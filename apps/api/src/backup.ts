@@ -83,6 +83,25 @@ function csvEscape(value: string): string {
  * process for seconds to minutes, blocking every other project's
  * requests too, not just this one backup request.
  */
+/**
+ * Mirrors entityFormatting.ts's own parseFileFieldValue -- a `file` field's
+ * stored value is a JSON-encoded `{url, name, size, mimeType}` descriptor,
+ * not a plain string like every other field type, so fieldDisplayValue
+ * below needs just the filename out of it (the backup ZIP has no way to
+ * also carry the uploaded bytes themselves, same limitation the live
+ * per-entity CSV export already has).
+ */
+function fileFieldDisplayName(value: unknown): string {
+  if (typeof value !== "string" || value === "") return "";
+  try {
+    const parsed = JSON.parse(value) as { name?: unknown };
+    if (typeof parsed.name === "string") return parsed.name;
+  } catch {
+    // not a file descriptor -- treated as no file, same as an empty value
+  }
+  return "";
+}
+
 function fieldDisplayValue(
   field: Field,
   value: unknown,
@@ -99,6 +118,7 @@ function fieldDisplayValue(
   }
   if (field.type === "boolean") return value ? "TRUE" : "FALSE";
   if (field.type === "enum") return field.enumLabels?.[String(value)] ?? String(value);
+  if (field.type === "file") return fileFieldDisplayName(value);
   return String(value);
 }
 

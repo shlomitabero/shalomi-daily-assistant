@@ -305,6 +305,47 @@ test("a boolean field renders as Excel's own TRUE/FALSE convention -- and unlike
   assert.equal(lines[3], "Finished,TRUE");
 });
 
+test("a file field renders as just the uploaded filename, not the raw JSON descriptor it's actually stored as", () => {
+  // A "file" field's stored value is a JSON-encoded {url, name, size,
+  // mimeType} descriptor (see entityFormatting.ts's own parseFileFieldValue,
+  // which apps/web's per-entity CSV export already uses for this exact
+  // purpose) -- this backup.ts copy of the CSV formatting logic had no
+  // branch for it at all, so it fell through to the generic String(value)
+  // case and would have printed that raw JSON straight into the "Backup
+  // all data" ZIP's CSV, instead of the same clean filename the live
+  // per-entity export already shows.
+  const fileProject: Project = {
+    ...project,
+    spec: {
+      ...project.spec,
+      entities: [
+        {
+          name: "Applicant",
+          label: "מועמדים",
+          fields: [
+            { name: "name", label: "שם", type: "text", required: true },
+            { name: "resume", label: "קורות חיים", type: "file", required: false },
+          ],
+        },
+      ],
+    },
+  };
+  const db = createTestDb(fileProject);
+  const applicant = fileProject.spec.entities[0];
+  insertRecord(db, fileProject.id, applicant, {
+    name: "Dana Levi",
+    resume: JSON.stringify({ url: "/api/uploads/p1/Applicant/abc.pdf", name: "dana-resume.pdf", size: 12345, mimeType: "application/pdf" }),
+  });
+  insertRecord(db, fileProject.id, applicant, { name: "No resume yet" });
+
+  const entries = generateBackupZipEntries(db, fileProject);
+  const applicantCsv = entries.find((e) => e.path === "Applicant.csv")!.content.replace(/^﻿/, "");
+  const lines = applicantCsv.split("\r\n");
+  assert.equal(lines[0], "שם,קורות חיים");
+  assert.equal(lines[1], "No resume yet,", "an unset file field must render blank, not 'null' or an empty JSON shape");
+  assert.equal(lines[2], "Dana Levi,dana-resume.pdf", "a set file field must render just the filename, not the raw JSON descriptor");
+});
+
 test("real WhatsApp messages produce a 'WhatsApp Messages.csv' entry, correctly escaped and ordered", () => {
   const db = createTestDb(project);
   const first = insertWhatsAppMessage(db, {
