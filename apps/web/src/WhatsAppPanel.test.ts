@@ -1099,6 +1099,132 @@ test("WhatsAppPanel disables every message's Retry button while any one retry is
 });
 
 /**
+ * Round 681: retryingId, deletingId, clearing, and loadingMore are four
+ * independent busy flags that all read/write the same messages state
+ * through the same messagesVersionRef guard -- Retry, per-message Delete,
+ * Clear History, and Load More. Each button was only ever disabled by its
+ * own flag, so e.g. deleting one message while a different message's
+ * retry was still in flight was never blocked. The version guard stops the
+ * retry's own stale response from being *applied*, but that's still a real
+ * regression on its own: the just-retried message silently never gets
+ * added to the on-screen log at all (no error, the button just resets).
+ * Mirrors round 680's identical fix for CollaboratorsPanel, and the
+ * existing convention HistoryPanel's restore/delete buttons already use --
+ * every one of these four buttons is now disabled while ANY of the four
+ * is in flight anywhere in this panel, so the mutations this bug needed
+ * can never genuinely overlap.
+ */
+test("WhatsAppPanel's Delete and Clear History buttons are disabled while a retry is in flight, and a blocked click never fires a real request", async () => {
+  await withJsdom(async () => {
+    const originalFetch = globalThis.fetch;
+    const originalConfirm = globalThis.window.confirm;
+    globalThis.window.confirm = (() => true) as typeof window.confirm;
+    let resolveSend: (() => void) | undefined;
+    const sendGate = new Promise<void>((resolve) => {
+      resolveSend = resolve;
+    });
+    let deleteCalls = 0;
+    let clearCalls = 0;
+    const store: WhatsAppMessageLogEntry[] = [
+      {
+        id: "m1",
+        direction: "out",
+        fromNumber: "972501234567",
+        toNumber: "972521112233",
+        body: "failed message",
+        matchedLabel: null,
+        matchedEntityName: null,
+        matchedRecordId: null,
+        status: "failed",
+        createdAt: new Date().toISOString(),
+      },
+      {
+        id: "m2",
+        direction: "in",
+        fromNumber: "972523334455",
+        toNumber: "972501234567",
+        body: "a different message entirely",
+        matchedLabel: null,
+        matchedEntityName: null,
+        matchedRecordId: null,
+        status: "received",
+        createdAt: new Date().toISOString(),
+      },
+    ];
+    globalThis.fetch = (async (input: string, init?: RequestInit): Promise<Response> => {
+      const method = init?.method ?? "GET";
+      if (method === "GET" && input === "/api/projects/proj1/integrations/whatsapp/status") {
+        return new Response(
+          JSON.stringify({ status: "connected", phoneNumber: "972501234567", qrDataUrl: null, error: null }),
+          { status: 200, headers: { "content-type": "application/json" } },
+        );
+      }
+      if (method === "GET" && input === "/api/projects/proj1/integrations/whatsapp/messages") {
+        return new Response(JSON.stringify({ messages: store }), { status: 200, headers: { "content-type": "application/json" } });
+      }
+      if (method === "POST" && input === "/api/projects/proj1/integrations/whatsapp/send") {
+        await sendGate;
+        return new Response(JSON.stringify({ ok: true }), { status: 200, headers: { "content-type": "application/json" } });
+      }
+      const deleteMatch = /^\/api\/projects\/proj1\/integrations\/whatsapp\/messages\/([^/]+)$/.exec(input);
+      if (method === "DELETE" && deleteMatch) {
+        deleteCalls += 1;
+        return new Response(null, { status: 204 });
+      }
+      if (method === "DELETE" && input === "/api/projects/proj1/integrations/whatsapp/messages") {
+        clearCalls += 1;
+        return new Response(null, { status: 204 });
+      }
+      throw new Error(`unexpected request ${method} ${input}`);
+    }) as typeof fetch;
+
+    try {
+      render(
+        React.createElement(
+          ThemeProvider,
+          null,
+          React.createElement(LanguageProvider, null, React.createElement(WhatsAppPanel, { projectId: "proj1", projectName: "Test Project", onClose: () => {}, onJumpToEntity: () => {}, onJumpToRecord: () => {} })),
+        ),
+      );
+      await waitForCondition(() => document.querySelectorAll(".whatsapp-log-list li").length === 2);
+
+      const rows = document.querySelectorAll(".whatsapp-log-list li");
+      const retryBtn = rows[0].querySelector("button.secondary.small") as HTMLButtonElement;
+      const deleteBtn = rows[1].querySelector(".whatsapp-log-delete") as HTMLButtonElement;
+      const clearBtn = Array.from(document.querySelectorAll("button")).find((b) => b.textContent?.includes("Clear")) as HTMLButtonElement;
+      assert.ok(retryBtn && deleteBtn && clearBtn, "sanity check: all three real buttons must be present");
+      assert.equal(deleteBtn.disabled, false, "sanity check: nothing is in flight yet");
+      assert.equal(clearBtn.disabled, false, "sanity check: nothing is in flight yet");
+
+      fireEvent.click(retryBtn);
+      await waitForCondition(() => retryBtn.disabled === true);
+
+      assert.equal(deleteBtn.disabled, true, "the delete button for a DIFFERENT message must be disabled while a retry is in flight");
+      assert.equal(clearBtn.disabled, true, "Clear History must be disabled while a retry is in flight");
+
+      // A disabled button's click handler never fires (browser/jsdom both
+      // suppress it) -- confirms the cross-gate genuinely blocks the
+      // request, not just looks disabled.
+      fireEvent.click(deleteBtn);
+      fireEvent.click(clearBtn);
+      assert.equal(deleteCalls, 0, "clicking a disabled delete button must never call the DELETE endpoint");
+      assert.equal(clearCalls, 0, "clicking a disabled Clear History button must never call the DELETE endpoint");
+
+      resolveSend!();
+      await waitForCondition(() => deleteBtn.disabled === false);
+      assert.equal(clearBtn.disabled, false, "both buttons must re-enable once the retry actually finishes");
+
+      // Now that nothing is in flight, deleting must work exactly as before.
+      fireEvent.click(deleteBtn);
+      await waitForCondition(() => deleteCalls === 1);
+    } finally {
+      globalThis.fetch = originalFetch;
+      globalThis.window.confirm = originalConfirm;
+    }
+  });
+});
+
+/**
  * New in this round: a `prefillTo` prop lets a caller (EntityPanel's
  * "Send WhatsApp" row action, via App.tsx) open this panel with the
  * test-send "to" box already filled in, instead of forcing the user to
@@ -3107,22 +3233,22 @@ test("WhatsAppPanel's 'Load older messages' button appends the next page without
 });
 
 /**
- * Regression test for round 432: handleLoadMore was a fourth
- * fetch-then-setMessages call site that round 431's own messagesVersionRef
- * fix never covered (the fix's own doc comment and code only guarded the
- * three mergeFreshMessages call sites). "Load older messages" and "Clear
- * history" are both always-enabled, simultaneously-rendered buttons --
- * nothing stops a user from clicking "Load older messages" and then
- * "Clear history" before the first request resolves. Before this round's
- * fix, the held-open "older page" fetch's response (still reflecting the
- * pre-clear log) would land after handleClearHistory had already emptied
- * `messages`, and handleLoadMore's unconditional `setMessages((prev) =>
- * [...prev, ...older])` would glue the stale page right back onto the
- * now-empty state -- resurrecting the entire cleared history. Confirms the
- * fix: the version bump from Clear history (which lands first here) makes
- * the load-more fetch's own now-stale result get discarded instead.
+ * Regression test for round 432, updated in round 681: handleLoadMore was
+ * a fourth fetch-then-setMessages call site that round 431's own
+ * messagesVersionRef fix never covered, so this test originally proved
+ * that guard caught the stale response AFTER the fact (clicking "Clear
+ * history" while "Load older messages" was still in flight used to be
+ * allowed, and the version bump discarded the stale page once it landed).
+ * Round 681 closed the same gap one level earlier for the whole panel
+ * (Retry/Delete/Clear/Load-more are now cross-gated on every one of their
+ * four busy flags, not just their own) -- so "Clear history" is now
+ * disabled for as long as "Load older messages" is in flight, and the
+ * version-guard race this test used to trigger can no longer even start.
+ * Confirms the stronger guarantee: the disabled Clear button is a genuine
+ * no-op (the list is untouched) while the fetch is held open, and once it
+ * resolves, Clear History works normally and empties the now-larger list.
  */
-test("WhatsAppPanel's 'Load older messages' never resurrects history cleared while its own fetch was still in flight", async () => {
+test("WhatsAppPanel's 'Clear history' button is disabled while 'Load older messages' is in flight, and only clears once that fetch actually finishes", async () => {
   await withJsdom(async () => {
     const originalFetch = globalThis.fetch;
     const originalConfirm = globalThis.window.confirm;
@@ -3230,31 +3356,27 @@ test("WhatsAppPanel's 'Load older messages' never resurrects history cleared whi
 
       // The older-page fetch is now held open, exactly as if a real
       // network request were still in flight. Clicking Clear history
-      // while it's held simulates the real race this test guards against.
-      const clearButton = Array.from(document.querySelectorAll("button")).find((b) => b.textContent === "Clear history");
+      // while it's held must now be a genuine no-op -- round 681's
+      // cross-gate disables it for exactly this reason.
+      const clearButton = Array.from(document.querySelectorAll("button")).find((b) => b.textContent === "Clear history") as HTMLButtonElement;
       assert.ok(clearButton, "expected a 'Clear history' button");
-      fireEvent.click(clearButton!);
-      await waitForCondition(() => document.querySelectorAll(".whatsapp-log-list li").length === 0);
+      assert.equal(clearButton.disabled, true, "Clear history must be disabled while Load older messages is still in flight");
 
-      // Only now release the stale older-page fetch, after the clear has
-      // already taken effect. handleClearHistory's own setHasMoreMessages(false)
-      // unmounts the "Load older messages" button entirely, so its
-      // "Loading…" label can't be used as a completion signal here --
-      // draining the microtask queue a few times (the same technique
-      // EntityPanel.test.ts already uses for an identical "let the stale
-      // call's continuation actually run after release" need, not a
-      // timing-based sleep) is what actually lets handleLoadMore's own
-      // continuation run before the assertion below.
-      releaseOlderPageFetch!();
-      await new Promise((resolve) => setImmediate(resolve));
-      await new Promise((resolve) => setImmediate(resolve));
-      await new Promise((resolve) => setImmediate(resolve));
-
+      fireEvent.click(clearButton);
       assert.equal(
         document.querySelectorAll(".whatsapp-log-list li").length,
-        0,
-        "the cleared history must stay empty -- the stale 'older page' fetch must never resurrect it",
+        2,
+        "a disabled Clear history button's click must never fire -- the list must stay exactly as it was",
       );
+
+      releaseOlderPageFetch!();
+      await waitForCondition(() => document.querySelectorAll(".whatsapp-log-list li").length === 3);
+      assert.equal(clearButton.disabled, false, "Clear history must re-enable once the load-more fetch actually finishes");
+
+      // Now that nothing is in flight, Clear history must work exactly as
+      // before.
+      fireEvent.click(clearButton);
+      await waitForCondition(() => document.querySelectorAll(".whatsapp-log-list li").length === 0);
     } finally {
       globalThis.window.confirm = originalConfirm;
       globalThis.fetch = originalFetch;

@@ -871,7 +871,22 @@ export function WhatsAppPanel({
                   {t("whatsapp.log.download")}
                 </button>
                 {!readOnly && (
-                  <button type="button" className="secondary small" onClick={handleClearHistory} disabled={clearing}>
+                  // Disabled while ANY of retry/delete/load-more is also in
+                  // flight, not just clearing itself -- all four mutate the
+                  // same messages state through the same messagesVersionRef
+                  // guard, the identical "independent busy flags on one
+                  // shared list" shape round 680 fixed for CollaboratorsPanel
+                  // (mirroring HistoryPanel's own restore/delete convention).
+                  // Without this, a retry/load-more fetch still in flight
+                  // when Clear History commits could still pass its own
+                  // version check and put already-cleared rows right back on
+                  // screen.
+                  <button
+                    type="button"
+                    className="secondary small"
+                    onClick={handleClearHistory}
+                    disabled={clearing || retryingId !== null || deletingId !== null || loadingMore}
+                  >
                     {clearing ? t("whatsapp.log.clearing") : t("whatsapp.log.clear")}
                   </button>
                 )}
@@ -996,11 +1011,17 @@ export function WhatsAppPanel({
                         // re-enables the first row's button mid-request -- a second
                         // click there fires a real, second sendWhatsAppMessage to the
                         // same customer, not just a harmless duplicate state update.
+                        // Also cross-gated against delete/clear/load-more -- all four
+                        // read/write the same messages state through messagesVersionRef,
+                        // so a delete or clear committing while this retry's own
+                        // listWhatsAppMessages fetch is still in flight can make that
+                        // fetch's version check fail, silently dropping the
+                        // just-retried message from the on-screen log.
                         <button
                           type="button"
                           className="secondary small"
                           onClick={() => handleRetry(m)}
-                          disabled={retryingId !== null}
+                          disabled={retryingId !== null || deletingId !== null || clearing || loadingMore}
                         >
                           {retryingId === m.id ? t("whatsapp.log.retrying") : t("whatsapp.log.retry")}
                         </button>
@@ -1013,12 +1034,17 @@ export function WhatsAppPanel({
                     </button>
                   )}
                   {!readOnly && (
+                  // Same cross-gate as the retry/clear/load-more buttons --
+                  // deleting one message while any of the other three is
+                  // still reading/writing messages via messagesVersionRef
+                  // can resurrect this exact message once that other
+                  // operation's own stale read lands.
                   <button
                     type="button"
                     className="whatsapp-log-delete"
                     aria-label={t("whatsapp.log.deleteOne")}
                     onClick={() => handleDeleteMessage(m)}
-                    disabled={deletingId !== null}
+                    disabled={deletingId !== null || retryingId !== null || clearing || loadingMore}
                   >
                     {deletingId === m.id ? "…" : "🗑️"}
                   </button>
@@ -1029,7 +1055,15 @@ export function WhatsAppPanel({
           )}
           {hasMoreMessages && (
             <div className="whatsapp-log-load-more">
-              <button type="button" className="secondary small" onClick={handleLoadMore} disabled={loadingMore}>
+              {/* Same cross-gate as retry/delete/clear -- loading an older
+                  page shares the same messagesVersionRef guard, so it can
+                  race against them exactly the same way. */}
+              <button
+                type="button"
+                className="secondary small"
+                onClick={handleLoadMore}
+                disabled={loadingMore || retryingId !== null || deletingId !== null || clearing}
+              >
                 {loadingMore ? t("whatsapp.log.loadingMore") : t("whatsapp.log.loadMore")}
               </button>
             </div>
