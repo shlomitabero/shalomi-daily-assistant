@@ -25,12 +25,7 @@ from .config import ROOT, can_render, runtime, save_runtime, settings
 def _seed_sample_week() -> None:
     """Fresh install: show the sample week so the panel never opens empty, and install LILO's
     approved anchor face (assets/lilo/R0_anchor.jpg) so the setup wizard starts at step 2."""
-    if not any(cal_dir().glob("week_*.json")):
-        setup_sample()
-    old_sample = cal_dir() / "week_2026-10-18.json"   # pre-campaign ZOZOBRA sample, now dated 22/11
-    if old_sample.exists() and "bangkok_heat" in old_sample.read_text(encoding="utf-8"):
-        old_sample.rename(old_sample.with_suffix(".retired"))
-        setup_sample()
+    _purge_zozobra_before_opening()
     rerender: list[tuple[str, str]] = []
     for bundled_cal in sorted((ROOT / "examples" / "calendars").glob("week_*.json")):   # campaign weeks 1-5
         target = cal_dir() / bundled_cal.name
@@ -61,6 +56,36 @@ def _seed_sample_week() -> None:
 
         anchor.parent.mkdir(parents=True, exist_ok=True)
         Image.open(bundled).convert("RGB").save(anchor)
+
+
+def _purge_zozobra_before_opening() -> None:
+    """Owner's rule: no ZOZOBRA before the opening. Unpublished ZOZOBRA posts and ZOZOBRA-only calendars
+    move to data/archive (kept for opening day), once."""
+    from .campaign import allows_zozobra
+
+    if runtime().get("purged_zozobra_v1"):
+        return
+    archive = settings().data_dir / "archive"
+    bundled = {p.name for p in (ROOT / "examples" / "calendars").glob("week_*.json")}
+    for q in sorted(queue_dir().glob("*.json")) if queue_dir().exists() else []:
+        it = json.loads(q.read_text(encoding="utf-8"))
+        zoz = "ZOZOBRA" in it.get("caption", "") or (it.get("steps") or {}).get("venue_plate")
+        if zoz and it.get("status") != "published":
+            (archive / "queue").mkdir(parents=True, exist_ok=True)
+            q.rename(archive / "queue" / q.name)
+    for c in sorted(cal_dir().glob("week_*")) if cal_dir().exists() else []:
+        if c.name in bundled:
+            continue
+        keep = c.suffix == ".json"
+        if keep:
+            days = json.loads(c.read_text(encoding="utf-8")).get("days", [])
+            keep = not any(d.get("features_zozobra", True) and not allows_zozobra(date.fromisoformat(d["day"]))
+                           for d in days)
+        if not keep:
+            (archive / "calendars").mkdir(parents=True, exist_ok=True)
+            c.rename(archive / "calendars" / c.name)
+    save_runtime(purged_zozobra_v1=True)
+
 
 
 @asynccontextmanager
@@ -423,8 +448,12 @@ def _produce_job(stem: str, day: str | None) -> str:
     s = settings()
     plan = WeekPlan.model_validate_json((cal_dir() / f"{stem}.json").read_text(encoding="utf-8"))
     menu, done = load_menu(), []
+    from .campaign import allows_zozobra
+
     for d in plan.days:
         if day and d.day.isoformat() != day:
+            continue
+        if d.features_zozobra and not allows_zozobra(d.day):    # owner's rule: no ZOZOBRA before opening
             continue
         produce_day(d, menu, s.data_dir / "renders" / d.day.isoformat(), not can_render(s))
         done.append(d.day.isoformat())
@@ -837,9 +866,7 @@ def setup(online: int = 0):
 <p><button class="btn">🔗 חבר</button></p></form>
 <p class="mute">המפתח נשמר רק בשרת ומתחדש אוטומטית כל שבוע. פרסום בפועל יקרה רק אחרי כיבוי מצב הבדיקה, ורק לפוסטים שאישרת.</p></div>
 
-<h2>דוגמה מוכנה</h2>
-<div class="card"><p>רוצה לראות איך שבוע נראה לפני שמחברים מפתחות? טען לוח תוכן לדוגמה (בנגקוק היט + וייב ערב).</p>
-<form method="post" action="/setup/sample"><button class="btn ghost">📅 טען שבוע לדוגמה</button></form></div>""", "/setup")
+""", "/setup")
 
 
 def _train_job() -> str:

@@ -41,7 +41,7 @@ def validate_day(day: DayPlan, valid_dish_ids: set[str]) -> list[str]:
     from .campaign import allows_zozobra
 
     if day.features_zozobra and not allows_zozobra(day.day):
-        problems.append("ZOZOBRA may not appear before the reveal phase (day 31)")
+        problems.append("ZOZOBRA may not appear before the opening date")
     if not _HHMM.match(day.post_time_local):
         problems.append(f"bad post_time_local '{day.post_time_local}'")
     if not set(day.platforms) <= {"instagram", "tiktok"} or not day.platforms:

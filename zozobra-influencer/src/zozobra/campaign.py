@@ -2,9 +2,11 @@
 
     brand       days 1-14   city nightlife guide, ZOZOBRA never named
     accelerate  days 15-30  double down on what performed, collabs, polls
-    reveal      days 31-45  ZOZOBRA enters openly (paid-partnership label, renders labelled)
-    launch      day 46 ->   cinematic teasers, countdown, opening campaign
-    open        from launch_date
+    reveal      days 31-45  bigger city formats, partner venues, community series
+    launch      day 46 ->   peak growth: collabs, giveaways with partner venues
+    open        from launch_date - only now ZOZOBRA appears (paid-partnership label)
+
+Owner's rule: no ZOZOBRA content at all before the opening date - LILO first builds her own audience.
 
 Phases and the weekday series come from data/campaign.json, so the Brain changes gear by itself.
 """
@@ -42,7 +44,7 @@ def series(day: date) -> str:
 
 
 def allows_zozobra(day: date) -> bool:
-    return phase(day) in ("reveal", "launch", "open")
+    return phase(day) == "open"
 
 
 _PHASE_RULES = {
@@ -53,14 +55,13 @@ _PHASE_RULES = {
         "PHASE accelerate (days 15-30): lean into the formats that performed best (see insights); more polls, "
         "reply-to-comment videos and collab-ready posts about real places. ZOZOBRA still not named."),
     "reveal": (
-        "PHASE reveal (days 31-45): ZOZOBRA enters openly as LILO's partner - never as an independent review. "
-        "2-3 ZOZOBRA posts per week (features_zozobra=true; the paid-partnership and render labels are added "
-        "automatically): the design, the bar, the open kitchen, the EAT • DRINK • STAY idea. The other days stay "
-        "city posts. Never say it is open; show diverse Israeli guests, not only Asian diners."),
+        "PHASE reveal (days 31-45): still ZERO ZOZOBRA - every day features_zozobra=false, dish_id='atmosphere', "
+        "visual.venue_plate='none'. Bigger city formats: neighbourhood tours, 'best of the month', collab-ready "
+        "posts about real places, reply-to-comment videos."),
     "launch": (
-        "PHASE launch campaign (days 46-60): cinematic teasers, countdown to the opening, the bar and the "
-        "experience; ZOZOBRA on most days (features_zozobra=true). Never promise a date, gift or giveaway that is "
-        "not in the menu JSON offers."),
+        "PHASE launch (days 46-60): still ZERO ZOZOBRA until the opening date - every day features_zozobra=false, "
+        "dish_id='atmosphere', visual.venue_plate='none'. Peak growth: collabs with partner venues, holiday and "
+        "weekend guides, community picks."),
     "open": (
         "PHASE open: ZOZOBRA is open. Hero dishes, fire show, bar nights; keep one city post a week so LILO stays "
         "a guide, not an ad."),

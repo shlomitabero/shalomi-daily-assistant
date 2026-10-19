@@ -20,7 +20,7 @@ def L(t0, t1, spoken, voice, onscreen, shot):
 
 DAYS = [
     {
-        "day": "2026-11-22", "weekday_he": "ראשון", "post_time_local": "20:00", "platforms": ["instagram", "tiktok"],
+        "day": "2026-12-20", "weekday_he": "ראשון", "post_time_local": "20:00", "platforms": ["instagram", "tiktok"],
         "format": "reel", "pillar": "fire_show", "dish_id": "bangkok_heat",
         "concept": "פותחים את השבוע ליד הפס של המטבח הפתוח: הבנגקוק היט נולד בווק, בשלושים שניות על אש גבוהה",
         "hook_he": "ככה מתחיל שבוע 🔥",
@@ -42,7 +42,7 @@ DAYS = [
         "trend_or_audio_note": "Original audio: real wok sizzle as the first 2 seconds - no music under the hook",
     },
     {
-        "day": "2026-11-23", "weekday_he": "שני", "post_time_local": "19:30", "platforms": ["instagram", "tiktok"],
+        "day": "2026-12-21", "weekday_he": "שני", "post_time_local": "19:30", "platforms": ["instagram", "tiktok"],
         "format": "reel", "pillar": "pov_story", "dish_id": "teriyaki_ramen",
         "concept": "POV: יצאת מהמשרד גמור/ה ויש רק דבר אחד שמציל את היום — קערת ראמן",
         "hook_he": "יום ארוך? יש לזה תשובה.",
@@ -64,7 +64,7 @@ DAYS = [
         "trend_or_audio_note": "POV text format; voiceover only, soft lo-fi bed at -20dB",
     },
     {
-        "day": "2026-11-24", "weekday_he": "שלישי", "post_time_local": "20:30", "platforms": ["instagram", "tiktok"],
+        "day": "2026-12-22", "weekday_he": "שלישי", "post_time_local": "20:30", "platforms": ["instagram", "tiktok"],
         "format": "reel", "pillar": "challenge", "dish_id": "super_b",
         "concept": "צ'אלנג' חריפות: לילו מנסה את הסופר בי בלי מים לעשר שניות",
         "hook_he": "עשר שניות בלי מים.",
@@ -86,7 +86,7 @@ DAYS = [
         "trend_or_audio_note": "Spice-challenge format with a visible on-screen timer; no alcohol in frame",
     },
     {
-        "day": "2026-11-25", "weekday_he": "רביעי", "post_time_local": "13:00", "platforms": ["instagram"],
+        "day": "2026-12-23", "weekday_he": "רביעי", "post_time_local": "13:00", "platforms": ["instagram"],
         "format": "carousel", "pillar": "hero_dish", "dish_id": "massaman_curry",
         "concept": "קרוסלה: 5 סיבות שהקארי מסמן הוא הצהריים הכי שווים של האמצע-שבוע",
         "hook_he": "המנה שכדאי להכיר",
@@ -102,7 +102,7 @@ DAYS = [
         "trend_or_audio_note": "",
     },
     {
-        "day": "2026-11-26", "weekday_he": "חמישי", "post_time_local": "21:00", "platforms": ["instagram", "tiktok"],
+        "day": "2026-12-24", "weekday_he": "חמישי", "post_time_local": "21:00", "platforms": ["instagram", "tiktok"],
         "format": "reel", "pillar": "night_vibe", "dish_id": "atmosphere",
         "concept": "חמישי בערב: לילו מגיעה לבר, מול המטבח הפתוח. הזמנה לדייט נייט",
         "hook_he": "חמישי בערב. יש לכם תוכניות?",
@@ -123,7 +123,7 @@ DAYS = [
         "trend_or_audio_note": "Slow-walk 'follow me' format; dark R&B instrumental, beat drop on the over-the-shoulder glance",
     },
     {
-        "day": "2026-11-27", "weekday_he": "שישי", "post_time_local": "12:30", "platforms": ["instagram", "tiktok"],
+        "day": "2026-12-25", "weekday_he": "שישי", "post_time_local": "12:30", "platforms": ["instagram", "tiktok"],
         "format": "reel", "pillar": "hero_dish", "dish_id": "pad_thai",
         "concept": "ASMR של שישי בצהריים: הפאד תאי מהרגע שהוא נכנס לווק עד הביס הראשון",
         "hook_he": "בלי מילים. רק תקשיבו 🎧",
@@ -145,7 +145,7 @@ DAYS = [
         "trend_or_audio_note": "Food ASMR - all natural sound, voice only at the end",
     },
     {
-        "day": "2026-11-28", "weekday_he": "שבת", "post_time_local": "20:30", "platforms": ["instagram", "tiktok"],
+        "day": "2026-12-26", "weekday_he": "שבת", "post_time_local": "20:30", "platforms": ["instagram", "tiktok"],
         "format": "reel", "pillar": "community", "dish_id": "spring_rolls",
         "concept": "לילו עונה לתגובות של השבוע תוך כדי ספרינג רולס — ומבקשת מהעוקבים להחליט את המנה של השבוע הבא",
         "hook_he": "שאלתם. אני עונה.",

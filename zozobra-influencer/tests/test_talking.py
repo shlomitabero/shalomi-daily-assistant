@@ -53,7 +53,7 @@ def test_campaign_phases():
 
     assert campaign.phase(date(2026, 10, 18)) == "brand"          # day 1
     assert campaign.phase(date(2026, 11, 1)) == "accelerate"      # day 15
-    assert campaign.phase(date(2026, 11, 17)) == "reveal"         # day 31
+    assert campaign.phase(date(2026, 11, 17)) == "reveal" and not campaign.allows_zozobra(date(2026, 12, 16))
     assert campaign.phase(date(2026, 12, 2)) == "launch"          # day 46
     assert campaign.phase(date(2026, 12, 17)) == "open"
     assert campaign.series(date(2026, 10, 18)).startswith("Hidden Gems")   # Sunday
@@ -191,3 +191,28 @@ def test_lilo_never_says_she_is_ai_in_scheduled_scripts():
         for day in WeekPlan.model_validate_json(path.read_text(encoding="utf-8")).days:
             for line in day.script:
                 assert not re.search(r"\bAI\b|דמות|וירטואל", line.spoken_he + " " + line.on_screen_text_he), (day.day, line)
+
+
+def test_zozobra_posts_purged_before_opening(tmp_path, monkeypatch):
+    import json as _json
+
+    monkeypatch.setenv("DATA_DIR", str(tmp_path))
+    from zozobra import jobs, web
+
+    monkeypatch.setattr(jobs, "submit", lambda *a, **k: None)
+    (tmp_path / "queue").mkdir()
+    (tmp_path / "calendars").mkdir()
+    zoz = {"day": "2026-10-18", "status": "pending", "caption": "#פרסומת | שיתוף פעולה בתשלום עם ZOZOBRA",
+           "steps": {"venue_plate": "open_kitchen"}}
+    city = {"day": "2026-10-19", "status": "pending", "caption": "חיפה", "steps": {"venue_plate": None}}
+    for it in (zoz, city):
+        (tmp_path / "queue" / f"{it['day']}.json").write_text(_json.dumps(it), encoding="utf-8")
+    old = SAMPLE.read_text(encoding="utf-8").replace("2026-12-2", "2026-11-2")   # a ZOZOBRA week before opening
+    (tmp_path / "calendars" / "week_2026-11-22.json").write_text(old, encoding="utf-8")
+    web._seed_sample_week()
+    assert not (tmp_path / "queue" / "2026-10-18.json").exists()
+    assert (tmp_path / "archive" / "queue" / "2026-10-18.json").exists()
+    assert (tmp_path / "queue" / "2026-10-19.json").exists()
+    assert not (tmp_path / "calendars" / "week_2026-11-22.json").exists()
+    for path in (tmp_path / "calendars").glob("week_*.json"):
+        assert not any(d.get("features_zozobra") for d in _json.loads(path.read_text(encoding="utf-8"))["days"])
