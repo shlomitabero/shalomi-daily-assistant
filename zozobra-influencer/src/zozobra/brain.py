@@ -209,6 +209,42 @@ def generate_week(
     return plan
 
 
+def revise_day(day: DayPlan, instruction: str, *, menu: dict | None = None,
+               client: anthropic.Anthropic | None = None) -> DayPlan:
+    """Apply the owner's correction (free Hebrew text from the panel's "fix" button) to one post."""
+    menu = menu or load_menu()
+    client = client or _client()
+    schema = anthropic.transform_schema(DayPlan)
+    prompt = "\n\n".join([
+        campaign.brief(day.day),
+        "Menu JSON (the only dishes/drinks you may reference):", json.dumps(menu, ensure_ascii=False),
+        "Current post JSON:", day.model_dump_json(indent=2),
+        f"The owner's correction (Hebrew): {instruction}",
+        "Apply exactly this correction and keep everything else as it is - same day, format and "
+        "places unless the correction says otherwise. Keep script timings continuous. Return the full post JSON.",
+    ])
+    with client.beta.messages.stream(
+        model=settings().model,
+        max_tokens=16000,
+        betas=["server-side-fallback-2026-07-01"],
+        fallbacks="default",
+        thinking={"type": "adaptive"},
+        output_config={"effort": "medium", "format": {"type": "json_schema", "schema": schema}},
+        system=[{"type": "text", "text": SYSTEM_PROMPT, "cache_control": {"type": "ephemeral"}}],
+        messages=[{"role": "user", "content": prompt}],
+    ) as stream:
+        message = stream.get_final_message()
+    if message.stop_reason == "refusal":
+        raise RuntimeError(f"Brain declined the correction: {message.stop_details}")
+    revised = DayPlan.model_validate_json(next(b.text for b in message.content if b.type == "text"))
+    revised = revised.model_copy(update={"day": day.day})
+    valid_ids = {d["id"] for d in menu.get("dishes", [])} | {d["id"] for d in menu.get("drinks", [])}
+    problems = validate_day(revised, valid_ids)
+    if problems:
+        raise ValueError("The corrected post failed validation: " + "; ".join(problems))
+    return revised
+
+
 def full_image_prompt(day: DayPlan) -> str:
     """Identity-locked prompt for ComfyUI (Module 1)."""
     return persona.visual_prompt(day.visual.scene, day.visual.action, day.visual.wardrobe or None)

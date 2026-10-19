@@ -57,7 +57,7 @@ async def lifespan(app: FastAPI):
 app = FastAPI(title="LILO × ZOZOBRA", lifespan=lifespan)
 e = lambda v: html.escape(str(v if v is not None else ""))
 
-STATUS_HE = {"pending": "ממתין לאישור", "approved": "מאושר", "published": "פורסם", "rejected": "נדחה",
+STATUS_HE = {"fixing": "בתיקון…", "pending": "ממתין לאישור", "approved": "מאושר", "published": "פורסם", "rejected": "נדחה",
              "running": "רץ…", "done": "הסתיים", "failed": "נכשל"}
 PILLAR_HE = {"hero_dish": "מנת הדגל", "fire_show": "שואו אש", "night_vibe": "וייב ערב", "challenge": "צ'אלנג'",
              "pov_story": "POV / סטוריטיים", "community": "קהילה"}
@@ -263,8 +263,26 @@ def item_card(it: dict, full: bool = False) -> str:
 <span class="pill {cls}">{STATUS_HE.get(status, status)}</span><span class="pill">{e(it['format'])}</span>
 <span class="pill">{e(PILLAR_HE.get(it['pillar'], it['pillar']))}</span><span class="pill">{e(' + '.join(it['platforms']))}</span></div>
 <p><b>הוק:</b> {e(it['hook'])}</p>{preview}
-{'' if full else f'<p><a class="btn ghost" href="/queue/{e(it["day"])}">פתח ואשר ←</a></p>'}
+{_review_bar(it)}
+{'' if full else f'<p><a class="btn ghost" href="/queue/{e(it["day"])}">פתח פוסט מלא ←</a></p>'}
+{"".join(f'<p class="mute">✏️ {e(r["at"])}: {e(r["instruction"])}</p>' for r in it.get("revisions", [])[-3:])}
 {f'<p class="mute">פורסם: {e(pub)}</p>' if pub else ''}</div>"""
+
+
+def _review_bar(it: dict) -> str:
+    """Approve / fix right under the post and its video."""
+    day = e(it["day"])
+    if it.get("status") == "fixing":
+        return '<p class="mute">✏️ התיקון בעבודה. הפוסט יחזור לכאן לאישור כשיהיה מוכן.</p>'
+    if it.get("status") not in ("pending", "rejected", "approved"):
+        return ""
+    approve = ('' if it.get("status") == "approved" else
+               f'<form method="post" action="/queue/{day}/approve" style="display:inline"><button class="btn">✅ אשר</button></form>')
+    return f"""<div class="row" style="align-items:flex-start;gap:8px;margin-top:10px">{approve}
+<details style="flex:1"><summary class="btn ghost" style="display:inline-block">✏️ תקן</summary>
+<form method="post" action="/queue/{day}/fix" style="margin-top:8px">
+<textarea name="instruction" required placeholder="לדוגמה: תקן את המשפט של לילו ל... / תחליף את ההוק ל... / תקצר את הכיתוב" style="min-height:90px"></textarea>
+<button class="btn">שלח תיקון</button></form></details></div>"""
 
 
 # ---------- dashboard ----------
@@ -468,6 +486,76 @@ def queue_save(day: str, caption: str = Form(...), post_time: str = Form(...), a
         it["post_time"] = post_time
         it["status"] = {"approve": "approved", "reject": "rejected"}.get(action, it.get("status", "pending"))
         save_item(it)
+    return back(f"/queue/{day}")
+
+
+@app.post("/queue/{day}/approve")
+def queue_approve(day: str):
+    path = queue_dir() / f"{Path(day).name}.json"
+    it = json.loads(path.read_text(encoding="utf-8"))
+    if it.get("status") in ("pending", "rejected"):
+        it["status"] = "approved"
+        save_item(it)
+    return back(f"/queue/{day}")
+
+
+def _calendar_for(day: str) -> Path | None:
+    for path in sorted(cal_dir().glob("week_*.json")):
+        if f'"day": "{day}"' in path.read_text(encoding="utf-8").replace('"day":"', '"day": "'):
+            return path
+    return None
+
+
+def _fix_job(day: str, instruction: str) -> str:
+    from datetime import datetime
+
+    from .account_health import TZ
+    from .brain import load_menu, revise_day
+    from .compliance import finalize_caption
+    from .pipeline import produce_day
+    from .schemas import WeekPlan
+
+    qpath = queue_dir() / f"{day}.json"
+    item = json.loads(qpath.read_text(encoding="utf-8"))
+    revisions = item.get("revisions", []) + [{"at": datetime.now(TZ).strftime("%d/%m %H:%M"), "instruction": instruction}]
+    try:
+        cal = _calendar_for(day)
+        if cal is None:
+            raise ValueError("לא נמצא לוח תוכן עם היום הזה")
+        plan = WeekPlan.model_validate_json(cal.read_text(encoding="utf-8"))
+        idx = next(i for i, d in enumerate(plan.days) if d.day.isoformat() == day)
+        old = plan.days[idx]
+        new = revise_day(old, instruction, menu=load_menu())
+        plan.days[idx] = new
+        cal.write_text(plan.model_dump_json(indent=2), encoding="utf-8")
+        needs_render = (old.script != new.script or old.visual != new.visual or old.format != new.format)
+        if needs_render:
+            s = settings()
+            item = produce_day(new, load_menu(), s.data_dir / "renders" / day, not can_render(s))
+            result = "התיקון הוחל והסרטון הופק מחדש"
+        else:
+            item.update(caption=finalize_caption(new), hook=new.hook_he, post_time=new.post_time_local)
+            result = "התיקון הוחל (טקסט בלבד, בלי הפקה מחדש)"
+        item["status"] = "pending"
+    except Exception:
+        item["status"] = "pending"
+        item["revisions"] = revisions
+        save_item(item)
+        raise
+    item["revisions"] = revisions
+    save_item(item)
+    return result
+
+
+@app.post("/queue/{day}/fix")
+def queue_fix(day: str, instruction: str = Form(...)):
+    day = Path(day).name
+    path = queue_dir() / f"{day}.json"
+    it = json.loads(path.read_text(encoding="utf-8"))
+    if it.get("status") != "published" and instruction.strip():
+        it["status"] = "fixing"
+        save_item(it)
+        jobs.submit(f"תיקון {day}", _fix_job, day, instruction.strip()[:1000])
     return back(f"/queue/{day}")
 
 

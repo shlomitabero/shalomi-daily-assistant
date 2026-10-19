@@ -137,3 +137,32 @@ def test_home_screen_link_logs_in_with_cookie(tmp_path, monkeypatch):
     assert c.get("/?k=secret-key").status_code == 200
     assert c.get("/calendars").status_code == 200            # cookie from the key visit
     assert TestClient(web.app).get("/apple-touch-icon.png").status_code == 200
+
+
+def test_fix_button_revises_text_without_rerender(tmp_path, monkeypatch):
+    import json as _json
+    import shutil
+
+    from fastapi.testclient import TestClient
+
+    monkeypatch.setenv("DATA_DIR", str(tmp_path))
+    monkeypatch.setenv("PANEL_PASSWORD", "")
+    monkeypatch.setenv("DRY_RUN", "true")
+    from zozobra import brain, jobs, pipeline, web
+
+    (tmp_path / "calendars").mkdir()
+    shutil.copy(SAMPLE.parent / "launch_posts.json", tmp_path / "calendars" / "week_2026-10-19.json")
+    day = WeekPlan.model_validate_json((SAMPLE.parent / "launch_posts.json").read_text(encoding="utf-8")).days[0]
+    monkeypatch.setattr(pipeline, "_queue_dir", lambda: tmp_path / "queue")
+    pipeline.produce_day(day, {}, tmp_path / "r", dry_run=True)
+    monkeypatch.setattr(brain, "revise_day", lambda d, instr, **kw: d.model_copy(update={"caption_he": "כיתוב מתוקן"}))
+    monkeypatch.setattr(jobs, "submit", lambda title, fn, *a: fn(*a))   # run inline
+
+    c = TestClient(web.app)
+    assert "✏️ תקן" in c.get("/").text
+    c.post("/queue/2026-10-19/fix", data={"instruction": "תקצר את הכיתוב"})
+    item = _json.loads((tmp_path / "queue" / "2026-10-19.json").read_text(encoding="utf-8"))
+    assert item["status"] == "pending" and item["caption"].startswith("כיתוב מתוקן")
+    assert item["revisions"][-1]["instruction"] == "תקצר את הכיתוב"
+    c.post("/queue/2026-10-19/approve")
+    assert _json.loads((tmp_path / "queue" / "2026-10-19.json").read_text(encoding="utf-8"))["status"] == "approved"
