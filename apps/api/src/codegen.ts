@@ -2559,13 +2559,20 @@ function buildCalendarIcs(entity, dateField, labelField, records, relatedRecords
 // shape every entity gets. Each day cell shows a chip per record landing on
 // that date (click to edit), with a "+N more" overflow instead of an
 // ever-growing cell.
-function CalendarView({ entity, dateField, endDateField, records, month, onPrevMonth, onNextMonth, onToday, onEdit, onDayClick, onReschedule, moveErrorId }) {
+function CalendarView({ entity, dateField, endDateField, records, month, onPrevMonth, onNextMonth, onToday, onJumpToMonth, onEdit, onDayClick, onReschedule, moveErrorId }) {
   const year = month.getFullYear();
   const monthIndex = month.getMonth();
   const days = useMemo(() => buildCalendarMonth(records, dateField, year, monthIndex, endDateField), [records, dateField, endDateField, year, monthIndex]);
   const [dragOverDay, setDragOverDay] = useState(null);
   const [expandedDays, setExpandedDays] = useState(new Set());
+  // Reaching a date more than a couple of months away previously meant
+  // clicking the prev/next chevron that many times -- mirrors the live
+  // preview's own fix (EntityPanel.tsx): the month label becomes a button
+  // that reveals a native month input, and picking a value jumps straight
+  // there via the same onJumpToMonth/setCalendarMonth the chevrons use.
+  const [showMonthPicker, setShowMonthPicker] = useState(false);
   const monthLabel = month.toLocaleDateString(undefined, { month: "long", year: "numeric" });
+  const monthInputValue = \`\${year}-\${String(monthIndex + 1).padStart(2, "0")}\`;
   const isCurrentMonth = isSameCalendarMonth(month, new Date());
   const weekdayLabels = useMemo(() => {
     const formatter = new Intl.DateTimeFormat(undefined, { weekday: "short" });
@@ -2584,7 +2591,23 @@ function CalendarView({ entity, dateField, endDateField, records, month, onPrevM
       <div className="calendar-nav">
         <button type="button" className="calendar-today-btn" onClick={onToday} disabled={isCurrentMonth}>Today</button>
         <button type="button" onClick={onPrevMonth} aria-label="Previous month">‹</button>
-        <span className="calendar-month-label">{monthLabel}</span>
+        {showMonthPicker ? (
+          <input
+            type="month"
+            className="calendar-month-input"
+            value={monthInputValue}
+            autoFocus
+            onChange={(e) => {
+              const [y, m] = e.target.value.split("-").map(Number);
+              if (!y || !m) return;
+              onJumpToMonth(new Date(y, m - 1, 1));
+              setShowMonthPicker(false);
+            }}
+            onBlur={() => setShowMonthPicker(false)}
+          />
+        ) : (
+          <button type="button" className="calendar-month-label" onClick={() => setShowMonthPicker(true)} aria-label="Jump to month/year">{monthLabel}</button>
+        )}
         <button type="button" onClick={onNextMonth} aria-label="Next month">›</button>
       </div>
       <div className="calendar-grid calendar-weekdays">
@@ -4813,6 +4836,7 @@ export function EntityView({ entity, highlightRecordId, onHighlightHandled, onJu
               onPrevMonth={() => setCalendarMonth((m) => new Date(m.getFullYear(), m.getMonth() - 1, 1))}
               onNextMonth={() => setCalendarMonth((m) => new Date(m.getFullYear(), m.getMonth() + 1, 1))}
               onToday={() => setCalendarMonth(new Date())}
+              onJumpToMonth={(m) => setCalendarMonth(m)}
               onEdit={startEdit}
               onDayClick={(date) => startCreateForDate(date, dateField)}
               onReschedule={(record, date, originDay) => handleCalendarDrop(record, dateField.name, date, originDay)}
@@ -6279,7 +6303,9 @@ nav button.active .tab-count { background: rgba(255, 255, 255, 0.25); color: inh
 .calendar-nav button { padding: 4px 12px; font-size: 16px; line-height: 1; border-radius: 6px; border: 1px solid var(--border); background: var(--surface); color: var(--text); cursor: pointer; }
 .calendar-today-btn { font-size: 13px; }
 .calendar-today-btn:disabled { opacity: 0.55; cursor: default; }
-.calendar-month-label { font-weight: 600; min-width: 140px; text-align: center; }
+.calendar-month-label { background: none; border: none; padding: 0; margin: 0; color: inherit; font: inherit; font-weight: 600; min-width: 140px; text-align: center; cursor: pointer; }
+.calendar-month-label:hover { color: var(--accent); }
+.calendar-month-input { min-width: 140px; text-align: center; font-weight: 600; }
 .calendar-grid { display: grid; grid-template-columns: repeat(7, 1fr); gap: 4px; }
 .calendar-weekday { text-align: center; color: var(--muted); font-size: 12px; text-transform: uppercase; letter-spacing: 0.04em; font-weight: 600; padding-bottom: 4px; }
 .calendar-day { min-height: 76px; background: var(--surface-muted); border: 1px solid var(--border-soft); border-radius: 8px; padding: 6px; display: flex; flex-direction: column; gap: 4px; overflow: hidden; }

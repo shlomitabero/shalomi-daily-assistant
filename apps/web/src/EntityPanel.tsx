@@ -521,6 +521,7 @@ function CalendarView({
   onPrevMonth,
   onNextMonth,
   onToday,
+  onJumpToMonth,
   onEdit,
   onDayClick,
   onReschedule,
@@ -537,6 +538,7 @@ function CalendarView({
   onPrevMonth: () => void;
   onNextMonth: () => void;
   onToday: () => void;
+  onJumpToMonth: (month: Date) => void;
   onEdit: (record: EntityRecord) => void;
   onDayClick: (date: Date) => void;
   onReschedule: (record: EntityRecord, date: Date, originDay?: string) => void;
@@ -552,7 +554,17 @@ function CalendarView({
   );
   const [dragOverDay, setDragOverDay] = useState<string | null>(null);
   const [expandedDays, setExpandedDays] = useState<Set<string>>(new Set());
+  // Reaching a date more than a couple of months away (a rental due in 11
+  // months, a historical record from 2 years back) previously meant
+  // clicking the prev/next chevron that many times -- the month label
+  // itself was static, inert text with no way to jump directly to an
+  // arbitrary month/year. onJumpToMonth already accepts any Date (the
+  // same setCalendarMonth the chevrons and "Today" already call), so this
+  // is purely a UI affordance: the label becomes a button that reveals a
+  // native month input, and picking a value jumps straight there.
+  const [showMonthPicker, setShowMonthPicker] = useState(false);
   const monthLabel = month.toLocaleDateString(LOCALE[lang], { month: "long", year: "numeric" });
+  const monthInputValue = `${year}-${String(monthIndex + 1).padStart(2, "0")}`;
   const weekdayLabels = useMemo(() => {
     const formatter = new Intl.DateTimeFormat(LOCALE[lang], { weekday: "short" });
     return days.slice(0, 7).map((d) => formatter.format(d.date));
@@ -569,7 +581,25 @@ function CalendarView({
         <button type="button" onClick={onPrevMonth} aria-label={t("entity.calendar.prev")}>
           ‹
         </button>
-        <span className="calendar-month-label">{monthLabel}</span>
+        {showMonthPicker ? (
+          <input
+            type="month"
+            className="calendar-month-input"
+            value={monthInputValue}
+            autoFocus
+            onChange={(e) => {
+              const [y, m] = e.target.value.split("-").map(Number);
+              if (!y || !m) return;
+              onJumpToMonth(new Date(y, m - 1, 1));
+              setShowMonthPicker(false);
+            }}
+            onBlur={() => setShowMonthPicker(false)}
+          />
+        ) : (
+          <button type="button" className="calendar-month-label" onClick={() => setShowMonthPicker(true)} aria-label={t("entity.calendar.jumpToMonth")}>
+            {monthLabel}
+          </button>
+        )}
         <button type="button" onClick={onNextMonth} aria-label={t("entity.calendar.next")}>
           ›
         </button>
@@ -3224,6 +3254,7 @@ export function EntityPanel({
               onPrevMonth={() => setCalendarMonth((m) => new Date(m.getFullYear(), m.getMonth() - 1, 1))}
               onNextMonth={() => setCalendarMonth((m) => new Date(m.getFullYear(), m.getMonth() + 1, 1))}
               onToday={() => setCalendarMonth(new Date())}
+              onJumpToMonth={(m) => setCalendarMonth(m)}
               onEdit={readOnly ? () => {} : startEdit}
               onDayClick={readOnly ? () => {} : (date) => startCreateForDate(date, dateField)}
               onReschedule={readOnly ? () => {} : (record, date, originDay) => handleCalendarDrop(record, dateField.name, date, originDay)}

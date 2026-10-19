@@ -2796,7 +2796,11 @@ test("EntityPanel's calendar view 'Today' button is disabled on the current mont
       const currentMonthLabel = monthLabel();
       assert.equal(todayBtn.disabled, true, "the Today button must start disabled -- the calendar already shows the current month");
 
-      const nextBtn = document.querySelectorAll(".calendar-nav button")[2] as HTMLButtonElement;
+      // Selected by aria-label rather than a positional button index --
+      // the month label became its own clickable button in a later round
+      // (to open the month/year jump picker), which shifted what used to
+      // be the 3rd <button> in .calendar-nav from "next" to the label.
+      const nextBtn = document.querySelector('[aria-label="Next month"]') as HTMLButtonElement;
       fireEvent.click(nextBtn);
       fireEvent.click(nextBtn);
       await waitForCondition(() => monthLabel() !== currentMonthLabel);
@@ -2805,6 +2809,58 @@ test("EntityPanel's calendar view 'Today' button is disabled on the current mont
       fireEvent.click(todayBtn);
       await waitForCondition(() => monthLabel() === currentMonthLabel);
       assert.equal(todayBtn.disabled, true, "clicking Today must return to the current month and disable itself again");
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+});
+
+/**
+ * New in this round: reaching a date more than a couple of months away (a
+ * rental due in 11 months, a historical record from 2 years back) meant
+ * clicking the prev/next chevron that many times -- the month label was
+ * static, inert text with no way to jump directly to an arbitrary month/
+ * year. Confirms clicking the label reveals a native month input seeded
+ * with the currently-shown month, and that picking a far-future value
+ * jumps the whole calendar there directly (not one month at a time) and
+ * closes the picker back to a plain label afterward.
+ */
+test("EntityPanel's calendar month label opens a month/year picker that jumps the calendar directly to the chosen month", async () => {
+  await withJsdom(async () => {
+    const today = isoDateToday();
+    const store: EntityRecord[] = [{ id: 1, title: "Dana's appointment", date: today }];
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = mockListRecordsFetch(store) as typeof fetch;
+    try {
+      renderAppointmentPanel();
+      await waitForCondition(() => document.querySelector(".entity-toolbar") !== null);
+
+      const calendarToggle = document.querySelectorAll(".view-toggle-btn")[1] as HTMLButtonElement;
+      fireEvent.click(calendarToggle);
+      await waitForCondition(() => document.querySelector(".calendar-month-label") !== null);
+
+      const monthLabel = () => document.querySelector(".calendar-month-label")?.textContent ?? null;
+      const currentMonthLabel = monthLabel();
+      assert.equal(document.querySelector(".calendar-month-input"), null, "the month input must not render until the label is clicked");
+
+      const labelBtn = document.querySelector(".calendar-month-label") as HTMLButtonElement;
+      fireEvent.click(labelBtn);
+      const monthInput = document.querySelector(".calendar-month-input") as HTMLInputElement;
+      assert.ok(monthInput, "clicking the label must reveal the month input");
+      assert.equal(document.querySelector(".calendar-month-label"), null, "the label button itself must be replaced by the input while open, not shown alongside it");
+
+      const now = new Date();
+      const expectedInputValue = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}`;
+      assert.equal(monthInput.value, expectedInputValue, "the input must be seeded with the currently-shown month, not blank");
+
+      const farFuture = new Date(now.getFullYear() + 1, now.getMonth(), 1);
+      const farFutureValue = `${farFuture.getFullYear()}-${String(farFuture.getMonth() + 1).padStart(2, "0")}`;
+      fireEvent.change(monthInput, { target: { value: farFutureValue } });
+
+      await waitForCondition(() => monthLabel() !== null && monthLabel() !== currentMonthLabel);
+      const expectedLabel = farFuture.toLocaleDateString("en-US", { month: "long", year: "numeric" });
+      assert.equal(monthLabel(), expectedLabel, "picking a year-ahead value must jump the calendar directly there, not one month at a time");
+      assert.equal(document.querySelector(".calendar-month-input"), null, "the picker must close itself once a value is chosen");
     } finally {
       globalThis.fetch = originalFetch;
     }
@@ -2846,7 +2902,7 @@ test("EntityPanel's ICS export button only appears in calendar view, and is disa
       assert.ok(icsBtn, "the ICS export button must render once in calendar view");
       assert.equal(icsBtn.disabled, false, "this month genuinely has one record, so the button must be enabled");
 
-      const nextBtn = document.querySelectorAll(".calendar-nav button")[2] as HTMLButtonElement;
+      const nextBtn = document.querySelector('[aria-label="Next month"]') as HTMLButtonElement;
       const monthLabel = () => document.querySelector(".calendar-month-label")!.textContent;
       const currentMonthLabel = monthLabel();
       fireEvent.click(nextBtn);

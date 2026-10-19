@@ -2084,7 +2084,7 @@ test("the exported CalendarView's isSameCalendarMonth is true only for two dates
 // calendar view coverage.
 test("the exported CalendarView renders a Today button wired to onToday and disabled on the current month", () => {
   const entityViewJsx = generateExportFiles(project).find((f) => f.path === "web/src/components/EntityView.jsx")!.content;
-  const calendarViewSource = entityViewJsx.slice(entityViewJsx.indexOf("function CalendarView"), entityViewJsx.indexOf("function CalendarView") + 2000);
+  const calendarViewSource = entityViewJsx.slice(entityViewJsx.indexOf("function CalendarView"), entityViewJsx.indexOf("function CalendarView") + 3500);
   assert.match(calendarViewSource, /calendar-today-btn/);
   assert.match(calendarViewSource, /onClick=\{onToday\}/);
   assert.match(calendarViewSource, /disabled=\{isCurrentMonth\}/);
@@ -2098,6 +2098,33 @@ test("the exported CalendarView renders a Today button wired to onToday and disa
 
   const stylesCss = generateExportFiles(project).find((f) => f.path === "web/src/styles.css")!.content;
   assert.match(stylesCss, /\.calendar-today-btn/);
+});
+
+/**
+ * New in this round: the exported CalendarView had the identical gap the
+ * live preview's own EntityPanel.tsx did -- reaching a date more than a
+ * couple of months away meant clicking the prev/next chevron that many
+ * times, since the month label was static, inert text. Confirms the
+ * generated CalendarView's month label is a real button that reveals a
+ * native month input seeded with the currently-shown month, that picking
+ * a value calls onJumpToMonth (wired to setCalendarMonth at the real call
+ * site, the same state the chevrons and Today button already share), and
+ * that the picker closes itself afterward.
+ */
+test("the exported CalendarView's month label opens a month/year picker wired to onJumpToMonth, instead of static inert text", () => {
+  const files = generateExportFiles(project);
+  const entityViewJsx = files.find((f) => f.path === "web/src/components/EntityView.jsx")!.content;
+  const calendarViewSource = entityViewJsx.slice(entityViewJsx.indexOf("function CalendarView"), entityViewJsx.indexOf("function CalendarView") + 3500);
+
+  assert.match(calendarViewSource, /onClick=\{\(\) => setShowMonthPicker\(true\)\}/, "clicking the label must open the picker");
+  assert.match(calendarViewSource, /type="month"/, "must use a native month input, not a free-text field");
+  assert.match(calendarViewSource, /onJumpToMonth\(new Date\(y, m - 1, 1\)\)/, "picking a value must call onJumpToMonth with the real chosen date");
+  assert.match(calendarViewSource, /setShowMonthPicker\(false\)/, "the picker must close itself once a value is chosen");
+
+  assert.match(entityViewJsx, /onJumpToMonth=\{\(m\) => setCalendarMonth\(m\)\}/, "the real call site must wire onJumpToMonth into the same setCalendarMonth state the chevrons and Today button already share");
+
+  const stylesCss = files.find((f) => f.path === "web/src/styles.css")!.content;
+  assert.match(stylesCss, /\.calendar-month-input/);
 });
 
 // Regression test: DATE_FIELD_NAME_HINTS lists "scheduledat" as a
