@@ -2811,7 +2811,7 @@ function RecordListPrintSheet({ entity, fields, records, relatedRecords, show })
 // field itself, since that's implied by which column the card is in), a
 // select to move it directly to another column, and the same Edit/Delete
 // actions the table row has.
-function BoardCard({ orderedFields, boardField, record, relatedRecords, highlightQuery, hasMoveError, onMove, onEdit, onDuplicate, onDelete, onJumpToRecord }) {
+function BoardCard({ orderedFields, boardField, record, relatedRecords, highlightQuery, hasMoveError, onMove, onEdit, onDuplicate, onDelete, onPrint, onJumpToRecord }) {
   // orderedFields (not the entity's raw declared order) -- mirrors round
   // 615's fix for Export CSV/Copy/per-record Print/Print list, so a board
   // card's field order follows the user's drag-reordered columns the same
@@ -2851,6 +2851,7 @@ function BoardCard({ orderedFields, boardField, record, relatedRecords, highligh
       <div className="row-actions">
         <button onClick={onEdit}>Edit</button>
         <button onClick={onDuplicate}>Duplicate</button>
+        <button onClick={onPrint}>Print</button>
         <button onClick={onDelete}>Delete</button>
       </div>
     </div>
@@ -4884,6 +4885,7 @@ export function EntityView({ entity, highlightRecordId, onHighlightHandled, onJu
                       onEdit={() => startEdit(r)}
                       onDuplicate={() => handleDuplicate(r.id)}
                       onDelete={() => handleDelete(r.id)}
+                      onPrint={() => setRecordToPrint(r)}
                       onJumpToRecord={onJumpToRecord}
                     />
                   ))}

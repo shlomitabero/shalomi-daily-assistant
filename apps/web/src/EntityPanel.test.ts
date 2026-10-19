@@ -8351,6 +8351,88 @@ test("EntityPanel's row-level 'Send WhatsApp' action does not render at all for 
 });
 
 /**
+ * New in this round: BoardCard was missing two of the table row's five
+ * actions -- Print and Send WhatsApp -- even though both are reachable
+ * from Table view for the exact same record. Confirmed via grep that
+ * BoardCard's own props never even accepted onPrint/phoneField/
+ * onSendWhatsApp before this round, so there was no way to reach either
+ * action once switched to Board view. Mirrors the table row's own
+ * conditional gating exactly: WhatsApp only for a record whose phone
+ * field actually has a value, Print unconditionally.
+ */
+test("EntityPanel's board view cards get the same Print and Send WhatsApp row actions the table row already has", async () => {
+  await withJsdom(async () => {
+    const leadEntity: Entity = {
+      name: "Lead",
+      label: "Lead",
+      fields: [
+        { name: "name", label: "Name", type: "text", required: true },
+        { name: "mobile", label: "Mobile", type: "text", required: false },
+        {
+          name: "stage",
+          label: "Stage",
+          type: "enum",
+          required: true,
+          enumValues: ["new", "won"],
+          enumLabels: { new: "New", won: "Won" },
+        },
+      ],
+    };
+    const store: EntityRecord[] = [
+      { id: 1, createdAt: "x", name: "Dana", mobile: "0501234567", stage: "new" },
+      { id: 2, createdAt: "x", name: "Noa", mobile: "", stage: "won" },
+    ];
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = (async (input: string) => {
+      if (input === "/api/projects/proj1/entities/Lead") {
+        return new Response(JSON.stringify({ records: store }), { status: 200, headers: { "content-type": "application/json" } });
+      }
+      throw new Error(`unexpected request ${input}`);
+    }) as typeof fetch;
+    const originalPrint = window.print;
+    let printCalls = 0;
+    window.print = () => {
+      printCalls += 1;
+    };
+    let sentTo: string | null = null;
+    try {
+      renderEntityPanel({
+        entity: leadEntity,
+        allEntities: [leadEntity],
+        onSendWhatsApp: (phoneNumber: string) => {
+          sentTo = phoneNumber;
+        },
+      });
+      await waitForCondition(() => document.querySelectorAll("table tbody tr").length === 2);
+
+      const boardToggle = document.querySelectorAll(".view-toggle-btn")[1] as HTMLButtonElement;
+      fireEvent.click(boardToggle);
+      await waitForCondition(() => document.querySelectorAll(".board-card").length === 2);
+
+      const danaCard = Array.from(document.querySelectorAll(".board-card")).find((c) => /Dana/.test(c.textContent ?? ""))!;
+      const danaWhatsAppBtn = Array.from(danaCard.querySelectorAll("button")).find((b) => b.textContent?.includes("WhatsApp"));
+      assert.ok(danaWhatsAppBtn, "expected a Send WhatsApp button on the board card for a record with a real phone value");
+      fireEvent.click(danaWhatsAppBtn!);
+      assert.equal(sentTo, "0501234567", "clicking the board card's WhatsApp button must call onSendWhatsApp with the record's own real phone value");
+
+      const noaCard = Array.from(document.querySelectorAll(".board-card")).find((c) => /Noa/.test(c.textContent ?? ""))!;
+      const noaWhatsAppBtn = Array.from(noaCard.querySelectorAll("button")).find((b) => b.textContent?.includes("WhatsApp"));
+      assert.equal(noaWhatsAppBtn, undefined, "a board card for a record whose phone field is empty must not get a Send WhatsApp button at all");
+
+      const danaPrintBtn = Array.from(danaCard.querySelectorAll("button")).find((b) => b.textContent?.includes("Print"));
+      assert.ok(danaPrintBtn, "expected a Print button on the board card, same as the table row");
+      fireEvent.click(danaPrintBtn!);
+      await waitForCondition(() => printCalls === 1);
+      const sheetText = document.querySelector(".print-record-sheet")!.textContent ?? "";
+      assert.match(sheetText, /Dana/, "the print sheet must show the clicked board card's own record, not another one");
+    } finally {
+      globalThis.fetch = originalFetch;
+      window.print = originalPrint;
+    }
+  });
+});
+
+/**
  * New in this round: a longtext cell (a "Notes"/"Description" field) now
  * carries its full, untruncated value in a native `title` attribute --
  * before this, the only way to read a longtext value once the column was

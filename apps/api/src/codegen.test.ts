@@ -4942,6 +4942,87 @@ test("the exported EntityView clears a Table-view row selection the moment the u
 });
 
 /**
+ * New in this round: the exported EntityView's BoardCard was missing the
+ * Print action the table row already has for the exact same record --
+ * confirmed via grep that the generated BoardCard's own props never
+ * accepted a print callback before this round. (WhatsApp is correctly
+ * out of scope here: the exported standalone app has no WhatsApp
+ * integration at all.)
+ */
+test("the exported EntityView's board cards get the same Print row action the table row already has", async () => {
+  const files = generateExportFiles(project);
+  const dir = writeGeneratedWebComponent(files);
+  const store = [{ id: 1, name: "Acme Corp", status: "New" }];
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = (async (input: string): Promise<Response> => {
+    if (input === "/api/Customer") {
+      return new Response(JSON.stringify({ records: store }), { status: 200, headers: { "content-type": "application/json" } });
+    }
+    throw new Error(`unexpected request ${input}`);
+  }) as typeof fetch;
+  const originalPrint = window.print;
+  let printCalls = 0;
+  window.print = () => {
+    printCalls += 1;
+  };
+
+  try {
+    await withRealLocalStorage(async () => {
+      const { EntityView } = await import(path.join(dir, "web", "src", "components", "EntityView.jsx"));
+      const customerEntity = project.spec.entities.find((e) => e.name === "Customer")!;
+      const props = {
+        entity: customerEntity,
+        highlightRecordId: null,
+        onHighlightHandled: () => {},
+        onJumpToRecord: () => {},
+        onRecordCountChange: () => {},
+      };
+
+      const { container } = render(React.createElement(EntityView, props));
+      for (let i = 0; i < 40; i++) {
+        if (container.querySelectorAll("tbody tr").length === 1) break;
+        await act(async () => {
+          await new Promise((resolve) => setTimeout(resolve, 0));
+        });
+      }
+
+      const boardToggle = container.querySelectorAll(".view-toggle-btn")[1] as HTMLButtonElement;
+      await act(async () => {
+        fireEvent.click(boardToggle);
+      });
+      for (let i = 0; i < 40; i++) {
+        if (container.querySelectorAll(".board-card").length === 1) break;
+        await act(async () => {
+          await new Promise((resolve) => setTimeout(resolve, 0));
+        });
+      }
+
+      const printBtn = Array.from(container.querySelector(".board-card")!.querySelectorAll("button")).find((b) =>
+        b.textContent?.includes("Print"),
+      );
+      assert.ok(printBtn, "expected a Print button on the board card, same as the table row");
+      await act(async () => {
+        fireEvent.click(printBtn!);
+      });
+      for (let i = 0; i < 40; i++) {
+        if (printCalls === 1) break;
+        await act(async () => {
+          await new Promise((resolve) => setTimeout(resolve, 0));
+        });
+      }
+      assert.equal(printCalls, 1, "window.print must actually be called from the board card's own Print button");
+      const sheetText = container.querySelector(".print-record-sheet")!.textContent ?? "";
+      assert.match(sheetText, /Acme Corp/, "the print sheet must show the clicked board card's own record");
+    });
+  } finally {
+    globalThis.fetch = originalFetch;
+    window.print = originalPrint;
+    cleanup();
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+/**
  * New in this round: porting the live preview's own "d" shortcut
  * (duplicate the focused row) to the exported app's EntityView.jsx.
  * j/k/Enter/x/Delete above let a keyboard-only user navigate, open,
@@ -5798,7 +5879,7 @@ test("the exported EntityView's relation cells jump to the related record via th
   // Threaded through every layer that can render a relation cell: the
   // table, the Kanban board (via BoardCard), the per-entity View wrapper,
   // and App's own activeEntity.View call -- not just the leaf component.
-  assert.match(entityViewJsx, /function BoardCard\(\{ orderedFields, boardField, record, relatedRecords, highlightQuery, hasMoveError, onMove, onEdit, onDuplicate, onDelete, onJumpToRecord \}\)/);
+  assert.match(entityViewJsx, /function BoardCard\(\{ orderedFields, boardField, record, relatedRecords, highlightQuery, hasMoveError, onMove, onEdit, onDuplicate, onDelete, onPrint, onJumpToRecord \}\)/);
   assert.match(entityViewJsx, /<Cell\s+field=\{f\}\s+value=\{record\[f\.name\]\}\s+relationLabel=\{[^}]+\}\s+highlightQuery=\{highlightQuery\}\s+onJumpToRecord=\{onJumpToRecord\}/);
   assert.match(entityViewJsx, /export function EntityView\(\{ entity, highlightRecordId, onHighlightHandled, onJumpToRecord, onRecordCountChange \}\)/);
 

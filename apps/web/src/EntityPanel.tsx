@@ -414,6 +414,9 @@ function BoardCard({
   onEdit,
   onDuplicate,
   onDelete,
+  onPrint,
+  phoneField,
+  onSendWhatsApp,
   onJumpToRecord,
   readOnly = false,
 }: {
@@ -430,6 +433,9 @@ function BoardCard({
   onEdit: () => void;
   onDuplicate: () => void;
   onDelete: () => void;
+  onPrint: () => void;
+  phoneField?: Field | null;
+  onSendWhatsApp?: (phoneNumber: string) => void;
   onJumpToRecord?: (targetEntity: string, recordId: number) => void;
   readOnly?: boolean;
 }) {
@@ -486,19 +492,31 @@ function BoardCard({
           </option>
         ))}
       </select>
-      {!readOnly && (
-        <div className="row-actions">
+      <div className="row-actions">
+        {!readOnly && (
           <button type="button" onClick={onEdit}>
             {t("entity.edit")}
           </button>
+        )}
+        {!readOnly && (
           <button type="button" onClick={onDuplicate}>
             {t("entity.duplicate")}
           </button>
+        )}
+        {!readOnly && phoneField && onSendWhatsApp && typeof record[phoneField.name] === "string" && record[phoneField.name] && (
+          <button type="button" onClick={() => onSendWhatsApp(record[phoneField.name] as string)}>
+            {t("entity.sendWhatsApp")}
+          </button>
+        )}
+        <button type="button" onClick={onPrint}>
+          {t("entity.print")}
+        </button>
+        {!readOnly && (
           <button type="button" className="danger" onClick={onDelete}>
             {t("entity.delete")}
           </button>
-        </div>
-      )}
+        )}
+      </div>
     </div>
   );
 }
@@ -3290,6 +3308,9 @@ export function EntityPanel({
                       onEdit={() => startEdit(record)}
                       onDuplicate={() => handleDuplicate(record.id as number)}
                       onDelete={() => handleDelete(record.id as number)}
+                      onPrint={() => setRecordToPrint(record)}
+                      phoneField={phoneField}
+                      onSendWhatsApp={onSendWhatsApp}
                       onJumpToRecord={onJumpToRecord}
                       readOnly={readOnly}
                     />
