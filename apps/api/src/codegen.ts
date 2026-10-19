@@ -3376,6 +3376,22 @@ export function EntityView({ entity, highlightRecordId, onHighlightHandled, onJu
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [entity.name]);
 
+  // Multi-row selection is only ever settable from Table view -- Board's
+  // own card and the calendar day cells have no selection checkbox at all
+  // -- but selectedIds itself is view-mode-agnostic state, and the
+  // toolbar's Copy/Export-CSV/Print-list buttons read it unconditionally
+  // in every view. Without this, selecting rows in Table and then
+  // switching to Board or Calendar left that stale selection invisible (no
+  // highlight on any card) and unreachable, since the table-only
+  // bulk-actions-bar (including its own "Clear selection" button) and the
+  // table-only Escape-clears-selection shortcut both live inside
+  // viewMode==="table" guards. Safe precisely because nothing outside
+  // Table view can ever populate selectedIds in the first place. Mirrors
+  // the live Forge AI preview's own EntityPanel.tsx.
+  useEffect(() => {
+    if (viewMode !== "table") setSelectedIds(new Set());
+  }, [viewMode]);
+
   // Which groups are collapsed is scoped per entity+groupFieldName too
   // (also re-running whenever groupFieldName itself changes, e.g. the
   // "Group by" dropdown) -- see COLLAPSED_GROUPS_STORAGE_KEY's own

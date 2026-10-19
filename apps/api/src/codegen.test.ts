@@ -4852,6 +4852,96 @@ test("the exported EntityView's Ctrl+Z shortcut undoes a pending delete without 
 });
 
 /**
+ * New in this round: selectedIds is view-mode-agnostic state in the
+ * exported EntityView.jsx too, but the only UI that can ever set it (the
+ * row checkboxes, select-all) lives entirely in Table view -- BoardCard
+ * has no selection checkbox at all. Before this fix, selecting a row in
+ * Table and then switching to Board left that stale selection invisible
+ * (no highlight on any card) and unreachable: the toolbar's own Export-CSV
+ * button reads selectedIds unconditionally in every view (its label
+ * literally switches to "Export N selected"), but the table-only
+ * bulk-actions-bar's "Clear selection" button never renders outside Table
+ * view. Confirms the toolbar's own label actually reverts (not just that
+ * some internal state looks right), and that switching back to Table shows
+ * a genuinely unchecked checkbox.
+ */
+test("the exported EntityView clears a Table-view row selection the moment the user switches to Board view", async () => {
+  const files = generateExportFiles(project);
+  const dir = writeGeneratedWebComponent(files);
+  const store = [{ id: 1, name: "Acme Corp", status: "New" }];
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = (async (input: string): Promise<Response> => {
+    if (input === "/api/Customer") {
+      return new Response(JSON.stringify({ records: store }), { status: 200, headers: { "content-type": "application/json" } });
+    }
+    throw new Error(`unexpected request ${input}`);
+  }) as typeof fetch;
+
+  try {
+    await withRealLocalStorage(async () => {
+      const { EntityView } = await import(path.join(dir, "web", "src", "components", "EntityView.jsx"));
+      const customerEntity = project.spec.entities.find((e) => e.name === "Customer")!;
+      const props = {
+        entity: customerEntity,
+        highlightRecordId: null,
+        onHighlightHandled: () => {},
+        onJumpToRecord: () => {},
+        onRecordCountChange: () => {},
+      };
+
+      const { container } = render(React.createElement(EntityView, props));
+      for (let i = 0; i < 40; i++) {
+        if (container.querySelectorAll("tbody tr").length === 1) break;
+        await act(async () => {
+          await new Promise((resolve) => setTimeout(resolve, 0));
+        });
+      }
+      assert.equal(container.querySelectorAll("tbody tr").length, 1, "expected the one record to have loaded");
+
+      const rowCheckbox = container.querySelector('tr[data-record-id="1"] .select-col input[type="checkbox"]') as HTMLInputElement;
+      await act(async () => {
+        fireEvent.click(rowCheckbox);
+      });
+      const exportBtn = container.querySelector(".csv-export-btn") as HTMLButtonElement;
+      assert.match(exportBtn.textContent ?? "", /1 selected/, "sanity check: selecting the row must flip the toolbar's own label");
+
+      const boardToggle = container.querySelectorAll(".view-toggle-btn")[1] as HTMLButtonElement;
+      await act(async () => {
+        fireEvent.click(boardToggle);
+      });
+      for (let i = 0; i < 40; i++) {
+        if (container.querySelectorAll(".board-card").length === 1) break;
+        await act(async () => {
+          await new Promise((resolve) => setTimeout(resolve, 0));
+        });
+      }
+      assert.doesNotMatch(
+        exportBtn.textContent ?? "",
+        /selected/,
+        "the toolbar must stop claiming a selection that Board view has no way to show or clear",
+      );
+
+      const tableToggle = container.querySelectorAll(".view-toggle-btn")[0] as HTMLButtonElement;
+      await act(async () => {
+        fireEvent.click(tableToggle);
+      });
+      for (let i = 0; i < 40; i++) {
+        if (container.querySelectorAll("tbody tr").length === 1) break;
+        await act(async () => {
+          await new Promise((resolve) => setTimeout(resolve, 0));
+        });
+      }
+      const rowCheckboxAgain = container.querySelector('tr[data-record-id="1"] .select-col input[type="checkbox"]') as HTMLInputElement;
+      assert.equal(rowCheckboxAgain.checked, false, "the selection must still be genuinely empty after switching back, not just hidden while in Board view");
+    });
+  } finally {
+    globalThis.fetch = originalFetch;
+    cleanup();
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+/**
  * New in this round: porting the live preview's own "d" shortcut
  * (duplicate the focused row) to the exported app's EntityView.jsx.
  * j/k/Enter/x/Delete above let a keyboard-only user navigate, open,

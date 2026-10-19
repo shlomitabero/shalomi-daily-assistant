@@ -1369,6 +1369,28 @@ export function EntityPanel({
     setViewMode(stillValid ? stored : "table");
   }, [projectId, entity.name, boardFieldName, dateFieldName]);
 
+  /**
+   * Multi-row selection (the checkboxes, "x", and select-all) is only ever
+   * settable from Table view -- Board/Calendar have no selection checkbox
+   * anywhere on BoardCard or the calendar day cells. But selectedIds itself
+   * is view-mode-agnostic state, and the toolbar's Copy/Export-CSV/
+   * Print-list buttons read it unconditionally in every view (their labels
+   * literally switch to "Export 3 selected" etc. regardless of viewMode).
+   * Without this, selecting rows in Table and then switching to Board or
+   * Calendar left that stale selection invisible (no highlight on any
+   * BoardCard) and, worse, unreachable -- the table-only bulk-actions-bar
+   * (including its own "Clear selection" button) and the table-only
+   * Escape-clears-selection shortcut both live inside viewMode==="table"
+   * guards, so there was no way back to an empty selection short of
+   * switching back to Table first. Clearing it the moment the user leaves
+   * Table view keeps the toolbar's own already-unconditional buttons
+   * honest, and is safe precisely because nothing outside Table view can
+   * ever populate selectedIds in the first place.
+   */
+  useEffect(() => {
+    if (viewMode !== "table") setSelectedIds(new Set());
+  }, [viewMode]);
+
   // Same reasoning as viewMode's own effect just above -- the chosen
   // multi-column sort is scoped per project+entity too (round 250).
   // Previously sortKeys was hard-reset to [] on every entity switch (see

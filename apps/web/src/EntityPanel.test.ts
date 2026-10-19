@@ -1369,6 +1369,57 @@ test("EntityPanel's board view renders an empty column for every declared status
 });
 
 /**
+ * New in this round: selectedIds is view-mode-agnostic state, but the only
+ * UI that can ever set it (the row checkboxes, select-all, and the "x"
+ * shortcut) lives entirely in Table view -- Board's own card and the
+ * calendar day cells have no selection checkbox at all. Before this fix,
+ * selecting rows in Table and then switching to Board left that stale
+ * selection invisible (no highlight on any card) and unreachable: the
+ * toolbar's own Copy/Export-CSV buttons read selectedIds unconditionally in
+ * every view (their label literally switches to "Export N selected"), but
+ * the table-only bulk-actions-bar's "Clear selection" button and the
+ * table-only Escape shortcut were both the only ways back to an empty
+ * selection, and neither exists in Board view. Confirms the toolbar's own
+ * label actually changes (not just that some internal state looks right),
+ * and that switching back to Table shows a real, visibly-unchecked
+ * checkbox -- not just a cleared Set that happens not to be rendered yet.
+ */
+test("EntityPanel clears a Table-view row selection the moment the user switches to Board view, so the toolbar never lies about a selection nothing can see or clear", async () => {
+  await withJsdom(async () => {
+    const store: EntityRecord[] = [{ id: 1, name: "Acme Corp", status: "new" }];
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = mockRecordsFetch(store) as typeof fetch;
+    try {
+      renderEntityPanel();
+      await waitForCondition(() => document.querySelectorAll("table tbody tr").length === 1);
+
+      const rowCheckbox = document.querySelector('tr[data-record-id="1"] .select-col input[type="checkbox"]') as HTMLInputElement;
+      fireEvent.click(rowCheckbox);
+      const exportBtn = document.querySelector(".csv-export-btn") as HTMLButtonElement;
+      assert.match(exportBtn.textContent ?? "", /1 selected/, "sanity check: selecting the row must flip the toolbar's own label");
+
+      const boardToggle = document.querySelectorAll(".view-toggle-btn")[1] as HTMLButtonElement;
+      fireEvent.click(boardToggle);
+      await waitForCondition(() => document.querySelectorAll(".board-card").length > 0);
+
+      assert.doesNotMatch(
+        exportBtn.textContent ?? "",
+        /selected/,
+        "the toolbar must stop claiming a selection that Board view has no way to show or clear",
+      );
+
+      const tableToggle = document.querySelectorAll(".view-toggle-btn")[0] as HTMLButtonElement;
+      fireEvent.click(tableToggle);
+      await waitForCondition(() => document.querySelectorAll("table tbody tr").length === 1);
+      const rowCheckboxAgain = document.querySelector('tr[data-record-id="1"] .select-col input[type="checkbox"]') as HTMLInputElement;
+      assert.equal(rowCheckboxAgain.checked, false, "the selection must still be genuinely empty after switching back, not just hidden while in Board view");
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+});
+
+/**
  * New in this round: the board view's own sibling to the calendar view's
  * "click an empty day to create a record for that date" (startCreateForDate)
  * -- a "+" button in each column's header that opens the general create
