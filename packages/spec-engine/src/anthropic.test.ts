@@ -33,6 +33,38 @@ test("generate() returns the parsed spec on a clean JSON response", async () => 
   assert.equal(spec.entities[0]!.name, "Customer");
 });
 
+/**
+ * Round 708: without an explicit pin, the model infers the output language
+ * from the raw description text itself, per the system prompt's own "same
+ * language... the user's description was written in" rule -- which breaks
+ * down when the description is a concatenation of a project's own
+ * established text plus brand-new, unrelated text (/refine's instruction,
+ * /answers' clarifying-question response): one stray Hebrew/English word
+ * in just the new part can tip the model's own inference for the WHOLE
+ * spec. Confirms isHebrewOverride appends an explicit directive pinning
+ * the language, and that omitting it sends the description unchanged
+ * (the exact prior behavior, so a caller generating a brand-new project
+ * with no established language yet is unaffected).
+ */
+test("generate() appends an explicit language directive to the request when isHebrewOverride is given, and sends the description unchanged when it's omitted", async () => {
+  let capturedContent: string | undefined;
+  const fakeFetch = (async (_url: string, init?: RequestInit) => {
+    capturedContent = (JSON.parse(init!.body as string) as { messages: { content: string }[] }).messages[0].content;
+    return new Response(JSON.stringify({ content: [{ type: "text", text: JSON.stringify(VALID_SPEC) }] }), { status: 200 });
+  }) as unknown as typeof fetch;
+  const provider = new AnthropicSpecProvider({ apiKey: "test-key", fetchImpl: fakeFetch });
+
+  await provider.generate("a CRM for my business", false);
+  assert.match(capturedContent!, /Write every.*in English/i, "isHebrewOverride: false must pin English explicitly");
+  assert.match(capturedContent!, /^a CRM for my business/, "the original description text must still lead the message");
+
+  await provider.generate("a CRM for my business", true);
+  assert.match(capturedContent!, /Write every.*in Hebrew/i, "isHebrewOverride: true must pin Hebrew explicitly");
+
+  await provider.generate("a CRM for my business");
+  assert.equal(capturedContent, "a CRM for my business", "omitting isHebrewOverride must send the description exactly as before this round, with no directive appended");
+});
+
 test("generate() strips markdown fences when the model's response is exactly one fenced block", async () => {
   const fenced = "```json\n" + JSON.stringify(VALID_SPEC) + "\n```";
   const fakeFetch = (async () =>

@@ -85,6 +85,37 @@ test("the generated assumptions no longer claim multi-user support doesn't exist
   );
 });
 
+/**
+ * Round 708: isHebrewText only checks whether ANY Hebrew character appears
+ * anywhere in its input, not which language dominates -- so without this
+ * override, a single Hebrew word mixed into an otherwise-English
+ * description (exactly what /refine and /answers do when they concatenate
+ * a project's own established description with new, unrelated text) flips
+ * the WHOLE spec's labels to Hebrew. Confirms isHebrewOverride lets a
+ * caller that already knows the real, established language pin it
+ * explicitly, regardless of what isHebrewText would have concluded from
+ * the raw text alone.
+ */
+test("isHebrewOverride pins the generated labels' language, regardless of what isHebrewText would conclude from the raw text", async () => {
+  const provider = new HeuristicSpecProvider();
+
+  // Mostly-English text containing one stray Hebrew word (a name) --
+  // isHebrewText alone would call this Hebrew; the override says no.
+  const pinnedEnglish = await provider.generate("A CRM to track customers for my shop, run by דנה.", false);
+  assert.equal(pinnedEnglish.entities[0].label, undefined, "an English-pinned spec must not carry a Hebrew label");
+
+  // Mostly-Hebrew text with no Hebrew characters at all in THIS particular
+  // call's own text (e.g. an all-ASCII clarifying answer) -- isHebrewText
+  // alone would call this English; the override says Hebrew.
+  const pinnedHebrew = await provider.generate("A CRM to track customers for my shop.", true);
+  assert.equal(pinnedHebrew.entities[0].label, "לקוחות", "a Hebrew-pinned spec must carry the real Hebrew label even though this text has no Hebrew characters at all");
+
+  // Omitting the override entirely must keep the pre-existing behavior:
+  // decide purely from the text itself.
+  const unpinned = await provider.generate("A CRM to track customers for my shop.");
+  assert.equal(unpinned.entities[0].label, undefined, "omitting the override must still infer English from all-English text, exactly as before this round");
+});
+
 test("asks about payments when billing entities are implied", async () => {
   const provider = new HeuristicSpecProvider();
   const spec = await provider.generate("A shop that tracks orders and sends invoices to customers.");

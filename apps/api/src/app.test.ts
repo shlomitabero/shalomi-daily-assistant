@@ -2189,6 +2189,64 @@ test("full acceptance flow: idea -> spec -> AI build pipeline -> CRUD -> refine 
   });
 });
 
+/**
+ * Round 708: isHebrewText only checks whether its input contains at least
+ * one Hebrew character, not which language dominates. Both /refine and
+ * /answers build combinedDescription by concatenating the project's own
+ * established description with brand-new text (the instruction, a
+ * clarifying-question answer) -- and both used to run isHebrewText on that
+ * WHOLE combined string. A single Hebrew word anywhere in the new text
+ * alone (a pasted name, a stray word) flipped an already-English, already-
+ * built project's ENTIRE set of entity/field labels to Hebrew, not just
+ * whatever the instruction was actually about -- a real, visible regression
+ * on a live app. Confirms a refine instruction containing one Hebrew word
+ * leaves the project's own already-English Customer label alone.
+ */
+test("POST /refine with an instruction containing a single Hebrew word does not flip the whole project's labels to Hebrew", async () => {
+  await withServer(async (baseUrl) => {
+    const token = await signup(baseUrl);
+    const createRes = await fetch(`${baseUrl}/api/projects`, {
+      method: "POST",
+      headers: authHeaders(token),
+      body: JSON.stringify({
+        description: "Build a CRM to track customers and their orders for my shop.",
+      }),
+    });
+    assert.equal(createRes.status, 201);
+    const created = (await createRes.json()) as { project: { id: string }; providerName: string };
+    assert.equal(created.providerName, "heuristic");
+    const projectId = created.project.id;
+
+    const buildRes = await fetch(`${baseUrl}/api/projects/${projectId}/build`, {
+      method: "POST",
+      headers: authHeaders(token),
+    });
+    assert.equal(buildRes.status, 200);
+    await collectSSE(buildRes);
+
+    // "דנה" (a Hebrew name) is the one Hebrew word in an otherwise-English
+    // instruction -- exactly the kind of stray text that used to flip
+    // isHebrewText(combinedDescription) to true for the whole regenerated
+    // spec.
+    const refineRes = await fetch(`${baseUrl}/api/projects/${projectId}/refine`, {
+      method: "POST",
+      headers: authHeaders(token),
+      body: JSON.stringify({ instruction: "Add a note field for the customer's account manager, דנה." }),
+    });
+    assert.equal(refineRes.status, 200);
+    const refineEvents = await collectSSE(refineRes);
+    assert.ok(refineEvents.every((e) => e.status !== "failed"), "refine should succeed on valid input");
+    const refineFinal = refineEvents[refineEvents.length - 1];
+    const refinedProject = (refineFinal.detail as { project: { spec: { entities: { name: string; label?: string }[] } } }).project;
+    const customer = refinedProject.spec.entities.find((e) => e.name === "Customer");
+    assert.ok(customer, "expected the original Customer entity to survive the refine");
+    assert.ok(
+      customer!.label === undefined || !/[֐-׿]/.test(customer!.label),
+      `the project's own established English label must not flip to Hebrew from one stray Hebrew word in the new instruction alone -- got label "${customer!.label}"`,
+    );
+  });
+});
+
 test("POST /build a second time on an already-built project is rejected, instead of silently inserting a second checkpoint mislabeled 'Initial build'", async () => {
   await withServer(async (baseUrl) => {
     const token = await signup(baseUrl);

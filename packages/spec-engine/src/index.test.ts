@@ -185,6 +185,31 @@ test("generateSpec returns providerName alongside the spec", async () => {
   assert.ok(spec.entities.length > 0);
 });
 
+/**
+ * Round 708: generateSpec's own new third parameter must actually reach
+ * the provider's generate() call -- both on the normal path and on the
+ * fallback-to-heuristic path, since a /refine or /answers call whose real
+ * provider fails must not silently lose the language pin and fall back to
+ * re-deriving it from the (potentially mixed-language) description text.
+ */
+test("generateSpec forwards isHebrewOverride to the provider, including the fallback heuristic call when the primary provider throws", async () => {
+  let capturedOverride: boolean | undefined;
+  const failingProvider = {
+    name: "anthropic",
+    generate: async (_description: string, isHebrewOverride?: boolean) => {
+      capturedOverride = isHebrewOverride;
+      throw new Error("simulated model failure");
+    },
+  };
+  const { spec, providerName } = await generateSpec("a shop with customers and orders", failingProvider, false);
+  assert.equal(providerName, "anthropic-fallback");
+  assert.equal(capturedOverride, false, "the primary provider must receive the real override before it fails");
+  // The fallback's own heuristic call must have received the same override
+  // too -- confirmed indirectly: an English-pinned fallback must not carry
+  // a Hebrew label even if it somehow would have otherwise.
+  assert.equal(spec.entities[0]?.label, undefined, "the fallback heuristic call must have received the same English pin");
+});
+
 test("generateSpec falls back to the heuristic provider when a non-heuristic provider throws, instead of surfacing a raw error", async () => {
   const failingProvider = {
     name: "anthropic",

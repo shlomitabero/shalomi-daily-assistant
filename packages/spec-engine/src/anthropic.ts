@@ -71,7 +71,21 @@ export class AnthropicSpecProvider implements SpecProvider {
     this.timeoutMs = options.timeoutMs;
   }
 
-  async generate(description: string): Promise<ProductSpec> {
+  async generate(description: string, isHebrewOverride?: boolean): Promise<ProductSpec> {
+    // See SpecProvider.generate's own doc comment: when the caller already
+    // knows the project's real, established language (a /refine instruction
+    // or /answers response concatenated onto the original description),
+    // this pins the model's output language explicitly instead of letting
+    // it infer one from the mixed text -- the system prompt's own "same
+    // language as the user's description" rule can't tell an established
+    // project's language apart from a single Hebrew/English word that only
+    // the newly-appended text happened to contain.
+    const languageDirective =
+      isHebrewOverride === undefined
+        ? ""
+        : isHebrewOverride
+          ? "\n\n[Write every \"label\", \"summary\", \"roles\", \"assumptions\", and \"openQuestions\" entry in Hebrew, regardless of what language any part of the request below is written in.]"
+          : "\n\n[Write every \"label\", \"summary\", \"roles\", \"assumptions\", and \"openQuestions\" entry in English, regardless of what language any part of the request below is written in.]";
     const response = await fetchAnthropic(
       this.fetchImpl,
       ANTHROPIC_API_URL,
@@ -86,7 +100,7 @@ export class AnthropicSpecProvider implements SpecProvider {
           model: this.model,
           max_tokens: 4096,
           system: SYSTEM_PROMPT,
-          messages: [{ role: "user", content: description }],
+          messages: [{ role: "user", content: `${description}${languageDirective}` }],
         }),
       },
       this.timeoutMs,

@@ -43,15 +43,16 @@ export function selectProvider(env: NodeJS.ProcessEnv = process.env): SpecProvid
 export async function generateSpec(
   description: string,
   provider: SpecProvider = selectProvider(),
+  isHebrewOverride?: boolean,
 ): Promise<{ spec: ProductSpec; providerName: string }> {
   try {
-    const spec = await provider.generate(description);
+    const spec = await provider.generate(description, isHebrewOverride);
     return { spec, providerName: provider.name };
   } catch (err) {
     if (provider.name === "heuristic") throw err;
     // eslint-disable-next-line no-console
     console.error(`spec provider "${provider.name}" failed, falling back to heuristic:`, err);
-    const spec = await new HeuristicSpecProvider().generate(description);
+    const spec = await new HeuristicSpecProvider().generate(description, isHebrewOverride);
     return { spec, providerName: `${provider.name}-fallback` };
   }
 }

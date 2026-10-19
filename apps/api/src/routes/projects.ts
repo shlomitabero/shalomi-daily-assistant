@@ -1331,7 +1331,11 @@ export function createProjectsRouter(
         activePipelines.add(project.id);
         try {
           const combinedDescription = `${project.description}\n\n${sections.join("\n\n")}`;
-          const { spec, providerName } = await generateSpec(combinedDescription, provider);
+          // Same fix as /refine just above -- a clarifying-question answer
+          // or additional request containing one Hebrew/English word must
+          // not flip the WHOLE draft spec's language away from what the
+          // original description already established.
+          const { spec, providerName } = await generateSpec(combinedDescription, provider, isHebrewText(project.description));
           const updated = updateProjectSpec(db, project.id, spec);
           return { status: 200, body: { project: updated, providerName } };
         } finally {
@@ -1391,7 +1395,14 @@ export function createProjectsRouter(
       try {
         const { instruction } = parsed.data;
         const combinedDescription = `${project.description}\n\nAdditional requirement: ${instruction}`;
-        const { spec: nextSpec, providerName } = await generateSpec(combinedDescription, provider);
+        // Decided from the project's own established description ALONE, not
+        // the combined text the instruction was just appended to -- without
+        // this, a single Hebrew/English word anywhere in a brand-new
+        // instruction (a pasted name, a stray word) flipped an already-built
+        // project's ENTIRE set of labels to that script, not just whatever
+        // the instruction was actually about (see SpecProvider.generate's
+        // own doc comment).
+        const { spec: nextSpec, providerName } = await generateSpec(combinedDescription, provider, isHebrewText(project.description));
         await streamPipeline(res, db, project, {
           previousSpec: project.spec,
           nextSpec,

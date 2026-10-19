@@ -222,11 +222,11 @@ function buildAssumptions(isHebrew: boolean): string[] {
 export class HeuristicSpecProvider implements SpecProvider {
   readonly name = "heuristic";
 
-  async generate(description: string): Promise<ProductSpec> {
+  async generate(description: string, isHebrewOverride?: boolean): Promise<ProductSpec> {
     if (!description || description.trim().length === 0) {
       throw new Error("description must not be empty");
     }
-    const isHebrew = isHebrewText(description);
+    const isHebrew = isHebrewOverride ?? isHebrewText(description);
     const entities = matchEntities(description, isHebrew);
     const roles = matchRoles(description, isHebrew);
     const screens = buildScreens(entities);
