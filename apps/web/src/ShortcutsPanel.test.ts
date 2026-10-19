@@ -62,9 +62,9 @@ test("renders a real dialog listing every actual shortcut, not a placeholder", a
     assert.equal(dialog!.getAttribute("aria-modal"), "true");
 
     const rows = document.querySelectorAll(".shortcuts-row");
-    // Ctrl+K, "/", "?", Escape (close), j/down, k/up, Enter, x, n, Delete, d,
-    // Ctrl+Enter, Escape (clear selection) -- 13 rows.
-    assert.equal(rows.length, 13, "expected one row per known shortcut");
+    // Ctrl+K, "/", "?", Escape (close), j/down, k/up, Enter, x, n, Delete,
+    // Ctrl+Z, d, Ctrl+Enter, Escape (clear selection) -- 14 rows.
+    assert.equal(rows.length, 14, "expected one row per known shortcut");
 
     const kbds = Array.from(document.querySelectorAll(".shortcuts-keys kbd")).map((el) => el.textContent);
     assert.ok(kbds.includes("Ctrl"), "expected Ctrl+K to be listed");
@@ -81,11 +81,12 @@ test("renders a real dialog listing every actual shortcut, not a placeholder", a
       kbds.includes("Backspace"),
       "expected Backspace to be listed too -- EntityPanel.tsx's own keydown handler treats it as equivalent to Delete for deleting the focused row (round 349), the same dual-key convention this list's own j/k rows already follow",
     );
+    assert.ok(kbds.includes("Z"), "expected Ctrl+Z (undo delete) to be listed");
     assert.ok(kbds.includes("d"), "expected d (duplicate row) to be listed");
     assert.equal(
       kbds.filter((k) => k === "Ctrl").length,
-      2,
-      "expected two distinct Ctrl-prefixed shortcuts: Ctrl+K and Ctrl+Enter",
+      3,
+      "expected three distinct Ctrl-prefixed shortcuts: Ctrl+K, Ctrl+Z, and Ctrl+Enter",
     );
     assert.equal(
       kbds.filter((k) => k === "Esc").length,
@@ -112,12 +113,12 @@ test("readOnly viewer sees only the shortcuts that still actually do something",
 
     const rows = document.querySelectorAll(".shortcuts-row");
     // Every editor-only shortcut (edit row, toggle-select, new record,
-    // delete row, duplicate row, submit form, clear selection) is a no-op
-    // for a viewer -- EntityPanel.tsx gates each one behind !readOnly, and
-    // the row-selection checkbox itself is `disabled={readOnly}` so
-    // selectedIds can never become non-empty to clear in the first place.
-    // Only the 6 role-agnostic rows (Ctrl+K, "/", "?", close-Esc, j, k)
-    // should remain.
+    // delete row, undo delete, duplicate row, submit form, clear selection)
+    // is a no-op for a viewer -- EntityPanel.tsx gates each one behind
+    // !readOnly, and the row-selection checkbox itself is
+    // `disabled={readOnly}` so selectedIds can never become non-empty to
+    // clear in the first place. Only the 6 role-agnostic rows (Ctrl+K, "/",
+    // "?", close-Esc, j, k) should remain.
     assert.equal(rows.length, 6, "expected only the 6 shortcuts that still work for a read-only viewer");
 
     const kbds = Array.from(document.querySelectorAll(".shortcuts-keys kbd")).map((el) => el.textContent);
@@ -131,6 +132,7 @@ test("readOnly viewer sees only the shortcuts that still actually do something",
     assert.ok(!kbds.includes("x"), "x (toggle select) is dead for a viewer and must not be listed");
     assert.ok(!kbds.includes("n"), "n (new record) is dead for a viewer and must not be listed");
     assert.ok(!kbds.includes("Delete"), "Delete (delete row) is dead for a viewer and must not be listed");
+    assert.ok(!kbds.includes("Z"), "Ctrl+Z (undo delete) is dead for a viewer and must not be listed");
     assert.ok(!kbds.includes("d"), "d (duplicate row) is dead for a viewer and must not be listed");
   });
 });
@@ -139,7 +141,7 @@ test("non-viewer still sees the full shortcut list (readOnly defaults to false)"
   await withJsdom(async () => {
     renderPanel();
     const rows = document.querySelectorAll(".shortcuts-row");
-    assert.equal(rows.length, 13, "expected the full list when readOnly is omitted");
+    assert.equal(rows.length, 14, "expected the full list when readOnly is omitted");
   });
 });
 

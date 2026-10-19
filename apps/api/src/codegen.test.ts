@@ -4763,6 +4763,95 @@ test("the exported EntityView's Delete/Backspace shortcut deletes the focused ro
 });
 
 /**
+ * New in this round: Ctrl/Cmd+Z now triggers the delete-undo toast's own
+ * "Undo" action in the exported app, same as the live Forge AI preview.
+ * Delete/Backspace above was already a real keyboard shortcut, but undoing
+ * that exact delete had none -- a keyboard-only user who deleted a row with
+ * the bound key still had to reach for the mouse to click the toast's
+ * "Undo" link. Confirms the row actually reappears at its original index
+ * (not appended) and that the DELETE request is never sent, proving the
+ * undo genuinely cancels the pending commit rather than just restoring a
+ * client-side copy after the real delete already went through.
+ */
+test("the exported EntityView's Ctrl+Z shortcut undoes a pending delete without ever sending the DELETE request", async () => {
+  const files = generateExportFiles(project);
+  const dir = writeGeneratedWebComponent(files);
+  const store = [
+    { id: 1, name: "Acme Corp", status: "New" },
+    { id: 2, name: "Globex", status: "Won" },
+  ];
+  const originalFetch = globalThis.fetch;
+  const originalConfirm = globalThis.window?.confirm;
+  let deleteCalls = 0;
+  globalThis.fetch = (async (input: string, init?: RequestInit): Promise<Response> => {
+    const method = init?.method ?? "GET";
+    if (method === "GET" && input === "/api/Customer") {
+      return new Response(JSON.stringify({ records: store }), { status: 200, headers: { "content-type": "application/json" } });
+    }
+    if (method === "DELETE" && input === "/api/Customer/1") {
+      deleteCalls += 1;
+      return new Response(null, { status: 204 });
+    }
+    throw new Error(`unexpected request ${method} ${input}`);
+  }) as typeof fetch;
+  (globalThis.window as unknown as { confirm: () => boolean }).confirm = () => true;
+
+  try {
+    await withRealLocalStorage(async () => {
+      const { EntityView } = await import(path.join(dir, "web", "src", "components", "EntityView.jsx"));
+      const customerEntity = project.spec.entities.find((e) => e.name === "Customer")!;
+      const props = {
+        entity: customerEntity,
+        highlightRecordId: null,
+        onHighlightHandled: () => {},
+        onJumpToRecord: () => {},
+        onRecordCountChange: () => {},
+      };
+
+      const { container } = render(React.createElement(EntityView, props));
+      for (let i = 0; i < 40; i++) {
+        if (container.querySelectorAll("tbody tr").length === 2) break;
+        await act(async () => {
+          await new Promise((resolve) => setTimeout(resolve, 0));
+        });
+      }
+      assert.equal(container.querySelectorAll("tbody tr").length, 2, "expected both records to have loaded");
+
+      await act(async () => {
+        fireEvent.keyDown(window, { key: "j" });
+      });
+      await act(async () => {
+        fireEvent.keyDown(window, { key: "Delete" });
+      });
+      assert.equal(container.querySelectorAll("tbody tr").length, 1, "sanity check: the focused row must be deleted first");
+      assert.equal(container.querySelector('tr[data-record-id="1"]'), null, "sanity check: Acme Corp (id 1) must be the one deleted");
+
+      await act(async () => {
+        fireEvent.keyDown(window, { key: "z", ctrlKey: true });
+      });
+      assert.equal(container.querySelectorAll("tbody tr").length, 2, "Ctrl+Z must restore the deleted row");
+      const rows = Array.from(container.querySelectorAll("tbody tr")) as HTMLElement[];
+      assert.deepEqual(
+        rows.map((r) => r.getAttribute("data-record-id")),
+        ["1", "2"],
+        "the restored row must land back at its original index, not get appended to the end",
+      );
+      assert.equal(deleteCalls, 0, "undoing before the window elapsed must cancel the pending delete, never sending the real DELETE request");
+
+      await act(async () => {
+        fireEvent.keyDown(window, { key: "z", ctrlKey: true });
+      });
+      assert.equal(container.querySelectorAll("tbody tr").length, 2, "pressing Ctrl+Z again with nothing pending must be a safe no-op");
+    });
+  } finally {
+    globalThis.fetch = originalFetch;
+    if (originalConfirm) (globalThis.window as unknown as { confirm: () => boolean }).confirm = originalConfirm;
+    cleanup();
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+/**
  * New in this round: porting the live preview's own "d" shortcut
  * (duplicate the focused row) to the exported app's EntityView.jsx.
  * j/k/Enter/x/Delete above let a keyboard-only user navigate, open,
@@ -10000,10 +10089,10 @@ test("the exported GlobalSearch hides the entity table behind it from assistive 
  * place any of this is actually documented to a real end user of the
  * exported app, who has no way back to the Forge AI platform or its docs.
  * Confirms the real generated ShortcutsPanel.jsx renders its title and
- * every one of the 13 shortcut rows the live preview's own SHORTCUTS array
+ * every one of the 14 shortcut rows the live preview's own SHORTCUTS array
  * declares, not just that the file exists.
  */
-test("the exported ShortcutsPanel renders every one of the live preview's own 13 keyboard-shortcut rows", async () => {
+test("the exported ShortcutsPanel renders every one of the live preview's own 14 keyboard-shortcut rows", async () => {
   const files = generateExportFiles(project);
   const dir = writeGeneratedWebComponent(files);
 
@@ -10013,7 +10102,7 @@ test("the exported ShortcutsPanel renders every one of the live preview's own 13
 
     assert.match(container.textContent ?? "", /Keyboard shortcuts/, "expected the panel's own heading to render");
     const rows = Array.from(container.querySelectorAll(".shortcuts-row"));
-    assert.equal(rows.length, 13, `expected all 13 shortcut rows, got ${rows.length}`);
+    assert.equal(rows.length, 14, `expected all 14 shortcut rows, got ${rows.length}`);
     const descriptions = rows.map((r) => r.textContent ?? "");
     for (const expected of [
       "Open search across the whole app",
@@ -10025,6 +10114,7 @@ test("the exported ShortcutsPanel renders every one of the live preview's own 13
       "Select/deselect the focused row",
       "Jump to the add-record form",
       "Delete the focused table row",
+      "Undo the last delete",
       "Duplicate the focused table row",
       "Submit the form (even from a multi-line text field)",
       "Clear the table's multi-row selection",

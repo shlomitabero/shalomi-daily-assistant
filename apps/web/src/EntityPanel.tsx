@@ -1925,6 +1925,34 @@ export function EntityPanel({
   }, [viewMode, visibleRecords, focusedRowId, selectedIds, recordGroups, collapsedGroups, readOnly]);
 
   /**
+   * Ctrl/Cmd+Z triggers the delete-undo toast's own "Undo" action --
+   * "Delete"/"Backspace" above is a real keyboard shortcut (round 311-ish),
+   * but undoing that exact delete had none, a small but real inconsistency
+   * in an otherwise keyboard-first flow: a keyboard-only user who deleted a
+   * row with the bound key still had to reach for the mouse to click the
+   * toast's "Undo" link. Not scoped to table view (unlike the j/k/x/d
+   * effect above) since the undo window (UNDO_WINDOW_MS) can still be open
+   * after switching to board/calendar view. e.shiftKey is excluded since
+   * Ctrl/Cmd+Shift+Z is the common OS/app convention for Redo, which this
+   * app has no equivalent action for -- claiming that chord too would just
+   * silently eat a gesture aimed at a (nonexistent) redo. handleUndoDelete
+   * itself already no-ops via pendingDeleteRef when nothing is pending, so
+   * this only ever prevents the key's default behavior when there's
+   * actually something to undo.
+   */
+  useEffect(() => {
+    function handleKeyDown(e: KeyboardEvent) {
+      if (!(e.ctrlKey || e.metaKey) || e.key.toLowerCase() !== "z" || e.shiftKey) return;
+      if (readOnly || isTypingTarget(e.target as HTMLElement | null) || isAnyDialogOpen()) return;
+      if (!pendingDeleteRef.current) return;
+      e.preventDefault();
+      handleUndoDelete();
+    }
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [readOnly]);
+
+  /**
    * "n" jumps straight to a blank add-record form, abandoning whatever
    * edit was in progress -- unlike j/k/Enter above, this isn't scoped to
    * table view: the form itself renders above the table/board/calendar

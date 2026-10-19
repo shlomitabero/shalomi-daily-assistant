@@ -6410,6 +6410,67 @@ test("EntityPanel's Delete/Backspace shortcut deletes the focused row via the re
 });
 
 /**
+ * New in this round: Ctrl/Cmd+Z now triggers the delete-undo toast's own
+ * "Undo" action -- Delete/Backspace above was already a real keyboard
+ * shortcut, but undoing that exact delete had none, a small but real
+ * inconsistency in an otherwise keyboard-first flow: a keyboard-only user
+ * who deleted a row with the bound key still had to reach for the mouse to
+ * click the toast's "Undo" link. Confirms the row actually comes back and
+ * the real DELETE request never fires, that Ctrl+Shift+Z (the conventional
+ * Redo chord) does NOT also trigger it, and that pressing it again once
+ * nothing is pending is a safe no-op.
+ */
+test("EntityPanel's Ctrl/Cmd+Z shortcut undoes a pending delete without ever calling the real delete API", async () => {
+  await withJsdom(async () => {
+    const store: EntityRecord[] = [
+      { id: 1, name: "Acme Corp", status: "new" },
+      { id: 2, name: "Globex", status: "won" },
+    ];
+    const deletedIds: number[] = [];
+    const originalFetch = globalThis.fetch;
+    const originalConfirm = globalThis.window.confirm;
+    globalThis.fetch = mockRecordsFetch(store, (id) => deletedIds.push(id)) as typeof fetch;
+    globalThis.window.confirm = (() => true) as typeof window.confirm;
+    try {
+      renderEntityPanel();
+      await waitForCondition(() => document.querySelectorAll("table tbody tr").length === 2);
+
+      for (let attempt = 0; document.querySelectorAll(".record-row-focused").length === 0 && attempt < 40; attempt++) {
+        fireEvent.keyDown(window, { key: "j" });
+        await new Promise((resolve) => setTimeout(resolve, 0));
+      }
+
+      fireEvent.keyDown(window, { key: "Delete" });
+      await waitForCondition(() => document.querySelectorAll("table tbody tr").length === 1);
+      assert.equal(document.querySelector('tr[data-record-id="1"]'), null, "sanity check: Acme Corp (id 1) must be the one deleted");
+
+      // The conventional Redo chord must not be hijacked into firing Undo.
+      fireEvent.keyDown(window, { key: "z", ctrlKey: true, shiftKey: true });
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      assert.equal(document.querySelectorAll("table tbody tr").length, 1, "Ctrl+Shift+Z (Redo) must not undo the delete");
+
+      fireEvent.keyDown(window, { key: "z", ctrlKey: true });
+      await waitForCondition(() => document.querySelectorAll("table tbody tr").length === 2);
+      const rows = Array.from(document.querySelectorAll("table tbody tr"));
+      assert.deepEqual(
+        rows.map((r) => r.getAttribute("data-record-id")),
+        ["1", "2"],
+        "the restored row must land back at its original index, not get appended to the end",
+      );
+      assert.equal(deletedIds.length, 0, "undoing before the window elapsed must cancel the pending delete, never calling the real delete API");
+
+      // Pressing it again with nothing pending must be a safe no-op.
+      fireEvent.keyDown(window, { key: "z", ctrlKey: true });
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      assert.equal(document.querySelectorAll("table tbody tr").length, 2, "Ctrl+Z with nothing pending must not throw or change anything");
+    } finally {
+      globalThis.fetch = originalFetch;
+      globalThis.window.confirm = originalConfirm;
+    }
+  });
+});
+
+/**
  * New in this round: j/k/Enter/x/Delete above let a keyboard-only user
  * navigate, open, select, and delete rows, but duplicating one still
  * required reaching for the mouse (the row's own Duplicate button). "d"

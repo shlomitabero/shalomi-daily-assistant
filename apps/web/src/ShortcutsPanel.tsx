@@ -22,6 +22,7 @@ const SHORTCUTS: { keys: string[]; descriptionKey: string }[] = [
   { keys: ["x"], descriptionKey: "shortcuts.toggleSelect" },
   { keys: ["n"], descriptionKey: "shortcuts.newRecord" },
   { keys: ["Delete", "Backspace"], descriptionKey: "shortcuts.rowDelete" },
+  { keys: ["Ctrl", "Z"], descriptionKey: "shortcuts.undoDelete" },
   { keys: ["d"], descriptionKey: "shortcuts.rowDuplicate" },
   { keys: ["Ctrl", "Enter"], descriptionKey: "shortcuts.submitForm" },
   { keys: ["Esc"], descriptionKey: "shortcuts.clearSelection" },
@@ -29,12 +30,11 @@ const SHORTCUTS: { keys: string[]; descriptionKey: string }[] = [
 
 /**
  * Every one of these rows is a shortcut that EntityPanel.tsx's own keydown
- * handler (and the create/edit form it submits) already no-ops for a
- * read-only viewer (readOnly checks at EntityPanel.tsx:1872/1878/1881/1884/
- * 1913, and the whole create/edit <form> is unrendered behind `{!readOnly &&`
- * at line 2743) -- so listing them here for a viewer would describe keys
- * that silently do nothing, the same affordance-gating hazard already fixed
- * for EntityPanel's own inline-edit cells, SpecListItemRemover, and
+ * handlers (and the create/edit form it submits) already no-op for a
+ * read-only viewer via their own `readOnly`/`!readOnly` checks -- so
+ * listing them here for a viewer would describe keys that silently do
+ * nothing, the same affordance-gating hazard already fixed for
+ * EntityPanel's own inline-edit cells, SpecListItemRemover, and
  * CalendarView.
  */
 const EDITOR_ONLY_KEYS = new Set([
@@ -42,6 +42,7 @@ const EDITOR_ONLY_KEYS = new Set([
   "shortcuts.toggleSelect",
   "shortcuts.newRecord",
   "shortcuts.rowDelete",
+  "shortcuts.undoDelete",
   "shortcuts.rowDuplicate",
   "shortcuts.submitForm",
   "shortcuts.clearSelection",

@@ -3792,6 +3792,30 @@ export function EntityView({ entity, highlightRecordId, onHighlightHandled, onJu
   }, [viewMode, visibleRecords, focusedRowId, selectedIds, recordGroups, collapsedGroups]);
 
   /**
+   * Ctrl/Cmd+Z triggers the delete-undo toast's own "Undo" action --
+   * Delete/Backspace above is a real keyboard shortcut, but undoing that
+   * exact delete had none, a small but real inconsistency in an otherwise
+   * keyboard-first flow. Not scoped to table view (unlike the j/k/x/d
+   * effect above) since the undo window (UNDO_WINDOW_MS) can still be
+   * open after switching to board/calendar view. e.shiftKey is excluded
+   * since Ctrl/Cmd+Shift+Z is the common OS/app convention for Redo,
+   * which this app has no equivalent action for. handleUndoDelete itself
+   * already no-ops via pendingDeleteRef when nothing is pending. Mirrors
+   * the live Forge AI preview's own EntityPanel.tsx.
+   */
+  useEffect(() => {
+    function handleKeyDown(e) {
+      if (!(e.ctrlKey || e.metaKey) || e.key.toLowerCase() !== "z" || e.shiftKey) return;
+      if (isTypingTarget(e.target) || isAnyDialogOpen()) return;
+      if (!pendingDeleteRef.current) return;
+      e.preventDefault();
+      handleUndoDelete();
+    }
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, []);
+
+  /**
    * "n" jumps straight to a blank add-record form, abandoning whatever
    * edit was in progress -- unlike j/k/Enter above, this isn't scoped to
    * table view: the form itself renders above the table/board/calendar
@@ -5596,6 +5620,7 @@ const SHORTCUTS = [
   { keys: ["x"], description: "Select/deselect the focused row" },
   { keys: ["n"], description: "Jump to the add-record form" },
   { keys: ["Delete", "Backspace"], description: "Delete the focused table row" },
+  { keys: ["Ctrl", "Z"], description: "Undo the last delete" },
   { keys: ["d"], description: "Duplicate the focused table row" },
   { keys: ["Ctrl", "Enter"], description: "Submit the form (even from a multi-line text field)" },
   { keys: ["Esc"], description: "Clear the table's multi-row selection" },
