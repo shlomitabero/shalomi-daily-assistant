@@ -149,6 +149,15 @@ export function GlobalSearchPanel({
           : null,
       )
       .filter((r): r is EntitySearchResult => r !== null);
+    // Entity groups are shown in descending totalMatches order rather than
+    // whichever order the project's entities happen to be declared in --
+    // without this, an entity with one coincidental match could sit above
+    // one with fifty, just because it comes first in the spec, which has
+    // nothing to do with how relevant either group actually is to the
+    // query. Array.prototype.sort is stable (ES2019+), so two entities
+    // tied on totalMatches keep their original declared order rather than
+    // visibly reshuffling between searches for no reason.
+    succeeded.sort((a, b) => b.totalMatches - a.totalMatches);
     setResults(succeeded);
     setSearched(true);
     setHighlightQuery(q);

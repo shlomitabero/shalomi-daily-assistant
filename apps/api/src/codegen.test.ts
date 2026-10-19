@@ -7248,6 +7248,73 @@ test("the exported GlobalSearch's runSearch shows results from every entity that
 });
 
 /**
+ * New in this round: the exported app's own GlobalSearch.jsx is a
+ * deliberate duplicate of the live-preview GlobalSearchPanel.tsx's
+ * runSearch, and it had the exact same ordering gap that round's own fix
+ * closed -- searchAllEntities built its results array by mapping over
+ * `entities` in whatever order the project's spec happens to declare
+ * them, with zero regard to totalMatches, so an entity with one
+ * coincidental match could sit above one with fifty. Declares entities in
+ * the opposite order from their real match counts to prove the fix sorts
+ * by totalMatches, not by array position. Runs the real generated
+ * searchAllEntities/runSearch.
+ */
+test("the exported GlobalSearch's runSearch orders entity groups by totalMatches descending, not by declaration order", async () => {
+  const files = generateExportFiles(project);
+  const globalSearchJsx = files.find((f) => f.path === "web/src/components/GlobalSearch.jsx")!.content;
+  const entityViewJsx = files.find((f) => f.path === "web/src/components/EntityView.jsx")!.content;
+
+  const matchesSearchSrc = entityViewJsx.match(/export function matchesSearch\([\s\S]*?\n\}\n/)?.[0]?.replace("export ", "");
+  const searchAllEntitiesSrc = globalSearchJsx.match(/async function searchAllEntities\([\s\S]*?\n\}\n/)?.[0];
+  const runSearchSrc = globalSearchJsx.match(/ {2}async function runSearch\(q\) \{[\s\S]*?\n {2}\}\n/)?.[0];
+  assert.ok(
+    matchesSearchSrc && searchAllEntitiesSrc && runSearchSrc,
+    "expected to find matchesSearch/searchAllEntities/runSearch in generated output",
+  );
+
+  const entityA = { name: "Alpha", label: "Alpha", fields: [{ name: "name", label: "Name", type: "text" }] };
+  const entityB = { name: "Beta", label: "Beta", fields: [{ name: "name", label: "Name", type: "text" }] };
+  const entityC = { name: "Gamma", label: "Gamma", fields: [{ name: "name", label: "Name", type: "text" }] };
+  const matchCounts: Record<string, number> = { Alpha: 1, Beta: 5, Gamma: 50 };
+
+  let capturedResults: unknown[] | undefined;
+
+  const fn = new Function(
+    "entities",
+    "listRecords",
+    "setLoading",
+    "setError",
+    "setResults",
+    "setSearched",
+    "setSelectedIndex",
+    "searchRequestId",
+    "lastRecordsByEntityRef",
+    `${matchesSearchSrc}\n${searchAllEntitiesSrc}\n${runSearchSrc}\nreturn runSearch;`,
+  )(
+    [entityA, entityB, entityC],
+    async (entityName: string) =>
+      ({ records: Array.from({ length: matchCounts[entityName] }, (_, i) => ({ id: i, name: `match-${entityName}-${i}` })) }),
+    () => {},
+    () => {},
+    (results: unknown[]) => {
+      capturedResults = results;
+    },
+    () => {},
+    () => {},
+    { current: 0 },
+    { current: {} },
+  ) as (q: string) => Promise<void>;
+
+  await fn("match");
+
+  assert.deepEqual(
+    (capturedResults ?? []).map((r) => (r as { entityName: string }).entityName),
+    ["Gamma", "Beta", "Alpha"],
+    "entity groups must be ordered by totalMatches descending, not by the entities array's own declaration order",
+  );
+});
+
+/**
  * Regression test: the exported app's own GlobalSearch.jsx is a deliberate
  * duplicate of the live-preview GlobalSearchPanel.tsx's runSearch, and it
  * had the exact same stale-async-overwrites-newer-setState race this

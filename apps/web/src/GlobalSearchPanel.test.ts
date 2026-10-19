@@ -146,6 +146,77 @@ test("GlobalSearchPanel's runSearch still surfaces the raw error message when ev
 });
 
 /**
+ * Regression test: runSearch built its results array by mapping over
+ * `entities` in whatever order the project's spec happens to declare them,
+ * with zero regard to how many matches each entity actually had -- an
+ * entity with one coincidental match could sit above one with fifty, just
+ * because it comes first in the entities array. Declares entities in the
+ * opposite order from their real match counts (Alpha first but fewest
+ * matches, Gamma last but most) to prove the fix sorts by totalMatches,
+ * not by array position.
+ */
+test("GlobalSearchPanel's runSearch orders entity groups by totalMatches descending, not by declaration order", async () => {
+  const handlerMatch = globalSearchPanelSrc.match(/ {2}async function runSearch\(q: string\) \{[\s\S]*?\n {2}\}\n/);
+  assert.ok(handlerMatch, "expected to find runSearch in GlobalSearchPanel.tsx");
+  const { code } = transformSync(handlerMatch![0], { loader: "ts" });
+
+  const entityA = { name: "Alpha", label: "Alpha", fields: [] };
+  const entityB = { name: "Beta", label: "Beta", fields: [] };
+  const entityC = { name: "Gamma", label: "Gamma", fields: [] };
+  const matchCounts: Record<string, number> = { Alpha: 1, Beta: 5, Gamma: 50 };
+
+  function fakeSearchEntityRecords(entity: { name: string; label: string }) {
+    const totalMatches = matchCounts[entity.name];
+    return { entityName: entity.name, entityLabel: entity.label, totalMatches, sample: [] };
+  }
+
+  let capturedResults: unknown[] | undefined;
+
+  const fn = new Function(
+    "entities",
+    "projectId",
+    "listRecords",
+    "searchEntityRecords",
+    "t",
+    "setLoading",
+    "setError",
+    "setResults",
+    "setSearched",
+    "setHighlightQuery",
+    "setSelectedIndex",
+    "searchRequestId",
+    "lastRecordsByEntityRef",
+    "lang",
+    `${code}\nreturn runSearch;`,
+  )(
+    [entityA, entityB, entityC],
+    "proj1",
+    async () => ({ records: [{ id: 1 }] }),
+    fakeSearchEntityRecords,
+    (key: string) => key,
+    () => {},
+    () => {},
+    (results: unknown[]) => {
+      capturedResults = results;
+    },
+    () => {},
+    () => {},
+    () => {},
+    { current: 0 },
+    { current: {} },
+    "en",
+  ) as (q: string) => Promise<void>;
+
+  await fn("match");
+
+  assert.deepEqual(
+    (capturedResults ?? []).map((r) => (r as { entityName: string }).entityName),
+    ["Gamma", "Beta", "Alpha"],
+    "entity groups must be ordered by totalMatches descending, not by the entities array's own declaration order",
+  );
+});
+
+/**
  * Regression test: runSearch had no guard against two overlapping calls --
  * submitting a search, then editing the query and submitting again before
  * the first search's network round trip finished (a realistic case: a slow

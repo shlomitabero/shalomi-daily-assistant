@@ -5059,6 +5059,12 @@ async function searchAllEntities(entities, query) {
       return { entityName: entity.name, entityLabel: entity.label, totalMatches: matches.length, sample: matches.slice(0, 5) };
     })
     .filter((r) => r !== null);
+  // Entity groups are shown in descending totalMatches order rather than
+  // whichever order the project's entities happen to be declared in --
+  // mirrors the live preview's own GlobalSearchPanel.tsx fix. Array.sort
+  // is stable (ES2019+), so two entities tied on totalMatches keep their
+  // original declared order.
+  results.sort((a, b) => b.totalMatches - a.totalMatches);
   const failures = settled.filter((r) => r.status === "rejected");
   return { results, failures, recordsByEntity };
 }
