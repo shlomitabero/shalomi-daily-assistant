@@ -7,6 +7,8 @@ Set PANEL_PASSWORD before exposing it to the internet (HTTP Basic, user: lilo).
 from __future__ import annotations
 
 import base64
+import hashlib
+import hmac
 import html
 import json
 import secrets
@@ -62,22 +64,53 @@ PILLAR_HE = {"hero_dish": "מנת הדגל", "fire_show": "שואו אש", "nigh
 
 
 # ---------- auth ----------
+SESSION_COOKIE = "lilo_session"
+
+
+def _session_value(pw: str) -> str:
+    return hmac.new(pw.encode(), b"lilo-panel-session", hashlib.sha256).hexdigest()
+
+
 @app.middleware("http")
 async def basic_auth(request: Request, call_next):
-    pw = settings().panel_password
-    public = request.url.path in ("/healthz", "/join") or request.url.path.startswith("/pub/")
-    if pw and not public:
-        header = request.headers.get("authorization", "")
-        ok = False
-        if header.startswith("Basic "):
-            try:
-                user, _, given = base64.b64decode(header[6:]).decode().partition(":")
-                ok = secrets.compare_digest(given, pw)
-            except ValueError:
-                ok = False
-        if not ok:
-            return Response(status_code=401, headers={"WWW-Authenticate": 'Basic realm="LILO"'})
-    return await call_next(request)
+    """Basic auth, or a long-lived cookie. Opening the panel once with ?k=<PANEL_LOGIN_KEY> (the
+    home-screen link) sets the cookie, so the iPhone icon opens straight in without a prompt."""
+    s = settings()
+    pw = s.panel_password
+    path = request.url.path
+    public = path in ("/healthz", "/join", "/apple-touch-icon.png") or path.startswith("/pub/")
+    if not pw or public:
+        return await call_next(request)
+    key = request.query_params.get("k", "")
+    via_key = bool(s.panel_login_key) and secrets.compare_digest(key, s.panel_login_key)
+    ok = via_key or secrets.compare_digest(request.cookies.get(SESSION_COOKIE, ""), _session_value(pw))
+    header = request.headers.get("authorization", "")
+    if not ok and header.startswith("Basic "):
+        try:
+            _, _, given = base64.b64decode(header[6:]).decode().partition(":")
+            ok = secrets.compare_digest(given, pw)
+        except ValueError:
+            ok = False
+    if not ok:
+        return Response(status_code=401, headers={"WWW-Authenticate": 'Basic realm="LILO"'})
+    response = await call_next(request)
+    if request.cookies.get(SESSION_COOKIE) != _session_value(pw):
+        response.set_cookie(SESSION_COOKIE, _session_value(pw), max_age=400 * 86400,
+                            httponly=True, secure=True, samesite="lax")
+    return response
+
+
+@app.get("/apple-touch-icon.png")
+def touch_icon():
+    anchor = settings().data_dir / "refs" / "R0_anchor.png"
+    bundled = ROOT / "assets" / "lilo" / "R0_anchor.jpg"
+    src = anchor if anchor.exists() else bundled
+    out = settings().data_dir / "touch_icon.png"
+    if not out.exists():
+        from PIL import Image, ImageOps
+
+        ImageOps.fit(Image.open(src).convert("RGB"), (180, 180)).save(out)
+    return FileResponse(out, media_type="image/png")
 
 
 @app.get("/healthz")
@@ -135,6 +168,8 @@ def page(title: str, body: str, path: str = "/", refresh: bool = False) -> HTMLR
     jobs_box = f'<div class="card"><b>משימות רקע</b>{job_html}</div>' if job_html else ""
     return HTMLResponse(f"""<!doctype html><html lang="he" dir="rtl"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">{meta}<title>{e(title)} · LILO</title>
+<meta name="apple-mobile-web-app-capable" content="yes"><meta name="apple-mobile-web-app-title" content="LILO">
+<meta name="apple-mobile-web-app-status-bar-style" content="black"><link rel="apple-touch-icon" href="/apple-touch-icon.png">
 <style>{CSS}</style></head><body><header><div class="logo">LILO <b>×</b> ZOZOBRA</div><nav>{nav}</nav></header>
 <main>{banner}<h1>{e(title)}</h1>{jobs_box}{body}</main></body></html>""")
 

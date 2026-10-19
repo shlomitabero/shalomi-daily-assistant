@@ -121,3 +121,19 @@ def test_phone_posting_only_after_approval(tmp_path, monkeypatch):
     assert "id=\"share\"" in c.get("/queue/2026-10-19").text
     c.post("/queue/2026-10-19/posted")
     assert _json.loads((tmp_path / "queue" / "2026-10-19.json").read_text())["status"] == "published"
+
+
+def test_home_screen_link_logs_in_with_cookie(tmp_path, monkeypatch):
+    from fastapi.testclient import TestClient
+
+    monkeypatch.setenv("DATA_DIR", str(tmp_path))
+    monkeypatch.setenv("PANEL_PASSWORD", "pw")
+    monkeypatch.setenv("PANEL_LOGIN_KEY", "secret-key")
+    from zozobra import web
+
+    c = TestClient(web.app, base_url="https://testserver")
+    assert c.get("/").status_code == 401
+    assert c.get("/?k=wrong").status_code == 401
+    assert c.get("/?k=secret-key").status_code == 200
+    assert c.get("/calendars").status_code == 200            # cookie from the key visit
+    assert TestClient(web.app).get("/apple-touch-icon.png").status_code == 200
