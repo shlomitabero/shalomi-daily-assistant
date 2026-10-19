@@ -91,6 +91,21 @@ function rowToRun(row: Record<string, unknown>): AutomationRun {
 }
 
 /**
+ * listAutomationRuns below never reads past its own default `limit` (no
+ * caller anywhere in this codebase ever passes a different one), so a
+ * busy rule -- a daily "schedule" trigger, or a "record_created"/
+ * "field_equals" rule on an active entity -- accumulated one row per
+ * firing *forever* with nothing ever reading past the most recent 20:
+ * pure unbounded growth for zero benefit. Unlike whatsapp_messages and
+ * checkpoints (each of which at least got a manual, user-initiated
+ * single-row delete -- deleteWhatsAppMessage, deleteCheckpoint), this
+ * table had no deletion path at all short of deleting the whole rule or
+ * project. Matches listAutomationRuns's own default exactly, so pruning
+ * to this cap can never discard a row any current reader could still see.
+ */
+const AUTOMATION_RUNS_RETENTION_LIMIT = 20;
+
+/**
  * The most recent runs for one rule, newest first -- capped at `limit`
  * (default 20) rather than cursor-paginated like listWhatsAppMessages:
  * AutomationsPanel only ever shows "did this rule recently misbehave,"
@@ -351,6 +366,15 @@ export function recordAutomationRun(
   db.prepare(
     `INSERT INTO automation_runs (id, projectId, ruleId, status, error, triggeredAt) VALUES (?, ?, ?, ?, ?, ?)`,
   ).run(randomUUID(), projectId, id, outcome.status, outcome.error ?? null, now);
+  // Prune anything beyond AUTOMATION_RUNS_RETENTION_LIMIT right away --
+  // ordered identically to listAutomationRuns's own ORDER BY, so "the
+  // rows that survive" and "the rows listAutomationRuns would return"
+  // are always the same set.
+  db.prepare(
+    `DELETE FROM automation_runs WHERE projectId = ? AND ruleId = ? AND id NOT IN (
+      SELECT id FROM automation_runs WHERE projectId = ? AND ruleId = ? ORDER BY triggeredAt DESC, rowid DESC LIMIT ?
+    )`,
+  ).run(projectId, id, projectId, id, AUTOMATION_RUNS_RETENTION_LIMIT);
 }
 
 export function deleteAutomationRule(db: ForgeDatabase, projectId: string, id: string): void {

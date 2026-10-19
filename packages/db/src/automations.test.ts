@@ -224,6 +224,49 @@ test("listAutomationRuns is scoped to one rule and one project, and caps at its 
   assert.equal(listAutomationRuns(db, "proj1", ruleA.id, 20).length, 20, "must cap at the given limit, not return every run ever fired");
 });
 
+/**
+ * New in this round: recordAutomationRun must actually prune old rows,
+ * not just rely on listAutomationRuns's own LIMIT to hide them -- a busy
+ * rule (a daily schedule trigger, or a record_created/field_equals rule
+ * on an active entity) fires forever, and before this round automation_runs
+ * had no deletion path short of deleting the whole rule or project. Counts
+ * the real underlying rows directly (bypassing listAutomationRuns's own
+ * LIMIT entirely) to prove the table itself stays bounded, not just what
+ * any one read happens to return.
+ */
+test("recordAutomationRun prunes automation_runs to its retention cap, not just relying on listAutomationRuns's own LIMIT", () => {
+  const db = openDatabase(":memory:");
+  ensureAutomationRulesTable(db);
+  const rule = insertAutomationRule(db, baseRule());
+  const otherRule = insertAutomationRule(db, baseRule({ entityName: "Ticket" }));
+
+  for (let i = 0; i < 50; i++) recordAutomationRun(db, "proj1", rule.id, { status: "sent" });
+  recordAutomationRun(db, "proj1", otherRule.id, { status: "sent" });
+
+  const rawCountForRule = (
+    db.prepare("SELECT COUNT(*) AS c FROM automation_runs WHERE projectId = ? AND ruleId = ?").get("proj1", rule.id) as {
+      c: number;
+    }
+  ).c;
+  assert.equal(rawCountForRule, 20, "the real row count for a busy rule must never exceed the retention cap, even after 50 firings");
+
+  const rawCountForOtherRule = (
+    db.prepare("SELECT COUNT(*) AS c FROM automation_runs WHERE projectId = ? AND ruleId = ?").get("proj1", otherRule.id) as {
+      c: number;
+    }
+  ).c;
+  assert.equal(rawCountForOtherRule, 1, "pruning one rule's own runs must never touch another rule's history");
+
+  // The 20 rows that DID survive must be the 20 most recent ones, not an
+  // arbitrary 20 -- same ordering listAutomationRuns itself uses.
+  const runs = listAutomationRuns(db, "proj1", rule.id, 20);
+  assert.equal(runs.length, 20);
+  const timestamps = db
+    .prepare("SELECT triggeredAt FROM automation_runs WHERE projectId = ? AND ruleId = ? ORDER BY triggeredAt ASC, rowid ASC")
+    .all("proj1", rule.id) as { triggeredAt: string }[];
+  assert.equal(timestamps.length, 20, "sanity check: exactly 20 rows must remain in insertion order too");
+});
+
 test("deleteAutomationRule also wipes that rule's own run history", () => {
   const db = openDatabase(":memory:");
   ensureAutomationRulesTable(db);
