@@ -5824,6 +5824,32 @@ test("generateExportFiles includes a real render.yaml matching this repo's own p
   assert.match(readme, /render\.com/i);
 });
 
+/**
+ * Round 725's finding: the README above told a user "the free plan works
+ * for this" and, separately, "data.sqlite -- your data. Back it up like
+ * any file" -- with zero mention that Render's free plan runs on an
+ * ephemeral filesystem that's wiped on every redeploy/restart. "Back it up
+ * like any file" actively implies normal persistence, the opposite of
+ * what actually happens, for a data-loss risk real end users deploying
+ * real exported apps would hit. This repo's own root README.md already
+ * states the same limitation correctly (its own "Notes: ... its storage
+ * isn't permanent" line) -- the generated one, shipped inside every
+ * exported project, did not. Confirms both the Deploy-it warning and the
+ * data.sqlite bullet's own warning are present, and that the data.sqlite
+ * bullet still keeps its original "back it up like any file" sentence
+ * rather than being replaced outright (so a user who's on a host that DOES
+ * persist storage isn't told backups are pointless).
+ */
+test("generateExportFiles' README warns that Render's free plan does not persist data.sqlite across redeploys", () => {
+  const files = generateExportFiles(project);
+  const readme = files.find((f) => f.path === "README.md")!.content;
+  assert.match(readme, /storage isn't permanent on the free plan/i);
+  assert.match(readme, /redeploy or restart wipes it back to empty/i);
+  assert.match(readme, /persistent Disk/i);
+  assert.match(readme, /Back it up like any file/);
+  assert.match(readme, /back it up \*before\* every redeploy\s+or restart/i);
+});
+
 // Round 442: the exported ZIP had no marker at all of when it was
 // generated, so a user who re-opens an old export folder months after
 // refining the live project further has no way to tell this downloaded

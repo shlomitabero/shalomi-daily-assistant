@@ -214,6 +214,13 @@ create a new Blueprint on Render pointing at it, and it picks up the build
 plan works for this — same one-command build/start as running it
 locally, just hosted.
 
+**Its storage isn't permanent on the free plan**: \`data.sqlite\` lives on
+the service's own disk, and a redeploy or restart wipes it back to empty
+-- fine for trying this out or sharing a demo link, but not for real data
+you need to keep. For that, add a persistent Disk to the service in
+Render's dashboard (or use one of Render's paid plans that includes one),
+or point this app at an external database instead.
+
 Prefer a different host? Any platform that runs a long-lived Node process
 (not a serverless/edge-function-only host, since this keeps a SQLite file
 on local disk) works the same way: install with \`npm install\`, run with
@@ -238,7 +245,10 @@ on local disk) works the same way: install with \`npm install\`, run with
 - \`web/src/App.jsx\` — the top-level app: entity tabs, wired to the entity
   components above.
 - \`web/src/api.js\` — the small REST client every component calls.
-- \`data.sqlite\` — your data. Back it up like any file.
+- \`data.sqlite\` — your data. Back it up like any file -- and if you
+  deployed this on Render's free plan, back it up *before* every redeploy
+  or restart, since that plan's disk doesn't survive one (see "Deploy it"
+  above).
 
 ## Extending it
 
