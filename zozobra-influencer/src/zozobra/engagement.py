@@ -48,7 +48,7 @@ REPLY_SCHEMA = {
 
 def ig_comments(media_id: str) -> list[dict]:
     s = settings()
-    r = requests.get(f"https://graph.facebook.com/{s.graph_version}/{media_id}/comments",
+    r = requests.get(f"{s.graph_base}/{media_id}/comments",
                      params={"fields": "id,text,username,timestamp", "access_token": s.ig_access_token},
                      timeout=60)
     r.raise_for_status()
@@ -89,7 +89,7 @@ def queue(drafts: list[dict], media_id: str, path: Path | None = None) -> Path:
 
 def send_ig_reply(comment_id: str, text: str) -> str:
     s = settings()
-    r = requests.post(f"https://graph.facebook.com/{s.graph_version}/{comment_id}/replies",
+    r = requests.post(f"{s.graph_base}/{comment_id}/replies",
                       data={"message": text, "access_token": s.ig_access_token}, timeout=60)
     r.raise_for_status()
     return r.json()["id"]

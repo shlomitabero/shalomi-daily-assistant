@@ -95,7 +95,7 @@ def run(online: bool = False) -> list[Check]:
             return "מחובר"
 
         def ig():
-            r = requests.get(f"https://graph.facebook.com/{s.graph_version}/{s.ig_user_id}",
+            r = requests.get(f"{s.graph_base}/{s.ig_user_id}",
                              params={"fields": "username", "access_token": s.ig_access_token}, timeout=20)
             r.raise_for_status()
             return "@" + r.json()["username"]

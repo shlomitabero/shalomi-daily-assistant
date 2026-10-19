@@ -74,3 +74,24 @@ def test_public_waitlist_needs_consent(tmp_path, monkeypatch):
     assert c.get("/leads").status_code == 401                    # list stays private
     r = c.get("/leads.csv", auth=("lilo", "pw"))
     assert "0501234567" in r.text and "bio" in r.text
+
+
+def test_instagram_login_token_uses_instagram_graph(tmp_path, monkeypatch):
+    from zozobra import publish_instagram
+    from zozobra.config import settings
+
+    monkeypatch.setenv("DATA_DIR", str(tmp_path))
+    monkeypatch.delenv("IG_ACCESS_TOKEN", raising=False)
+    calls = []
+
+    class R:
+        status_code = 200
+        text = ""
+        def json(self): return {"user_id": "1784", "username": "lilo_moskowitz"}
+
+    monkeypatch.setattr(publish_instagram.requests, "get", lambda url, **kw: calls.append(url) or R())
+    assert publish_instagram.connect(" IGAAtoken ")["username"] == "lilo_moskowitz"
+    assert calls[0].startswith("https://graph.instagram.com/")
+    s = settings()
+    assert s.ig_access_token == "IGAAtoken" and s.ig_user_id == "1784"
+    assert s.graph_base.startswith("https://graph.instagram.com/")

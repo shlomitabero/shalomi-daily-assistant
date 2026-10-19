@@ -15,8 +15,8 @@ from .config import settings
 class InstagramPublisher:
     def __init__(self) -> None:
         s = settings()
-        self.base = f"https://graph.facebook.com/{s.graph_version}"
-        self.user = s.ig_user_id
+        self.base = s.graph_base
+        self.user = s.ig_user_id or "me"
         self.token = s.ig_access_token
 
     def _post(self, path: str, **params) -> dict:
@@ -64,3 +64,38 @@ class InstagramPublisher:
                                children=",".join(children), caption=caption)["id"]
         self._wait(container)
         return self._post(f"{self.user}/media_publish", creation_id=container)["id"]
+
+
+def connect(token: str) -> dict:
+    """Verify a pasted Instagram-Login token, store it with the account id (panel /setup)."""
+    from .config import save_runtime
+
+    token = token.strip()
+    s = settings()
+    host = "graph.instagram.com" if token.startswith("IG") else "graph.facebook.com"
+    r = requests.get(f"https://{host}/{s.graph_version}/me",
+                     params={"fields": "user_id,username", "access_token": token}, timeout=30)
+    if r.status_code != 200:
+        raise ValueError(f"Instagram rejected the token: {r.text[:300]}")
+    me = r.json()
+    save_runtime(ig_access_token=token, ig_user_id=str(me.get("user_id") or me.get("id")),
+                 ig_username=me.get("username", ""), ig_token_refreshed=time.strftime("%Y-%m-%d"))
+    return me
+
+
+def refresh_token() -> str:
+    """Long-lived Instagram-Login tokens last 60 days; refresh weekly so publishing never stops."""
+    from datetime import date, timedelta
+
+    from .config import runtime, save_runtime
+
+    rt = runtime()
+    token = rt.get("ig_access_token", "")
+    last = rt.get("ig_token_refreshed", "2000-01-01")
+    if not token.startswith("IG") or date.fromisoformat(last) > date.today() - timedelta(days=7):
+        return "no refresh needed"
+    r = requests.get("https://graph.instagram.com/refresh_access_token",
+                     params={"grant_type": "ig_refresh_token", "access_token": token}, timeout=30)
+    r.raise_for_status()
+    save_runtime(ig_access_token=r.json()["access_token"], ig_token_refreshed=date.today().isoformat())
+    return "token refreshed"

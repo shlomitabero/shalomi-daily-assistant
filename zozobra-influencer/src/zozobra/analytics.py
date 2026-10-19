@@ -47,7 +47,7 @@ def score(views: int, likes: int, comments: int, shares: int, saves: int) -> flo
 
 def fetch_instagram(media_id: str) -> dict:
     s = settings()
-    r = requests.get(f"https://graph.facebook.com/{s.graph_version}/{media_id}/insights",
+    r = requests.get(f"{s.graph_base}/{media_id}/insights",
                      params={"metric": "views,reach,likes,comments,shares,saved",
                              "access_token": s.ig_access_token}, timeout=60)
     r.raise_for_status()

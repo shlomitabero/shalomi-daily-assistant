@@ -597,6 +597,9 @@ def setup(online: int = 0):
 <form method="post" action="/setup/engine"><input type="hidden" name="engine" value="{k}"><button class="btn">בחר את המנוע הזה</button></form></div>'''
         for k, label in TALK_LABELS_HE.items() if (shoot / f"{k}.mp4").exists())
     current_preset = runtime().get("voice_preset", "natural")
+    rt_ig = runtime()
+    ig_html = (f'<p>✓ מחובר: <b>@{e(rt_ig.get("ig_username", ""))}</b> · חודש לאחרונה {e(rt_ig.get("ig_token_refreshed", ""))}</p>'
+               if rt_ig.get("ig_access_token") else '<p>לא מחובר עדיין.</p>')
     preset_html = "".join(
         f'<form method="post" action="/setup/voice-preset" class="row" style="margin-top:8px">'
         f'<input type="hidden" name="preset" value="{k}"><b style="min-width:110px">{e(v["label"])}</b>'
@@ -637,6 +640,13 @@ def setup(online: int = 0):
 בתמונה, בקול ובתנועת השפתיים, במכה אחת. לחיצה אחת מייצרת את אותו משפט בשלושת המנועים (כ-5 דקות, כ-10$), ואתה בוחר.</p>
 <form method="post" action="/setup/engines"><button class="btn" {'disabled' if not has_fal else ''}>🎬 השווה 3 מנועים</button></form>
 {engines_html}</div>
+
+<h2>שלב 6 — חיבור אינסטגרם</h2>
+<div class="card">{ig_html}
+<form method="post" action="/setup/instagram"><label>מפתח גישה מאינסטגרם (מתחיל ב-IGAA)</label>
+<input name="token" autocomplete="off" required placeholder="IGAA...">
+<p><button class="btn">🔗 חבר</button></p></form>
+<p class="mute">המפתח נשמר רק בשרת ומתחדש אוטומטית כל שבוע. פרסום בפועל יקרה רק אחרי כיבוי מצב הבדיקה, ורק לפוסטים שאישרת.</p></div>
 
 <h2>דוגמה מוכנה</h2>
 <div class="card"><p>רוצה לראות איך שבוע נראה לפני שמחברים מפתחות? טען לוח תוכן לדוגמה (בנגקוק היט + וייב ערב).</p>
@@ -740,6 +750,18 @@ def _engines_job() -> str:
         except Exception as ex:
             print(f"[talk] shootout {k} failed: {ex}", flush=True)
     return f"מוכנים: {', '.join(done) or 'אף אחד'}"
+
+
+@app.post("/setup/instagram", response_class=HTMLResponse)
+def setup_instagram(token: str = Form(...)):
+    from .publish_instagram import connect
+
+    try:
+        me = connect(token)
+    except Exception as ex:
+        return page("חיבור אינסטגרם", f'<div class="card">החיבור נכשל: {e(ex)}<p><a class="btn" href="/setup">חזרה</a></p></div>', "/setup")
+    return page("חיבור אינסטגרם", f'<div class="card">✓ מחובר ל-<b>@{e(me.get("username", ""))}</b>.'
+                f'<p><a class="btn" href="/setup">חזרה להקמה</a></p></div>', "/setup")
 
 
 @app.post("/setup/engines")
@@ -894,6 +916,10 @@ def _scheduled_plan() -> str:
 
 
 def _scheduled_metrics() -> str:
+    if settings().ig_access_token:
+        from .publish_instagram import refresh_token
+
+        print(f"[job] instagram token: {refresh_token()}", flush=True)
     if not (settings().ig_access_token or settings().tiktok_access_token):
         return "אין חשבונות מחוברים"
     return _metrics_job()

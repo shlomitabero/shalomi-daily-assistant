@@ -69,9 +69,17 @@ class Settings:
     media_public_base_url: str = field(default_factory=lambda: os.getenv("MEDIA_PUBLIC_BASE_URL", ""))
     s3_endpoint_url: str = field(default_factory=lambda: os.getenv("S3_ENDPOINT_URL", ""))
 
-    ig_user_id: str = field(default_factory=lambda: os.getenv("IG_USER_ID", ""))
-    ig_access_token: str = field(default_factory=lambda: os.getenv("IG_ACCESS_TOKEN", ""))
+    # runtime first: the panel saves the token pasted on /setup and the scheduler refreshes it there
+    ig_user_id: str = field(default_factory=lambda: runtime().get("ig_user_id") or os.getenv("IG_USER_ID", ""))
+    ig_access_token: str = field(default_factory=lambda: runtime().get("ig_access_token") or os.getenv("IG_ACCESS_TOKEN", ""))
     graph_version: str = field(default_factory=lambda: os.getenv("META_GRAPH_VERSION", "v23.0"))
+
+    @property
+    def graph_base(self) -> str:
+        """Instagram-Login tokens (IGAA...) talk to graph.instagram.com - no Facebook Page needed;
+        Facebook-Login / system-user tokens use graph.facebook.com."""
+        host = "graph.instagram.com" if self.ig_access_token.startswith("IG") else "graph.facebook.com"
+        return f"https://{host}/{self.graph_version}"
     tiktok_access_token: str = field(default_factory=lambda: os.getenv("TIKTOK_ACCESS_TOKEN", ""))
 
     require_human_approval: bool = field(default_factory=lambda: _bool("REQUIRE_HUMAN_APPROVAL", True))
