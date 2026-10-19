@@ -206,14 +206,33 @@ export function AutomationsPanel({
     setMessageTemplate(rule.messageTemplate);
   }
 
+  /**
+   * The single source of truth for whether Create/Save may actually be
+   * submitted -- shared between handleSubmit's own early-return guard and
+   * the submit button's `disabled` attribute below, so the two can never
+   * drift apart again. Before this, the button's `disabled` only checked
+   * `!messageTemplate.trim()` while handleSubmit's guard also required
+   * fieldValue (for trigger "field_equals"), a schedule time/day (for
+   * trigger "schedule"), a webhook URL (for actionType "webhook"), and a
+   * phone field or number (for actionType "send_whatsapp") -- each of
+   * those was added for a later trigger/action type without the button's
+   * own disabled condition being extended to match. Create/Save stayed
+   * clickable, enabled, with no spinner and no error, and simply did
+   * nothing at all when clicked in any of those states -- the one feature
+   * in this app that silently failed to save with zero feedback.
+   */
+  const formIncomplete =
+    !selectedEntity ||
+    !messageTemplate.trim() ||
+    (trigger === "field_equals" && (!fieldName || !fieldValue.trim())) ||
+    (trigger === "schedule" && (!scheduleTimeUtc || scheduleDays.length === 0)) ||
+    (actionType === "webhook" && !webhookUrl.trim()) ||
+    (actionType === "send_whatsapp" && toMode === "field" && !toField) ||
+    (actionType === "send_whatsapp" && toMode === "static" && !toNumber.trim());
+
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
-    if (!selectedEntity || !messageTemplate.trim()) return;
-    if (trigger === "field_equals" && (!fieldName || !fieldValue.trim())) return;
-    if (trigger === "schedule" && (!scheduleTimeUtc || scheduleDays.length === 0)) return;
-    if (actionType === "webhook" && !webhookUrl.trim()) return;
-    if (actionType === "send_whatsapp" && toMode === "field" && !toField) return;
-    if (actionType === "send_whatsapp" && toMode === "static" && !toNumber.trim()) return;
+    if (formIncomplete || !selectedEntity) return;
     setCreateBusy(true);
     setError(null);
     const everyDay = scheduleDays.length === 7;
@@ -690,7 +709,7 @@ export function AutomationsPanel({
           <p className="muted small">{t("automations.messageTemplate.hint")}</p>
 
           <div className="automations-form-actions">
-            <button type="submit" disabled={createBusy || !messageTemplate.trim()}>
+            <button type="submit" disabled={createBusy || formIncomplete}>
               {editingRuleId
                 ? createBusy
                   ? t("automations.save.busy")

@@ -298,6 +298,75 @@ test("AutomationsPanel creates a new rule from the form and adds it to the list 
   });
 });
 
+/**
+ * Round 705: the Create/Save button's `disabled` only ever checked
+ * `!messageTemplate.trim()`, while handleSubmit's own early-return guard
+ * also required fieldValue (for trigger "field_equals"), a schedule time/
+ * day, a webhook URL, and a phone field or number -- each added for a
+ * later trigger/action type without the button's disabled condition being
+ * extended to match. The button stayed enabled, clickable, and simply did
+ * nothing at all (no fetch, no error, no spinner) when clicked in any of
+ * those states. Confirms the button is now genuinely disabled for the
+ * field_equals/empty-Value case specifically, that submitting the form in
+ * that state makes no request at all, and that filling in the missing
+ * value both enables the button and lets the rule actually get created.
+ */
+test("AutomationsPanel's Create button is disabled (not just silently non-functional) when trigger is field_equals and Value is left blank", async () => {
+  await withJsdom(async () => {
+    const originalFetch = globalThis.fetch;
+    let createCalled = false;
+    globalThis.fetch = (async (input: string, init?: RequestInit) => {
+      const method = init?.method ?? "GET";
+      if (method === "GET" && input === "/api/projects/proj1/automations") {
+        return new Response(JSON.stringify({ rules: [] }), { status: 200, headers: { "content-type": "application/json" } });
+      }
+      if (method === "POST" && input === "/api/projects/proj1/entities/Order/automations") {
+        createCalled = true;
+        const body = JSON.parse(init!.body as string);
+        return new Response(JSON.stringify({ rule: makeRule({ id: "rule2", ...body }) }), {
+          status: 201,
+          headers: { "content-type": "application/json" },
+        });
+      }
+      throw new Error(`unexpected request ${method} ${input}`);
+    }) as typeof fetch;
+
+    try {
+      renderPanel();
+      await waitForCondition(() => document.body.textContent?.includes("No automations yet") ?? false);
+
+      const triggerSelect = Array.from(document.querySelectorAll("select")).find((s) =>
+        Array.from(s.options).some((o) => o.value === "field_equals"),
+      ) as HTMLSelectElement;
+      fireEvent.change(triggerSelect, { target: { value: "field_equals" } });
+
+      // "status" is a plain text field on this fixture's own Order entity
+      // (not boolean/enum), so the Value control stays the free-text input
+      // this placeholder identifies, defaulting to empty.
+      await waitForCondition(() => document.querySelector('input[placeholder="Value (e.g. Shipped)"]') !== null);
+
+      const messageField = document.querySelector(".automations-create-form textarea") as HTMLTextAreaElement;
+      fireEvent.change(messageField, { target: { value: "Status changed" } });
+
+      const submitButton = document.querySelector('.automations-create-form button[type="submit"]') as HTMLButtonElement;
+      assert.equal(submitButton.disabled, true, "Create must be disabled while trigger is field_equals and Value is still blank");
+
+      fireEvent.submit(document.querySelector(".automations-create-form")!);
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      assert.equal(createCalled, false, "submitting the form in this state must make no request at all, matching the disabled button");
+
+      const valueInput = document.querySelector('input[placeholder="Value (e.g. Shipped)"]') as HTMLInputElement;
+      fireEvent.change(valueInput, { target: { value: "Shipped" } });
+      assert.equal(submitButton.disabled, false, "Create must become enabled once a real Value is entered");
+
+      fireEvent.submit(document.querySelector(".automations-create-form")!);
+      await waitForCondition(() => createCalled);
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+});
+
 test("AutomationsPanel's enable/disable button toggles the rule and reflects the server's own updated state", async () => {
   await withJsdom(async () => {
     const originalFetch = globalThis.fetch;
