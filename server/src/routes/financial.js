@@ -8,11 +8,11 @@ import { logAction } from '../services/execution.js';
 
 export const financialRouter = Router();
 
-financialRouter.get('/financial/watchlist', requireOwner, (req, res) => {
+export function listWatchlist(req, res) {
   res.json({ watchlist: db.financial_watchlist.all(), connected: isMarketDataConnected() });
-});
+}
 
-financialRouter.post('/financial/watchlist', requireOwner, asyncHandler(async (req, res) => {
+export async function addToWatchlist(req, res) {
   const { symbol } = req.body ?? {};
   // A non-string symbol (an object, a number) would otherwise be stored
   // as-is and crash the whole Financial page's render — there's no error
@@ -41,7 +41,7 @@ financialRouter.post('/financial/watchlist', requireOwner, asyncHandler(async (r
     createdAt: new Date().toISOString(),
   });
   res.status(201).json({ entry });
-}));
+}
 
 // Without this, a watchlist entry's price/connected status was frozen
 // forever at whatever it was when added — a symbol added before
@@ -50,7 +50,7 @@ financialRouter.post('/financial/watchlist', requireOwner, asyncHandler(async (r
 // updated past the moment it was first added. There was no way back to
 // current data short of deleting and re-adding the symbol (and there's
 // no delete route either).
-financialRouter.post('/financial/watchlist/:id/refresh', requireOwner, asyncHandler(async (req, res) => {
+export async function refreshWatchlistEntry(req, res) {
   const entry = db.financial_watchlist.get(req.params.id);
   if (!entry) return res.status(404).json({ error: 'not found' });
   if (!isMarketDataConnected()) return res.status(503).json({ error: 'market data source is not connected' });
@@ -69,19 +69,19 @@ financialRouter.post('/financial/watchlist/:id/refresh', requireOwner, asyncHand
     connected: true,
   });
   res.json({ entry: updated });
-}));
+}
 
-financialRouter.delete('/financial/watchlist/:id', requireOwner, (req, res) => {
+export function deleteWatchlistEntry(req, res) {
   const existed = db.financial_watchlist.delete(req.params.id);
   if (!existed) return res.status(404).json({ error: 'not found' });
   res.status(204).end();
-});
+}
 
 const VALID_SIDES = ['long', 'short'];
 
 // Simulation only — never touches the real ledger. Real trading requires a
 // broker connection that does not exist in this build.
-financialRouter.post('/financial/paper-trade', requireOwner, (req, res) => {
+export function createPaperTrade(req, res) {
   const { symbol, side, entryPrice, exitPrice, quantity } = req.body ?? {};
   if (!symbol || typeof symbol !== 'string') return res.status(400).json({ error: 'symbol is required' });
   // simulateTradeResult silently treats anything other than 'long' as a
@@ -103,8 +103,15 @@ financialRouter.post('/financial/paper-trade', requireOwner, (req, res) => {
   });
   logAction({ type: 'paper_trade', detail: { symbol, side, netPnl: result.netPnl }, result: 'success' });
   res.status(201).json({ trade });
-});
+}
 
-financialRouter.get('/financial/paper-trades', requireOwner, (req, res) => {
+export function listPaperTrades(req, res) {
   res.json({ trades: db.paper_trades.all().sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt)) });
-});
+}
+
+financialRouter.get('/financial/watchlist', requireOwner, listWatchlist);
+financialRouter.post('/financial/watchlist', requireOwner, asyncHandler(addToWatchlist));
+financialRouter.post('/financial/watchlist/:id/refresh', requireOwner, asyncHandler(refreshWatchlistEntry));
+financialRouter.delete('/financial/watchlist/:id', requireOwner, deleteWatchlistEntry);
+financialRouter.post('/financial/paper-trade', requireOwner, createPaperTrade);
+financialRouter.get('/financial/paper-trades', requireOwner, listPaperTrades);
