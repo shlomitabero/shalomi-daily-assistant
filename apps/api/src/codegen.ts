@@ -3963,6 +3963,14 @@ export function EntityView({ entity, highlightRecordId, onHighlightHandled, onJu
     if (!editingCell) return;
     const { recordId, field } = editingCell;
     const value = cellDraft;
+    // Mirrors handleBulkUpdate's own identical check above -- without it,
+    // clearing a required cell and committing fires a doomed PATCH.
+    const fieldDef = entity.fields.find((f) => f.name === field);
+    if (fieldDef?.required && (value === "" || value == null)) {
+      setError(\`"\${fieldDef.label || fieldDef.name}" is a required field\`);
+      setMoveErrorId(recordId);
+      return;
+    }
     suppressCellBlurCommitRef.current = true;
     setEditingCell(null);
     try {

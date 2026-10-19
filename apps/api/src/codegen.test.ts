@@ -8729,7 +8729,7 @@ test("the exported EntityView's generated inline cell editor suppresses a stale 
       state.editingCell,
       state.cellDraft,
       suppressCellBlurCommitRef,
-      { name: "Customer" },
+      { name: "Customer", fields: [{ name: "name", required: false }] },
       (next: unknown) => (state.editingCell = next as typeof state.editingCell),
       async (_entityName: string, _id: number, patch: Record<string, unknown>) => {
         updateCalls.push(patch);
@@ -8750,6 +8750,54 @@ test("the exported EntityView's generated inline cell editor suppresses a stale 
   assert.deepEqual(updateCalls, [{ name: "New Value" }], "the stale post-commit blur must not send a second updateRecord call for the same value");
   assert.equal(refreshCalled, 1, "the real commit's own refresh must still run exactly once");
   assert.equal(suppressCellBlurCommitRef.current, false, "the flag must be consumed (reset to false) by the stale blur it suppressed");
+});
+
+/**
+ * Round 707: the same gap found in the live preview's own commitInlineEdit
+ * exists here too -- clearing a required cell and committing fired a
+ * doomed PATCH with no pre-submit check at all, unlike this same generated
+ * file's own handleBulkUpdate (round 702), which already has the identical
+ * guard. Mirrors that same check.
+ */
+test("the exported EntityView's generated inline cell editor refuses to commit a required field left blank, instead of sending a doomed PATCH", async () => {
+  const entityViewJsx = generateExportFiles(project).find((f) => f.path === "web/src/components/EntityView.jsx")!.content;
+
+  const commitSrc = entityViewJsx.match(/async function commitInlineEdit\(\) \{[\s\S]*?\n {2}\}\n/)?.[0];
+  assert.ok(commitSrc, "expected to find commitInlineEdit in generated output");
+
+  let capturedError: string | undefined;
+  let updateCalled = false;
+  const fn = new Function(
+    "editingCell",
+    "cellDraft",
+    "suppressCellBlurCommitRef",
+    "entity",
+    "setEditingCell",
+    "updateRecord",
+    "refresh",
+    "setError",
+    "setMoveErrorId",
+    `${commitSrc}\nreturn commitInlineEdit;`,
+  )(
+    { recordId: 1, field: "name" },
+    "",
+    { current: false },
+    { name: "Customer", fields: [{ name: "name", label: "Name", required: true }] },
+    () => {},
+    async () => {
+      updateCalled = true;
+    },
+    async () => {},
+    (msg: string) => {
+      capturedError = msg;
+    },
+    () => {},
+  ) as () => Promise<void>;
+
+  await fn();
+
+  assert.match(capturedError!, /"Name" is a required field/, "must name the required field, mirroring handleBulkUpdate's own message");
+  assert.equal(updateCalled, false, "must not call updateRecord at all when the edited cell's field is required and blank");
 });
 
 /**

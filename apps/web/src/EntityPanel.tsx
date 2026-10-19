@@ -2596,6 +2596,21 @@ export function EntityPanel({
     if (!editingCell) return;
     const { recordId, field } = editingCell;
     const value = cellDraft;
+    // Mirrors the single-record add/edit form's own missingField guard and
+    // handleBulkUpdate's identical check (round 702) -- the third sibling
+    // mutation path through this same FieldInput/isInlineEditableField set
+    // of types, previously the only one with no pre-submit required-field
+    // check at all. Without it, clearing a required text/longtext/number/
+    // date cell and committing fired a doomed PATCH, rejected server-side,
+    // surfaced only as the generic VALIDATION_ERROR string -- actively
+    // misleading here, since it says "check the form" while inline cell
+    // editing never shows a form, just one table cell.
+    const fieldDef = entity.fields.find((f) => f.name === field);
+    if (fieldDef?.required && (value === "" || value == null)) {
+      setError(t("entity.form.requiredField", { field: fieldDef.label ?? fieldDef.name }));
+      setMoveErrorId(recordId);
+      return;
+    }
     suppressCellBlurCommitRef.current = true;
     setEditingCell(null);
     try {

@@ -7089,7 +7089,7 @@ test("EntityPanel's inline cell editor suppresses a stale post-commit blur inste
       state.cellDraft,
       suppressCellBlurCommitRef,
       "proj1",
-      { name: "Customer" },
+      { name: "Customer", fields: [{ name: "name", required: false }] },
       (next: unknown) => (state.editingCell = next as typeof state.editingCell),
       async (_projectId: string, _entityName: string, _id: number, patch: Record<string, unknown>) => {
         updateCalls.push(patch);
@@ -7156,6 +7156,57 @@ test("EntityPanel's inline cell editor discards the draft on Escape without send
       assert.equal(nameCell.textContent, "Acme Corp", "Escape must discard the in-progress draft, leaving the original value visible");
       assert.equal(patchCount, 0, "Escape must never send a PATCH request");
       assert.equal(store[0].name, "Acme Corp", "the mock server's own record must be untouched after a cancelled edit");
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+});
+
+/**
+ * Round 707: the single-record add/edit form's own missingField guard, and
+ * handleBulkUpdate's identical check (round 702), both refuse to submit a
+ * blank required field with a real, specific, translated message -- but
+ * commitInlineEdit (the inline table-cell editor, the third mutation path
+ * through this same FieldInput/isInlineEditableField set of types) had no
+ * such check at all. Clearing a required text cell and committing with
+ * Enter used to fire a doomed PATCH, rejected server-side, surfaced only as
+ * the generic VALIDATION_ERROR string -- actively misleading here, since it
+ * tells the user to "check the form" while inline cell editing never shows
+ * a form, just one table cell. Confirms the real, specific message now
+ * shows instead, no PATCH is sent, and the cell stays open (not silently
+ * closed) so the user can fix the value without double-clicking again.
+ */
+test("EntityPanel's inline cell editor refuses to commit a required field left blank, instead of sending a doomed PATCH", async () => {
+  await withJsdom(async () => {
+    const store: EntityRecord[] = [{ id: 1, createdAt: "x", name: "Acme Corp", status: "new" }];
+    const originalFetch = globalThis.fetch;
+    let patchCount = 0;
+    globalThis.fetch = (async (input: string, init?: RequestInit) => {
+      if (init?.method === "PATCH") patchCount += 1;
+      return mockRecordsFetch(store)(input, init);
+    }) as typeof fetch;
+    try {
+      renderEntityPanel();
+      await waitForCondition(() => document.querySelectorAll("table tbody tr").length === 1);
+
+      const nameCell = document.querySelectorAll("table tbody td")[1] as HTMLTableCellElement;
+      fireEvent.doubleClick(nameCell);
+      const input = nameCell.querySelector('input[type="text"]') as HTMLInputElement;
+      fireEvent.change(input, { target: { value: "" } });
+      fireEvent.keyDown(input, { key: "Enter" });
+      await new Promise((resolve) => setTimeout(resolve, 0));
+
+      assert.equal(patchCount, 0, "must never send a PATCH for a blank required field");
+      assert.equal(store[0].name, "Acme Corp", "the mock server's own record must be untouched");
+      assert.match(
+        document.querySelector("p.error")?.textContent ?? "",
+        /Name.*required field|required field.*Name/,
+        "must show the real, specific required-field message naming the field, not a generic one",
+      );
+      assert.ok(
+        nameCell.querySelector("input") !== null,
+        "the cell must stay open for editing (not silently closed) so the user can fix the value without double-clicking again",
+      );
     } finally {
       globalThis.fetch = originalFetch;
     }
