@@ -95,3 +95,29 @@ def test_instagram_login_token_uses_instagram_graph(tmp_path, monkeypatch):
     s = settings()
     assert s.ig_access_token == "IGAAtoken" and s.ig_user_id == "1784"
     assert s.graph_base.startswith("https://graph.instagram.com/")
+
+
+def test_phone_posting_only_after_approval(tmp_path, monkeypatch):
+    import json as _json
+
+    from fastapi.testclient import TestClient
+
+    monkeypatch.setenv("DATA_DIR", str(tmp_path))
+    monkeypatch.setenv("PANEL_PASSWORD", "")
+    from zozobra import web
+
+    (tmp_path / "queue").mkdir()
+    video = tmp_path / "final.mp4"
+    video.write_bytes(b"x")
+    item = {"day": "2026-10-19", "post_time": "20:00", "platforms": ["instagram"], "format": "reel",
+            "pillar": "pov_story", "dish_id": "atmosphere", "hook": "h", "caption": "c", "status": "pending",
+            "media_path": str(video), "image_urls": [], "steps": {}}
+    (tmp_path / "queue" / "2026-10-19.json").write_text(_json.dumps(item), encoding="utf-8")
+    c = TestClient(web.app)
+    assert "id=\"share\"" not in c.get("/queue/2026-10-19").text
+    c.post("/queue/2026-10-19/posted")
+    assert _json.loads((tmp_path / "queue" / "2026-10-19.json").read_text())["status"] == "pending"
+    c.post("/queue/2026-10-19/save", data={"caption": "c", "post_time": "20:00", "action": "approve"})
+    assert "id=\"share\"" in c.get("/queue/2026-10-19").text
+    c.post("/queue/2026-10-19/posted")
+    assert _json.loads((tmp_path / "queue" / "2026-10-19.json").read_text())["status"] == "published"

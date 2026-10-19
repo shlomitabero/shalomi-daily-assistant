@@ -385,7 +385,43 @@ def queue_view(day: str):
 <button class="btn ghost" name="action" value="save" {'disabled' if locked else ''}>שמור בלי לאשר</button>
 <button class="btn red" name="action" value="reject" {'disabled' if locked else ''}>דחה</button></div>
 <p class="mute">צפה בסרטון עד הסוף לפני אישור: שם מנה נכון, אין טקסט שגוי, הפנים שלה עקביים.</p></form>
+{_phone_post_card(it, day)}
 <details class="card"><summary>פרטים טכניים</summary><pre>{e(json.dumps(it.get('steps', {}), ensure_ascii=False, indent=2))}</pre></details>""")
+
+
+def _phone_post_card(it: dict, day: str) -> str:
+    """Manual posting from the iPhone: only after approval. Copies the caption, then opens the iOS share
+    sheet with the video so it goes straight into Instagram / TikTok (or Save Video)."""
+    if it.get("status") != "approved" or not it.get("media_path") or not Path(it["media_path"]).exists():
+        if it.get("status") == "published":
+            return '<div class="card">✓ סומן כפורסם.</div>'
+        return '<div class="card mute">📲 פרסום מהאייפון יופיע כאן אחרי שתאשר את הפוסט.</div>'
+    url = media_url(it["media_path"])
+    return f"""<div class="card"><b>📲 פרסום מהאייפון</b>
+<ol><li>לחץ <b>שתף</b>: הכיתוב מועתק, וחלון השיתוף נפתח. בחר <b>Instagram</b> (או TikTok / שמור סרטון).</li>
+<li>באינסטגרם: Reel ← הדבק את הכיתוב ← <b>Advanced settings ← AI label: On</b> ← שתף.</li>
+<li>חזור לכאן ולחץ <b>פורסם</b>.</li></ol>
+<p><button class="btn" type="button" id="share">📲 שתף</button>
+<a class="btn ghost" href="{url}" download="lilo_{e(day)}.mp4">⬇️ הורד</a></p>
+<form method="post" action="/queue/{e(day)}/posted"><button class="btn ghost">✅ פורסם (סימון ידני)</button></form>
+<p class="mute" id="msg"></p>
+<script>
+// iOS only opens the share sheet inside the tap itself, so the video is fetched before the tap
+let file = null;
+fetch('{url}').then(r => r.blob()).then(b => {{ file = new File([b], 'lilo_{e(day)}.mp4', {{type: 'video/mp4'}}); }});
+document.getElementById('share').onclick = () => {{
+  const msg = document.getElementById('msg');
+  navigator.clipboard.writeText(document.querySelector('textarea[name=caption]').value)
+    .then(() => {{ msg.textContent = 'הכיתוב הועתק ✓'; }}).catch(() => {{}});
+  if (file && navigator.canShare && navigator.canShare({{files: [file]}})) {{
+    navigator.share({{files: [file]}}).catch(() => {{}});
+  }} else if (!file) {{
+    msg.textContent = 'הסרטון עוד נטען, נסה שוב בעוד רגע';
+  }} else {{
+    location.href = '{url}';
+  }}
+}};
+</script></div>"""
 
 
 @app.post("/queue/{day}/save")
@@ -396,6 +432,18 @@ def queue_save(day: str, caption: str = Form(...), post_time: str = Form(...), a
         it["caption"] = ensure_disclosures(caption.replace("\r\n", "\n"))
         it["post_time"] = post_time
         it["status"] = {"approve": "approved", "reject": "rejected"}.get(action, it.get("status", "pending"))
+        save_item(it)
+    return back(f"/queue/{day}")
+
+
+@app.post("/queue/{day}/posted")
+def queue_posted(day: str):
+    """The user posted it by hand from the phone - only an approved item can be marked."""
+    path = queue_dir() / f"{Path(day).name}.json"
+    it = json.loads(path.read_text(encoding="utf-8"))
+    if it.get("status") == "approved":
+        it["status"] = "published"
+        it.setdefault("published", {})["instagram"] = "manual"
         save_item(it)
     return back(f"/queue/{day}")
 
