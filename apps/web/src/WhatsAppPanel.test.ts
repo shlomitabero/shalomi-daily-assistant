@@ -909,6 +909,94 @@ test("WhatsAppPanel shows a real error with a Retry button when the initial stat
 });
 
 /**
+ * Round 706: the QR-pairing poll (startPolling) gives up and sets loadError
+ * after 5 consecutive failed status checks, without ever changing `status`
+ * -- but unlike every other loadError cause (connect/disconnect/send, each
+ * of which keeps its own button usable), the connecting/qr box rendered no
+ * button at all. A user mid-pairing (exactly the kind of long-lived screen
+ * where a brief network hiccup is plausible) was left permanently stuck
+ * with a stale QR code and an error line, with no in-panel way forward
+ * short of closing and reopening the whole panel -- contradicting this
+ * same file's own doc comment on initialLoadError, which claims every
+ * other loadError cause "already has its own clear recovery action".
+ * Mocks setInterval only (via node:test's MockTimers) so the 5 poll
+ * failures can be driven deterministically without a real 7.5-second wait,
+ * while leaving the real setTimeout(0) waitForCondition/flush idiom intact.
+ */
+test("WhatsAppPanel's QR-pairing poll offers a real Retry button after 5 consecutive failures, instead of leaving the user stuck with a stale QR code", async (t) => {
+  await withJsdom(async () => {
+    const originalFetch = globalThis.fetch;
+    let statusCallCount = 0;
+    globalThis.fetch = (async (input: string, init?: RequestInit): Promise<Response> => {
+      const method = init?.method ?? "GET";
+      if (method === "GET" && input === "/api/projects/proj1/integrations/whatsapp/status") {
+        statusCallCount += 1;
+        // Call 1: the initial mount fetch, resolves to "qr" and starts
+        // polling. Calls 2-6: the next 5 consecutive poll ticks, each a
+        // real failure. Call 7+: the poll a successful Retry click issues.
+        if (statusCallCount >= 2 && statusCallCount <= 6) {
+          return new Response(JSON.stringify({ error: "Connection lost" }), {
+            status: 500,
+            headers: { "content-type": "application/json" },
+          });
+        }
+        return new Response(
+          JSON.stringify({ status: "qr", qrDataUrl: "data:image/png;base64,abc", phoneNumber: null, error: null }),
+          { status: 200, headers: { "content-type": "application/json" } },
+        );
+      }
+      throw new Error(`unexpected request ${method} ${input}`);
+    }) as typeof fetch;
+
+    t.mock.timers.enable({ apis: ["setInterval"] });
+    try {
+      render(
+        React.createElement(
+          ThemeProvider,
+          null,
+          React.createElement(
+            LanguageProvider,
+            null,
+            React.createElement(WhatsAppPanel, { projectId: "proj1", projectName: "Test Project", onClose: () => {}, onJumpToEntity: () => {}, onJumpToRecord: () => {} }),
+          ),
+        ),
+      );
+      await waitForCondition(() => document.querySelector(".whatsapp-qr-image") !== null);
+
+      for (let i = 0; i < 5; i++) {
+        await act(async () => {
+          t.mock.timers.tick(1500);
+          await new Promise((resolve) => setTimeout(resolve, 0));
+        });
+      }
+
+      await waitForCondition(() => document.querySelector(".whatsapp-connect-box .error-retry-row") !== null);
+      const errorRow = document.querySelector(".whatsapp-connect-box .error-retry-row")!;
+      assert.match(errorRow.querySelector("p.error")!.textContent ?? "", /Connection lost/);
+      assert.equal(
+        document.querySelectorAll("p.error").length,
+        1,
+        "the error must appear exactly once, inside the connecting/qr box -- not also duplicated in the generic loadError banner above it",
+      );
+      // The stale QR image must still be visible -- Retry is an ADDITION
+      // to this state, not a replacement of it.
+      assert.ok(document.querySelector(".whatsapp-qr-image"), "the QR code itself must still be shown alongside the error");
+
+      const retryButton = errorRow.querySelector("button") as HTMLButtonElement;
+      assert.ok(retryButton, "expected a real Retry button once the QR poll has genuinely given up");
+      assert.equal(retryButton.textContent, "Try again");
+
+      fireEvent.click(retryButton);
+      await waitForCondition(() => document.querySelector(".error-retry-row") === null);
+      assert.ok(document.querySelector(".whatsapp-qr-image"), "a successful retry must resume showing the QR code");
+    } finally {
+      t.mock.timers.reset();
+      globalThis.fetch = originalFetch;
+    }
+  });
+});
+
+/**
  * Real-DOM coverage for handleSendTest -- the two typed text fields
  * (recipient number, message body) had never been exercised through a
  * real render, only via handleDisconnect's own function-extraction tests

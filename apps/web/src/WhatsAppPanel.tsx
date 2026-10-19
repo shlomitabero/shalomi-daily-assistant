@@ -434,6 +434,25 @@ export function WhatsAppPanel({
     if (messages.length > 0) setWhatsAppLastSeenId(projectId, messages[0].id);
   }, [projectId, messages]);
 
+  /**
+   * startPolling's own 5-consecutive-failures giveup (above) sets loadError
+   * but never changes `status`, so a user mid-QR-pairing was left staring
+   * at the stale QR code plus an error line with no in-panel action at
+   * all -- the shared loadError block right above this component's own
+   * per-status boxes renders it as a bare, buttonless <p>, unlike every
+   * other loadError cause (connect/disconnect/send failures), which all
+   * keep their own clear recovery action (the Connect/Disconnect/Retry
+   * button for that state) usable. Reuses loadInitialStatus rather than
+   * just calling startPolling() again, since the real status may have
+   * changed during the outage (e.g. genuinely connected or disconnected
+   * while the poll was failing) -- a plain retry must re-check reality,
+   * not just assume nothing changed.
+   */
+  function handleRetryPoll() {
+    setLoadError(null);
+    loadInitialStatus();
+  }
+
   async function handleConnect() {
     setConnecting(true);
     setLoadError(null);
@@ -724,7 +743,12 @@ export function WhatsAppPanel({
         </div>
         <p className="muted small">{t("whatsapp.description")}</p>
         <p className="muted small whatsapp-prereq">{t("whatsapp.prerequisite")}</p>
-        {loadError && (
+        {/* s === "connecting"/"qr" renders its own loadError + Retry button
+         * below instead -- that's the one state with no other recovery
+         * action, unlike every other loadError cause (disconnected/
+         * connected both keep their own Connect/Disconnect button usable
+         * regardless). */}
+        {loadError && s !== "connecting" && s !== "qr" && (
           <p className="error" role="status">
             {loadError}
           </p>
@@ -769,6 +793,16 @@ export function WhatsAppPanel({
               <p className="error" role="status">
                 {status.error}
               </p>
+            )}
+            {loadError && (
+              <div className="error-retry-row">
+                <p className="error" role="status">
+                  {loadError}
+                </p>
+                <button type="button" className="secondary small" onClick={handleRetryPoll}>
+                  {t("whatsapp.retry")}
+                </button>
+              </div>
             )}
           </div>
         )}
