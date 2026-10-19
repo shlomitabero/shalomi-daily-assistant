@@ -6370,7 +6370,7 @@ test("the exported EntityView renders a real CSV import (the complement to CSV e
   const files = generateExportFiles(project);
   const entityViewJsx = files.find((f) => f.path === "web/src/components/EntityView.jsx")!.content;
   assert.match(entityViewJsx, /function parseCsv\(text\)/);
-  assert.match(entityViewJsx, /function buildImportRecords\(fields, rows\)/);
+  assert.match(entityViewJsx, /function buildImportRecords\(fields, rows, relatedRecords\)/);
   assert.match(entityViewJsx, /async function handleImportFile\(e\)/);
   assert.match(entityViewJsx, /csv-import-label/);
   assert.match(entityViewJsx, /Promise\.allSettled/);
@@ -6418,7 +6418,7 @@ test("the exported EntityView's CSV import rejects a date field value that isn't
   const fieldLabelOccurrencesSrc = entityViewJsx.match(/function fieldLabelOccurrences\(fields\) \{[\s\S]*?\n\}\n/)?.[0];
   const fieldDisplayLabelSrc = entityViewJsx.match(/function fieldDisplayLabel\(field, occurrences\) \{[\s\S]*?\n\}\n/)?.[0];
   const headerSrc = entityViewJsx.match(/function matchesImportHeader\(header, field, labelOccurrences\) \{[\s\S]*?\n\}\n/)?.[0];
-  const importSrc = entityViewJsx.match(/function buildImportRecords\(fields, rows\) \{[\s\S]*?\n\}\n/)?.[0];
+  const importSrc = entityViewJsx.match(/function buildImportRecords\(fields, rows, relatedRecords\) \{[\s\S]*?\n\}\n/)?.[0];
   assert.ok(
     isValidDateSrc && fieldLabelOccurrencesSrc && fieldDisplayLabelSrc && headerSrc && importSrc,
     "expected to find isValidDate/fieldLabelOccurrences/fieldDisplayLabel/matchesImportHeader/buildImportRecords in generated output",
@@ -6469,7 +6469,7 @@ test("the exported EntityView's CSV import accepts a date field value in the yea
   const fieldLabelOccurrencesSrc = entityViewJsx.match(/function fieldLabelOccurrences\(fields\) \{[\s\S]*?\n\}\n/)?.[0];
   const fieldDisplayLabelSrc = entityViewJsx.match(/function fieldDisplayLabel\(field, occurrences\) \{[\s\S]*?\n\}\n/)?.[0];
   const headerSrc = entityViewJsx.match(/function matchesImportHeader\(header, field, labelOccurrences\) \{[\s\S]*?\n\}\n/)?.[0];
-  const importSrc = entityViewJsx.match(/function buildImportRecords\(fields, rows\) \{[\s\S]*?\n\}\n/)?.[0];
+  const importSrc = entityViewJsx.match(/function buildImportRecords\(fields, rows, relatedRecords\) \{[\s\S]*?\n\}\n/)?.[0];
   assert.ok(
     isValidDateSrc && fieldLabelOccurrencesSrc && fieldDisplayLabelSrc && headerSrc && importSrc,
     "expected to find isValidDate/fieldLabelOccurrences/fieldDisplayLabel/matchesImportHeader/buildImportRecords in generated output",
@@ -6523,7 +6523,7 @@ test("the exported EntityView's CSV import rejects an unrecognized boolean value
   const fieldLabelOccurrencesSrc = entityViewJsx.match(/function fieldLabelOccurrences\(fields\) \{[\s\S]*?\n\}\n/)?.[0];
   const fieldDisplayLabelSrc = entityViewJsx.match(/function fieldDisplayLabel\(field, occurrences\) \{[\s\S]*?\n\}\n/)?.[0];
   const headerSrc = entityViewJsx.match(/function matchesImportHeader\(header, field, labelOccurrences\) \{[\s\S]*?\n\}\n/)?.[0];
-  const importSrc = entityViewJsx.match(/function buildImportRecords\(fields, rows\) \{[\s\S]*?\n\}\n/)?.[0];
+  const importSrc = entityViewJsx.match(/function buildImportRecords\(fields, rows, relatedRecords\) \{[\s\S]*?\n\}\n/)?.[0];
   assert.ok(
     isValidDateSrc && fieldLabelOccurrencesSrc && fieldDisplayLabelSrc && headerSrc && importSrc,
     "expected to find isValidDate/fieldLabelOccurrences/fieldDisplayLabel/matchesImportHeader/buildImportRecords in generated output",
@@ -6587,7 +6587,7 @@ test("the exported EntityView's CSV import rejects \"Infinity\"/\"-Infinity\" as
   const fieldLabelOccurrencesSrc = entityViewJsx.match(/function fieldLabelOccurrences\(fields\) \{[\s\S]*?\n\}\n/)?.[0];
   const fieldDisplayLabelSrc = entityViewJsx.match(/function fieldDisplayLabel\(field, occurrences\) \{[\s\S]*?\n\}\n/)?.[0];
   const headerSrc = entityViewJsx.match(/function matchesImportHeader\(header, field, labelOccurrences\) \{[\s\S]*?\n\}\n/)?.[0];
-  const importSrc = entityViewJsx.match(/function buildImportRecords\(fields, rows\) \{[\s\S]*?\n\}\n/)?.[0];
+  const importSrc = entityViewJsx.match(/function buildImportRecords\(fields, rows, relatedRecords\) \{[\s\S]*?\n\}\n/)?.[0];
   assert.ok(
     isValidDateSrc && fieldLabelOccurrencesSrc && fieldDisplayLabelSrc && headerSrc && importSrc,
     "expected to find isValidDate/fieldLabelOccurrences/fieldDisplayLabel/matchesImportHeader/buildImportRecords in generated output",
@@ -6645,7 +6645,7 @@ test("the exported EntityView's CSV import maps each column to a distinct field 
   const fieldLabelOccurrencesSrc = entityViewJsx.match(/function fieldLabelOccurrences\(fields\) \{[\s\S]*?\n\}\n/)?.[0];
   const fieldDisplayLabelSrc = entityViewJsx.match(/function fieldDisplayLabel\(field, occurrences\) \{[\s\S]*?\n\}\n/)?.[0];
   const headerSrc = entityViewJsx.match(/function matchesImportHeader\(header, field, labelOccurrences\) \{[\s\S]*?\n\}\n/)?.[0];
-  const importSrc = entityViewJsx.match(/function buildImportRecords\(fields, rows\) \{[\s\S]*?\n\}\n/)?.[0];
+  const importSrc = entityViewJsx.match(/function buildImportRecords\(fields, rows, relatedRecords\) \{[\s\S]*?\n\}\n/)?.[0];
   assert.ok(
     isValidDateSrc && fieldLabelOccurrencesSrc && fieldDisplayLabelSrc && headerSrc && importSrc,
     "expected to find isValidDate/fieldLabelOccurrences/fieldDisplayLabel/matchesImportHeader/buildImportRecords in generated output",
@@ -6708,7 +6708,7 @@ test("the exported EntityView's CSV export and import round-trip two same-labele
   const parseCsvSrc = entityViewJsx.match(/function parseCsv\(text\) \{[\s\S]*?\n\}\n/)?.[0];
   const headerSrc = entityViewJsx.match(/function matchesImportHeader\(header, field, labelOccurrences\) \{[\s\S]*?\n\}\n/)?.[0];
   const isValidDateSrc = entityViewJsx.match(/const DATE_FORMAT[\s\S]*?\nfunction isValidDate\(value\) \{[\s\S]*?\n\}\n/)?.[0];
-  const importSrc = entityViewJsx.match(/function buildImportRecords\(fields, rows\) \{[\s\S]*?\n\}\n/)?.[0];
+  const importSrc = entityViewJsx.match(/function buildImportRecords\(fields, rows, relatedRecords\) \{[\s\S]*?\n\}\n/)?.[0];
   assert.ok(
     csvEscapeSrc && fieldDisplayValueSrc && recordsToCsvSrc && fieldLabelOccurrencesSrc && fieldDisplayLabelSrc && parseCsvSrc && headerSrc && isValidDateSrc && importSrc,
     "expected to find csvEscape/fieldDisplayValue/recordsToCsv/fieldLabelOccurrences/fieldDisplayLabel/parseCsv/matchesImportHeader/isValidDate/buildImportRecords in generated output",
@@ -6765,7 +6765,7 @@ test("the exported EntityView's CSV import ignores a blank/unnamed column instea
   const fieldLabelOccurrencesSrc = entityViewJsx.match(/function fieldLabelOccurrences\(fields\) \{[\s\S]*?\n\}\n/)?.[0];
   const fieldDisplayLabelSrc = entityViewJsx.match(/function fieldDisplayLabel\(field, occurrences\) \{[\s\S]*?\n\}\n/)?.[0];
   const headerSrc = entityViewJsx.match(/function matchesImportHeader\(header, field, labelOccurrences\) \{[\s\S]*?\n\}\n/)?.[0];
-  const importSrc = entityViewJsx.match(/function buildImportRecords\(fields, rows\) \{[\s\S]*?\n\}\n/)?.[0];
+  const importSrc = entityViewJsx.match(/function buildImportRecords\(fields, rows, relatedRecords\) \{[\s\S]*?\n\}\n/)?.[0];
   assert.ok(
     isValidDateSrc && fieldLabelOccurrencesSrc && fieldDisplayLabelSrc && headerSrc && importSrc,
     "expected to find isValidDate/fieldLabelOccurrences/fieldDisplayLabel/matchesImportHeader/buildImportRecords in generated output",
@@ -6815,7 +6815,7 @@ test("the exported EntityView's CSV export and import round-trip a value csvEsca
   const parseCsvSrc = entityViewJsx.match(/function parseCsv\(text\) \{[\s\S]*?\n\}\n/)?.[0];
   const headerSrc = entityViewJsx.match(/function matchesImportHeader\(header, field, labelOccurrences\) \{[\s\S]*?\n\}\n/)?.[0];
   const isValidDateSrc = entityViewJsx.match(/const DATE_FORMAT[\s\S]*?\nfunction isValidDate\(value\) \{[\s\S]*?\n\}\n/)?.[0];
-  const importSrc = entityViewJsx.match(/function buildImportRecords\(fields, rows\) \{[\s\S]*?\n\}\n/)?.[0];
+  const importSrc = entityViewJsx.match(/function buildImportRecords\(fields, rows, relatedRecords\) \{[\s\S]*?\n\}\n/)?.[0];
   assert.ok(
     csvEscapeSrc && fieldDisplayValueSrc && recordsToCsvSrc && fieldLabelOccurrencesSrc && fieldDisplayLabelSrc && parseCsvSrc && headerSrc && isValidDateSrc && importSrc,
     "expected to find csvEscape/fieldDisplayValue/recordsToCsv/fieldLabelOccurrences/fieldDisplayLabel/parseCsv/matchesImportHeader/isValidDate/buildImportRecords in generated output",
@@ -6868,7 +6868,7 @@ test("the exported EntityView's CSV export and import round-trip a value that ge
   const parseCsvSrc = entityViewJsx.match(/function parseCsv\(text\) \{[\s\S]*?\n\}\n/)?.[0];
   const headerSrc = entityViewJsx.match(/function matchesImportHeader\(header, field, labelOccurrences\) \{[\s\S]*?\n\}\n/)?.[0];
   const isValidDateSrc = entityViewJsx.match(/const DATE_FORMAT[\s\S]*?\nfunction isValidDate\(value\) \{[\s\S]*?\n\}\n/)?.[0];
-  const importSrc = entityViewJsx.match(/function buildImportRecords\(fields, rows\) \{[\s\S]*?\n\}\n/)?.[0];
+  const importSrc = entityViewJsx.match(/function buildImportRecords\(fields, rows, relatedRecords\) \{[\s\S]*?\n\}\n/)?.[0];
   assert.ok(
     csvEscapeSrc && fieldDisplayValueSrc && recordsToCsvSrc && fieldLabelOccurrencesSrc && fieldDisplayLabelSrc && parseCsvSrc && headerSrc && isValidDateSrc && importSrc,
     "expected to find csvEscape/fieldDisplayValue/recordsToCsv/fieldLabelOccurrences/fieldDisplayLabel/parseCsv/matchesImportHeader/isValidDate/buildImportRecords in generated output",
@@ -6921,7 +6921,7 @@ test("the exported EntityView's CSV export (with includeId) and import round-tri
   const parseCsvSrc = entityViewJsx.match(/function parseCsv\(text\) \{[\s\S]*?\n\}\n/)?.[0];
   const headerSrc = entityViewJsx.match(/function matchesImportHeader\(header, field, labelOccurrences\) \{[\s\S]*?\n\}\n/)?.[0];
   const isValidDateSrc = entityViewJsx.match(/const DATE_FORMAT[\s\S]*?\nfunction isValidDate\(value\) \{[\s\S]*?\n\}\n/)?.[0];
-  const importSrc = entityViewJsx.match(/function buildImportRecords\(fields, rows\) \{[\s\S]*?\n\}\n/)?.[0];
+  const importSrc = entityViewJsx.match(/function buildImportRecords\(fields, rows, relatedRecords\) \{[\s\S]*?\n\}\n/)?.[0];
   assert.ok(
     csvEscapeSrc && fieldDisplayValueSrc && recordsToCsvSrc && fieldLabelOccurrencesSrc && fieldDisplayLabelSrc && parseCsvSrc && headerSrc && isValidDateSrc && importSrc,
     "expected to find csvEscape/fieldDisplayValue/recordsToCsv/fieldLabelOccurrences/fieldDisplayLabel/parseCsv/matchesImportHeader/isValidDate/buildImportRecords in generated output",
@@ -6944,6 +6944,100 @@ test("the exported EntityView's CSV export (with includeId) and import round-tri
   const { records, errors } = buildImportRecords(fields, rows);
   assert.deepEqual(errors, []);
   assert.deepEqual(records, [{ id: 42, name: "Globex" }, { name: "Amit" }], "a matched id must resolve for re-import, and a blank id must still mean a brand-new record");
+});
+
+/**
+ * Round 712: the live preview's own buildImportRecords (apps/web/src/
+ * entityFormatting.ts) gained real relation-cell resolution this round --
+ * before it, a relation column was always ignored, even though
+ * recordsToCsv's own export already renders that exact cell as a real,
+ * resolvable display label. This exported, standalone app's own
+ * independent copy of buildImportRecords had the identical gap (a bare
+ * `if (field.type === "relation") continue;`), now ported the same way:
+ * resolving a cell like "Dana Levi" back to the matching related record's
+ * id via recordDisplayLabel, or accepting its literal "#<id>" form,
+ * including for a *required* relation field, which used to refuse the
+ * whole import outright.
+ */
+test("the exported EntityView's CSV import resolves a relation cell to the matching related record's id, including a required relation field, and errors on no match or an ambiguous match", () => {
+  const relationProject: Project = {
+    ...project,
+    spec: {
+      ...project.spec,
+      entities: [
+        {
+          name: "Courier",
+          label: "Courier",
+          fields: [{ name: "name", label: "Name", type: "text", required: true }],
+        },
+        {
+          name: "Order",
+          label: "Order",
+          fields: [
+            { name: "label", label: "Label", type: "text", required: true },
+            { name: "courierId", label: "Courier", type: "relation", required: true, relationTo: "Courier" },
+          ],
+        },
+      ],
+    },
+  };
+  const entityViewJsx = generateExportFiles(relationProject).find((f) => f.path === "web/src/components/EntityView.jsx")!.content;
+
+  const displayFieldHintsSrc = entityViewJsx.match(/const DISPLAY_FIELD_NAME_HINTS = .*;\n/)?.[0];
+  const pickDisplaySrc = entityViewJsx.match(/export function pickDisplayField\(entity\) \{[\s\S]*?\n\}\n/)?.[0]?.replace("export ", "");
+  const recordDisplayLabelSrc = entityViewJsx.match(/export function recordDisplayLabel\(entity, record\) \{[\s\S]*?\n\}\n/)?.[0]?.replace("export ", "");
+  const fieldLabelOccurrencesSrc = entityViewJsx.match(/function fieldLabelOccurrences\(fields\) \{[\s\S]*?\n\}\n/)?.[0];
+  const fieldDisplayLabelSrc = entityViewJsx.match(/function fieldDisplayLabel\(field, occurrences\) \{[\s\S]*?\n\}\n/)?.[0];
+  const headerSrc = entityViewJsx.match(/function matchesImportHeader\(header, field, labelOccurrences\) \{[\s\S]*?\n\}\n/)?.[0];
+  const importSrc = entityViewJsx.match(/function buildImportRecords\(fields, rows, relatedRecords\) \{[\s\S]*?\n\}\n/)?.[0];
+  assert.ok(
+    displayFieldHintsSrc && pickDisplaySrc && recordDisplayLabelSrc && fieldLabelOccurrencesSrc && fieldDisplayLabelSrc && headerSrc && importSrc,
+    "expected to find DISPLAY_FIELD_NAME_HINTS/pickDisplayField/recordDisplayLabel/fieldLabelOccurrences/fieldDisplayLabel/matchesImportHeader/buildImportRecords in generated output",
+  );
+
+  // ALL_ENTITIES is a real module-level const in the generated file, built
+  // from the project's own entities -- not part of the extracted function
+  // snippets above, so this test supplies its own equivalent directly,
+  // same shape relationResolvable/the relation branch expect to find it in.
+  const allEntitiesDecl = `const ALL_ENTITIES = ${JSON.stringify(relationProject.spec.entities)};`;
+
+  const buildImportRecords = new Function(
+    `${allEntitiesDecl}\n${displayFieldHintsSrc}\n${pickDisplaySrc}\n${recordDisplayLabelSrc}\n${fieldLabelOccurrencesSrc}\n${fieldDisplayLabelSrc}\n${headerSrc}\n${importSrc}\nreturn buildImportRecords;`,
+  )();
+
+  const fields = relationProject.spec.entities[1].fields;
+  const couriers: EntityRecord[] = [
+    { id: 1, name: "Yossi Cohen" },
+    { id: 2, name: "Yossi Cohen" },
+    { id: 3, name: "Dana Levi" },
+  ];
+
+  const resolved = buildImportRecords(fields, [["Label", "Courier"], ["Order A", "Dana Levi"]], { Courier: couriers });
+  assert.deepEqual(resolved.errors, []);
+  assert.deepEqual(resolved.records, [{ label: "Order A", courierId: 3 }]);
+
+  const hashForm = buildImportRecords(fields, [["Label", "Courier"], ["Order A", "#999"]], { Courier: couriers });
+  assert.deepEqual(hashForm.errors, []);
+  assert.deepEqual(hashForm.records, [{ label: "Order A", courierId: 999 }]);
+
+  const noMatch = buildImportRecords(fields, [["Label", "Courier"], ["Order A", "Someone Else"]], { Courier: couriers });
+  assert.deepEqual(noMatch.records, []);
+  assert.equal(noMatch.errors.length, 1);
+  assert.match(noMatch.errors[0], /doesn't match any Courier record/);
+
+  const ambiguous = buildImportRecords(fields, [["Label", "Courier"], ["Order A", "Yossi Cohen"]], { Courier: couriers });
+  assert.deepEqual(ambiguous.records, []);
+  assert.equal(ambiguous.errors.length, 1);
+  assert.match(ambiguous.errors[0], /matches more than one Courier record/);
+  assert.match(ambiguous.errors[0], /#<id>/);
+
+  // No relatedRecords provided at all -- falls back to the original
+  // whole-import refusal for this required relation field, exactly like
+  // before this round, instead of crashing on an undefined lookup.
+  const noData = buildImportRecords(fields, [["Label", "Courier"], ["Order A", "Dana Levi"]]);
+  assert.deepEqual(noData.records, []);
+  assert.equal(noData.errors.length, 1);
+  assert.match(noData.errors[0], /CSV import isn't supported yet for entities with a required relation field/);
 });
 
 test("the exported EntityView's handleImportFile PATCHes a row whose id resolved, instead of always POSTing a duplicate", () => {

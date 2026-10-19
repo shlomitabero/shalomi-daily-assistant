@@ -1608,6 +1608,91 @@ test("buildImportRecords ignores an optional relation column instead of failing 
   assert.deepEqual(result.records, [{ name: "Dana" }]);
 });
 
+/**
+ * Round 712: before this round, a relation field's CSV cell was always
+ * ignored (see the two tests just above) -- even though recordsToCsv's own
+ * export renders the exact same cell as a real, resolvable display label
+ * (relationDisplayLabel), making a round-trip of your own export silently
+ * drop every relation column's data. When the caller passes allEntities/
+ * relatedRecords with the target entity's records already loaded (the real
+ * production case -- EntityPanel.tsx already has both in scope), the cell
+ * is now resolved back to the matching record's id the same way
+ * relationDisplayLabel resolves it forward, including a *required*
+ * relation field, which used to refuse the whole import outright.
+ */
+test("buildImportRecords resolves a relation cell to the matching related record's id when allEntities/relatedRecords are provided, including a required relation field", () => {
+  const fields: Field[] = [
+    { name: "name", type: "text", required: true },
+    { name: "courierId", label: "Courier", type: "relation", required: true, relationTo: "Courier" },
+  ];
+  const couriers: EntityRecord[] = [
+    { id: 42, name: "Yossi Cohen" },
+    { id: 7, name: "Dana Levi" },
+  ];
+  const rows = [["name", "Courier"], ["Order A", "Yossi Cohen"], ["Order B", "Dana Levi"]];
+  const result = buildImportRecords(fields, rows, [courierEntity], { Courier: couriers });
+  assert.deepEqual(result.errors, []);
+  assert.deepEqual(result.records, [
+    { name: "Order A", courierId: 42 },
+    { name: "Order B", courierId: 7 },
+  ]);
+});
+
+test("buildImportRecords accepts a relation cell's literal \"#<id>\" form directly, the same fallback relationDisplayLabel itself renders when a label can't be resolved", () => {
+  const fields: Field[] = [
+    { name: "name", type: "text", required: true },
+    { name: "courierId", label: "Courier", type: "relation", required: false, relationTo: "Courier" },
+  ];
+  const couriers: EntityRecord[] = [{ id: 42, name: "Yossi Cohen" }];
+  const rows = [["name", "Courier"], ["Order A", "#999"]];
+  const result = buildImportRecords(fields, rows, [courierEntity], { Courier: couriers });
+  assert.deepEqual(result.errors, []);
+  assert.deepEqual(result.records, [{ name: "Order A", courierId: 999 }]);
+});
+
+test("buildImportRecords reports a row error for a relation cell that matches no related record, instead of silently dropping it", () => {
+  const fields: Field[] = [
+    { name: "name", type: "text", required: true },
+    { name: "courierId", label: "Courier", type: "relation", required: false, relationTo: "Courier" },
+  ];
+  const couriers: EntityRecord[] = [{ id: 42, name: "Yossi Cohen" }];
+  const rows = [["name", "Courier"], ["Order A", "Someone Else"]];
+  const result = buildImportRecords(fields, rows, [courierEntity], { Courier: couriers });
+  assert.deepEqual(result.records, []);
+  assert.equal(result.errors.length, 1);
+  assert.match(result.errors[0], /doesn't match any Courier record/);
+});
+
+test("buildImportRecords reports a row error asking for the \"#<id>\" form when a relation cell's label matches more than one related record, instead of silently guessing wrong", () => {
+  const fields: Field[] = [
+    { name: "name", type: "text", required: true },
+    { name: "courierId", label: "Courier", type: "relation", required: false, relationTo: "Courier" },
+  ];
+  const couriers: EntityRecord[] = [
+    { id: 1, name: "Yossi Cohen" },
+    { id: 2, name: "Yossi Cohen" },
+  ];
+  const rows = [["name", "Courier"], ["Order A", "Yossi Cohen"]];
+  const result = buildImportRecords(fields, rows, [courierEntity], { Courier: couriers });
+  assert.deepEqual(result.records, []);
+  assert.equal(result.errors.length, 1);
+  assert.match(result.errors[0], /matches more than one Courier record/);
+  assert.match(result.errors[0], /#<id>/);
+});
+
+test("buildImportRecords still reports a missing-required-field error for a blank relation cell even when relatedRecords are provided", () => {
+  const fields: Field[] = [
+    { name: "name", type: "text", required: true },
+    { name: "courierId", label: "Courier", type: "relation", required: true, relationTo: "Courier" },
+  ];
+  const couriers: EntityRecord[] = [{ id: 42, name: "Yossi Cohen" }];
+  const rows = [["name", "Courier"], ["Order A", ""]];
+  const result = buildImportRecords(fields, rows, [courierEntity], { Courier: couriers });
+  assert.deepEqual(result.records, []);
+  assert.equal(result.errors.length, 1);
+  assert.match(result.errors[0], /missing required field "Courier"/);
+});
+
 test("buildImportRecords ignores an unmatched CSV column instead of erroring on it", () => {
   const fields: Field[] = [{ name: "name", type: "text", required: true }];
   const rows = [["name", "internal notes"], ["Dana", "vip, handle with care"]];

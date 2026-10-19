@@ -1289,18 +1289,30 @@ const BOOLEAN_FALSE_VALUES = ["false", "0", "no", "לא"];
  * unmatched column is simply ignored rather than treated as an error,
  * since a spreadsheet often carries extra notes columns.
  *
- * Relation fields are not supported yet -- resolving a CSV cell like
- * "Dana Levi" back to the right foreign-key id needs the related entity's
- * own records loaded, which the caller may not have fetched. A *required*
- * relation field makes every row impossible to satisfy, so this refuses
- * the whole import with one clear error instead of silently producing
- * records that will fail the server's own required-field check one at a
- * time. An *optional* relation column, if present, is ignored per row.
+ * A relation field's cell (e.g. "Dana Levi") is resolved back to the
+ * related record's real id the same way relationDisplayLabel renders it
+ * forward: matching recordDisplayLabel case-insensitively against
+ * `relatedRecords[field.relationTo]`, or accepting the literal "#<id>"
+ * form directly (the same fallback relationDisplayLabel itself renders
+ * when a display label can't be resolved), so a file this app exported
+ * round-trips even for a record whose label has since changed or gone
+ * ambiguous. Zero matches is a row error; more than one match (display
+ * labels aren't guaranteed unique -- see fieldLabelOccurrences' own
+ * disambiguation for column headers, a different instance of the same
+ * problem) asks for the "#<id>" form instead of silently guessing wrong.
+ * This resolution needs `allEntities`/`relatedRecords` to actually be
+ * passed in with the target entity's records loaded -- a caller that
+ * omits them (or a relation whose target isn't part of this project's
+ * spec at all) falls back to the original "impossible from a CSV cell"
+ * treatment: an optional column is ignored, and a *required* relation
+ * field refuses the whole import with one clear error instead of
+ * silently producing records that will fail the server's own
+ * required-field check one at a time.
  *
  * File fields have the same "impossible from a CSV cell" problem for the
  * opposite reason -- there's no uploaded file to attach, not a missing
- * lookup -- so a required file field gets the same whole-import refusal,
- * and an optional one is ignored per row exactly like relation.
+ * lookup -- so a required file field always gets the same whole-import
+ * refusal, and an optional one is always ignored per row.
  *
  * A header cell literally "id" (case-insensitive) is recognized as
  * recordsToCsv's own re-import-friendly leading column, not matched
@@ -1312,10 +1324,27 @@ const BOOLEAN_FALSE_VALUES = ["false", "0", "no", "לא"];
  * appended below the exported ones, e.g.) is simply a new record, exactly
  * like a file with no id column at all.
  */
-export function buildImportRecords(fields: Field[], rows: string[][]): ImportResult {
+export function buildImportRecords(
+  fields: Field[],
+  rows: string[][],
+  allEntities: Entity[] = [],
+  relatedRecords: RelatedRecordsByEntity = {},
+): ImportResult {
   if (rows.length === 0) return { records: [], errors: [] };
 
-  const requiredUnsupported = fields.find((f) => (f.type === "relation" || f.type === "file") && f.required);
+  // A relation field can only be resolved when the caller has already
+  // loaded its target entity's records (relatedRecords/allEntities) -- see
+  // relationDisplayLabel's own doc comment for why the target may
+  // legitimately be absent (an optional relation whose target isn't part
+  // of this project's spec, or a caller that never fetched relatedRecords
+  // at all). Without that data this field falls back to the original
+  // "impossible from a CSV cell" treatment below.
+  const relationResolvable = (f: Field): boolean =>
+    !!f.relationTo && allEntities.some((e) => e.name === f.relationTo) && !!relatedRecords[f.relationTo];
+
+  const requiredUnsupported = fields.find(
+    (f) => (f.type === "file" && f.required) || (f.type === "relation" && f.required && !relationResolvable(f)),
+  );
   if (requiredUnsupported) {
     return {
       records: [],
@@ -1371,7 +1400,37 @@ export function buildImportRecords(fields: Field[], rows: string[][]): ImportRes
       const columnIndex = columnFields.findIndex((f) => f?.name === field.name);
       const raw = columnIndex === -1 ? "" : unescapeCsvGuard((row[columnIndex] ?? "").trim());
 
-      if (field.type === "relation" || field.type === "file") continue; // see doc comment: not supported per-row yet
+      if (field.type === "file") continue; // no file to attach from a CSV cell
+
+      if (field.type === "relation") {
+        if (!relationResolvable(field)) continue; // see doc comment: no related records loaded, keep ignoring the column
+        if (raw === "") {
+          if (field.required) {
+            rowError = `Row ${rowIndex + 1}: missing required field "${field.label ?? field.name}".`;
+            break;
+          }
+          record[field.name] = null;
+          continue;
+        }
+        const targetEntity = allEntities.find((e) => e.name === field.relationTo)!;
+        const targetRecords = relatedRecords[field.relationTo!]!;
+        const hashMatch = raw.match(/^#(\d+)$/);
+        if (hashMatch) {
+          record[field.name] = Number(hashMatch[1]);
+          continue;
+        }
+        const matches = targetRecords.filter((r) => recordDisplayLabel(targetEntity, r).toLowerCase() === raw.toLowerCase());
+        if (matches.length === 0) {
+          rowError = `Row ${rowIndex + 1}: "${raw}" doesn't match any ${targetEntity.label ?? targetEntity.name} record for field "${field.label ?? field.name}".`;
+          break;
+        }
+        if (matches.length > 1) {
+          rowError = `Row ${rowIndex + 1}: "${raw}" matches more than one ${targetEntity.label ?? targetEntity.name} record for field "${field.label ?? field.name}" -- use its "#<id>" form instead.`;
+          break;
+        }
+        record[field.name] = Number(matches[0].id);
+        continue;
+      }
 
       if (raw === "") {
         if (field.required) {

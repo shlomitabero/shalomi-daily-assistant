@@ -1983,12 +1983,17 @@ function matchesImportHeader(header, field, labelOccurrences) {
 // Turns parsed CSV rows into record payloads matching entity.fields --
 // the reverse of fieldDisplayValue. Columns are matched to fields by
 // header text (label or field name, case-insensitively); an unmatched
-// column is ignored. A required relation field makes every row
-// impossible to satisfy (resolving a label back to a foreign-key id
-// needs the related entity's own records loaded), so that refuses the
-// whole import with one clear error instead of guessing; an optional
-// relation column, if present, is ignored per row.
-function buildImportRecords(fields, rows) {
+// column is ignored. A relation field's cell (e.g. "Dana Levi") is
+// resolved back to the related record's real id the same way
+// relationDisplayLabel renders it forward -- matching recordDisplayLabel
+// case-insensitively against relatedRecords, or accepting the literal
+// "#<id>" form directly (see entityFormatting.ts's buildImportRecords for
+// the full reasoning this mirrors). When relatedRecords for this field's
+// target isn't available at all, it falls back to the original
+// "impossible from a CSV cell" treatment: an optional column is ignored,
+// and a required relation field refuses the whole import with one clear
+// error instead of guessing.
+function buildImportRecords(fields, rows, relatedRecords) {
   if (rows.length === 0) return { records: [], errors: [] };
 
   // Unlike number/enum/date below, a boolean cell used to have no
@@ -2002,7 +2007,9 @@ function buildImportRecords(fields, rows) {
   const BOOLEAN_TRUE_VALUES = ["true", "1", "yes", "כן"];
   const BOOLEAN_FALSE_VALUES = ["false", "0", "no", "לא"];
 
-  const requiredRelation = fields.find((f) => f.type === "relation" && f.required);
+  const relationResolvable = (f) => !!f.relationTo && ALL_ENTITIES.some((e) => e.name === f.relationTo) && !!(relatedRecords && relatedRecords[f.relationTo]);
+
+  const requiredRelation = fields.find((f) => f.type === "relation" && f.required && !relationResolvable(f));
   if (requiredRelation) {
     return {
       records: [],
@@ -2065,7 +2072,35 @@ function buildImportRecords(fields, rows) {
       // character is left untouched.
       const raw = trimmedCell[0] === "'" && /^[=+\\-@\\t\\r']/.test(trimmedCell.slice(1)) ? trimmedCell.slice(1) : trimmedCell;
 
-      if (field.type === "relation") continue;
+      if (field.type === "relation") {
+        if (!relationResolvable(field)) continue;
+        if (raw === "") {
+          if (field.required) {
+            rowError = \`Row \${rowIndex + 1}: missing required field "\${field.label || field.name}".\`;
+            break;
+          }
+          record[field.name] = null;
+          continue;
+        }
+        const targetEntity = ALL_ENTITIES.find((e) => e.name === field.relationTo);
+        const targetRecords = relatedRecords[field.relationTo];
+        const hashMatch = raw.match(/^#(\\d+)$/);
+        if (hashMatch) {
+          record[field.name] = Number(hashMatch[1]);
+          continue;
+        }
+        const matches = targetRecords.filter((r) => recordDisplayLabel(targetEntity, r).toLowerCase() === raw.toLowerCase());
+        if (matches.length === 0) {
+          rowError = \`Row \${rowIndex + 1}: "\${raw}" doesn't match any \${targetEntity.label || targetEntity.name} record for field "\${field.label || field.name}".\`;
+          break;
+        }
+        if (matches.length > 1) {
+          rowError = \`Row \${rowIndex + 1}: "\${raw}" matches more than one \${targetEntity.label || targetEntity.name} record for field "\${field.label || field.name}" -- use its "#<id>" form instead.\`;
+          break;
+        }
+        record[field.name] = Number(matches[0].id);
+        continue;
+      }
 
       if (raw === "") {
         if (field.required) {
@@ -4169,7 +4204,7 @@ export function EntityView({ entity, highlightRecordId, onHighlightHandled, onJu
     try {
       const text = await file.text();
       const rows = parseCsv(text);
-      const { records: parsedRecords, errors: parseErrors } = buildImportRecords(entity.fields, rows);
+      const { records: parsedRecords, errors: parseErrors } = buildImportRecords(entity.fields, rows, relatedRecords);
 
       if (parsedRecords.length === 0) {
         setImportErrors(parseErrors);

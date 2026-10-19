@@ -2419,7 +2419,7 @@ export function EntityPanel({
     try {
       const text = await file.text();
       const rows = parseCsv(text);
-      const { records: parsedRecords, errors: parseErrors } = buildImportRecords(entity.fields, rows);
+      const { records: parsedRecords, errors: parseErrors } = buildImportRecords(entity.fields, rows, allEntities, relatedRecords);
 
       if (parsedRecords.length === 0) {
         setImportErrors(parseErrors);
