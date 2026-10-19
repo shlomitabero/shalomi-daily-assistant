@@ -2927,6 +2927,60 @@ test("App's WhatsApp unread-badge poll suppresses a stale nonzero count while th
   assert.equal(stateClosed.count, 1, "badge must still show the real unread count while the panel is closed");
 });
 
+/**
+ * Round 710: a real, visible feature -- a failing-automations badge next to
+ * the topbar's "⚡ Automations" button, mirroring the WhatsApp unread badge
+ * one button over. Before this round, a rule that started failing (webhook
+ * endpoint down, WhatsApp disconnected, a stale toField after a refine) was
+ * only discoverable by manually opening the Automations panel and reading
+ * each rule's own "last run" line -- even though listAutomationRules
+ * already returns every rule's lastStatus and the WhatsApp badge next door
+ * already demonstrates the exact poll-and-badge pattern needed. Extracts
+ * the real checkFailingAutomations poll handler from App.tsx and confirms
+ * it counts only ENABLED rules whose lastStatus is "failed", ignoring a
+ * disabled rule with a stale failed status and a rule that's never failed.
+ */
+test("App's checkFailingAutomations counts only enabled rules with lastStatus \"failed\", ignoring disabled rules and non-failing rules", async () => {
+  const appSrc = readFileSync(new URL("./App.tsx", import.meta.url), "utf8");
+  const handlerMatch = appSrc.match(/ {4}async function checkFailingAutomations\(\) \{[\s\S]*?\n {4}\}\n/);
+  assert.ok(handlerMatch, "expected to find checkFailingAutomations in App.tsx");
+  const { code } = transformSync(handlerMatch![0], { loader: "ts" });
+
+  function run(rules: Array<{ enabled: boolean; lastStatus: "sent" | "failed" | null }>) {
+    const state = { count: -1 };
+    const fn = new Function(
+      "projectId",
+      "cancelled",
+      "listAutomationRules",
+      "setAutomationsFailingCount",
+      `${code}\nreturn checkFailingAutomations;`,
+    )(
+      "project-1",
+      false,
+      async () => ({ rules }),
+      (v: number) => (state.count = v),
+    ) as () => Promise<void>;
+    return { fn, state };
+  }
+
+  const { fn: fnMixed, state: stateMixed } = run([
+    { enabled: true, lastStatus: "failed" },
+    { enabled: false, lastStatus: "failed" }, // disabled -- must not count even though it last failed
+    { enabled: true, lastStatus: "sent" }, // enabled but healthy -- must not count
+    { enabled: true, lastStatus: null }, // never run yet -- must not count
+    { enabled: true, lastStatus: "failed" },
+  ]);
+  await fnMixed();
+  assert.equal(stateMixed.count, 2, "expected exactly the 2 enabled+failed rules to count, not the disabled or healthy ones");
+
+  const { fn: fnHealthy, state: stateHealthy } = run([
+    { enabled: true, lastStatus: "sent" },
+    { enabled: true, lastStatus: null },
+  ]);
+  await fnHealthy();
+  assert.equal(stateHealthy.count, 0, "expected 0 when no enabled rule is currently failing");
+});
+
 test("App's checkUnread reads tRef.current fresh on every tick instead of closing over a stale `t` from whenever the poll effect last (re)started", async () => {
   // Round 592 regression test: useTranslation()'s `t` is a brand-new closure
   // on every language change, but the poll effect that owns checkUnread only

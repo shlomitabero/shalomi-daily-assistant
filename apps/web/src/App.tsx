@@ -13,6 +13,7 @@ import {
   getEntityCounts,
   getToken,
   getWhatsAppStatus,
+  listAutomationRules,
   listCollaborators,
   listProjects,
   listTemplates,
@@ -77,6 +78,8 @@ const LOCALE: Record<string, string> = { he: "he-IL", en: "en-US" };
 
 /** How often the topbar's own WhatsApp unread-badge poll checks for new messages -- lighter than WhatsAppPanel's own 10s CONNECTED_POLL_INTERVAL_MS since this runs for every built project, not just while its panel happens to be open. */
 const WHATSAPP_UNREAD_POLL_INTERVAL_MS = 20000;
+/** How often the topbar's own failing-automations badge poll re-checks rule status. Slightly longer than WHATSAPP_UNREAD_POLL_INTERVAL_MS since a rule's lastStatus only changes when it actually fires (schedule/webhook/field-change), not on every incoming message. */
+const AUTOMATIONS_FAILING_POLL_INTERVAL_MS = 30000;
 
 /** A project card's own creation date, locale-formatted -- separated out (rather than inlined in the JSX) purely so it's directly unit-testable, matching this file's own summarizeRefineImpact/filterAndSortProjects convention. */
 export function formatProjectCreatedDate(createdAt: string, lang: Lang): string {
@@ -500,6 +503,14 @@ function AppContent() {
   // test-send box instead of the user having to copy/paste it themselves.
   const [whatsappPrefillTo, setWhatsappPrefillTo] = useState<string | null>(null);
   const [whatsappUnreadCount, setWhatsappUnreadCount] = useState(0);
+  // Count of enabled automation rules whose lastStatus is "failed" -- a
+  // standing problem (webhook endpoint down, WhatsApp disconnected, a stale
+  // toField after a refine), not an accumulating stream like WhatsApp
+  // messages, so unlike whatsappUnreadCount this has no "last seen" marker
+  // and no suppress-while-panel-open logic: it just tracks live server
+  // truth, and drops back to 0 on its own once every failing rule actually
+  // starts succeeding again or is fixed/disabled.
+  const [automationsFailingCount, setAutomationsFailingCount] = useState(0);
   // The newest inbound WhatsApp message id a desktop notification has
   // already been shown for -- separate from the topbar badge's own "last
   // seen" marker (whatsappUnread.ts), which only moves when the panel is
@@ -751,6 +762,42 @@ function AppContent() {
 
     checkUnread();
     intervalId = setInterval(checkUnread, WHATSAPP_UNREAD_POLL_INTERVAL_MS);
+    return () => {
+      cancelled = true;
+      if (intervalId) clearInterval(intervalId);
+    };
+  }, [project?.id, project?.status]);
+
+  /**
+   * Mirrors the WhatsApp unread-badge poll just above, so that a rule
+   * failing silently in the background (webhook endpoint down, WhatsApp
+   * disconnected, a stale toField after a refine) surfaces the same way an
+   * unread WhatsApp message does -- without the user having to remember to
+   * open "⚡ Automations" and read each rule's own "last run" line one by
+   * one. listAutomationRules already returns every rule's lastStatus.
+   */
+  useEffect(() => {
+    if (!project || project.status !== "built") {
+      setAutomationsFailingCount(0);
+      return;
+    }
+    const projectId = project.id;
+    let cancelled = false;
+    let intervalId: ReturnType<typeof setInterval> | null = null;
+
+    async function checkFailingAutomations() {
+      try {
+        const { rules } = await listAutomationRules(projectId);
+        if (cancelled) return;
+        setAutomationsFailingCount(rules.filter((r) => r.enabled && r.lastStatus === "failed").length);
+      } catch {
+        // A single failed background check isn't worth surfacing to the
+        // user -- just skip this tick and try again on the next one.
+      }
+    }
+
+    checkFailingAutomations();
+    intervalId = setInterval(checkFailingAutomations, AUTOMATIONS_FAILING_POLL_INTERVAL_MS);
     return () => {
       cancelled = true;
       if (intervalId) clearInterval(intervalId);
@@ -1948,6 +1995,14 @@ function AppContent() {
               </button>
               <button type="button" className="secondary" onClick={() => openPanel("automations")}>
                 {t("preview.automations")}
+                {automationsFailingCount > 0 && (
+                  <span
+                    className="automations-failing-badge"
+                    aria-label={t("automations.failingBadge", { count: String(automationsFailingCount) })}
+                  >
+                    {automationsFailingCount}
+                  </span>
+                )}
               </button>
               <button type="button" className="secondary" onClick={() => openPanel("collaborators")}>
                 {t("preview.collaborators")}
