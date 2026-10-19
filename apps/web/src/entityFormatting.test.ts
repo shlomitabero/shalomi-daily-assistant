@@ -35,6 +35,7 @@ import {
   recordsToCsv,
   relationDisplayLabel,
   restoreRecordAt,
+  scrollIntoViewRespectingMotion,
   searchEntityRecords,
   selectedOrAllRecords,
   sortRecords,
@@ -2144,6 +2145,49 @@ test("enterTargetsInteractiveElement is false for an ordinary element, no target
   assert.equal(enterTargetsInteractiveElement(ordinary as unknown as EventTarget), false);
   assert.equal(enterTargetsInteractiveElement(null), false);
   assert.equal(enterTargetsInteractiveElement({} as unknown as EventTarget), false);
+});
+
+/**
+ * Regression test: every scrollIntoView call site in this app passed
+ * behavior: "smooth" unconditionally, firing a real scroll animation on
+ * every keypress and click regardless of whether the person has their OS/
+ * browser set to "prefers-reduced-motion: reduce" -- the exact WCAG 2.3.3
+ * case this app already treats as real for its one CSS keyframe animation
+ * (styles.css's .hero3d-cube). This file runs in plain Node (no jsdom), so
+ * `window` is stubbed directly for the duration of each test rather than
+ * swapping in a full JSDOM instance -- scrollIntoViewRespectingMotion only
+ * ever reads window.matchMedia once per call, with no listener to set up.
+ */
+test("scrollIntoViewRespectingMotion calls scrollIntoView with behavior: \"auto\" instead of \"smooth\" when prefers-reduced-motion is set", () => {
+  const originalWindow = (globalThis as { window?: unknown }).window;
+  (globalThis as { window?: unknown }).window = { matchMedia: () => ({ matches: true }) };
+  try {
+    const calls: unknown[] = [];
+    const el = { scrollIntoView: (options: unknown) => calls.push(options) };
+    scrollIntoViewRespectingMotion(el as unknown as Element, { behavior: "smooth", block: "center" });
+    assert.deepEqual(calls, [{ behavior: "auto", block: "center" }]);
+  } finally {
+    (globalThis as { window?: unknown }).window = originalWindow;
+  }
+});
+
+test("scrollIntoViewRespectingMotion passes the original options unchanged when prefers-reduced-motion is not set", () => {
+  const originalWindow = (globalThis as { window?: unknown }).window;
+  (globalThis as { window?: unknown }).window = { matchMedia: () => ({ matches: false }) };
+  try {
+    const calls: unknown[] = [];
+    const el = { scrollIntoView: (options: unknown) => calls.push(options) };
+    scrollIntoViewRespectingMotion(el as unknown as Element, { behavior: "smooth", block: "center" });
+    assert.deepEqual(calls, [{ behavior: "smooth", block: "center" }]);
+  } finally {
+    (globalThis as { window?: unknown }).window = originalWindow;
+  }
+});
+
+test("scrollIntoViewRespectingMotion does nothing for a null/undefined element, or one with no scrollIntoView at all", () => {
+  assert.doesNotThrow(() => scrollIntoViewRespectingMotion(null, { behavior: "smooth" }));
+  assert.doesNotThrow(() => scrollIntoViewRespectingMotion(undefined, { behavior: "smooth" }));
+  assert.doesNotThrow(() => scrollIntoViewRespectingMotion({} as unknown as Element, { behavior: "smooth" }));
 });
 
 test("isInlineEditableField allows every field type except relation and file", () => {

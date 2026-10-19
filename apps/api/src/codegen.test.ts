@@ -7062,7 +7062,7 @@ test("the exported app includes a real cross-entity global search, ported from t
   // ShortcutsPanel.jsx became a second dialog sharing the same guard.
   assert.match(
     globalSearchJsx,
-    /import \{\s*matchesSearch,\s*recordDisplayLabel,\s*markDialogOpen,\s*markDialogClosed,\s*DIALOG_FOCUSABLE_SELECTOR,\s*hideDialogBackgroundFromAssistiveTech,\s*\} from ".\/EntityView\.jsx";/,
+    /import \{\s*matchesSearch,\s*recordDisplayLabel,\s*markDialogOpen,\s*markDialogClosed,\s*DIALOG_FOCUSABLE_SELECTOR,\s*hideDialogBackgroundFromAssistiveTech,\s*scrollIntoViewRespectingMotion,\s*\} from ".\/EntityView\.jsx";/,
   );
   assert.match(globalSearchJsx, /export function GlobalSearch/);
   assert.match(globalSearchJsx, /global-search-group-selected/);
@@ -8524,6 +8524,68 @@ test("the exported EntityView's isInlineEditableField allows every field type ex
 });
 
 /**
+ * New in this round: every scrollIntoView call in the exported app passed
+ * behavior: "smooth" unconditionally, regardless of whether the person
+ * has their OS/browser set to "prefers-reduced-motion: reduce" -- the
+ * exact WCAG 2.3.3 case the live preview's fix (and this exported app's
+ * own styles.css, which already disables its .hero3d-cube animation
+ * under this same media query) treats as real. Runs the real generated
+ * scrollIntoViewRespectingMotion, not a reimplementation.
+ */
+test("the exported EntityView's scrollIntoViewRespectingMotion substitutes behavior: \"auto\" for \"smooth\" when prefers-reduced-motion is set, and leaves it alone otherwise", () => {
+  const entityViewJsx = generateExportFiles(project).find((f) => f.path === "web/src/components/EntityView.jsx")!.content;
+  const fnSrc = entityViewJsx.match(/export function scrollIntoViewRespectingMotion\(el, options\) \{[\s\S]*?\n\}\n/)?.[0]?.replace("export ", "");
+  assert.ok(fnSrc, "expected to find scrollIntoViewRespectingMotion in generated output");
+  const scrollIntoViewRespectingMotion = new Function(`${fnSrc}\nreturn scrollIntoViewRespectingMotion;`)() as (
+    el: { scrollIntoView: (options: unknown) => void } | null | undefined,
+    options: Record<string, unknown>,
+  ) => void;
+
+  const originalWindow = (globalThis as { window?: unknown }).window;
+  try {
+    (globalThis as { window?: unknown }).window = { matchMedia: () => ({ matches: true }) };
+    const reducedCalls: unknown[] = [];
+    scrollIntoViewRespectingMotion({ scrollIntoView: (o) => reducedCalls.push(o) }, { behavior: "smooth", block: "center" });
+    assert.deepEqual(reducedCalls, [{ behavior: "auto", block: "center" }]);
+
+    (globalThis as { window?: unknown }).window = { matchMedia: () => ({ matches: false }) };
+    const normalCalls: unknown[] = [];
+    scrollIntoViewRespectingMotion({ scrollIntoView: (o) => normalCalls.push(o) }, { behavior: "smooth", block: "center" });
+    assert.deepEqual(normalCalls, [{ behavior: "smooth", block: "center" }]);
+
+    assert.doesNotThrow(() => scrollIntoViewRespectingMotion(null, { behavior: "smooth" }));
+    assert.doesNotThrow(() => scrollIntoViewRespectingMotion(undefined, { behavior: "smooth" }));
+  } finally {
+    (globalThis as { window?: unknown }).window = originalWindow;
+  }
+});
+
+// Confirms every one of the four real scrollIntoView call sites this
+// round touched (two in EntityView.jsx, one in GlobalSearch.jsx, plus
+// startCreateNew) actually routes through scrollIntoViewRespectingMotion
+// now, rather than calling the DOM method directly -- checked against the
+// specific old call patterns each site used (not a blanket "no
+// .scrollIntoView(" scan, which would also flag the wrapper's own,
+// necessary internal call); the function's own correctness is covered
+// end-to-end above.
+test("every scrollIntoView call site in the exported app routes through scrollIntoViewRespectingMotion, not a direct DOM call", () => {
+  const files = generateExportFiles(project);
+  const entityViewJsx = files.find((f) => f.path === "web/src/components/EntityView.jsx")!.content;
+  const globalSearchJsx = files.find((f) => f.path === "web/src/components/GlobalSearch.jsx")!.content;
+
+  assert.doesNotMatch(entityViewJsx, /row\?\.scrollIntoView\?\.\(/, "the highlighted-row/focused-row effects must no longer call scrollIntoView directly");
+  assert.doesNotMatch(entityViewJsx, /formEl\?\.scrollIntoView\?\.\(/, "startCreateNew must no longer call scrollIntoView directly");
+  assert.doesNotMatch(globalSearchJsx, /group\.scrollIntoView\(/, "the arrow-key result-group scroll must no longer call scrollIntoView directly");
+
+  const entityViewCallCount = (entityViewJsx.match(/scrollIntoViewRespectingMotion\(/g) ?? []).length;
+  assert.equal(entityViewCallCount, 4, "expected exactly 4 occurrences in EntityView.jsx: the function's own definition, the highlighted-row effect, the focused-row effect, and startCreateNew");
+
+  assert.match(globalSearchJsx, /scrollIntoViewRespectingMotion,\n\} from "\.\/EntityView\.jsx";/, "GlobalSearch.jsx must import the shared helper from EntityView.jsx rather than duplicating it");
+  const globalSearchCallCount = (globalSearchJsx.match(/scrollIntoViewRespectingMotion\(/g) ?? []).length;
+  assert.equal(globalSearchCallCount, 1, "expected exactly 1 call site in GlobalSearch.jsx: the arrow-key result-group scroll");
+});
+
+/**
  * New in this round: the exported app's own Cell, matchesSearch, and
  * fieldDisplayValue (CSV export) all had zero support for the "file"
  * field type -- every other surface of this same codebase (the live
@@ -9391,8 +9453,8 @@ test("the exported GlobalSearch scrolls the newly-highlighted result group into 
   );
   assert.match(
     globalSearchJsx,
-    /group\.scrollIntoView\(\{ behavior: "smooth", block: "nearest" \}\)/,
-    "expected the found group to actually be scrolled into view",
+    /scrollIntoViewRespectingMotion\(group, \{ behavior: "smooth", block: "nearest" \}\)/,
+    "expected the found group to actually be scrolled into view (through the reduced-motion-aware wrapper, not a direct DOM call)",
   );
   assert.match(
     globalSearchJsx,

@@ -701,6 +701,59 @@ test("GlobalSearchPanel's arrow keys scroll the newly-highlighted result group i
 });
 
 /**
+ * New in this round: the arrow-key scroll above (and every other
+ * scrollIntoView call in this app) passed behavior: "smooth"
+ * unconditionally, regardless of whether the person has their OS/browser
+ * set to "prefers-reduced-motion: reduce" -- the exact WCAG 2.3.3 case
+ * this app already treats as real for its one CSS keyframe animation.
+ * jsdom itself doesn't implement matchMedia at all, so this test installs
+ * a minimal stub (same technique ThemeContext.test.ts uses) reporting
+ * reduced motion is requested, then confirms the real scrollIntoView
+ * call -- triggered through an actual ArrowDown keypress, not a direct
+ * function call -- receives behavior: "auto" instead of "smooth".
+ */
+test("GlobalSearchPanel's arrow-key scroll uses behavior: \"auto\" instead of \"smooth\" when prefers-reduced-motion is set", async () => {
+  await withJsdom(async () => {
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = mockGlobalSearchFetch() as typeof fetch;
+    const calls: unknown[] = [];
+    const proto = window.HTMLElement.prototype as unknown as { scrollIntoView?: (...args: unknown[]) => void };
+    proto.scrollIntoView = function (_options?: unknown) {
+      calls.push(_options);
+    };
+    // renderGlobalSearchPanel wraps in ThemeProvider too, which calls
+    // matchMedia("(prefers-color-scheme: dark)") on its own and expects a
+    // real add/removeEventListener -- this stub must satisfy both callers,
+    // not just the reduced-motion one this test cares about.
+    (window as unknown as { matchMedia: (query: string) => MediaQueryList }).matchMedia = (query: string) =>
+      ({
+        matches: query.includes("prefers-reduced-motion"),
+        media: query,
+        addEventListener: () => {},
+        removeEventListener: () => {},
+      }) as unknown as MediaQueryList;
+    try {
+      renderGlobalSearchPanel(() => {});
+
+      const input = document.querySelector(".global-search-input") as HTMLInputElement;
+      fireEvent.change(input, { target: { value: "widget" } });
+      const form = document.querySelector("form.global-search-form")!;
+      fireEvent.submit(form);
+
+      await waitForCondition(() => document.querySelectorAll(".global-search-group").length === 2);
+      fireEvent.keyDown(input, { key: "ArrowDown" });
+
+      assert.equal(calls.length, 1);
+      assert.deepEqual(calls[0], { behavior: "auto", block: "nearest" }, "must substitute behavior: \"auto\" when the person asked for reduced motion");
+    } finally {
+      globalThis.fetch = originalFetch;
+      delete proto.scrollIntoView;
+      delete (window as unknown as { matchMedia?: unknown }).matchMedia;
+    }
+  });
+});
+
+/**
  * New in this round: each individual matched row is now its own clickable
  * button (onJumpToRecord), not just the group header's "jump to" button
  * (onJumpToEntity, which only ever switched tabs and threw away which

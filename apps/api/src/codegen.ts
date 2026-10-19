@@ -3033,6 +3033,19 @@ export function enterTargetsInteractiveElement(target) {
   return Boolean(target?.closest?.('button, a[href], [role="button"], summary'));
 }
 
+// Every scrollIntoView call in the exported app passed behavior: "smooth"
+// unconditionally, firing a real scroll animation on every keypress and
+// click regardless of whether the person has their OS/browser set to
+// "prefers-reduced-motion: reduce". A behavior: "smooth" JS option isn't
+// something a CSS media query can intercept -- only an element's inherited
+// scroll-behavior -- so each call site needs its own check. Mirrors the
+// live preview's own entityFormatting.ts scrollIntoViewRespectingMotion.
+export function scrollIntoViewRespectingMotion(el, options) {
+  if (!el || !el.scrollIntoView) return;
+  const prefersReducedMotion = typeof window !== "undefined" && typeof window.matchMedia === "function" && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+  el.scrollIntoView(prefersReducedMotion ? { ...options, behavior: "auto" } : options);
+}
+
 // The exported app's overlay dialogs (GlobalSearch, ShortcutsPanel) share a
 // single module-scoped counter -- the same isAnyDialogOpen() guard the live
 // Forge AI preview shares across its own eight dialogs via
@@ -3661,7 +3674,7 @@ export function EntityView({ entity, highlightRecordId, onHighlightHandled, onJu
   useEffect(() => {
     if (highlightedRecordId == null) return;
     const row = document.querySelector(\`tr[data-record-id="\${highlightedRecordId}"]\`);
-    row?.scrollIntoView?.({ behavior: "smooth", block: "center" });
+    scrollIntoViewRespectingMotion(row, { behavior: "smooth", block: "center" });
   }, [highlightedRecordId, visibleRecords]);
 
   // Mirrors the highlighted-row scroll effect above, for the keyboard-
@@ -3669,7 +3682,7 @@ export function EntityView({ entity, highlightRecordId, onHighlightHandled, onJu
   useEffect(() => {
     if (focusedRowId == null) return;
     const row = document.querySelector(\`tr[data-record-id="\${focusedRowId}"]\`);
-    row?.scrollIntoView?.({ behavior: "smooth", block: "nearest" });
+    scrollIntoViewRespectingMotion(row, { behavior: "smooth", block: "nearest" });
   }, [focusedRowId, visibleRecords]);
 
   /**
@@ -3835,7 +3848,7 @@ export function EntityView({ entity, highlightRecordId, onHighlightHandled, onJu
     setEditingId(null);
     setForm(emptyForm(entity));
     const formEl = document.querySelector(".record-form");
-    formEl?.scrollIntoView?.({ behavior: "smooth", block: "start" });
+    scrollIntoViewRespectingMotion(formEl, { behavior: "smooth", block: "start" });
     const firstField = document.querySelector(".record-form input, .record-form select, .record-form textarea");
     firstField?.focus();
   }
@@ -5029,6 +5042,7 @@ import {
   markDialogClosed,
   DIALOG_FOCUSABLE_SELECTOR,
   hideDialogBackgroundFromAssistiveTech,
+  scrollIntoViewRespectingMotion,
 } from "./EntityView.jsx";
 
 // Fetches every entity's own records once, then searches all of them using
@@ -5251,7 +5265,7 @@ export function GlobalSearch({ entities, onClose, onJumpToEntity, onJumpToRecord
   useEffect(() => {
     if (selectedIndex == null) return;
     const group = resultsContainerRef.current && resultsContainerRef.current.querySelector(\`[data-group-index="\${selectedIndex}"]\`);
-    if (group && group.scrollIntoView) group.scrollIntoView({ behavior: "smooth", block: "nearest" });
+    scrollIntoViewRespectingMotion(group, { behavior: "smooth", block: "nearest" });
   }, [selectedIndex]);
 
   async function runSearch(q) {

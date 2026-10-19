@@ -1606,6 +1606,29 @@ export function enterTargetsInteractiveElement(target: EventTarget | null): bool
 }
 
 /**
+ * Every scrollIntoView call in this app (arrow-key result navigation,
+ * jump-to-record, the "n"/calendar-day/board-column create-new shortcuts)
+ * passed `behavior: "smooth"` unconditionally, firing a real scroll
+ * animation on every keypress and click regardless of whether the person
+ * has their OS/browser set to "prefers-reduced-motion: reduce" -- the
+ * exact WCAG 2.3.3 case this app already treats as real for its one CSS
+ * keyframe animation (styles.css's `.hero3d-cube`, disabled under the
+ * same media query). A `behavior: "smooth"` passed directly as a JS
+ * option isn't something that CSS media query can intercept -- it only
+ * affects an element's inherited `scroll-behavior`, not an explicit call
+ * like this -- so each call site needs its own check instead.
+ */
+export function scrollIntoViewRespectingMotion(
+  el: (Element & { scrollIntoView?: (options?: ScrollIntoViewOptions) => void }) | null | undefined,
+  options: ScrollIntoViewOptions,
+): void {
+  if (!el?.scrollIntoView) return;
+  const prefersReducedMotion =
+    typeof window !== "undefined" && typeof window.matchMedia === "function" && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+  el.scrollIntoView(prefersReducedMotion ? { ...options, behavior: "auto" } : options);
+}
+
+/**
  * Whether a table cell for this field can be edited directly in place with
  * a double-click, instead of always having to open the full add/edit form
  * below the table just to change one value. Relation fields are excluded --

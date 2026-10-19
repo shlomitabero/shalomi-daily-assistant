@@ -65,6 +65,7 @@ import {
   relationDisplayLabel,
   recordsToCsv,
   restoreRecordAt,
+  scrollIntoViewRespectingMotion,
   selectedOrAllRecords,
   sortRecordsMulti,
   splitHighlightSegments,
@@ -1777,7 +1778,7 @@ export function EntityPanel({
   useEffect(() => {
     if (highlightedRecordId == null) return;
     const row = tableScrollRef.current?.querySelector(`tr[data-record-id="${highlightedRecordId}"]`);
-    row?.scrollIntoView?.({ behavior: "smooth", block: "center" });
+    scrollIntoViewRespectingMotion(row, { behavior: "smooth", block: "center" });
   }, [highlightedRecordId, visibleRecords]);
 
   // Mirrors the highlighted-row scroll effect above, for the keyboard-
@@ -1785,7 +1786,7 @@ export function EntityPanel({
   useEffect(() => {
     if (focusedRowId == null) return;
     const row = tableScrollRef.current?.querySelector(`tr[data-record-id="${focusedRowId}"]`);
-    row?.scrollIntoView?.({ behavior: "smooth", block: "nearest" });
+    scrollIntoViewRespectingMotion(row, { behavior: "smooth", block: "nearest" });
   }, [focusedRowId, visibleRecords]);
 
   /**
@@ -1986,7 +1987,7 @@ export function EntityPanel({
   function startCreateNew() {
     setEditingId(null);
     setForm(emptyForm(entity));
-    formRef.current?.scrollIntoView?.({ behavior: "smooth", block: "start" });
+    scrollIntoViewRespectingMotion(formRef.current, { behavior: "smooth", block: "start" });
     const firstField = formRef.current?.querySelector<HTMLElement>("input, select, textarea");
     firstField?.focus();
   }
@@ -2001,7 +2002,7 @@ export function EntityPanel({
   function startCreateForDate(date: Date, dateField: Field) {
     setEditingId(null);
     setForm({ ...emptyForm(entity), [dateField.name]: formatDateForInput(date) });
-    formRef.current?.scrollIntoView?.({ behavior: "smooth", block: "start" });
+    scrollIntoViewRespectingMotion(formRef.current, { behavior: "smooth", block: "start" });
   }
 
   /**
@@ -2013,7 +2014,7 @@ export function EntityPanel({
   function startCreateForColumn(value: string, field: Field) {
     setEditingId(null);
     setForm({ ...emptyForm(entity), [field.name]: value });
-    formRef.current?.scrollIntoView?.({ behavior: "smooth", block: "start" });
+    scrollIntoViewRespectingMotion(formRef.current, { behavior: "smooth", block: "start" });
   }
 
   // Fires the real DELETE request for a record the undo window has already

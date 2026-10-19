@@ -3,6 +3,7 @@ import type { Entity, EntityRecord } from "@forge/shared";
 import { listRecords } from "./api.js";
 import {
   recordDisplayLabel,
+  scrollIntoViewRespectingMotion,
   searchEntityRecords,
   splitHighlightSegments,
   type EntitySearchResult,
@@ -309,7 +310,7 @@ export function GlobalSearchPanel({
   useEffect(() => {
     if (selectedIndex == null) return;
     const group = resultsContainerRef.current?.querySelector(`[data-group-index="${selectedIndex}"]`);
-    group?.scrollIntoView?.({ behavior: "smooth", block: "nearest" });
+    scrollIntoViewRespectingMotion(group, { behavior: "smooth", block: "nearest" });
   }, [selectedIndex]);
 
   /**
