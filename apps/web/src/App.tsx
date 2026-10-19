@@ -23,6 +23,7 @@ import {
   streamBuild,
   streamRefine,
   subscribeAuthExpired,
+  subscribeProjectGone,
   subscribeWakeStatus,
   type CollaboratorRole,
   type TemplateSummary,
@@ -924,6 +925,30 @@ function AppContent() {
       setWhatsappPrefillTo(null);
     });
   }, []);
+
+  /**
+   * Mirrors the subscribeAuthExpired effect just above, for a narrower
+   * event: the currently-open project itself is gone (deleted, or this
+   * account's own collaborator access to it was just revoked -- the exact
+   * same "no access to this project from this browser ever again" case
+   * CollaboratorsPanel's own onLeft callback below already reaches via a
+   * self-service "leave project" click). Without this, every subsequent
+   * action in the now-stale project view (a background refresh, any
+   * mutation) 404ed the same way forever, with the project shell (tabs,
+   * stale records) still rendered and no path back to the project list.
+   * Guarded by project id so an unrelated/stale notification (there
+   * shouldn't be one, since only one project is ever open at a time, but
+   * matching defensively costs nothing) never kicks the viewer out of a
+   * DIFFERENT project they've since navigated to.
+   */
+  useEffect(() => {
+    return subscribeProjectGone((projectId, message) => {
+      if (project?.id !== projectId) return;
+      purgeProjectPreferences(projectId);
+      handleGoHome();
+      setError(message);
+    });
+  }, [project]);
 
   /**
    * `project` is plain in-memory React state with nothing behind it once

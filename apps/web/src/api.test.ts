@@ -15,6 +15,7 @@ import {
   sendWhatsAppMessage,
   streamBuild,
   subscribeAuthExpired,
+  subscribeProjectGone,
 } from "./api.js";
 import { DEFAULT_DELAYS_MS } from "./wakeRetry.js";
 
@@ -444,6 +445,65 @@ test("subscribeAuthExpired also fires for sendWhatsAppMessage's own normalize-wi
   } finally {
     unsubscribe();
   }
+});
+
+/**
+ * Mirrors subscribeAuthExpired's own coverage above, for the narrower
+ * PROJECT_NOT_FOUND case: requireProjectAccess/requireProjectOwner
+ * (apps/api/src/routes/projects.ts) throw this exact code whenever the
+ * project was deleted or this account's own collaborator access to it
+ * was just revoked -- previously surfaced only as that one request's own
+ * translated inline error text, with no way for App.tsx to tell "the
+ * project itself is gone" apart from any other 404. subscribeProjectGone
+ * is the hook App.tsx uses to reset to the home screen instead, the
+ * moment ANY request for the currently-open project hits this code.
+ */
+test("subscribeProjectGone's listener fires with the real project id and translated message when a request() call gets a 404 PROJECT_NOT_FOUND", async () => {
+  let firedWith: [string, string] | undefined;
+  const unsubscribe = subscribeProjectGone((projectId, message) => {
+    firedWith = [projectId, message];
+  });
+  try {
+    await assert.rejects(() =>
+      withFakeFetch(new Response(JSON.stringify({ error: 'Project "proj1" not found', code: "PROJECT_NOT_FOUND" }), { status: 404 }), () =>
+        listRecords("proj1", "Customer"),
+      ),
+    );
+    assert.deepEqual(firedWith, ["proj1", "Project not found."]);
+  } finally {
+    unsubscribe();
+  }
+});
+
+test("subscribeProjectGone's listener never fires for an unrelated 404 (e.g. a deleted entity), only PROJECT_NOT_FOUND specifically", async () => {
+  let fired = 0;
+  const unsubscribe = subscribeProjectGone(() => {
+    fired += 1;
+  });
+  try {
+    await assert.rejects(() =>
+      withFakeFetch(new Response(JSON.stringify({ error: 'Entity "Customer" not found', code: "ENTITY_NOT_FOUND" }), { status: 404 }), () =>
+        listRecords("proj1", "Customer"),
+      ),
+    );
+    assert.equal(fired, 0);
+  } finally {
+    unsubscribe();
+  }
+});
+
+test("subscribeProjectGone's returned unsubscribe function actually stops delivery to that listener", async () => {
+  let fired = 0;
+  const unsubscribe = subscribeProjectGone(() => {
+    fired += 1;
+  });
+  unsubscribe();
+  await assert.rejects(() =>
+    withFakeFetch(new Response(JSON.stringify({ error: 'Project "proj1" not found', code: "PROJECT_NOT_FOUND" }), { status: 404 }), () =>
+      listRecords("proj1", "Customer"),
+    ),
+  );
+  assert.equal(fired, 0);
 });
 
 /**

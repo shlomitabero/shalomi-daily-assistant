@@ -75,6 +75,32 @@ function notifyAuthExpired(): void {
   for (const listener of authExpiredListeners) listener();
 }
 
+type ProjectGoneListener = (projectId: string, message: string) => void;
+const projectGoneListeners = new Set<ProjectGoneListener>();
+
+/**
+ * Lets App.tsx reset to the home screen (same mechanism as
+ * subscribeAuthExpired above) the moment a request reports the
+ * currently-open project is gone -- requireProjectAccess/requireProjectOwner
+ * (apps/api/src/routes/projects.ts) throw this exact, unambiguous code
+ * whenever the project was deleted OR this account's own collaborator
+ * access to it was just revoked, and every mutating/reading route on a
+ * project goes through one of those two. Previously this surfaced only as
+ * that one request's own translated inline error text ("Project not
+ * found."), wherever it happened to fire from (a background refresh, a
+ * mutation, anything) -- `project` stayed set and the whole project shell
+ * (tabs, now-stale records) kept rendering, with every subsequent action
+ * 404ing the exact same way forever and no path back to the project list.
+ */
+export function subscribeProjectGone(listener: ProjectGoneListener): () => void {
+  projectGoneListeners.add(listener);
+  return () => projectGoneListeners.delete(listener);
+}
+
+function notifyProjectGone(projectId: string, message: string): void {
+  for (const listener of projectGoneListeners) listener(projectId, message);
+}
+
 /**
  * A generous ceiling on the *whole* request, retries included -- meant to be
  * comfortably above the server's own 60s Anthropic-call timeout (see
@@ -199,8 +225,13 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
   if (!res.ok) {
     const body = await res.json().catch(() => ({ error: `Request failed (${res.status})`, code: "REQUEST_FAILED" }));
     const code = (body as { code?: string }).code;
+    const message = resolveErrorMessage(body as { error?: string; code?: string });
     if (code === "SESSION_EXPIRED" || code === "AUTH_REQUIRED") notifyAuthExpired();
-    throw new Error(resolveErrorMessage(body as { error?: string; code?: string }));
+    if (code === "PROJECT_NOT_FOUND") {
+      const match = path.match(/^\/projects\/([^/]+)/);
+      if (match) notifyProjectGone(match[1], message);
+    }
+    throw new Error(message);
   }
   if (res.status === 204) return undefined as T;
   return (await res.json()) as T;

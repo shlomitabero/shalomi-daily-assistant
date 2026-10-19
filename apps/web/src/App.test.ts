@@ -2842,6 +2842,80 @@ test("App's subscribeAuthExpired effect clears the token and resets user/project
 });
 
 /**
+ * Mirrors the subscribeAuthExpired effect test above, for the narrower
+ * subscribeProjectGone case (api.ts): requireProjectAccess/
+ * requireProjectOwner throw PROJECT_NOT_FOUND whenever the project was
+ * deleted or this account's own collaborator access to it was just
+ * revoked. Previously this surfaced only as that one request's own
+ * translated inline error text, with `project` staying set and the whole
+ * project shell (tabs, now-stale records) still rendered -- every
+ * subsequent action 404ing the same way forever, no path back to the
+ * project list. Confirms the listener resets to the home screen (via the
+ * same handleGoHome used by CollaboratorsPanel's own "leave project"
+ * flow) and purges the gone project's own client-side preferences --
+ * but only when the reported project id actually matches the one
+ * currently open, never for an unrelated/stale notification.
+ */
+test("App's subscribeProjectGone effect resets to the home screen and purges preferences, but only for the currently-open project", () => {
+  const appSrc = readFileSync(new URL("./App.tsx", import.meta.url), "utf8");
+  const effectMatch = appSrc.match(/ {2}useEffect\(\(\) => \{\n {4}return subscribeProjectGone\(\(projectId, message\) => \{[\s\S]*?\n {2}\}, \[project\]\);\n/);
+  assert.ok(effectMatch, "expected to find the subscribeProjectGone effect in App.tsx");
+  const { code } = transformSync(effectMatch![0], { loader: "ts" });
+
+  let subscribedListener: ((projectId: string, message: string) => void) | undefined;
+  let purgedId: unknown = "untouched";
+  let homeCalled = false;
+  let errorSet: unknown = "untouched";
+
+  function buildEffect(project: { id: string } | null) {
+    purgedId = "untouched";
+    homeCalled = false;
+    errorSet = "untouched";
+    const fn = new Function(
+      "useEffect",
+      "subscribeProjectGone",
+      "project",
+      "purgeProjectPreferences",
+      "handleGoHome",
+      "setError",
+      `${code}`,
+    ) as (
+      useEffect: (effect: () => void, deps: unknown[]) => void,
+      subscribeProjectGone: (listener: (projectId: string, message: string) => void) => () => void,
+      project: { id: string } | null,
+      purgeProjectPreferences: (id: string) => void,
+      handleGoHome: () => void,
+      setError: (v: unknown) => void,
+    ) => void;
+    fn(
+      (effect) => effect(),
+      (listener) => {
+        subscribedListener = listener;
+        return () => undefined;
+      },
+      project,
+      (id) => (purgedId = id),
+      () => {
+        homeCalled = true;
+      },
+      (v) => (errorSet = v),
+    );
+  }
+
+  buildEffect({ id: "proj1" });
+  assert.ok(subscribedListener, "the effect must call subscribeProjectGone with a real listener");
+
+  subscribedListener!("proj2", "Project not found.");
+  assert.equal(homeCalled, false, "a notification for a DIFFERENT project than the one currently open must be ignored entirely");
+  assert.equal(purgedId, "untouched", "must not purge preferences for a project that isn't the one currently open");
+
+  subscribedListener!("proj1", "Project not found.");
+  assert.equal(homeCalled, true, "a notification for the currently-open project must reset to the home screen");
+  assert.equal(purgedId, "proj1", "must purge the gone project's own client-side preferences");
+  assert.equal(errorSet, "Project not found.", "must surface the real translated message as the error banner, so the person knows why they were sent home");
+});
+
+/**
  * The decorative 3D hero graphic on the home screen (a rotating CSS cube,
  * no WebGL/three.js dependency) is purely presentational -- it has no
  * state or handler to test, and jsdom has no real 3D rendering to assert
