@@ -1129,6 +1129,147 @@ test("changing a field chip's type select to enum opens a draft confirm step req
   });
 });
 
+/**
+ * Round 715: before this, a field that was ALREADY "enum"/"relation" had
+ * no way at all to edit its own enumValues/relationTo -- re-selecting the
+ * type <select>'s own already-selected option fires no onChange (a native
+ * <select> never fires change for its current value), and switching away
+ * to a different type and back permanently loses the original values
+ * (the server's own /type route wipes them the instant the type changes
+ * away). Confirms a plain text/number/etc. field shows no such button at
+ * all (nothing to edit), while an enum field's own edit button opens the
+ * same draft confirm step pre-filled with its current comma-joined
+ * enumValues, and submitting commits via the real PATCH type endpoint
+ * with the field's own (unchanged) type.
+ */
+test("a plain (non-enum/relation) field chip shows no \"edit values\" button at all", async () => {
+  await withJsdom(async () => {
+    renderFieldChip(() => {}, true, { name: "email", type: "text", required: true });
+    assert.equal(document.querySelector(".chip-field-edit-values"), null, "a text field has no enumValues/relationTo to edit");
+  });
+});
+
+test("clicking an existing enum field chip's \"edit values\" button opens the draft confirm step pre-filled with its current values, and submitting commits the edited list via the real PATCH type endpoint", async () => {
+  await withJsdom(async () => {
+    const originalFetch = globalThis.fetch;
+    let patchBody: { type: string; enumValues?: string } | undefined;
+    globalThis.fetch = (async (input: string, init?: RequestInit) => {
+      if (init?.method === "PATCH" && input === "/api/projects/proj1/entities/Customer/fields/status/type") {
+        patchBody = JSON.parse(init.body as string) as { type: string; enumValues?: string };
+        const updated = {
+          ...baseProject,
+          spec: {
+            ...baseProject.spec,
+            entities: [
+              {
+                ...baseProject.spec.entities[0],
+                fields: [{ name: "status", type: "enum", required: true, enumValues: ["New", "In Progress", "Done"] }],
+              },
+            ],
+          },
+        };
+        return new Response(JSON.stringify({ project: updated }), { status: 200, headers: { "content-type": "application/json" } });
+      }
+      throw new Error(`unexpected request ${init?.method ?? "GET"} ${input}`);
+    }) as typeof fetch;
+
+    try {
+      const changedProjects: Project[] = [];
+      renderFieldChip(
+        (p) => changedProjects.push(p),
+        true,
+        { name: "status", type: "enum", required: true, enumValues: ["New", "Done"] },
+      );
+
+      const editButton = document.querySelector(".chip-field-edit-values") as HTMLButtonElement;
+      assert.ok(editButton, "expected an edit-values button on an existing enum field");
+      assert.equal(document.querySelector(".chip-field-type-confirm"), null, "the confirm step must not be open before clicking the button");
+
+      fireEvent.click(editButton);
+
+      const confirmForm = document.querySelector(".chip-field-type-confirm") as HTMLFormElement;
+      assert.ok(confirmForm, "clicking the edit-values button must open the draft confirm step");
+      const enumInput = confirmForm.querySelector("input") as HTMLInputElement;
+      assert.equal(enumInput.value, "New, Done", "the draft must start pre-filled with the field's own current enumValues");
+
+      fireEvent.change(enumInput, { target: { value: "New, In Progress, Done" } });
+      fireEvent.submit(confirmForm);
+
+      await waitForCondition(() => changedProjects.length === 1);
+      assert.deepEqual(
+        patchBody,
+        { type: "enum", enumValues: "New, In Progress, Done" },
+        "must PATCH the field's own unchanged type alongside the edited values -- not require switching to a different type first",
+      );
+      assert.equal(document.querySelector(".chip-field-type-confirm"), null, "the confirm step must close after a successful commit");
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+});
+
+test("clicking an existing relation field chip's \"edit target\" button opens the draft confirm step pre-filled with its current relationTo, and submitting commits the new target via the real PATCH type endpoint", async () => {
+  await withJsdom(async () => {
+    const originalFetch = globalThis.fetch;
+    let patchBody: { type: string; relationTo?: string } | undefined;
+    globalThis.fetch = (async (input: string, init?: RequestInit) => {
+      if (init?.method === "PATCH" && input === "/api/projects/proj1/entities/Customer/fields/supplierId/type") {
+        patchBody = JSON.parse(init.body as string) as { type: string; relationTo?: string };
+        const updated = {
+          ...baseProject,
+          spec: {
+            ...baseProject.spec,
+            entities: [
+              { ...baseProject.spec.entities[0], fields: [{ name: "supplierId", type: "relation", required: false, relationTo: patchBody.relationTo }] },
+            ],
+          },
+        };
+        return new Response(JSON.stringify({ project: updated }), { status: 200, headers: { "content-type": "application/json" } });
+      }
+      throw new Error(`unexpected request ${init?.method ?? "GET"} ${input}`);
+    }) as typeof fetch;
+
+    const relatedEntities: Entity[] = [
+      ...baseProject.spec.entities,
+      { name: "Supplier", label: "Supplier", fields: [{ name: "name", type: "text", required: true }] },
+      { name: "Warehouse", label: "Warehouse", fields: [{ name: "name", type: "text", required: true }] },
+    ];
+
+    try {
+      const changedProjects: Project[] = [];
+      renderFieldChip(
+        (p) => changedProjects.push(p),
+        true,
+        { name: "supplierId", type: "relation", required: false, relationTo: "Supplier" },
+        relatedEntities,
+      );
+
+      const editButton = document.querySelector(".chip-field-edit-values") as HTMLButtonElement;
+      assert.ok(editButton, "expected an edit-target button on an existing relation field");
+
+      fireEvent.click(editButton);
+
+      const confirmForm = document.querySelector(".chip-field-type-confirm") as HTMLFormElement;
+      assert.ok(confirmForm, "clicking the edit-target button must open the draft confirm step");
+      const relationSelect = confirmForm.querySelector("select") as HTMLSelectElement;
+      assert.equal(relationSelect.value, "Supplier", "the draft must start pre-filled with the field's own current relationTo");
+
+      fireEvent.change(relationSelect, { target: { value: "Warehouse" } });
+      fireEvent.submit(confirmForm);
+
+      await waitForCondition(() => changedProjects.length === 1);
+      assert.deepEqual(
+        patchBody,
+        { type: "relation", relationTo: "Warehouse" },
+        "must PATCH the field's own unchanged type alongside the new relation target",
+      );
+      assert.equal(document.querySelector(".chip-field-type-confirm"), null, "the confirm step must close after a successful commit");
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+});
+
 test("clicking a field chip's text opens an inline edit, and saving it calls the real PATCH label endpoint by entity+field name", async () => {
   await withJsdom(async () => {
     const originalFetch = globalThis.fetch;

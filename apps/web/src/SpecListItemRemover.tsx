@@ -534,15 +534,24 @@ export function FieldChip({
     }
   }
 
+  // Shared by handleTypeSelectChange's enum/relation branch below and the
+  // "edit values"/"edit target" button rendered when the field is ALREADY
+  // that type (see that button's own comment for why a type-switch away
+  // and back can't substitute for this -- the server's own /type route
+  // wipes the old enumValues/relationTo the instant the type changes away).
+  function openDraftFor(type: "enum" | "relation") {
+    setDraftType(type);
+    setDraftEnumValues(field.enumValues?.join(", ") ?? "");
+    setDraftRelationTo(field.relationTo ?? allEntities[0]?.name ?? "");
+  }
+
   function handleTypeSelectChange(newType: Field["type"]) {
     if (newType === field.type) {
       setDraftType(null);
       return;
     }
     if (newType === "enum" || newType === "relation") {
-      setDraftType(newType);
-      setDraftEnumValues(field.enumValues?.join(", ") ?? "");
-      setDraftRelationTo(field.relationTo ?? allEntities[0]?.name ?? "");
+      openDraftFor(newType);
       return;
     }
     void commitTypeChange(newType);
@@ -625,6 +634,29 @@ export function FieldChip({
           </option>
         ))}
       </select>
+      {/*
+        Without this, a field that's ALREADY "enum"/"relation" had no way
+        to edit its own enumValues/relationTo at all: re-picking the type
+        <select>'s already-selected option fires no onChange (a native
+        <select> never fires change for its current value), and switching
+        away to another type and back loses the original values outright
+        -- the server's own /type route wipes enumValues/relationTo the
+        instant the type changes away (see that route's own doc comment).
+        Hidden while a draft is already open so this doesn't duplicate the
+        type-switch path's own entry into the same form below.
+      */}
+      {draftType === null && (field.type === "enum" || field.type === "relation") && (
+        <button
+          type="button"
+          className="chip-field-edit-values"
+          onClick={() => openDraftFor(field.type as "enum" | "relation")}
+          disabled={typeBusy}
+          title={field.type === "enum" ? t("spec.fields.enumValues.edit") : t("spec.fields.relationTo.edit")}
+          aria-label={field.type === "enum" ? t("spec.fields.enumValues.edit") : t("spec.fields.relationTo.edit")}
+        >
+          ✏️
+        </button>
+      )}
       {draftType === "enum" && (
         <form className="chip-field-type-confirm" onSubmit={handleConfirmTypeChange}>
           <input

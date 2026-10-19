@@ -947,6 +947,15 @@ button.danger:hover:not(:disabled) {
   max-width: 120px;
 }
 
+.chip-field-edit-values {
+  background: none;
+  border: none;
+  cursor: pointer;
+  font-size: 0.8em;
+  padding: 0 2px;
+  line-height: 1;
+}
+
 .chip-text {
   cursor: pointer;
   border-radius: var(--radius-sm);
