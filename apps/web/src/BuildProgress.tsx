@@ -582,6 +582,28 @@ export function BuildProgress({
           {error}
         </p>
       )}
+      {/* `error` (run() itself rejecting -- the initial fetch failing before
+       * any SSE frame arrived, or a real network drop mid-stream) and
+       * `failedStep` (an agent's own latest reported status being "failed")
+       * are two independent signals: a non-OK response or a dropped
+       * connection sets `error` with zero AgentStepEvents ever recorded, so
+       * `failedStep` stays undefined and the block below never renders.
+       * Without this, that case showed only the raw error text with no
+       * Retry or Back button at all -- a dead end recoverable only by
+       * reloading the whole page, which drops App.tsx's in-progress project/
+       * view state. Retry/Back are real regardless of which signal fired;
+       * Copy/Download stay inside the failedStep block below since they
+       * summarize real per-agent event data, which doesn't exist here. */}
+      {error && !failedStep && (
+        <div>
+          <button type="button" className="secondary small" onClick={handleRetry}>
+            {t("build.retry")}
+          </button>
+          <button type="button" onClick={onBack}>
+            {t("build.back")}
+          </button>
+        </div>
+      )}
       {failedStep && (
         <div>
           <p className="error" role="status">

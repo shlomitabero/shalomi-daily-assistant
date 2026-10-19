@@ -762,6 +762,61 @@ test("BuildProgress still shows the failed-build banner for a genuine, unrecover
 });
 
 /**
+ * Round 704: `run(onEvent)` itself rejecting (the initial fetch for
+ * /build or /refine failing before any SSE frame ever arrived, or a real
+ * network drop mid-stream -- see api.ts's streamPipeline) sets `error`
+ * directly, with zero AgentStepEvents ever recorded. `failedStep` is
+ * derived purely from an agent's own latest reported status being
+ * "failed", so it stays undefined in this case -- and Retry/Back
+ * previously lived ONLY inside the `failedStep` block, leaving the user
+ * with just the raw error banner and no button at all: a genuine dead end
+ * recoverable only by reloading the whole page (which drops App.tsx's
+ * in-progress project/view state). Confirms Retry/Back now render for
+ * this exact case too, and that clicking Retry really re-invokes `run`.
+ */
+test("BuildProgress still offers Retry and Back when run() itself rejects before any agent ever reported failed, not just a dead-end error banner", async () => {
+  await withJsdom(async () => {
+    let runCallCount = 0;
+    const onBackCalls: number[] = [];
+    renderBuildProgress([], undefined, {
+      run: async () => {
+        runCallCount += 1;
+        throw new Error("Failed to fetch");
+      },
+      onBack: () => onBackCalls.push(1),
+    });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    assert.equal(runCallCount, 1, "expected run to have been called once on mount");
+    assert.ok(document.querySelector("p.error.banner"), "expected the raw error banner to show");
+    assert.equal(document.querySelector("p.error:not(.banner)"), null, "no agent ever reported failed, so the separate failed-build banner must not show");
+
+    const retryButton = Array.from(document.querySelectorAll("button")).find((b) => b.textContent?.includes("Try again"));
+    assert.ok(retryButton, "expected a real Retry button even though no agent-level failure was ever recorded");
+    assert.ok(
+      Array.from(document.querySelectorAll("button")).some((b) => b.textContent === "Back"),
+      "expected a real Back button even though no agent-level failure was ever recorded",
+    );
+
+    act(() => {
+      retryButton!.click();
+    });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    assert.equal(runCallCount, 2, "clicking Retry in this state must really re-invoke run, not just redraw stale state");
+
+    // Re-query after the retry's own re-render (a fresh error, same dead-end
+    // state) -- Back must still be real and clickable, not just present on
+    // the very first render.
+    const backButton = Array.from(document.querySelectorAll("button")).find((b) => b.textContent === "Back");
+    assert.ok(backButton, "expected Back to still be offered after a retry that itself failed the same way");
+    act(() => {
+      backButton!.click();
+    });
+    assert.equal(onBackCalls.length, 1, "clicking Back in this state must really call the real onBack callback");
+  });
+});
+
+/**
  * New in this round: once a build finishes (success or failure) there was no
  * way to keep a record of what the AI Team actually did -- the live screen
  * is gone the moment you navigate away. formatBuildSummary renders the same
