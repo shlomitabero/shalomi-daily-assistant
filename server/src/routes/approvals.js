@@ -5,11 +5,11 @@ import { logAction } from '../services/execution.js';
 
 export const approvalsRouter = Router();
 
-approvalsRouter.get('/approvals', requireOwner, (req, res) => {
+export function listApprovals(req, res) {
   res.json({ approvals: db.approvals.all() });
-});
+}
 
-approvalsRouter.post('/approvals', requireOwner, (req, res) => {
+export function createApproval(req, res) {
   const { opportunityId, actionType } = req.body ?? {};
   if (!opportunityId || !actionType) return res.status(400).json({ error: 'opportunityId and actionType are required' });
   if (!db.opportunities.get(opportunityId)) return res.status(404).json({ error: 'opportunity not found' });
@@ -24,12 +24,16 @@ approvalsRouter.post('/approvals', requireOwner, (req, res) => {
 
   logAction({ type: 'approve', detail: { opportunityId, actionType }, result: 'success' });
   res.status(201).json({ approval });
-});
+}
 
-approvalsRouter.post('/approvals/:id/reject', requireOwner, (req, res) => {
+export function rejectApproval(req, res) {
   const approval = db.approvals.get(req.params.id);
   if (!approval) return res.status(404).json({ error: 'not found' });
   const updated = db.approvals.update(req.params.id, { status: 'rejected', rejectedAt: new Date().toISOString() });
   logAction({ type: 'reject', detail: { opportunityId: approval.opportunityId, actionType: approval.actionType }, result: 'success' });
   res.json({ approval: updated });
-});
+}
+
+approvalsRouter.get('/approvals', requireOwner, listApprovals);
+approvalsRouter.post('/approvals', requireOwner, createApproval);
+approvalsRouter.post('/approvals/:id/reject', requireOwner, rejectApproval);
