@@ -1,10 +1,11 @@
 import { useEffect, useMemo, useState } from "react";
-import type { Entity, Project } from "@forge/shared";
+import type { Entity, EntityRecord, Project } from "@forge/shared";
 import {
   createAutomationRule,
   deleteAutomationRule,
   listAutomationRules,
   listAutomationRuns,
+  listRecords,
   updateAutomationRule,
   type AutomationActionType,
   type AutomationRuleView,
@@ -13,7 +14,7 @@ import {
   type AutomationTrigger,
 } from "./api.js";
 import { downloadAutomationsReport, formatAutomationsReport } from "./automationsReport.js";
-import { uniqueEnumValues } from "./entityFormatting.js";
+import { recordDisplayLabel, uniqueEnumValues, type RelatedRecordsByEntity } from "./entityFormatting.js";
 import { useTranslation } from "./i18n/LanguageContext.js";
 import { useDialogFocusTrap } from "./useDialogFocusTrap.js";
 
@@ -148,6 +149,71 @@ export function AutomationsPanel({
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [fieldName]);
+
+  // The "Value" control's relation branch (below) needs the target
+  // entity's own records loaded, to render a real picker instead of
+  // forcing the user to type the related record's raw, never-shown
+  // internal id by hand -- the server's own validateAutomationFieldValue
+  // (apps/api/src/routes/projects.ts) accepts only that bare id, which no
+  // other UI surface in this app ever shows (every other relation render
+  // -- EntityPanel.tsx, table cells, CSV export -- uses relationDisplayLabel
+  // instead). The same records are also needed to resolve an *existing*
+  // rule's own stored id back to a label in the rule list/report below,
+  // so this fetches for every relation-type field referenced by any rule,
+  // not just the form's currently-selected one.
+  const [relatedRecords, setRelatedRecords] = useState<RelatedRecordsByEntity>({});
+  const relationTargetEntity =
+    selectedField?.type === "relation" && selectedField.relationTo
+      ? entities.find((e) => e.name === selectedField.relationTo)
+      : undefined;
+  const relationTargetRecords = relationTargetEntity ? relatedRecords[relationTargetEntity.name] : undefined;
+
+  const relationFieldTargets = useMemo(() => {
+    const names = new Set<string>();
+    if (relationTargetEntity) names.add(relationTargetEntity.name);
+    for (const rule of rules ?? []) {
+      const ruleFieldEntity = entities.find((e) => e.name === rule.entityName);
+      const field = ruleFieldEntity?.fields.find((f) => f.name === rule.fieldName);
+      if (field?.type === "relation" && field.relationTo) names.add(field.relationTo);
+    }
+    return [...names].filter((name) => entities.some((e) => e.name === name));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [relationTargetEntity, rules, entities]);
+
+  useEffect(() => {
+    let cancelled = false;
+    const missing = relationFieldTargets.filter((name) => !(name in relatedRecords));
+    if (missing.length === 0) return;
+    (async () => {
+      const entries = await Promise.all(
+        missing.map(async (name) => {
+          try {
+            const { records } = await listRecords(projectId, name);
+            return [name, records] as const;
+          } catch {
+            return [name, []] as const;
+          }
+        }),
+      );
+      if (!cancelled) {
+        setRelatedRecords((prev) => ({ ...prev, ...Object.fromEntries(entries) }));
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [relationFieldTargets, relatedRecords, projectId]);
+
+  // Mirrors the boolean/enum branches above, once relationTargetRecords
+  // actually finishes loading (it starts out undefined, so this can't
+  // just run alongside the [fieldName]-keyed effect above).
+  useEffect(() => {
+    if (selectedField?.type !== "relation" || !relationTargetRecords) return;
+    if (!relationTargetRecords.some((r) => String(r.id) === fieldValue)) {
+      setFieldValue(relationTargetRecords[0] ? String(relationTargetRecords[0].id) : "");
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [fieldName, relationTargetRecords]);
 
   function loadRules() {
     setLoadError(null);
@@ -341,11 +407,22 @@ export function AutomationsPanel({
 
   // Mirrors apps/api/src/automations.ts's own interpolateTemplate, which
   // resolves an enum field's raw stored value to its enumLabels display
-  // text the same way before sending the real WhatsApp message.
+  // text the same way before sending the real WhatsApp message. A
+  // relation field's stored value is the related record's raw id -- the
+  // same "degrade to the bare id when the target/records aren't
+  // available" fallback relationDisplayLabel itself uses (relatedRecords
+  // may not have finished loading, or the related record may have since
+  // been deleted), rather than ever showing nothing at all.
   function fieldValueLabel(rule: AutomationRuleView): string {
     if (!rule.fieldValue) return "";
     const field = ruleEntity(rule)?.fields.find((f) => f.name === rule.fieldName);
     if (field?.type === "enum") return field.enumLabels?.[rule.fieldValue] ?? rule.fieldValue;
+    if (field?.type === "relation" && field.relationTo) {
+      const targetEntity = entities.find((e) => e.name === field.relationTo);
+      const records = relatedRecords[field.relationTo];
+      const match = targetEntity && records ? records.find((r) => String(r.id) === rule.fieldValue) : undefined;
+      return match && targetEntity ? recordDisplayLabel(targetEntity, match) : rule.fieldValue;
+    }
     return rule.fieldValue;
   }
 
@@ -417,7 +494,7 @@ export function AutomationsPanel({
   }
 
   function handleDownload() {
-    downloadAutomationsReport(formatAutomationsReport(rules ?? [], entities, project.name, lang, t), project.name);
+    downloadAutomationsReport(formatAutomationsReport(rules ?? [], entities, project.name, lang, t, relatedRecords), project.name);
   }
 
   /**
@@ -429,7 +506,7 @@ export function AutomationsPanel({
    */
   async function handleCopy() {
     try {
-      await navigator.clipboard.writeText(formatAutomationsReport(rules ?? [], entities, project.name, lang, t));
+      await navigator.clipboard.writeText(formatAutomationsReport(rules ?? [], entities, project.name, lang, t, relatedRecords));
       setCopyStatus("copied");
     } catch {
       setCopyStatus("failed");
@@ -632,6 +709,20 @@ export function AutomationsPanel({
                     </option>
                   ))}
                 </select>
+              ) : relationTargetEntity ? (
+                relationTargetRecords ? (
+                  <select value={fieldValue} onChange={(e) => setFieldValue(e.target.value)} aria-label={t("automations.fieldValue.placeholder")}>
+                    {relationTargetRecords.map((r) => (
+                      <option key={r.id as number} value={String(r.id)}>
+                        {recordDisplayLabel(relationTargetEntity, r)}
+                      </option>
+                    ))}
+                  </select>
+                ) : (
+                  <select disabled aria-label={t("automations.fieldValue.placeholder")}>
+                    <option>{t("entity.relation.loading")}</option>
+                  </select>
+                )
               ) : (
                 <input
                   type="text"

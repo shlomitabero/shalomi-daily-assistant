@@ -1,5 +1,6 @@
 import type { Entity } from "@forge/shared";
 import { safeDownloadName, type AutomationRuleView } from "./api.js";
+import { recordDisplayLabel, type RelatedRecordsByEntity } from "./entityFormatting.js";
 import type { Lang } from "./i18n/language.js";
 
 const LOCALE: Record<Lang, string> = { he: "he-IL", en: "en-US" };
@@ -35,10 +36,16 @@ function fieldLabel(rule: AutomationRuleView, fieldName: string | null, entities
   return field?.label ?? fieldName;
 }
 
-function fieldValueLabel(rule: AutomationRuleView, entities: Entity[]): string {
+function fieldValueLabel(rule: AutomationRuleView, entities: Entity[], relatedRecords: RelatedRecordsByEntity): string {
   if (!rule.fieldValue) return "";
   const field = ruleEntity(rule, entities)?.fields.find((f) => f.name === rule.fieldName);
   if (field?.type === "enum") return field.enumLabels?.[rule.fieldValue] ?? rule.fieldValue;
+  if (field?.type === "relation" && field.relationTo) {
+    const targetEntity = entities.find((e) => e.name === field.relationTo);
+    const records = relatedRecords[field.relationTo];
+    const match = targetEntity && records ? records.find((r) => String(r.id) === rule.fieldValue) : undefined;
+    return match && targetEntity ? recordDisplayLabel(targetEntity, match) : rule.fieldValue;
+  }
   return rule.fieldValue;
 }
 
@@ -61,6 +68,7 @@ function describeSchedule(
 function describeRule(
   rule: AutomationRuleView,
   entities: Entity[],
+  relatedRecords: RelatedRecordsByEntity,
   lang: Lang,
   t: (key: string, params?: Record<string, string | number>) => string,
 ): string {
@@ -69,7 +77,7 @@ function describeRule(
   return t("automations.rule.when.fieldEquals", {
     field: fieldLabel(rule, rule.fieldName, entities),
     entity: entityLabel(rule, entities),
-    value: fieldValueLabel(rule, entities),
+    value: fieldValueLabel(rule, entities, relatedRecords),
   });
 }
 
@@ -106,6 +114,7 @@ export function formatAutomationsReport(
   projectName: string,
   lang: Lang,
   t: (key: string, params?: Record<string, string | number>) => string,
+  relatedRecords: RelatedRecordsByEntity = {},
 ): string {
   const lines: string[] = [];
   lines.push(`${t("automations.title")} — ${projectName}`);
@@ -118,7 +127,7 @@ export function formatAutomationsReport(
   }
 
   for (const rule of rules) {
-    lines.push(`${describeRule(rule, entities, lang, t)} (${rule.enabled ? t("automations.status.enabled") : t("automations.status.disabled")})`);
+    lines.push(`${describeRule(rule, entities, relatedRecords, lang, t)} (${rule.enabled ? t("automations.status.enabled") : t("automations.status.disabled")})`);
     lines.push(describeDestination(rule, entities, t));
     lines.push(rule.messageTemplate);
     lines.push(describeLastRun(rule, lang, t));

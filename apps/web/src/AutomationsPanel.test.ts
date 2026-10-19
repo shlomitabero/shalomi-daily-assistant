@@ -833,6 +833,179 @@ test("AutomationsPanel's field_equals Value control renders a <select> of the fi
 });
 
 /**
+ * Round 714: the field_equals trigger's "Value" control had a type-aware
+ * branch for boolean/enum fields (round 668) but fell through to a plain
+ * free-text input for a relation field -- the server's own
+ * validateAutomationFieldValue (apps/api/src/routes/projects.ts) only ever
+ * accepts the related record's raw, internal id there, a value no other UI
+ * surface in this app ever shows a user (every other relation render uses
+ * relationDisplayLabel instead). Confirms the Value control now renders a
+ * real <select> of the target entity's own records (fetched via
+ * listRecords, the same call EntityPanel.tsx's own relation picker uses),
+ * defaults to the first one, and submits its raw id -- plus that an
+ * existing rule's own stored id resolves back to the related record's
+ * display label in both the rule list and the Copy/Download report,
+ * instead of printing the bare id.
+ */
+const relationFieldProject: Project = {
+  id: "proj6",
+  ownerId: "owner1",
+  name: "Deliveries",
+  description: "A delivery-tracking app",
+  status: "built",
+  createdAt: new Date().toISOString(),
+  spec: {
+    summary: "A delivery-tracking app",
+    personas: [],
+    roles: ["Admin"],
+    entities: [
+      {
+        name: "Order",
+        label: "Order",
+        fields: [
+          { name: "label", label: "Label", type: "text", required: true },
+          { name: "courierId", label: "Courier", type: "relation", required: false, relationTo: "Courier" },
+        ],
+      },
+      {
+        name: "Courier",
+        label: "Courier",
+        fields: [{ name: "name", label: "Name", type: "text", required: true }],
+      },
+    ],
+    screens: [],
+    assumptions: [],
+    openQuestions: [],
+  },
+};
+
+test("AutomationsPanel's field_equals Value control renders a real picker of the target entity's own records for a relation field, defaulting to the first one, and submits its raw id", async () => {
+  await withJsdom(async () => {
+    const originalFetch = globalThis.fetch;
+    let createBody: Record<string, unknown> | undefined;
+    globalThis.fetch = (async (input: string, init?: RequestInit) => {
+      const method = init?.method ?? "GET";
+      if (method === "GET" && input === "/api/projects/proj6/automations") {
+        return new Response(JSON.stringify({ rules: [] }), { status: 200, headers: { "content-type": "application/json" } });
+      }
+      if (method === "GET" && input === "/api/projects/proj6/entities/Courier") {
+        return new Response(
+          JSON.stringify({ records: [{ id: 1, name: "Yossi Cohen" }, { id: 2, name: "Dana Levi" }] }),
+          { status: 200, headers: { "content-type": "application/json" } },
+        );
+      }
+      if (method === "POST" && input === "/api/projects/proj6/entities/Order/automations") {
+        createBody = JSON.parse(init!.body as string);
+        return new Response(JSON.stringify({ rule: { id: "rule10", ...createBody } }), {
+          status: 201,
+          headers: { "content-type": "application/json" },
+        });
+      }
+      throw new Error(`unexpected request ${method} ${input}`);
+    }) as typeof fetch;
+
+    try {
+      renderPanelWith(relationFieldProject);
+      await waitForCondition(() => document.body.textContent?.includes("No automations yet") ?? false);
+
+      const triggerSelect = Array.from(document.querySelectorAll("select")).find((s) =>
+        Array.from(s.options).some((o) => o.value === "field_equals"),
+      ) as HTMLSelectElement;
+      fireEvent.change(triggerSelect, { target: { value: "field_equals" } });
+
+      const fieldSelect = Array.from(document.querySelectorAll("select")).find((s) =>
+        Array.from(s.options).some((o) => o.value === "courierId"),
+      ) as HTMLSelectElement;
+      fireEvent.change(fieldSelect, { target: { value: "courierId" } });
+
+      const valueSelect = await (async () => {
+        await waitForCondition(() =>
+          Array.from(document.querySelectorAll("select")).some((s) => Array.from(s.options).some((o) => o.value === "1")),
+        );
+        return Array.from(document.querySelectorAll("select")).find((s) => Array.from(s.options).some((o) => o.value === "1")) as HTMLSelectElement;
+      })();
+      const optionTexts = Array.from(valueSelect.options).map((o) => ({ value: o.value, text: o.textContent }));
+      assert.deepEqual(
+        optionTexts,
+        [
+          { value: "1", text: "Yossi Cohen" },
+          { value: "2", text: "Dana Levi" },
+        ],
+        "options must be the related entity's own records, shown by their real display label, not a raw id",
+      );
+      assert.equal(valueSelect.value, "1", "must default to the first related record's id, not an empty/unset value");
+
+      fireEvent.change(valueSelect, { target: { value: "2" } });
+
+      const messageField = document.querySelector(".automations-create-form textarea") as HTMLTextAreaElement;
+      fireEvent.change(messageField, { target: { value: "Courier changed" } });
+      fireEvent.submit(document.querySelector(".automations-create-form")!);
+
+      await waitForCondition(() => createBody !== undefined);
+      assert.equal(createBody?.fieldValue, "2", "must submit the chosen record's raw id, not its display label");
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+});
+
+test("AutomationsPanel resolves an existing rule's stored relation id back to the related record's display label in the rule list and the Copy/Download report, instead of printing the bare id", async () => {
+  await withJsdom(async () => {
+    const originalFetch = globalThis.fetch;
+    const rule = makeRule({
+      id: "rule11",
+      entityName: "Order",
+      trigger: "field_equals",
+      fieldName: "courierId",
+      fieldValue: "2",
+    });
+    globalThis.fetch = (async (input: string, init?: RequestInit) => {
+      const method = init?.method ?? "GET";
+      if (method === "GET" && input === "/api/projects/proj6/automations") {
+        return new Response(JSON.stringify({ rules: [rule] }), { status: 200, headers: { "content-type": "application/json" } });
+      }
+      if (method === "GET" && input === "/api/projects/proj6/entities/Courier") {
+        return new Response(
+          JSON.stringify({ records: [{ id: 1, name: "Yossi Cohen" }, { id: 2, name: "Dana Levi" }] }),
+          { status: 200, headers: { "content-type": "application/json" } },
+        );
+      }
+      throw new Error(`unexpected request ${method} ${input}`);
+    }) as typeof fetch;
+
+    let writtenText: string | undefined;
+    Object.defineProperty(navigator, "clipboard", {
+      value: { writeText: async (text: string) => void (writtenText = text) },
+      configurable: true,
+    });
+
+    try {
+      renderPanelWith(relationFieldProject);
+      await waitForCondition(() => document.querySelector(".automations-rule-condition") !== null);
+      await waitForCondition(() => (document.querySelector(".automations-rule-condition")?.textContent ?? "").includes("Dana Levi"));
+      assert.doesNotMatch(
+        document.querySelector(".automations-rule-condition")?.textContent ?? "",
+        /"2"/,
+        "the raw stored id must never be shown once the related record's label is resolvable",
+      );
+
+      const copyButton = Array.from(document.querySelectorAll("button")).find((b) => b.textContent?.includes("Copy report")) as HTMLButtonElement;
+      await act(async () => {
+        fireEvent.click(copyButton);
+        await Promise.resolve();
+        await Promise.resolve();
+      });
+
+      assert.equal(typeof writtenText, "string", "clicking Copy must actually call navigator.clipboard.writeText");
+      assert.match(writtenText!, /Dana Levi/, "the Copy report text must also resolve the relation id to its display label");
+    } finally {
+      globalThis.fetch = originalFetch;
+      delete (navigator as { clipboard?: unknown }).clipboard;
+    }
+  });
+});
+
+/**
  * New: the "schedule" trigger -- a recurring, time-of-day rule with no
  * triggering record at all, unlike record_created/field_equals. Choosing
  * it must reveal a time input and a day-of-week picker, force toMode to
