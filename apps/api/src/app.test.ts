@@ -2247,6 +2247,65 @@ test("POST /refine with an instruction containing a single Hebrew word does not 
   });
 });
 
+/**
+ * Round 709: round 708 (commit f52c1b7) fixed generateSpec's own language
+ * decision to come from project.description alone, not the instruction --
+ * but the checkpoint's own changeLabel, three lines below that fix, still
+ * decided its Hebrew/English prefix from isHebrewText(instruction), the
+ * brand-new instruction's own text, never touched by round 708 since it
+ * isn't part of spec generation. A Hebrew project refined with a plain-
+ * English instruction got one inconsistently-English entry ("Refine: ...")
+ * in an otherwise fully-Hebrew Time Machine checkpoint list -- the exact
+ * same root-cause shape (deciding a language-sensitive label from the
+ * wrong, non-authoritative text) as round 708, just a different field.
+ * Confirms the checkpoint label now matches /build's own identical
+ * isHebrewText(project.description) convention, regardless of which
+ * script the instruction itself happens to use.
+ */
+test("POST /refine on a Hebrew project with a plain-English instruction still labels the checkpoint in Hebrew, matching every other checkpoint", async () => {
+  await withServer(async (baseUrl) => {
+    const token = await signup(baseUrl);
+    const createRes = await fetch(`${baseUrl}/api/projects`, {
+      method: "POST",
+      headers: authHeaders(token),
+      body: JSON.stringify({
+        description: "אפליקציה לניהול לקוחות והזמנות לחנות שלי.",
+      }),
+    });
+    assert.equal(createRes.status, 201);
+    const created = (await createRes.json()) as { project: { id: string }; providerName: string };
+    const projectId = created.project.id;
+
+    const buildRes = await fetch(`${baseUrl}/api/projects/${projectId}/build`, {
+      method: "POST",
+      headers: authHeaders(token),
+    });
+    assert.equal(buildRes.status, 200);
+    await collectSSE(buildRes);
+
+    const refineRes = await fetch(`${baseUrl}/api/projects/${projectId}/refine`, {
+      method: "POST",
+      headers: authHeaders(token),
+      body: JSON.stringify({ instruction: "Add email field" }),
+    });
+    assert.equal(refineRes.status, 200);
+    const refineEvents = await collectSSE(refineRes);
+    assert.ok(refineEvents.every((e) => e.status !== "failed"), "refine should succeed on valid input");
+
+    const checkpointsRes = await fetch(`${baseUrl}/api/projects/${projectId}/checkpoints`, {
+      headers: authHeaders(token),
+    });
+    const { checkpoints } = (await checkpointsRes.json()) as { checkpoints: { label: string }[] };
+    const refineCheckpoint = checkpoints.find((c) => c.label.includes("Add email field"));
+    assert.ok(refineCheckpoint, "expected a checkpoint for the refine");
+    assert.match(
+      refineCheckpoint!.label,
+      /^שיפור: /,
+      `a Hebrew project's checkpoint must stay labeled in Hebrew regardless of which script the refine instruction itself used -- got "${refineCheckpoint!.label}"`,
+    );
+  });
+});
+
 test("POST /build a second time on an already-built project is rejected, instead of silently inserting a second checkpoint mislabeled 'Initial build'", async () => {
   await withServer(async (baseUrl) => {
     const token = await signup(baseUrl);

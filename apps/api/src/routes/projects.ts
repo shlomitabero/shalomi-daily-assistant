@@ -1406,7 +1406,15 @@ export function createProjectsRouter(
         await streamPipeline(res, db, project, {
           previousSpec: project.spec,
           nextSpec,
-          changeLabel: isHebrewText(instruction) ? `שיפור: ${instruction}` : `Refine: ${instruction}`,
+          // Decided from the project's own established description, matching
+          // /build's identical convention just above and round 708's own
+          // principle -- not from the instruction's own text, which can be
+          // typed in either script regardless of the project's real,
+          // established language (e.g. a Hebrew project refined with a
+          // plain-English instruction), leaving an otherwise fully-Hebrew
+          // Time Machine checkpoint list with one inconsistently-English
+          // entry.
+          changeLabel: isHebrewText(project.description) ? `שיפור: ${instruction}` : `Refine: ${instruction}`,
           providerName,
         });
       } finally {
