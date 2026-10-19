@@ -2397,6 +2397,27 @@ test("App.tsx's document-title effect passes whatsappUnreadCount into formatDocu
 });
 
 /**
+ * Round 713: GlobalSearchPanel's own result groups and arrow-key
+ * navigation order follow exactly the order of its `entities` prop (see
+ * GlobalSearchPanel.tsx's runSearch -- `entities.map(...)` builds
+ * `results` in prop order). App.tsx was passing the raw
+ * `project.spec.entities` instead of `orderedEntities` (the entity tab
+ * bar's own drag/keyboard-reordered order, entityTabOrder.ts) -- so a user
+ * who deliberately moved an entity to the top of their tabs still saw
+ * Global Search list it wherever it happened to fall in the original
+ * spec/build order, the same "ignores the user's own reorder" gap this
+ * routine has repeatedly found and fixed for columnOrder.ts's sibling
+ * preference (filter dropdowns, group-by, bulk-edit, CSV/ICS export).
+ */
+test("App.tsx passes GlobalSearchPanel the entity-tab bar's own orderedEntities, not the raw project.spec.entities, so search result groups follow the user's own drag/keyboard-reordered tab order", () => {
+  const appSrc = readFileSync(new URL("./App.tsx", import.meta.url), "utf8");
+  const globalSearchMatch = appSrc.match(/<GlobalSearchPanel[\s\S]*?\/>/);
+  assert.ok(globalSearchMatch, "expected to find a <GlobalSearchPanel ... /> call site in App.tsx");
+  assert.match(globalSearchMatch![0], /entities=\{orderedEntities\}/);
+  assert.doesNotMatch(globalSearchMatch![0], /entities=\{project\.spec\.entities\}/);
+});
+
+/**
  * New in this round: a past refine's own instruction text in
  * "Improvement history" was inert -- reusing a similar request (or one
  * refined away by mistake) meant retyping it from scratch. Extracts the

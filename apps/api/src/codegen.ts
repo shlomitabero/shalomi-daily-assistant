@@ -5944,8 +5944,11 @@ export default function App() {
         />
       )}
       {showSearch && (
+        // orderedEntities (the entity tab bar's own drag/keyboard-reordered
+        // order), not the raw ENTITIES -- GlobalSearch's result groups and
+        // arrow-key navigation follow this prop's own order exactly.
         <GlobalSearch
-          entities={ENTITIES}
+          entities={orderedEntities}
           onClose={() => setShowSearch(false)}
           onJumpToEntity={(name) => {
             setActive(name);

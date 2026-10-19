@@ -2292,10 +2292,19 @@ function AppContent() {
           )}
 
           {showSearch && (
+            // orderedEntities (the entity tab bar's own drag/keyboard-reordered
+            // order, entityTabOrder.ts), not the raw project.spec.entities --
+            // GlobalSearchPanel's result groups and arrow-key navigation order
+            // follow this prop's own order exactly, so a user who has
+            // deliberately moved, say, "Customers" to the top of their entity
+            // tabs still saw search list it wherever it happened to fall in
+            // the original spec/build order. The same convention every
+            // orderedFields-respecting surface (filter dropdowns, group-by,
+            // bulk-edit, CSV/ICS export) already follows for field order.
             <GlobalSearchPanel
               projectId={project.id}
               projectName={project.name}
-              entities={project.spec.entities}
+              entities={orderedEntities}
               onClose={() => setShowSearch(false)}
               onJumpToEntity={(entityName) => {
                 setActiveEntity(entityName);

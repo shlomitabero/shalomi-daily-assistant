@@ -7094,6 +7094,26 @@ test("the exported app includes a real cross-entity global search, ported from t
 });
 
 /**
+ * Round 713: the same bug fixed this round in the live preview (App.tsx)
+ * existed identically in this exported app's own App.jsx -- GlobalSearch's
+ * own result-group order and arrow-key navigation follow exactly the order
+ * of its `entities` prop, but App.jsx passed the raw, un-reordered
+ * `ENTITIES` instead of `orderedEntities` (the entity tab bar's own
+ * drag/keyboard-reordered order, round 309/662), the exact array the tab
+ * bar itself already renders from a few lines above. A user who'd
+ * reordered their entity tabs in a deployed, exported app still saw
+ * Global Search list them in the original build order.
+ */
+test("the exported app's App.jsx passes GlobalSearch the entity-tab bar's own orderedEntities, not the raw ENTITIES, so search result groups follow the user's own drag/keyboard-reordered tab order", () => {
+  const files = generateExportFiles(project);
+  const appJsx = files.find((f) => f.path === "web/src/App.jsx")!.content;
+  const globalSearchMatch = appJsx.match(/<GlobalSearch[\s\S]*?\/>/);
+  assert.ok(globalSearchMatch, "expected to find a <GlobalSearch ... /> call site in the generated App.jsx");
+  assert.match(globalSearchMatch![0], /entities=\{orderedEntities\}/);
+  assert.doesNotMatch(globalSearchMatch![0], /entities=\{ENTITIES\}/);
+});
+
+/**
  * The live Forge AI preview's own GlobalSearchPanel.tsx lets a person click
  * an individual matched row (not just the group's "Go to tab" button) and
  * land scrolled-to/highlighted on that exact record -- see EntityPanel.tsx's
