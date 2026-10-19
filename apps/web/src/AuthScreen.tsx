@@ -1,6 +1,6 @@
 import { useState } from "react";
 import type { User } from "@forge/shared";
-import { login, setToken, signup, verifyLoginCode } from "./api.js";
+import { forgotPassword, login, resetPassword, setToken, signup, verifyLoginCode } from "./api.js";
 import { useTranslation } from "./i18n/LanguageContext.js";
 import { LanguageSwitcher } from "./i18n/LanguageSwitcher.js";
 import { PasswordInput } from "./PasswordInput.js";
@@ -23,14 +23,84 @@ export function AuthScreen({ onAuthenticated }: { onAuthenticated: (user: User) 
   const [pendingLoginCodeId, setPendingLoginCodeId] = useState<string | null>(null);
   const [code, setCode] = useState("");
 
+  // Read once, at mount -- a URL this app itself never otherwise reads any
+  // query param from (see routes/auth.ts's own forgot-password route,
+  // which builds this exact link from the request's own origin). Cleared
+  // to null (and stripped from the URL, see handleBackToLogin below) once
+  // the reset actually completes, so a page refresh afterward -- or a
+  // second attempt with the same, now-consumed token -- doesn't look like
+  // it's still "pending".
+  const [resetToken, setResetToken] = useState<string | null>(
+    () => new URLSearchParams(window.location.search).get("resetToken"),
+  );
+  const [resetNewPassword, setResetNewPassword] = useState("");
+  const [resetConfirmPassword, setResetConfirmPassword] = useState("");
+  const [resetDone, setResetDone] = useState(false);
+
+  // Mirrors pendingLoginCodeId's own "non-null means show a different step
+  // instead of the login/signup form" shape, one level up: this step comes
+  // BEFORE a login code could ever apply (it's requested instead of
+  // logging in at all), so it only matters while pendingLoginCodeId is
+  // itself null.
+  const [forgotPasswordMode, setForgotPasswordMode] = useState(false);
+  const [forgotPasswordSent, setForgotPasswordSent] = useState(false);
+
+  function handleBackToLogin() {
+    window.history.replaceState(null, "", window.location.pathname + window.location.hash);
+    setResetToken(null);
+    setResetDone(false);
+    setResetNewPassword("");
+    setResetConfirmPassword("");
+    setForgotPasswordMode(false);
+    setForgotPasswordSent(false);
+    setMode("login");
+    setError(null);
+  }
+
+  async function handleForgotPasswordSubmit(e: React.FormEvent) {
+    e.preventDefault();
+    setError(null);
+    setBusy(true);
+    try {
+      await forgotPassword(email, lang);
+      setForgotPasswordSent(true);
+    } catch (err) {
+      setError((err as Error).message);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function handleResetPasswordSubmit(e: React.FormEvent) {
+    e.preventDefault();
+    setError(null);
+    // Mirrors handleSubmit's own signup confirm-check exactly -- caught
+    // client-side, before it ever reaches the server.
+    if (resetNewPassword !== resetConfirmPassword) {
+      setError(t("auth.confirmPassword.mismatch"));
+      return;
+    }
+    setBusy(true);
+    try {
+      await resetPassword(resetToken!, resetNewPassword);
+      setResetDone(true);
+    } catch (err) {
+      setError((err as Error).message);
+    } finally {
+      setBusy(false);
+    }
+  }
+
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
     setError(null);
-    // Signup is the one place a typo is unrecoverable -- there's no
-    // "forgot password" flow (yet), so a mistyped password here means a
-    // permanently locked-out account. Mirrors ChangePasswordPanel's own
-    // confirm-field mismatch check exactly: caught client-side, before it
-    // ever reaches the server.
+    // Signup is the one place a typo would otherwise go unnoticed until the
+    // very next login attempt -- round 716 added a real "forgot password"
+    // recovery path for an account locked out this way, but catching the
+    // typo right here, before it ever reaches the server, is still better
+    // than making someone go through that flow for a mistake made seconds
+    // ago. Mirrors ChangePasswordPanel's own confirm-field mismatch check
+    // exactly.
     if (mode === "signup" && password !== confirmPassword) {
       setError(t("auth.confirmPassword.mismatch"));
       return;
@@ -91,7 +161,95 @@ export function AuthScreen({ onAuthenticated }: { onAuthenticated: (user: User) 
       </div>
       <div className="auth-layout">
         <div className="auth-main">
-          {pendingLoginCodeId ? (
+          {resetToken ? (
+            resetDone ? (
+              <>
+                <h1>{t("auth.resetPassword.title")}</h1>
+                <p className="success">{t("auth.resetPassword.success")}</p>
+                <button type="button" onClick={handleBackToLogin}>
+                  {t("auth.resetPassword.goToLogin")}
+                </button>
+              </>
+            ) : (
+              <>
+                <h1>{t("auth.resetPassword.title")}</h1>
+                <p className="muted">{t("auth.resetPassword.subtitle")}</p>
+                <form onSubmit={handleResetPasswordSubmit} className="auth-form">
+                  <label className="field-row">
+                    <span>{t("auth.resetPassword.new")}</span>
+                    <PasswordInput
+                      value={resetNewPassword}
+                      onChange={setResetNewPassword}
+                      required
+                      minLength={8}
+                      autoComplete="new-password"
+                      showStrength
+                    />
+                  </label>
+                  <label className="field-row">
+                    <span>{t("auth.resetPassword.confirm")}</span>
+                    <PasswordInput value={resetConfirmPassword} onChange={setResetConfirmPassword} required minLength={8} autoComplete="new-password" />
+                  </label>
+                  <button type="submit" disabled={busy}>
+                    {busy ? t("auth.submit.busy") : t("auth.resetPassword.submit")}
+                  </button>
+                </form>
+                {error && (
+                  <p className="error" role="status">
+                    {error}
+                  </p>
+                )}
+              </>
+            )
+          ) : forgotPasswordMode ? (
+            <>
+              <h1>{t("auth.forgotPassword.title")}</h1>
+              {forgotPasswordSent ? (
+                <>
+                  <p className="success">{t("auth.forgotPassword.sent")}</p>
+                  <button type="button" onClick={handleBackToLogin}>
+                    {t("auth.forgotPassword.back")}
+                  </button>
+                </>
+              ) : (
+                <>
+                  <p className="muted">{t("auth.forgotPassword.subtitle")}</p>
+                  <form onSubmit={handleForgotPasswordSubmit} className="auth-form">
+                    <label className="field-row">
+                      <span>{t("auth.email.label")}</span>
+                      <input
+                        type="email"
+                        autoComplete="username"
+                        autoFocus
+                        required
+                        value={email}
+                        onChange={(e) => setEmail(e.target.value)}
+                      />
+                    </label>
+                    <button type="submit" disabled={busy}>
+                      {busy ? t("auth.submit.busy") : t("auth.forgotPassword.submit")}
+                    </button>
+                  </form>
+                  {error && (
+                    <p className="error" role="status">
+                      {error}
+                    </p>
+                  )}
+                  <button
+                    type="button"
+                    className="secondary link-button"
+                    disabled={busy}
+                    onClick={() => {
+                      setForgotPasswordMode(false);
+                      setError(null);
+                    }}
+                  >
+                    {t("auth.forgotPassword.back")}
+                  </button>
+                </>
+              )}
+            </>
+          ) : pendingLoginCodeId ? (
             <>
               <h1>{t("auth.code.title")}</h1>
               <p className="muted">{t("auth.code.subtitle", { email })}</p>
@@ -172,6 +330,19 @@ export function AuthScreen({ onAuthenticated }: { onAuthenticated: (user: User) 
                 <p className="error" role="status">
                   {error}
                 </p>
+              )}
+              {mode === "login" && (
+                <button
+                  type="button"
+                  className="secondary link-button"
+                  disabled={busy}
+                  onClick={() => {
+                    setForgotPasswordMode(true);
+                    setError(null);
+                  }}
+                >
+                  {t("auth.forgotPassword.link")}
+                </button>
               )}
               <button
                 type="button"

@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
@@ -865,6 +865,201 @@ test("changing your password while the same account is concurrently deleted must
     });
     assert.equal(reSignupRes.status, 201, "the email must be free to re-register -- the account was genuinely deleted, not left in some half-updated state");
   });
+});
+
+/**
+ * The "forgot password" flow (routes/auth.ts): until now a forgotten (not
+ * just mistyped-at-signup) password left an account permanently
+ * inaccessible -- see AuthScreen.tsx's own comment on this exact gap.
+ * These tests exercise the whole real server-side flow -- email send,
+ * token issuance, reset, session revocation -- with a fake, inspectable
+ * EmailSender double, the same convention the login-code tests above
+ * already use for the identical kind of flow.
+ */
+test("forgot-password emails a real reset link, and following it with a new password actually changes the password and revokes every existing session", async () => {
+  const emailSender = createFakeEmailSender();
+  await withServer(
+    async (baseUrl) => {
+      const email = "dana@example.com";
+      const token = await signup(baseUrl, email);
+      // A second, independent session for the same account, to confirm the
+      // reset revokes EVERY session, not just the one that happened to
+      // request it (there is no "request it" session here at all -- forgot
+      // password is deliberately unauthenticated -- so this just proves
+      // the blanket revocation, the same as DELETE /auth/account's own).
+      const secondLoginRes = await fetch(`${baseUrl}/api/auth/login`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ email, password: "correct-horse-battery" }),
+      });
+      const { loginCodeId: secondLoginCodeId } = (await secondLoginRes.json()) as { loginCodeId: string };
+      const secondCode = emailSender.sentTo[0]!.text.match(/\d{6}/)![0];
+      const secondVerifyRes = await fetch(`${baseUrl}/api/auth/login/verify-code`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ loginCodeId: secondLoginCodeId, code: secondCode }),
+      });
+      const { token: secondToken } = (await secondVerifyRes.json()) as { token: string };
+
+      const forgotRes = await fetch(`${baseUrl}/api/auth/forgot-password`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ email, lang: "en" }),
+      });
+      assert.equal(forgotRes.status, 200);
+      assert.deepEqual(await forgotRes.json(), { sent: true });
+
+      // The second login above (configured EmailSender) also sent its own
+      // login-code email to this same address -- find the reset email
+      // specifically (it carries a link, not a 6-digit code) rather than
+      // assume it's the only one sent so far.
+      const resetEmail = emailSender.sentTo.find((e) => /https?:\/\//.test(e.text));
+      assert.ok(resetEmail, "expected one of the sent emails to contain a real reset link");
+      assert.equal(resetEmail!.to, email);
+      const resetUrl = resetEmail!.text.match(/https?:\/\/\S+/)?.[0];
+      assert.ok(resetUrl, "the email body must contain a real reset link");
+      const resetToken = new URL(resetUrl!).searchParams.get("resetToken");
+      assert.ok(resetToken, "the reset link must carry a resetToken query param");
+
+      const resetRes = await fetch(`${baseUrl}/api/auth/reset-password`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ token: resetToken, newPassword: "brand-new-password" }),
+      });
+      assert.equal(resetRes.status, 204);
+
+      // Both of this account's pre-reset sessions must now be dead.
+      const meWithOldTokenRes = await fetch(`${baseUrl}/api/auth/me`, { headers: authHeaders(token) });
+      assert.equal(meWithOldTokenRes.status, 401);
+      const meWithSecondTokenRes = await fetch(`${baseUrl}/api/auth/me`, { headers: authHeaders(secondToken) });
+      assert.equal(meWithSecondTokenRes.status, 401);
+
+      // The old password must no longer work; the new one must.
+      const loginWithOldRes = await fetch(`${baseUrl}/api/auth/login`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ email, password: "correct-horse-battery" }),
+      });
+      assert.equal(loginWithOldRes.status, 401);
+      const loginWithNewRes = await fetch(`${baseUrl}/api/auth/login`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ email, password: "brand-new-password" }),
+      });
+      assert.equal(loginWithNewRes.status, 200);
+
+      // The now-used reset token must be rejected on a second attempt --
+      // single-use, not reusable until its own TTL.
+      const reuseRes = await fetch(`${baseUrl}/api/auth/reset-password`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ token: resetToken, newPassword: "yet-another-password" }),
+      });
+      assert.equal(reuseRes.status, 401);
+      assert.equal(((await reuseRes.json()) as { code?: string }).code, "RESET_TOKEN_INVALID");
+    },
+    { emailSender },
+  );
+});
+
+test("forgot-password for an email with no account still returns the exact same generic success response, and sends no email at all", async () => {
+  const emailSender = createFakeEmailSender();
+  await withServer(
+    async (baseUrl) => {
+      const res = await fetch(`${baseUrl}/api/auth/forgot-password`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ email: "no-such-account@example.com", lang: "en" }),
+      });
+      assert.equal(res.status, 200, "must never reveal that this email has no account via a different status code");
+      assert.deepEqual(
+        await res.json(),
+        { sent: true },
+        "must never reveal that this email has no account via a different response body",
+      );
+      assert.equal(emailSender.sentTo.length, 0, "no real account to email, so nothing should actually be sent");
+    },
+    { emailSender },
+  );
+});
+
+test("forgot-password returns a clear EMAIL_NOT_CONFIGURED error when no EmailSender is set up, instead of a silent no-op", async () => {
+  await withServer(async (baseUrl) => {
+    // The default withServer (no emailSender option) uses createApp's own
+    // default, same as a real deployment with no RESEND_API_KEY set.
+    const res = await fetch(`${baseUrl}/api/auth/forgot-password`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ email: "dana@example.com", lang: "en" }),
+    });
+    assert.equal(res.status, 503);
+    assert.equal(((await res.json()) as { code?: string }).code, "EMAIL_NOT_CONFIGURED");
+  });
+});
+
+test("reset-password rejects a garbage/unknown token, and an expired one, both with RESET_TOKEN_INVALID", async () => {
+  await withServer(async (baseUrl, db) => {
+    const garbageRes = await fetch(`${baseUrl}/api/auth/reset-password`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ token: "this-token-was-never-issued", newPassword: "whatever-password" }),
+    });
+    assert.equal(garbageRes.status, 401);
+    assert.equal(((await garbageRes.json()) as { code?: string }).code, "RESET_TOKEN_INVALID");
+
+    // An already-expired row, inserted directly (bypassing the real
+    // 1-hour TTL) -- same technique passwordResetTokens.test.ts's own
+    // pruneExpiredPasswordResetTokens test uses to exercise expiry without
+    // actually waiting an hour.
+    const email = `expired-reset-${Date.now()}@example.com`;
+    await signup(baseUrl, email);
+    const expiredToken = "expired-raw-token";
+    const expiredHash = createHash("sha256").update(expiredToken).digest("hex");
+    db.prepare(
+      "INSERT INTO password_reset_tokens (id, userId, tokenHash, expiresAt, createdAt) SELECT ?, id, ?, ?, ? FROM users WHERE email = ?",
+    ).run(randomUUID(), expiredHash, new Date(Date.now() - 60 * 60 * 1000).toISOString(), new Date().toISOString(), email);
+
+    const expiredRes = await fetch(`${baseUrl}/api/auth/reset-password`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ token: expiredToken, newPassword: "whatever-password" }),
+    });
+    assert.equal(expiredRes.status, 401);
+    assert.equal(((await expiredRes.json()) as { code?: string }).code, "RESET_TOKEN_INVALID");
+  });
+});
+
+test("requesting a fresh reset token invalidates the previous one for the same account", async () => {
+  const emailSender = createFakeEmailSender();
+  await withServer(
+    async (baseUrl) => {
+      const email = "dana@example.com";
+      await signup(baseUrl, email);
+
+      await fetch(`${baseUrl}/api/auth/forgot-password`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ email, lang: "en" }),
+      });
+      const firstUrl = emailSender.sentTo[0]!.text.match(/https?:\/\/\S+/)![0];
+      const firstToken = new URL(firstUrl).searchParams.get("resetToken")!;
+
+      await fetch(`${baseUrl}/api/auth/forgot-password`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ email, lang: "en" }),
+      });
+
+      const firstAttemptRes = await fetch(`${baseUrl}/api/auth/reset-password`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ token: firstToken, newPassword: "whatever-password" }),
+      });
+      assert.equal(firstAttemptRes.status, 401, "the first (now-superseded) token must no longer work");
+      assert.equal(((await firstAttemptRes.json()) as { code?: string }).code, "RESET_TOKEN_INVALID");
+    },
+    { emailSender },
+  );
 });
 
 test("project routes reject requests without a valid session", async () => {

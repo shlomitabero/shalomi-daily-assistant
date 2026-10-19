@@ -3,12 +3,15 @@ import { Router } from "express";
 import { z } from "zod";
 import {
   createLoginCode,
+  createPasswordResetToken,
   createSession,
   createUser,
   deleteAllSessionsForUser,
   deleteLoginCode,
   deleteLoginCodesForUser,
   deleteOtherSessionsForUser,
+  deletePasswordResetToken,
+  deletePasswordResetTokensForUser,
   deleteSession,
   deleteUser,
   deleteProject,
@@ -16,6 +19,7 @@ import {
   findUserById,
   getLoginCode,
   getPasswordHash,
+  getPasswordResetTokenByHash,
   incrementLoginCodeAttempts,
   listOwnedProjectIds,
   removeAllCollaborationsForUser,
@@ -58,6 +62,31 @@ const VerifyLoginCodeSchema = z.object({
 
 const LOGIN_CODE_TTL_MS = 10 * 60 * 1000; // 10 minutes
 const MAX_LOGIN_CODE_ATTEMPTS = 5;
+
+const ForgotPasswordSchema = z.object({
+  email: z.string().email().transform((email) => email.toLowerCase()),
+  lang: z.enum(["he", "en"]).optional(),
+});
+
+const ResetPasswordSchema = z.object({
+  token: z.string().min(1, "token is required"),
+  newPassword: z.string().min(8, "newPassword must be at least 8 characters"),
+});
+
+const PASSWORD_RESET_TOKEN_TTL_MS = 60 * 60 * 1000; // 1 hour
+
+/**
+ * The token itself is never stored -- only this hash -- so a DB leak alone
+ * can't be replayed into a password reset the same way a leaked session
+ * token could. Deliberately the same fast sha256 hashLoginCode above
+ * already uses, not hashPassword's scrypt: this token's real defense is
+ * its own 256 bits of randomness + the TTL, not hash cost (see
+ * passwordResetTokens.ts's own doc comment for why no attempts-counter is
+ * needed either).
+ */
+function hashResetToken(token: string): string {
+  return createHash("sha256").update(token).digest("hex");
+}
 
 function generateLoginCode(): string {
   // randomInt, not Math.random -- this gates a real login, so it needs a
@@ -241,6 +270,122 @@ export function createAuthRouter(
       }
       const token = issueSession(db, user.id);
       res.json({ user, token });
+    } catch (err) {
+      next(err);
+    }
+  });
+
+  /**
+   * The one place a forgotten (not just mistyped-at-signup) password was
+   * previously unrecoverable at all -- see AuthScreen.tsx's own comment on
+   * this exact gap. Always responds with the same generic `{ sent: true }`
+   * regardless of whether `email` matches a real account -- the defense
+   * against account enumeration via this route, mirroring /auth/login's own
+   * "never a different status/body for a nonexistent account" rule.
+   * Deliberately does NOT also chase /auth/login's RESPONSE-TIMING defense
+   * (dummyPasswordHashPromise): the gap here is a genuine network
+   * email-send await with no cheap, risk-free dummy equivalent, a smaller
+   * and harder-to-exploit residual risk than a differing status code or
+   * body would be.
+   */
+  router.post("/auth/forgot-password", async (req, res, next) => {
+    const parsed = ForgotPasswordSchema.safeParse(req.body);
+    if (!parsed.success) {
+      next(new HttpError(400, formatValidationError(parsed.error), "VALIDATION_ERROR"));
+      return;
+    }
+    try {
+      const { email, lang } = parsed.data;
+      // Unlike the login-code step (which simply skips itself when email
+      // isn't configured, since logging in with just a password still
+      // works fine without it), there is no fallback path for a password
+      // reset with no way to deliver the link -- so this responds with a
+      // clear, honest error instead of a silent, permanent no-op. This
+      // check runs before looking up the account at all: whether email is
+      // configured is a deployment-wide fact, not something tied to any
+      // specific address, so returning it early here isn't an enumeration
+      // vector the way a per-account difference would be.
+      if (!emailSender.configured) {
+        next(
+          new HttpError(
+            503,
+            "Password reset isn't available on this deployment yet -- no email provider is configured",
+            "EMAIL_NOT_CONFIGURED",
+          ),
+        );
+        return;
+      }
+      const record = findUserByEmail(db, email);
+      if (record) {
+        const token = randomBytes(32).toString("hex");
+        // req.protocol/req.get("host") reflect the real public-facing
+        // scheme/host here (see app.ts's own "trust proxy" comment) --
+        // this app serves its own frontend from the exact same origin as
+        // this API, so there's no separate "frontend URL" to configure.
+        const resetUrl = `${req.protocol}://${req.get("host")}/?resetToken=${token}`;
+        const isHebrew = lang !== "en";
+        const subject = isHebrew ? "איפוס סיסמה ל-Forge AI" : "Reset your Forge AI password";
+        const body = isHebrew
+          ? `קיבלנו בקשה לאפס את הסיסמה שלך. לחצו על הקישור הבא כדי לבחור סיסמה חדשה:\n\n${resetUrl}\n\nהקישור בתוקף לשעה אחת. אם לא בקשתם זאת, אפשר להתעלם מהודעה זו -- הסיסמה שלכם לא תשתנה.`
+          : `We received a request to reset your password. Click the link below to choose a new one:\n\n${resetUrl}\n\nThis link expires in 1 hour. If you didn't request this, you can ignore this email -- your password won't change.`;
+        try {
+          await emailSender.send(record.email, subject, body);
+        } catch {
+          // Swallowed, deliberately -- unlike the login-code email (where a
+          // failed send leaves the user visibly stuck mid-login and needs
+          // to be reported), surfacing this one would mean "account exists
+          // but the email failed" responds differently than "no such
+          // account", which is itself an enumeration oracle. The response
+          // below stays identical either way.
+        }
+        deletePasswordResetTokensForUser(db, record.id);
+        createPasswordResetToken(db, {
+          id: randomUUID(),
+          userId: record.id,
+          tokenHash: hashResetToken(token),
+          expiresAt: new Date(Date.now() + PASSWORD_RESET_TOKEN_TTL_MS).toISOString(),
+        });
+      }
+      res.json({ sent: true });
+    } catch (err) {
+      next(err);
+    }
+  });
+
+  /**
+   * The second half of the flow above: the link emailed by /auth/forgot-
+   * password carries this exact token. A reset is the "I may have lost
+   * control of this account" case, unlike PATCH /auth/password below
+   * (which requires knowing the *current* password and so keeps this
+   * exact request's own session alive) -- there is no prior session of
+   * this request's own to preserve, so every existing session is revoked,
+   * forcing a fresh login with the new password on every device.
+   */
+  router.post("/auth/reset-password", async (req, res, next) => {
+    const parsed = ResetPasswordSchema.safeParse(req.body);
+    if (!parsed.success) {
+      next(new HttpError(400, formatValidationError(parsed.error), "VALIDATION_ERROR"));
+      return;
+    }
+    try {
+      const { token, newPassword } = parsed.data;
+      const pending = getPasswordResetTokenByHash(db, hashResetToken(token));
+      const expired = !pending || new Date(pending.expiresAt).getTime() < Date.now();
+      if (expired) {
+        if (pending) deletePasswordResetToken(db, pending.id);
+        next(new HttpError(401, "This reset link has expired or is invalid. Please request a new one.", "RESET_TOKEN_INVALID"));
+        return;
+      }
+      deletePasswordResetToken(db, pending.id);
+      const user = findUserById(db, pending.userId);
+      if (!user) {
+        next(new HttpError(401, "This account no longer exists", "USER_NOT_FOUND"));
+        return;
+      }
+      const newHash = await hashPassword(newPassword);
+      updatePasswordHash(db, user.id, newHash);
+      deleteAllSessionsForUser(db, user.id);
+      res.status(204).end();
     } catch (err) {
       next(err);
     }

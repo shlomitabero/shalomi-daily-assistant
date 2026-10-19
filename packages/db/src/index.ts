@@ -110,6 +110,15 @@ export {
   type LoginCodeRecord,
 } from "./loginCodes.js";
 export {
+  ensurePasswordResetTokensTable,
+  createPasswordResetToken,
+  getPasswordResetTokenByHash,
+  deletePasswordResetToken,
+  deletePasswordResetTokensForUser,
+  pruneExpiredPasswordResetTokens,
+  type PasswordResetTokenRecord,
+} from "./passwordResetTokens.js";
+export {
   ensureAutomationRulesTable,
   ensureAutomationRunsTable,
   insertAutomationRule,

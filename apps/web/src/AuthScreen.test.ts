@@ -8,9 +8,14 @@ import { AuthScreen } from "./AuthScreen.js";
 import { LanguageProvider } from "./i18n/LanguageContext.js";
 import { ThemeProvider } from "./theme/ThemeContext.js";
 
-/** Same jsdom-swap technique as useDialogFocusTrap.test.ts. */
-async function withJsdom<T>(fn: () => Promise<T> | T): Promise<T> {
-  const dom = new JSDOM("<!doctype html><html><body></body></html>", { url: "http://localhost/" });
+/**
+ * Same jsdom-swap technique as useDialogFocusTrap.test.ts. `url` lets the
+ * reset-password tests below simulate actually following an emailed
+ * `?resetToken=...` link -- AuthScreen reads that query param once, at
+ * mount, from `window.location.search`.
+ */
+async function withJsdom<T>(fn: () => Promise<T> | T, url = "http://localhost/"): Promise<T> {
+  const dom = new JSDOM("<!doctype html><html><body></body></html>", { url });
   const { window } = dom;
   const replacements: Record<string, unknown> = {
     window,
@@ -199,13 +204,14 @@ test("AuthScreen's mode-toggle button works normally (and clears state) before a
 });
 
 /**
- * There's no "forgot password" flow (yet, see docs/roadmap.md's own open
- * candidates list), so a typo'd password at signup is a permanently
- * locked-out account -- this confirm-password field (mirroring
- * ChangePasswordPanel's own established mismatch check) is the only real
- * defense against that. Confirms the mismatch is actually caught
- * client-side: zero requests reach the network, and the real error
- * message shows.
+ * Round 716 added a real "forgot password" recovery path for an account
+ * locked out by a typo'd signup password, but catching the typo right
+ * here -- before it ever reaches the server -- is still better than
+ * making someone go through that whole flow for a mistake made seconds
+ * ago. This confirm-password field (mirroring ChangePasswordPanel's own
+ * established mismatch check) is that first line of defense. Confirms
+ * the mismatch is actually caught client-side: zero requests reach the
+ * network, and the real error message shows.
  */
 test("AuthScreen blocks signup entirely when password and confirmPassword don't match, with zero requests sent", async () => {
   await withJsdom(async () => {
@@ -382,4 +388,145 @@ test("AuthScreen's code-entry 'back' button returns to the login form and clears
       globalThis.fetch = originalFetch;
     }
   });
+});
+
+/**
+ * Round 716: the real "forgot password" recovery flow. The link only
+ * makes sense in login mode (there's no existing password to have
+ * forgotten while signing up for the first time); submitting the typed
+ * email always shows the same generic confirmation, mirroring
+ * routes/auth.ts's own deliberate "never reveal whether the email has an
+ * account" response.
+ */
+test("AuthScreen's 'Forgot password?' link only shows in login mode, and submitting an email calls the real endpoint and shows the generic confirmation", async () => {
+  await withJsdom(async () => {
+    const originalFetch = globalThis.fetch;
+    let capturedBody: string | undefined;
+    globalThis.fetch = (async (_input: string, init?: RequestInit) => {
+      capturedBody = init?.body as string;
+      return new Response(JSON.stringify({ sent: true }), { status: 200, headers: { "content-type": "application/json" } });
+    }) as typeof fetch;
+    try {
+      renderAuthScreen(() => {});
+      // starts in signup mode -- no "Forgot password?" link yet.
+      assert.equal(
+        Array.from(document.querySelectorAll("button")).some((b) => b.textContent === "Forgot password?"),
+        false,
+        "signup mode has no existing password to have forgotten",
+      );
+
+      fireEvent.click(document.querySelector("button.link-button") as HTMLButtonElement); // switch to login
+      const forgotLink = Array.from(document.querySelectorAll("button")).find((b) => b.textContent === "Forgot password?") as HTMLButtonElement;
+      assert.ok(forgotLink, "expected a 'Forgot password?' link in login mode");
+
+      fireEvent.click(forgotLink);
+      assert.equal(
+        document.querySelector('input[type="password"]') === null,
+        true,
+        "the forgot-password step shows only an email field, no password input",
+      );
+      const emailInput = document.querySelector('input[type="email"]') as HTMLInputElement;
+      fireEvent.change(emailInput, { target: { value: "dana@example.com" } });
+
+      await act(async () => {
+        fireEvent.submit(document.querySelector("form.auth-form")!);
+        await Promise.resolve();
+        await Promise.resolve();
+      });
+
+      assert.equal(JSON.parse(capturedBody!).email, "dana@example.com");
+      assert.equal(
+        document.querySelector('input[type="email"]') === null,
+        true,
+        "must show the confirmation, not the email form, once sent",
+      );
+      assert.match(document.body.textContent ?? "", /sent a password reset link/i);
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+});
+
+/**
+ * Following the real emailed link (`?resetToken=...`) must show the
+ * reset-password form instead of the normal login/signup screen --
+ * confirms the whole real flow through real DOM events: typing a new
+ * password, submitting, and the success state's "Go to login" button
+ * actually clearing the URL and returning to a fresh login form.
+ */
+test("AuthScreen shows the reset-password form when the URL carries a resetToken, submits it to the real endpoint, and 'Go to login' clears the URL afterward", async () => {
+  await withJsdom(
+    async () => {
+      const originalFetch = globalThis.fetch;
+      let capturedBody: string | undefined;
+      globalThis.fetch = (async (_input: string, init?: RequestInit) => {
+        capturedBody = init?.body as string;
+        return new Response(null, { status: 204 });
+      }) as typeof fetch;
+      try {
+        renderAuthScreen(() => {});
+
+        assert.equal(
+          document.querySelector('input[type="email"]') === null,
+          true,
+          "the reset-password form must show instead of the normal login/signup form",
+        );
+        const [newPasswordInput, confirmPasswordInput] = document.querySelectorAll('input[type="password"]') as NodeListOf<HTMLInputElement>;
+        assert.ok(newPasswordInput, "expected a new-password field");
+        assert.ok(confirmPasswordInput, "expected a confirm-password field");
+
+        fireEvent.change(newPasswordInput, { target: { value: "brand-new-password" } });
+        fireEvent.change(confirmPasswordInput, { target: { value: "brand-new-password" } });
+
+        await act(async () => {
+          fireEvent.submit(document.querySelector("form.auth-form")!);
+          await Promise.resolve();
+          await Promise.resolve();
+        });
+
+        assert.equal(JSON.parse(capturedBody!).token, "abc123");
+        assert.equal(JSON.parse(capturedBody!).newPassword, "brand-new-password");
+        assert.match(document.body.textContent ?? "", /password has been reset/i);
+
+        const goToLoginButton = Array.from(document.querySelectorAll("button")).find((b) => b.textContent?.includes("login")) as HTMLButtonElement;
+        fireEvent.click(goToLoginButton);
+
+        assert.ok(document.querySelector('input[type="email"]'), "must return to the normal login form");
+        assert.equal(window.location.search, "", "the resetToken query param must be stripped from the URL after returning to login");
+      } finally {
+        globalThis.fetch = originalFetch;
+      }
+    },
+    "http://localhost/?resetToken=abc123",
+  );
+});
+
+test("AuthScreen's reset-password form rejects a mismatched confirmation client-side, with zero requests sent", async () => {
+  await withJsdom(
+    async () => {
+      const originalFetch = globalThis.fetch;
+      let requestCount = 0;
+      globalThis.fetch = (async () => {
+        requestCount += 1;
+        throw new Error("must never be called");
+      }) as typeof fetch;
+      try {
+        renderAuthScreen(() => {});
+        const [newPasswordInput, confirmPasswordInput] = document.querySelectorAll('input[type="password"]') as NodeListOf<HTMLInputElement>;
+        fireEvent.change(newPasswordInput, { target: { value: "brand-new-password" } });
+        fireEvent.change(confirmPasswordInput, { target: { value: "something-else-entirely" } });
+
+        await act(async () => {
+          fireEvent.submit(document.querySelector("form.auth-form")!);
+          await Promise.resolve();
+        });
+
+        assert.equal(requestCount, 0, "a mismatched confirmation must never send a real reset-password request");
+        assert.match(document.querySelector(".error")!.textContent ?? "", /match/i);
+      } finally {
+        globalThis.fetch = originalFetch;
+      }
+    },
+    "http://localhost/?resetToken=abc123",
+  );
 });

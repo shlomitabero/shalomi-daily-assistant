@@ -231,6 +231,23 @@ export function verifyLoginCode(loginCodeId: string, code: string): Promise<{ us
   return request("/auth/login/verify-code", { method: "POST", body: JSON.stringify({ loginCodeId, code }) });
 }
 
+/**
+ * Always resolves with `{ sent: true }`, whether or not `email` matches a
+ * real account -- see routes/auth.ts's own doc comment on why the server
+ * deliberately never reveals that either way. The one exception is
+ * EMAIL_NOT_CONFIGURED (503), a deployment-wide condition unrelated to any
+ * specific address, which AuthScreen.tsx surfaces as a real error instead
+ * of the generic "check your email" confirmation.
+ */
+export function forgotPassword(email: string, lang: "he" | "en"): Promise<{ sent: true }> {
+  return request("/auth/forgot-password", { method: "POST", body: JSON.stringify({ email, lang }) });
+}
+
+/** The second half of the flow above -- `token` is whatever AuthScreen.tsx read from the emailed link's own `?resetToken=` query param. */
+export function resetPassword(token: string, newPassword: string): Promise<void> {
+  return request("/auth/reset-password", { method: "POST", body: JSON.stringify({ token, newPassword }) });
+}
+
 export function me(): Promise<{ user: User }> {
   return request("/auth/me");
 }
