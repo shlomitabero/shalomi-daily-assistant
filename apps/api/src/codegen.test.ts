@@ -8438,7 +8438,7 @@ test("the exported EntityView's board column drop with no real record id is a si
 // code" standard this file's other pure-function tests use. Mirrors the
 // live preview's own entityFormatting.test.ts coverage for
 // isInlineEditableField (round 206).
-test("the exported EntityView's isInlineEditableField allows every field type except relation", () => {
+test("the exported EntityView's isInlineEditableField allows every field type except relation and file", () => {
   const entityViewJsx = generateExportFiles(project).find((f) => f.path === "web/src/components/EntityView.jsx")!.content;
   const fnSrc = entityViewJsx.match(/export function isInlineEditableField\(field\) \{[\s\S]*?\n\}\n/)?.[0]?.replace("export ", "");
   assert.ok(fnSrc, "expected to find isInlineEditableField in generated output");
@@ -8448,6 +8448,111 @@ test("the exported EntityView's isInlineEditableField allows every field type ex
     assert.equal(isInlineEditableField({ type }), true, `expected ${type} to be inline-editable`);
   }
   assert.equal(isInlineEditableField({ type: "relation" }), false, "a relation field's cell shows a label resolved from a different record, so it must stay excluded");
+  // New in this round: a file field's cell showed just the attachment's
+  // filename (via parseFileFieldValue), not the raw JSON descriptor an
+  // inline editor would need to edit -- without this exclusion,
+  // double-clicking it let a user type free text over that raw JSON,
+  // corrupting the stored attachment.
+  assert.equal(isInlineEditableField({ type: "file" }), false, "a file field's real editing UI needs an upload endpoint this exported app doesn't have, so it must stay excluded");
+});
+
+/**
+ * New in this round: the exported app's own Cell, matchesSearch, and
+ * fieldDisplayValue (CSV export) all had zero support for the "file"
+ * field type -- every other surface of this same codebase (the live
+ * Forge AI preview's entityFormatting.ts, the backup ZIP's CSV export)
+ * already parses a file field's stored {url, name, size, mimeType} JSON
+ * descriptor and shows just the filename, but this exported app fell
+ * through to String(value) everywhere, dumping the raw JSON into the
+ * table cell, the CSV export, and (over-/under-)matching it in search.
+ * Runs the real generated Cell/matchesSearch/fieldDisplayValue (plus the
+ * parseFileFieldValue/isImageMimeType helpers they depend on), not a
+ * reimplementation.
+ */
+test("the exported EntityView's Cell, matchesSearch, and fieldDisplayValue all show a file field's real filename, not its raw JSON descriptor", () => {
+  const entityViewJsx = generateExportFiles(project).find((f) => f.path === "web/src/components/EntityView.jsx")!.content;
+
+  const parseFileFieldValueSrc = entityViewJsx.match(/function parseFileFieldValue\(value\) \{[\s\S]*?\n\}\n/)?.[0];
+  const isImageMimeTypeSrc = entityViewJsx.match(/function isImageMimeType\(mimeType\) \{[\s\S]*?\n\}\n/)?.[0];
+  const matchesSearchSrc = entityViewJsx.match(/export function matchesSearch\([\s\S]*?\n\}\n/)?.[0]?.replace("export ", "");
+  const fieldDisplayValueSrc = entityViewJsx.match(/function fieldDisplayValue\(field, value, relatedRecords\) \{[\s\S]*?\n\}\n/)?.[0];
+  assert.ok(
+    parseFileFieldValueSrc && isImageMimeTypeSrc && matchesSearchSrc && fieldDisplayValueSrc,
+    "expected to find parseFileFieldValue/isImageMimeType/matchesSearch/fieldDisplayValue in generated output",
+  );
+
+  const fileValue = JSON.stringify({ url: "https://files.example.com/invoice.pdf", name: "invoice.pdf", size: 1024, mimeType: "application/pdf" });
+
+  const { matchesSearch } = new Function(`${parseFileFieldValueSrc}\n${matchesSearchSrc}\nreturn { matchesSearch };`)() as {
+    matchesSearch: (record: unknown, fields: unknown[], query: string) => boolean;
+  };
+  const fields = [{ name: "attachment", type: "file" }];
+  assert.equal(matchesSearch({ attachment: fileValue }, fields, "invoice"), true, "the real filename shown in the table cell must be searchable");
+  assert.equal(matchesSearch({ attachment: fileValue }, fields, "files.example.com"), false, "the raw stored URL is never shown on screen, so it must not match");
+  assert.equal(matchesSearch({ attachment: fileValue }, fields, "application/pdf"), false, "the raw stored mimetype is never shown on screen, so it must not match");
+
+  const { fieldDisplayValue } = new Function(`${parseFileFieldValueSrc}\n${fieldDisplayValueSrc}\nreturn { fieldDisplayValue };`)() as {
+    fieldDisplayValue: (field: unknown, value: unknown) => string;
+  };
+  assert.equal(fieldDisplayValue({ type: "file" }, fileValue), "invoice.pdf", "the CSV export must show just the filename, not the raw JSON descriptor");
+
+  const transformed = transformSync(`${isImageMimeTypeSrc}\n${parseFileFieldValueSrc}\nfunction Highlighted({ text }) { return text; }\n${entityViewJsx.match(/function Cell\(\{ field, value, relationLabel, highlightQuery, onJumpToRecord \}\) \{[\s\S]*?\n\}\n/)![0]}`, {
+    loader: "jsx",
+    jsxFactory: "h",
+    jsxFragment: "Frag",
+  }).code;
+  const Cell = new Function("h", "Frag", `${transformed}\nreturn Cell;`)(
+    (_type: unknown, props: Record<string, unknown> | null, ...children: unknown[]) =>
+      props?.href ? { href: props.href, children } : children.length === 1 ? children[0] : children,
+    Symbol("Fragment"),
+  ) as (props: { field: unknown; value: unknown }) => unknown;
+
+  const rendered = Cell({ field: { type: "file" }, value: fileValue }) as { href: string; children: unknown };
+  assert.equal(rendered.href, "https://files.example.com/invoice.pdf", "the table cell must link straight to the real file, not render the raw JSON as plain text");
+});
+
+/**
+ * New in this round: a file field's stored value is a JSON descriptor an
+ * upload endpoint sets -- not something a CSV cell can ever supply, and
+ * typing text into one would both fail to attach a real file and corrupt
+ * an existing one. Mirrors the live preview's own buildImportRecords
+ * ("no file to attach from a CSV cell").
+ */
+test("the exported EntityView's CSV import skips a file column entirely, even when it's marked required", () => {
+  const withFile: Project = {
+    ...project,
+    spec: {
+      ...project.spec,
+      entities: [
+        ...project.spec.entities,
+        {
+          name: "Document",
+          label: "Document",
+          fields: [
+            { name: "title", label: "Title", type: "text", required: true },
+            { name: "attachment", label: "Attachment", type: "file", required: true },
+          ],
+        },
+      ],
+    },
+  };
+  const entityViewJsx = generateExportFiles(withFile).find((f) => f.path === "web/src/components/EntityView.jsx")!.content;
+  const buildImportRecordsSrc = entityViewJsx.match(/function buildImportRecords\(fields, rows, relatedRecords\) \{[\s\S]*?\n  return \{ records, errors \};\n\}\n/)?.[0];
+  const matchesImportHeaderSrc = entityViewJsx.match(/function matchesImportHeader\([\s\S]*?\n\}\n/)?.[0];
+  const fieldLabelOccurrencesSrc = entityViewJsx.match(/function fieldLabelOccurrences\(fields\) \{[\s\S]*?\n\}\n/)?.[0];
+  assert.ok(buildImportRecordsSrc && matchesImportHeaderSrc && fieldLabelOccurrencesSrc, "expected to find buildImportRecords/matchesImportHeader/fieldLabelOccurrences in generated output");
+
+  const ALL_ENTITIES = withFile.spec.entities;
+  const { buildImportRecords } = new Function(
+    "ALL_ENTITIES",
+    `${matchesImportHeaderSrc}\n${fieldLabelOccurrencesSrc}\n${buildImportRecordsSrc}\nreturn { buildImportRecords };`,
+  )(ALL_ENTITIES) as { buildImportRecords: (fields: unknown[], rows: string[][], relatedRecords: unknown) => { records: unknown[]; errors: string[] } };
+
+  const fields = withFile.spec.entities.find((e) => e.name === "Document")!.fields;
+  const result = buildImportRecords(fields, [["Title", "Attachment"], ["Invoice", "not-real-json-garbage"]], {});
+  assert.deepEqual(result.errors, [], "a required file column must never block the import -- there's no CSV cell that could ever satisfy it");
+  assert.equal(result.records.length, 1);
+  assert.equal("attachment" in result.records[0]!, false, "the file column's cell text must never be written into the record, required or not");
 });
 
 /**
@@ -8979,6 +9084,54 @@ test("the exported EntityView's FieldInput wires field.required into the real re
 
   const textBranch = fieldInputSrc!.match(/return <input id=\{id\} type="text"[\s\S]{0,100}/)?.[0];
   assert.match(textBranch ?? "", /required=\{field\.required\}/, "the plain text input fallback branch must be required-wired");
+});
+
+/**
+ * New in this round: the exported app's FieldInput had no "file" branch at
+ * all, so a file field fell through to the plain text fallback above --
+ * letting a user type arbitrary text into a required field (satisfying the
+ * HTML5 `required` check with text that was never a real file) and, worse,
+ * freely overwrite an existing attachment's real JSON descriptor with
+ * whatever they typed, corrupting it. There's no upload endpoint in this
+ * exported app to wire a real file picker to, so the fix shows the
+ * existing attachment (if any) as a plain link and nothing more -- not an
+ * `<input type="text">` masquerading as something it can't actually do.
+ * Runs the real generated FieldInput, extracted the same way the step/
+ * required tests above do.
+ */
+test("the exported EntityView's FieldInput shows a file field's existing attachment as a plain link, with no editable text input that could corrupt it", () => {
+  const files = generateExportFiles(project);
+  const entityViewJsx = files.find((f) => f.path === "web/src/components/EntityView.jsx")!.content;
+
+  const fieldInputSrc = entityViewJsx.match(/function FieldInput\(\{[\s\S]*?\n\}\n/)?.[0];
+  assert.ok(fieldInputSrc, "expected to find FieldInput in generated output");
+
+  const fileBranch = fieldInputSrc!.match(/if \(field\.type === "file"\) \{[\s\S]*?\n  \}\n/)?.[0];
+  assert.ok(fileBranch, "expected a dedicated file branch in the generated FieldInput");
+  assert.doesNotMatch(fileBranch!, /type="text"/, "a file field must never fall through to (or reuse) a free-text input");
+  assert.doesNotMatch(fileBranch!, /type="file"/, "there's no upload endpoint in the exported app to wire a real file picker to");
+
+  const parseFileFieldValueSrc = entityViewJsx.match(/function parseFileFieldValue\(value\) \{[\s\S]*?\n\}\n/)?.[0];
+  assert.ok(parseFileFieldValueSrc, "expected to find parseFileFieldValue in generated output");
+
+  const transformed = transformSync(`${parseFileFieldValueSrc}\nfunction FieldInput({ field, value }) {\n  const id = "test-id";\n${fileBranch}\n}`, {
+    loader: "jsx",
+    jsxFactory: "h",
+    jsxFragment: "Frag",
+  }).code;
+  const FieldInput = new Function("h", "Frag", `${transformed}\nreturn FieldInput;`)(
+    (type: unknown, props: Record<string, unknown> | null, ...children: unknown[]) => ({ type, props, children }),
+    Symbol("Fragment"),
+  ) as (props: { field: unknown; value: unknown }) => { type: unknown; props: Record<string, unknown> | null; children: unknown[] };
+
+  const fileValue = JSON.stringify({ url: "https://files.example.com/invoice.pdf", name: "invoice.pdf", size: 1024, mimeType: "application/pdf" });
+  const withFile = FieldInput({ field: { type: "file" }, value: fileValue });
+  const withFileJson = JSON.stringify(withFile);
+  assert.match(withFileJson, /invoice\.pdf/, "the existing attachment's real filename must still be shown");
+  assert.match(withFileJson, /https:\/\/files\.example\.com\/invoice\.pdf/, "the existing attachment's real link must still be shown");
+
+  const withoutFile = FieldInput({ field: { type: "file" }, value: "" });
+  assert.doesNotMatch(JSON.stringify(withoutFile), /invoice\.pdf/, "with no current file, nothing from a previous call must leak through");
 });
 
 /**

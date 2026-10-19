@@ -1513,12 +1513,46 @@ function getDateUrgency(value, today) {
   return null;
 }
 
+// A \`file\` field's stored value is a JSON-encoded {url, name, size,
+// mimeType} descriptor (set by the live Forge AI preview's own upload
+// endpoint), not a plain string like every other field type -- a record
+// with no file chosen yet, or one from before this field existed, stores
+// "" or null instead, so this returns null rather than throwing on
+// anything that doesn't parse as the expected shape. Mirrors the live
+// preview's own entityFormatting.ts parseFileFieldValue.
+function parseFileFieldValue(value) {
+  if (typeof value !== "string" || value === "") return null;
+  try {
+    const parsed = JSON.parse(value);
+    if (typeof parsed.url === "string" && typeof parsed.name === "string") {
+      return { url: parsed.url, name: parsed.name, size: Number(parsed.size) || 0, mimeType: String(parsed.mimeType || "") };
+    }
+  } catch {
+    // not a file descriptor -- treated as no file, same as an empty value
+  }
+  return null;
+}
+
+// Mirrors the live preview's own entityFormatting.ts isImageMimeType.
+function isImageMimeType(mimeType) {
+  return mimeType.startsWith("image/");
+}
+
 // A relation cell already shows a label resolved from a *different*
 // record (see relationDisplayLabel), not the raw stored value an inline
 // editor would need to edit -- mirrors the live preview's own
 // entityFormatting.ts isInlineEditableField (round 206).
+//
+// "file" is excluded for the same reason: its real editing UI (choosing
+// and uploading a file) needs more room and more state than a single
+// inline table cell gives it -- see FieldInput's own "file" branch below,
+// the only one that would need an upload endpoint to work at all (which
+// this exported app doesn't have). Without this exclusion, double-
+// clicking a file cell let a user inline-edit the raw JSON descriptor as
+// free text, silently corrupting the stored attachment. Mirrors the live
+// preview's own entityFormatting.ts isInlineEditableField.
 export function isInlineEditableField(field) {
-  return field.type !== "relation";
+  return field.type !== "relation" && field.type !== "file";
 }
 
 // Splits text into plain-vs-link segments so a table cell can render a real,
@@ -1670,6 +1704,21 @@ function Cell({ field, value, relationLabel, highlightQuery, onJumpToRecord }) {
       </span>
     );
   }
+  if (field.type === "file") {
+    const fileValue = parseFileFieldValue(value);
+    if (!fileValue) return <span className="muted">—</span>;
+    return (
+      <a href={fileValue.url} target="_blank" rel="noopener noreferrer" className="file-cell-link" title={fileValue.name}>
+        {isImageMimeType(fileValue.mimeType) ? (
+          <img src={fileValue.url} alt={fileValue.name} className="file-cell-thumbnail" />
+        ) : (
+          <span className="file-cell-name">
+            <Highlighted text={fileValue.name} query={highlightQuery} />
+          </span>
+        )}
+      </a>
+    );
+  }
   return <LinkifiedText text={String(value)} query={highlightQuery} />;
 }
 
@@ -1703,6 +1752,15 @@ function Cell({ field, value, relationLabel, highlightQuery, onJumpToRecord }) {
 // cell itself renders a checkmark/dash, not even that). Typing "Yes"/"No"
 // -- the exact words shown in the group-by header for the same field --
 // found nothing.
+//
+// A file field has the same gap for the same reason: the table cell
+// (Cell(), above) shows just the attachment's filename via
+// parseFileFieldValue, not the raw stored JSON descriptor ({"url":...,
+// "name":...,...}) -- so this both over-matched (searching "url", a
+// mimetype, or the raw byte size matched every record with a file) and
+// under-matched (a filename containing a quote or backslash is JSON-
+// escaped in the raw stored string, so typing back the exact filename
+// shown on screen could fail to match).
 export function matchesSearch(record, fields, query, relatedRecords) {
   const trimmed = query.trim().toLowerCase();
   if (!trimmed) return true;
@@ -1713,6 +1771,9 @@ export function matchesSearch(record, fields, query, relatedRecords) {
       const date = parseFieldDate(value);
       const formatted = Number.isNaN(date.getTime()) ? value : date.toLocaleDateString();
       return \`\${value} \${formatted}\`.toLowerCase().includes(trimmed);
+    }
+    if (f.type === "file") {
+      return (parseFileFieldValue(value)?.name || "").toLowerCase().includes(trimmed);
     }
     const display =
       f.type === "enum" && f.enumLabels && f.enumLabels[value]
@@ -1816,6 +1877,13 @@ function fieldDisplayValue(field, value, relatedRecords) {
   if (field.type === "relation") return relationDisplayLabel(field, value, relatedRecords) || \`#\${value}\`;
   if (field.type === "boolean") return value ? "TRUE" : "FALSE";
   if (field.type === "enum") return (field.enumLabels && field.enumLabels[value]) || value;
+  // A file field's raw stored value is a JSON descriptor ({"url":...,
+  // "name":...,...}), not something a spreadsheet reader would recognize
+  // -- the CSV export has no way to also carry the uploaded bytes
+  // themselves (same limitation the live preview's own CSV export and
+  // the backup ZIP's CSV export already have), so this gives just the
+  // filename, mirroring both of those.
+  if (field.type === "file") return parseFileFieldValue(value)?.name || "";
   return String(value);
 }
 
@@ -2071,6 +2139,14 @@ function buildImportRecords(fields, rows, relatedRecords) {
       // that genuinely starts with a literal "'" followed by an ordinary
       // character is left untouched.
       const raw = trimmedCell[0] === "'" && /^[=+\\-@\\t\\r']/.test(trimmedCell.slice(1)) ? trimmedCell.slice(1) : trimmedCell;
+
+      // A file field's real value is a JSON descriptor set by an upload
+      // endpoint, not something a CSV cell can supply -- skipped the same
+      // way the live preview's own buildImportRecords skips it (there's
+      // no file to attach from a CSV cell, required or not), instead of
+      // letting a typed-in cell value overwrite -- or a required check
+      // reject -- a field no CSV import can ever actually satisfy.
+      if (field.type === "file") continue;
 
       if (field.type === "relation") {
         if (!relationResolvable(field)) continue;
@@ -2875,6 +2951,32 @@ function FieldInput({ entity, field, value, onChange, relatedEntity, relatedEnti
         onBlur={onBlur}
         onKeyDown={onKeyDown}
       />
+    );
+  }
+  if (field.type === "file") {
+    // The exported app has no upload endpoint of its own (only the live
+    // Forge AI preview can turn a chosen file into the {url, name, size,
+    // mimeType} descriptor this field actually stores) -- before this,
+    // this fell through to the generic text input below, letting a user
+    // type arbitrary text into a required field and silently corrupt an
+    // existing attachment's JSON descriptor. A record that already has a
+    // file (exported after it was uploaded in the live preview) still
+    // shows and keeps it; there's just no way to add, replace, or clear
+    // one here.
+    const currentFile = parseFileFieldValue(value);
+    return (
+      <div className="file-field-input" id={id}>
+        {currentFile ? (
+          <span className="file-field-current">
+            <a href={currentFile.url} target="_blank" rel="noopener noreferrer">
+              {currentFile.name}
+            </a>
+          </span>
+        ) : (
+          <span className="muted">No file</span>
+        )}
+        <p className="muted small">Files can't be added or changed in an exported app -- only the live Forge AI preview supports file uploads.</p>
+      </div>
     );
   }
   return <input id={id} type="text" required={field.required} value={value ?? ""} onChange={(e) => onChange(e.target.value)} autoFocus={autoFocus} onBlur={onBlur} onKeyDown={onKeyDown} />;
@@ -6081,6 +6183,11 @@ th, td { text-align: start; padding: 8px 10px; border-bottom: 1px solid var(--bo
 .entity-undo-toast { display: flex; align-items: center; gap: 10px; background: var(--accent-soft); border: 1px solid var(--accent); color: var(--text); padding: 8px 14px; border-radius: 8px; margin: 0 0 16px; }
 .link-button { background: none; border: none; color: var(--accent); padding: 0; text-decoration: underline; font: inherit; font-weight: 600; cursor: pointer; }
 .cell-link { color: var(--accent); text-decoration: underline; }
+.file-cell-link { display: inline-flex; align-items: center; }
+.file-cell-name { color: var(--accent-deep); text-decoration: underline; }
+.file-cell-thumbnail { max-width: 48px; max-height: 48px; border-radius: 4px; object-fit: cover; }
+.file-field-input { display: flex; flex-direction: column; gap: 4px; }
+.file-field-current { display: flex; align-items: center; gap: 8px; }
 .search-match { background: var(--accent-soft); color: var(--accent-deep); border-radius: 3px; padding: 0 1px; }
 .link-button:hover { opacity: 0.85; }
 .entity-search { max-width: 280px; margin-bottom: 14px; }
