@@ -154,16 +154,16 @@ def _produce_talking(day: DayPlan, plate_id, night: bool, hero_url: str, hero: P
     """2026 path: the video model speaks the Hebrew itself (picture + voice + lip-sync in one pass)."""
     from . import providers as P
     from . import subtitles, video
-    from .fal_provider import talk, talk_prompt
+    from .fal_provider import clip_seconds, talk, talk_prompt
 
     no_fire = not venue.fire_allowed(plate_id)
     groups = chunk_lines(day.script, TALK_ENGINES[engine][1])
-    clips = []
+    clips, start_url = [], hero_url
     for i, group in enumerate(groups):
         spoken = " ".join(l.spoken_he.strip() for l in group if l.spoken_he.strip())
         if spoken:
             prompt = talk_prompt(_clean(day.visual.scene), _clean(day.visual.action), spoken, no_fire)
-            url = talk(engine, hero_url, prompt)
+            url = talk(engine, start_url, prompt, clip_seconds(engine, spoken))
         else:   # silent cutaway: the real room or the dish, animated without speech
             if plate_id and not venue.is_food_shot(group[0].shot):
                 img = venue.plate_9x16(plate_id, night=night)
@@ -173,7 +173,13 @@ def _produce_talking(day: DayPlan, plate_id, night: bool, hero_url: str, hero: P
                               workdir / "broll", use_lora=False)[0]
             url = P.animate(P.upload(img, f"lilo/{day.day}/{img.name}"), " ".join(l.shot for l in group), 5,
                             no_fire=no_fire and bool(plate_id))
-        clips.append(video.download(url, workdir / f"talk_{i}.mp4"))
+        clip = video.download(url, workdir / f"talk_{i}.mp4")
+        if spoken:
+            clip = video.trim_after_speech(clip)
+            # the next talking clip continues from where this one ended - no jump between clips
+            frame = video.last_frame(clip, workdir / f"talk_{i}_last.jpg")
+            start_url = P.upload(frame, f"lilo/{day.day}/{frame.name}")
+        clips.append(clip)
         print(f"[talk] {day.day} clip {i + 1}/{len(groups)} ready", flush=True)
     lines = retime(groups, [video.probe(c)[0] for c in clips])
     subs = subtitles.write_ass(lines, workdir / "subs.ass", hook=day.hook_he)

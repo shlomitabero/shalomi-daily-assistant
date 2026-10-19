@@ -186,9 +186,9 @@
         {
           "t_start": 17.0,
           "t_end": 21.0,
-          "spoken_he": "אני AI. אני לא טועמת. ובכל זאת, קראש.",
+          "spoken_he": "ואני? כבר יש לי קראש.",
           "voice_direction": "[laughs] [playful]",
-          "on_screen_text_he": "AI עם קראש",
+          "on_screen_text_he": "קראש 💘",
           "shot": "close-up, LILO hand on heart, smiling"
         },
         {
@@ -303,7 +303,7 @@
         {
           "t_start": 21.0,
           "t_end": 25.0,
-          "spoken_he": "אני AI. אני רק מתכננת. אתם הולכים.",
+          "spoken_he": "אני רק מתכננת. אתם הולכים.",
           "voice_direction": "[laughs] [warm]",
           "on_screen_text_he": "אני מתכננת. אתם הולכים.",
           "shot": "close-up, LILO to camera, playful smile"
@@ -563,7 +563,7 @@
           "t_end": 23.0,
           "spoken_he": "ואני? אני כבר בטלפון שלכם.",
           "voice_direction": "[laughs]",
-          "on_screen_text_he": "AI, תמיד בכיס",
+          "on_screen_text_he": "תמיד בכיס שלכם",
           "shot": "close-up, LILO grinning to camera"
         },
         {
@@ -831,9 +831,9 @@
         {
           "t_start": 21.0,
           "t_end": 25.0,
-          "spoken_he": "ותחפושת להאלווין? אני כבר AI.",
+          "spoken_he": "ותחפושת להאלווין? כתבו לי.",
           "voice_direction": "[laughs]",
-          "on_screen_text_he": "תחפושת? כבר AI",
+          "on_screen_text_he": "תחפושת? כתבו לי 🎃",
           "shot": "close-up, LILO small amused shrug"
         },
         {
@@ -857,5 +857,6 @@
       ],
       "trend_or_audio_note": "'Final round' card-reveal format: game-show tension beat with a soft drum hit on each reveal, light spooky sting on the Halloween line."
     }
-  ]
+  ],
+  "_rev": 2
 }

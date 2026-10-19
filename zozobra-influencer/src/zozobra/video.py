@@ -167,3 +167,32 @@ def concat(clips: list[Path], out: Path, subtitles: Path | None = None) -> Path:
                     "-metadata", "comment=AI-generated (trainedAlgorithmicMedia) - LILO virtual creator x ZOZOBRA",
                     str(out)], check=True, capture_output=True)
     return out
+
+
+def last_frame(clip: Path, out: Path) -> Path:
+    """Final frame of a clip - the next talking clip starts from it, so there is no jump between clips."""
+    subprocess.run(["ffmpeg", "-y", "-sseof", "-0.15", "-i", str(clip), "-frames:v", "1", "-q:v", "2", str(out)],
+                   check=True, capture_output=True)
+    return out
+
+
+def trim_after_speech(clip: Path, tail: float = 0.35, min_keep: float = 1.5) -> Path:
+    """Cut the silent tail after the last spoken word (where models drift or repeat lines)."""
+    dur, has_audio = probe(clip)
+    if not has_audio:
+        return clip
+    log = subprocess.run(["ffmpeg", "-i", str(clip), "-af", "silencedetect=noise=-32dB:d=0.35", "-f", "null", "-"],
+                         capture_output=True, text=True).stderr
+    starts = [float(x.split("silence_start:")[1].split()[0]) for x in log.splitlines() if "silence_start:" in x]
+    ends = [float(x.split("silence_end:")[1].split()[0]) for x in log.splitlines() if "silence_end:" in x]
+    # trailing silence = the last silence has no end, or (newer ffmpeg) ends at the end of the stream
+    trailing = starts and (len(ends) < len(starts) or ends[-1] >= dur - 0.15)
+    if not trailing:
+        return clip
+    cut = starts[-1] + tail
+    if cut < min_keep or cut >= dur - 0.2:
+        return clip
+    out = clip.with_name(clip.stem + "_trim.mp4")
+    subprocess.run(["ffmpeg", "-y", "-i", str(clip), "-t", f"{cut:.2f}", "-c:v", "libx264", "-preset", "fast",
+                    "-crf", "18", "-c:a", "aac", str(out)], check=True, capture_output=True)
+    return out

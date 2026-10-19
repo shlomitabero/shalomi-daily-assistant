@@ -31,11 +31,29 @@ def _seed_sample_week() -> None:
     if old_sample.exists() and "bangkok_heat" in old_sample.read_text(encoding="utf-8"):
         old_sample.rename(old_sample.with_suffix(".retired"))
         setup_sample()
+    rerender: list[tuple[str, str]] = []
     for bundled_cal in sorted((ROOT / "examples" / "calendars").glob("week_*.json")):   # campaign weeks 1-5
         target = cal_dir() / bundled_cal.name
         if not target.exists():
             cal_dir().mkdir(parents=True, exist_ok=True)
             target.write_text(bundled_cal.read_text(encoding="utf-8"), encoding="utf-8")
+            continue
+        new, cur = json.loads(bundled_cal.read_text(encoding="utf-8")), json.loads(target.read_text(encoding="utf-8"))
+        if new.get("_rev", 1) <= cur.get("_rev", 1):
+            continue
+        # a newer bundled revision: take its version of every day you haven't approved or posted yet
+        queued = {i["day"]: i for i in queue_items()}
+        by_day = {d["day"]: d for d in new["days"]}
+        for idx, d in enumerate(cur["days"]):
+            q = queued.get(d["day"])
+            if d["day"] in by_day and by_day[d["day"]] != d and (not q or q.get("status") in ("pending", "rejected")):
+                cur["days"][idx] = by_day[d["day"]]
+                if q:
+                    rerender.append((target.stem, d["day"]))
+        cur["_rev"] = new["_rev"]
+        target.write_text(json.dumps(cur, ensure_ascii=False, indent=2), encoding="utf-8")
+    for stem, day in rerender:      # posts already produced from the old text are produced again
+        jobs.submit(f"הפקה מחדש {day}", _produce_job, stem, day)
     anchor = settings().data_dir / "refs" / "R0_anchor.png"
     bundled = ROOT / "assets" / "lilo" / "R0_anchor.jpg"
     if not anchor.exists() and bundled.exists():

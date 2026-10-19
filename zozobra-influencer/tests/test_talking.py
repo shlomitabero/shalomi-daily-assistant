@@ -166,3 +166,28 @@ def test_fix_button_revises_text_without_rerender(tmp_path, monkeypatch):
     assert item["revisions"][-1]["instruction"] == "תקצר את הכיתוב"
     c.post("/queue/2026-10-19/approve")
     assert _json.loads((tmp_path / "queue" / "2026-10-19.json").read_text(encoding="utf-8"))["status"] == "approved"
+
+
+def test_clip_length_fits_line_and_silent_tail_is_cut(tmp_path):
+    import subprocess
+
+    from zozobra import video
+    from zozobra.fal_provider import clip_seconds
+
+    assert clip_seconds("veo", "נעים מאוד, אני לילו.") == 4
+    assert clip_seconds("veo", " ".join(["מילה"] * 30)) == 8
+    clip = tmp_path / "c.mp4"
+    subprocess.run(["ffmpeg", "-v", "error", "-y", "-f", "lavfi", "-i", "testsrc=s=320x568:d=5", "-f", "lavfi",
+                    "-i", "sine=f=440:d=2,apad=pad_dur=3", "-shortest", str(clip)], check=True)
+    trimmed = video.trim_after_speech(clip)
+    assert 2.0 < video.probe(trimmed)[0] < 2.8
+    assert video.last_frame(trimmed, tmp_path / "f.jpg").stat().st_size > 0
+
+
+def test_lilo_never_says_she_is_ai_in_scheduled_scripts():
+    import re
+
+    for path in (SAMPLE.parent / "calendars").glob("week_*.json"):
+        for day in WeekPlan.model_validate_json(path.read_text(encoding="utf-8")).days:
+            for line in day.script:
+                assert not re.search(r"\bAI\b|דמות|וירטואל", line.spoken_he + " " + line.on_screen_text_he), (day.day, line)

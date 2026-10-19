@@ -113,14 +113,25 @@ def animate(image_url: str, prompt: str, duration: int = 10, no_fire: bool = Fal
     return result["video"]["url"]
 
 
-# engine -> (fal app, max seconds per clip, extra arguments)
+# engine -> (fal app, max seconds per clip, extra arguments, allowed clip lengths -> wire value)
 TALK_ENGINES = {
     "veo": ("fal-ai/veo3.1/image-to-video", 8,
-            {"aspect_ratio": "9:16", "resolution": "1080p", "generate_audio": True, "duration": "8s"}),
-    "sora": ("fal-ai/sora-2/image-to-video/pro", 12, {"aspect_ratio": "9:16", "resolution": "1080p", "duration": 12}),
+            {"aspect_ratio": "9:16", "resolution": "1080p", "generate_audio": True},
+            {4: "4s", 6: "6s", 8: "8s"}),
+    "sora": ("fal-ai/sora-2/image-to-video/pro", 12, {"aspect_ratio": "9:16", "resolution": "1080p"},
+             {4: 4, 8: 8, 12: 12}),
     "seedance": ("bytedance/seedance-2.0/image-to-video", 10,
-                 {"aspect_ratio": "9:16", "resolution": "1080p", "generate_audio": True, "duration": "10"}),
+                 {"aspect_ratio": "9:16", "resolution": "1080p", "generate_audio": True},
+                 {5: "5", 10: "10"}),
 }
+HEBREW_WORDS_PER_SECOND = 2.4
+
+
+def clip_seconds(engine: str, spoken_he: str) -> int:
+    """Shortest allowed clip that fits the line - a too-long clip makes the model repeat words."""
+    need = len(spoken_he.split()) / HEBREW_WORDS_PER_SECOND + 1.0
+    lengths = sorted(TALK_ENGINES[engine][3])
+    return next((n for n in lengths if n >= need), lengths[-1])
 TALK_LABELS_HE = {"veo": "Google Veo 3.1", "sora": "OpenAI Sora 2 Pro", "seedance": "ByteDance Seedance 2.0"}
 
 
@@ -130,7 +141,10 @@ def talk_prompt(scene: str, action: str, spoken_he: str, no_fire: bool = True) -
         f"Vertical 9:16 cinematic social video. The woman in the image keeps exactly the same face, hair and outfit. "
         f"Setting: {scene}. {action}. Her outfit is elegant and modest, fully covered.",
         f'She speaks directly to camera in natural, fluent native Israeli Hebrew with a natural native Israeli accent, '
-        f'warm and playful, conversational pace, perfect lip-sync. She says, in Hebrew: "{spoken_he}"',
+        f'warm and playful, conversational pace, perfect lip-sync. She says, in Hebrew, exactly once and word '
+        f'for word: "{spoken_he}" - then she stops talking and just smiles. She never repeats a word, never adds '
+        f'words, no stutter.',
+        "One continuous shot: no cuts, no jump cuts, smooth natural motion.",
         "Audio: only her voice and soft real restaurant ambience. No music, no narrator, no other voices.",
         "No subtitles, no captions, no on-screen text, no logos. Keep the room exactly as in the image: "
         "no new lamps, lanterns or decorations.",
@@ -140,9 +154,10 @@ def talk_prompt(scene: str, action: str, spoken_he: str, no_fire: bool = True) -
     return " ".join(parts)
 
 
-def talk(engine: str, image_url: str, prompt: str) -> str:
+def talk(engine: str, image_url: str, prompt: str, seconds: int | None = None) -> str:
     """Speaking clip from a still. Falls back to the minimal schema if a model rejects an option."""
-    app, _, extra = TALK_ENGINES[engine]
+    app, max_s, extra, lengths = TALK_ENGINES[engine]
+    extra = {**extra, "duration": lengths[seconds if seconds in lengths else max_s]}
     base = {"image_url": image_url, "prompt": prompt[:4800]}
     try:
         result = _fal().subscribe(app, arguments={**base, **extra})

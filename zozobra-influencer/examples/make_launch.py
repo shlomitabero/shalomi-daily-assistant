@@ -34,18 +34,18 @@ def city_day(day, weekday, time, pillar, concept, hook, alts, scene, action, mot
 DAYS = [
     city_day(
         "2026-10-19", "שני", "20:00", "pov_story",
-        "היכרות: לילו, מדריכת הבילויים הווירטואלית של חיפה והקריות, מבקשת מהקהל להיות \"הפה שלה\"",
-        "נעים מאוד, אני לילו.", ["אני AI, ואני צריכה את העזרה שלכם", "מדריכת הלילה החדשה של חיפה"],
+        "היכרות: לילו, מדריכת הבילויים של חיפה והקריות, שואלת את הקהל לאן יוצאים",
+        "נעים מאוד, אני לילו.", ["אני צריכה את העזרה שלכם", "מדריכת הלילה החדשה של חיפה"],
         "Louis Promenade in Haifa at night, the lights of Haifa Bay and the port glittering far below, warm street lamps",
         "leaning on the promenade railing, turning to camera with a confident half-smile, a small wave",
         "Slow push-in from medium to medium close-up. She turns from the bay view to the camera, smiles and gives a "
         "small wave; city lights twinkle in the bokeh behind her; a light breeze moves loose strands of her hair.",
         [L(0, 3, "נעים מאוד, אני לילו.", "[warmly]", "נעים מאוד, אני לילו 👋", "medium, LILO to camera at the promenade"),
-         L(3, 7, "אני דמות AI, ואני מכירה כל פינה שווה בחיפה ובקריות.", "[confidently]", "AI · חיפה והקריות", "medium close-up, LILO to camera"),
-         L(7, 11, "רק בעיה אחת: אני לא יכולה לטעום. אז אתם תהיו הפה שלי.", "[playfully]", "אתם הפה שלי", "close-up, LILO smiling"),
+         L(3, 7, "אני מכירה כל פינה שווה בחיפה ובקריות.", "[confidently]", "חיפה והקריות", "medium close-up, LILO to camera"),
+         L(7, 11, "ומעכשיו, אני מראה לכם לאן יוצאים.", "[playfully]", "לאן יוצאים?", "close-up, LILO smiling"),
          L(11, 15, "כתבו לי בתגובות: לאן יוצאים הערב?", "[warmly]", "לאן יוצאים הערב? 👇", "medium close-up, LILO points at camera"),
          L(15, 17.5, *SIGN_OFF, "medium, LILO turns back to the bay view")],
-        "נעים מאוד, אני לילו 🌙\nדמות AI שמכירה כל פינה שווה בחיפה ובקריות, ולא יכולה לטעום כלום.\nאז אתם תהיו הפה שלי.",
+        "נעים מאוד, אני לילו 🌙\nאני מכירה כל פינה שווה בחיפה ובקריות.\nומעכשיו אני מראה לכם לאן יוצאים.",
         "כתבו בתגובות לאן יוצאים הערב 👇", TAGS),
     city_day(
         "2026-10-21", "רביעי", "20:00", "night_vibe",
