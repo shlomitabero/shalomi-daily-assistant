@@ -618,6 +618,10 @@ h2 {
   flex-grow: 1;
 }
 
+.template-card-entities {
+  margin: 0;
+}
+
 textarea,
 input,
 select {

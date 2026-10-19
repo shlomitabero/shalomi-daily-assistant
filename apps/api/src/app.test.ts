@@ -2893,6 +2893,39 @@ test("GET /templates returns the Templates Gallery's display metadata, but never
   });
 });
 
+/**
+ * Round 711: before this round, the Templates Gallery's own GET /templates
+ * route (see its doc comment above) stripped out every entity name, even
+ * though TEMPLATES' full spec/specEn were already in memory server-side --
+ * a user browsing the gallery had no way to see what a template actually
+ * builds beyond whatever happened to be mentioned in its one-line
+ * description. Confirms the new entityNames/entityNamesEn fields carry each
+ * entity's own display label (Hebrew and English) and nothing more -- no
+ * fields, types, required flags, or relations, preserving the route's own
+ * "never leak the full spec" intent from the test just above.
+ */
+test("GET /templates includes each template's entity display labels (Hebrew and English), without leaking field-level spec detail", async () => {
+  await withServer(async (baseUrl) => {
+    const token = await signup(baseUrl, "templates-list2@example.com");
+    const res = await fetch(`${baseUrl}/api/templates`, { headers: authHeaders(token) });
+    assert.equal(res.status, 200);
+    const { templates } = (await res.json()) as {
+      templates: { id: string; entityNames: string[]; entityNamesEn: string[] }[];
+    };
+    const restaurant = templates.find((t) => t.id === "restaurant");
+    assert.ok(restaurant, "the restaurant template must be in the gallery");
+    assert.ok(restaurant!.entityNames.length > 0, "expected at least one Hebrew entity label");
+    assert.ok(restaurant!.entityNamesEn.length > 0, "expected at least one English entity label");
+    assert.equal(restaurant!.entityNames.length, restaurant!.entityNamesEn.length, "the Hebrew and English entity lists must describe the same entities, just localized");
+    assert.ok(restaurant!.entityNames.includes("מנה"), `expected the Hebrew MenuItem label among ${JSON.stringify(restaurant!.entityNames)}`);
+    assert.ok(restaurant!.entityNamesEn.includes("Menu Item"), `expected the English MenuItem label among ${JSON.stringify(restaurant!.entityNamesEn)}`);
+    // Every entry must be a plain label string, not a nested field/type object.
+    for (const label of [...restaurant!.entityNames, ...restaurant!.entityNamesEn]) {
+      assert.equal(typeof label, "string");
+    }
+  });
+});
+
 test("POST /projects/from-template creates a buildable draft project from a template, defaulting to its Hebrew display text", async () => {
   await withServer(async (baseUrl) => {
     const token = await signup(baseUrl, "templates-use1@example.com");

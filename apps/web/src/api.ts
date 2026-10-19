@@ -283,6 +283,8 @@ export interface TemplateSummary {
   nameHe: string;
   description: string;
   descriptionHe: string;
+  entityNames: string[];
+  entityNamesEn: string[];
 }
 
 export function listTemplates(): Promise<{ templates: TemplateSummary[] }> {

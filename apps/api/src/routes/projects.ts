@@ -931,19 +931,25 @@ export function createProjectsRouter(
    * `spec` -- the client doesn't need it (picking a template goes straight
    * to POST /projects/from-template below, which resolves it server-side),
    * and there's no reason to hand a bigger payload than the gallery cards
-   * actually render.
+   * actually render. `entityNames`/`entityNamesEn` are the one exception:
+   * just each entity's own display label (no fields/types/required/relations),
+   * cheap to derive since `spec`/`specEn` are already in memory, so a user
+   * can see what a template actually builds before committing to it instead
+   * of guessing from the one-line description alone.
    */
   router.get(
     "/templates",
     asyncRoute(async (_req, res) => {
       res.json({
-        templates: TEMPLATES.map(({ id, icon, name, nameHe, description, descriptionHe }) => ({
+        templates: TEMPLATES.map(({ id, icon, name, nameHe, description, descriptionHe, spec, specEn }) => ({
           id,
           icon,
           name,
           nameHe,
           description,
           descriptionHe,
+          entityNames: spec.entities.map((e) => e.label),
+          entityNamesEn: specEn.entities.map((e) => e.label),
         })),
       });
     }),

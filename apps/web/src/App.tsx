@@ -1798,6 +1798,11 @@ function AppContent() {
                     <p className="muted small template-card-description">
                       {lang === "en" ? template.description : template.descriptionHe}
                     </p>
+                    {(lang === "en" ? template.entityNamesEn : template.entityNames).length > 0 && (
+                      <p className="muted small template-card-entities">
+                        {t("home.templates.includes")}: {(lang === "en" ? template.entityNamesEn : template.entityNames).join(", ")}
+                      </p>
+                    )}
                     <button
                       type="button"
                       disabled={templateBusy !== null}
