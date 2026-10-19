@@ -1652,7 +1652,7 @@ export function EntityPanel({
   // declared order. Moved here (it used to sit right after boardField
   // above, textually before orderedFields existed) for the same reason
   // bulkEditableFields was.
-  const filterableFields = useMemo(() => findFilterableFields(orderedFields), [orderedFields]);
+  const filterableFields = useMemo(() => findFilterableFields(orderedFields, allEntities, relatedRecords), [orderedFields, allEntities, relatedRecords]);
   const filterableFieldLabelOccurrences = useMemo(() => fieldLabelOccurrences(filterableFields), [filterableFields]);
 
   // Which columns actually render in the table -- CSV export and both print
@@ -2979,6 +2979,12 @@ export function EntityPanel({
                     <option value="true">{t("entity.groupBy.yes")}</option>
                     <option value="false">{t("entity.groupBy.no")}</option>
                   </>
+                ) : f.type === "relation" ? (
+                  (relatedRecords[f.relationTo!] ?? []).map((r) => (
+                    <option key={r.id as number} value={String(r.id)}>
+                      {recordDisplayLabel(allEntities.find((e) => e.name === f.relationTo)!, r)}
+                    </option>
+                  ))
                 ) : (
                   uniqueEnumValues(f.enumValues).map((v) => (
                     <option key={v} value={v}>

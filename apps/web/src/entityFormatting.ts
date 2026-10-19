@@ -615,9 +615,24 @@ export function findFilterableEnumFields(fields: Field[]): Field[] {
  * to just the true (or false) rows. findFilterableEnumFields itself is
  * left untouched since findBoardField (Kanban column grouping, inherently
  * a different, enum-shaped question) depends on its exact enum-only scope.
+ *
+ * A relation field is just as fixed-value-space as an enum -- its options
+ * are exactly the related entity's current records -- but had no filter
+ * dropdown at all: the free-text search box matches a relation by its
+ * resolved display label as a substring, which can't target "exactly this
+ * customer" the way an exact-match dropdown does (and over-matches any
+ * other field whose text happens to contain the same substring). Only
+ * offered once allEntities/relatedRecords confirm the relation actually
+ * resolves to a loaded set of records -- the same "resolvable" guard
+ * buildImportRecords/FieldInput already use for a relation field, so a
+ * stale relationTo pointing at a deleted entity, or data that hasn't
+ * finished loading yet, never offers a filter with nothing real to pick.
  */
-export function findFilterableFields(fields: Field[]): Field[] {
-  return [...findFilterableEnumFields(fields), ...fields.filter((f) => f.type === "boolean")];
+export function findFilterableFields(fields: Field[], allEntities?: Entity[], relatedRecords?: RelatedRecordsByEntity): Field[] {
+  const relationFields = fields.filter(
+    (f) => f.type === "relation" && f.relationTo && allEntities?.some((e) => e.name === f.relationTo) && relatedRecords?.[f.relationTo],
+  );
+  return [...findFilterableEnumFields(fields), ...fields.filter((f) => f.type === "boolean"), ...relationFields];
 }
 
 /**

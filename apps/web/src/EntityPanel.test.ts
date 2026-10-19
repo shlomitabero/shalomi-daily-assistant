@@ -1613,6 +1613,71 @@ test("EntityPanel's status filter dropdown narrows the table to matching records
   });
 });
 
+/**
+ * New in this round: a relation field is just as fixed-value-space as an
+ * enum -- its options are exactly the related entity's current records --
+ * but had no filter dropdown at all, only the free-text search box
+ * (which matches a relation by its resolved display label as a
+ * substring, not an exact pick). Renders an Order entity with a
+ * "courierId" relation field, 3 orders across 2 couriers plus one with no
+ * courier assigned, and confirms a real filter dropdown appears with the
+ * two couriers' real display labels (not raw ids), picking one narrows
+ * the table to exactly that courier's orders, and clearing it restores
+ * the rest -- the same reversible-filter contract the enum/boolean
+ * filter above already has.
+ */
+test("EntityPanel's per-field filter offers a relation field too, with the related records' real display labels as options", async () => {
+  await withJsdom(async () => {
+    const orderEntity: Entity = {
+      name: "Order",
+      label: "Order",
+      fields: [
+        { name: "item", label: "Item", type: "text", required: true },
+        { name: "courierId", label: "Courier", type: "relation", relationTo: "Courier", required: false },
+      ],
+    };
+    const courierEntity: Entity = { name: "Courier", label: "Courier", fields: [{ name: "name", label: "Name", type: "text", required: true }] };
+    const courierRecords: EntityRecord[] = [
+      { id: 9, createdAt: "x", name: "Dana" },
+      { id: 10, createdAt: "x", name: "Omer" },
+    ];
+    const store: EntityRecord[] = [
+      { id: 1, createdAt: "x", item: "Pizza", courierId: 9 },
+      { id: 2, createdAt: "x", item: "Sushi", courierId: 10 },
+      { id: 3, createdAt: "x", item: "Burger", courierId: null },
+    ];
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = (async (input: string) => {
+      if (input === "/api/projects/proj1/entities/Order") {
+        return new Response(JSON.stringify({ records: store }), { status: 200, headers: { "content-type": "application/json" } });
+      }
+      if (input === "/api/projects/proj1/entities/Courier") {
+        return new Response(JSON.stringify({ records: courierRecords }), { status: 200, headers: { "content-type": "application/json" } });
+      }
+      throw new Error(`unexpected request ${input}`);
+    }) as typeof fetch;
+    try {
+      renderEntityPanel({ entity: orderEntity, allEntities: [orderEntity, courierEntity] });
+      await waitForCondition(() => document.querySelectorAll("table tbody tr").length === 3);
+
+      await waitForCondition(() => document.querySelector(".entity-status-filter") !== null);
+      const filterSelect = document.querySelector(".entity-status-filter") as HTMLSelectElement;
+      assert.ok(filterSelect, "expected a filter dropdown for the relation field once related records load");
+      const optionLabels = Array.from(filterSelect.options).map((o) => o.textContent);
+      assert.deepEqual(optionLabels.slice(1), ["Dana", "Omer"], "options must show the related records' real display labels, not raw ids");
+
+      fireEvent.change(filterSelect, { target: { value: String(courierRecords[1].id) } });
+      await waitForCondition(() => document.querySelectorAll("table tbody tr").length === 1);
+      assert.match(document.querySelector("table tbody tr")!.textContent ?? "", /Sushi/, "picking a courier must narrow the table to exactly that courier's orders");
+
+      fireEvent.change(filterSelect, { target: { value: "" } });
+      await waitForCondition(() => document.querySelectorAll("table tbody tr").length === 3);
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+});
+
 const TASK_ENTITY: Entity = {
   name: "Task",
   label: "Task",

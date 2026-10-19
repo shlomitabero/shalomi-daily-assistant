@@ -1342,8 +1342,8 @@ test("the exported EntityView's table toolbar has one filter dropdown per qualif
   const entityViewJsx = files.find((f) => f.path === "web/src/components/EntityView.jsx")!.content;
 
   assert.match(entityViewJsx, /function findFilterableEnumFields\(fields\) \{/);
-  assert.match(entityViewJsx, /function findFilterableFields\(fields\) \{/);
-  assert.match(entityViewJsx, /const filterableFields = useMemo\(\(\) => findFilterableFields\(orderedFields\), \[orderedFields\]\);/);
+  assert.match(entityViewJsx, /function findFilterableFields\(fields, relatedRecords\) \{/);
+  assert.match(entityViewJsx, /const filterableFields = useMemo\(\(\) => findFilterableFields\(orderedFields, relatedRecords\), \[orderedFields, relatedRecords\]\);/);
   assert.match(
     entityViewJsx,
     /const \[fieldFilters, setFieldFilters\] = useState\(\(\) => sanitizeFieldFilters\(getPersistedFieldFilters\(entity\.name\), entity\.fields\)\);/,
@@ -1398,8 +1398,70 @@ test("the exported EntityView's filter dropdown also covers a boolean field, ren
   // (Kanban column picking) still depends on the enum-only function.
   assert.match(
     entityViewJsx,
-    /function findFilterableFields\(fields\) \{\s*\n\s*return \[\.\.\.findFilterableEnumFields\(fields\), \.\.\.fields\.filter\(\(f\) => f\.type === "boolean"\)\];/,
+    /function findFilterableFields\(fields, relatedRecords\) \{/,
   );
+  assert.match(
+    entityViewJsx,
+    /return \[\.\.\.findFilterableEnumFields\(fields\), \.\.\.fields\.filter\(\(f\) => f\.type === "boolean"\), \.\.\.relationFields\];/,
+  );
+});
+
+/**
+ * New in this round: the exported app's own per-field filter dropdown had
+ * the identical gap the live preview's own EntityPanel.tsx did -- a
+ * relation field is just as fixed-value-space as an enum, but got no
+ * filter dropdown at all. Confirms the generated findFilterableFields
+ * includes a relation field only once relatedRecords confirms it
+ * actually resolves to a loaded set of records (mirroring the live
+ * preview's own "resolvable" guard), and that the real option-rendering
+ * JSX shows the related records' real display labels rather than raw ids.
+ */
+test("the exported EntityView's filter dropdown also covers a relation field, once relatedRecords confirms it resolves, with the related records' real display labels as options", () => {
+  const withRelation: Project = {
+    ...project,
+    spec: {
+      ...project.spec,
+      entities: [
+        ...project.spec.entities,
+        { name: "Courier", label: "Courier", fields: [{ name: "name", label: "Name", type: "text", required: true }] },
+        {
+          name: "Order",
+          label: "Order",
+          fields: [
+            { name: "item", label: "Item", type: "text", required: true },
+            { name: "courierId", label: "Courier", type: "relation", required: false, relationTo: "Courier" },
+          ],
+        },
+      ],
+    },
+  };
+  const files = generateExportFiles(withRelation);
+  const entityViewJsx = files.find((f) => f.path === "web/src/components/EntityView.jsx")!.content;
+
+  const findFilterableFieldsSrc = entityViewJsx.match(/function findFilterableFields\(fields, relatedRecords\) \{[\s\S]*?\n\}\n/)?.[0];
+  const findFilterableEnumFieldsSrc = entityViewJsx.match(/function findFilterableEnumFields\(fields\) \{[\s\S]*?\n\}\n/)?.[0];
+  assert.ok(findFilterableFieldsSrc && findFilterableEnumFieldsSrc, "expected to find findFilterableFields/findFilterableEnumFields in generated output");
+
+  const allEntitiesSrc = entityViewJsx.match(/const ALL_ENTITIES = [\s\S]*?;\n/)?.[0];
+  assert.ok(allEntitiesSrc, "expected to find ALL_ENTITIES in generated output");
+  const findFilterableFields = new Function(`${allEntitiesSrc}\n${findFilterableEnumFieldsSrc}\n${findFilterableFieldsSrc}\nreturn findFilterableFields;`)() as (
+    fields: unknown[],
+    relatedRecords: unknown,
+  ) => { name: string }[];
+
+  const orderFields = withRelation.spec.entities.find((e) => e.name === "Order")!.fields;
+  assert.deepEqual(
+    findFilterableFields(orderFields, undefined).map((f) => f.name),
+    [],
+    "with no relatedRecords at all, the relation field must not be offered",
+  );
+  assert.deepEqual(
+    findFilterableFields(orderFields, { Courier: [{ id: 9, name: "Dana" }] }).map((f) => f.name),
+    ["courierId"],
+    "once the related entity's records are loaded, the relation field must be included",
+  );
+
+  assert.match(entityViewJsx, /f\.type === "relation"[\s\S]{0,100}relatedRecords\[f\.relationTo\][\s\S]{0,120}recordDisplayLabel\(ALL_ENTITIES\.find/, "the real option-rendering branch must resolve each option's label via recordDisplayLabel, not a raw id");
 });
 
 /**

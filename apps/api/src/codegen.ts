@@ -2250,8 +2250,17 @@ function findFilterableEnumFields(fields) {
 // value space the enum filter was built for). findFilterableEnumFields
 // itself stays enum-only, since findBoardField above depends on that exact
 // scope for Kanban column grouping.
-function findFilterableFields(fields) {
-  return [...findFilterableEnumFields(fields), ...fields.filter((f) => f.type === "boolean")];
+//
+// A relation field is just as fixed-value-space as an enum, but had no
+// filter dropdown at all -- mirrors the live preview's own
+// entityFormatting.ts fix. Only offered once relatedRecords confirms the
+// relation actually resolves to a loaded set of records, the same
+// "resolvable" guard relationResolvable (above) already uses.
+function findFilterableFields(fields, relatedRecords) {
+  const relationFields = fields.filter(
+    (f) => f.type === "relation" && f.relationTo && ALL_ENTITIES.some((e) => e.name === f.relationTo) && relatedRecords && relatedRecords[f.relationTo],
+  );
+  return [...findFilterableEnumFields(fields), ...fields.filter((f) => f.type === "boolean"), ...relationFields];
 }
 
 // Picks the enum field an entity's records should be grouped into board
@@ -3501,7 +3510,7 @@ export function EntityView({ entity, highlightRecordId, onHighlightHandled, onJu
   // same reason that round's own fix moved bulkEditableFields there.
   const bulkEditableFields = useMemo(() => orderedFields.filter(isInlineEditableField), [orderedFields]);
   const bulkEditableFieldLabelOccurrences = useMemo(() => fieldLabelOccurrences(bulkEditableFields), [bulkEditableFields]);
-  const filterableFields = useMemo(() => findFilterableFields(orderedFields), [orderedFields]);
+  const filterableFields = useMemo(() => findFilterableFields(orderedFields, relatedRecords), [orderedFields, relatedRecords]);
   const filterableFieldLabelOccurrences = useMemo(() => fieldLabelOccurrences(filterableFields), [filterableFields]);
 
   // Which columns actually render in the table -- CSV export and both print
@@ -4593,6 +4602,12 @@ export function EntityView({ entity, highlightRecordId, onHighlightHandled, onJu
                     <option value="true">Yes</option>
                     <option value="false">No</option>
                   </>
+                ) : f.type === "relation" ? (
+                  (relatedRecords[f.relationTo] || []).map((r) => (
+                    <option key={r.id} value={String(r.id)}>
+                      {recordDisplayLabel(ALL_ENTITIES.find((e) => e.name === f.relationTo), r)}
+                    </option>
+                  ))
                 ) : (
                   uniqueEnumValues(f.enumValues).map((v) => (
                     <option key={v} value={v}>

@@ -2250,6 +2250,46 @@ test("findFilterableFields returns every qualifying enum field plus every boolea
   );
 });
 
+/**
+ * New in this round: a relation field is just as fixed-value-space as an
+ * enum -- its options are exactly the related entity's current records --
+ * but findFilterableFields never included it at all, so a person could
+ * group a table by a relation's resolved label but never filter down to
+ * one specific related record. Only offered once allEntities/
+ * relatedRecords confirm the relation actually resolves to a loaded set
+ * of records -- the same "resolvable" guard buildImportRecords/FieldInput
+ * already use -- so a stale relationTo pointing at a deleted entity, or
+ * data that hasn't finished loading yet, is correctly excluded.
+ */
+test("findFilterableFields includes a relation field only once allEntities/relatedRecords confirm it actually resolves to a loaded set of records", () => {
+  const courier: Entity = { name: "Courier", label: "Courier", fields: [{ name: "name", type: "text", required: true }] };
+  const fields: Field[] = [
+    { name: "name", type: "text", required: true },
+    { name: "courierId", label: "Courier", type: "relation", required: false, relationTo: "Courier" },
+  ];
+
+  assert.deepEqual(
+    findFilterableFields(fields).map((f) => f.name),
+    [],
+    "with no allEntities/relatedRecords at all, a relation field must not be offered -- there's nothing to resolve it against",
+  );
+  assert.deepEqual(
+    findFilterableFields(fields, [courier], {}).map((f) => f.name),
+    [],
+    "with the target entity known but its records not yet loaded, the relation still can't be resolved",
+  );
+  assert.deepEqual(
+    findFilterableFields(fields, [courier], { Courier: [{ id: 1, name: "Dana" }] }).map((f) => f.name),
+    ["courierId"],
+    "once the related entity exists and its records are loaded, the relation field must be included",
+  );
+  assert.deepEqual(
+    findFilterableFields(fields, [], { Courier: [{ id: 1, name: "Dana" }] }).map((f) => f.name),
+    [],
+    "a relationTo pointing at an entity that no longer exists must stay excluded even if stale relatedRecords for it happen to be present",
+  );
+});
+
 test("groupRecordsByField groups by an enum field in the field's own declared order, with an 'other' bucket for a stale value no longer in enumValues", () => {
   const t = (key: string) => translate("en", key);
   const field: Field = {
