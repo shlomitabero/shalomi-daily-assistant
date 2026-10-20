@@ -4031,12 +4031,16 @@ export function EntityView({ entity, highlightRecordId, onHighlightHandled, onJu
   // 184). Only one delete is ever pending at a time: starting a new one
   // commits any still-pending one for real first, rather than letting two
   // undo windows overlap.
+  // Returns whether the record was actually (optimistically) removed, so
+  // the record-form's own Delete button below knows whether to close
+  // itself -- a caller that just fires-and-forgets (the table row/board
+  // card's own Delete button) can ignore the return value entirely.
   function handleDelete(id) {
     const index = records.findIndex((r) => r.id === id);
-    if (index === -1) return;
+    if (index === -1) return false;
     const record = records[index];
     const label = recordDisplayLabel(entity, record);
-    if (!window.confirm(\`Delete "\${label}"? You can undo this for a few seconds after deleting.\`)) return;
+    if (!window.confirm(\`Delete "\${label}"? You can undo this for a few seconds after deleting.\`)) return false;
 
     if (pendingDeleteRef.current) {
       clearTimeout(pendingDeleteRef.current.timeoutId);
@@ -4061,6 +4065,7 @@ export function EntityView({ entity, highlightRecordId, onHighlightHandled, onJu
     }, UNDO_WINDOW_MS);
 
     setPendingDelete({ entries: [{ id, record, index }], message: \`Deleted "\${label}". \`, timeoutId });
+    return true;
   }
 
   function handleUndoDelete() {
@@ -4627,6 +4632,26 @@ export function EntityView({ entity, highlightRecordId, onHighlightHandled, onJu
               }}
             >
               Cancel
+            </button>
+          )}
+          {editingId != null && (
+            <button
+              type="button"
+              onClick={() => {
+                const id = editingId;
+                const deleted = handleDelete(id);
+                // Only close the form once the delete actually went through
+                // -- window.confirm's own Cancel (handleDelete returning
+                // false) must leave the in-progress edit exactly as it was.
+                if (deleted) {
+                  setForm(emptyForm(entity));
+                  setEditingId(null);
+                  editingOriginalRef.current = null;
+                  setFormInstanceKey((k) => k + 1);
+                }
+              }}
+            >
+              Delete
             </button>
           )}
         </div>

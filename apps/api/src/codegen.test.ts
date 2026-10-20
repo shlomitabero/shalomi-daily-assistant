@@ -14174,6 +14174,188 @@ test("the exported EntityView shows a required-field error instead of relying on
 });
 
 /**
+ * Round 739: mirrors the live preview's own fix -- Calendar view's only
+ * interaction with a record was clicking its chip to open this same
+ * shared record-form for editing (unlike Table/Board, which each have
+ * their own Delete button outside the form). This same form never had a
+ * Delete button of its own, so the exported standalone app inherited the
+ * identical gap: a person living in Calendar view had no way at all to
+ * delete a record. Confirms the generated record-form now shows a real
+ * Delete button once editing an existing record (not while creating a
+ * new one), and that it deletes via the same confirm + undo-toast flow
+ * the table row's own Delete button already uses.
+ */
+test("the exported EntityView's record-form gains a real Delete button once editing an existing record, which deletes it via the same undo-toast flow as the table row's own Delete button", async () => {
+  const files = generateExportFiles(project);
+  const dir = writeGeneratedWebComponent(files);
+  const originalFetch = globalThis.fetch;
+  const store = [{ id: 1, name: "Acme Corp", status: "New" }];
+  const deletedIds: number[] = [];
+  globalThis.fetch = (async (input: string, init?: RequestInit): Promise<Response> => {
+    const method = init?.method ?? "GET";
+    if (method === "GET" && input === "/api/Customer") {
+      return new Response(JSON.stringify({ records: store }), { status: 200, headers: { "content-type": "application/json" } });
+    }
+    if (method === "DELETE" && input === "/api/Customer/1") {
+      deletedIds.push(1);
+      return new Response(null, { status: 204 });
+    }
+    throw new Error(`unexpected request ${method} ${input}`);
+  }) as typeof fetch;
+  const originalConfirm = globalThis.window.confirm;
+  globalThis.window.confirm = (() => true) as typeof window.confirm;
+
+  try {
+    await withRealLocalStorage(async () => {
+      const { EntityView } = await import(path.join(dir, "web", "src", "components", "EntityView.jsx"));
+      const customerEntity = project.spec.entities.find((e) => e.name === "Customer")!;
+      const props = {
+        entity: customerEntity,
+        highlightRecordId: null,
+        onHighlightHandled: () => {},
+        onJumpToRecord: () => {},
+        onRecordCountChange: () => {},
+      };
+
+      const { container } = render(React.createElement(EntityView, props));
+      for (let i = 0; i < 40; i++) {
+        if (container.querySelectorAll("tbody tr").length === 1) break;
+        await act(async () => {
+          await new Promise((resolve) => setTimeout(resolve, 0));
+        });
+      }
+
+      assert.equal(
+        Array.from(container.querySelectorAll(".record-form button")).find((b) => b.textContent === "Delete"),
+        undefined,
+        "a brand-new, not-yet-saved record has nothing to delete -- no Delete button while editingId is null",
+      );
+
+      const editButton = Array.from(container.querySelectorAll("button")).find((b) => b.textContent === "Edit") as HTMLButtonElement;
+      await act(async () => {
+        fireEvent.click(editButton);
+      });
+      for (let i = 0; i < 40; i++) {
+        if ((container.querySelector('.record-form input[type="text"]') as HTMLInputElement)?.value === "Acme Corp") break;
+        await act(async () => {
+          await new Promise((resolve) => setTimeout(resolve, 0));
+        });
+      }
+
+      const formDeleteButton = Array.from(container.querySelectorAll(".record-form button")).find((b) => b.textContent === "Delete") as HTMLButtonElement;
+      assert.ok(formDeleteButton, "expected a real Delete button in the generated record-form once editing an existing record");
+
+      await act(async () => {
+        fireEvent.click(formDeleteButton);
+      });
+
+      for (let i = 0; i < 40; i++) {
+        if (container.querySelectorAll("tbody tr").length === 0) break;
+        await act(async () => {
+          await new Promise((resolve) => setTimeout(resolve, 0));
+        });
+      }
+      assert.equal(container.querySelectorAll("tbody tr").length, 0, "the row must disappear immediately, same as every other Delete button");
+      assert.equal(deletedIds.length, 0, "the real DELETE request must not have fired yet -- still inside the undo window");
+
+      const toast = container.querySelector(".entity-undo-toast");
+      assert.ok(toast, "expected the same real Undo toast the table row's own Delete button produces");
+      assert.match(toast!.textContent ?? "", /Acme Corp/, "the toast must name the actual record that was deleted");
+
+      assert.equal(
+        Array.from(container.querySelectorAll(".record-form button")).find((b) => b.textContent === "Cancel"),
+        undefined,
+        "deleting from the form must also close it -- the Cancel button must disappear",
+      );
+      const submitButton = container.querySelector(".record-form button[type=submit]") as HTMLButtonElement;
+      assert.equal(submitButton.textContent, "Add", "the submit button must revert to create-mode wording once the form closes itself after deleting");
+    });
+  } finally {
+    globalThis.fetch = originalFetch;
+    globalThis.window.confirm = originalConfirm;
+    cleanup();
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("the exported EntityView's record-form Delete button leaves the in-progress edit open and completely untouched when the confirm dialog is cancelled", async () => {
+  const files = generateExportFiles(project);
+  const dir = writeGeneratedWebComponent(files);
+  const originalFetch = globalThis.fetch;
+  const store = [{ id: 1, name: "Acme Corp", status: "New" }];
+  const deletedIds: number[] = [];
+  globalThis.fetch = (async (input: string, init?: RequestInit): Promise<Response> => {
+    const method = init?.method ?? "GET";
+    if (method === "GET" && input === "/api/Customer") {
+      return new Response(JSON.stringify({ records: store }), { status: 200, headers: { "content-type": "application/json" } });
+    }
+    if (method === "DELETE" && input === "/api/Customer/1") {
+      deletedIds.push(1);
+      return new Response(null, { status: 204 });
+    }
+    throw new Error(`unexpected request ${method} ${input}`);
+  }) as typeof fetch;
+  const originalConfirm = globalThis.window.confirm;
+  globalThis.window.confirm = (() => false) as typeof window.confirm;
+
+  try {
+    await withRealLocalStorage(async () => {
+      const { EntityView } = await import(path.join(dir, "web", "src", "components", "EntityView.jsx"));
+      const customerEntity = project.spec.entities.find((e) => e.name === "Customer")!;
+      const props = {
+        entity: customerEntity,
+        highlightRecordId: null,
+        onHighlightHandled: () => {},
+        onJumpToRecord: () => {},
+        onRecordCountChange: () => {},
+      };
+
+      const { container } = render(React.createElement(EntityView, props));
+      for (let i = 0; i < 40; i++) {
+        if (container.querySelectorAll("tbody tr").length === 1) break;
+        await act(async () => {
+          await new Promise((resolve) => setTimeout(resolve, 0));
+        });
+      }
+
+      const editButton = Array.from(container.querySelectorAll("button")).find((b) => b.textContent === "Edit") as HTMLButtonElement;
+      await act(async () => {
+        fireEvent.click(editButton);
+      });
+      for (let i = 0; i < 40; i++) {
+        if ((container.querySelector('.record-form input[type="text"]') as HTMLInputElement)?.value === "Acme Corp") break;
+        await act(async () => {
+          await new Promise((resolve) => setTimeout(resolve, 0));
+        });
+      }
+
+      const formDeleteButton = Array.from(container.querySelectorAll(".record-form button")).find((b) => b.textContent === "Delete") as HTMLButtonElement;
+      await act(async () => {
+        fireEvent.click(formDeleteButton);
+      });
+
+      assert.equal(container.querySelectorAll("tbody tr").length, 1, "cancelling the confirm dialog must leave the row untouched");
+      assert.equal(deletedIds.length, 0, "cancelling must never call the real delete API");
+      assert.equal(container.querySelector(".entity-undo-toast"), null, "cancelling must never produce an Undo toast -- nothing was actually deleted");
+      assert.equal(
+        (container.querySelector('.record-form input[type="text"]') as HTMLInputElement).value,
+        "Acme Corp",
+        "the in-progress edit must still be open with its real value, not reset by the cancelled delete attempt",
+      );
+      assert.ok(
+        Array.from(container.querySelectorAll(".record-form button")).find((b) => b.textContent === "Cancel"),
+        "the Cancel button must still be present -- editingId must not have been cleared by the cancelled delete",
+      );
+    });
+  } finally {
+    globalThis.fetch = originalFetch;
+    globalThis.window.confirm = originalConfirm;
+    cleanup();
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+/**
  * New in this round: mirrors the live preview's own fix -- extends the
  * already-established Escape-to-cancel convention (the inline cell editor
  * already has it) to the exported app's main add/edit form, which

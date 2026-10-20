@@ -5477,6 +5477,97 @@ test("EntityPanel's delete removes the row immediately and shows an Undo toast, 
 });
 
 /**
+ * Round 739: Calendar view's only interaction with a record was clicking
+ * its chip to open the shared record-form for editing -- unlike Table
+ * (its own row Delete button) and Board (BoardCard's own Delete button),
+ * Calendar had no delete affordance anywhere, since the shared record-form
+ * itself only ever rendered Save/Cancel. This gives the form a real
+ * Delete button too, so every view that opens it (including Calendar) can
+ * now delete the record actually being edited, going through the exact
+ * same confirm + undo-toast flow the table row's own Delete button
+ * already uses (handleDelete is the one shared function). Deliberately
+ * gated on editingId != null -- there's nothing to delete while creating
+ * a brand-new, not-yet-saved record.
+ */
+test("EntityPanel's record-form gains a real Delete button once editing an existing record, which deletes it via the same undo-toast flow as the table row's own Delete button", async () => {
+  await withJsdom(async () => {
+    const store: EntityRecord[] = [{ id: 1, name: "Acme Corp", status: "new" }];
+    const deletedIds: number[] = [];
+    const originalFetch = globalThis.fetch;
+    const originalConfirm = globalThis.window.confirm;
+    globalThis.fetch = mockRecordsFetch(store, (id) => deletedIds.push(id)) as typeof fetch;
+    globalThis.window.confirm = (() => true) as typeof window.confirm;
+    try {
+      renderEntityPanel();
+      await waitForCondition(() => document.querySelectorAll("table tbody tr").length === 1);
+
+      assert.equal(
+        document.querySelector(".form-actions button.danger"),
+        null,
+        "a brand-new, not-yet-saved record has nothing to delete -- no Delete button while editingId is null",
+      );
+
+      fireEvent.click(document.querySelector(".row-actions button") as HTMLButtonElement);
+      await waitForCondition(() => (document.querySelector('.record-form input[type="text"]') as HTMLInputElement)?.value === "Acme Corp");
+
+      const formDeleteButton = document.querySelector(".form-actions button.danger") as HTMLButtonElement;
+      assert.ok(formDeleteButton, "expected a real Delete button in the form once editing an existing record");
+
+      fireEvent.click(formDeleteButton);
+      await waitForCondition(() => document.querySelectorAll("table tbody tr").length === 0);
+      assert.equal(deletedIds.length, 0, "the real DELETE request must not have fired yet -- still inside the undo window, same as every other Delete button");
+
+      const toast = document.querySelector(".entity-undo-toast");
+      assert.ok(toast, "expected the same real Undo toast the table row's own Delete button produces");
+      assert.match(toast!.textContent ?? "", /Acme Corp/, "the toast must name the actual record that was deleted");
+
+      assert.equal(document.querySelector(".form-actions button.secondary"), null, "deleting from the form must also close it -- the Cancel button must disappear");
+      const submitButton = document.querySelector(".form-actions button[type=submit]") as HTMLButtonElement;
+      assert.equal(submitButton.textContent, "Add", "the submit button must revert to create-mode wording once the form closes itself after deleting");
+    } finally {
+      globalThis.fetch = originalFetch;
+      globalThis.window.confirm = originalConfirm;
+    }
+  });
+});
+
+test("EntityPanel's record-form Delete button leaves the in-progress edit open and completely untouched when the confirm dialog is cancelled", async () => {
+  await withJsdom(async () => {
+    const store: EntityRecord[] = [{ id: 1, name: "Acme Corp", status: "new" }];
+    const deletedIds: number[] = [];
+    const originalFetch = globalThis.fetch;
+    const originalConfirm = globalThis.window.confirm;
+    globalThis.fetch = mockRecordsFetch(store, (id) => deletedIds.push(id)) as typeof fetch;
+    globalThis.window.confirm = (() => false) as typeof window.confirm;
+    try {
+      renderEntityPanel();
+      await waitForCondition(() => document.querySelectorAll("table tbody tr").length === 1);
+
+      fireEvent.click(document.querySelector(".row-actions button") as HTMLButtonElement);
+      await waitForCondition(() => (document.querySelector('.record-form input[type="text"]') as HTMLInputElement)?.value === "Acme Corp");
+
+      fireEvent.click(document.querySelector(".form-actions button.danger") as HTMLButtonElement);
+
+      assert.equal(document.querySelectorAll("table tbody tr").length, 1, "cancelling the confirm dialog must leave the row untouched");
+      assert.equal(deletedIds.length, 0, "cancelling must never call the real delete API");
+      assert.equal(document.querySelector(".entity-undo-toast"), null, "cancelling must never produce an Undo toast -- nothing was actually deleted");
+      assert.equal(
+        (document.querySelector('.record-form input[type="text"]') as HTMLInputElement)?.value,
+        "Acme Corp",
+        "the in-progress edit must still be open with its real value, not reset by the cancelled delete attempt",
+      );
+      assert.ok(
+        document.querySelector(".form-actions button.secondary"),
+        "the Cancel button must still be present -- editingId must not have been cleared by the cancelled delete",
+      );
+    } finally {
+      globalThis.fetch = originalFetch;
+      globalThis.window.confirm = originalConfirm;
+    }
+  });
+});
+
+/**
  * The other half of the same feature: NOT clicking Undo must commit the
  * real delete once the undo window actually elapses -- the whole point is
  * a temporary reprieve, not silently keeping deleted records around

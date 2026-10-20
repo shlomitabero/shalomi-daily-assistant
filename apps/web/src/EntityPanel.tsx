@@ -2215,13 +2215,24 @@ export function EntityPanel({
    * Undo button. Only one delete is ever pending at a time: starting a new
    * one commits any still-pending one for real first, rather than letting
    * two undo windows overlap.
+   *
+   * Returns whether the record was actually (optimistically) removed, so
+   * the record-form's own Delete button (see form-actions below) knows
+   * whether to close itself -- a caller that just fires-and-forgets (the
+   * table row/BoardCard's own Delete button) can ignore the return value
+   * entirely, same as before this return type existed. Deliberately plain
+   * (not async, unlike handleDuplicate/handleSubmit) -- every step below is
+   * genuinely synchronous, and keeping it that way lets the form's own
+   * Delete button consume the return value in the very same event-dispatch
+   * tick React already wraps in act(), rather than in a later microtask
+   * continuation outside any act() scope.
    */
-  async function handleDelete(id: number) {
+  function handleDelete(id: number): boolean {
     const index = records.findIndex((r) => (r.id as number) === id);
-    if (index === -1) return;
+    if (index === -1) return false;
     const record = records[index];
     const label = recordDisplayLabel(entity, record);
-    if (!window.confirm(t("entity.confirmDelete", { label }))) return;
+    if (!window.confirm(t("entity.confirmDelete", { label }))) return false;
 
     if (pendingDeleteRef.current) {
       clearTimeout(pendingDeleteRef.current.timeoutId);
@@ -2246,6 +2257,7 @@ export function EntityPanel({
     }, UNDO_WINDOW_MS);
 
     setPendingDelete({ entries: [{ id, record, index }], message: t("entity.delete.undoToast", { label }), timeoutId });
+    return true;
   }
 
   function handleUndoDelete() {
@@ -2998,6 +3010,28 @@ export function EntityPanel({
               }}
             >
               {t("entity.cancel")}
+            </button>
+          )}
+          {editingId != null && (
+            <button
+              type="button"
+              className="danger"
+              onClick={() => {
+                const id = editingId;
+                const deleted = handleDelete(id);
+                // Only close the form once the delete actually went through
+                // -- window.confirm's own Cancel (handleDelete returning
+                // false) must leave the in-progress edit exactly as it was,
+                // not silently discard it.
+                if (deleted) {
+                  setForm(emptyForm(entity));
+                  setEditingId(null);
+                  editingOriginalRef.current = null;
+                  setFormInstanceKey((k) => k + 1);
+                }
+              }}
+            >
+              {t("entity.delete")}
             </button>
           )}
         </div>
