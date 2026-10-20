@@ -21,7 +21,7 @@ function withFeasibility(opportunity) {
 // The one proven end-to-end path: AI drafts a real digital product + sales
 // copy. Demand/revenue is left as missing data (never fabricated) until the
 // owner sets their own estimate on the card.
-opportunitiesRouter.post('/opportunities/digital-product', requireOwner, asyncHandler(async (req, res) => {
+export async function createDigitalProduct(req, res) {
   const { topic, audience } = req.body ?? {};
   if (!topic || !topic.trim()) return res.status(400).json({ error: 'topic is required' });
   if (!audience || !audience.trim()) return res.status(400).json({ error: 'audience is required' });
@@ -34,25 +34,25 @@ opportunitiesRouter.post('/opportunities/digital-product', requireOwner, asyncHa
   }
 
   res.status(201).json({ opportunity: withFeasibility(opportunity) });
-}));
+}
 
 // Manually trigger the same scan the scheduler runs periodically — useful to
 // test the autonomous loop without waiting for the next scheduled run.
-opportunitiesRouter.post('/opportunities/autonomous-scan', requireOwner, asyncHandler(async (req, res) => {
+export async function triggerAutonomousScan(req, res) {
   const result = await runAutonomousScan();
   res.json(result);
-}));
+}
 
-opportunitiesRouter.get('/opportunities', requireOwner, (req, res) => {
+export function listOpportunities(req, res) {
   const withFeas = db.opportunities.all().map(withFeasibility);
   res.json({ opportunities: rankOpportunities(withFeas) });
-});
+}
 
-opportunitiesRouter.get('/opportunities/:id', requireOwner, (req, res) => {
+export function getOpportunity(req, res) {
   const opportunity = db.opportunities.get(req.params.id);
   if (!opportunity) return res.status(404).json({ error: 'not found' });
   res.json({ opportunity: withFeasibility(opportunity) });
-});
+}
 
 const EDITABLE_FIELDS = ['revenueEstimate', 'costs', 'riskLevel', 'dataQuality', 'priceUSD', 'missingInfo'];
 
@@ -64,7 +64,7 @@ function isFiniteOrNullish(value) {
   return value == null || (typeof value === 'number' && Number.isFinite(value));
 }
 
-opportunitiesRouter.patch('/opportunities/:id', requireOwner, (req, res) => {
+export function patchOpportunity(req, res) {
   const opportunity = db.opportunities.get(req.params.id);
   if (!opportunity) return res.status(404).json({ error: 'not found' });
   const patch = {};
@@ -95,12 +95,12 @@ opportunitiesRouter.patch('/opportunities/:id', requireOwner, (req, res) => {
 
   const updated = db.opportunities.update(req.params.id, patch);
   res.json({ opportunity: withFeasibility(updated) });
-});
+}
 
 // The gated, idempotent, audit-logged action that actually makes the
 // product public. Blocked unless the mode/approval/budget gate allows it
 // (research mode, no approval yet, or emergency stop).
-opportunitiesRouter.post('/opportunities/:id/publish', requireOwner, asyncHandler(async (req, res) => {
+export async function publishOpportunityRoute(req, res) {
   const opportunity = db.opportunities.get(req.params.id);
   if (!opportunity) return res.status(404).json({ error: 'not found' });
   if (!isPaddleConfigured()) {
@@ -119,4 +119,11 @@ opportunitiesRouter.post('/opportunities/:id/publish', requireOwner, asyncHandle
 
   if (!result.allowed) return res.status(409).json({ error: result.reason, duplicate: Boolean(result.duplicate) });
   res.json({ opportunity: withFeasibility(db.opportunities.get(opportunity.id)) });
-}));
+}
+
+opportunitiesRouter.post('/opportunities/digital-product', requireOwner, asyncHandler(createDigitalProduct));
+opportunitiesRouter.post('/opportunities/autonomous-scan', requireOwner, asyncHandler(triggerAutonomousScan));
+opportunitiesRouter.get('/opportunities', requireOwner, listOpportunities);
+opportunitiesRouter.get('/opportunities/:id', requireOwner, getOpportunity);
+opportunitiesRouter.patch('/opportunities/:id', requireOwner, patchOpportunity);
+opportunitiesRouter.post('/opportunities/:id/publish', requireOwner, asyncHandler(publishOpportunityRoute));
