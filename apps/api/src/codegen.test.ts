@@ -9399,8 +9399,18 @@ test("the exported EntityView's Cell, matchesSearch, and fieldDisplayValue all s
  * typing text into one would both fail to attach a real file and corrupt
  * an existing one. Mirrors the live preview's own buildImportRecords
  * ("no file to attach from a CSV cell").
+ *
+ * Round 746 correction: an OPTIONAL file column is still skipped per-row
+ * exactly as before, but a REQUIRED one must refuse the whole import
+ * upfront (same as a required, unresolvable relation field just below) --
+ * not silently skip the column and let every row through, since the
+ * server's own coerce() unconditionally rejects every single one of those
+ * rows afterward with "Field is required". This test used to assert the
+ * old, buggy behavior (zero errors, one wasted POST per row); it now
+ * asserts the upfront refusal the live preview's buildImportRecords
+ * already had all along.
  */
-test("the exported EntityView's CSV import skips a file column entirely, even when it's marked required", () => {
+test("the exported EntityView's CSV import skips an optional file column, but refuses the whole import upfront for a required one", () => {
   const withFile: Project = {
     ...project,
     spec: {
@@ -9412,7 +9422,7 @@ test("the exported EntityView's CSV import skips a file column entirely, even wh
           label: "Document",
           fields: [
             { name: "title", label: "Title", type: "text", required: true },
-            { name: "attachment", label: "Attachment", type: "file", required: true },
+            { name: "attachment", label: "Attachment", type: "file", required: false },
           ],
         },
       ],
@@ -9431,10 +9441,18 @@ test("the exported EntityView's CSV import skips a file column entirely, even wh
   )(ALL_ENTITIES) as { buildImportRecords: (fields: unknown[], rows: string[][], relatedRecords: unknown) => { records: unknown[]; errors: string[] } };
 
   const fields = withFile.spec.entities.find((e) => e.name === "Document")!.fields;
-  const result = buildImportRecords(fields, [["Title", "Attachment"], ["Invoice", "not-real-json-garbage"]], {});
-  assert.deepEqual(result.errors, [], "a required file column must never block the import -- there's no CSV cell that could ever satisfy it");
-  assert.equal(result.records.length, 1);
-  assert.equal("attachment" in result.records[0]!, false, "the file column's cell text must never be written into the record, required or not");
+
+  const optionalResult = buildImportRecords(fields, [["Title", "Attachment"], ["Invoice", "not-real-json-garbage"]], {});
+  assert.deepEqual(optionalResult.errors, [], "an optional file column must never block the import -- there's no CSV cell that could ever satisfy it");
+  assert.equal(optionalResult.records.length, 1);
+  assert.equal("attachment" in optionalResult.records[0]!, false, "the file column's cell text must never be written into the record, required or not");
+
+  const requiredFields = [fields[0]!, { ...fields[1]!, required: true }];
+  const requiredResult = buildImportRecords(requiredFields, [["Title", "Attachment"], ["Invoice", "not-real-json-garbage"]], {});
+  assert.deepEqual(requiredResult.records, [], "a required file field can never be satisfied from a CSV cell, so the whole import must be refused upfront");
+  assert.equal(requiredResult.errors.length, 1);
+  assert.match(requiredResult.errors[0]!, /required file field/);
+  assert.match(requiredResult.errors[0]!, /Attachment/);
 });
 
 /**

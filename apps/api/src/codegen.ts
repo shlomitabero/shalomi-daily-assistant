@@ -2109,11 +2109,20 @@ function buildImportRecords(fields, rows, relatedRecords) {
 
   const relationResolvable = (f) => !!f.relationTo && ALL_ENTITIES.some((e) => e.name === f.relationTo) && !!(relatedRecords && relatedRecords[f.relationTo]);
 
-  const requiredRelation = fields.find((f) => f.type === "relation" && f.required && !relationResolvable(f));
-  if (requiredRelation) {
+  // A required "file" field can never be satisfied from a CSV cell either
+  // (same reasoning as the relation case below -- see entityFormatting.ts's
+  // own buildImportRecords, which this mirrors): its real value is a JSON
+  // descriptor an upload endpoint sets, never something a CSV cell could
+  // supply. Must be caught here, upfront, not just skipped per-row below --
+  // otherwise every imported row silently omits the field and the server's
+  // own coerce() then rejects every single row with "Field is required",
+  // one wasted POST per row, instead of refusing the whole import with one
+  // clear reason before any request is even sent.
+  const requiredUnsupported = fields.find((f) => (f.type === "file" && f.required) || (f.type === "relation" && f.required && !relationResolvable(f)));
+  if (requiredUnsupported) {
     return {
       records: [],
-      errors: [\`CSV import isn't supported yet for entities with a required relation field ("\${requiredRelation.label || requiredRelation.name}").\`],
+      errors: [\`CSV import isn't supported yet for entities with a required \${requiredUnsupported.type} field ("\${requiredUnsupported.label || requiredUnsupported.name}").\`],
     };
   }
 

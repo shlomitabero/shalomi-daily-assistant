@@ -1644,6 +1644,19 @@ test("buildImportRecords skips fully blank rows silently instead of treating the
   assert.deepEqual(result.errors, []);
 });
 
+test("buildImportRecords refuses the whole import for an entity with a required file field, since no CSV cell can ever supply one", () => {
+  const fields: Field[] = [
+    { name: "title", type: "text", required: true },
+    { name: "attachment", label: "Attachment", type: "file", required: true },
+  ];
+  const rows = [["title", "Attachment"], ["Invoice", "not-real-json-garbage"]];
+  const result = buildImportRecords(fields, rows);
+  assert.deepEqual(result.records, []);
+  assert.equal(result.errors.length, 1);
+  assert.match(result.errors[0], /required file field/);
+  assert.match(result.errors[0], /Attachment/);
+});
+
 test("buildImportRecords refuses the whole import for an entity with a required relation field, rather than producing records that would fail one at a time", () => {
   const fields: Field[] = [
     { name: "name", type: "text", required: true },
