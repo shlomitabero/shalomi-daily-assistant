@@ -4,14 +4,14 @@ import { getSettings, updateSettings } from '../services/settings.js';
 
 export const settingsRouter = Router();
 
-settingsRouter.get('/settings', requireOwner, (req, res) => {
+export function readSettings(req, res) {
   res.json({ settings: getSettings() });
-});
+}
 
 const ALLOWED_FIELDS = ['budget', 'maxLoss', 'country', 'currency', 'preferredCategories', 'mode', 'emergencyStop'];
 const VALID_MODES = ['research', 'approve', 'auto_limited'];
 
-settingsRouter.patch('/settings', requireOwner, (req, res) => {
+export function patchSettings(req, res) {
   const patch = {};
   for (const field of ALLOWED_FIELDS) {
     if (field in (req.body ?? {})) patch[field] = req.body[field];
@@ -31,4 +31,7 @@ settingsRouter.patch('/settings', requireOwner, (req, res) => {
     }
   }
   res.json({ settings: updateSettings(patch) });
-});
+}
+
+settingsRouter.get('/settings', requireOwner, readSettings);
+settingsRouter.patch('/settings', requireOwner, patchSettings);
