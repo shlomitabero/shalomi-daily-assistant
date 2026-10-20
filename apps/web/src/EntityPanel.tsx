@@ -1816,12 +1816,15 @@ export function EntityPanel({
   // table view, with search/sort/columns all still applying underneath.
   // Same orderedFields rationale as filterableFields above -- the "Group
   // by" dropdown's own option list is a whole-record-set view too.
-  const groupableFields = useMemo(() => orderedFields.filter(isGroupableField), [orderedFields]);
+  const groupableFields = useMemo(
+    () => orderedFields.filter((f) => isGroupableField(f, allEntities, relatedRecords)),
+    [orderedFields, allEntities, relatedRecords],
+  );
   const groupableFieldLabelOccurrences = useMemo(() => fieldLabelOccurrences(groupableFields), [groupableFields]);
   const groupField = groupableFields.find((f) => f.name === groupFieldName) ?? null;
   const recordGroups = useMemo(
-    () => (groupField ? groupRecordsByField(visibleRecords, groupField, t) : null),
-    [groupField, visibleRecords, t],
+    () => (groupField ? groupRecordsByField(visibleRecords, groupField, t, allEntities, relatedRecords) : null),
+    [groupField, visibleRecords, t, allEntities, relatedRecords],
   );
 
   // The records actually rendered in the table body right now -- unlike

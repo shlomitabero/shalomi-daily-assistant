@@ -2405,6 +2405,82 @@ test("groupRecordsByField groups by a boolean field into exactly true then false
   );
 });
 
+/**
+ * Round 738: a relation field is just as fixed-value-space as an enum --
+ * the sibling toolbar filter dropdown (findFilterableFields, round 721)
+ * already treats it that way -- but isGroupableField never included it,
+ * even though its own doc comment only argues for excluding genuinely
+ * unbounded free-text/number/date fields and never mentions relation as a
+ * deliberate exclusion. Mirrors findFilterableFields' own "resolvable"
+ * guard test above: only offered once allEntities/relatedRecords confirm
+ * the relation actually resolves to a loaded set of records.
+ */
+test("isGroupableField includes a relation field only once allEntities/relatedRecords confirm it actually resolves to a loaded set of records", () => {
+  const courier: Entity = { name: "Courier", label: "Courier", fields: [{ name: "name", type: "text", required: true }] };
+  const field: Field = { name: "courierId", label: "Courier", type: "relation", required: false, relationTo: "Courier" };
+
+  assert.equal(isGroupableField(field), false, "with no allEntities/relatedRecords at all, a relation field must not be groupable");
+  assert.equal(
+    isGroupableField(field, [courier], {}),
+    false,
+    "with the target entity known but its records not yet loaded, the relation still can't be resolved",
+  );
+  assert.equal(
+    isGroupableField(field, [courier], { Courier: [{ id: 1, name: "Dana" }] }),
+    true,
+    "once the related entity exists and its records are loaded, the relation field must be groupable",
+  );
+  assert.equal(
+    isGroupableField(field, [], { Courier: [{ id: 1, name: "Dana" }] }),
+    false,
+    "a relationTo pointing at an entity that no longer exists must stay excluded even if stale relatedRecords for it happen to be present",
+  );
+});
+
+/**
+ * Round 738: groupRecordsByField's new relation branch -- groups follow the
+ * related entity's own current record order (not first-seen order among
+ * the grouped records), labeled via recordDisplayLabel the same way
+ * relationDisplayLabel already resolves a relation cell's own text. A
+ * record whose stored id is null, or a dangling reference to a related
+ * record that no longer exists, is collected into the same "(other)"
+ * bucket the enum branch already uses, rather than silently dropped.
+ */
+test("groupRecordsByField groups by a relation field in the related entity's own record order, with an 'other' bucket for a null/dangling reference", () => {
+  const t = (key: string) => translate("en", key);
+  const courier: Entity = { name: "Courier", label: "Courier", fields: [{ name: "name", type: "text", required: true }] };
+  const field: Field = { name: "courierId", label: "Courier", type: "relation", required: false, relationTo: "Courier" };
+  const relatedRecords = { Courier: [{ id: 2, name: "Bar" }, { id: 1, name: "Dana" }] };
+  const records = [
+    { id: 10, courierId: 1 }, // Dana
+    { id: 11, courierId: 2 }, // Bar
+    { id: 12, courierId: null }, // no courier assigned
+    { id: 13, courierId: 999 }, // dangling -- no such Courier record
+    { id: 14, courierId: 1 }, // Dana again
+  ];
+
+  const groups = groupRecordsByField(records, field, t, [courier], relatedRecords);
+  assert.deepEqual(
+    groups.map((g) => g.key),
+    ["2", "1", "__other__"],
+    "must follow Courier's own record order (Bar then Dana, not first-seen order 1 then 2), with one trailing 'other' bucket",
+  );
+  assert.equal(groups[0].label, "Bar");
+  assert.equal(groups[1].label, "Dana");
+  assert.deepEqual(groups.find((g) => g.key === "1")!.records.map((r) => r.id), [10, 14]);
+  assert.deepEqual(
+    groups.find((g) => g.key === "__other__")!.records.map((r) => r.id),
+    [12, 13],
+    "both the null-courier record and the dangling-reference record must land in 'other', not be silently dropped",
+  );
+
+  assert.deepEqual(
+    groupRecordsByField(records, field, t).map((g) => g.key),
+    [],
+    "with no allEntities/relatedRecords passed at all, grouping by a relation field must produce no groups rather than throw",
+  );
+});
+
 test("sumNumericFields sums each number-type field across the given records, ignoring non-number fields entirely", () => {
   const fields: Field[] = [
     { name: "amount", type: "number", required: true },

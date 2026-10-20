@@ -2335,23 +2335,55 @@ function groupByField(records, field) {
 // plain table by -- distinct from groupByField above (Kanban board columns
 // only, enum-only, always includes empty columns). Mirrors the live
 // preview's own entityFormatting.ts isGroupableField (round 219).
-function isGroupableField(field) {
-  return field.type === "enum" || field.type === "boolean";
+//
+// A relation field is exactly as fixed-value-space as an enum -- its own
+// options are the related entity's current records -- and the sibling
+// toolbar filter dropdown (findFilterableFields above, round 721) already
+// treats it that way, with the identical "resolvable" guard: only once
+// relatedRecords confirms the relation actually resolves to a loaded set
+// of records, so a stale relationTo or not-yet-loaded data never offers a
+// group-by option with nothing real to group by. Mirrors the live
+// preview's own entityFormatting.ts isGroupableField widening (round 738).
+function isGroupableField(field, relatedRecords) {
+  if (field.type === "enum" || field.type === "boolean") return true;
+  return field.type === "relation" && !!field.relationTo && ALL_ENTITIES.some((e) => e.name === field.relationTo) && !!(relatedRecords && relatedRecords[field.relationTo]);
 }
 
 // Partitions records into ordered groups by one groupable field's value,
 // omitting any group with zero matching records. For an enum field, groups
 // follow the field's own declared enumValues order, with a final "(other)"
 // bucket for any legacy value no longer in enumValues. For a boolean
-// field there are only ever the two fixed groups, true then false.
-// Mirrors the live preview's own entityFormatting.ts groupRecordsByField.
-function groupRecordsByField(records, field) {
+// field there are only ever the two fixed groups, true then false. For a
+// relation field, groups follow the related entity's own current record
+// order, labeled via the same recordDisplayLabel used elsewhere, with any
+// record whose stored id is empty or no longer resolves (a dangling
+// reference to a deleted related record) collected into the same "(other)"
+// bucket the enum branch uses. Mirrors the live preview's own
+// entityFormatting.ts groupRecordsByField.
+function groupRecordsByField(records, field, relatedRecords) {
   if (field.type === "boolean") {
     const groups = [];
     const truthy = records.filter((r) => Boolean(r[field.name]));
     const falsy = records.filter((r) => !r[field.name]);
     if (truthy.length > 0) groups.push({ key: "true", label: "Yes", records: truthy });
     if (falsy.length > 0) groups.push({ key: "false", label: "No", records: falsy });
+    return groups;
+  }
+  if (field.type === "relation") {
+    const targetEntity = field.relationTo ? ALL_ENTITIES.find((e) => e.name === field.relationTo) : undefined;
+    const relatedList = field.relationTo && relatedRecords ? relatedRecords[field.relationTo] : undefined;
+    if (!targetEntity || !relatedList) return [];
+    const groups = [];
+    const knownIds = new Set(relatedList.map((r) => r.id));
+    for (const related of relatedList) {
+      const matched = records.filter((r) => Number(r[field.name]) === related.id);
+      if (matched.length > 0) groups.push({ key: String(related.id), label: recordDisplayLabel(targetEntity, related), records: matched });
+    }
+    const other = records.filter((r) => {
+      const v = r[field.name];
+      return v === null || v === undefined || v === "" || !knownIds.has(Number(v));
+    });
+    if (other.length > 0) groups.push({ key: otherGroupKey(undefined), label: "Other", records: other });
     return groups;
   }
   const groups = [];
@@ -3687,12 +3719,15 @@ export function EntityView({ entity, highlightRecordId, onHighlightHandled, onJu
   // Same orderedFields rationale as filterableFields/bulkEditableFields
   // above -- the "Group by" dropdown's own option list is a
   // whole-record-set view too.
-  const groupableFields = useMemo(() => orderedFields.filter(isGroupableField), [orderedFields]);
+  const groupableFields = useMemo(
+    () => orderedFields.filter((f) => isGroupableField(f, relatedRecords)),
+    [orderedFields, relatedRecords],
+  );
   const groupableFieldLabelOccurrences = useMemo(() => fieldLabelOccurrences(groupableFields), [groupableFields]);
   const groupField = groupableFields.find((f) => f.name === groupFieldName) || null;
   const recordGroups = useMemo(
-    () => (groupField ? groupRecordsByField(visibleRecords, groupField) : null),
-    [groupField, visibleRecords],
+    () => (groupField ? groupRecordsByField(visibleRecords, groupField, relatedRecords) : null),
+    [groupField, visibleRecords, relatedRecords],
   );
 
   // The records actually rendered in the table body right now -- unlike

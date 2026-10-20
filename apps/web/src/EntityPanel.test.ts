@@ -1850,6 +1850,69 @@ test("EntityPanel's per-field filter offers a relation field too, with the relat
   });
 });
 
+/**
+ * New in this round (738): isGroupableField/groupRecordsByField widened to
+ * include a relation field too, mirroring the sibling "per-field filter"
+ * fix directly above (round 721) -- same Order/Courier fixture. Confirms
+ * the live "Group by" dropdown now offers "Courier" as an option, and that
+ * grouping by it actually clusters the table by the related record's real
+ * display label (not a raw id), with the order that has no courier
+ * assigned landing in its own "(other)" bucket rather than being dropped.
+ */
+test("EntityPanel's 'Group by' dropdown also offers a relation field, clustering the table by the related record's real display label", async () => {
+  await withJsdom(async () => {
+    const orderEntity: Entity = {
+      name: "Order",
+      label: "Order",
+      fields: [
+        { name: "item", label: "Item", type: "text", required: true },
+        { name: "courierId", label: "Courier", type: "relation", relationTo: "Courier", required: false },
+      ],
+    };
+    const courierEntity: Entity = { name: "Courier", label: "Courier", fields: [{ name: "name", label: "Name", type: "text", required: true }] };
+    const courierRecords: EntityRecord[] = [
+      { id: 9, createdAt: "x", name: "Dana" },
+      { id: 10, createdAt: "x", name: "Omer" },
+    ];
+    const store: EntityRecord[] = [
+      { id: 1, createdAt: "x", item: "Pizza", courierId: 9 },
+      { id: 2, createdAt: "x", item: "Sushi", courierId: 10 },
+      { id: 3, createdAt: "x", item: "Burger", courierId: null },
+    ];
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = (async (input: string) => {
+      if (input === "/api/projects/proj1/entities/Order") {
+        return new Response(JSON.stringify({ records: store }), { status: 200, headers: { "content-type": "application/json" } });
+      }
+      if (input === "/api/projects/proj1/entities/Courier") {
+        return new Response(JSON.stringify({ records: courierRecords }), { status: 200, headers: { "content-type": "application/json" } });
+      }
+      throw new Error(`unexpected request ${input}`);
+    }) as typeof fetch;
+    try {
+      renderEntityPanel({ entity: orderEntity, allEntities: [orderEntity, courierEntity] });
+      await waitForCondition(() => document.querySelectorAll("table tbody tr").length === 3);
+
+      await waitForCondition(() => document.querySelector(".entity-group-by") !== null);
+      const groupBySelect = document.querySelector(".entity-group-by") as HTMLSelectElement;
+      const optionLabels = Array.from(groupBySelect.options).map((o) => o.textContent);
+      assert.ok(optionLabels.includes("Courier"), "the relation field must now appear as a 'Group by' option, not just enum/boolean fields");
+
+      fireEvent.change(groupBySelect, { target: { value: "courierId" } });
+      await waitForCondition(() => document.querySelectorAll(".entity-group-header-row").length === 3);
+
+      const headerRows = Array.from(document.querySelectorAll(".entity-group-header-row"));
+      assert.deepEqual(
+        headerRows.map((r) => r.textContent?.trim()),
+        ["▾ Dana (1)", "▾ Omer (1)", "▾ Other (1)"],
+        "must show one header per related record's real display label (not a raw id), in the related entity's own record order, plus a trailing 'other' bucket for the order with no courier assigned",
+      );
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+});
+
 const TASK_ENTITY: Entity = {
   name: "Task",
   label: "Task",

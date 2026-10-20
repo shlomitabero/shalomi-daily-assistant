@@ -1679,9 +1679,21 @@ export function isInlineEditableField(field: Field): boolean {
  * IsBillable field instead of scrolling a flat list. Free-text/number/date
  * fields are excluded -- with an unbounded value space, "grouping" by one
  * would produce one group per distinct value, which isn't grouping at all.
+ *
+ * A relation field is exactly as fixed-value-space as an enum -- its own
+ * options are the related entity's current records -- and the sibling
+ * toolbar filter dropdown (findFilterableFields, round 721) already treats
+ * it that way, with the identical "resolvable" guard used here: only once
+ * allEntities/relatedRecords confirm the relation actually resolves to a
+ * loaded set of records, so a stale relationTo pointing at a deleted
+ * entity, or data that hasn't finished loading yet, never offers a group-by
+ * option with nothing real to group by. allEntities/relatedRecords are
+ * optional so an existing call site that only cares about enum/boolean
+ * doesn't need to pass them.
  */
-export function isGroupableField(field: Field): boolean {
-  return field.type === "enum" || field.type === "boolean";
+export function isGroupableField(field: Field, allEntities?: Entity[], relatedRecords?: RelatedRecordsByEntity): boolean {
+  if (field.type === "enum" || field.type === "boolean") return true;
+  return field.type === "relation" && !!field.relationTo && !!allEntities?.some((e) => e.name === field.relationTo) && !!relatedRecords?.[field.relationTo];
 }
 
 export interface RecordGroup {
@@ -1697,13 +1709,23 @@ export interface RecordGroup {
  * first-seen, with one final "(other)" bucket for any legacy value no
  * longer in enumValues -- the same "don't silently drop unrecognized data"
  * principle badgeTone's own fallback already follows. For a boolean field,
- * there are only ever the two fixed groups, true then false. A group with
- * zero matching records is omitted entirely rather than rendered empty.
+ * there are only ever the two fixed groups, true then false. For a relation
+ * field (see isGroupableField's own doc comment), groups follow the related
+ * entity's own current record order, labeled via the same recordDisplayLabel
+ * relationDisplayLabel already uses, with any record whose stored id is
+ * null/empty or no longer resolves (a dangling reference to a deleted
+ * related record) collected into the same "(other)" bucket the enum branch
+ * uses, rather than silently dropped. allEntities/relatedRecords are only
+ * needed for the relation case; an enum/boolean call site can omit them. A
+ * group with zero matching records is omitted entirely rather than rendered
+ * empty.
  */
 export function groupRecordsByField(
   records: EntityRecord[],
   field: Field,
   t: (key: string, params?: Record<string, string | number>) => string,
+  allEntities?: Entity[],
+  relatedRecords?: RelatedRecordsByEntity,
 ): RecordGroup[] {
   if (field.type === "boolean") {
     const groups: RecordGroup[] = [];
@@ -1711,6 +1733,24 @@ export function groupRecordsByField(
     const falsy = records.filter((r) => !r[field.name]);
     if (truthy.length > 0) groups.push({ key: "true", label: t("entity.groupBy.yes"), records: truthy });
     if (falsy.length > 0) groups.push({ key: "false", label: t("entity.groupBy.no"), records: falsy });
+    return groups;
+  }
+
+  if (field.type === "relation") {
+    const targetEntity = field.relationTo ? allEntities?.find((e) => e.name === field.relationTo) : undefined;
+    const relatedList = field.relationTo ? relatedRecords?.[field.relationTo] : undefined;
+    if (!targetEntity || !relatedList) return [];
+    const groups: RecordGroup[] = [];
+    const knownIds = new Set(relatedList.map((r) => r.id));
+    for (const related of relatedList) {
+      const matched = records.filter((r) => Number(r[field.name]) === related.id);
+      if (matched.length > 0) groups.push({ key: String(related.id), label: recordDisplayLabel(targetEntity, related), records: matched });
+    }
+    const other = records.filter((r) => {
+      const v = r[field.name];
+      return v === null || v === undefined || v === "" || !knownIds.has(Number(v));
+    });
+    if (other.length > 0) groups.push({ key: otherGroupKey(undefined), label: t("entity.groupBy.other"), records: other });
     return groups;
   }
 

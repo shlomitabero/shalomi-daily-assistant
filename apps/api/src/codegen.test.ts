@@ -1489,10 +1489,13 @@ test("the exported EntityView's table can be grouped by an enum/boolean field, n
   const files = generateExportFiles(project);
   const entityViewJsx = files.find((f) => f.path === "web/src/components/EntityView.jsx")!.content;
 
-  assert.match(entityViewJsx, /function isGroupableField\(field\) \{/);
-  assert.match(entityViewJsx, /function groupRecordsByField\(records, field\) \{/);
+  assert.match(entityViewJsx, /function isGroupableField\(field, relatedRecords\) \{/);
+  assert.match(entityViewJsx, /function groupRecordsByField\(records, field, relatedRecords\) \{/);
   assert.match(entityViewJsx, /const \[groupFieldName, setGroupFieldName\] = useState\(\(\) => getPersistedGroupField\(entity\.name\)\);/);
-  assert.match(entityViewJsx, /const groupableFields = useMemo\(\(\) => orderedFields\.filter\(isGroupableField\), \[orderedFields\]\);/);
+  assert.match(
+    entityViewJsx,
+    /const groupableFields = useMemo\(\s*\(\) => orderedFields\.filter\(\(f\) => isGroupableField\(f, relatedRecords\)\),\s*\[orderedFields, relatedRecords\],\s*\);/,
+  );
   assert.match(entityViewJsx, /const recordGroups = useMemo\(/);
   // The group-by dropdown itself, gated to table view only
   assert.match(entityViewJsx, /viewMode === "table" && groupableFields\.length > 0 &&/);
@@ -1508,6 +1511,119 @@ test("the exported EntityView's table can be grouped by an enum/boolean field, n
   const stylesCss = files.find((f) => f.path === "web/src/styles.css")!.content;
   assert.match(stylesCss, /\.entity-group-by/);
   assert.match(stylesCss, /\.entity-group-header-row/);
+});
+
+/**
+ * New in this round (738): the live preview's own isGroupableField/
+ * groupRecordsByField (entityFormatting.ts) widened to include a relation
+ * field too, mirroring the sibling per-field filter dropdown's own earlier
+ * fix (findFilterableFields, round 721) -- a relation field is exactly as
+ * fixed-value-space as an enum, but "Group by" never offered it. Ported
+ * the identical widening here: groupRecordsByField's new relation branch
+ * groups by the related entity's own current record order, labeled via
+ * recordDisplayLabel, with a record whose stored id is null or no longer
+ * resolves (a dangling reference to a deleted related record) collected
+ * into the same "(other)" bucket the enum branch already uses. Confirms
+ * both the real generated source shape and the real rendered dropdown +
+ * grouped table, using the real generated component (not a reimplementation).
+ */
+test("the exported EntityView's 'Group by' dropdown also covers a relation field, clustering by the related record's real display label", async () => {
+  const courierEntity: Entity = { name: "Courier", label: "Courier", fields: [{ name: "name", label: "Name", type: "text", required: true }] };
+  const orderEntity: Entity = {
+    name: "Order",
+    label: "Order",
+    fields: [
+      { name: "item", label: "Item", type: "text", required: true },
+      { name: "courierId", label: "Courier", type: "relation", relationTo: "Courier", required: false },
+    ],
+  };
+  const withRelationProject: Project = {
+    ...project,
+    spec: { ...project.spec, entities: [courierEntity, orderEntity] },
+  };
+  const files = generateExportFiles(withRelationProject);
+  const entityViewJsx = files.find((f) => f.path === "web/src/components/EntityView.jsx")!.content;
+
+  assert.match(
+    entityViewJsx,
+    /return field\.type === "relation" && !!field\.relationTo && ALL_ENTITIES\.some\(\(e\) => e\.name === field\.relationTo\) && !!\(relatedRecords && relatedRecords\[field\.relationTo\]\);/,
+    "isGroupableField's relation branch must use the same resolvable guard as findFilterableFields",
+  );
+
+  const dir = writeGeneratedWebComponent(files);
+  const courierRelated: EntityRecord[] = [
+    { id: 1, name: "Dana Levi" },
+    { id: 2, name: "Yossi Cohen" },
+  ];
+  const store: EntityRecord[] = [
+    { id: 1, item: "Pizza", courierId: 1 },
+    { id: 2, item: "Sushi", courierId: 2 },
+    { id: 3, item: "Burger", courierId: null },
+  ];
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = (async (input: string) => {
+    if (input === "/api/Order") {
+      return new Response(JSON.stringify({ records: store }), { status: 200, headers: { "content-type": "application/json" } });
+    }
+    if (input === "/api/Courier") {
+      return new Response(JSON.stringify({ records: courierRelated }), { status: 200, headers: { "content-type": "application/json" } });
+    }
+    throw new Error(`unexpected request ${input}`);
+  }) as typeof fetch;
+
+  try {
+    await withRealLocalStorage(async () => {
+      const { EntityView } = await import(path.join(dir, "web", "src", "components", "EntityView.jsx"));
+      const props = {
+        entity: orderEntity,
+        highlightRecordId: null,
+        onHighlightHandled: () => {},
+        onJumpToRecord: () => {},
+        onRecordCountChange: () => {},
+      };
+
+      const { container } = render(React.createElement(EntityView, props));
+      for (let i = 0; i < 40; i++) {
+        if (container.querySelectorAll("tbody tr").length === 3) break;
+        await act(async () => {
+          await new Promise((resolve) => setTimeout(resolve, 0));
+        });
+      }
+
+      let groupBySelect: HTMLSelectElement | null = null;
+      for (let i = 0; i < 40; i++) {
+        groupBySelect = container.querySelector(".entity-group-by") as HTMLSelectElement | null;
+        const optionLabels = groupBySelect ? Array.from(groupBySelect.options).map((o) => o.textContent) : [];
+        if (optionLabels.includes("Courier")) break;
+        await act(async () => {
+          await new Promise((resolve) => setTimeout(resolve, 0));
+        });
+      }
+      assert.ok(groupBySelect, "expected a real 'Group by' dropdown");
+      const optionLabels = Array.from(groupBySelect!.options).map((o) => o.textContent);
+      assert.ok(optionLabels.includes("Courier"), "the relation field must appear as a 'Group by' option once relatedRecords has loaded");
+
+      await act(async () => {
+        fireEvent.change(groupBySelect!, { target: { value: "courierId" } });
+      });
+      for (let i = 0; i < 40; i++) {
+        if (container.querySelectorAll(".entity-group-header-row").length === 3) break;
+        await act(async () => {
+          await new Promise((resolve) => setTimeout(resolve, 0));
+        });
+      }
+      const headerRows = Array.from(container.querySelectorAll(".entity-group-header-row"));
+      assert.deepEqual(
+        headerRows.map((r) => r.textContent?.trim()),
+        ["▾ Dana Levi (1)", "▾ Yossi Cohen (1)", "▾ Other (1)"],
+        "must show one header per related record's real display label, in the related entity's own record order, plus a trailing 'other' bucket for the order with no courier assigned",
+      );
+    });
+  } finally {
+    globalThis.fetch = originalFetch;
+    cleanup();
+    rmSync(dir, { recursive: true, force: true });
+  }
 });
 
 /**
