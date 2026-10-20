@@ -1079,6 +1079,124 @@ test("WhatsAppPanel sends the exact typed recipient/message and refreshes the me
 });
 
 /**
+ * New in this round: every other write-form in this app resets to empty
+ * right after a successful submission (e.g. EntityPanel's own record form
+ * clears right after createRecord succeeds) -- but this test-send form
+ * left the just-sent recipient/message sitting in both inputs, risking a
+ * double-send on a stray extra click, or (confirmed by a separate test
+ * below) stale drafted text silently following a later Reply click to a
+ * different recipient. Confirms both inputs clear only once the send
+ * actually succeeds.
+ */
+test("WhatsAppPanel clears the recipient and message inputs after a successful send", async () => {
+  await withJsdom(async () => {
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = (async (input: string, init?: RequestInit): Promise<Response> => {
+      const method = init?.method ?? "GET";
+      if (method === "GET" && input === "/api/projects/proj1/integrations/whatsapp/status") {
+        return new Response(
+          JSON.stringify({ status: "connected", phoneNumber: "972501234567", qrDataUrl: null, error: null }),
+          { status: 200, headers: { "content-type": "application/json" } },
+        );
+      }
+      if (method === "GET" && input === "/api/projects/proj1/integrations/whatsapp/messages") {
+        return new Response(JSON.stringify({ messages: [] }), { status: 200, headers: { "content-type": "application/json" } });
+      }
+      if (method === "POST" && input === "/api/projects/proj1/integrations/whatsapp/send") {
+        return new Response(JSON.stringify({ ok: true }), { status: 200, headers: { "content-type": "application/json" } });
+      }
+      throw new Error(`unexpected request ${method} ${input}`);
+    }) as typeof fetch;
+    try {
+      render(
+        React.createElement(
+          ThemeProvider,
+          null,
+          React.createElement(LanguageProvider, null, React.createElement(WhatsAppPanel, { projectId: "proj1", projectName: "Test Project", onClose: () => {}, onJumpToEntity: () => {}, onJumpToRecord: () => {} })),
+        ),
+      );
+      await waitForCondition(() => document.querySelector(".whatsapp-test-form") !== null);
+
+      const inputs = document.querySelectorAll('.whatsapp-test-form input[type="text"]');
+      const toInput = inputs[0] as HTMLInputElement;
+      const messageInput = inputs[1] as HTMLInputElement;
+      fireEvent.change(toInput, { target: { value: "972521112233" } });
+      fireEvent.change(messageInput, { target: { value: "Hello from test" } });
+      fireEvent.submit(document.querySelector("form.whatsapp-test-form")!);
+
+      await waitForCondition(() => toInput.value === "" && messageInput.value === "");
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+});
+
+/**
+ * New in this round: the other half of the same gap -- clicking Reply on
+ * an inbound message only ever overwrote the "to" input, leaving whatever
+ * text was already drafted for a DIFFERENT recipient sitting in the
+ * message input. Confirms Reply now also clears any already-drafted
+ * message, so stale text can never silently follow a recipient switch.
+ */
+test("WhatsAppPanel's Reply button clears any already-drafted message, not just the recipient", async () => {
+  await withJsdom(async () => {
+    const originalFetch = globalThis.fetch;
+    const messages: WhatsAppMessageLogEntry[] = [
+      {
+        id: "m1",
+        direction: "in",
+        fromNumber: "972521112233",
+        toNumber: "972501234567",
+        body: "Hi, do you have this in stock?",
+        matchedLabel: null,
+        matchedEntityName: null,
+        matchedRecordId: null,
+        status: "received",
+        createdAt: new Date().toISOString(),
+      },
+    ];
+    globalThis.fetch = (async (input: string, init?: RequestInit): Promise<Response> => {
+      const method = init?.method ?? "GET";
+      if (method === "GET" && input === "/api/projects/proj1/integrations/whatsapp/status") {
+        return new Response(
+          JSON.stringify({ status: "connected", phoneNumber: "972501234567", qrDataUrl: null, error: null }),
+          { status: 200, headers: { "content-type": "application/json" } },
+        );
+      }
+      if (method === "GET" && input === "/api/projects/proj1/integrations/whatsapp/messages") {
+        return new Response(JSON.stringify({ messages }), { status: 200, headers: { "content-type": "application/json" } });
+      }
+      throw new Error(`unexpected request ${method} ${input}`);
+    }) as typeof fetch;
+    try {
+      render(
+        React.createElement(
+          ThemeProvider,
+          null,
+          React.createElement(LanguageProvider, null, React.createElement(WhatsAppPanel, { projectId: "proj1", projectName: "Test Project", onClose: () => {}, onJumpToEntity: () => {}, onJumpToRecord: () => {} })),
+        ),
+      );
+      await waitForCondition(() => document.querySelectorAll(".whatsapp-log-list li").length === 1);
+
+      const messageInput = document.querySelectorAll('.whatsapp-test-form input[type="text"]')[1] as HTMLInputElement;
+      fireEvent.change(messageInput, { target: { value: "This was meant for someone else" } });
+
+      const logRow = document.querySelector(".whatsapp-log-in") as HTMLElement;
+      const replyButtons = [...logRow.querySelectorAll("button")].filter((b) => b.textContent === "Reply");
+      fireEvent.click(replyButtons[0]);
+
+      assert.equal(
+        messageInput.value,
+        "",
+        "clicking Reply must clear any text already drafted for a different recipient, not leave it to silently follow the switch",
+      );
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+});
+
+/**
  * Round 630's finding: retryingId is a single panel-wide `string | null`
  * slot, so the Retry button's own disabled check (`retryingId === m.id`,
  * pre-fix) only ever protected the ONE row remembered there. Clicking a

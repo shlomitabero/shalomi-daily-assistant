@@ -519,6 +519,15 @@ export function WhatsAppPanel({
       setSendResult(
         result.ok ? { ok: true, text: t("whatsapp.send.success") } : { ok: false, text: result.error ?? t("whatsapp.send.genericError") },
       );
+      // Mirrors every other write-form in this app (EntityPanel's own
+      // record form resets to empty right after a successful create) --
+      // only on success, so a failed send still leaves the typed
+      // recipient/message in place to retry, rather than forcing the user
+      // to retype both after e.g. a transient network error.
+      if (result.ok) {
+        setTestTo("");
+        setTestMessage("");
+      }
       const versionBeforeFetch = messagesVersionRef.current;
       const { messages: freshPage } = await listWhatsAppMessages(projectId);
       if (messagesVersionRef.current === versionBeforeFetch) {
@@ -544,9 +553,16 @@ export function WhatsAppPanel({
    * handleRecentNumberClick already makes; the recipient of a reply is
    * always the message's own sender (fromNumber), never toNumber (that's
    * this project's own WhatsApp number).
+   *
+   * Also clears any already-drafted testMessage -- otherwise text typed
+   * for one contact silently follows the recipient switch to whichever
+   * message was just replied to, risking the drafted text being sent to
+   * the wrong person if the user doesn't notice the swap before hitting
+   * Send.
    */
   function handleReplyToMessage(m: WhatsAppMessageLogEntry) {
     setTestTo(m.fromNumber);
+    setTestMessage("");
   }
 
   function handleRemoveRecentNumber(n: string) {
