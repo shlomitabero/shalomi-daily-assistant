@@ -216,3 +216,31 @@ def test_zozobra_posts_purged_before_opening(tmp_path, monkeypatch):
     assert not (tmp_path / "calendars" / "week_2026-11-22.json").exists()
     for path in (tmp_path / "calendars").glob("week_*.json"):
         assert not any(d.get("features_zozobra") for d in _json.loads(path.read_text(encoding="utf-8"))["days"])
+
+
+def test_failed_render_flags_old_video(tmp_path, monkeypatch):
+    import json as _json
+    import shutil
+
+    import pytest
+    from fastapi.testclient import TestClient
+
+    monkeypatch.setenv("DATA_DIR", str(tmp_path))
+    monkeypatch.setenv("PANEL_PASSWORD", "")
+    from zozobra import web
+
+    (tmp_path / "calendars").mkdir()
+    (tmp_path / "queue").mkdir()
+    shutil.copy(SAMPLE.parent / "launch_posts.json", tmp_path / "calendars" / "week_2026-10-19.json")
+    (tmp_path / "queue" / "2026-10-19.json").write_text(_json.dumps(
+        {"day": "2026-10-19", "post_time": "20:00", "platforms": ["instagram"], "format": "reel", "pillar": "pov_story",
+         "dish_id": "atmosphere", "hook": "h", "caption": "c", "status": "pending", "image_urls": [], "steps": {}}),
+        encoding="utf-8")
+
+    def boom(*a, **k):
+        raise RuntimeError("User is locked. Reason: Exhausted balance.")
+
+    monkeypatch.setattr("zozobra.pipeline.produce_day", boom)
+    with pytest.raises(RuntimeError):
+        web._produce_job("week_2026-10-19", "2026-10-19")
+    assert "נגמרה היתרה" in TestClient(web.app).get("/queue/2026-10-19").text

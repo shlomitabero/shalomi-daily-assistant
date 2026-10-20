@@ -305,7 +305,8 @@ def item_card(it: dict, full: bool = False) -> str:
     return f"""<div class="card"><div class="row"><b>{e(it['day'])} · {e(it['post_time'])}</b>
 <span class="pill {cls}">{STATUS_HE.get(status, status)}</span><span class="pill">{e(it['format'])}</span>
 <span class="pill">{e(PILLAR_HE.get(it['pillar'], it['pillar']))}</span><span class="pill">{e(' + '.join(it['platforms']))}</span></div>
-<p><b>הוק:</b> {e(it['hook'])}</p>{preview}
+<p><b>הוק:</b> {e(it['hook'])}</p>
+{f'<div class="banner">⚠️ ההפקה החדשה נכשלה ({e(it["last_error"])}). הסרטון כאן הוא הגרסה הישנה, אל תאשר אותו.</div>' if it.get("last_error") else ''}{preview}
 {_review_bar(it)}
 {'' if full else f'<p><a class="btn ghost" href="/queue/{e(it["day"])}">פתח פוסט מלא ←</a></p>'}
 {"".join(f'<p class="mute">✏️ {e(r["at"])}: {e(r["instruction"])}</p>' for r in it.get("revisions", [])[-3:])}
@@ -440,6 +441,15 @@ def venue_thumb(plate_id: str) -> str:
             f'style="height:56px;border-radius:8px;border:1px solid var(--line)"> 📍 {e(p["zone_he"])}</div>')
 
 
+def _friendly_error(ex: Exception) -> str:
+    text = str(ex)
+    if "Exhausted balance" in text or "User is locked" in text:
+        return "נגמרה היתרה ב-fal.ai: צריך להטעין ב-fal.ai/dashboard/billing ואז להפיק שוב"
+    if "content_policy" in text:
+        return "מודל הווידאו חסם את הסצנה בבדיקת תוכן: נסה 'תקן' עם ניסוח אחר"
+    return f"שגיאה: {text[:200]}"
+
+
 def _produce_job(stem: str, day: str | None) -> str:
     from .brain import load_menu
     from .pipeline import produce_day
@@ -455,7 +465,15 @@ def _produce_job(stem: str, day: str | None) -> str:
             continue
         if d.features_zozobra and not allows_zozobra(d.day):    # owner's rule: no ZOZOBRA before opening
             continue
-        produce_day(d, menu, s.data_dir / "renders" / d.day.isoformat(), not can_render(s))
+        qpath = queue_dir() / f"{d.day.isoformat()}.json"
+        try:
+            produce_day(d, menu, s.data_dir / "renders" / d.day.isoformat(), not can_render(s))
+        except Exception as ex:
+            if qpath.exists():   # keep the old video, but say clearly that it IS the old one
+                it = json.loads(qpath.read_text(encoding="utf-8"))
+                it["last_error"] = _friendly_error(ex)
+                save_item(it)
+            raise
         done.append(d.day.isoformat())
     return "הופקו: " + ", ".join(done)
 
@@ -584,9 +602,10 @@ def _fix_job(day: str, instruction: str) -> str:
             item.update(caption=finalize_caption(new), hook=new.hook_he, post_time=new.post_time_local)
             result = "התיקון הוחל (טקסט בלבד, בלי הפקה מחדש)"
         item["status"] = "pending"
-    except Exception:
+    except Exception as ex:
         item["status"] = "pending"
         item["revisions"] = revisions
+        item["last_error"] = _friendly_error(ex)
         save_item(item)
         raise
     item["revisions"] = revisions
