@@ -246,6 +246,19 @@ test("buildCalendarIcs resolves a file field to just its filename in DESCRIPTION
   assert.doesNotMatch(events[1]!, /תמונה/, "an unset file field must produce no description line at all, same as any other empty field");
 });
 
+test("buildCalendarIcs renders a boolean field in DESCRIPTION as uppercase TRUE/FALSE, matching this app's own CSV export and automation-message convention", () => {
+  const confirmedField: Field = { name: "confirmed", label: "מאושר", type: "boolean", required: false };
+  const confirmedEntity: Entity = { name: "Appointment", label: "תור", fields: [dateField, nameField, confirmedField] };
+  const records: EntityRecord[] = [
+    { id: 1, appointmentDate: "2026-03-15", customerName: "Dana Levi", confirmed: true },
+    { id: 2, appointmentDate: "2026-03-16", customerName: "Yossi Cohen", confirmed: false },
+  ];
+  const ics = buildCalendarIcs(confirmedEntity, dateField, nameField, records, [], {});
+  const events = parseEvents(ics);
+  assert.match(events[0]!, /מאושר: TRUE/, "a true boolean field must render uppercase TRUE, not JS's own lowercase \"true\"");
+  assert.match(events[1]!, /מאושר: FALSE/, "a false boolean field must still produce a description line (false is a real, meaningful value here, not an empty one) rendering uppercase FALSE, not JS's own lowercase \"false\"");
+});
+
 /**
  * Same gap, other affected line: SUMMARY uses whatever field
  * calendarChipLabelField picked as the label field, which falls back to

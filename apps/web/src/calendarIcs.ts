@@ -179,6 +179,14 @@ export function buildCalendarIcs(
         // server's internal upload URL path structure into a file a user
         // might forward or publish. Mirrors entityFormatting.ts's own
         // fieldDisplayValue, which already has this exact branch.
+        // A "boolean" field's stored value is a real JS boolean
+        // (rowToRecord/repository.ts always yields one) -- without this
+        // branch it falls into the generic `record[f.name]` case below and
+        // template-literal-interpolates straight to JS's own lowercase
+        // "true"/"false", inconsistent with the uppercase "TRUE"/"FALSE"
+        // this app uses everywhere else a boolean becomes display text
+        // (fieldDisplayValue/CSV export, interpolateTemplate/automation
+        // messages, twin.ts's enum-distribution insight).
         const value =
           f.type === "relation"
             ? relationDisplayLabel(f, record[f.name], allEntities, relatedRecords)
@@ -186,7 +194,9 @@ export function buildCalendarIcs(
               ? (f.enumLabels?.[String(record[f.name])] ?? record[f.name])
               : f.type === "file"
                 ? parseFileFieldValue(record[f.name])?.name ?? null
-                : record[f.name];
+                : f.type === "boolean"
+                  ? (record[f.name] ? "TRUE" : "FALSE")
+                  : record[f.name];
         if (value === null || value === undefined || value === "") return null;
         const fieldLabel = f.label ?? f.name;
         const ambiguous = (descriptionLabelOccurrences.get(fieldLabel) ?? 0) > 1;

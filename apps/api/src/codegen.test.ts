@@ -3103,6 +3103,70 @@ test("the exported EntityView's real generated buildCalendarIcs resolves an enum
 });
 
 /**
+ * Round 747: the real generated buildCalendarIcs had the exact same gap
+ * the live-preview's own calendarIcs.ts was just fixed for -- a boolean
+ * field fell through to the generic record[f.name] case and
+ * interpolated to JS's own lowercase "true"/"false", inconsistent with
+ * the uppercase "TRUE"/"FALSE" this file's own fieldDisplayValue (CSV
+ * export) already uses for the exact same field type.
+ */
+test("the exported EntityView's real generated buildCalendarIcs renders a boolean field in DESCRIPTION as uppercase TRUE/FALSE, not JS's own lowercase true/false", () => {
+  const withConfirmed: Project = {
+    ...project,
+    spec: {
+      ...project.spec,
+      entities: [
+        ...project.spec.entities,
+        {
+          name: "Appointment",
+          label: "תורים",
+          fields: [
+            { name: "customerName", label: "שם לקוח", type: "text", required: true },
+            { name: "date", label: "תאריך", type: "date", required: true },
+            { name: "confirmed", label: "מאושר", type: "boolean", required: false },
+          ],
+        },
+      ],
+    },
+  };
+  const entityViewJsx = generateExportFiles(withConfirmed).find((f) => f.path === "web/src/components/EntityView.jsx")!.content;
+
+  const pickDisplaySrc = entityViewJsx.match(/export function pickDisplayField\(entity\) \{[\s\S]*?\n\}\n/)?.[0]?.replace(/^export /, "");
+  const labelFieldSrc = entityViewJsx.match(/function calendarLabelField\(entity, dateField\) \{[\s\S]*?\n\}\n/)?.[0];
+  const pad2Src = entityViewJsx.match(/function icsPad2\(n\) \{[\s\S]*?\n\}\n/)?.[0];
+  const dateSrc = entityViewJsx.match(/function formatIcsDate\(date\) \{[\s\S]*?\n\}\n/)?.[0];
+  const tsSrc = entityViewJsx.match(/function formatIcsTimestamp\(date\) \{[\s\S]*?\n\}\n/)?.[0];
+  const escSrc = entityViewJsx.match(/function icsEscapeText\(value\) \{[\s\S]*?\n\}\n/)?.[0];
+  const utf8LenSrc = entityViewJsx.match(/function utf8ByteLength\(s\) \{[\s\S]*?\n\}\n/)?.[0];
+  const foldSrc = entityViewJsx.match(/function foldIcsLine\(line\) \{[\s\S]*?\n\}\n/)?.[0];
+  const buildSrc = entityViewJsx.match(
+    /function buildCalendarIcs\(entity, dateField, labelField, records, relatedRecords, now, endField, orderedFields = entity\.fields\) \{[\s\S]*?\n\}\n/,
+  )?.[0];
+  assert.ok(
+    pickDisplaySrc && labelFieldSrc && pad2Src && dateSrc && tsSrc && escSrc && utf8LenSrc && foldSrc && buildSrc,
+    "expected to find every ICS helper function in the real generated output",
+  );
+
+  const relationStub = "function relationDisplayLabel() { return ''; }\n";
+  const buildCalendarIcs = new Function(
+    `${pickDisplaySrc}\n${labelFieldSrc}\n${pad2Src}\n${dateSrc}\n${tsSrc}\n${escSrc}\n${utf8LenSrc}\n${foldSrc}\n${relationStub}\n${buildSrc}\nreturn buildCalendarIcs;`,
+  )() as (entity: unknown, dateField: unknown, labelField: unknown, records: unknown[], relatedRecords: unknown, now: Date) => string;
+
+  const entity = withConfirmed.spec.entities.find((e) => e.name === "Appointment")!;
+  const dateField = entity.fields.find((f) => f.name === "date")!;
+  const labelField = entity.fields.find((f) => f.name === "customerName")!;
+  const records = [
+    { id: 5, customerName: "Dana Levi", date: "2026-03-15", confirmed: true },
+    { id: 6, customerName: "Yossi Cohen", date: "2026-03-16", confirmed: false },
+  ];
+
+  const ics = buildCalendarIcs(entity, dateField, labelField, records, {}, new Date("2026-01-01T00:00:00Z"));
+
+  assert.match(ics, /מאושר: TRUE/, "a true boolean field must render uppercase TRUE, not JS's own lowercase \"true\"");
+  assert.match(ics, /מאושר: FALSE/, "a false boolean field must still produce a description line, rendering uppercase FALSE, not JS's own lowercase \"false\"");
+});
+
+/**
  * Regression test for round 430: the exported app's own ported foldIcsLine
  * had the exact same byte-vs-character bug as the live-preview version
  * (counting .length instead of real UTF-8 bytes), since it's a byte-for-

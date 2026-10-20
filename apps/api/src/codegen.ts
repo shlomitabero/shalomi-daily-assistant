@@ -2622,7 +2622,14 @@ function buildCalendarIcs(entity, dateField, labelField, records, relatedRecords
         // forward or publish. Mirrors the live preview's own
         // calendarIcs.ts (round 694) and this file's own fieldDisplayValue,
         // which already has this exact branch.
-        const value = f.type === "relation" ? relationDisplayLabel(f, record[f.name], relatedRecords) : f.type === "enum" ? ((f.enumLabels && f.enumLabels[record[f.name]]) || record[f.name]) : f.type === "file" ? parseFileFieldValue(record[f.name])?.name || null : record[f.name];
+        // A "boolean" field's stored value is a real JS boolean
+        // (rowToRecord above always yields one) -- without this branch it
+        // falls into the generic record[f.name] case and interpolates
+        // straight to JS's own lowercase "true"/"false", inconsistent with
+        // the uppercase "TRUE"/"FALSE" this file's own fieldDisplayValue
+        // (CSV export) already uses for the exact same field type. Mirrors
+        // the live preview's own calendarIcs.ts (round 747).
+        const value = f.type === "relation" ? relationDisplayLabel(f, record[f.name], relatedRecords) : f.type === "enum" ? ((f.enumLabels && f.enumLabels[record[f.name]]) || record[f.name]) : f.type === "file" ? parseFileFieldValue(record[f.name])?.name || null : f.type === "boolean" ? (record[f.name] ? "TRUE" : "FALSE") : record[f.name];
         if (value === null || value === undefined || value === "") return null;
         const fieldLabel = f.label || f.name;
         const ambiguous = (descriptionLabelOccurrences[fieldLabel] || 0) > 1;
