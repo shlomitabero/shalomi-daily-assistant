@@ -185,6 +185,45 @@ test("interpolateTemplate falls back to the raw stored value for a date field th
   assert.equal(result, "Due not-a-date");
 });
 
+/**
+ * New in this round: a "file" field's stored value is a JSON-encoded
+ * {url, name, size, mimeType} descriptor (see entityFormatting.ts's own
+ * parseFileFieldValue), not plain text like every other field type --
+ * interpolateTemplate never got a branch for it, so a template
+ * referencing a file field (the create-rule UI's own hint explicitly
+ * invites referencing ANY field by name, and neither
+ * CreateAutomationRuleSchema nor UpdateAutomationRuleSchema restrict
+ * messageTemplate's field references by type) sent the raw JSON
+ * descriptor -- including the server's own internal upload URL path --
+ * verbatim to a real WhatsApp recipient or webhook endpoint. Mirrors
+ * backup.ts's own fileFieldDisplayName exactly: just the filename, same
+ * as fieldDisplayValue (CSV export) and calendarIcs.ts already do for
+ * this exact field type.
+ */
+test("interpolateTemplate renders a file field as just its own filename, not the raw JSON upload descriptor", () => {
+  const applicantEntity: Entity = {
+    name: "Applicant",
+    label: "Applicant",
+    fields: [
+      { name: "name", type: "text", required: true },
+      { name: "resume", type: "file", required: false },
+    ],
+  };
+  const fileValue = JSON.stringify({ url: "/api/uploads/p1/Applicant/abc.pdf", name: "resume.pdf", size: 123, mimeType: "application/pdf" });
+  const result = interpolateTemplate("Thanks {{name}}, see attached: {{resume}}", applicantEntity, { name: "Dana", resume: fileValue }, "en");
+  assert.equal(result, "Thanks Dana, see attached: resume.pdf");
+});
+
+test("interpolateTemplate renders an empty string for a file field whose value isn't a real file descriptor", () => {
+  const applicantEntity: Entity = {
+    name: "Applicant",
+    label: "Applicant",
+    fields: [{ name: "resume", type: "file", required: false }],
+  };
+  const result = interpolateTemplate("Attached: {{resume}}", applicantEntity, { resume: "not-json" }, "en");
+  assert.equal(result, "Attached: ");
+});
+
 test("matchesTrigger: record_created only matches the 'created' event, never 'updated'", () => {
   const rule = insertAutomationRule(openDbForRuleOnly(), {
     projectId: "p",

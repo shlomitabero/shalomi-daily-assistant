@@ -34,6 +34,24 @@ function parseFieldDate(raw: string): Date {
 }
 
 /**
+ * Mirrors backup.ts's own fileFieldDisplayName (and entityFormatting.ts's
+ * parseFileFieldValue on the client side) -- a "file" field's stored value
+ * is a JSON-encoded `{url, name, size, mimeType}` descriptor, not plain
+ * text like every other field type, so interpolateTemplate below needs
+ * just the filename out of it.
+ */
+function fileFieldDisplayName(value: unknown): string {
+  if (typeof value !== "string" || value === "") return "";
+  try {
+    const parsed = JSON.parse(value) as { name?: unknown };
+    if (typeof parsed.name === "string") return parsed.name;
+  } catch {
+    // not a file descriptor -- treated as no file, same as an empty value
+  }
+  return "";
+}
+
+/**
  * Interpolates {{fieldName}} placeholders in a message template from a
  * record's own field values, e.g. "Hi {{customerName}}, ..." -- an
  * unmatched placeholder (a typo'd field name, or one removed by a later
@@ -56,6 +74,14 @@ function parseFieldDate(raw: string): Date {
  * follow THAT convention instead -- locale-formatted, using `lang` (no
  * stored per-project language preference exists, so this is picked the
  * same way twin.ts already does via isHebrewText(project.description)).
+ *
+ * "file" gets its own branch for the identical reason fieldDisplayValue
+ * (backup.ts/entityFormatting.ts) and calendarIcs.ts already carved one
+ * out: without it, a template referencing a file field (the create-rule
+ * UI's own hint explicitly invites referencing ANY field by name) sent
+ * the raw JSON upload descriptor -- url, size, mimeType, the server's own
+ * internal upload path -- verbatim to a real WhatsApp recipient or
+ * webhook endpoint, instead of just the filename a human actually wants.
  */
 export function interpolateTemplate(template: string, entity: Entity, record: EntityRecord, lang: Lang): string {
   return template.replace(/\{\{\s*([a-zA-Z0-9_]+)\s*\}\}/g, (match, fieldName: string) => {
@@ -64,6 +90,7 @@ export function interpolateTemplate(template: string, entity: Entity, record: En
     const field = entity.fields.find((f) => f.name === fieldName);
     if (field?.type === "boolean") return value ? "TRUE" : "FALSE";
     if (field?.type === "enum") return field.enumLabels?.[String(value)] ?? String(value);
+    if (field?.type === "file") return fileFieldDisplayName(value);
     if (field?.type === "date") {
       const date = parseFieldDate(String(value));
       return Number.isNaN(date.getTime()) ? String(value) : date.toLocaleDateString(LOCALE[lang]);
