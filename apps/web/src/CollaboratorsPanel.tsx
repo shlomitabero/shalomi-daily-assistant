@@ -78,14 +78,26 @@ export function CollaboratorsPanel({
     // previously got zero feedback that nothing actually happened. Checked
     // BEFORE the request (against the list already on screen), since the
     // response alone can't tell a genuine new add apart from a no-op.
-    const alreadyCollaborator = (collaborators ?? []).some((c) => c.email.toLowerCase() === trimmed.toLowerCase());
+    const existingCollaborator = (collaborators ?? []).find((c) => c.email.toLowerCase() === trimmed.toLowerCase());
     try {
       const { collaborators, owner } = await addCollaborator(projectId, trimmed, inviteRole);
       setCollaborators(collaborators);
       setOwner(owner);
       setEmail("");
-      if (alreadyCollaborator) {
-        setInviteInfo(t("collab.alreadyCollaborator", { email: trimmed }));
+      if (existingCollaborator) {
+        // The role dropdown right next to the email field is fully live on
+        // a re-invite too, but addCollaborator's own idempotency silently
+        // keeps the collaborator's existing role untouched -- without this
+        // distinction, an owner picking a different role than the one this
+        // person already has (e.g. trying to "invite as Viewer" someone
+        // who's already an Editor) would see the same plain "already has
+        // access" message and reasonably believe the role they just picked
+        // took effect.
+        setInviteInfo(
+          existingCollaborator.role === inviteRole
+            ? t("collab.alreadyCollaborator", { email: trimmed })
+            : t("collab.alreadyCollaboratorRoleUnchanged", { email: trimmed }),
+        );
       }
     } catch (err) {
       setError((err as Error).message);

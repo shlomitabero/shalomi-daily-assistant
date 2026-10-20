@@ -408,6 +408,61 @@ test("CollaboratorsPanel tells the owner when the invited email already has acce
 });
 
 /**
+ * New in this round: re-inviting an existing collaborator while the role
+ * dropdown is set to a DIFFERENT role than the one they already have must
+ * say so explicitly -- addCollaborator (packages/db/src/collaborators.ts)
+ * is idempotent and leaves an existing collaborator's role untouched, so
+ * the plain "already has access" message alone would let the owner
+ * believe the role they just picked took effect, when it silently didn't.
+ */
+test("CollaboratorsPanel tells the owner their role pick was ignored when re-inviting an existing collaborator at a different role", async () => {
+  await withJsdom(async () => {
+    const originalFetch = globalThis.fetch;
+    const dana = makeCollaborator("u1", "dana@example.com", "editor");
+
+    globalThis.fetch = (async (input: string, init?: RequestInit) => {
+      const method = init?.method ?? "GET";
+      if (method === "GET" && input === "/api/projects/proj1/collaborators") {
+        return new Response(JSON.stringify({ collaborators: [dana], owner: { userId: "owner1", email: "amit@example.com" } }), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        });
+      }
+      if (method === "POST" && input === "/api/projects/proj1/collaborators") {
+        // The real idempotent no-op: 201 with the SAME, unchanged role.
+        return new Response(
+          JSON.stringify({ collaborators: [dana], owner: { userId: "owner1", email: "amit@example.com" } }),
+          { status: 201, headers: { "content-type": "application/json" } },
+        );
+      }
+      throw new Error(`unexpected request ${method} ${input}`);
+    }) as typeof fetch;
+
+    try {
+      renderPanel(true);
+      await waitForCondition(() => document.querySelectorAll(".collab-list li").length === 2);
+
+      fireEvent.change(document.querySelector('.collab-invite-form input[type="email"]') as HTMLInputElement, {
+        target: { value: "dana@example.com" },
+      });
+      fireEvent.change(document.querySelector('.collab-invite-form select[aria-label]') as HTMLSelectElement, {
+        target: { value: "viewer" },
+      });
+      fireEvent.submit(document.querySelector(".collab-invite-form")!);
+
+      await waitForCondition(() => document.body.textContent?.includes("role wasn't changed") ?? false);
+      assert.ok(document.body.textContent?.includes("dana@example.com"), "the message must name the real invited email");
+      assert.ok(
+        !document.body.textContent?.includes("already has access to this project."),
+        "re-inviting at a different role must show the role-aware message, not the plain 'already has access to this project.' one",
+      );
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+});
+
+/**
  * The other half: a genuinely NEW collaborator must never trigger the
  * "already has access" message -- it's conditional on the invited email
  * already being in the list BEFORE the request, not a blanket message
