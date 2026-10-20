@@ -708,6 +708,30 @@ test("sortRecords falls back to the raw enum value when a value has no enumLabel
   assert.deepEqual(sorted.map((r) => r.priority), ["high", "low"]);
 });
 
+test("sortRecords sorts a file field by its own filename, not the raw JSON upload descriptor", () => {
+  const fields: Field[] = [{ name: "resume", type: "file", required: false }];
+  const records = [
+    { id: 1, resume: JSON.stringify({ url: "/api/uploads/p1/Applicant/zzz-random-id.pdf", name: "a-report.pdf", size: 1, mimeType: "application/pdf" }) },
+    { id: 2, resume: JSON.stringify({ url: "/api/uploads/p1/Applicant/aaa-random-id.pdf", name: "z-report.pdf", size: 1, mimeType: "application/pdf" }) },
+  ];
+  const sorted = sortRecords(records, "resume", "asc", fields);
+  assert.deepEqual(
+    sorted.map((r) => r.id),
+    [1, 2],
+    "ascending by filename puts \"a-report.pdf\" (record 1) before \"z-report.pdf\" (record 2), the opposite of sorting by each record's raw JSON descriptor (whose url field, \"aaa...\" < \"zzz...\", would put record 2 first)",
+  );
+});
+
+test("sortRecords treats a file field with no real upload (empty/invalid value) as sorting before one with a real filename", () => {
+  const fields: Field[] = [{ name: "resume", type: "file", required: false }];
+  const records = [
+    { id: 1, resume: JSON.stringify({ url: "/api/uploads/p1/Applicant/x.pdf", name: "resume.pdf", size: 1, mimeType: "application/pdf" }) },
+    { id: 2, resume: "" },
+  ];
+  const sorted = sortRecords(records, "resume", "asc", fields);
+  assert.deepEqual(sorted.map((r) => r.id), [2, 1]);
+});
+
 test("sortRecordsMulti resolves an enum key to its translated label too, composing correctly with a non-enum tiebreaker key", () => {
   const fields: Field[] = [
     { name: "priority", type: "enum", required: true, enumValues: ["P1", "P3"], enumLabels: { P1: "Low", P3: "High" } },

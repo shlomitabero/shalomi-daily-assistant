@@ -1827,9 +1827,17 @@ function compareValues(a, b) {
 // already resolves it the same way, but this never did -- clicking an enum
 // column's header sorted by the raw stored value instead of the label
 // shown on screen.
+//
+// A file field has the identical gap: its stored value is the JSON upload
+// descriptor (parseFileFieldValue), but the cell renders just the filename
+// -- without this, clicking the column header sorts by the descriptor
+// string instead of the filename shown on screen. Mirrors this file's own
+// identical "file" branch used for search (line ~1786) and CSV export
+// (line ~1896).
 function resolveSortValue(fieldName, value, fields, relatedRecords) {
   const field = fields?.find((f) => f.name === fieldName);
   if (field?.type === "enum") return (field.enumLabels && field.enumLabels[value]) || value;
+  if (field?.type === "file") return parseFileFieldValue(value)?.name || "";
   if (field?.type !== "relation" || !relatedRecords) return value;
   return relationDisplayLabel(field, value, relatedRecords);
 }

@@ -9402,6 +9402,45 @@ test("the exported EntityView's sortRecordsMulti sorts an enum field by its tran
 });
 
 /**
+ * New in this round: the exported app's own resolveSortValue had the same
+ * gap for file fields that it already had for enum (fixed above) -- a file
+ * field's stored value is the JSON upload descriptor (parseFileFieldValue),
+ * but the table cell renders just the filename, so sorting compared the
+ * raw descriptor string instead. The fixture's two descriptors have `url`
+ * segments ("aaa"/"zzz") that sort in the OPPOSITE order from their own
+ * filenames ("z-report.pdf"/"a-report.pdf"), so unfixed code (still sorting
+ * by the raw descriptor) would produce a detectably different order.
+ */
+test("the exported EntityView's sortRecordsMulti sorts a file field by its own filename, not the raw JSON upload descriptor", () => {
+  const entityViewJsx = generateExportFiles(project).find((f) => f.path === "web/src/components/EntityView.jsx")!.content;
+
+  const parseFileFieldValueSrc = entityViewJsx.match(/function parseFileFieldValue\(value\) \{[\s\S]*?\n\}\n/)?.[0];
+  const compareValuesSrc = entityViewJsx.match(/function compareValues\([\s\S]*?\n\}\n/)?.[0];
+  const resolveSortValueSrc = entityViewJsx.match(/function resolveSortValue\([\s\S]*?\n\}\n/)?.[0];
+  const sortRecordsMultiSrc = entityViewJsx.match(/export function sortRecordsMulti\([\s\S]*?\n\}\n/)?.[0]?.replace("export ", "");
+  assert.ok(
+    parseFileFieldValueSrc && compareValuesSrc && resolveSortValueSrc && sortRecordsMultiSrc,
+    "expected to find parseFileFieldValue/compareValues/resolveSortValue/sortRecordsMulti in generated output",
+  );
+
+  const sortRecordsMulti = new Function(
+    `${parseFileFieldValueSrc}\n${compareValuesSrc}\n${resolveSortValueSrc}\n${sortRecordsMultiSrc}\nreturn sortRecordsMulti;`,
+  )() as (records: { id: number }[], sortKeys: { field: string; direction: string }[], fields: unknown[]) => { id: number }[];
+
+  const fields = [{ name: "resume", type: "file" }];
+  const records = [
+    { id: 1, resume: JSON.stringify({ url: "/api/uploads/p1/Applicant/zzz-random-id.pdf", name: "a-report.pdf", size: 1, mimeType: "application/pdf" }) },
+    { id: 2, resume: JSON.stringify({ url: "/api/uploads/p1/Applicant/aaa-random-id.pdf", name: "z-report.pdf", size: 1, mimeType: "application/pdf" }) },
+  ];
+  const sorted = sortRecordsMulti(records, [{ field: "resume", direction: "asc" }], fields);
+  assert.deepEqual(
+    sorted.map((r) => r.id),
+    [1, 2],
+    "ascending by filename puts \"a-report.pdf\" (record 1) before \"z-report.pdf\" (record 2), the opposite of sorting by each record's raw JSON descriptor",
+  );
+});
+
+/**
  * Round 386: the exported app's own relationDisplayLabel had the exact
  * same O(N*M) records.find(...) scan round 385 fixed in this file's
  * backup route, just with far more call sites (matchesSearch/

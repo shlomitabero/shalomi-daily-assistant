@@ -510,6 +510,13 @@ function compareValues(a: unknown, b: unknown): number {
  * Unlike relation, this only ever needs `fields` -- an enum's label comes
  * straight from the field definition, no relatedRecords/allEntities to
  * resolve against.
+ *
+ * A file field has the identical gap: its stored value is the JSON upload
+ * descriptor (parseFileFieldValue), but the cell renders just the filename
+ * (EntityPanel.tsx's Cell, "file" branch) -- without this, clicking the
+ * column header sorts by the descriptor string (dominated by each upload's
+ * random url segment), landing rows in an order unrelated to what's shown.
+ * Mirrors fieldDisplayValue's own identical "file" branch (CSV export).
  */
 function resolveSortValue(
   fieldName: string,
@@ -520,6 +527,7 @@ function resolveSortValue(
 ): unknown {
   const field = fields?.find((f) => f.name === fieldName);
   if (field?.type === "enum") return field.enumLabels?.[String(value)] ?? value;
+  if (field?.type === "file") return parseFileFieldValue(value)?.name ?? "";
   if (field?.type !== "relation" || !allEntities || !relatedRecords) return value;
   return relationDisplayLabel(field, value, allEntities, relatedRecords);
 }
