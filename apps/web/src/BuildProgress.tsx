@@ -557,7 +557,7 @@ export function BuildProgress({
               <div className="agent-step-body">
                 <div className="agent-step-header">
                   <strong>
-                    {icon} {t(`build.agent.${key}.title`)}
+                    <span aria-hidden="true">{icon}</span> {t(`build.agent.${key}.title`)}
                   </strong>
                   {hasDetail && (
                     <button type="button" className="link-button detail-toggle" onClick={() => toggleExpanded(agent)}>

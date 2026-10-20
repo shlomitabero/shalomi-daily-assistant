@@ -1804,7 +1804,7 @@ function AppContent() {
                     saveIdeaDraft(t(example.textKey));
                   }}
                 >
-                  <span className="idea-example-icon">{example.icon}</span>
+                  <span className="idea-example-icon" aria-hidden="true">{example.icon}</span>
                   <span className="idea-example-label">{t(example.labelKey)}</span>
                 </button>
               ))}
@@ -1818,7 +1818,7 @@ function AppContent() {
               <div className="templates-gallery-grid">
                 {templates.map((template) => (
                   <div className="template-card" key={template.id}>
-                    <span className="template-card-icon">{template.icon}</span>
+                    <span className="template-card-icon" aria-hidden="true">{template.icon}</span>
                     <h3 className="template-card-name">{lang === "en" ? template.name : template.nameHe}</h3>
                     <p className="muted small template-card-description">
                       {lang === "en" ? template.description : template.descriptionHe}

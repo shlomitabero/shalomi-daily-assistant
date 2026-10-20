@@ -2936,6 +2936,32 @@ test("the home screen's decorative 3D hero cube is marked aria-hidden, keeping i
   assert.equal(faceCount, 6, "a cube needs exactly 6 faces");
 });
 
+/**
+ * New in this round: the same "decorative, keep it out of the
+ * accessibility tree" discipline the hero cube above already gets --
+ * applied here to two emoji icons that sit directly beside a real text
+ * label (the idea-examples grid's own icon+label button, and each
+ * Templates Gallery card's own icon+name) rather than carrying any
+ * information themselves. Without aria-hidden, a screen reader announced
+ * each emoji's own verbose Unicode name on top of the adjacent label that
+ * already says the same thing in real words -- pure noise on every one of
+ * the ~5 idea-example cards and every template card. Source-regex, not a
+ * full render, since mounting App.tsx's home screen needs a real auth/
+ * routing harness this file doesn't otherwise set up -- same approach the
+ * hero-cube test above already uses for exactly this reason.
+ */
+test("the home screen's idea-example and template-card icons are marked aria-hidden, since the real label beside each already says the same thing", () => {
+  const appSrc = readFileSync(new URL("./App.tsx", import.meta.url), "utf8");
+
+  const ideaIconLine = appSrc.match(/<span className="idea-example-icon"[^>]*>\{example\.icon\}<\/span>/);
+  assert.ok(ideaIconLine, "expected the idea-example icon span");
+  assert.match(ideaIconLine![0], /aria-hidden="true"/, "the idea-example icon must be aria-hidden, since idea-example-label already carries the real text");
+
+  const templateIconLine = appSrc.match(/<span className="template-card-icon"[^>]*>\{template\.icon\}<\/span>/);
+  assert.ok(templateIconLine, "expected the template-card icon span");
+  assert.match(templateIconLine![0], /aria-hidden="true"/, "the template-card icon must be aria-hidden, since template-card-name already carries the real text");
+});
+
 test("the decorative 3D hero cube's CSS uses real 3D transforms and respects prefers-reduced-motion", () => {
   const stylesCss = readFileSync(new URL("./styles.css", import.meta.url), "utf8");
 

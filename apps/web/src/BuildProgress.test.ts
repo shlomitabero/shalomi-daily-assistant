@@ -314,6 +314,34 @@ test("BuildProgress shows each agent's own real success message, not a generic c
 });
 
 /**
+ * New in this round: each agent-step's own emoji icon sits directly beside
+ * its real, translated title text inside the same <strong> -- without
+ * aria-hidden, a screen reader announced the emoji's own verbose Unicode
+ * name on top of the title that already says the same thing in real
+ * words, redundant noise on every one of the (up to) 7 build steps. The
+ * title text itself must still render untouched -- this only hides the
+ * decorative icon, not the real label beside it.
+ */
+test("BuildProgress marks each agent-step's own icon aria-hidden, since its real title already carries the information", async () => {
+  await withJsdom(async () => {
+    const events: AgentStepEvent[] = [{ agent: "Architect", status: "running", message: "…" }];
+    renderBuildProgress(events);
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    const architectStep = [...document.querySelectorAll(".agent-step")].find((s) => s.textContent?.includes("Product Planner"));
+    assert.ok(architectStep, "expected the Architect step to render");
+
+    const titleStrong = architectStep!.querySelector(".agent-step-header > strong");
+    assert.ok(titleStrong, "expected the step's own <strong> title wrapper");
+    assert.match(titleStrong!.textContent ?? "", /Product Planner/, "sanity check: the real title text must still render");
+
+    const iconSpan = titleStrong!.querySelector("span[aria-hidden]");
+    assert.ok(iconSpan, "expected the icon's own span to exist inside the title");
+    assert.equal(iconSpan!.getAttribute("aria-hidden"), "true", "the decorative icon must be aria-hidden, since the title text beside it already says the same thing");
+  });
+});
+
+/**
  * Regression test for a real gap found by round 377's Explore survey:
  * pipeline.ts's computeImpact now reports entities a refine dropped from
  * the spec (see pipeline.test.ts), but that's only useful if the live AI
