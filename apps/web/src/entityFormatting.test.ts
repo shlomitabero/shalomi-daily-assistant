@@ -1213,6 +1213,41 @@ test("pickDisplayField falls back to the first text field, then the first field 
   assert.equal(pickDisplayField({ name: "Empty", fields: [] }), null);
 });
 
+/**
+ * A join/line-item entity (e.g. an Enrollment linking a Student to a
+ * Course) can legitimately have no name/title/text field at all --
+ * EntitySchema only requires at least one field, nothing requires a text
+ * one. Without skipping relation fields in the last-resort fallback,
+ * pickDisplayField would pick the first relation field, and
+ * recordDisplayLabel/relationDisplayLabel would then render that field's
+ * raw stored value -- the *related* record's own internal id, e.g. "4" --
+ * as if it were this record's own human label, everywhere a record is
+ * shown by name (a relation field's own picker options, CSV export/
+ * import's relation-cell matching, the "Group by"/filter dropdowns).
+ */
+test("pickDisplayField skips a relation field in its last-resort fallback, preferring any other non-relation field instead", () => {
+  const enrollmentFields: Field[] = [
+    { name: "studentId", type: "relation", relationTo: "Student", required: true },
+    { name: "grade", type: "enum", required: false, enumValues: ["A", "B", "C"] },
+    { name: "courseId", type: "relation", relationTo: "Course", required: true },
+  ];
+  assert.equal(
+    pickDisplayField({ name: "Enrollment", fields: enrollmentFields })?.name,
+    "grade",
+    "with no name/title/text field, the first non-relation field (grade) must win over the first-declared relation field (studentId)",
+  );
+
+  const allRelations: Field[] = [
+    { name: "userId", type: "relation", relationTo: "User", required: true },
+    { name: "groupId", type: "relation", relationTo: "Group", required: true },
+  ];
+  assert.equal(
+    pickDisplayField({ name: "Membership", fields: allRelations })?.name,
+    "userId",
+    "there's nothing else to fall back to when literally every field is a relation, so the first field regardless is the only option left",
+  );
+});
+
 test("calendarChipLabelField prefers the entity's real display field over whichever field merely comes first after the date field", () => {
   // Every built-in domain entity happens to declare its "name"/"title"
   // field before its date field, so grabbing "the first field that isn't

@@ -929,13 +929,28 @@ const DISPLAY_FIELD_NAME_HINTS = ["name", "title"];
  * in a picker/cell instead of a raw foreign-key id. Prefers a field
  * literally named "name"/"title" (the domain library's own convention),
  * then falls back to the first text field, then to the entity's first
- * field of any type; returns null only for an entity with no fields at all.
+ * non-relation field of any other type, then -- only if literally every
+ * field is itself a relation -- the first field regardless; returns null
+ * only for an entity with no fields at all.
+ *
+ * A join/line-item entity (e.g. `Enrollment { studentId: relation,
+ * courseId: relation, grade: enum }`) can legitimately have no name/
+ * title/text field at all -- `EntitySchema` only requires at least one
+ * field, nothing requires a text one. Without the relation exclusion in
+ * this last-resort step, recordDisplayLabel would render the *related*
+ * record's own raw internal id (e.g. "4") as this record's own label
+ * everywhere a record is shown by name -- a relation field's own <option>
+ * list, CSV export/import's relation-cell matching, the "Group by"/filter
+ * dropdowns' own labels -- indistinguishable from every other record
+ * pointing at the same related row.
  */
 export function pickDisplayField(entity: Entity): Field | null {
   const named = entity.fields.find((f) => DISPLAY_FIELD_NAME_HINTS.includes(f.name.toLowerCase()));
   if (named) return named;
   const firstText = entity.fields.find((f) => f.type === "text");
-  return firstText ?? entity.fields[0] ?? null;
+  if (firstText) return firstText;
+  const firstNonRelation = entity.fields.find((f) => f.type !== "relation");
+  return firstNonRelation ?? entity.fields[0] ?? null;
 }
 
 /**

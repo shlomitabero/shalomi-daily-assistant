@@ -2403,6 +2403,54 @@ test("the exported record table's date cell shows the correct calendar day even 
   }
 });
 
+/**
+ * Round 741: mirrors the live preview's own fix (entityFormatting.ts's
+ * pickDisplayField) -- a join/line-item entity (e.g. an Enrollment linking
+ * a Student to a Course) can legitimately have no name/title/text field
+ * at all, since EntitySchema only requires at least one field. Without
+ * skipping relation fields in the last-resort fallback, the generated
+ * pickDisplayField/recordDisplayLabel would render the *related* record's
+ * own raw internal id as this record's own label everywhere the exported
+ * app shows a record by name -- a relation field's own picker options,
+ * CSV export/import, the "Group by"/filter dropdowns. Runs the real
+ * generated pickDisplayField directly against a relation-only entity.
+ */
+test("the exported EntityView's pickDisplayField skips a relation field in its last-resort fallback, preferring any other non-relation field instead", () => {
+  const files = generateExportFiles(project);
+  const entityViewJsx = files.find((f) => f.path === "web/src/components/EntityView.jsx")!.content;
+
+  const displayFieldHintsSrc = entityViewJsx.match(/const DISPLAY_FIELD_NAME_HINTS = .*;\n/)?.[0];
+  const pickDisplayFieldSrc = entityViewJsx.match(/export function pickDisplayField\([\s\S]*?\n\}\n/)?.[0]?.replace("export ", "");
+  assert.ok(displayFieldHintsSrc && pickDisplayFieldSrc, "expected to find DISPLAY_FIELD_NAME_HINTS/pickDisplayField in generated output");
+
+  const pickDisplayField = new Function(`${displayFieldHintsSrc}\n${pickDisplayFieldSrc}\nreturn pickDisplayField;`)() as (entity: unknown) => { name: string } | null;
+
+  assert.equal(
+    pickDisplayField({
+      name: "Enrollment",
+      fields: [
+        { name: "studentId", type: "relation", relationTo: "Student" },
+        { name: "grade", type: "enum" },
+        { name: "courseId", type: "relation", relationTo: "Course" },
+      ],
+    })?.name,
+    "grade",
+    "with no name/title/text field, the first non-relation field (grade) must win over the first-declared relation field (studentId)",
+  );
+
+  assert.equal(
+    pickDisplayField({
+      name: "Membership",
+      fields: [
+        { name: "userId", type: "relation", relationTo: "User" },
+        { name: "groupId", type: "relation", relationTo: "Group" },
+      ],
+    })?.name,
+    "userId",
+    "there's nothing else to fall back to when literally every field is a relation, so the first field regardless is the only option left",
+  );
+});
+
 test("the exported CalendarView picks its day-chip label via pickDisplayField, not just whichever field happens to come first after the date field", () => {
   // Mirrors the live-preview fix in apps/web/src/entityFormatting.ts
   // (calendarChipLabelField): every built-in domain entity happens to
@@ -8283,6 +8331,37 @@ test("the exported server.js's own backupFieldDisplayValue resolves a relation f
     backupFieldDisplayValue(relationField, 999, recordIndexByEntity),
     "#999",
     "a relation id with no matching record must fall back to the raw id, not throw or return empty",
+  );
+});
+
+/**
+ * Round 741: backupPickDisplayField is its own separate copy of the same
+ * name/title -> text -> fallback chain pickDisplayField uses elsewhere in
+ * this file, specifically for the exported app's own "Backup all data"
+ * ZIP/CSV feature. Mirrors the same relation-exclusion fix made to
+ * pickDisplayField and the live preview's own entityFormatting.ts: a
+ * join/line-item entity with no name/title/text field would otherwise
+ * make the backup CSV show the *related* record's own raw internal id as
+ * this record's own label.
+ */
+test("the exported server.js's own backupPickDisplayField skips a relation field in its last-resort fallback, preferring any other non-relation field instead", () => {
+  const serverJs = generateExportFiles(project).find((f) => f.path === "server.js")!.content;
+  const backupPickDisplayFieldSrc = serverJs.match(/const BACKUP_DISPLAY_FIELD_HINTS[\s\S]*?\nfunction backupPickDisplayField\(entity\) \{[\s\S]*?\n\}\n/)?.[0];
+  assert.ok(backupPickDisplayFieldSrc, "expected to find BACKUP_DISPLAY_FIELD_HINTS/backupPickDisplayField in generated server.js");
+
+  const backupPickDisplayField = new Function(`${backupPickDisplayFieldSrc}\nreturn backupPickDisplayField;`)() as (entity: unknown) => { name: string } | null;
+
+  assert.equal(
+    backupPickDisplayField({
+      name: "Enrollment",
+      fields: [
+        { name: "studentId", type: "relation", relationTo: "Student" },
+        { name: "grade", type: "enum" },
+        { name: "courseId", type: "relation", relationTo: "Course" },
+      ],
+    })?.name,
+    "grade",
+    "with no name/title/text field, the first non-relation field (grade) must win over the first-declared relation field (studentId)",
   );
 });
 

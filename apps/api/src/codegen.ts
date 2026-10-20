@@ -635,12 +635,18 @@ function csvEscape(value) {
   return guarded;
 }
 
+// Mirrors the exported app's own pickDisplayField above -- the last-resort
+// fallback skips relation fields too, since a join/line-item entity with
+// no name/title/text field would otherwise have this backup CSV show the
+// *related* record's own raw internal id as this record's own label.
 const BACKUP_DISPLAY_FIELD_HINTS = ["name", "title"];
 function backupPickDisplayField(entity) {
   const named = entity.fields.find((f) => BACKUP_DISPLAY_FIELD_HINTS.includes(f.name.toLowerCase()));
   if (named) return named;
   const firstText = entity.fields.find((f) => f.type === "text");
-  return firstText || entity.fields[0] || null;
+  if (firstText) return firstText;
+  const firstNonRelation = entity.fields.find((f) => f.type !== "relation");
+  return firstNonRelation || entity.fields[0] || null;
 }
 
 function backupRecordDisplayLabel(entity, record) {
@@ -1415,14 +1421,22 @@ function isValidDate(value) {
 
 // Picks the field that best represents one of an entity's records as a
 // short human label -- prefers a field literally named "name"/"title",
-// falls back to the first text field, then the first field of any type.
+// falls back to the first text field, then the first non-relation field
+// of any other type, then -- only if literally every field is itself a
+// relation -- the first field regardless. A join/line-item entity (e.g.
+// Enrollment { studentId: relation, courseId: relation, grade: enum })
+// can legitimately have no name/title/text field at all, and without the
+// relation exclusion here recordDisplayLabel would render the *related*
+// record's own raw internal id as this record's own label.
 const DISPLAY_FIELD_NAME_HINTS = ["name", "title"];
 export function pickDisplayField(entity) {
   if (!entity || !entity.fields || entity.fields.length === 0) return null;
   const named = entity.fields.find((f) => DISPLAY_FIELD_NAME_HINTS.includes(f.name.toLowerCase()));
   if (named) return named;
   const firstText = entity.fields.find((f) => f.type === "text");
-  return firstText || entity.fields[0];
+  if (firstText) return firstText;
+  const firstNonRelation = entity.fields.find((f) => f.type !== "relation");
+  return firstNonRelation || entity.fields[0];
 }
 
 export function recordDisplayLabel(entity, record) {
