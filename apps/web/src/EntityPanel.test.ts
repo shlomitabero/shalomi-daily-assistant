@@ -9133,6 +9133,126 @@ test("EntityPanel's per-field enum filter survives an unmount+remount of the sam
 });
 
 /**
+ * New in this round: the toolbar filter select is the one remaining
+ * sibling in the "stale value has no <option>" family (round 508) that
+ * never got the fix -- unlike FieldInput's own enum branch a few hundred
+ * lines above, this select's options were built only from the field's
+ * CURRENT enumValues, never including fieldFilters[f.name]'s own value if
+ * that value has since become stale (an AI refine renaming/narrowing the
+ * enum while the field itself survives under the same name -- migrate.ts
+ * only ever adds columns, never rewrites existing row data). Without a
+ * matching <option>, the browser silently blanks the controlled select
+ * even though the filter is still actively applied.
+ */
+test("EntityPanel's enum filter select keeps a stale persisted value visibly selected via a synthetic option, instead of silently going blank, when a refine narrows field.enumValues", async () => {
+  await withJsdom(async () => {
+    const store: EntityRecord[] = [
+      { id: 1, name: "Globex", status: "won" },
+      { id: 2, name: "Zeta Inc", status: "new" },
+      { id: 3, name: "Acme Corp", status: "lost" },
+    ];
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = mockRecordsFetch(store) as typeof fetch;
+    try {
+      const view = renderEntityPanel();
+      await waitForCondition(() => document.querySelectorAll("table tbody tr").length === 3);
+
+      const statusFilter = document.querySelector(".entity-status-filter") as HTMLSelectElement;
+      fireEvent.change(statusFilter, { target: { value: "lost" } });
+      await waitForCondition(() => document.querySelectorAll("table tbody tr").length === 1);
+
+      const narrowedDealEntity: Entity = {
+        ...DEAL_ENTITY,
+        fields: DEAL_ENTITY.fields.map((f) =>
+          f.name === "status"
+            ? { ...f, enumValues: ["new", "won", "archived"], enumLabels: { new: "New", won: "Won", archived: "Archived" } }
+            : f,
+        ),
+      };
+      view.rerender(buildEntityPanelElement({ entity: narrowedDealEntity, allEntities: [narrowedDealEntity] }));
+
+      const filterAfterRefine = document.querySelector(".entity-status-filter") as HTMLSelectElement;
+      assert.equal(
+        filterAfterRefine.value,
+        "lost",
+        "the select must still reflect the real, still-active stale filter value, not silently go blank",
+      );
+      assert.ok(
+        Array.from(filterAfterRefine.options).some((o) => o.value === "lost"),
+        "a synthetic option for the stale value must exist so the browser can actually display it as selected",
+      );
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+});
+
+/**
+ * The relation half of the same gap: a filter set to a related record's
+ * id, with that record since deleted while the relation field itself
+ * survives, has no matching <option> either -- mirrors FieldInput's own
+ * relation branch's synthetic "#id" fallback (round 515).
+ */
+test("EntityPanel's relation filter select keeps a stale persisted id visibly selected via a synthetic '#id' option, instead of silently going blank, when the filtered-to related record has been deleted", async () => {
+  await withJsdom(async () => {
+    const orderEntity: Entity = {
+      name: "Order",
+      label: "Order",
+      fields: [
+        { name: "item", label: "Item", type: "text", required: true },
+        { name: "courierId", label: "Courier", type: "relation", relationTo: "Courier", required: false },
+      ],
+    };
+    const courierEntity: Entity = { name: "Courier", label: "Courier", fields: [{ name: "name", label: "Name", type: "text", required: true }] };
+    const store: EntityRecord[] = [
+      { id: 1, createdAt: "x", item: "Pizza", courierId: 9 },
+      { id: 2, createdAt: "x", item: "Sushi", courierId: 10 },
+    ];
+    let courierRecords: EntityRecord[] = [
+      { id: 9, createdAt: "x", name: "Dana" },
+      { id: 10, createdAt: "x", name: "Omer" },
+    ];
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = (async (input: string) => {
+      if (input === "/api/projects/proj1/entities/Order") {
+        return new Response(JSON.stringify({ records: store }), { status: 200, headers: { "content-type": "application/json" } });
+      }
+      if (input === "/api/projects/proj1/entities/Courier") {
+        return new Response(JSON.stringify({ records: courierRecords }), { status: 200, headers: { "content-type": "application/json" } });
+      }
+      throw new Error(`unexpected request ${input}`);
+    }) as typeof fetch;
+    try {
+      const firstView = renderEntityPanel({ entity: orderEntity, allEntities: [orderEntity, courierEntity] });
+      await waitForCondition(() => document.querySelectorAll("table tbody tr").length === 2);
+      await waitForCondition(() => document.querySelector(".entity-status-filter") !== null);
+
+      const filterSelect = document.querySelector(".entity-status-filter") as HTMLSelectElement;
+      fireEvent.change(filterSelect, { target: { value: "10" } });
+      await waitForCondition(() => document.querySelectorAll("table tbody tr").length === 1);
+
+      firstView.unmount();
+      // Simulate Omer having been deleted in the meantime -- the related
+      // record disappears from Courier's own list, but the persisted
+      // filter (fieldFiltersPreference, keyed by projectId+entity.name)
+      // still holds the now-deleted id.
+      courierRecords = [{ id: 9, createdAt: "x", name: "Dana" }];
+      renderEntityPanel({ entity: orderEntity, allEntities: [orderEntity, courierEntity] });
+      await waitForCondition(() => document.querySelector(".entity-status-filter") !== null);
+      const filterAfterDeletion = document.querySelector(".entity-status-filter") as HTMLSelectElement;
+      await waitForCondition(() => filterAfterDeletion.value === "10");
+
+      assert.ok(
+        Array.from(filterAfterDeletion.options).some((o) => o.value === "10"),
+        "a synthetic '#10' option for the deleted-but-still-filtered courier must exist so the browser can actually display it as selected",
+      );
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+});
+
+/**
  * New in this round (341): with no way to reset multiple active per-field
  * filters except reopening each dropdown individually, a "Clear filters"
  * button now appears only once at least one filter is actually set, and

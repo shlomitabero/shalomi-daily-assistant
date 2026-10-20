@@ -3062,41 +3062,67 @@ export function EntityPanel({
             <span className="muted small entity-record-count">
               {formatEntityRecordCount(visibleRecords.length, records.length, t)}
             </span>
-            {filterableFields.map((f) => (
-              <select
-                key={f.name}
-                className="entity-status-filter"
-                aria-label={t("entity.filter.byField", { field: fieldDisplayLabel(f, filterableFieldLabelOccurrences) })}
-                value={fieldFilters[f.name] ?? ""}
-                onChange={(e) =>
-                  setFieldFilters((prev) => {
-                    const next = { ...prev, [f.name]: e.target.value };
-                    setFieldFiltersPreference(projectId, entity.name, next);
-                    return next;
-                  })
-                }
-              >
-                <option value="">{t("entity.filter.allValues", { field: fieldDisplayLabel(f, filterableFieldLabelOccurrences) })}</option>
-                {f.type === "boolean" ? (
-                  <>
-                    <option value="true">{t("entity.groupBy.yes")}</option>
-                    <option value="false">{t("entity.groupBy.no")}</option>
-                  </>
-                ) : f.type === "relation" ? (
-                  (relatedRecords[f.relationTo!] ?? []).map((r) => (
-                    <option key={r.id as number} value={String(r.id)}>
-                      {recordDisplayLabel(allEntities.find((e) => e.name === f.relationTo)!, r)}
-                    </option>
-                  ))
-                ) : (
-                  uniqueEnumValues(f.enumValues).map((v) => (
-                    <option key={v} value={v}>
-                      {f.enumLabels?.[v] ?? v}
-                    </option>
-                  ))
-                )}
-              </select>
-            ))}
+            {filterableFields.map((f) => {
+              // A filter already set to a value (enum value or related
+              // record id) that's since become stale -- an AI refine
+              // renaming/narrowing f.enumValues, or the filtered-to related
+              // record being deleted, both while the field itself survives
+              // under the same name -- has no matching <option> below,
+              // which silently blanks this controlled <select> even though
+              // fieldFilters[f.name] (and visibleRecords' own filtering by
+              // it) stays set to the stale value. The exact same "stale
+              // value has no <option>" bug class FieldInput's own
+              // enum/relation branches and BoardCard's move select already
+              // guard against (round 508) -- this toolbar filter select
+              // used the same raw pattern with no synthetic-option guard.
+              const currentFilterValue = fieldFilters[f.name] ?? "";
+              const knownRelationRecords = f.type === "relation" ? relatedRecords[f.relationTo!] ?? [] : [];
+              const hasCurrentRelationOption =
+                f.type !== "relation" || currentFilterValue === "" || knownRelationRecords.some((r) => String(r.id) === currentFilterValue);
+              const knownEnumFilterValues = f.type === "enum" ? uniqueEnumValues(f.enumValues) : [];
+              const enumFilterOptionValues =
+                f.type === "enum" && currentFilterValue && !knownEnumFilterValues.includes(currentFilterValue)
+                  ? [currentFilterValue, ...knownEnumFilterValues]
+                  : knownEnumFilterValues;
+              return (
+                <select
+                  key={f.name}
+                  className="entity-status-filter"
+                  aria-label={t("entity.filter.byField", { field: fieldDisplayLabel(f, filterableFieldLabelOccurrences) })}
+                  value={currentFilterValue}
+                  onChange={(e) =>
+                    setFieldFilters((prev) => {
+                      const next = { ...prev, [f.name]: e.target.value };
+                      setFieldFiltersPreference(projectId, entity.name, next);
+                      return next;
+                    })
+                  }
+                >
+                  <option value="">{t("entity.filter.allValues", { field: fieldDisplayLabel(f, filterableFieldLabelOccurrences) })}</option>
+                  {f.type === "boolean" ? (
+                    <>
+                      <option value="true">{t("entity.groupBy.yes")}</option>
+                      <option value="false">{t("entity.groupBy.no")}</option>
+                    </>
+                  ) : f.type === "relation" ? (
+                    <>
+                      {!hasCurrentRelationOption && <option value={currentFilterValue}>{`#${currentFilterValue}`}</option>}
+                      {knownRelationRecords.map((r) => (
+                        <option key={r.id as number} value={String(r.id)}>
+                          {recordDisplayLabel(allEntities.find((e) => e.name === f.relationTo)!, r)}
+                        </option>
+                      ))}
+                    </>
+                  ) : (
+                    enumFilterOptionValues.map((v) => (
+                      <option key={v} value={v}>
+                        {f.enumLabels?.[v] ?? v}
+                      </option>
+                    ))
+                  )}
+                </select>
+              );
+            })}
             {filterableFields.length > 0 && Object.values(fieldFilters).some(Boolean) && (
               <button
                 type="button"

@@ -1348,7 +1348,7 @@ test("the exported EntityView's table toolbar has one filter dropdown per qualif
     entityViewJsx,
     /const \[fieldFilters, setFieldFilters\] = useState\(\(\) => sanitizeFieldFilters\(getPersistedFieldFilters\(entity\.name\), entity\.fields\)\);/,
   );
-  assert.match(entityViewJsx, /\{filterableFields\.map\(\(f\) => \(/);
+  assert.match(entityViewJsx, /\{filterableFields\.map\(\(f\) => \{/);
   assert.match(entityViewJsx, /className="entity-status-filter"/);
   // The filter must actually apply to visibleRecords, not just render inert dropdowns
   assert.match(
@@ -1461,7 +1461,16 @@ test("the exported EntityView's filter dropdown also covers a relation field, on
     "once the related entity's records are loaded, the relation field must be included",
   );
 
-  assert.match(entityViewJsx, /f\.type === "relation"[\s\S]{0,100}relatedRecords\[f\.relationTo\][\s\S]{0,120}recordDisplayLabel\(ALL_ENTITIES\.find/, "the real option-rendering branch must resolve each option's label via recordDisplayLabel, not a raw id");
+  assert.match(
+    entityViewJsx,
+    /const knownRelationRecords = f\.type === "relation" \? relatedRecords\[f\.relationTo\][\s\S]{0,20} : \[\];/,
+    "the relation branch's own option list must be built from relatedRecords[f.relationTo]",
+  );
+  assert.match(
+    entityViewJsx,
+    /knownRelationRecords\.map\(\(r\) =>[\s\S]{0,150}recordDisplayLabel\(ALL_ENTITIES\.find/,
+    "the real option-rendering branch must resolve each option's label via recordDisplayLabel, not a raw id",
+  );
 });
 
 /**
@@ -11854,6 +11863,118 @@ test("the exported EntityView's relation field keeps the record's real stored va
         "9",
         "the select must reflect the record's real stored courier id even though the related-entity fetch failed and returned no options",
       );
+    });
+  } finally {
+    globalThis.fetch = originalFetch;
+    cleanup();
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+/**
+ * New in this round: the toolbar filter select (not FieldInput's own
+ * relation branch, already fixed round 515 just above) has the identical
+ * "stale value has no <option>" gap for the exported app's own filter
+ * dropdown -- a filter set to a related record's id, with that record
+ * since deleted while the relation field itself survives, has no
+ * matching <option>, silently blanking the controlled select. Unlike the
+ * enum branch of this same select (unreachable here -- this exported
+ * app's schema is frozen at export time, so field.enumValues never
+ * changes), deleting a related record is an ordinary runtime data
+ * operation fully reachable in the exported app's own deployed instance.
+ */
+test("the exported EntityView's relation filter select keeps a stale persisted id visibly selected via a synthetic '#id' option, instead of silently going blank, when the filtered-to related record has been deleted", async () => {
+  const courierEntity: Entity = { name: "Courier", label: "Courier", fields: [{ name: "name", label: "Name", type: "text", required: true }] };
+  const orderEntity: Entity = {
+    name: "Order",
+    label: "Order",
+    fields: [
+      { name: "item", label: "Item", type: "text", required: true },
+      { name: "courierId", label: "Courier", type: "relation", relationTo: "Courier", required: false },
+    ],
+  };
+  const withRelationProject: Project = {
+    ...project,
+    spec: { ...project.spec, entities: [courierEntity, orderEntity] },
+  };
+  const files = generateExportFiles(withRelationProject);
+  const dir = writeGeneratedWebComponent(files);
+  const store: EntityRecord[] = [
+    { id: 1, item: "Pizza", courierId: 9 },
+    { id: 2, item: "Sushi", courierId: 10 },
+  ];
+  let courierRecords: EntityRecord[] = [
+    { id: 9, name: "Dana" },
+    { id: 10, name: "Omer" },
+  ];
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = (async (input: string) => {
+    if (input === "/api/Order") {
+      return new Response(JSON.stringify({ records: store }), { status: 200, headers: { "content-type": "application/json" } });
+    }
+    if (input === "/api/Courier") {
+      return new Response(JSON.stringify({ records: courierRecords }), { status: 200, headers: { "content-type": "application/json" } });
+    }
+    throw new Error(`unexpected request ${input}`);
+  }) as typeof fetch;
+
+  try {
+    await withRealLocalStorage(async () => {
+      const { EntityView } = await import(path.join(dir, "web", "src", "components", "EntityView.jsx"));
+      const props = {
+        entity: orderEntity,
+        highlightRecordId: null,
+        onHighlightHandled: () => {},
+        onJumpToRecord: () => {},
+        onRecordCountChange: () => {},
+      };
+
+      const firstMount = render(React.createElement(EntityView, props));
+      for (let i = 0; i < 40; i++) {
+        if (firstMount.container.querySelector(".entity-status-filter")) break;
+        await act(async () => {
+          await new Promise((resolve) => setTimeout(resolve, 0));
+        });
+      }
+      const filterSelect = firstMount.container.querySelector(".entity-status-filter") as HTMLSelectElement;
+      assert.ok(filterSelect, "expected a real relation filter select");
+      await act(async () => {
+        fireEvent.change(filterSelect, { target: { value: "10" } });
+      });
+      for (let i = 0; i < 40; i++) {
+        if (firstMount.container.querySelectorAll("tbody tr").length === 1) break;
+        await act(async () => {
+          await new Promise((resolve) => setTimeout(resolve, 0));
+        });
+      }
+      assert.equal(firstMount.container.querySelectorAll("tbody tr").length, 1, "the filter must actually narrow the rendered rows");
+      firstMount.unmount();
+
+      // Simulate Omer having been deleted in the meantime -- the related
+      // record disappears from Courier's own list, but the persisted
+      // filter (localStorage, keyed by entity.name) still holds the
+      // now-deleted id.
+      courierRecords = [{ id: 9, name: "Dana" }];
+      const secondMount = render(React.createElement(EntityView, props));
+      let filterAfterDeletion: HTMLSelectElement | null = null;
+      for (let i = 0; i < 40; i++) {
+        filterAfterDeletion = secondMount.container.querySelector(".entity-status-filter") as HTMLSelectElement | null;
+        if (filterAfterDeletion !== null && filterAfterDeletion.value === "10") break;
+        await act(async () => {
+          await new Promise((resolve) => setTimeout(resolve, 0));
+        });
+      }
+      assert.ok(filterAfterDeletion, "expected the restored filter select to re-render after remount");
+      assert.equal(
+        filterAfterDeletion!.value,
+        "10",
+        "the select must still reflect the real, still-active stale filter value, not silently go blank",
+      );
+      assert.ok(
+        Array.from(filterAfterDeletion!.options).some((o) => o.value === "10"),
+        "a synthetic '#10' option for the deleted-but-still-filtered courier must exist so the browser can actually display it as selected",
+      );
+      secondMount.unmount();
     });
   } finally {
     globalThis.fetch = originalFetch;

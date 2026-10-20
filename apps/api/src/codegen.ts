@@ -4641,12 +4641,27 @@ export function EntityView({ entity, highlightRecordId, onHighlightHandled, onJu
             <span className="muted entity-record-count">
               {formatEntityRecordCount(visibleRecords.length, records.length)}
             </span>
-            {filterableFields.map((f) => (
+            {filterableFields.map((f) => {
+              // A filter already set to a related record's id, with that
+              // record since deleted while the relation field itself
+              // survives, has no matching <option> below -- which silently
+              // blanks this controlled <select> even though fieldFilters
+              // stays set to the now-deleted id. The same "stale value has
+              // no <option>" bug class FieldInput's own relation branch
+              // already guards against. (The enum branch has the same
+              // shape in the live preview app, but can't actually occur
+              // here -- this exported app's schema is frozen, so
+              // f.enumValues never changes after export.)
+              const currentFilterValue = fieldFilters[f.name] || "";
+              const knownRelationRecords = f.type === "relation" ? relatedRecords[f.relationTo] || [] : [];
+              const hasCurrentRelationOption =
+                f.type !== "relation" || currentFilterValue === "" || knownRelationRecords.some((r) => String(r.id) === currentFilterValue);
+              return (
               <select
                 key={f.name}
                 className="entity-status-filter"
                 aria-label={"Filter by " + fieldDisplayLabel(f, filterableFieldLabelOccurrences)}
-                value={fieldFilters[f.name] || ""}
+                value={currentFilterValue}
                 onChange={(e) =>
                   setFieldFilters((prev) => {
                     const next = { ...prev, [f.name]: e.target.value };
@@ -4662,11 +4677,14 @@ export function EntityView({ entity, highlightRecordId, onHighlightHandled, onJu
                     <option value="false">No</option>
                   </>
                 ) : f.type === "relation" ? (
-                  (relatedRecords[f.relationTo] || []).map((r) => (
-                    <option key={r.id} value={String(r.id)}>
-                      {recordDisplayLabel(ALL_ENTITIES.find((e) => e.name === f.relationTo), r)}
-                    </option>
-                  ))
+                  <>
+                    {!hasCurrentRelationOption && <option value={currentFilterValue}>{\`#\${currentFilterValue}\`}</option>}
+                    {knownRelationRecords.map((r) => (
+                      <option key={r.id} value={String(r.id)}>
+                        {recordDisplayLabel(ALL_ENTITIES.find((e) => e.name === f.relationTo), r)}
+                      </option>
+                    ))}
+                  </>
                 ) : (
                   uniqueEnumValues(f.enumValues).map((v) => (
                     <option key={v} value={v}>
@@ -4675,7 +4693,8 @@ export function EntityView({ entity, highlightRecordId, onHighlightHandled, onJu
                   ))
                 )}
               </select>
-            ))}
+              );
+            })}
             {filterableFields.length > 0 && Object.values(fieldFilters).some(Boolean) && (
               <button
                 type="button"
