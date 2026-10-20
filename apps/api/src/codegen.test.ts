@@ -1125,6 +1125,7 @@ test("the exported EntityView's handleSubmit saves only the field the user actua
     const editingOriginalRef = { current: null };
     function setForm(next) { form = typeof next === "function" ? next(form) : next; }
     function setEditingId(id) { editingId = id; }
+    function setFormInstanceKey() {}
     ${startEditSrc}
     ${handleSubmitSrc}
     return { startEdit, handleSubmit, getForm: () => form };
@@ -1644,7 +1645,7 @@ test("the exported EntityView's Kanban board has a real '+' button per column th
 
   assert.match(
     entityViewJsx,
-    /function startCreateForColumn\(value, field\) \{\s*setEditingId\(null\);\s*setForm\(\{ \.\.\.emptyForm\(entity\), \[field\.name\]: value \}\);\s*\}/,
+    /function startCreateForColumn\(value, field\) \{\s*setEditingId\(null\);\s*setForm\(\{ \.\.\.emptyForm\(entity\), \[field\.name\]: value \}\);\s*setFormInstanceKey\(\(k\) => k \+ 1\);\s*\}/,
   );
   assert.match(entityViewJsx, /className="board-add-card-btn"/);
   assert.match(entityViewJsx, /onClick=\{\(\) => startCreateForColumn\(column\.value, boardField\)\}/);
@@ -1720,7 +1721,7 @@ test("the exported EntityView's calendar has a real clickable day that pre-fills
   const files = generateExportFiles(withDate);
   const entityViewJsx = files.find((f) => f.path === "web/src/components/EntityView.jsx")!.content;
 
-  assert.match(entityViewJsx, /function startCreateForDate\(date, field\) \{\s*setEditingId\(null\);\s*setForm\(\{ \.\.\.emptyForm\(entity\), \[field\.name\]: formatDateForInput\(date\) \}\);\s*\}/);
+  assert.match(entityViewJsx, /function startCreateForDate\(date, field\) \{\s*setEditingId\(null\);\s*setForm\(\{ \.\.\.emptyForm\(entity\), \[field\.name\]: formatDateForInput\(date\) \}\);\s*setFormInstanceKey\(\(k\) => k \+ 1\);\s*\}/);
   assert.match(entityViewJsx, /onDayClick=\{\(date\) => startCreateForDate\(date, dateField\)\}/);
   // The day cell's className is now built from a dayClasses array (round
   // 294's own today-highlight needed a third independent condition, which
@@ -1745,8 +1746,9 @@ test("the exported EntityView's calendar has a real clickable day that pre-fills
     "emptyForm",
     "setForm",
     "setEditingId",
+    "setFormInstanceKey",
     `${formatDateSrc}\n${startCreateSrc}\nreturn startCreateForDate;`,
-  )({ fields: [] }, () => ({}), (f) => (capturedForm = f), (id) => (capturedEditingId = id));
+  )({ fields: [] }, () => ({}), (f) => (capturedForm = f), (id) => (capturedEditingId = id), () => {});
 
   startCreateForDate(new Date(2026, 8, 15), { name: "date" }); // September 15, 2026 (month is 0-indexed)
   assert.equal(capturedEditingId, null, "clicking a day must switch out of edit mode, not silently continue editing a different record");
@@ -5786,10 +5788,20 @@ test("the exported EntityView's 'n' shortcut discards an in-progress edit, reset
 
       await act(async () => {
         fireEvent.keyDown(window, { key: "n" });
+        // startCreateNew's own focus call is deferred one tick (round 737:
+        // the field now remounts on this same transition, so focusing
+        // synchronously would still target the about-to-be-replaced node).
+        await new Promise((resolve) => setTimeout(resolve, 0));
       });
-      assert.equal(nameInput.value, "", "'n' must reset the form back to blank, discarding the in-progress edit");
+      // Re-queried fresh, not the stale `nameInput` captured above -- the
+      // record-form's own fields now remount (key'd on formInstanceKey, a
+      // new round-737 fix) every time the form's real target changes,
+      // including this exact "discard an in-progress edit" transition, so
+      // the old reference is a detached node frozen at its last value.
+      const nameInputAfter = container.querySelector('input[type="text"]') as HTMLInputElement;
+      assert.equal(nameInputAfter.value, "", "'n' must reset the form back to blank, discarding the in-progress edit");
       assert.match(container.querySelector("form")?.textContent ?? "", /Add/, "'n' must flip the submit button back to its add-record label");
-      assert.equal(document.activeElement, nameInput, "'n' must focus the form's first field");
+      assert.equal(document.activeElement, nameInputAfter, "'n' must focus the form's first field");
     });
   } finally {
     globalThis.fetch = originalFetch;
@@ -12090,6 +12102,121 @@ test("the exported EntityView's relation field offers a filter input once there 
 });
 
 /**
+ * New in this round: the exported app's own relation filter <input> above
+ * is FieldInput-local state (relationFilter), never reset by startEdit --
+ * the record form keys each FieldInput only by field.name (unchanged
+ * across edit targets), so the exact same instance, and its stale filter
+ * text, used to survive switching from editing one record to editing a
+ * completely different one. Confirms the filter text clears once the
+ * edit target actually switches.
+ */
+test("the exported EntityView's relation filter text does not bleed from one record's edit form into another record's", async () => {
+  const courierEntity: Entity = { name: "Courier", label: "Courier", fields: [{ name: "name", label: "Name", type: "text", required: true }] };
+  const orderEntity: Entity = {
+    name: "Order",
+    label: "Order",
+    fields: [
+      { name: "item", label: "Item", type: "text", required: true },
+      { name: "courierId", label: "Courier", type: "relation", relationTo: "Courier", required: false },
+    ],
+  };
+  const withRelationProject: Project = {
+    ...project,
+    spec: { ...project.spec, entities: [courierEntity, orderEntity] },
+  };
+  const files = generateExportFiles(withRelationProject);
+  const dir = writeGeneratedWebComponent(files);
+  const courierRelated: EntityRecord[] = [
+    { id: 1, name: "Dana Levi" },
+    { id: 2, name: "Yossi Cohen" },
+    { id: 3, name: "Maya Golan" },
+    { id: 4, name: "Avi Mizrahi" },
+    { id: 5, name: "Noa Peretz" },
+    { id: 6, name: "Ron Shapira" },
+  ];
+  const store: EntityRecord[] = [
+    { id: 1, item: "Pizza", courierId: 1 },
+    { id: 2, item: "Sushi", courierId: 2 },
+  ];
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = (async (input: string) => {
+    if (input === "/api/Order") {
+      return new Response(JSON.stringify({ records: store }), { status: 200, headers: { "content-type": "application/json" } });
+    }
+    if (input === "/api/Courier") {
+      return new Response(JSON.stringify({ records: courierRelated }), { status: 200, headers: { "content-type": "application/json" } });
+    }
+    throw new Error(`unexpected request ${input}`);
+  }) as typeof fetch;
+
+  try {
+    await withRealLocalStorage(async () => {
+      const { EntityView } = await import(path.join(dir, "web", "src", "components", "EntityView.jsx"));
+      const props = {
+        entity: orderEntity,
+        highlightRecordId: null,
+        onHighlightHandled: () => {},
+        onJumpToRecord: () => {},
+        onRecordCountChange: () => {},
+      };
+
+      const { container } = render(React.createElement(EntityView, props));
+      for (let i = 0; i < 40; i++) {
+        if (container.querySelectorAll("tbody tr").length === 2) break;
+        await act(async () => {
+          await new Promise((resolve) => setTimeout(resolve, 0));
+        });
+      }
+
+      const rows = container.querySelectorAll("tbody tr");
+      const firstRowEditButton = rows[0].querySelector(".row-actions button") as HTMLButtonElement;
+      await act(async () => {
+        fireEvent.click(firstRowEditButton);
+      });
+
+      let filterInput: HTMLInputElement | null = null;
+      for (let i = 0; i < 40; i++) {
+        filterInput = container.querySelector(".relation-filter-input") as HTMLInputElement | null;
+        if (filterInput !== null) break;
+        await act(async () => {
+          await new Promise((resolve) => setTimeout(resolve, 0));
+        });
+      }
+      assert.ok(filterInput, "expected a filter input while editing the first record");
+      await act(async () => {
+        fireEvent.change(filterInput!, { target: { value: "yossi" } });
+      });
+      assert.equal(filterInput!.value, "yossi");
+
+      const rowsAfter = container.querySelectorAll("tbody tr");
+      const secondRowEditButton = rowsAfter[1].querySelector(".row-actions button") as HTMLButtonElement;
+      await act(async () => {
+        fireEvent.click(secondRowEditButton);
+      });
+
+      let filterInputAfterSwitch: HTMLInputElement | null = null;
+      for (let i = 0; i < 40; i++) {
+        filterInputAfterSwitch = container.querySelector(".relation-filter-input") as HTMLInputElement | null;
+        if (filterInputAfterSwitch !== null) break;
+        await act(async () => {
+          await new Promise((resolve) => setTimeout(resolve, 0));
+        });
+      }
+      assert.ok(filterInputAfterSwitch, "expected a filter input while editing the second record too");
+      assert.equal(
+        filterInputAfterSwitch!.value,
+        "",
+        "the filter text typed while editing the first record must never bleed into the second record's own edit form",
+      );
+    });
+  } finally {
+    globalThis.fetch = originalFetch;
+    cleanup();
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+/**
  * New in this round (440): a long-standing, known-but-deprioritized gap
  * from round 375's own notes, mirrored here in the exported standalone
  * app's own hand-duplicated FieldInput (apps/api/src/codegen.ts). Its
@@ -14112,9 +14239,15 @@ test("the exported EntityView's record form submits on Ctrl+Enter or Cmd+Enter f
       assert.equal(postCount, 1, "Ctrl+Enter must create the real record through the real API");
       assert.equal(store[0]?.name, "Dana");
 
+      // Re-queried fresh, not the stale `nameInput`/`notesTextarea` above --
+      // a successful submit now remounts the record form's own fields
+      // (round 737's formInstanceKey fix), so the old references are
+      // detached nodes no live handler is listening on.
+      const nameInputAfterSubmit = container.querySelector('.record-form input[type="text"]') as HTMLInputElement;
+      const notesTextareaAfterSubmit = container.querySelector(".record-form textarea") as HTMLTextAreaElement;
       await act(async () => {
-        fireEvent.change(nameInput, { target: { value: "Lee" } });
-        fireEvent.keyDown(notesTextarea, { key: "Enter", metaKey: true });
+        fireEvent.change(nameInputAfterSubmit, { target: { value: "Lee" } });
+        fireEvent.keyDown(notesTextareaAfterSubmit, { key: "Enter", metaKey: true });
       });
       for (let i = 0; i < 40; i++) {
         if (postCount === 2) break;

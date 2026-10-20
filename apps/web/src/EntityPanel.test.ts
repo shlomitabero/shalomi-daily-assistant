@@ -7006,9 +7006,7 @@ test("EntityPanel's 'n' shortcut jumps to a blank add-record form and focuses it
       renderEntityPanel();
       await waitForCondition(() => document.querySelectorAll("table tbody tr").length === 2);
 
-      const submitButton = document.querySelector(".record-form button[type=submit]") as HTMLButtonElement;
-      const addLabel = submitButton.textContent;
-      const nameInput = document.querySelector(".record-form input[type=text]") as HTMLInputElement;
+      const addLabel = (document.querySelector(".record-form button[type=submit]") as HTMLButtonElement).textContent;
 
       // Open Globex (id 2) for editing via its row's own Edit button, so
       // the form is genuinely mid-edit -- not just coincidentally blank
@@ -7017,31 +7015,54 @@ test("EntityPanel's 'n' shortcut jumps to a blank add-record form and focuses it
       const globexEdit = editButtons.find((b) => b.closest("tr")?.getAttribute("data-record-id") === "2" && /edit/i.test(b.textContent ?? ""));
       assert.ok(globexEdit, "expected an Edit button on the Globex row");
       fireEvent.click(globexEdit!);
-      await waitForCondition(() => nameInput.value === "Globex");
+      await waitForCondition(() => (document.querySelector(".record-form input[type=text]") as HTMLInputElement)?.value === "Globex");
 
       // "n" must abandon that edit: the form resets to blank, the submit
       // button reverts to its "add" label, and the first field (the name
-      // text input) ends up focused -- all without any mouse click.
-      for (let attempt = 0; nameInput.value !== "" && attempt < 40; attempt++) {
+      // text input) ends up focused -- all without any mouse click. Each
+      // field now remounts on this transition (round 737's
+      // formInstanceKey fix, guarding against FieldInput's own local
+      // state -- e.g. a file field's upload error -- surviving into an
+      // unrelated record/field), so the real "name" input is re-queried
+      // fresh after "n" rather than reusing a reference captured before
+      // the remount, which would be a detached node frozen at "Globex".
+      for (
+        let attempt = 0;
+        (document.querySelector(".record-form input[type=text]") as HTMLInputElement)?.value !== "" && attempt < 40;
+        attempt++
+      ) {
         fireEvent.keyDown(window, { key: "n" });
         await new Promise((resolve) => setTimeout(resolve, 0));
       }
-      assert.equal(nameInput.value, "", "'n' must reset the form back to blank, discarding the in-progress edit");
-      assert.equal(submitButton.textContent, addLabel, "'n' must flip the submit button back to its add-record label");
-      assert.equal(document.activeElement, nameInput, "'n' must focus the form's first field");
+      const nameInputAfterN = document.querySelector(".record-form input[type=text]") as HTMLInputElement;
+      assert.equal(nameInputAfterN.value, "", "'n' must reset the form back to blank, discarding the in-progress edit");
+      assert.equal(
+        (document.querySelector(".record-form button[type=submit]") as HTMLButtonElement).textContent,
+        addLabel,
+        "'n' must flip the submit button back to its add-record label",
+      );
+      assert.equal(document.activeElement, nameInputAfterN, "'n' must focus the form's first field");
 
       // Regression test for round 653: e.key is "n" whether or not a
       // modifier is held, so Ctrl+N/Alt+N (browser/OS shortcuts in some
       // environments) must never be hijacked into resetting the form --
       // re-open the Globex edit and confirm a modified "n" leaves it alone.
       fireEvent.click(globexEdit!);
-      await waitForCondition(() => nameInput.value === "Globex");
+      await waitForCondition(() => (document.querySelector(".record-form input[type=text]") as HTMLInputElement)?.value === "Globex");
       fireEvent.keyDown(window, { key: "n", ctrlKey: true });
       await new Promise((resolve) => setTimeout(resolve, 0));
-      assert.equal(nameInput.value, "Globex", "Ctrl+N must never reset the in-progress edit");
+      assert.equal(
+        (document.querySelector(".record-form input[type=text]") as HTMLInputElement)?.value,
+        "Globex",
+        "Ctrl+N must never reset the in-progress edit",
+      );
       fireEvent.keyDown(window, { key: "n", altKey: true });
       await new Promise((resolve) => setTimeout(resolve, 0));
-      assert.equal(nameInput.value, "Globex", "Alt+N must never reset the in-progress edit either");
+      assert.equal(
+        (document.querySelector(".record-form input[type=text]") as HTMLInputElement)?.value,
+        "Globex",
+        "Alt+N must never reset the in-progress edit either",
+      );
 
       // Pressing "n" while the search box itself has focus must type a
       // literal "n" there instead of being hijacked by the shortcut.
@@ -7159,11 +7180,14 @@ test("EntityPanel's window-level keyboard shortcuts ('n', j/k) are suppressed wh
       renderEntityPanel();
       await waitForCondition(() => document.querySelectorAll("table tbody tr").length === 2);
 
-      const nameInput = document.querySelector(".record-form input[type=text]") as HTMLInputElement;
       const editButtons = Array.from(document.querySelectorAll("table tbody button")) as HTMLButtonElement[];
       const globexEdit = editButtons.find((b) => b.closest("tr")?.getAttribute("data-record-id") === "2" && /edit/i.test(b.textContent ?? ""));
       fireEvent.click(globexEdit!);
-      await waitForCondition(() => nameInput.value === "Globex");
+      // Re-queried after every remount-triggering action below (round
+      // 737's formInstanceKey fix remounts the record form's own fields
+      // on startEdit/"n", so a reference captured before either would be
+      // a stale, detached node) rather than reused from one capture.
+      await waitForCondition(() => (document.querySelector(".record-form input[type=text]") as HTMLInputElement)?.value === "Globex");
 
       let closeCalls = 0;
       const dialog = render(React.createElement(TestOverlayDialog, { onClose: () => (closeCalls += 1) }));
@@ -7172,7 +7196,11 @@ test("EntityPanel's window-level keyboard shortcuts ('n', j/k) are suppressed wh
 
       fireEvent.keyDown(window, { key: "n" });
       await new Promise((resolve) => setTimeout(resolve, 0));
-      assert.equal(nameInput.value, "Globex", "'n' must NOT abandon the in-progress edit while a real dialog is open");
+      assert.equal(
+        (document.querySelector(".record-form input[type=text]") as HTMLInputElement)?.value,
+        "Globex",
+        "'n' must NOT abandon the in-progress edit while a real dialog is open",
+      );
 
       fireEvent.keyDown(window, { key: "j" });
       await new Promise((resolve) => setTimeout(resolve, 0));
@@ -7181,11 +7209,19 @@ test("EntityPanel's window-level keyboard shortcuts ('n', j/k) are suppressed wh
       dialog.unmount();
       assert.equal(closeCalls, 0, "sanity check: the dialog must close via the test's own unmount, not an accidental Escape/onClose");
 
-      for (let attempt = 0; (nameInput.value as string) !== "" && attempt < 40; attempt++) {
+      for (
+        let attempt = 0;
+        (document.querySelector(".record-form input[type=text]") as HTMLInputElement)?.value !== "" && attempt < 40;
+        attempt++
+      ) {
         fireEvent.keyDown(window, { key: "n" });
         await new Promise((resolve) => setTimeout(resolve, 0));
       }
-      assert.equal(nameInput.value, "", "'n' must work normally again once the dialog has closed");
+      assert.equal(
+        (document.querySelector(".record-form input[type=text]") as HTMLInputElement)?.value,
+        "",
+        "'n' must work normally again once the dialog has closed",
+      );
     } finally {
       globalThis.fetch = originalFetch;
     }
@@ -10344,6 +10380,59 @@ test("EntityPanel's file field rejects an oversized file before ever uploading i
       await waitForCondition(() => form.querySelector(".file-field-current") !== null);
       assert.equal(uploadCalls, 1, "a file within the limit must still upload normally right after a rejected one");
       assert.equal(form.querySelector('[role="alert"]'), null, "the earlier error must clear once a valid file is chosen");
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+});
+
+/**
+ * New in this round: FieldInput's fileUploadError is its own component-
+ * local state, never reset by startEdit/startCreateNew/handleSubmit's
+ * success path -- those only ever touch EntityPanel's own form/editingId
+ * state, not whatever's inside the FieldInput instance already mounted
+ * for a field. Since the record form keys FieldInput only by field.name
+ * (unchanged across edit targets), the exact same instance -- and its
+ * stale error -- used to survive switching from the blank create form
+ * (where this error was triggered) to editing a completely unrelated
+ * record. Confirms the error no longer bleeds across that switch.
+ */
+test("EntityPanel's file field upload error from the create form does not bleed into the edit form for an unrelated record", async () => {
+  await withJsdom(async () => {
+    const store: EntityRecord[] = [{ id: 1, name: "Dana", resume: null }];
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = (async (input: string, init?: RequestInit): Promise<Response> => {
+      const method = init?.method ?? "GET";
+      if (method === "GET" && input === "/api/projects/proj1/entities/Applicant") {
+        return new Response(JSON.stringify({ records: store }), { status: 200, headers: { "content-type": "application/json" } });
+      }
+      throw new Error(`unexpected request ${method} ${input}`);
+    }) as typeof fetch;
+
+    try {
+      renderEntityPanel({ entity: APPLICANT_ENTITY, allEntities: [APPLICANT_ENTITY] });
+      await waitForCondition(() => document.querySelectorAll("table tbody tr").length === 1);
+
+      const form = document.querySelector("form") as HTMLFormElement;
+      const fileInput = form.querySelector('input[type="file"]') as HTMLInputElement;
+      const oversizedFile = new File(["small body"], "huge.pdf", { type: "application/pdf" });
+      Object.defineProperty(oversizedFile, "size", { value: 11 * 1024 * 1024 });
+
+      await act(async () => {
+        Object.defineProperty(fileInput, "files", { value: [oversizedFile], configurable: true });
+        fireEvent.change(fileInput);
+        await new Promise((resolve) => setTimeout(resolve, 0));
+      });
+      await waitForCondition(() => form.querySelector('[role="alert"]') !== null);
+
+      fireEvent.click(document.querySelector(".row-actions button") as HTMLButtonElement);
+      await waitForCondition(() => (document.querySelector('.record-form input[type="text"]') as HTMLInputElement)?.value === "Dana");
+
+      assert.equal(
+        document.querySelector('.record-form [role="alert"]'),
+        null,
+        "a file-too-large error from the create form must never show up for an unrelated record's own edit form",
+      );
     } finally {
       globalThis.fetch = originalFetch;
     }

@@ -3182,6 +3182,15 @@ export function EntityView({ entity, highlightRecordId, onHighlightHandled, onJu
   // Forge AI preview's own EntityPanel.tsx.
   const editingOriginalRef = useRef(null);
   const [editingId, setEditingId] = useState(null);
+  // Forces a fresh FieldInput instance (via its own key below) every time
+  // the form's real target changes -- a different record to edit, a new
+  // blank create, or a successful submit -- so a relation field's own
+  // relationFilter (FieldInput-local state, not lifted into this
+  // component) can never survive into an unrelated record/field.
+  // editingId alone can't do this: it stays null across two consecutive
+  // "create new" sessions. Mirrors the live Forge AI preview's own
+  // EntityPanel.tsx.
+  const [formInstanceKey, setFormInstanceKey] = useState(0);
   const [search, setSearch] = useState("");
   const [recentSearches, setRecentSearches] = useState(() => getEntityRecentSearches(entity.name));
   const [fieldFilters, setFieldFilters] = useState(() => sanitizeFieldFilters(getPersistedFieldFilters(entity.name), entity.fields));
@@ -3909,6 +3918,7 @@ export function EntityView({ entity, highlightRecordId, onHighlightHandled, onJu
       setForm(emptyForm(entity));
       setEditingId(null);
       editingOriginalRef.current = null;
+      setFormInstanceKey((k) => k + 1);
       await refresh();
     } catch (err) {
       setError(err.message);
@@ -3921,16 +3931,19 @@ export function EntityView({ entity, highlightRecordId, onHighlightHandled, onJu
     setForm(next);
     setEditingId(record.id);
     editingOriginalRef.current = record;
+    setFormInstanceKey((k) => k + 1);
   }
 
   function startCreateForColumn(value, field) {
     setEditingId(null);
     setForm({ ...emptyForm(entity), [field.name]: value });
+    setFormInstanceKey((k) => k + 1);
   }
 
   function startCreateForDate(date, field) {
     setEditingId(null);
     setForm({ ...emptyForm(entity), [field.name]: formatDateForInput(date) });
+    setFormInstanceKey((k) => k + 1);
   }
 
   // The "n" shortcut's own target -- discards an in-progress edit (if
@@ -3938,10 +3951,18 @@ export function EntityView({ entity, highlightRecordId, onHighlightHandled, onJu
   function startCreateNew() {
     setEditingId(null);
     setForm(emptyForm(entity));
+    setFormInstanceKey((k) => k + 1);
     const formEl = document.querySelector(".record-form");
     scrollIntoViewRespectingMotion(formEl, { behavior: "smooth", block: "start" });
-    const firstField = document.querySelector(".record-form input, .record-form select, .record-form textarea");
-    firstField?.focus();
+    // The record form's own fields now remount on every target switch
+    // (keyed on formInstanceKey, just incremented above) -- querying for
+    // the first field synchronously here would still find the OLD,
+    // about-to-be-replaced node, since React's own state updates only
+    // commit after this synchronous handler returns. Deferred one tick.
+    setTimeout(() => {
+      const firstField = document.querySelector(".record-form input, .record-form select, .record-form textarea");
+      firstField?.focus();
+    }, 0);
   }
 
   // Toggles one group's collapsed state and persists the full updated set.
@@ -4543,7 +4564,7 @@ export function EntityView({ entity, highlightRecordId, onHighlightHandled, onJu
             preview's own EntityPanel.tsx (round 678); handleSubmit builds
             a plain keyed object regardless of field order. */}
         {orderedFields.map((f) => (
-          <label className="field" key={f.name}>
+          <label className="field" key={\`\${f.name}-\${formInstanceKey}\`}>
             <span>
               {fieldDisplayLabel(f, entityFieldLabelOccurrences)}
               {f.required ? " *" : ""}

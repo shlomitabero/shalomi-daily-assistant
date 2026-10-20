@@ -1095,6 +1095,17 @@ export function EntityPanel({
   // handleSubmit's own comment for why this matters.
   const editingOriginalRef = useRef<EntityRecord | null>(null);
   const [editingId, setEditingId] = useState<number | null>(null);
+  // Forces a fresh FieldInput instance (via its own key below) every time
+  // the form's real target changes -- a different record to edit, a new
+  // blank create, or a successful submit -- so a file field's own
+  // fileUploadError and a relation field's own relationFilter (both
+  // FieldInput-local state, deliberately not lifted into this component)
+  // can never survive into an unrelated record/field. editingId alone
+  // can't do this: it stays null across two consecutive "create new"
+  // sessions (including right after a successful create), so a stale
+  // error from one new-record attempt would otherwise still be showing
+  // under the very next one.
+  const [formInstanceKey, setFormInstanceKey] = useState(0);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
@@ -2078,6 +2089,7 @@ export function EntityPanel({
       setForm(emptyForm(entity));
       setEditingId(null);
       editingOriginalRef.current = null;
+      setFormInstanceKey((k) => k + 1);
       await refresh();
     } catch (err) {
       setError((err as Error).message);
@@ -2088,6 +2100,7 @@ export function EntityPanel({
     setEditingId(record.id as number);
     setForm({ ...record });
     editingOriginalRef.current = record;
+    setFormInstanceKey((k) => k + 1);
   }
 
   /**
@@ -2098,9 +2111,20 @@ export function EntityPanel({
   function startCreateNew() {
     setEditingId(null);
     setForm(emptyForm(entity));
+    setFormInstanceKey((k) => k + 1);
     scrollIntoViewRespectingMotion(formRef.current, { behavior: "smooth", block: "start" });
-    const firstField = formRef.current?.querySelector<HTMLElement>("input, select, textarea");
-    firstField?.focus();
+    // formRef.current itself never remounts, but the fields inside it now
+    // do (keyed on formInstanceKey, just incremented above) -- querying
+    // for the first field synchronously here would still find the OLD,
+    // about-to-be-replaced node (React's own state updates, including
+    // this one, only commit after this synchronous handler returns), so
+    // the focus would land on an element about to be torn down instead of
+    // the real new one. Deferred one tick, matching this file's own
+    // existing "wait for the browser to actually render first" pattern.
+    setTimeout(() => {
+      const firstField = formRef.current?.querySelector<HTMLElement>("input, select, textarea");
+      firstField?.focus();
+    }, 0);
   }
 
   /**
@@ -2113,6 +2137,7 @@ export function EntityPanel({
   function startCreateForDate(date: Date, dateField: Field) {
     setEditingId(null);
     setForm({ ...emptyForm(entity), [dateField.name]: formatDateForInput(date) });
+    setFormInstanceKey((k) => k + 1);
     scrollIntoViewRespectingMotion(formRef.current, { behavior: "smooth", block: "start" });
   }
 
@@ -2125,6 +2150,7 @@ export function EntityPanel({
   function startCreateForColumn(value: string, field: Field) {
     setEditingId(null);
     setForm({ ...emptyForm(entity), [field.name]: value });
+    setFormInstanceKey((k) => k + 1);
     scrollIntoViewRespectingMotion(formRef.current, { behavior: "smooth", block: "start" });
   }
 
@@ -2937,7 +2963,7 @@ export function EntityPanel({
          * builds a plain keyed object regardless of field order.
          */}
         {orderedFields.map((field) => (
-          <label key={field.name} className="field-row">
+          <label key={`${field.name}-${formInstanceKey}`} className="field-row">
             <FieldLabelEditor
               entityName={entity.name}
               field={field}
