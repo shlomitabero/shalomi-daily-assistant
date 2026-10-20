@@ -44,17 +44,19 @@ export function formatTwinReport(
   // report has no such distinction, so all are folded back in here as plain
   // bullets, in the same order BusinessTwinPanel.tsx renders them on screen
   // (mostActiveObservation before mostLinkedRecord).
+  // twin.distributions/twin.numericStats are NOT folded in here separately --
+  // computeBusinessTwin (apps/api/src/twin.ts) already spreads both of them
+  // into jumpableObservations itself ("jumpableObservations.push(...
+  // numericStats, ...distributions)"), so their own `.text` is already
+  // present via the jumpableObservations line below. Folding them in again
+  // here printed every distribution/numeric-aggregate sentence twice in the
+  // one artifact a user actually shares (WhatsApp/email) -- the bug this
+  // comment now guards against re-introducing.
   const allObservations = [
     ...(twin.mostActiveObservation ? [twin.mostActiveObservation.text] : []),
     ...(twin.mostLinkedRecord ? [twin.mostLinkedRecord.text] : []),
     ...twin.jumpableObservations.map((o) => o.text),
     ...twin.observations,
-    // distributions before numericStats, same order BusinessTwinPanel.tsx's
-    // own Dashboard tab renders them (bar charts, then stat tiles) -- these
-    // were added by the Dashboard feature but never folded in here, so the
-    // one downloadable/shareable snapshot of this data silently omitted it.
-    ...twin.distributions.map((d) => d.text),
-    ...twin.numericStats.map((s) => s.text),
   ];
   if (allObservations.length > 0) {
     lines.push("");

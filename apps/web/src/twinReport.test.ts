@@ -141,20 +141,36 @@ test("formatTwinReport orders mostActiveObservation before mostLinkedRecord, mat
 });
 
 /**
- * Round 701: BusinessTwinPanel.tsx's Dashboard tab renders distributions as
- * bar charts and numericStats as stat tiles, but formatTwinReport never
- * folded either `.text` field into the report -- the one downloadable/
- * shareable snapshot of this exact data silently omitted it. Confirms both
- * now survive into the report, in the same order the Dashboard tab renders
- * them (distributions' bar charts before numericStats' stat tiles).
+ * Round 701 folded distributions/numericStats' own `.text` into the report
+ * directly, via a SEPARATE append -- but computeBusinessTwin
+ * (apps/api/src/twin.ts) already spreads both into jumpableObservations
+ * itself ("jumpableObservations.push(...numericStats, ...distributions)"),
+ * a real invariant confirmed by twin.test.ts's own tests. Round 701's own
+ * test fixture never caught this because it set jumpableObservations to []
+ * while separately populating distributions/numericStats -- a combination
+ * that can never actually happen in production, where jumpableObservations
+ * is always the superset. The real bug this masked: every distribution and
+ * numeric-aggregate sentence was printed TWICE in the one artifact a user
+ * actually shares (WhatsApp/email). Round 735 removed the now-redundant
+ * separate append; this test's fixture now mirrors the real (overlapping)
+ * shape, confirming each sentence survives into the report exactly once.
  */
-test("formatTwinReport folds distributions and numericStats into the observations section, in the Dashboard tab's own order", () => {
+test("formatTwinReport folds distributions and numericStats into the observations section exactly once, not twice, matching how computeBusinessTwin already folds them into jumpableObservations", () => {
   const t = (key: string, params?: Record<string, string | number>) => translate("en", key, params);
+  const distributionText = 'In "Orders", status breaks down as: Open (3), Closed (2).';
+  const numericStatText = 'Total revenue across "Orders": 1,250 (average 250).';
   const twin = makeTwin({
     observations: [],
+    // Mirrors computeBusinessTwin's own real push order (numericStats
+    // first, then distributions) -- jumpableObservations is the superset
+    // every real BusinessTwin response actually has.
+    jumpableObservations: [
+      { text: numericStatText, entityName: "Order" },
+      { text: distributionText, entityName: "Order" },
+    ],
     distributions: [
       {
-        text: 'In "Orders", status breaks down as: Open (3), Closed (2).',
+        text: distributionText,
         entityName: "Order",
         entityLabel: "Orders",
         fieldName: "status",
@@ -167,7 +183,7 @@ test("formatTwinReport folds distributions and numericStats into the observation
     ],
     numericStats: [
       {
-        text: 'Total revenue across "Orders": 1,250 (average 250).',
+        text: numericStatText,
         entityName: "Order",
         entityLabel: "Orders",
         fieldName: "revenue",
@@ -183,9 +199,10 @@ test("formatTwinReport folds distributions and numericStats into the observation
   assert.match(report, /status breaks down as: Open \(3\), Closed \(2\)/);
   assert.match(report, /Total revenue across "Orders": 1,250/);
 
-  const distributionIndex = report.indexOf("status breaks down as");
-  const numericIndex = report.indexOf("Total revenue across");
-  assert.ok(distributionIndex < numericIndex, "distributions must appear before numericStats, matching the Dashboard tab's own order");
+  const distributionOccurrences = report.split("status breaks down as").length - 1;
+  const numericOccurrences = report.split("Total revenue across").length - 1;
+  assert.equal(distributionOccurrences, 1, "the distribution's own sentence must appear exactly once, not duplicated");
+  assert.equal(numericOccurrences, 1, "the numeric-aggregate sentence must appear exactly once, not duplicated");
 });
 
 test("formatTwinReport still lists every entity's count even when there are zero total records", () => {
