@@ -2237,6 +2237,19 @@ export function EntityPanel({
     const record = records.find((r) => (r.id as number) === id);
     if (!record) return;
     setError(null);
+    // A required "file" field can never be filled in by a duplicate (see
+    // the file-nulling comment below for why) -- without this check, the
+    // request below always reaches createRecord only to be rejected by
+    // coerceValue's own required-field check (repository.ts), surfacing a
+    // generic "field is required" error for an action the user never
+    // filled in a form for. Mirrors buildImportRecords' own upfront
+    // refusal for the identical "a required file field makes this
+    // operation impossible" shape (entityFormatting.ts).
+    const requiredFileField = entity.fields.find((f) => f.type === "file" && f.required);
+    if (requiredFileField) {
+      setError(t("entity.duplicate.requiredFileField", { field: requiredFileField.label ?? requiredFileField.name }));
+      return;
+    }
     try {
       const copy: Record<string, unknown> = {};
       // A "file" field's stored value is just the uploaded file's own
@@ -2290,6 +2303,15 @@ export function EntityPanel({
     if (bulkActionBusy) return;
     const ids = [...selectedIds];
     if (ids.length === 0) return;
+    // Same upfront refusal as handleDuplicate above -- a required "file"
+    // field would doom every single one of these requests identically, so
+    // this refuses the whole batch once rather than firing N requests that
+    // all fail the same way.
+    const requiredFileField = entity.fields.find((f) => f.type === "file" && f.required);
+    if (requiredFileField) {
+      setError(t("entity.duplicate.requiredFileField", { field: requiredFileField.label ?? requiredFileField.name }));
+      return;
+    }
     setBulkActionBusy(true);
     setError(null);
     try {

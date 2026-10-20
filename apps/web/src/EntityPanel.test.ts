@@ -237,6 +237,127 @@ test("EntityPanel's handleBulkDuplicate never copies a 'file' field's value eith
   assert.equal(attemptedCopies[0]!.resume, null, "a 'file' field's value must never be copied in a bulk duplicate either");
 });
 
+/**
+ * New in this round: a REQUIRED "file" field makes Duplicate doomed every
+ * single time -- round 693's own fix above nulls the field out (correctly,
+ * to avoid two records sharing one file on disk), but coerceValue
+ * (repository.ts) then rejects that null for a required field, so the
+ * request always failed with a generic "field is required" error for an
+ * action the user never filled a form in for. Confirms the real
+ * handleDuplicate now refuses upfront -- with the translated, specific
+ * message naming the actual field -- and never even calls createRecord.
+ */
+test("EntityPanel's handleDuplicate refuses upfront for an entity with a required 'file' field, instead of always failing with a generic server error", async () => {
+  const handlerMatch = entityPanelSrc.match(/ {2}async function handleDuplicate\(id: number\) \{[\s\S]*?\n {2}\}\n/);
+  assert.ok(handlerMatch, "expected to find handleDuplicate in EntityPanel.tsx");
+  const { code } = transformSync(handlerMatch![0], { loader: "ts" });
+
+  const entity: Entity = {
+    name: "Applicant",
+    fields: [
+      { name: "name", type: "text", required: true },
+      { name: "resume", label: "Resume", type: "file", required: true },
+    ],
+  };
+  const fileValue = JSON.stringify({ url: "/api/uploads/p1/Applicant/abc.pdf", name: "resume.pdf", size: 123, mimeType: "application/pdf" });
+  const records: EntityRecord[] = [{ id: 1, createdAt: "x", name: "Dana", resume: fileValue }];
+
+  let capturedError: string | undefined;
+  let createRecordCalled = 0;
+
+  const fn = new Function(
+    "records",
+    "setError",
+    "entity",
+    "createRecord",
+    "projectId",
+    "refresh",
+    "t",
+    `${code}\nreturn handleDuplicate;`,
+  )(
+    records,
+    (msg: string | null) => {
+      capturedError = msg ?? undefined;
+    },
+    entity,
+    async () => {
+      createRecordCalled += 1;
+    },
+    "proj1",
+    async () => {},
+    (key: string, params?: Record<string, unknown>) => (params ? `${key}:${JSON.stringify(params)}` : key),
+  ) as (id: number) => Promise<void>;
+
+  await fn(1);
+
+  assert.equal(createRecordCalled, 0, "the doomed request must never even be attempted");
+  assert.match(capturedError!, /entity\.duplicate\.requiredFileField/, "expected the translated, specific refusal message");
+  assert.match(capturedError!, /"field":"Resume"/, "the refusal must name the real field's own label, not a generic field name");
+});
+
+test("EntityPanel's handleBulkDuplicate refuses the whole batch upfront for an entity with a required 'file' field, instead of every single duplicate failing the same way", async () => {
+  const handlerMatch = entityPanelSrc.match(/ {2}async function handleBulkDuplicate\(\) \{[\s\S]*?\n {2}\}\n/);
+  assert.ok(handlerMatch, "expected to find handleBulkDuplicate in EntityPanel.tsx");
+  const { code } = transformSync(handlerMatch![0], { loader: "ts" });
+
+  const entity: Entity = {
+    name: "Applicant",
+    fields: [
+      { name: "name", type: "text", required: true },
+      { name: "resume", label: "Resume", type: "file", required: true },
+    ],
+  };
+  const fileValue = JSON.stringify({ url: "/api/uploads/p1/Applicant/abc.pdf", name: "resume.pdf", size: 123, mimeType: "application/pdf" });
+  const records: EntityRecord[] = [
+    { id: 1, createdAt: "x", name: "Dana", resume: fileValue },
+    { id: 2, createdAt: "x", name: "Noa", resume: fileValue },
+  ];
+
+  let capturedError: string | undefined;
+  let capturedBulkActionBusy: boolean | undefined;
+  let createRecordCalled = 0;
+
+  const fn = new Function(
+    "bulkActionBusy",
+    "setBulkActionBusy",
+    "t",
+    "projectId",
+    "entity",
+    "records",
+    "selectedIds",
+    "setError",
+    "createRecord",
+    "setSelectedIds",
+    "refresh",
+    `${code}\nreturn handleBulkDuplicate;`,
+  )(
+    false,
+    (busy: boolean) => {
+      capturedBulkActionBusy = busy;
+    },
+    (key: string, params?: Record<string, unknown>) => (params ? `${key}:${JSON.stringify(params)}` : key),
+    "proj1",
+    entity,
+    records,
+    new Set([1, 2]),
+    (msg: string | null) => {
+      capturedError = msg ?? undefined;
+    },
+    async () => {
+      createRecordCalled += 1;
+    },
+    () => {},
+    async () => {},
+  ) as () => Promise<void>;
+
+  await fn();
+
+  assert.equal(createRecordCalled, 0, "none of the doomed per-record requests must ever be attempted");
+  assert.match(capturedError!, /entity\.duplicate\.requiredFileField/, "expected the translated, specific refusal message");
+  assert.match(capturedError!, /"field":"Resume"/, "the refusal must name the real field's own label");
+  assert.equal(capturedBulkActionBusy, undefined, "the busy flag must never even be set, since the batch is refused before that point");
+});
+
 test("EntityPanel's handleBulkDuplicate still surfaces the raw error message when every duplicate in the batch fails", async () => {
   const handlerMatch = entityPanelSrc.match(/ {2}async function handleBulkDuplicate\(\) \{[\s\S]*?\n {2}\}\n/);
   const { code } = transformSync(handlerMatch![0], { loader: "ts" });
