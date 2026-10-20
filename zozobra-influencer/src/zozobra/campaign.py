@@ -20,11 +20,16 @@ from .config import ROOT, settings
 PHASES = ("brand", "accelerate", "reveal", "launch", "open")
 
 
+DEFAULT = {"start_date": "2026-10-18", "launch_date": "2026-12-17", "city_he": "חיפה והקריות",
+           "launch_location_he": "ZOZOBRA חוצות המפרץ, חיפה", "weekly_series": {}, "public_spots": []}
+
+
 def config() -> dict:
-    path = settings().data_dir / "campaign.json"
-    if not path.exists():
-        path = ROOT / "data" / "campaign.json"
-    return json.loads(path.read_text(encoding="utf-8"))
+    """Volume copy first (editable), then the bundled file; never crash the panel over a missing file."""
+    for path in (settings().data_dir / "campaign.json", ROOT / "data" / "campaign.json"):
+        if path.exists():
+            return DEFAULT | json.loads(path.read_text(encoding="utf-8"))
+    return DEFAULT
 
 
 def day_number(day: date) -> int:
