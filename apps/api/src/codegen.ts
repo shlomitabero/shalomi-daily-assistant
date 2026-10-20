@@ -2605,7 +2605,15 @@ function buildCalendarIcs(entity, dateField, labelField, records, relatedRecords
     }
     const descriptionLines = descriptionFields
       .map((f) => {
-        const value = f.type === "relation" ? relationDisplayLabel(f, record[f.name], relatedRecords) : f.type === "enum" ? ((f.enumLabels && f.enumLabels[record[f.name]]) || record[f.name]) : record[f.name];
+        // A "file" field's stored value is a JSON-encoded descriptor
+        // (url/name/size/mimeType), not a plain string -- without this
+        // branch it falls into the generic record[f.name] case below and
+        // writes that raw JSON verbatim into the exported .ics, leaking
+        // the server's internal upload URL path into a file a user might
+        // forward or publish. Mirrors the live preview's own
+        // calendarIcs.ts (round 694) and this file's own fieldDisplayValue,
+        // which already has this exact branch.
+        const value = f.type === "relation" ? relationDisplayLabel(f, record[f.name], relatedRecords) : f.type === "enum" ? ((f.enumLabels && f.enumLabels[record[f.name]]) || record[f.name]) : f.type === "file" ? parseFileFieldValue(record[f.name])?.name || null : record[f.name];
         if (value === null || value === undefined || value === "") return null;
         const fieldLabel = f.label || f.name;
         const ambiguous = (descriptionLabelOccurrences[fieldLabel] || 0) > 1;

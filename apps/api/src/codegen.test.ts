@@ -2659,6 +2659,88 @@ test("the exported EntityView's real generated buildCalendarIcs produces a genui
 });
 
 /**
+ * Round 742: mirrors the live preview's own fix (calendarIcs.ts, round
+ * 694) -- a "file" field's stored value is a JSON-encoded descriptor
+ * ({url, name, size, mimeType}), not a plain string, so without a "file"
+ * branch buildCalendarIcs' descriptionLines fell through to the generic
+ * raw-value case and wrote that JSON (including the server's own internal
+ * upload URL path) straight into the exported .ics's DESCRIPTION line.
+ * Round 694 explicitly skipped porting this fix to codegen.ts at the
+ * time, reasoning that the exported app had zero file-type support at
+ * all so the hazard couldn't occur there -- true then, but round 717
+ * later gave the exported app full file-type support (parseFileFieldValue,
+ * Cell, matchesSearch, FieldInput, etc.) without ever looping back to
+ * this one function. Uses the same real-generated-code extraction harness
+ * as the tests above, not a reimplementation.
+ */
+test("the exported EntityView's real generated buildCalendarIcs resolves a file field to just its filename in DESCRIPTION, not the raw JSON descriptor it's actually stored as", () => {
+  const withDate: Project = {
+    ...project,
+    spec: {
+      ...project.spec,
+      entities: [
+        ...project.spec.entities,
+        {
+          name: "Appointment",
+          label: "תור",
+          fields: [
+            { name: "customerName", label: "שם לקוח", type: "text", required: true },
+            { name: "date", label: "תאריך", type: "date", required: true },
+            { name: "photo", label: "תמונה", type: "file", required: false },
+          ],
+        },
+      ],
+    },
+  };
+  const entityViewJsx = generateExportFiles(withDate).find((f) => f.path === "web/src/components/EntityView.jsx")!.content;
+
+  const pickDisplaySrc = entityViewJsx.match(/export function pickDisplayField\(entity\) \{[\s\S]*?\n\}\n/)?.[0]?.replace(/^export /, "");
+  const labelFieldSrc = entityViewJsx.match(/function calendarLabelField\(entity, dateField\) \{[\s\S]*?\n\}\n/)?.[0];
+  const pad2Src = entityViewJsx.match(/function icsPad2\(n\) \{[\s\S]*?\n\}\n/)?.[0];
+  const dateSrc = entityViewJsx.match(/function formatIcsDate\(date\) \{[\s\S]*?\n\}\n/)?.[0];
+  const tsSrc = entityViewJsx.match(/function formatIcsTimestamp\(date\) \{[\s\S]*?\n\}\n/)?.[0];
+  const escSrc = entityViewJsx.match(/function icsEscapeText\(value\) \{[\s\S]*?\n\}\n/)?.[0];
+  const utf8LenSrc = entityViewJsx.match(/function utf8ByteLength\(s\) \{[\s\S]*?\n\}\n/)?.[0];
+  const foldSrc = entityViewJsx.match(/function foldIcsLine\(line\) \{[\s\S]*?\n\}\n/)?.[0];
+  const parseFileSrc = entityViewJsx.match(/function parseFileFieldValue\(value\) \{[\s\S]*?\n\}\n/)?.[0];
+  const buildSrc = entityViewJsx.match(
+    /function buildCalendarIcs\(entity, dateField, labelField, records, relatedRecords, now, endField, orderedFields = entity\.fields\) \{[\s\S]*?\n\}\n/,
+  )?.[0];
+  assert.ok(
+    pickDisplaySrc && labelFieldSrc && pad2Src && dateSrc && tsSrc && escSrc && utf8LenSrc && foldSrc && parseFileSrc && buildSrc,
+    "expected to find every ICS helper function, including parseFileFieldValue, in the real generated output",
+  );
+
+  const relationStub = "function relationDisplayLabel() { return ''; }\n";
+  const buildCalendarIcs = new Function(
+    `${pickDisplaySrc}\n${labelFieldSrc}\n${pad2Src}\n${dateSrc}\n${tsSrc}\n${escSrc}\n${utf8LenSrc}\n${foldSrc}\n${parseFileSrc}\n${relationStub}\n${buildSrc}\nreturn buildCalendarIcs;`,
+  )() as (entity: unknown, dateField: unknown, labelField: unknown, records: unknown[], relatedRecords: unknown, now: Date) => string;
+
+  const entity = {
+    name: "Appointment",
+    label: "תור",
+    fields: [
+      { name: "customerName", label: "שם לקוח", type: "text" },
+      { name: "date", label: "תאריך", type: "date" },
+      { name: "photo", label: "תמונה", type: "file" },
+    ],
+  };
+  const dateField = entity.fields[1];
+  const labelField = entity.fields[0];
+  const fileValue = JSON.stringify({ url: "/api/uploads/p1/Appointment/abc.jpg", name: "receipt.jpg", size: 2048, mimeType: "image/jpeg" });
+  const records = [
+    { id: 1, customerName: "Dana Levi", date: "2026-03-15", photo: fileValue },
+    { id: 2, customerName: "Yossi Cohen", date: "2026-03-16", photo: null },
+  ];
+
+  const ics = buildCalendarIcs(entity, dateField, labelField, records, {}, new Date("2026-01-01T00:00:00Z"));
+
+  assert.match(ics, /תמונה: receipt\.jpg/, "a set file field must render just the filename, not the raw JSON descriptor");
+  assert.doesNotMatch(ics, /api\/uploads/, "the server's own internal upload URL path must never leak into an exported calendar file");
+  assert.doesNotMatch(ics, /2048/, "the raw JSON descriptor (size/mimeType) must never leak into the DESCRIPTION line either");
+});
+
+/**
  * Regression test for a real bug found by round 636's Explore survey: the
  * same label-collision gap round 635 fixed in twin.ts's Business Twin
  * observations, but never checked anywhere else. Only field.name is unique
