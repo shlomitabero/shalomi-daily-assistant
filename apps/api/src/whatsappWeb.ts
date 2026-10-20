@@ -340,7 +340,19 @@ export class WhatsAppWebManager {
     for (const msg of upsert.messages) {
       if (msg.key.fromMe) continue;
       const remoteJid = msg.key.remoteJid;
-      if (!remoteJid || remoteJid.endsWith("@g.us")) continue;
+      // "@g.us" is a group chat; "@broadcast" is WhatsApp's own Status/Story
+      // updates ("status@broadcast") and broadcast lists -- Baileys relays
+      // a connected account's own contacts' Status posts through this exact
+      // same messages.upsert/"notify" stream, with fromMe: false, so nothing
+      // else here incidentally excludes them. A plain-text Status update
+      // carries the identical conversation/extendedTextMessage shape as a
+      // real chat message, so it isn't caught by the text-presence check
+      // below either -- without this, every Status post from the owner's
+      // own contacts (far more frequent than real incoming messages for a
+      // typical small business) gets logged as an unmatched incoming
+      // message from a customer literally named "status", permanent noise
+      // in the one panel this feature exists to keep reliable.
+      if (!remoteJid || remoteJid.endsWith("@g.us") || remoteJid.endsWith("@broadcast")) continue;
       const text = msg.message?.conversation ?? msg.message?.extendedTextMessage?.text;
       if (!text) continue;
       const from = remoteJid.split("@")[0];

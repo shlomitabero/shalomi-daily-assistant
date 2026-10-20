@@ -351,6 +351,41 @@ test("an incoming message is skipped when it is from the linked device itself or
   assert.equal(listWhatsAppMessages(db, project.id).messages.length, 0);
 });
 
+/**
+ * Regression test for a real round-743 Explore survey finding: Baileys
+ * relays a connected account's own contacts' WhatsApp Status/Story updates
+ * through this exact same messages.upsert/"notify" event stream, with
+ * fromMe: false and remoteJid "status@broadcast" (a broadcast list uses
+ * "<id>@broadcast" the same way) -- nothing else in the handler
+ * incidentally excludes them, since a plain-text Status update carries
+ * the identical conversation/extendedTextMessage shape a real chat
+ * message does. Before this fix, every Status post from the owner's own
+ * contacts got logged as a real incoming message from a customer
+ * literally named "status" (remoteJid.split("@")[0]) that could never
+ * match a real record -- permanent noise in the one panel this feature
+ * exists to keep reliable, and far more frequent in practice than most
+ * individual real chat messages for a typical small business.
+ */
+test("an incoming message is skipped when it is a WhatsApp Status update or broadcast-list message, not a real chat message", async () => {
+  const { manager, createdSockets, db } = setupManager();
+  insertProject(db, project);
+  applyMigrations(db, project.id, project.spec);
+  markProjectBuilt(db, project.id);
+
+  await manager.connect(project.id);
+  createdSockets[0].emitConnectionUpdate({ connection: "open" });
+
+  createdSockets[0].emitMessagesUpsert({
+    type: "notify",
+    messages: [
+      { key: { remoteJid: "status@broadcast", fromMe: false }, message: { conversation: "my status update" } },
+      { key: { remoteJid: "123456789@broadcast", fromMe: false }, message: { extendedTextMessage: { text: "broadcast list message" } } },
+    ],
+  });
+
+  assert.equal(listWhatsAppMessages(db, project.id).messages.length, 0);
+});
+
 test("disconnect logs out the real socket, clears the live session, and keeps the last known phone number in the DB", async () => {
   const { manager, createdSockets, db } = setupManager();
   await manager.connect("proj1");
