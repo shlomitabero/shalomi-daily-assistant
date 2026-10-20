@@ -404,15 +404,28 @@ async function fireRule(
  * below only ticks once a minute (and could occasionally run a little
  * late under load, or miss a tick entirely across a process restart), so
  * an exact-match comparison could silently skip an entire day. Reusing
- * `lastTriggeredAt` (already recorded by recordAutomationRun on every
- * fire, success or failure) to track "already ran today" means this needs
- * no extra column for that -- once it's fired today, it stays not-due
- * until the UTC date rolls over, however many ticks happen in between.
+ * `lastTriggeredAt`/`lastStatus` (already recorded by recordAutomationRun
+ * on every fire) to track "already *succeeded* today" means this needs no
+ * extra column for that -- once it's actually sent today, it stays
+ * not-due until the UTC date rolls over, however many ticks happen in
+ * between.
+ *
+ * Deliberately gated on `lastStatus === "sent"`, not just "already
+ * attempted today" -- WhatsApp disconnects are an acknowledged,
+ * no-auto-reconnect reality (see whatsappWeb.ts's own module comment), so
+ * a rule whose one daily attempt lands in exactly that window would
+ * otherwise record a "failed" lastTriggeredAt and then silently stay
+ * not-due for the rest of the day even after the owner reconnects minutes
+ * later -- a once-daily "send today's report" automation (this app's own
+ * flagship feature) skipping an entire day on pure bad luck, with no
+ * manual re-fire control anywhere in AutomationsPanel.tsx to recover.
+ * Gating on the real outcome instead lets a failed attempt keep retrying
+ * on every subsequent tick (still just once per successful send).
  */
 export function isScheduledRuleDue(rule: AutomationRule, now: Date): boolean {
   if (rule.trigger !== "schedule" || !rule.scheduleTimeUtc) return false;
   const todayUtc = now.toISOString().slice(0, 10);
-  if (rule.lastTriggeredAt && rule.lastTriggeredAt.slice(0, 10) === todayUtc) return false;
+  if (rule.lastTriggeredAt && rule.lastTriggeredAt.slice(0, 10) === todayUtc && rule.lastStatus === "sent") return false;
   if (rule.scheduleDaysOfWeek) {
     const days = rule.scheduleDaysOfWeek.split(",").map(Number);
     if (!days.includes(now.getUTCDay())) return false;

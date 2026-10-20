@@ -573,6 +573,31 @@ test("isScheduledRuleDue is not due again the same UTC day it already fired, but
   assert.equal(isScheduledRuleDue(rule, new Date("2026-03-16T09:00:00.000Z")), true, "a new UTC day has started, so it's due again");
 });
 
+test("isScheduledRuleDue is still due later the same day after a failed attempt, so a WhatsApp disconnect doesn't skip the whole day", () => {
+  const rule = {
+    ...scheduleRuleBase(),
+    id: "r1",
+    createdAt: "",
+    updatedAt: "",
+    lastTriggeredAt: "2026-03-15T09:00:05.000Z",
+    lastStatus: "failed",
+    lastError: "WhatsApp is not connected",
+    enabled: true,
+  } as unknown as Parameters<typeof isScheduledRuleDue>[0];
+  assert.equal(
+    isScheduledRuleDue(rule, new Date("2026-03-15T09:05:00.000Z")),
+    true,
+    "the one attempt today failed, so it must stay due -- not silently skip the rest of the day",
+  );
+
+  const succeededOnRetry = { ...rule, lastTriggeredAt: "2026-03-15T09:05:30.000Z", lastStatus: "sent" as const };
+  assert.equal(
+    isScheduledRuleDue(succeededOnRetry, new Date("2026-03-15T09:10:00.000Z")),
+    false,
+    "once a retry actually succeeds today, it must go back to not-due for the rest of the day",
+  );
+});
+
 test("isScheduledRuleDue respects scheduleDaysOfWeek when set, and treats null as every day", () => {
   const mondayOnly = {
     ...scheduleRuleBase({ scheduleDaysOfWeek: "1" }),
