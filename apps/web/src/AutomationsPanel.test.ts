@@ -668,6 +668,73 @@ test("AutomationsPanel shows a message instead of an invalid dropdown when the e
 });
 
 /**
+ * Round 748 regression test: the field_equals trigger's own "Field"
+ * dropdown listed every field on the entity with no filter at all,
+ * including a "file" field -- whose stored value (the raw upload JSON
+ * descriptor) the server's own validateAutomationFieldValue now rejects
+ * outright (apps/api/src/routes/projects.ts), the same kind of gap round
+ * 666 closed for the "send to a field" dropdown just above.
+ */
+const fileFieldProject: Project = {
+  id: "proj4",
+  ownerId: "owner1",
+  name: "Hiring",
+  description: "A hiring app",
+  status: "built",
+  createdAt: new Date().toISOString(),
+  spec: {
+    summary: "A hiring app",
+    personas: [],
+    roles: ["Admin"],
+    entities: [
+      {
+        name: "Applicant",
+        label: "Applicant",
+        fields: [
+          { name: "name", label: "Name", type: "text", required: true },
+          { name: "resume", label: "Resume", type: "file", required: false },
+        ],
+      },
+    ],
+    screens: [],
+    assumptions: [],
+    openQuestions: [],
+  },
+};
+
+test("AutomationsPanel's field_equals trigger 'Field' dropdown never offers a file field, since its stored value can never be typed in by hand", async () => {
+  await withJsdom(async () => {
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = (async (input: string) => {
+      if (input === "/api/projects/proj4/automations") {
+        return new Response(JSON.stringify({ rules: [] }), { status: 200, headers: { "content-type": "application/json" } });
+      }
+      throw new Error(`unexpected request ${input}`);
+    }) as typeof fetch;
+
+    try {
+      renderPanelWith(fileFieldProject);
+      await waitForCondition(() => document.body.textContent?.includes("No automations yet") ?? false);
+
+      const triggerSelect = Array.from(document.querySelectorAll("select")).find((s) =>
+        Array.from(s.options).some((o) => o.value === "field_equals"),
+      ) as HTMLSelectElement;
+      fireEvent.change(triggerSelect, { target: { value: "field_equals" } });
+
+      const fieldSelect = Array.from(document.querySelectorAll("label"))
+        .find((l) => l.textContent?.startsWith("Field"))
+        ?.querySelector("select") as HTMLSelectElement;
+      assert.ok(fieldSelect, "the field_equals 'Field' dropdown must be rendered");
+      const optionNames = Array.from(fieldSelect.options).map((o) => o.value);
+      assert.deepEqual(optionNames, ["name"], "a file field must never appear as a trigger-condition field");
+      assert.equal(fieldSelect.value, "name", "must default to the first non-file field, not the literal first field if it were excluded and empty");
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+});
+
+/**
  * Round 668 regression test: the field_equals trigger's "Value" input was
  * a plain, type-blind <input type="text"> regardless of the selected
  * field's type -- rounds 595/607/613 only ever closed this gap

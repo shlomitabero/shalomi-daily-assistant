@@ -1611,6 +1611,84 @@ test("creating or updating a field_equals automation rule with a fieldValue that
 });
 
 /**
+ * Round 748: validateAutomationFieldValue had branches for boolean/enum/
+ * date/number/relation (the same gap round 595/607/613 each closed one
+ * field type at a time) but never one for "file" -- a file field's real
+ * stored value (repository.ts's coerceValue default case) is the raw
+ * JSON-encoded {url, name, size, mimeType} upload descriptor, which
+ * matchesTrigger's byte-exact `String(actual) === rule.fieldValue`
+ * comparison can never match against anything a person could type into
+ * AutomationsPanel.tsx's plain-text Value box. Without this, a
+ * field_equals rule on a file field saved successfully as a permanently,
+ * silently dead rule.
+ */
+test("creating or updating a field_equals automation rule on a file field is rejected with 400, since a file field's stored value can never be typed in by hand", async () => {
+  await withServer(async (baseUrl, db) => {
+    const email = `automation-file-fieldvalue-${randomUUID()}@example.com`;
+    const token = await signup(baseUrl, email);
+    const user = findUserByEmail(db, email)!;
+
+    const spec: ProductSpec = {
+      summary: "test",
+      personas: [],
+      roles: ["Admin"],
+      entities: [
+        {
+          name: "Applicant",
+          fields: [
+            { name: "name", type: "text", required: true },
+            { name: "resume", type: "file", required: false },
+          ],
+        },
+      ],
+      screens: [],
+      assumptions: [],
+      openQuestions: [],
+    };
+    const projectId = randomUUID();
+    insertProject(db, { id: projectId, ownerId: user.id, name: "Hiring", description: "test", spec });
+    diffAndMigrate(db, projectId, undefined, spec);
+    markProjectBuilt(db, projectId);
+
+    const baseRule = {
+      trigger: "field_equals",
+      actionType: "send_whatsapp",
+      toMode: "static",
+      toNumber: "+972500000000",
+      messageTemplate: "hi",
+    };
+
+    const createRes = await fetch(`${baseUrl}/api/projects/${projectId}/entities/Applicant/automations`, {
+      method: "POST",
+      headers: authHeaders(token),
+      body: JSON.stringify({ ...baseRule, fieldName: "resume", fieldValue: "resume.pdf" }),
+    });
+    assert.equal(createRes.status, 400);
+    assert.equal(((await createRes.json()) as { code?: string }).code, "VALIDATION_ERROR");
+
+    // A real, valid field type must still be accepted -- this isn't a
+    // blanket rejection of the whole rule.
+    const goodRes = await fetch(`${baseUrl}/api/projects/${projectId}/entities/Applicant/automations`, {
+      method: "POST",
+      headers: authHeaders(token),
+      body: JSON.stringify({ ...baseRule, fieldName: "name", fieldValue: "Dana" }),
+    });
+    assert.equal(goodRes.status, 201);
+    const { rule: createdRule } = (await goodRes.json()) as { rule: { id: string } };
+
+    // A PATCH that would re-point an existing rule at the file field must
+    // be rejected the same way as creation.
+    const patchRes2 = await fetch(`${baseUrl}/api/projects/${projectId}/automations/${createdRule.id}`, {
+      method: "PATCH",
+      headers: authHeaders(token),
+      body: JSON.stringify({ fieldName: "resume", fieldValue: "resume.pdf" }),
+    });
+    assert.equal(patchRes2.status, 400);
+    assert.equal(((await patchRes2.json()) as { code?: string }).code, "VALIDATION_ERROR");
+  });
+});
+
+/**
  * Round 607's Explore survey found the same gap round 595 closed for
  * boolean/enum fields still open for date fields: a date field's only
  * stored shape is a real "YYYY-MM-DD" (repository.ts's own coerceValue

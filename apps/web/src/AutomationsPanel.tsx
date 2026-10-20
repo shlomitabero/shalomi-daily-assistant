@@ -111,17 +111,26 @@ export function AutomationsPanel({
   // which rejects every other field type at creation/update time.
   const phoneFields = selectedEntity?.fields.filter((f) => f.type === "text" || f.type === "longtext") ?? [];
 
+  // A file field's stored value is the raw upload JSON descriptor, never
+  // something a person could type into the Value box below -- mirrors the
+  // server's own validateAutomationFieldValue, which rejects it at
+  // creation/update time for exactly that reason. Without this filter the
+  // field dropdown would still offer it, saving a rule that can now only
+  // ever fail with a 400 the user never asked for.
+  const triggerableFields = selectedEntity?.fields.filter((f) => f.type !== "file") ?? [];
+
   const selectedField = selectedEntity?.fields.find((f) => f.name === fieldName);
 
   // Keep the field/toField selects pointed at a real field whenever the
   // chosen entity changes (including on first render) -- an empty/stale
   // selection here would otherwise submit a field name that doesn't exist
-  // on the newly-chosen entity. toField is further restricted to
-  // phoneFields, since the server rejects any other field type outright.
+  // on the newly-chosen entity. fieldName is further restricted to
+  // triggerableFields and toField to phoneFields, since the server rejects
+  // any other field type outright in each case.
   useEffect(() => {
     if (!selectedEntity) return;
-    if (!selectedEntity.fields.some((f) => f.name === fieldName)) {
-      setFieldName(selectedEntity.fields[0]?.name ?? "");
+    if (!triggerableFields.some((f) => f.name === fieldName)) {
+      setFieldName(triggerableFields[0]?.name ?? "");
     }
     if (!phoneFields.some((f) => f.name === toField)) {
       setToField(phoneFields[0]?.name ?? "");
@@ -235,10 +244,11 @@ export function AutomationsPanel({
   function resetToCreateMode() {
     const firstEntity = entities[0];
     const firstPhoneField = firstEntity?.fields.find((f) => f.type === "text" || f.type === "longtext");
+    const firstTriggerableField = firstEntity?.fields.find((f) => f.type !== "file");
     setEditingRuleId(null);
     setEntityName(firstEntity?.name ?? "");
     setTrigger("record_created");
-    setFieldName(firstEntity?.fields[0]?.name ?? "");
+    setFieldName(firstTriggerableField?.name ?? "");
     setFieldValue("");
     setToMode("field");
     setToField(firstPhoneField?.name ?? "");
@@ -689,7 +699,7 @@ export function AutomationsPanel({
               <label>
                 {t("automations.field.label")}
                 <select value={fieldName} onChange={(e) => setFieldName(e.target.value)}>
-                  {selectedEntity.fields.map((f) => (
+                  {triggerableFields.map((f) => (
                     <option key={f.name} value={f.name}>
                       {f.label ?? f.name}
                     </option>

@@ -560,6 +560,21 @@ function validateAutomationFieldValue(field: Field, fieldValue: string): void {
   if (field.type === "relation" && (!Number.isInteger(Number(fieldValue)) || String(Number(fieldValue)) !== fieldValue || Number(fieldValue) < 0)) {
     throw new HttpError(400, `Field "${field.name}" must be the related record's id (a plain non-negative integer), not its display label`, "VALIDATION_ERROR");
   }
+  // A file field's stored value (repository.ts's coerceValue default case)
+  // is the raw JSON-encoded {url, name, size, mimeType} upload descriptor
+  // -- never something a real person could type into the Value box (its
+  // url/size are generated at upload time and unknowable in advance), so
+  // matchesTrigger's own byte-exact `String(actual) === rule.fieldValue`
+  // comparison can never succeed. Without this, the rule builder UI
+  // (AutomationsPanel.tsx) still lets a file field be picked here with no
+  // filter, and its Value box falls through to the same plain text input
+  // every unrecognized field type gets -- saving successfully as a
+  // permanently, silently dead rule, the exact failure shape rounds
+  // 595/607/613 already closed for every other field type that can never
+  // match.
+  if (field.type === "file") {
+    throw new HttpError(400, `Field "${field.name}" can't be used in a trigger condition -- a file field's stored value can never be typed in by hand`, "VALIDATION_ERROR");
+  }
 }
 
 // A toMode:"field" rule's destination is `record[toField]`, sent as-is to
