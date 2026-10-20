@@ -14356,6 +14356,110 @@ test("the exported EntityView's record-form Delete button leaves the in-progress
 });
 
 /**
+ * Round 740: the same asymmetry round 739 fixed for Delete also applied to
+ * Duplicate here -- the exported app's own table row and BoardCard each
+ * already have their own dedicated Duplicate button/shortcut calling the
+ * shared `handleDuplicate`, but the record-form (the exported app's own
+ * Calendar view's only reachable action surface for an existing record)
+ * never had one. Confirms the generated form now offers a real Duplicate
+ * button once editing an existing record, that it calls the real API via
+ * the same `handleDuplicate` the table row already uses, and that
+ * duplicating leaves the original record's own in-progress edit session
+ * completely open and untouched.
+ */
+test("the exported EntityView's record-form gains a real Duplicate button once editing an existing record, which duplicates it via the real API while leaving the original edit session open", async () => {
+  const files = generateExportFiles(project);
+  const dir = writeGeneratedWebComponent(files);
+  const store = [{ id: 1, name: "Acme Corp", status: "New" }];
+  const postedBodies: Record<string, unknown>[] = [];
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = (async (input: string, init?: RequestInit): Promise<Response> => {
+    const method = init?.method ?? "GET";
+    if (method === "GET" && input === "/api/Customer") {
+      return new Response(JSON.stringify({ records: store }), { status: 200, headers: { "content-type": "application/json" } });
+    }
+    if (method === "POST" && input === "/api/Customer") {
+      const body = JSON.parse(init!.body as string);
+      postedBodies.push(body);
+      const record = { id: 2, ...body };
+      store.push(record);
+      return new Response(JSON.stringify({ record }), { status: 201, headers: { "content-type": "application/json" } });
+    }
+    throw new Error(`unexpected request ${method} ${input}`);
+  }) as typeof fetch;
+
+  try {
+    await withRealLocalStorage(async () => {
+      const { EntityView } = await import(path.join(dir, "web", "src", "components", "EntityView.jsx"));
+      const customerEntity = project.spec.entities.find((e) => e.name === "Customer")!;
+      const props = {
+        entity: customerEntity,
+        highlightRecordId: null,
+        onHighlightHandled: () => {},
+        onJumpToRecord: () => {},
+        onRecordCountChange: () => {},
+      };
+
+      const { container } = render(React.createElement(EntityView, props));
+      for (let i = 0; i < 40; i++) {
+        if (container.querySelectorAll("tbody tr").length === 1) break;
+        await act(async () => {
+          await new Promise((resolve) => setTimeout(resolve, 0));
+        });
+      }
+
+      assert.equal(
+        Array.from(container.querySelectorAll(".record-form button")).find((b) => b.textContent === "Duplicate"),
+        undefined,
+        "a brand-new, not-yet-saved record has nothing to duplicate -- no Duplicate button while editingId is null",
+      );
+
+      const editButton = Array.from(container.querySelectorAll("button")).find((b) => b.textContent === "Edit") as HTMLButtonElement;
+      await act(async () => {
+        fireEvent.click(editButton);
+      });
+      for (let i = 0; i < 40; i++) {
+        if ((container.querySelector('.record-form input[type="text"]') as HTMLInputElement)?.value === "Acme Corp") break;
+        await act(async () => {
+          await new Promise((resolve) => setTimeout(resolve, 0));
+        });
+      }
+
+      const formDuplicateButton = Array.from(container.querySelectorAll(".record-form button")).find((b) => b.textContent === "Duplicate") as HTMLButtonElement;
+      assert.ok(formDuplicateButton, "expected a real Duplicate button in the generated record-form once editing an existing record");
+
+      await act(async () => {
+        fireEvent.click(formDuplicateButton);
+      });
+      for (let i = 0; i < 40; i++) {
+        if (container.querySelectorAll("tbody tr").length === 2) break;
+        await act(async () => {
+          await new Promise((resolve) => setTimeout(resolve, 0));
+        });
+      }
+
+      assert.equal(postedBodies.length, 1, "the real duplicate request must fire exactly once");
+      assert.equal(postedBodies[0]?.name, "Acme Corp", "the duplicate must copy the record actually being edited");
+      assert.equal(postedBodies[0]?.status, "New");
+
+      assert.equal(
+        (container.querySelector('.record-form input[type="text"]') as HTMLInputElement).value,
+        "Acme Corp",
+        "duplicating must leave the original record's own in-progress edit session open and untouched",
+      );
+      assert.ok(
+        Array.from(container.querySelectorAll(".record-form button")).find((b) => b.textContent === "Cancel"),
+        "the Cancel button must still be present -- duplicating must never close the form the way a successful delete does",
+      );
+    });
+  } finally {
+    globalThis.fetch = originalFetch;
+    cleanup();
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+/**
  * New in this round: mirrors the live preview's own fix -- extends the
  * already-established Escape-to-cancel convention (the inline cell editor
  * already has it) to the exported app's main add/edit form, which

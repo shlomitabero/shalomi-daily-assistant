@@ -3013,6 +3013,11 @@ export function EntityPanel({
             </button>
           )}
           {editingId != null && (
+            <button type="button" onClick={() => handleDuplicate(editingId)}>
+              {t("entity.duplicate")}
+            </button>
+          )}
+          {editingId != null && (
             <button
               type="button"
               className="danger"

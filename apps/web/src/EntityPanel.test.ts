@@ -5568,6 +5568,75 @@ test("EntityPanel's record-form Delete button leaves the in-progress edit open a
 });
 
 /**
+ * Round 740: the same asymmetry round 739 fixed for Delete also applied to
+ * Duplicate -- the table row and BoardCard each already have their own
+ * dedicated Duplicate button/shortcut calling the shared `handleDuplicate`,
+ * but the record-form (Calendar's only reachable action surface for an
+ * existing record) never had one. Confirms the form now offers a real
+ * Duplicate button while editing an existing record, that it calls the
+ * real API via the same `handleDuplicate` the table row already uses, and
+ * -- unlike Delete -- that duplicating leaves the original record's own
+ * in-progress edit session completely open and untouched (duplicating
+ * creates a new record; it has no reason to discard what's being edited).
+ */
+test("EntityPanel's record-form gains a real Duplicate button once editing an existing record, which duplicates it via the real API while leaving the original edit session open", async () => {
+  await withJsdom(async () => {
+    const store: EntityRecord[] = [{ id: 1, name: "Acme Corp", status: "new" }];
+    const postedBodies: Record<string, unknown>[] = [];
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = (async (input: string, init?: RequestInit): Promise<Response> => {
+      const method = init?.method ?? "GET";
+      if (method === "GET" && input === "/api/projects/proj1/entities/Deal") {
+        return new Response(JSON.stringify({ records: store }), { status: 200, headers: { "content-type": "application/json" } });
+      }
+      if (method === "POST" && input === "/api/projects/proj1/entities/Deal") {
+        const body = JSON.parse(init!.body as string);
+        postedBodies.push(body);
+        const record = { id: 2, ...body };
+        store.push(record);
+        return new Response(JSON.stringify({ record }), { status: 201, headers: { "content-type": "application/json" } });
+      }
+      throw new Error(`unexpected request ${method} ${input}`);
+    }) as typeof fetch;
+    try {
+      renderEntityPanel();
+      await waitForCondition(() => document.querySelectorAll("table tbody tr").length === 1);
+
+      assert.equal(
+        Array.from(document.querySelectorAll(".form-actions button")).find((b) => b.textContent === "Duplicate"),
+        undefined,
+        "a brand-new, not-yet-saved record has nothing to duplicate -- no Duplicate button while editingId is null",
+      );
+
+      fireEvent.click(document.querySelector(".row-actions button") as HTMLButtonElement);
+      await waitForCondition(() => (document.querySelector('.record-form input[type="text"]') as HTMLInputElement)?.value === "Acme Corp");
+
+      const formDuplicateButton = Array.from(document.querySelectorAll(".form-actions button")).find((b) => b.textContent === "Duplicate") as HTMLButtonElement;
+      assert.ok(formDuplicateButton, "expected a real Duplicate button in the form once editing an existing record");
+
+      fireEvent.click(formDuplicateButton);
+      await waitForCondition(() => document.querySelectorAll("table tbody tr").length === 2);
+
+      assert.equal(postedBodies.length, 1, "the real duplicate request must fire exactly once");
+      assert.equal(postedBodies[0]?.name, "Acme Corp", "the duplicate must copy the record actually being edited");
+      assert.equal(postedBodies[0]?.status, "new");
+
+      assert.equal(
+        (document.querySelector('.record-form input[type="text"]') as HTMLInputElement)?.value,
+        "Acme Corp",
+        "duplicating must leave the original record's own in-progress edit session open and untouched",
+      );
+      assert.ok(
+        document.querySelector(".form-actions button.secondary"),
+        "the Cancel button must still be present -- duplicating must never close the form the way a successful delete does",
+      );
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+});
+
+/**
  * The other half of the same feature: NOT clicking Undo must commit the
  * real delete once the undo window actually elapses -- the whole point is
  * a temporary reprieve, not silently keeping deleted records around

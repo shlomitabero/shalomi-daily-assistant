@@ -4635,6 +4635,11 @@ export function EntityView({ entity, highlightRecordId, onHighlightHandled, onJu
             </button>
           )}
           {editingId != null && (
+            <button type="button" onClick={() => handleDuplicate(editingId)}>
+              Duplicate
+            </button>
+          )}
+          {editingId != null && (
             <button
               type="button"
               onClick={() => {
