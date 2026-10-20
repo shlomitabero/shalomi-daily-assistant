@@ -635,18 +635,38 @@ function csvEscape(value) {
   return guarded;
 }
 
+// This file's own parseFileFieldValue (used by fieldDisplayValue etc.)
+// lives in the EntityView.jsx template (renderEntityViewJsx), not here --
+// this template (renderServerJs) is a separate generated file with no
+// access to it, so backupFieldDisplayValue below needs its own minimal
+// copy. Mirrors backup.ts's own server-side fileFieldDisplayName exactly
+// (just the filename, no url/size/mimeType needed here).
+function backupFileFieldDisplayName(value) {
+  if (typeof value !== "string" || value === "") return "";
+  try {
+    const parsed = JSON.parse(value);
+    if (typeof parsed.name === "string") return parsed.name;
+  } catch {
+    // not a file descriptor -- treated as no file, same as an empty value
+  }
+  return "";
+}
+
 // Mirrors the exported app's own pickDisplayField above -- the last-resort
 // fallback skips relation fields too, since a join/line-item entity with
 // no name/title/text field would otherwise have this backup CSV show the
 // *related* record's own raw internal id as this record's own label.
+// Round 749: also skips "file" for the same reason -- would otherwise
+// String() a file field's raw JSON upload descriptor as this record's
+// own label.
 const BACKUP_DISPLAY_FIELD_HINTS = ["name", "title"];
 function backupPickDisplayField(entity) {
   const named = entity.fields.find((f) => BACKUP_DISPLAY_FIELD_HINTS.includes(f.name.toLowerCase()));
   if (named) return named;
   const firstText = entity.fields.find((f) => f.type === "text");
   if (firstText) return firstText;
-  const firstNonRelation = entity.fields.find((f) => f.type !== "relation");
-  return firstNonRelation || entity.fields[0] || null;
+  const firstDisplayable = entity.fields.find((f) => f.type !== "relation" && f.type !== "file");
+  return firstDisplayable || entity.fields[0] || null;
 }
 
 function backupRecordDisplayLabel(entity, record) {
@@ -667,6 +687,16 @@ function backupFieldDisplayValue(field, value, recordIndexByEntity) {
   }
   if (field.type === "boolean") return value ? "TRUE" : "FALSE";
   if (field.type === "enum") return (field.enumLabels && field.enumLabels[String(value)]) || String(value);
+  // Round 749: this backup-specific sibling of fieldDisplayValue (below)
+  // was left with this exact gap when file-field support first landed in
+  // this file -- flagged then as "needs the whole feature decision
+  // first" and deliberately deferred, per docs/roadmap.md. A file field's
+  // raw stored value is a JSON descriptor ({"url":...,"name":...,...}),
+  // not something a spreadsheet reader would recognize -- mirrors
+  // fieldDisplayValue's own file branch, giving just the filename (via
+  // backupFileFieldDisplayName above, since this template has no access
+  // to the EntityView.jsx template's own parseFileFieldValue).
+  if (field.type === "file") return backupFileFieldDisplayName(value);
   return String(value);
 }
 
@@ -1428,6 +1458,10 @@ function isValidDate(value) {
 // can legitimately have no name/title/text field at all, and without the
 // relation exclusion here recordDisplayLabel would render the *related*
 // record's own raw internal id as this record's own label.
+// Round 749: also excludes "file" for the same reason -- a document-
+// centric join entity with no name/title/text field either would
+// otherwise String() a file field's raw JSON upload descriptor
+// ({url,name,size,mimeType}) as this record's own label.
 const DISPLAY_FIELD_NAME_HINTS = ["name", "title"];
 export function pickDisplayField(entity) {
   if (!entity || !entity.fields || entity.fields.length === 0) return null;
@@ -1435,8 +1469,8 @@ export function pickDisplayField(entity) {
   if (named) return named;
   const firstText = entity.fields.find((f) => f.type === "text");
   if (firstText) return firstText;
-  const firstNonRelation = entity.fields.find((f) => f.type !== "relation");
-  return firstNonRelation || entity.fields[0];
+  const firstDisplayable = entity.fields.find((f) => f.type !== "relation" && f.type !== "file");
+  return firstDisplayable || entity.fields[0];
 }
 
 export function recordDisplayLabel(entity, record) {

@@ -2451,6 +2451,51 @@ test("the exported EntityView's pickDisplayField skips a relation field in its l
   );
 });
 
+/**
+ * Round 749: mirrors the live preview's own fix -- the same gap the test
+ * above covers for a relation field, but for "file". A document-centric
+ * join entity (e.g. an Enrollment with a signed certificate attached) can
+ * just as legitimately have no name/title/text field. Without skipping
+ * "file" too in the last-resort fallback, the generated pickDisplayField/
+ * recordDisplayLabel would String() the file's raw JSON upload descriptor
+ * as this record's own label.
+ */
+test("the exported EntityView's pickDisplayField skips a file field in its last-resort fallback, preferring any other displayable field instead", () => {
+  const files = generateExportFiles(project);
+  const entityViewJsx = files.find((f) => f.path === "web/src/components/EntityView.jsx")!.content;
+
+  const displayFieldHintsSrc = entityViewJsx.match(/const DISPLAY_FIELD_NAME_HINTS = .*;\n/)?.[0];
+  const pickDisplayFieldSrc = entityViewJsx.match(/export function pickDisplayField\([\s\S]*?\n\}\n/)?.[0]?.replace("export ", "");
+  assert.ok(displayFieldHintsSrc && pickDisplayFieldSrc, "expected to find DISPLAY_FIELD_NAME_HINTS/pickDisplayField in generated output");
+
+  const pickDisplayField = new Function(`${displayFieldHintsSrc}\n${pickDisplayFieldSrc}\nreturn pickDisplayField;`)() as (entity: unknown) => { name: string } | null;
+
+  assert.equal(
+    pickDisplayField({
+      name: "Enrollment",
+      fields: [
+        { name: "studentId", type: "relation", relationTo: "Student" },
+        { name: "certificate", type: "file" },
+        { name: "grade", type: "enum" },
+      ],
+    })?.name,
+    "grade",
+    "with no name/title/text field, the enum field (grade) must win over both the relation (studentId) and the file field (certificate)",
+  );
+
+  assert.equal(
+    pickDisplayField({
+      name: "Enrollment",
+      fields: [
+        { name: "studentId", type: "relation", relationTo: "Student" },
+        { name: "certificate", type: "file" },
+      ],
+    })?.name,
+    "studentId",
+    "when every remaining field is either a relation or a file, there's nothing else to fall back to but the first field regardless",
+  );
+});
+
 test("the exported CalendarView picks its day-chip label via pickDisplayField, not just whichever field happens to come first after the date field", () => {
   // Mirrors the live-preview fix in apps/web/src/entityFormatting.ts
   // (calendarChipLabelField): every built-in domain entity happens to
@@ -8509,6 +8554,67 @@ test("the exported server.js's own backupPickDisplayField skips a relation field
     "grade",
     "with no name/title/text field, the first non-relation field (grade) must win over the first-declared relation field (studentId)",
   );
+});
+
+/**
+ * Round 749: mirrors the same relation-exclusion fix just above, but for
+ * "file" -- a document-centric join entity with no name/title/text field
+ * would otherwise make the backup CSV show the file field's own raw JSON
+ * upload descriptor as this record's own label.
+ */
+test("the exported server.js's own backupPickDisplayField skips a file field in its last-resort fallback, preferring any other displayable field instead", () => {
+  const serverJs = generateExportFiles(project).find((f) => f.path === "server.js")!.content;
+  const backupPickDisplayFieldSrc = serverJs.match(/const BACKUP_DISPLAY_FIELD_HINTS[\s\S]*?\nfunction backupPickDisplayField\(entity\) \{[\s\S]*?\n\}\n/)?.[0];
+  assert.ok(backupPickDisplayFieldSrc, "expected to find BACKUP_DISPLAY_FIELD_HINTS/backupPickDisplayField in generated server.js");
+
+  const backupPickDisplayField = new Function(`${backupPickDisplayFieldSrc}\nreturn backupPickDisplayField;`)() as (entity: unknown) => { name: string } | null;
+
+  assert.equal(
+    backupPickDisplayField({
+      name: "Enrollment",
+      fields: [
+        { name: "studentId", type: "relation", relationTo: "Student" },
+        { name: "certificate", type: "file" },
+        { name: "grade", type: "enum" },
+      ],
+    })?.name,
+    "grade",
+    "with no name/title/text field, the enum field (grade) must win over both the relation (studentId) and the file field (certificate)",
+  );
+});
+
+/**
+ * Round 749: backupFieldDisplayValue had the exact same "no file branch"
+ * gap live-preview's own CSV export (entityFormatting.ts's
+ * fieldDisplayValue) and this file's own main fieldDisplayValue were
+ * already fixed for -- confirmed in docs/roadmap.md as a previously
+ * deferred/known gap ("needs the whole feature decision first") that was
+ * never actually followed up on once file-field support did land in this
+ * file. Without this branch, a file field's raw JSON upload descriptor
+ * ({url,name,size,mimeType}) was written straight into the "Backup all
+ * data" ZIP's CSV, instead of just the filename.
+ */
+test("the exported server.js's own backupFieldDisplayValue resolves a file field to just its filename, not the raw JSON descriptor it's actually stored as", () => {
+  const serverJs = generateExportFiles(project).find((f) => f.path === "server.js")!.content;
+  const backupFileFieldDisplayNameSrc = serverJs.match(/function backupFileFieldDisplayName\(value\) \{[\s\S]*?\n\}\n/)?.[0];
+  const backupFieldDisplayValueSrc = serverJs.match(/function backupFieldDisplayValue\(field, value, recordIndexByEntity\) \{[\s\S]*?\n\}\n/)?.[0];
+  assert.ok(
+    backupFileFieldDisplayNameSrc && backupFieldDisplayValueSrc,
+    "expected to find backupFileFieldDisplayName/backupFieldDisplayValue in generated server.js",
+  );
+
+  const backupFieldDisplayValue = new Function(`${backupFileFieldDisplayNameSrc}\n${backupFieldDisplayValueSrc}\nreturn backupFieldDisplayValue;`)() as (
+    field: unknown,
+    value: unknown,
+    recordIndexByEntity: unknown,
+  ) => string;
+
+  const fileField = { name: "attachment", type: "file" };
+  const stored = JSON.stringify({ url: "/api/uploads/proj1/Applicant/abc123.pdf", name: "resume.pdf", size: 48213, mimeType: "application/pdf" });
+
+  assert.equal(backupFieldDisplayValue(fileField, stored, {}), "resume.pdf");
+  assert.doesNotMatch(backupFieldDisplayValue(fileField, stored, {}), /api\/uploads/, "the server's own internal upload URL path must never leak into the backup CSV");
+  assert.equal(backupFieldDisplayValue(fileField, "", {}), "", "an unset file field must render as an empty cell, not an error or a stray value");
 });
 
 /**

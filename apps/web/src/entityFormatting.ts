@@ -943,14 +943,21 @@ const DISPLAY_FIELD_NAME_HINTS = ["name", "title"];
  * list, CSV export/import's relation-cell matching, the "Group by"/filter
  * dropdowns' own labels -- indistinguishable from every other record
  * pointing at the same related row.
+ *
+ * Round 749: the last-resort step also excludes `file` for the exact same
+ * reason -- a document-centric join entity like `Enrollment { studentId:
+ * relation, courseId: relation, certificate: file }` has no name/title/
+ * text field either, and without this exclusion recordDisplayLabel would
+ * String() the file's raw JSON upload descriptor ({url,name,size,
+ * mimeType}) as this record's own label.
  */
 export function pickDisplayField(entity: Entity): Field | null {
   const named = entity.fields.find((f) => DISPLAY_FIELD_NAME_HINTS.includes(f.name.toLowerCase()));
   if (named) return named;
   const firstText = entity.fields.find((f) => f.type === "text");
   if (firstText) return firstText;
-  const firstNonRelation = entity.fields.find((f) => f.type !== "relation");
-  return firstNonRelation ?? entity.fields[0] ?? null;
+  const firstDisplayable = entity.fields.find((f) => f.type !== "relation" && f.type !== "file");
+  return firstDisplayable ?? entity.fields[0] ?? null;
 }
 
 /**

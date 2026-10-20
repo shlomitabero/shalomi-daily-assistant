@@ -1248,6 +1248,39 @@ test("pickDisplayField skips a relation field in its last-resort fallback, prefe
   );
 });
 
+/**
+ * Round 749: the same gap round 741's own test above covers for a
+ * relation field, but for "file" -- a document-centric join entity (e.g.
+ * an Enrollment linking a Student to a Course, with the signed
+ * certificate attached) can just as legitimately have no name/title/text
+ * field, with a file field in the mix instead of/alongside relations.
+ * Without skipping "file" too in the last-resort fallback,
+ * recordDisplayLabel would String() the file's raw JSON upload descriptor
+ * ({url,name,size,mimeType}) as this record's own human label.
+ */
+test("pickDisplayField skips a file field in its last-resort fallback, preferring any other displayable field instead", () => {
+  const enrollmentFields: Field[] = [
+    { name: "studentId", type: "relation", relationTo: "Student", required: true },
+    { name: "certificate", type: "file", required: false },
+    { name: "grade", type: "enum", required: false, enumValues: ["A", "B", "C"] },
+  ];
+  assert.equal(
+    pickDisplayField({ name: "Enrollment", fields: enrollmentFields })?.name,
+    "grade",
+    "with no name/title/text field, the enum field (grade) must win over both the relation (studentId) and the file field (certificate)",
+  );
+
+  const relationsAndFileOnly: Field[] = [
+    { name: "studentId", type: "relation", relationTo: "Student", required: true },
+    { name: "certificate", type: "file", required: false },
+  ];
+  assert.equal(
+    pickDisplayField({ name: "Enrollment", fields: relationsAndFileOnly })?.name,
+    "studentId",
+    "when every remaining field is either a relation or a file, there's nothing else to fall back to but the first field regardless",
+  );
+});
+
 test("calendarChipLabelField prefers the entity's real display field over whichever field merely comes first after the date field", () => {
   // Every built-in domain entity happens to declare its "name"/"title"
   // field before its date field, so grabbing "the first field that isn't

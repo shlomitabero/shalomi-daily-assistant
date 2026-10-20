@@ -73,6 +73,41 @@ test("pickDisplayField falls back to the first relation field only when literall
   assert.equal(pickDisplayField(entity)?.name, "userId", "there's nothing else to fall back to, so the first field regardless is the only option left");
 });
 
+/**
+ * Round 749: the same gap the test above covers for a relation field, but
+ * for "file" -- a document-centric join entity (e.g. an Enrollment with a
+ * signed certificate attached) can just as legitimately have no name/
+ * title/text field. Without skipping "file" too in the last-resort
+ * fallback, recordDisplayLabel would String() the file's raw JSON upload
+ * descriptor ({url,name,size,mimeType}) as this record's own human label.
+ */
+test("pickDisplayField skips a file field in its last-resort fallback, preferring any other displayable field instead", () => {
+  const entity: Entity = {
+    name: "Enrollment",
+    fields: [
+      { name: "studentId", type: "relation", relationTo: "Student", required: true },
+      { name: "certificate", type: "file", required: false },
+      { name: "grade", type: "enum", required: false, enumValues: ["A", "B", "C"] },
+    ],
+  };
+  assert.equal(
+    pickDisplayField(entity)?.name,
+    "grade",
+    "with no name/title/text field, the enum field (grade) must win over both the relation (studentId) and the file field (certificate)",
+  );
+});
+
+test("pickDisplayField falls back to the first field regardless when every remaining field is either a relation or a file", () => {
+  const entity: Entity = {
+    name: "Enrollment",
+    fields: [
+      { name: "studentId", type: "relation", relationTo: "Student", required: true },
+      { name: "certificate", type: "file", required: false },
+    ],
+  };
+  assert.equal(pickDisplayField(entity)?.name, "studentId", "there's nothing else to fall back to, so the first field regardless is the only option left");
+});
+
 test("pickDisplayField's tie-break between a name field and a title field follows field declaration order, not name-before-title priority", () => {
   // DISPLAY_FIELD_NAME_HINTS lists "name" before "title", which reads like a
   // priority order, but pickDisplayField iterates entity.fields (not the
