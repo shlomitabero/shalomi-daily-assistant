@@ -186,6 +186,41 @@ test("interpolateTemplate falls back to the raw stored value for a date field th
 });
 
 /**
+ * Round 744: "createdAt" is a reserved key repository.ts's own insert
+ * always sets on every EntityRecord, never a declared entity field -- so
+ * entity.fields.find(...) above always returns undefined for it, and it
+ * used to fall through to the generic raw-String(value) branch, sending a
+ * raw ISO-8601 timestamp to a real WhatsApp recipient instead of a
+ * locale-formatted one, even though the create-rule UI's own hint invites
+ * referencing any field by name and {{createdAt}} is a very natural guess
+ * for "when this record was created". Mirrors the established pattern in
+ * entityFormatting.test.ts's own formatRecordCreatedAt test: the exact
+ * formatted string is locale/timezone-dependent, but comparing against
+ * the raw value and against the declared-date-field's own date-only
+ * output confirms real formatting (including time-of-day) actually
+ * happened, not a silent pass-through.
+ */
+test("interpolateTemplate renders {{createdAt}} in locale-formatted form (date and time), not the raw ISO-8601 timestamp", () => {
+  const invoiceEntity: Entity = {
+    name: "Invoice",
+    label: "Invoice",
+    fields: [{ name: "dueDate", type: "date", required: true }],
+  };
+  const rawTimestamp = "2026-03-15T14:30:00.000Z";
+  const record = { createdAt: rawTimestamp, dueDate: "2026-03-15" };
+
+  const result = interpolateTemplate("Created {{createdAt}}", invoiceEntity, record, "en");
+  assert.notEqual(result, `Created ${rawTimestamp}`, "must never send the raw ISO-8601 timestamp verbatim");
+
+  const dueDateOnly = interpolateTemplate("Due {{dueDate}}", invoiceEntity, record, "en");
+  assert.notEqual(
+    result.replace("Created ", ""),
+    dueDateOnly.replace("Due ", ""),
+    "createdAt carries real time-of-day information a declared date field never does, so it must not format identically to one",
+  );
+});
+
+/**
  * New in this round: a "file" field's stored value is a JSON-encoded
  * {url, name, size, mimeType} descriptor (see entityFormatting.ts's own
  * parseFileFieldValue), not plain text like every other field type --

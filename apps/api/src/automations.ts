@@ -96,6 +96,23 @@ export function interpolateTemplate(template: string, entity: Entity, record: En
       return Number.isNaN(date.getTime()) ? String(value) : date.toLocaleDateString(LOCALE[lang]);
     }
     if (field?.type === "number") return Number(value).toLocaleString(LOCALE[lang]);
+    // "createdAt" is a reserved key repository.ts's own insert always sets
+    // on every EntityRecord, never a declared entity field -- so `field`
+    // above is always undefined for it, and it would otherwise fall
+    // through to the generic raw-String(value) branch below, sending a
+    // raw ISO-8601 timestamp ("2024-01-15T08:30:00.000Z") to a real
+    // WhatsApp recipient instead of a locale-formatted one, even though
+    // the create-rule UI's own hint invites referencing any field by name
+    // and {{createdAt}} is a very natural guess. Mirrors the on-screen
+    // table's own "Created" column (entityFormatting.ts's
+    // formatRecordCreatedAt) exactly -- toLocaleString (date+time), not
+    // toLocaleDateString like the declared-"date"-field branch above,
+    // since createdAt carries real time-of-day information a declared
+    // "date" field never does.
+    if (fieldName === "createdAt") {
+      const date = new Date(String(value));
+      return Number.isNaN(date.getTime()) ? String(value) : date.toLocaleString(LOCALE[lang]);
+    }
     return String(value);
   });
 }
