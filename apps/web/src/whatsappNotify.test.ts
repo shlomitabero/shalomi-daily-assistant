@@ -31,7 +31,7 @@ test("findNewInboundMessages returns null when nothing new has arrived since las
 test("findNewInboundMessages returns the single new inbound message's own details", () => {
   const messages = [msg({ id: "m2", fromNumber: "972529998888", body: "Are you open tomorrow?" }), msg({ id: "m1" })];
   const result = findNewInboundMessages(messages, "m1");
-  assert.deepEqual(result, { newestMessageId: "m2", count: 1, fromNumber: "972529998888", snippet: "Are you open tomorrow?" });
+  assert.deepEqual(result, { newestMessageId: "m2", count: 1, fromNumber: "972529998888", matchedLabel: null, snippet: "Are you open tomorrow?" });
 });
 
 test("findNewInboundMessages reports the correct count and the NEWEST message's own details when several arrived at once", () => {
@@ -42,17 +42,29 @@ test("findNewInboundMessages reports the correct count and the NEWEST message's 
     msg({ id: "m1" }),
   ];
   const result = findNewInboundMessages(messages, "m1");
-  assert.deepEqual(result, { newestMessageId: "m4", count: 3, fromNumber: "972521110000", snippet: "newest" });
+  assert.deepEqual(result, { newestMessageId: "m4", count: 3, fromNumber: "972521110000", matchedLabel: null, snippet: "newest" });
 });
 
 test("findNewInboundMessages never counts an outbound message the project itself sent as a new inbound message", () => {
   const messages = [msg({ id: "m3", direction: "out", body: "our reply" }), msg({ id: "m2", body: "the real new one" }), msg({ id: "m1" })];
   const result = findNewInboundMessages(messages, "m1");
-  assert.deepEqual(result, { newestMessageId: "m2", count: 1, fromNumber: "972521112233", snippet: "the real new one" });
+  assert.deepEqual(result, { newestMessageId: "m2", count: 1, fromNumber: "972521112233", matchedLabel: null, snippet: "the real new one" });
 });
 
 test("findNewInboundMessages caps the count at what's in this page when lastNotifiedId isn't found in it at all, instead of throwing or guessing a larger number", () => {
   const messages = [msg({ id: "m3" }), msg({ id: "m2" })];
   const result = findNewInboundMessages(messages, "some-old-id-not-in-this-page");
-  assert.deepEqual(result, { newestMessageId: "m3", count: 2, fromNumber: "972521112233", snippet: "hello" });
+  assert.deepEqual(result, { newestMessageId: "m3", count: 2, fromNumber: "972521112233", matchedLabel: null, snippet: "hello" });
+});
+
+/**
+ * Round 750: the newest inbound message's matchedLabel must be carried
+ * through verbatim -- App.tsx's desktop notification relies on it to show
+ * the same "matchedLabel ?? fromNumber" human label whatsappLog.ts and
+ * WhatsAppPanel.tsx already show for this exact message everywhere else.
+ */
+test("findNewInboundMessages carries the newest message's matchedLabel through, when it was matched to a real CRM record", () => {
+  const messages = [msg({ id: "m2", fromNumber: "972529998888", matchedLabel: "Sarah Cohen", body: "Are you open tomorrow?" }), msg({ id: "m1" })];
+  const result = findNewInboundMessages(messages, "m1");
+  assert.deepEqual(result, { newestMessageId: "m2", count: 1, fromNumber: "972529998888", matchedLabel: "Sarah Cohen", snippet: "Are you open tomorrow?" });
 });

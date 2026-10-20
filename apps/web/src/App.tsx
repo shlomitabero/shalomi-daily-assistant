@@ -408,7 +408,7 @@ export function maybeNotifyNewWhatsAppMessages(
   if (typeof Notification === "undefined" || Notification.permission !== "granted") return;
   const title =
     newMessages.count === 1
-      ? t("whatsapp.notification.title.one", { from: newMessages.fromNumber })
+      ? t("whatsapp.notification.title.one", { from: newMessages.matchedLabel ?? newMessages.fromNumber })
       : t("whatsapp.notification.title.many", { count: String(newMessages.count) });
   new Notification(title, { body: newMessages.snippet });
 }

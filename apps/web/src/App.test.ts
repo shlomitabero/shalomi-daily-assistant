@@ -864,6 +864,37 @@ test("maybeNotifyNewWhatsAppMessages fires a real Notification with the correct 
   }
 });
 
+/**
+ * Round 750: whatsappLog.ts and WhatsAppPanel.tsx both already show
+ * "matchedLabel ?? fromNumber" for this exact message everywhere else in
+ * the app -- the desktop notification (the one surface specifically
+ * meant to alert someone while they're away from the tab) must show the
+ * same human label, not a bare, unrecognizable phone number, whenever the
+ * inbound number was matched to a real CRM record.
+ */
+test("maybeNotifyNewWhatsAppMessages shows the matched record's own label in the title instead of the bare phone number, when the message was matched to one", () => {
+  const originalNotification = (globalThis as { Notification?: unknown }).Notification;
+  const calls: Array<{ title: string; body: string }> = [];
+  class FakeNotification {
+    static permission = "granted";
+    constructor(title: string, options?: { body?: string }) {
+      calls.push({ title, body: options?.body ?? "" });
+    }
+  }
+  (globalThis as { Notification: unknown }).Notification = FakeNotification;
+  try {
+    const messages = [
+      whatsAppMsg({ id: "m2", fromNumber: "972529998888", matchedLabel: "Sarah Cohen", body: "Are you open tomorrow?" }),
+      whatsAppMsg({ id: "m1" }),
+    ];
+    const ref = { current: "m1" };
+    maybeNotifyNewWhatsAppMessages(messages, ref, true, notifyT);
+    assert.deepEqual(calls, [{ title: 'whatsapp.notification.title.one:{"from":"Sarah Cohen"}', body: "Are you open tomorrow?" }]);
+  } finally {
+    (globalThis as { Notification?: unknown }).Notification = originalNotification;
+  }
+});
+
 test("maybeNotifyNewWhatsAppMessages never calls Notification when the tab is NOT hidden, even with new messages and granted permission -- but still advances the ref", () => {
   const originalNotification = (globalThis as { Notification?: unknown }).Notification;
   let constructed = 0;

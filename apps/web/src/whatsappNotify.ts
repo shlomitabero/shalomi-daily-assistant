@@ -4,6 +4,15 @@ export interface NewWhatsAppMessages {
   newestMessageId: string;
   count: number;
   fromNumber: string;
+  // Round 750: carried through alongside fromNumber (not instead of it,
+  // since a real caller still needs the raw number as the no-match
+  // fallback) so App.tsx's desktop notification can show the same
+  // "matchedLabel ?? fromNumber" human label whatsappLog.ts/
+  // WhatsAppPanel.tsx already show everywhere else this exact message
+  // appears -- without this, the one surface specifically meant to alert
+  // someone while they're away from the tab was the only place still
+  // showing a bare, unrecognizable phone number instead of "Sarah Cohen".
+  matchedLabel: string | null;
   snippet: string;
 }
 
@@ -39,5 +48,11 @@ export function findNewInboundMessages(
   }
   if (newInbound.length === 0) return null;
   const newest = newInbound[0];
-  return { newestMessageId: newest.id, count: newInbound.length, fromNumber: newest.fromNumber, snippet: newest.body };
+  return {
+    newestMessageId: newest.id,
+    count: newInbound.length,
+    fromNumber: newest.fromNumber,
+    matchedLabel: newest.matchedLabel,
+    snippet: newest.body,
+  };
 }
