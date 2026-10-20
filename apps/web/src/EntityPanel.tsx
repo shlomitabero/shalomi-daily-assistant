@@ -1449,6 +1449,12 @@ export function EntityPanel({
   // its stale array index, misnumbering its own priority badge and
   // reporting the wrong column via aria-sort.
   const fieldNamesKey = useMemo(() => entity.fields.map((f) => f.name).join(","), [entity.fields]);
+  // Only read by the fieldFilters effect just below, not this one --
+  // sorting by a retyped field's own raw value is harmless (visually odd
+  // at worst), unlike a filter whose stored value's shape can stop
+  // matching its field's current type entirely. See that effect's own
+  // doc comment for why.
+  const fieldTypesKey = useMemo(() => entity.fields.map((f) => `${f.name}:${f.type}`).join(","), [entity.fields]);
   useEffect(() => {
     const validFieldNames = new Set(fieldNamesKey ? fieldNamesKey.split(",") : []);
     validFieldNames.add("createdAt");
@@ -1468,15 +1474,39 @@ export function EntityPanel({
   // removed left visibleRecords's own `r[fieldName] === value` check
   // comparing against `undefined` forever, silently hiding every record
   // with no visible indication why.
+  //
+  // Round 751: also re-validates whenever a field's TYPE changes while
+  // its name survives (e.g. an enum -> boolean refine) -- fieldNamesKey
+  // alone wouldn't even notice that happened (same names, so its own
+  // dependency array wouldn't change), so fieldTypesKey below is an extra
+  // trigger carrying each field's type too. Once re-run, a stored value
+  // whose SHAPE no longer matches the field's current type (checked
+  // directly, not by comparing to any "previous type" -- nothing persists
+  // that) is dropped the same way a value for a now-missing field already
+  // was: a boolean <select> only ever has two real options ("true"/
+  // "false"), so a stale value like "Shipped" left over from when this
+  // field was an enum renders with nothing selected and no visible sign a
+  // filter is even active, while visibleRecords' own check above still
+  // silently hides every record. Mirrors validateAutomationFieldValue's
+  // own per-type shape checks (apps/api/src/routes/projects.ts). An enum
+  // field needs no such check: any stored string is a plausible (if
+  // stale) enum value, and that staleness is exactly what the toolbar
+  // <select>'s own synthetic-option guard below already surfaces visibly,
+  // with a working Clear button -- unlike the boolean/relation cases,
+  // where nothing would otherwise explain an empty table.
   useEffect(() => {
-    const validFieldNames = new Set(fieldNamesKey ? fieldNamesKey.split(",") : []);
+    const fieldsByName = new Map(entity.fields.map((f) => [f.name, f]));
     const persisted = getFieldFiltersPreference(projectId, entity.name);
     const next: Record<string, string> = {};
     for (const [field, value] of Object.entries(persisted)) {
-      if (validFieldNames.has(field)) next[field] = value;
+      const f = fieldsByName.get(field);
+      if (!f) continue;
+      if (f.type === "boolean" && value !== "true" && value !== "false") continue;
+      if (f.type === "relation" && (!Number.isInteger(Number(value)) || String(Number(value)) !== value || Number(value) < 0)) continue;
+      next[field] = value;
     }
     setFieldFilters(next);
-  }, [projectId, entity.name, fieldNamesKey]);
+  }, [projectId, entity.name, fieldNamesKey, fieldTypesKey]);
 
   /**
    * Drag-to-resize a column header. Only attaches real mousemove/mouseup

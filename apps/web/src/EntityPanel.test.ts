@@ -6528,6 +6528,76 @@ test("EntityPanel drops a field filter when a live refine removes the exact fiel
 });
 
 /**
+ * Round 751: the field-removed case just above was already fixed, but a
+ * live refine that changes a field's TYPE while keeping its exact name
+ * (e.g. "status" going from enum to boolean) left the stored filter
+ * value untouched -- fieldNamesKey alone doesn't even change for this,
+ * since the set of field names is identical. "won" (a real enum value a
+ * moment ago) is not "true"/"false", so every record's own real boolean
+ * value fails visibleRecords' own string-equality check, exactly the
+ * same "entire table silently empties" failure the field-removed case
+ * has, but without even a working Clear-filters button pointing at an
+ * obviously-wrong value -- the toolbar <select> just renders with
+ * nothing selected.
+ */
+test("EntityPanel drops a field filter when a live refine changes that field's type, instead of silently showing zero records", async () => {
+  await withJsdom(async () => {
+    const statusEnumField = {
+      name: "status",
+      label: "Status",
+      type: "enum" as const,
+      required: true,
+      enumValues: ["new", "won"],
+      enumLabels: { new: "New", won: "Won" },
+    };
+    const statusBooleanField = { name: "status", label: "Status", type: "boolean" as const, required: true };
+    const entityWithEnumStatus: Entity = {
+      name: "Deal",
+      label: "Deal",
+      fields: [{ name: "name", label: "Name", type: "text", required: true }, statusEnumField],
+    };
+    const entityWithBooleanStatus: Entity = {
+      name: "Deal",
+      label: "Deal",
+      fields: [{ name: "name", label: "Name", type: "text", required: true }, statusBooleanField],
+    };
+    const store: EntityRecord[] = [
+      { id: 1, createdAt: "x", name: "Acme Corp", status: "new" },
+      { id: 2, createdAt: "x", name: "Globex", status: "won" },
+    ];
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = mockRecordsFetch(store) as typeof fetch;
+    try {
+      const view = renderEntityPanel({ entity: entityWithEnumStatus, allEntities: [entityWithEnumStatus] });
+      await waitForCondition(() => document.querySelectorAll("table tbody tr").length === 2);
+
+      const statusFilter = document.querySelector(".entity-status-filter") as HTMLSelectElement;
+      fireEvent.change(statusFilter, { target: { value: "won" } });
+      await waitForCondition(() => document.querySelectorAll("table tbody tr").length === 1);
+      assert.ok(
+        document.querySelector("table tbody")?.textContent?.includes("Globex"),
+        "filtering to status=won must leave only Globex visible",
+      );
+
+      // Simulate a refine that retypes "status" from enum to boolean
+      // while staying on the exact same entity.name ("Deal") and the
+      // exact same field name ("status") -- the same live-refine,
+      // no-remount scenario the field-removed test above exercises.
+      view.rerender(buildEntityPanelElement({ entity: entityWithBooleanStatus, allEntities: [entityWithBooleanStatus] }));
+      await waitForCondition(() => document.querySelectorAll("table tbody tr").length === 2);
+
+      assert.ok(
+        document.querySelector("table tbody")?.textContent?.includes("Acme Corp") &&
+          document.querySelector("table tbody")?.textContent?.includes("Globex"),
+        "both records must be visible again once the now-type-mismatched 'status' filter (\"won\") is dropped, not stuck hiding everything forever",
+      );
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+});
+
+/**
  * Regression test for round 500's finding: sortKeys' own re-validation
  * effect (sibling to viewMode's and fieldFilters', fixed in rounds 490 and
  * 493 respectively) was never given the same fix -- it only dropped a sort
