@@ -1679,7 +1679,7 @@ function Cell({ field, value, relationLabel, highlightQuery, onJumpToRecord }) {
     }
     return <>{label}</>;
   }
-  if (field.type === "boolean") return value ? <span className="bool-yes">✓</span> : <span className="muted">–</span>;
+  if (field.type === "boolean") return value ? <span className="bool-yes" aria-label="Yes">✓</span> : <span className="muted" aria-label="No">–</span>;
   if (field.type === "enum") {
     const label = String((field.enumLabels && field.enumLabels[value]) || value);
     return (

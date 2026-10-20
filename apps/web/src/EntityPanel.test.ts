@@ -1920,6 +1920,60 @@ test("EntityPanel renders a filter dropdown for a boolean field too, offering Ye
 });
 
 /**
+ * New in this round: a boolean field's table cell rendered as a bare ✓ or
+ * – glyph with no aria-label -- unlike every other field type Cell renders
+ * (an enum's real label text, a formatted date/number, a relation's
+ * resolved label), this glyph IS the cell's only content, so a screen
+ * reader got nothing from it at all. Confirms both the true and false
+ * cells now carry a real, translated aria-label (reusing the same
+ * "Yes"/"No" strings the filter dropdown and group-by header already use),
+ * not just that the glyph itself still renders.
+ */
+test("EntityPanel's boolean table cells carry a real aria-label, not just a bare glyph with no accessible text", async () => {
+  await withJsdom(async () => {
+    const store: EntityRecord[] = [
+      { id: 1, name: "Write report", status: "todo", isUrgent: false },
+      { id: 2, name: "Fix outage", status: "todo", isUrgent: true },
+    ];
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = mockTaskRecordsFetch(store) as typeof fetch;
+    try {
+      render(
+        React.createElement(
+          ThemeProvider,
+          null,
+          React.createElement(
+            LanguageProvider,
+            null,
+            React.createElement(EntityPanel, {
+              projectId: "proj1",
+              entity: TASK_WITH_BOOLEAN_ENTITY,
+              allEntities: [TASK_WITH_BOOLEAN_ENTITY],
+              onEntityRenamed: () => {},
+            }),
+          ),
+        ),
+      );
+      await waitForCondition(() => document.querySelectorAll("table tbody tr").length === 2);
+
+      const rows = document.querySelectorAll("table tbody tr");
+      const falseRow = Array.from(rows).find((r) => /Write report/.test(r.textContent ?? ""))!;
+      const trueRow = Array.from(rows).find((r) => /Fix outage/.test(r.textContent ?? ""))!;
+
+      const trueCell = trueRow.querySelector(".bool-yes");
+      assert.ok(trueCell, "expected the true cell's own ✓ glyph span to render");
+      assert.equal(trueCell!.getAttribute("aria-label"), "Yes", "a true boolean cell must carry a real 'Yes' aria-label, not just the bare glyph");
+
+      const falseCell = falseRow.querySelector('span[aria-label="No"]');
+      assert.ok(falseCell, "expected the false cell's own – glyph span to carry a real 'No' aria-label, not just the bare glyph");
+      assert.equal(falseCell!.textContent, "–", "the labeled span must still be the real – glyph, not some other element");
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+});
+
+/**
  * New in this round: the toolbar's real record count (visibleRecords.length
  * vs records.length -- both already computed, neither ever shown) had no
  * way to tell a user how many records actually matched a search versus how

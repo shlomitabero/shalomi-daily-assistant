@@ -5023,6 +5023,86 @@ test("the exported EntityView's board cards get the same Print row action the ta
 });
 
 /**
+ * New in this round: a boolean field's table cell in the exported app
+ * rendered as a bare ✓ or – glyph with no aria-label -- unlike every
+ * other field type the generated Cell renders (an enum's real label text,
+ * a formatted date/number, a relation's resolved label), this glyph IS
+ * the cell's only content, so a screen reader got nothing from it at all.
+ * Confirms both the true and false cells now carry a real aria-label.
+ * Hardcoded English (matching this generated app's own all-English
+ * convention elsewhere -- confirmed no other string in this generator
+ * function varies by project language).
+ */
+test("the exported EntityView's boolean table cells carry a real aria-label, not just a bare glyph with no accessible text", async () => {
+  const customerProject: Project = {
+    ...project,
+    spec: {
+      ...project.spec,
+      entities: [
+        {
+          name: "Customer",
+          fields: [
+            { name: "name", type: "text", required: true },
+            { name: "vip", type: "boolean", required: false },
+          ],
+        },
+      ],
+    },
+  };
+  const files = generateExportFiles(customerProject);
+  const dir = writeGeneratedWebComponent(files);
+  const store = [
+    { id: 1, name: "Acme Corp", vip: true },
+    { id: 2, name: "Globex", vip: false },
+  ];
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = (async (input: string): Promise<Response> => {
+    if (input === "/api/Customer") {
+      return new Response(JSON.stringify({ records: store }), { status: 200, headers: { "content-type": "application/json" } });
+    }
+    throw new Error(`unexpected request ${input}`);
+  }) as typeof fetch;
+
+  try {
+    await withRealLocalStorage(async () => {
+      const { EntityView } = await import(path.join(dir, "web", "src", "components", "EntityView.jsx"));
+      const customerEntity = customerProject.spec.entities.find((e) => e.name === "Customer")!;
+      const props = {
+        entity: customerEntity,
+        highlightRecordId: null,
+        onHighlightHandled: () => {},
+        onJumpToRecord: () => {},
+        onRecordCountChange: () => {},
+      };
+
+      const { container } = render(React.createElement(EntityView, props));
+      for (let i = 0; i < 40; i++) {
+        if (container.querySelectorAll("tbody tr").length === 2) break;
+        await act(async () => {
+          await new Promise((resolve) => setTimeout(resolve, 0));
+        });
+      }
+      assert.equal(container.querySelectorAll("tbody tr").length, 2, "expected both records to have loaded");
+
+      const trueRow = Array.from(container.querySelectorAll("tbody tr")).find((r) => /Acme Corp/.test(r.textContent ?? ""))!;
+      const falseRow = Array.from(container.querySelectorAll("tbody tr")).find((r) => /Globex/.test(r.textContent ?? ""))!;
+
+      const trueCell = trueRow.querySelector(".bool-yes");
+      assert.ok(trueCell, "expected the true cell's own ✓ glyph span to render");
+      assert.equal(trueCell!.getAttribute("aria-label"), "Yes", "a true boolean cell must carry a real 'Yes' aria-label, not just the bare glyph");
+
+      const falseCell = falseRow.querySelector('span[aria-label="No"]');
+      assert.ok(falseCell, "expected the false cell's own – glyph span to carry a real 'No' aria-label, not just the bare glyph");
+      assert.equal(falseCell!.textContent, "–", "the labeled span must still be the real – glyph, not some other element");
+    });
+  } finally {
+    globalThis.fetch = originalFetch;
+    cleanup();
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+/**
  * New in this round: porting the live preview's own "d" shortcut
  * (duplicate the focused row) to the exported app's EntityView.jsx.
  * j/k/Enter/x/Delete above let a keyboard-only user navigate, open,

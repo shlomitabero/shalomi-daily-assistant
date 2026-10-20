@@ -217,7 +217,20 @@ function Cell({
     return <>{label}</>;
   }
   if (field.type === "boolean") {
-    return value ? <span className="bool-yes">✓</span> : <span className="muted">–</span>;
+    // Every other field type here renders its real value as text a screen
+    // reader can announce (an enum's label, a formatted date/number, a
+    // relation's resolved label) -- this glyph IS the cell's only content,
+    // unlike the decorative icons elsewhere in this app (e.g. the pencil
+    // next to CheckpointLabelEditor's own text) that correctly use
+    // aria-hidden because real text already sits beside them. Without an
+    // aria-label, a boolean column conveyed nothing at all to a non-visual
+    // user. Reuses the same "Yes"/"No" strings the group-by dropdown and
+    // column header already translate this value to.
+    return value ? (
+      <span className="bool-yes" aria-label={t("entity.groupBy.yes")}>✓</span>
+    ) : (
+      <span className="muted" aria-label={t("entity.groupBy.no")}>–</span>
+    );
   }
   if (field.type === "enum") {
     const label = field.enumLabels?.[String(value)] ?? String(value);
