@@ -1,6 +1,9 @@
 import type { Entity, EntityRecord, Field } from "@forge/shared";
-import { parseFileFieldValue, relationDisplayLabel, type RelatedRecordsByEntity } from "./entityFormatting.js";
+import { parseFieldDate, parseFileFieldValue, relationDisplayLabel, type RelatedRecordsByEntity } from "./entityFormatting.js";
 import { safeDownloadName } from "./api.js";
+import type { Lang } from "./i18n/language.js";
+
+const LOCALE: Record<Lang, string> = { he: "he-IL", en: "en-US" };
 
 function pad2(n: number): string {
   return String(n).padStart(2, "0");
@@ -14,6 +17,24 @@ function formatIcsDate(date: Date): string {
 /** UTC "when this file was generated" timestamp (YYYYMMDDTHHMMSSZ) -- not a record's own date, which DTSTART already carries. */
 function formatIcsTimestamp(date: Date): string {
   return `${date.getUTCFullYear()}${pad2(date.getUTCMonth() + 1)}${pad2(date.getUTCDate())}T${pad2(date.getUTCHours())}${pad2(date.getUTCMinutes())}${pad2(date.getUTCSeconds())}Z`;
+}
+
+/**
+ * Mirrors apps/api/src/automations.ts's own interpolateTemplate branches
+ * for these two types -- see this file's own call-site comment above for
+ * why the CSV-export rationale for leaving date/number raw doesn't apply
+ * to a one-way .ics export. Falls back to the raw stored value when it
+ * isn't a parseable date, the same "never show nothing" behavior
+ * interpolateTemplate itself uses.
+ */
+function formatIcsDescriptionDate(value: unknown, lang: Lang): unknown {
+  if (typeof value !== "string") return value;
+  const date = parseFieldDate(value);
+  return Number.isNaN(date.getTime()) ? value : date.toLocaleDateString(LOCALE[lang]);
+}
+
+function formatIcsDescriptionNumber(value: unknown, lang: Lang): unknown {
+  return typeof value === "number" ? value.toLocaleString(LOCALE[lang]) : value;
 }
 
 /** RFC 5545 §3.3.11 TEXT escaping: backslash, semicolon, comma, and newline must be backslash-escaped, or a real calendar app's parser can misread the field boundary or drop the value outright. */
@@ -110,6 +131,7 @@ export function buildCalendarIcs(
   now: Date = new Date(),
   endField?: Field | null,
   orderedFields: Field[] = entity.fields,
+  lang: Lang = "en",
 ): string {
   const dtstamp = formatIcsTimestamp(now);
   const descriptionFields = orderedFields.filter(
@@ -187,6 +209,18 @@ export function buildCalendarIcs(
         // this app uses everywhere else a boolean becomes display text
         // (fieldDisplayValue/CSV export, interpolateTemplate/automation
         // messages, twin.ts's enum-distribution insight).
+        // "date"/"number" are locale-formatted the same way apps/api/src/
+        // automations.ts's own interpolateTemplate already does for a
+        // WhatsApp message referencing the same field -- that function's
+        // own doc comment explains why: fieldDisplayValue (CSV export)
+        // deliberately leaves these two raw ONLY so a CSV round-trips
+        // exactly through buildImportRecords' re-parse; this .ics export
+        // is never re-imported by this app either, exactly like a
+        // WhatsApp message, so the CSV rationale for leaving them raw
+        // doesn't apply here -- without this, a number field like
+        // "budget" exported "50000" into a real calendar app's event
+        // description instead of this same field's own on-screen
+        // "50,000" (formatNumberValue) or WhatsApp-message formatting.
         const value =
           f.type === "relation"
             ? relationDisplayLabel(f, record[f.name], allEntities, relatedRecords)
@@ -196,7 +230,11 @@ export function buildCalendarIcs(
                 ? parseFileFieldValue(record[f.name])?.name ?? null
                 : f.type === "boolean"
                   ? (record[f.name] ? "TRUE" : "FALSE")
-                  : record[f.name];
+                  : f.type === "date"
+                    ? formatIcsDescriptionDate(record[f.name], lang)
+                    : f.type === "number"
+                      ? formatIcsDescriptionNumber(record[f.name], lang)
+                      : record[f.name];
         if (value === null || value === undefined || value === "") return null;
         const fieldLabel = f.label ?? f.name;
         const ambiguous = (descriptionLabelOccurrences.get(fieldLabel) ?? 0) > 1;

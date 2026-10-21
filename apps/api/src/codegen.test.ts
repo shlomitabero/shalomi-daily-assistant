@@ -2910,17 +2910,33 @@ test("the exported EntityView's real generated buildCalendarIcs disambiguates tw
   const escSrc = entityViewJsx.match(/function icsEscapeText\(value\) \{[\s\S]*?\n\}\n/)?.[0];
   const utf8LenSrc = entityViewJsx.match(/function utf8ByteLength\(s\) \{[\s\S]*?\n\}\n/)?.[0];
   const foldSrc = entityViewJsx.match(/function foldIcsLine\(line\) \{[\s\S]*?\n\}\n/)?.[0];
+  const calendarDateFormatSrc = entityViewJsx.match(/const CALENDAR_DATE_FORMAT = .*;\n/)?.[0];
+  const parseFieldDateSrc = entityViewJsx.match(/function parseFieldDate\(raw\) \{[\s\S]*?\n\}\n/)?.[0];
+  const descDateSrc = entityViewJsx.match(/function formatIcsDescriptionDate\(value\) \{[\s\S]*?\n\}\n/)?.[0];
+  const descNumberSrc = entityViewJsx.match(/function formatIcsDescriptionNumber\(value\) \{[\s\S]*?\n\}\n/)?.[0];
   const buildSrc = entityViewJsx.match(
     /function buildCalendarIcs\(entity, dateField, labelField, records, relatedRecords, now, endField, orderedFields = entity\.fields\) \{[\s\S]*?\n\}\n/,
   )?.[0];
   assert.ok(
-    pickDisplaySrc && labelFieldSrc && pad2Src && dateSrc && tsSrc && escSrc && utf8LenSrc && foldSrc && buildSrc,
-    "expected to find every ICS helper function in the real generated output",
+    pickDisplaySrc &&
+      labelFieldSrc &&
+      pad2Src &&
+      dateSrc &&
+      tsSrc &&
+      escSrc &&
+      utf8LenSrc &&
+      foldSrc &&
+      calendarDateFormatSrc &&
+      parseFieldDateSrc &&
+      descDateSrc &&
+      descNumberSrc &&
+      buildSrc,
+    "expected to find every ICS helper function (including the date/number formatters) in the real generated output",
   );
 
   const relationStub = "function relationDisplayLabel() { return ''; }\n";
   const buildCalendarIcs = new Function(
-    `${pickDisplaySrc}\n${labelFieldSrc}\n${pad2Src}\n${dateSrc}\n${tsSrc}\n${escSrc}\n${utf8LenSrc}\n${foldSrc}\n${relationStub}\n${buildSrc}\nreturn buildCalendarIcs;`,
+    `${pickDisplaySrc}\n${labelFieldSrc}\n${pad2Src}\n${dateSrc}\n${tsSrc}\n${escSrc}\n${utf8LenSrc}\n${foldSrc}\n${calendarDateFormatSrc}\n${parseFieldDateSrc}\n${descDateSrc}\n${descNumberSrc}\n${relationStub}\n${buildSrc}\nreturn buildCalendarIcs;`,
   )() as (entity: unknown, dateField: unknown, labelField: unknown, records: unknown[], relatedRecords: unknown, now: Date) => string;
 
   const entity = {
@@ -3291,6 +3307,88 @@ test("the exported EntityView's real generated buildCalendarIcs renders a boolea
 
   assert.match(ics, /מאושר: TRUE/, "a true boolean field must render uppercase TRUE, not JS's own lowercase \"true\"");
   assert.match(ics, /מאושר: FALSE/, "a false boolean field must still produce a description line, rendering uppercase FALSE, not JS's own lowercase \"false\"");
+});
+
+/**
+ * Round 763: mirrors the live preview's own fix -- a number/date field in
+ * DESCRIPTION fell through to the raw stored value in the exported app's
+ * own buildCalendarIcs too, the same byte-for-byte duplicated gap. Uses
+ * this file's own bare toLocaleDateString()/toLocaleString() convention
+ * (no explicit locale, since the exported app has no language-switching
+ * mechanism, unlike the live preview's calendarIcs.ts).
+ */
+test("the exported EntityView's real generated buildCalendarIcs locale-formats a number/date field in DESCRIPTION, not the raw stored value", () => {
+  const withProject: Project = {
+    ...project,
+    spec: {
+      ...project.spec,
+      entities: [
+        ...project.spec.entities,
+        {
+          name: "Project",
+          label: "פרויקט",
+          fields: [
+            { name: "customerName", label: "שם לקוח", type: "text", required: true },
+            { name: "date", label: "תאריך", type: "date", required: true },
+            { name: "budget", label: "תקציב", type: "number", required: false },
+            { name: "deadline", label: "מועד", type: "date", required: false },
+          ],
+        },
+      ],
+    },
+  };
+  const entityViewJsx = generateExportFiles(withProject).find((f) => f.path === "web/src/components/EntityView.jsx")!.content;
+
+  const pickDisplaySrc = entityViewJsx.match(/export function pickDisplayField\(entity\) \{[\s\S]*?\n\}\n/)?.[0]?.replace(/^export /, "");
+  const labelFieldSrc = entityViewJsx.match(/function calendarLabelField\(entity, dateField\) \{[\s\S]*?\n\}\n/)?.[0];
+  const pad2Src = entityViewJsx.match(/function icsPad2\(n\) \{[\s\S]*?\n\}\n/)?.[0];
+  const dateSrc = entityViewJsx.match(/function formatIcsDate\(date\) \{[\s\S]*?\n\}\n/)?.[0];
+  const tsSrc = entityViewJsx.match(/function formatIcsTimestamp\(date\) \{[\s\S]*?\n\}\n/)?.[0];
+  const escSrc = entityViewJsx.match(/function icsEscapeText\(value\) \{[\s\S]*?\n\}\n/)?.[0];
+  const utf8LenSrc = entityViewJsx.match(/function utf8ByteLength\(s\) \{[\s\S]*?\n\}\n/)?.[0];
+  const foldSrc = entityViewJsx.match(/function foldIcsLine\(line\) \{[\s\S]*?\n\}\n/)?.[0];
+  const calendarDateFormatSrc = entityViewJsx.match(/const CALENDAR_DATE_FORMAT = .*;\n/)?.[0];
+  const parseFieldDateSrc = entityViewJsx.match(/function parseFieldDate\(raw\) \{[\s\S]*?\n\}\n/)?.[0];
+  const descDateSrc = entityViewJsx.match(/function formatIcsDescriptionDate\(value\) \{[\s\S]*?\n\}\n/)?.[0];
+  const descNumberSrc = entityViewJsx.match(/function formatIcsDescriptionNumber\(value\) \{[\s\S]*?\n\}\n/)?.[0];
+  const buildSrc = entityViewJsx.match(
+    /function buildCalendarIcs\(entity, dateField, labelField, records, relatedRecords, now, endField, orderedFields = entity\.fields\) \{[\s\S]*?\n\}\n/,
+  )?.[0];
+  assert.ok(
+    pickDisplaySrc &&
+      labelFieldSrc &&
+      pad2Src &&
+      dateSrc &&
+      tsSrc &&
+      escSrc &&
+      utf8LenSrc &&
+      foldSrc &&
+      calendarDateFormatSrc &&
+      parseFieldDateSrc &&
+      descDateSrc &&
+      descNumberSrc &&
+      buildSrc,
+    "expected to find every ICS helper function (including the new date/number formatters) in the real generated output",
+  );
+
+  const relationStub = "function relationDisplayLabel() { return ''; }\n";
+  const buildCalendarIcs = new Function(
+    `${pickDisplaySrc}\n${labelFieldSrc}\n${pad2Src}\n${dateSrc}\n${tsSrc}\n${escSrc}\n${utf8LenSrc}\n${foldSrc}\n${calendarDateFormatSrc}\n${parseFieldDateSrc}\n${descDateSrc}\n${descNumberSrc}\n${relationStub}\n${buildSrc}\nreturn buildCalendarIcs;`,
+  )() as (entity: unknown, dateField: unknown, labelField: unknown, records: unknown[], relatedRecords: unknown, now: Date) => string;
+
+  const entity = withProject.spec.entities.find((e) => e.name === "Project")!;
+  const dateField = entity.fields.find((f) => f.name === "date")!;
+  const labelField = entity.fields.find((f) => f.name === "customerName")!;
+  const records = [{ id: 7, customerName: "Dana Levi", date: "2026-03-15", budget: 50000, deadline: "2026-04-01" }];
+
+  const ics = buildCalendarIcs(entity, dateField, labelField, records, {}, new Date("2026-01-01T00:00:00Z"));
+
+  assert.match(
+    ics,
+    /תקציב: 50\\,000/,
+    "a number field must render locale-formatted with a thousands separator (escaped per RFC 5545's own comma rule), not the raw \"50000\"",
+  );
+  assert.match(ics, /מועד: \d{1,2}\/\d{1,2}\/2026/, "a date field (other than the primary one) must render locale-formatted, not the raw \"2026-04-01\"");
 });
 
 /**

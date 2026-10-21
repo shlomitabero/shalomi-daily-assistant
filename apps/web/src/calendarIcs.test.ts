@@ -260,6 +260,34 @@ test("buildCalendarIcs renders a boolean field in DESCRIPTION as uppercase TRUE/
 });
 
 /**
+ * Round 763: a number/date field in DESCRIPTION fell through to the raw
+ * stored value -- unlike relation/enum/file/boolean, each already given
+ * their own branch in an earlier round. apps/api/src/automations.ts's own
+ * interpolateTemplate locale-formats these same two types for a WhatsApp
+ * message referencing the same field, explicitly reasoning that the CSV-
+ * export rationale for leaving them raw (an exact round-trip through
+ * buildImportRecords' re-parse) doesn't apply to a one-way export -- this
+ * .ics export is exactly as one-way, so it now follows the same
+ * convention, using the real `lang` passed through from the caller.
+ */
+test("buildCalendarIcs locale-formats a number/date field in DESCRIPTION, not the raw stored value", () => {
+  const budgetField: Field = { name: "budget", label: "תקציב", type: "number", required: false };
+  const deadlineField: Field = { name: "deadline", label: "מועד", type: "date", required: false };
+  const projectEntity: Entity = { name: "Project", label: "פרויקט", fields: [dateField, nameField, budgetField, deadlineField] };
+  const records: EntityRecord[] = [
+    { id: 1, appointmentDate: "2026-03-15", customerName: "Dana Levi", budget: 50000, deadline: "2026-04-01" },
+  ];
+  const ics = buildCalendarIcs(projectEntity, dateField, nameField, records, [], {}, new Date(), null, projectEntity.fields, "he");
+  const events = parseEvents(ics);
+  assert.match(
+    events[0]!,
+    /תקציב: 50\\,000/,
+    "a number field must render locale-formatted with a thousands separator (escaped per RFC 5545's own comma rule), not the raw \"50000\"",
+  );
+  assert.match(events[0]!, /מועד: 1\.4\.2026/, "a date field (other than the primary one) must render locale-formatted, not the raw \"2026-04-01\"");
+});
+
+/**
  * Same gap, other affected line: SUMMARY uses whatever field
  * calendarChipLabelField picked as the label field, which falls back to
  * the entity's first non-date field when no text/name field exists --

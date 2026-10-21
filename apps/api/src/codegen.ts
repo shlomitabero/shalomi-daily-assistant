@@ -2620,6 +2620,21 @@ function foldIcsLine(line) {
   return parts.join("\\r\\n ");
 }
 
+// Mirrors this file's own EntityView table cells (bare toLocaleDateString()/
+// toLocaleString(), no explicit locale -- this exported app has no
+// language-switching mechanism of its own). Falls back to the raw stored
+// value when it isn't a parseable date, the same "never show nothing"
+// behavior this file's own fieldDisplayValue uses.
+function formatIcsDescriptionDate(value) {
+  if (typeof value !== "string") return value;
+  const date = parseFieldDate(value);
+  return Number.isNaN(date.getTime()) ? value : date.toLocaleDateString();
+}
+
+function formatIcsDescriptionNumber(value) {
+  return typeof value === "number" ? value.toLocaleString() : value;
+}
+
 // Builds a real RFC 5545 .ics calendar, one all-day VEVENT per record --
 // every field other than the date/label fields becomes a "Label: value"
 // line in DESCRIPTION, and a relation field resolves to its real display
@@ -2678,7 +2693,17 @@ function buildCalendarIcs(entity, dateField, labelField, records, relatedRecords
         // the uppercase "TRUE"/"FALSE" this file's own fieldDisplayValue
         // (CSV export) already uses for the exact same field type. Mirrors
         // the live preview's own calendarIcs.ts (round 747).
-        const value = f.type === "relation" ? relationDisplayLabel(f, record[f.name], relatedRecords) : f.type === "enum" ? ((f.enumLabels && f.enumLabels[record[f.name]]) || record[f.name]) : f.type === "file" ? parseFileFieldValue(record[f.name])?.name || null : f.type === "boolean" ? (record[f.name] ? "TRUE" : "FALSE") : record[f.name];
+        // "date"/"number" are locale-formatted the same way this file's
+        // own EntityView table cells already render them (bare
+        // toLocaleDateString()/toLocaleString(), no explicit locale --
+        // this exported app has no language-switching mechanism of its
+        // own, unlike the live preview's calendarIcs.ts, which threads a
+        // real lang argument). Mirrors the live preview's own round-763
+        // fix: fieldDisplayValue (CSV export) deliberately leaves these
+        // two raw only so a CSV round-trips exactly through
+        // buildImportRecords' re-parse, which doesn't apply to this
+        // one-way .ics export.
+        const value = f.type === "relation" ? relationDisplayLabel(f, record[f.name], relatedRecords) : f.type === "enum" ? ((f.enumLabels && f.enumLabels[record[f.name]]) || record[f.name]) : f.type === "file" ? parseFileFieldValue(record[f.name])?.name || null : f.type === "boolean" ? (record[f.name] ? "TRUE" : "FALSE") : f.type === "date" ? formatIcsDescriptionDate(record[f.name]) : f.type === "number" ? formatIcsDescriptionNumber(record[f.name]) : record[f.name];
         if (value === null || value === undefined || value === "") return null;
         const fieldLabel = f.label || f.name;
         const ambiguous = (descriptionLabelOccurrences[fieldLabel] || 0) > 1;
