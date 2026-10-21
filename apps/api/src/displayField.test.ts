@@ -26,6 +26,39 @@ test("pickDisplayField falls back to the first text field when there's no name/t
   assert.equal(pickDisplayField(entity)?.name, "notes");
 });
 
+/**
+ * Round 762 regression test: a plain "text" field and a "longtext" field
+ * are treated as the same free-text kind everywhere else in this codebase
+ * (AutomationsPanel.tsx's phoneFields, pipeline.ts's seed-value check,
+ * validateAutomationToField, migrate.ts's type_changed branch) -- but
+ * pickDisplayField's "first text field" step only ever checked "text",
+ * never "longtext". An entity like a feedback form with no name/title/
+ * text field, only a longtext "message" and a number "rating", would
+ * otherwise skip past "message" and land on "rating" as the display
+ * field, labeling every record by its numeric rating.
+ */
+test("pickDisplayField falls back to the first longtext field when there's no name/title/text field", () => {
+  const entity: Entity = {
+    name: "Feedback",
+    fields: [
+      { name: "rating", type: "number", required: true },
+      { name: "message", type: "longtext", required: false },
+    ],
+  };
+  assert.equal(pickDisplayField(entity)?.name, "message");
+});
+
+test("pickDisplayField prefers a real text field over a longtext field, even when the longtext field is declared first", () => {
+  const entity: Entity = {
+    name: "Feedback",
+    fields: [
+      { name: "message", type: "longtext", required: false },
+      { name: "summary", type: "text", required: false },
+    ],
+  };
+  assert.equal(pickDisplayField(entity)?.name, "summary");
+});
+
 test("pickDisplayField falls back to the entity's first field of any type as a last resort", () => {
   const entity: Entity = {
     name: "Metric",

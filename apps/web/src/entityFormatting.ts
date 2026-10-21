@@ -950,11 +950,23 @@ const DISPLAY_FIELD_NAME_HINTS = ["name", "title"];
  * text field either, and without this exclusion recordDisplayLabel would
  * String() the file's raw JSON upload descriptor ({url,name,size,
  * mimeType}) as this record's own label.
+ *
+ * Round 762: the "first text field" step also tries `longtext` as a
+ * second choice (never a tiebreak over a real `text` field -- a plain
+ * `text` field found anywhere still wins, matching every other "free-
+ * text field" convention in this codebase: AutomationsPanel.tsx's
+ * phoneFields, pipeline.ts's seed-value check, validateAutomationToField,
+ * migrate.ts's type_changed branch -- all treat text/longtext as the same
+ * free-text kind). An entity like `Feedback { message: longtext, rating:
+ * number, submittedDate: date }` has no name/title/text field, and without
+ * this, the last-resort step below would land on `rating` (a plain
+ * number) instead of `message` -- labeling every record by its numeric
+ * rating instead of its actual feedback text.
  */
 export function pickDisplayField(entity: Entity): Field | null {
   const named = entity.fields.find((f) => DISPLAY_FIELD_NAME_HINTS.includes(f.name.toLowerCase()));
   if (named) return named;
-  const firstText = entity.fields.find((f) => f.type === "text");
+  const firstText = entity.fields.find((f) => f.type === "text") ?? entity.fields.find((f) => f.type === "longtext");
   if (firstText) return firstText;
   const firstDisplayable = entity.fields.find((f) => f.type !== "relation" && f.type !== "file");
   return firstDisplayable ?? entity.fields[0] ?? null;

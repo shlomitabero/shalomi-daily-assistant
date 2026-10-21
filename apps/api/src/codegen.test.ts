@@ -2535,6 +2535,49 @@ test("the exported EntityView's recordDisplayLabel resolves an enum display fiel
   );
 });
 
+/**
+ * Round 762: mirrors the live preview's own fix -- pickDisplayField's
+ * "first text field" step only ever checked "text", never "longtext",
+ * even though the two are the same free-text kind everywhere else in
+ * this codebase. An entity like a feedback form with no name/title/text
+ * field, only a longtext "message" and a number "rating", would
+ * otherwise skip past "message" and land on "rating" as the display
+ * field.
+ */
+test("the exported EntityView's pickDisplayField falls back to the first longtext field, but still prefers a real text field over it", () => {
+  const files = generateExportFiles(project);
+  const entityViewJsx = files.find((f) => f.path === "web/src/components/EntityView.jsx")!.content;
+
+  const displayFieldHintsSrc = entityViewJsx.match(/const DISPLAY_FIELD_NAME_HINTS = .*;\n/)?.[0];
+  const pickDisplayFieldSrc = entityViewJsx.match(/export function pickDisplayField\([\s\S]*?\n\}\n/)?.[0]?.replace("export ", "");
+  assert.ok(displayFieldHintsSrc && pickDisplayFieldSrc, "expected to find DISPLAY_FIELD_NAME_HINTS/pickDisplayField in generated output");
+
+  const pickDisplayField = new Function(`${displayFieldHintsSrc}\n${pickDisplayFieldSrc}\nreturn pickDisplayField;`)() as (entity: unknown) => { name: string } | null;
+
+  assert.equal(
+    pickDisplayField({
+      name: "Feedback",
+      fields: [
+        { name: "rating", type: "number" },
+        { name: "message", type: "longtext" },
+      ],
+    })?.name,
+    "message",
+    "with no name/title/text field, the longtext field (message) must win over the number field (rating)",
+  );
+  assert.equal(
+    pickDisplayField({
+      name: "Feedback",
+      fields: [
+        { name: "message", type: "longtext" },
+        { name: "summary", type: "text" },
+      ],
+    })?.name,
+    "summary",
+    "a real text field must still win over a longtext field, even when the longtext field is declared first",
+  );
+});
+
 test("the exported CalendarView picks its day-chip label via pickDisplayField, not just whichever field happens to come first after the date field", () => {
   // Mirrors the live-preview fix in apps/web/src/entityFormatting.ts
   // (calendarChipLabelField): every built-in domain entity happens to
@@ -8619,6 +8662,43 @@ test("the exported server.js's own backupPickDisplayField skips a file field in 
     })?.name,
     "grade",
     "with no name/title/text field, the enum field (grade) must win over both the relation (studentId) and the file field (certificate)",
+  );
+});
+
+/**
+ * Round 762: mirrors the live preview's own fix -- backupPickDisplayField's
+ * "first text field" step only ever checked "text", never "longtext",
+ * even though the two are the same free-text kind everywhere else in
+ * this codebase.
+ */
+test("the exported server.js's own backupPickDisplayField falls back to the first longtext field, but still prefers a real text field over it", () => {
+  const serverJs = generateExportFiles(project).find((f) => f.path === "server.js")!.content;
+  const backupPickDisplayFieldSrc = serverJs.match(/const BACKUP_DISPLAY_FIELD_HINTS[\s\S]*?\nfunction backupPickDisplayField\(entity\) \{[\s\S]*?\n\}\n/)?.[0];
+  assert.ok(backupPickDisplayFieldSrc, "expected to find BACKUP_DISPLAY_FIELD_HINTS/backupPickDisplayField in generated server.js");
+
+  const backupPickDisplayField = new Function(`${backupPickDisplayFieldSrc}\nreturn backupPickDisplayField;`)() as (entity: unknown) => { name: string } | null;
+
+  assert.equal(
+    backupPickDisplayField({
+      name: "Feedback",
+      fields: [
+        { name: "rating", type: "number" },
+        { name: "message", type: "longtext" },
+      ],
+    })?.name,
+    "message",
+    "with no name/title/text field, the longtext field (message) must win over the number field (rating)",
+  );
+  assert.equal(
+    backupPickDisplayField({
+      name: "Feedback",
+      fields: [
+        { name: "message", type: "longtext" },
+        { name: "summary", type: "text" },
+      ],
+    })?.name,
+    "summary",
+    "a real text field must still win over a longtext field, even when the longtext field is declared first",
   );
 });
 

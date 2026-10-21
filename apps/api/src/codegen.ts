@@ -665,12 +665,15 @@ function backupFileFieldDisplayName(value) {
 // *related* record's own raw internal id as this record's own label.
 // Round 749: also skips "file" for the same reason -- would otherwise
 // String() a file field's raw JSON upload descriptor as this record's
-// own label.
+// own label. Round 762: the "first text field" step also tries
+// "longtext" as a second choice (never a tiebreak over a real "text"
+// field), the same free-text-kind convention this codebase's other
+// text/longtext checks already follow.
 const BACKUP_DISPLAY_FIELD_HINTS = ["name", "title"];
 function backupPickDisplayField(entity) {
   const named = entity.fields.find((f) => BACKUP_DISPLAY_FIELD_HINTS.includes(f.name.toLowerCase()));
   if (named) return named;
-  const firstText = entity.fields.find((f) => f.type === "text");
+  const firstText = entity.fields.find((f) => f.type === "text") || entity.fields.find((f) => f.type === "longtext");
   if (firstText) return firstText;
   const firstDisplayable = entity.fields.find((f) => f.type !== "relation" && f.type !== "file");
   return firstDisplayable || entity.fields[0] || null;
@@ -1469,12 +1472,16 @@ function isValidDate(value) {
 // centric join entity with no name/title/text field either would
 // otherwise String() a file field's raw JSON upload descriptor
 // ({url,name,size,mimeType}) as this record's own label.
+// Round 762: the "first text field" step also tries "longtext" as a
+// second choice (never a tiebreak over a real "text" field), the same
+// free-text-kind convention this codebase's other text/longtext checks
+// already follow.
 const DISPLAY_FIELD_NAME_HINTS = ["name", "title"];
 export function pickDisplayField(entity) {
   if (!entity || !entity.fields || entity.fields.length === 0) return null;
   const named = entity.fields.find((f) => DISPLAY_FIELD_NAME_HINTS.includes(f.name.toLowerCase()));
   if (named) return named;
-  const firstText = entity.fields.find((f) => f.type === "text");
+  const firstText = entity.fields.find((f) => f.type === "text") || entity.fields.find((f) => f.type === "longtext");
   if (firstText) return firstText;
   const firstDisplayable = entity.fields.find((f) => f.type !== "relation" && f.type !== "file");
   return firstDisplayable || entity.fields[0];

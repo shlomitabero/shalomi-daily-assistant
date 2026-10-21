@@ -1214,6 +1214,35 @@ test("pickDisplayField falls back to the first text field, then the first field 
 });
 
 /**
+ * Round 762 regression test: mirrors apps/api/src/displayField.ts's own
+ * identical fix -- a plain "text" field and a "longtext" field are the
+ * same free-text kind everywhere else in this codebase (AutomationsPanel.
+ * tsx's phoneFields, pipeline.ts's seed-value check, migrate.ts's
+ * type_changed branch), but pickDisplayField's "first text field" step
+ * only ever checked "text", never "longtext". An entity like a feedback
+ * form with no name/title/text field, only a longtext "message" and a
+ * number "rating", would otherwise skip past "message" and land on
+ * "rating" as the display field.
+ */
+test("pickDisplayField falls back to the first longtext field when there's no name/title/text field, but still prefers a real text field over it", () => {
+  const feedback: Field[] = [
+    { name: "rating", type: "number", required: true },
+    { name: "message", type: "longtext", required: false },
+  ];
+  assert.equal(pickDisplayField({ name: "Feedback", fields: feedback })?.name, "message");
+
+  const bothTextKinds: Field[] = [
+    { name: "message", type: "longtext", required: false },
+    { name: "summary", type: "text", required: false },
+  ];
+  assert.equal(
+    pickDisplayField({ name: "Feedback", fields: bothTextKinds })?.name,
+    "summary",
+    "a real text field must still win over a longtext field, even when the longtext field is declared first",
+  );
+});
+
+/**
  * A join/line-item entity (e.g. an Enrollment linking a Student to a
  * Course) can legitimately have no name/title/text field at all --
  * EntitySchema only requires at least one field, nothing requires a text
