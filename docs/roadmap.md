@@ -30813,3 +30813,32 @@ Still no genuine reply from שלומי. Round 764's own survey had flagged this 
 **Verification**: one regression-proof cycle -- reverting the condition back to the original `leadingZeros === 1` only (a real, targeted edit, not a blanket gate) reproduced the exact predicted failure (`result.ok` was `true` instead of `false`) before being restored clean. Re-ran all 7 `sendMessage` tests in the file afterward -- all clean, confirming no regression to the 0/1/2-leading-zero or cross-country cases. Only `apps/api` changed this round, so its own full suite ran: 531/532 (the sole failure being the same, now-fourteenth-confirmed-unrelated `codegen.test.ts` exit-hang flake). `npm run build` clean.
 
 **Status**: shipped and pushed.
+
+### Round 766: CSV import let a relation cell's "#<id>" shorthand override a genuine resolved display-label match
+
+Still no genuine reply from שלומי. This round's survey was steered away from every area closed in rounds 745-765 (webhook SSRF, pickDisplayField/recordDisplayLabel family, AutomationsPanel field-value formatting, calendarIcs locale formatting, entity-tab ordering, WhatsApp leading zeros, upload XSS, CSV-apostrophe escaping) and landed on CSV import's relation-cell resolution logic -- a genuinely different feature area, and a resolution-priority bug rather than another display-formatting duplication.
+
+**The gap**: `buildImportRecords` (`apps/web/src/entityFormatting.ts` lines ~1471-1498, and its hand-duplicated copy for the exported standalone app in `apps/api/src/codegen.ts` lines ~2241-2269) checked a relation cell's "#<id>" shorthand *before* trying a real display-label match:
+
+```js
+const hashMatch = raw.match(/^#(\d+)$/);
+if (hashMatch) {
+  record[field.name] = Number(hashMatch[1]);   // accepted unconditionally
+  continue;
+}
+const matches = targetRecords.filter((r) => recordDisplayLabel(targetEntity, r).toLowerCase() === raw.toLowerCase());
+```
+
+`recordDisplayLabel` (entityFormatting.ts lines 988-994) returns `#<id>` as a fallback *only* when a record has no usable display value -- but nothing stops a record's real display field (its name/title/first-text field) from genuinely containing text like "#5" (a plausible SKU, ticket, or room-number convention). When it does, `recordDisplayLabel` returns that literal text as an ordinary, resolved label, and exporting that relation cell to CSV renders it correctly. Re-importing that same file unchanged hit the hashMatch branch first and silently set the field to id 5 -- whichever record that happens to be -- instead of resolving "#5" to the record whose real label actually is "#5". Concretely: `Product` has id=5 "Office Chair" and id=42 "#5" (a legitimately-named record); a `Deal.product` relation cell exported as "#5" (id 42's real label) re-imports as id 5 ("Office Chair") with zero error reported. Separately, the legitimate shorthand path (`raw` genuinely meaning an id reference, when no real label can be resolved at all) never checked that the referenced id exists in `targetRecords` either -- a typo in the exact "#<id>" form the ambiguous-match error message itself tells users to use fell through to a generic FK-violation error at the per-record write step instead of a clear, immediate row error.
+
+**Why this is not deliberate**: `recordDisplayLabel`'s own doc comment describes "#<id>" purely as what it renders "when the entity has no usable field or the display field is empty on this particular record" -- a fallback for the *absence* of a real label, not a reserved syntax a real label can never collide with. Nothing in the schema, the UI, or either function's reasoning excludes a text field from holding "#<digits>" as genuine data. The existing test at `entityFormatting.test.ts` line ~1801 only ever exercised the *intended* fallback case (no real label resolves at all); no test covered a record whose *real* label happens to equal the shorthand pattern, and no test covered a shorthand id that doesn't exist -- both read as genuinely unconsidered gaps, not design choices.
+
+**The fix**: in both files, try the real display-label match first; only fall back to the "#<id>" shorthand when zero records' resolved labels match the raw cell, and even then only accept it once the referenced id is confirmed to exist among `targetRecords` (otherwise it now reports the same "doesn't match any ... record" row error every other unresolvable cell already gets, instead of silently writing a dangling reference).
+
+**codegen.ts parity**: needed and done -- `buildImportRecords`'s relation branch is duplicated verbatim (JS-string form) in `codegen.ts` for the exported standalone app's own CSV import; ported the identical priority change there.
+
+**The tests**: `entityFormatting.test.ts` -- updated the existing "#<id>" fallback test to use an id that actually exists in `relatedRecords` (its old premise, a *nonexistent* "#999", would now correctly be rejected by this round's own existence check); added a new test proving a record whose real label literally reads "#5" wins over misreading the cell as id 5; added a new test proving a "#<id>" cell naming a nonexistent id is now rejected with a row error instead of silently accepted. `codegen.test.ts` -- same three changes mirrored through the `new Function(...)` extraction/assembly convention this file's relation-import tests already use.
+
+**Verification**: reverted the live-preview fix back to its original hash-first shape (a real, targeted edit, not a blanket gate) and re-ran `entityFormatting.test.ts` -- both new tests failed with exactly the predicted wrong behavior (resolving to id 5 instead of 42, and silently accepting id 999), while all other 184 tests still passed; restored the fix and reran clean (186/186). `apps/api`'s `codegen.test.ts` full run: 100/100 individual tests pass (the file's own process-level exit-hang flake, unrelated to any test content, is the sole non-pass and already documented across many prior rounds). `apps/web`'s full suite: 1076/1076 pass (one transient failure on an unrelated test during an earlier run turned out to be a flake -- confirmed clean on immediate re-run with no code changes in between). `npm run build` (apps/api, esbuild bundle of codegen.ts's generated source) clean.
+
+**Status**: shipped and pushed.
