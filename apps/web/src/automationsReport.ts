@@ -40,7 +40,9 @@ function fieldLabel(rule: AutomationRuleView, fieldName: string | null, entities
 // including the date/number branches that mirror apps/api/src/
 // automations.ts's interpolateTemplate, so a date/number field_equals
 // rule's value shows locale-formatted in this report the same way it now
-// does in the live rule list, instead of the raw stored string.
+// does in the live rule list, instead of the raw stored string. Same for
+// boolean's uppercase "TRUE"/"FALSE" convention -- the create-form's own
+// checkbox stores the raw lowercase string "true"/"false" as fieldValue.
 function fieldValueLabel(rule: AutomationRuleView, entities: Entity[], relatedRecords: RelatedRecordsByEntity, lang: Lang): string {
   if (!rule.fieldValue) return "";
   const field = ruleEntity(rule, entities)?.fields.find((f) => f.name === rule.fieldName);
@@ -56,6 +58,7 @@ function fieldValueLabel(rule: AutomationRuleView, entities: Entity[], relatedRe
     return Number.isNaN(date.getTime()) ? rule.fieldValue : date.toLocaleDateString(LOCALE[lang]);
   }
   if (field?.type === "number") return Number(rule.fieldValue).toLocaleString(LOCALE[lang]);
+  if (field?.type === "boolean") return rule.fieldValue === "true" ? "TRUE" : "FALSE";
   return rule.fieldValue;
 }
 

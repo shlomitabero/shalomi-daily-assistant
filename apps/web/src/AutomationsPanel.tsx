@@ -428,6 +428,12 @@ export function AutomationsPanel({
   // that literal ISO string in the rule list and Copy/Download report,
   // instead of the locale-formatted date every other date display in this
   // app (table cells, this same rule's own outgoing WhatsApp message) uses.
+  // boolean mirrors interpolateTemplate's own uppercase "TRUE"/"FALSE"
+  // convention too (also used by entityFormatting.ts's fieldDisplayValue,
+  // backup.ts's CSV export, and calendarIcs.ts) -- the create-form's own
+  // checkbox stores the raw lowercase string "true"/"false" as fieldValue,
+  // which without this branch showed inconsistently lowercase here, the
+  // one display surface in the app that didn't follow this convention.
   function fieldValueLabel(rule: AutomationRuleView): string {
     if (!rule.fieldValue) return "";
     const field = ruleEntity(rule)?.fields.find((f) => f.name === rule.fieldName);
@@ -443,6 +449,7 @@ export function AutomationsPanel({
       return Number.isNaN(date.getTime()) ? rule.fieldValue : date.toLocaleDateString(LOCALE[lang]);
     }
     if (field?.type === "number") return Number(rule.fieldValue).toLocaleString(LOCALE[lang]);
+    if (field?.type === "boolean") return rule.fieldValue === "true" ? "TRUE" : "FALSE";
     return rule.fieldValue;
   }
 

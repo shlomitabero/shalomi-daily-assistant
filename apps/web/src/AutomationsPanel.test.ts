@@ -1091,6 +1091,7 @@ const dateFieldProject: Project = {
           { name: "label", label: "Label", type: "text", required: true },
           { name: "dueDate", label: "Due Date", type: "date", required: false },
           { name: "amount", label: "Amount", type: "number", required: false },
+          { name: "isUrgent", label: "Is Urgent", type: "boolean", required: false },
         ],
       },
     ],
@@ -1169,6 +1170,65 @@ test("AutomationsPanel locale-formats a date/number field_equals rule's value in
       assert.equal(typeof writtenText, "string", "clicking Copy must actually call navigator.clipboard.writeText");
       assert.match(writtenText!, /1\/15\/2024/, "the Copy report text must also locale-format the date field's value");
       assert.match(writtenText!, /1,500/, "the Copy report text must also locale-format the number field's value");
+    } finally {
+      globalThis.fetch = originalFetch;
+      delete (navigator as { clipboard?: unknown }).clipboard;
+    }
+  });
+});
+
+/**
+ * Round 760 regression test: fieldValueLabel (in both AutomationsPanel.tsx
+ * and automationsReport.ts) had no boolean branch either -- a boolean
+ * field_equals rule's raw stored value ("true"/"false", lowercase, the
+ * exact literal string the create-form's own checkbox submits) fell
+ * through to the bare, unformatted string in both the rule list and the
+ * Copy/Download report, inconsistent with the uppercase "TRUE"/"FALSE"
+ * convention every other field-value display in this app already uses
+ * (interpolateTemplate, entityFormatting.ts's fieldDisplayValue,
+ * backup.ts's CSV export, calendarIcs.ts).
+ */
+test("AutomationsPanel shows uppercase TRUE/FALSE for a boolean field_equals rule's value in the rule list and the Copy report, instead of the raw lowercase stored string", async () => {
+  await withJsdom(async () => {
+    const originalFetch = globalThis.fetch;
+    const boolRule = makeRule({
+      id: "rule14",
+      entityName: "Order",
+      trigger: "field_equals",
+      fieldName: "isUrgent",
+      fieldValue: "true",
+    });
+    globalThis.fetch = (async (input: string, init?: RequestInit) => {
+      const method = init?.method ?? "GET";
+      if (method === "GET" && input === "/api/projects/proj7/automations") {
+        return new Response(JSON.stringify({ rules: [boolRule] }), { status: 200, headers: { "content-type": "application/json" } });
+      }
+      throw new Error(`unexpected request ${method} ${input}`);
+    }) as typeof fetch;
+
+    let writtenText: string | undefined;
+    Object.defineProperty(navigator, "clipboard", {
+      value: { writeText: async (text: string) => void (writtenText = text) },
+      configurable: true,
+    });
+
+    try {
+      renderPanelWith(dateFieldProject);
+      await waitForCondition(() => document.querySelectorAll(".automations-rule-condition").length === 1);
+      const conditionText = document.querySelector(".automations-rule-condition")?.textContent ?? "";
+
+      assert.ok(conditionText.includes("TRUE"), `expected uppercase "TRUE", got: ${JSON.stringify(conditionText)}`);
+      assert.ok(!conditionText.includes('"true"'), "the raw lowercase stored string must never be shown once the field's type is known to be \"boolean\"");
+
+      const copyButton = Array.from(document.querySelectorAll("button")).find((b) => b.textContent?.includes("Copy report")) as HTMLButtonElement;
+      await act(async () => {
+        fireEvent.click(copyButton);
+        await Promise.resolve();
+        await Promise.resolve();
+      });
+
+      assert.equal(typeof writtenText, "string", "clicking Copy must actually call navigator.clipboard.writeText");
+      assert.match(writtenText!, /becomes "TRUE"/, "the Copy report text must also show uppercase TRUE, not the raw lowercase stored string");
     } finally {
       globalThis.fetch = originalFetch;
       delete (navigator as { clipboard?: unknown }).clipboard;
