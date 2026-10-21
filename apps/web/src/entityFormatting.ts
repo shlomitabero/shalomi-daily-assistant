@@ -1480,22 +1480,31 @@ export function buildImportRecords(
         }
         const targetEntity = allEntities.find((e) => e.name === field.relationTo)!;
         const targetRecords = relatedRecords[field.relationTo!]!;
-        const hashMatch = raw.match(/^#(\d+)$/);
-        if (hashMatch) {
-          record[field.name] = Number(hashMatch[1]);
+        // A real display-label match always wins over the "#<id>" shorthand below:
+        // a record's own display field can legitimately hold text that looks like
+        // "#<digits>" (a SKU, ticket or room number), and recordDisplayLabel renders
+        // that as a genuine, resolved label rather than its "no label" fallback --
+        // treating it as an id reference instead would silently point the import at
+        // the wrong record.
+        const matches = targetRecords.filter((r) => recordDisplayLabel(targetEntity, r).toLowerCase() === raw.toLowerCase());
+        if (matches.length === 1) {
+          record[field.name] = Number(matches[0].id);
           continue;
         }
-        const matches = targetRecords.filter((r) => recordDisplayLabel(targetEntity, r).toLowerCase() === raw.toLowerCase());
         if (matches.length === 0) {
+          const hashMatch = raw.match(/^#(\d+)$/);
+          if (hashMatch) {
+            const id = Number(hashMatch[1]);
+            if (targetRecords.some((r) => Number(r.id) === id)) {
+              record[field.name] = id;
+              continue;
+            }
+          }
           rowError = `Row ${rowIndex + 1}: "${raw}" doesn't match any ${targetEntity.label ?? targetEntity.name} record for field "${field.label ?? field.name}".`;
           break;
         }
-        if (matches.length > 1) {
-          rowError = `Row ${rowIndex + 1}: "${raw}" matches more than one ${targetEntity.label ?? targetEntity.name} record for field "${field.label ?? field.name}" -- use its "#<id>" form instead.`;
-          break;
-        }
-        record[field.name] = Number(matches[0].id);
-        continue;
+        rowError = `Row ${rowIndex + 1}: "${raw}" matches more than one ${targetEntity.label ?? targetEntity.name} record for field "${field.label ?? field.name}" -- use its "#<id>" form instead.`;
+        break;
       }
 
       if (raw === "") {

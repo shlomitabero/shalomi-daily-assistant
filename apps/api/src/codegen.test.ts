@@ -8027,9 +8027,9 @@ test("the exported EntityView's CSV import resolves a relation cell to the match
   assert.deepEqual(resolved.errors, []);
   assert.deepEqual(resolved.records, [{ label: "Order A", courierId: 3 }]);
 
-  const hashForm = buildImportRecords(fields, [["Label", "Courier"], ["Order A", "#999"]], { Courier: couriers });
+  const hashForm = buildImportRecords(fields, [["Label", "Courier"], ["Order A", "#3"]], { Courier: couriers });
   assert.deepEqual(hashForm.errors, []);
-  assert.deepEqual(hashForm.records, [{ label: "Order A", courierId: 999 }]);
+  assert.deepEqual(hashForm.records, [{ label: "Order A", courierId: 3 }]);
 
   const noMatch = buildImportRecords(fields, [["Label", "Courier"], ["Order A", "Someone Else"]], { Courier: couriers });
   assert.deepEqual(noMatch.records, []);
@@ -8049,6 +8049,85 @@ test("the exported EntityView's CSV import resolves a relation cell to the match
   assert.deepEqual(noData.records, []);
   assert.equal(noData.errors.length, 1);
   assert.match(noData.errors[0], /CSV import isn't supported yet for entities with a required relation field/);
+});
+
+/**
+ * Round 766: the exported EntityView's buildImportRecords checked the
+ * "#<id>" shorthand BEFORE trying a real display-label match -- exactly
+ * the same bug as the live preview's own copy (see entityFormatting.ts's
+ * matching test). A related record's display field can legitimately hold
+ * text that reads "#<digits>" (a SKU/ticket/room number), and
+ * recordDisplayLabel renders that as a genuine, resolved label rather than
+ * its "no label" fallback -- so checking the shorthand first silently
+ * linked the import to the wrong record whenever that happened. Also, the
+ * shorthand itself never checked that the id it names actually exists,
+ * deferring a typo to a generic FK-violation error at write time instead
+ * of a clear, immediate row error.
+ */
+test("the exported EntityView's CSV import prefers a real display-label match over the \"#<id>\" shorthand, and rejects a shorthand id that doesn't exist", () => {
+  const relationProject: Project = {
+    ...project,
+    spec: {
+      ...project.spec,
+      entities: [
+        {
+          name: "Courier",
+          label: "Courier",
+          fields: [{ name: "name", label: "Name", type: "text", required: true }],
+        },
+        {
+          name: "Order",
+          label: "Order",
+          fields: [
+            { name: "label", label: "Label", type: "text", required: true },
+            { name: "courierId", label: "Courier", type: "relation", required: false, relationTo: "Courier" },
+          ],
+        },
+      ],
+    },
+  };
+  const entityViewJsx = generateExportFiles(relationProject).find((f) => f.path === "web/src/components/EntityView.jsx")!.content;
+
+  const displayFieldHintsSrc = entityViewJsx.match(/const DISPLAY_FIELD_NAME_HINTS = .*;\n/)?.[0];
+  const pickDisplaySrc = entityViewJsx.match(/export function pickDisplayField\(entity\) \{[\s\S]*?\n\}\n/)?.[0]?.replace("export ", "");
+  const recordDisplayLabelSrc = entityViewJsx.match(/export function recordDisplayLabel\(entity, record\) \{[\s\S]*?\n\}\n/)?.[0]?.replace("export ", "");
+  const fieldLabelOccurrencesSrc = entityViewJsx.match(/function fieldLabelOccurrences\(fields\) \{[\s\S]*?\n\}\n/)?.[0];
+  const fieldDisplayLabelSrc = entityViewJsx.match(/function fieldDisplayLabel\(field, occurrences\) \{[\s\S]*?\n\}\n/)?.[0];
+  const headerSrc = entityViewJsx.match(/function matchesImportHeader\(header, field, labelOccurrences\) \{[\s\S]*?\n\}\n/)?.[0];
+  const importSrc = entityViewJsx.match(/function buildImportRecords\(fields, rows, relatedRecords\) \{[\s\S]*?\n\}\n/)?.[0];
+  assert.ok(
+    displayFieldHintsSrc && pickDisplaySrc && recordDisplayLabelSrc && fieldLabelOccurrencesSrc && fieldDisplayLabelSrc && headerSrc && importSrc,
+    "expected to find DISPLAY_FIELD_NAME_HINTS/pickDisplayField/recordDisplayLabel/fieldLabelOccurrences/fieldDisplayLabel/matchesImportHeader/buildImportRecords in generated output",
+  );
+
+  const allEntitiesDecl = `const ALL_ENTITIES = ${JSON.stringify(relationProject.spec.entities)};`;
+
+  const buildImportRecords = new Function(
+    `${allEntitiesDecl}\n${displayFieldHintsSrc}\n${pickDisplaySrc}\n${recordDisplayLabelSrc}\n${fieldLabelOccurrencesSrc}\n${fieldDisplayLabelSrc}\n${headerSrc}\n${importSrc}\nreturn buildImportRecords;`,
+  )();
+
+  const fields = relationProject.spec.entities[1].fields;
+
+  const literalHashLabel = buildImportRecords(
+    fields,
+    [["Label", "Courier"], ["Order A", "#5"]],
+    { Courier: [{ id: 5, name: "Yossi Cohen" }, { id: 42, name: "#5" }] },
+  );
+  assert.deepEqual(literalHashLabel.errors, []);
+  assert.deepEqual(
+    literalHashLabel.records,
+    [{ label: "Order A", courierId: 42 }],
+    "a record whose own display label literally reads \"#5\" must win over misreading the cell as id 5",
+  );
+
+  const danglingId = buildImportRecords(
+    fields,
+    [["Label", "Courier"], ["Order A", "#999"]],
+    { Courier: [{ id: 42, name: "Yossi Cohen" }] },
+  );
+  assert.deepEqual(danglingId.records, []);
+  assert.equal(danglingId.errors.length, 1);
+  assert.match(danglingId.errors[0], /doesn't match any Courier record/);
 });
 
 test("the exported EntityView's handleImportFile PATCHes a row whose id resolved, instead of always POSTing a duplicate", () => {

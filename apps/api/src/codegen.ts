@@ -2250,22 +2250,27 @@ function buildImportRecords(fields, rows, relatedRecords) {
         }
         const targetEntity = ALL_ENTITIES.find((e) => e.name === field.relationTo);
         const targetRecords = relatedRecords[field.relationTo];
-        const hashMatch = raw.match(/^#(\\d+)$/);
-        if (hashMatch) {
-          record[field.name] = Number(hashMatch[1]);
+        // A real display-label match always wins over the "#<id>" shorthand below --
+        // see the live preview's own buildImportRecords for why.
+        const matches = targetRecords.filter((r) => recordDisplayLabel(targetEntity, r).toLowerCase() === raw.toLowerCase());
+        if (matches.length === 1) {
+          record[field.name] = Number(matches[0].id);
           continue;
         }
-        const matches = targetRecords.filter((r) => recordDisplayLabel(targetEntity, r).toLowerCase() === raw.toLowerCase());
         if (matches.length === 0) {
+          const hashMatch = raw.match(/^#(\\d+)$/);
+          if (hashMatch) {
+            const id = Number(hashMatch[1]);
+            if (targetRecords.some((r) => Number(r.id) === id)) {
+              record[field.name] = id;
+              continue;
+            }
+          }
           rowError = \`Row \${rowIndex + 1}: "\${raw}" doesn't match any \${targetEntity.label || targetEntity.name} record for field "\${field.label || field.name}".\`;
           break;
         }
-        if (matches.length > 1) {
-          rowError = \`Row \${rowIndex + 1}: "\${raw}" matches more than one \${targetEntity.label || targetEntity.name} record for field "\${field.label || field.name}" -- use its "#<id>" form instead.\`;
-          break;
-        }
-        record[field.name] = Number(matches[0].id);
-        continue;
+        rowError = \`Row \${rowIndex + 1}: "\${raw}" matches more than one \${targetEntity.label || targetEntity.name} record for field "\${field.label || field.name}" -- use its "#<id>" form instead.\`;
+        break;
       }
 
       if (raw === "") {

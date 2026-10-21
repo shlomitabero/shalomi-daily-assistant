@@ -1798,7 +1798,34 @@ test("buildImportRecords resolves a relation cell to the matching related record
   ]);
 });
 
-test("buildImportRecords accepts a relation cell's literal \"#<id>\" form directly, the same fallback relationDisplayLabel itself renders when a label can't be resolved", () => {
+test("buildImportRecords accepts a relation cell's literal \"#<id>\" form, falling back to it only once no related record's own resolved display label matches the cell", () => {
+  const fields: Field[] = [
+    { name: "name", type: "text", required: true },
+    { name: "courierId", label: "Courier", type: "relation", required: false, relationTo: "Courier" },
+  ];
+  const couriers: EntityRecord[] = [{ id: 999, name: "Dana Levi" }];
+  const rows = [["name", "Courier"], ["Order A", "#999"]];
+  const result = buildImportRecords(fields, rows, [courierEntity], { Courier: couriers });
+  assert.deepEqual(result.errors, []);
+  assert.deepEqual(result.records, [{ name: "Order A", courierId: 999 }]);
+});
+
+test("buildImportRecords resolves a relation cell to the record whose own display label literally reads \"#<digits>\", instead of misreading it as that digit's raw id (a real bug: a record's display field can legitimately hold a SKU/ticket-style value like \"#5\", and exporting it renders that genuine, resolved label -- not the \"no label\" fallback -- so re-importing it must not be mistaken for an id reference)", () => {
+  const fields: Field[] = [
+    { name: "name", type: "text", required: true },
+    { name: "courierId", label: "Courier", type: "relation", required: false, relationTo: "Courier" },
+  ];
+  const couriers: EntityRecord[] = [
+    { id: 5, name: "Yossi Cohen" },
+    { id: 42, name: "#5" },
+  ];
+  const rows = [["name", "Courier"], ["Order A", "#5"]];
+  const result = buildImportRecords(fields, rows, [courierEntity], { Courier: couriers });
+  assert.deepEqual(result.errors, []);
+  assert.deepEqual(result.records, [{ name: "Order A", courierId: 42 }]);
+});
+
+test("buildImportRecords rejects a \"#<id>\" relation cell whose id doesn't match any related record, instead of silently importing a dangling reference", () => {
   const fields: Field[] = [
     { name: "name", type: "text", required: true },
     { name: "courierId", label: "Courier", type: "relation", required: false, relationTo: "Courier" },
@@ -1806,8 +1833,9 @@ test("buildImportRecords accepts a relation cell's literal \"#<id>\" form direct
   const couriers: EntityRecord[] = [{ id: 42, name: "Yossi Cohen" }];
   const rows = [["name", "Courier"], ["Order A", "#999"]];
   const result = buildImportRecords(fields, rows, [courierEntity], { Courier: couriers });
-  assert.deepEqual(result.errors, []);
-  assert.deepEqual(result.records, [{ name: "Order A", courierId: 999 }]);
+  assert.deepEqual(result.records, []);
+  assert.equal(result.errors.length, 1);
+  assert.match(result.errors[0], /doesn't match any Courier record/);
 });
 
 test("buildImportRecords reports a row error for a relation cell that matches no related record, instead of silently dropping it", () => {
