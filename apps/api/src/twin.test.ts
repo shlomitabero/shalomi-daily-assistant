@@ -948,6 +948,71 @@ test("computeBusinessTwin's twin.numericStats carries the real sum/average as nu
   assert.equal(stats.recordCount, 2);
 });
 
+/**
+ * Round 754: the numeric-aggregate PROSE text's sum/average
+ * toLocaleString() calls had no locale argument at all, baked server-side
+ * into `text` with no way for a client re-render to ever correct it --
+ * unlike every other number/date in this app (twinReport.ts/
+ * searchReport.ts/checkpointDiff.ts, and round 703's own client-side fix
+ * for this same Business Twin feature's Dashboard tab), which all pass an
+ * explicit he-IL/en-US locale. he-IL and en-US render plain digits
+ * identically, so this spies on Number.prototype.toLocaleString itself
+ * (same technique round 703's own test uses) to prove a real, explicit
+ * locale is actually forwarded, for both the English and Hebrew sentence
+ * forms, not just that some number came back right.
+ */
+test("computeBusinessTwin's numeric-aggregate prose formats its sum/average with the project's own detected language, not the runtime's default locale", () => {
+  const originalToLocaleString = Number.prototype.toLocaleString;
+  const capturedLocales: unknown[] = [];
+  Number.prototype.toLocaleString = function (this: number, ...args: unknown[]) {
+    capturedLocales.push(args[0]);
+    return originalToLocaleString.apply(this, args as [string?, Intl.NumberFormatOptions?]);
+  } as typeof Number.prototype.toLocaleString;
+  try {
+    const orderFields = [
+      { name: "customer", type: "text" as const, required: true },
+      { name: "total", label: "Total", type: "number" as const, required: true },
+    ];
+
+    const englishProject: Project = {
+      ...project,
+      description: "An online store with orders",
+      spec: { ...project.spec, entities: [{ name: "Order", label: "Orders", fields: orderFields }] },
+    };
+    const englishDb = openDatabase(":memory:");
+    applyMigrations(englishDb, englishProject.id, englishProject.spec);
+    const englishOrder = englishProject.spec.entities[0];
+    insertRecord(englishDb, englishProject.id, englishOrder, { customer: "Dana", total: 100 });
+    insertRecord(englishDb, englishProject.id, englishOrder, { customer: "Yossi", total: 300 });
+    computeBusinessTwin(englishDb, englishProject);
+    assert.ok(capturedLocales.length > 0, "expected at least one toLocaleString call for the English project");
+    assert.ok(
+      capturedLocales.every((l) => l === "en-US"),
+      `expected every toLocaleString call to carry "en-US" for an English project, got: ${JSON.stringify(capturedLocales)}`,
+    );
+    capturedLocales.length = 0;
+
+    const hebrewProject: Project = {
+      ...project,
+      description: "חנות מקוונת להזמנות",
+      spec: { ...project.spec, entities: [{ name: "Order", label: "הזמנות", fields: orderFields }] },
+    };
+    const hebrewDb = openDatabase(":memory:");
+    applyMigrations(hebrewDb, hebrewProject.id, hebrewProject.spec);
+    const hebrewOrder = hebrewProject.spec.entities[0];
+    insertRecord(hebrewDb, hebrewProject.id, hebrewOrder, { customer: "דנה", total: 100 });
+    insertRecord(hebrewDb, hebrewProject.id, hebrewOrder, { customer: "יוסי", total: 300 });
+    computeBusinessTwin(hebrewDb, hebrewProject);
+    assert.ok(capturedLocales.length > 0, "expected at least one toLocaleString call for the Hebrew project");
+    assert.ok(
+      capturedLocales.every((l) => l === "he-IL"),
+      `expected every toLocaleString call to carry "he-IL" for a Hebrew project, got: ${JSON.stringify(capturedLocales)}`,
+    );
+  } finally {
+    Number.prototype.toLocaleString = originalToLocaleString;
+  }
+});
+
 test("computeBusinessTwin's boolean distribution is skipped when every record shares the same value, same as the enum case", () => {
   const orderProject: Project = {
     ...project,

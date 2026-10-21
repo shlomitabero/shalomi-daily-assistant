@@ -433,10 +433,22 @@ function computeNumericAggregateObservations(
       const fieldLabel = field.label ?? field.name;
       const ambiguous = (labelOccurrences.get(fieldLabel) ?? 0) > 1;
       const fieldSuffix = ambiguous ? ` (${field.name})` : "";
+      // Unlike every other locale-formatted number in this app (twinReport.ts/
+      // searchReport.ts/checkpointDiff.ts all pass he-IL/en-US explicitly),
+      // these two toLocaleString calls had no locale argument at all --
+      // baked server-side into prose text (not a client render), so they
+      // always used this Node process's one global default ICU locale,
+      // completely decoupled from `hebrew` (the very flag this sentence's
+      // own word choice already depends on) and from the viewer's actual
+      // in-app language. Round 703 fixed the sibling client-side instances
+      // in BusinessTwinPanel.tsx's Dashboard tab, but never looked at this
+      // file -- a different workspace, a different mechanism (a formatted
+      // number embedded in generated text, not a live render).
+      const numberLocale = hebrew ? "he-IL" : "en-US";
       observations.push({
         text: hebrew
-          ? `סה"כ "${fieldLabel}"${fieldSuffix} ב"${entityLabel}": ${sum.toLocaleString()} (ממוצע ${average.toLocaleString(undefined, { maximumFractionDigits: 1 })} על פני ${values.length} רשומות).`
-          : `Total "${fieldLabel}"${fieldSuffix} in "${entityLabel}": ${sum.toLocaleString()} (average ${average.toLocaleString(undefined, { maximumFractionDigits: 1 })} across ${values.length} records).`,
+          ? `סה"כ "${fieldLabel}"${fieldSuffix} ב"${entityLabel}": ${sum.toLocaleString(numberLocale)} (ממוצע ${average.toLocaleString(numberLocale, { maximumFractionDigits: 1 })} על פני ${values.length} רשומות).`
+          : `Total "${fieldLabel}"${fieldSuffix} in "${entityLabel}": ${sum.toLocaleString(numberLocale)} (average ${average.toLocaleString(numberLocale, { maximumFractionDigits: 1 })} across ${values.length} records).`,
         entityName: entity.name,
         entityLabel,
         fieldName: field.name,
