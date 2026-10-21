@@ -1,3 +1,4 @@
+import { isIP } from "node:net";
 import type { Entity, EntityRecord, Project } from "@forge/shared";
 import {
   getProject,
@@ -222,14 +223,23 @@ export async function runAutomationsForRecordChange(
 // redirect-following check on the response) -- raising the bar against the
 // common case at low complexity, not a guarantee against a determined
 // attacker with DNS control.
-const BLOCKED_WEBHOOK_HOSTNAME_PATTERNS = [
+// These dotted-decimal prefix patterns only mean anything for a genuine
+// IPv4 literal -- isAllowedWebhookUrl below only runs them against a
+// hostname that Node's own net.isIP already confirmed is one. Without
+// that guard, an ordinary *public* hostname that merely starts with the
+// same digits (e.g. "10.example.com", "192.168.mycompany.io",
+// "172.16.shop.com") would match these as a plain string prefix and be
+// wrongly blocked, even though it isn't a private IP at all -- a false
+// positive with no security benefit, just a webhook URL a real business
+// has no way to use.
+const BLOCKED_IPV4_HOSTNAME_PATTERNS = [/^127\./, /^0\.0\.0\.0$/, /^10\./, /^172\.(1[6-9]|2\d|3[01])\./, /^192\.168\./, /^169\.254\./];
+
+// Safe to run against any hostname as-is: "localhost" is an exact match,
+// and a colon is never valid in an ordinary DNS hostname (only inside the
+// bracketed IPv6-literal form a URL's own hostname can take), so none of
+// these can ever collide with a real public domain name's spelling.
+const BLOCKED_OTHER_HOSTNAME_PATTERNS = [
   /^localhost$/i,
-  /^127\./,
-  /^0\.0\.0\.0$/,
-  /^10\./,
-  /^172\.(1[6-9]|2\d|3[01])\./,
-  /^192\.168\./,
-  /^169\.254\./,
   // IPv6's own "unspecified address" analogue of 0.0.0.0 above --
   // connecting to it routes to the local host the same way 0.0.0.0 does,
   // and Node's URL parser canonicalizes every all-zero spelling
@@ -276,7 +286,8 @@ export function isAllowedWebhookUrl(raw: string): boolean {
   if (url.protocol !== "http:" && url.protocol !== "https:") return false;
   const hostname = url.hostname.toLowerCase();
   const hostToCheck = extractIPv4MappedAddress(hostname) ?? hostname;
-  return !BLOCKED_WEBHOOK_HOSTNAME_PATTERNS.some((p) => p.test(hostToCheck));
+  if (isIP(hostToCheck) === 4 && BLOCKED_IPV4_HOSTNAME_PATTERNS.some((p) => p.test(hostToCheck))) return false;
+  return !BLOCKED_OTHER_HOSTNAME_PATTERNS.some((p) => p.test(hostToCheck));
 }
 
 /**

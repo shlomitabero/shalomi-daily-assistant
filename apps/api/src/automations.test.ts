@@ -725,6 +725,35 @@ test("isAllowedWebhookUrl blocks the IPv6 unspecified address ('::'), the analog
 });
 
 /**
+ * Round 757: BLOCKED_WEBHOOK_HOSTNAME_PATTERNS' dotted-decimal entries
+ * (/^10\./, /^172\.(1[6-9]|2\d|3[01])\./, /^192\.168\./, /^127\./,
+ * /^169\.254\./) are plain string-prefix regexes with no anchor at the
+ * end, so before this fix they matched any hostname merely *starting*
+ * with those digits -- not just a genuine private IPv4 literal. A real
+ * business could have no way to use a webhook endpoint under a public
+ * domain that happened to start the same way, with the generic "no valid
+ * webhook URL configured" failure giving no hint why. isAllowedWebhookUrl
+ * now only runs these patterns against a hostname node:net's isIP
+ * confirms is actually an IPv4 address, so a real public hostname that
+ * merely looks similar is correctly allowed, while every genuine private/
+ * loopback/link-local IPv4 literal (the whole point of this blocklist) is
+ * still blocked exactly as before.
+ */
+test("isAllowedWebhookUrl allows a real public hostname that merely starts with the same digits as a blocked private IPv4 range, while still blocking the real IPv4 literal", () => {
+  assert.equal(isAllowedWebhookUrl("https://10.example.com/webhook"), true, "a public hostname starting with '10.' is not a private 10.x address");
+  assert.equal(isAllowedWebhookUrl("https://192.168.mycompany.io/hook"), true, "a public hostname starting with '192.168.' is not a private 192.168.x address");
+  assert.equal(isAllowedWebhookUrl("https://172.16.shop.com/x"), true, "a public hostname starting with '172.16.' is not a private 172.16.x address");
+  assert.equal(isAllowedWebhookUrl("https://127.company.net/x"), true, "a public hostname starting with '127.' is not the loopback address");
+  assert.equal(isAllowedWebhookUrl("https://169.254.example.org/x"), true, "a public hostname starting with '169.254.' is not the link-local/instance-metadata range");
+  // The real IPv4 literals these patterns exist for must still be blocked.
+  assert.equal(isAllowedWebhookUrl("http://10.0.0.5/abc"), false);
+  assert.equal(isAllowedWebhookUrl("http://172.16.0.5/abc"), false);
+  assert.equal(isAllowedWebhookUrl("http://192.168.1.5/abc"), false);
+  assert.equal(isAllowedWebhookUrl("http://127.0.0.1/abc"), false);
+  assert.equal(isAllowedWebhookUrl("http://169.254.169.254/latest/meta-data/"), false);
+});
+
+/**
  * New: the "webhook" action type -- fireRule's own branch, reached through
  * the real event-driven path (runAutomationsForRecordChange), not a direct
  * call (fireRule itself isn't exported). Mocks the global fetch this
