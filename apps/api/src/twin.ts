@@ -260,9 +260,10 @@ function computeRelationHubObservation(
  * records genuinely coincide on that kind of field all the time (e.g. two
  * unrelated shipments that both happen to weigh 5kg) without being
  * duplicates in any meaningful sense, so this only runs for an entity
- * whose picked display field is actually text -- the one case where two
- * records sharing that value really does suggest the same person or thing
- * was entered twice.
+ * whose picked display field is free-text -- "text" or "longtext" (the same
+ * free-text kind pickDisplayField's own fallback step treats as
+ * interchangeable) -- the one case where two records sharing that value
+ * really does suggest the same person or thing was entered twice.
  *
  * Grouping uses a trimmed, case-folded key rather than the raw label, since
  * the exact double-import this observation targets is exactly the kind of
@@ -281,7 +282,7 @@ function computeDuplicateObservations(
   const observations: { text: string; entityName: string }[] = [];
   for (const entity of project.spec.entities) {
     const displayField = pickDisplayField(entity);
-    if (!displayField || displayField.type !== "text") continue;
+    if (!displayField || (displayField.type !== "text" && displayField.type !== "longtext")) continue;
     const records = recordsByEntity.get(entity.name) ?? [];
     if (records.length < 2) continue;
 

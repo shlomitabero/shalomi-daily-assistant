@@ -560,6 +560,42 @@ test("computeBusinessTwin never flags two records as duplicates just because the
   );
 });
 
+test("computeBusinessTwin flags duplicates for an entity whose picked display field is longtext, not just plain text", () => {
+  // Feedback has no "name"/"title" field and no plain-text field either --
+  // only a longtext field and a number -- so pickDisplayField (round 762)
+  // falls back to "message" (longtext) over "rating" (number). Two records
+  // with the exact same feedback text is the textbook accidental
+  // double-submit this observation exists to catch, and must be flagged
+  // the same way it would be for a plain "text" display field.
+  const feedbackProject: Project = {
+    ...project,
+    description: "I need to track customer feedback",
+    spec: {
+      ...project.spec,
+      entities: [
+        {
+          name: "Feedback",
+          label: "Feedback",
+          fields: [
+            { name: "message", type: "longtext", required: true },
+            { name: "rating", type: "number", required: true },
+          ],
+        },
+      ],
+    },
+  };
+  const db = openDatabase(":memory:");
+  applyMigrations(db, feedbackProject.id, feedbackProject.spec);
+  const feedback = feedbackProject.spec.entities[0];
+  insertRecord(db, feedbackProject.id, feedback, { message: "Great service, very happy!", rating: 5 });
+  insertRecord(db, feedbackProject.id, feedback, { message: "Great service, very happy!", rating: 1 });
+
+  const twin = computeBusinessTwin(db, feedbackProject);
+  const dupObservation = twin.jumpableObservations.find((o) => o.text.includes("possibly a duplicate"));
+  assert.ok(dupObservation, `expected a duplicate observation for a longtext display field, got: ${JSON.stringify(twin.jumpableObservations)}`);
+  assert.ok(dupObservation!.text.includes("2 records"), `expected both records grouped together, got: "${dupObservation!.text}"`);
+});
+
 test("computeBusinessTwin phrases the duplicate observation in Hebrew for a Hebrew description", () => {
   const db = openDatabase(":memory:");
   applyMigrations(db, project.id, project.spec);
