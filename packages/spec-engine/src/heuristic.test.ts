@@ -122,6 +122,53 @@ test("the generated assumptions no longer claim every collaborator gets full acc
 });
 
 /**
+ * Round 769: the third sentence of this same function lumped "messaging"
+ * in with "payments" as an integration that's "not wired up yet" --
+ * false for messaging since a real WhatsApp Web connection
+ * (apps/api/src/whatsappWeb.ts's baileys-based QR linking, real
+ * inbound/outbound messages, apps/api/src/automations.ts's
+ * send_whatsapp action) is available for every project, surfaced by an
+ * unconditional "WhatsApp" button in the preview header (App.tsx) with no
+ * gating on the project's own description or entities. Payments remain
+ * genuinely unwired (no Stripe/PayPal/checkout code exists anywhere
+ * outside this package's own open-question keyword matching), so the
+ * fix narrows the claim to payments and describes the real WhatsApp
+ * capability instead of denying it -- the same move round 768 made for
+ * the RBAC sentence right above this one.
+ */
+test("the generated assumptions no longer claim messaging integrations aren't wired up, since a real WhatsApp connection already ships for every project", async () => {
+  const provider = new HeuristicSpecProvider();
+
+  const enSpec = await provider.generate("I want to organize my hobby collection.");
+  assert.ok(
+    enSpec.assumptions.every((a) => !/messaging, etc\.\) are not wired up/i.test(a)),
+    "must not claim messaging integrations aren't wired up -- a real WhatsApp connection exists",
+  );
+  assert.ok(
+    enSpec.assumptions.some((a) => /WhatsApp/i.test(a)),
+    "should instead describe the real WhatsApp capability",
+  );
+  assert.ok(
+    enSpec.assumptions.some((a) => /payments/i.test(a) && /not wired up/i.test(a)),
+    "payments remain genuinely unwired and should still be named as such",
+  );
+
+  const heSpec = await provider.generate("אני רוצה לנהל את אוסף התחביב שלי.");
+  assert.ok(
+    heSpec.assumptions.every((a) => !/הודעות וכו'\) עדיין לא מחוברת/.test(a)),
+    "must not claim messaging integrations aren't wired up -- a real WhatsApp connection exists",
+  );
+  assert.ok(
+    heSpec.assumptions.some((a) => /וואטסאפ/.test(a)),
+    "should instead describe the real WhatsApp capability",
+  );
+  assert.ok(
+    heSpec.assumptions.some((a) => /תשלומים/.test(a) && /לא מחוברת/.test(a)),
+    "payments remain genuinely unwired and should still be named as such",
+  );
+});
+
+/**
  * Round 708: isHebrewText only checks whether ANY Hebrew character appears
  * anywhere in its input, not which language dominates -- so without this
  * override, a single Hebrew word mixed into an otherwise-English
