@@ -242,6 +242,29 @@ test("sendMessage refuses honestly when 'to' is a bare local-format number missi
   assert.deepEqual(createdSockets[0].sendCalls, []);
 });
 
+/**
+ * Round 765 regression test: the leading-zero classification only ever
+ * checked for exactly 1 (reject) or exactly 2 (the "00" access code,
+ * allow) -- 3 or more leading zeros fell through neither branch and was
+ * silently sent. normalizePhone strips the *entire* run of leading zeros
+ * regardless of count, so "000501234567" (a realistic typo: a "00"
+ * access-code prefix glued onto a local-format number that still has its
+ * own trunk zero) normalizes to "501234567" -- the exact same country-
+ * code-missing shape the 1-zero branch exists to reject -- yet sailed
+ * through to a real sendMessage call before this fix.
+ */
+test("sendMessage refuses honestly when 'to' has 3 or more leading zeros, instead of silently stripping them all and addressing a wrong/nonexistent JID", async () => {
+  const { manager, createdSockets } = setupManager();
+  await manager.connect("proj1");
+  createdSockets[0].sock.user = { id: "972501234567:1@s.whatsapp.net" };
+  createdSockets[0].emitConnectionUpdate({ connection: "open" });
+
+  const result = await manager.sendMessage("proj1", "000-501-234-567", "שלום!");
+  assert.equal(result.ok, false);
+  assert.equal(result.error, "missing_country_code");
+  assert.deepEqual(createdSockets[0].sendCalls, []);
+});
+
 test("sendMessage builds a real, fully-qualified JID for a number typed with a 00 international access code", async () => {
   // Unlike the local-format case above ("050-123-4567" -> missing its
   // country code entirely, now refused honestly instead of silently

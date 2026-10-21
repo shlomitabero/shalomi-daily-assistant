@@ -426,9 +426,18 @@ export class WhatsAppWebManager {
     // zero is the local trunk prefix (country code missing), two is the
     // "00" international access code (already fully qualified), and zero
     // is either already-international or untaggable either way.
+    //
+    // Three or more leading zeros is neither of those two legitimate
+    // shapes -- it's the same "00" access-code typo this check already
+    // guards against for the 1-zero case, just with the destination's own
+    // local trunk zero left in too (e.g. "00" + "0501234567" = 3 leading
+    // zeros). normalizePhone strips the *entire* run of leading zeros
+    // regardless of count, so this would otherwise silently resolve to the
+    // exact same country-code-missing number the 1-zero branch exists to
+    // reject, just reached via a different leading-zero count.
     const rawDigits = to.replace(/\D/g, "");
     const leadingZeros = rawDigits.length - rawDigits.replace(/^0+/, "").length;
-    if (leadingZeros === 1) {
+    if (leadingZeros === 1 || leadingZeros >= 3) {
       return { ok: false, error: "missing_country_code" };
     }
     try {
