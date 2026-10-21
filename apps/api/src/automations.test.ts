@@ -754,6 +754,44 @@ test("isAllowedWebhookUrl allows a real public hostname that merely starts with 
 });
 
 /**
+ * Round 758: the IPv6 unique-local (ULA, fc00::/7) and link-local
+ * (fe80::/10) patterns only matched the single literal hex group
+ * "fc00:"/"fd00:"/"fe80:" exactly -- not the real CIDR ranges they were
+ * meant to cover. ULA fc00::/7 covers every address whose first byte is
+ * 0xfc or 0xfd (first hex group fc00-fdff); almost every real-world ULA
+ * is "locally assigned" with a random 40-bit global ID (RFC 4193), so a
+ * real one looks like "fd12:3456:789a::1", never literally "fd00:....".
+ * link-local fe80::/10 covers first hex group fe80-febf, and a real
+ * link-local address almost always has a non-zero interface identifier
+ * (e.g. "fe81::1"). Before the fix, every one of these sailed straight
+ * through isAllowedWebhookUrl, bypassing this exact SSRF guard via the
+ * IPv6 side -- any project collaborator with write access could point an
+ * Automation Rule's webhook at an internal IPv6 ULA/link-local service
+ * (common in self-hosted/Docker/Kubernetes deployments) and it would
+ * validate and actually be POSTed to by fireWebhookAction's fetch() call.
+ */
+test("isAllowedWebhookUrl blocks real IPv6 unique-local (fc00::/7) and link-local (fe80::/10) addresses, not just the single literal 'fc00:'/'fd00:'/'fe80:' group", () => {
+  // Real-world ULA addresses (RFC 4193's randomly-assigned fd00::/8 in
+  // particular) almost never start with the literal group "fd00"/"fc00".
+  assert.equal(isAllowedWebhookUrl("http://[fd12:3456:789a::1]/hook"), false, "a randomly-assigned ULA address must be blocked, not just the literal 'fd00::' group");
+  assert.equal(isAllowedWebhookUrl("http://[fdab:cdef::1]/hook"), false);
+  assert.equal(isAllowedWebhookUrl("http://[fc01::1]/hook"), false, "the ULA range also covers 0xfc-prefixed addresses other than the literal 'fc00::' group");
+  // Real-world link-local addresses almost always have a non-zero
+  // interface identifier, not the literal group "fe80" alone.
+  assert.equal(isAllowedWebhookUrl("http://[fe81::1]/hook"), false, "a link-local address with a real interface identifier must be blocked, not just the literal 'fe80::' group");
+  assert.equal(isAllowedWebhookUrl("http://[febf::1]/hook"), false, "the top edge of the real fe80::/10 range must still be blocked");
+  // Already-blocked literal cases must still be blocked.
+  assert.equal(isAllowedWebhookUrl("http://[fd00::1]/hook"), false);
+  assert.equal(isAllowedWebhookUrl("http://[fc00::1]/hook"), false);
+  assert.equal(isAllowedWebhookUrl("http://[fe80::1]/hook"), false);
+  // Addresses just outside these real ranges are genuinely public and
+  // must not be blocked.
+  assert.equal(isAllowedWebhookUrl("http://[fe00::1]/hook"), true, "just below the real fe80::/10 range, this is not link-local");
+  assert.equal(isAllowedWebhookUrl("http://[fec0::1]/hook"), true, "just above the real fe80::/10 range, this is not link-local");
+  assert.equal(isAllowedWebhookUrl("http://[2001:4860:4860::8888]/hook"), true, "a genuinely public IPv6 address must still be allowed");
+});
+
+/**
  * New: the "webhook" action type -- fireRule's own branch, reached through
  * the real event-driven path (runAutomationsForRecordChange), not a direct
  * call (fireRule itself isn't exported). Mocks the global fetch this

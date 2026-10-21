@@ -246,21 +246,35 @@ const BLOCKED_OTHER_HOSTNAME_PATTERNS = [
   // ("[::0]", "[0:0:0:0:0:0:0:0]", "[0::0]", etc.) to this same "[::]".
   /^\[?::\]?$/,
   /^\[?::1\]?$/,
-  /^\[?fe80:/i,
-  /^\[?fc00:/i,
-  /^\[?fd00:/i,
+  // The real fe80::/10 link-local range is every address whose first 10
+  // bits are 1111111010 -- i.e. first hex group fe80-febf (first byte
+  // fixed at 0xfe, second byte's top two bits fixed at "10"), not just
+  // the single literal group "fe80" a plain `/^fe80:/` only matches. A
+  // real link-local address almost always has a non-zero interface
+  // identifier in the low 64 bits (e.g. "fe81::1", "fe9a::abcd"), which
+  // the old literal-prefix check let straight through.
+  /^\[?fe[89ab][0-9a-f]:/i,
+  // The real fc00::/7 unique-local (ULA) range is every address whose
+  // first byte is 0xfc or 0xfd -- first hex group fc00-fdff -- not just
+  // the two literal groups "fc00"/"fd00" a plain `/^fc00:|^fd00:/` only
+  // matches. Almost every real-world ULA is "locally assigned" under
+  // fd00::/8 with a random 40-bit global ID (RFC 4193), so a real one
+  // looks like "fd12:3456:789a::1", never literally "fd00:...." -- the
+  // old literal-prefix check let every one of those straight through,
+  // bypassing this exact SSRF guard via the IPv6 side.
+  /^\[?f[cd][0-9a-f]{2}:/i,
 ];
 
 /**
  * Node's URL parser normalizes an IPv4-mapped IPv6 literal (e.g.
  * "[::ffff:169.254.169.254]", or the same address written in hex as
  * "[::ffff:a9fe:a9fe]") into its own canonical bracketed hex form --
- * neither form starts with any of BLOCKED_WEBHOOK_HOSTNAME_PATTERNS'
- * dotted-decimal or "::1"/"fe80:"/"fc00:"/"fd00:" prefixes, so a blocked
- * IPv4 target (the cloud instance-metadata IP included) could sail
- * straight through isAllowedWebhookUrl wrapped in this form. Unwraps it
- * back to the embedded IPv4 address so the existing IPv4 patterns above
- * still catch it.
+ * neither form is itself a dotted-decimal IPv4 literal or matches any of
+ * BLOCKED_OTHER_HOSTNAME_PATTERNS' IPv6-only patterns, so a blocked IPv4
+ * target (the cloud instance-metadata IP included) could sail straight
+ * through isAllowedWebhookUrl wrapped in this form. Unwraps it back to
+ * the embedded IPv4 address so BLOCKED_IPV4_HOSTNAME_PATTERNS above still
+ * catches it.
  */
 function extractIPv4MappedAddress(hostname: string): string | null {
   const stripped = hostname.startsWith("[") && hostname.endsWith("]") ? hostname.slice(1, -1) : hostname;
