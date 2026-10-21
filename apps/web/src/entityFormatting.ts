@@ -963,12 +963,21 @@ export function pickDisplayField(entity: Entity): Field | null {
 /**
  * Renders one record of `entity` as a short human label using its display
  * field, falling back to "#<id>" when the entity has no usable field or the
- * display field is empty on this particular record.
+ * display field is empty on this particular record. When the picked field
+ * is an `enum` (e.g. the last-resort fallback above landing on one, for a
+ * join entity with no name/title/text field), resolves it through the
+ * field's own `enumLabels` the same way every other enum render path in
+ * this file already does (fieldDisplayValue, matchesSearch, etc.) --
+ * without this, a record shown by this label elsewhere (a relation
+ * picker, Business Twin's narrative sentences) would show the field's raw
+ * stored value (e.g. the English enum key "in") instead of its translated
+ * display text (e.g. "כניסה").
  */
 export function recordDisplayLabel(entity: Entity, record: EntityRecord): string {
   const field = pickDisplayField(entity);
   const value = field ? record[field.name] : undefined;
   if (value === null || value === undefined || value === "") return `#${record.id}`;
+  if (field?.type === "enum") return field.enumLabels?.[String(value)] ?? String(value);
   return String(value);
 }
 

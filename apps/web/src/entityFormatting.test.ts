@@ -1322,6 +1322,31 @@ test("recordDisplayLabel shows the display field's value, falling back to #id wh
   assert.equal(recordDisplayLabel({ name: "Empty", fields: [] }, { id: 9 }), "#9");
 });
 
+/**
+ * Round 761 regression test: mirrors apps/api/src/displayField.ts's own
+ * identical fix -- when pickDisplayField's last-resort fallback lands on
+ * an enum field (no name/title/text field on the entity), recordDisplayLabel
+ * used to String() its raw stored value instead of resolving it through
+ * the field's own enumLabels, the uniform convention every other enum
+ * render path in this file already follows (fieldDisplayValue,
+ * matchesSearch, etc.).
+ */
+test("recordDisplayLabel resolves an enum display field through its own enumLabels, not its raw stored value", () => {
+  const entity: Entity = {
+    name: "Enrollment",
+    fields: [
+      { name: "studentId", type: "relation", relationTo: "Student", required: true },
+      { name: "certificate", type: "file", required: false },
+      { name: "grade", type: "enum", required: false, enumValues: ["A", "B", "C"], enumLabels: { A: "מצטיין", B: "טוב", C: "עובר" } },
+    ],
+  };
+  assert.equal(
+    recordDisplayLabel(entity, { id: 3, studentId: 1, certificate: "", grade: "A" }),
+    "מצטיין",
+    "the enum field's own translated label must be shown, not the raw stored value \"A\"",
+  );
+});
+
 const courierEntity: Entity = {
   name: "Courier",
   fields: [{ name: "name", type: "text", required: true }],

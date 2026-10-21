@@ -141,3 +141,33 @@ test("recordDisplayLabel renders #<id> when the display field's value is missing
   assert.equal(recordDisplayLabel(entity, { id: 8, createdAt: "", name: null }), "#8");
   assert.equal(recordDisplayLabel(entity, { id: 9, createdAt: "", name: "Dana Levi" }), "Dana Levi");
 });
+
+/**
+ * Round 761 regression test: when pickDisplayField's last-resort fallback
+ * lands on an enum field (the exact "Enrollment" fixture the round-749
+ * file-exclusion test above already uses, where "grade" is an enum
+ * picked over the relation/file fields), recordDisplayLabel used to
+ * String() the field's raw stored value instead of resolving it through
+ * the field's own enumLabels -- the uniform convention every other enum
+ * render path in this codebase already follows. A real-world instance:
+ * an entity with no name/title/text field whose only other field is an
+ * enum with translated labels (e.g. a "movementType" enum valued
+ * "in"/"out" with Hebrew labels) would show the raw English key anywhere
+ * a record of it is displayed by name -- a relation picker, an
+ * Automation Rule's WhatsApp message, Business Twin's narrative.
+ */
+test("recordDisplayLabel resolves an enum display field through its own enumLabels, not its raw stored value", () => {
+  const entity: Entity = {
+    name: "Enrollment",
+    fields: [
+      { name: "studentId", type: "relation", relationTo: "Student", required: true },
+      { name: "certificate", type: "file", required: false },
+      { name: "grade", type: "enum", required: false, enumValues: ["A", "B", "C"], enumLabels: { A: "מצטיין", B: "טוב", C: "עובר" } },
+    ],
+  };
+  assert.equal(
+    recordDisplayLabel(entity, { id: 3, createdAt: "", studentId: 1, certificate: "", grade: "A" }),
+    "מצטיין",
+    "the enum field's own translated label must be shown, not the raw stored value \"A\"",
+  );
+});

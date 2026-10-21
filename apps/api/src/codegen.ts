@@ -1484,6 +1484,7 @@ export function recordDisplayLabel(entity, record) {
   const field = pickDisplayField(entity);
   const value = field ? record[field.name] : undefined;
   if (value === null || value === undefined || value === "") return \`#\${record.id}\`;
+  if (field?.type === "enum") return field.enumLabels?.[String(value)] ?? String(value);
   return String(value);
 }
 

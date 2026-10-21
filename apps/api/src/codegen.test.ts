@@ -2496,6 +2496,45 @@ test("the exported EntityView's pickDisplayField skips a file field in its last-
   );
 });
 
+/**
+ * Round 761: mirrors the live preview's own fix -- when pickDisplayField's
+ * last-resort fallback lands on an enum field (the exact "Enrollment"
+ * fixture the test above already uses), recordDisplayLabel used to
+ * String() the field's raw stored value instead of resolving it through
+ * the field's own enumLabels, the convention every other enum render
+ * path in the generated app already follows.
+ */
+test("the exported EntityView's recordDisplayLabel resolves an enum display field through its own enumLabels, not its raw stored value", () => {
+  const files = generateExportFiles(project);
+  const entityViewJsx = files.find((f) => f.path === "web/src/components/EntityView.jsx")!.content;
+
+  const displayFieldHintsSrc = entityViewJsx.match(/const DISPLAY_FIELD_NAME_HINTS = .*;\n/)?.[0];
+  const pickDisplayFieldSrc = entityViewJsx.match(/export function pickDisplayField\([\s\S]*?\n\}\n/)?.[0]?.replace("export ", "");
+  const recordDisplayLabelSrc = entityViewJsx.match(/export function recordDisplayLabel\(entity, record\) \{[\s\S]*?\n\}\n/)?.[0]?.replace("export ", "");
+  assert.ok(
+    displayFieldHintsSrc && pickDisplayFieldSrc && recordDisplayLabelSrc,
+    "expected to find DISPLAY_FIELD_NAME_HINTS/pickDisplayField/recordDisplayLabel in generated output",
+  );
+
+  const recordDisplayLabel = new Function(
+    `${displayFieldHintsSrc}\n${pickDisplayFieldSrc}\n${recordDisplayLabelSrc}\nreturn recordDisplayLabel;`,
+  )() as (entity: unknown, record: unknown) => string;
+
+  const entity = {
+    name: "Enrollment",
+    fields: [
+      { name: "studentId", type: "relation", relationTo: "Student" },
+      { name: "certificate", type: "file" },
+      { name: "grade", type: "enum", enumValues: ["A", "B", "C"], enumLabels: { A: "מצטיין", B: "טוב", C: "עובר" } },
+    ],
+  };
+  assert.equal(
+    recordDisplayLabel(entity, { id: 3, studentId: 1, certificate: "", grade: "A" }),
+    "מצטיין",
+    "the enum field's own translated label must be shown, not the raw stored value \"A\"",
+  );
+});
+
 test("the exported CalendarView picks its day-chip label via pickDisplayField, not just whichever field happens to come first after the date field", () => {
   // Mirrors the live-preview fix in apps/web/src/entityFormatting.ts
   // (calendarChipLabelField): every built-in domain entity happens to

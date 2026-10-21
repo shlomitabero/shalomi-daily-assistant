@@ -34,10 +34,23 @@ export function pickDisplayField(entity: Entity): Field | null {
   return firstDisplayable ?? entity.fields[0] ?? null;
 }
 
-/** Renders a record as a short human label using pickDisplayField, falling back to "#<id>" when there's no usable value. */
+/**
+ * Renders a record as a short human label using pickDisplayField, falling
+ * back to "#<id>" when there's no usable value. When the picked field is
+ * an `enum` (e.g. the last-resort fallback above landing on one, for a
+ * join entity with no name/title/text field), resolves it through the
+ * field's own `enumLabels` the same way every other enum render path in
+ * this codebase already does (EntityPanel.tsx's cells, entityFormatting.
+ * ts's own fieldDisplayValue/matchesSearch, etc.) -- without this, a
+ * record shown by this label elsewhere (a relation picker, an Automation
+ * Rule's WhatsApp message, Business Twin's narrative sentences) would
+ * show the field's raw stored value (e.g. the English enum key "in")
+ * instead of its translated display text (e.g. "כניסה").
+ */
 export function recordDisplayLabel(entity: Entity, record: EntityRecord): string {
   const field = pickDisplayField(entity);
   const value = field ? record[field.name] : undefined;
   if (value === null || value === undefined || value === "") return `#${record.id}`;
+  if (field?.type === "enum") return field.enumLabels?.[String(value)] ?? String(value);
   return String(value);
 }
