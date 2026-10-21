@@ -2449,6 +2449,23 @@ test("App.tsx passes GlobalSearchPanel the entity-tab bar's own orderedEntities,
 });
 
 /**
+ * Round 764: the exact same gap round 713 fixed for GlobalSearchPanel,
+ * freshly identified for a second, never-audited consumer -- AutomationsPanel
+ * was handed the raw `project` and derived its own entity list from
+ * `project.spec.entities` directly, so the "Create automation rule" form's
+ * entity dropdown (and its default-selected entity) always listed entities
+ * in build order, ignoring a user's own deliberate reorder of their entity
+ * tabs.
+ */
+test("App.tsx passes AutomationsPanel the entity-tab bar's own orderedEntities, not the raw project.spec.entities, so the Create-rule form's entity dropdown follows the user's own drag/keyboard-reordered tab order", () => {
+  const appSrc = readFileSync(new URL("./App.tsx", import.meta.url), "utf8");
+  const automationsMatch = appSrc.match(/<AutomationsPanel[\s\S]*?\/>/);
+  assert.ok(automationsMatch, "expected to find an <AutomationsPanel ... /> call site in App.tsx");
+  assert.match(automationsMatch![0], /entities=\{orderedEntities\}/);
+  assert.doesNotMatch(automationsMatch![0], /entities=\{project\.spec\.entities\}/);
+});
+
+/**
  * New in this round: a past refine's own instruction text in
  * "Improvement history" was inert -- reusing a similar request (or one
  * refined away by mistake) meant retyping it from scratch. Extracts the

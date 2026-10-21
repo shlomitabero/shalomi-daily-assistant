@@ -2287,9 +2287,17 @@ function AppContent() {
           )}
 
           {showAutomations && (
+            // orderedEntities (the entity tab bar's own drag/keyboard-
+            // reordered order, entityTabOrder.ts), not the raw
+            // project.spec.entities -- the same fix round 713 already made
+            // for GlobalSearchPanel below, for the identical reason: the
+            // "Create automation rule" form's entity dropdown must follow
+            // a user's own deliberate tab reorder, not the original spec/
+            // build order.
             <AutomationsPanel
               projectId={project.id}
               project={project}
+              entities={orderedEntities}
               onClose={() => setShowAutomations(false)}
               readOnly={myRole === "viewer"}
             />

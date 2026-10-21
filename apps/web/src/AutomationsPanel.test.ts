@@ -577,7 +577,7 @@ const mixedFieldsProject: Project = {
   },
 };
 
-function renderPanelWith(project: Project, onClose: () => void = () => {}) {
+function renderPanelWith(project: Project, onClose: () => void = () => {}, entities?: Project["spec"]["entities"]) {
   return render(
     React.createElement(
       ThemeProvider,
@@ -585,7 +585,7 @@ function renderPanelWith(project: Project, onClose: () => void = () => {}) {
       React.createElement(
         LanguageProvider,
         null,
-        React.createElement(AutomationsPanel, { projectId: project.id, project, onClose }),
+        React.createElement(AutomationsPanel, { projectId: project.id, project, entities, onClose }),
       ),
     ),
   );
@@ -1068,6 +1068,45 @@ test("AutomationsPanel resolves an existing rule's stored relation id back to th
     } finally {
       globalThis.fetch = originalFetch;
       delete (navigator as { clipboard?: unknown }).clipboard;
+    }
+  });
+});
+
+/**
+ * Round 764 regression test: AutomationsPanel used to derive its entity
+ * list straight from project.spec.entities, ignoring any `entities` prop
+ * -- so the "Create automation rule" form's entity dropdown (and its
+ * default-selected entity) always listed entities in the spec's original
+ * declared/build order, regardless of how a user had actually reordered
+ * their own entity tabs. App.tsx now passes its own orderedEntities
+ * (entityTabOrder.ts's persisted order) the same way it already does for
+ * GlobalSearchPanel (round 713) -- this test exercises AutomationsPanel
+ * directly with a reordered `entities` prop, confirming both the
+ * dropdown's option order and the default pre-selected entity follow it,
+ * not project.spec.entities' own declared order ([Order, Courier]).
+ */
+test("AutomationsPanel's entity dropdown and default-selected entity follow a reordered entities prop, not project.spec.entities' own declared order", async () => {
+  await withJsdom(async () => {
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = (async (input: string, init?: RequestInit) => {
+      const method = init?.method ?? "GET";
+      if (method === "GET" && input === "/api/projects/proj6/automations") {
+        return new Response(JSON.stringify({ rules: [] }), { status: 200, headers: { "content-type": "application/json" } });
+      }
+      throw new Error(`unexpected request ${method} ${input}`);
+    }) as typeof fetch;
+
+    try {
+      const [orderField, courierField] = relationFieldProject.spec.entities;
+      renderPanelWith(relationFieldProject, () => {}, [courierField!, orderField!]);
+      await waitForCondition(() => document.body.textContent?.includes("No automations yet") ?? false);
+
+      const entitySelect = document.querySelector(".automations-create-form select") as HTMLSelectElement;
+      const optionNames = Array.from(entitySelect.options).map((o) => o.value);
+      assert.deepEqual(optionNames, ["Courier", "Order"], "the dropdown's option order must follow the reordered entities prop, not the spec's own [Order, Courier] declared order");
+      assert.equal(entitySelect.value, "Courier", "the default-selected entity must be the reordered array's first entity, not project.spec.entities[0]");
+    } finally {
+      globalThis.fetch = originalFetch;
     }
   });
 });

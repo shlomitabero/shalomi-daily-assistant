@@ -33,11 +33,25 @@ const LOCALE: Record<string, string> = { he: "he-IL", en: "en-US" };
 export function AutomationsPanel({
   projectId,
   project,
+  // Defaults to project.spec.entities' own declared/build order for
+  // backward compatibility with every existing caller/test that doesn't
+  // pass this -- App.tsx's real call site passes its own orderedEntities
+  // (entityTabOrder.ts's persisted drag/keyboard-reordered tab order) the
+  // same way it already does for GlobalSearchPanel (round 713). Without
+  // this, the "Create automation rule" form's entity dropdown always
+  // listed entities in build order, ignoring a user's own deliberate
+  // reorder of their entity tabs -- the same "orderedFields-respecting
+  // surface" convention every field-order-sensitive picker in this app
+  // (filter dropdowns, group-by, bulk-edit, CSV/ICS export) already
+  // follows for field order, just never extended to this entity-order
+  // case until now.
+  entities = project.spec.entities,
   onClose,
   readOnly = false,
 }: {
   projectId: string;
   project: Project;
+  entities?: Entity[];
   onClose: () => void;
   /** True for a "viewer" collaborator -- the server already rejects every write here with 403 VIEWER_READ_ONLY; this just keeps a viewer from clicking a control that can only ever fail. */
   readOnly?: boolean;
@@ -63,7 +77,6 @@ export function AutomationsPanel({
   const [historyLoading, setHistoryLoading] = useState(false);
   const dialogRef = useDialogFocusTrap<HTMLDivElement>(onClose);
 
-  const entities = project.spec.entities;
   const [entityName, setEntityName] = useState(entities[0]?.name ?? "");
   const [trigger, setTrigger] = useState<AutomationTrigger>("record_created");
   const [fieldName, setFieldName] = useState("");
