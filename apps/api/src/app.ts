@@ -79,8 +79,33 @@ export function createApp(
    * routes/projects.ts's upload route), never the original filename, so
    * reaching a specific file means already holding the exact URL a
    * legitimate upload or record read handed out.
+   *
+   * The upload route (routes/projects.ts's createUploadMiddleware) never
+   * restricts what a file's own content type can be -- only its *stored
+   * filename's* extension is sanitized, purely against path traversal
+   * (see safeFileExtension's own comment). A malicious uploader can
+   * therefore attach a real `.html` or `.svg` file to any file-type
+   * field; express.static would otherwise serve it back with that exact
+   * Content-Type, and EntityPanel.tsx links every file field open with a
+   * plain <a href=...> -- so any other collaborator who opens that link
+   * would have the attacker's script execute on this app's own origin,
+   * with access to this app's own localStorage session token. Forcing
+   * every response from this route to download instead of render inline
+   * closes that off regardless of what content type was uploaded, without
+   * needing to maintain a content-type/extension allowlist that a spoofed
+   * multipart Content-Type header could bypass anyway. nosniff is
+   * defense-in-depth alongside it, against a browser trying to sniff and
+   * render the body despite the attachment disposition.
    */
-  app.use("/api/uploads", express.static(uploadsDir));
+  app.use(
+    "/api/uploads",
+    express.static(uploadsDir, {
+      setHeaders: (res) => {
+        res.setHeader("X-Content-Type-Options", "nosniff");
+        res.setHeader("Content-Disposition", "attachment");
+      },
+    }),
+  );
   app.use("/api", createAuthRouter(db, whatsappManager, resolvedEmailSender, activePipelines, uploadsDir));
   app.use("/api", createProjectsRouter(db, provider, whatsappManager, activePipelines, uploadsDir));
 

