@@ -6,6 +6,7 @@ import React from "react";
 import { act, cleanup, fireEvent, render } from "@testing-library/react";
 import type { Project } from "@forge/shared";
 import { AutomationsPanel } from "./AutomationsPanel.js";
+import { setColumnOrder } from "./columnOrder.js";
 import { LanguageProvider } from "./i18n/LanguageContext.js";
 import { ThemeProvider } from "./theme/ThemeContext.js";
 
@@ -660,6 +661,129 @@ test("AutomationsPanel shows a message instead of an invalid dropdown when the e
         document.body.textContent ?? "",
         /no text field that could hold a phone number/i,
         "a real message must explain why, instead of silently rendering an empty or invalid dropdown",
+      );
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+});
+
+/**
+ * Round 770 regression test: both the field_equals trigger's "Field"
+ * dropdown and the "send to a field" toField dropdown rendered the
+ * entity's raw declared field order, ignoring the user's own
+ * drag-reordered column order (columnOrder.ts) that every other
+ * field-order-sensitive picker in this app (EntityPanel.tsx's bulk-edit
+ * and filter pickers, CSV export, both Print sheets) already respects.
+ */
+test("AutomationsPanel's Field and toField dropdowns follow the user's own drag-reordered column order, not the entity's raw declared field order", async () => {
+  await withJsdom(async () => {
+    setColumnOrder("proj2", "Shipment", ["isUrgent", "notes", "contactPhone", "priority"]);
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = (async (input: string) => {
+      if (input === "/api/projects/proj2/automations") {
+        return new Response(JSON.stringify({ rules: [] }), { status: 200, headers: { "content-type": "application/json" } });
+      }
+      throw new Error(`unexpected request ${input}`);
+    }) as typeof fetch;
+
+    try {
+      renderPanelWith(mixedFieldsProject);
+      await waitForCondition(() => document.body.textContent?.includes("No automations yet") ?? false);
+
+      const triggerSelect = Array.from(document.querySelectorAll("select")).find((s) =>
+        Array.from(s.options).some((o) => o.value === "field_equals"),
+      ) as HTMLSelectElement;
+      fireEvent.change(triggerSelect, { target: { value: "field_equals" } });
+
+      const fieldSelect = Array.from(document.querySelectorAll("label"))
+        .find((l) => l.textContent?.startsWith("Field"))
+        ?.querySelector("select") as HTMLSelectElement;
+      assert.ok(fieldSelect, "the field_equals Field dropdown must be rendered");
+      assert.deepEqual(
+        Array.from(fieldSelect.options).map((o) => o.value),
+        ["isUrgent", "notes", "contactPhone", "priority"],
+        "the Field dropdown must follow the drag-reordered column order, not the entity's raw declared order",
+      );
+
+      const toFieldSelect = document.querySelector('select[aria-label="Choose a phone field"]') as HTMLSelectElement;
+      assert.ok(toFieldSelect, "the toField select must be rendered since the entity has eligible text/longtext fields");
+      assert.deepEqual(
+        Array.from(toFieldSelect.options).map((o) => o.value),
+        ["notes", "contactPhone"],
+        "the toField dropdown must follow the drag-reordered column order too -- notes (longtext) now precedes contactPhone (text)",
+      );
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+});
+
+/**
+ * Round 770 regression test: the field_equals trigger's "Field" dropdown,
+ * the "send to a field" toField dropdown, and the rule list's own field
+ * label all rendered a field's bare `label ?? name`, with no
+ * disambiguation for two fields on the same entity sharing a label --
+ * unlike every other field-selection surface in this app (EntityPanel.tsx's
+ * bulk-edit/filter pickers, both Print sheets, CSV export), which all call
+ * fieldDisplayLabel to append the field's own unique name whenever its
+ * label collides with another field's.
+ */
+const duplicateLabelProject: Project = {
+  id: "proj5",
+  ownerId: "owner1",
+  name: "Invoicing",
+  description: "An invoicing app",
+  status: "built",
+  createdAt: new Date().toISOString(),
+  spec: {
+    summary: "An invoicing app",
+    personas: [],
+    roles: ["Admin"],
+    entities: [
+      {
+        name: "Order",
+        label: "Order",
+        fields: [
+          { name: "subtotal", label: "Amount", type: "number", required: true },
+          { name: "shipping", label: "Amount", type: "number", required: false },
+        ],
+      },
+    ],
+    screens: [],
+    assumptions: [],
+    openQuestions: [],
+  },
+};
+
+test("AutomationsPanel's field_equals Field dropdown disambiguates two fields that share the same label, instead of showing two indistinguishable options", async () => {
+  await withJsdom(async () => {
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = (async (input: string) => {
+      if (input === "/api/projects/proj5/automations") {
+        return new Response(JSON.stringify({ rules: [] }), { status: 200, headers: { "content-type": "application/json" } });
+      }
+      throw new Error(`unexpected request ${input}`);
+    }) as typeof fetch;
+
+    try {
+      renderPanelWith(duplicateLabelProject);
+      await waitForCondition(() => document.body.textContent?.includes("No automations yet") ?? false);
+
+      const triggerSelect = Array.from(document.querySelectorAll("select")).find((s) =>
+        Array.from(s.options).some((o) => o.value === "field_equals"),
+      ) as HTMLSelectElement;
+      fireEvent.change(triggerSelect, { target: { value: "field_equals" } });
+
+      const fieldSelect = Array.from(document.querySelectorAll("label"))
+        .find((l) => l.textContent?.startsWith("Field"))
+        ?.querySelector("select") as HTMLSelectElement;
+      assert.ok(fieldSelect, "the field_equals Field dropdown must be rendered");
+      const optionTexts = Array.from(fieldSelect.options).map((o) => o.textContent);
+      assert.deepEqual(
+        optionTexts,
+        ["Amount (subtotal)", "Amount (shipping)"],
+        "two fields sharing the label \"Amount\" must be disambiguated by their own unique name, exactly like every other field picker in this app",
       );
     } finally {
       globalThis.fetch = originalFetch;

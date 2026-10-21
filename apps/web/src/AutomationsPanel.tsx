@@ -14,7 +14,8 @@ import {
   type AutomationTrigger,
 } from "./api.js";
 import { downloadAutomationsReport, formatAutomationsReport } from "./automationsReport.js";
-import { parseFieldDate, recordDisplayLabel, uniqueEnumValues, type RelatedRecordsByEntity } from "./entityFormatting.js";
+import { applyColumnOrder, getColumnOrder } from "./columnOrder.js";
+import { fieldDisplayLabel, fieldLabelOccurrences, parseFieldDate, recordDisplayLabel, uniqueEnumValues, type RelatedRecordsByEntity } from "./entityFormatting.js";
 import { useTranslation } from "./i18n/LanguageContext.js";
 import { useDialogFocusTrap } from "./useDialogFocusTrap.js";
 
@@ -119,10 +120,31 @@ export function AutomationsPanel({
     [entities, entityName],
   );
 
+  // The user's own drag-reordered column order (EntityPanel.tsx's table)
+  // is the layout they see as their real field order everywhere else in
+  // the app (bulk-edit, filters, CSV export, both Print sheets) -- without
+  // this, every dropdown below would silently fall back to the entity's
+  // raw declared/build order instead.
+  const orderedSelectedEntityFields = useMemo(
+    () => (selectedEntity ? applyColumnOrder(selectedEntity.fields, getColumnOrder(projectId, selectedEntity.name)) : []),
+    [selectedEntity, projectId],
+  );
+
+  // Two fields on the same entity can legally share a label (the Field
+  // Label editor doesn't enforce uniqueness) -- mirrors every other
+  // field-selection surface in this app (EntityPanel.tsx's bulk-edit/filter
+  // pickers, both Print sheets, CSV export), all of which disambiguate via
+  // fieldDisplayLabel instead of rendering the bare, possibly-colliding
+  // label.
+  const selectedEntityFieldOccurrences = useMemo(
+    () => fieldLabelOccurrences(selectedEntity?.fields ?? []),
+    [selectedEntity],
+  );
+
   // Only text/longtext fields can ever hold a phone number -- mirrors the
   // server's own validateAutomationToField (apps/api/src/routes/projects.ts),
   // which rejects every other field type at creation/update time.
-  const phoneFields = selectedEntity?.fields.filter((f) => f.type === "text" || f.type === "longtext") ?? [];
+  const phoneFields = orderedSelectedEntityFields.filter((f) => f.type === "text" || f.type === "longtext");
 
   // A file field's stored value is the raw upload JSON descriptor, never
   // something a person could type into the Value box below -- mirrors the
@@ -130,7 +152,7 @@ export function AutomationsPanel({
   // creation/update time for exactly that reason. Without this filter the
   // field dropdown would still offer it, saving a rule that can now only
   // ever fail with a 400 the user never asked for.
-  const triggerableFields = selectedEntity?.fields.filter((f) => f.type !== "file") ?? [];
+  const triggerableFields = orderedSelectedEntityFields.filter((f) => f.type !== "file");
 
   const selectedField = selectedEntity?.fields.find((f) => f.name === fieldName);
 
@@ -406,10 +428,10 @@ export function AutomationsPanel({
 
   // Resolves a rule's stored entityName/fieldName/toField/fieldValue (the
   // raw internal identifiers listRecords etc. also use) to the same
-  // human-facing label this panel's own create-form selects already show
-  // (entities.map's `e.label ?? e.name`, `selectedEntity.fields.map`'s
-  // `f.label ?? f.name`) -- a Hebrew-labeled entity/field must not come
-  // back from the server and then render in the rule list under its raw,
+  // human-facing, disambiguated label this panel's own create-form selects
+  // already show (entities.map's `e.label ?? e.name`, fieldDisplayLabel
+  // for fields) -- a Hebrew-labeled entity/field must not come back from
+  // the server and then render in the rule list under its raw,
   // often-English internal name. Falls back to the raw identifier when the
   // entity/field can no longer be found (it was renamed or deleted after
   // the rule was created), matching label's own "falls back to name when
@@ -424,8 +446,10 @@ export function AutomationsPanel({
 
   function fieldLabel(rule: AutomationRuleView, fieldName: string | null): string {
     if (!fieldName) return "";
-    const field = ruleEntity(rule)?.fields.find((f) => f.name === fieldName);
-    return field?.label ?? fieldName;
+    const ruleFields = ruleEntity(rule)?.fields ?? [];
+    const field = ruleFields.find((f) => f.name === fieldName);
+    if (!field) return fieldName;
+    return fieldDisplayLabel(field, fieldLabelOccurrences(ruleFields));
   }
 
   // Mirrors apps/api/src/automations.ts's own interpolateTemplate, which
@@ -731,7 +755,7 @@ export function AutomationsPanel({
                 <select value={fieldName} onChange={(e) => setFieldName(e.target.value)}>
                   {triggerableFields.map((f) => (
                     <option key={f.name} value={f.name}>
-                      {f.label ?? f.name}
+                      {fieldDisplayLabel(f, selectedEntityFieldOccurrences)}
                     </option>
                   ))}
                 </select>
@@ -810,7 +834,7 @@ export function AutomationsPanel({
                 <select value={toField} onChange={(e) => setToField(e.target.value)} aria-label={t("automations.toField.placeholder")}>
                   {phoneFields.map((f) => (
                     <option key={f.name} value={f.name}>
-                      {f.label ?? f.name}
+                      {fieldDisplayLabel(f, selectedEntityFieldOccurrences)}
                     </option>
                   ))}
                 </select>
