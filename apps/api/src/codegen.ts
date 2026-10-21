@@ -2938,6 +2938,17 @@ function BoardCard({ orderedFields, boardField, record, relatedRecords, highligh
   const currentBoardValue = String(record[boardField.name] ?? "");
   const knownBoardValues = uniqueEnumValues(boardField.enumValues);
   const boardOptionValues = currentBoardValue && !knownBoardValues.includes(currentBoardValue) ? [currentBoardValue, ...knownBoardValues] : knownBoardValues;
+  // The exact same "(other)" column also catches a record whose board
+  // field is simply null/unset -- an optional board field left blank at
+  // creation, or any pre-existing row after a refine added this field as
+  // a brand-new column (migrate.ts's additive-only ALTER TABLE always
+  // leaves existing rows NULL). currentBoardValue is then "" too, but
+  // the ternary above only ever adds a non-empty stale value to the
+  // option list -- it never adds "" itself, so the <select> still has no
+  // matching <option> and still blanks out. Mirrors FieldInput's own
+  // enum branch, which never hits this because it always renders a
+  // disabled "" option unconditionally.
+  const hasEmptyBoardOption = currentBoardValue === "";
   const labelOccurrences = fieldLabelOccurrences(otherFields);
   return (
     <div className={hasMoveError ? "board-card board-card-move-error" : "board-card"} draggable onDragStart={(e) => e.dataTransfer.setData("text/plain", String(record.id))}>
@@ -2954,6 +2965,11 @@ function BoardCard({ orderedFields, boardField, record, relatedRecords, highligh
         </div>
       ))}
       <select className="board-card-move" value={currentBoardValue} onChange={(e) => onMove(e.target.value)}>
+        {hasEmptyBoardOption && (
+          <option value="" disabled>
+            …
+          </option>
+        )}
         {boardOptionValues.map((v) => (
           <option key={v} value={v}>
             {(boardField.enumLabels && boardField.enumLabels[v]) || v}

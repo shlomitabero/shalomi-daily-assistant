@@ -1680,6 +1680,52 @@ test("EntityPanel's board card 'move' select shows the record's real stale statu
 });
 
 /**
+ * Round 752: the fix just above only ever adds a non-empty stale value
+ * (e.g. "archived") to the move select's own option list -- it never
+ * adds "" itself. A record whose board field is simply null/unset (an
+ * optional board field left blank at creation, or any pre-existing row
+ * after a refine added this field as a brand-new column -- migrate.ts's
+ * additive-only ALTER TABLE always leaves existing rows NULL) also lands
+ * in the "(other)" column, with the exact same "controlled value matches
+ * no <option>" blanking the browser silently applies -- but with no
+ * visible placeholder at all, unlike FieldInput's own enum branch, which
+ * always renders one.
+ */
+test("EntityPanel's board card 'move' select shows a real placeholder, not a blank selection, for a record whose status is null/unset", async () => {
+  await withJsdom(async () => {
+    const store: EntityRecord[] = [
+      { id: 1, name: "Acme Corp", status: "new" },
+      { id: 2, name: "Globex", status: null },
+    ];
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = mockRecordsFetch(store) as typeof fetch;
+    try {
+      renderEntityPanel();
+      await waitForCondition(() => document.querySelector(".entity-toolbar") !== null);
+
+      const boardToggle = document.querySelectorAll(".view-toggle-btn")[1] as HTMLButtonElement;
+      fireEvent.click(boardToggle);
+      await waitForCondition(() => document.querySelectorAll(".board-column").length === 4);
+
+      const otherColumn = Array.from(document.querySelectorAll(".board-column")).find((col) =>
+        col.querySelector(".board-column-header")?.textContent?.includes("Other"),
+      );
+      const moveSelect = otherColumn!.querySelector(".board-card-move") as HTMLSelectElement;
+      assert.ok(moveSelect, "expected the card's own move select to render");
+      assert.equal(moveSelect.value, "", "the select's controlled value must stay empty, matching the record's real unset status");
+      assert.equal(
+        moveSelect.selectedIndex === -1,
+        false,
+        "the select must have a real matching <option> (the disabled placeholder), not blank out with selectedIndex -1",
+      );
+      assert.equal((moveSelect.options[moveSelect.selectedIndex] as HTMLOptionElement).disabled, true, "the matched placeholder option must be disabled, not a real selectable status");
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+});
+
+/**
  * Regression test for round 509's finding: hiddenFields' own persisted-load
  * effect is one of 4 siblings (alongside recentSearches, columnOrderState,
  * columnWidths, groupFieldName) that never got the fieldNamesKey

@@ -466,6 +466,19 @@ function BoardCard({
   const currentBoardValue = String(record[boardField.name] ?? "");
   const knownBoardValues = uniqueEnumValues(boardField.enumValues);
   const boardOptionValues = currentBoardValue && !knownBoardValues.includes(currentBoardValue) ? [currentBoardValue, ...knownBoardValues] : knownBoardValues;
+  // The exact same "(other)" column also catches a record whose board
+  // field is simply null/unset -- an optional board field left blank at
+  // creation, or any pre-existing row after a refine added this field as
+  // a brand-new column (migrate.ts's additive-only ALTER TABLE always
+  // leaves existing rows NULL, regardless of the field's required flag
+  // going forward). currentBoardValue is then "" too, but the ternary
+  // above only ever adds a non-empty stale value to the option list --
+  // it never adds "" itself, so the <select> still has no matching
+  // <option> and still blanks out. Mirrors FieldInput's own enum branch,
+  // which never hits this because it always renders a disabled "" option
+  // unconditionally; this one only needs it for the empty case, since a
+  // genuinely stale non-empty value is already shown as its own option.
+  const hasEmptyBoardOption = currentBoardValue === "";
   const labelOccurrences = fieldLabelOccurrences(otherFields);
   return (
     <div
@@ -499,6 +512,11 @@ function BoardCard({
         onChange={(e) => onMove(e.target.value)}
         disabled={readOnly}
       >
+        {hasEmptyBoardOption && (
+          <option value="" disabled>
+            {t("entity.select")}
+          </option>
+        )}
         {boardOptionValues.map((v) => (
           <option key={v} value={v}>
             {boardField.enumLabels?.[v] ?? v}

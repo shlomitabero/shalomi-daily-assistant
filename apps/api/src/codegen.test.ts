@@ -10367,6 +10367,48 @@ test("the exported app's BoardCard move select and FieldInput's enum select both
 });
 
 /**
+ * Round 752: the test just above confirms boardOptionValues correctly
+ * adds no spurious "" entry for a missing/empty value -- but that also
+ * means the move <select> has literally no <option> at all matching its
+ * own controlled value="" in that exact case (a record whose board field
+ * is null/unset, e.g. an optional board field left blank at creation, or
+ * any pre-existing row after a refine added this field as a brand-new
+ * column). hasEmptyBoardOption is the real generated flag the exported
+ * app's JSX uses to render a disabled "" placeholder option specifically
+ * for that case, mirroring FieldInput's own enum branch, which always
+ * renders one.
+ */
+test("the exported app's BoardCard computes hasEmptyBoardOption so its move select can render a real placeholder for a null/unset status, instead of leaving no matching <option> at all", () => {
+  const entityViewJsx = generateExportFiles(project).find((f) => f.path === "web/src/components/EntityView.jsx")!.content;
+
+  const hasEmptyBoardOptionSrc = entityViewJsx.match(/  const hasEmptyBoardOption = [^\n]*\n/)?.[0];
+  assert.ok(hasEmptyBoardOptionSrc, "expected to find BoardCard's real generated hasEmptyBoardOption computation");
+  const computeHasEmptyBoardOption = new Function(
+    "record",
+    "boardField",
+    `const currentBoardValue = String(record[boardField.name] ?? "");\n${hasEmptyBoardOptionSrc}\nreturn hasEmptyBoardOption;`,
+  ) as (record: Record<string, unknown>, boardField: { name: string }) => boolean;
+
+  assert.equal(
+    computeHasEmptyBoardOption({ status: null }, { name: "status" }),
+    true,
+    "a null status must flag that the move select needs its own placeholder option",
+  );
+  assert.equal(computeHasEmptyBoardOption({}, { name: "status" }), true, "a missing status field entirely must also flag it");
+  assert.equal(
+    computeHasEmptyBoardOption({ status: "new" }, { name: "status" }),
+    false,
+    "a real, present status value needs no placeholder -- it already gets its own matching <option>",
+  );
+
+  assert.match(
+    entityViewJsx,
+    /\{hasEmptyBoardOption && \(\s*<option value="" disabled>/,
+    "the move select must actually render the placeholder option when hasEmptyBoardOption is true",
+  );
+});
+
+/**
  * New in this round: handleToggleColumn's own "keep at least one column
  * visible" guard computed how many columns are actually visible as
  * `entity.fields.length - hiddenFields.size`. That undercounts the real
