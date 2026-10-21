@@ -301,6 +301,20 @@ export function runQaChecks(
       // missing too, which is what let every required field past the first
       // go completely unchecked before this fix.
       const validRecord = generateSeedRecords(entity, 1)[0];
+      // generateSeedRecords (seed.ts) always leaves a "file" field null --
+      // correct for real seeding, but it breaks this exact function's own
+      // "valid for every OTHER field" invariant whenever the entity has a
+      // REQUIRED file field: insertRecord would reject validRecord itself,
+      // before recordMissingThisField below ever deletes the field this
+      // loop is actually testing, for the unrelated file field instead. A
+      // placeholder value (coerceValue's own "file" case stores it as a
+      // plain string with no shape validation at all, same as every other
+      // unrecognized type) is never submitted for real -- it only fills in
+      // a SIBLING required field here, so testing that same file field
+      // itself still correctly deletes it below and still gets rejected.
+      for (const f of entity.fields) {
+        if (f.type === "file" && f.required) validRecord[f.name] = JSON.stringify({ url: "", name: "placeholder", size: 0, mimeType: "" });
+      }
       for (const requiredField of requiredFields) {
         const recordMissingThisField = { ...validRecord };
         delete recordMissingThisField[requiredField.name];
@@ -309,8 +323,22 @@ export function runQaChecks(
           allPassed = false;
           checks.push(`FAILED: inserting without required "${requiredField.name}" was not rejected`);
         } catch (err) {
-          if (err instanceof ValidationError) {
+          // Confirms the rejection actually names requiredField itself --
+          // not just that *some* ValidationError was thrown. Without this,
+          // a sibling required field insertRecord rejects FIRST (coerceValue
+          // processes fields in array order) would be silently credited as
+          // "enforced for" requiredField even though requiredField's own
+          // required-check was never actually exercised -- the exact
+          // invariant the placeholder-fill above exists to prevent, kept
+          // here as a second, self-verifying layer rather than relying
+          // solely on validRecord always being correctly constructed.
+          if (err instanceof ValidationError && (err as Error).message.includes(`"${requiredField.name}"`)) {
             checks.push(`required-field validation enforced for "${requiredField.name}"`);
+          } else if (err instanceof ValidationError) {
+            allPassed = false;
+            checks.push(
+              `FAILED: inserting without required "${requiredField.name}" was rejected, but for a different field (${(err as Error).message}) -- "${requiredField.name}"'s own required-check was never actually exercised`,
+            );
           } else {
             allPassed = false;
             checks.push(`FAILED: unexpected error validating "${requiredField.name}": ${(err as Error).message}`);
@@ -505,6 +533,26 @@ export async function* runBuildPipeline(
   let seededCount = 0;
   const seedErrors: string[] = [];
   for (const entity of entitiesToSeed) {
+    // seedValueFor (seed.ts) deliberately leaves every "file" field null --
+    // there's no real uploaded file to point a seeded record at. For an
+    // OPTIONAL file field that's fine (the field is just left empty). For a
+    // REQUIRED one, insertRecord's own coerceValue rejects every single
+    // generated record for this entity with the exact same
+    // `Field "X" is required` error, every time, for a structural reason
+    // that retrying or seeding more records can never fix -- unlike
+    // buildImportRecords (CSV import) and handleDuplicate/
+    // handleBulkDuplicate, which already refuse upfront with one clear
+    // reason for this exact "file field makes the operation structurally
+    // impossible" case, this loop used to just attempt the doomed inserts
+    // anyway, piling up one identical error per generated record instead of
+    // explaining the real, unfixable-by-seeding cause once.
+    const unseedableFileField = entity.fields.find((f) => f.type === "file" && f.required);
+    if (unseedableFileField) {
+      seedErrors.push(
+        `${entity.name}: skipped seeding -- required file field "${unseedableFileField.label ?? unseedableFileField.name}" has no real uploaded file to point a sample record at; add its first record(s) by hand once the app is live.`,
+      );
+      continue;
+    }
     for (const record of generateSeedRecords(entity)) {
       // generateSeedRecords's required-relation guess is a static "row 1",
       // which orderForSeeding above only gets right by assuming the target

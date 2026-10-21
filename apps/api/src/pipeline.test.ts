@@ -346,6 +346,63 @@ test("seeding a spec that lists a dependent entity before its required relation 
 });
 
 /**
+ * Round 753: seedValueFor (seed.ts) deliberately leaves every "file" field
+ * null -- there's no real uploaded file to point a seeded record at. For
+ * an entity with a REQUIRED file field, that used to mean every single
+ * generated seed record was rejected by insertRecord with the identical
+ * `Field "resume" is required` error, piling up one duplicate error per
+ * record instead of skipping the entity upfront with one clear,
+ * structural reason -- the same "file field makes the operation
+ * impossible" case buildImportRecords (CSV import) and
+ * handleDuplicate/handleBulkDuplicate already handle by refusing outright
+ * rather than attempting a doomed operation.
+ */
+test("seeding an entity with a required 'file' field skips it with one clear message instead of piling up one identical insert error per generated record", async () => {
+  const spec: ProductSpec = {
+    summary: "test",
+    personas: [],
+    roles: ["Admin"],
+    screens: [],
+    assumptions: [],
+    openQuestions: [],
+    entities: [
+      {
+        name: "Applicant",
+        fields: [
+          { name: "name", type: "text", required: true },
+          { name: "resume", label: "Resume", type: "file", required: true },
+        ],
+      },
+    ],
+  };
+  const db = openDatabase(":memory:");
+  ensureProjectsTable(db);
+  ensureCheckpointsTable(db);
+  const project = insertProject(db, {
+    id: "proj1",
+    ownerId: "user1",
+    name: "test",
+    description: "test",
+    spec,
+  });
+  const [applicant] = spec.entities;
+
+  const events = await collect(runBuildPipeline(db, project, { nextSpec: spec, changeLabel: "Initial build" }));
+  const forgeEvent = events.find((e) => e.agent === "Forge");
+  assert.ok(forgeEvent && forgeEvent.status === "success", "the build must still succeed overall -- an unseedable entity is not a build failure");
+
+  const seedEvent = events.find((e) => e.agent === "Seed Data" && e.status !== "running");
+  assert.equal(seedEvent!.status, "failed", "an entirely unseedable entity is still a real Seed Data failure, just an honest, upfront one");
+  assert.deepEqual(
+    seedEvent!.detail,
+    ['Applicant: skipped seeding -- required file field "Resume" has no real uploaded file to point a sample record at; add its first record(s) by hand once the app is live.'],
+    "exactly one clear, structural message -- not one identical insert-rejection error repeated per generated record",
+  );
+
+  assert.equal(countRecords(db, project.id, applicant), 0, "Applicant correctly has zero seeded rows, not partial/garbage data");
+});
+
+/**
  * Regression test: the old Seed Data eligibility filter only seeded an
  * entity if it was BOTH brand-new (per this diff's new_table changes) AND
  * currently empty. An existing entity the user had emptied out (e.g. she
@@ -1339,6 +1396,56 @@ test("runQaChecks's per-required-field check omits only the field under test, le
       `expected a real, correctly-attributed rejection for "${fieldName}", not a misattributed failure from some other field's seed value being invalid`,
     );
   }
+});
+
+/**
+ * Round 753: a required "file" field is the one case the test just above
+ * didn't cover -- generateSeedRecords (seed.ts) always leaves a "file"
+ * field null (there's no real uploaded file to synthesize), so
+ * runQaChecks' own validRecord baseline was NOT actually valid for every
+ * other field when the entity had one, breaking the exact invariant the
+ * comment above this function describes. Declaring the file field BEFORE
+ * the field under test in entity.fields order reproduces the real bug:
+ * coerceValue processes fields in array order and throws on the file
+ * field first, so testing "signedDate" (deleting it) actually got
+ * rejected for "attachment" instead -- and the old code only checked
+ * `err instanceof ValidationError`, never which field the message
+ * actually named, so it credited "signedDate" with a check that never
+ * really ran.
+ */
+test("runQaChecks correctly attributes a required field's own check even when a required 'file' field is declared earlier on the same entity", () => {
+  const spec: ProductSpec = {
+    summary: "test",
+    personas: [],
+    roles: ["Admin"],
+    screens: [],
+    assumptions: [],
+    openQuestions: [],
+    entities: [
+      {
+        name: "Contract",
+        fields: [
+          { name: "attachment", type: "file", required: true },
+          { name: "signedDate", type: "date", required: true },
+        ],
+      },
+    ],
+  };
+  const db = openDatabase(":memory:");
+  applyMigrations(db, "proj1", spec);
+
+  const qa = runQaChecks(db, "proj1", spec);
+
+  assert.equal(qa.allPassed, true);
+  const contractChecks = qa.results.find((r) => r.entity === "Contract")!.checks;
+  assert.ok(
+    contractChecks.includes('required-field validation enforced for "attachment"'),
+    "the required file field's own check must still be correctly attributed",
+  );
+  assert.ok(
+    contractChecks.includes('required-field validation enforced for "signedDate"'),
+    'signedDate\'s own required-check must be genuinely exercised and correctly attributed, not masked by "attachment" being rejected first',
+  );
 });
 
 /**
