@@ -86,6 +86,42 @@ test("the generated assumptions no longer claim multi-user support doesn't exist
 });
 
 /**
+ * Round 768: the sentence the test above locked in ("no granular
+ * permission tier yet -- every collaborator gets full data access") went
+ * stale the moment real two-tier RBAC shipped (packages/db/src/
+ * collaborators.ts's role column, apps/api/src/routes/projects.ts's
+ * requireProjectWriteAccess 403 for a viewer, CollaboratorsPanel.tsx's
+ * role selector) -- an earlier fix for this exact function's exact kind of
+ * staleness (the test just above it), now stale itself in the same way.
+ * Confirms the claim that every collaborator gets full access is gone, and
+ * the real viewer/read-only distinction is described instead, in both
+ * languages.
+ */
+test("the generated assumptions no longer claim every collaborator gets full access, since real viewer/editor roles already ship", async () => {
+  const provider = new HeuristicSpecProvider();
+
+  const enSpec = await provider.generate("I want to organize my hobby collection.");
+  assert.ok(
+    enSpec.assumptions.every((a) => !/no granular permission tier|every collaborator gets full/i.test(a)),
+    "must not claim there's no permission tier or every collaborator gets full access -- viewer/editor roles exist",
+  );
+  assert.ok(
+    enSpec.assumptions.some((a) => /viewer/i.test(a) && /editor/i.test(a)),
+    "should instead describe the real editor/viewer role distinction",
+  );
+
+  const heSpec = await provider.generate("אני רוצה לנהל את אוסף התחביב שלי.");
+  assert.ok(
+    heSpec.assumptions.every((a) => !/גישה מלאה לנתונים/.test(a)),
+    "must not claim every collaborator gets full data access -- viewer/editor roles exist",
+  );
+  assert.ok(
+    heSpec.assumptions.some((a) => /צפייה בלבד/.test(a) && /עורך/.test(a)),
+    "should instead describe the real editor/viewer role distinction",
+  );
+});
+
+/**
  * Round 708: isHebrewText only checks whether ANY Hebrew character appears
  * anywhere in its input, not which language dominates -- so without this
  * override, a single Hebrew word mixed into an otherwise-English
