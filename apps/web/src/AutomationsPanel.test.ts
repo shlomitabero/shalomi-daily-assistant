@@ -1072,6 +1072,110 @@ test("AutomationsPanel resolves an existing rule's stored relation id back to th
   });
 });
 
+const dateFieldProject: Project = {
+  id: "proj7",
+  ownerId: "owner1",
+  name: "Orders",
+  description: "An order-tracking app",
+  status: "built",
+  createdAt: new Date().toISOString(),
+  spec: {
+    summary: "An order-tracking app",
+    personas: [],
+    roles: ["Admin"],
+    entities: [
+      {
+        name: "Order",
+        label: "Order",
+        fields: [
+          { name: "label", label: "Label", type: "text", required: true },
+          { name: "dueDate", label: "Due Date", type: "date", required: false },
+          { name: "amount", label: "Amount", type: "number", required: false },
+        ],
+      },
+    ],
+    screens: [],
+    assumptions: [],
+    openQuestions: [],
+  },
+};
+
+/**
+ * Round 759 regression test: fieldValueLabel (in both AutomationsPanel.tsx
+ * and automationsReport.ts) only had branches for enum/relation field
+ * types -- a date or number field_equals rule's raw stored value
+ * ("2024-01-15", "1500") fell through to the bare, unformatted string in
+ * both the rule list and the Copy/Download report, even though the
+ * function's own doc comment claims to mirror apps/api/src/automations.
+ * ts's interpolateTemplate, which already locale-formats both types for
+ * the real outgoing WhatsApp message.
+ */
+test("AutomationsPanel locale-formats a date/number field_equals rule's value in the rule list and the Copy report, instead of printing the raw stored string", async () => {
+  await withJsdom(async () => {
+    const originalFetch = globalThis.fetch;
+    const dateRule = makeRule({
+      id: "rule12",
+      entityName: "Order",
+      trigger: "field_equals",
+      fieldName: "dueDate",
+      fieldValue: "2024-01-15",
+    });
+    const numberRule = makeRule({
+      id: "rule13",
+      entityName: "Order",
+      trigger: "field_equals",
+      fieldName: "amount",
+      fieldValue: "1500",
+    });
+    globalThis.fetch = (async (input: string, init?: RequestInit) => {
+      const method = init?.method ?? "GET";
+      if (method === "GET" && input === "/api/projects/proj7/automations") {
+        return new Response(JSON.stringify({ rules: [dateRule, numberRule] }), { status: 200, headers: { "content-type": "application/json" } });
+      }
+      throw new Error(`unexpected request ${method} ${input}`);
+    }) as typeof fetch;
+
+    let writtenText: string | undefined;
+    Object.defineProperty(navigator, "clipboard", {
+      value: { writeText: async (text: string) => void (writtenText = text) },
+      configurable: true,
+    });
+
+    try {
+      renderPanelWith(dateFieldProject);
+      await waitForCondition(() => document.querySelectorAll(".automations-rule-condition").length === 2);
+      const conditionTexts = Array.from(document.querySelectorAll(".automations-rule-condition")).map((el) => el.textContent ?? "");
+
+      assert.ok(
+        conditionTexts.some((text) => text.includes("1/15/2024")),
+        `expected a locale-formatted date ("1/15/2024"), got: ${JSON.stringify(conditionTexts)}`,
+      );
+      assert.ok(
+        !conditionTexts.some((text) => text.includes("2024-01-15")),
+        "the raw ISO date string must never be shown once the field's type is known to be \"date\"",
+      );
+      assert.ok(
+        conditionTexts.some((text) => text.includes("1,500")),
+        `expected a locale-formatted number ("1,500"), got: ${JSON.stringify(conditionTexts)}`,
+      );
+
+      const copyButton = Array.from(document.querySelectorAll("button")).find((b) => b.textContent?.includes("Copy report")) as HTMLButtonElement;
+      await act(async () => {
+        fireEvent.click(copyButton);
+        await Promise.resolve();
+        await Promise.resolve();
+      });
+
+      assert.equal(typeof writtenText, "string", "clicking Copy must actually call navigator.clipboard.writeText");
+      assert.match(writtenText!, /1\/15\/2024/, "the Copy report text must also locale-format the date field's value");
+      assert.match(writtenText!, /1,500/, "the Copy report text must also locale-format the number field's value");
+    } finally {
+      globalThis.fetch = originalFetch;
+      delete (navigator as { clipboard?: unknown }).clipboard;
+    }
+  });
+});
+
 /**
  * New: the "schedule" trigger -- a recurring, time-of-day rule with no
  * triggering record at all, unlike record_created/field_equals. Choosing

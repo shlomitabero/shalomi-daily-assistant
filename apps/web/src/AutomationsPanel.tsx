@@ -14,7 +14,7 @@ import {
   type AutomationTrigger,
 } from "./api.js";
 import { downloadAutomationsReport, formatAutomationsReport } from "./automationsReport.js";
-import { recordDisplayLabel, uniqueEnumValues, type RelatedRecordsByEntity } from "./entityFormatting.js";
+import { parseFieldDate, recordDisplayLabel, uniqueEnumValues, type RelatedRecordsByEntity } from "./entityFormatting.js";
 import { useTranslation } from "./i18n/LanguageContext.js";
 import { useDialogFocusTrap } from "./useDialogFocusTrap.js";
 
@@ -422,7 +422,12 @@ export function AutomationsPanel({
   // same "degrade to the bare id when the target/records aren't
   // available" fallback relationDisplayLabel itself uses (relatedRecords
   // may not have finished loading, or the related record may have since
-  // been deleted), rather than ever showing nothing at all.
+  // been deleted), rather than ever showing nothing at all. date/number
+  // mirror interpolateTemplate's own date/number branches too -- without
+  // these, a date field_equals rule's raw stored "2024-01-15" showed as
+  // that literal ISO string in the rule list and Copy/Download report,
+  // instead of the locale-formatted date every other date display in this
+  // app (table cells, this same rule's own outgoing WhatsApp message) uses.
   function fieldValueLabel(rule: AutomationRuleView): string {
     if (!rule.fieldValue) return "";
     const field = ruleEntity(rule)?.fields.find((f) => f.name === rule.fieldName);
@@ -433,6 +438,11 @@ export function AutomationsPanel({
       const match = targetEntity && records ? records.find((r) => String(r.id) === rule.fieldValue) : undefined;
       return match && targetEntity ? recordDisplayLabel(targetEntity, match) : rule.fieldValue;
     }
+    if (field?.type === "date") {
+      const date = parseFieldDate(rule.fieldValue);
+      return Number.isNaN(date.getTime()) ? rule.fieldValue : date.toLocaleDateString(LOCALE[lang]);
+    }
+    if (field?.type === "number") return Number(rule.fieldValue).toLocaleString(LOCALE[lang]);
     return rule.fieldValue;
   }
 

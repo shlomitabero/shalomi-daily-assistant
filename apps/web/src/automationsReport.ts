@@ -1,6 +1,6 @@
 import type { Entity } from "@forge/shared";
 import { safeDownloadName, type AutomationRuleView } from "./api.js";
-import { recordDisplayLabel, type RelatedRecordsByEntity } from "./entityFormatting.js";
+import { parseFieldDate, recordDisplayLabel, type RelatedRecordsByEntity } from "./entityFormatting.js";
 import type { Lang } from "./i18n/language.js";
 
 const LOCALE: Record<Lang, string> = { he: "he-IL", en: "en-US" };
@@ -36,7 +36,12 @@ function fieldLabel(rule: AutomationRuleView, fieldName: string | null, entities
   return field?.label ?? fieldName;
 }
 
-function fieldValueLabel(rule: AutomationRuleView, entities: Entity[], relatedRecords: RelatedRecordsByEntity): string {
+// Mirrors AutomationsPanel.tsx's own fieldValueLabel (see its comment) --
+// including the date/number branches that mirror apps/api/src/
+// automations.ts's interpolateTemplate, so a date/number field_equals
+// rule's value shows locale-formatted in this report the same way it now
+// does in the live rule list, instead of the raw stored string.
+function fieldValueLabel(rule: AutomationRuleView, entities: Entity[], relatedRecords: RelatedRecordsByEntity, lang: Lang): string {
   if (!rule.fieldValue) return "";
   const field = ruleEntity(rule, entities)?.fields.find((f) => f.name === rule.fieldName);
   if (field?.type === "enum") return field.enumLabels?.[rule.fieldValue] ?? rule.fieldValue;
@@ -46,6 +51,11 @@ function fieldValueLabel(rule: AutomationRuleView, entities: Entity[], relatedRe
     const match = targetEntity && records ? records.find((r) => String(r.id) === rule.fieldValue) : undefined;
     return match && targetEntity ? recordDisplayLabel(targetEntity, match) : rule.fieldValue;
   }
+  if (field?.type === "date") {
+    const date = parseFieldDate(rule.fieldValue);
+    return Number.isNaN(date.getTime()) ? rule.fieldValue : date.toLocaleDateString(LOCALE[lang]);
+  }
+  if (field?.type === "number") return Number(rule.fieldValue).toLocaleString(LOCALE[lang]);
   return rule.fieldValue;
 }
 
@@ -77,7 +87,7 @@ function describeRule(
   return t("automations.rule.when.fieldEquals", {
     field: fieldLabel(rule, rule.fieldName, entities),
     entity: entityLabel(rule, entities),
-    value: fieldValueLabel(rule, entities, relatedRecords),
+    value: fieldValueLabel(rule, entities, relatedRecords, lang),
   });
 }
 
