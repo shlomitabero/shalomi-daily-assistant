@@ -54,9 +54,20 @@ function sanitizeZipEntryName(name: string): string {
  * injection, CWE-1236): spreadsheet apps treat an unguarded cell like that
  * as a formula, and a stored field can hold arbitrary text, not just
  * values this app itself ever wrote.
+ *
+ * A value that already starts with a literal "'" is also prefixed with one
+ * more "'" -- this backup CSV is re-importable via the per-entity "Import
+ * CSV" feature (see this file's own comment below on numbers/dates being
+ * left unformatted for exactly that reason), which shares entityFormatting.
+ * ts's unescapeCsvGuard: without this, a value like "'-interesting" (a real
+ * leading apostrophe immediately followed by a guarded character) exports
+ * to the exact same bytes as the guard applied to "-interesting", so that
+ * shared unescape logic can't tell them apart on import and silently drops
+ * the real apostrophe. Mirrors entityFormatting.ts's own csvEscape, which
+ * already carries this fix.
  */
 function csvEscape(value: string): string {
-  const guarded = /^[=+\-@\t\r]/.test(value) ? `'${value}` : value;
+  const guarded = /^[=+\-@\t\r']/.test(value) ? `'${value}` : value;
   if (/[",\r\n]/.test(guarded)) {
     return `"${guarded.replace(/"/g, '""')}"`;
   }

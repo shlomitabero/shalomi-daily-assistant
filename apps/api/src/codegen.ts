@@ -626,9 +626,16 @@ function buildZip(entries) {
 // A value starting with =, +, -, @, or a tab/CR is prefixed with a leading
 // single quote before the usual comma/quote/newline wrapping -- spreadsheet
 // apps treat an unguarded cell like that as a formula (CSV/formula
-// injection, CWE-1236), and a stored field can hold arbitrary text.
+// injection, CWE-1236), and a stored field can hold arbitrary text. A value
+// that already starts with a literal "'" is also prefixed with one more
+// "'" -- this backup CSV is re-importable via the general entity CSV
+// import below, which shares its unescapeCsvGuard: without this, a value
+// like "'-interesting" exports to the same bytes as the guard applied to
+// "-interesting", so import can't tell them apart and drops the real
+// apostrophe. Mirrors this file's own general-import csvEscape below,
+// which already carries this fix.
 function csvEscape(value) {
-  const guarded = /^[=+\\-@\\t\\r]/.test(value) ? \`'\${value}\` : value;
+  const guarded = /^[=+\\-@\\t\\r']/.test(value) ? \`'\${value}\` : value;
   if (/[",\\r\\n]/.test(guarded)) {
     return \`"\${guarded.replace(/"/g, '""')}"\`;
   }

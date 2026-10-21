@@ -8655,6 +8655,42 @@ test("the exported server.js's own entityToCsv disambiguates two columns that sh
   assert.equal(lines[1], "800,30");
 });
 
+/**
+ * Round 756: this exported server.js's own backup-specific csvEscape (used
+ * only by entityToCsv/the "Backup all data" ZIP route, a separate copy
+ * from the general entity CSV export/import feature's own csvEscape a few
+ * hundred lines below -- see that other csvEscape's own comment) was
+ * missing the leading-apostrophe disambiguation fix the general-import
+ * copy already carries. This backup CSV is importable through that same
+ * general "Import CSV" feature (shares the exact column format -- see
+ * this file's own entityToCsv/csvEscape comments), so a value that
+ * genuinely starts with "'" immediately followed by a guarded character
+ * (e.g. "'-interesting") must get a second guard quote, or re-importing it
+ * silently drops the real apostrophe.
+ */
+test("the exported server.js's own backup-specific csvEscape double-guards a value starting with a literal apostrophe followed by a guarded character", () => {
+  const serverJs = generateExportFiles(project).find((f) => f.path === "server.js")!.content;
+  const csvEscapeSrc = serverJs.match(/function csvEscape\(value\) \{[\s\S]*?\n\}\n/)?.[0];
+  const backupRecordDisplayLabelSrc = serverJs.match(/function backupRecordDisplayLabel\(entity, record\) \{[\s\S]*?\n\}\n/)?.[0];
+  const backupPickDisplayFieldSrc = serverJs.match(/const BACKUP_DISPLAY_FIELD_HINTS[\s\S]*?\nfunction backupPickDisplayField\(entity\) \{[\s\S]*?\n\}\n/)?.[0];
+  const backupFieldDisplayValueSrc = serverJs.match(/function backupFieldDisplayValue\(field, value, recordIndexByEntity\) \{[\s\S]*?\n\}\n/)?.[0];
+  const entityToCsvSrc = serverJs.match(/function entityToCsv\(entity, records, recordIndexByEntity\) \{[\s\S]*?\n\}\n/)?.[0];
+  assert.ok(
+    csvEscapeSrc && backupRecordDisplayLabelSrc && backupPickDisplayFieldSrc && backupFieldDisplayValueSrc && entityToCsvSrc,
+    "expected to find csvEscape/backupRecordDisplayLabel/backupPickDisplayField/backupFieldDisplayValue/entityToCsv in generated server.js",
+  );
+
+  const entityToCsv = new Function(
+    "ENTITIES",
+    `${csvEscapeSrc}\n${backupPickDisplayFieldSrc}\n${backupRecordDisplayLabelSrc}\n${backupFieldDisplayValueSrc}\n${entityToCsvSrc}\nreturn entityToCsv;`,
+  )([]);
+
+  const entity = { name: "Customer", fields: [{ name: "name", label: "Name", type: "text" }] };
+  const csv = entityToCsv(entity, [{ name: "'-interesting" }], {});
+  const lines = csv.split("\r\n");
+  assert.equal(lines[1], "''-interesting");
+});
+
 // Regression test: the exported app's own embedded buildZip() (a
 // necessary copy of apps/api/src/zip.ts, since the exported app has zero
 // runtime dependency on this repo) had drifted from it -- missing the

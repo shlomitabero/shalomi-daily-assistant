@@ -538,3 +538,27 @@ test("a value that would be interpreted as a spreadsheet formula is guarded with
   const lines = customerCsv.split("\r\n");
   assert.equal(lines[1], "'=cmd|' /C calc'!A1,חדש");
 });
+
+/**
+ * Regression test for a real round-trip corruption: this backup CSV's own
+ * doc comment (see csvEscape's own comment above) says it's meant to be
+ * re-importable via the per-entity "Import CSV" feature, which shares
+ * entityFormatting.ts's unescapeCsvGuard -- that shared unescape logic
+ * strips exactly one leading "'" whenever it's followed by one of
+ * =+-@\t\r' (the same set csvEscape itself guards against). A value that
+ * genuinely starts with a literal "'" immediately followed by one of
+ * those characters (e.g. "'-interesting") must therefore be guarded with
+ * TWO leading quotes, not one -- otherwise it exports to the exact same
+ * bytes ("'-interesting") the guard would produce for the unguarded value
+ * "-interesting", and re-importing silently drops the real apostrophe.
+ */
+test("a value starting with a literal apostrophe followed by a guarded character gets a second guard quote, so re-importing can't mistake it for an added guard", () => {
+  const db = createTestDb(project);
+  const customer = project.spec.entities[0];
+  insertRecord(db, project.id, customer, { name: "'-interesting", status: "New" });
+
+  const entries = generateBackupZipEntries(db, project);
+  const customerCsv = entries.find((e) => e.path === "Customer.csv")!.content.replace(/^﻿/, "");
+  const lines = customerCsv.split("\r\n");
+  assert.equal(lines[1], "''-interesting,חדש");
+});
