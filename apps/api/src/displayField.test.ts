@@ -204,3 +204,31 @@ test("recordDisplayLabel resolves an enum display field through its own enumLabe
     "the enum field's own translated label must be shown, not the raw stored value \"A\"",
   );
 });
+
+/**
+ * Round 771 regression test: the exact same bug class as the enum fix
+ * just above, never done for "boolean" -- when pickDisplayField's
+ * last-resort fallback lands on a boolean field, recordDisplayLabel used
+ * to String() the raw value ("true"/"false") instead of this codebase's
+ * own uniform "TRUE"/"FALSE" convention.
+ */
+test("recordDisplayLabel resolves a boolean display field to TRUE/FALSE, not its raw lowercase stored value", () => {
+  const entity: Entity = {
+    name: "Consent",
+    fields: [
+      { name: "studentId", type: "relation", relationTo: "Student", required: true },
+      { name: "courseId", type: "relation", relationTo: "Course", required: true },
+      { name: "signed", type: "boolean", required: false },
+    ],
+  };
+  assert.equal(
+    recordDisplayLabel(entity, { id: 5, createdAt: "", studentId: 1, courseId: 1, signed: true }),
+    "TRUE",
+    "the boolean field's own uniform TRUE/FALSE convention must be shown, not the raw stored value \"true\"",
+  );
+  assert.equal(
+    recordDisplayLabel(entity, { id: 6, createdAt: "", studentId: 1, courseId: 2, signed: false }),
+    "FALSE",
+    "a false boolean display field must render FALSE, not fall through the empty-value check and then String() to \"false\"",
+  );
+});

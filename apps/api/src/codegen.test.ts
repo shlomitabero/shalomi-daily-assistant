@@ -2536,6 +2536,49 @@ test("the exported EntityView's recordDisplayLabel resolves an enum display fiel
 });
 
 /**
+ * Round 771: the exact same bug class as round 761's enum fix just above,
+ * never done for "boolean" -- when pickDisplayField's last-resort fallback
+ * lands on a boolean field, recordDisplayLabel used to String() the raw
+ * value ("true"/"false") instead of this generated app's own uniform
+ * "TRUE"/"FALSE" convention.
+ */
+test("the exported EntityView's recordDisplayLabel resolves a boolean display field to TRUE/FALSE, not its raw lowercase stored value", () => {
+  const files = generateExportFiles(project);
+  const entityViewJsx = files.find((f) => f.path === "web/src/components/EntityView.jsx")!.content;
+
+  const displayFieldHintsSrc = entityViewJsx.match(/const DISPLAY_FIELD_NAME_HINTS = .*;\n/)?.[0];
+  const pickDisplayFieldSrc = entityViewJsx.match(/export function pickDisplayField\([\s\S]*?\n\}\n/)?.[0]?.replace("export ", "");
+  const recordDisplayLabelSrc = entityViewJsx.match(/export function recordDisplayLabel\(entity, record\) \{[\s\S]*?\n\}\n/)?.[0]?.replace("export ", "");
+  assert.ok(
+    displayFieldHintsSrc && pickDisplayFieldSrc && recordDisplayLabelSrc,
+    "expected to find DISPLAY_FIELD_NAME_HINTS/pickDisplayField/recordDisplayLabel in generated output",
+  );
+
+  const recordDisplayLabel = new Function(
+    `${displayFieldHintsSrc}\n${pickDisplayFieldSrc}\n${recordDisplayLabelSrc}\nreturn recordDisplayLabel;`,
+  )() as (entity: unknown, record: unknown) => string;
+
+  const entity = {
+    name: "Consent",
+    fields: [
+      { name: "studentId", type: "relation", relationTo: "Student" },
+      { name: "courseId", type: "relation", relationTo: "Course" },
+      { name: "signed", type: "boolean" },
+    ],
+  };
+  assert.equal(
+    recordDisplayLabel(entity, { id: 5, studentId: 1, courseId: 1, signed: true }),
+    "TRUE",
+    "the boolean field's own uniform TRUE/FALSE convention must be shown, not the raw stored value \"true\"",
+  );
+  assert.equal(
+    recordDisplayLabel(entity, { id: 6, studentId: 1, courseId: 2, signed: false }),
+    "FALSE",
+    "a false boolean display field must render FALSE, not fall through the empty-value check and then String() to \"false\"",
+  );
+});
+
+/**
  * Round 762: mirrors the live preview's own fix -- pickDisplayField's
  * "first text field" step only ever checked "text", never "longtext",
  * even though the two are the same free-text kind everywhere else in
@@ -8781,6 +8824,62 @@ test("the exported server.js's own backupFieldDisplayValue resolves a relation f
     backupFieldDisplayValue(relationField, 999, recordIndexByEntity),
     "#999",
     "a relation id with no matching record must fall back to the raw id, not throw or return empty",
+  );
+});
+
+/**
+ * Round 771: unlike this file's *other* three recordDisplayLabel copies
+ * (the live preview's entityFormatting.ts, apps/api/src/displayField.ts,
+ * and this same file's own main EntityView.jsx copy -- all fixed for enum
+ * in round 761), backupRecordDisplayLabel never got an enum branch at
+ * all, nor the uniform boolean TRUE/FALSE convention
+ * backupFieldDisplayValue's own direct-column path already follows. A
+ * relation pointing at a join/line-item entity whose own display field is
+ * an enum or boolean (no name/title/text field) showed the raw stored
+ * value ("in" or "true") in the exported app's own backup CSV instead of
+ * the translated label or TRUE/FALSE.
+ */
+test("the exported server.js's own backupRecordDisplayLabel resolves an enum or boolean display field the same way the other recordDisplayLabel copies already do", () => {
+  const serverJs = generateExportFiles(project).find((f) => f.path === "server.js")!.content;
+  const backupRecordDisplayLabelSrc = serverJs.match(/function backupRecordDisplayLabel\(entity, record\) \{[\s\S]*?\n\}\n/)?.[0];
+  const backupPickDisplayFieldSrc = serverJs.match(/const BACKUP_DISPLAY_FIELD_HINTS[\s\S]*?\nfunction backupPickDisplayField\(entity\) \{[\s\S]*?\n\}\n/)?.[0];
+  const backupFieldDisplayValueSrc = serverJs.match(/function backupFieldDisplayValue\(field, value, recordIndexByEntity\) \{[\s\S]*?\n\}\n/)?.[0];
+  assert.ok(
+    backupRecordDisplayLabelSrc && backupPickDisplayFieldSrc && backupFieldDisplayValueSrc,
+    "expected to find backupRecordDisplayLabel/backupPickDisplayField/backupFieldDisplayValue in generated server.js",
+  );
+
+  const stockMovementEntity = {
+    name: "StockMovement",
+    fields: [
+      { name: "product", type: "relation", relationTo: "Product" },
+      { name: "movementType", type: "enum", enumLabels: { in: "כניסה", out: "יציאה" } },
+    ],
+  };
+  const consentEntity = {
+    name: "Consent",
+    fields: [
+      { name: "studentId", type: "relation", relationTo: "Student" },
+      { name: "signed", type: "boolean" },
+    ],
+  };
+  const backupFieldDisplayValue = new Function(
+    "ENTITIES",
+    `${backupPickDisplayFieldSrc}\n${backupRecordDisplayLabelSrc}\n${backupFieldDisplayValueSrc}\nreturn backupFieldDisplayValue;`,
+  )([stockMovementEntity, consentEntity]);
+
+  const movementField = { name: "movement", type: "relation", relationTo: "StockMovement" };
+  assert.equal(
+    backupFieldDisplayValue(movementField, 1, { StockMovement: new Map([[1, { id: 1, product: 1, movementType: "in" }]]) }),
+    "כניסה",
+    "the enum display field's own translated label must be shown, not the raw stored value \"in\"",
+  );
+
+  const consentField = { name: "consent", type: "relation", relationTo: "Consent" };
+  assert.equal(
+    backupFieldDisplayValue(consentField, 5, { Consent: new Map([[5, { id: 5, studentId: 1, signed: true }]]) }),
+    "TRUE",
+    "the boolean display field's own uniform TRUE/FALSE convention must be shown, not the raw stored value \"true\"",
   );
 });
 

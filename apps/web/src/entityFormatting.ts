@@ -989,6 +989,7 @@ export function recordDisplayLabel(entity: Entity, record: EntityRecord): string
   const field = pickDisplayField(entity);
   const value = field ? record[field.name] : undefined;
   if (value === null || value === undefined || value === "") return `#${record.id}`;
+  if (field?.type === "boolean") return value ? "TRUE" : "FALSE";
   if (field?.type === "enum") return field.enumLabels?.[String(value)] ?? String(value);
   return String(value);
 }
