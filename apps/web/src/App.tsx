@@ -267,17 +267,26 @@ export function formatEntityFieldSummary(fields: Field[]): string {
 /**
  * How many of the spec's open questions already have an answer -- the chip
  * buttons and the free-text input both write into the same
- * selectedAnswers[q.question] slot (see the spec-review view below), so an
+ * selectedAnswers[index] slot (see the spec-review view below), so an
  * answer is just a non-blank value there, regardless of which control set
  * it. Backs the "answered N of M" progress line, so a person with a long
  * list of open questions doesn't have to scroll and count for themselves
  * whether they've addressed everything before clicking build.
+ *
+ * Keyed by each question's own array INDEX, not its `question` text --
+ * OpenQuestionSchema carries no uniqueness constraint on `question` (unlike
+ * entity names, which get a real collision check), and the AI provider has
+ * no reason to avoid asking two unrelated questions with identical wording
+ * (e.g. two different features each prompting "Should notifications be
+ * sent via email or SMS?"). Keying by text would have let the second such
+ * question's chip silently read as pre-answered the moment the first one
+ * was touched, and both would count toward "answered" from a single click.
  */
 export function countAnsweredOpenQuestions(
   openQuestions: OpenQuestion[],
   selectedAnswers: Record<string, string>,
 ): { answered: number; total: number } {
-  const answered = openQuestions.filter((q) => (selectedAnswers[q.question] ?? "").trim().length > 0).length;
+  const answered = openQuestions.filter((_, i) => (selectedAnswers[String(i)] ?? "").trim().length > 0).length;
   return { answered, total: openQuestions.length };
 }
 
@@ -1377,9 +1386,15 @@ function AppContent() {
 
   async function handleBuild() {
     if (!project) return;
-    const answered = Object.fromEntries(Object.entries(selectedAnswers).filter(([, v]) => v.trim().length > 0));
+    // Pairs each answer with its own question's text, by array index (see
+    // selectedAnswers' own comment above countAnsweredOpenQuestions) --
+    // never by the question text itself, so two identically-worded
+    // questions each keep their own distinct answer instead of colliding.
+    const answered = project.spec.openQuestions
+      .map((q, i) => ({ question: q.question, answer: (selectedAnswers[String(i)] ?? "").trim() }))
+      .filter((a) => a.answer.length > 0);
     const request = additionalRequest.trim();
-    if (Object.keys(answered).length > 0 || request.length > 0) {
+    if (answered.length > 0 || request.length > 0) {
       setBusy(true);
       setError(null);
       try {
@@ -1962,8 +1977,8 @@ function AppContent() {
                       <button
                         type="button"
                         key={opt}
-                        className={selectedAnswers[q.question] === opt ? "chip chip-selected" : "chip chip-button"}
-                        onClick={() => setSelectedAnswers((prev) => ({ ...prev, [q.question]: opt }))}
+                        className={selectedAnswers[String(i)] === opt ? "chip chip-selected" : "chip chip-button"}
+                        onClick={() => setSelectedAnswers((prev) => ({ ...prev, [String(i)]: opt }))}
                       >
                         {opt}
                       </button>
@@ -1973,8 +1988,8 @@ function AppContent() {
                     type="text"
                     className="answer-input"
                     placeholder={t("spec.answerInput.placeholder")}
-                    value={selectedAnswers[q.question] ?? ""}
-                    onChange={(e) => setSelectedAnswers((prev) => ({ ...prev, [q.question]: e.target.value }))}
+                    value={selectedAnswers[String(i)] ?? ""}
+                    onChange={(e) => setSelectedAnswers((prev) => ({ ...prev, [String(i)]: e.target.value }))}
                   />
                   {q.recommendation && (
                     <p className="muted small">

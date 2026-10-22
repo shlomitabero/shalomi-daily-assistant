@@ -595,10 +595,15 @@ export function addEntity(projectId: string, label: string): Promise<{ project: 
  * no-op case. See createProject's own doc comment for why this also
  * generates one idempotency key per call, protecting against a second
  * real generateSpec() call and spec overwrite from the same click/retry.
+ * `answers` is an array, not a `Record<string,string>` keyed by question
+ * text -- two open questions can legitimately share identical wording
+ * (OpenQuestionSchema carries no uniqueness constraint), and a flat object
+ * can't hold two entries under the same key, so the array preserves both
+ * answers distinctly even when their questions' text collides.
  */
 export function answerQuestions(
   projectId: string,
-  answers: Record<string, string>,
+  answers: { question: string; answer: string }[],
   additionalRequest?: string,
 ): Promise<{ project: Project; providerName?: string }> {
   return request(`/projects/${projectId}/answers`, {

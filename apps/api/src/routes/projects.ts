@@ -86,8 +86,26 @@ const RefineSchema = z.object({
   instruction: z.string().min(1, "instruction is required"),
 });
 
+/**
+ * Round 776: `answers` used to be a flat `Record<string,string>` keyed by
+ * the question's own text -- which works fine as long as every open
+ * question's wording is unique, but ProductSpecSchema's own
+ * OpenQuestionSchema carries no uniqueness constraint on `question` (unlike
+ * entity names, which get a real `.refine()` a few lines below in
+ * ProductSpecSchema), and the AI provider's system prompt gives the model
+ * no reason to avoid asking two unrelated, identically-worded questions
+ * (e.g. two different features each prompting "Should notifications be
+ * sent via email or SMS?"). A JS object literally cannot hold two entries
+ * under the same key, so two distinct answers for the same question text
+ * were unrepresentable at the wire-format level even before this route's
+ * own code ran -- the second answer always silently overwrote the first
+ * in the request body itself. Array-of-pairs keeps every answer distinct
+ * regardless of whether its question's wording collides with another's;
+ * the client now pairs each answer with its own question's array index
+ * (see App.tsx's own selectedAnswers comment) rather than by text.
+ */
 const AnswerQuestionsSchema = z.object({
-  answers: z.record(z.string(), z.string()).optional().default({}),
+  answers: z.array(z.object({ question: z.string(), answer: z.string() })).optional().default([]),
   additionalRequest: z.string().optional(),
 });
 
@@ -1303,8 +1321,8 @@ export function createProjectsRouter(
       if (!parsed.success) {
         throw new HttpError(400, formatValidationError(parsed.error), "VALIDATION_ERROR");
       }
-      const entries = Object.entries(parsed.data.answers)
-        .map(([question, answer]) => [question.trim(), answer.trim()] as const)
+      const entries = parsed.data.answers
+        .map(({ question, answer }) => [question.trim(), answer.trim()] as const)
         .filter(([question, answer]) => question.length > 0 && answer.length > 0);
       const additionalRequest = parsed.data.additionalRequest?.trim() ?? "";
 

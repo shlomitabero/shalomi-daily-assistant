@@ -2297,7 +2297,7 @@ test("POST /projects/:id/answers retried with the same idempotency key after the
       const firstRes = await fetch(`${baseUrl}/api/projects/${project.id}/answers`, {
         method: "POST",
         headers,
-        body: JSON.stringify({ answers: { [question.question]: "Yes, use Stripe for all payments" } }),
+        body: JSON.stringify({ answers: [{ question: question.question, answer: "Yes, use Stripe for all payments" }] }),
       });
       assert.equal(firstRes.status, 200);
       const first = await firstRes.json();
@@ -2306,7 +2306,7 @@ test("POST /projects/:id/answers retried with the same idempotency key after the
       const retryRes = await fetch(`${baseUrl}/api/projects/${project.id}/answers`, {
         method: "POST",
         headers,
-        body: JSON.stringify({ answers: { [question.question]: "Yes, use Stripe for all payments" } }),
+        body: JSON.stringify({ answers: [{ question: question.question, answer: "Yes, use Stripe for all payments" }] }),
       });
       assert.equal(retryRes.status, 200);
       const retry = await retryRes.json();
@@ -6577,7 +6577,7 @@ test("answering an open question (free text, not just a suggested option) actual
     const answersRes = await fetch(`${baseUrl}/api/projects/${project.id}/answers`, {
       method: "POST",
       headers: authHeaders(token),
-      body: JSON.stringify({ answers: { [question.question]: "Yes, use Stripe for all payments" } }),
+      body: JSON.stringify({ answers: [{ question: question.question, answer: "Yes, use Stripe for all payments" }] }),
     });
     assert.equal(answersRes.status, 200);
     const { project: answeredProject } = (await answersRes.json()) as {
@@ -6605,10 +6605,79 @@ test("answering an open question (free text, not just a suggested option) actual
     const noopRes = await fetch(`${baseUrl}/api/projects/${project.id}/answers`, {
       method: "POST",
       headers: authHeaders(token),
-      body: JSON.stringify({ answers: { "some question": "   " } }),
+      body: JSON.stringify({ answers: [{ question: "some question", answer: "   " }] }),
     });
     assert.equal(noopRes.status, 200);
   });
+});
+
+/**
+ * Round 776: `answers` used to be a flat `Record<string,string>` keyed by
+ * question text -- so two open questions sharing identical wording
+ * (OpenQuestionSchema carries no uniqueness constraint, unlike entity
+ * names) could never both be answered: a plain JS object can't hold two
+ * entries under the same key, so the second answer always silently
+ * overwrote the first in the request body itself, before this route's own
+ * code ever ran. The heuristic provider itself never generates more than
+ * one open question, so the duplicate-worded spec here is written directly
+ * via updateProjectSpec (the db layer), simulating what a real AI-
+ * generated spec can plausibly produce. A capturing provider wrapper
+ * confirms both answers reach the regeneration prompt as distinct lines.
+ */
+test("POST /projects/:id/answers keeps two identically-worded open questions' answers distinct in the regeneration prompt", async () => {
+  let capturedDescription: string | undefined;
+  const inner = new HeuristicSpecProvider();
+  const provider: SpecProvider = {
+    name: inner.name,
+    async generate(description, isHebrewOverride) {
+      capturedDescription = description;
+      return inner.generate(description, isHebrewOverride);
+    },
+  };
+  await withServer(
+    async (baseUrl, db) => {
+      const token = await signup(baseUrl, "dup-question1@example.com");
+      const createRes = await fetch(`${baseUrl}/api/projects`, {
+        method: "POST",
+        headers: authHeaders(token),
+        body: JSON.stringify({ description: "A CRM with customers and deals." }),
+      });
+      const { project } = (await createRes.json()) as { project: { id: string; spec: ProductSpec } };
+
+      const dupSpec: ProductSpec = {
+        ...project.spec,
+        openQuestions: [
+          { question: "Which plan?", options: ["Pro", "Basic"] },
+          { question: "Which plan?", options: ["Pro", "Basic"] },
+        ],
+      };
+      updateProjectSpec(db, project.id, dupSpec);
+
+      const res = await fetch(`${baseUrl}/api/projects/${project.id}/answers`, {
+        method: "POST",
+        headers: authHeaders(token),
+        body: JSON.stringify({
+          answers: [
+            { question: "Which plan?", answer: "Basic for this one" },
+            { question: "Which plan?", answer: "Pro for the other one" },
+          ],
+        }),
+      });
+      assert.equal(res.status, 200);
+      assert.ok(capturedDescription, "the provider must have been called with the combined description");
+      assert.match(
+        capturedDescription!,
+        /Which plan\?: Basic for this one/,
+        "the first identically-worded question's own answer must reach the regeneration prompt",
+      );
+      assert.match(
+        capturedDescription!,
+        /Which plan\?: Pro for the other one/,
+        "the second identically-worded question's own answer must ALSO reach the prompt, not be overwritten by the first",
+      );
+    },
+    { provider },
+  );
 });
 
 test("a free-standing request on the spec review screen (not tied to any open question) also changes the spec", async () => {

@@ -143,18 +143,34 @@ function question(text: string): OpenQuestion {
 
 test("countAnsweredOpenQuestions counts a question answered whether the value came from a chip click or the free-text input, since both write the same selectedAnswers slot", () => {
   const questions = [question("Q1"), question("Q2"), question("Q3")];
-  const result = countAnsweredOpenQuestions(questions, { Q1: "Yes", Q2: "a custom answer" });
+  const result = countAnsweredOpenQuestions(questions, { "0": "Yes", "1": "a custom answer" });
   assert.deepEqual(result, { answered: 2, total: 3 });
 });
 
 test("countAnsweredOpenQuestions treats a blank or whitespace-only value as unanswered", () => {
   const questions = [question("Q1"), question("Q2")];
-  const result = countAnsweredOpenQuestions(questions, { Q1: "   ", Q2: "" });
+  const result = countAnsweredOpenQuestions(questions, { "0": "   ", "1": "" });
   assert.deepEqual(result, { answered: 0, total: 2 });
 });
 
 test("countAnsweredOpenQuestions returns zero total for a spec with no open questions", () => {
   assert.deepEqual(countAnsweredOpenQuestions([], {}), { answered: 0, total: 0 });
+});
+
+/**
+ * Round 776: selectedAnswers is keyed by each question's own array index,
+ * not its text, specifically so two unrelated open questions that happen
+ * to share identical wording (OpenQuestionSchema has no uniqueness
+ * constraint, unlike entity names) don't collide on the same slot. Before
+ * that fix, keying by `q.question` meant the SECOND of two
+ * identically-worded questions would already read as answered the moment
+ * the first one was, from a single click -- this confirms they're now
+ * counted independently, by position.
+ */
+test("countAnsweredOpenQuestions counts two identically-worded questions independently, by position, not by colliding on their shared text", () => {
+  const questions = [question("Which plan?"), question("Which plan?")];
+  const result = countAnsweredOpenQuestions(questions, { "0": "Pro" });
+  assert.deepEqual(result, { answered: 1, total: 2 }, "only the first of the two identically-worded questions was actually answered");
 });
 
 test("formatOpenQuestionsProgress picks the 'none answered' phrasing when nothing is answered yet", () => {
@@ -166,13 +182,13 @@ test("formatOpenQuestionsProgress picks the 'none answered' phrasing when nothin
 test("formatOpenQuestionsProgress picks the 'answered N of M' phrasing partway through", () => {
   const questions = [question("Q1"), question("Q2"), question("Q3")];
   const tr = (key: string, params?: Record<string, string | number>) => translate("en", key, params);
-  assert.equal(formatOpenQuestionsProgress(questions, { Q1: "Yes" }, tr), "Answered 1 of 3 questions");
+  assert.equal(formatOpenQuestionsProgress(questions, { "0": "Yes" }, tr), "Answered 1 of 3 questions");
 });
 
 test("formatOpenQuestionsProgress picks the 'all answered' phrasing once every question has a value, in Hebrew", () => {
   const questions = [question("Q1"), question("Q2")];
   const tr = (key: string, params?: Record<string, string | number>) => translate("he", key, params);
-  assert.equal(formatOpenQuestionsProgress(questions, { Q1: "כן", Q2: "לא" }, tr), "ענית על כל 2 השאלות ✓");
+  assert.equal(formatOpenQuestionsProgress(questions, { "0": "כן", "1": "לא" }, tr), "ענית על כל 2 השאלות ✓");
 });
 
 test("summarizeRefineImpact prefers the LAST successful Architect event, not the first, so a Debug Agent recovery's corrected detail wins", () => {
@@ -556,7 +572,7 @@ test("App's handleBuild overwrites specProvider with the /answers call's own pro
     additionalRequest: string,
     answerQuestionsFn: (
       projectId: string,
-      answers: Record<string, string>,
+      answers: { question: string; answer: string }[],
       additionalRequest?: string,
     ) => Promise<{ project: Project; providerName?: string }>,
   ) {
@@ -586,7 +602,7 @@ test("App's handleBuild overwrites specProvider with the /answers call's own pro
       additionalRequest,
       (v: boolean) => (state.busy = v),
       (v: string | null) => (state.error = v),
-      (...args: [string, Record<string, string>, string | undefined]) => {
+      (...args: [string, { question: string; answer: string }[], string | undefined]) => {
         state.calls += 1;
         return answerQuestionsFn(...args);
       },
@@ -599,9 +615,10 @@ test("App's handleBuild overwrites specProvider with the /answers call's own pro
   }
 
   const project = makeProject([makeEntity("Customer")]);
+  project.spec.openQuestions = [{ question: "Use Stripe?", options: ["Yes", "No"] }];
   const answeredProject = makeProject([makeEntity("Customer"), makeEntity("Invoice")]);
 
-  const { fn: fnWithAnswers, state: stateWithAnswers } = run(project, { q1: "yes" }, "", async () => ({
+  const { fn: fnWithAnswers, state: stateWithAnswers } = run(project, { "0": "yes" }, "", async () => ({
     project: answeredProject,
     providerName: "anthropic-fallback",
   }));
@@ -619,6 +636,75 @@ test("App's handleBuild overwrites specProvider with the /answers call's own pro
   assert.equal(stateNoAnswers.calls, 0, "nothing was answered, so answerQuestions must never be called at all");
   assert.equal(stateNoAnswers.specProvider, "anthropic", "with nothing answered, the original specProvider from project creation must be left exactly as it was");
   assert.equal(stateNoAnswers.view, "building");
+});
+
+/**
+ * Round 776: handleBuild used to build its `answers` payload straight from
+ * `Object.entries(selectedAnswers)`, keyed by question TEXT -- so two open
+ * questions sharing identical wording (OpenQuestionSchema has no
+ * uniqueness constraint) could never both be sent; the second answer
+ * always silently overwrote the first in the plain JS object itself,
+ * before the request even left the browser. Confirms the fix: each
+ * question's answer is now looked up by its own array index, and sent as
+ * an array of distinct {question, answer} pairs -- so two
+ * identically-worded questions each keep their own answer.
+ */
+test("App's handleBuild sends each open question's own answer by position, so two identically-worded questions don't collapse into one", async () => {
+  const appSrc = readFileSync(new URL("./App.tsx", import.meta.url), "utf8");
+  const handlerMatch = appSrc.match(/ {2}async function handleBuild\(\) \{[\s\S]*?\n {2}\}\n/);
+  assert.ok(handlerMatch, "expected to find handleBuild in App.tsx");
+  const { code } = transformSync(handlerMatch![0], { loader: "ts" });
+
+  const project = makeProject([makeEntity("Customer")]);
+  project.spec.openQuestions = [
+    { question: "Which plan?", options: ["Pro", "Basic"] },
+    { question: "Which plan?", options: ["Pro", "Basic"] },
+  ];
+
+  let capturedAnswers: { question: string; answer: string }[] | undefined;
+  const state: { project: Project | null; specProvider: string | null; view: string | null } = {
+    project,
+    specProvider: "anthropic",
+    view: null,
+  };
+  const fn = new Function(
+    "project",
+    "selectedAnswers",
+    "additionalRequest",
+    "setBusy",
+    "setError",
+    "answerQuestions",
+    "setProject",
+    "setSpecProvider",
+    "setBuildWarning",
+    "setView",
+    `${code}\nreturn handleBuild;`,
+  )(
+    state.project,
+    { "0": "Basic", "1": "Pro" },
+    "",
+    () => {},
+    () => {},
+    async (_projectId: string, answers: { question: string; answer: string }[]) => {
+      capturedAnswers = answers;
+      return { project, providerName: "anthropic-fallback" };
+    },
+    (p: Project) => (state.project = p),
+    (v: string | null) => (state.specProvider = v),
+    () => {},
+    (v: string) => (state.view = v),
+  ) as () => Promise<void>;
+
+  await fn();
+
+  assert.deepEqual(
+    capturedAnswers,
+    [
+      { question: "Which plan?", answer: "Basic" },
+      { question: "Which plan?", answer: "Pro" },
+    ],
+    "each identically-worded question must keep its own distinct answer, not collapse into one shared value",
+  );
 });
 
 /**
