@@ -234,6 +234,97 @@ test("sendMessage succeeds once connected, addressing the real WhatsApp JID form
 });
 
 /**
+ * Round 794: a legitimate workflow (EntityPanel.tsx's bulk-update "Apply to
+ * N", deliberately left firing automations normally per round 643/644,
+ * unlike CSV import's suppression) can fire many concurrent sendMessage()
+ * calls for the same project at once, each independently matching an
+ * automation rule. Before this round, nothing serialized them -- they all
+ * raced the one shared Baileys socket in the same instant, exactly the
+ * "automated behavior" burst pattern this file's own module doc comment
+ * warns can get a real WhatsApp number flagged or temporarily blocked
+ * (flagged as a known gap in round 744's survey, deliberately left open).
+ * The fake socket here holds its own sendMessage open for a few
+ * milliseconds (unlike createFakeSocket's default, which resolves
+ * instantly and so could never actually observe an overlap) so a real
+ * concurrency violation would be caught instead of coincidentally passing.
+ */
+test("sendMessage serializes concurrent sends for the same project so the socket never sees two in flight at once", async () => {
+  const db = openDatabase(":memory:");
+  ensureProjectsTable(db);
+  ensureWhatsAppConnectionsTable(db);
+  ensureWhatsAppMessagesTable(db);
+
+  let active = 0;
+  let maxActive = 0;
+  const order: string[] = [];
+  const fake = createFakeSocket();
+  const originalSendMessage = fake.sock.sendMessage.bind(fake.sock);
+  fake.sock.sendMessage = async (jid, content) => {
+    active++;
+    maxActive = Math.max(maxActive, active);
+    await new Promise((resolve) => setTimeout(resolve, 5));
+    const result = await originalSendMessage(jid, content);
+    if ("text" in content) order.push(content.text);
+    active--;
+    return result;
+  };
+
+  const manager = new WhatsAppWebManager({
+    db,
+    sessionsRootDir: "/tmp/forge-whatsapp-test-sessions-serialize",
+    createSocket: async () => ({ sock: fake.sock, saveCreds: async () => {} }),
+    qrToDataUrl: async (qr) => `data:image/png;base64,FAKE(${qr})`,
+    // No real-world delay needed to prove ordering/non-overlap -- only
+    // the fake socket's own artificial 5ms hold-open above matters for that.
+    sendSpacingMs: 0,
+  });
+
+  await manager.connect("proj1");
+  fake.sock.user = { id: "972501234567:1@s.whatsapp.net" };
+  fake.emitConnectionUpdate({ connection: "open" });
+
+  const results = await Promise.all([
+    manager.sendMessage("proj1", "972501111111", "one"),
+    manager.sendMessage("proj1", "972502222222", "two"),
+    manager.sendMessage("proj1", "972503333333", "three"),
+  ]);
+
+  assert.deepEqual(results, [{ ok: true }, { ok: true }, { ok: true }]);
+  assert.equal(maxActive, 1, "the socket must never see two sends in flight at the same time");
+  assert.deepEqual(order, ["one", "two", "three"], "sends must go out in call order, one at a time, not interleaved");
+});
+
+/**
+ * Same mechanism, the other half: serializing sends for ONE project must
+ * never block a completely unrelated project's own sends behind it --
+ * sendQueue is keyed by projectId precisely so two projects' sockets stay
+ * fully independent.
+ */
+test("sendMessage for one project does not wait behind a slow in-flight send for a different project", async () => {
+  const { manager, createdSockets } = setupManager();
+  await manager.connect("proj1");
+  await manager.connect("proj2");
+  createdSockets[0].sock.user = { id: "972501234567:1@s.whatsapp.net" };
+  createdSockets[0].emitConnectionUpdate({ connection: "open" });
+  createdSockets[1].sock.user = { id: "972509999999:1@s.whatsapp.net" };
+  createdSockets[1].emitConnectionUpdate({ connection: "open" });
+
+  let resolveProj1Send!: () => void;
+  const originalSend = createdSockets[0].sock.sendMessage.bind(createdSockets[0].sock);
+  createdSockets[0].sock.sendMessage = (jid, content) =>
+    new Promise((resolve) => {
+      resolveProj1Send = () => resolve(originalSend(jid, content));
+    });
+
+  const proj1Send = manager.sendMessage("proj1", "972501111111", "slow");
+  const proj2Result = await manager.sendMessage("proj2", "972502222222", "fast");
+
+  assert.equal(proj2Result.ok, true, "project 2's send must not be stuck waiting on project 1's still-unresolved send");
+  resolveProj1Send();
+  assert.equal((await proj1Send).ok, true);
+});
+
+/**
  * Round 786: automations.ts's findTemplateFileAttachment resolves a real
  * file field's value down to a path on disk -- this is the layer below
  * it that actually reads that file and hands it to Baileys as a document,

@@ -185,6 +185,15 @@ export interface WhatsAppWebManagerOptions {
   qrToDataUrl?: (qr: string) => Promise<string>;
   /** Kept injectable so tests can control its exact timing, the same way createSocket is -- see cleanupAuthDir. */
   removeAuthDir?: (authDir: string) => Promise<void>;
+  /**
+   * Fixed delay (ms) sendMessage waits after each send before letting the
+   * next queued send for the same project go out -- see the sendQueue
+   * field's own doc comment. Kept injectable (defaulting to a real
+   * 1200ms) purely so tests exercising a multi-send sequence don't
+   * actually have to wait out real spacing delays, the same reason
+   * createSocket/removeAuthDir are injectable above.
+   */
+  sendSpacingMs?: number;
 }
 
 export class WhatsAppWebManager {
@@ -198,6 +207,27 @@ export class WhatsAppWebManager {
   private readonly pendingCleanup = new Map<string, Promise<void>>();
   /** Tracks an in-flight connect() attempt's own createSocket() call per project -- see connect() and its use in cleanupAuthDir. */
   private readonly pendingConnect = new Map<string, Promise<void>>();
+  /**
+   * Round 794: chains every sendMessage() call for the same project onto
+   * the one before it, with a fixed delay inserted after each actual
+   * send -- the same Promise-chain-per-project-id idiom pendingConnect/
+   * pendingCleanup above already use, just for ordering sends instead of
+   * connect/cleanup. Without this, a legitimate workflow that fires many
+   * concurrent sendMessage() calls for one project at once (EntityPanel.
+   * tsx's bulk-update "Apply to N" firing N concurrent PATCH requests,
+   * each independently triggering a matching automation rule's WhatsApp
+   * send -- deliberately left un-suppressed for bulk-update, unlike CSV
+   * import, since notifying real customers on a status change is the
+   * actual point of that feature) sent all of them through the one
+   * shared Baileys socket in the same instant: exactly the "automated
+   * behavior" burst pattern this file's own module doc comment above
+   * already warns can get a real WhatsApp number flagged or temporarily
+   * blocked. Flagged as a known, real gap in round 744's survey and
+   * deliberately left for a dedicated round rather than rushed; this is
+   * that round.
+   */
+  private readonly sendQueue = new Map<string, Promise<void>>();
+  private readonly sendSpacingMs: number;
 
   constructor(options: WhatsAppWebManagerOptions) {
     this.db = options.db;
@@ -205,6 +235,11 @@ export class WhatsAppWebManager {
     this.createSocket = options.createSocket ?? defaultCreateSocket;
     this.qrToDataUrl = options.qrToDataUrl ?? defaultQrToDataUrl;
     this.removeAuthDir = options.removeAuthDir ?? ((dir) => rm(dir, { recursive: true, force: true }));
+    this.sendSpacingMs = options.sendSpacingMs ?? 1200;
+  }
+
+  private delay(ms: number): Promise<void> {
+    return new Promise((resolve) => setTimeout(resolve, ms));
   }
 
   private authDirFor(projectId: string): string {
@@ -499,6 +534,36 @@ export class WhatsAppWebManager {
     const leadingZeros = rawDigits.length - rawDigits.replace(/^0+/, "").length;
     if (leadingZeros === 1 || leadingZeros >= 3) {
       return { ok: false, error: "missing_country_code" };
+    }
+
+    // Everything above is pure validation with no socket interaction, so it
+    // runs immediately rather than queueing -- only the actual Baileys send
+    // below is serialized per project (see sendQueue's own doc comment).
+    // Chained off whatever is already queued for this project, so a burst
+    // of concurrent calls ends up as one project-wide sequence instead of
+    // each racing the socket at once; the fixed delay is appended AFTER
+    // each send so the next queued one doesn't go out back-to-back with it.
+    const previousInQueue = this.sendQueue.get(projectId) ?? Promise.resolve();
+    const queuedSend = previousInQueue.then(() => this.performSend(projectId, phone, body, attachment));
+    const nextInQueue = queuedSend.then(() => this.delay(this.sendSpacingMs)).catch(() => {});
+    this.sendQueue.set(projectId, nextInQueue);
+    void nextInQueue.finally(() => {
+      if (this.sendQueue.get(projectId) === nextInQueue) this.sendQueue.delete(projectId);
+    });
+    return queuedSend;
+  }
+
+  /**
+   * The actual Baileys send, run one at a time per project through
+   * sendQueue above -- re-reads the live session fresh (rather than
+   * reusing sendMessage's own earlier lookup) since a queued call can sit
+   * behind others for a while, and the connection may have dropped by the
+   * time its own turn actually comes up.
+   */
+  private async performSend(projectId: string, phone: string, body: string, attachment?: WhatsAppAttachment): Promise<WhatsAppSendResult> {
+    const session = this.sessions.get(projectId);
+    if (!session || session.status !== "connected" || !session.sock) {
+      return { ok: false, error: "not_connected" };
     }
     try {
       const jid = `${phone}@s.whatsapp.net`;
