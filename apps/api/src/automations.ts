@@ -368,10 +368,20 @@ const BLOCKED_OTHER_HOSTNAME_PATTERNS = [
  * through isAllowedWebhookUrl wrapped in this form. Unwraps it back to
  * the embedded IPv4 address so BLOCKED_IPV4_HOSTNAME_PATTERNS above still
  * catches it.
+ *
+ * `64:ff9b::` is the second real-world encoding of the identical hazard:
+ * RFC 6052's well-known NAT64 prefix, used by networks that actually
+ * perform NAT64/DNS64 translation (common on IPv6-mostly networks and
+ * some cloud/container egress setups) to embed an IPv4 destination inside
+ * an IPv6 literal the exact same way "::ffff:" does. Confirmed empirically
+ * that Node's URL parser canonicalizes "[64:ff9b::169.254.169.254]" to
+ * "[64:ff9b::a9fe:a9fe]" -- the identical hex-pair shape "::ffff:" already
+ * produces, just under this other prefix, which the original regex never
+ * matched at all.
  */
 function extractIPv4MappedAddress(hostname: string): string | null {
   const stripped = hostname.startsWith("[") && hostname.endsWith("]") ? hostname.slice(1, -1) : hostname;
-  const match = /^::ffff:(.+)$/.exec(stripped);
+  const match = /^(?:::ffff:|64:ff9b::)(.+)$/.exec(stripped);
   if (!match) return null;
   const tail = match[1]!;
   if (/^\d+\.\d+\.\d+\.\d+$/.test(tail)) return tail;
