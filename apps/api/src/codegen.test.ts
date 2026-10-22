@@ -8558,6 +8558,62 @@ test("the exported GlobalSearch's runSearch orders entity groups by totalMatches
 });
 
 /**
+ * Round 790: the exported app's own GlobalSearch.jsx is a deliberate
+ * duplicate of the live-preview GlobalSearchPanel.tsx's handleShowAll,
+ * and it had the exact same staleness gap -- handleShowAll re-fetches one
+ * entity's own records fresh, but never wrote that fresh data back into
+ * lastRecordsByEntityRef, the shared cache a DIFFERENT entity's own
+ * "Show all" reads to resolve a relation field pointing at the just-
+ * refreshed entity. Runs the real generated handleShowAll directly,
+ * pre-seeded with the kind of stale snapshot an earlier full search would
+ * have left behind, and confirms the fresh fetch overwrites it.
+ */
+test("the exported GlobalSearch's handleShowAll writes the data it just fetched back into lastRecordsByEntityRef, instead of leaving the original search's stale snapshot for a DIFFERENT entity's own later 'Show all' to read", async () => {
+  const files = generateExportFiles(project);
+  const globalSearchJsx = files.find((f) => f.path === "web/src/components/GlobalSearch.jsx")!.content;
+  const entityViewJsx = files.find((f) => f.path === "web/src/components/EntityView.jsx")!.content;
+
+  const matchesSearchSrc = entityViewJsx.match(/export function matchesSearch\([\s\S]*?\n\}\n/)?.[0]?.replace("export ", "");
+  const handleShowAllSrc = globalSearchJsx.match(/ {2}async function handleShowAll\(entityName\) \{[\s\S]*?\n {2}\}\n/)?.[0];
+  assert.ok(matchesSearchSrc && handleShowAllSrc, "expected to find matchesSearch/handleShowAll in generated output");
+
+  const courierEntity = { name: "Courier", label: "Courier", fields: [{ name: "name", label: "Name", type: "text" }] };
+  // Pre-seeded with the STALE snapshot an earlier full search would have
+  // left behind -- courier #1 was "Dana 1" at that point.
+  const lastRecordsByEntityRef = { current: { Courier: [{ id: 1, name: "Dana 1" }] } };
+
+  const fn = new Function(
+    "entities",
+    "listRecords",
+    "setShowAllLoading",
+    "setError",
+    "setExpandedSamples",
+    "setResults",
+    "query",
+    "searchRequestId",
+    "lastRecordsByEntityRef",
+    `${matchesSearchSrc}\n${handleShowAllSrc}\nreturn handleShowAll;`,
+  )(
+    [courierEntity],
+    async () => ({ records: [{ id: 1, name: "Bob Cohen" }] }),
+    () => {},
+    () => {},
+    () => {},
+    () => {},
+    "Dana",
+    { current: 0 },
+    lastRecordsByEntityRef,
+  ) as (entityName: string) => Promise<void>;
+
+  await fn("Courier");
+  assert.deepEqual(
+    lastRecordsByEntityRef.current.Courier,
+    [{ id: 1, name: "Bob Cohen" }],
+    "handleShowAll must write the fresh records it just fetched back into lastRecordsByEntityRef, not leave the pre-existing stale snapshot in place",
+  );
+});
+
+/**
  * Regression test: the exported app's own GlobalSearch.jsx is a deliberate
  * duplicate of the live-preview GlobalSearchPanel.tsx's runSearch, and it
  * had the exact same stale-async-overwrites-newer-setState race this

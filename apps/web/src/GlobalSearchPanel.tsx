@@ -233,6 +233,13 @@ export function GlobalSearchPanel({
     try {
       const { records } = await listRecords(projectId, entityName);
       if (searchRequestId.current !== requestId) return;
+      // Keeps the shared relation-label lookup in sync with the fresh data
+      // this fetch just pulled -- without this, a DIFFERENT entity's own
+      // later "Show all" (which reads this exact ref for resolving a
+      // relation field pointing at entityName) kept matching against this
+      // entity's data as it stood at the ORIGINAL search, not the fresh
+      // snapshot already sitting right here in memory.
+      lastRecordsByEntityRef.current = { ...lastRecordsByEntityRef.current, [entityName]: records };
       const full = searchEntityRecords(
         entity,
         records,

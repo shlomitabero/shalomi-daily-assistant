@@ -1426,6 +1426,126 @@ test("GlobalSearchPanel matches a relation field's resolved display label, not t
 });
 
 /**
+ * Round 790: handleShowAll's own fresh re-fetch (used both to display
+ * this entity's full results and, per round 556, to patch its own
+ * totalMatches) never wrote that fresh data back into
+ * lastRecordsByEntityRef -- the shared cache every entity's relation-field
+ * matching reads from (the identical mechanism the test above confirms).
+ * So a DIFFERENT entity's own later "Show all" click kept resolving a
+ * relation pointing at the just-refreshed entity from the ORIGINAL
+ * search's now-stale snapshot, not the data "Show all" just fetched --
+ * even though that data is already sitting in memory from the very
+ * request that just completed.
+ */
+test("GlobalSearchPanel's 'Show all' on one entity refreshes the relation-label cache other entities' own 'Show all' then reads", async () => {
+  const courierEntity: Entity = { name: "Courier", label: "Courier", fields: [{ name: "name", label: "Name", type: "text", required: true }] };
+  const orderEntity: Entity = {
+    name: "Order",
+    label: "Order",
+    fields: [
+      { name: "item", label: "Item", type: "text", required: true },
+      { name: "courierId", label: "Courier", type: "relation", relationTo: "Courier", required: false },
+    ],
+  };
+  const makeCouriers = (firstName: string): EntityRecord[] =>
+    Array.from({ length: 6 }, (_, i) => ({ id: i + 1, name: i === 0 ? firstName : `Dana ${i + 1}` }));
+  const orders: EntityRecord[] = Array.from({ length: 6 }, (_, i) => ({ id: i + 1, item: `Delivery ${i + 1}`, courierId: i + 1 }));
+
+  const originalFetch = globalThis.fetch;
+  let courierCallCount = 0;
+  globalThis.fetch = (async (input: string): Promise<Response> => {
+    if (input === "/api/projects/proj1/entities/Courier") {
+      courierCallCount += 1;
+      // Call 1 is the initial search (courier #1 is still "Dana 1", so all
+      // 6 couriers -- and, via relation, all 6 orders -- match "Dana").
+      // Call 2 is "Show all" on Courier itself, by which point courier #1
+      // has been renamed to "Bob Cohen" elsewhere (a collaborator, another
+      // tab) -- it no longer matches "Dana" at all.
+      const records = makeCouriers(courierCallCount === 1 ? "Dana 1" : "Bob Cohen");
+      return new Response(JSON.stringify({ records }), { status: 200, headers: { "content-type": "application/json" } });
+    }
+    if (input === "/api/projects/proj1/entities/Order") {
+      // Orders themselves never change between calls -- only the Courier
+      // they relate to does.
+      return new Response(JSON.stringify({ records: orders }), { status: 200, headers: { "content-type": "application/json" } });
+    }
+    throw new Error(`unexpected request ${input}`);
+  }) as typeof fetch;
+
+  await withJsdom(async () => {
+    try {
+      render(
+        React.createElement(
+          ThemeProvider,
+          null,
+          React.createElement(
+            LanguageProvider,
+            null,
+            React.createElement(GlobalSearchPanel, {
+              projectId: "proj1",
+              projectName: "Test Project",
+              entities: [courierEntity, orderEntity],
+              onClose: () => {},
+              onJumpToEntity: () => {},
+              onJumpToRecord: () => {},
+            }),
+          ),
+        ),
+      );
+
+      const input = document.querySelector(".global-search-input") as HTMLInputElement;
+      fireEvent.change(input, { target: { value: "Dana" } });
+      fireEvent.submit(document.querySelector("form.global-search-form")!);
+      await waitForCondition(() => document.querySelectorAll(".global-search-group").length === 2);
+
+      // Both groups start with 6 real matches (the 5-row sample cap leaves
+      // one "Show all" button per group).
+      const showAllButtons = () => [...document.querySelectorAll(".global-search-show-all")] as HTMLButtonElement[];
+      assert.equal(showAllButtons().length, 2, "both Courier and Order must initially have more than 5 matches each");
+
+      // "Show all" on Courier: courier #1 is now "Bob Cohen" -- its own
+      // count correctly drops to 5, and the fresh data must now be the
+      // one Order's own "Show all" (clicked next) reads for its relation
+      // matching too.
+      const courierGroup = [...document.querySelectorAll(".global-search-group")].find((g) => g.textContent?.includes("Courier"))!;
+      fireEvent.click(courierGroup.querySelector(".global-search-show-all") as HTMLButtonElement);
+      await waitForCondition(() => courierCallCount === 2);
+      await waitForCondition(() => courierGroup.querySelector(".global-search-show-all") === null);
+
+      // "Show all" on Order: must now correctly report only 5 matches --
+      // the order whose courier is now "Bob Cohen" no longer matches
+      // "Dana" -- not the original, stale 6.
+      const orderGroup = [...document.querySelectorAll(".global-search-group")].find((g) => g.textContent?.includes("Order"))!;
+      const orderShowAll = orderGroup.querySelector(".global-search-show-all") as HTMLButtonElement;
+      assert.ok(orderShowAll, "Order must still have its own 'Show all' button at this point");
+      fireEvent.click(orderShowAll);
+
+      // The button's own disappearance only proves the async update has
+      // landed (it disappears either way, since handleShowAll always sets
+      // totalMatches to whatever it just computed as the sample size,
+      // making `remaining` 0 regardless of whether that computed size is
+      // the correct 5 or the stale 6) -- the REAL discriminator is the
+      // final hit-button count checked right after.
+      let orderShowAllGone = false;
+      try {
+        await waitForCondition(() => orderGroup.querySelector(".global-search-show-all") === null, 10);
+        orderShowAllGone = true;
+      } catch {
+        orderShowAllGone = false;
+      }
+      assert.equal(orderShowAllGone, true, "Order's own 'Show all' must complete and disappear once clicked");
+      assert.equal(
+        orderGroup.querySelectorAll(".global-search-hit-button").length,
+        5,
+        "Order's own 'Show all' must report 5 real matches using the courier data Courier's own 'Show all' just refreshed -- not the original search's stale 6, which would wrongly still include the order whose courier is now 'Bob Cohen'",
+      );
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+});
+
+/**
  * Round 361: the query box had zero Escape handling at all -- pressing
  * Escape while typing a query closed the WHOLE panel (useDialogFocusTrap's
  * own native keydown listener on the dialog container), exactly the bug
