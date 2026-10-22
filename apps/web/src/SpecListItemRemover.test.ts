@@ -9,10 +9,12 @@ import {
   AddAssumptionForm,
   AddEntityForm,
   AddFieldForm,
+  AddPersonaForm,
   AddRoleForm,
   AssumptionItem,
   EntitySummaryItem,
   FieldChip,
+  PersonaItem,
   RoleChip,
 } from "./SpecListItemRemover.js";
 import { LanguageProvider } from "./i18n/LanguageContext.js";
@@ -71,7 +73,7 @@ const baseProject: Project = {
   createdAt: new Date().toISOString(),
   spec: {
     summary: "s",
-    personas: [],
+    personas: ["First persona", "Second persona"],
     roles: ["Admin", "Manager"],
     entities: [{ name: "Customer", fields: [{ name: "name", type: "text", required: true }] }],
     screens: [],
@@ -113,6 +115,31 @@ function renderAssumptionItem(
         null,
         React.createElement(AssumptionItem, {
           assumption: "Second assumption",
+          projectId: "proj1",
+          index: 1,
+          onRenamed,
+          onRemoved,
+          readOnly,
+        }),
+      ),
+    ),
+  );
+}
+
+function renderPersonaItem(
+  onRemoved: (p: Project) => void,
+  onRenamed: (p: Project) => void = () => {},
+  readOnly = false,
+) {
+  render(
+    React.createElement(
+      ThemeProvider,
+      null,
+      React.createElement(
+        LanguageProvider,
+        null,
+        React.createElement(PersonaItem, {
+          persona: "Second persona",
           projectId: "proj1",
           index: 1,
           onRenamed,
@@ -214,6 +241,16 @@ function renderAddAssumptionForm(onAdded: (p: Project) => void, readOnly = false
       ThemeProvider,
       null,
       React.createElement(LanguageProvider, null, React.createElement(AddAssumptionForm, { projectId: "proj1", onAdded, readOnly })),
+    ),
+  );
+}
+
+function renderAddPersonaForm(onAdded: (p: Project) => void, readOnly = false) {
+  render(
+    React.createElement(
+      ThemeProvider,
+      null,
+      React.createElement(LanguageProvider, null, React.createElement(AddPersonaForm, { projectId: "proj1", onAdded, readOnly })),
     ),
   );
 }
@@ -520,6 +557,118 @@ test("pressing Escape while editing an assumption cancels without saving", async
   });
 });
 
+test("clicking a persona's remove button calls the real DELETE endpoint by index and reports the returned project", async () => {
+  await withJsdom(async () => {
+    const originalFetch = globalThis.fetch;
+    let deleteCalls = 0;
+    globalThis.fetch = (async (input: string, init?: RequestInit) => {
+      if (init?.method === "DELETE" && input === "/api/projects/proj1/personas/1") {
+        deleteCalls += 1;
+        const remaining = { ...baseProject, spec: { ...baseProject.spec, personas: ["First persona"] } };
+        return new Response(JSON.stringify({ project: remaining }), { status: 200, headers: { "content-type": "application/json" } });
+      }
+      throw new Error(`unexpected request ${init?.method ?? "GET"} ${input}`);
+    }) as typeof fetch;
+
+    try {
+      const removedProjects: Project[] = [];
+      renderPersonaItem((p) => removedProjects.push(p));
+
+      const button = document.querySelector(".persona-remove") as HTMLButtonElement;
+      assert.ok(button, "expected a remove button on the persona item");
+      fireEvent.click(button);
+
+      await waitForCondition(() => removedProjects.length === 1);
+      assert.equal(deleteCalls, 1);
+      assert.deepEqual(removedProjects[0].spec.personas, ["First persona"]);
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+});
+
+test("clicking a persona's text opens an inline edit, and saving it calls the real PATCH endpoint by index", async () => {
+  await withJsdom(async () => {
+    const originalFetch = globalThis.fetch;
+    let patchBody: { persona: string; expect?: string } | undefined;
+    globalThis.fetch = (async (input: string, init?: RequestInit) => {
+      if (init?.method === "PATCH" && input === "/api/projects/proj1/personas/1") {
+        patchBody = JSON.parse(init.body as string) as { persona: string; expect?: string };
+        const renamed = {
+          ...baseProject,
+          spec: { ...baseProject.spec, personas: ["First persona", patchBody.persona] },
+        };
+        return new Response(JSON.stringify({ project: renamed }), { status: 200, headers: { "content-type": "application/json" } });
+      }
+      throw new Error(`unexpected request ${init?.method ?? "GET"} ${input}`);
+    }) as typeof fetch;
+
+    try {
+      const renamedProjects: Project[] = [];
+      renderPersonaItem(() => {}, (p) => renamedProjects.push(p));
+
+      fireEvent.click(document.querySelector(".persona-text") as HTMLElement);
+      const input = document.querySelector(".persona-rename-edit input") as HTMLInputElement;
+      assert.ok(input, "expected an inline edit input after clicking the persona text");
+      assert.equal(input.value, "Second persona");
+
+      fireEvent.change(input, { target: { value: "Busy small-business owners" } });
+      fireEvent.blur(input);
+
+      await waitForCondition(() => renamedProjects.length === 1);
+      assert.deepEqual(patchBody, { persona: "Busy small-business owners", expect: "Second persona" });
+      assert.deepEqual(renamedProjects[0].spec.personas, ["First persona", "Busy small-business owners"]);
+      assert.equal(document.querySelector(".persona-rename-edit"), null, "must return to display mode after a successful save");
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+});
+
+test("a persona's text is keyboard-focusable and Enter opens edit mode", async () => {
+  await withJsdom(async () => {
+    renderPersonaItem(() => {});
+
+    const text = document.querySelector(".persona-text") as HTMLElement;
+    assert.equal(text.getAttribute("role"), "button");
+    assert.equal(text.getAttribute("tabIndex"), "0");
+
+    fireEvent.keyDown(text, { key: "Enter" });
+    await waitForCondition(() => document.querySelector(".persona-rename-edit input") !== null);
+    assert.ok(document.querySelector(".persona-rename-edit input"), "Enter should have entered edit mode");
+  });
+});
+
+test("pressing Escape while editing a persona cancels without saving", async () => {
+  await withJsdom(async () => {
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = (async () => {
+      throw new Error("renamePersona must never be called after Escape cancels the edit");
+    }) as typeof fetch;
+
+    try {
+      const renamedProjects: Project[] = [];
+      renderPersonaItem(() => {}, (p) => renamedProjects.push(p));
+
+      fireEvent.click(document.querySelector(".persona-text") as HTMLElement);
+      const input = document.querySelector(".persona-rename-edit input") as HTMLInputElement;
+      fireEvent.change(input, { target: { value: "Something else entirely" } });
+      fireEvent.keyDown(input, { key: "Escape" });
+      fireEvent.blur(input);
+      await new Promise((resolve) => setTimeout(resolve, 0));
+
+      assert.equal(renamedProjects.length, 0, "Escape must cancel without ever calling renamePersona");
+      assert.equal(
+        document.querySelector(".persona-text")?.textContent,
+        "Second persona",
+        "the original persona text must be shown, unchanged",
+      );
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+});
+
 test("clicking an entity summary's remove button calls the real DELETE endpoint by entity name and reports the returned project", async () => {
   await withJsdom(async () => {
     const originalFetch = globalThis.fetch;
@@ -812,6 +961,44 @@ test("submitting the add-assumption form calls the real POST endpoint with the t
       await waitForCondition(() => addedProjects.length === 1);
       assert.equal(postedAssumption, "Only one warehouse");
       assert.deepEqual(addedProjects[0].spec.assumptions, ["First assumption", "Second assumption", "Only one warehouse"]);
+      assert.equal(input.value, "");
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+});
+
+test("submitting the add-persona form calls the real POST endpoint with the trimmed value and reports the returned project", async () => {
+  await withJsdom(async () => {
+    const originalFetch = globalThis.fetch;
+    let postedPersona: string | undefined;
+    globalThis.fetch = (async (input: string, init?: RequestInit) => {
+      if (init?.method === "POST" && input === "/api/projects/proj1/personas") {
+        postedPersona = (JSON.parse(init.body as string) as { persona: string }).persona;
+        const withNewPersona = {
+          ...baseProject,
+          spec: { ...baseProject.spec, personas: [...baseProject.spec.personas, postedPersona] },
+        };
+        return new Response(JSON.stringify({ project: withNewPersona }), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        });
+      }
+      throw new Error(`unexpected request ${init?.method ?? "GET"} ${input}`);
+    }) as typeof fetch;
+
+    try {
+      const addedProjects: Project[] = [];
+      renderAddPersonaForm((p) => addedProjects.push(p));
+
+      const input = document.querySelector(".spec-add-item-form input") as HTMLInputElement;
+      const button = document.querySelector(".spec-add-item-form button") as HTMLButtonElement;
+      fireEvent.change(input, { target: { value: "  Busy small-business owners  " } });
+      fireEvent.click(button);
+
+      await waitForCondition(() => addedProjects.length === 1);
+      assert.equal(postedPersona, "Busy small-business owners");
+      assert.deepEqual(addedProjects[0].spec.personas, ["First persona", "Second persona", "Busy small-business owners"]);
       assert.equal(input.value, "");
     } finally {
       globalThis.fetch = originalFetch;
@@ -1555,6 +1742,15 @@ test("an assumption item in readOnly mode renders the plain text with no rename 
   });
 });
 
+test("a persona item in readOnly mode renders the plain text with no rename or remove affordance", async () => {
+  await withJsdom(async () => {
+    renderPersonaItem(() => {}, () => {}, true);
+    assert.equal(document.body.textContent, "Second persona");
+    assert.equal(document.querySelector(".persona-remove") === null, true, "a read-only persona must never show a remove button");
+    assert.equal(document.querySelector(".persona-text") === null, true, "a read-only persona must never show a clickable rename affordance");
+  });
+});
+
 test("an entity summary in readOnly mode renders the plain entity label with no rename/remove affordance, its field chips are also read-only, and the add-field form is omitted entirely", async () => {
   await withJsdom(async () => {
     renderEntitySummaryItem(() => {}, true, () => {}, true);
@@ -1582,7 +1778,7 @@ test("a field chip in readOnly mode renders the plain field label (with the requ
   });
 });
 
-test("AddRoleForm, AddAssumptionForm, AddEntityForm, and AddFieldForm all render nothing at all in readOnly mode", async () => {
+test("AddRoleForm, AddAssumptionForm, AddPersonaForm, AddEntityForm, and AddFieldForm all render nothing at all in readOnly mode", async () => {
   await withJsdom(async () => {
     renderAddRoleForm(() => {}, true);
     assert.equal(document.querySelector("form") === null, true, "a read-only AddRoleForm must render nothing");
@@ -1590,6 +1786,10 @@ test("AddRoleForm, AddAssumptionForm, AddEntityForm, and AddFieldForm all render
 
     renderAddAssumptionForm(() => {}, true);
     assert.equal(document.querySelector("form") === null, true, "a read-only AddAssumptionForm must render nothing");
+    cleanup();
+
+    renderAddPersonaForm(() => {}, true);
+    assert.equal(document.querySelector("form") === null, true, "a read-only AddPersonaForm must render nothing");
     cleanup();
 
     renderAddEntityForm(() => {}, true);

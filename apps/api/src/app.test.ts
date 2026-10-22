@@ -4275,6 +4275,307 @@ test("deleting an assumption at a now-stale index is rejected (409) instead of s
 });
 
 /**
+ * Round 775: `personas` is the one spec-level string[] (ProductSpecSchema,
+ * alongside roles/assumptions) that had no API-level add/remove/rename
+ * routes at all until this round, and therefore no UI either (see
+ * SpecListItemRemover.tsx's own PersonaItem/AddPersonaForm comment). These
+ * mirror the equivalent roles/assumptions tests above exactly, since the
+ * three new routes are a direct copy of the assumptions routes' own shape
+ * (no `.min(1)` floor, same idempotency/stale-index machinery).
+ */
+test("POST /projects/:id/personas retried with the same idempotency key after the first attempt already finished replays the original response instead of appending a second persona", async () => {
+  await withServer(async (baseUrl) => {
+    const token = await signup(baseUrl, "persona-idem1@example.com");
+    const createRes = await fetch(`${baseUrl}/api/projects`, {
+      method: "POST",
+      headers: authHeaders(token),
+      body: JSON.stringify({ description: "A CRM with customers and deals." }),
+    });
+    const { project } = (await createRes.json()) as { project: { id: string; spec: { personas: string[] } } };
+    const originalCount = project.spec.personas.length;
+
+    const headers = { ...authHeaders(token), "x-idempotency-key": "persona-repro-key" };
+    const firstRes = await fetch(`${baseUrl}/api/projects/${project.id}/personas`, {
+      method: "POST",
+      headers,
+      body: JSON.stringify({ persona: "A support agent triaging incoming tickets." }),
+    });
+    assert.equal(firstRes.status, 200);
+    const first = (await firstRes.json()) as { project: { spec: { personas: string[] } } };
+    assert.equal(first.project.spec.personas.length, originalCount + 1);
+
+    const retryRes = await fetch(`${baseUrl}/api/projects/${project.id}/personas`, {
+      method: "POST",
+      headers,
+      body: JSON.stringify({ persona: "A support agent triaging incoming tickets." }),
+    });
+    assert.equal(retryRes.status, 200);
+    const retry = (await retryRes.json()) as { project: { spec: { personas: string[] } } };
+    assert.deepEqual(
+      retry.project.spec.personas,
+      first.project.spec.personas,
+      "the retry must replay the original response, not append a second persona",
+    );
+  });
+});
+
+test("the owner can remove a persona by index, and a collaborator can too -- the remaining personas keep their own relative order", async () => {
+  await withServer(async (baseUrl) => {
+    const ownerToken = await signup(baseUrl, "persona-remove-owner1@example.com");
+    const collabToken = await signup(baseUrl, "persona-remove-collab1@example.com");
+    const createRes = await fetch(`${baseUrl}/api/projects`, {
+      method: "POST",
+      headers: authHeaders(ownerToken),
+      body: JSON.stringify({
+        description: "A CRM with customers and deals, used by a sales manager and a customer portal for self-service.",
+      }),
+    });
+    const { project } = (await createRes.json()) as { project: { id: string; spec: { personas: string[] } } };
+    assert.ok(project.spec.personas.length >= 3, "the heuristic engine always generates one persona per role");
+    const originalPersonas = project.spec.personas;
+    await fetch(`${baseUrl}/api/projects/${project.id}/collaborators`, {
+      method: "POST",
+      headers: authHeaders(ownerToken),
+      body: JSON.stringify({ email: "persona-remove-collab1@example.com" }),
+    });
+
+    const ownerRes = await fetch(`${baseUrl}/api/projects/${project.id}/personas/1`, {
+      method: "DELETE",
+      headers: authHeaders(ownerToken),
+    });
+    assert.equal(ownerRes.status, 200);
+    const { project: afterFirstRemoval } = (await ownerRes.json()) as { project: { spec: { personas: string[] } } };
+    assert.deepEqual(
+      afterFirstRemoval.spec.personas,
+      [originalPersonas[0], ...originalPersonas.slice(2)],
+      "removing index 1 must drop only the middle persona, keeping the others in their original order",
+    );
+
+    const collabRes = await fetch(`${baseUrl}/api/projects/${project.id}/personas/0`, {
+      method: "DELETE",
+      headers: authHeaders(collabToken),
+    });
+    assert.equal(collabRes.status, 200);
+    const { project: afterSecondRemoval } = (await collabRes.json()) as { project: { spec: { personas: string[] } } };
+    assert.deepEqual(
+      afterSecondRemoval.spec.personas,
+      originalPersonas.slice(2),
+      "a collaborator can remove a persona too, same as the owner",
+    );
+  });
+});
+
+test("removing a persona at an out-of-range index 404s with PERSONA_NOT_FOUND, and the personas list is left untouched", async () => {
+  await withServer(async (baseUrl) => {
+    const token = await signup(baseUrl, "persona-remove-owner2@example.com");
+    const createRes = await fetch(`${baseUrl}/api/projects`, {
+      method: "POST",
+      headers: authHeaders(token),
+      body: JSON.stringify({ description: "A CRM with customers and deals." }),
+    });
+    const { project } = (await createRes.json()) as { project: { id: string; spec: { personas: string[] } } };
+
+    const res = await fetch(`${baseUrl}/api/projects/${project.id}/personas/${project.spec.personas.length}`, {
+      method: "DELETE",
+      headers: authHeaders(token),
+    });
+    assert.equal(res.status, 404);
+    assert.equal(((await res.json()) as { code?: string }).code, "PERSONA_NOT_FOUND");
+
+    const getRes = await fetch(`${baseUrl}/api/projects/${project.id}`, { headers: authHeaders(token) });
+    const { project: unchanged } = (await getRes.json()) as { project: { spec: { personas: string[] } } };
+    assert.deepEqual(unchanged.spec.personas, project.spec.personas);
+  });
+});
+
+test("removing a persona on a project you have no access to still 404s, the same as any other project route", async () => {
+  await withServer(async (baseUrl) => {
+    const ownerToken = await signup(baseUrl, "persona-remove-owner3@example.com");
+    const outsiderToken = await signup(baseUrl, "persona-remove-outsider3@example.com");
+    const createRes = await fetch(`${baseUrl}/api/projects`, {
+      method: "POST",
+      headers: authHeaders(ownerToken),
+      body: JSON.stringify({ description: "A CRM with customers and deals." }),
+    });
+    const { project } = (await createRes.json()) as { project: { id: string } };
+
+    const res = await fetch(`${baseUrl}/api/projects/${project.id}/personas/0`, {
+      method: "DELETE",
+      headers: authHeaders(outsiderToken),
+    });
+    assert.equal(res.status, 404);
+  });
+});
+
+test("the owner can rename a persona by index in place, and a collaborator can too -- renaming never changes the array's own length or order", async () => {
+  await withServer(async (baseUrl) => {
+    const ownerToken = await signup(baseUrl, "persona-rename-owner1@example.com");
+    const collabToken = await signup(baseUrl, "persona-rename-collab1@example.com");
+    const createRes = await fetch(`${baseUrl}/api/projects`, {
+      method: "POST",
+      headers: authHeaders(ownerToken),
+      body: JSON.stringify({
+        description: "A CRM with customers and deals, used by a sales manager and a customer portal for self-service.",
+      }),
+    });
+    const { project } = (await createRes.json()) as { project: { id: string; spec: { personas: string[] } } };
+    assert.ok(project.spec.personas.length >= 3, "the heuristic engine always generates one persona per role");
+    const originalPersonas = project.spec.personas;
+    await fetch(`${baseUrl}/api/projects/${project.id}/collaborators`, {
+      method: "POST",
+      headers: authHeaders(ownerToken),
+      body: JSON.stringify({ email: "persona-rename-collab1@example.com" }),
+    });
+
+    const ownerRes = await fetch(`${baseUrl}/api/projects/${project.id}/personas/0`, {
+      method: "PATCH",
+      headers: authHeaders(ownerToken),
+      body: JSON.stringify({ persona: "Busy small-business owner managing everything solo" }),
+    });
+    assert.equal(ownerRes.status, 200);
+    const { project: afterFirstRename } = (await ownerRes.json()) as { project: { spec: { personas: string[] } } };
+    assert.deepEqual(
+      afterFirstRename.spec.personas,
+      ["Busy small-business owner managing everything solo", ...originalPersonas.slice(1)],
+      "renaming index 0 must replace only that persona in place, at the same position",
+    );
+
+    const collabRes = await fetch(`${baseUrl}/api/projects/${project.id}/personas/1`, {
+      method: "PATCH",
+      headers: authHeaders(collabToken),
+      body: JSON.stringify({ persona: "Renamed by collaborator" }),
+    });
+    assert.equal(collabRes.status, 200);
+    const { project: afterSecondRename } = (await collabRes.json()) as { project: { spec: { personas: string[] } } };
+    assert.equal(
+      afterSecondRename.spec.personas.length,
+      originalPersonas.length,
+      "renaming must never change the list's length",
+    );
+    assert.equal(
+      afterSecondRename.spec.personas[1],
+      "Renamed by collaborator",
+      "a collaborator can rename a persona too, same as the owner",
+    );
+  });
+});
+
+test("renaming a persona at an out-of-range index 404s with PERSONA_NOT_FOUND, and the personas list is left untouched", async () => {
+  await withServer(async (baseUrl) => {
+    const token = await signup(baseUrl, "persona-rename-owner2@example.com");
+    const createRes = await fetch(`${baseUrl}/api/projects`, {
+      method: "POST",
+      headers: authHeaders(token),
+      body: JSON.stringify({ description: "A CRM with customers and deals." }),
+    });
+    const { project } = (await createRes.json()) as { project: { id: string; spec: { personas: string[] } } };
+
+    const res = await fetch(`${baseUrl}/api/projects/${project.id}/personas/${project.spec.personas.length}`, {
+      method: "PATCH",
+      headers: authHeaders(token),
+      body: JSON.stringify({ persona: "Anything" }),
+    });
+    assert.equal(res.status, 404);
+    assert.equal(((await res.json()) as { code?: string }).code, "PERSONA_NOT_FOUND");
+
+    const getRes = await fetch(`${baseUrl}/api/projects/${project.id}`, { headers: authHeaders(token) });
+    const { project: unchanged } = (await getRes.json()) as { project: { spec: { personas: string[] } } };
+    assert.deepEqual(unchanged.spec.personas, project.spec.personas);
+  });
+});
+
+test("renaming a persona on a project you have no access to still 404s, the same as any other project route", async () => {
+  await withServer(async (baseUrl) => {
+    const ownerToken = await signup(baseUrl, "persona-rename-owner3@example.com");
+    const outsiderToken = await signup(baseUrl, "persona-rename-outsider3@example.com");
+    const createRes = await fetch(`${baseUrl}/api/projects`, {
+      method: "POST",
+      headers: authHeaders(ownerToken),
+      body: JSON.stringify({ description: "A CRM with customers and deals." }),
+    });
+    const { project } = (await createRes.json()) as { project: { id: string } };
+
+    const res = await fetch(`${baseUrl}/api/projects/${project.id}/personas/0`, {
+      method: "PATCH",
+      headers: authHeaders(outsiderToken),
+      body: JSON.stringify({ persona: "Hijacked persona" }),
+    });
+    assert.equal(res.status, 404);
+  });
+});
+
+test("deleting a persona at a now-stale index is rejected (409) instead of silently removing the wrong persona", async () => {
+  await withServer(async (baseUrl) => {
+    const token = await signup(baseUrl, "persona-stale-index1@example.com");
+    const createRes = await fetch(`${baseUrl}/api/projects`, {
+      method: "POST",
+      headers: authHeaders(token),
+      body: JSON.stringify({
+        description: "A CRM with customers and deals, used by a sales manager and a customer portal for self-service.",
+      }),
+    });
+    const { project } = (await createRes.json()) as { project: { id: string; spec: { personas: string[] } } };
+    assert.ok(project.spec.personas.length >= 3);
+    const [first, second] = project.spec.personas;
+
+    const firstRemoval = await fetch(`${baseUrl}/api/projects/${project.id}/personas/0`, {
+      method: "DELETE",
+      headers: authHeaders(token),
+      body: JSON.stringify({ expect: first }),
+    });
+    assert.equal(firstRemoval.status, 200);
+
+    const staleRemoval = await fetch(`${baseUrl}/api/projects/${project.id}/personas/1`, {
+      method: "DELETE",
+      headers: authHeaders(token),
+      body: JSON.stringify({ expect: second }),
+    });
+    assert.equal(staleRemoval.status, 409);
+    assert.equal(((await staleRemoval.json()) as { code?: string }).code, "PERSONA_STALE_INDEX");
+
+    const getRes = await fetch(`${baseUrl}/api/projects/${project.id}`, { headers: authHeaders(token) });
+    const { project: afterBoth } = (await getRes.json()) as { project: { spec: { personas: string[] } } };
+    assert.ok(afterBoth.spec.personas.includes(second), "the persona the user actually clicked to remove must survive the rejected stale request");
+  });
+});
+
+test("renaming a persona at a now-stale index is rejected (409) instead of silently renaming the wrong persona", async () => {
+  await withServer(async (baseUrl) => {
+    const token = await signup(baseUrl, "persona-stale-rename1@example.com");
+    const createRes = await fetch(`${baseUrl}/api/projects`, {
+      method: "POST",
+      headers: authHeaders(token),
+      body: JSON.stringify({
+        description: "A CRM with customers and deals, used by a sales manager and a customer portal for self-service.",
+      }),
+    });
+    const { project } = (await createRes.json()) as { project: { id: string; spec: { personas: string[] } } };
+    assert.ok(project.spec.personas.length >= 3);
+    const [first, second] = project.spec.personas;
+
+    const firstRemoval = await fetch(`${baseUrl}/api/projects/${project.id}/personas/0`, {
+      method: "DELETE",
+      headers: authHeaders(token),
+      body: JSON.stringify({ expect: first }),
+    });
+    assert.equal(firstRemoval.status, 200);
+
+    const staleRename = await fetch(`${baseUrl}/api/projects/${project.id}/personas/1`, {
+      method: "PATCH",
+      headers: authHeaders(token),
+      body: JSON.stringify({ persona: "Oops wrong one", expect: second }),
+    });
+    assert.equal(staleRename.status, 409);
+    assert.equal(((await staleRename.json()) as { code?: string }).code, "PERSONA_STALE_INDEX");
+
+    const getRes = await fetch(`${baseUrl}/api/projects/${project.id}`, { headers: authHeaders(token) });
+    const { project: afterBoth } = (await getRes.json()) as { project: { spec: { personas: string[] } } };
+    assert.ok(afterBoth.spec.personas.includes(second), "the persona the user actually clicked to rename must survive untouched");
+    assert.ok(!afterBoth.spec.personas.includes("Oops wrong one"), "the stale-indexed rename must not have been applied to any persona");
+  });
+});
+
+/**
  * New in this round: the spec review screen's "entities" list (the
  * screens about to be built) had no correction path at all, unlike roles
  * and assumptions above -- an unwanted screen the heuristic invented could

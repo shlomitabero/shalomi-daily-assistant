@@ -500,6 +500,13 @@ export function removeAssumption(projectId: string, index: number, expect: strin
   });
 }
 
+export function removePersona(projectId: string, index: number, expect: string): Promise<{ project: Project }> {
+  return request(`/projects/${projectId}/personas/${index}`, {
+    method: "DELETE",
+    body: JSON.stringify({ expect }),
+  });
+}
+
 /** See createProject's own doc comment for why this generates one idempotency key per call, here protecting against a duplicate role from the same click/retry. */
 export function addRole(projectId: string, role: string): Promise<{ project: Project }> {
   return request(`/projects/${projectId}/roles`, {
@@ -515,6 +522,15 @@ export function addAssumption(projectId: string, assumption: string): Promise<{ 
     method: "POST",
     headers: { "x-idempotency-key": crypto.randomUUID() },
     body: JSON.stringify({ assumption }),
+  });
+}
+
+/** See createProject's own doc comment for why this generates one idempotency key per call, here protecting against a duplicate persona from the same click/retry. */
+export function addPersona(projectId: string, persona: string): Promise<{ project: Project }> {
+  return request(`/projects/${projectId}/personas`, {
+    method: "POST",
+    headers: { "x-idempotency-key": crypto.randomUUID() },
+    body: JSON.stringify({ persona }),
   });
 }
 
@@ -539,6 +555,18 @@ export function renameAssumption(
   return request(`/projects/${projectId}/assumptions/${index}`, {
     method: "PATCH",
     body: JSON.stringify({ assumption, expect }),
+  });
+}
+
+export function renamePersona(
+  projectId: string,
+  index: number,
+  persona: string,
+  expect: string,
+): Promise<{ project: Project }> {
+  return request(`/projects/${projectId}/personas/${index}`, {
+    method: "PATCH",
+    body: JSON.stringify({ persona, expect }),
   });
 }
 

@@ -44,7 +44,16 @@ import { ProjectNameEditor } from "./ProjectNameEditor.js";
 import { ProjectDescriptionEditor } from "./ProjectDescriptionEditor.js";
 import { ShortcutsPanel } from "./ShortcutsPanel.js";
 import { isAnyDialogOpen } from "./useDialogFocusTrap.js";
-import { AddAssumptionForm, AddEntityForm, AddRoleForm, AssumptionItem, EntitySummaryItem, RoleChip } from "./SpecListItemRemover.js";
+import {
+  AddAssumptionForm,
+  AddEntityForm,
+  AddPersonaForm,
+  AddRoleForm,
+  AssumptionItem,
+  EntitySummaryItem,
+  PersonaItem,
+  RoleChip,
+} from "./SpecListItemRemover.js";
 import { applyColumnOrder, reorderColumns } from "./columnOrder.js";
 import { getEntityTabOrder, setEntityTabOrder } from "./entityTabOrder.js";
 import { getPinnedIds, sortByPinned, togglePinned } from "./pinnedProjects.js";
@@ -1882,6 +1891,24 @@ function AppContent() {
               ))}
             </div>
             <AddRoleForm projectId={project.id} onAdded={setProject} readOnly={myRole === "viewer"} />
+          </section>
+
+          <section>
+            <h2>{t("spec.personas.heading")}</h2>
+            <ul>
+              {project.spec.personas.map((p, i) => (
+                <PersonaItem
+                  key={`${i}-${p}`}
+                  persona={p}
+                  projectId={project.id}
+                  index={i}
+                  onRenamed={setProject}
+                  onRemoved={setProject}
+                  readOnly={myRole === "viewer"}
+                />
+              ))}
+            </ul>
+            <AddPersonaForm projectId={project.id} onAdded={setProject} readOnly={myRole === "viewer"} />
           </section>
 
           <section>
