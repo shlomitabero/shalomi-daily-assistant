@@ -9786,3 +9786,83 @@ test("changing a collaborator's role is owner-only, can't target the owner's own
     assert.equal(((await badRole.json()) as { code?: string }).code, "VALIDATION_ERROR");
   });
 });
+
+test("POST /auth/signup is rate-limited per IP: the 21st signup attempt in the window is rejected with 429 even though every earlier one used a distinct, otherwise-valid email", async () => {
+  await withServer(async (baseUrl) => {
+    for (let i = 0; i < 20; i++) {
+      const res = await fetch(`${baseUrl}/api/auth/signup`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ email: `rate-limit-signup-${i}@example.com`, password: "correct-horse-battery" }),
+      });
+      assert.equal(res.status, 201, `signup ${i + 1} of 20 (within the limit) must still succeed normally`);
+    }
+    const blocked = await fetch(`${baseUrl}/api/auth/signup`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ email: "rate-limit-signup-21@example.com", password: "correct-horse-battery" }),
+    });
+    assert.equal(blocked.status, 429);
+    assert.equal(((await blocked.json()) as { code?: string }).code, "RATE_LIMITED");
+  });
+});
+
+test("POST /auth/login is rate-limited per IP: the 31st login attempt in the window is rejected with 429, protecting against unbounded password brute-forcing", async () => {
+  await withServer(async (baseUrl) => {
+    const email = "rate-limit-login@example.com";
+    await signup(baseUrl, email);
+    for (let i = 0; i < 30; i++) {
+      const res = await fetch(`${baseUrl}/api/auth/login`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ email, password: "wrong-password-guess" }),
+      });
+      assert.equal(res.status, 401, `login attempt ${i + 1} of 30 (within the limit) must still get the normal invalid-credentials response, not a 429`);
+    }
+    const blocked = await fetch(`${baseUrl}/api/auth/login`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ email, password: "wrong-password-guess" }),
+    });
+    assert.equal(blocked.status, 429);
+    assert.equal(((await blocked.json()) as { code?: string }).code, "RATE_LIMITED");
+  });
+});
+
+test("POST /auth/forgot-password is rate-limited per TARGET EMAIL: the 6th reset request for the same victim email in the window is rejected with 429, while a request for a completely different email is unaffected", async () => {
+  const emailSender = createFakeEmailSender();
+  await withServer(
+    async (baseUrl) => {
+      const victimEmail = "rate-limit-victim@example.com";
+      await signup(baseUrl, victimEmail);
+      for (let i = 0; i < 5; i++) {
+        const res = await fetch(`${baseUrl}/api/auth/forgot-password`, {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ email: victimEmail, lang: "en" }),
+        });
+        assert.equal(res.status, 200, `forgot-password request ${i + 1} of 5 (within the limit) must still succeed normally`);
+      }
+      const blocked = await fetch(`${baseUrl}/api/auth/forgot-password`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ email: victimEmail, lang: "en" }),
+      });
+      assert.equal(blocked.status, 429);
+      assert.equal(((await blocked.json()) as { code?: string }).code, "RATE_LIMITED");
+
+      // A different target email must still get its own fresh allowance --
+      // this is keyed by the email being reset, not by the caller's IP (the
+      // same IP just got rate-limited above), so an attacker exhausting one
+      // victim's allowance must never collaterally block requests for
+      // anyone else.
+      const unrelatedEmailRes = await fetch(`${baseUrl}/api/auth/forgot-password`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ email: "someone-else-entirely@example.com", lang: "en" }),
+      });
+      assert.equal(unrelatedEmailRes.status, 200, "a different target email must not be collaterally blocked by the victim email's own rate limit");
+    },
+    { emailSender },
+  );
+});

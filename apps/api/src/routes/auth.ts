@@ -29,6 +29,7 @@ import {
 } from "@forge/db";
 import { hashPassword, verifyPassword } from "../auth/password.js";
 import { extractBearerToken, requireAuth } from "../auth/middleware.js";
+import { createRateLimiter } from "../auth/rateLimit.js";
 import { formatValidationError, HttpError } from "../httpError.js";
 import type { EmailSender } from "../email.js";
 import type { WhatsAppWebManager } from "../whatsappWeb.js";
@@ -74,6 +75,8 @@ const ResetPasswordSchema = z.object({
 });
 
 const PASSWORD_RESET_TOKEN_TTL_MS = 60 * 60 * 1000; // 1 hour
+
+const RATE_LIMIT_WINDOW_MS = 15 * 60 * 1000; // 15 minutes
 
 /**
  * The token itself is never stored -- only this hash -- so a DB leak alone
@@ -147,7 +150,45 @@ export function createAuthRouter(
 ): Router {
   const router = Router();
 
-  router.post("/auth/signup", async (req, res, next) => {
+  /**
+   * There was previously no limit at all on how many times any of these
+   * three routes could be called -- verifyPassword's scrypt cost (see
+   * dummyPasswordHashPromise's own comment) is real attacker-side CPU, not
+   * a server-enforced limit, so an unbounded /auth/login loop could
+   * brute-force a password at whatever rate the attacker's own hardware
+   * allows; an unbounded /auth/signup loop could mass-create
+   * accounts/rows; and an unbounded /auth/forgot-password loop against a
+   * known victim email sends that victim a real reset email on every
+   * single call with no throttle at all (email-bombing their inbox, and
+   * burning this deployment's Resend quota). Keyed by IP for
+   * signup/login -- the realistic attack there is one machine iterating
+   * quickly -- but by the target *email* for forgot-password, since the
+   * actual harm (spamming one inbox) doesn't depend on which IP the
+   * request comes from. Created fresh per createAuthRouter() call, the
+   * same convention app.ts's own `activePipelines` already follows, so
+   * app.test.ts's withServer (which calls createApp() fresh per test)
+   * never leaks rate-limit state between unrelated tests.
+   */
+  const signupRateLimiter = createRateLimiter({
+    windowMs: RATE_LIMIT_WINDOW_MS,
+    max: 20,
+    keyGenerator: (req) => req.ip ?? "unknown",
+    message: "Too many signup attempts. Please try again later.",
+  });
+  const loginRateLimiter = createRateLimiter({
+    windowMs: RATE_LIMIT_WINDOW_MS,
+    max: 30,
+    keyGenerator: (req) => req.ip ?? "unknown",
+    message: "Too many login attempts. Please try again later.",
+  });
+  const forgotPasswordRateLimiter = createRateLimiter({
+    windowMs: RATE_LIMIT_WINDOW_MS,
+    max: 5,
+    keyGenerator: (req) => String(req.body?.email ?? "").toLowerCase(),
+    message: "Too many password reset requests for this email. Please try again later.",
+  });
+
+  router.post("/auth/signup", signupRateLimiter, async (req, res, next) => {
     const parsed = CredentialsSchema.safeParse(req.body);
     if (!parsed.success) {
       next(new HttpError(400, formatValidationError(parsed.error), "VALIDATION_ERROR"));
@@ -168,7 +209,7 @@ export function createAuthRouter(
     }
   });
 
-  router.post("/auth/login", async (req, res, next) => {
+  router.post("/auth/login", loginRateLimiter, async (req, res, next) => {
     const parsed = CredentialsSchema.safeParse(req.body);
     if (!parsed.success) {
       next(new HttpError(400, formatValidationError(parsed.error), "VALIDATION_ERROR"));
@@ -288,7 +329,7 @@ export function createAuthRouter(
    * and harder-to-exploit residual risk than a differing status code or
    * body would be.
    */
-  router.post("/auth/forgot-password", async (req, res, next) => {
+  router.post("/auth/forgot-password", forgotPasswordRateLimiter, async (req, res, next) => {
     const parsed = ForgotPasswordSchema.safeParse(req.body);
     if (!parsed.success) {
       next(new HttpError(400, formatValidationError(parsed.error), "VALIDATION_ERROR"));
