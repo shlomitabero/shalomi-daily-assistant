@@ -161,22 +161,43 @@ export function computeCheckpointDiff(currentSpec: ProductSpec, checkpointSpec: 
 }
 
 /**
- * Whether a checkpoint's own entities/fields are exactly what the app is
- * showing right now -- not just "restoring it wouldn't remove anything"
+ * Whether a checkpoint's own spec is exactly what the app is showing
+ * right now -- not just "restoring it wouldn't remove anything"
  * (computeCheckpointDiff's own, one-directional question), but "you are
  * already looking at this". After a restore to an OLDER checkpoint, the
  * list's own newest-first order no longer lines up with which entry is
  * actually current -- the most-recently-created checkpoint at the top can
  * be stale once you've gone back to an earlier one, with nothing in the
- * list itself saying so. Compared as sets of entity/field names plus each
- * shared field's own fieldSignature (matching computeCheckpointDiff's own
- * scope) rather than full JSON equality, since array order is never
- * meaningful here and isn't guaranteed stable -- but a same-named field
- * that changed type/enum/relation between the two specs is a real
- * structural difference, not "still current", so name-matching alone is
- * deliberately not enough here either.
+ * list itself saying so.
+ *
+ * The restore route (apps/api/src/routes/projects.ts) replaces a
+ * project's ENTIRE spec with the checkpoint's, not just its
+ * entities/fields -- so a checkpoint whose entities/fields match the
+ * live spec byte-for-byte can still genuinely differ from it in
+ * summary/roles/screens/assumptions/personas/openQuestions (e.g. a
+ * refine step that only reworded the summary or renamed a role, leaving
+ * every entity untouched). Comparing entities/fields alone used to mark
+ * that checkpoint "Current" and permanently disable its own Restore
+ * button, even though the live app's summary/role chips visibly differ
+ * from it -- the opposite of what the doc comment above already promised.
+ * summary/roles/personas/screens/assumptions/openQuestions have no
+ * drag-reorder feature anywhere in the UI, so their stored array order
+ * IS their display order and a plain JSON comparison is correct for
+ * them; only entities/fields get the order-insensitive, signature-based
+ * comparison below, since array order is never meaningful there and
+ * isn't guaranteed stable -- but a same-named field that changed
+ * type/enum/relation between the two specs is a real structural
+ * difference, not "still current", so name-matching alone is
+ * deliberately not enough even there.
  */
 export function isCheckpointCurrent(currentSpec: ProductSpec, checkpointSpec: ProductSpec): boolean {
+  if (currentSpec.summary !== checkpointSpec.summary) return false;
+  if (JSON.stringify(currentSpec.roles) !== JSON.stringify(checkpointSpec.roles)) return false;
+  if (JSON.stringify(currentSpec.personas) !== JSON.stringify(checkpointSpec.personas)) return false;
+  if (JSON.stringify(currentSpec.screens) !== JSON.stringify(checkpointSpec.screens)) return false;
+  if (JSON.stringify(currentSpec.assumptions) !== JSON.stringify(checkpointSpec.assumptions)) return false;
+  if (JSON.stringify(currentSpec.openQuestions) !== JSON.stringify(checkpointSpec.openQuestions)) return false;
+
   const currentNames = new Set(currentSpec.entities.map((e) => e.name));
   const checkpointNames = new Set(checkpointSpec.entities.map((e) => e.name));
   if (currentNames.size !== checkpointNames.size) return false;

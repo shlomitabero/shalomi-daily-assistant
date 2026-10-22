@@ -306,6 +306,42 @@ test("isCheckpointCurrent is true only when the checkpoint has exactly the same 
   );
 });
 
+/**
+ * Round 773: isCheckpointCurrent only ever compared entities/fields, even
+ * though the restore route (apps/api/src/routes/projects.ts) replaces a
+ * project's ENTIRE spec with the checkpoint's -- so a refine step that
+ * only reworded the summary or renamed a role, leaving every entity
+ * untouched, produced a checkpoint that was wrongly marked "Current"
+ * (and had its own Restore button permanently disabled), even though the
+ * live app's visible summary text and role chips genuinely differ from
+ * it.
+ */
+test("isCheckpointCurrent is false when the summary or roles differ, even though entities/fields are byte-identical", () => {
+  const entities: ProductSpec["entities"] = [{ name: "Order", fields: [{ name: "total", type: "number", required: true }] }];
+  const current: ProductSpec = { summary: "A cafe management app for orders", personas: [], roles: ["Owner", "Cashier"], entities, screens: [], assumptions: [], openQuestions: [] };
+
+  const differentSummary: ProductSpec = { ...current, summary: "Manage orders for a small shop" };
+  assert.equal(
+    isCheckpointCurrent(current, differentSummary),
+    false,
+    "a checkpoint whose summary genuinely differs from the live spec must not be marked Current, even with identical entities/fields",
+  );
+
+  const differentRoles: ProductSpec = { ...current, roles: ["Owner", "Staff"] };
+  assert.equal(
+    isCheckpointCurrent(current, differentRoles),
+    false,
+    "a checkpoint whose roles genuinely differ from the live spec must not be marked Current, even with identical entities/fields",
+  );
+
+  const identicalSpec: ProductSpec = { ...current, entities };
+  assert.equal(
+    isCheckpointCurrent(current, identicalSpec),
+    true,
+    "a checkpoint with a genuinely identical full spec must still be marked Current",
+  );
+});
+
 test("isCheckpointCurrent is false when the checkpoint is missing an entity, missing a field, or has an extra one", () => {
   const current = makeSpec([{ name: "Customer", fields: [{ name: "name", type: "text", required: true }] }]);
 
