@@ -31156,3 +31156,23 @@ Still no genuine reply from שלומי. This round's survey moved to a different
 **Verification**: temporarily removed the middleware wiring on all three routes (a real, targeted revert) and reran -- all 3 new integration tests failed exactly as predicted (expected 429, got the normal unblocked status); restored and reran clean. Specifically re-ran the pre-existing `/auth/login` timing-side-channel test (13 login calls in a single test) and the login-code-invalidation test (3 logins in a single test) to confirm the chosen limits (30/15min, comfortably above both call counts) don't collide with legitimate existing test traffic -- they didn't. Full `apps/api` suite: 558/559 pass, the sole failure being the already-documented pre-existing `codegen.test.ts` process-exit hang flake (location `:1:1`, SIGKILL), unrelated to this change. `apps/web`: `tsc -b` clean; `i18n/language.test.ts` 20/20, including the HttpError-code-translation-coverage scan.
 
 **Status**: shipped and pushed.
+
+### Round 784: Time Machine's diff and "Current" check silently ignored a field's required flag
+
+Still no genuine reply from שלומי. This round's survey moved to the Time Machine (checkpoint history) feature, a different corner of the app from the auth layer rounds 782-783 focused on.
+
+**The gap**: `checkpointDiff.ts`'s `fieldSignature()` -- the "shape" two same-named fields are compared by, used by both `computeCheckpointDiff` (the diff list shown per checkpoint) and `isCheckpointCurrent` (the "Current" chip) -- only ever compared `type`, `relationTo`, and `enumValues`. It deliberately (and correctly) never compares `label`, since a label rename is cosmetic, with its own doc comment saying exactly that. But it also silently never compared `required`, with no comment acknowledging the omission at all -- even though `required` is a genuine behavioral property, not cosmetic: `repository.ts`'s `coerceValue` rejects a missing value once a field is required. `apps/api/src/pipeline.ts`'s own `computeImpact` already treats exactly this change (a field becoming required) as a tracked "tightened" structural change worth its own build-time warning -- proving the team already considers this a real, reportable change; the independently-written Time Machine diff logic in a completely different file just never got the same treatment.
+
+**Why this is not deliberate**: the one existing test that touched this exact combination (`"computeCheckpointDiff never flags a field as changed just because its label or required-ness differs"`) actually asserted the bug as intended behavior -- but `fieldSignature`'s own doc comment only ever explained the label omission, never the required one, and a parallel, already-fixed property in a sibling file (`pipeline.ts`'s `tightenedFieldNames`) treats the identical flag as worth tracking.
+
+**Concrete failure scenario**: build a project with `Customer.email` optional, then refine it to make `email` required (same field name, same type). Opening History/Time Machine: the original checkpoint still gets the "Current" chip (`isCheckpointCurrent` wrongly returns `true`), and the diff view reports zero changes for that field (`computeCheckpointDiff`'s `changedFieldNames` is empty) -- even though restoring that checkpoint would genuinely make the field optional again, a real difference from the live app.
+
+**The fix**: folded `required` into `fieldSignature`'s string, the same symmetric treatment `type`/`enum`/`relation` already get -- flagged as changed in *either* direction (loosened or tightened), not just the one-directional "tightening" `pipeline.ts`'s own narrower build-time-warning feature cares about.
+
+**codegen.ts parity**: confirmed not needed -- the exported standalone app has no Time Machine/checkpoint feature of its own at all.
+
+**The tests**: the one existing test that encoded the bug as intended behavior was split into two -- a label-only test (kept, still correctly expecting no change) and a new required-only test (now correctly expecting `changedFieldNames` to report it). Added a parallel new `isCheckpointCurrent` test for the identical gap (same name/type, only the required flag differs -> not current).
+
+**Verification**: reverted `fieldSignature`'s new required segment and reran -- both new tests failed exactly as predicted (a `deepEqual` mismatch on `changedFieldNames`; `true !== false` on `isCheckpointCurrent`); restored and reran clean. Full `checkpointDiff.test.ts`: 38/38 pass. Only `apps/web` changed this round, so its own full suite ran: 1107/1107 pass, no flakes. `tsc -b` clean.
+
+**Status**: shipped and pushed.
