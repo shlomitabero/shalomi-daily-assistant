@@ -51,13 +51,16 @@ export interface MatchedRecord {
 }
 
 /**
- * Best-effort match: looks across every entity that has a field whose
- * name matches a common phone-field convention (see
+ * Best-effort match: looks across every entity that has one or more
+ * fields whose name matches a common phone-field convention (see
  * PHONE_FIELD_NAME_HINTS -- "phone" is the domain library's own
  * convention, see spec-engine/domainEntities.ts, but "mobile"/
- * "phoneNumber"/etc. are just as plausible from an AI-generated spec)
- * for a record whose phone number normalizes to the same digits as the
- * incoming message's sender.
+ * "phoneNumber"/etc. are just as plausible from an AI-generated spec),
+ * checking EVERY such field on a record, not just the first one found --
+ * an entity can plausibly have both e.g. "phone" (an office line) and
+ * "mobile" (the number that actually receives WhatsApp messages), and a
+ * record whose "mobile" matches the incoming sender must still be found
+ * even if its "phone" doesn't, or isn't even set.
  * International prefixes (a stored "050-..." vs. an incoming
  * "972 50 ..." from the same real number) are reconciled by comparing
  * digit suffixes, not exact equality -- a genuine, common mismatch this
@@ -70,23 +73,25 @@ export function findMatchingRecord(db: ForgeDatabase, project: Project, fromNumb
   if (!normalizedFrom) return null;
 
   for (const entity of project.spec.entities) {
-    const phoneField = entity.fields.find((f) => PHONE_FIELD_NAME_HINTS.includes(f.name.toLowerCase()));
-    if (!phoneField) continue;
+    const phoneFields = entity.fields.filter((f) => PHONE_FIELD_NAME_HINTS.includes(f.name.toLowerCase()));
+    if (phoneFields.length === 0) continue;
     const records = listRecords(db, project.id, entity);
     for (const record of records) {
-      const raw = record[phoneField.name];
-      if (typeof raw !== "string" || !raw) continue;
-      const normalizedStored = normalizePhone(raw);
-      if (!normalizedStored) continue;
-      const shorter = normalizedStored.length <= normalizedFrom.length ? normalizedStored : normalizedFrom;
-      const longer = normalizedStored.length <= normalizedFrom.length ? normalizedFrom : normalizedStored;
-      if (shorter.length >= 7 && longer.endsWith(shorter)) {
-        return {
-          entityName: entity.name,
-          entityLabel: entity.label ?? entity.name,
-          recordId: record.id as number,
-          label: recordDisplayLabel(entity, record),
-        };
+      for (const phoneField of phoneFields) {
+        const raw = record[phoneField.name];
+        if (typeof raw !== "string" || !raw) continue;
+        const normalizedStored = normalizePhone(raw);
+        if (!normalizedStored) continue;
+        const shorter = normalizedStored.length <= normalizedFrom.length ? normalizedStored : normalizedFrom;
+        const longer = normalizedStored.length <= normalizedFrom.length ? normalizedFrom : normalizedStored;
+        if (shorter.length >= 7 && longer.endsWith(shorter)) {
+          return {
+            entityName: entity.name,
+            entityLabel: entity.label ?? entity.name,
+            recordId: record.id as number,
+            label: recordDisplayLabel(entity, record),
+          };
+        }
       }
     }
   }

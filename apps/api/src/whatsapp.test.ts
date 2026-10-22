@@ -186,3 +186,46 @@ test("findMatchingRecord skips entities that have no phone field, rather than th
   applyMigrations(db, noPhone.id, noPhone.spec);
   assert.equal(findMatchingRecord(db, noPhone, "972501234567"), null);
 });
+
+/**
+ * Round 774: findMatchingRecord used to pick only the FIRST field on an
+ * entity whose name matched PHONE_FIELD_NAME_HINTS (entity.fields.find),
+ * then only ever checked that one field for every record -- so an entity
+ * with two plausible phone-like fields (e.g. "phone", an office line,
+ * declared before "mobile", the number that actually receives WhatsApp
+ * messages -- an entirely ordinary real-world combination) silently
+ * never matched against the second field at all, for any record,
+ * regardless of which field actually held the incoming sender's number.
+ */
+test("findMatchingRecord checks every phone-like field on an entity, not just the first one declared", () => {
+  const twoPhoneFieldsProject: Project = {
+    ...project,
+    spec: {
+      ...project.spec,
+      entities: [
+        {
+          name: "Customer",
+          label: "לקוחות",
+          fields: [
+            { name: "name", label: "שם", type: "text", required: true },
+            { name: "phone", label: "טלפון", type: "text", required: false },
+            { name: "mobile", label: "נייד", type: "text", required: false },
+          ],
+        },
+      ],
+    },
+  };
+  const db = openDatabase(":memory:");
+  applyMigrations(db, twoPhoneFieldsProject.id, twoPhoneFieldsProject.spec);
+  const customer = twoPhoneFieldsProject.spec.entities[0];
+  const inserted = insertRecord(db, twoPhoneFieldsProject.id, customer, {
+    name: "Dana Levi",
+    phone: "03-555-1234",
+    mobile: "050-999-8888",
+  });
+
+  const match = findMatchingRecord(db, twoPhoneFieldsProject, "972509998888");
+  assert.ok(match, "must match via the second phone-like field (mobile) even though it's declared after the first (phone)");
+  assert.equal(match!.recordId, inserted.id);
+  assert.equal(match!.label, "Dana Levi");
+});
