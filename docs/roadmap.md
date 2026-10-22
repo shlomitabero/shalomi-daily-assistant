@@ -31402,3 +31402,25 @@ Still no genuine reply from שלומי. This round's survey re-checked round 793
 **Verification**: verified via revert/restore in isolation (`--test-name-pattern`), since `codegen.test.ts`'s own full-file run hits its already-documented, now doubly-confirmed pre-existing process-exit hang flake before reaching this test (it sits much later in file order than where the hang stops) -- reverting the type check made the new test fail exactly as predicted (`'title'` instead of `'department'`); restoring made it pass. Only `apps/api` changed this round, so its own full suite ran: 579/580 pass; the sole failure is that same hang flake, stopping at the identical subtest it has in every round's log since 787 -- confirmed unrelated. `npm run build` (esbuild bundle) clean.
 
 **Status**: shipped and pushed.
+
+### Round 796: `BuildProgress.tsx`'s Database detail panel misrendered a disabled automation rule
+
+Still no genuine reply from שלומי. The exact same gap class rounds 396 and 464 already found and fixed in this same file for two earlier `MigrationChange` variants -- round 687 simply introduced a sixth variant years later without anyone revisiting this specific consumer again.
+
+**The gap**: round 687 added `"automation_rule_disabled"` to `MigrationChange`'s type union (`packages/db/src/migrate.ts`), taught `describeMigrationHazards` to summarize it correctly in the Database step's plain-text message, and noted "both existing consumers pick this up for free with zero new wiring" -- referring to `pipeline.ts`'s own message stream and the checkpoint-restore route's `migrationWarning`. It never accounted for a third, independent consumer of the identical `MigrationChange[]` array: `BuildProgress.tsx`'s own local `MigrationChangeDetail` type, which the "What exactly happened?" expandable itemized list switches on separately for its own structured rendering.
+
+**Why this is not deliberate**: this is literally the same bug rounds 396 (`relation_target_changed`) and 464 (`relation_missing_fk`) already found and fixed in this exact file, for this exact union type, each time a new `MigrationChange` variant was introduced without this one extra consumer being updated alongside it. Round 687 simply repeated the pattern a third time.
+
+**Concrete failure scenario**: build or refine an app whose entity/field removal auto-disables an automation rule. The Database step's summary line correctly says "...Note: 1 automation rule(s) were disabled...", but expanding "What exactly happened?" right below it renders a contradicting, bogus line instead -- `MigrationChangeDetail`'s type union only listed five of the six real variants, so this entry fell through the ternary chain's final `else` branch (which assumes `type_changed` and reads `fromType`/`toType`, fields this variant never sets): "Field type changed but the database column was left unchanged: entity_X.status (undefined → undefined)" -- and for an entity-level disable (`column` left undefined, the same convention `"new_table"` already uses), "...entity_X.undefined (undefined → undefined)".
+
+**The fix**: added the 6th type to `MigrationChangeDetail`'s union plus its `disabledCount` field, and a new ternary branch rendering it correctly (table, plus `.column` only when present, plus the real disabled count) before the `type_changed` fallback. New i18n key `"build.detail.database.automationRuleDisabled"` in both locales.
+
+**Scope note**: distinct from the already-closed "automation-rule auto-disable migration hazards" topic (the detection/disabling mechanism and the plain-text summary message itself, both already correct and untouched here) -- this is specifically the separate structured itemized-list renderer never having learned about this one variant.
+
+**codegen.ts parity**: confirmed not needed -- the exported standalone app has no Automations feature at all, so this variant can never reach it. `apps/api` has no equivalent renderer of its own; it only produces the events.
+
+**The tests**: one new test in `BuildProgress.test.ts`, placed directly after the existing `relation_missing_fk` test for this exact same gap class, covering both shapes in one test -- a field-level disable (`column` set) and an entity-level disable (`column` undefined).
+
+**Verification**: reverted the new ternary branch and reran -- the test failed exactly as predicted, rendering the real bogus line ("Field type changed... entity_proj1_Order.status (undefined → undefined)... entity_proj1_Customer.undefined (undefined → undefined)"); restored and reran clean. The i18n key-parity test (`language.test.ts`) also passed, confirming both locales stayed in sync. Only `apps/web` changed this round, so its own full suite ran: 1112/1112 pass, no flakes. `tsc -b` clean.
+
+**Status**: shipped and pushed.
