@@ -1457,6 +1457,94 @@ test("clicking an existing relation field chip's \"edit target\" button opens th
   });
 });
 
+/**
+ * Round 799: every other inline-edit control in this file (RoleChip,
+ * AssumptionItem, PersonaItem, EntitySummaryItem's label editor, and this
+ * same FieldChip's own label-rename editor just below) already supports
+ * Escape-to-cancel -- this enum/relation type-change draft, opened either
+ * by picking "enum"/"relation" from the type <select> or by the dedicated
+ * "edit values"/"edit target" button, was the one left without any way
+ * to back out once opened: no Escape handler, no Cancel button, and
+ * re-selecting the <select>'s own already-shown value fires no onChange
+ * at all (the exact reason the edit button exists in the first place).
+ * Covers both halves: Escape on the enum input, and the new explicit
+ * Cancel button on the relation select's own draft.
+ */
+test("pressing Escape while editing an existing enum field's values closes the draft without ever calling the PATCH endpoint", async () => {
+  await withJsdom(async () => {
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = (async () => {
+      throw new Error("setFieldType must never be called after Escape cancels the draft");
+    }) as typeof fetch;
+
+    try {
+      const changedProjects: Project[] = [];
+      renderFieldChip((p) => changedProjects.push(p), true, { name: "status", type: "enum", required: true, enumValues: ["New", "Done"] });
+
+      const editButton = document.querySelector(".chip-field-edit-values") as HTMLButtonElement;
+      fireEvent.click(editButton);
+      const confirmForm = document.querySelector(".chip-field-type-confirm") as HTMLFormElement;
+      assert.ok(confirmForm, "expected the draft confirm step to open");
+      const enumInput = confirmForm.querySelector("input") as HTMLInputElement;
+
+      fireEvent.change(enumInput, { target: { value: "something not yet saved" } });
+      fireEvent.keyDown(enumInput, { key: "Escape" });
+
+      assert.equal(changedProjects.length, 0, "Escape must cancel without ever calling setFieldType");
+      // Compared as a boolean, not assert.equal(element, null, ...) directly
+      // -- when that form of assertion actually fails, node:assert's default
+      // diff formatter tries to inspect the real DOM element, which hangs
+      // indefinitely on jsdom's circular/huge node structure (confirmed
+      // empirically: this exact revert-and-rerun regression check hung for
+      // 60+ seconds before being SIGKILLed, with the boolean form below
+      // failing in well under a second instead).
+      assert.equal(document.querySelector(".chip-field-type-confirm") === null, true, "the draft confirm step must close");
+      assert.ok(document.querySelector(".chip-field-edit-values"), "the edit-values button must reappear so the draft can be reopened");
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+});
+
+test("clicking Cancel while editing an existing relation field's target closes the draft without ever calling the PATCH endpoint", async () => {
+  await withJsdom(async () => {
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = (async () => {
+      throw new Error("setFieldType must never be called after Cancel closes the draft");
+    }) as typeof fetch;
+
+    const relatedEntities: Entity[] = [
+      ...baseProject.spec.entities,
+      { name: "Supplier", label: "Supplier", fields: [{ name: "name", type: "text", required: true }] },
+      { name: "Warehouse", label: "Warehouse", fields: [{ name: "name", type: "text", required: true }] },
+    ];
+
+    try {
+      const changedProjects: Project[] = [];
+      renderFieldChip((p) => changedProjects.push(p), true, { name: "supplierId", type: "relation", required: false, relationTo: "Supplier" }, relatedEntities);
+
+      const editButton = document.querySelector(".chip-field-edit-values") as HTMLButtonElement;
+      fireEvent.click(editButton);
+      const confirmForm = document.querySelector(".chip-field-type-confirm") as HTMLFormElement;
+      assert.ok(confirmForm, "expected the draft confirm step to open");
+      const relationSelect = confirmForm.querySelector("select") as HTMLSelectElement;
+
+      fireEvent.change(relationSelect, { target: { value: "Warehouse" } });
+      const cancelButton = Array.from(confirmForm.querySelectorAll("button")).find((b) => b.type === "button") as HTMLButtonElement;
+      assert.ok(cancelButton, "expected a real Cancel button in the draft form");
+      fireEvent.click(cancelButton);
+
+      assert.equal(changedProjects.length, 0, "Cancel must close the draft without ever calling setFieldType");
+      // See the Escape-cancel test above for why this is compared as a
+      // boolean rather than assert.equal(element, null, ...) directly.
+      assert.equal(document.querySelector(".chip-field-type-confirm") === null, true, "the draft confirm step must close");
+      assert.ok(document.querySelector(".chip-field-edit-values"), "the edit-target button must reappear so the draft can be reopened");
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+});
+
 test("clicking a field chip's text opens an inline edit, and saving it calls the real PATCH label endpoint by entity+field name", async () => {
   await withJsdom(async () => {
     const originalFetch = globalThis.fetch;

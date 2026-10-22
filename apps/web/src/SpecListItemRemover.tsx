@@ -767,9 +767,23 @@ export function FieldChip({
             aria-label={t("spec.fields.enumValues.placeholder")}
             disabled={typeBusy}
             autoFocus
+            // Every structurally-identical sibling editor in this file
+            // (RoleChip, AssumptionItem, PersonaItem, EntitySummaryItem's
+            // label editor, FieldChip's own rename form just above) wires
+            // this same Escape-cancels pattern -- this draft form was the
+            // one left without it, with no way to back out once opened
+            // except submitting (an unwanted network round-trip) or
+            // picking a different plain type (which commits immediately
+            // and silently wipes enumValues/relationTo server-side).
+            onKeyDown={(e) => {
+              if (e.key === "Escape") setDraftType(null);
+            }}
           />
           <button type="submit" className="secondary small" disabled={typeBusy || !draftEnumValues.trim()}>
             {t("spec.fields.type.confirm")}
+          </button>
+          <button type="button" className="link-button small" disabled={typeBusy} onClick={() => setDraftType(null)}>
+            {t("spec.fields.type.cancel")}
           </button>
         </form>
       )}
@@ -780,6 +794,9 @@ export function FieldChip({
             onChange={(e) => setDraftRelationTo(e.target.value)}
             disabled={typeBusy}
             aria-label={t("spec.fields.relationTo")}
+            onKeyDown={(e) => {
+              if (e.key === "Escape") setDraftType(null);
+            }}
           >
             {allEntities.map((e) => (
               <option key={e.name} value={e.name}>
@@ -789,6 +806,9 @@ export function FieldChip({
           </select>
           <button type="submit" className="secondary small" disabled={typeBusy || !draftRelationTo}>
             {t("spec.fields.type.confirm")}
+          </button>
+          <button type="button" className="link-button small" disabled={typeBusy} onClick={() => setDraftType(null)}>
+            {t("spec.fields.type.cancel")}
           </button>
         </form>
       )}
