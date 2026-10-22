@@ -31176,3 +31176,23 @@ Still no genuine reply from שלומי. This round's survey moved to the Time Ma
 **Verification**: reverted `fieldSignature`'s new required segment and reran -- both new tests failed exactly as predicted (a `deepEqual` mismatch on `changedFieldNames`; `true !== false` on `isCheckpointCurrent`); restored and reran clean. Full `checkpointDiff.test.ts`: 38/38 pass. Only `apps/web` changed this round, so its own full suite ran: 1107/1107 pass, no flakes. `tsc -b` clean.
 
 **Status**: shipped and pushed.
+
+### Round 785: a customer's incoming WhatsApp photo, voice note, or document was silently dropped -- no row, no log entry, nothing
+
+Still no genuine reply from שלומי. This round's survey moved to WhatsApp incoming-message handling, a different corner of the app from the Time Machine checkpoint logic round 784 focused on.
+
+**The gap**: `handleIncomingMessages` (`apps/api/src/whatsappWeb.ts`) only ever read `msg.message?.conversation` and `msg.message?.extendedTextMessage?.text`, then `continue`d -- no row inserted at all -- whenever both were empty. Baileys shapes a photo/video/voice-note/document/sticker completely differently from a plain text message: none of those populate `conversation`/`extendedTextMessage`, only a type-specific key (`imageMessage`/`videoMessage`/`audioMessage`/`documentMessage`/`stickerMessage`), each with its own optional `caption` (audio and stickers have none at all -- WhatsApp itself doesn't support a caption on either). None of those keys were ever read anywhere in this file, confirmed by grepping the whole repo for them.
+
+**Why this is not deliberate**: there's no comment anywhere suggesting non-text messages were ever considered and intentionally excluded -- the plain text-only lookup is just an incomplete read of Baileys' real, much richer message shape.
+
+**Concrete failure scenario**: a customer texts a connected WhatsApp number a photo of a damaged product, or a voice note placing an order, with no caption. The message simply never appeared anywhere -- no row in `whatsapp_messages`, nothing in the WhatsApp log UI, no indication to the business owner that a message had even arrived. This is a materially common case for this feature's own target users (couriers, small retail, service businesses), not an edge case.
+
+**The fix**: `describeIncomingMessage()` recognizes the five common media kinds and builds a bracketed, plain-English placeholder (`"[Photo]"`, `"[Video]"`, `"[Voice note]"`/`"[Audio]"` depending on the `ptt` flag, `"[Document: <filename>]"`, `"[Sticker]"`), appending the real caption when the kind has one and it's non-empty -- matching this file's own `QR_EXPIRED_MESSAGE`/`CONNECTION_LOST_MESSAGE` convention of plain English for backend-origin text, since this isn't a UI-chrome string with an error code the client can translate. A row is now always inserted for these kinds, so the business owner at least sees that something arrived and what kind, even though the actual photo/voice note/document content isn't retrievable from here. Deliberately scoped to just these five verified shapes -- a genuinely unrecognized message (a contact card, location pin, poll, etc.) still returns `null` and is skipped exactly as before, rather than guessing at an unverified shape.
+
+**codegen.ts parity**: confirmed not needed -- the exported standalone app has no WhatsApp integration of its own at all.
+
+**The tests**: one new test drives all five media kinds (including both with and without a caption/fileName, and both `ptt` true/false for audio) through the real `emitMessagesUpsert` path and asserts each produced row has the exact expected placeholder body (ordering matches `listWhatsAppMessages`' own documented newest-first order -- caught and fixed a first-draft mistake in the test itself, which initially asserted insertion order rather than the real newest-first query order). A second new test confirms a genuinely unrecognized message shape is still skipped, preserving the existing "no body -> no row" behavior for everything else.
+
+**Verification**: reverted `describeIncomingMessage`'s call site back to the old plain-text-only lookup and reran -- the new media test failed exactly as predicted (0 rows inserted instead of 7); restored and reran clean. Full `whatsappWeb.test.ts`: 25/25. Only `apps/api` changed this round, so its own full suite ran: 560/561 pass; the sole failure is the already-documented pre-existing `codegen.test.ts` process-exit hang flake (location `:1:1`, SIGKILL), unrelated to this change. `npm run build` (esbuild bundle) clean.
+
+**Status**: shipped and pushed.
