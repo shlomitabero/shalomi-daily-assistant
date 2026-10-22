@@ -1959,6 +1959,100 @@ test("EntityPanel's 'Group by' dropdown also offers a relation field, clustering
   });
 });
 
+/**
+ * Round 779: the bulk-edit "Set field" picker used to exclude relation
+ * fields entirely (it reused isInlineEditableField, written for the
+ * single table cell's own space constraint, not this toolbar's full-width
+ * FieldInput). Bulk-reassigning the SAME target record across many
+ * selected rows (e.g. moving a batch of orders to a different courier) is
+ * exactly as sensible as this feature's existing bulk-set of an
+ * enum/boolean/date value. Confirms: the relation field now appears in
+ * the picker, choosing it renders a REAL populated relation `<select>`
+ * (not the old missing-props blank state), and clicking Apply sends the
+ * chosen related record's own id to every selected record.
+ */
+test("EntityPanel's bulk-edit 'Set field' picker now offers a relation field, with a real picker, and applies the chosen related record's id to every selected record", async () => {
+  await withJsdom(async () => {
+    const orderEntity: Entity = {
+      name: "Order",
+      label: "Order",
+      fields: [
+        { name: "item", label: "Item", type: "text", required: true },
+        { name: "courierId", label: "Courier", type: "relation", relationTo: "Courier", required: false },
+      ],
+    };
+    const courierEntity: Entity = { name: "Courier", label: "Courier", fields: [{ name: "name", label: "Name", type: "text", required: true }] };
+    const courierRecords: EntityRecord[] = [
+      { id: 9, createdAt: "x", name: "Dana" },
+      { id: 10, createdAt: "x", name: "Omer" },
+    ];
+    const store: EntityRecord[] = [
+      { id: 1, createdAt: "x", item: "Pizza", courierId: null },
+      { id: 2, createdAt: "x", item: "Sushi", courierId: null },
+    ];
+    const patchedBodies: Record<number, unknown> = {};
+    const originalFetch = globalThis.fetch;
+    const originalConfirm = globalThis.window.confirm;
+    globalThis.fetch = (async (input: string, init?: RequestInit) => {
+      const method = init?.method ?? "GET";
+      if (method === "GET" && input === "/api/projects/proj1/entities/Order") {
+        return new Response(JSON.stringify({ records: store }), { status: 200, headers: { "content-type": "application/json" } });
+      }
+      if (method === "GET" && input === "/api/projects/proj1/entities/Courier") {
+        return new Response(JSON.stringify({ records: courierRecords }), { status: 200, headers: { "content-type": "application/json" } });
+      }
+      const patchMatch = /^\/api\/projects\/proj1\/entities\/Order\/(\d+)$/.exec(input);
+      if (method === "PATCH" && patchMatch) {
+        const id = Number(patchMatch[1]);
+        const body = JSON.parse(init!.body as string);
+        patchedBodies[id] = body;
+        const record = store.find((r) => r.id === id)!;
+        Object.assign(record, body);
+        return new Response(JSON.stringify({ record }), { status: 200, headers: { "content-type": "application/json" } });
+      }
+      throw new Error(`unexpected request ${method} ${input}`);
+    }) as typeof fetch;
+    globalThis.window.confirm = (() => true) as typeof window.confirm;
+    try {
+      renderEntityPanel({ entity: orderEntity, allEntities: [orderEntity, courierEntity] });
+      await waitForCondition(() => document.querySelectorAll("table tbody tr").length === 2);
+
+      for (const checkbox of document.querySelectorAll('td.select-col input[type="checkbox"]')) {
+        fireEvent.click(checkbox);
+      }
+      await waitForCondition(() => document.querySelector(".bulk-actions-bar") !== null);
+
+      const fieldPicker = document.querySelector(".bulk-edit-field-label select") as HTMLSelectElement;
+      const pickerOptions = Array.from(fieldPicker.options).map((o) => o.textContent);
+      assert.ok(pickerOptions.includes("Courier"), "the relation field must now appear in the bulk-edit 'Set field' picker");
+
+      fireEvent.change(fieldPicker, { target: { value: "courierId" } });
+      await waitForCondition(() => document.querySelector(".bulk-actions-bar .relation-field-input select") !== null);
+      const relationSelect = document.querySelector(".bulk-actions-bar .relation-field-input select") as HTMLSelectElement;
+      const relationOptionLabels = Array.from(relationSelect.options).map((o) => o.textContent);
+      assert.deepEqual(
+        relationOptionLabels.slice(1),
+        ["Dana", "Omer"],
+        "the bulk-edit relation picker must show the related records' real display labels, not raw ids or a blank/disabled select",
+      );
+
+      fireEvent.change(relationSelect, { target: { value: String(courierRecords[1].id) } });
+      await waitForCondition(
+        () => (document.querySelector(".bulk-actions-bar .relation-field-input select") as HTMLSelectElement | null)?.value === String(courierRecords[1].id),
+      );
+      const applyButton = Array.from(document.querySelectorAll(".bulk-actions-bar button")).find((b) => /Apply|החל/.test(b.textContent ?? ""))!;
+      fireEvent.click(applyButton);
+
+      await waitForCondition(() => Object.keys(patchedBodies).length === 2);
+      assert.deepEqual(patchedBodies[1], { courierId: courierRecords[1].id }, "must PATCH the chosen courier's own id onto the first selected record");
+      assert.deepEqual(patchedBodies[2], { courierId: courierRecords[1].id }, "must PATCH the exact same courier's id onto every other selected record too");
+    } finally {
+      globalThis.fetch = originalFetch;
+      globalThis.window.confirm = originalConfirm;
+    }
+  });
+});
+
 const TASK_ENTITY: Entity = {
   name: "Task",
   label: "Task",

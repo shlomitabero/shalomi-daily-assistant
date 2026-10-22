@@ -3713,15 +3713,21 @@ test("the exported EntityView's bulk-actions bar also supports duplicating and b
 
   // The bulk-actions bar itself must render the field picker, the live
   // FieldInput for the chosen field, and both new action buttons --
-  // filtered through isInlineEditableField (now precomputed as
-  // bulkEditableFields -- round 649 -- so its label-occurrence count for
-  // disambiguation isn't recomputed on every keystroke) so a relation
-  // field (whose "value" is another record's id) can never be picked for
-  // a bulk update.
+  // bulkEditableFields (precomputed -- round 649 -- so its label-occurrence
+  // count for disambiguation isn't recomputed on every keystroke) only
+  // excludes "file" (round 779: relation is now included too, the same
+  // way the live preview's own fix wired relatedEntity/relatedEntityRecords
+  // into this exact FieldInput call so a relation field gets a real picker,
+  // not the old missing-props blank state).
   assert.match(entityViewJsx, /bulkEditableFields\.map\(\(f\) => \(/);
   assert.match(
     entityViewJsx,
-    /<FieldInput entity=\{entity\} field=\{entity\.fields\.find\(\(f\) => f\.name === bulkEditField\)\} value=\{bulkEditValue\} onChange=\{setBulkEditValue\} \/>/,
+    /const bulkEditableFields = useMemo\(\(\) => orderedFields\.filter\(\(f\) => f\.type !== "file"\), \[orderedFields\]\);/,
+    "the filter must now only exclude 'file', not every relation field too",
+  );
+  assert.match(
+    entityViewJsx,
+    /<FieldInput\s+entity=\{entity\}\s+field=\{bulkEditFieldDef\}\s+value=\{bulkEditValue\}\s+onChange=\{setBulkEditValue\}\s+relatedEntity=\{bulkEditFieldDef\.relationTo \? ALL_ENTITIES\.find\(\(e\) => e\.name === bulkEditFieldDef\.relationTo\) : undefined\}\s+relatedEntityRecords=\{bulkEditFieldDef\.relationTo \? relatedRecords\[bulkEditFieldDef\.relationTo\] : undefined\}\s*\/>/,
   );
   assert.match(entityViewJsx, /onClick=\{handleBulkUpdate\}/);
   assert.match(entityViewJsx, /onClick=\{handleBulkDuplicate\}/);

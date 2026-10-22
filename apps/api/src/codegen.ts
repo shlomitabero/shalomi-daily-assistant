@@ -3748,8 +3748,15 @@ export function EntityView({ entity, highlightRecordId, onHighlightHandled, onJu
   // EntityPanel.tsx (round 678); moved here (they used to sit right after
   // boardField above, textually before orderedFields existed) for the
   // same reason that round's own fix moved bulkEditableFields there.
-  const bulkEditableFields = useMemo(() => orderedFields.filter(isInlineEditableField), [orderedFields]);
+  // Round 779: mirrors the live preview's own fix (EntityPanel.tsx) --
+  // this used to reuse isInlineEditableField verbatim (excludes relation,
+  // correct for THAT predicate's own single-table-cell reason, but not
+  // for this toolbar, which renders a full-width FieldInput with a real
+  // relation picker). "file" stays excluded: its upload UI needs more
+  // state than this toolbar threads through.
+  const bulkEditableFields = useMemo(() => orderedFields.filter((f) => f.type !== "file"), [orderedFields]);
   const bulkEditableFieldLabelOccurrences = useMemo(() => fieldLabelOccurrences(bulkEditableFields), [bulkEditableFields]);
+  const bulkEditFieldDef = useMemo(() => entity.fields.find((f) => f.name === bulkEditField), [entity.fields, bulkEditField]);
   const filterableFields = useMemo(() => findFilterableFields(orderedFields, relatedRecords), [orderedFields, relatedRecords]);
   const filterableFieldLabelOccurrences = useMemo(() => fieldLabelOccurrences(filterableFields), [filterableFields]);
 
@@ -4349,11 +4356,13 @@ export function EntityView({ entity, highlightRecordId, onHighlightHandled, onJu
   }
 
   // Changing a single shared field's value across several selected records
-  // (e.g. marking 15 selected orders "Shipped") still meant editing each
-  // row one at a time without this -- same Promise.allSettled resilience as
-  // handleBulkDelete/handleBulkDuplicate above. Restricted to
-  // isInlineEditableField fields (excludes relation), same reason the
-  // inline cell editor itself is.
+  // (e.g. marking 15 selected orders "Shipped", or reassigning a batch of
+  // orders to a different customer) still meant editing each row one at a
+  // time without this -- same Promise.allSettled resilience as
+  // handleBulkDelete/handleBulkDuplicate above. Round 779: bulkEditValue
+  // is already in the right shape to PATCH directly -- for a relation
+  // field it's the chosen record's own id, the exact same value the
+  // single-record add/edit form sends through this same updateRecord call.
   async function handleBulkUpdate() {
     if (bulkActionBusy) return;
     const ids = [...selectedIds];
@@ -5202,8 +5211,15 @@ export function EntityView({ entity, highlightRecordId, onHighlightHandled, onJu
                       ))}
                     </select>
                   </label>
-                  {bulkEditField && (
-                    <FieldInput entity={entity} field={entity.fields.find((f) => f.name === bulkEditField)} value={bulkEditValue} onChange={setBulkEditValue} />
+                  {bulkEditField && bulkEditFieldDef && (
+                    <FieldInput
+                      entity={entity}
+                      field={bulkEditFieldDef}
+                      value={bulkEditValue}
+                      onChange={setBulkEditValue}
+                      relatedEntity={bulkEditFieldDef.relationTo ? ALL_ENTITIES.find((e) => e.name === bulkEditFieldDef.relationTo) : undefined}
+                      relatedEntityRecords={bulkEditFieldDef.relationTo ? relatedRecords[bulkEditFieldDef.relationTo] : undefined}
+                    />
                   )}
                   {bulkEditField && (
                     <button type="button" disabled={bulkActionBusy} onClick={handleBulkUpdate}>

@@ -842,9 +842,11 @@ function FieldInput({
   onBlur?: () => void;
   onKeyDown?: (e: React.KeyboardEvent) => void;
   /** Only needed by the "file" branch below, to reach the upload endpoint
-   * -- isInlineEditableField already excludes "file" from every other
-   * FieldInput call site (inline cell edit, bulk edit), so only the
-   * plain add/edit form ever actually needs to pass these. */
+   * -- every other FieldInput call site (inline cell edit, bulk edit)
+   * excludes "file" of its own accord (isInlineEditableField for the
+   * former, bulkEditableFields' own narrower filter for the latter -- see
+   * round 779), so only the plain add/edit form ever actually needs to
+   * pass these. */
   projectId?: string;
   entityName?: string;
 }) {
@@ -1763,8 +1765,25 @@ export function EntityPanel({
   // (orderedFields) rather than the entity's raw declared order -- moved
   // here (it used to sit right after boardField/filterableFields above,
   // textually before orderedFields existed) since it now reads from it.
-  const bulkEditableFields = useMemo(() => orderedFields.filter(isInlineEditableField), [orderedFields]);
+  //
+  // Round 779: this used to reuse isInlineEditableField verbatim, which
+  // also excludes "relation" -- correct for THAT predicate's own reason
+  // (a single table cell has no room for a related-entity picker), but
+  // that reason doesn't apply here: the bulk-edit toolbar below already
+  // renders a full-width FieldInput (now with relatedEntity/
+  // relatedEntityRecords wired in, the same way the add/edit form's own
+  // call does), the exact component that already gives relation fields a
+  // complete picker with filtering. Bulk-reassigning the SAME target
+  // record across many selected rows (e.g. moving a batch of orders to a
+  // different customer, or leads to a different rep) is exactly as
+  // sensible as this feature's existing bulk-set of an enum/boolean/date
+  // value -- findFilterableFields already treats relation the same way
+  // for the filter dropdowns, a few lines below. "file" stays excluded:
+  // its real editing UI needs projectId/entityName to reach the upload
+  // endpoint, which this toolbar still has no reason to thread through.
+  const bulkEditableFields = useMemo(() => orderedFields.filter((f) => f.type !== "file"), [orderedFields]);
   const bulkEditableFieldLabelOccurrences = useMemo(() => fieldLabelOccurrences(bulkEditableFields), [bulkEditableFields]);
+  const bulkEditFieldDef = useMemo(() => entity.fields.find((f) => f.name === bulkEditField), [entity.fields, bulkEditField]);
   // The per-field filter dropdowns are a whole-record-set view like the
   // bulk-edit field picker just above -- they follow the same
   // drag-reordered column order (orderedFields), not the entity's raw
@@ -2486,17 +2505,18 @@ export function EntityPanel({
   /**
    * Bulk delete/duplicate already existed, but changing a single shared
    * field's value across several selected records (e.g. marking 15
-   * selected orders "Shipped", or moving 8 leads to "Closed") still meant
-   * editing each row one at a time -- double-clicking a cell, or dragging
-   * board cards one card at a time -- for what any real ops tool treats as
-   * a single mass action. Same Promise.allSettled resilience as
+   * selected orders "Shipped", moving 8 leads to "Closed", or reassigning
+   * a batch of orders to a different customer) still meant editing each
+   * row one at a time -- double-clicking a cell, or dragging board cards
+   * one card at a time -- for what any real ops tool treats as a single
+   * mass action. Same Promise.allSettled resilience as
    * handleBulkDelete/handleBulkDuplicate above: one record another tab
    * already deleted, or a validation failure on one record's current
-   * value, must not hide the successful updates to the rest. Restricted to
-   * isInlineEditableField fields (excludes relation) for the same reason
-   * the inline cell editor itself is: a relation's "value" is another
-   * record's id, not something a single shared value across N different
-   * records makes sense for.
+   * value, must not hide the successful updates to the rest. bulkEditValue
+   * is already in the right shape to PATCH directly -- for a relation
+   * field it's the chosen record's own id (FieldInput's relation branch
+   * onChange already resolves to that), the exact same value the single-
+   * record add/edit form sends through this same updateRecord call.
    */
   async function handleBulkUpdate() {
     if (bulkActionBusy) return;
@@ -3539,11 +3559,13 @@ export function EntityPanel({
                       ))}
                     </select>
                   </label>
-                  {bulkEditField && (
+                  {bulkEditField && bulkEditFieldDef && (
                     <FieldInput
-                      field={entity.fields.find((f) => f.name === bulkEditField)!}
+                      field={bulkEditFieldDef}
                       value={bulkEditValue}
                       onChange={setBulkEditValue}
+                      relatedEntity={bulkEditFieldDef.relationTo ? allEntities.find((e) => e.name === bulkEditFieldDef.relationTo) : undefined}
+                      relatedEntityRecords={bulkEditFieldDef.relationTo ? relatedRecords[bulkEditFieldDef.relationTo] : undefined}
                     />
                   )}
                   {bulkEditField && (
