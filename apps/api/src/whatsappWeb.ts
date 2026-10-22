@@ -76,7 +76,15 @@ export interface BaileysConnectionUpdate {
 
 export interface BaileysIncomingMessage {
   key: { remoteJid?: string; fromMe?: boolean };
-  message?: { conversation?: string; extendedTextMessage?: { text?: string } };
+  message?: {
+    conversation?: string;
+    extendedTextMessage?: { text?: string };
+    imageMessage?: { caption?: string };
+    videoMessage?: { caption?: string };
+    documentMessage?: { caption?: string; fileName?: string };
+    audioMessage?: { ptt?: boolean };
+    stickerMessage?: Record<string, never>;
+  };
 }
 
 export interface BaileysMessagesUpsert {
@@ -97,6 +105,45 @@ const LOGGED_OUT_STATUS_CODE = 401;
  */
 const QR_EXPIRED_MESSAGE = "The QR code expired before it was scanned. Click Connect to get a new one.";
 const CONNECTION_LOST_MESSAGE = "The WhatsApp connection was lost. Click Connect to reconnect.";
+
+/**
+ * Baileys shapes a photo/video/voice-note/document/sticker completely
+ * differently from a plain text message: conversation/extendedTextMessage
+ * is never populated for any of them, only a type-specific key
+ * (imageMessage/videoMessage/audioMessage/documentMessage/stickerMessage),
+ * each with its own optional `caption` -- audio and stickers have none at
+ * all, since WhatsApp itself doesn't support a caption on either. Before
+ * this, handleIncomingMessages' plain text lookup returned undefined for
+ * every one of these, and the whole message was silently dropped via
+ * `continue` with no row ever inserted -- a customer texting in a photo of
+ * a damaged product, or a voice note placing an order, with no caption,
+ * never showed up in the WhatsApp log at all, with nothing telling the
+ * business owner a message had even arrived. A bracketed, plain-English
+ * placeholder (matching this file's own QR_EXPIRED_MESSAGE/
+ * CONNECTION_LOST_MESSAGE convention for backend-origin text -- never
+ * localized, since this isn't a UI-chrome string with an error code the
+ * client can translate) at minimum tells the owner something arrived and
+ * what kind, even though the actual photo/voice note/document content
+ * itself still isn't retrievable from here. Deliberately scoped to just
+ * these five common kinds -- an unrecognized message shape (a shared
+ * contact card, a location pin, a poll, etc.) still returns null and is
+ * skipped exactly as before, rather than guessing at an unverified shape.
+ */
+function describeIncomingMessage(message: BaileysIncomingMessage["message"]): string | null {
+  if (!message) return null;
+  const text = message.conversation ?? message.extendedTextMessage?.text;
+  if (text) return text;
+  if (message.imageMessage) return message.imageMessage.caption ? `[Photo] ${message.imageMessage.caption}` : "[Photo]";
+  if (message.videoMessage) return message.videoMessage.caption ? `[Video] ${message.videoMessage.caption}` : "[Video]";
+  if (message.documentMessage) {
+    const name = message.documentMessage.fileName;
+    const label = `[Document${name ? `: ${name}` : ""}]`;
+    return message.documentMessage.caption ? `${label} ${message.documentMessage.caption}` : label;
+  }
+  if (message.audioMessage) return message.audioMessage.ptt ? "[Voice note]" : "[Audio]";
+  if (message.stickerMessage) return "[Sticker]";
+  return null;
+}
 
 async function defaultCreateSocket(authDir: string): Promise<{ sock: WhatsAppSocket; saveCreds: () => Promise<void> }> {
   const { default: makeWASocket, useMultiFileAuthState } = await import("@whiskeysockets/baileys");
@@ -353,7 +400,7 @@ export class WhatsAppWebManager {
       // message from a customer literally named "status", permanent noise
       // in the one panel this feature exists to keep reliable.
       if (!remoteJid || remoteJid.endsWith("@g.us") || remoteJid.endsWith("@broadcast")) continue;
-      const text = msg.message?.conversation ?? msg.message?.extendedTextMessage?.text;
+      const text = describeIncomingMessage(msg.message);
       if (!text) continue;
       const from = remoteJid.split("@")[0];
 

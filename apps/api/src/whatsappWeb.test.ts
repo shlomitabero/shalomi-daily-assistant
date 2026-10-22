@@ -409,6 +409,77 @@ test("an incoming message is skipped when it is a WhatsApp Status update or broa
   assert.equal(listWhatsAppMessages(db, project.id).messages.length, 0);
 });
 
+/**
+ * Round 785: a photo/video/voice-note/document/sticker is shaped
+ * completely differently from a plain text message (no conversation or
+ * extendedTextMessage at all, only a type-specific key with its own
+ * optional caption) -- before this fix, the plain text lookup returned
+ * undefined for every one of these and the whole message was silently
+ * dropped, with no row ever inserted and nothing telling the business
+ * owner a message had even arrived.
+ */
+test("an incoming photo, video, voice note, document, and sticker are each logged with a descriptive placeholder instead of being silently dropped", async () => {
+  const { manager, createdSockets, db } = setupManager();
+  insertProject(db, project);
+  applyMigrations(db, project.id, project.spec);
+  markProjectBuilt(db, project.id);
+
+  await manager.connect(project.id);
+  createdSockets[0].emitConnectionUpdate({ connection: "open" });
+
+  createdSockets[0].emitMessagesUpsert({
+    type: "notify",
+    messages: [
+      { key: { remoteJid: "972501234567@s.whatsapp.net", fromMe: false }, message: { imageMessage: { caption: "המוצר הגיע שבור" } } },
+      { key: { remoteJid: "972501234567@s.whatsapp.net", fromMe: false }, message: { imageMessage: {} } },
+      { key: { remoteJid: "972501234567@s.whatsapp.net", fromMe: false }, message: { videoMessage: {} } },
+      { key: { remoteJid: "972501234567@s.whatsapp.net", fromMe: false }, message: { audioMessage: { ptt: true } } },
+      { key: { remoteJid: "972501234567@s.whatsapp.net", fromMe: false }, message: { audioMessage: { ptt: false } } },
+      { key: { remoteJid: "972501234567@s.whatsapp.net", fromMe: false }, message: { documentMessage: { fileName: "invoice.pdf" } } },
+      { key: { remoteJid: "972501234567@s.whatsapp.net", fromMe: false }, message: { stickerMessage: {} } },
+    ],
+  });
+
+  // listWhatsAppMessages orders newest-first (see its own doc comment), the
+  // reverse of the emission order above.
+  const { messages } = listWhatsAppMessages(db, project.id);
+  assert.equal(messages.length, 7);
+  assert.equal(messages[0].body, "[Sticker]");
+  assert.equal(messages[1].body, "[Document: invoice.pdf]");
+  assert.equal(messages[2].body, "[Audio]");
+  assert.equal(messages[3].body, "[Voice note]");
+  assert.equal(messages[4].body, "[Video]");
+  assert.equal(messages[5].body, "[Photo]");
+  assert.equal(messages[6].body, "[Photo] המוצר הגיע שבור");
+  for (const m of messages) assert.equal(m.direction, "in", "every placeholder row must still be a real, matched-against incoming message, not metadata");
+});
+
+/**
+ * Round 785: an unrecognized message shape (a shared contact card, a
+ * location pin, a poll, etc.) is deliberately NOT guessed at -- it's
+ * still skipped exactly as before this fix, the same as a message with no
+ * body at all.
+ */
+test("an incoming message of a completely unrecognized shape is still skipped, not guessed at", async () => {
+  const { manager, createdSockets, db } = setupManager();
+  insertProject(db, project);
+  applyMigrations(db, project.id, project.spec);
+  markProjectBuilt(db, project.id);
+
+  await manager.connect(project.id);
+  createdSockets[0].emitConnectionUpdate({ connection: "open" });
+
+  createdSockets[0].emitMessagesUpsert({
+    type: "notify",
+    messages: [
+      { key: { remoteJid: "972501234567@s.whatsapp.net", fromMe: false }, message: {} },
+      { key: { remoteJid: "972501234567@s.whatsapp.net", fromMe: false } },
+    ],
+  });
+
+  assert.equal(listWhatsAppMessages(db, project.id).messages.length, 0);
+});
+
 test("disconnect logs out the real socket, clears the live session, and keeps the last known phone number in the DB", async () => {
   const { manager, createdSockets, db } = setupManager();
   await manager.connect("proj1");
