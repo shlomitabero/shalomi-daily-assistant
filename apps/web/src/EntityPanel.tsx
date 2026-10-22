@@ -1536,6 +1536,43 @@ export function EntityPanel({
   }, [projectId, entity.name, fieldNamesKey, fieldTypesKey]);
 
   /**
+   * Round 780: groupFieldName's own load effect above only re-validates on
+   * a project/entity SWITCH -- it never re-runs while staying mounted on
+   * the SAME entity through a live refine, so a field whose TYPE changes
+   * while its NAME survives (e.g. an enum "status" refined into a
+   * boolean) keeps grouping by it unchanged. groupRecordsByField's
+   * boolean/relation branches have no "legacy value" guard the way the
+   * enum branch's own "(other)" bucket already does: a pre-existing
+   * record's stale old-type value (a leftover enum string like "Shipped")
+   * coerces through Boolean(...) to true, so every record except a
+   * genuinely-empty one gets silently mislabeled under a confident "Yes"
+   * group, with real per-group subtotals computed over that fabricated
+   * split -- the exact "silently wrong results presented as correct"
+   * hazard round 751 fixed for fieldFilters, not the merely-cosmetic one
+   * it declined to fix for sortKeys. Unlike fieldFilters' own stored
+   * VALUE (whose shape can be checked directly against the current
+   * type), groupFieldName is just a field NAME with no shape to check --
+   * so a ref remembers the type of whichever field it currently names,
+   * captured the moment it's chosen (by the user, or reloaded from
+   * storage above), and the selection is cleared via the same round-462
+   * clearing path the moment that type changes out from under it. Also
+   * closes the "stale value has no <option>" blank-select hazard for the
+   * case a type change moves the field OUT of being groupable entirely.
+   */
+  const groupedFieldTypeRef = useRef<string | null>(null);
+  useEffect(() => {
+    groupedFieldTypeRef.current = groupFieldName ? entity.fields.find((f) => f.name === groupFieldName)?.type ?? null : null;
+  }, [groupFieldName]);
+  useEffect(() => {
+    if (!groupFieldName) return;
+    const currentType = entity.fields.find((f) => f.name === groupFieldName)?.type;
+    if (currentType && groupedFieldTypeRef.current && currentType !== groupedFieldTypeRef.current) {
+      setGroupFieldName(setGroupByField(projectId, entity.name, ""));
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [fieldTypesKey]);
+
+  /**
    * Drag-to-resize a column header. Only attaches real mousemove/mouseup
    * listeners while a drag is actually in progress (resizingField set),
    * removing them the instant it ends -- not a permanent global listener

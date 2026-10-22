@@ -6782,6 +6782,80 @@ test("EntityPanel drops a field filter when a live refine changes that field's t
 });
 
 /**
+ * Round 780: the same "field TYPE changes while its NAME survives a live
+ * refine" bug class round 751 fixed for fieldFilters above, never fixed
+ * for groupFieldName. Before the fix, grouping by "status" (an enum with
+ * real values "Pending"/"Shipped") through a refine that retypes it to
+ * boolean kept the SAME grouping selection -- groupRecordsByField's
+ * boolean branch then ran `Boolean(r.status)` against the still-stale
+ * enum strings, and since both "Pending" and "Shipped" are non-empty
+ * (hence truthy), EVERY record landed in a single, confidently-labeled
+ * "Yes" group, misrepresenting real business data with no error or
+ * visible sign anything was wrong. Confirms the fix: the stale grouping
+ * is dropped entirely (back to a flat, ungrouped table) the moment the
+ * field's type changes out from under it, rather than silently
+ * mislabeling every record.
+ */
+test("EntityPanel drops the 'Group by' selection when a live refine changes that field's type, instead of silently mislabeling every record", async () => {
+  await withJsdom(async () => {
+    const statusEnumField = {
+      name: "status",
+      label: "Status",
+      type: "enum" as const,
+      required: true,
+      enumValues: ["Pending", "Shipped"],
+      enumLabels: { Pending: "Pending", Shipped: "Shipped" },
+    };
+    const statusBooleanField = { name: "status", label: "Status", type: "boolean" as const, required: true };
+    const entityWithEnumStatus: Entity = {
+      name: "Deal",
+      label: "Deal",
+      fields: [{ name: "name", label: "Name", type: "text", required: true }, statusEnumField],
+    };
+    const entityWithBooleanStatus: Entity = {
+      name: "Deal",
+      label: "Deal",
+      fields: [{ name: "name", label: "Name", type: "text", required: true }, statusBooleanField],
+    };
+    const store: EntityRecord[] = [
+      { id: 1, createdAt: "x", name: "Acme Corp", status: "Pending" },
+      { id: 2, createdAt: "x", name: "Globex", status: "Shipped" },
+    ];
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = mockRecordsFetch(store) as typeof fetch;
+    try {
+      const view = renderEntityPanel({ entity: entityWithEnumStatus, allEntities: [entityWithEnumStatus] });
+      await waitForCondition(() => document.querySelectorAll("table tbody tr").length === 2);
+
+      const groupBySelect = document.querySelector(".entity-group-by") as HTMLSelectElement;
+      fireEvent.change(groupBySelect, { target: { value: "status" } });
+      await waitForCondition(() => document.querySelectorAll(".entity-group-header-row").length === 2);
+
+      // Simulate a refine that retypes "status" from enum to boolean
+      // while staying on the exact same entity.name ("Deal") and the
+      // exact same field name ("status") -- the same live-refine,
+      // no-remount scenario the fieldFilters test above exercises.
+      view.rerender(buildEntityPanelElement({ entity: entityWithBooleanStatus, allEntities: [entityWithBooleanStatus] }));
+      await waitForCondition(() => document.querySelectorAll(".entity-group-header-row").length === 0);
+
+      assert.equal(
+        (document.querySelector(".entity-group-by") as HTMLSelectElement).value,
+        "",
+        "the 'Group by' dropdown must reset to 'no grouping', not keep pointing at the now-retyped field",
+      );
+      assert.equal(document.querySelectorAll("table tbody tr").length, 2, "both records must render as a normal, ungrouped table");
+      assert.doesNotMatch(
+        document.querySelector("table tbody")?.textContent ?? "",
+        /Yes/,
+        "must never show a fabricated 'Yes' group mislabeling both records from their stale enum values",
+      );
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+});
+
+/**
  * Regression test for round 500's finding: sortKeys' own re-validation
  * effect (sibling to viewMode's and fieldFilters', fixed in rounds 490 and
  * 493 respectively) was never given the same fix -- it only dropped a sort
