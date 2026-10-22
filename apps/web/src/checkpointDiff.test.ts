@@ -249,7 +249,28 @@ test("computeCheckpointDiff reports a same-named enum field whose enumValues cha
   ]);
 });
 
-test("computeCheckpointDiff never flags a field as changed just because its label or required-ness differs -- only type/enum/relation shape matters", () => {
+test("computeCheckpointDiff never flags a field as changed just because its label differs -- a label rename alone is cosmetic", () => {
+  const current = makeSpec([
+    {
+      name: "Order",
+      fields: [{ name: "status", label: "Order Status", type: "text", required: true }],
+    },
+  ]);
+  const checkpoint = makeSpec([{ name: "Order", fields: [{ name: "status", label: "Status", type: "text", required: true }] }]);
+
+  const diff = computeCheckpointDiff(current, checkpoint);
+  assert.deepEqual(diff.changedEntities, [], "a label rename alone must not be reported as a structural change");
+});
+
+/**
+ * New in this round: fieldSignature used to omit `required` entirely, so a
+ * same-named, same-typed field whose required flag flipped read as "the
+ * same field, unchanged" -- even though it's a genuine behavioral change
+ * (repository.ts's coerceValue rejects a missing value once a field is
+ * required), the exact property pipeline.ts's own computeImpact already
+ * tracks as a "tightened" field worth its own build-time warning.
+ */
+test("computeCheckpointDiff reports a same-named, same-typed field as changedFieldNames when only its required flag differs", () => {
   const current = makeSpec([
     {
       name: "Order",
@@ -259,7 +280,9 @@ test("computeCheckpointDiff never flags a field as changed just because its labe
   const checkpoint = makeSpec([{ name: "Order", fields: [{ name: "status", label: "Status", type: "text", required: false }] }]);
 
   const diff = computeCheckpointDiff(current, checkpoint);
-  assert.deepEqual(diff.changedEntities, [], "a label rename or required-ness flip alone must not be reported as a structural change");
+  assert.deepEqual(diff.changedEntities, [
+    { name: "Order", label: "Order", removedFieldNames: [], addedFieldNames: [], changedFieldNames: ["Order Status"] },
+  ]);
 });
 
 /**
@@ -278,6 +301,22 @@ test("isCheckpointCurrent is false when a same-named field changed type, even th
     isCheckpointCurrent(current, typeChanged),
     false,
     "same field name and field count must not be enough when the field's own type genuinely differs",
+  );
+});
+
+/**
+ * New in this round: the identical gap existed for a field's `required`
+ * flag -- same name, same type, but one side made it required and the
+ * other didn't used to still read as "the same field, unchanged".
+ */
+test("isCheckpointCurrent is false when a same-named, same-typed field's required flag differs", () => {
+  const current = makeSpec([{ name: "Order", fields: [{ name: "status", type: "text", required: true }] }]);
+  const requiredChanged = makeSpec([{ name: "Order", fields: [{ name: "status", type: "text", required: false }] }]);
+
+  assert.equal(
+    isCheckpointCurrent(current, requiredChanged),
+    false,
+    "same field name, type, and count must not be enough when the field's own required flag genuinely differs",
   );
 });
 

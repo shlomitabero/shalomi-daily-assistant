@@ -20,11 +20,22 @@ export interface CheckpointDiff {
  * already assumed name-matching alone implied -- which silently stopped
  * being true the moment a refine changes a field's type (e.g. free text ->
  * enum) without renaming it, exactly the gap this fixes.
+ *
+ * `required` is included for the same reason: it's a real behavioral
+ * property (repository.ts's coerceValue rejects a missing value once a
+ * field is required), not cosmetic like `label`. pipeline.ts's own
+ * computeImpact already tracks a field becoming required as a
+ * "tightened" structural change worth a build-time warning -- this just
+ * folds the identical property into the equality check this file's two
+ * callers (computeCheckpointDiff, isCheckpointCurrent) already use, so a
+ * checkpoint that only differs by a field's required flag is correctly
+ * reported as changed / not current, in either direction (loosened or
+ * tightened), rather than silently read as "the same field, unchanged".
  */
 function fieldSignature(f: Field): string {
   const enumPart = f.type === "enum" ? (f.enumValues ?? []).slice().sort().join(",") : "";
   const relationPart = f.type === "relation" ? (f.relationTo ?? "") : "";
-  return `${f.type}|${relationPart}|${enumPart}`;
+  return `${f.type}|${relationPart}|${enumPart}|${f.required ? "required" : "optional"}`;
 }
 
 /**
