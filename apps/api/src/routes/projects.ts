@@ -770,6 +770,38 @@ function safeFileExtension(originalName: string): string {
 }
 
 /**
+ * multer (via busboy) decodes a multipart part's `Content-Disposition:
+ * filename="..."` header using a strict Latin-1 byte-for-byte mapping
+ * unless a `defParamCharset` is explicitly configured (which this app's
+ * own createUploadMiddleware never does) -- but every real browser
+ * (Chrome/Firefox/Safari) sends a non-ASCII filename as its raw UTF-8
+ * bytes, not RFC 5987 percent-encoding and not real Latin-1. The result:
+ * `file.originalname` for a Hebrew filename like "קורות חיים.pdf" (an
+ * entirely ordinary upload for this app's primary Hebrew-speaking user
+ * base) arrives as mojibake -- each UTF-8 byte individually mis-mapped to
+ * its own Latin-1 code point -- and that corrupted string then becomes
+ * the file field's permanent, displayed `name` (table cell, CSV/backup
+ * export, WhatsApp/webhook automation templates, Global Search), with no
+ * way for the user to fix it short of re-uploading under an ASCII name.
+ * Re-interpreting those same code points as UTF-8 bytes (the exact
+ * inverse of the mis-decoding) recovers the original text. Gated to only
+ * apply when every character is in the Latin-1 range (U+0000-U+00FF) --
+ * a string busboy's own extended `filename*=UTF-8''...` RFC 5987 syntax
+ * already decoded correctly (an actual real Unicode string) always has
+ * at least one character outside that range, and must never be
+ * reinterpreted a second time -- and when the result doesn't introduce
+ * the U+FFFD replacement character, which would mean the bytes never
+ * were valid UTF-8 in the first place (e.g. a genuine single-byte Latin-1
+ * accented filename sent by some other, older client), in which case the
+ * original is already correct and is returned unchanged.
+ */
+export function decodeMojibakeFilename(name: string): string {
+  if (!/^[\u0000-ÿ]*$/.test(name)) return name;
+  const reDecoded = Buffer.from(name, "latin1").toString("utf8");
+  return reDecoded.includes("�") ? name : reDecoded;
+}
+
+/**
  * Every uploaded file for a project lives under uploadsDir/{projectId}/...
  * (see createUploadMiddleware's own destination callback below) -- a
  * project-scoped directory, so removing it wholesale on project deletion
@@ -1949,7 +1981,7 @@ export function createProjectsRouter(
       res.json({
         file: {
           url: `/api/uploads/${req.params.id}/${req.params.entityName}/${file.filename}`,
-          name: file.originalname,
+          name: decodeMojibakeFilename(file.originalname),
           size: file.size,
           mimeType: file.mimetype,
         },

@@ -8836,6 +8836,63 @@ test("uploading a file for a 'file' field stores it on disk, serves it back at t
 });
 
 /**
+ * Round 782: multer (via busboy) decodes a multipart part's
+ * `Content-Disposition: filename="..."` header as raw Latin-1 bytes
+ * unless `defParamCharset` is explicitly configured, which
+ * createUploadMiddleware never does -- but every real browser (and, as
+ * confirmed directly, Node's own native fetch/FormData/File, used here)
+ * sends a non-ASCII filename as its raw UTF-8 bytes, not RFC 5987
+ * percent-encoding. Before the fix, a Hebrew filename like "קורות
+ * חיים.pdf" -- an entirely ordinary upload for this app's primary
+ * Hebrew-speaking user base -- arrived as mojibake and that corrupted
+ * string became the file field's permanent, displayed name everywhere
+ * (table cell, CSV/backup export, automation templates, Global Search).
+ * Confirms the real upload route now recovers the original Hebrew text.
+ */
+test("uploading a file with a non-ASCII (Hebrew) filename stores and returns the real original name, not mojibake", async () => {
+  await withServer(async (baseUrl, db) => {
+    const email = `upload-hebrew-${randomUUID()}@example.com`;
+    const token = await signup(baseUrl, email);
+    const user = findUserByEmail(db, email)!;
+
+    const spec: ProductSpec = {
+      summary: "test",
+      personas: [],
+      roles: ["Admin"],
+      entities: [
+        {
+          name: "Applicant",
+          fields: [
+            { name: "name", type: "text", required: true },
+            { name: "resume", type: "file", required: false },
+          ],
+        },
+      ],
+      screens: [],
+      assumptions: [],
+      openQuestions: [],
+    };
+    const projectId = randomUUID();
+    insertProject(db, { id: projectId, ownerId: user.id, name: "Hiring", description: "test", spec });
+    diffAndMigrate(db, projectId, undefined, spec);
+    markProjectBuilt(db, projectId);
+
+    const hebrewFilename = "קורות חיים.pdf";
+    const fileBody = "%PDF-fake-resume-contents";
+    const formData = new FormData();
+    formData.append("file", new File([fileBody], hebrewFilename, { type: "application/pdf" }));
+    const uploadRes = await fetch(`${baseUrl}/api/projects/${projectId}/entities/Applicant/fields/resume/upload`, {
+      method: "POST",
+      headers: { authorization: `Bearer ${token}` },
+      body: formData,
+    });
+    assert.equal(uploadRes.status, 200);
+    const uploadBody = (await uploadRes.json()) as { file: { url: string; name: string; size: number; mimeType: string } };
+    assert.equal(uploadBody.file.name, hebrewFilename, "the real Hebrew filename must survive the round trip, not come back as mojibake");
+  });
+});
+
+/**
  * Regression test for a stored-XSS/session-theft hole: nothing restricts
  * what content type a file-type field's upload can be, and EntityPanel.tsx
  * opens every uploaded file through a plain <a href> on this app's own

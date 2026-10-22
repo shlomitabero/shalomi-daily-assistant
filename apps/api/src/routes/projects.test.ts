@@ -3,6 +3,7 @@ import { test } from "node:test";
 import type { Entity } from "@forge/shared";
 import {
   computeChangedFields,
+  decodeMojibakeFilename,
   deriveEntityName,
   deriveFieldName,
   deriveName,
@@ -338,4 +339,58 @@ test("findAutomationRuleInvariantViolation never requires toNumber/toField for a
     }),
     null,
   );
+});
+
+/**
+ * Round 782: multer/busboy decodes a multipart `filename="..."` header as
+ * raw Latin-1 bytes unless defParamCharset is configured (which
+ * createUploadMiddleware never does), but every real browser sends a
+ * non-ASCII filename as its raw UTF-8 bytes -- so file.originalname for a
+ * Hebrew filename arrives as mojibake, every UTF-8 byte individually
+ * mis-mapped to its own Latin-1 code point. decodeMojibakeFilename
+ * reverses that exact mis-decoding.
+ */
+test("decodeMojibakeFilename leaves a plain ASCII filename completely unchanged", () => {
+  assert.equal(decodeMojibakeFilename("my resume.pdf"), "my resume.pdf");
+});
+
+test("decodeMojibakeFilename recovers a Hebrew filename from its Latin-1-mis-decoded mojibake form", () => {
+  const realName = "קורות חיים.pdf";
+  // Simulates exactly what busboy's own latin1Slice + nullDecoder produces
+  // for a real browser's raw-UTF-8-bytes filename header: the same bytes,
+  // reinterpreted one-for-one as Latin-1 code points.
+  const mojibake = Buffer.from(realName, "utf8").toString("latin1");
+  assert.notEqual(mojibake, realName, "the simulated mojibake must actually differ from the real name, or this test proves nothing");
+  assert.equal(decodeMojibakeFilename(mojibake), realName);
+});
+
+/**
+ * Must never run a second, destructive decode pass on a filename busboy's
+ * OWN extended `filename*=UTF-8''...` (RFC 5987) syntax already decoded
+ * correctly -- a real Unicode string like this always has at least one
+ * character outside the Latin-1 range, which decodeMojibakeFilename's own
+ * all-Latin-1-range guard must leave alone.
+ */
+test("decodeMojibakeFilename never re-decodes a filename that's already correct Unicode text", () => {
+  // Real Hebrew (code points above U+00FF) -- the "every character is in
+  // the Latin-1 range" guard must reject this immediately, before ever
+  // reaching the Buffer re-decode step at all. "café résumé.pdf" would be
+  // the wrong fixture here: é is U+00E9, inside the Latin-1 range, so it
+  // wouldn't actually exercise this guard (it would instead pass through
+  // to the re-decode step and only survive via the OTHER guard below).
+  const alreadyCorrect = "קורות חיים.pdf";
+  assert.equal(decodeMojibakeFilename(alreadyCorrect), alreadyCorrect);
+});
+
+/**
+ * A genuine single-byte Latin-1 accented filename (some other, older
+ * client sending one real Latin-1 byte per accented character, not UTF-8's
+ * multi-byte sequence) would, if "fixed" anyway, decode as invalid UTF-8
+ * and introduce the U+FFFD replacement character -- the signal that the
+ * bytes were never UTF-8 in the first place, so the original must be
+ * returned unchanged instead of being corrupted further.
+ */
+test("decodeMojibakeFilename leaves a genuine single-byte Latin-1 name alone when re-decoding it as UTF-8 would be invalid", () => {
+  const genuineLatin1 = Buffer.from([0x63, 0x61, 0x66, 0xe9, 0x2e, 0x70, 0x64, 0x66]).toString("latin1"); // "caf\xE9.pdf"
+  assert.equal(decodeMojibakeFilename(genuineLatin1), genuineLatin1);
 });
