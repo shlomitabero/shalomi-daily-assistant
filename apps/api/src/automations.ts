@@ -1,4 +1,5 @@
 import { isIP } from "node:net";
+import path from "node:path";
 import type { Entity, EntityRecord, Project } from "@forge/shared";
 import {
   getProject,
@@ -13,7 +14,7 @@ import {
 import { isHebrewText } from "@forge/spec-engine";
 import { recordDisplayLabel } from "./displayField.js";
 import { findMatchingRecord } from "./whatsapp.js";
-import type { WhatsAppWebManager } from "./whatsappWeb.js";
+import type { WhatsAppAttachment, WhatsAppWebManager } from "./whatsappWeb.js";
 
 type Lang = "he" | "en";
 const LOCALE: Record<Lang, string> = { he: "he-IL", en: "en-US" };
@@ -50,6 +51,52 @@ function fileFieldDisplayName(value: unknown): string {
     // not a file descriptor -- treated as no file, same as an empty value
   }
   return "";
+}
+
+/**
+ * Mirrors routes/projects.ts's own deleteUploadedFile -- the only other
+ * place that ever turns a file field's stored `{url, name, size,
+ * mimeType}` descriptor back into a real path on disk (uploadsDir/
+ * projectId/entityName/<storedFilename>, where <storedFilename> is
+ * whatever the URL's own last path segment names, never the raw
+ * descriptor's `name` -- that's the ORIGINAL upload name, which
+ * createUploadMiddleware deliberately never uses as the stored filename).
+ * Before this, a WhatsApp message template referencing a file field (e.g.
+ * "here's your invoice: {{invoice}}") sent only the bare filename as
+ * plain text -- fileFieldDisplayName's own doc comment explains why
+ * that's the right text to interpolate, but the real file itself was
+ * never actually attached to the message, even though Baileys supports
+ * sending one alongside its caption. Scoped to the FIRST file field
+ * referenced in the template (in placeholder order) that has a real
+ * value -- WhatsApp (and Baileys) only support one media attachment per
+ * message, so a template naming more than one file field can only ever
+ * attach one of them regardless of how this picks.
+ */
+export function findTemplateFileAttachment(
+  uploadsDir: string,
+  projectId: string,
+  entity: Entity,
+  template: string,
+  record: EntityRecord,
+): WhatsAppAttachment | null {
+  for (const match of template.matchAll(/\{\{\s*([a-zA-Z0-9_]+)\s*\}\}/g)) {
+    const fieldName = match[1];
+    const field = entity.fields.find((f) => f.name === fieldName && f.type === "file");
+    if (!field) continue;
+    const rawValue = record[fieldName];
+    if (typeof rawValue !== "string" || rawValue === "") continue;
+    let parsed: { url?: unknown; name?: unknown; mimeType?: unknown };
+    try {
+      parsed = JSON.parse(rawValue);
+    } catch {
+      continue;
+    }
+    if (typeof parsed.url !== "string" || typeof parsed.name !== "string" || typeof parsed.mimeType !== "string") continue;
+    const storedFilename = parsed.url.slice(parsed.url.lastIndexOf("/") + 1);
+    if (!storedFilename) continue;
+    return { filePath: path.join(uploadsDir, projectId, entity.name, storedFilename), fileName: parsed.name, mimeType: parsed.mimeType };
+  }
+  return null;
 }
 
 /**
@@ -194,12 +241,13 @@ export async function runAutomationsForRecordChange(
   event: "created" | "updated",
   record: EntityRecord,
   changedFields: Set<string>,
+  uploadsDir: string,
 ): Promise<void> {
   const rules = listEnabledAutomationRulesForEntity(db, project.id, entity.name);
   for (const rule of rules) {
     if (!matchesTrigger(rule, event, record, changedFields)) continue;
     try {
-      await fireRule(db, whatsapp, project, entity, rule, record);
+      await fireRule(db, whatsapp, project, entity, rule, record, uploadsDir);
     } catch (err) {
       // Defensive only -- fireRule's own try/catch below already handles
       // every expected failure mode. This exists so a genuinely
@@ -375,6 +423,7 @@ async function fireRule(
   entity: Entity,
   rule: AutomationRule,
   record: EntityRecord,
+  uploadsDir: string,
 ): Promise<void> {
   if (rule.actionType === "webhook") {
     await fireWebhookAction(db, project, entity, rule, record);
@@ -396,7 +445,13 @@ async function fireRule(
   const templateRecord = resolveRelationFieldsForTemplate(db, project.id, entity, project.spec.entities, record);
   const lang: Lang = isHebrewText(project.description) ? "he" : "en";
   const message = interpolateTemplate(rule.messageTemplate, entity, templateRecord, lang);
-  const result = await whatsapp.sendMessage(project.id, to, message);
+  // `record`, not templateRecord -- a file field's own stored value is
+  // never touched by resolveRelationFieldsForTemplate (that only rewrites
+  // relation fields), so both carry the identical raw {url,...} descriptor
+  // for any file field; using the original avoids any accidental coupling
+  // to a transform this lookup has nothing to do with.
+  const attachment = findTemplateFileAttachment(uploadsDir, project.id, entity, rule.messageTemplate, record) ?? undefined;
+  const result = await whatsapp.sendMessage(project.id, to, message, attachment);
   // Same re-check-after-await hazard the manual send route already
   // documents (routes/projects.ts's POST .../whatsapp/send) -- sendMessage
   // above is a genuine await (a real network round-trip), during which

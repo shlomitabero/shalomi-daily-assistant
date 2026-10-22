@@ -1917,6 +1917,7 @@ export function createProjectsRouter(
               "created",
               record,
               new Set(Object.keys(req.body ?? {})),
+              uploadsDir,
             );
           }
           return { status: 201, body: { record } };
@@ -2695,6 +2696,7 @@ export function createProjectsRouter(
           "updated",
           record,
           computeChangedFields(entity, before, record),
+          uploadsDir,
         );
       }
     }),

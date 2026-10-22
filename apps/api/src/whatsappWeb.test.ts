@@ -1,4 +1,7 @@
 import assert from "node:assert/strict";
+import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import path from "node:path";
 import { test } from "node:test";
 import type { Project } from "@forge/shared";
 import { applyMigrations, ensureProjectsTable, ensureWhatsAppConnectionsTable, ensureWhatsAppMessagesTable, getWhatsAppConnection, insertProject, insertRecord, listWhatsAppMessages, markProjectBuilt, openDatabase } from "@forge/db";
@@ -20,7 +23,7 @@ function createFakeSocket() {
     connectionUpdate?: (u: BaileysConnectionUpdate) => void;
     messagesUpsert?: (u: BaileysMessagesUpsert) => void;
   } = {};
-  const sendCalls: { jid: string; text: string }[] = [];
+  const sendCalls: ({ jid: string; text: string } | { jid: string; document: Buffer; mimetype: string; fileName: string; caption?: string })[] = [];
   let loggedOut = false;
 
   const sock: WhatsAppSocket = {
@@ -33,7 +36,11 @@ function createFakeSocket() {
     },
     user: null,
     async sendMessage(jid, content) {
-      sendCalls.push({ jid, text: content.text });
+      if ("text" in content) {
+        sendCalls.push({ jid, text: content.text });
+      } else {
+        sendCalls.push({ jid, document: content.document, mimetype: content.mimetype, fileName: content.fileName, caption: content.caption });
+      }
       return {};
     },
     async logout() {
@@ -224,6 +231,66 @@ test("sendMessage succeeds once connected, addressing the real WhatsApp JID form
   const result = await manager.sendMessage("proj1", "972509998888", "שלום!");
   assert.equal(result.ok, true);
   assert.deepEqual(createdSockets[0].sendCalls, [{ jid: "972509998888@s.whatsapp.net", text: "שלום!" }]);
+});
+
+/**
+ * Round 786: automations.ts's findTemplateFileAttachment resolves a real
+ * file field's value down to a path on disk -- this is the layer below
+ * it that actually reads that file and hands it to Baileys as a document,
+ * alongside its text as the caption, instead of ever sending only text.
+ */
+test("sendMessage attaches a real file from disk as a document, with the message text as its caption, when given an attachment", async () => {
+  const { manager, createdSockets } = setupManager();
+  await manager.connect("proj1");
+  createdSockets[0].sock.user = { id: "972501234567:1@s.whatsapp.net" };
+  createdSockets[0].emitConnectionUpdate({ connection: "open" });
+
+  const dir = await mkdtemp(path.join(tmpdir(), "forge-whatsapp-attachment-test-"));
+  try {
+    const filePath = path.join(dir, "invoice.pdf");
+    await writeFile(filePath, "%PDF-fake-invoice-contents");
+
+    const result = await manager.sendMessage("proj1", "972509998888", "הנה החשבונית שלך", {
+      filePath,
+      fileName: "invoice-203.pdf",
+      mimeType: "application/pdf",
+    });
+    assert.equal(result.ok, true);
+    assert.deepEqual(createdSockets[0].sendCalls, [
+      {
+        jid: "972509998888@s.whatsapp.net",
+        document: Buffer.from("%PDF-fake-invoice-contents"),
+        mimetype: "application/pdf",
+        fileName: "invoice-203.pdf",
+        caption: "הנה החשבונית שלך",
+      },
+    ]);
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+/**
+ * Round 786: the referenced upload can be gone by the time an automation
+ * actually fires (deleted, replaced by a later edit) -- degrading to a
+ * plain text send (still mentioning the filename, since that text comes
+ * from interpolateTemplate independently) is strictly more useful than
+ * failing the whole send over a missing attachment, and must not be
+ * reported as a send FAILURE the way a genuine Baileys/network error is.
+ */
+test("sendMessage falls back to a plain text send when the attachment's file no longer exists on disk, instead of failing the whole send", async () => {
+  const { manager, createdSockets } = setupManager();
+  await manager.connect("proj1");
+  createdSockets[0].sock.user = { id: "972501234567:1@s.whatsapp.net" };
+  createdSockets[0].emitConnectionUpdate({ connection: "open" });
+
+  const result = await manager.sendMessage("proj1", "972509998888", "הנה החשבונית שלך: invoice-203.pdf", {
+    filePath: "/tmp/forge-whatsapp-attachment-test-does-not-exist/invoice.pdf",
+    fileName: "invoice-203.pdf",
+    mimeType: "application/pdf",
+  });
+  assert.equal(result.ok, true);
+  assert.deepEqual(createdSockets[0].sendCalls, [{ jid: "972509998888@s.whatsapp.net", text: "הנה החשבונית שלך: invoice-203.pdf" }]);
 });
 
 test("sendMessage refuses honestly when 'to' is a bare local-format number missing its country code, instead of addressing a wrong/nonexistent JID", async () => {

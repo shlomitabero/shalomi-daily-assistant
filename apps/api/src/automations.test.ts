@@ -1,4 +1,7 @@
 import assert from "node:assert/strict";
+import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import path from "node:path";
 import { test } from "node:test";
 import type { Entity, Project } from "@forge/shared";
 import {
@@ -18,6 +21,7 @@ import {
 } from "@forge/db";
 import {
   fireScheduledRule,
+  findTemplateFileAttachment,
   interpolateTemplate,
   isAllowedWebhookUrl,
   isScheduledRuleDue,
@@ -25,7 +29,17 @@ import {
   runAutomationsForRecordChange,
   runScheduledAutomationsCheck,
 } from "./automations.js";
-import type { WhatsAppConnectionState, WhatsAppSendResult, WhatsAppWebManager } from "./whatsappWeb.js";
+import type { WhatsAppAttachment, WhatsAppConnectionState, WhatsAppSendResult, WhatsAppWebManager } from "./whatsappWeb.js";
+
+/**
+ * None of the existing fixtures below reference a file-type field in their
+ * message templates, so findTemplateFileAttachment never actually reads
+ * this path for any of them -- it exists only so every pre-existing
+ * runAutomationsForRecordChange call site has a value to pass for the new
+ * uploadsDir parameter (round 786). The one test that DOES exercise a real
+ * attachment uses its own real mkdtemp'd directory instead.
+ */
+const UNUSED_UPLOADS_DIR = "/tmp/forge-automations-test-unused-uploads";
 
 const orderEntity: Entity = {
   name: "Order",
@@ -54,7 +68,7 @@ const projectSpec = {
  * module's own interface boundary is exactly these two methods.
  */
 function createFakeWhatsApp(opts: { connected: boolean; sendResult?: WhatsAppSendResult }) {
-  const sendCalls: { projectId: string; to: string; body: string }[] = [];
+  const sendCalls: { projectId: string; to: string; body: string; attachment?: WhatsAppAttachment }[] = [];
   const manager = {
     getStatus(): WhatsAppConnectionState {
       return {
@@ -64,8 +78,8 @@ function createFakeWhatsApp(opts: { connected: boolean; sendResult?: WhatsAppSen
         error: null,
       };
     },
-    async sendMessage(projectId: string, to: string, body: string): Promise<WhatsAppSendResult> {
-      sendCalls.push({ projectId, to, body });
+    async sendMessage(projectId: string, to: string, body: string, attachment?: WhatsAppAttachment): Promise<WhatsAppSendResult> {
+      sendCalls.push({ projectId, to, body, attachment });
       return opts.sendResult ?? { ok: true };
     },
   } as unknown as WhatsAppWebManager;
@@ -345,7 +359,7 @@ test("runAutomationsForRecordChange sends a WhatsApp message when a matching rul
   const { manager, sendCalls } = createFakeWhatsApp({ connected: true });
   const record = { id: 1, customerName: "Dana", customerPhone: "972501234567", status: "Delivered" };
 
-  await runAutomationsForRecordChange(db, manager, project, orderEntity, "updated", record, new Set(["status"]));
+  await runAutomationsForRecordChange(db, manager, project, orderEntity, "updated", record, new Set(["status"]), UNUSED_UPLOADS_DIR);
 
   assert.equal(sendCalls.length, 1);
   assert.equal(sendCalls[0]!.to, "972501234567");
@@ -354,6 +368,116 @@ test("runAutomationsForRecordChange sends a WhatsApp message when a matching rul
   assert.equal(messages.length, 1);
   assert.equal(messages[0]!.status, "sent");
   assert.equal(messages[0]!.toNumber, "972501234567");
+});
+
+/**
+ * Round 786: before this round, a message template referencing a `file`
+ * field (e.g. "{{invoice}}") only ever sent the bare filename as plain
+ * text -- a customer never actually received the file itself, even though
+ * Baileys supports attaching one. This drives the real upload-storage
+ * layout (routes/projects.ts's createUploadMiddleware: uploadsDir/
+ * projectId/entityName/<storedFilename>) end-to-end through
+ * runAutomationsForRecordChange and confirms the real file on disk is
+ * handed to WhatsAppWebManager.sendMessage as an attachment, not just
+ * mentioned in the text.
+ */
+test("runAutomationsForRecordChange attaches a real uploaded file when the message template references a 'file' field", async () => {
+  const entityWithInvoice: Entity = {
+    ...orderEntity,
+    fields: [...orderEntity.fields, { name: "invoice", type: "file", required: false }],
+  };
+  const db = openDatabase(":memory:");
+  ensureProjectsTable(db);
+  ensureAutomationRulesTable(db);
+  ensureWhatsAppConnectionsTable(db);
+  ensureWhatsAppMessagesTable(db);
+  const project = {
+    ...insertProject(db, {
+      id: "proj1",
+      ownerId: "owner1",
+      name: "Orders",
+      description: "An order-tracking app",
+      spec: { ...projectSpec, entities: [entityWithInvoice] },
+    }),
+    status: "built" as const,
+  };
+  applyMigrations(db, project.id, project.spec);
+  markProjectBuilt(db, project.id);
+
+  insertAutomationRule(db, {
+    projectId: project.id,
+    entityName: "Order",
+    trigger: "field_equals",
+    fieldName: "status",
+    fieldValue: "Delivered",
+    actionType: "send_whatsapp",
+    toMode: "field",
+    toField: "customerPhone",
+    messageTemplate: "Hi {{customerName}}, here's your invoice: {{invoice}}",
+  });
+  const { manager, sendCalls } = createFakeWhatsApp({ connected: true });
+
+  const uploadsDir = await mkdtemp(path.join(tmpdir(), "forge-automations-attachment-test-"));
+  try {
+    const storedFilename = "abc123.pdf";
+    await mkdir(path.join(uploadsDir, project.id, "Order"), { recursive: true });
+    await writeFile(path.join(uploadsDir, project.id, "Order", storedFilename), "%PDF-fake-invoice-contents");
+
+    const record = {
+      id: 1,
+      customerName: "Dana",
+      customerPhone: "972501234567",
+      status: "Delivered",
+      invoice: JSON.stringify({ url: `/api/uploads/${project.id}/Order/${storedFilename}`, name: "invoice-203.pdf", size: 27, mimeType: "application/pdf" }),
+    };
+
+    await runAutomationsForRecordChange(db, manager, project, entityWithInvoice, "updated", record, new Set(["status"]), uploadsDir);
+
+    assert.equal(sendCalls.length, 1);
+    assert.equal(sendCalls[0]!.body, "Hi Dana, here's your invoice: invoice-203.pdf", "the plain text itself still only names the file, same as before this round");
+    assert.deepEqual(sendCalls[0]!.attachment, {
+      filePath: path.join(uploadsDir, project.id, "Order", storedFilename),
+      fileName: "invoice-203.pdf",
+      mimeType: "application/pdf",
+    });
+  } finally {
+    await rm(uploadsDir, { recursive: true, force: true });
+  }
+});
+
+test("findTemplateFileAttachment resolves the first file-type field referenced in the template to its real path on disk", () => {
+  const entityWithInvoice: Entity = {
+    ...orderEntity,
+    fields: [...orderEntity.fields, { name: "invoice", type: "file", required: false }],
+  };
+  const record = {
+    customerName: "Dana",
+    invoice: JSON.stringify({ url: "/api/uploads/proj1/Order/abc123.pdf", name: "invoice-203.pdf", size: 27, mimeType: "application/pdf" }),
+  };
+  const attachment = findTemplateFileAttachment("/uploads", "proj1", entityWithInvoice, "Hi {{customerName}}, here's {{invoice}}", record);
+  assert.deepEqual(attachment, { filePath: "/uploads/proj1/Order/abc123.pdf", fileName: "invoice-203.pdf", mimeType: "application/pdf" });
+});
+
+test("findTemplateFileAttachment returns null when the template references no file field, references one with no value, or the field isn't a 'file' type at all", () => {
+  const entityWithInvoice: Entity = {
+    ...orderEntity,
+    fields: [...orderEntity.fields, { name: "invoice", type: "file", required: false }],
+  };
+  assert.equal(
+    findTemplateFileAttachment("/uploads", "proj1", entityWithInvoice, "Hi {{customerName}}", { customerName: "Dana" }),
+    null,
+    "no file field referenced at all",
+  );
+  assert.equal(
+    findTemplateFileAttachment("/uploads", "proj1", entityWithInvoice, "Invoice: {{invoice}}", { customerName: "Dana", invoice: "" }),
+    null,
+    "the file field is referenced but has no real value",
+  );
+  assert.equal(
+    findTemplateFileAttachment("/uploads", "proj1", entityWithInvoice, "Name: {{customerName}}", { customerName: "Dana", invoice: "{}" }),
+    null,
+    "customerName is referenced but isn't a 'file'-type field, so it must never be treated as one",
+  );
 });
 
 test("runAutomationsForRecordChange records the outcome on the rule itself (lastStatus/lastTriggeredAt)", async () => {
@@ -371,7 +495,7 @@ test("runAutomationsForRecordChange records the outcome on the rule itself (last
   const record = { id: 2, customerName: "Noa", customerPhone: null, status: "New" };
 
   assert.equal(rule.lastTriggeredAt, null);
-  await runAutomationsForRecordChange(db, manager, project, orderEntity, "created", record, new Set(Object.keys(record)));
+  await runAutomationsForRecordChange(db, manager, project, orderEntity, "created", record, new Set(Object.keys(record)), UNUSED_UPLOADS_DIR);
 
   const after = getAutomationRule(db, project.id, rule.id)!;
   assert.ok(after.lastTriggeredAt);
@@ -393,7 +517,7 @@ test("runAutomationsForRecordChange never calls sendMessage and records a failur
   const { manager, sendCalls } = createFakeWhatsApp({ connected: false });
   const record = { id: 3, customerName: "Omer", customerPhone: null, status: "New" };
 
-  await runAutomationsForRecordChange(db, manager, project, orderEntity, "created", record, new Set(Object.keys(record)));
+  await runAutomationsForRecordChange(db, manager, project, orderEntity, "created", record, new Set(Object.keys(record)), UNUSED_UPLOADS_DIR);
 
   assert.equal(sendCalls.length, 0);
   const after = getAutomationRule(db, project.id, rule.id)!;
@@ -415,7 +539,7 @@ test("runAutomationsForRecordChange records a failure, never attempts a send, wh
   const { manager, sendCalls } = createFakeWhatsApp({ connected: true });
   const record = { id: 4, customerName: "Yossi", customerPhone: null, status: "New" };
 
-  await runAutomationsForRecordChange(db, manager, project, orderEntity, "created", record, new Set(Object.keys(record)));
+  await runAutomationsForRecordChange(db, manager, project, orderEntity, "created", record, new Set(Object.keys(record)), UNUSED_UPLOADS_DIR);
 
   assert.equal(sendCalls.length, 0);
   const after = getAutomationRule(db, project.id, rule.id)!;
@@ -438,7 +562,7 @@ test("runAutomationsForRecordChange never evaluates a disabled rule", async () =
   const { manager, sendCalls } = createFakeWhatsApp({ connected: true });
   const record = { id: 5, customerName: "Tal", customerPhone: null, status: "New" };
 
-  await runAutomationsForRecordChange(db, manager, project, orderEntity, "created", record, new Set(Object.keys(record)));
+  await runAutomationsForRecordChange(db, manager, project, orderEntity, "created", record, new Set(Object.keys(record)), UNUSED_UPLOADS_DIR);
 
   assert.equal(sendCalls.length, 0);
   const after = getAutomationRule(db, project.id, rule.id)!;
@@ -461,7 +585,7 @@ test("runAutomationsForRecordChange does nothing (no rules match) for a non-matc
   const { manager, sendCalls } = createFakeWhatsApp({ connected: true });
   const record = { id: 6, customerName: "Ron", customerPhone: null, status: "Cancelled" };
 
-  await runAutomationsForRecordChange(db, manager, project, orderEntity, "updated", record, new Set(["status"]));
+  await runAutomationsForRecordChange(db, manager, project, orderEntity, "updated", record, new Set(["status"]), UNUSED_UPLOADS_DIR);
 
   assert.equal(sendCalls.length, 0);
   const after = getAutomationRule(db, project.id, rule.id)!;
@@ -524,7 +648,7 @@ test("runAutomationsForRecordChange interpolates a relation field's display labe
   const { manager, sendCalls } = createFakeWhatsApp({ connected: true });
   const record = { id: 1, customer: customer.id, status: "Won" };
 
-  await runAutomationsForRecordChange(db, manager, project, dealEntity, "updated", record, new Set(["status"]));
+  await runAutomationsForRecordChange(db, manager, project, dealEntity, "updated", record, new Set(["status"]), UNUSED_UPLOADS_DIR);
 
   assert.equal(sendCalls.length, 1);
   assert.equal(
@@ -818,7 +942,7 @@ test("runAutomationsForRecordChange posts a JSON payload to the webhook URL and 
     return new Response(null, { status: 200 });
   }) as typeof fetch;
   try {
-    await runAutomationsForRecordChange(db, {} as WhatsAppWebManager, project, orderEntity, "created", record, new Set());
+    await runAutomationsForRecordChange(db, {} as WhatsAppWebManager, project, orderEntity, "created", record, new Set(), UNUSED_UPLOADS_DIR);
   } finally {
     globalThis.fetch = originalFetch;
   }
@@ -851,7 +975,7 @@ test("runAutomationsForRecordChange records a failed outcome when the webhook re
   const originalFetch = globalThis.fetch;
   globalThis.fetch = (async () => new Response(null, { status: 500 })) as typeof fetch;
   try {
-    await runAutomationsForRecordChange(db, {} as WhatsAppWebManager, project, orderEntity, "created", record, new Set());
+    await runAutomationsForRecordChange(db, {} as WhatsAppWebManager, project, orderEntity, "created", record, new Set(), UNUSED_UPLOADS_DIR);
   } finally {
     globalThis.fetch = originalFetch;
   }
@@ -879,7 +1003,7 @@ test("runAutomationsForRecordChange records a failed outcome when the webhook re
     throw new Error("network down");
   }) as typeof fetch;
   try {
-    await runAutomationsForRecordChange(db, {} as WhatsAppWebManager, project, orderEntity, "created", record, new Set());
+    await runAutomationsForRecordChange(db, {} as WhatsAppWebManager, project, orderEntity, "created", record, new Set(), UNUSED_UPLOADS_DIR);
   } finally {
     globalThis.fetch = originalFetch;
   }
@@ -913,7 +1037,7 @@ test("runAutomationsForRecordChange rejects (records failed, never calls fetch) 
     return new Response(null, { status: 200 });
   }) as typeof fetch;
   try {
-    await runAutomationsForRecordChange(db, {} as WhatsAppWebManager, project, orderEntity, "created", record, new Set());
+    await runAutomationsForRecordChange(db, {} as WhatsAppWebManager, project, orderEntity, "created", record, new Set(), UNUSED_UPLOADS_DIR);
   } finally {
     globalThis.fetch = originalFetch;
   }

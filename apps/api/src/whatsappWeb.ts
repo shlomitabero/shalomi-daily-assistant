@@ -1,4 +1,4 @@
-import { rm } from "node:fs/promises";
+import { readFile, rm } from "node:fs/promises";
 import path from "node:path";
 import {
   getProject,
@@ -56,6 +56,19 @@ export interface WhatsAppSendResult {
   error?: string;
 }
 
+/**
+ * A real file already sitting on disk under this project's own uploads
+ * directory (see routes/projects.ts's createUploadMiddleware), to attach
+ * to an outgoing WhatsApp message alongside its text -- resolved by the
+ * caller (automations.ts's findTemplateFileAttachment), never by this
+ * manager, which has no concept of a record or a template.
+ */
+export interface WhatsAppAttachment {
+  filePath: string;
+  fileName: string;
+  mimeType: string;
+}
+
 /** The slice of Baileys' real `WASocket` this manager actually uses -- kept as its own interface so tests can inject a fake without touching the real network. */
 export interface WhatsAppSocket {
   ev: {
@@ -64,7 +77,7 @@ export interface WhatsAppSocket {
     on(event: "messages.upsert", listener: (upsert: BaileysMessagesUpsert) => void): void;
   };
   user?: { id: string } | null;
-  sendMessage(jid: string, content: { text: string }): Promise<unknown>;
+  sendMessage(jid: string, content: { text: string } | { document: Buffer; mimetype: string; fileName: string; caption?: string }): Promise<unknown>;
   logout(): Promise<void>;
 }
 
@@ -437,7 +450,7 @@ export class WhatsAppWebManager {
     void this.cleanupAuthDir(projectId);
   }
 
-  async sendMessage(projectId: string, to: string, body: string): Promise<WhatsAppSendResult> {
+  async sendMessage(projectId: string, to: string, body: string, attachment?: WhatsAppAttachment): Promise<WhatsAppSendResult> {
     const session = this.sessions.get(projectId);
     if (!session || session.status !== "connected" || !session.sock) {
       return { ok: false, error: "not_connected" };
@@ -489,7 +502,19 @@ export class WhatsAppWebManager {
     }
     try {
       const jid = `${phone}@s.whatsapp.net`;
-      await session.sock.sendMessage(jid, { text: body });
+      // Resolved lazily, inside the try block, so a disk error (the
+      // referenced upload was deleted/replaced since the automation rule
+      // last ran, or the project's uploads directory isn't readable for
+      // some other reason) degrades to a plain text send with the file
+      // simply missing -- caught separately via .catch(() => null), not by
+      // this function's own outer catch, so it never turns into a reported
+      // send FAILURE the way a genuine Baileys/network error below does.
+      const fileBuffer = attachment ? await readFile(attachment.filePath).catch(() => null) : null;
+      if (fileBuffer && attachment) {
+        await session.sock.sendMessage(jid, { document: fileBuffer, mimetype: attachment.mimeType, fileName: attachment.fileName, caption: body });
+      } else {
+        await session.sock.sendMessage(jid, { text: body });
+      }
       return { ok: true };
     } catch (err) {
       return { ok: false, error: (err as Error).message };
