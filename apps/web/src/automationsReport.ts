@@ -1,6 +1,6 @@
 import type { Entity } from "@forge/shared";
 import { safeDownloadName, type AutomationRuleView } from "./api.js";
-import { parseFieldDate, recordDisplayLabel, type RelatedRecordsByEntity } from "./entityFormatting.js";
+import { fieldDisplayLabel, fieldLabelOccurrences, parseFieldDate, recordDisplayLabel, type RelatedRecordsByEntity } from "./entityFormatting.js";
 import type { Lang } from "./i18n/language.js";
 
 const LOCALE: Record<Lang, string> = { he: "he-IL", en: "en-US" };
@@ -32,8 +32,10 @@ function entityLabel(rule: AutomationRuleView, entities: Entity[]): string {
 
 function fieldLabel(rule: AutomationRuleView, fieldName: string | null, entities: Entity[]): string {
   if (!fieldName) return "";
-  const field = ruleEntity(rule, entities)?.fields.find((f) => f.name === fieldName);
-  return field?.label ?? fieldName;
+  const ruleFields = ruleEntity(rule, entities)?.fields ?? [];
+  const field = ruleFields.find((f) => f.name === fieldName);
+  if (!field) return fieldName;
+  return fieldDisplayLabel(field, fieldLabelOccurrences(ruleFields));
 }
 
 // Mirrors AutomationsPanel.tsx's own fieldValueLabel (see its comment) --
