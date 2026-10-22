@@ -669,9 +669,22 @@ function backupFileFieldDisplayName(value) {
 // "longtext" as a second choice (never a tiebreak over a real "text"
 // field), the same free-text-kind convention this codebase's other
 // text/longtext checks already follow.
+// Round 795: the name-hint step itself also excludes "relation"/"file" --
+// round 793 fixed this exact gap in every OTHER copy of this logic
+// (apps/api/src/displayField.ts, apps/web/src/entityFormatting.ts, and
+// this file's own pickDisplayField above) but missed this fourth,
+// separately-named copy (BACKUP_DISPLAY_FIELD_HINTS vs
+// DISPLAY_FIELD_NAME_HINTS) baked into the exported app's own /api/backup
+// endpoint. A field can legitimately be named "title" while being a
+// relation (Employee { title: relation->JobTitle }) or "name" while being
+// a file (Document { name: file }), and without this exclusion that field
+// won by name alone before the type-aware fallback steps below ever ran --
+// leaking a relation's raw foreign-key id or a file's raw JSON upload
+// descriptor (including its internal /api/uploads/... path) straight into
+// a downloaded backup CSV's relation column.
 const BACKUP_DISPLAY_FIELD_HINTS = ["name", "title"];
 function backupPickDisplayField(entity) {
-  const named = entity.fields.find((f) => BACKUP_DISPLAY_FIELD_HINTS.includes(f.name.toLowerCase()));
+  const named = entity.fields.find((f) => BACKUP_DISPLAY_FIELD_HINTS.includes(f.name.toLowerCase()) && f.type !== "relation" && f.type !== "file");
   if (named) return named;
   const firstText = entity.fields.find((f) => f.type === "text") || entity.fields.find((f) => f.type === "longtext");
   if (firstText) return firstText;

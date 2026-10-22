@@ -9155,6 +9155,52 @@ test("the exported server.js's own backupPickDisplayField skips a file field in 
 });
 
 /**
+ * Round 795: round 793 fixed the exact same "name-hint step never checked
+ * field type" gap in every OTHER copy of this logic (displayField.ts,
+ * entityFormatting.ts, and this file's own EntityView.jsx pickDisplayField)
+ * but missed this fourth copy, baked into the exported app's own
+ * /api/backup endpoint under a differently-named hint array
+ * (BACKUP_DISPLAY_FIELD_HINTS). A relation field literally named "title"
+ * (e.g. Employee { title: relation->JobTitle }) or a file field literally
+ * named "name" (e.g. Document { name: file }) would win by name alone,
+ * before the type-aware fallback steps below ever ran -- leaking a raw
+ * foreign-key id or a file's raw JSON upload descriptor (internal
+ * /api/uploads/... path included) straight into a downloaded backup CSV's
+ * relation column.
+ */
+test("the exported server.js's own backupPickDisplayField skips a relation/file field even when it's literally named 'title'/'name', preferring a later text field instead", () => {
+  const serverJs = generateExportFiles(project).find((f) => f.path === "server.js")!.content;
+  const backupPickDisplayFieldSrc = serverJs.match(/const BACKUP_DISPLAY_FIELD_HINTS[\s\S]*?\nfunction backupPickDisplayField\(entity\) \{[\s\S]*?\n\}\n/)?.[0];
+  assert.ok(backupPickDisplayFieldSrc, "expected to find BACKUP_DISPLAY_FIELD_HINTS/backupPickDisplayField in generated server.js");
+
+  const backupPickDisplayField = new Function(`${backupPickDisplayFieldSrc}\nreturn backupPickDisplayField;`)() as (entity: unknown) => { name: string } | null;
+
+  assert.equal(
+    backupPickDisplayField({
+      name: "Employee",
+      fields: [
+        { name: "title", type: "relation", relationTo: "JobTitle" },
+        { name: "department", type: "text" },
+      ],
+    })?.name,
+    "department",
+    "a relation field named 'title' must not win just by name -- the plain text field (department) should win instead",
+  );
+
+  assert.equal(
+    backupPickDisplayField({
+      name: "Document",
+      fields: [
+        { name: "name", type: "file" },
+        { name: "category", type: "text" },
+      ],
+    })?.name,
+    "category",
+    "a file field named 'name' must not win just by name -- the plain text field (category) should win instead",
+  );
+});
+
+/**
  * Round 762: mirrors the live preview's own fix -- backupPickDisplayField's
  * "first text field" step only ever checked "text", never "longtext",
  * even though the two are the same free-text kind everywhere else in
