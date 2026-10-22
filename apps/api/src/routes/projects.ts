@@ -58,7 +58,7 @@ import type { SpecProvider } from "@forge/spec-engine";
 import { enhancePrompt, generateSpec, isHebrewText, TEMPLATES } from "@forge/spec-engine";
 import { formatValidationError, HttpError } from "../httpError.js";
 import { requireAuth } from "../auth/middleware.js";
-import { runBuildPipeline } from "../pipeline.js";
+import { describeImpactHazards, runBuildPipeline } from "../pipeline.js";
 import { withIdempotency } from "../idempotency.js";
 import { generateExportFiles } from "../codegen.js";
 import { generateBackupZipEntries } from "../backup.js";
@@ -1541,7 +1541,19 @@ export function createProjectsRouter(
       // Boolean("some real note text") as true) with no warning at all.
       const changes = diffAndMigrate(db, project.id, project.spec, checkpoint.spec);
       const updated = updateProjectSpec(db, project.id, checkpoint.spec);
-      const migrationWarning = describeMigrationHazards(changes).trim();
+      // An older checkpoint being restored to isn't guaranteed to be a
+      // safe, monotonically-looser move the way the data migration above
+      // already is (additive-only) -- it can easily be STRICTER on a field
+      // the user has since relaxed, or simply missing an entity/field the
+      // user has been actively using with real data in it. /build and
+      // /refine already warn about this exact class of change
+      // (pipeline.ts's own "Architect" message); describeImpactHazards
+      // reuses that identical hazard detection here, over the current spec
+      // being replaced (previousSpec) and the checkpoint's own spec taking
+      // its place (nextSpec) -- the same previousSpec/nextSpec shape
+      // computeImpact already expects, restore just supplies an older
+      // spec as "next" instead of a freshly regenerated one.
+      const migrationWarning = (describeMigrationHazards(changes).trim() + describeImpactHazards(project.spec, checkpoint.spec)).trim();
       res.json({ project: updated, migrationWarning: migrationWarning.length > 0 ? migrationWarning : null });
     }),
   );

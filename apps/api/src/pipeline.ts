@@ -149,7 +149,7 @@ function entityDisplayLabel(entity: Entity, occurrences: Map<string, number>): s
   return (occurrences.get(label) ?? 0) > 1 ? `${label} (${entity.name})` : label;
 }
 
-function computeImpact(previousSpec: ProductSpec | undefined, nextSpec: ProductSpec): ImpactSummary {
+export function computeImpact(previousSpec: ProductSpec | undefined, nextSpec: ProductSpec): ImpactSummary {
   const previousEntities = new Map((previousSpec?.entities ?? []).map((e) => [e.name, e]));
   const nextEntityNames = new Set(nextSpec.entities.map((e) => e.name));
   // Counted over every entity that exists on EITHER side of this refine
@@ -234,22 +234,50 @@ function computeImpact(previousSpec: ProductSpec | undefined, nextSpec: ProductS
   };
 }
 
-function architectEvent(previousSpec: ProductSpec | undefined, nextSpec: ProductSpec): AgentStepEvent {
+/**
+ * Just the "Warning: ..." clauses of architectEvent's own message below --
+ * extracted so the checkpoint restore route (routes/projects.ts) can give
+ * the identical "something is now unreachable/stricter" hazard detection
+ * /build and /refine already give, even though a restore has no "Impact:
+ * +N new entities..." headline of its own to attach them to (it isn't a
+ * fresh design pass). Pure, over two ProductSpec objects exactly like
+ * computeImpact itself -- the same previousSpec/nextSpec shape works
+ * whether `nextSpec` came from a real regeneration or, as in a restore, is
+ * simply an OLDER checkpoint's spec: restoring isn't guaranteed to be a
+ * safe, monotonically-looser move the way the data-migration side of a
+ * restore already is (migrations are additive-only, see migrate.ts) -- an
+ * earlier checkpoint can easily be STRICTER on a field a user has since
+ * relaxed, or simply missing an entity/field the user has been actively
+ * using, with real data already in it.
+ */
+export function describeImpactHazards(previousSpec: ProductSpec, nextSpec: ProductSpec): string {
   const impact = computeImpact(previousSpec, nextSpec);
-  // Mirrors the removedEntityNames warning below, one level down: an entity
-  // that still exists can nonetheless lose one of its OWN fields on a
-  // refine (same root cause -- the AI regenerates the whole spec from prose
-  // with no access to the previous structure). computeImpact already
-  // computes this per entity (changedEntities[].removedFieldNames), but
-  // without this clause the message says "N existing entities gaining
-  // fields" even when an entity only ever LOST a field and gained nothing,
-  // which is actively misleading, not just incomplete.
+  // An entity that still exists can nonetheless lose one of its OWN fields
+  // (same root cause as an entity disappearing outright, one level down).
+  // computeImpact already computes this per entity
+  // (changedEntities[].removedFieldNames) -- this just picks out which
+  // entities need their own clause below.
   const entitiesWithRemovedFields = impact.changedEntities.filter((e) => e.removedFieldNames.length > 0);
   // Same sibling-attribute gap class as removedFieldNames above, but for a
   // field that keeps existing on both sides while becoming more restrictive
-  // (now required, or an enum losing a value) -- a real, user-caused change
-  // computeImpact now tracks but that otherwise had no warning at all.
+  // (now required, or an enum losing a value) -- a real change computeImpact
+  // tracks but that otherwise had no warning at all.
   const entitiesWithTightenedFields = impact.changedEntities.filter((e) => e.tightenedFieldNames.length > 0);
+  return (
+    (impact.removedEntityNames.length > 0
+      ? ` Warning: ${impact.removedEntityNames.length} entities are no longer in the spec (${impact.removedEntityNames.join(", ")}) -- their data is kept but is no longer reachable through the app.`
+      : "") +
+    (entitiesWithRemovedFields.length > 0
+      ? ` Warning: ${entitiesWithRemovedFields.map((e) => `${e.label} lost field(s): ${e.removedFieldNames.join(", ")}`).join("; ")} -- their data is kept but is no longer reachable through the app.`
+      : "") +
+    (entitiesWithTightenedFields.length > 0
+      ? ` Warning: ${entitiesWithTightenedFields.map((e) => `${e.label} now enforces stricter rules on: ${e.tightenedFieldNames.join(", ")}`).join("; ")} -- existing records are unaffected unless edited again.`
+      : "")
+  );
+}
+
+function architectEvent(previousSpec: ProductSpec | undefined, nextSpec: ProductSpec): AgentStepEvent {
+  const impact = computeImpact(previousSpec, nextSpec);
   // changedEntities includes an entity for ANY of new/removed/tightened
   // fields (see computeImpact above), but the headline below only ever
   // talks about entities "gaining fields" -- using changedEntities.length
@@ -260,15 +288,7 @@ function architectEvent(previousSpec: ProductSpec | undefined, nextSpec: Product
   const message = previousSpec
     ? `Impact: +${impact.newEntityNames.length} new entities (${impact.newEntityNames.join(", ") || "none"}), ` +
       `${entitiesWithNewFields.length} existing entities gaining fields.` +
-      (impact.removedEntityNames.length > 0
-        ? ` Warning: ${impact.removedEntityNames.length} entities are no longer in the spec (${impact.removedEntityNames.join(", ")}) -- their data is kept but is no longer reachable through the app.`
-        : "") +
-      (entitiesWithRemovedFields.length > 0
-        ? ` Warning: ${entitiesWithRemovedFields.map((e) => `${e.label} lost field(s): ${e.removedFieldNames.join(", ")}`).join("; ")} -- their data is kept but is no longer reachable through the app.`
-        : "") +
-      (entitiesWithTightenedFields.length > 0
-        ? ` Warning: ${entitiesWithTightenedFields.map((e) => `${e.label} now enforces stricter rules on: ${e.tightenedFieldNames.join(", ")}`).join("; ")} -- existing records are unaffected unless edited again.`
-        : "")
+      describeImpactHazards(previousSpec, nextSpec)
     : `Designed ${nextSpec.entities.length} tables for ${nextSpec.roles.length} roles.`;
   return { agent: "Architect", status: "success", message, detail: impact };
 }

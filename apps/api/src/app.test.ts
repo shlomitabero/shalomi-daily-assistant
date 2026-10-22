@@ -8667,6 +8667,154 @@ test("restoring a checkpoint surfaces a migrationWarning when a reused column's 
 });
 
 /**
+ * Round 787: /build and /refine already warn about a field becoming
+ * required where it wasn't, or an entity/field disappearing from the spec
+ * entirely (pipeline.ts's own "Architect" message, via computeImpact) --
+ * but the checkpoint-restore route never surfaced that same hazard class
+ * at all, even though restoring to an older checkpoint can trigger the
+ * identical situation: an earlier checkpoint can be STRICTER on a field a
+ * later refine relaxed, or simply predate an entity/field the user has
+ * been actively using with real data in it. Engineered via the DB layer,
+ * same determinism reasoning as the type-mismatch test above.
+ */
+test("restoring a checkpoint surfaces a migrationWarning when the restored spec re-tightens a field, the same impact warning /refine already gives", async () => {
+  await withServer(async (baseUrl, db) => {
+    const email = `restore-tighten-warning-${randomUUID()}@example.com`;
+    const token = await signup(baseUrl, email);
+    const user = findUserByEmail(db, email)!;
+
+    const specWithRequiredEmail: ProductSpec = {
+      summary: "test",
+      personas: [],
+      roles: ["Admin"],
+      entities: [
+        {
+          name: "Customer",
+          fields: [
+            { name: "name", type: "text", required: true },
+            { name: "email", type: "text", required: true },
+          ],
+        },
+      ],
+      screens: [],
+      assumptions: [],
+      openQuestions: [],
+    };
+    const specWithOptionalEmail: ProductSpec = {
+      ...specWithRequiredEmail,
+      entities: [
+        {
+          name: "Customer",
+          fields: [
+            { name: "name", type: "text", required: true },
+            { name: "email", type: "text", required: false },
+          ],
+        },
+      ],
+    };
+
+    const projectId = randomUUID();
+    insertProject(db, {
+      id: projectId,
+      ownerId: user.id,
+      name: "CRM",
+      description: "A customer tracker.",
+      spec: specWithRequiredEmail,
+    });
+    diffAndMigrate(db, projectId, undefined, specWithRequiredEmail);
+    const checkpoint = insertCheckpoint(db, {
+      id: randomUUID(),
+      projectId,
+      label: "Initial build",
+      kind: "build",
+      spec: specWithRequiredEmail,
+    });
+
+    // Simulates a later refine that relaxes "email" to optional -- no
+    // warning at this step (loosening a field is never flagged, only
+    // tightening).
+    diffAndMigrate(db, projectId, specWithRequiredEmail, specWithOptionalEmail);
+    updateProjectSpec(db, projectId, specWithOptionalEmail);
+
+    // Restoring the original checkpoint moves "email" back to required --
+    // the exact "now enforces stricter rules on" hazard /refine already
+    // warns about, now also expected from restore.
+    const restoreRes = await fetch(`${baseUrl}/api/projects/${projectId}/checkpoints/${checkpoint.id}/restore`, {
+      method: "POST",
+      headers: authHeaders(token),
+    });
+    assert.equal(restoreRes.status, 200);
+    const restoreBody = (await restoreRes.json()) as { migrationWarning: string | null };
+    assert.ok(restoreBody.migrationWarning, "a migrationWarning must be present given the restored spec re-tightens email");
+    assert.match(restoreBody.migrationWarning!, /now enforces stricter rules on: email/);
+    assert.match(restoreBody.migrationWarning!, /existing records are unaffected unless edited again/);
+  });
+});
+
+/**
+ * Round 787: the sibling hazard to the field-tightening one above -- an
+ * entity added by a later refine simply doesn't exist in an earlier
+ * checkpoint, so restoring to it makes that entity (and any real data in
+ * it) vanish from every tab in the live app. /refine already warns about
+ * this exact situation when an entity disappears from a freshly
+ * regenerated spec; restore must give the identical warning.
+ */
+test("restoring a checkpoint surfaces a migrationWarning naming an entity that doesn't exist in the restored spec, the same impact warning /refine already gives", async () => {
+  await withServer(async (baseUrl, db) => {
+    const email = `restore-removed-entity-warning-${randomUUID()}@example.com`;
+    const token = await signup(baseUrl, email);
+    const user = findUserByEmail(db, email)!;
+
+    const specWithJustCustomer: ProductSpec = {
+      summary: "test",
+      personas: [],
+      roles: ["Admin"],
+      entities: [{ name: "Customer", fields: [{ name: "name", type: "text", required: true }] }],
+      screens: [],
+      assumptions: [],
+      openQuestions: [],
+    };
+    const specWithInvoiceToo: ProductSpec = {
+      ...specWithJustCustomer,
+      entities: [...specWithJustCustomer.entities, { name: "Invoice", fields: [{ name: "total", type: "number", required: true }] }],
+    };
+
+    const projectId = randomUUID();
+    insertProject(db, {
+      id: projectId,
+      ownerId: user.id,
+      name: "CRM",
+      description: "A customer tracker.",
+      spec: specWithJustCustomer,
+    });
+    diffAndMigrate(db, projectId, undefined, specWithJustCustomer);
+    const checkpoint = insertCheckpoint(db, {
+      id: randomUUID(),
+      projectId,
+      label: "Initial build",
+      kind: "build",
+      spec: specWithJustCustomer,
+    });
+
+    // Simulates a later refine that adds the Invoice entity.
+    diffAndMigrate(db, projectId, specWithJustCustomer, specWithInvoiceToo);
+    updateProjectSpec(db, projectId, specWithInvoiceToo);
+
+    // Restoring the original checkpoint drops Invoice back out of the
+    // live spec -- the exact "entities are no longer in the spec" hazard
+    // /refine already warns about, now also expected from restore.
+    const restoreRes = await fetch(`${baseUrl}/api/projects/${projectId}/checkpoints/${checkpoint.id}/restore`, {
+      method: "POST",
+      headers: authHeaders(token),
+    });
+    assert.equal(restoreRes.status, 200);
+    const restoreBody = (await restoreRes.json()) as { migrationWarning: string | null };
+    assert.ok(restoreBody.migrationWarning, "a migrationWarning must be present given Invoice disappears from the restored spec");
+    assert.match(restoreBody.migrationWarning!, /entities are no longer in the spec \(Invoice\)/);
+  });
+});
+
+/**
  * Round 687: diffAndMigrate's own automation-rule-disable sweep
  * (packages/db/src/migrate.ts) silently discarded its outcome instead of
  * reporting it as a real MigrationChange -- confirmed by reading the code

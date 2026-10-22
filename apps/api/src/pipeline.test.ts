@@ -12,7 +12,7 @@ import {
   listRecords,
   openDatabase,
 } from "@forge/db";
-import { runBuildPipeline, runQaChecks, runSecurityScan } from "./pipeline.js";
+import { describeImpactHazards, runBuildPipeline, runQaChecks, runSecurityScan } from "./pipeline.js";
 
 const brokenSpec: ProductSpec = {
   summary: "test",
@@ -1521,4 +1521,67 @@ test("runQaChecks reports an entity with no required fields as having nothing to
     "no required fields to validate",
   ]);
   assert.equal(countRecords(db, "proj1", spec.entities[0]), 0, "a QA smoke test must never leave a real row behind in the entity's own table");
+});
+
+/**
+ * Round 787: describeImpactHazards is architectEvent's own "Warning: ..."
+ * clauses extracted into a standalone, directly-testable function, reused
+ * by the checkpoint-restore route (routes/projects.ts) which has no
+ * "Impact: +N new entities..." headline of its own to attach them to.
+ */
+test("describeImpactHazards reports a removed entity, a removed field, and a tightened field all at once", () => {
+  const previousSpec: ProductSpec = {
+    summary: "test",
+    personas: [],
+    roles: ["Admin"],
+    screens: [],
+    assumptions: [],
+    openQuestions: [],
+    entities: [
+      {
+        name: "Customer",
+        fields: [
+          { name: "name", type: "text", required: true },
+          { name: "email", type: "text", required: false },
+          { name: "phone", type: "text", required: false },
+        ],
+      },
+      { name: "Invoice", fields: [{ name: "total", type: "number", required: true }] },
+    ],
+  };
+  const nextSpec: ProductSpec = {
+    ...previousSpec,
+    entities: [
+      {
+        name: "Customer",
+        fields: [{ name: "name", type: "text", required: true }, { name: "email", type: "text", required: true }],
+      },
+    ],
+  };
+
+  const hazards = describeImpactHazards(previousSpec, nextSpec);
+  assert.match(hazards, /entities are no longer in the spec \(Invoice\)/);
+  assert.match(hazards, /Customer lost field\(s\): phone/);
+  assert.match(hazards, /Customer now enforces stricter rules on: email/);
+});
+
+test("describeImpactHazards returns an empty string when nothing structurally hazardous changed", () => {
+  const previousSpec: ProductSpec = {
+    summary: "test",
+    personas: [],
+    roles: ["Admin"],
+    screens: [],
+    assumptions: [],
+    openQuestions: [],
+    entities: [{ name: "Customer", fields: [{ name: "name", type: "text", required: true }] }],
+  };
+  // A brand-new field being ADDED is never a hazard -- only removed/
+  // tightened fields and removed entities are.
+  const nextSpec: ProductSpec = {
+    ...previousSpec,
+    entities: [{ name: "Customer", fields: [{ name: "name", type: "text", required: true }, { name: "phone", type: "text", required: false }] }],
+  };
+
+  assert.equal(describeImpactHazards(previousSpec, previousSpec), "", "identical specs must report no hazards");
+  assert.equal(describeImpactHazards(previousSpec, nextSpec), "", "a purely additive change (a new optional field) must report no hazards");
 });
