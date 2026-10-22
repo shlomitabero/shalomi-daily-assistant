@@ -31100,3 +31100,21 @@ Still no genuine reply from שלומי. This round's first survey re-proposed `m
 **Verification**: temporarily removed the two new effects (a real, targeted revert) and reran -- failed exactly as predicted; restored and reran clean. Full `EntityPanel.test.ts` (177/177) passes, confirming no regression to round 751's own `fieldFilters` test or any other group-by/filter test. Only `apps/web` changed this round, so its own full suite ran: 1104/1104 pass, no flakes. `tsc -b` clean.
 
 **Status**: shipped and pushed.
+
+### Round 781: bulk-edit kept a stale enum value selected after a live refine retyped that field to boolean, rendering a misleadingly pre-checked checkbox
+
+Still no genuine reply from שלומי. This round's survey directly extended round 780's own fix to the sibling `bulkEditField`/`bulkEditValue` state -- the exact same "field TYPE changes while its NAME survives a live refine" bug class, in a different piece of per-entity UI state that round 780's own fix didn't touch.
+
+**The gap**: `handleBulkEditFieldChange`'s own doc comment (`apps/web/src/EntityPanel.tsx`) already states the precise hazard it guards against -- "switching the bulk-edit field picker from, say, an enum to a boolean must not leave a stale string value FieldInput would render nonsensically." But that reset only ever fired when the *user* re-picks the field from the dropdown, never when the *same* field retypes underneath it while it stays selected and the bulk-edit panel stays open (EntityPanel doesn't remount for a live refine of the currently-open entity). Concretely: pick an enum value ("Shipped") for bulk-editing several selected records' `status` field, then a live refine retypes `status` to boolean while the panel stays open. `FieldInput`'s boolean branch (`checked={Boolean(value)}`) coerces the stale non-empty string to a *pre-checked* checkbox -- actively misleading, not just cosmetically stale, since it shows "on" with no action from the user. If applied as-is, the server's own `coerceValue` strictly rejects anything but `true/false/1/0` for a boolean field, so clicking Apply fails every single selected record's PATCH with a confusing validation error after the UI looked ready to go.
+
+**Why this is not deliberate**: the exact hazard is already named in this file's own doc comment as something the code is *supposed* to guard against -- it was just only wired to one of its two real triggers (manual re-pick), not the other (live refine), the same incomplete-coverage pattern round 780 found for `groupFieldName`.
+
+**The fix**: a ref remembers the type of whichever field `bulkEditField` currently names, and reuses `handleBulkEditFieldChange` itself (the exact reset a user re-picking this same field would already get) the moment that type changes out from under it. If the new type is `"file"` -- excluded from `bulkEditableFields` entirely since round 779 -- the field name itself is cleared instead, closing the same "stale value has no `<option>`" blank-select hazard round 780 also closed for `groupFieldName`.
+
+**codegen.ts parity**: confirmed not needed -- its `bulkEditField` is a plain `useState` initializer with no live-refine re-validation concept at all, the same reasoning round 780 used to rule out codegen.ts parity for the identical `groupFieldName` fix.
+
+**The tests**: added a new DOM test mirroring round 780's own `groupFieldName` type-change test: selects two records, picks the bulk-edit `status` field (enum), picks value "Shipped", then rerenders (no remount, same `entity.name`) with `status` retyped to boolean, and confirms the checkbox renders unchecked rather than misleadingly pre-checked from the stale string.
+
+**Verification**: temporarily removed the reset logic (a real, targeted revert) and reran -- failed exactly as predicted; restored and reran clean. Full `EntityPanel.test.ts` (178/178) passes, confirming no regression to round 780's own `groupFieldName` test or any other bulk-edit test. Only `apps/web` changed this round, so its own full suite ran: 1105/1105 pass, no flakes. `tsc -b` clean.
+
+**Status**: shipped and pushed.
