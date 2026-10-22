@@ -644,26 +644,52 @@ export async function* runBuildPipeline(
     detail: security.warnings,
   };
 
-  updateProjectSpec(db, project.id, nextSpec);
-  markProjectBuilt(db, project.id);
-  // previousSpec is only ever set by the /refine route (undefined for
-  // /build -- see routes/projects.ts's two streamPipeline call sites), so
-  // it's already the one unambiguous, rename-proof signal for which kind
-  // of checkpoint this is; see CheckpointSchema's own doc-comment for why
-  // this can no longer be re-derived from `label` later.
-  insertCheckpoint(db, {
-    id: randomUUID(),
-    projectId: project.id,
-    label: changeLabel,
-    kind: previousSpec ? "refine" : "build",
-    spec: nextSpec,
-  });
-  const finalProject = getProject(db, project.id)!;
+  // Every other step above is deliberately wrapped so nothing can throw
+  // past this point once headers are already sent (writeHead happened
+  // long before this generator started -- see streamPipeline's own call
+  // site): the Database step's try/catch+auto-fix-retry, Seed Data's
+  // per-record try/catch, runQaChecks' own internal try/catches. This
+  // finalize block does real DB writes too (a disk-full ephemeral-disk
+  // write failure is exactly the kind of thing the Database step above
+  // already treats as a real, expected failure mode, not hypothetical),
+  // so it needs the identical guard -- without it, a thrown error here
+  // propagates out of this generator with nowhere good to go: streamPipeline's
+  // `for await` has no try/catch of its own, so it reaches Express's error
+  // middleware (app.ts) *after* this response's headers were already
+  // written, at which point calling res.status(500).json(...) there throws
+  // its own synchronous ERR_HTTP_HEADERS_SENT instead of ever reaching the
+  // client -- the browser just sees the SSE connection die with no real
+  // error message, after having already watched every earlier step render
+  // as a green "success", even though the build was never actually marked
+  // built and no checkpoint was ever saved.
+  try {
+    updateProjectSpec(db, project.id, nextSpec);
+    markProjectBuilt(db, project.id);
+    // previousSpec is only ever set by the /refine route (undefined for
+    // /build -- see routes/projects.ts's two streamPipeline call sites), so
+    // it's already the one unambiguous, rename-proof signal for which kind
+    // of checkpoint this is; see CheckpointSchema's own doc-comment for why
+    // this can no longer be re-derived from `label` later.
+    insertCheckpoint(db, {
+      id: randomUUID(),
+      projectId: project.id,
+      label: changeLabel,
+      kind: previousSpec ? "refine" : "build",
+      spec: nextSpec,
+    });
+    const finalProject = getProject(db, project.id)!;
 
-  yield {
-    agent: "Forge",
-    status: "success",
-    message: "Build complete. Checkpoint saved to the Time Machine.",
-    detail: { project: finalProject },
-  };
+    yield {
+      agent: "Forge",
+      status: "success",
+      message: "Build complete. Checkpoint saved to the Time Machine.",
+      detail: { project: finalProject },
+    };
+  } catch (err) {
+    yield {
+      agent: "Forge",
+      status: "failed",
+      message: "The build finished, but saving it failed: " + (err as Error).message,
+    };
+  }
 }

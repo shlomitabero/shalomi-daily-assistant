@@ -18,7 +18,7 @@ import {
   type ForgeDatabase,
 } from "@forge/db";
 import { HeuristicSpecProvider, type SpecProvider } from "@forge/spec-engine";
-import { createApp } from "./app.js";
+import { createApp, errorMiddleware } from "./app.js";
 import type { EmailSender } from "./email.js";
 import { createStore } from "./store.js";
 import { WhatsAppWebManager, type BaileysConnectionUpdate, type BaileysMessagesUpsert, type WhatsAppSocket } from "./whatsappWeb.js";
@@ -191,6 +191,66 @@ async function collectSSE(res: Response): Promise<AgentStepEvent[]> {
   }
   return events;
 }
+
+/**
+ * Round 797: a streaming route (routes/projects.ts's streamPipeline, the
+ * build/refine SSE endpoint) calls res.writeHead(200, ...) long before an
+ * error from inside the stream could ever reach this middleware -- before
+ * this round, every branch here called res.status(...)/res.json(...)
+ * unconditionally, which throws its own synchronous ERR_HTTP_HEADERS_SENT
+ * once headers are already on the wire, masking the real error instead of
+ * letting it reach the client. A unit test against a fake Response is used
+ * here (rather than a real HTTP round-trip) specifically because a real
+ * Express response whose headers are already sent really does tear down
+ * the socket once next(err) reaches Express's own default handler -- not
+ * something a test could usefully assert on afterwards.
+ */
+test("errorMiddleware hands off to next(err) instead of trying to send a second response once headers are already sent", () => {
+  const statusCalls: number[] = [];
+  const fakeRes = {
+    headersSent: true,
+    status(code: number) {
+      statusCalls.push(code);
+      return this;
+    },
+    json() {
+      throw new Error("ERR_HTTP_HEADERS_SENT: should never be called once headers are sent");
+    },
+  };
+  let nextCalledWith: unknown;
+  const next = (err: unknown) => {
+    nextCalledWith = err;
+  };
+
+  const realError = new Error("disk full while finalizing the build");
+  assert.doesNotThrow(() => {
+    errorMiddleware(realError, {} as never, fakeRes as never, next as never);
+  });
+  assert.equal(nextCalledWith, realError, "the real error must be handed to next(), not swallowed or replaced");
+  assert.deepEqual(statusCalls, [], "must never attempt to set a status/send a body once headers are already sent");
+});
+
+test("errorMiddleware still sends a normal response when headers have not been sent yet", () => {
+  const statusCalls: number[] = [];
+  let jsonBody: unknown;
+  const fakeRes = {
+    headersSent: false,
+    status(code: number) {
+      statusCalls.push(code);
+      return this;
+    },
+    json(body: unknown) {
+      jsonBody = body;
+    },
+  };
+  const next = () => {
+    throw new Error("next() must not be called when headers have not been sent");
+  };
+
+  errorMiddleware(new Error("boom"), {} as never, fakeRes as never, next as never);
+  assert.deepEqual(statusCalls, [500]);
+  assert.deepEqual(jsonBody, { error: "Internal server error", code: "INTERNAL_ERROR" });
+});
 
 test("health check responds ok", async () => {
   await withServer(async (baseUrl) => {

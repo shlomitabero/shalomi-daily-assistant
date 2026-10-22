@@ -283,6 +283,63 @@ test("a real build's checkpoint is inserted with kind 'build' and a real refine'
 });
 
 /**
+ * Round 797: every earlier step in this exact generator is deliberately
+ * guarded so it can never throw once headers are already sent on the SSE
+ * response (the Database step's own try/catch+auto-fix-retry just above,
+ * Seed Data's per-record try/catch, runQaChecks' own internal try/catches)
+ * -- but the finalize block's own real DB writes (updateProjectSpec,
+ * markProjectBuilt, insertCheckpoint, getProject) had no such guard. A
+ * genuine write failure there (this app's own ephemeral-disk Render
+ * deployment makes a disk-full write failure a real, not hypothetical,
+ * case) used to propagate straight out of this async generator -- with
+ * streamPipeline's own `for await` (routes/projects.ts) having no
+ * try/catch of its own, it reached Express's error middleware (app.ts)
+ * *after* this response's headers were already written, which (before
+ * this round) called res.status(500).json(...) there too, throwing its
+ * own synchronous ERR_HTTP_HEADERS_SENT instead of ever reaching the
+ * client -- the build appeared to die with no real error message, after
+ * the user had already watched every earlier step render as a green
+ * "success".
+ */
+test("a DB write failure while finalizing the build is reported as a failed Forge event, not thrown out of the generator", async () => {
+  const spec: ProductSpec = {
+    summary: "test",
+    personas: [],
+    roles: ["Admin"],
+    screens: [],
+    assumptions: [],
+    openQuestions: [],
+    entities: [{ name: "Customer", fields: [{ name: "name", type: "text", required: true }] }],
+  };
+  const db = openDatabase(":memory:");
+  ensureProjectsTable(db);
+  ensureCheckpointsTable(db);
+  const project = insertProject(db, { id: "proj1", ownerId: "user1", name: "test", description: "test", spec });
+
+  const gen = runBuildPipeline(db, project, { nextSpec: spec, changeLabel: "Initial build" });
+  const events: AgentStepEvent[] = [];
+  let step = await gen.next();
+  while (!step.done) {
+    events.push(step.value);
+    if (step.value.agent === "Security" && step.value.status === "success") {
+      // Everything up to and including Security has already succeeded and
+      // streamed to the client -- closing the db now simulates the exact
+      // kind of real write failure (disk full, DB unavailable) the
+      // finalize block's own updateProjectSpec/markProjectBuilt/
+      // insertCheckpoint calls can genuinely hit, without needing to fake
+      // a disk-full condition directly.
+      db.close();
+    }
+    step = await gen.next();
+  }
+
+  const forgeEvents = events.filter((e) => e.agent === "Forge");
+  assert.equal(forgeEvents.length, 1, "the generator must yield exactly one Forge event, not throw past it");
+  assert.equal(forgeEvents[0]!.status, "failed", "a DB write failure while finalizing must be reported as a failed event, not thrown out of the generator");
+  assert.match(forgeEvents[0]!.message, /database is not open/i);
+});
+
+/**
  * Regression test: a required relation field is seeded with a best-effort
  * `id=1` guess (packages/db/src/seed.ts's seedValueFor) -- correct only if
  * its target entity already has a real row 1 by the time it's attempted.
