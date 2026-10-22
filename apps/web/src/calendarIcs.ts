@@ -170,7 +170,21 @@ export function buildCalendarIcs(
         }
       }
     }
-    const labelRaw = labelField.type === "enum" ? (labelField.enumLabels?.[String(record[labelField.name])] ?? record[labelField.name]) : record[labelField.name];
+    // Round 778: boolean added alongside enum -- a boolean display field
+    // (reachable the same way round 771 found for recordDisplayLabel, an
+    // entity with no name/title/text field whose fallback lands on a
+    // boolean) previously printed the raw stored value, "true"/"false"
+    // lowercase, instead of this codebase's own uniform "TRUE"/"FALSE"
+    // convention every other boolean render path already follows.
+    const rawLabelValue = record[labelField.name];
+    const labelRaw =
+      labelField.type === "boolean" && rawLabelValue !== null && rawLabelValue !== undefined
+        ? rawLabelValue
+          ? "TRUE"
+          : "FALSE"
+        : labelField.type === "enum"
+          ? labelField.enumLabels?.[String(rawLabelValue)] ?? rawLabelValue
+          : rawLabelValue;
     const summary = String(labelRaw ?? entity.label ?? entity.name);
     // Same label-collision gap twin.ts's Business Twin observations had
     // (round 635 fixed it there): only field.name is unique, never .label,

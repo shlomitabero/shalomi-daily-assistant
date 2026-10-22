@@ -854,11 +854,45 @@ export function findRecordPhoneNumber(fields: Field[], record: EntityRecord): st
  * field before its date field), but an AI-generated spec has no such
  * guarantee, so the calendar chip could otherwise show a boolean, a
  * status, or a foreign-key id instead of a name.
+ *
+ * Round 778: the last-resort fallback below used to grab the first OTHER
+ * field with no type filtering at all -- reachable when `pickDisplayField`
+ * itself returns `dateField` (an entity with no name/title/text/longtext
+ * field, where the date field happens to be the first field that isn't
+ * `relation`/`file`, e.g. `CheckIn { date: date, location: relation,
+ * confirmed: boolean }`). In that case the unfiltered fallback could land
+ * on a `relation` field -- rendering a raw related-record id (or a blank
+ * chip when null) instead of any real label -- or a `file` field, leaking
+ * the raw upload descriptor. `pickDisplayField` itself already excludes
+ * both types at every one of its own fallback steps for exactly this
+ * reason; this fallback now mirrors that same exclusion instead of
+ * reintroducing the hazard one function away.
  */
 export function calendarChipLabelField(entity: Entity, dateField: Field): Field {
   const preferred = pickDisplayField(entity);
   if (preferred && preferred.name !== dateField.name) return preferred;
-  return entity.fields.find((f) => f.name !== dateField.name) ?? dateField;
+  return (
+    entity.fields.find((f) => f.name !== dateField.name && f.type !== "relation" && f.type !== "file") ?? dateField
+  );
+}
+
+/**
+ * Resolves calendarChipLabelField's own chosen field to the actual string
+ * the live calendar view's day-chip should display for one record --
+ * before this, the chip rendered the raw stored value with ZERO type
+ * awareness (not even enum, unlike calendarIcs.ts's own SUMMARY line,
+ * which round 274 already made enum-aware). A `boolean` display field
+ * (e.g. `Consent.signed`, the same no-name/title/text shape round 771
+ * fixed for recordDisplayLabel) showed lowercase "true"/"false" instead of
+ * this codebase's own uniform "TRUE"/"FALSE" convention; an `enum` display
+ * field showed its raw stored key instead of its translated enumLabel.
+ */
+export function calendarChipLabelValue(labelField: Field, record: EntityRecord): string {
+  const value = record[labelField.name];
+  if (value === null || value === undefined) return "";
+  if (labelField.type === "boolean") return value ? "TRUE" : "FALSE";
+  if (labelField.type === "enum") return (labelField.enumLabels && labelField.enumLabels[String(value)]) || String(value);
+  return String(value);
 }
 
 export interface CalendarDay {

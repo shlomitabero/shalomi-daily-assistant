@@ -7,6 +7,7 @@ import {
   buildCalendarMonth,
   buildImportRecords,
   calendarChipLabelField,
+  calendarChipLabelValue,
   computeNextFocusedRowId,
   enterTargetsInteractiveElement,
   findBoardField,
@@ -1377,6 +1378,61 @@ test("calendarChipLabelField falls back to the first other field when the entity
   ];
   const entity: Entity = { name: "Metric", fields };
   assert.equal(calendarChipLabelField(entity, dateField).name, "count");
+});
+
+/**
+ * Round 778: this fallback used to grab the first OTHER field with no
+ * type filtering at all, reachable when pickDisplayField itself returns
+ * dateField (no name/title/text/longtext field, and the date field
+ * happens to be the first field that isn't relation/file). CheckIn here
+ * has no name/title/text field, so pickDisplayField lands on `date`
+ * itself -- the unfiltered fallback would then pick `location`, a
+ * relation field, showing a raw related-record id (or a blank chip when
+ * null) instead of skipping it the same way pickDisplayField's own
+ * fallback already does.
+ */
+test("calendarChipLabelField's last-resort fallback skips a relation field, the same way pickDisplayField already does, landing on a sibling field instead", () => {
+  const dateField: Field = { name: "date", type: "date", required: true };
+  const fields: Field[] = [
+    dateField,
+    { name: "location", type: "relation", relationTo: "Location", required: false },
+    { name: "confirmed", type: "boolean", required: false },
+  ];
+  const entity: Entity = { name: "CheckIn", fields };
+  assert.equal(calendarChipLabelField(entity, dateField).name, "confirmed");
+});
+
+test("calendarChipLabelField's last-resort fallback skips a file field too, falling back to dateField itself when nothing else qualifies", () => {
+  const dateField: Field = { name: "date", type: "date", required: true };
+  const fields: Field[] = [
+    dateField,
+    { name: "attachment", type: "file", required: false },
+  ];
+  const entity: Entity = { name: "Upload", fields };
+  assert.equal(calendarChipLabelField(entity, dateField).name, "date", "with no other usable field, must fall back to dateField itself rather than the file field");
+});
+
+test("calendarChipLabelValue resolves a boolean display field to uppercase TRUE/FALSE, matching this codebase's own uniform convention", () => {
+  const field: Field = { name: "confirmed", type: "boolean", required: false };
+  assert.equal(calendarChipLabelValue(field, { id: 1, confirmed: true }), "TRUE");
+  assert.equal(calendarChipLabelValue(field, { id: 1, confirmed: false }), "FALSE");
+});
+
+test("calendarChipLabelValue resolves an enum display field through its own enumLabels, not the raw stored key", () => {
+  const field: Field = {
+    name: "stage",
+    type: "enum",
+    required: false,
+    enumValues: ["in", "out"],
+    enumLabels: { in: "כניסה", out: "יציאה" },
+  };
+  assert.equal(calendarChipLabelValue(field, { id: 1, stage: "in" }), "כניסה");
+});
+
+test("calendarChipLabelValue returns a blank string for a null/undefined/missing value, instead of the literal word 'null'", () => {
+  const field: Field = { name: "notes", type: "text", required: false };
+  assert.equal(calendarChipLabelValue(field, { id: 1, notes: null }), "");
+  assert.equal(calendarChipLabelValue(field, { id: 1 }), "");
 });
 
 test("recordDisplayLabel shows the display field's value, falling back to #id when it's empty or missing", () => {

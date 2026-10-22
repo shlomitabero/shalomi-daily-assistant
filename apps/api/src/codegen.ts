@@ -2579,9 +2579,31 @@ function buildCalendarMonth(records, field, year, month, endField) {
 // what a real business owner wants to drop straight into their phone's
 // real calendar app, which CSV can't do. Picks the same label field
 // CalendarView's own day chips already use.
+// Round 778: the fallback below now excludes relation/file fields too,
+// mirroring pickDisplayField's own exclusion -- an entity with no
+// name/title/text field whose fallback lands on a relation field used to
+// show a raw related-record id (or a blank chip when null), and a file
+// field used to leak its raw upload descriptor. See entityFormatting.ts's
+// own calendarChipLabelField doc comment for the full rationale.
 function calendarLabelField(entity, dateField) {
   const preferred = pickDisplayField(entity);
-  return (preferred && preferred.name !== dateField.name ? preferred : null) || entity.fields.find((f) => f.name !== dateField.name) || dateField;
+  return (
+    (preferred && preferred.name !== dateField.name ? preferred : null) ||
+    entity.fields.find((f) => f.name !== dateField.name && f.type !== "relation" && f.type !== "file") ||
+    dateField
+  );
+}
+
+// Round 778: resolves calendarLabelField's own chosen field to the actual
+// string the live calendar day-chip should display -- the chip used to
+// render the raw stored value with zero type awareness (not even enum).
+// Mirrors entityFormatting.ts's own calendarChipLabelValue.
+function calendarLabelValue(labelField, record) {
+  const value = record[labelField.name];
+  if (value === null || value === undefined) return "";
+  if (labelField.type === "boolean") return value ? "TRUE" : "FALSE";
+  if (labelField.type === "enum") return (labelField.enumLabels && labelField.enumLabels[value]) || String(value);
+  return String(value);
 }
 
 function icsPad2(n) {
@@ -2671,7 +2693,13 @@ function buildCalendarIcs(entity, dateField, labelField, records, relatedRecords
         }
       }
     }
-    const labelRaw = labelField.type === "enum" ? ((labelField.enumLabels && labelField.enumLabels[record[labelField.name]]) || record[labelField.name]) : record[labelField.name];
+    const rawLabelValue = record[labelField.name];
+    const labelRaw =
+      labelField.type === "boolean" && rawLabelValue !== null && rawLabelValue !== undefined
+        ? rawLabelValue ? "TRUE" : "FALSE"
+        : labelField.type === "enum"
+          ? (labelField.enumLabels && labelField.enumLabels[rawLabelValue]) || rawLabelValue
+          : rawLabelValue;
     const summary = String(labelRaw ?? entity.label ?? entity.name);
     // Same label-collision gap the exported app's Business Twin-equivalent
     // text builders were fixed for -- only field.name is unique, never
@@ -2869,7 +2897,7 @@ function CalendarView({ entity, dateField, endDateField, records, month, onPrevM
                     onEdit(record);
                   }}
                 >
-                  {String(record[labelField.name] ?? "")}
+                  {calendarLabelValue(labelField, record)}
                 </button>
               ))}
               {day.records.length > 3 && (

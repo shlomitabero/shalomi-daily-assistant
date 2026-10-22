@@ -32,6 +32,7 @@ import {
   buildCalendarMonth,
   buildImportRecords,
   calendarChipLabelField,
+  calendarChipLabelValue,
   computeNextFocusedRowId,
   findBoardField,
   findDateField,
@@ -769,7 +770,7 @@ function CalendarView({
                     onEdit(record);
                   }}
                 >
-                  {String(record[labelField.name] ?? "")}
+                  {calendarChipLabelValue(labelField, record)}
                 </button>
               ))}
               {day.records.length > 3 && (

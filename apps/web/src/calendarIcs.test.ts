@@ -309,6 +309,24 @@ test("buildCalendarIcs resolves an enum field to its Hebrew enumLabels translati
   assert.doesNotMatch(ics, /SUMMARY:shipped/, "must never leak the raw enum value in SUMMARY once a real Hebrew label exists for it");
 });
 
+/**
+ * Round 778: same gap, the other type the enum fix above never covered --
+ * a `boolean` display field (reachable the same way round 771 found for
+ * recordDisplayLabel: an entity with no name/title/text field whose
+ * fallback lands on a boolean, e.g. `CheckIn { date: date, confirmed:
+ * boolean }`) previously printed the raw stored value, lowercase
+ * "true"/"false", instead of this codebase's own uniform "TRUE"/"FALSE"
+ * convention every other boolean render path already follows.
+ */
+test("buildCalendarIcs resolves a boolean label field to uppercase TRUE/FALSE in SUMMARY, not lowercase true/false", () => {
+  const confirmedField: Field = { name: "confirmed", label: "אישור", type: "boolean", required: false };
+  const checkInEntity: Entity = { name: "CheckIn", label: "צ'ק אין", fields: [dateField, confirmedField] };
+  const records: EntityRecord[] = [{ id: 1, appointmentDate: "2026-03-15", confirmed: false }];
+  const ics = buildCalendarIcs(checkInEntity, dateField, confirmedField, records, [], {});
+  assert.match(ics, /SUMMARY:FALSE/, "a boolean false value must render as uppercase FALSE, and must not fall back to the entity's own name");
+  assert.doesNotMatch(ics, /SUMMARY:false/, "must never leak the raw lowercase boolean value");
+});
+
 test("buildCalendarIcs folds a long DESCRIPTION line at 75 UTF-8 octets with a CRLF + single leading space continuation", () => {
   const longNote = "x".repeat(120);
   const records: EntityRecord[] = [

@@ -2653,6 +2653,50 @@ test("EntityPanel's calendar view shows at most 3 record chips per day, with a '
 });
 
 /**
+ * Round 778: for an entity with no name/title/text field (e.g. a
+ * "CheckIn"/"Attendance"-shaped log entity with just a date and a
+ * boolean), the calendar day-chip used to render the raw stored value
+ * with zero type awareness -- "true"/"false" lowercase instead of this
+ * codebase's own uniform "TRUE"/"FALSE" convention. Confirms the real,
+ * wired-up render (not just calendarChipLabelValue's own pure-function
+ * coverage in entityFormatting.test.ts) shows the correct uppercase form.
+ */
+test("EntityPanel's calendar day-chip renders a boolean label field as TRUE/FALSE, for an entity with no name/title/text field", async () => {
+  await withJsdom(async () => {
+    const checkInEntity: Entity = {
+      name: "CheckIn",
+      label: "CheckIn",
+      fields: [
+        { name: "date", label: "Date", type: "date", required: true },
+        { name: "confirmed", label: "Confirmed", type: "boolean", required: false },
+      ],
+    };
+    const today = isoDateToday();
+    const store: EntityRecord[] = [{ id: 1, date: today, confirmed: false }];
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = (async (input: string) => {
+      if (input === "/api/projects/proj1/entities/CheckIn") {
+        return new Response(JSON.stringify({ records: store }), { status: 200, headers: { "content-type": "application/json" } });
+      }
+      throw new Error(`unexpected request ${input}`);
+    }) as typeof fetch;
+    try {
+      renderEntityPanel({ entity: checkInEntity, allEntities: [checkInEntity] });
+      await waitForCondition(() => document.querySelector(".entity-toolbar") !== null);
+
+      const calendarToggle = document.querySelectorAll(".view-toggle-btn")[1] as HTMLButtonElement;
+      fireEvent.click(calendarToggle);
+      await waitForCondition(() => document.querySelectorAll(".calendar-record-chip").length === 1);
+
+      const chip = document.querySelector(".calendar-record-chip")!;
+      assert.equal(chip.textContent, "FALSE", "a boolean false value must render as uppercase FALSE, not lowercase false");
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+});
+
+/**
  * New in this round: the calendar view's day cells never distinguished
  * "today" from any other day in the currently-viewed month -- a user
  * scanning the grid had to mentally compute which cell was "now". Confirms

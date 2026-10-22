@@ -2643,6 +2643,45 @@ test("the exported CalendarView picks its day-chip label via pickDisplayField, n
 });
 
 /**
+ * Round 778: mirrors the live-preview's own fix (entityFormatting.ts's
+ * calendarChipLabelField) -- the generated calendarLabelField's own
+ * last-resort fallback ("no name/title/text field, and pickDisplayField
+ * itself landed on the date field") used to grab the first OTHER field
+ * with zero type filtering, reachable for an entity like `CheckIn { date:
+ * date, location: relation, confirmed: boolean }`. That could land on a
+ * `relation` field -- a raw related-record id, or a blank chip when null
+ * -- instead of skipping it the same way pickDisplayField's own fallback
+ * already does. Extracts and RUNS the real generated calendarLabelField
+ * (not just checking the source text is present) to confirm it now skips
+ * the relation field and picks the boolean field instead.
+ */
+test("the exported CalendarView's real generated calendarLabelField skips a relation field in its last-resort fallback, the same way pickDisplayField already does", () => {
+  const files = generateExportFiles(project);
+  const entityViewJsx = files.find((f) => f.path === "web/src/components/EntityView.jsx")!.content;
+  const displayFieldHintsSrc = entityViewJsx.match(/const DISPLAY_FIELD_NAME_HINTS = .*;\n/)?.[0];
+  const pickDisplaySrc = entityViewJsx.match(/export function pickDisplayField\(entity\) \{[\s\S]*?\n\}\n/)?.[0]?.replace(/^export /, "");
+  const labelFieldSrc = entityViewJsx.match(/function calendarLabelField\(entity, dateField\) \{[\s\S]*?\n\}\n/)?.[0];
+  assert.ok(displayFieldHintsSrc && pickDisplaySrc && labelFieldSrc, "expected to find DISPLAY_FIELD_NAME_HINTS/pickDisplayField/calendarLabelField in generated output");
+
+  const calendarLabelField = new Function(`${displayFieldHintsSrc}\n${pickDisplaySrc}\n${labelFieldSrc}\nreturn calendarLabelField;`)() as (
+    entity: unknown,
+    dateField: unknown,
+  ) => { name: string };
+
+  const checkInEntity = {
+    name: "CheckIn",
+    fields: [
+      { name: "date", type: "date" },
+      { name: "location", type: "relation", relationTo: "Location" },
+      { name: "confirmed", type: "boolean" },
+    ],
+  };
+  const dateField = checkInEntity.fields[0];
+  const result = calendarLabelField(checkInEntity, dateField);
+  assert.equal(result.name, "confirmed", "must skip the relation field and fall through to the boolean field instead");
+});
+
+/**
  * Regression test for the same real bug this round fixed in the live-preview
  * version (apps/web/src/EntityPanel.tsx): the exported CalendarView's own
  * "+N more" overflow was an inert <span> with no click handler, sitting
@@ -2826,6 +2865,71 @@ test("the exported EntityView's real generated buildCalendarIcs produces a genui
   assert.match(ics, /DTSTART;VALUE=DATE:20260315/);
   assert.match(ics, /DTEND;VALUE=DATE:20260316/, "an all-day single-day event's DTEND must be the next day (exclusive end), not the same day");
   assert.match(ics, /SUMMARY:Dana\\, Levi/, "a comma in the summary must be backslash-escaped per RFC 5545 §3.3.11");
+});
+
+/**
+ * Round 778: mirrors the live-preview's own fix (calendarIcs.ts) -- a
+ * `boolean` display field (the same no-name/title/text shape round 771
+ * fixed for recordDisplayLabel, e.g. a `CheckIn { date: date, confirmed:
+ * boolean }` join/log entity with no other field) previously printed the
+ * raw stored value, lowercase "true"/"false", in SUMMARY instead of this
+ * codebase's own uniform "TRUE"/"FALSE" convention every other boolean
+ * render path already follows.
+ */
+test("the exported EntityView's real generated buildCalendarIcs renders a boolean label field as TRUE/FALSE in SUMMARY, not lowercase true/false", () => {
+  const withDate: Project = {
+    ...project,
+    spec: {
+      ...project.spec,
+      entities: [
+        ...project.spec.entities,
+        {
+          name: "CheckIn",
+          fields: [
+            { name: "date", type: "date", required: true },
+            { name: "confirmed", type: "boolean", required: false },
+          ],
+        },
+      ],
+    },
+  };
+  const entityViewJsx = generateExportFiles(withDate).find((f) => f.path === "web/src/components/EntityView.jsx")!.content;
+
+  const pickDisplaySrc = entityViewJsx.match(/export function pickDisplayField\(entity\) \{[\s\S]*?\n\}\n/)?.[0]?.replace(/^export /, "");
+  const labelFieldSrc = entityViewJsx.match(/function calendarLabelField\(entity, dateField\) \{[\s\S]*?\n\}\n/)?.[0];
+  const pad2Src = entityViewJsx.match(/function icsPad2\(n\) \{[\s\S]*?\n\}\n/)?.[0];
+  const dateSrc = entityViewJsx.match(/function formatIcsDate\(date\) \{[\s\S]*?\n\}\n/)?.[0];
+  const tsSrc = entityViewJsx.match(/function formatIcsTimestamp\(date\) \{[\s\S]*?\n\}\n/)?.[0];
+  const escSrc = entityViewJsx.match(/function icsEscapeText\(value\) \{[\s\S]*?\n\}\n/)?.[0];
+  const utf8LenSrc = entityViewJsx.match(/function utf8ByteLength\(s\) \{[\s\S]*?\n\}\n/)?.[0];
+  const foldSrc = entityViewJsx.match(/function foldIcsLine\(line\) \{[\s\S]*?\n\}\n/)?.[0];
+  const buildSrc = entityViewJsx.match(
+    /function buildCalendarIcs\(entity, dateField, labelField, records, relatedRecords, now, endField, orderedFields = entity\.fields\) \{[\s\S]*?\n\}\n/,
+  )?.[0];
+  assert.ok(
+    pickDisplaySrc && labelFieldSrc && pad2Src && dateSrc && tsSrc && escSrc && utf8LenSrc && foldSrc && buildSrc,
+    "expected to find every ICS helper function in the real generated output",
+  );
+
+  const relationStub = "function relationDisplayLabel() { return ''; }\n";
+  const buildCalendarIcs = new Function(
+    `${pickDisplaySrc}\n${labelFieldSrc}\n${pad2Src}\n${dateSrc}\n${tsSrc}\n${escSrc}\n${utf8LenSrc}\n${foldSrc}\n${relationStub}\n${buildSrc}\nreturn buildCalendarIcs;`,
+  )() as (entity: unknown, dateField: unknown, labelField: unknown, records: unknown[], relatedRecords: unknown, now: Date) => string;
+
+  const entity = {
+    name: "CheckIn",
+    fields: [
+      { name: "date", type: "date" },
+      { name: "confirmed", type: "boolean" },
+    ],
+  };
+  const dateField = entity.fields[0];
+  const labelField = entity.fields[1];
+  const records = [{ id: 7, date: "2026-03-15", confirmed: false }];
+
+  const ics = buildCalendarIcs(entity, dateField, labelField, records, {}, new Date("2026-01-01T00:00:00Z"));
+
+  assert.match(ics, /SUMMARY:FALSE/, "a boolean false value must render as uppercase FALSE, not lowercase false, and must not fall back to the entity's own name");
 });
 
 /**
