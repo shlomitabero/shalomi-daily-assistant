@@ -141,6 +141,54 @@ test("pickDisplayField falls back to the first field regardless when every remai
   assert.equal(pickDisplayField(entity)?.name, "studentId", "there's nothing else to fall back to, so the first field regardless is the only option left");
 });
 
+/**
+ * Round 793 regression test: the name-hint step itself never checked
+ * field type, unlike the last-resort step just above (which explicitly
+ * skips relation/file). An Employee entity whose "title" field is a
+ * relation to a normalized JobTitle lookup entity (a perfectly reasonable
+ * real-world schema) would have pickDisplayField return that relation
+ * field purely because it's named "title" -- before the later, type-aware
+ * steps ever got a chance to prefer the plain "department" text field
+ * instead. recordDisplayLabel would then String() the raw foreign-key id
+ * (e.g. "4") as the employee's own label, everywhere one is shown by name.
+ */
+test("pickDisplayField skips a relation field even when it's literally named 'title', preferring a later text field instead", () => {
+  const entity: Entity = {
+    name: "Employee",
+    fields: [
+      { name: "title", type: "relation", relationTo: "JobTitle", required: true },
+      { name: "department", type: "text", required: false },
+    ],
+  };
+  assert.equal(
+    pickDisplayField(entity)?.name,
+    "department",
+    "a relation field named 'title' must not win just by name -- the plain text field (department) should win instead",
+  );
+});
+
+/**
+ * Same gap, for "file" -- a Document entity whose uploaded-file field
+ * happens to be named "name" (also a perfectly reasonable real-world
+ * schema) would otherwise win by name alone, and recordDisplayLabel would
+ * String() the file's raw JSON upload descriptor ({url,name,size,
+ * mimeType}) as the record's own label.
+ */
+test("pickDisplayField skips a file field even when it's literally named 'name', preferring a later text field instead", () => {
+  const entity: Entity = {
+    name: "Document",
+    fields: [
+      { name: "name", type: "file", required: true },
+      { name: "category", type: "text", required: false },
+    ],
+  };
+  assert.equal(
+    pickDisplayField(entity)?.name,
+    "category",
+    "a file field named 'name' must not win just by name -- the plain text field (category) should win instead",
+  );
+});
+
 test("pickDisplayField's tie-break between a name field and a title field follows field declaration order, not name-before-title priority", () => {
   // DISPLAY_FIELD_NAME_HINTS lists "name" before "title", which reads like a
   // priority order, but pickDisplayField iterates entity.fields (not the

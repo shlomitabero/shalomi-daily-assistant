@@ -2497,6 +2497,53 @@ test("the exported EntityView's pickDisplayField skips a file field in its last-
 });
 
 /**
+ * Round 793: mirrors the live preview's own fix -- the name-hint step
+ * itself never checked field type, unlike the last-resort step just
+ * above (which explicitly skips relation/file). An Employee entity whose
+ * "title" field is a relation to a normalized JobTitle lookup entity (a
+ * perfectly reasonable real-world schema) would have the generated
+ * pickDisplayField return that relation field purely because it's named
+ * "title" -- before the later, type-aware steps ever got a chance to
+ * prefer the plain "department" text field instead. The generated
+ * recordDisplayLabel would then String() the raw foreign-key id as the
+ * employee's own label, everywhere the exported app shows one by name.
+ */
+test("the exported EntityView's pickDisplayField skips a relation/file field even when it's literally named 'title'/'name', preferring a later text field instead", () => {
+  const files = generateExportFiles(project);
+  const entityViewJsx = files.find((f) => f.path === "web/src/components/EntityView.jsx")!.content;
+
+  const displayFieldHintsSrc = entityViewJsx.match(/const DISPLAY_FIELD_NAME_HINTS = .*;\n/)?.[0];
+  const pickDisplayFieldSrc = entityViewJsx.match(/export function pickDisplayField\([\s\S]*?\n\}\n/)?.[0]?.replace("export ", "");
+  assert.ok(displayFieldHintsSrc && pickDisplayFieldSrc, "expected to find DISPLAY_FIELD_NAME_HINTS/pickDisplayField in generated output");
+
+  const pickDisplayField = new Function(`${displayFieldHintsSrc}\n${pickDisplayFieldSrc}\nreturn pickDisplayField;`)() as (entity: unknown) => { name: string } | null;
+
+  assert.equal(
+    pickDisplayField({
+      name: "Employee",
+      fields: [
+        { name: "title", type: "relation", relationTo: "JobTitle" },
+        { name: "department", type: "text" },
+      ],
+    })?.name,
+    "department",
+    "a relation field named 'title' must not win just by name -- the plain text field (department) should win instead",
+  );
+
+  assert.equal(
+    pickDisplayField({
+      name: "Document",
+      fields: [
+        { name: "name", type: "file" },
+        { name: "category", type: "text" },
+      ],
+    })?.name,
+    "category",
+    "a file field named 'name' must not win just by name -- the plain text field (category) should win instead",
+  );
+});
+
+/**
  * Round 761: mirrors the live preview's own fix -- when pickDisplayField's
  * last-resort fallback lands on an enum field (the exact "Enrollment"
  * fixture the test above already uses), recordDisplayLabel used to

@@ -1023,9 +1023,23 @@ const DISPLAY_FIELD_NAME_HINTS = ["name", "title"];
  * this, the last-resort step below would land on `rating` (a plain
  * number) instead of `message` -- labeling every record by its numeric
  * rating instead of its actual feedback text.
+ *
+ * Round 793: the name-hint step itself also excludes `relation`/`file`
+ * now, for the identical reason the last-resort step already excludes
+ * them -- a field can legitimately be named "title" or "name" while being
+ * a relation (e.g. `Employee { title: relation->JobTitle }`, a normalized
+ * job-title lookup) or a file (e.g. `Document { name: file }`, an
+ * uploaded file whose own field happens to be called "name"). Without
+ * this exclusion, that field won by name alone before the type-aware
+ * fallback steps ever ran, and recordDisplayLabel below would String() a
+ * relation's raw foreign-key id or a file's raw JSON upload descriptor as
+ * the record's own label -- the exact hazard this function's later steps
+ * already guard against, just reachable one step earlier than they catch.
  */
 export function pickDisplayField(entity: Entity): Field | null {
-  const named = entity.fields.find((f) => DISPLAY_FIELD_NAME_HINTS.includes(f.name.toLowerCase()));
+  const named = entity.fields.find(
+    (f) => DISPLAY_FIELD_NAME_HINTS.includes(f.name.toLowerCase()) && f.type !== "relation" && f.type !== "file",
+  );
   if (named) return named;
   const firstText = entity.fields.find((f) => f.type === "text") ?? entity.fields.find((f) => f.type === "longtext");
   if (firstText) return firstText;

@@ -1352,6 +1352,48 @@ test("pickDisplayField skips a file field in its last-resort fallback, preferrin
   );
 });
 
+/**
+ * Round 793: the name-hint step itself never checked field type, unlike
+ * the last-resort step just above (which explicitly skips relation/file).
+ * An Employee entity whose "title" field is a relation to a normalized
+ * JobTitle lookup entity (a perfectly reasonable real-world schema) would
+ * have pickDisplayField return that relation field purely because it's
+ * named "title" -- before the later, type-aware steps ever got a chance
+ * to prefer the plain "department" text field instead. recordDisplayLabel
+ * would then String() the raw foreign-key id as the employee's own label,
+ * everywhere one is shown by name (a relation picker's own cells, CSV
+ * import's relation-cell matching, Business Twin's narrative sentences).
+ */
+test("pickDisplayField skips a relation field even when it's literally named 'title', preferring a later text field instead", () => {
+  const employeeFields: Field[] = [
+    { name: "title", type: "relation", relationTo: "JobTitle", required: true },
+    { name: "department", type: "text", required: false },
+  ];
+  assert.equal(
+    pickDisplayField({ name: "Employee", fields: employeeFields })?.name,
+    "department",
+    "a relation field named 'title' must not win just by name -- the plain text field (department) should win instead",
+  );
+});
+
+/**
+ * Same gap, for "file" -- a Document entity whose uploaded-file field
+ * happens to be named "name" would otherwise win by name alone, and
+ * recordDisplayLabel would String() the file's raw JSON upload descriptor
+ * ({url,name,size,mimeType}) as the record's own label.
+ */
+test("pickDisplayField skips a file field even when it's literally named 'name', preferring a later text field instead", () => {
+  const documentFields: Field[] = [
+    { name: "name", type: "file", required: true },
+    { name: "category", type: "text", required: false },
+  ];
+  assert.equal(
+    pickDisplayField({ name: "Document", fields: documentFields })?.name,
+    "category",
+    "a file field named 'name' must not win just by name -- the plain text field (category) should win instead",
+  );
+});
+
 test("calendarChipLabelField prefers the entity's real display field over whichever field merely comes first after the date field", () => {
   // Every built-in domain entity happens to declare its "name"/"title"
   // field before its date field, so grabbing "the first field that isn't

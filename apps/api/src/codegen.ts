@@ -1478,10 +1478,17 @@ function isValidDate(value) {
 // second choice (never a tiebreak over a real "text" field), the same
 // free-text-kind convention this codebase's other text/longtext checks
 // already follow.
+// Round 793: the name-hint step itself also excludes "relation"/"file" --
+// a field can legitimately be named "title" or "name" while being a
+// relation (e.g. Employee { title: relation->JobTitle }) or a file (e.g.
+// Document { name: file }), and without this exclusion that field won by
+// name alone before the type-aware fallback steps below ever ran.
 const DISPLAY_FIELD_NAME_HINTS = ["name", "title"];
 export function pickDisplayField(entity) {
   if (!entity || !entity.fields || entity.fields.length === 0) return null;
-  const named = entity.fields.find((f) => DISPLAY_FIELD_NAME_HINTS.includes(f.name.toLowerCase()));
+  const named = entity.fields.find(
+    (f) => DISPLAY_FIELD_NAME_HINTS.includes(f.name.toLowerCase()) && f.type !== "relation" && f.type !== "file",
+  );
   if (named) return named;
   const firstText = entity.fields.find((f) => f.type === "text") || entity.fields.find((f) => f.type === "longtext");
   if (firstText) return firstText;
