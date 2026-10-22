@@ -6856,6 +6856,82 @@ test("EntityPanel drops the 'Group by' selection when a live refine changes that
 });
 
 /**
+ * Round 781: the identical "field TYPE changes while its NAME survives a
+ * live refine" bug class round 780 just fixed for groupFieldName, now
+ * fixed for its sibling bulkEditField/bulkEditValue. Before the fix,
+ * picking an enum value ("Shipped") for the bulk-edit "status" field,
+ * then a live refine retyping "status" to boolean while the panel stays
+ * open, left bulkEditValue as the stale string "Shipped" -- FieldInput's
+ * boolean branch (`checked={Boolean(value)}`) then rendered the checkbox
+ * pre-checked, even though the user never touched it, actively
+ * misrepresenting an unmade choice as "on". Confirms the fix: the stale
+ * value is reset to a type-appropriate empty value (false for boolean)
+ * the moment the type changes out from under it.
+ */
+test("EntityPanel resets a stale bulk-edit value when a live refine changes that field's type, instead of rendering a misleadingly pre-checked checkbox", async () => {
+  await withJsdom(async () => {
+    const statusEnumField = {
+      name: "status",
+      label: "Status",
+      type: "enum" as const,
+      required: false,
+      enumValues: ["Pending", "Shipped"],
+      enumLabels: { Pending: "Pending", Shipped: "Shipped" },
+    };
+    const statusBooleanField = { name: "status", label: "Status", type: "boolean" as const, required: false };
+    const entityWithEnumStatus: Entity = {
+      name: "Deal",
+      label: "Deal",
+      fields: [{ name: "name", label: "Name", type: "text", required: true }, statusEnumField],
+    };
+    const entityWithBooleanStatus: Entity = {
+      name: "Deal",
+      label: "Deal",
+      fields: [{ name: "name", label: "Name", type: "text", required: true }, statusBooleanField],
+    };
+    const store: EntityRecord[] = [
+      { id: 1, createdAt: "x", name: "Acme Corp", status: "Pending" },
+      { id: 2, createdAt: "x", name: "Globex", status: "Shipped" },
+    ];
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = mockRecordsFetch(store) as typeof fetch;
+    try {
+      const view = renderEntityPanel({ entity: entityWithEnumStatus, allEntities: [entityWithEnumStatus] });
+      await waitForCondition(() => document.querySelectorAll("table tbody tr").length === 2);
+
+      for (const checkbox of document.querySelectorAll('td.select-col input[type="checkbox"]')) {
+        fireEvent.click(checkbox);
+      }
+      await waitForCondition(() => document.querySelector(".bulk-actions-bar") !== null);
+
+      const fieldPicker = document.querySelector(".bulk-edit-field-label select") as HTMLSelectElement;
+      fireEvent.change(fieldPicker, { target: { value: "status" } });
+      await waitForCondition(() => document.querySelectorAll(".bulk-actions-bar select").length === 2);
+      const valueSelect = document.querySelectorAll(".bulk-actions-bar select")[1] as HTMLSelectElement;
+      fireEvent.change(valueSelect, { target: { value: "Shipped" } });
+      await waitForCondition(() => valueSelect.value === "Shipped");
+
+      // Simulate a refine that retypes "status" from enum to boolean
+      // while staying on the exact same entity.name ("Deal") and the
+      // exact same field name ("status"), with the bulk-edit panel still
+      // open and "status" still selected -- the same live-refine,
+      // no-remount scenario the groupFieldName test above exercises.
+      view.rerender(buildEntityPanelElement({ entity: entityWithBooleanStatus, allEntities: [entityWithBooleanStatus] }));
+      await waitForCondition(() => document.querySelector(".bulk-actions-bar input[type='checkbox']") !== null);
+
+      const checkbox = document.querySelector(".bulk-actions-bar input[type='checkbox']") as HTMLInputElement;
+      assert.equal(
+        checkbox.checked,
+        false,
+        "the stale enum value \"Shipped\" must never be coerced into a pre-checked checkbox the user never actually chose",
+      );
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+});
+
+/**
  * Regression test for round 500's finding: sortKeys' own re-validation
  * effect (sibling to viewMode's and fieldFilters', fixed in rounds 490 and
  * 493 respectively) was never given the same fix -- it only dropped a sort

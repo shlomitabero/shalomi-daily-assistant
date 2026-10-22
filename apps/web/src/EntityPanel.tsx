@@ -1573,6 +1573,49 @@ export function EntityPanel({
   }, [fieldTypesKey]);
 
   /**
+   * Round 781: the identical "field TYPE changes while its NAME survives
+   * a live refine" bug class round 780 just fixed for groupFieldName,
+   * applied to its sibling bulkEditField/bulkEditValue.
+   * handleBulkEditFieldChange's own doc comment already states the exact
+   * hazard this guards against ("a stale string value FieldInput would
+   * render nonsensically") -- but that reset only ever fires when the
+   * USER re-picks the field from the dropdown, never when the SAME field
+   * retypes underneath it while it stays selected. FieldInput's boolean
+   * branch (`checked={Boolean(value)}`) coerces any non-empty leftover
+   * string (e.g. a stale enum value like "Shipped" left over from before
+   * the retype) to a pre-checked checkbox -- actively misleading, not
+   * just cosmetically stale, since it shows "on" with no action from the
+   * user. Left as-is, the server's own coerceValue strictly rejects
+   * anything but true/false/1/0 for a boolean field, so clicking Apply
+   * fails every single selected record's PATCH with a confusing
+   * validation error after the UI looked ready to go. Reuses
+   * handleBulkEditFieldChange itself (same field name, so bulkEditField
+   * is unaffected) to recompute the type-appropriate empty value, the
+   * exact reset a user re-picking this same field from the dropdown
+   * would already get. If the new type is "file" -- excluded from
+   * bulkEditableFields entirely, below -- the field name itself is
+   * cleared instead, the same "stale value has no <option>" blank-select
+   * hazard round 780 also closed for groupFieldName.
+   */
+  const bulkEditFieldTypeRef = useRef<string | null>(null);
+  useEffect(() => {
+    bulkEditFieldTypeRef.current = bulkEditField ? entity.fields.find((f) => f.name === bulkEditField)?.type ?? null : null;
+  }, [bulkEditField]);
+  useEffect(() => {
+    if (!bulkEditField) return;
+    const currentType = entity.fields.find((f) => f.name === bulkEditField)?.type;
+    if (currentType && bulkEditFieldTypeRef.current && currentType !== bulkEditFieldTypeRef.current) {
+      if (currentType === "file") {
+        setBulkEditField("");
+        setBulkEditValue("");
+      } else {
+        handleBulkEditFieldChange(bulkEditField);
+      }
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [fieldTypesKey]);
+
+  /**
    * Drag-to-resize a column header. Only attaches real mousemove/mouseup
    * listeners while a drag is actually in progress (resizingField set),
    * removing them the instant it ends -- not a permanent global listener
