@@ -151,13 +151,15 @@ interface ImpactDetail {
 }
 
 interface MigrationChangeDetail {
-  type: "new_table" | "new_column" | "type_changed" | "relation_target_changed" | "relation_missing_fk";
+  type: "new_table" | "new_column" | "type_changed" | "relation_target_changed" | "relation_missing_fk" | "automation_rule_disabled";
   table: string;
   column?: string;
   fromType?: string;
   toType?: string;
   fromRelationTo?: string;
   toRelationTo?: string;
+  /** Only set for "automation_rule_disabled" -- see migrate.ts's own MigrationChange. */
+  disabledCount?: number;
 }
 
 interface QaResultDetail {
@@ -231,7 +233,9 @@ function AgentDetail({ agent, detail }: { agent: AgentStepEvent["agent"]; detail
                   ? `${t("build.detail.database.relationTargetChanged")}${c.table}.${c.column} (${c.fromRelationTo} → ${c.toRelationTo})`
                   : c.type === "relation_missing_fk"
                     ? `${t("build.detail.database.relationMissingFk")}${c.table}.${c.column} (→ ${c.toRelationTo})`
-                    : `${t("build.detail.database.typeChanged")}${c.table}.${c.column} (${c.fromType} → ${c.toType})`}
+                    : c.type === "automation_rule_disabled"
+                      ? `${t("build.detail.database.automationRuleDisabled")}${c.table}${c.column ? `.${c.column}` : ""} (${c.disabledCount})`
+                      : `${t("build.detail.database.typeChanged")}${c.table}.${c.column} (${c.fromType} → ${c.toType})`}
           </li>
         ))}
       </ul>

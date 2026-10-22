@@ -577,6 +577,59 @@ test("BuildProgress's Database detail panel reports a relation field reusing an 
 });
 
 /**
+ * Regression test for round 796's finding, the exact same gap class as the
+ * two tests just above: migrate.ts's MigrationChange has a 6th variant,
+ * "automation_rule_disabled" (added in round 687, already handled
+ * correctly by pipeline.ts's own collapsed Database-step summary message
+ * via describeMigrationHazards), but this panel's own local
+ * MigrationChangeDetail type never learned about it either -- any detail
+ * entry that wasn't one of the five earlier variants fell into the final
+ * else branch, which assumes "type_changed" and reads fromType/toType --
+ * fields an automation_rule_disabled entry doesn't have (it only ever
+ * sets disabledCount, and column is left undefined for an entity-level
+ * disable), rendering a bogus "Field type changed ... (undefined →
+ * undefined)" line. Covers both shapes: a field-level disable (column
+ * set) and an entity-level disable (column left undefined, the same
+ * convention "new_table" already uses).
+ */
+test("BuildProgress's Database detail panel reports a disabled automation rule correctly, once expanded, for both a field-level and an entity-level disable", async () => {
+  await withJsdom(async () => {
+    const events: AgentStepEvent[] = [
+      { agent: "Database", status: "running", message: "…" },
+      {
+        agent: "Database",
+        status: "success",
+        message: "1 schema change(s) applied (0 new tables, 0 new columns). Nothing was dropped. Note: 2 automation rule(s) were disabled because they referenced a field or entity that no longer exists — re-enable them from the Automations panel if still needed.",
+        detail: [
+          { type: "automation_rule_disabled", table: "entity_proj1_Order", column: "status", disabledCount: 1 },
+          { type: "automation_rule_disabled", table: "entity_proj1_Customer", disabledCount: 1 },
+        ],
+      },
+    ];
+    renderBuildProgress(events);
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    const steps = [...document.querySelectorAll(".agent-step")];
+    const databaseStep = steps.find((s) => s.textContent?.includes("Database Engineer"));
+    const toggle = databaseStep?.querySelector(".detail-toggle") as HTMLButtonElement | null;
+    assert.ok(toggle, "expected a details toggle for the Database step once it succeeds with a detail payload");
+    fireEvent.click(toggle!);
+
+    const detailList = databaseStep?.querySelector(".detail-list");
+    assert.ok(detailList, "expected the detail list to render once expanded");
+    const text = detailList!.textContent ?? "";
+    assert.match(text, /entity_proj1_Order\.status/, "a field-level disable must still name the real table.column");
+    assert.match(text, /entity_proj1_Customer/, "an entity-level disable must name the real table even with no column");
+    assert.doesNotMatch(text, /undefined/, "an automation_rule_disabled entry has no fromType/toType -- it must never fall through to the type_changed rendering branch");
+    assert.doesNotMatch(
+      text,
+      /Field type changed/,
+      "the wording must be specific to a disabled automation rule, not reuse the unrelated 'type changed' label",
+    );
+  });
+});
+
+/**
  * New in this round: the subtitle's "step N of M" text already carried
  * this same fraction, but only as text a reader had to do the division on
  * themselves. Confirms a real filled progress bar renders in the DOM with
