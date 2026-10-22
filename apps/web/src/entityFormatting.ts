@@ -817,6 +817,33 @@ export function findPhoneField(fields: Field[]): Field | null {
 }
 
 /**
+ * Picks the actual phone NUMBER a "Send WhatsApp" row action should use for
+ * one specific record -- unlike findPhoneField above (which names a single
+ * FIELD for the whole entity, by declaration order only), a record can
+ * have ITS OWN phone-like field left blank while a sibling phone-like
+ * field on that same record holds a real number (e.g. an entity with both
+ * "phone", an office line, and "mobile", the number that actually receives
+ * WhatsApp messages -- an entirely ordinary real-world combination).
+ * Before this, the "Send WhatsApp" button read only the one field
+ * findPhoneField happened to pick for the whole entity, so a record whose
+ * office line was blank hid the button entirely even when its own mobile
+ * number was right there. Checks every phone-like field on the entity, in
+ * declaration order, and returns the first one that actually has a
+ * non-empty value on THIS record -- the same "check every candidate field,
+ * not just the first" fix round 774 already made to whatsapp.ts's own
+ * findMatchingRecord for the opposite (inbound message -> record)
+ * direction.
+ */
+export function findRecordPhoneNumber(fields: Field[], record: EntityRecord): string | null {
+  for (const field of fields) {
+    if (!PHONE_FIELD_NAME_HINTS.includes(field.name.toLowerCase())) continue;
+    const value = record[field.name];
+    if (typeof value === "string" && value) return value;
+  }
+  return null;
+}
+
+/**
  * Picks the field the calendar view's day-chip should show as a record's
  * label -- reuses `pickDisplayField`'s own "name"/"title", then first text
  * field" preference (the same rule the table/board views use for a

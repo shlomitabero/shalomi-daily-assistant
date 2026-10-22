@@ -40,6 +40,7 @@ import {
   fieldDisplayLabel,
   fieldLabelOccurrences,
   findPhoneField,
+  findRecordPhoneNumber,
   formatDateForInput,
   formatDateValue,
   formatEntityRecordCount,
@@ -534,8 +535,8 @@ function BoardCard({
             {t("entity.duplicate")}
           </button>
         )}
-        {!readOnly && phoneField && onSendWhatsApp && typeof record[phoneField.name] === "string" && record[phoneField.name] && (
-          <button type="button" onClick={() => onSendWhatsApp(record[phoneField.name] as string)}>
+        {!readOnly && phoneField && onSendWhatsApp && findRecordPhoneNumber(orderedFields, record) && (
+          <button type="button" onClick={() => onSendWhatsApp(findRecordPhoneNumber(orderedFields, record) as string)}>
             {t("entity.sendWhatsApp")}
           </button>
         )}
@@ -1191,6 +1192,11 @@ export function EntityPanel({
   const boardField = useMemo(() => findBoardField(entity.fields), [entity.fields]);
   const dateField = useMemo(() => findDateField(entity.fields), [entity.fields]);
   const endDateField = useMemo(() => (dateField ? findEndDateField(entity.fields, dateField) : null), [entity.fields, dateField]);
+  // Only used as a cheap "does this entity even have a phone-like field at
+  // all" gate below -- which actual field holds a given RECORD's real
+  // number is looked up per-record via findRecordPhoneNumber instead (a
+  // record can have its own phone-like field blank while a sibling
+  // phone-like field on that same record holds a real number).
   const phoneField = useMemo(() => findPhoneField(entity.fields), [entity.fields]);
   const relationTargets = useMemo(() => {
     const names = entity.fields
@@ -2965,8 +2971,8 @@ export function EntityPanel({
               {t("entity.duplicate")}
             </button>
           )}
-          {!readOnly && phoneField && onSendWhatsApp && typeof record[phoneField.name] === "string" && record[phoneField.name] && (
-            <button type="button" onClick={() => onSendWhatsApp(record[phoneField.name] as string)}>
+          {!readOnly && phoneField && onSendWhatsApp && findRecordPhoneNumber(entity.fields, record) && (
+            <button type="button" onClick={() => onSendWhatsApp(findRecordPhoneNumber(entity.fields, record) as string)}>
               {t("entity.sendWhatsApp")}
             </button>
           )}

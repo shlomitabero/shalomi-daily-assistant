@@ -8983,6 +8983,110 @@ test("EntityPanel's board view cards get the same Print and Send WhatsApp row ac
 });
 
 /**
+ * Round 777: the "Send WhatsApp" row action used to read only the single
+ * phone-like field findPhoneField picked for the WHOLE entity (the first
+ * one by declaration order) -- so an entity with two phone-like fields
+ * (e.g. "phone", an office line, declared before "mobile", the number
+ * that actually receives WhatsApp messages) hid the button entirely for
+ * any record whose "phone" happened to be blank, even when that exact
+ * record's own "mobile" held a real number. Confirms the fix: the button
+ * now falls through to a sibling phone-like field on the SAME record.
+ */
+test("EntityPanel's row-level 'Send WhatsApp' action falls through to a sibling phone-like field when the first one is blank on this record", async () => {
+  await withJsdom(async () => {
+    const leadEntity: Entity = {
+      name: "Lead",
+      label: "Lead",
+      fields: [
+        { name: "name", label: "Name", type: "text", required: true },
+        { name: "phone", label: "Phone", type: "text", required: false },
+        { name: "mobile", label: "Mobile", type: "text", required: false },
+      ],
+    };
+    const store: EntityRecord[] = [{ id: 1, createdAt: "x", name: "Dana", phone: "", mobile: "0501234567" }];
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = (async (input: string) => {
+      if (input === "/api/projects/proj1/entities/Lead") {
+        return new Response(JSON.stringify({ records: store }), { status: 200, headers: { "content-type": "application/json" } });
+      }
+      throw new Error(`unexpected request ${input}`);
+    }) as typeof fetch;
+    let sentTo: string | null = null;
+    try {
+      renderEntityPanel({
+        entity: leadEntity,
+        allEntities: [leadEntity],
+        onSendWhatsApp: (phoneNumber: string) => {
+          sentTo = phoneNumber;
+        },
+      });
+      await waitForCondition(() => document.querySelectorAll("table tbody tr").length === 1);
+
+      const row = document.querySelectorAll("table tbody tr")[0];
+      const whatsAppBtn = Array.from(row.querySelectorAll("button")).find((b) => b.textContent?.includes("WhatsApp"));
+      assert.ok(whatsAppBtn, "a blank 'phone' must not hide the button when this record's own 'mobile' has a real value");
+      fireEvent.click(whatsAppBtn!);
+      assert.equal(sentTo, "0501234567", "clicking must use this record's own 'mobile' value, since 'phone' is blank on it");
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+});
+
+test("EntityPanel's board view card's Send WhatsApp action also falls through to a sibling phone-like field when the first one is blank on this record", async () => {
+  await withJsdom(async () => {
+    const leadEntity: Entity = {
+      name: "Lead",
+      label: "Lead",
+      fields: [
+        { name: "name", label: "Name", type: "text", required: true },
+        { name: "phone", label: "Phone", type: "text", required: false },
+        { name: "mobile", label: "Mobile", type: "text", required: false },
+        {
+          name: "stage",
+          label: "Stage",
+          type: "enum",
+          required: true,
+          enumValues: ["new", "won"],
+          enumLabels: { new: "New", won: "Won" },
+        },
+      ],
+    };
+    const store: EntityRecord[] = [{ id: 1, createdAt: "x", name: "Dana", phone: "", mobile: "0501234567", stage: "new" }];
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = (async (input: string) => {
+      if (input === "/api/projects/proj1/entities/Lead") {
+        return new Response(JSON.stringify({ records: store }), { status: 200, headers: { "content-type": "application/json" } });
+      }
+      throw new Error(`unexpected request ${input}`);
+    }) as typeof fetch;
+    let sentTo: string | null = null;
+    try {
+      renderEntityPanel({
+        entity: leadEntity,
+        allEntities: [leadEntity],
+        onSendWhatsApp: (phoneNumber: string) => {
+          sentTo = phoneNumber;
+        },
+      });
+      await waitForCondition(() => document.querySelectorAll("table tbody tr").length === 1);
+
+      const boardToggle = document.querySelectorAll(".view-toggle-btn")[1] as HTMLButtonElement;
+      fireEvent.click(boardToggle);
+      await waitForCondition(() => document.querySelectorAll(".board-card").length === 1);
+
+      const danaCard = document.querySelector(".board-card")!;
+      const whatsAppBtn = Array.from(danaCard.querySelectorAll("button")).find((b) => b.textContent?.includes("WhatsApp"));
+      assert.ok(whatsAppBtn, "a blank 'phone' must not hide the board card's button when this record's own 'mobile' has a real value");
+      fireEvent.click(whatsAppBtn!);
+      assert.equal(sentTo, "0501234567", "clicking must use this record's own 'mobile' value, since 'phone' is blank on it");
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+});
+
+/**
  * New in this round: a longtext cell (a "Notes"/"Description" field) now
  * carries its full, untruncated value in a native `title` attribute --
  * before this, the only way to read a longtext value once the column was

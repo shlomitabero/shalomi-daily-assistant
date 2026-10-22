@@ -14,6 +14,7 @@ import {
   findEndDateField,
   findFilterableFields,
   findPhoneField,
+  findRecordPhoneNumber,
   formatDateForInput,
   formatDateValue,
   formatEntityRecordCount,
@@ -827,6 +828,46 @@ test("findPhoneField returns null when the entity has no phone-like field", () =
     { name: "email", type: "text", required: false },
   ];
   assert.equal(findPhoneField(fields), null);
+});
+
+/**
+ * Round 777: findRecordPhoneNumber is the per-RECORD counterpart to
+ * findPhoneField above -- an entity with two phone-like fields (e.g.
+ * "phone", an office line, declared before "mobile", the number that
+ * actually receives WhatsApp messages) can have a record whose "phone" is
+ * blank while its "mobile" holds a real number. Before this, the "Send
+ * WhatsApp" row action read only the single field findPhoneField picked
+ * for the whole entity, so that record's button never showed at all, even
+ * though a real number was right there on a sibling field.
+ */
+test("findRecordPhoneNumber falls through to a sibling phone-like field when the first one is blank on this particular record", () => {
+  const fields: Field[] = [
+    { name: "name", type: "text", required: true },
+    { name: "phone", type: "text", required: false },
+    { name: "mobile", type: "text", required: false },
+  ];
+  const recordWithBlankOfficeLine = { id: 1, name: "Dana Levi", phone: "", mobile: "050-999-8888" };
+  assert.equal(findRecordPhoneNumber(fields, recordWithBlankOfficeLine), "050-999-8888");
+});
+
+test("findRecordPhoneNumber prefers the first phone-like field's own value when it's actually set on this record", () => {
+  const fields: Field[] = [
+    { name: "name", type: "text", required: true },
+    { name: "phone", type: "text", required: false },
+    { name: "mobile", type: "text", required: false },
+  ];
+  const recordWithBothSet = { id: 1, name: "Dana Levi", phone: "03-555-1234", mobile: "050-999-8888" };
+  assert.equal(findRecordPhoneNumber(fields, recordWithBothSet), "03-555-1234");
+});
+
+test("findRecordPhoneNumber returns null when every phone-like field is blank or missing on this record", () => {
+  const fields: Field[] = [
+    { name: "name", type: "text", required: true },
+    { name: "phone", type: "text", required: false },
+    { name: "mobile", type: "text", required: false },
+  ];
+  const recordWithNeitherSet = { id: 1, name: "Dana Levi", phone: "", mobile: null };
+  assert.equal(findRecordPhoneNumber(fields, recordWithNeitherSet), null);
 });
 
 /**
