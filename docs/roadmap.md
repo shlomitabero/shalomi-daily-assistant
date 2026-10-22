@@ -31258,3 +31258,21 @@ Still no genuine reply from שלומי. This round's survey moved to the webhook
 **Verification**: reverted `fireWebhookAction`'s own file-field resolution (passing the raw record straight through) and reran -- the new integration test failed exactly as predicted (the raw doubly-encoded JSON string instead of a resolved object); restored and reran clean. Full `automations.test.ts`: 44/44. `app.test.ts`: 229/229, confirming the `routes/projects.ts` signature changes broke nothing. Only `apps/api` changed this round, so its own full suite ran: 571/572 pass; the sole failure is the already-documented pre-existing `codegen.test.ts` process-exit hang flake (location `:1:1`, SIGKILL), unrelated to this change. `npm run build` (esbuild bundle) clean.
 
 **Status**: shipped and pushed.
+
+### Round 789: the webhook SSRF guard's IPv4-mapped-IPv6 unwrapping missed the RFC 6052 NAT64 encoding of the same blocked-IP bypass
+
+Still no genuine reply from שלומי. This round's survey went back to the webhook SSRF guard -- not the already-reviewed-and-accepted DNS-rebinding gap, but a different, static-literal encoding gap in the existing IPv4-mapped-address unwrapping this exact file already has a fix for under one specific prefix.
+
+**The gap**: `extractIPv4MappedAddress` (`apps/api/src/automations.ts`) already unwraps the `"::ffff:"` IPv4-mapped-IPv6 encoding (e.g. `"[::ffff:169.254.169.254]"`) back to its embedded IPv4 address, specifically so `BLOCKED_IPV4_HOSTNAME_PATTERNS` can still catch a blocked target hiding behind that encoding -- but its regex only ever matched that one prefix. RFC 6052's well-known NAT64 prefix (`"64:ff9b::"`) embeds an IPv4 address inside an IPv6 literal the exact same way, used by any network that actually performs NAT64/DNS64 translation (common on IPv6-mostly networks and some cloud/container egress setups). Confirmed empirically (`node -e "console.log(new URL('http://[64:ff9b::169.254.169.254]/').hostname)"`) that Node's own URL parser canonicalizes that literal to `"[64:ff9b::a9fe:a9fe]"` -- the identical hex-pair shape `"::ffff:"` already produces, just under a prefix the original regex never recognized at all, so it fell through to `BLOCKED_OTHER_HOSTNAME_PATTERNS` (none of which know about this prefix either) and `isAllowedWebhookUrl` wrongly returned `true` for a webhook URL literally addressing the AWS/GCP instance-metadata IP.
+
+**Why this is not deliberate**: this file's own extensive comment history already treats "a blocked IP hiding behind a different IPv6 encoding" as a recognized, actively-defended-against hazard class (the exact reasoning behind `extractIPv4MappedAddress` existing at all) -- it just covered one of the two real-world encodings of that class, not both.
+
+**The fix**: `extractIPv4MappedAddress`'s regex now matches either prefix (`"::ffff:"` or `"64:ff9b::"`) before extracting the embedded IPv4 address -- the rest of the unwrapping/validation logic is unchanged, since both prefixes produce the identical embedded-address shape.
+
+**codegen.ts parity**: confirmed not needed -- the exported standalone app has no automations engine of its own at all.
+
+**The tests**: a new test mirrors the existing `"::ffff:"` IPv4-mapped-literal test exactly, for the NAT64 prefix instead -- confirms the cloud instance-metadata IP, loopback (dotted and hex form), and a private `10.x` address wrapped with `"64:ff9b::"` are all still blocked, while a genuinely public IPv4 address wrapped the same way is still allowed.
+
+**Verification**: reverted the regex back to `"::ffff:"`-only and reran -- the new test failed exactly as predicted (the blocked instance-metadata IP wrongly allowed through); restored and reran clean. Full `automations.test.ts`: 45/45. Only `apps/api` changed this round, so its own full suite ran: 572/573 pass; the sole failure is the already-documented pre-existing `codegen.test.ts` process-exit hang flake (location `:1:1`, SIGKILL), unrelated to this change. `npm run build` (esbuild bundle) clean.
+
+**Status**: shipped and pushed.
