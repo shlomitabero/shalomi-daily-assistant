@@ -31296,3 +31296,27 @@ Still no genuine reply from שלומי. This round's survey moved to Global Sear
 **Verification**: the live DOM test's first draft actually passed even against the UNFIXED code -- caught via tracing the real cache contents and the real computed sample size at each step: waiting for the "Show all" button to disappear isn't on its own a correct discriminating signal, since it disappears either way (`totalMatches` always gets set to whatever was just computed, buggy or not). Corrected the test to assert the final hit count directly instead. With that correction, reverting the fix made the corrected test fail exactly as predicted (6 matches instead of 5); restored and reran clean. Same revert-and-confirm cycle for the `codegen.ts` port. Full `GlobalSearchPanel.test.ts`: 24/24. The isolated `codegen.test.ts` run hit the already-documented pre-existing process-exit hang flake (location `:1:1`, SIGKILL) at the exact same subtest it has in every prior round's log (787-789), confirming it's unrelated to this change; the new test was independently verified via `--test-name-pattern` in isolation, including the fail-before/pass-after cycle. Both workspaces changed this round, so both full suites ran: `apps/api` 572/573 (same pre-existing flake); `apps/web` 1108/1108, no flakes. `tsc -b` (apps/web) and `npm run build` (apps/api's esbuild bundle) both clean.
 
 **Status**: shipped and pushed.
+
+### Round 791: Business Twin's shareable text report listed entities in raw declaration order, contradicting the live panel's own count-sorted grid
+
+Still no genuine reply from שלומי. This round's survey moved to Business Twin's report-sharing feature -- a different corner of the app from the Global Search cache fix round 790 just shipped.
+
+**The gap**: `BusinessTwinPanel.tsx`'s on-screen entity-stats grid is deliberately rendered via `sortTwinStatsByCount(twin.entities)` -- a real fix (biggest numbers first, not whatever order the spec happens to declare entities in, with a stable tie-break for equal counts). `formatTwinReport` (`twinReport.ts`) -- the function behind both the "Copy" and "Download" buttons, whose own doc comment explicitly calls it a "shareable text snapshot" of the exact same data -- instead iterated `twin.entities` with a plain `for...of`, i.e. the server's raw spec-declaration order.
+
+**Why this is not deliberate**: `twinReport.ts`'s own doc comment, right above the exact code this round touched, already explicitly reasons about matching the on-screen rendering order for a DIFFERENT section (`mostActiveObservation`/`mostLinkedRecord`: "in the same order BusinessTwinPanel.tsx renders them on screen") -- proving the author actively cared about this exact property elsewhere in this same function, just missed applying it to the entities list itself.
+
+**Concrete failure scenario**: a project with entities declared `[Lead, Customer, Order]` where Order has 500 records, Customer 50, Lead 2. The on-screen dashboard correctly shows Order -> Customer -> Lead. Clicking "Download" or "Copy" instead produced "Lead: 2 / Customer: 50 / Order: 500" -- the opposite order, contradicting what the reader just saw on screen the moment they share that exact text (WhatsApp, email, anywhere this plain-text snapshot ends up).
+
+**Not caught by any existing test**: `twinReport.test.ts`'s own fixture entities (`[Customer: 3, Order: 2]`) already happen to be in descending-count order, so no existing assertion could have caught a reordering regression -- `sortTwinStatsByCount` was never imported or referenced in that file at all before this fix.
+
+**The fix**: relocated `sortTwinStatsByCount` from `BusinessTwinPanel.tsx` into `twinReport.ts` (`twinReport.ts` has no existing dependency on `BusinessTwinPanel.tsx`, so this is the direction that avoids a circular import -- `BusinessTwinPanel.tsx` already imports `formatTwinReport`/`downloadTwinReport` from `twinReport.ts`, and now imports `sortTwinStatsByCount` from there too instead of defining it locally). `formatTwinReport` now iterates `sortTwinStatsByCount(twin.entities)` instead of the raw array.
+
+**Deliberately NOT touched this round**: `twin.distributions`/`twin.numericStats` are rendered via plain `.map()` with no analogous sort -- flagged separately as a much weaker, more subjective case (there's no single "correct" significance order for a distribution chart the way there is for a raw record count), noted but not pursued.
+
+**codegen.ts parity**: confirmed not needed -- the exported standalone app has no Business Twin feature of its own at all.
+
+**The tests**: moved `sortTwinStatsByCount`'s own two unit tests from `BusinessTwinPanel.test.ts` to `twinReport.test.ts` (its new home, alongside its own `BusinessTwinEntityStat` import). Added a new `formatTwinReport` test with entities declared in the OPPOSITE order from their real counts, to actually prove the fix sorts rather than merely preserving a fixture that already happened to already be sorted.
+
+**Verification**: reverted `formatTwinReport`'s `sortTwinStatsByCount` call (back to the raw `twin.entities` iteration) and reran -- the new test failed exactly as predicted (Orders listed after Customers instead of before); restored and reran clean. Full `twinReport.test.ts` and `BusinessTwinPanel.test.ts` both pass. Only `apps/web` changed this round, so its own full suite ran: 1109/1109 pass, no flakes. `tsc -b` clean.
+
+**Status**: shipped and pushed.
