@@ -865,6 +865,13 @@ export async function uploadRecordFile(
   return body.file;
 }
 
+/**
+ * Round 792: the same X-Idempotency-Key mechanism createRecord already
+ * uses, missed for update -- a response lost in transit after the server
+ * already applied this update left fetchWithWakeRetry's retry free to
+ * re-apply it (harmless for storage, but a duplicate "record_updated"
+ * automation fire for a single logical edit).
+ */
 export function updateRecord(
   projectId: string,
   entityName: string,
@@ -874,13 +881,28 @@ export function updateRecord(
 ): Promise<{ record: EntityRecord }> {
   return request(`/projects/${projectId}/entities/${encodeURIComponent(entityName)}/${recordId}`, {
     method: "PATCH",
-    headers: options?.suppressAutomations ? { "x-suppress-automations": "true" } : undefined,
+    headers: {
+      "x-idempotency-key": crypto.randomUUID(),
+      ...(options?.suppressAutomations ? { "x-suppress-automations": "true" } : {}),
+    },
     body: JSON.stringify(data),
   });
 }
 
+/**
+ * Round 792: the same X-Idempotency-Key mechanism createRecord already
+ * uses, missed for delete -- a response lost in transit after the server
+ * already deleted the row left fetchWithWakeRetry's retry hitting an
+ * already-deleted record, surfacing a confusing "not found" error for a
+ * delete that, from the user's own point of view, already fully
+ * succeeded (see EntityPanel.tsx's commitPendingDelete, which would
+ * otherwise restore the already-gone row into the UI on that error).
+ */
 export function deleteRecord(projectId: string, entityName: string, recordId: number): Promise<void> {
-  return request(`/projects/${projectId}/entities/${encodeURIComponent(entityName)}/${recordId}`, { method: "DELETE" });
+  return request(`/projects/${projectId}/entities/${encodeURIComponent(entityName)}/${recordId}`, {
+    method: "DELETE",
+    headers: { "x-idempotency-key": crypto.randomUUID() },
+  });
 }
 
 /** The owner never appears in `collaborators` itself (see collaborators.ts's own module comment -- their access comes from project.ownerId, not the join table), so the panel needs this separately to show who actually owns the project. Null only in the should-never-happen case of a dangling owner reference. */

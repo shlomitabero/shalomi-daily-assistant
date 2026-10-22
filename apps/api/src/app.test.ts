@@ -10,6 +10,7 @@ import {
   findUserByEmail,
   insertCheckpoint,
   insertProject,
+  insertRecord,
   insertWhatsAppMessage,
   markProjectBuilt,
   recordAutomationRun,
@@ -1522,6 +1523,141 @@ test("POST /projects/:id/entities/:entityName retried with the same idempotency 
     const listRes = await fetch(`${baseUrl}/api/projects/${project.id}/entities/Courier`, { headers: authHeaders(token) });
     const { records } = (await listRes.json()) as { records: { id: number }[] };
     assert.equal(records.length, originalCount + 1, "exactly one new record must exist -- the retry must not have inserted a second row");
+  });
+});
+
+/**
+ * Round 792's Explore survey found that unlike record create (round 594,
+ * just above), PATCH and DELETE on a single record never got
+ * withIdempotency protection at all -- neither reads X-Idempotency-Key.
+ * For DELETE this is a guaranteed, visible failure, not just a duplication
+ * risk: deleteRecord (repository.ts) throws NotFoundError once the row is
+ * actually gone, and the route has no special case for it, so it
+ * propagates as a real 404. A response lost in transit after the server
+ * already deleted the row (a dropped Wi-Fi/mobile connection, not only
+ * Render's cold-start case this mechanism was built for) made
+ * fetchWithWakeRetry's retry land on an already-deleted row and get back a
+ * confusing "not found" error for a delete that, from the user's own point
+ * of view, already fully succeeded -- EntityPanel.tsx's
+ * commitPendingDelete then restores the (already gone) row into the UI
+ * and shows that error.
+ */
+test("DELETE .../entities/:entityName/:recordId retried with the same idempotency key after the first attempt already succeeded replays the original 204, instead of 404ing on the now-deleted row", async () => {
+  await withServer(async (baseUrl, db) => {
+    const email = `delete-idem-${randomUUID()}@example.com`;
+    const token = await signup(baseUrl, email);
+    const user = findUserByEmail(db, email)!;
+
+    const spec: ProductSpec = {
+      summary: "test",
+      personas: [],
+      roles: ["Admin"],
+      entities: [{ name: "Customer", fields: [{ name: "name", type: "text", required: true }] }],
+      screens: [],
+      assumptions: [],
+      openQuestions: [],
+    };
+    const projectId = randomUUID();
+    insertProject(db, { id: projectId, ownerId: user.id, name: "CRM", description: "test", spec });
+    diffAndMigrate(db, projectId, undefined, spec);
+    markProjectBuilt(db, projectId);
+    const record = insertRecord(db, projectId, spec.entities[0], { name: "Dana Levi" });
+
+    const headers = { ...authHeaders(token), "x-idempotency-key": "delete-repro-key" };
+    const firstRes = await fetch(`${baseUrl}/api/projects/${projectId}/entities/Customer/${record.id}`, {
+      method: "DELETE",
+      headers,
+    });
+    assert.equal(firstRes.status, 204);
+
+    const retryRes = await fetch(`${baseUrl}/api/projects/${projectId}/entities/Customer/${record.id}`, {
+      method: "DELETE",
+      headers,
+    });
+    assert.equal(
+      retryRes.status,
+      204,
+      "a retried delete with the same idempotency key must replay the original success, not 404 on the already-deleted row",
+    );
+
+    const listRes = await fetch(`${baseUrl}/api/projects/${projectId}/entities/Customer`, { headers: authHeaders(token) });
+    const { records } = (await listRes.json()) as { records: { id: number }[] };
+    assert.equal(records.length, 0, "the record must still be gone -- the replay must not have somehow resurrected it");
+  });
+});
+
+/**
+ * Round 792: same withIdempotency extension as DELETE just above, for
+ * PATCH -- but a retried PATCH re-sending the exact same body it sent
+ * before is naturally idempotent at the storage level on its own
+ * (updateRecord just rewrites the same value back), so a test that only
+ * re-sends the identical request can't tell a guarded retry from an
+ * unguarded one -- both land on the same final state by coincidence, not
+ * because anything guarded the second run.
+ *
+ * The real, observable harm needs a THIRD edit landing in between the
+ * first attempt and the lost-response retry (a collaborator's own PATCH,
+ * using no idempotency key of its own, racing in while the first
+ * caller's response never reached them): without the fix, the retry
+ * genuinely re-runs updateRecord with its own stale body and clobbers
+ * that collaborator's newer edit back to the stale value. With the fix,
+ * the retry is a pure cached replay -- updateRecord never runs a second
+ * time, so the collaborator's edit survives untouched in the database
+ * (even though the stale cached response handed back to the retrying
+ * client still reads the original value it itself sent).
+ */
+test("PATCH .../entities/:entityName/:recordId retried with the same idempotency key after a collaborator's own edit lands in between does not clobber that edit", async () => {
+  await withServer(async (baseUrl, db) => {
+    const email = `patch-idem-${randomUUID()}@example.com`;
+    const token = await signup(baseUrl, email);
+    const user = findUserByEmail(db, email)!;
+
+    const spec: ProductSpec = {
+      summary: "test",
+      personas: [],
+      roles: ["Admin"],
+      entities: [{ name: "Customer", fields: [{ name: "name", type: "text", required: true }] }],
+      screens: [],
+      assumptions: [],
+      openQuestions: [],
+    };
+    const projectId = randomUUID();
+    insertProject(db, { id: projectId, ownerId: user.id, name: "CRM", description: "test", spec });
+    diffAndMigrate(db, projectId, undefined, spec);
+    markProjectBuilt(db, projectId);
+    const record = insertRecord(db, projectId, spec.entities[0], { name: "Dana Levi" });
+
+    const idemHeaders = { ...authHeaders(token), "x-idempotency-key": "patch-repro-key" };
+    const firstRes = await fetch(`${baseUrl}/api/projects/${projectId}/entities/Customer/${record.id}`, {
+      method: "PATCH",
+      headers: idemHeaders,
+      body: JSON.stringify({ name: "Dana Cohen" }),
+    });
+    assert.equal(firstRes.status, 200);
+
+    // A collaborator's own, separately-keyed edit lands before the
+    // original caller's retry -- simulating the original response being
+    // lost in transit while a second person's genuine update gets through.
+    const collaboratorRes = await fetch(`${baseUrl}/api/projects/${projectId}/entities/Customer/${record.id}`, {
+      method: "PATCH",
+      headers: authHeaders(token),
+      body: JSON.stringify({ name: "Dana Smith" }),
+    });
+    assert.equal(collaboratorRes.status, 200);
+
+    // The original caller, having never seen the first response, retries
+    // with the exact same key and body.
+    const retryRes = await fetch(`${baseUrl}/api/projects/${projectId}/entities/Customer/${record.id}`, {
+      method: "PATCH",
+      headers: idemHeaders,
+      body: JSON.stringify({ name: "Dana Cohen" }),
+    });
+    assert.equal(retryRes.status, 200);
+
+    const getRes = await fetch(`${baseUrl}/api/projects/${projectId}/entities/Customer`, { headers: authHeaders(token) });
+    const { records } = (await getRes.json()) as { records: { name: string }[] };
+    assert.equal(records.length, 1, "no duplicate record must exist");
+    assert.equal(records[0]!.name, "Dana Smith", "the collaborator's later edit must survive the replayed retry, not be clobbered back to the retry's own stale body");
   });
 });
 

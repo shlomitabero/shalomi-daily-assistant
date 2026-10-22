@@ -2671,48 +2671,75 @@ export function createProjectsRouter(
       }
       const entity = findEntity(project, req.params.entityName);
       const recordId = parseRecordId(req.params.recordId);
-      const before = getRecord(db, project.id, entity, recordId);
-      // Same FOREIGN KEY constraint translation as the POST route above --
-      // see its own comment for why this is reachable through the real UI.
-      let record: ReturnType<typeof updateRecord>;
-      try {
-        record = updateRecord(db, project.id, entity, recordId, req.body ?? {});
-      } catch (err) {
-        if (err instanceof Error && err.message === "FOREIGN KEY constraint failed") {
-          throw new HttpError(
-            400,
-            "This record references another record that no longer exists",
-            "INVALID_RELATION_TARGET",
-          );
-        }
-        throw err;
-      }
-      res.json({ record });
-      // Fire-and-forget, same reasoning as runAutomationsForRecordChange
-      // just below -- a filesystem delete must never add latency to, or
-      // ever fail, the response this update already succeeded at.
-      void deleteReplacedFileFields(uploadsDir, project.id, entity, before, record);
-      // Same X-Suppress-Automations escape hatch as the POST route above --
-      // see its own comment. CSV import now PATCHes a row whose id matched
-      // an existing record (see EntityPanel.tsx's handleImportFile) instead
-      // of always POSTing a duplicate, and that bulk re-import is exactly
-      // as automation-unsafe on the update side as it is on the create
-      // side: a spreadsheet of hundreds of pre-existing customers,
-      // re-imported after a bulk edit, must not fire a "record_updated"
-      // WhatsApp rule for every single one of them at once.
-      if (req.header("X-Suppress-Automations") !== "true") {
-        void runAutomationsForRecordChange(
-          db,
-          whatsapp,
-          project,
-          entity,
-          "updated",
-          record,
-          computeChangedFields(entity, before, record),
-          uploadsDir,
-          `${req.protocol}://${req.get("host")}`,
-        );
-      }
+      /**
+       * Round 792: same withIdempotency extension as the DELETE route just
+       * below's own doc comment -- a response lost in transit after
+       * updateRecord already committed used to leave a retry free to run
+       * updateRecord a second time. Re-sending the exact same body is
+       * harmless on its own (the second run just rewrites the same value
+       * back), but a genuinely different edit from someone else landing in
+       * between the lost response and the retry is not: without this
+       * guard, the retry would blindly re-apply its own stale body and
+       * clobber that intervening edit back to the old value. With it, a
+       * retry that matches an already-completed key never touches the
+       * database again -- it just replays the cached response -- so a
+       * collaborator's newer edit in between survives untouched.
+       */
+      const idempotencyKey = req.header("X-Idempotency-Key") || undefined;
+      const { status, body } = await withIdempotency(
+        db,
+        idempotencyKey,
+        req.userId!,
+        `PATCH /projects/${project.id}/entities/${entity.name}/${recordId}`,
+        async () => {
+          const before = getRecord(db, project.id, entity, recordId);
+          // Same FOREIGN KEY constraint translation as the POST route above --
+          // see its own comment for why this is reachable through the real UI.
+          let record: ReturnType<typeof updateRecord>;
+          try {
+            record = updateRecord(db, project.id, entity, recordId, req.body ?? {});
+          } catch (err) {
+            if (err instanceof Error && err.message === "FOREIGN KEY constraint failed") {
+              throw new HttpError(
+                400,
+                "This record references another record that no longer exists",
+                "INVALID_RELATION_TARGET",
+              );
+            }
+            throw err;
+          }
+          // Fire-and-forget, same reasoning as runAutomationsForRecordChange
+          // just below -- a filesystem delete must never add latency to, or
+          // ever fail, the response this update already succeeded at. Fired
+          // inside this callback (never reached on a replayed/cached retry),
+          // the same convention the create-record route's own automations
+          // call already established.
+          void deleteReplacedFileFields(uploadsDir, project.id, entity, before, record);
+          // Same X-Suppress-Automations escape hatch as the POST route above --
+          // see its own comment. CSV import now PATCHes a row whose id matched
+          // an existing record (see EntityPanel.tsx's handleImportFile) instead
+          // of always POSTing a duplicate, and that bulk re-import is exactly
+          // as automation-unsafe on the update side as it is on the create
+          // side: a spreadsheet of hundreds of pre-existing customers,
+          // re-imported after a bulk edit, must not fire a "record_updated"
+          // WhatsApp rule for every single one of them at once.
+          if (req.header("X-Suppress-Automations") !== "true") {
+            void runAutomationsForRecordChange(
+              db,
+              whatsapp,
+              project,
+              entity,
+              "updated",
+              record,
+              computeChangedFields(entity, before, record),
+              uploadsDir,
+              `${req.protocol}://${req.get("host")}`,
+            );
+          }
+          return { status: 200, body: { record } };
+        },
+      );
+      res.status(status).json(body);
     }),
   );
 
@@ -2725,39 +2752,69 @@ export function createProjectsRouter(
       }
       const entity = findEntity(project, req.params.entityName);
       const recordId = parseRecordId(req.params.recordId);
-      // Fetched before the delete below purely so a `file`-type field's
-      // own upload can be cleaned up afterward (see
-      // deleteReplacedFileFields) -- `undefined` here just means the
-      // delete itself is about to 404, same as always.
-      const before = getRecord(db, project.id, entity, recordId);
       /**
-       * `PRAGMA foreign_keys = ON` (connection.ts) makes deleting a record
-       * another record still points to via a `relation` field throw a real
-       * "FOREIGN KEY constraint failed" error from node:sqlite -- app.ts's
-       * generic error handler turned that into an unexplained 500 before
-       * this, with EntityPanel.tsx's own deferred-delete undo window
-       * (round 108-ish) silently swallowing the failure entirely (its
-       * `.catch(() => {})`, fixed the same round as this), so the user saw
-       * the row vanish and then quietly reappear on next refresh with no
-       * error ever shown. Translated into an actionable 409 here instead,
-       * the same route-level pattern as EXPORT_UNSAFE_IDENTIFIER (round 284).
+       * Round 792: every other real-effect mutation on a record (create,
+       * update) already got withIdempotency protection (rounds 471-594) --
+       * this delete route was missed, and unlike create/update, a retried
+       * delete doesn't just risk a no-op or a harmless re-apply: deleteRecord
+       * (repository.ts) throws NotFoundError once the row is actually gone,
+       * which this route has no special case for, so it propagates as a
+       * real 404. fetchWithWakeRetry (apps/web/src/wakeRetry.ts) retries on
+       * ANY thrown fetch() error, not just a cold start -- a response lost
+       * in transit after the server already deleted the row (a dropped
+       * connection is a realistic Wi-Fi/mobile blip, not only Render's
+       * cold-start case this mechanism was built for) means the retry lands
+       * on an already-deleted row and gets back a confusing "not found"
+       * error for a delete that, from the user's own point of view, already
+       * fully succeeded -- EntityPanel.tsx's commitPendingDelete then
+       * restores the (already gone) row into the UI and shows that error.
        */
-      try {
-        deleteRecord(db, project.id, entity, recordId);
-      } catch (err) {
-        if (err instanceof Error && err.message === "FOREIGN KEY constraint failed") {
-          throw new HttpError(
-            409,
-            "Cannot delete this record -- another record still references it through a relation field",
-            "RECORD_HAS_DEPENDENT_RECORDS",
-          );
-        }
-        throw err;
-      }
-      res.status(204).end();
-      // Fire-and-forget, same reasoning as the PATCH route's own call --
-      // a filesystem delete must never add latency to this response.
-      if (before) void deleteReplacedFileFields(uploadsDir, project.id, entity, before, null);
+      const idempotencyKey = req.header("X-Idempotency-Key") || undefined;
+      const { status } = await withIdempotency(
+        db,
+        idempotencyKey,
+        req.userId!,
+        `DELETE /projects/${project.id}/entities/${entity.name}/${recordId}`,
+        async () => {
+          // Fetched before the delete below purely so a `file`-type field's
+          // own upload can be cleaned up afterward (see
+          // deleteReplacedFileFields) -- `undefined` here just means the
+          // delete itself is about to 404, same as always.
+          const before = getRecord(db, project.id, entity, recordId);
+          /**
+           * `PRAGMA foreign_keys = ON` (connection.ts) makes deleting a record
+           * another record still points to via a `relation` field throw a real
+           * "FOREIGN KEY constraint failed" error from node:sqlite -- app.ts's
+           * generic error handler turned that into an unexplained 500 before
+           * this, with EntityPanel.tsx's own deferred-delete undo window
+           * (round 108-ish) silently swallowing the failure entirely (its
+           * `.catch(() => {})`, fixed the same round as this), so the user saw
+           * the row vanish and then quietly reappear on next refresh with no
+           * error ever shown. Translated into an actionable 409 here instead,
+           * the same route-level pattern as EXPORT_UNSAFE_IDENTIFIER (round 284).
+           */
+          try {
+            deleteRecord(db, project.id, entity, recordId);
+          } catch (err) {
+            if (err instanceof Error && err.message === "FOREIGN KEY constraint failed") {
+              throw new HttpError(
+                409,
+                "Cannot delete this record -- another record still references it through a relation field",
+                "RECORD_HAS_DEPENDENT_RECORDS",
+              );
+            }
+            throw err;
+          }
+          // Fire-and-forget, same reasoning as the PATCH route's own call --
+          // a filesystem delete must never add latency to this response.
+          // Fired inside this callback (never reached on a replayed/cached
+          // retry), the same convention the create-record route's own
+          // automations call already established.
+          if (before) void deleteReplacedFileFields(uploadsDir, project.id, entity, before, null);
+          return { status: 204, body: null };
+        },
+      );
+      res.status(status).end();
     }),
   );
 
