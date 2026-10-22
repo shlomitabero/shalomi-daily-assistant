@@ -26,6 +26,7 @@ import {
   isAllowedWebhookUrl,
   isScheduledRuleDue,
   matchesTrigger,
+  resolveFileFieldsForWebhook,
   runAutomationsForRecordChange,
   runScheduledAutomationsCheck,
 } from "./automations.js";
@@ -40,6 +41,15 @@ import type { WhatsAppAttachment, WhatsAppConnectionState, WhatsAppSendResult, W
  * attachment uses its own real mkdtemp'd directory instead.
  */
 const UNUSED_UPLOADS_DIR = "/tmp/forge-automations-test-unused-uploads";
+
+/**
+ * None of the existing fixtures below fire a webhook rule with a real file
+ * field (resolveFileFieldsForWebhook only ever runs for the webhook action
+ * type), so every pre-existing runAutomationsForRecordChange call site
+ * just needs a value to pass for the new baseUrl parameter (round 788).
+ * The dedicated webhook-file test uses a real, meaningful base URL.
+ */
+const UNUSED_BASE_URL = "https://unused.example.com";
 
 const orderEntity: Entity = {
   name: "Order",
@@ -359,7 +369,7 @@ test("runAutomationsForRecordChange sends a WhatsApp message when a matching rul
   const { manager, sendCalls } = createFakeWhatsApp({ connected: true });
   const record = { id: 1, customerName: "Dana", customerPhone: "972501234567", status: "Delivered" };
 
-  await runAutomationsForRecordChange(db, manager, project, orderEntity, "updated", record, new Set(["status"]), UNUSED_UPLOADS_DIR);
+  await runAutomationsForRecordChange(db, manager, project, orderEntity, "updated", record, new Set(["status"]), UNUSED_UPLOADS_DIR, UNUSED_BASE_URL);
 
   assert.equal(sendCalls.length, 1);
   assert.equal(sendCalls[0]!.to, "972501234567");
@@ -431,7 +441,7 @@ test("runAutomationsForRecordChange attaches a real uploaded file when the messa
       invoice: JSON.stringify({ url: `/api/uploads/${project.id}/Order/${storedFilename}`, name: "invoice-203.pdf", size: 27, mimeType: "application/pdf" }),
     };
 
-    await runAutomationsForRecordChange(db, manager, project, entityWithInvoice, "updated", record, new Set(["status"]), uploadsDir);
+    await runAutomationsForRecordChange(db, manager, project, entityWithInvoice, "updated", record, new Set(["status"]), uploadsDir, UNUSED_BASE_URL);
 
     assert.equal(sendCalls.length, 1);
     assert.equal(sendCalls[0]!.body, "Hi Dana, here's your invoice: invoice-203.pdf", "the plain text itself still only names the file, same as before this round");
@@ -495,7 +505,7 @@ test("runAutomationsForRecordChange records the outcome on the rule itself (last
   const record = { id: 2, customerName: "Noa", customerPhone: null, status: "New" };
 
   assert.equal(rule.lastTriggeredAt, null);
-  await runAutomationsForRecordChange(db, manager, project, orderEntity, "created", record, new Set(Object.keys(record)), UNUSED_UPLOADS_DIR);
+  await runAutomationsForRecordChange(db, manager, project, orderEntity, "created", record, new Set(Object.keys(record)), UNUSED_UPLOADS_DIR, UNUSED_BASE_URL);
 
   const after = getAutomationRule(db, project.id, rule.id)!;
   assert.ok(after.lastTriggeredAt);
@@ -517,7 +527,7 @@ test("runAutomationsForRecordChange never calls sendMessage and records a failur
   const { manager, sendCalls } = createFakeWhatsApp({ connected: false });
   const record = { id: 3, customerName: "Omer", customerPhone: null, status: "New" };
 
-  await runAutomationsForRecordChange(db, manager, project, orderEntity, "created", record, new Set(Object.keys(record)), UNUSED_UPLOADS_DIR);
+  await runAutomationsForRecordChange(db, manager, project, orderEntity, "created", record, new Set(Object.keys(record)), UNUSED_UPLOADS_DIR, UNUSED_BASE_URL);
 
   assert.equal(sendCalls.length, 0);
   const after = getAutomationRule(db, project.id, rule.id)!;
@@ -539,7 +549,7 @@ test("runAutomationsForRecordChange records a failure, never attempts a send, wh
   const { manager, sendCalls } = createFakeWhatsApp({ connected: true });
   const record = { id: 4, customerName: "Yossi", customerPhone: null, status: "New" };
 
-  await runAutomationsForRecordChange(db, manager, project, orderEntity, "created", record, new Set(Object.keys(record)), UNUSED_UPLOADS_DIR);
+  await runAutomationsForRecordChange(db, manager, project, orderEntity, "created", record, new Set(Object.keys(record)), UNUSED_UPLOADS_DIR, UNUSED_BASE_URL);
 
   assert.equal(sendCalls.length, 0);
   const after = getAutomationRule(db, project.id, rule.id)!;
@@ -562,7 +572,7 @@ test("runAutomationsForRecordChange never evaluates a disabled rule", async () =
   const { manager, sendCalls } = createFakeWhatsApp({ connected: true });
   const record = { id: 5, customerName: "Tal", customerPhone: null, status: "New" };
 
-  await runAutomationsForRecordChange(db, manager, project, orderEntity, "created", record, new Set(Object.keys(record)), UNUSED_UPLOADS_DIR);
+  await runAutomationsForRecordChange(db, manager, project, orderEntity, "created", record, new Set(Object.keys(record)), UNUSED_UPLOADS_DIR, UNUSED_BASE_URL);
 
   assert.equal(sendCalls.length, 0);
   const after = getAutomationRule(db, project.id, rule.id)!;
@@ -585,7 +595,7 @@ test("runAutomationsForRecordChange does nothing (no rules match) for a non-matc
   const { manager, sendCalls } = createFakeWhatsApp({ connected: true });
   const record = { id: 6, customerName: "Ron", customerPhone: null, status: "Cancelled" };
 
-  await runAutomationsForRecordChange(db, manager, project, orderEntity, "updated", record, new Set(["status"]), UNUSED_UPLOADS_DIR);
+  await runAutomationsForRecordChange(db, manager, project, orderEntity, "updated", record, new Set(["status"]), UNUSED_UPLOADS_DIR, UNUSED_BASE_URL);
 
   assert.equal(sendCalls.length, 0);
   const after = getAutomationRule(db, project.id, rule.id)!;
@@ -648,7 +658,7 @@ test("runAutomationsForRecordChange interpolates a relation field's display labe
   const { manager, sendCalls } = createFakeWhatsApp({ connected: true });
   const record = { id: 1, customer: customer.id, status: "Won" };
 
-  await runAutomationsForRecordChange(db, manager, project, dealEntity, "updated", record, new Set(["status"]), UNUSED_UPLOADS_DIR);
+  await runAutomationsForRecordChange(db, manager, project, dealEntity, "updated", record, new Set(["status"]), UNUSED_UPLOADS_DIR, UNUSED_BASE_URL);
 
   assert.equal(sendCalls.length, 1);
   assert.equal(
@@ -942,7 +952,7 @@ test("runAutomationsForRecordChange posts a JSON payload to the webhook URL and 
     return new Response(null, { status: 200 });
   }) as typeof fetch;
   try {
-    await runAutomationsForRecordChange(db, {} as WhatsAppWebManager, project, orderEntity, "created", record, new Set(), UNUSED_UPLOADS_DIR);
+    await runAutomationsForRecordChange(db, {} as WhatsAppWebManager, project, orderEntity, "created", record, new Set(), UNUSED_UPLOADS_DIR, UNUSED_BASE_URL);
   } finally {
     globalThis.fetch = originalFetch;
   }
@@ -957,6 +967,93 @@ test("runAutomationsForRecordChange posts a JSON payload to the webhook URL and 
   assert.deepEqual(payload.record, record);
   assert.equal(payload.project.id, project.id);
   assert.equal(getAutomationRule(db, project.id, rule.id)!.lastStatus, "sent");
+});
+
+/**
+ * Round 788: a `file` field's stored value is itself a JSON-encoded
+ * descriptor string -- before this round, the webhook payload embedded
+ * `record` completely untouched, so this descriptor arrived as a
+ * doubly-escaped JSON string nested inside the outer JSON body (not a
+ * usable nested object), with a relative `url` the receiving service
+ * (the create-rule UI explicitly advertises Zapier/Slack/Make) has no
+ * way to resolve against this server's own origin.
+ */
+test("runAutomationsForRecordChange resolves a 'file' field in the webhook payload's record to a real nested object with a fully-qualified URL, instead of a doubly-encoded string with a relative path", async () => {
+  const entityWithInvoice: Entity = {
+    ...orderEntity,
+    fields: [...orderEntity.fields, { name: "invoice", type: "file", required: false }],
+  };
+  const db = openDatabase(":memory:");
+  ensureProjectsTable(db);
+  ensureAutomationRulesTable(db);
+  ensureWhatsAppConnectionsTable(db);
+  ensureWhatsAppMessagesTable(db);
+  const project = {
+    ...insertProject(db, {
+      id: "proj1",
+      ownerId: "owner1",
+      name: "Orders",
+      description: "An order-tracking app",
+      spec: { ...projectSpec, entities: [entityWithInvoice] },
+    }),
+    status: "built" as const,
+  };
+  applyMigrations(db, project.id, project.spec);
+  markProjectBuilt(db, project.id);
+
+  const rule = insertAutomationRule(db, {
+    projectId: project.id,
+    entityName: "Order",
+    trigger: "record_created",
+    actionType: "webhook",
+    webhookUrl: "https://hooks.example.com/forge",
+    toMode: "static",
+    messageTemplate: "New order from {{customerName}}, invoice: {{invoice}}",
+  });
+  const record = {
+    id: 1,
+    customerName: "Dana Levi",
+    customerPhone: "972501234567",
+    status: "New",
+    invoice: JSON.stringify({ url: "/api/uploads/proj1/Order/abc123.pdf", name: "invoice-203.pdf", size: 27, mimeType: "application/pdf" }),
+  };
+
+  const originalFetch = globalThis.fetch;
+  const calls: { url: string; init: RequestInit }[] = [];
+  globalThis.fetch = (async (url: string, init?: RequestInit) => {
+    calls.push({ url, init: init! });
+    return new Response(null, { status: 200 });
+  }) as typeof fetch;
+  try {
+    await runAutomationsForRecordChange(db, {} as WhatsAppWebManager, project, entityWithInvoice, "created", record, new Set(), UNUSED_UPLOADS_DIR, "https://forge-ai-m7p7.onrender.com");
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+
+  assert.equal(calls.length, 1);
+  const payload = JSON.parse(calls[0]!.init.body as string);
+  assert.equal(payload.message, "New order from Dana Levi, invoice: invoice-203.pdf", "the text message itself is unaffected -- still just the filename");
+  assert.deepEqual(payload.record.invoice, {
+    url: "https://forge-ai-m7p7.onrender.com/api/uploads/proj1/Order/abc123.pdf",
+    name: "invoice-203.pdf",
+    size: 27,
+    mimeType: "application/pdf",
+  });
+  assert.equal(payload.record.customerName, "Dana Levi", "every non-file field is passed through completely untouched");
+  assert.equal(getAutomationRule(db, project.id, rule.id)!.lastStatus, "sent");
+});
+
+test("resolveFileFieldsForWebhook leaves every non-file field untouched and leaves a file field alone when its value is empty or malformed", () => {
+  const entityWithInvoice: Entity = {
+    ...orderEntity,
+    fields: [...orderEntity.fields, { name: "invoice", type: "file", required: false }],
+  };
+  const emptyRecord = { customerName: "Dana", invoice: "" };
+  assert.deepEqual(findTemplateFileAttachment("/uploads", "proj1", entityWithInvoice, "{{invoice}}", emptyRecord), null);
+  assert.deepEqual(resolveFileFieldsForWebhook(entityWithInvoice, emptyRecord, "https://example.com"), emptyRecord);
+
+  const malformedRecord = { customerName: "Dana", invoice: "not valid json" };
+  assert.deepEqual(resolveFileFieldsForWebhook(entityWithInvoice, malformedRecord, "https://example.com"), malformedRecord);
 });
 
 test("runAutomationsForRecordChange records a failed outcome when the webhook responds with a non-2xx status, without throwing", async () => {
@@ -975,7 +1072,7 @@ test("runAutomationsForRecordChange records a failed outcome when the webhook re
   const originalFetch = globalThis.fetch;
   globalThis.fetch = (async () => new Response(null, { status: 500 })) as typeof fetch;
   try {
-    await runAutomationsForRecordChange(db, {} as WhatsAppWebManager, project, orderEntity, "created", record, new Set(), UNUSED_UPLOADS_DIR);
+    await runAutomationsForRecordChange(db, {} as WhatsAppWebManager, project, orderEntity, "created", record, new Set(), UNUSED_UPLOADS_DIR, UNUSED_BASE_URL);
   } finally {
     globalThis.fetch = originalFetch;
   }
@@ -1003,7 +1100,7 @@ test("runAutomationsForRecordChange records a failed outcome when the webhook re
     throw new Error("network down");
   }) as typeof fetch;
   try {
-    await runAutomationsForRecordChange(db, {} as WhatsAppWebManager, project, orderEntity, "created", record, new Set(), UNUSED_UPLOADS_DIR);
+    await runAutomationsForRecordChange(db, {} as WhatsAppWebManager, project, orderEntity, "created", record, new Set(), UNUSED_UPLOADS_DIR, UNUSED_BASE_URL);
   } finally {
     globalThis.fetch = originalFetch;
   }
@@ -1037,7 +1134,7 @@ test("runAutomationsForRecordChange rejects (records failed, never calls fetch) 
     return new Response(null, { status: 200 });
   }) as typeof fetch;
   try {
-    await runAutomationsForRecordChange(db, {} as WhatsAppWebManager, project, orderEntity, "created", record, new Set(), UNUSED_UPLOADS_DIR);
+    await runAutomationsForRecordChange(db, {} as WhatsAppWebManager, project, orderEntity, "created", record, new Set(), UNUSED_UPLOADS_DIR, UNUSED_BASE_URL);
   } finally {
     globalThis.fetch = originalFetch;
   }

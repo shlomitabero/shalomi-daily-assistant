@@ -1930,6 +1930,7 @@ export function createProjectsRouter(
               record,
               new Set(Object.keys(req.body ?? {})),
               uploadsDir,
+              `${req.protocol}://${req.get("host")}`,
             );
           }
           return { status: 201, body: { record } };
@@ -2709,6 +2710,7 @@ export function createProjectsRouter(
           record,
           computeChangedFields(entity, before, record),
           uploadsDir,
+          `${req.protocol}://${req.get("host")}`,
         );
       }
     }),

@@ -54,6 +54,50 @@ function fileFieldDisplayName(value: unknown): string {
 }
 
 /**
+ * The webhook action's own JSON payload embeds the raw, untouched
+ * EntityRecord straight from the DB (fireWebhookAction below) -- unlike
+ * `message`, which interpolateTemplate carefully special-cases `file`
+ * fields for (fileFieldDisplayName, just the filename). Every OTHER field
+ * type genuinely IS just its stored value already, but a `file` field's
+ * stored value is itself a JSON-ENCODED `{url, name, size, mimeType}`
+ * descriptor string -- JSON.stringify-ing the whole payload then embeds
+ * that descriptor as a doubly-escaped JSON STRING nested inside the outer
+ * JSON body (e.g. `"pdf": "{\"url\":...}"`), not a usable nested object.
+ * Worse, even parsed, `url` is this server's own relative path (e.g.
+ * "/api/uploads/..."), meaningless to the exact external consumer this
+ * feature's own create-rule UI advertises ("works with Zapier, Slack,
+ * Make, or any other system") -- none of those auto-parse a JSON string
+ * buried inside a JSON value, and none of them know this server's own
+ * origin to resolve a relative path against even if they did.
+ *
+ * Returns a plain Record (not EntityRecord -- that type is string | number
+ * | boolean | null only, and a resolved file descriptor is a nested
+ * object) with every file field's descriptor parsed and its `url`
+ * rewritten to a real, fully-qualified URL the receiving service can
+ * actually fetch; every other field is passed through untouched. A value
+ * that isn't a real file descriptor at all (empty, malformed) is left
+ * exactly as-is -- the same graceful degradation fileFieldDisplayName
+ * already uses for the identical class of bad input.
+ */
+export function resolveFileFieldsForWebhook(entity: Entity, record: EntityRecord, baseUrl: string): Record<string, unknown> {
+  const resolved: Record<string, unknown> = { ...record };
+  for (const field of entity.fields) {
+    if (field.type !== "file") continue;
+    const rawValue = resolved[field.name];
+    if (typeof rawValue !== "string" || rawValue === "") continue;
+    let parsed: { url?: unknown; name?: unknown; size?: unknown; mimeType?: unknown };
+    try {
+      parsed = JSON.parse(rawValue);
+    } catch {
+      continue;
+    }
+    if (typeof parsed.url !== "string") continue;
+    resolved[field.name] = { url: new URL(parsed.url, baseUrl).toString(), name: parsed.name, size: parsed.size, mimeType: parsed.mimeType };
+  }
+  return resolved;
+}
+
+/**
  * Mirrors routes/projects.ts's own deleteUploadedFile -- the only other
  * place that ever turns a file field's stored `{url, name, size,
  * mimeType}` descriptor back into a real path on disk (uploadsDir/
@@ -242,12 +286,13 @@ export async function runAutomationsForRecordChange(
   record: EntityRecord,
   changedFields: Set<string>,
   uploadsDir: string,
+  baseUrl: string,
 ): Promise<void> {
   const rules = listEnabledAutomationRulesForEntity(db, project.id, entity.name);
   for (const rule of rules) {
     if (!matchesTrigger(rule, event, record, changedFields)) continue;
     try {
-      await fireRule(db, whatsapp, project, entity, rule, record, uploadsDir);
+      await fireRule(db, whatsapp, project, entity, rule, record, uploadsDir, baseUrl);
     } catch (err) {
       // Defensive only -- fireRule's own try/catch below already handles
       // every expected failure mode. This exists so a genuinely
@@ -358,10 +403,12 @@ export function isAllowedWebhookUrl(raw: string): boolean {
  * sending a message. `entity`/`record` are null for a schedule rule (there's
  * no triggering record at all), in which case messageTemplate is sent
  * verbatim in the payload's own `message` field, same as fireScheduledRule's
- * WhatsApp path already does for the identical reason. A 10s timeout keeps a
- * slow/hanging destination from blocking this automation (and, since this
- * is fire-and-forget background work either way, from leaking an open
- * connection) indefinitely.
+ * WhatsApp path already does for the identical reason -- `baseUrl` is
+ * `null` for that same case (nothing to resolve a file field's URL
+ * against with no record). A 10s timeout keeps a slow/hanging destination
+ * from blocking this automation (and, since this is fire-and-forget
+ * background work either way, from leaking an open connection)
+ * indefinitely.
  */
 async function fireWebhookAction(
   db: ForgeDatabase,
@@ -369,6 +416,7 @@ async function fireWebhookAction(
   entity: Entity | null,
   rule: AutomationRule,
   record: EntityRecord | null,
+  baseUrl: string | null,
 ): Promise<void> {
   if (!rule.webhookUrl || !isAllowedWebhookUrl(rule.webhookUrl)) {
     recordAutomationRun(db, project.id, rule.id, {
@@ -391,7 +439,7 @@ async function fireWebhookAction(
     project: { id: project.id, name: project.name },
     entity: entity?.name ?? null,
     message,
-    record: record ?? null,
+    record: entity && record && baseUrl ? resolveFileFieldsForWebhook(entity, record, baseUrl) : record ?? null,
   };
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), 10_000);
@@ -424,9 +472,10 @@ async function fireRule(
   rule: AutomationRule,
   record: EntityRecord,
   uploadsDir: string,
+  baseUrl: string,
 ): Promise<void> {
   if (rule.actionType === "webhook") {
-    await fireWebhookAction(db, project, entity, rule, record);
+    await fireWebhookAction(db, project, entity, rule, record, baseUrl);
     return;
   }
   const to = rule.toMode === "static" ? rule.toNumber : rule.toField ? record[rule.toField] : null;
@@ -533,7 +582,7 @@ export async function fireScheduledRule(
   rule: AutomationRule,
 ): Promise<void> {
   if (rule.actionType === "webhook") {
-    await fireWebhookAction(db, project, null, rule, null);
+    await fireWebhookAction(db, project, null, rule, null, null);
     return;
   }
   const to = rule.toNumber;
