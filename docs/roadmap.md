@@ -30972,3 +30972,21 @@ Still no genuine reply from שלומי. This round's survey was explicitly steer
 **Verification**: reverted the fix back to the original entities/fields-only comparison (a real, targeted edit) and reran the new test -- failed exactly as predicted; restored the fix and reran clean. Full `checkpointDiff.test.ts` (36 tests) and `HistoryPanel.test.ts` (21 tests, the other direct consumer of `isCheckpointCurrent`) both pass clean, confirming no regression to the existing array-order/missing-entity/type-change tests. Only `apps/web` changed this round, so its own full suite ran: 1082/1082 pass, no flakes. `tsc --noEmit`/`tsc -b` both clean.
 
 **Status**: shipped and pushed.
+
+### Round 774: WhatsApp message matching only ever checked the FIRST phone-like field on an entity, never a second one declared after it
+
+Still no genuine reply from שלומי. This round's survey was explicitly steered away from WhatsApp's recently-closed areas and from Automations/Time Machine (rounds 770-773) and landed on `whatsapp.ts`'s own record-matching logic, a module no recent round had touched.
+
+**The gap**: `findMatchingRecord` (`apps/api/src/whatsapp.ts`) used `entity.fields.find((f) => PHONE_FIELD_NAME_HINTS.includes(f.name.toLowerCase()))` to pick a single phone-like field per entity, then checked only that one field against every record's stored value. `PHONE_FIELD_NAME_HINTS` deliberately lists eight synonyms (`phone`, `mobile`, `phonenumber`, `mobilenumber`, `cellphone`, `cell`, `telephone`, `tel`) precisely because an AI-generated spec can plausibly use any of them -- but nothing stops a single entity from declaring *two* of them at once, an entirely ordinary real business shape: a Customer entity with both `phone` (an office/landline number, declared first) and `mobile` (the actual number that receives WhatsApp messages, declared second). Because `.find()` stops at the first hint match, `mobile` was never even looked at -- an inbound WhatsApp message from a real, existing contact whose office line happened to be recorded too would always fall through to "unknown number" in the message log, regardless of which field actually held the sender's number.
+
+**Why this is not deliberate**: the function's own doc comment (before this round) never claimed "only the first phone field counts" -- it framed the whole point of `PHONE_FIELD_NAME_HINTS` as tolerating whichever synonym a real spec happens to use, with no indication that a second, equally valid field on the same entity should be silently ignored. None of the existing tests constructed an entity with more than one phone-like field, so the gap had no coverage either way.
+
+**The fix**: changed `entity.fields.find(...)` to `entity.fields.filter(...)`, collecting every phone-like field on the entity, and added a nested loop so each record is checked against every one of its phone-like fields (not just the first) before moving to the next record. The matching logic itself (digit normalization, leading-zero/00-prefix stripping, suffix comparison) is unchanged -- only which fields get checked.
+
+**codegen.ts parity**: confirmed not needed -- grepped `codegen.ts` for `findMatchingRecord`/`PHONE_FIELD_NAME_HINTS`: no matches; WhatsApp integration is a Forge-platform-only feature with no exported-standalone-app equivalent.
+
+**The tests**: added a new test to `whatsapp.test.ts`, directly after the existing "skips entities that have no phone field" test, using a Customer entity with both `phone` (a non-matching office line) and `mobile` (the real match) declared in that order, asserting the incoming number is still matched via `mobile` even though it's declared second.
+
+**Verification**: reverted the fix back to the original `.find()` + single-field check (a real, targeted edit) and reran the new test -- failed exactly as predicted (`findMatchingRecord` returned `null`); restored the fix and reran clean. Full `whatsapp.test.ts` file (9 tests) passes clean, confirming no regression to the existing international-prefix, synonym-name, and case-insensitivity tests. Only `apps/api` changed this round, so its own full suite ran: 535/536 pass (the sole failure, `codegen.test.ts` at `:1:1`, is the long-documented pre-existing exit-hang flake, confirmed unrelated across 17+ rounds now). `npm run build` (esbuild bundle) clean.
+
+**Status**: shipped and pushed.
