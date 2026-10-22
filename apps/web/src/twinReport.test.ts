@@ -1,8 +1,8 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import type { BusinessTwin } from "./api.js";
+import type { BusinessTwin, BusinessTwinEntityStat } from "./api.js";
 import { translate } from "./i18n/language.js";
-import { formatTwinReport } from "./twinReport.js";
+import { formatTwinReport, sortTwinStatsByCount } from "./twinReport.js";
 
 function makeTwin(overrides: Partial<BusinessTwin> = {}): BusinessTwin {
   return {
@@ -24,6 +24,84 @@ function makeTwin(overrides: Partial<BusinessTwin> = {}): BusinessTwin {
     ...overrides,
   };
 }
+
+/**
+ * The server (apps/api/src/twin.ts) returns entities in the spec's own
+ * declaration order, not by activity, so the busiest entity could end up
+ * buried behind several all-zero tiles instead of leading a stats
+ * dashboard the way a person actually expects. Confirms real descending
+ * order, a stable tie-break for equal counts (not left to sort()'s
+ * engine-dependent behavior on a tie), and that the function doesn't
+ * mutate its input array (both formatTwinReport below and
+ * BusinessTwinPanel.tsx's own grid re-render from the same twin state on
+ * every render, so mutating it in place would be a real, hard-to-spot bug).
+ */
+test("sortTwinStatsByCount sorts descending by count, without mutating the input array", () => {
+  const entities: BusinessTwinEntityStat[] = [
+    { name: "Ticket", label: "Tickets", count: 3 },
+    { name: "Customer", label: "Customers", count: 12 },
+    { name: "Order", label: "Orders", count: 0 },
+    { name: "Invoice", label: "Invoices", count: 7 },
+  ];
+  const originalOrder = entities.map((e) => e.name);
+
+  const sorted = sortTwinStatsByCount(entities);
+
+  assert.deepEqual(
+    sorted.map((e) => e.name),
+    ["Customer", "Invoice", "Ticket", "Order"],
+    "expected strictly descending order by count",
+  );
+  assert.deepEqual(entities.map((e) => e.name), originalOrder, "must not mutate the caller's own array");
+});
+
+test("sortTwinStatsByCount breaks a tie between equal counts by keeping the original declaration order, not an arbitrary one", () => {
+  const entities: BusinessTwinEntityStat[] = [
+    { name: "Vendor", label: "Vendors", count: 0 },
+    { name: "Expense", label: "Expenses", count: 5 },
+    { name: "Review", label: "Reviews", count: 0 },
+  ];
+
+  const sorted = sortTwinStatsByCount(entities);
+
+  assert.deepEqual(
+    sorted.map((e) => e.name),
+    ["Expense", "Vendor", "Review"],
+    "the two tied (0-count) entities must keep their original relative order (Vendor before Review), not swap unpredictably",
+  );
+});
+
+/**
+ * Round 791: formatTwinReport iterated twin.entities in whatever order
+ * the server happened to return them (the spec's own raw declaration
+ * order), silently contradicting the live panel's own grid -- which
+ * always shows biggest counts first via sortTwinStatsByCount. The
+ * existing test just above this one never caught it because its own
+ * fixture entities ([Customer: 3, Order: 2]) already happen to be in
+ * descending-count order. Declares entities in the OPPOSITE order from
+ * their real counts to actually prove the fix sorts, rather than merely
+ * preserving whatever order the fixture happened to already have.
+ */
+test("formatTwinReport lists entities by count descending, the same order the live panel's own grid uses -- not the server's raw spec-declaration order", () => {
+  const t = (key: string, params?: Record<string, string | number>) => translate("en", key, params);
+  const twin = makeTwin({
+    entities: [
+      { name: "Lead", label: "Leads", count: 2 },
+      { name: "Customer", label: "Customers", count: 50 },
+      { name: "Order", label: "Orders", count: 500 },
+    ],
+    totalRecords: 552,
+  });
+
+  const report = formatTwinReport(twin, "Flower Shop", "en", t);
+
+  const orderIndex = report.indexOf("Orders: 500");
+  const customerIndex = report.indexOf("Customers: 50");
+  const leadIndex = report.indexOf("Leads: 2");
+  assert.ok(orderIndex > -1 && customerIndex > -1 && leadIndex > -1, "expected all three entity lines to be present");
+  assert.ok(orderIndex < customerIndex, "Orders (500) must be listed before Customers (50), not in declaration order");
+  assert.ok(customerIndex < leadIndex, "Customers (50) must be listed before Leads (2), not in declaration order");
+});
 
 test("formatTwinReport includes the project name, summary, roles, per-entity counts, total, and observations (Hebrew)", () => {
   const t = (key: string, params?: Record<string, string | number>) => translate("he", key, params);

@@ -4,8 +4,8 @@ import { test } from "node:test";
 import { JSDOM } from "jsdom";
 import React from "react";
 import { act, cleanup, fireEvent, render } from "@testing-library/react";
-import type { BusinessTwin, BusinessTwinEntityStat } from "./api.js";
-import { BusinessTwinPanel, computeTwinStatPercent, sortTwinStatsByCount } from "./BusinessTwinPanel.js";
+import type { BusinessTwin } from "./api.js";
+import { BusinessTwinPanel, computeTwinStatPercent } from "./BusinessTwinPanel.js";
 import { LanguageProvider } from "./i18n/LanguageContext.js";
 import { ThemeProvider } from "./theme/ThemeContext.js";
 
@@ -102,51 +102,6 @@ function renderTwinPanel(
     ),
   );
 }
-
-/**
- * New in this round: the server (twin.ts) returns entities in the spec's
- * own declaration order, not by activity, so the busiest entity could end
- * up buried behind several all-zero tiles instead of leading a stats
- * dashboard the way a person actually expects. Confirms real descending
- * order, a stable tie-break for equal counts (not left to sort()'s
- * engine-dependent behavior on a tie), and that the function doesn't
- * mutate its input array (the caller re-renders from the same twin state
- * on every render, so mutating it in place would be a real, hard-to-spot bug).
- */
-test("sortTwinStatsByCount sorts descending by count, without mutating the input array", () => {
-  const entities: BusinessTwinEntityStat[] = [
-    { name: "Ticket", label: "Tickets", count: 3 },
-    { name: "Customer", label: "Customers", count: 12 },
-    { name: "Order", label: "Orders", count: 0 },
-    { name: "Invoice", label: "Invoices", count: 7 },
-  ];
-  const originalOrder = entities.map((e) => e.name);
-
-  const sorted = sortTwinStatsByCount(entities);
-
-  assert.deepEqual(
-    sorted.map((e) => e.name),
-    ["Customer", "Invoice", "Ticket", "Order"],
-    "expected strictly descending order by count",
-  );
-  assert.deepEqual(entities.map((e) => e.name), originalOrder, "must not mutate the caller's own array");
-});
-
-test("sortTwinStatsByCount breaks a tie between equal counts by keeping the original declaration order, not an arbitrary one", () => {
-  const entities: BusinessTwinEntityStat[] = [
-    { name: "Vendor", label: "Vendors", count: 0 },
-    { name: "Expense", label: "Expenses", count: 5 },
-    { name: "Review", label: "Reviews", count: 0 },
-  ];
-
-  const sorted = sortTwinStatsByCount(entities);
-
-  assert.deepEqual(
-    sorted.map((e) => e.name),
-    ["Expense", "Vendor", "Review"],
-    "the two tied (0-count) entities must keep their original relative order (Vendor before Review), not swap unpredictably",
-  );
-});
 
 /**
  * New in this round: each stat tile in Business Twin ("Customers · 12") is

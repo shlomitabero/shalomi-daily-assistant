@@ -1,8 +1,31 @@
-import type { BusinessTwin } from "./api.js";
+import type { BusinessTwin, BusinessTwinEntityStat } from "./api.js";
 import { safeDownloadName } from "./api.js";
 import type { Lang } from "./i18n/language.js";
 
 const LOCALE: Record<Lang, string> = { he: "he-IL", en: "en-US" };
+
+/**
+ * The server (apps/api/src/twin.ts) returns entities in the spec's own
+ * declaration order, not by activity -- so a project whose busiest entity
+ * happened to be declared last showed its biggest number at the bottom of
+ * the on-screen grid (BusinessTwinPanel.tsx, which imports this from here),
+ * exactly backwards from how a stats dashboard is meant to read (biggest
+ * numbers first). A plain `.sort()` on `count` alone isn't enough:
+ * Array.prototype.sort is only guaranteed stable as of ES2019, and even
+ * then, sorting descending by a key that has ties (multiple entities on 0
+ * records, or on the same count) needs an explicit tie-break to keep those
+ * tied entities in their original, predictable order rather than depending
+ * on engine-specific behavior for the tie itself. Lives here (not in
+ * BusinessTwinPanel.tsx, which imports it) so formatTwinReport below --
+ * the plain-text "Copy"/"Download" snapshot of the exact same data -- can
+ * use the identical order without a circular import.
+ */
+export function sortTwinStatsByCount(entities: BusinessTwinEntityStat[]): BusinessTwinEntityStat[] {
+  return entities
+    .map((entity, index) => ({ entity, index }))
+    .sort((a, b) => b.entity.count - a.entity.count || a.index - b.index)
+    .map(({ entity }) => entity);
+}
 
 /**
  * Renders the Business Twin's own data (already fetched into the panel --
@@ -33,7 +56,12 @@ export function formatTwinReport(
     lines.push("");
   }
   lines.push(`${t("twin.report.records")}:`);
-  for (const e of twin.entities) {
+  // Same count-descending order the live panel's own grid already uses
+  // (sortTwinStatsByCount above) -- without this, this report iterated
+  // twin.entities in the server's raw spec-declaration order, silently
+  // contradicting the "biggest numbers first" order a reader just saw on
+  // screen the moment they share this exact snapshot.
+  for (const e of sortTwinStatsByCount(twin.entities)) {
     lines.push(`- ${e.label}: ${e.count}`);
   }
   lines.push(`${t("twin.report.total")}: ${twin.totalRecords}`);
