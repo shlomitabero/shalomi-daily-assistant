@@ -4446,6 +4446,105 @@ test("the exported EntityView's bulk delete removes every selected row immediate
 });
 
 /**
+ * Round 798: the exported app's FieldInput has no upload control at all
+ * for a "file" field (only the live Forge AI preview can turn a chosen
+ * file into the real {url,name,size,mimeType} descriptor) -- a required
+ * file field was therefore permanently unsatisfiable on a brand-new record,
+ * but before this round the only feedback was the generic, repeatable
+ * "is a required field" message every single time Add was clicked, with
+ * nothing indicating the entity could never accept a new record at all.
+ * Mirrors the identical hazard this exact file already guards for CSV
+ * import (requiredUnsupported) and the live preview's own EntityPanel.tsx
+ * already guards for handleDuplicate -- this single-record Add form was
+ * the one path left unguarded. Drives the real generated EntityView
+ * component, not a regex proxy.
+ */
+test("the exported EntityView's Add form refuses to create a new record for an entity with a required file field, with a clear, specific, permanent message", async () => {
+  const withApplicant: Project = {
+    ...project,
+    spec: {
+      ...project.spec,
+      entities: [
+        ...project.spec.entities,
+        {
+          name: "Applicant",
+          label: "Applicant",
+          fields: [
+            { name: "name", label: "Name", type: "text", required: true },
+            { name: "resume", label: "Resume", type: "file", required: true },
+          ],
+        },
+      ],
+    },
+  };
+  const files = generateExportFiles(withApplicant);
+  const dir = writeGeneratedWebComponent(files);
+  const originalFetch = globalThis.fetch;
+  let postCalled = false;
+  globalThis.fetch = (async (input: string, init?: RequestInit): Promise<Response> => {
+    const method = init?.method ?? "GET";
+    if (method === "GET" && input === "/api/Applicant") {
+      return new Response(JSON.stringify({ records: [] }), { status: 200, headers: { "content-type": "application/json" } });
+    }
+    if (method === "POST" && input === "/api/Applicant") {
+      postCalled = true;
+      return new Response(JSON.stringify({ record: { id: 1, name: "Dana", resume: null } }), { status: 201 });
+    }
+    throw new Error(`unexpected request ${method} ${input}`);
+  }) as typeof fetch;
+
+  try {
+    await withRealLocalStorage(async () => {
+      const { EntityView } = await import(path.join(dir, "web", "src", "components", "EntityView.jsx"));
+      const applicantEntity = withApplicant.spec.entities.find((e) => e.name === "Applicant")!;
+      const props = {
+        entity: applicantEntity,
+        highlightRecordId: null,
+        onHighlightHandled: () => {},
+        onJumpToRecord: () => {},
+        onRecordCountChange: () => {},
+      };
+
+      const { container } = render(React.createElement(EntityView, props));
+      for (let i = 0; i < 40; i++) {
+        if (container.querySelector(".record-form")) break;
+        await act(async () => {
+          await new Promise((resolve) => setTimeout(resolve, 0));
+        });
+      }
+      const form = container.querySelector(".record-form") as HTMLFormElement;
+      assert.ok(form, "expected the record form to render");
+
+      const addButton = Array.from(form.querySelectorAll("button")).find((b) => b.textContent === "Add") as HTMLButtonElement;
+      assert.ok(addButton, "expected a real 'Add' button");
+      assert.equal(addButton.disabled, true, "the Add button must be disabled upfront -- this entity can never accept a new record here");
+      assert.match(
+        form.textContent ?? "",
+        /Resume.*required file field/s,
+        "a clear, specific explanation must already be visible without needing to click Add first",
+      );
+
+      // Defense in depth: even a forced submit (bypassing the disabled
+      // button, e.g. via Enter in a text field) must still refuse with the
+      // same specific message, never falling through to the generic
+      // "is a required field" wording or an actual POST.
+      await act(async () => {
+        fireEvent.submit(form);
+      });
+
+      assert.equal(postCalled, false, "a new Applicant record must never actually be created");
+      const errorEl = container.querySelector("p.error");
+      assert.ok(errorEl, "expected a specific error message");
+      assert.match(errorEl!.textContent ?? "", /can't be created in an exported app/, "must explain this is permanent, not the generic 'is a required field' message");
+    });
+  } finally {
+    globalThis.fetch = originalFetch;
+    cleanup();
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+/**
  * New in this round: once rows are selected in the exported app, the only
  * ways to leave selection mode were committing a real bulk delete/duplicate
  * (mutating data just to escape the mode) or unchecking every row one at a

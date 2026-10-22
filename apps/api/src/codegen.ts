@@ -3761,6 +3761,22 @@ export function EntityView({ entity, highlightRecordId, onHighlightHandled, onJu
   // the live preview's own EntityPanel.tsx (round 203).
   const orderedFields = useMemo(() => applyColumnOrder(entity.fields, columnOrder), [entity.fields, columnOrder]);
   const orderedFieldLabelOccurrences = useMemo(() => fieldLabelOccurrences(orderedFields), [orderedFields]);
+  // Round 798: a required "file" field can never be satisfied when
+  // CREATING a new record here -- the exported app's own FieldInput file
+  // branch above has no upload control at all (only the live Forge AI
+  // preview can turn a chosen file into the real {url,name,size,mimeType}
+  // descriptor), so form[f.name] stays "" forever for a brand-new record,
+  // making handleSubmit's generic missingField check fire on every single
+  // submit attempt with no indication it's permanently, not just
+  // currently, unsatisfiable. Mirrors the identical hazard this exact file
+  // already recognizes and guards for CSV import (requiredUnsupported,
+  // above) and the live preview's own EntityPanel.tsx already guards for
+  // handleDuplicate -- this single-record Add form was the one path left
+  // unguarded. Only blocks CREATE, not edit: an existing record that
+  // already has a file (exported after being uploaded in the live
+  // preview) keeps form[f.name] non-empty, so editing its OTHER fields is
+  // still possible, unaffected by this.
+  const requiredFileField = entity.fields.find((f) => f.type === "file" && f.required);
   // The bulk-edit field picker, and the per-field filter dropdowns below,
   // are whole-record-set actions like the table's own column list -- they
   // follow the same drag-reordered column order (orderedFields) rather
@@ -4107,6 +4123,16 @@ export function EntityView({ entity, highlightRecordId, onHighlightHandled, onJu
   async function handleSubmit(e) {
     e.preventDefault();
     setError(null);
+    // Checked first, and worded specifically, because the generic
+    // missingField message below ("is a required field") reads like a
+    // fixable omission -- this is permanent for a brand-new record in an
+    // exported app (see requiredFileField's own doc comment above).
+    if (editingId == null && requiredFileField) {
+      setError(
+        \`New \${entity.label} records can't be created in an exported app -- "\${requiredFileField.label || requiredFileField.name}" is a required file field, and only the live Forge AI preview supports file uploads.\`,
+      );
+      return;
+    }
     // Checked client-side (with noValidate on the <form>) rather than
     // relying on the browser's own native required-field validation --
     // mirrors the live preview's own identical fix.
@@ -4812,8 +4838,13 @@ export function EntityView({ entity, highlightRecordId, onHighlightHandled, onJu
             />
           </label>
         ))}
+        {editingId == null && requiredFileField && (
+          <p className="muted small" role="alert">
+            New {entity.label} records can't be created in an exported app -- "{requiredFileField.label || requiredFileField.name}" is a required file field, and only the live Forge AI preview supports file uploads.
+          </p>
+        )}
         <div>
-          <button type="submit" className="btn">
+          <button type="submit" className="btn" disabled={editingId == null && !!requiredFileField}>
             {editingId != null ? "Save" : "Add"}
           </button>
           {editingId != null && (
