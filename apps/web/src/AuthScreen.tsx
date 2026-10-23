@@ -83,6 +83,17 @@ export function AuthScreen({ onAuthenticated }: { onAuthenticated: (user: User) 
     setBusy(true);
     try {
       await resetPassword(resetToken!, resetNewPassword);
+      // Strips the now-consumed token from the URL immediately, the same
+      // one-liner handleBackToLogin uses -- but deliberately WITHOUT also
+      // nulling the resetToken state itself, which would flip the
+      // `resetToken && resetDone` render-gate below back to the normal
+      // login/signup screen and vanish the success message this very call
+      // is about to show. A refresh/remount after this point re-reads a
+      // clean URL and lands on login instead of re-showing this form for a
+      // token the server already deleted on success (single-use by
+      // design), which previously surfaced a confusing "expired or
+      // invalid" error for someone who had, in fact, already succeeded.
+      window.history.replaceState(null, "", window.location.pathname + window.location.hash);
       setResetDone(true);
     } catch (err) {
       setError((err as Error).message);

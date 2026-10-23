@@ -501,6 +501,52 @@ test("AuthScreen shows the reset-password form when the URL carries a resetToken
   );
 });
 
+/**
+ * Round 879: this state's own doc comment (AuthScreen.tsx, the resetToken
+ * useState initializer) claims the URL's resetToken param is "stripped
+ * from the URL... once the reset actually completes" -- but only
+ * handleBackToLogin (an explicit, voluntary button click) ever did that.
+ * A successful reset left the token sitting in the URL bar, so a
+ * completely ordinary refresh (or re-opening the same emailed link a
+ * second time) before clicking "Go to login" remounted AuthScreen with
+ * the same resetToken still in the URL, re-showing the reset-password FORM
+ * instead of the success message -- and submitting it failed, since the
+ * server already deleted that single-use token on the first success,
+ * surfacing a confusing "expired or invalid" error for someone who had, in
+ * fact, already succeeded. Confirms the URL is cleared the moment the
+ * reset itself succeeds, not only when "Go to login" is clicked.
+ */
+test("AuthScreen strips the resetToken query param from the URL the moment the reset itself succeeds, not only when 'Go to login' is later clicked", async () => {
+  await withJsdom(
+    async () => {
+      const originalFetch = globalThis.fetch;
+      globalThis.fetch = (async () => new Response(null, { status: 204 })) as typeof fetch;
+      try {
+        renderAuthScreen(() => {});
+        const [newPasswordInput, confirmPasswordInput] = document.querySelectorAll('input[type="password"]') as NodeListOf<HTMLInputElement>;
+        fireEvent.change(newPasswordInput, { target: { value: "brand-new-password" } });
+        fireEvent.change(confirmPasswordInput, { target: { value: "brand-new-password" } });
+
+        await act(async () => {
+          fireEvent.submit(document.querySelector("form.auth-form")!);
+          await Promise.resolve();
+          await Promise.resolve();
+        });
+
+        assert.match(document.body.textContent ?? "", /password has been reset/i, "the success message must still be showing right after submit");
+        assert.equal(
+          window.location.search,
+          "",
+          "the resetToken query param must already be stripped the moment the reset succeeds, before 'Go to login' is ever clicked",
+        );
+      } finally {
+        globalThis.fetch = originalFetch;
+      }
+    },
+    "http://localhost/?resetToken=abc123",
+  );
+});
+
 test("AuthScreen's reset-password form rejects a mismatched confirmation client-side, with zero requests sent", async () => {
   await withJsdom(
     async () => {
