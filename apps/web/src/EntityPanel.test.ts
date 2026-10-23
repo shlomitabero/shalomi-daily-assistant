@@ -6992,6 +6992,90 @@ test("EntityPanel drops the 'Group by' selection when a live refine changes that
 });
 
 /**
+ * Round 838: the same hazard round 780 fixed above, reached a different
+ * way -- round 780's own fix is an in-memory ref with nothing to compare
+ * against the instant a FRESH EntityPanel mounts (switching to a
+ * different entity tab and back genuinely unmounts and remounts this
+ * component, per App.tsx's own `.filter((e) => e.name === activeEntity)`,
+ * not just a rerender with the same instance the way round 780's own test
+ * above simulates). A refine that retypes the grouped field while its tab
+ * is NOT the active one left the persisted "Group by" selection pointing
+ * at the field under its new, incompatible type the instant the tab
+ * reopened -- confirms the fix: a fresh mount drops the stale selection
+ * instead of grouping real records under the same kind of fabricated
+ * "Yes" bucket round 780's own fix prevents for the still-mounted case.
+ */
+test("EntityPanel drops a persisted 'Group by' selection on a fresh mount when the field was retyped while its tab was closed, instead of silently mislabeling every record", async () => {
+  await withJsdom(async () => {
+    const statusEnumField = {
+      name: "status",
+      label: "Status",
+      type: "enum" as const,
+      required: true,
+      enumValues: ["Pending", "Shipped"],
+      enumLabels: { Pending: "Pending", Shipped: "Shipped" },
+    };
+    const statusBooleanField = { name: "status", label: "Status", type: "boolean" as const, required: true };
+    const entityWithEnumStatus: Entity = {
+      name: "Deal",
+      label: "Deal",
+      fields: [{ name: "name", label: "Name", type: "text", required: true }, statusEnumField],
+    };
+    const entityWithBooleanStatus: Entity = {
+      name: "Deal",
+      label: "Deal",
+      fields: [{ name: "name", label: "Name", type: "text", required: true }, statusBooleanField],
+    };
+    const store: EntityRecord[] = [
+      { id: 1, createdAt: "x", name: "Acme Corp", status: "Pending" },
+      { id: 2, createdAt: "x", name: "Globex", status: "Shipped" },
+    ];
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = mockRecordsFetch(store) as typeof fetch;
+    try {
+      const firstMount = renderEntityPanel({ entity: entityWithEnumStatus, allEntities: [entityWithEnumStatus] });
+      await waitForCondition(() => document.querySelectorAll("table tbody tr").length === 2);
+
+      const groupBySelect = () => document.querySelector(".entity-group-by") as HTMLSelectElement;
+      fireEvent.change(groupBySelect(), { target: { value: "status" } });
+      await waitForCondition(() => document.querySelectorAll(".entity-group-header-row").length === 2);
+
+      // Simulates switching away to another entity tab -- a real
+      // unmount, not a rerender of the same instance (App.tsx's own
+      // EntityPanel genuinely unmounts when its tab isn't the active
+      // one). The persisted "Group by" choice survives this, same as
+      // every other per-entity preference.
+      firstMount.unmount();
+
+      // Simulates a refine retyping "status" from enum to boolean while
+      // the Deal tab was closed -- a fresh render() call (not .rerender()
+      // on the old instance), so this is a genuinely new EntityPanel
+      // mount with no memory of the previous one's own ref.
+      renderEntityPanel({ entity: entityWithBooleanStatus, allEntities: [entityWithBooleanStatus] });
+      // data-record-id, not a bare tr count -- if the stale grouping is
+      // still active (the bug this test exists to catch), the table also
+      // renders extra group-header <tr> elements with no such attribute,
+      // which would make a bare "=== 2" condition never become true.
+      await waitForCondition(() => document.querySelectorAll("table tbody tr[data-record-id]").length === 2);
+
+      assert.equal(
+        groupBySelect().value,
+        "",
+        "a fresh mount must drop the stale 'Group by' selection, not keep pointing at the now-retyped field",
+      );
+      assert.equal(document.querySelectorAll(".entity-group-header-row").length, 0, "the table must render flat, not grouped");
+      assert.doesNotMatch(
+        document.querySelector("table tbody")?.textContent ?? "",
+        /Yes/,
+        "must never show a fabricated 'Yes' group mislabeling both records from their stale enum values",
+      );
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+});
+
+/**
  * Round 781: the identical "field TYPE changes while its NAME survives a
  * live refine" bug class round 780 just fixed for groupFieldName, now
  * fixed for its sibling bulkEditField/bulkEditValue. Before the fix,

@@ -18,7 +18,7 @@ import {
   getEntityRecentSearches,
   removeEntityRecentSearch,
 } from "./entityRecentSearches.js";
-import { getGroupByField, setGroupByField } from "./groupByPreference.js";
+import { getGroupByField, getGroupByFieldType, setGroupByField, setGroupByFieldType } from "./groupByPreference.js";
 import { getViewMode as getViewModePreference, setViewMode as setViewModePreference } from "./viewModePreference.js";
 import { getSortKeys as getSortKeysPreference, setSortKeys as setSortKeysPreference } from "./sortKeysPreference.js";
 import { getFieldFilters as getFieldFiltersPreference, setFieldFilters as setFieldFiltersPreference } from "./fieldFiltersPreference.js";
@@ -1379,8 +1379,29 @@ export function EntityPanel({
   // was reset to "" on every entity switch (see the combined reset effect
   // above) and never persisted at all, so picking a grouping didn't survive
   // even a reload of the same entity.
+  // Round 838: validates the just-loaded choice against the field type that
+  // was on record the moment it was last chosen (see getGroupByFieldType's
+  // own doc comment) -- the identical "field TYPE changes while its NAME
+  // survives" hazard round 780 already fixed, just reached via unmounting
+  // this entity's own tab (switching away) rather than staying mounted
+  // through a live refine. Round 780's own in-memory ref has nothing to
+  // compare against on a brand-new mount, so a refine that retypes the
+  // grouped field while its tab was NOT the active one left the persisted
+  // selection grouping real records under a fabricated split the instant
+  // the tab reopened. A loaded field with no recorded type yet (a choice
+  // persisted before this round shipped) is trusted as-is, same as before.
   useEffect(() => {
-    setGroupFieldName(getGroupByField(projectId, entity.name));
+    const loaded = getGroupByField(projectId, entity.name);
+    if (loaded) {
+      const currentType = entity.fields.find((f) => f.name === loaded)?.type;
+      const recordedType = getGroupByFieldType(projectId, entity.name);
+      if (!currentType || (recordedType && recordedType !== currentType)) {
+        setGroupFieldName(setGroupByField(projectId, entity.name, ""));
+        setGroupByFieldType(projectId, entity.name, "");
+        return;
+      }
+    }
+    setGroupFieldName(loaded);
   }, [projectId, entity.name]);
 
   // Same reasoning as groupFieldName's own effect just above -- which
@@ -1577,7 +1598,16 @@ export function EntityPanel({
    */
   const groupedFieldTypeRef = useRef<string | null>(null);
   useEffect(() => {
-    groupedFieldTypeRef.current = groupFieldName ? entity.fields.find((f) => f.name === groupFieldName)?.type ?? null : null;
+    const type = groupFieldName ? entity.fields.find((f) => f.name === groupFieldName)?.type ?? null : null;
+    groupedFieldTypeRef.current = type;
+    // Mirrors the ref above into persisted storage (round 838) -- this
+    // effect already fires on every single change of groupFieldName,
+    // regardless of which of this file's several call sites caused it
+    // (a user's own pick, the load effect above, or either clearing
+    // path below), so it's the one place that keeps getGroupByFieldType
+    // in sync with getGroupByField without touching every call site.
+    setGroupByFieldType(projectId, entity.name, type ?? "");
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [groupFieldName]);
   useEffect(() => {
     if (!groupFieldName) return;
