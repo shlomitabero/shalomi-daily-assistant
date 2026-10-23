@@ -3431,6 +3431,19 @@ export function EntityView({ entity, highlightRecordId, onHighlightHandled, onJu
   // "create new" sessions. Mirrors the live Forge AI preview's own
   // EntityPanel.tsx.
   const [formInstanceKey, setFormInstanceKey] = useState(0);
+  // Mirrors formInstanceKey's own value, but synchronously, so a slow
+  // handleSubmit awaiting updateRecord/createRecord can tell -- once that
+  // await finally resolves -- whether the form has since moved on to a
+  // different editing session before unconditionally resetting it back to
+  // blank. formInstanceKey itself can't answer this: it's a React state
+  // value, frozen in handleSubmit's own closure at whatever it was when
+  // that specific submit began. Mirrors the live Forge AI preview's own
+  // EntityPanel.tsx.
+  const formInstanceKeyRef = useRef(0);
+  function bumpFormInstanceKey() {
+    formInstanceKeyRef.current += 1;
+    setFormInstanceKey(formInstanceKeyRef.current);
+  }
   const [search, setSearch] = useState("");
   const [recentSearches, setRecentSearches] = useState(() => getEntityRecentSearches(entity.name));
   const [fieldFilters, setFieldFilters] = useState(() => sanitizeFieldFilters(getPersistedFieldFilters(entity.name), entity.fields));
@@ -4181,6 +4194,14 @@ export function EntityView({ entity, highlightRecordId, onHighlightHandled, onJu
       setError(\`"\${missingField.label || missingField.name}" is a required field\`);
       return;
     }
+    // Nothing disables startEdit/startCreateNew/the in-form Delete button
+    // while this submit's own await is still pending -- a slow save
+    // resolving after the user has already clicked Edit on a different
+    // record must not yank the form back to blank under that record's
+    // in-progress edit. Captured before the await; only the UNCONDITIONAL
+    // success-path reset below is skipped once the form has moved on.
+    // Mirrors the live Forge AI preview's own fix.
+    const formInstanceAtSubmitTime = formInstanceKeyRef.current;
     try {
       if (editingId != null) {
         // \`form\` holds a value for EVERY field, including every one the
@@ -4207,10 +4228,12 @@ export function EntityView({ entity, highlightRecordId, onHighlightHandled, onJu
       } else {
         await createRecord(entity.name, form);
       }
-      setForm(emptyForm(entity));
-      setEditingId(null);
-      editingOriginalRef.current = null;
-      setFormInstanceKey((k) => k + 1);
+      if (formInstanceKeyRef.current === formInstanceAtSubmitTime) {
+        setForm(emptyForm(entity));
+        setEditingId(null);
+        editingOriginalRef.current = null;
+        bumpFormInstanceKey();
+      }
       await refresh();
     } catch (err) {
       setError(err.message);
@@ -4223,20 +4246,20 @@ export function EntityView({ entity, highlightRecordId, onHighlightHandled, onJu
     setForm(next);
     setEditingId(record.id);
     editingOriginalRef.current = record;
-    setFormInstanceKey((k) => k + 1);
+    bumpFormInstanceKey();
   }
 
   function startCreateForColumn(value, field) {
     setEditingId(null);
     setForm({ ...emptyForm(entity), [field.name]: value });
-    setFormInstanceKey((k) => k + 1);
+    bumpFormInstanceKey();
     scrollIntoViewRespectingMotion(document.querySelector(".record-form"), { behavior: "smooth", block: "start" });
   }
 
   function startCreateForDate(date, field) {
     setEditingId(null);
     setForm({ ...emptyForm(entity), [field.name]: formatDateForInput(date) });
-    setFormInstanceKey((k) => k + 1);
+    bumpFormInstanceKey();
     scrollIntoViewRespectingMotion(document.querySelector(".record-form"), { behavior: "smooth", block: "start" });
   }
 
@@ -4245,7 +4268,7 @@ export function EntityView({ entity, highlightRecordId, onHighlightHandled, onJu
   function startCreateNew() {
     setEditingId(null);
     setForm(emptyForm(entity));
-    setFormInstanceKey((k) => k + 1);
+    bumpFormInstanceKey();
     const formEl = document.querySelector(".record-form");
     scrollIntoViewRespectingMotion(formEl, { behavior: "smooth", block: "start" });
     // The record form's own fields now remount on every target switch
@@ -4918,7 +4941,7 @@ export function EntityView({ entity, highlightRecordId, onHighlightHandled, onJu
                   setForm(emptyForm(entity));
                   setEditingId(null);
                   editingOriginalRef.current = null;
-                  setFormInstanceKey((k) => k + 1);
+                  bumpFormInstanceKey();
                 }
               }}
             >

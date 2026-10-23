@@ -1128,6 +1128,22 @@ export function EntityPanel({
   // error from one new-record attempt would otherwise still be showing
   // under the very next one.
   const [formInstanceKey, setFormInstanceKey] = useState(0);
+  // Mirrors formInstanceKey's own value, but synchronously, so a slow
+  // handleSubmit awaiting updateRecord/createRecord can tell -- once that
+  // await finally resolves -- whether the form has since moved on to a
+  // different editing session (a different record's startEdit, a fresh
+  // startCreateNew/startCreateForDate/startCreateForColumn, or the
+  // in-form Delete button's own reset) before unconditionally resetting
+  // it back to blank. formInstanceKey itself can't answer this: it's a
+  // React state value, frozen in handleSubmit's own closure at whatever
+  // it was when that specific submit began, the same reason
+  // refreshRequestId below needs its own ref rather than reading
+  // formInstanceKey's state directly.
+  const formInstanceKeyRef = useRef(0);
+  function bumpFormInstanceKey() {
+    formInstanceKeyRef.current += 1;
+    setFormInstanceKey(formInstanceKeyRef.current);
+  }
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
@@ -2312,6 +2328,15 @@ export function EntityPanel({
       setError(t("entity.form.requiredField", { field: missingField.label ?? missingField.name }));
       return;
     }
+    // Nothing disables startEdit/startCreateNew/the in-form Delete button
+    // while this submit's own await is still pending -- a slow save for
+    // record A resolving after the user has already clicked Edit on a
+    // different record B must not yank the form back to blank under B's
+    // in-progress edit. Captured before the await (this closure's own
+    // `editingId`/`form` stay correctly bound to A throughout, so A still
+    // gets the right PATCH/POST either way); only the UNCONDITIONAL
+    // success-path reset below is skipped once the form has moved on.
+    const formInstanceAtSubmitTime = formInstanceKeyRef.current;
     try {
       if (editingId != null) {
         // Round 644: `form` holds a value for EVERY field, including every
@@ -2342,10 +2367,12 @@ export function EntityPanel({
       } else {
         await createRecord(projectId, entity.name, form);
       }
-      setForm(emptyForm(entity));
-      setEditingId(null);
-      editingOriginalRef.current = null;
-      setFormInstanceKey((k) => k + 1);
+      if (formInstanceKeyRef.current === formInstanceAtSubmitTime) {
+        setForm(emptyForm(entity));
+        setEditingId(null);
+        editingOriginalRef.current = null;
+        bumpFormInstanceKey();
+      }
       await refresh();
     } catch (err) {
       setError((err as Error).message);
@@ -2356,7 +2383,7 @@ export function EntityPanel({
     setEditingId(record.id as number);
     setForm({ ...record });
     editingOriginalRef.current = record;
-    setFormInstanceKey((k) => k + 1);
+    bumpFormInstanceKey();
   }
 
   /**
@@ -2367,7 +2394,7 @@ export function EntityPanel({
   function startCreateNew() {
     setEditingId(null);
     setForm(emptyForm(entity));
-    setFormInstanceKey((k) => k + 1);
+    bumpFormInstanceKey();
     scrollIntoViewRespectingMotion(formRef.current, { behavior: "smooth", block: "start" });
     // formRef.current itself never remounts, but the fields inside it now
     // do (keyed on formInstanceKey, just incremented above) -- querying
@@ -2393,7 +2420,7 @@ export function EntityPanel({
   function startCreateForDate(date: Date, dateField: Field) {
     setEditingId(null);
     setForm({ ...emptyForm(entity), [dateField.name]: formatDateForInput(date) });
-    setFormInstanceKey((k) => k + 1);
+    bumpFormInstanceKey();
     scrollIntoViewRespectingMotion(formRef.current, { behavior: "smooth", block: "start" });
   }
 
@@ -2406,7 +2433,7 @@ export function EntityPanel({
   function startCreateForColumn(value: string, field: Field) {
     setEditingId(null);
     setForm({ ...emptyForm(entity), [field.name]: value });
-    setFormInstanceKey((k) => k + 1);
+    bumpFormInstanceKey();
     scrollIntoViewRespectingMotion(formRef.current, { behavior: "smooth", block: "start" });
   }
 
@@ -3286,7 +3313,7 @@ export function EntityPanel({
                   setForm(emptyForm(entity));
                   setEditingId(null);
                   editingOriginalRef.current = null;
-                  setFormInstanceKey((k) => k + 1);
+                  bumpFormInstanceKey();
                 }
               }}
             >

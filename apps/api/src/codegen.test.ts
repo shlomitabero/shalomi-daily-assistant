@@ -1245,7 +1245,13 @@ test("the exported EntityView's handleSubmit saves only the field the user actua
     const editingOriginalRef = { current: null };
     function setForm(next) { form = typeof next === "function" ? next(form) : next; }
     function setEditingId(id) { editingId = id; }
-    function setFormInstanceKey() {}
+    let formInstanceKey = 0;
+    const formInstanceKeyRef = { current: 0 };
+    function setFormInstanceKey(next) { formInstanceKey = next; }
+    function bumpFormInstanceKey() {
+      formInstanceKeyRef.current += 1;
+      setFormInstanceKey(formInstanceKeyRef.current);
+    }
     ${startEditSrc}
     ${handleSubmitSrc}
     return { startEdit, handleSubmit, getForm: () => form };
@@ -1291,6 +1297,133 @@ test("the exported EntityView's handleSubmit saves only the field the user actua
     { name: "Alice Cohen" },
     "the update must carry only the field actually edited, not every field the form happened to hold",
   );
+});
+
+/**
+ * Round 832 regression, ported from the live Forge AI preview's own
+ * EntityPanel.tsx fix: handleSubmit's success path used to unconditionally
+ * reset `form`/`editingId` back to blank once its PATCH/POST resolved, with
+ * no check that the form hadn't since moved on to editing a different
+ * record. A slow save for one record (e.g. record A) resolving after the
+ * user had already clicked Edit on a different record (record B) used to
+ * wipe out record B's own in-progress, unsaved edit. Mirrors the live
+ * preview's own formInstanceKeyRef/bumpFormInstanceKey fix: the reset is
+ * now conditional on the form still being the same "instance" started at
+ * submit time.
+ */
+test("the exported EntityView's record-form survives a different record's in-progress edit when an earlier record's slow save resolves afterward", async () => {
+  const files = generateExportFiles(project);
+  const dir = writeGeneratedWebComponent(files);
+  const store = [
+    { id: 1, name: "Acme Corp", status: "New" },
+    { id: 2, name: "Beta Inc", status: "New" },
+  ];
+  const originalFetch = globalThis.fetch;
+  let resolvePatch!: (value: Response) => void;
+  const patchHeld = new Promise<Response>((resolve) => {
+    resolvePatch = resolve;
+  });
+  globalThis.fetch = (async (input: string, init?: RequestInit): Promise<Response> => {
+    const method = init?.method ?? "GET";
+    if (method === "GET" && input === "/api/Customer") {
+      return new Response(JSON.stringify({ records: store }), { status: 200, headers: { "content-type": "application/json" } });
+    }
+    if (method === "PATCH" && input === "/api/Customer/1") {
+      return patchHeld; // record 1's own Save stays in flight until the test resolves it
+    }
+    throw new Error(`unexpected request ${method} ${input}`);
+  }) as typeof fetch;
+
+  try {
+    await withRealLocalStorage(async () => {
+      const { EntityView } = await import(path.join(dir, "web", "src", "components", "EntityView.jsx"));
+      const customerEntity = project.spec.entities.find((e) => e.name === "Customer")!;
+      const props = {
+        entity: customerEntity,
+        highlightRecordId: null,
+        onHighlightHandled: () => {},
+        onJumpToRecord: () => {},
+        onRecordCountChange: () => {},
+      };
+
+      const { container } = render(React.createElement(EntityView, props));
+      for (let i = 0; i < 40; i++) {
+        if (container.querySelectorAll("tbody tr").length === 2) break;
+        await act(async () => {
+          await new Promise((resolve) => setTimeout(resolve, 0));
+        });
+      }
+      assert.equal(container.querySelectorAll("tbody tr").length, 2, "expected both records to have loaded");
+
+      const findEditButton = (rowId: string) => {
+        const buttons = Array.from(container.querySelectorAll("table tbody button")) as HTMLButtonElement[];
+        return buttons.find((b) => b.closest("tr")?.getAttribute("data-record-id") === rowId && /edit/i.test(b.textContent ?? ""))!;
+      };
+      const getNameInput = () => container.querySelector(".record-form input[type=text]") as HTMLInputElement;
+
+      await act(async () => {
+        fireEvent.click(findEditButton("1"));
+      });
+      assert.equal(getNameInput().value, "Acme Corp");
+
+      await act(async () => {
+        fireEvent.change(getNameInput(), { target: { value: "Acme Corp EDITED" } });
+      });
+      await act(async () => {
+        fireEvent.submit(container.querySelector(".record-form")!);
+      });
+      await act(async () => {
+        await new Promise((resolve) => setTimeout(resolve, 0)); // let record 1's PATCH actually start before switching
+      });
+
+      // startEdit bumps formInstanceKey, remounting the form's own fields
+      // under a new key -- the name input clicked-into above is a now-
+      // detached DOM node, so every reference after this point must be
+      // re-queried fresh via getNameInput() rather than reused.
+      await act(async () => {
+        fireEvent.click(findEditButton("2"));
+      });
+      assert.equal(getNameInput().value, "Beta Inc");
+      await act(async () => {
+        fireEvent.change(getNameInput(), { target: { value: "Beta Inc TYPING" } });
+      });
+
+      // Stands in for the real server actually having applied record 1's
+      // PATCH -- the mock's own GET handler (hit by refresh() right after
+      // this resolves) must reflect that real update.
+      store[0].name = "Acme Corp EDITED";
+      await act(async () => {
+        resolvePatch(
+          new Response(JSON.stringify({ record: { id: 1, name: "Acme Corp EDITED", status: "New" } }), {
+            status: 200,
+            headers: { "content-type": "application/json" },
+          }),
+        );
+        await new Promise((resolve) => setTimeout(resolve, 0));
+      });
+      for (let i = 0; i < 40; i++) {
+        if (container.querySelector("table tbody tr")?.textContent?.includes("Acme Corp EDITED")) break;
+        await act(async () => {
+          await new Promise((resolve) => setTimeout(resolve, 0));
+        });
+      }
+      assert.ok(
+        container.querySelector("table tbody tr")?.textContent?.includes("Acme Corp EDITED"),
+        "sanity check: record 1's save must have actually resolved and refreshed the table",
+      );
+
+      assert.equal(getNameInput().value, "Beta Inc TYPING", "record 2's own in-progress edit must survive record 1's slow save resolving afterward");
+      assert.match(
+        container.querySelector(".record-form button[type=submit]")!.textContent ?? "",
+        /save/i,
+        "the form must still be showing an active edit (Save), not have snapped back to a blank create form (Add)",
+      );
+    });
+  } finally {
+    globalThis.fetch = originalFetch;
+    cleanup();
+    rmSync(dir, { recursive: true, force: true });
+  }
 });
 
 test("every generated .jsx/.js file is syntactically valid, checked with a real parser (esbuild)", async () => {
@@ -1881,7 +2014,7 @@ test("the exported EntityView's Kanban board has a real '+' button per column th
 
   assert.match(
     entityViewJsx,
-    /function startCreateForColumn\(value, field\) \{\s*setEditingId\(null\);\s*setForm\(\{ \.\.\.emptyForm\(entity\), \[field\.name\]: value \}\);\s*setFormInstanceKey\(\(k\) => k \+ 1\);\s*scrollIntoViewRespectingMotion\(document\.querySelector\("\.record-form"\), \{ behavior: "smooth", block: "start" \}\);\s*\}/,
+    /function startCreateForColumn\(value, field\) \{\s*setEditingId\(null\);\s*setForm\(\{ \.\.\.emptyForm\(entity\), \[field\.name\]: value \}\);\s*bumpFormInstanceKey\(\);\s*scrollIntoViewRespectingMotion\(document\.querySelector\("\.record-form"\), \{ behavior: "smooth", block: "start" \}\);\s*\}/,
   );
   assert.match(entityViewJsx, /className="board-add-card-btn"/);
   assert.match(entityViewJsx, /onClick=\{\(\) => startCreateForColumn\(column\.value, boardField\)\}/);
@@ -1924,7 +2057,7 @@ test("the exported EntityView's Kanban board '+' button scrolls the create form 
     "emptyForm",
     "setForm",
     "setEditingId",
-    "setFormInstanceKey",
+    "bumpFormInstanceKey",
     "scrollIntoViewRespectingMotion",
     `${startCreateSrc}\nreturn startCreateForColumn;`,
   )(
@@ -2007,7 +2140,7 @@ test("the exported EntityView's calendar has a real clickable day that pre-fills
 
   assert.match(
     entityViewJsx,
-    /function startCreateForDate\(date, field\) \{\s*setEditingId\(null\);\s*setForm\(\{ \.\.\.emptyForm\(entity\), \[field\.name\]: formatDateForInput\(date\) \}\);\s*setFormInstanceKey\(\(k\) => k \+ 1\);\s*scrollIntoViewRespectingMotion\(document\.querySelector\("\.record-form"\), \{ behavior: "smooth", block: "start" \}\);\s*\}/,
+    /function startCreateForDate\(date, field\) \{\s*setEditingId\(null\);\s*setForm\(\{ \.\.\.emptyForm\(entity\), \[field\.name\]: formatDateForInput\(date\) \}\);\s*bumpFormInstanceKey\(\);\s*scrollIntoViewRespectingMotion\(document\.querySelector\("\.record-form"\), \{ behavior: "smooth", block: "start" \}\);\s*\}/,
   );
   assert.match(entityViewJsx, /onDayClick=\{\(date\) => startCreateForDate\(date, dateField\)\}/);
   // The day cell's className is now built from a dayClasses array (round
@@ -2033,7 +2166,7 @@ test("the exported EntityView's calendar has a real clickable day that pre-fills
     "emptyForm",
     "setForm",
     "setEditingId",
-    "setFormInstanceKey",
+    "bumpFormInstanceKey",
     "scrollIntoViewRespectingMotion",
     `${formatDateSrc}\n${startCreateSrc}\nreturn startCreateForDate;`,
   )({ fields: [] }, () => ({}), (f) => (capturedForm = f), (id) => (capturedEditingId = id), () => {}, () => {});

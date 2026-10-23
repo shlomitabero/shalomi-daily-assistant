@@ -8061,6 +8061,93 @@ test("EntityPanel's main Edit form saves only the field the user actually touche
 });
 
 /**
+ * Round 832's finding: nothing disabled startEdit/the table's own Edit
+ * buttons while an earlier handleSubmit's own PATCH/POST was still in
+ * flight -- a slow save for record A resolving after the user had already
+ * clicked Edit on a different record B let handleSubmit's unconditional
+ * success-path reset (setForm(emptyForm)/setEditingId(null)) silently wipe
+ * out B's own in-progress edit, snapping the form back to "New record"
+ * with zero warning. Exactly the same "two independent in-flight states,
+ * only one checked" shape round 831 just fixed for AutomationsPanel.tsx's
+ * own create/edit form vs. its row actions -- here within EntityPanel's
+ * single form/editingId state instead of a separate busy flag. Confirms
+ * record A's slow save still genuinely completes (the table row reflects
+ * its new name) while record B's own in-progress edit in the form
+ * survives completely untouched.
+ */
+test("EntityPanel's record-form survives a different record's in-progress edit when an earlier record's slow save resolves afterward", async () => {
+  await withJsdom(async () => {
+    const store: EntityRecord[] = [
+      { id: 1, name: "Acme Corp", status: "new" },
+      { id: 2, name: "Beta Inc", status: "new" },
+    ];
+    const originalFetch = globalThis.fetch;
+    let resolvePatch!: (value: Response) => void;
+    const patchHeld = new Promise<Response>((resolve) => {
+      resolvePatch = resolve;
+    });
+    globalThis.fetch = (async (input: string, init?: RequestInit) => {
+      const method = init?.method ?? "GET";
+      if (method === "GET" && input === "/api/projects/proj1/entities/Deal") {
+        return new Response(JSON.stringify({ records: store }), { status: 200, headers: { "content-type": "application/json" } });
+      }
+      if (method === "PATCH" && input === "/api/projects/proj1/entities/Deal/1") {
+        return patchHeld; // record 1's own Save stays in flight until the test resolves it
+      }
+      throw new Error(`unexpected request ${method} ${input}`);
+    }) as typeof fetch;
+
+    try {
+      renderEntityPanel();
+      await waitForCondition(() => document.querySelectorAll("table tbody tr").length === 2);
+
+      const findEditButton = (rowText: string) => {
+        const row = Array.from(document.querySelectorAll("table tbody tr")).find((r) => r.textContent?.includes(rowText))!;
+        return Array.from(row.querySelectorAll("button")).find((b) => /edit/i.test(b.textContent ?? "")) as HTMLButtonElement;
+      };
+
+      const getNameInput = () => document.querySelector(".record-form input[type=text]") as HTMLInputElement;
+
+      fireEvent.click(findEditButton("Acme Corp"));
+      await waitForCondition(() => getNameInput().value === "Acme Corp");
+
+      fireEvent.change(getNameInput(), { target: { value: "Acme Corp EDITED" } });
+      fireEvent.submit(document.querySelector(".record-form")!);
+      await new Promise((resolve) => setTimeout(resolve, 0)); // let record 1's PATCH actually start before switching
+
+      // startEdit bumps formInstanceKey, remounting the form's own fields
+      // under a new key -- the name input clicked-into above is a now-
+      // detached DOM node, so every reference after this point must be
+      // re-queried fresh rather than reused.
+      fireEvent.click(findEditButton("Beta Inc"));
+      await waitForCondition(() => getNameInput().value === "Beta Inc");
+      fireEvent.change(getNameInput(), { target: { value: "Beta Inc TYPING" } });
+
+      // Stands in for the real server actually having applied record 1's
+      // PATCH -- the mock's own GET handler (hit by refresh() right after
+      // this resolves) must reflect that real update.
+      store[0].name = "Acme Corp EDITED";
+      resolvePatch(
+        new Response(JSON.stringify({ record: { id: 1, name: "Acme Corp EDITED", status: "new" } }), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        }),
+      );
+      await waitForCondition(() => document.querySelector("table tbody tr")!.textContent?.includes("Acme Corp EDITED") ?? false);
+
+      assert.equal(getNameInput().value, "Beta Inc TYPING", "record B's own in-progress edit must survive record A's slow save resolving afterward");
+      assert.match(
+        document.querySelector(".record-form button[type=submit]")!.textContent ?? "",
+        /save/i,
+        "the form must still be showing an active edit (Save), not have snapped back to a blank create form (Add)",
+      );
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+});
+
+/**
  * Round 365 regression: EntityPanel never unmounts while an overlay dialog
  * (History, WhatsApp, Shortcuts, ...) is open on top of it (see App.tsx --
  * they render as siblings), so its own window-level "n"/j/k/x/Delete/d
