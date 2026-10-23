@@ -31771,3 +31771,23 @@ Still no genuine reply from שלומי. A third round in a row finding the same 
 **Verification**: reverted the fix and reran -- the test failed exactly as predicted (`'שליחת חוזים' (sending contracts) alone must not spuriously match Courier`); restored, it passes. Also independently re-verified end-to-end (not just the isolated regex) that the real singular and plural courier cases still correctly produce the Courier entity, with no regression. Only `packages/spec-engine` changed, so its own full suite ran: 158/158 pass. `apps/api`'s full suite was also run (cross-workspace dependency): 585/586 pass, the sole failure being the already-documented pre-existing `codegen.test.ts` process-exit hang flake, confirmed unrelated.
 
 **Status**: shipped and pushed.
+
+### Round 814: a third inflection of the same Manager/Admin word family rounds 659 and 811 already fixed -- the Hebrew construct-state plural "מנהלי מערכת"
+
+Still no genuine reply from שלומי. A fourth consecutive round finding a real bug in `packages/spec-engine/src/domainEntities.ts` -- the same word family as rounds 659 and 811, now a third grammatical inflection neither prior fix's lookahead covered.
+
+**The gap**: rounds 659 and 811 excluded Manager's bare `"מנהל"` keyword from matching Admin's own `"מנהל מערכת"`/`"מנהלת מערכת"` (masculine/feminine "system admin") phrases via the lookahead `(?!ת?\s*מערכת)`. The Hebrew construct-state plural `"מנהלי מערכת"` ("system administrators") -- the standard, more natural phrasing for naming a role/permission group rather than one person (e.g. "רק מנהלי מערכת יכולים לגשת לדוחות") -- has the identical collision: after `"מנהל"` the next letter is `"י"`, not `"ת"` or whitespace, so neither prior lookahead fires for it.
+
+**Why this is not deliberate**: this exact word family (`"מנהל"`/`"מנהלת"`/`"מנהלים"`) is explicitly treated as interchangeable by round 811's own comment, which merged two of its inflections into one lookahead -- but the construct-state plural form (grammatically distinct from the free-standing plural `"מנהלים"`) was never considered. `heuristic.test.ts` has explicit regression tests for the masculine (659) and feminine (811) singular forms, confirmed via grep, but none for the plural construct form -- this exact gap was never tested or noticed.
+
+**Concrete failure scenario, verified empirically end-to-end**: calling the real `HeuristicSpecProvider.generate()` with "האפליקציה מיועדת למנהלי מערכת בלבד, בלי תפקידים אחרים" (a description naming only system administrators, plural) returned `roles: ["מנהל/ת" (Manager), "מנהל/ת ראשי/ת" (Admin)]` -- compare to the identical phrasing in the already-fixed singular forms, which correctly returns Admin + the generic Member fallback with no spurious Manager.
+
+**The fix**: made the `"י"` optional alongside the existing `"ת"` in the lookahead -- `(?!ת?\s*מערכת)` → `(?!י?ת?\s*מערכת)` -- one pattern now covers all three inflections (masculine, feminine, construct-plural), while still matching a real standalone `"מנהל"`/`"מנהלת"`/`"מנהלי"` (e.g. `"מנהלי חנות"`, real plural store managers). Also checked whether Admin's own `"מנהל מערכת"` keyword needed a matching `"מנהלי מערכת"` sibling (it doesn't match the plural either, since the extra `"י"` breaks the contiguous substring) -- confirmed unnecessary: `matchRoles` adds Admin unconditionally regardless of its own keyword match (per its own doc comment in `heuristic.ts`), so only Manager's spurious match needed fixing.
+
+**Scope**: lives entirely in `packages/spec-engine`, same scoping as rounds 811/813 -- no `apps/web` or `codegen.ts` counterpart, since this role-matching logic runs once, server-side, before any exported app code exists.
+
+**The test**: added next to round 811's own existing test -- confirms the plural-construct-only description gets no spurious Manager role and does get the Member fallback, and that the real `"מנהלי חנות"` (plural store managers) phrasing still correctly adds Manager.
+
+**Verification**: reverted the fix and reran -- the test failed exactly as predicted; restored, it passes. Also independently re-verified the real plural-manager case end-to-end with no regression. Only `packages/spec-engine` changed, so its own full suite ran: 159/159 pass. `apps/api`'s full suite was also run (cross-workspace dependency): 585/586 pass, the sole failure being the already-documented pre-existing `codegen.test.ts` process-exit hang flake, confirmed unrelated.
+
+**Status**: shipped and pushed.
