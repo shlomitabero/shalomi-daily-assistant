@@ -1107,7 +1107,7 @@ export function createAutomationRule(
     messageTemplate: string;
   },
 ): Promise<{ rule: AutomationRuleView }> {
-  return request(`/projects/${projectId}/entities/${entityName}/automations`, {
+  return request(`/projects/${projectId}/entities/${encodeURIComponent(entityName)}/automations`, {
     method: "POST",
     headers: { "x-idempotency-key": crypto.randomUUID() },
     body: JSON.stringify(data),

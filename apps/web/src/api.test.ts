@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import {
   backupProject,
+  createAutomationRule,
   createProjectFromTemplate,
   createWakeRefCounter,
   exportProject,
@@ -177,14 +178,21 @@ test("backupProject sends each entity's column order as a JSON-encoded columnOrd
  * entity/field permanently, including its own rename/remove routes. Same
  * defense-in-depth posture already taken for this exact assumed input in
  * backup.ts's sanitizeZipEntryName.
+ *
+ * createAutomationRule (round 847's finding) had the identical gap, missed
+ * by the original round-552 sweep since it predates that commit: every
+ * OTHER entity-scoped request builder in this file was already fixed, but
+ * this one call site -- added earlier, for the Automations panel -- was
+ * never touched by it, left interpolating entityName raw into
+ * `/entities/${entityName}/automations`.
  */
-test("listRecords/removeEntity/removeField percent-encode a '/' in an entity/field name instead of letting it split the URL path", async () => {
+test("listRecords/removeEntity/removeField/createAutomationRule percent-encode a '/' in an entity/field name instead of letting it split the URL path", async () => {
   async function requestedUrlFor<T>(fn: () => Promise<T>): Promise<string | undefined> {
     let requestedUrl: string | undefined;
     const original = globalThis.fetch;
     globalThis.fetch = (async (input: string) => {
       requestedUrl = input;
-      return new Response(JSON.stringify({ records: [], project: {} }), { status: 200 });
+      return new Response(JSON.stringify({ records: [], project: {}, rule: {} }), { status: 200 });
     }) as typeof fetch;
     try {
       await fn();
@@ -199,6 +207,17 @@ test("listRecords/removeEntity/removeField percent-encode a '/' in an entity/fie
   assert.equal(
     await requestedUrlFor(() => removeField("proj1", "Profit/Loss", "unit/price")),
     "/api/projects/proj1/entities/Profit%2FLoss/fields/unit%2Fprice",
+  );
+  assert.equal(
+    await requestedUrlFor(() =>
+      createAutomationRule("proj1", "Profit/Loss", {
+        trigger: "record_created",
+        actionType: "webhook",
+        toMode: "static",
+        messageTemplate: "hi",
+      }),
+    ),
+    "/api/projects/proj1/entities/Profit%2FLoss/automations",
   );
 });
 
