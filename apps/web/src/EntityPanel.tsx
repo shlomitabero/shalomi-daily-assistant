@@ -1616,6 +1616,40 @@ export function EntityPanel({
   }, [fieldTypesKey]);
 
   /**
+   * Round 800: the identical "field TYPE changes while its NAME survives a
+   * live refine" bug class rounds 780/781 already fixed for groupFieldName
+   * and bulkEditField/bulkEditValue, missed for this third sibling that
+   * goes through the exact same FieldInput type-branch dispatch --
+   * editingCell/cellDraft, the in-progress inline table-cell editor.
+   * Unlike those two (a reselect/recompute to the new type's own sensible
+   * empty value), there's no equivalent "still useful" draft here once the
+   * field underneath it has changed shape -- an in-progress edit of what
+   * is now a different field is just cancelled outright, via the same
+   * cancelInlineEdit() an explicit Escape already uses, so the stale
+   * cellDraft is never fed into whichever control FieldInput now renders
+   * for the field's new type. Concretely: editing an enum field left
+   * cellDraft holding a stored value like "High"; if a refine then
+   * retypes that same field to boolean before the cell is blurred,
+   * FieldInput's boolean branch would otherwise render `checked={Boolean(
+   * "High")}` -- true, a pre-checked checkbox the user never touched --
+   * and blurring normally would PATCH the unchanged string value against
+   * the now-boolean field, rejected server-side as a confusing error on a
+   * row the user believes they never edited.
+   */
+  const editingCellFieldTypeRef = useRef<string | null>(null);
+  useEffect(() => {
+    editingCellFieldTypeRef.current = editingCell ? entity.fields.find((f) => f.name === editingCell.field)?.type ?? null : null;
+  }, [editingCell]);
+  useEffect(() => {
+    if (!editingCell) return;
+    const currentType = entity.fields.find((f) => f.name === editingCell.field)?.type;
+    if (currentType && editingCellFieldTypeRef.current && currentType !== editingCellFieldTypeRef.current) {
+      cancelInlineEdit();
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [fieldTypesKey]);
+
+  /**
    * Drag-to-resize a column header. Only attaches real mousemove/mouseup
    * listeners while a drag is actually in progress (resizingField set),
    * removing them the instant it ends -- not a permanent global listener

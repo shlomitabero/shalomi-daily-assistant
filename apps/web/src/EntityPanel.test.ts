@@ -6932,6 +6932,77 @@ test("EntityPanel resets a stale bulk-edit value when a live refine changes that
 });
 
 /**
+ * Round 800: the identical "field TYPE changes while its NAME survives a
+ * live refine" bug class rounds 780/781 already fixed for groupFieldName
+ * and bulkEditField/bulkEditValue, missed for a third sibling that goes
+ * through the exact same FieldInput type-branch dispatch -- editingCell/
+ * cellDraft, the in-progress inline table-cell editor. Before the fix,
+ * double-clicking a cell to inline-edit an enum field left cellDraft
+ * holding the stored string value ("Shipped"); a live refine retyping
+ * that same field to boolean while the panel stayed open (no remount,
+ * same entity.name) would re-render that still-open cell through
+ * FieldInput's boolean branch (`checked={Boolean(value)}`) with the
+ * stale string still in cellDraft -- a pre-checked checkbox the user
+ * never touched, and blurring normally would PATCH the unchanged string
+ * against the now-boolean field. Confirms the fix: the in-progress edit
+ * is cancelled outright the moment the field's type changes underneath
+ * it, instead of rendering a misleading control for a stale draft.
+ */
+test("EntityPanel cancels an in-progress inline cell edit when a live refine changes that field's type, instead of rendering a misleadingly pre-checked checkbox", async () => {
+  await withJsdom(async () => {
+    const statusEnumField = {
+      name: "status",
+      label: "Status",
+      type: "enum" as const,
+      required: false,
+      enumValues: ["Pending", "Shipped"],
+      enumLabels: { Pending: "Pending", Shipped: "Shipped" },
+    };
+    const statusBooleanField = { name: "status", label: "Status", type: "boolean" as const, required: false };
+    const entityWithEnumStatus: Entity = {
+      name: "Deal",
+      label: "Deal",
+      fields: [{ name: "name", label: "Name", type: "text", required: true }, statusEnumField],
+    };
+    const entityWithBooleanStatus: Entity = {
+      name: "Deal",
+      label: "Deal",
+      fields: [{ name: "name", label: "Name", type: "text", required: true }, statusBooleanField],
+    };
+    const store: EntityRecord[] = [{ id: 1, createdAt: "x", name: "Acme Corp", status: "Shipped" }];
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = mockRecordsFetch(store) as typeof fetch;
+    try {
+      const view = renderEntityPanel({ entity: entityWithEnumStatus, allEntities: [entityWithEnumStatus] });
+      await waitForCondition(() => document.querySelectorAll("table tbody tr").length === 1);
+
+      const statusCell = document.querySelectorAll("table tbody td")[2] as HTMLTableCellElement;
+      fireEvent.doubleClick(statusCell);
+      await waitForCondition(() => document.querySelector("td.cell-editing select") !== null);
+      assert.equal((document.querySelector("td.cell-editing select") as HTMLSelectElement).value, "Shipped", "the draft must start pre-filled with the record's own current enum value");
+
+      // Simulate a refine that retypes "status" from enum to boolean while
+      // staying on the exact same entity.name ("Deal") and the exact same
+      // field name ("status"), with the cell still open for editing --
+      // the same live-refine, no-remount scenario the bulk-edit test above
+      // exercises.
+      view.rerender(buildEntityPanelElement({ entity: entityWithBooleanStatus, allEntities: [entityWithBooleanStatus] }));
+
+      assert.equal(document.querySelector("td.cell-editing") === null, true, "the in-progress edit must be cancelled outright, not left open with a stale draft fed into the field's new type");
+      // Compared as a boolean, not assert.equal(element, null, ...) directly
+      // -- that form's default diff formatter hangs on jsdom's circular DOM
+      // structure when the assertion actually fails (round 799's own lesson).
+      // Excludes td.select-col's own unrelated row-select checkbox, which
+      // is always present regardless of any inline edit.
+      const statusCellAfterRetype = document.querySelectorAll("table tbody td")[2] as HTMLTableCellElement;
+      assert.equal(statusCellAfterRetype.querySelector("input[type='checkbox']") === null, true, "no checkbox must render in the status cell at all -- it must revert to its normal, non-editing display");
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+});
+
+/**
  * Regression test for round 500's finding: sortKeys' own re-validation
  * effect (sibling to viewMode's and fieldFilters', fixed in rounds 490 and
  * 493 respectively) was never given the same fix -- it only dropped a sort
