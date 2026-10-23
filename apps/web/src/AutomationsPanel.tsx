@@ -120,6 +120,20 @@ export function AutomationsPanel({
     [entities, entityName],
   );
 
+  // Mirrors EntityPanel.tsx's own fieldTypesKey (rounds 780/781/800/805) --
+  // this panel is mounted once per showAutomations toggle and keeps
+  // receiving the live `entities` prop straight from App.tsx's own
+  // `project` state, so it never remounts when a background Refine
+  // finishes. A field's NAME surviving a retype is exactly what the three
+  // effects below already rely on to keep pointed at "the same field", but
+  // none of them were keyed on the field's own TYPE -- only on entityName
+  // or fieldName (the name, not the type). Added to those effects' own
+  // dependency arrays below.
+  const fieldTypesKey = useMemo(
+    () => (selectedEntity ? selectedEntity.fields.map((f) => `${f.name}:${f.type}`).join(",") : ""),
+    [selectedEntity],
+  );
+
   // The user's own drag-reordered column order (EntityPanel.tsx's table)
   // is the layout they see as their real field order everywhere else in
   // the app (bulk-edit, filters, CSV export, both Print sheets) -- without
@@ -171,7 +185,7 @@ export function AutomationsPanel({
       setToField(phoneFields[0]?.name ?? "");
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [entityName]);
+  }, [entityName, fieldTypesKey]);
 
   // The "Value" control below renders a checkbox for a boolean field and a
   // <select> of enumValues for an enum field -- the same type-aware
@@ -181,7 +195,14 @@ export function AutomationsPanel({
   // projects.ts, rejects anything else at creation/update time regardless).
   // Whenever the selected field changes, point fieldValue at one of those
   // real options instead of carrying over unrelated free text left over
-  // from a previously-selected field.
+  // from a previously-selected field. Also keyed on fieldTypesKey, not
+  // just fieldName: a Refine can retype the SAME still-selected field (its
+  // name survives, e.g. enum -> boolean) while this panel stays mounted --
+  // the checkbox below would otherwise render correctly-unchecked
+  // (`fieldValue === "true"` is false for a stale leftover string like
+  // "High"), masking that fieldValue itself is still that stale string,
+  // which handleSubmit then sends straight to the server as a boolean
+  // field's value.
   useEffect(() => {
     if (selectedField?.type === "boolean" && fieldValue !== "true" && fieldValue !== "false") {
       setFieldValue("true");
@@ -192,7 +213,7 @@ export function AutomationsPanel({
       }
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [fieldName]);
+  }, [fieldName, fieldTypesKey]);
 
   // The "Value" control's relation branch (below) needs the target
   // entity's own records loaded, to render a real picker instead of
@@ -250,14 +271,17 @@ export function AutomationsPanel({
 
   // Mirrors the boolean/enum branches above, once relationTargetRecords
   // actually finishes loading (it starts out undefined, so this can't
-  // just run alongside the [fieldName]-keyed effect above).
+  // just run alongside the [fieldName]-keyed effect above). Also keyed on
+  // fieldTypesKey for the same live-refine reason as that effect -- a
+  // field retyping INTO relation while its name survives needs this reset
+  // too, not just a fieldName change.
   useEffect(() => {
     if (selectedField?.type !== "relation" || !relationTargetRecords) return;
     if (!relationTargetRecords.some((r) => String(r.id) === fieldValue)) {
       setFieldValue(relationTargetRecords[0] ? String(relationTargetRecords[0].id) : "");
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [fieldName, relationTargetRecords]);
+  }, [fieldName, fieldTypesKey, relationTargetRecords]);
 
   function loadRules() {
     setLoadError(null);

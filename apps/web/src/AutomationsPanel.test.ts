@@ -1981,3 +1981,135 @@ test("AutomationsPanel's History button shows a real empty state for a rule that
     }
   });
 });
+
+/**
+ * Round 806: the fifth sibling of the "field TYPE changes while its NAME
+ * survives a live refine" bug class -- distinct from the four already-fixed
+ * EntityPanel.tsx siblings (groupFieldName, bulkEditField/bulkEditValue,
+ * editingCell/cellDraft, the main form, rounds 780/781/800/805), since this
+ * panel has its own inline boolean/enum/relation rendering rather than going
+ * through FieldInput. AutomationsPanel is mounted once per showAutomations
+ * toggle and keeps receiving the live `entities` prop straight from App.tsx's
+ * `project` state (no remount on a background refine), but the effect that
+ * resets fieldValue to a type-appropriate default was keyed only on
+ * [fieldName] -- never re-firing when the SAME still-selected field's type
+ * changes underneath it. Picks "priority" (enum) and sets its value to
+ * "High", then simulates a refine retyping "priority" to boolean while
+ * staying selected (same entityName, same fieldName, no remount). Before the
+ * fix, fieldValue stayed the stale string "High": `fieldValue === "true"` is
+ * false, so the checkbox rendered UNCHECKED -- a plausible-looking but
+ * actually-invalid state, since submitting would send "High" for a boolean
+ * field. Confirms the fix instead resets it to the field's own normal
+ * boolean default (checked, "true", the same default a freshly-selected
+ * boolean field already gets per the existing "defaults to true" test
+ * above), and that submitting sends that valid "true" rather than the stale
+ * "High".
+ */
+test("AutomationsPanel resets a stale field_equals value when a live refine changes the selected field's type, instead of submitting a stale value for the new type", async () => {
+  await withJsdom(async () => {
+    const entityWithEnumPriority: Project["spec"]["entities"][number] = {
+      name: "Ticket",
+      label: "Ticket",
+      fields: [
+        { name: "title", label: "Title", type: "text", required: true },
+        {
+          name: "priority",
+          label: "Priority",
+          type: "enum",
+          required: false,
+          enumValues: ["Low", "High"],
+          enumLabels: { Low: "Low", High: "High" },
+        },
+      ],
+    };
+    const entityWithBooleanPriority: Project["spec"]["entities"][number] = {
+      name: "Ticket",
+      label: "Ticket",
+      fields: [
+        { name: "title", label: "Title", type: "text", required: true },
+        { name: "priority", label: "Priority", type: "boolean", required: false },
+      ],
+    };
+    const retypeProject: Project = {
+      ...triggerFieldProject,
+      spec: { ...triggerFieldProject.spec, entities: [entityWithEnumPriority] },
+    };
+    const originalFetch = globalThis.fetch;
+    let createBody: Record<string, unknown> | undefined;
+    globalThis.fetch = (async (input: string, init?: RequestInit) => {
+      const method = init?.method ?? "GET";
+      if (method === "GET" && input === "/api/projects/proj5/automations") {
+        return new Response(JSON.stringify({ rules: [] }), { status: 200, headers: { "content-type": "application/json" } });
+      }
+      if (method === "POST" && input === "/api/projects/proj5/entities/Ticket/automations") {
+        createBody = JSON.parse(init!.body as string);
+        return new Response(JSON.stringify({ rule: { id: "rule9", ...createBody } }), {
+          status: 201,
+          headers: { "content-type": "application/json" },
+        });
+      }
+      throw new Error(`unexpected request ${method} ${input}`);
+    }) as typeof fetch;
+
+    try {
+      const view = renderPanelWith(retypeProject, () => {}, [entityWithEnumPriority]);
+      await waitForCondition(() => document.body.textContent?.includes("No automations yet") ?? false);
+
+      const triggerSelect = Array.from(document.querySelectorAll("select")).find((s) =>
+        Array.from(s.options).some((o) => o.value === "field_equals"),
+      ) as HTMLSelectElement;
+      fireEvent.change(triggerSelect, { target: { value: "field_equals" } });
+
+      const fieldSelect = Array.from(document.querySelectorAll("select")).find((s) =>
+        Array.from(s.options).some((o) => o.value === "priority"),
+      ) as HTMLSelectElement;
+      fireEvent.change(fieldSelect, { target: { value: "priority" } });
+
+      await waitForCondition(() => document.querySelector(".automations-field-value-placeholder, select[aria-label]") !== null || true);
+      const valueSelect = Array.from(document.querySelectorAll("select")).find((s) =>
+        Array.from(s.options).some((o) => o.value === "High"),
+      ) as HTMLSelectElement;
+      fireEvent.change(valueSelect, { target: { value: "High" } });
+      await waitForCondition(() => valueSelect.value === "High");
+
+      // Simulate a refine that retypes "priority" from enum to boolean
+      // while staying on the exact same entityName ("Ticket") and the
+      // exact same fieldName ("priority"), with the create form still
+      // open and "priority" still selected -- the panel stays mounted,
+      // just like the already-fixed EntityPanel.tsx siblings' own tests.
+      view.rerender(
+        React.createElement(
+          ThemeProvider,
+          null,
+          React.createElement(
+            LanguageProvider,
+            null,
+            React.createElement(AutomationsPanel, {
+              projectId: retypeProject.id,
+              project: { ...retypeProject, spec: { ...retypeProject.spec, entities: [entityWithBooleanPriority] } },
+              entities: [entityWithBooleanPriority],
+              onClose: () => {},
+            }),
+          ),
+        ),
+      );
+      await waitForCondition(() => document.querySelector(".automations-field-value-checkbox input") !== null);
+
+      const checkbox = document.querySelector(".automations-field-value-checkbox input") as HTMLInputElement;
+      assert.equal(
+        checkbox.checked,
+        true,
+        "the stale enum value \"High\" must be reset to the field's own normal boolean default (checked), not rendered as a plausible-looking but actually-invalid unchecked box",
+      );
+
+      const messageField = document.querySelector(".automations-create-form textarea") as HTMLTextAreaElement;
+      fireEvent.change(messageField, { target: { value: "Priority changed" } });
+      fireEvent.submit(document.querySelector(".automations-create-form")!);
+
+      await waitForCondition(() => createBody !== undefined);
+      assert.equal(createBody?.fieldValue, "true", "the submitted value must be the reset boolean default, never the stale enum string \"High\"");
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+});
