@@ -61,7 +61,7 @@ import { requireAuth } from "../auth/middleware.js";
 import { describeImpactHazards, runBuildPipeline } from "../pipeline.js";
 import { withIdempotency } from "../idempotency.js";
 import { generateExportFiles } from "../codegen.js";
-import { generateBackupZipEntries } from "../backup.js";
+import { generateBackupZipEntries, parseColumnOrdersQueryParam } from "../backup.js";
 import { buildZip } from "../zip.js";
 import { computeBusinessTwin } from "../twin.js";
 import type { WhatsAppWebManager } from "../whatsappWeb.js";
@@ -1651,7 +1651,8 @@ export function createProjectsRouter(
       if (project.status !== "built") {
         throw new HttpError(409, "Build the project before backing up its data", "BUILD_REQUIRED");
       }
-      const entries = generateBackupZipEntries(db, project);
+      const columnOrders = parseColumnOrdersQueryParam(req.query.columnOrders);
+      const entries = generateBackupZipEntries(db, project, columnOrders);
       const zip = buildZip(entries);
       const safeName = project.name.replace(/[^A-Za-z0-9 _-]/g, "").trim() || "forge-app";
       res.setHeader("content-type", "application/zip");

@@ -730,10 +730,16 @@ export function exportProject(projectId: string, projectName: string): Promise<v
 /**
  * Downloads a single .zip containing one CSV per entity -- the whole
  * project's data at once, instead of visiting every tab's own CSV export
- * button.
+ * button. columnOrders carries each entity's own drag-reordered column
+ * order (apps/web/src/columnOrder.ts), a client-only localStorage
+ * preference the server has no other way to learn -- sent as a single
+ * JSON-encoded query param since this is a plain GET download with no
+ * request body. Omitted entities (never reordered) fall back to their
+ * declared field order server-side, same as every other export surface.
  */
-export function backupProject(projectId: string, projectName: string): Promise<void> {
-  return downloadBlob(`/api/projects/${projectId}/backup`, `${safeDownloadName(projectName, "forge-app")}-backup.zip`);
+export function backupProject(projectId: string, projectName: string, columnOrders: Record<string, string[]>): Promise<void> {
+  const query = Object.keys(columnOrders).length > 0 ? `?columnOrders=${encodeURIComponent(JSON.stringify(columnOrders))}` : "";
+  return downloadBlob(`/api/projects/${projectId}/backup${query}`, `${safeDownloadName(projectName, "forge-app")}-backup.zip`);
 }
 
 export interface BusinessTwinEntityStat {

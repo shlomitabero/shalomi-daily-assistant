@@ -133,11 +133,35 @@ test("backupProject requests the backup endpoint and downloads it with a '-backu
     return new Response(new Blob(["zip bytes"]), { status: 200 });
   }) as typeof fetch;
   try {
-    await withFakeDocument(() => backupProject("proj1", "My CRM App"));
+    await withFakeDocument(() => backupProject("proj1", "My CRM App", {}));
   } finally {
     globalThis.fetch = original;
   }
   assert.equal(requestedUrl, "/api/projects/proj1/backup");
+});
+
+/**
+ * Round 835: the server has no way to learn a client-only localStorage
+ * column-order preference on its own, so backupProject sends it as a
+ * JSON-encoded query param -- the one export surface that didn't yet
+ * respect the user's drag-reordered columns (every other export surface
+ * already does, rounds 615/621/670/678/684/686).
+ */
+test("backupProject sends each entity's column order as a JSON-encoded columnOrders query param, omitted entirely when nothing was ever reordered", async () => {
+  let requestedUrl: string | undefined;
+  const original = globalThis.fetch;
+  globalThis.fetch = (async (input: string) => {
+    requestedUrl = input;
+    return new Response(new Blob(["zip bytes"]), { status: 200 });
+  }) as typeof fetch;
+  try {
+    await withFakeDocument(() => backupProject("proj1", "My CRM App", { Customer: ["status", "name"] }));
+  } finally {
+    globalThis.fetch = original;
+  }
+  const url = new URL(requestedUrl!, "http://localhost");
+  assert.equal(url.pathname, "/api/projects/proj1/backup");
+  assert.deepEqual(JSON.parse(url.searchParams.get("columnOrders")!), { Customer: ["status", "name"] });
 });
 
 /**

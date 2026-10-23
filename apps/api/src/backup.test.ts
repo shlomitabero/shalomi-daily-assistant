@@ -10,7 +10,7 @@ import {
   openDatabase,
   type ForgeDatabase,
 } from "@forge/db";
-import { generateBackupZipEntries } from "./backup.js";
+import { generateBackupZipEntries, parseColumnOrdersQueryParam } from "./backup.js";
 
 /**
  * Every real server opens its database through store.ts, which calls
@@ -171,6 +171,56 @@ test("two fields sharing a label produce a disambiguated 'Backup all data' CSV h
   const entries = generateBackupZipEntries(db, orderProject);
   const orderCsv = entries.find((e) => e.path === "Order.csv")!.content.replace(/^﻿/, "");
   assert.equal(orderCsv, "Amount (subtotal),Amount (shipping)");
+});
+
+/**
+ * Round 835: the on-screen table, per-entity CSV/Copy, both Print sheets,
+ * the Columns menu, board cards, the record form, the bulk-edit/filter/
+ * group-by pickers, and the calendar .ics export (rounds 615/621/670/678/
+ * 684/686) all already follow the user's drag-reordered column order --
+ * this server-side "Backup all data" ZIP was the one export surface that
+ * didn't, since the server has no way to learn a client-only localStorage
+ * preference on its own until the client sends it as columnOrders.
+ */
+test("generateBackupZipEntries honors a per-entity column order passed in, instead of always using the entity's raw declared field order", () => {
+  const db = createTestDb(project);
+  const customer = project.spec.entities[0];
+  insertRecord(db, project.id, customer, { name: "Dana", status: "New" });
+  const entries = generateBackupZipEntries(db, project, { Customer: ["status", "name"] });
+  const customerCsv = entries.find((e) => e.path === "Customer.csv")!.content.replace(/^﻿/, "");
+  const [header, ...rows] = customerCsv.split("\r\n");
+  assert.equal(header, "סטטוס,שם", "the header must follow the persisted order, not the entity's declared field order");
+  assert.equal(rows[0], "חדש,Dana", "each row's own values must follow the exact same reordering as the header");
+});
+
+test("generateBackupZipEntries falls back to an entity's declared field order when no column order was ever persisted for it", () => {
+  const db = createTestDb(project);
+  const entries = generateBackupZipEntries(db, project, {});
+  const customerCsv = entries.find((e) => e.path === "Customer.csv")!.content.replace(/^﻿/, "");
+  assert.equal(customerCsv.split("\r\n")[0], "שם,סטטוס");
+});
+
+test("generateBackupZipEntries's column order falls back to an entity's declared order when the persisted order only names a field it doesn't have, without dropping any real field", () => {
+  const db = createTestDb(project);
+  const entries = generateBackupZipEntries(db, project, { Customer: ["nonexistent"] });
+  const customerCsv = entries.find((e) => e.path === "Customer.csv")!.content.replace(/^﻿/, "");
+  assert.equal(customerCsv.split("\r\n")[0], "שם,סטטוס");
+});
+
+/**
+ * The server has no request body on this plain GET download, so the
+ * client's own column order arrives as a single JSON-encoded query param
+ * -- malformed input must never throw or silently trust an unsafe shape,
+ * the same defensive convention apps/web/src/columnOrder.ts's own
+ * readStore already uses for the identical localStorage-sourced data.
+ */
+test("parseColumnOrdersQueryParam defensively falls back to an empty map for malformed input, instead of throwing or trusting an unsafe shape", () => {
+  assert.deepEqual(parseColumnOrdersQueryParam(undefined), {});
+  assert.deepEqual(parseColumnOrdersQueryParam(""), {});
+  assert.deepEqual(parseColumnOrdersQueryParam("not json"), {});
+  assert.deepEqual(parseColumnOrdersQueryParam(JSON.stringify(["array", "not", "object"])), {});
+  assert.deepEqual(parseColumnOrdersQueryParam(JSON.stringify({ Customer: "not an array" })), {});
+  assert.deepEqual(parseColumnOrdersQueryParam(JSON.stringify({ Customer: ["status", 123, "name"] })), { Customer: ["status", "name"] });
 });
 
 test("a relation field resolves to the related record's display label, not the raw foreign-key id", () => {

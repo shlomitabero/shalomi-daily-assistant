@@ -160,16 +160,80 @@ function fieldDisplayLabel(field: Field, occurrences: Map<string, number>): stri
   return (occurrences.get(label) ?? 0) > 1 ? `${label} (${field.name})` : label;
 }
 
+/**
+ * Reorders entity.fields to match the user's own drag-reordered column
+ * order for this entity's table -- the on-screen table, per-entity "Export
+ * CSV", Copy, both Print sheets, the Columns menu, board cards, the add/
+ * edit form, the bulk-edit/filter/group-by pickers, and the calendar .ics
+ * export (rounds 615/621/670/678/684/686) all already follow it; this
+ * server-side ZIP was the one export surface left behind, since the
+ * server has no way to learn a client-only localStorage preference on its
+ * own -- the client now sends it as a query param (see
+ * parseColumnOrdersQueryParam below). Mirrors (rather than imports, per
+ * this file's own top comment) apps/web/src/columnOrder.ts's own
+ * applyColumnOrder verbatim: a field the order mentions keeps its
+ * persisted relative position; any field the order doesn't mention (a
+ * newly added field, or an order saved before this entity was ever
+ * reordered) is appended at the end in the entity's own original order,
+ * so every field still appears exactly once.
+ */
+function orderedFieldsFor(entity: Entity, columnOrders: Record<string, string[]>): Field[] {
+  const order = columnOrders[entity.name];
+  if (!order || order.length === 0) return entity.fields;
+  const byName = new Map(entity.fields.map((f) => [f.name, f]));
+  const ordered: Field[] = [];
+  for (const name of order) {
+    const field = byName.get(name);
+    if (field) {
+      ordered.push(field);
+      byName.delete(name);
+    }
+  }
+  for (const field of entity.fields) {
+    if (byName.has(field.name)) ordered.push(field);
+  }
+  return ordered;
+}
+
+/**
+ * Defensive parsing of the client's own per-entity column order, sent as a
+ * single JSON-encoded query param (?columnOrders=...) since this is a
+ * plain GET download with no request body. Any malformed shape -- not
+ * valid JSON, not a plain object, a value that isn't an array of strings
+ * -- is dropped down to an empty map rather than thrown: the backup must
+ * never fail just because a stale or malformed localStorage value made it
+ * onto the wire, and orderedFieldsFor's own fallback to the entity's
+ * declared order already handles an entity missing from the map, or an
+ * empty order array, the same way it handles a never-reordered entity.
+ */
+export function parseColumnOrdersQueryParam(raw: unknown): Record<string, string[]> {
+  if (typeof raw !== "string" || raw === "") return {};
+  try {
+    const parsed = JSON.parse(raw);
+    if (parsed === null || typeof parsed !== "object" || Array.isArray(parsed)) return {};
+    const result: Record<string, string[]> = {};
+    for (const [key, value] of Object.entries(parsed as Record<string, unknown>)) {
+      if (!Array.isArray(value)) continue;
+      const names = value.filter((v): v is string => typeof v === "string");
+      if (names.length > 0) result[key] = names;
+    }
+    return result;
+  } catch {
+    return {};
+  }
+}
+
 function entityToCsv(
   entity: Entity,
   records: EntityRecord[],
   allEntities: Entity[],
   recordIndexByEntity: Record<string, Map<number, EntityRecord>>,
+  orderedFields: Field[],
 ): string {
-  const labelOccurrences = fieldLabelOccurrences(entity.fields);
-  const header = entity.fields.map((f) => csvEscape(fieldDisplayLabel(f, labelOccurrences))).join(",");
+  const labelOccurrences = fieldLabelOccurrences(orderedFields);
+  const header = orderedFields.map((f) => csvEscape(fieldDisplayLabel(f, labelOccurrences))).join(",");
   const rows = records.map((record) =>
-    entity.fields.map((f) => csvEscape(fieldDisplayValue(f, record[f.name], allEntities, recordIndexByEntity))).join(","),
+    orderedFields.map((f) => csvEscape(fieldDisplayValue(f, record[f.name], allEntities, recordIndexByEntity))).join(","),
   );
   return [header, ...rows].join("\r\n");
 }
@@ -276,7 +340,11 @@ function uniqueWhatsAppLogPath(existingPaths: string[]): string {
   return `${base} ${suffix}.csv`;
 }
 
-export function generateBackupZipEntries(db: ForgeDatabase, project: Project): { path: string; content: string }[] {
+export function generateBackupZipEntries(
+  db: ForgeDatabase,
+  project: Project,
+  columnOrders: Record<string, string[]> = {},
+): { path: string; content: string }[] {
   const allEntities = project.spec.entities;
   const recordsByEntity: Record<string, EntityRecord[]> = {};
   const recordIndexByEntity: Record<string, Map<number, EntityRecord>> = {};
@@ -288,7 +356,9 @@ export function generateBackupZipEntries(db: ForgeDatabase, project: Project): {
 
   const entries = allEntities.map((entity) => ({
     path: `${sanitizeZipEntryName(entity.name)}.csv`,
-    content: "﻿" + entityToCsv(entity, recordsByEntity[entity.name], allEntities, recordIndexByEntity),
+    content:
+      "﻿" +
+      entityToCsv(entity, recordsByEntity[entity.name], allEntities, recordIndexByEntity, orderedFieldsFor(entity, columnOrders)),
   }));
 
   const whatsappMessages = collectAllWhatsAppMessages(db, project.id);

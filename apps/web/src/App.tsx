@@ -54,7 +54,7 @@ import {
   PersonaItem,
   RoleChip,
 } from "./SpecListItemRemover.js";
-import { applyColumnOrder, reorderColumns } from "./columnOrder.js";
+import { applyColumnOrder, getColumnOrder, reorderColumns } from "./columnOrder.js";
 import { getEntityTabOrder, setEntityTabOrder } from "./entityTabOrder.js";
 import { getPinnedIds, sortByPinned, togglePinned } from "./pinnedProjects.js";
 import { getSeenSharedTimestamps, markSharedProjectSeen, isNewShare } from "./sharedProjectSeen.js";
@@ -1375,7 +1375,18 @@ function AppContent() {
     setBackupBusy(true);
     setError(null);
     try {
-      await backupProject(project.id, project.name);
+      // Every other export surface (table, per-entity CSV/Copy, both
+      // Print sheets, Columns menu, board cards, the record form, the
+      // calendar .ics export) already follows each entity's own
+      // drag-reordered column order -- this is the one that didn't, since
+      // the server backing this ZIP has no way to learn a client-only
+      // localStorage preference on its own.
+      const columnOrders: Record<string, string[]> = {};
+      for (const entity of project.spec.entities) {
+        const order = getColumnOrder(project.id, entity.name);
+        if (order.length > 0) columnOrders[entity.name] = order;
+      }
+      await backupProject(project.id, project.name, columnOrders);
       setBackupDone(true);
     } catch (err) {
       setError((err as Error).message);
