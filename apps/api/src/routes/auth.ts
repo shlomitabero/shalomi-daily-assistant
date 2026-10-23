@@ -152,7 +152,7 @@ export function createAuthRouter(
 
   /**
    * There was previously no limit at all on how many times any of these
-   * three routes could be called -- verifyPassword's scrypt cost (see
+   * four routes could be called -- verifyPassword's scrypt cost (see
    * dummyPasswordHashPromise's own comment) is real attacker-side CPU, not
    * a server-enforced limit, so an unbounded /auth/login loop could
    * brute-force a password at whatever rate the attacker's own hardware
@@ -161,10 +161,10 @@ export function createAuthRouter(
    * known victim email sends that victim a real reset email on every
    * single call with no throttle at all (email-bombing their inbox, and
    * burning this deployment's Resend quota). Keyed by IP for
-   * signup/login -- the realistic attack there is one machine iterating
-   * quickly -- but by the target *email* for forgot-password, since the
-   * actual harm (spamming one inbox) doesn't depend on which IP the
-   * request comes from. Created fresh per createAuthRouter() call, the
+   * signup/login/verify-code -- the realistic attack there is one machine
+   * iterating quickly -- but by the target *email* for forgot-password,
+   * since the actual harm (spamming one inbox) doesn't depend on which IP
+   * the request comes from. Created fresh per createAuthRouter() call, the
    * same convention app.ts's own `activePipelines` already follows, so
    * app.test.ts's withServer (which calls createApp() fresh per test)
    * never leaks rate-limit state between unrelated tests.
@@ -186,6 +186,27 @@ export function createAuthRouter(
     max: 5,
     keyGenerator: (req) => String(req.body?.email ?? "").toLowerCase(),
     message: "Too many password reset requests for this email. Please try again later.",
+  });
+  /**
+   * Round 857: every other unauthenticated POST route in this exact login
+   * flow (above) already has a volumetric throttle; this one, the literal
+   * second half of /auth/login's own email-code flow, had none. This is
+   * NOT a code-guessing defense -- that's already fully handled by
+   * MAX_LOGIN_CODE_ATTEMPTS, a permanent per-row cap (5 wrong guesses and
+   * the row is deleted, regardless of request rate or time window) that a
+   * sliding-window limiter can't improve on and would be redundant with if
+   * keyed the same way. Keyed by IP instead, same rationale as
+   * signup/login above, this closes the separate, previously-unguarded gap
+   * of unbounded REQUEST VOLUME against the cheapest unauthenticated POST
+   * endpoint in the whole API (sha256 + timingSafeEqual, no scrypt) --
+   * flooding it with garbage loginCodeId values costs this server a DB
+   * lookup per request with no throttle at all, unlike every sibling route.
+   */
+  const verifyLoginCodeRateLimiter = createRateLimiter({
+    windowMs: RATE_LIMIT_WINDOW_MS,
+    max: 30,
+    keyGenerator: (req) => req.ip ?? "unknown",
+    message: "Too many login code attempts. Please try again later.",
   });
 
   router.post("/auth/signup", signupRateLimiter, async (req, res, next) => {
@@ -281,9 +302,10 @@ export function createAuthRouter(
    * The second step of the email-login-code flow above: the code itself was
    * never sent back in the first response, only the opaque loginCodeId, so
    * this is the one place that can actually complete a login once the code
-   * step is active.
+   * step is active. See verifyLoginCodeRateLimiter's own comment above for
+   * why this route needed the same volumetric throttle as its siblings.
    */
-  router.post("/auth/login/verify-code", async (req, res, next) => {
+  router.post("/auth/login/verify-code", verifyLoginCodeRateLimiter, async (req, res, next) => {
     const parsed = VerifyLoginCodeSchema.safeParse(req.body);
     if (!parsed.success) {
       next(new HttpError(400, formatValidationError(parsed.error), "VALIDATION_ERROR"));

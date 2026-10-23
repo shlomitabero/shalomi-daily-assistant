@@ -10405,3 +10405,51 @@ test("POST /auth/forgot-password is rate-limited per TARGET EMAIL: the 6th reset
     { emailSender },
   );
 });
+
+/**
+ * Round 857: every other unauthenticated POST route in the login flow
+ * (signup/login/forgot-password, all tested above) already had a
+ * volumetric rate limiter -- this route, the literal second half of the
+ * same login flow, had none at all. Not a code-guessing test (that's
+ * already covered by the "locks it out after too many wrong attempts"
+ * test above, a permanent per-row cap independent of request rate) --
+ * this confirms the separate, previously-missing IP-keyed throttle on
+ * request volume itself. Uses wrong-code calls against one real
+ * loginCodeId purely as a cheap way to generate 31 real requests to this
+ * route; the exact error code for any individual call doesn't matter
+ * (the row's own 5-attempt cap means some of these 401s are
+ * INVALID_LOGIN_CODE and some are LOGIN_CODE_EXPIRED once it's deleted --
+ * both still real responses to a real request, which is all this test needs).
+ */
+test("POST /auth/login/verify-code is rate-limited per IP: the 31st request in the window is rejected with 429", async () => {
+  const emailSender = createFakeEmailSender();
+  await withServer(
+    async (baseUrl) => {
+      const email = "rate-limit-verify-code@example.com";
+      await signup(baseUrl, email);
+      const loginRes = await fetch(`${baseUrl}/api/auth/login`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ email, password: "correct-horse-battery" }),
+      });
+      const { loginCodeId } = (await loginRes.json()) as { loginCodeId: string };
+
+      for (let i = 0; i < 30; i++) {
+        const res = await fetch(`${baseUrl}/api/auth/login/verify-code`, {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ loginCodeId, code: "000000" }),
+        });
+        assert.notEqual(res.status, 429, `verify-code request ${i + 1} of 30 (within the limit) must not be rate-limited yet`);
+      }
+      const blocked = await fetch(`${baseUrl}/api/auth/login/verify-code`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ loginCodeId, code: "000000" }),
+      });
+      assert.equal(blocked.status, 429);
+      assert.equal(((await blocked.json()) as { code?: string }).code, "RATE_LIMITED");
+    },
+    { emailSender },
+  );
+});
