@@ -9816,6 +9816,88 @@ test("uploading a file for an entity whose own name is a path-traversal attempt 
 });
 
 /**
+ * Round 849's finding: deleteUploadedFile (the per-record cleanup that
+ * runs on a PATCH that replaces/clears a file field, or a DELETE of the
+ * record) builds the identical kind of path from the identical
+ * unrestricted entity.name string the upload-destination side above was
+ * just fixed for, but had no equivalent containment check at all -- this
+ * function's own doc comment previously (wrongly) claimed it "can never
+ * escape uploadsDir" specifically because the project/entity directory
+ * segments were "already-authorized", the same assumption round 848
+ * proved false. A file field's stored value is otherwise-unvalidated,
+ * client-settable JSON (coerceValue's "file" case has no structural
+ * check), so an entity named with a traversal sequence plus a crafted
+ * file-field value naming any UUID-shaped filename -- not necessarily one
+ * this server ever actually wrote -- turned a PATCH/DELETE into an
+ * arbitrary single-file-delete primitive. Mirrors round 685's own
+ * existing canary-file test for a crafted VALUE's own traversal attempt,
+ * but for a traversal reached through the entity NAME instead.
+ */
+test("replacing a file field's value on a record belonging to a path-traversal-named entity never deletes anything outside that project's own uploads directory", async () => {
+  await withServer(async (baseUrl, db) => {
+    const email = `upload-entity-delete-traversal-${randomUUID()}@example.com`;
+    const token = await signup(baseUrl, email);
+    const user = findUserByEmail(db, email)!;
+
+    const unsafeEntityName = "../../../tmp/evil";
+    const spec: ProductSpec = {
+      summary: "test",
+      personas: [],
+      roles: ["Admin"],
+      entities: [{ name: unsafeEntityName, fields: [{ name: "resume", type: "file", required: false }] }],
+      screens: [],
+      assumptions: [],
+      openQuestions: [],
+    };
+    const projectId = randomUUID();
+    insertProject(db, { id: projectId, ownerId: user.id, name: "Hiring", description: "test", spec });
+    diffAndMigrate(db, projectId, undefined, spec);
+    markProjectBuilt(db, projectId);
+
+    // A canary file shaped exactly like a real upload (UPLOADED_FILENAME's
+    // own regex), sitting at the entity name's own traversal target --
+    // standing in for another real project's own real upload, which an
+    // attacker could reach the same way by guessing/observing its UUID.
+    const canaryDir = path.join(tmpdir(), "evil");
+    mkdirSync(canaryDir, { recursive: true });
+    const canaryFilename = `${randomUUID()}.txt`;
+    const canaryPath = path.join(canaryDir, canaryFilename);
+    writeFileSync(canaryPath, "do not delete me");
+
+    try {
+      const createRes = await fetch(
+        `${baseUrl}/api/projects/${projectId}/entities/${encodeURIComponent(unsafeEntityName)}`,
+        {
+          method: "POST",
+          headers: authHeaders(token),
+          body: JSON.stringify({ resume: JSON.stringify({ url: canaryFilename, name: "x", size: 0, mimeType: "" }) }),
+        },
+      );
+      assert.equal(createRes.status, 201);
+      const { record } = (await createRes.json()) as { record: { id: number } };
+
+      const patchRes = await fetch(
+        `${baseUrl}/api/projects/${projectId}/entities/${encodeURIComponent(unsafeEntityName)}/${record.id}`,
+        {
+          method: "PATCH",
+          headers: authHeaders(token),
+          body: JSON.stringify({ resume: "" }),
+        },
+      );
+      assert.equal(patchRes.status, 200);
+      await new Promise((resolve) => setTimeout(resolve, 20));
+
+      assert.ok(
+        existsSync(canaryPath),
+        "clearing a file field on a traversal-named entity's own record must never delete a file outside this project's own uploads directory",
+      );
+    } finally {
+      rmSync(canaryDir, { recursive: true, force: true });
+    }
+  });
+});
+
+/**
  * Same ordering guarantee as the test above, from the other direction:
  * a user with no access to this project must be rejected before multer
  * ever runs, even though the request is otherwise well-formed and

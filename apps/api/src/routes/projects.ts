@@ -835,12 +835,24 @@ const UPLOADED_FILENAME = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9
  * repository.ts) -- so this can never be handed a value and trusted to
  * resolve wherever its own embedded URL points. Only the filename's final
  * path segment is used, and only once it matches UPLOADED_FILENAME exactly
- * (the one shape this server itself ever generates); the project/entity
- * directory segments come solely from this route's own already-authorized
- * `project.id`/`entity.name`, never from the field value itself. A fully
- * crafted value can therefore at worst name another real file already
- * inside that exact project+entity's own upload directory -- it can never
- * escape uploadsDir or target a different project's files.
+ * (the one shape this server itself ever generates).
+ *
+ * This comment previously claimed the project/entity directory segments
+ * were safe because they "come solely from this route's own already-
+ * authorized `project.id`/`entity.name`" -- round 848 proved that
+ * assumption false for entity.name specifically (EntitySchema's own
+ * `name` has no character-set restriction, and migrate.ts's own
+ * tableNameFor sanitizes it for the SQL table only, never rejecting the
+ * build or rewriting the spec's own stored value). Round 849 found this
+ * exact function still reachable the same way: an entity named e.g.
+ * "../../../tmp/evil" plus a crafted file-field value naming any
+ * UUID-shaped filename (not necessarily one this server ever actually
+ * wrote) lets a PATCH or DELETE on that entity's own record `rm()`
+ * whatever that resolves to -- an arbitrary single-file-delete primitive,
+ * constrained only to filenames matching UPLOADED_FILENAME's own shape
+ * (which happens to be exactly how every legitimate upload is named, so
+ * directly usable against another project's real uploads too). Now
+ * guarded the same way round 848 guarded the upload-destination side.
  */
 async function deleteUploadedFile(uploadsDir: string, projectId: string, entityName: string, rawValue: unknown): Promise<void> {
   if (typeof rawValue !== "string" || rawValue === "") return;
@@ -854,7 +866,9 @@ async function deleteUploadedFile(uploadsDir: string, projectId: string, entityN
   }
   const filename = url.slice(url.lastIndexOf("/") + 1);
   if (!UPLOADED_FILENAME.test(filename)) return;
-  await rm(path.join(uploadsDir, projectId, entityName, filename), { force: true }).catch(() => {});
+  const target = path.join(uploadsDir, projectId, entityName, filename);
+  if (!isPathInsideDir(target, uploadsDir)) return;
+  await rm(target, { force: true }).catch(() => {});
 }
 
 /**
