@@ -31708,3 +31708,23 @@ Still no genuine reply from שלומי. A fourth instance of the same "stale cla
 **Scope**: docs-only, no application code changed -- no test suite or build to run, no parity question applies.
 
 **Status**: shipped and pushed.
+
+### Round 811: the feminine "מנהלת מערכת" sibling of round 659's Manager/Admin substring collision
+
+Still no genuine reply from שלומי. A real code bug this round, after three docs-only rounds -- the "missed sibling" pattern recurring inside the Hebrew heuristic spec provider's own role-matching table.
+
+**The gap**: round 659 fixed Manager's bare `"מנהל"` keyword spuriously matching inside Admin's own `"מנהל מערכת"` ("system admin") phrase, via a negative lookahead `(?!\s*מערכת)`. The feminine form `"מנהלת מערכת"` ("female system admin") has the identical substring collision -- `"מנהלת"` contains `"מנהל"` as its own first four letters, immediately followed by `"ת"` rather than `"מערכת"`, so round 659's lookahead never fires for it; and a separate, unguarded bare `"מנהלת"` keyword matched it outright regardless.
+
+**Why this is not deliberate**: this file's own adjacent comment explicitly groups `"מנהל"`/`"מנהלת"`/`"מנהלים"` as one interchangeable word family, and round 659's own regression test comment ("The real word still works on its own (via 'מנהלת'/'ניהול'...)") shows the author was aware `"מנהלת"` was a separate, untested code path -- just never circled back to apply the identical fix to it.
+
+**Concrete failure scenario, verified empirically (not just read from source)**: calling the real `HeuristicSpecProvider.generate()` with "האפליקציה מיועדת למנהלת מערכת אחת בלבד, בלי תפקידים אחרים" (a description naming only a female system admin) returned `roles = ["מנהל/ת" (Manager), "מנהל/ת ראשי/ת" (Admin)]` -- the generic Member fallback (`matchRoles` only adds it when exactly one role matched) was silently suppressed by the bogus extra Manager role, the exact same wrong outcome round 659 fixed for the masculine phrasing.
+
+**The fix**: merged the masculine and feminine cases into a single lookahead, `/מנהל(?!ת?\s*מערכת)/` (the `ת` made optional), replacing both the old `/מנהל(?!\s*מערכת)/` regex and the separate unguarded `"מנהלת"` literal. Verified against all four cases directly with Node's own regex engine before touching the test file: excludes both `"מנהל מערכת"` and `"מנהלת מערכת"`, while still matching a standalone `"מנהל"`/`"מנהלת"` (e.g. a store manager) correctly.
+
+**Scope**: lives entirely in `packages/spec-engine` (the offline heuristic fallback provider, used when no LLM API key is configured) -- no `apps/web`, `apps/api` route, or `codegen.ts` counterpart, since spec generation happens once, server-side, before any app code is generated.
+
+**The test**: mirrors round 659's own test exactly, substituting the feminine phrase -- confirms the female-system-admin-only description gets no spurious Manager role and does get the Member fallback, and that the real "מנהלת חנות" (female store manager) phrasing still correctly adds Manager.
+
+**Verification**: reverted the fix and reran -- the test failed exactly as predicted (`AssertionError`, Manager was present); restored, it passes. Only `packages/spec-engine` changed, so its own full suite ran: 156/156 pass. `apps/api`'s full suite (consumes `@forge/spec-engine` for spec generation) was also run since this is a cross-workspace dependency change: 585/586 pass, the sole failure being the already-documented pre-existing `codegen.test.ts` process-exit hang flake, confirmed unrelated.
+
+**Status**: shipped and pushed.
