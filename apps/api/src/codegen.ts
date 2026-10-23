@@ -1454,12 +1454,40 @@ function getPersistedFieldFilters(entityName) {
 // "true"/"false"), with the boolean/relation filter <select> showing
 // nothing selected and no synthetic stale-value option (unlike the enum
 // case, which always has one for exactly this reason).
+// Round 882: the two shape checks below only cover a field retyped INTO
+// boolean/relation -- they miss a field that drops out of
+// findFilterableFields's own qualifying set a different way: an enum
+// field whose enumValues count lands outside findFilterableEnumFields's
+// own 2-8 range (the field's own type never changes, so this isn't even
+// a type-shape mismatch), or a field retyped to number/text/longtext/
+// date (neither "boolean" nor "relation", so neither check below fires).
+// Either way the toolbar's own filter dropdown for that field (above,
+// findFilterableFields) no longer offers it at all, with no synthetic
+// stale-value option left to surface the staleness -- mirrors the live
+// Forge AI preview's own EntityPanel.tsx fix for the identical gap.
+//
+// Deliberately NOT reusing findFilterableFields directly: that function
+// also requires relatedRecords to already confirm a relation field's
+// target records have loaded, which this sanitize step (run once per
+// entity-tab switch, before refresh() has fetched anything) has no
+// business waiting on -- gating on it here would drop a perfectly valid,
+// already-persisted relation filter before its data ever had a chance to
+// load. A relation field only needs to be STRUCTURALLY resolvable (its
+// relationTo names a real entity in this export's own ALL_ENTITIES) to
+// stay filterable here; whether its records have been fetched yet is the
+// toolbar dropdown's own, separate concern.
 function sanitizeFieldFilters(filters, fields) {
   const fieldsByName = new Map(fields.map((f) => [f.name, f]));
+  const filterableEnumNames = new Set(findFilterableEnumFields(fields).map((f) => f.name));
   const cleaned = {};
   for (const [name, value] of Object.entries(filters)) {
     const f = fieldsByName.get(name);
     if (!f) continue;
+    const stillFilterable =
+      f.type === "boolean" ||
+      (f.type === "enum" && filterableEnumNames.has(name)) ||
+      (f.type === "relation" && f.relationTo && ALL_ENTITIES.some((e) => e.name === f.relationTo));
+    if (!stillFilterable) continue;
     if (f.type === "boolean" && value !== "true" && value !== "false") continue;
     if (f.type === "relation" && (!Number.isInteger(Number(value)) || String(Number(value)) !== value || Number(value) < 0)) continue;
     cleaned[name] = value;

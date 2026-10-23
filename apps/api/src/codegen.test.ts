@@ -13825,6 +13825,135 @@ test("the exported EntityView drops a persisted 'Group by' selection when a newe
 });
 
 /**
+ * Round 882: the exact same cross-export reachability path round
+ * 509/570/834 established for sibling stores, applied to sanitizeFieldFilters
+ * this time -- its own two shape checks (boolean value must be "true"/
+ * "false", relation value a plain integer id) only cover a field retyped
+ * INTO boolean/relation. They miss a field that drops out of
+ * findFilterableFields's own qualifying set a different way: an enum field
+ * widened past findFilterableEnumFields's own 2-8 "workable" range (the
+ * field's own type never changes, so this isn't even a type-shape
+ * mismatch). A newer export of the same project (after a refine widened
+ * "status" from 2 to 9 enum values) reloaded against a browser still
+ * holding an older export's stale "status=Shipped" filter kept it applied
+ * forever, since findFilterableFields no longer offers a filter dropdown
+ * for "status" at all once it has too many values -- with no synthetic
+ * stale-value option or "Clear filters" button left to reveal or clear it
+ * (visibleRecords' own filter predicate silently hides every record
+ * regardless).
+ */
+test("the exported EntityView drops a persisted field filter when a newer export widened that enum field past the filterable value-count range, instead of silently showing zero records", async () => {
+  const fewValues = ["New", "Shipped"];
+  const manyValues = Array.from({ length: 9 }, (_, i) => `v${i}`);
+  const customerWithFewValues: Entity = {
+    name: "Customer",
+    label: "Customers",
+    fields: [
+      { name: "name", label: "Name", type: "text", required: true },
+      { name: "status", label: "Status", type: "enum", required: true, enumValues: fewValues, enumLabels: { New: "New", Shipped: "Shipped" } },
+    ],
+  };
+  const customerWithManyValues: Entity = {
+    name: "Customer",
+    label: "Customers",
+    fields: [
+      { name: "name", label: "Name", type: "text", required: true },
+      {
+        name: "status",
+        label: "Status",
+        type: "enum",
+        required: true,
+        enumValues: manyValues,
+        enumLabels: Object.fromEntries(manyValues.map((v) => [v, v])),
+      },
+    ],
+  };
+  const olderExportProject: Project = { ...project, spec: { ...project.spec, entities: [customerWithFewValues] } };
+  const newerExportProject: Project = { ...project, spec: { ...project.spec, entities: [customerWithManyValues] } };
+  const store = [
+    { id: 1, name: "Acme Corp", status: "New" },
+    { id: 2, name: "Globex", status: "Shipped" },
+  ];
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = (async (input: string) => {
+    if (input === "/api/Customer") {
+      return new Response(JSON.stringify({ records: store }), { status: 200, headers: { "content-type": "application/json" } });
+    }
+    throw new Error(`unexpected request ${input}`);
+  }) as typeof fetch;
+
+  const olderDir = writeGeneratedWebComponent(generateExportFiles(olderExportProject));
+  const newerDir = writeGeneratedWebComponent(generateExportFiles(newerExportProject));
+  try {
+    await withRealLocalStorage(async () => {
+      // Simulates filtering to status="Shipped" in an OLDER export, while
+      // "status" still had only 2 enum values -- persists the real filter
+      // via the real generated store functions, through the real UI.
+      const { EntityView: OlderEntityView } = await import(path.join(olderDir, "web", "src", "components", "EntityView.jsx"));
+      const olderEntity = olderExportProject.spec.entities[0];
+      const olderProps = {
+        entity: olderEntity,
+        highlightRecordId: null,
+        onHighlightHandled: () => {},
+        onJumpToRecord: () => {},
+        onRecordCountChange: () => {},
+      };
+      const older = render(React.createElement(OlderEntityView, olderProps));
+      for (let i = 0; i < 40; i++) {
+        if (older.container.querySelectorAll("tbody tr").length > 0) break;
+        await act(async () => {
+          await new Promise((resolve) => setTimeout(resolve, 0));
+        });
+      }
+      const statusFilter = older.container.querySelector(".entity-status-filter") as HTMLSelectElement;
+      await act(async () => {
+        fireEvent.change(statusFilter, { target: { value: "Shipped" } });
+      });
+      assert.equal(statusFilter.value, "Shipped", "sanity check: the older export's own filter must have actually been set");
+      older.unmount();
+
+      // Simulates re-downloading/reloading a NEWER export of the same
+      // project at the same origin, after a refine widened "status" to 9
+      // enum values -- a fresh dynamic import (a genuinely different
+      // generated module, not a rerender of the same instance), with the
+      // real browser localStorage from the older export still holding the
+      // stale "status=Shipped" filter.
+      const { EntityView: NewerEntityView } = await import(path.join(newerDir, "web", "src", "components", "EntityView.jsx"));
+      const newerEntity = newerExportProject.spec.entities[0];
+      const newerProps = {
+        entity: newerEntity,
+        highlightRecordId: null,
+        onHighlightHandled: () => {},
+        onJumpToRecord: () => {},
+        onRecordCountChange: () => {},
+      };
+      const newer = render(React.createElement(NewerEntityView, newerProps));
+      for (let i = 0; i < 40; i++) {
+        if (newer.container.querySelectorAll("tbody tr[data-record-id]").length === 2) break;
+        await act(async () => {
+          await new Promise((resolve) => setTimeout(resolve, 0));
+        });
+      }
+      assert.equal(
+        newer.container.querySelectorAll("tbody tr[data-record-id]").length,
+        2,
+        "both records must be visible again once the now-unfilterable 'status' field's stale filter is dropped, not stuck hiding everything forever",
+      );
+      assert.equal(
+        newer.container.querySelector(".entity-status-filter"),
+        null,
+        "the toolbar's own filter dropdown for 'status' must no longer render once it has too many values to be filterable",
+      );
+    });
+  } finally {
+    globalThis.fetch = originalFetch;
+    cleanup();
+    rmSync(olderDir, { recursive: true, force: true });
+    rmSync(newerDir, { recursive: true, force: true });
+  }
+});
+
+/**
  * Round 840: the exact same cross-export reachability path round 839 just
  * closed for getPersistedGroupField, but for getPersistedViewMode --
  * getPersistedViewMode only ever validated the stored string is one of

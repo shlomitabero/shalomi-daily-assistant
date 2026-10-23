@@ -7148,6 +7148,156 @@ test("EntityPanel drops a field filter when a live refine changes that field's t
 });
 
 /**
+ * Round 882: round 751's own two shape checks (boolean value must be
+ * "true"/"false", relation value must be a plain non-negative integer id)
+ * only cover a field retyped INTO boolean/relation -- they miss a field
+ * that drops out of findFilterableFields's own qualifying set a different
+ * way: an enum field whose enumValues count grows past
+ * findFilterableEnumFields's own 2-8 "workable" range. The field's own
+ * TYPE never changes (still "enum"), so this isn't even a type-shape
+ * mismatch the way enum->boolean is -- it's the toolbar's own filter
+ * dropdown for "status" disappearing entirely once there are too many
+ * values to offer a workable dropdown for, while visibleRecords' filter
+ * predicate keeps applying the stale value regardless, with the
+ * "status" <select> no longer rendered at all to reveal or clear it.
+ */
+test("EntityPanel drops a field filter when a live refine widens that enum field past the filterable value-count range, instead of silently showing zero records", async () => {
+  await withJsdom(async () => {
+    const statusFieldFewValues = {
+      name: "status",
+      label: "Status",
+      type: "enum" as const,
+      required: true,
+      enumValues: ["new", "won"],
+      enumLabels: { new: "New", won: "Won" },
+    };
+    const manyValues = Array.from({ length: 9 }, (_, i) => `v${i}`);
+    const statusFieldManyValues = {
+      name: "status",
+      label: "Status",
+      type: "enum" as const,
+      required: true,
+      enumValues: manyValues,
+      enumLabels: Object.fromEntries(manyValues.map((v) => [v, v])),
+    };
+    const entityWithFewValues: Entity = {
+      name: "Deal",
+      label: "Deal",
+      fields: [{ name: "name", label: "Name", type: "text", required: true }, statusFieldFewValues],
+    };
+    const entityWithManyValues: Entity = {
+      name: "Deal",
+      label: "Deal",
+      fields: [{ name: "name", label: "Name", type: "text", required: true }, statusFieldManyValues],
+    };
+    const store: EntityRecord[] = [
+      { id: 1, createdAt: "x", name: "Acme Corp", status: "new" },
+      { id: 2, createdAt: "x", name: "Globex", status: "won" },
+    ];
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = mockRecordsFetch(store) as typeof fetch;
+    try {
+      const view = renderEntityPanel({ entity: entityWithFewValues, allEntities: [entityWithFewValues] });
+      await waitForCondition(() => document.querySelectorAll("table tbody tr").length === 2);
+
+      const statusFilter = document.querySelector(".entity-status-filter") as HTMLSelectElement;
+      fireEvent.change(statusFilter, { target: { value: "won" } });
+      await waitForCondition(() => document.querySelectorAll("table tbody tr").length === 1);
+      assert.ok(
+        document.querySelector("table tbody")?.textContent?.includes("Globex"),
+        "filtering to status=won must leave only Globex visible",
+      );
+
+      // Simulate a refine that widens "status" to 9 enum values -- past
+      // findFilterableEnumFields's own 2-8 range -- while staying on the
+      // exact same entity.name ("Deal") and the exact same field name
+      // ("status"). The field's own type stays "enum" throughout.
+      view.rerender(buildEntityPanelElement({ entity: entityWithManyValues, allEntities: [entityWithManyValues] }));
+      await waitForCondition(() => document.querySelectorAll("table tbody tr").length === 2);
+
+      assert.equal(
+        document.querySelector(".entity-status-filter"),
+        null,
+        "the toolbar's own filter dropdown for 'status' must no longer render once it has too many values to be filterable",
+      );
+      assert.ok(
+        document.querySelector("table tbody")?.textContent?.includes("Acme Corp") &&
+          document.querySelector("table tbody")?.textContent?.includes("Globex"),
+        "both records must be visible again once the now-unfilterable 'status' field's stale filter (\"won\") is dropped, not stuck hiding everything forever",
+      );
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+});
+
+/**
+ * Round 882, the sibling direction: a field retyped away from enum/
+ * boolean/relation into something findFilterableFields never offers a
+ * filter for at all (number/text/longtext/date) was equally missed by
+ * round 751's own two shape checks, since neither checks for "boolean"
+ * nor "relation" -- the new type is neither -- so the stale enum-shaped
+ * value fell through unchanged.
+ */
+test("EntityPanel drops a field filter when a live refine retypes that field to a non-filterable type, instead of silently showing zero records", async () => {
+  await withJsdom(async () => {
+    const statusEnumField = {
+      name: "status",
+      label: "Status",
+      type: "enum" as const,
+      required: true,
+      enumValues: ["new", "won"],
+      enumLabels: { new: "New", won: "Won" },
+    };
+    const statusNumberField = { name: "status", label: "Status", type: "number" as const, required: true };
+    const entityWithEnumStatus: Entity = {
+      name: "Deal",
+      label: "Deal",
+      fields: [{ name: "name", label: "Name", type: "text", required: true }, statusEnumField],
+    };
+    const entityWithNumberStatus: Entity = {
+      name: "Deal",
+      label: "Deal",
+      fields: [{ name: "name", label: "Name", type: "text", required: true }, statusNumberField],
+    };
+    const store: EntityRecord[] = [
+      { id: 1, createdAt: "x", name: "Acme Corp", status: "new" },
+      { id: 2, createdAt: "x", name: "Globex", status: "won" },
+    ];
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = mockRecordsFetch(store) as typeof fetch;
+    try {
+      const view = renderEntityPanel({ entity: entityWithEnumStatus, allEntities: [entityWithEnumStatus] });
+      await waitForCondition(() => document.querySelectorAll("table tbody tr").length === 2);
+
+      const statusFilter = document.querySelector(".entity-status-filter") as HTMLSelectElement;
+      fireEvent.change(statusFilter, { target: { value: "won" } });
+      await waitForCondition(() => document.querySelectorAll("table tbody tr").length === 1);
+
+      // Simulate a refine that retypes "status" from enum to number --
+      // neither boolean nor relation, so round 751's own two checks never
+      // fire -- while staying on the exact same entity.name ("Deal") and
+      // field name ("status").
+      view.rerender(buildEntityPanelElement({ entity: entityWithNumberStatus, allEntities: [entityWithNumberStatus] }));
+      await waitForCondition(() => document.querySelectorAll("table tbody tr").length === 2);
+
+      assert.equal(
+        document.querySelector(".entity-status-filter"),
+        null,
+        "the toolbar's own filter dropdown for 'status' must no longer render once it's a number field",
+      );
+      assert.ok(
+        document.querySelector("table tbody")?.textContent?.includes("Acme Corp") &&
+          document.querySelector("table tbody")?.textContent?.includes("Globex"),
+        "both records must be visible again once the now-unfilterable 'status' field's stale filter (\"won\") is dropped, not stuck hiding everything forever",
+      );
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+});
+
+/**
  * Round 780: the same "field TYPE changes while its NAME survives a live
  * refine" bug class round 751 fixed for fieldFilters above, never fixed
  * for groupFieldName. Before the fix, grouping by "status" (an enum with

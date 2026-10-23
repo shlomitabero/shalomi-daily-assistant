@@ -38,6 +38,7 @@ import {
   findDateField,
   findEndDateField,
   findFilterableFields,
+  findFilterableEnumFields,
   fieldDisplayLabel,
   fieldLabelOccurrences,
   findPhoneField,
@@ -1562,6 +1563,14 @@ export function EntityPanel({
   // matching its field's current type entirely. See that effect's own
   // doc comment for why.
   const fieldTypesKey = useMemo(() => entity.fields.map((f) => `${f.name}:${f.type}`).join(","), [entity.fields]);
+  // Only read by the fieldFilters effect just below (round 882) -- an enum
+  // field widened/narrowed past findFilterableEnumFields's own 2-8 range
+  // never changes its own type (still "enum"), so fieldTypesKey alone
+  // wouldn't notice that transition at all.
+  const fieldEnumCountsKey = useMemo(
+    () => entity.fields.map((f) => `${f.name}:${f.type === "enum" ? (f.enumValues?.length ?? 0) : ""}`).join(","),
+    [entity.fields],
+  );
   useEffect(() => {
     const validFieldNames = new Set(fieldNamesKey ? fieldNamesKey.split(",") : []);
     validFieldNames.add("createdAt");
@@ -1601,6 +1610,38 @@ export function EntityPanel({
   // <select>'s own synthetic-option guard below already surfaces visibly,
   // with a working Clear button -- unlike the boolean/relation cases,
   // where nothing would otherwise explain an empty table.
+  //
+  // Round 882: those two shape checks alone still missed a field that
+  // drops out of filterableFields's own qualifying set a different way --
+  // an enum field refined to have 9+ (or fewer than 2) enumValues (still
+  // type "enum", so fieldTypesKey doesn't even change -- fieldEnumCountsKey
+  // above exists for exactly this), or a field retyped to number/text/
+  // longtext/date (fieldTypesKey changes, but the type is neither
+  // "boolean" nor "relation", so neither existing check fires). Either way
+  // the toolbar's own filterableFields dropdown for that field disappears
+  // entirely (findFilterableEnumFields's enum-count gate, or the type no
+  // longer qualifying at all) -- with no synthetic-option guard left to
+  // surface the staleness, since the field's own <select> isn't rendered
+  // at all anymore. visibleRecords' filter predicate keeps applying the
+  // stale value regardless, silently hiding every record, and if this was
+  // the entity's only filterable field, filterableFields is now empty, so
+  // the "Clear filters" button (gated on filterableFields.length > 0)
+  // never renders either -- no UI control left anywhere to reveal or
+  // clear it.
+  //
+  // Deliberately NOT reusing filterableFields/findFilterableFields
+  // directly here: that function also requires relatedRecords to already
+  // confirm a relation field's target records have loaded, which this
+  // effect has no business waiting on -- relatedRecords starts out {} on
+  // every fresh mount and populates asynchronously after this effect's
+  // own first run, so gating on it here would transiently (and, since
+  // this effect doesn't depend on relatedRecords, PERMANENTLY within this
+  // mount) drop a perfectly valid, already-persisted relation filter
+  // before its data ever had a chance to load. A relation field only
+  // needs to be STRUCTURALLY resolvable (its relationTo names a real,
+  // still-existing entity) to stay filterable here; whether its records
+  // have been fetched yet is the toolbar dropdown's own, separate concern.
+  const filterableEnumNames = useMemo(() => new Set(findFilterableEnumFields(entity.fields).map((f) => f.name)), [entity.fields]);
   useEffect(() => {
     const fieldsByName = new Map(entity.fields.map((f) => [f.name, f]));
     const persisted = getFieldFiltersPreference(projectId, entity.name);
@@ -1608,12 +1649,17 @@ export function EntityPanel({
     for (const [field, value] of Object.entries(persisted)) {
       const f = fieldsByName.get(field);
       if (!f) continue;
+      const stillFilterable =
+        f.type === "boolean" ||
+        (f.type === "enum" && filterableEnumNames.has(field)) ||
+        (f.type === "relation" && !!f.relationTo && allEntities.some((e) => e.name === f.relationTo));
+      if (!stillFilterable) continue;
       if (f.type === "boolean" && value !== "true" && value !== "false") continue;
       if (f.type === "relation" && (!Number.isInteger(Number(value)) || String(Number(value)) !== value || Number(value) < 0)) continue;
       next[field] = value;
     }
     setFieldFilters(next);
-  }, [projectId, entity.name, fieldNamesKey, fieldTypesKey]);
+  }, [projectId, entity.name, fieldNamesKey, fieldTypesKey, fieldEnumCountsKey, filterableEnumNames, allEntities]);
 
   /**
    * Round 780: groupFieldName's own load effect above only re-validates on
