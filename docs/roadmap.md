@@ -31851,3 +31851,23 @@ Still no genuine reply from שלומי. A code bug after a run of mostly-docs ro
 **Verification**: reverted the fix (temporarily neutralizing just the two behavioral checks, not the type-shape change the other 9 tests depend on) and reran -- both new `checkpointDiff.test.ts` behavioral tests failed exactly as predicted; restored, all 3 pass. The `HistoryPanel.test.ts` test also failed without the fix (a module-level crash before reaching the detail-text assertion -- still a valid "module-load crash is a strong confirmation" per this session's own established convention) and passed once restored. Full `apps/web` suite: 1124/1124 pass, no flakes. `tsc -b` clean.
 
 **Status**: shipped and pushed.
+
+### Round 818: Time Machine's diff/"Current" check never compared an enum field's own enumLabels
+
+Still no genuine reply from שלומי. The very next round found another instance of the exact pattern round 817 just closed, inside the same function.
+
+**The gap**: `fieldSignature()` (`apps/web/src/checkpointDiff.ts`) encoded a field's `type`, `relationTo`, sorted `enumValues`, and `required` flag -- but never `enumLabels`. Unlike a field/entity `label` (deliberately excluded, per this function's own doc comment, as "cosmetic"), `enumLabels` is real and *pervasively* user-rendered: the displayed text in table cells, Kanban board columns, form `<select>` options, automation rule conditions, calendar exports, and grouping/sort/search matching all read `enumLabels`, not the raw `enumValue` (confirmed across `entityFormatting.ts`, `calendarIcs.ts`, `AutomationsPanel.tsx` -- 15+ call sites), arguably an even more pervasive property than round 817's `description`.
+
+**Why this is not deliberate**: zero mentions of `enumLabels` anywhere in `checkpointDiff.ts`, `pipeline.ts`, or `migrate.ts` (confirmed via grep) -- no exclusion rationale exists for it anywhere, unlike `label`'s own explicit comment two lines above `fieldSignature` itself. This is exactly the "missed sibling" pattern just closed for `description` -- a property silently absent with no exclusion rationale, sitting right next to one (`label`) that got the correct, deliberate treatment.
+
+**Concrete failure scenario**: an enum field `status: { enumValues: ["New", "Done"] }` (no `enumLabels`) gets checkpointed, then refined to add `enumLabels: { New: "חדש", Done: "בוצע" }` with the exact same `enumValues`/`type`/`required`. Every record's status now renders completely different text across the whole app. `fieldSignature` produces the identical string for both (`"enum||New,Done||optional"` either way before the fix), so `computeCheckpointDiff` reports the field as unchanged -- HistoryPanel's diff view says "nothing changed" for a refine that actually re-labeled every value shown app-wide -- and `isCheckpointCurrent` wrongly reports `true`, permanently disabling that checkpoint's Restore button, the same failure mode round 817 just fixed for `description`.
+
+**The fix**: added `enumLabels` to the signature as sorted `"rawValue:displayLabel"` pairs (so key order never produces a spurious diff), with `undefined` and `{}` deliberately producing the identical signature (both mean "no overrides, raw values shown as-is").
+
+**Scope**: `apps/web` only. `apps/api/src/pipeline.ts`'s `computeImpact` is an explicitly separate implementation (its own comment calls out "checkpoints with checkpointDiff.ts's own (separate, client-side)" logic) that warns about structural/data-breaking impact, not display-only changes -- `enumLabels` changing breaks nothing structurally, so it has no obligation to flag this. `codegen.ts` has no checkpoint-history/diff feature at all.
+
+**The tests**: mirroring round 817's pair exactly -- a same-named enum field with only `enumLabels` differing is reported by `computeCheckpointDiff` (and identical-undefined `enumLabels` on both sides is correctly NOT reported), plus the identical case for `isCheckpointCurrent`.
+
+**Verification**: reverted the fix and reran -- both behavioral tests failed exactly as predicted (`AssertionError`/`true !== false`); restored, all 3 pass. Full `apps/web` suite: 1127/1127 pass, no flakes. `tsc -b` clean.
+
+**Status**: shipped and pushed.
