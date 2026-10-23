@@ -1014,6 +1014,48 @@ test("MenuItem's 'dish' keyword doesn't spuriously match 'dishonest'", async () 
 });
 
 /**
+ * Round 871's finding: the same idiom-co-occurrence pitfall rounds 869/870
+ * fixed for Order's "order"/Event's "conference" also applied to
+ * MenuItem's "dish(es)" keyword, just never checked there. "satellite
+ * dish(es)" is a genuine, correctly-spelled standalone phrase for a
+ * satellite-TV installer, and "dish soap"/"dish rack(s)"/"dish towel(s)"/
+ * "Dish Network" are equally ordinary kitchenware/cleaning/brand phrases --
+ * none have anything to do with a restaurant/cafe menu. Confirmed with a
+ * real repro before fixing: a satellite-TV-installation description, a
+ * dish-soap-subscription description, and a dish-rack-inventory
+ * description all spuriously matched MenuItem (fields: name/price/
+ * category) via HeuristicSpecProvider's real matchEntities. Mirrors
+ * Event's two-INDEPENDENT-exclusions shape (round 870) rather than Order's
+ * single joined idiom -- "satellite " immediately before OR one of a
+ * small set of compound nouns immediately after, either alone sufficient
+ * to exclude a match -- confirmed here alongside the genuine standalone
+ * "dish"/"dishes" cases the test just above already exercises.
+ */
+test("MenuItem's 'dish' keyword doesn't spuriously trigger on 'satellite dish(es)', 'dish soap', 'dish rack(s)', or 'dish towel(s)'", async () => {
+  const provider = new HeuristicSpecProvider();
+
+  const satelliteTv = await provider.generate(
+    "An app for our satellite TV installation company to schedule technician visits and track which satellite dishes are installed at each customer's home.",
+  );
+  assert.ok(!satelliteTv.entities.some((e) => e.name === "MenuItem"), "'satellite dishes' alone must not spuriously match MenuItem");
+
+  const dishSoap = await provider.generate("A dish soap subscription service that ships to customers monthly.");
+  assert.ok(!dishSoap.entities.some((e) => e.name === "MenuItem"), "'dish soap' alone must not spuriously match MenuItem");
+
+  const dishRack = await provider.generate("An app to track our dish rack inventory for a kitchenware store.");
+  assert.ok(!dishRack.entities.some((e) => e.name === "MenuItem"), "'dish rack' alone must not spuriously match MenuItem");
+
+  const dishTowel = await provider.generate("An online shop selling dish towels and other kitchen linens.");
+  assert.ok(!dishTowel.entities.some((e) => e.name === "MenuItem"), "'dish towels' alone must not spuriously match MenuItem");
+
+  // The real restaurant term still works, with no "satellite"/"soap"/
+  // "rack"/"towel" nearby (the test just above already covers this, but
+  // re-confirmed here against this exact fix's own regex).
+  const realDish = await provider.generate("An app for a restaurant to manage its menu and daily dish specials.");
+  assert.ok(realDish.entities.some((e) => e.name === "MenuItem"), "a standalone 'dish' must still match MenuItem");
+});
+
+/**
  * Regression test for a real bug found in round 448's survey and fixed in
  * round 449: Product's bare "product" keyword is a substring of
  * "production" -- an ordinary word in a creative/media description that has

@@ -465,8 +465,26 @@ export const DOMAIN_ENTITY_RULES: DomainEntityRule[] = [
     // only orders ("ניהול הזמנות") spuriously matched this entity too,
     // fabricating a restaurant menu for e.g. a clothing store's order
     // tracker. The negative lookbehind excludes only that specific root.
+    // Round 871: a `\b`-bounded "dish(es)" is still the idiom-co-occurrence
+    // shape (pitfall 1b, same as Order's "in order to" and Event's "video
+    // conference"/"conference call") -- "satellite dish(es)" is a genuine,
+    // correctly-spelled standalone phrase for a satellite-TV installer
+    // that has nothing to do with restaurants, and "dish soap"/"dish
+    // rack(s)"/"dish towel(s)"/"Dish Network" are equally ordinary
+    // kitchenware/cleaning/brand phrases. Confirmed empirically before
+    // fixing: a satellite-TV installation description, a dish-soap
+    // subscription description, and a dish-rack-inventory description all
+    // spuriously matched MenuItem via HeuristicSpecProvider's real
+    // matchEntities. Bare "dish"/"dishes" can't simply be dropped --
+    // heuristic.test.ts already relies on it matching genuine standalone
+    // uses ("daily dish specials", "which dishes are available"), so this
+    // mirrors Event's two-INDEPENDENT-exclusions shape rather than Order's
+    // single joined idiom: excluded when immediately preceded by
+    // "satellite " OR immediately followed by one of a small, specific set
+    // of non-restaurant compound nouns, either alone sufficient to reject
+    // a match.
     keywords: [
-      "menu", /\bdish(es)?\b/, "food item", "restaurant", "cafe", "מסעדה", "מסעדות",
+      "menu", /(?<!\bsatellite\s)\bdish(es)?\b(?!\s*(soap|racks?|towels?|network)\b)/, "food item", "restaurant", "cafe", "מסעדה", "מסעדות",
       "תפריט", /(?<!ז)מנות/, "בית קפה",
       // "בית קפה" (café) had no plural entry (round 582). Unlike this
       // file's other missing-plural fixes (576-581, all a ה→ות swap or a
