@@ -31993,3 +31993,23 @@ Still no genuine reply from שלומי. `packages/db/src/collaborators.ts` was t
 **Verification**: reverted the fix and reran -- failed exactly as predicted (`["amy","zed"]` instead of `["zed","amy"]`); restored, passes, along with all 15 tests in `collaborators.test.ts`. Full `packages/db` suite: 215/215 pass. Full `apps/api` suite (consumer of `listCollaborators` via `CollaboratorsPanel`'s backing routes): 588/589 pass, the lone failure is `codegen.test.ts`'s same recurring, already-documented, unrelated whole-file `SIGKILL`.
 
 **Status**: shipped and pushed.
+
+### Round 825: Employee's bare "צוות" keyword spuriously matched "מצוות" (commandments)
+
+Still no genuine reply from שלומי. This round needed two survey passes -- the first's top candidate (a claimed gap in `calendarChipLabelField`'s relation-field handling) did not survive independent verification: direct tracing through `pickDisplayField`/`calendarChipLabelField` shows a relation-typed field can never reach the label role whenever the entity has a date field (which `calendarChipLabelField`'s own caller guarantees), and round 778 already closed the fallback-path version of this exact bug class with explicit test coverage, including a near-identical fixture. The survey's second candidate was a real but purely cosmetic stale doc comment near an access-control route (naming the wrong helper function in a comment, with the actual access control correct and consistent) -- too thin to carry a round on its own. A second, redirected survey (pointed at genuinely unexplored files) found this round's real fix.
+
+**The gap**: `domainEntities.ts`'s `Employee` entity rule (`DOMAIN_ENTITY_RULES`) and `ROLE_RULES.Employee` both included bare `"צוות"` ("team"/"staff") in their Hebrew keyword lists. `"צוות"` is a plain substring of `"מצוות"` ("commandments"/"mitzvot") -- an entirely ordinary word in a religious-observance tracker or bar/bat-mitzvah planning app description, with nothing to do with staff management. `matchesKeyword` (`heuristic.ts`) does a plain `.includes()` for a string keyword, with no word-boundary awareness -- and JS's `\b` doesn't bound Hebrew in the first place, so even an explicit boundary wouldn't have helped.
+
+**Concrete failure scenario**: a description like "אפליקציה למעקב אחר קיום מצוות ומנהגים" (an app for tracking observance of commandments and customs) -- never mentioning staff, team, or employees -- matched bare `"צוות"` as a substring inside `"מצוות"`. `matchEntities` fabricated an `Employee` entity (fields name/role/email/active) with no basis in the description, and `matchRoles` fabricated an `עובד/ת` role alongside Admin, suppressing the generic Member-role fallback (which only applies when exactly one role matched) -- producing an entirely wrong entity/role/screens set for a project about religious observance.
+
+**Why not intentional**: this exact file already fixed the identical "מ + root" collision shape at least 15 times over (documented inline for order/stock/driver/patient/deals/worker/courses/stripe/חיוב/מנוי/מלאי/מוצר), and -- critically -- the very same keyword array already carries this exact fix for `עובד`/`עובדת`/`עובדים` (round 565, excluding the pu'al "מעובד" prefix collision) with `"צוות"` sitting bare in the very next array slot, no exclusion, no comment explaining why it would be different. No existing test exercised `"מצוות"` or `"בר מצווה"` as a negative case.
+
+**The fix**: replaced bare `"צוות"` with `/(?<!מ)צוות/` in both `DOMAIN_ENTITY_RULES`'s `Employee` rule and `ROLE_RULES.Employee`, keeping them in sync -- the identical lookbehind pattern this file already uses for `עובד`/`עובדת`/`עובדים`/`מלאי`/`מוצר`.
+
+**Scope**: `packages/spec-engine` only -- this logic is consumed purely server-side at spec-generation time; confirmed via grep that neither `ROLE_RULES` nor `DOMAIN_ENTITY_RULES` are referenced anywhere in `apps/web`/`codegen.ts`, so no parity fix applies.
+
+**The tests**: a new test mirrors round 565's own `עובד`/`מעובד` test exactly -- confirms a commandments-themed description no longer spuriously adds the `Employee` entity or `עובד/ת` role, while real usage (`"הצוות שלנו"`, with the definite-article "ה" prefix rather than "מ") still matches both.
+
+**Verification**: reverted the fix and reran -- failed exactly as predicted (`'מצוות'... must not spuriously match Employee` assertion failed); restored, passes. Full `packages/spec-engine` suite: 160/160 pass. Full `apps/api` suite (consumes spec-engine at build time): 588/589 pass, the lone failure is `codegen.test.ts`'s same recurring, already-documented, unrelated whole-file `SIGKILL`.
+
+**Status**: shipped and pushed.
