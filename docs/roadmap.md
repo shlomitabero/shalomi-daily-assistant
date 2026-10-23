@@ -31690,3 +31690,21 @@ Still no genuine reply from שלומי. The same bug as round 807, in a third do
 **Scope**: docs-only, no application code changed -- no test suite or build to run, no parity question applies.
 
 **Status**: shipped and pushed.
+
+### Round 810: docs/architecture.md still claimed "not yet an exportable codebase," never updated once code export shipped
+
+Still no genuine reply from שלומי. A fourth instance of the same "stale claim fixed in one doc, missed in a sibling doc" pattern (rounds 807-809), this time against a feature-existence claim rather than RBAC.
+
+**The gap**: `docs/architecture.md`'s "Key design decisions" bullet said "One generic CRUD engine, not per-project generated code -- real schema, real persistence, real validation, but not yet an exportable codebase." This flatly contradicts the real, shipped, UI-exposed "Export Code" feature.
+
+**Why this is not deliberate**: ADR-0001 itself cross-references this exact caveat as having lived in *both* `architecture.md` and `roadmap.md` simultaneously ("flagged clearly in three places"). When code export actually shipped (ADR-0003, later upgraded to a real multi-file Vite+React+Express codebase per ADR-0005), `roadmap.md`'s own Phase 2 entry was correctly updated to say so -- but `architecture.md`'s identical bullet never was. `git log --follow -- docs/architecture.md` shows exactly two commits total, both predating `codegen.ts`'s existence, confirming this file was never touched again after the feature landed.
+
+**Concrete failure scenario**: `README.md` explicitly tells a reader "See `docs/architecture.md`... for the reasoning behind each major decision" -- the doc a new contributor or evaluator is pointed to. Reading it, they'd conclude the app can't be exported, directly contradicting the real "Export Code" button they may have just clicked, which produces a genuine, dependency-free, `npm install && npm start`-able codebase (per ADR-0005, verified against the real npm registry). A reader relying on this doc could conclude they need to build an export pipeline from scratch, duplicating ~7000 lines of already-shipped work in `codegen.ts`.
+
+**Verified directly** before editing: `generateExportFiles` (`apps/api/src/codegen.ts`), the live `GET /projects/:id/export` route (`apps/api/src/routes/projects.ts`), and a real "Export Code" button calling `exportProject` (`apps/web/src/App.tsx`) all exist and are wired together. Also checked `docs/security.md`'s nearby, superficially similar "no sandboxing of generated code" claim -- that one is still accurate (it's about the export templates being fixed, reviewed code with only data interpolated, never AI-executed code) and was correctly left untouched.
+
+**The fix**: updated the bullet to describe current reality -- the CRUD engine still serves the *live* app, but a real, independently-runnable per-project codebase is also generatable on demand via Export Code, with a pointer to ADR 0003/0005, mirroring the wording `roadmap.md`'s own corrected entry already uses.
+
+**Scope**: docs-only, no application code changed -- no test suite or build to run, no parity question applies.
+
+**Status**: shipped and pushed.
