@@ -7735,6 +7735,60 @@ test("the idea-enhance endpoint requires auth, rejects an empty idea, and expand
  * JSON.stringify(issues) dump as its "error" text instead of readable
  * words. See docs/roadmap.md for the bug this test covers.
  */
+/**
+ * Round 858: routes/auth.ts already has a volumetric rate limiter on
+ * every unauthenticated route (signup/login/forgot-password/verify-code,
+ * rounds 847-857), but routes/projects.ts -- which spends real, metered
+ * Anthropic API cost on /ideas/enhance, POST /projects, .../answers, and
+ * .../refine every single call (whenever ANTHROPIC_API_KEY is
+ * configured, which it is for this app's real deployment) -- had none at
+ * all. activePipelines only guards against two overlapping requests on
+ * the SAME project; it does nothing to stop one authenticated account
+ * looping any of these calls indefinitely. Confirms the new shared,
+ * per-user limiter: calls to /ideas/enhance and POST /projects draw from
+ * the SAME budget (not one counter per route -- alternating between them
+ * must not let a caller dodge the cap), the limit is keyed by user id
+ * (not IP, since every route here is already authenticated), and a
+ * completely different account gets its own fresh allowance.
+ */
+test("POST /ideas/enhance and POST /projects share one per-user AI-generation rate limit: the 31st call across both routes is rejected with 429, while a different account is unaffected", async () => {
+  await withServer(async (baseUrl) => {
+    const token = await signup(baseUrl, "rate-limit-ai-gen@example.com");
+    const idea = "a booking app for a hair salon with customers and appointments";
+
+    for (let i = 0; i < 30; i++) {
+      const res = await fetch(`${baseUrl}/api/ideas/enhance`, {
+        method: "POST",
+        headers: authHeaders(token),
+        body: JSON.stringify({ idea }),
+      });
+      assert.notEqual(res.status, 429, `ideas/enhance call ${i + 1} of 30 (within the limit) must not be rate-limited yet`);
+    }
+
+    // The 31st call across the SAME budget, on a DIFFERENT route -- proves
+    // the limit is shared, not one independent counter per route.
+    const blocked = await fetch(`${baseUrl}/api/projects`, {
+      method: "POST",
+      headers: authHeaders(token),
+      body: JSON.stringify({ description: idea }),
+    });
+    assert.equal(blocked.status, 429);
+    assert.equal(((await blocked.json()) as { code?: string }).code, "RATE_LIMITED");
+
+    // A completely different account must get its own fresh allowance --
+    // this is keyed by user id, not IP (every request above came from the
+    // same test client/IP), so one account exhausting its own budget must
+    // never collaterally block anyone else.
+    const otherToken = await signup(baseUrl, "unrelated-account@example.com");
+    const otherRes = await fetch(`${baseUrl}/api/ideas/enhance`, {
+      method: "POST",
+      headers: authHeaders(otherToken),
+      body: JSON.stringify({ idea }),
+    });
+    assert.equal(otherRes.status, 200, "a different account must not be collaterally blocked by another account's own rate limit");
+  });
+});
+
 test("a validation failure on project routes returns readable text, not Zod's raw JSON issue dump", async () => {
   await withServer(async (baseUrl) => {
     const token = await signup(baseUrl);

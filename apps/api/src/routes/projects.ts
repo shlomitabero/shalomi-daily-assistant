@@ -58,6 +58,7 @@ import type { SpecProvider } from "@forge/spec-engine";
 import { enhancePrompt, generateSpec, isHebrewText, TEMPLATES } from "@forge/spec-engine";
 import { formatValidationError, HttpError } from "../httpError.js";
 import { requireAuth } from "../auth/middleware.js";
+import { createRateLimiter } from "../auth/rateLimit.js";
 import { describeImpactHazards, runBuildPipeline } from "../pipeline.js";
 import { withIdempotency } from "../idempotency.js";
 import { generateExportFiles } from "../codegen.js";
@@ -958,6 +959,50 @@ export function createProjectsRouter(
   const upload = createUploadMiddleware(uploadsDir);
 
   /**
+   * Round 858: unlike routes/auth.ts (signup/login/forgot-password/
+   * login/verify-code, rounds 847-857), this router had NO volumetric
+   * throttle at all on the routes that actually spend real, metered
+   * Anthropic API cost -- /ideas/enhance, POST /projects, and
+   * .../answers/.../refine each unconditionally call generateSpec/
+   * enhancePrompt (packages/spec-engine) whenever ANTHROPIC_API_KEY is
+   * configured, which it is for this app's own real deployment (the free
+   * heuristic fallback only applies when no key is set at all). Every
+   * route here already sits behind requireAuth (line above), but an
+   * authenticated account looping any of these four calls has no limit
+   * at all -- activePipelines (below) only blocks two overlapping
+   * requests on the SAME project, never a tight sequential loop across
+   * many. Round 807's own docs/security.md fix already named this exact
+   * gap explicitly ("routes/projects.ts/app.ts never import
+   * createRateLimiter at all, so POST /api/projects/.../refine genuinely
+   * remain unprotected") but only corrected the documentation's claim
+   * about it -- the code gap itself was never closed until now.
+   *
+   * One shared limiter (not one per route, unlike auth.ts): these four
+   * routes are really one budget -- "how many real AI-generation calls
+   * can this account trigger" -- not four independent concerns, so a
+   * user alternating between them to dodge a per-route cap would still
+   * be correctly caught by a single shared counter. Keyed by user id, not
+   * IP, since every caller here is already authenticated and a shared
+   * IP (an office, a NAT) must not collaterally throttle unrelated
+   * accounts.
+   *
+   * Deliberately excludes /build: it reuses the spec POST /projects or
+   * /answers already generated (`nextSpec: project.spec`) and only ever
+   * makes its own extra AI call on the rare Debug Agent repair path
+   * (streamPipeline's own single-shot requestSpecFix, triggered only by
+   * a genuine migration failure) -- counting an ordinary build (zero
+   * extra AI cost in the common case) against the same budget as an
+   * actual spec generation would eat into a legitimate user's allowance
+   * for no real cost reason.
+   */
+  const aiGenerationRateLimiter = createRateLimiter({
+    windowMs: 15 * 60 * 1000,
+    max: 30,
+    keyGenerator: (req) => req.userId ?? "unknown",
+    message: "Too many AI generation requests. Please try again later.",
+  });
+
+  /**
    * /build, /refine, and /answers each read `project.spec` once at the
    * start of the request, then spend real time (an AI/heuristic
    * spec-generation call, and for /build and /refine also a migration)
@@ -991,6 +1036,7 @@ export function createProjectsRouter(
    */
   router.post(
     "/ideas/enhance",
+    aiGenerationRateLimiter,
     asyncRoute(async (req, res) => {
       const parsed = EnhanceIdeaSchema.safeParse(req.body);
       if (!parsed.success) {
@@ -1014,6 +1060,7 @@ export function createProjectsRouter(
    */
   router.post(
     "/projects",
+    aiGenerationRateLimiter,
     asyncRoute(async (req, res) => {
       const parsed = CreateProjectSchema.safeParse(req.body);
       if (!parsed.success) {
@@ -1391,6 +1438,7 @@ export function createProjectsRouter(
 
   router.post(
     "/projects/:id/answers",
+    aiGenerationRateLimiter,
     asyncRoute(async (req, res) => {
       const project = requireProjectWriteAccess(db, req.params.id, req.userId!);
       const parsed = AnswerQuestionsSchema.safeParse(req.body);
@@ -1498,6 +1546,7 @@ export function createProjectsRouter(
 
   router.post(
     "/projects/:id/refine",
+    aiGenerationRateLimiter,
     asyncRoute(async (req, res) => {
       const project = requireProjectWriteAccess(db, req.params.id, req.userId!);
       if (project.status !== "built") {
