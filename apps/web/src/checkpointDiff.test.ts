@@ -498,6 +498,42 @@ test("isCheckpointCurrent is false when an entity's own description differs, eve
 });
 
 /**
+ * Round 874's finding: isCheckpointCurrent had the identical gap round 817
+ * already fixed for description -- a checkpoint whose entities/fields
+ * match the live spec byte-for-byte (fieldSignature deliberately excludes
+ * a field's own label, for computeCheckpointDiff's narrower "is this a
+ * structural change" question) but whose entity/field LABEL differs used
+ * to be wrongly reported "Current" too. An entity/field label rename
+ * (routes/projects.ts's PATCH .../label routes) never creates a new
+ * checkpoint, so every pre-existing checkpoint keeps the old label while
+ * the live spec shows the new one -- restoring that checkpoint would
+ * genuinely change the rendered label back, which isCheckpointCurrent
+ * must not call "already current".
+ */
+test("isCheckpointCurrent is false when an entity's or a field's own label differs, even though every other property is byte-identical", () => {
+  const current = makeSpec([
+    { name: "Customer", label: "Customer", fields: [{ name: "name", label: "Name", type: "text", required: true }] },
+  ]);
+  const entityLabelChanged = makeSpec([
+    { name: "Customer", label: "Client", fields: [{ name: "name", label: "Name", type: "text", required: true }] },
+  ]);
+  const fieldLabelChanged = makeSpec([
+    { name: "Customer", label: "Customer", fields: [{ name: "name", label: "Full Name", type: "text", required: true }] },
+  ]);
+
+  assert.equal(
+    isCheckpointCurrent(current, entityLabelChanged),
+    false,
+    "identical entities/fields must not be enough when the entity's own label genuinely differs",
+  );
+  assert.equal(
+    isCheckpointCurrent(current, fieldLabelChanged),
+    false,
+    "identical entities/fields must not be enough when a field's own label genuinely differs",
+  );
+});
+
+/**
  * New in this round: after restoring an OLDER checkpoint, the checkpoint
  * list's own newest-first order no longer lines up with which entry is
  * actually current -- the most-recently-created checkpoint at the top can

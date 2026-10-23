@@ -275,6 +275,23 @@ export function isCheckpointCurrent(currentSpec: ProductSpec, checkpointSpec: Pr
     // to be wrongly reported "Current", the same category of gap this
     // function's own doc comment already describes for summary/roles/etc.
     if ((entity.description ?? "") !== (inCheckpoint.description ?? "")) return false;
+    // Round 874: the identical gap, for an entity's own display label.
+    // fieldSignature deliberately excludes a FIELD's label (see its own
+    // doc comment above) for computeCheckpointDiff's narrower "is this a
+    // structural change worth flagging" question -- but isCheckpointCurrent
+    // asks a stricter one, "is this EXACTLY what's on screen right now",
+    // the same reasoning the description check just above already applies.
+    // An entity/field label rename (routes/projects.ts's PATCH
+    // .../entities/:entityName/label and .../fields/:fieldName/label) does
+    // a direct updateProjectSpec write with no new checkpoint ever
+    // inserted (checkpoints only come from pipeline.ts's build/refine
+    // flow), so every pre-existing checkpoint still carries the old label
+    // while the live spec now shows the new one -- restoring that
+    // checkpoint would genuinely change the rendered label back, yet
+    // nothing here caught it, wrongly marking the checkpoint "Current" and
+    // permanently disabling the one action (Restore) that would actually
+    // undo the rename.
+    if ((entity.label ?? entity.name) !== (inCheckpoint.label ?? inCheckpoint.name)) return false;
     const currentFieldsByName = new Map(entity.fields.map((f) => [f.name, f]));
     const checkpointFieldsByName = new Map(inCheckpoint.fields.map((f) => [f.name, f]));
     if (currentFieldsByName.size !== checkpointFieldsByName.size) return false;
@@ -282,6 +299,8 @@ export function isCheckpointCurrent(currentSpec: ProductSpec, checkpointSpec: Pr
       const inCheckpointField = checkpointFieldsByName.get(fieldName);
       if (!inCheckpointField) return false;
       if (fieldSignature(field) !== fieldSignature(inCheckpointField)) return false;
+      // Same reasoning as the entity label check just above, one level down.
+      if ((field.label ?? field.name) !== (inCheckpointField.label ?? inCheckpointField.name)) return false;
     }
   }
 
