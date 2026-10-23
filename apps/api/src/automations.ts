@@ -332,8 +332,9 @@ export async function runAutomationsForRecordChange(
 // collaborator can type one in), and this server would otherwise make an
 // outbound request to wherever it points, from inside whatever network this
 // process happens to run on. This is a deliberately cheap, hostname/literal-
-// IP-string check, not full SSRF-proofing (no DNS-rebinding protection, no
-// redirect-following check on the response) -- raising the bar against the
+// IP-string check, not full SSRF-proofing (no DNS-rebinding protection --
+// fireWebhookAction's own fetch call does guard against a redirect-following
+// bypass, via redirect: "manual", round 859) -- raising the bar against the
 // common case at low complexity, not a guarantee against a determined
 // attacker with DNS control.
 // These dotted-decimal prefix patterns only mean anything for a genuine
@@ -474,11 +475,30 @@ async function fireWebhookAction(
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), 10_000);
   try {
+    // Round 859: isAllowedWebhookUrl above only ever validates rule.webhookUrl
+    // itself -- without redirect: "manual", Node's own fetch (undici)
+    // defaults to silently following up to 20 redirects, re-requesting
+    // whatever Location a 3xx response names with NO re-validation against
+    // that guard. An attacker only needs to control (or compromise) any
+    // ordinary public HTTP(S) endpoint -- trivially passing the hostname
+    // check -- then respond with a redirect to the cloud instance-metadata
+    // address (169.254.169.254) or any other blocked target, and every bit
+    // of the hardening above is defeated in one hop. This is the single
+    // most common real-world SSRF bypass technique, strictly easier than
+    // the DNS-rebinding attack isAllowedWebhookUrl's own comment already
+    // discloses as out of scope -- unlike DNS rebinding, it needs no DNS
+    // control or timing race at all. redirect: "manual" makes fetch return
+    // the raw 3xx response instead of following it (confirmed empirically:
+    // status/ok reflect the redirect response itself, not an opaque
+    // browser-only type) -- res.ok below is already false for any 3xx, so
+    // this alone, with no other change, turns a followed redirect into an
+    // ordinary reported failure.
     const res = await fetch(rule.webhookUrl, {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify(payload),
       signal: controller.signal,
+      redirect: "manual",
     });
     recordAutomationRun(db, project.id, rule.id, {
       status: res.ok ? "sent" : "failed",

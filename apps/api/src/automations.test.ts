@@ -1137,6 +1137,87 @@ test("runAutomationsForRecordChange records a failed outcome when the webhook re
   assert.match(after.lastError ?? "", /500/);
 });
 
+/**
+ * Round 859: isAllowedWebhookUrl only ever validates rule.webhookUrl
+ * itself, once, before the fetch -- without redirect: "manual", Node's
+ * own fetch (undici) silently follows up to 20 redirects, re-requesting
+ * whatever Location a 3xx response names with NO re-validation against
+ * that guard at all. An attacker only needs to control (or compromise)
+ * any ordinary public HTTP(S) endpoint -- trivially passing the hostname
+ * check -- then respond to the POST with a redirect to the cloud
+ * instance-metadata address (169.254.169.254) or any other blocked
+ * target, defeating every bit of isAllowedWebhookUrl's hardening in one
+ * hop. This is the single most common real-world SSRF bypass technique,
+ * strictly easier than the DNS-rebinding attack that function's own
+ * comment already discloses as out of scope. Confirms the actual wiring
+ * at the real call site: fetch is invoked with redirect: "manual".
+ */
+test("runAutomationsForRecordChange's webhook fetch call passes redirect: \"manual\", so a malicious redirect target is never silently followed", async () => {
+  const { db, project } = setupProject();
+  insertAutomationRule(db, {
+    projectId: project.id,
+    entityName: "Order",
+    trigger: "record_created",
+    actionType: "webhook",
+    webhookUrl: "https://hooks.example.com/forge",
+    toMode: "static",
+    messageTemplate: "New order!",
+  });
+  const record = { id: 1, customerName: "Dana Levi", customerPhone: "972501234567", status: "New" };
+
+  const originalFetch = globalThis.fetch;
+  const calls: { url: string; init: RequestInit }[] = [];
+  globalThis.fetch = (async (url: string, init?: RequestInit) => {
+    calls.push({ url, init: init! });
+    return new Response(null, { status: 200 });
+  }) as typeof fetch;
+  try {
+    await runAutomationsForRecordChange(db, {} as WhatsAppWebManager, project, orderEntity, "created", record, new Set(), UNUSED_UPLOADS_DIR, UNUSED_BASE_URL);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0]!.init.redirect, "manual", "the webhook fetch must never silently follow a redirect -- isAllowedWebhookUrl is never re-checked against a redirect target");
+});
+
+/**
+ * Round 859: a real redirect response, with redirect: "manual" in effect
+ * (confirmed empirically against Node's own undici: status/ok reflect
+ * the 3xx response itself, not an opaque browser-only type), is a
+ * perfectly ordinary non-2xx Response as far as this function's own
+ * res.ok check is concerned -- so no separate branch is needed to reject
+ * it; it already falls into the exact same "failed" path the 500 case
+ * above does. This confirms that path specifically for a 3xx, so a
+ * redirect is reported as a failure (never silently treated as success)
+ * even though the earlier test only checks the request's own options.
+ */
+test("runAutomationsForRecordChange records a failed outcome when the (unfollowed, thanks to redirect: \"manual\") webhook response is itself a redirect, not success", async () => {
+  const { db, project } = setupProject();
+  const rule = insertAutomationRule(db, {
+    projectId: project.id,
+    entityName: "Order",
+    trigger: "record_created",
+    actionType: "webhook",
+    webhookUrl: "https://hooks.example.com/forge",
+    toMode: "static",
+    messageTemplate: "New order!",
+  });
+  const record = { id: 1, customerName: "Dana Levi", customerPhone: "972501234567", status: "New" };
+
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = (async () => new Response(null, { status: 302, headers: { location: "http://169.254.169.254/latest/meta-data/" } })) as typeof fetch;
+  try {
+    await runAutomationsForRecordChange(db, {} as WhatsAppWebManager, project, orderEntity, "created", record, new Set(), UNUSED_UPLOADS_DIR, UNUSED_BASE_URL);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+
+  const after = getAutomationRule(db, project.id, rule.id)!;
+  assert.equal(after.lastStatus, "failed");
+  assert.match(after.lastError ?? "", /302/);
+});
+
 test("runAutomationsForRecordChange records a failed outcome when the webhook request itself throws (network error/timeout), without throwing", async () => {
   const { db, project } = setupProject();
   const rule = insertAutomationRule(db, {
