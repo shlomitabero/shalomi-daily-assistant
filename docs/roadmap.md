@@ -31973,3 +31973,23 @@ Still no genuine reply from שלומי. `apps/api/src/routes/projects.ts`'s fiel
 **Verification**: reverted the fix and reran -- failed exactly as predicted (`'lost'` label of `"אבדה"` still present instead of `undefined`); restored, passes. Full `apps/api` suite: 588/589 pass, the lone failure is `codegen.test.ts`'s whole-file `SIGKILL` -- the same recurring environment flake from rounds 819/821/822, confirmed unrelated since this round never touched `codegen.ts` at all and the new test (`ok 146`) passed cleanly. `npm run build`: clean. Only `apps/api` was touched this round.
 
 **Status**: shipped and pushed.
+
+### Round 824: `listCollaborators` broke a same-millisecond tie on `userId` instead of insertion order
+
+Still no genuine reply from שלומי. `packages/db/src/collaborators.ts` was the one remaining `createdAt`/`addedAt`-sorted listing query in this package that hadn't received round 808's own fix.
+
+**The gap**: `addedAt` is set via `new Date().toISOString()` -- millisecond resolution, identical to every other timestamp column in this package. `listCollaborators`'s query tiebroke a same-millisecond tie with `ORDER BY ... userId ASC` -- an essentially random string unrelated to insertion order. `checkpoints.ts`'s `listCheckpoints`, `projects.ts`'s `listProjectsForOwner`/`listProjectsForUser`, and `automations.ts`'s three list queries all already guard against this exact hazard with an explicit `rowid` tiebreak (round 808), each with a comment explaining why. `collaborators.ts` had no such comment, and `project_collaborators` is a plain rowid table (no `WITHOUT ROWID`) exactly like all of them -- the same fix was simply never applied here.
+
+**Concrete failure scenario**: a project owner invites two collaborators in quick succession -- two browser tabs, a script looping over an invite list, or two fast concurrent `POST /projects/:id/collaborators` requests. The insert path (`addCollaborator`) has only a synchronous `INSERT OR IGNORE` between request and commit, so landing both within the same millisecond is entirely reachable. If the second-added collaborator's `userId` happens to sort alphabetically before the first-added collaborator's, `CollaboratorsPanel.tsx` (which renders `listCollaborators`'s return order directly) displays them in the wrong order -- the collaborator invited second appears above the one invited first, with no indication anything is off.
+
+**Why not caught earlier**: the existing ordering test (`"listCollaborators resolves each collaborator's real email... and orders by when they were added"`) happens to use a `user1`/`user2` fixture where the user added first *also* sorts first alphabetically -- so a `userId` tiebreak and a `rowid` tiebreak were indistinguishable in that fixture, and the bug slipped past it undetected.
+
+**The fix**: `ORDER BY project_collaborators.addedAt ASC, project_collaborators.rowid ASC` instead of `userId ASC` -- the identical fix shape round 808 already applied to every sibling query in this package.
+
+**The tests**: a new test deliberately reverses the relationship between insertion order and alphabetical order (`"zed"` added first, `"amy"` added second) -- the one case the existing fixture couldn't exercise. Unlike round 808's own `automation_rules` tests (which only *pin* intended behavior, since that query's plan happened to already preserve `rowid` order even with no explicit tiebreak at all), this test genuinely distinguishes the fix from its absence: the old code's tiebreak was an explicit, always-applied `userId ASC`, not a missing guarantee a query plan might coincidentally satisfy anyway.
+
+**Scope**: `packages/db` only. `codegen.ts`'s exported standalone app has no collaborator-management feature at all (confirmed via grep), so no parity fix applies.
+
+**Verification**: reverted the fix and reran -- failed exactly as predicted (`["amy","zed"]` instead of `["zed","amy"]`); restored, passes, along with all 15 tests in `collaborators.test.ts`. Full `packages/db` suite: 215/215 pass. Full `apps/api` suite (consumer of `listCollaborators` via `CollaboratorsPanel`'s backing routes): 588/589 pass, the lone failure is `codegen.test.ts`'s same recurring, already-documented, unrelated whole-file `SIGKILL`.
+
+**Status**: shipped and pushed.
