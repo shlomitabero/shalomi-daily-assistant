@@ -13261,6 +13261,88 @@ test("the exported EntityView drops a stale fieldFilters entry naming a field th
 });
 
 /**
+ * Round 834: the sibling half of round 570's own fix above -- a stale
+ * fieldFilters entry naming a field that still EXISTS but whose stored
+ * value's shape no longer matches that field's CURRENT type (e.g. a
+ * leftover enum value like "Won" for a field a refine has since retyped
+ * to boolean), reachable via the identical cross-export localStorage path
+ * round 509/570 already established, not a live refine (this exported
+ * app's schema is frozen at export time). The live preview's own round-751
+ * fix explicitly declined to port this to codegen.ts, reasoning that a
+ * field's type can never change while this frozen-schema app stays
+ * mounted -- true, but not the actual reachability path, which (like
+ * round 570's own field-removed case) never requires the schema to change
+ * while mounted at all. Before this fix, visibleRecords' own
+ * Object.entries(fieldFilters).every(...) check hid EVERY record once the
+ * filter value's shape no longer matched (a boolean never equals the
+ * string "Won"), with the boolean filter <select> showing nothing
+ * selected and no synthetic stale-value option to explain why.
+ */
+test("the exported EntityView drops a stale fieldFilters entry whose value's shape no longer matches its field's current type, instead of hiding every record with no recovery", async () => {
+  const customerRetypedToBoolean: Entity = {
+    name: "Customer",
+    label: "לקוחות",
+    fields: [
+      { name: "name", label: "שם", type: "text", required: true },
+      { name: "status", label: "סטטוס", type: "boolean", required: true },
+    ],
+  };
+  const retypedProject: Project = { ...project, spec: { ...project.spec, entities: [customerRetypedToBoolean] } };
+
+  const files = generateExportFiles(retypedProject);
+  const dir = writeGeneratedWebComponent(files);
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = (async () => ({
+    ok: true,
+    status: 200,
+    json: async () => ({
+      records: [
+        { id: 1, name: "Alice", status: true },
+        { id: 2, name: "Bob", status: false },
+      ],
+    }),
+  })) as typeof fetch;
+
+  try {
+    await withRealLocalStorage(async () => {
+      // Simulates an older export's leftover filter: "status" was an enum
+      // ("Won") in that older export, but the current export has since
+      // retyped it to boolean -- the exact round-751 trigger, reached here
+      // via the same cross-export reachability path round 509/570 already
+      // established for the field-removed case.
+      localStorage.setItem("forge_field_filters", JSON.stringify({ Customer: { status: "Won" } }));
+
+      const { EntityView } = await import(path.join(dir, "web", "src", "components", "EntityView.jsx"));
+      const customerEntity = retypedProject.spec.entities.find((e) => e.name === "Customer")!;
+      const props = {
+        entity: customerEntity,
+        highlightRecordId: null,
+        onHighlightHandled: () => {},
+        onJumpToRecord: () => {},
+        onRecordCountChange: () => {},
+      };
+
+      const { container } = render(React.createElement(EntityView, props));
+      for (let i = 0; i < 40; i++) {
+        if (container.querySelectorAll("tbody tr").length > 0) break;
+        await act(async () => {
+          await new Promise((resolve) => setTimeout(resolve, 0));
+        });
+      }
+      assert.equal(
+        container.querySelectorAll("tbody tr").length,
+        2,
+        "both records must still render -- a stale filter value whose shape no longer matches the retyped field must never hide every record",
+      );
+    });
+  } finally {
+    globalThis.fetch = originalFetch;
+    cleanup();
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+/**
  * New in this round: mirrors the live preview's own group-collapse
  * toggle -- a grouped table previously rendered every one of a group's
  * rows unconditionally, with no way to hide a group a person doesn't

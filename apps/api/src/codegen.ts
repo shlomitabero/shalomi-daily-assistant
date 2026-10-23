@@ -1315,24 +1315,38 @@ function getPersistedFieldFilters(entityName) {
   const filters = store[entityName];
   return filters && typeof filters === "object" && !Array.isArray(filters) ? filters : {};
 }
-// Drops any persisted filter naming a field entity.fields no longer has.
-// The live preview's own round-493 fix only needed a live-refine
-// re-validation effect, since its schema can change while a tab stays
-// mounted -- this exported app's schema is frozen at export time, so no
-// such effect runs here either, but round 509 already established a
-// different, simpler reachability path for the same stale-localStorage
-// shape: loading a newer export of the same project in a browser that
-// still holds an older export's localStorage for that origin (keyed only
-// by entity name, with no export-version dimension). A stale filter here
-// doesn't just render a wrong value -- visibleRecords' own .every() check
-// hides EVERY record once the filtered field no longer exists on any of
-// them, with no visible "Clear filters" button to recover if that was the
-// entity's only filterable field (round 570).
+// Drops any persisted filter naming a field entity.fields no longer has,
+// or whose stored value's shape no longer matches that field's CURRENT
+// type (round 833: e.g. a stale enum value like "Shipped" left over from
+// before a refine retyped the field to boolean). The live preview's own
+// round-493/751 fixes needed a live-refine re-validation effect, since its
+// schema can change while a tab stays mounted -- this exported app's
+// schema is frozen at export time, so no such effect runs here either, but
+// round 509 already established a different, simpler reachability path
+// for the same stale-localStorage shape: loading a newer export of the
+// same project in a browser that still holds an older export's localStorage
+// for that origin (keyed only by entity name, with no export-version
+// dimension). Round 570 ported the field-removed half of this for exactly
+// that reason; round 751's own "no port needed" verdict for the
+// field-RETYPED half only ruled out a type changing *within one mount* of
+// this frozen-schema app, which was never the real reachability path for
+// either half -- the cross-export one round 509/570 established applies
+// identically regardless of whether the field was removed or just
+// retyped. A stale value here doesn't just render a wrong value --
+// visibleRecords' own .every() check hides EVERY record once the value's
+// shape no longer matches (e.g. "Shipped" never equals a boolean's real
+// "true"/"false"), with the boolean/relation filter <select> showing
+// nothing selected and no synthetic stale-value option (unlike the enum
+// case, which always has one for exactly this reason).
 function sanitizeFieldFilters(filters, fields) {
-  const fieldNames = new Set(fields.map((f) => f.name));
+  const fieldsByName = new Map(fields.map((f) => [f.name, f]));
   const cleaned = {};
   for (const [name, value] of Object.entries(filters)) {
-    if (fieldNames.has(name)) cleaned[name] = value;
+    const f = fieldsByName.get(name);
+    if (!f) continue;
+    if (f.type === "boolean" && value !== "true" && value !== "false") continue;
+    if (f.type === "relation" && (!Number.isInteger(Number(value)) || String(Number(value)) !== value || Number(value) < 0)) continue;
+    cleaned[name] = value;
   }
   return cleaned;
 }
