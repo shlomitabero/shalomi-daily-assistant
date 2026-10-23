@@ -597,6 +597,60 @@ test("diffAndMigrate reports a relation_missing_fk entry when a removed boolean 
   assert.equal(order.isUrgent, 999999, "a dangling, nonexistent Customer id is silently accepted -- the exact gap this change type now reports");
 });
 
+test("diffAndMigrate reports a type_changed entry when a removed relation field is re-added as boolean, reusing a column that still has a real FK", () => {
+  const db = openDatabase(":memory:");
+  const baseSpec: ProductSpec = {
+    ...spec,
+    entities: [
+      spec.entities[0],
+      { ...spec.entities[1], fields: [spec.entities[1].fields[0], { name: "driverId", type: "relation", required: false, relationTo: "Customer" }] },
+    ],
+  };
+  applyMigrations(db, "proj1", baseSpec);
+  insertRecord(db, "proj1", baseSpec.entities[0], { name: "Alice", status: "New" }); // Customer id 1
+
+  // Refine 1: drop "driverId" entirely. The physical INTEGER column, FK
+  // constraint included, survives untouched -- additive-only.
+  const midSpec: ProductSpec = {
+    ...baseSpec,
+    entities: [baseSpec.entities[0], { ...baseSpec.entities[1], fields: [baseSpec.entities[1].fields[0]] }],
+  };
+  const removalChanges = diffAndMigrate(db, "proj1", baseSpec, midSpec);
+  assert.deepEqual(removalChanges, []);
+
+  // Refine 2: re-add a field also named "driverId", but now boolean -- same
+  // INTEGER bucket as relation, so the plain sqlType comparison alone would
+  // stay silent. fieldTypeLabelForSqlType's existing hasForeignKey signal
+  // catches it: the column's real FK (still physically present) means the
+  // reused column was a relation, not a boolean, until this refine.
+  const nextSpec: ProductSpec = {
+    ...midSpec,
+    entities: [
+      midSpec.entities[0],
+      { ...midSpec.entities[1], fields: [midSpec.entities[1].fields[0], { name: "driverId", type: "boolean", required: false }] },
+    ],
+  };
+  const changes = diffAndMigrate(db, "proj1", midSpec, nextSpec);
+  assert.deepEqual(changes, [
+    { type: "type_changed", table: "entity_proj1_Order", column: "driverId", fromType: "relation", toType: "boolean" },
+    { type: "new_column", table: "entity_proj1_Order", column: "driverId" },
+  ]);
+
+  // The real proof of the documented gap: the column still has its original
+  // FK, which SQLite can't retroactively drop -- so writing a boolean that
+  // coerces to anything but an existing Customer row id throws a raw FOREIGN
+  // KEY constraint failed, not a validation error, for a field the UI now
+  // renders as a plain Yes/No checkbox.
+  const fkList = db.prepare('PRAGMA foreign_key_list("entity_proj1_Order")').all() as { table: string }[];
+  assert.deepEqual(fkList.map((fk) => fk.table), ["entity_proj1_Customer"]);
+  const orderEntity = nextSpec.entities[1];
+  assert.throws(
+    () => insertRecord(db, "proj1", orderEntity, { total: 20, driverId: false }),
+    /FOREIGN KEY constraint failed/,
+    "driverId: false coerces to 0, never a valid Customer row id -- the exact gap this change type now reports",
+  );
+});
+
 /**
  * Round 444: the prevField branch's relation_target_changed check compared
  * only `prevField.relationTo !== field.relationTo` -- the IMMEDIATELY

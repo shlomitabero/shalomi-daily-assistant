@@ -502,6 +502,46 @@ export function diffAndMigrate(
             fromType: fieldTypeLabelForSqlType(shape.sqlType, shape.fkTable !== undefined),
             toType: field.type,
           });
+          if (field.type !== "text" && field.type !== "longtext") {
+            if (!fieldsNeedingAutomationDisable.has(entity.name)) {
+              fieldsNeedingAutomationDisable.set(entity.name, new Set());
+            }
+            fieldsNeedingAutomationDisable.get(entity.name)!.add(field.name);
+          }
+        } else if (shape && shape.fkTable !== undefined && field.type !== "relation") {
+          // The reused column shares relation's own INTEGER bucket with
+          // boolean, so the sqlType check above stays silent even when the
+          // field is no longer a relation at all -- but unlike the TEXT
+          // bucket (text/longtext/enum/date, genuinely ambiguous with no
+          // physical way to tell them apart once collapsed to a column),
+          // fieldTypeLabelForSqlType already distinguishes "boolean" from
+          // "relation" within the INTEGER bucket using exactly this
+          // shape.fkTable signal. The column SQLite created still carries a
+          // real FOREIGN KEY constraint from its relation days -- unlike
+          // relation_missing_fk below (reused column that never had one),
+          // writing a plain boolean value through this now-boolean field
+          // doesn't get a silently-dangling id, it gets a raw, cryptic
+          // "FOREIGN KEY constraint failed" the moment the write doesn't
+          // happen to coerce to an existing row id (repository.ts's
+          // coerceValue turns `false` into the literal `0`, never a real
+          // row id, so every single "uncheck and save" on this field was
+          // guaranteed to fail this way) -- translated by routes/projects.ts
+          // into "This record references another record that no longer
+          // exists", bewildering for a field the UI now renders as a plain
+          // Yes/No checkbox with no relation picker anywhere in sight.
+          changes.push({
+            type: "type_changed",
+            table,
+            column: columnName,
+            fromType: "relation",
+            toType: field.type,
+          });
+          if (field.type !== "text" && field.type !== "longtext") {
+            if (!fieldsNeedingAutomationDisable.has(entity.name)) {
+              fieldsNeedingAutomationDisable.set(entity.name, new Set());
+            }
+            fieldsNeedingAutomationDisable.get(entity.name)!.add(field.name);
+          }
         } else if (field.type === "relation" && shape) {
           const expectedFkTable = field.relationTo && entityNames.has(field.relationTo) ? tableNameFor(projectId, field.relationTo) : undefined;
           if (shape.fkTable && expectedFkTable && shape.fkTable !== expectedFkTable) {
