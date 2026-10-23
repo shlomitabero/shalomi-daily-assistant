@@ -1391,7 +1391,20 @@ export const ROLE_RULES: Record<string, RoleRule> = {
   // fallback when exactly one role matched) silently suppressed Member
   // and fabricated a Manager role/persona/screens the description never
   // asked for. The negative lookahead excludes only that specific phrase.
-  Manager: { keywords: ["manager", /\bmanagement\b/, /מנהל(?!\s*מערכת)/, "מנהלת", "ניהול"], labelHe: "מנהל/ת" },
+  // Round 811: the round-659 lookahead above only excluded "מנהל" directly
+  // followed by "מערכת" -- but "מנהלת מערכת" ("female system admin") also
+  // contains the bare substring "מנהל" (as מנהלת's own first four letters),
+  // immediately followed by "ת", not "מערכת" -- so the lookahead (?!\s*מערכת)
+  // doesn't fire for it, and the old bare "מנהלת" keyword below matched it
+  // too. Both were the identical substring-collision bug round 659 fixed
+  // for the masculine phrase, just never carried through to the feminine
+  // one -- this file's own comment a few lines below (describing the
+  // "מנהל"/"מנהלת"/"מנהלים" word family) already treats them as
+  // interchangeable. One merged lookahead -- (?!ת?\s*מערכת), the ת
+  // optional -- excludes both "מנהל מערכת" and "מנהלת מערכת" while still
+  // matching a standalone "מנהל"/"מנהלת" (e.g. "מנהל/ת חנות", a store
+  // manager) that isn't naming a system admin.
+  Manager: { keywords: ["manager", /\bmanagement\b/, /מנהל(?!ת?\s*מערכת)/, "ניהול"], labelHe: "מנהל/ת" },
   // Same bare-substring collision as the Employee entity rule above
   // ("coworker" contains "worker") -- \b-bounded here too. Also same
   // pu'al "מעובד" collision (round 565) as the Employee entity rule's own

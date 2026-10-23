@@ -1582,6 +1582,37 @@ test("Manager's bare 'מנהל' keyword doesn't spuriously match inside Admin's 
 });
 
 /**
+ * Regression test for round 811's finding: the identical substring
+ * collision round 659 (above) fixed for the masculine "מנהל מערכת" was
+ * never carried through to the feminine form -- "מנהלת מערכת" ("female
+ * system admin") contains the bare substring "מנהל" (מנהלת's own first
+ * four letters) immediately followed by "ת", not "מערכת", so round 659's
+ * own `(?!\s*מערכת)` lookahead didn't fire for it, and the separate bare
+ * "מנהלת" keyword (with no lookahead of its own) matched it outright. A
+ * description naming only a female system admin spuriously got Manager
+ * too, silently suppressing the generic Member fallback the same way
+ * round 659's own bug did for the masculine phrase.
+ */
+test("Manager's 'מנהל'/'מנהלת' keywords don't spuriously match inside Admin's own feminine 'מנהלת מערכת' phrase", async () => {
+  const provider = new HeuristicSpecProvider();
+
+  const adminOnly = await provider.generate("האפליקציה מיועדת למנהלת מערכת אחת בלבד, בלי תפקידים אחרים.");
+  assert.ok(
+    !adminOnly.roles.includes("מנהל/ת"),
+    "a description naming only a female system admin must not spuriously add a Manager role via the 'מנהל'/'מנהלת' substring",
+  );
+  assert.ok(
+    adminOnly.roles.includes("חבר/ת צוות"),
+    "with no second real role detected, the generic Member fallback must still be added, not silently suppressed",
+  );
+
+  // The real feminine word still works on its own, the same way round
+  // 659's own masculine counterpart does.
+  const realManager = await provider.generate("אפליקציה למנהלת חנות שעוקבת אחרי המלאי והעובדים.");
+  assert.ok(realManager.roles.includes("מנהל/ת"), "a standalone 'מנהלת' (female store manager) must still add the Manager role");
+});
+
+/**
  * Regression test for round 561's finding: Student's bare "pupil" keyword
  * is a whole-word genuine polysemy collision (not a substring issue) with
  * the ophthalmology/optometry term "pupil" (the part of the eye) -- the
