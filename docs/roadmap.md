@@ -32053,3 +32053,25 @@ Still no genuine reply from שלומי. `packages/db/src/seed.ts`'s `textSeedVal
 **Verification**: reverted the fix and reran -- failed exactly as predicted (`WorkOrder`'s title `"Service upgrade"` matched one of Deal's own sample titles); restored, passes. Full `packages/db` suite: 216/216 pass. Full `apps/api` suite: 588/589 pass, the lone failure is `codegen.test.ts`'s same recurring, already-documented, unrelated whole-file `SIGKILL`.
 
 **Status**: shipped and pushed.
+
+### Round 828: `Rental`'s `itemName` seed data silently reused `Appointment`'s service-plan names
+
+Still no genuine reply from שלומי. The exact same shape as round 827's just-closed `"title"` fix, one `switch` case below it in the same function.
+
+**The gap**: `textSeedValueFor`'s `case "service": case "itemName":` returned `pick(ITEM_NAMES_HE/EN, index)` unconditionally, with zero `entityName` check. `ITEM_NAMES_HE/EN` (`["Basic Package", "Premium Upgrade", "Standard Treatment", "Monthly Plan"]`) was written for the case's `"service"` half -- `Appointment`'s own `service` field, "a scheduled time slot with a customer," where those phrases genuinely fit. But the same case also handles `"itemName"` -- `Rental`'s own *required* field, whose entity description is literally "An item rented out to a customer for a defined period": a physical piece of equipment (a drill, a projector, a tent), not a subscription plan. Confirmed via grep that `Appointment.service` and `Rental.itemName` are the only two fields in `domainEntities.ts` hitting this case.
+
+**Concrete failure scenario**: build any app whose spec includes `Rental` (an "equipment rental business" description). Verified empirically via direct `generateSeedRecords()` invocation before implementing anything: a fresh `Rental` entity's demo rows showed `itemName` values of `"Basic Package"`, `"Premium Upgrade"`, `"Standard Treatment"`, `"Monthly Plan"` -- plausible as a subscription tier, nonsensical as the name of a rented item.
+
+**Why not caught by round 827's own fix**: round 827 closed the identical gap one case above this one (`"title"`), but didn't sweep the rest of the file for the same shape -- this round did exactly that sweep, per the standing lesson that closing one instance of a pattern doesn't guarantee every sibling got the same treatment.
+
+**The fix**: added a dedicated `RENTAL_ITEM_NAMES_HE/EN` pool (`"Power Drill"`, `"Portable Projector"`, `"Camping Tent"`, `"Mountain Bike"`) and dispatched on `entityName === "Rental"` before falling back to `ITEM_NAMES` for `Appointment` (and any custom entity reusing `"service"`/`"itemName"`) -- the same dispatch shape `"name"`/`"title"` already use.
+
+**Scope**: `packages/db` only -- confirmed via grep that `seed.ts`'s pools aren't referenced in `apps/web`/`codegen.ts`.
+
+**The tests**: a new test asserts `Rental`'s seeded `itemName` values are never one of `Appointment`'s own service-plan sample names.
+
+**Verification**: reverted the fix and reran -- failed exactly as predicted (`Rental`'s itemName `"Basic Package"` matched one of Appointment's own sample names); restored, passes. Full `packages/db` suite: 217/217 pass. Full `apps/api` suite: 588/589 pass, the lone failure is `codegen.test.ts`'s same recurring, already-documented, unrelated whole-file `SIGKILL`.
+
+**Unverified lead, not yet investigated**: this round's survey also flagged that `domainEntities.ts`'s `Service` entity keyword `"שירות"` may collide with `"כשירות"` (fitness/eligibility/competency, e.g. "כשירות משפטית"/"בדיקת כשירות גופנית") via the `כ` prefix -- a substring match confirmed directly in Node, but not yet confirmed to produce an actual wrong `HeuristicSpecProvider.generate()` outcome. Left for a future round's dedicated verification rather than bundled into this one.
+
+**Status**: shipped and pushed.
