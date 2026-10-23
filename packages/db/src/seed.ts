@@ -19,6 +19,8 @@ const PERSON_NAMES_HE = ["דנה לוי", "יוסי כהן", "מיכל אברה�
 const PERSON_NAMES_EN = ["Dana Levi", "Yossi Cohen", "Michal Abraham", "Ron Peretz", "Noa Sharon", "Alon Mizrahi"];
 const ITEM_NAMES_HE = ["חבילת בסיס", "שדרוג פרימיום", "טיפול סטנדרטי", "מנוי חודשי"];
 const ITEM_NAMES_EN = ["Basic Package", "Premium Upgrade", "Standard Treatment", "Monthly Plan"];
+const RENTAL_ITEM_NAMES_HE = ["מקדחה חשמלית", "מקרן נייד", "אוהל קמפינג", "אופני הרים"];
+const RENTAL_ITEM_NAMES_EN = ["Power Drill", "Portable Projector", "Camping Tent", "Mountain Bike"];
 const EMAIL_LOCAL_PARTS = ["dana.levi", "yossi.cohen", "michal.abraham", "ron.peretz", "noa.sharon", "alon.mizrahi"];
 const PHONES_HE = ["050-123-4567", "052-987-6543", "054-222-1188", "058-765-4321"];
 const PHONES_EN = ["(555) 123-4567", "(555) 987-6543", "(555) 222-1188", "(555) 765-4321"];
@@ -211,6 +213,15 @@ function textSeedValueFor(fieldName: string, entityName: string, isHebrew: boole
       return pick(isHebrew ? PERSON_NAMES_HE : PERSON_NAMES_EN, index);
     case "service":
     case "itemName":
+      // "itemName" (Rental's own required field, "an item rented out to a
+      // customer for a defined period") names a physical piece of
+      // equipment -- a drill, a projector, a tent -- not a service plan.
+      // ITEM_NAMES_HE/EN was written for the "service" case's own owner,
+      // Appointment ("Standard Treatment"/"Monthly Plan" fit a scheduled
+      // service), and this case had no entity-aware branching at all
+      // (unlike its "name"/"title"/"description" siblings), so Rental
+      // silently inherited Appointment's service-plan phrasing instead.
+      if (entityName === "Rental") return pick(isHebrew ? RENTAL_ITEM_NAMES_HE : RENTAL_ITEM_NAMES_EN, index);
       return pick(isHebrew ? ITEM_NAMES_HE : ITEM_NAMES_EN, index);
     case "address":
     case "destination":

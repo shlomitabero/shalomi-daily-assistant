@@ -312,6 +312,26 @@ test("WorkOrder, Case, and Task each get their own field-appropriate 'title' see
   for (const title of taskTitles) assert.ok(!dealTitles.has(title), `Task's title "${title}" must not be one of Deal's own sample titles`);
 });
 
+/**
+ * Round 828's finding: the exact same shape as round 827's "title" fix,
+ * one case below it. textSeedValueFor's "service"/"itemName" case had no
+ * entity-aware dispatch either -- ITEM_NAMES_HE/EN was written for
+ * Appointment's "service" field ("Standard Treatment"/"Monthly Plan" fit a
+ * scheduled service), but Rental's own required "itemName" field ("an item
+ * rented out to a customer for a defined period" -- a physical piece of
+ * equipment, not a service plan) silently fell into the same pool and
+ * sample set.
+ */
+test("Rental's 'itemName' seed values are a plausible rentable item, not Appointment's service-plan phrasing", () => {
+  const rental: Entity = { name: "Rental", fields: [{ name: "itemName", type: "text", required: true }] };
+  const appointment: Entity = { name: "Appointment", fields: [{ name: "service", type: "text", required: false }] };
+
+  const servicePlanNames = new Set(generateSeedRecords(appointment, 4).map((r) => r.service as string));
+
+  const itemNames = generateSeedRecords(rental, 4).map((r) => r.itemName as string);
+  for (const name of itemNames) assert.ok(!servicePlanNames.has(name), `Rental's itemName "${name}" must not be one of Appointment's own service-plan sample names`);
+});
+
 test("an unrecognized field name still gets a labeled fallback value instead of throwing", () => {
   const custom: Entity = { name: "Widget", fields: [{ name: "colorPreference", type: "text", required: false }] };
   const [record] = generateSeedRecords(custom, 1);
