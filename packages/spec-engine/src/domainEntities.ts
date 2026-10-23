@@ -483,9 +483,25 @@ export const DOMAIN_ENTITY_RULES: DomainEntityRule[] = [
     // "satellite " OR immediately followed by one of a small, specific set
     // of non-restaurant compound nouns, either alone sufficient to reject
     // a match.
+    // Round 880: bare "menu"/"תפריט" was the exact same unguarded-substring
+    // shape -- but far more reachable than "dish", since "menu" is
+    // ubiquitous software UI vocabulary ("navigation menu", "hamburger
+    // menu", "dropdown menu", "menu bar"), not a niche idiom. Confirmed
+    // empirically: HeuristicSpecProvider.generate on a plain task-manager
+    // description mentioning a "navigation menu" fabricated a whole
+    // MenuItem restaurant entity (price/category/available fields) with
+    // zero connection to the actual app; a note-taking app with a
+    // "hamburger menu for settings" matched ONLY MenuItem, losing the real
+    // Note entity entirely. Hebrew "תפריט ניווט" (navigation menu) and
+    // "תפריט נפתח" (dropdown menu) reproduced the identical failure. Every
+    // existing test already pairs "menu"/"תפריט" with "cafe"/"restaurant"/
+    // "dish"/"מסעדה", so excluding the UI-chrome phrasing (rather than
+    // dropping the keyword outright) preserves every genuine menu-only
+    // restaurant description while rejecting the ubiquitous UI sense.
     keywords: [
-      "menu", /(?<!\bsatellite\s)\bdish(es)?\b(?!\s*(soap|racks?|towels?|network)\b)/, "food item", "restaurant", "cafe", "מסעדה", "מסעדות",
-      "תפריט", /(?<!ז)מנות/, "בית קפה",
+      /(?<!\b(?:navigation|nav|hamburger|dropdown|drop-down|side|context|settings)\s)\bmenu\b(?!\s*bar\b)/i,
+      /(?<!\bsatellite\s)\bdish(es)?\b(?!\s*(soap|racks?|towels?|network)\b)/, "food item", "restaurant", "cafe", "מסעדה", "מסעדות",
+      /תפריט(?!\s*(ניווט|נפתח|צד))/, /(?<!ז)מנות/, "בית קפה",
       // "בית קפה" (café) had no plural entry (round 582). Unlike this
       // file's other missing-plural fixes (576-581, all a ה→ות swap or a
       // sofit-letter swap), "בית" (house) forms its plural with the

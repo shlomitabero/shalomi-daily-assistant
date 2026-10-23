@@ -1056,6 +1056,50 @@ test("MenuItem's 'dish' keyword doesn't spuriously trigger on 'satellite dish(es
 });
 
 /**
+ * Round 880's finding: MenuItem's sibling "menu"/"תפריט" keyword had the
+ * identical unguarded-substring shape just fixed above for "dish" -- but
+ * far more reachable, since "menu" is ubiquitous software UI vocabulary
+ * ("navigation menu", "hamburger menu", "dropdown menu", "menu bar"), not
+ * a niche idiom. Confirmed with a real repro before fixing: a plain
+ * task-manager description mentioning a "navigation menu" fabricated a
+ * whole MenuItem restaurant entity via HeuristicSpecProvider's real
+ * matchEntities, and a note-taking app with a "hamburger menu for
+ * settings" matched ONLY MenuItem, losing the real Note/Item entity
+ * entirely. Hebrew "תפריט ניווט" (navigation menu) and "תפריט נפתח"
+ * (dropdown menu) reproduced the identical failure.
+ */
+test("MenuItem's 'menu'/'תפריט' keyword doesn't spuriously trigger on 'navigation menu', 'hamburger menu', 'dropdown menu', or 'menu bar'", async () => {
+  const provider = new HeuristicSpecProvider();
+
+  const navMenu = await provider.generate(
+    "Build a task manager app with a navigation menu and a dashboard to organize my personal projects.",
+  );
+  assert.ok(!navMenu.entities.some((e) => e.name === "MenuItem"), "'navigation menu' alone must not spuriously match MenuItem");
+
+  const hamburgerMenu = await provider.generate("A simple note-taking app with a hamburger menu for settings and a list of notes.");
+  assert.ok(!hamburgerMenu.entities.some((e) => e.name === "MenuItem"), "'hamburger menu' alone must not spuriously match MenuItem");
+
+  const dropdownMenu = await provider.generate("An app to track my home workouts, with a dropdown menu to pick exercises and a progress chart.");
+  assert.ok(!dropdownMenu.entities.some((e) => e.name === "MenuItem"), "'dropdown menu' alone must not spuriously match MenuItem");
+
+  const menuBar = await provider.generate("A text editor app with a menu bar at the top for File/Edit/View actions.");
+  assert.ok(!menuBar.entities.some((e) => e.name === "MenuItem"), "'menu bar' alone must not spuriously match MenuItem");
+
+  const navMenuHe = await provider.generate("אפליקציה לניהול משימות עם תפריט ניווט ולוח מחוונים לפרויקטים שלי");
+  assert.ok(!navMenuHe.entities.some((e) => e.name === "MenuItem"), "Hebrew 'תפריט ניווט' alone must not spuriously match MenuItem");
+
+  const dropdownMenuHe = await provider.generate("אפליקציית פתקים פשוטה עם תפריט נפתח להגדרות");
+  assert.ok(!dropdownMenuHe.entities.some((e) => e.name === "MenuItem"), "Hebrew 'תפריט נפתח' alone must not spuriously match MenuItem");
+
+  // The real restaurant term still works, in both languages.
+  const realMenu = await provider.generate("An app for a restaurant to manage its menu and daily dish specials.");
+  assert.ok(realMenu.entities.some((e) => e.name === "MenuItem"), "a standalone 'menu' must still match MenuItem");
+
+  const realMenuHe = await provider.generate("אפליקציה לניהול תפריט ומנות למסעדה");
+  assert.ok(realMenuHe.entities.some((e) => e.name === "MenuItem"), "Hebrew standalone 'תפריט' must still match MenuItem");
+});
+
+/**
  * Regression test for a real bug found in round 448's survey and fixed in
  * round 449: Product's bare "product" keyword is a substring of
  * "production" -- an ordinary word in a creative/media description that has
