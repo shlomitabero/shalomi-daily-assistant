@@ -672,6 +672,89 @@ test("generated server.js rejects a boolean field value outside the true/false a
 });
 
 /**
+ * Regression test (round 855): the exported standalone app's own coerce()
+ * -- same copy-pasted logic as packages/db/src/repository.ts's
+ * coerceValue -- had no rejection path at all for its final fallthrough
+ * branch (text/longtext/file, every type with no explicit `if` above),
+ * unlike number/relation, boolean, enum, and date right above it: an
+ * object or array value for a text field silently became the literal
+ * string "[object Object]" or a comma-joined list via String(value), with
+ * the request still reporting success (201), instead of the 400 every
+ * other type mismatch here already gets. Reproduced here against a real
+ * spawned server, the same standard the boolean/date/number tests above
+ * already use for this exact function.
+ */
+test("generated server.js rejects an object or array value for a text field, instead of silently stringifying it", async () => {
+  const customerProject: Project = {
+    ...project,
+    spec: {
+      ...project.spec,
+      entities: [
+        {
+          name: "Customer",
+          fields: [{ name: "name", type: "text", required: true }],
+        },
+      ],
+    },
+  };
+  const files = generateExportFiles(customerProject);
+  const serverJs = files.find((f) => f.path === "server.js")!.content;
+
+  const dir = mkdtempSync(path.join(tmpdir(), "codegen-text-coerce-test-"));
+  const repoRoot = path.resolve(import.meta.dirname, "../../..");
+  symlinkSync(path.join(repoRoot, "node_modules"), path.join(dir, "node_modules"));
+  writeFileSync(path.join(dir, "server.js"), serverJs);
+
+  const port = 44000 + Math.floor(Math.random() * 5000);
+  const child = spawn(process.execPath, ["--experimental-sqlite", "server.js"], {
+    cwd: dir,
+    env: { ...process.env, PORT: String(port) },
+    stdio: ["ignore", "pipe", "pipe"],
+  });
+  let stderr = "";
+  child.stderr.on("data", (chunk) => {
+    stderr += chunk.toString();
+  });
+
+  try {
+    const deadline = Date.now() + 5000;
+    let lastErr: unknown;
+    while (Date.now() < deadline) {
+      if (child.exitCode !== null) {
+        throw new Error(`server.js exited early (code ${child.exitCode}):\n${stderr}`);
+      }
+      try {
+        await fetch(`http://localhost:${port}/api/entities`);
+        break;
+      } catch (err) {
+        lastErr = err;
+        await new Promise((r) => setTimeout(r, 100));
+      }
+    }
+    if (child.exitCode !== null) throw lastErr instanceof Error ? lastErr : new Error(String(lastErr));
+
+    const validRes = await fetch(`http://localhost:${port}/api/Customer`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ name: "Alice" }),
+    });
+    assert.equal(validRes.status, 201);
+
+    for (const bad of [{ foo: "bar" }, [1, 2, 3]]) {
+      const badRes = await fetch(`http://localhost:${port}/api/Customer`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ name: bad }),
+      });
+      assert.equal(badRes.status, 400, `expected ${JSON.stringify(bad)} to be rejected instead of silently stringified`);
+    }
+  } finally {
+    child.kill();
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+/**
  * Regression test: the exported standalone app's own coerce() -- same
  * copy-pasted logic as packages/db/src/repository.ts's coerceValue, round
  * 408 found and fixed in both places -- only checked a value against the

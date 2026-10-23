@@ -437,6 +437,9 @@ function coerce(field, value) {
     if (!isValidDate(str)) throw new Error(\`Field "\${field.name}" must be a valid date in YYYY-MM-DD format\`);
     return str;
   }
+  if (typeof value !== "string" && typeof value !== "number" && typeof value !== "boolean") {
+    throw new Error(\`Field "\${field.name}" must be a string\`);
+  }
   return String(value);
 }
 
