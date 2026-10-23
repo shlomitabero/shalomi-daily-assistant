@@ -32013,3 +32013,23 @@ Still no genuine reply from שלומי. This round needed two survey passes -- t
 **Verification**: reverted the fix and reran -- failed exactly as predicted (`'מצוות'... must not spuriously match Employee` assertion failed); restored, passes. Full `packages/spec-engine` suite: 160/160 pass. Full `apps/api` suite (consumes spec-engine at build time): 588/589 pass, the lone failure is `codegen.test.ts`'s same recurring, already-documented, unrelated whole-file `SIGKILL`.
 
 **Status**: shipped and pushed.
+
+### Round 826: `BILLING_ENTITY_NAMES` was missing `MenuItem` -- and nearly gained a false-positive-prone `Service`
+
+Still no genuine reply from שלומי. `heuristic.ts`'s `BILLING_ENTITY_NAMES` set -- entities whose mere presence implies "this app needs payments" even when the description never hits `PAYMENT_KEYWORDS` -- had already drifted out of sync with `domainEntities.ts` twice before (round 566 added `Rental`, round 622 added `Property`, both with the same "this list itself can still drift out of sync" comment acknowledging the maintenance hazard).
+
+**The gap**: `MenuItem` (a restaurant/cafe menu dish, with a *required* `price` field) was never added. "A cafe menu app to track dishes and prices for my restaurant" matched only `MenuItem` -- sharing no substring with `PAYMENT_KEYWORDS` -- and got recommended "No payments", even though a priced dish on a restaurant's menu is definitionally for sale. Verified empirically via direct `HeuristicSpecProvider.generate()` invocation before writing any fix.
+
+**A second candidate, `Service`, was investigated and rejected**: the same survey also found that `Service`'s own description ("Something the business offers for sale") shares the identical framing Rental/Property/MenuItem were added for, and "an app for a hair salon to manage the service it charges clients for" showed the same wrong "No payments" recommendation. But adding `"Service"` to `BILLING_ENTITY_NAMES` and running the *full* `packages/spec-engine` suite (not just the new test) surfaced a real collateral failure: an existing, unrelated test ("אפליקציה לאיסוף משוב חיובי מלקוחות על השירות שלנו" -- a feedback-collection app mentioning "our service") started wrongly recommending Stripe. Unlike Rental ("rental business")/Property ("real estate", "properties for sale")/MenuItem ("menu"/"cafe"/"restaurant"/"dish"), `Service`'s own keyword trigger is the bare, generic word "service"/"שירות" -- which shows up constantly in ordinary, non-commercial phrasing ("customer service", "the service was great"). Matching that entity alone is not a reliable "this business receives money" signal the way the other four's narrower, specifically-commercial triggers are. `Service` was deliberately left out, with the reasoning documented inline right next to the set itself so a future round doesn't re-propose it without this context.
+
+**Why `MenuItem` is safe where `Service` isn't**: confirmed the full `packages/spec-engine` suite stays green with `MenuItem` added alone -- its keyword list (`"menu"`, `/\bdish(es)?\b/`, `"restaurant"`, `"cafe"`, Hebrew equivalents) is narrow enough, combined with the entity's own *required* price field, to not collide with any existing test's fixture.
+
+**The fix**: added `"MenuItem"` to `BILLING_ENTITY_NAMES`, with the `Service` investigation and rejection documented in the same comment block as a worked example of this list's own drift-risk the comment already warns about.
+
+**Scope**: `packages/spec-engine` only -- confirmed via grep that `BILLING_ENTITY_NAMES` isn't referenced anywhere in `apps/web`/`codegen.ts`.
+
+**The tests**: a new test mirrors round 566/622's own Rental/Property tests exactly -- a restaurant-menu description matches only `MenuItem`, shares no substring with any payment keyword, and still gets the "Stripe" recommendation. (A parallel `Service` test was written, confirmed to fail without that part of the fix, then removed along with the code once `Service` itself was backed out -- the empirical collision it would have shipped was real, not hypothetical.)
+
+**Verification**: reverted the fix and reran -- failed exactly as predicted (`'Stripe'` expected, `'No payments'` actual); restored, passes, along with the full `packages/spec-engine` suite (161/161, including the previously-broken `חיוב`/`חיובי` test, confirmed clean once `Service` was removed). Full `apps/api` suite: 587/589 pass, with two pre-existing, independently-confirmed, unrelated flakes: `auth/password.test.ts`'s concurrent-hashing timing assertion (CPU-contention sensitive, already documented) and `codegen.test.ts`'s same recurring whole-file `SIGKILL`.
+
+**Status**: shipped and pushed.
