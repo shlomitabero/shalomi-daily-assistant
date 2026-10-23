@@ -490,7 +490,14 @@ export const DOMAIN_ENTITY_RULES: DomainEntityRule[] = [
       // ה-suffixed "שליחה" (which can legitimately mean "female courier"),
       // the same genuinely-ambiguous-word judgment call this file already
       // makes elsewhere rather than guessing at a dual-meaning word.
-      "courier", /\bdriver(s)?\b/, "delivery person", /שליח(?![תו])/, "שליחים", "נהג", "נהגים",
+      // Bare "נהג"/"נהגים" (round 830) are substrings of "מנהג"/"מנהגים"
+      // ("custom"/"tradition" -- e.g. a holiday-observance or family
+      // customs description), an ordinary word with nothing to do with
+      // delivery drivers. Hebrew has no \b (same reason round 565's
+      // "מעובד", round 825's "מצוות", and round 829's "כשירות" fixes
+      // needed lookbehind too); this excludes the specific "מ" prefix
+      // while still matching every real "נהג"-based phrasing.
+      "courier", /\bdriver(s)?\b/, "delivery person", /שליח(?![תו])/, "שליחים", /(?<!מ)נהג/, /(?<!מ)נהגים/,
       // "delivery person" had no plural entry (round 584). Unlike this
       // file's other missing-plural fixes (576-583, all Hebrew ה→ות or
       // sofit-letter swaps, or an irregular Hebrew construct plural),

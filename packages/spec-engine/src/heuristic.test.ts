@@ -2419,6 +2419,46 @@ test("Courier's 'שליח' keyword doesn't spuriously match inside 'שליחת' 
 });
 
 /**
+ * Regression test for round 830's finding: Courier's bare "נהג"/"נהגים"
+ * ("driver"/"drivers") are substrings of "מנהג"/"מנהגים" ("custom"/
+ * "tradition" -- e.g. a holiday-observance or family-customs description),
+ * an ordinary word with nothing to do with delivery drivers. JS's \b
+ * doesn't bound Hebrew (same reason round 565's "מעובד", round 825's
+ * "מצוות", and round 829's "כשירות" fixes needed lookbehind too), so this
+ * excludes the specific "מ" prefix while still matching every real
+ * "נהג"-based phrasing. Notably, the exact description round 825's own
+ * regression test uses to prove "מצוות" doesn't spuriously match Employee
+ * ("אפליקציה למעקב אחר קיום מצוות ומנהגים") also contains "ומנהגים" --
+ * nobody had checked it against Courier, where this bug let it spuriously
+ * match.
+ */
+test("Courier's 'נהג' keyword doesn't spuriously match 'מנהג'/'מנהגים' (custom/tradition)", async () => {
+  const provider = new HeuristicSpecProvider();
+
+  const familyCustoms = await provider.generate("אפליקציה לניהול מנהגי המשפחה לחג");
+  assert.ok(
+    !familyCustoms.entities.some((e) => e.name === "Courier"),
+    "'מנהגי' (customs) alone must not spuriously match Courier via a bare 'נהג' substring",
+  );
+
+  const jewishCustoms = await provider.generate("אפליקציה לתיעוד מנהגים יהודיים");
+  assert.ok(
+    !jewishCustoms.entities.some((e) => e.name === "Courier"),
+    "'מנהגים' (customs) alone must not spuriously match Courier via a bare 'נהג' substring",
+  );
+
+  // The real word still works, singular and plural, with or without the
+  // definite-article "ה" prefix (not "מ") -- these descriptions avoid this
+  // rule's other keywords ("courier"/"driver(s)"/"delivery person"/"שליח"),
+  // so a match here can only come from "נהג"/"נהגים" itself.
+  const realDriver = await provider.generate("אפליקציה למעקב אחרי הנהג שמביא את ההזמנות ללקוחות");
+  assert.ok(realDriver.entities.some((e) => e.name === "Courier"), "'הנהג' must still match Courier");
+
+  const realDrivers = await provider.generate("אפליקציה לניהול נהגים שמביאים הזמנות ללקוחות");
+  assert.ok(realDrivers.entities.some((e) => e.name === "Courier"), "'נהגים' must still match Courier");
+});
+
+/**
  * Regression test for round 585's finding: Rental's Hebrew construct-state
  * keyword "השכרת ציוד" (equipment rental) had no plural entry. Its plural
  * "השכרות ציוד" swaps the word-final ת for ות mid-word, the same
