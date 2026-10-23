@@ -324,18 +324,44 @@ export function AutomationsPanel({
   // change it, so the entity-specific field/toField selects below render
   // the rule's own real entity instead of whatever the create-form
   // happened to be pointed at before Edit was clicked.
+  //
+  // Round 883: fieldName/toField used to be seeded straight from the
+  // stored rule with no validation against that entity's CURRENT fields.
+  // disableAutomationRulesForField (packages/db/src/automations.ts)
+  // deliberately disables a rule when its field is removed but leaves
+  // fieldName/toField as the now-stale string in storage (for
+  // restore-safety, per its own doc comment) -- the rule LIST already
+  // handles this gracefully (fieldLabel's fallback to the raw name), but
+  // this edit-seeding path had no equivalent guard. The effect just above
+  // (lines ~179-188) exists for exactly this kind of staleness, but it's
+  // keyed on [entityName, fieldTypesKey] -- it only reruns when the
+  // SELECTED entity changes or a field retypes while mounted, never
+  // merely because this function just set fieldName/toField to a value
+  // that happens to be invalid for an entityName that was ALREADY
+  // selected (editing two rules on the same entity back to back, or the
+  // very first edit when that entity already defaults to entities[0]).
+  // Validated directly here against the rule's own target entity's
+  // current fields (not `selectedEntity`, which still reflects whatever
+  // entity was selected before this call) -- the same fallback-to-first
+  // field behavior as that effect, rather than a blank fallback, so a
+  // stale value never gets to render as if it were still a valid pick.
   function handleStartEdit(rule: AutomationRuleView) {
     setError(null);
     setEditingRuleId(rule.id);
     setEntityName(rule.entityName);
     setTrigger(rule.trigger);
-    setFieldName(rule.fieldName ?? "");
+    const ruleEntityFields = entities.find((e) => e.name === rule.entityName)?.fields ?? [];
+    const ruleTriggerableFields = ruleEntityFields.filter((f) => f.type !== "file");
+    const rulePhoneFields = ruleEntityFields.filter((f) => f.type === "text" || f.type === "longtext");
+    setFieldName(
+      ruleTriggerableFields.some((f) => f.name === rule.fieldName) ? rule.fieldName ?? "" : ruleTriggerableFields[0]?.name ?? "",
+    );
     setFieldValue(rule.fieldValue ?? "");
     setScheduleTimeUtc(rule.scheduleTimeUtc ?? "09:00");
     setScheduleDays(rule.scheduleDaysOfWeek ? rule.scheduleDaysOfWeek.split(",").map(Number) : [0, 1, 2, 3, 4, 5, 6]);
     setActionType(rule.actionType);
     setToMode(rule.toMode);
-    setToField(rule.toField ?? "");
+    setToField(rulePhoneFields.some((f) => f.name === rule.toField) ? rule.toField ?? "" : rulePhoneFields[0]?.name ?? "");
     setToNumber(rule.toNumber ?? "");
     setWebhookUrl(rule.webhookUrl ?? "");
     setMessageTemplate(rule.messageTemplate);

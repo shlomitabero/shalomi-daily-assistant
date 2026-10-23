@@ -1746,6 +1746,93 @@ test("AutomationsPanel's Edit button seeds the create-form from the chosen rule 
   });
 });
 
+/**
+ * Round 883: disableAutomationRulesForField (packages/db/src/automations.ts)
+ * disables a rule when its field is removed by a live refine, but
+ * deliberately leaves fieldName/toField as the now-stale string in
+ * storage (for restore-safety, per its own doc comment) -- the rule LIST
+ * already handles this gracefully (fieldLabel's own fallback to the raw
+ * name), but handleStartEdit used to seed fieldName straight from the
+ * stored rule with no validation at all. The one guard that normally
+ * keeps fieldName pointed at a real field (the effect right above
+ * handleStartEdit in AutomationsPanel.tsx) is keyed on
+ * [entityName, fieldTypesKey], which never changes here: "Order" is this
+ * fixture's only entity, so entityName already equals rule.entityName
+ * before Edit is even clicked, and "Order"'s own current field set
+ * (fieldTypesKey) doesn't change by clicking Edit either -- the effect
+ * simply never reruns, so the stale "status" value lands in React's own
+ * fieldName state with none of the select's real <option>s matching it.
+ *
+ * Deliberately asserts on the submitted PATCH body, not the <select>
+ * element's own .value property: an HTML <select> whose controlled
+ * value matches none of its <option>s silently falls back its OWN .value
+ * to the first real option regardless of what React's state actually
+ * holds, so inspecting the DOM property alone can never tell a stale
+ * "status" apart from a correctly-reset "customerName" -- only
+ * submitting (which sends whatever fieldName itself truly is) proves
+ * which one actually happened, matching the real user-facing symptom:
+ * a confusing 404 FIELD_NOT_FOUND naming a field the dropdown never
+ * visibly showed as selected.
+ */
+test("AutomationsPanel's Edit button falls back to a real field instead of submitting a now-removed field", async () => {
+  await withJsdom(async () => {
+    const orderWithoutStatus = [
+      {
+        name: "Order",
+        label: "Order",
+        fields: [
+          { name: "customerName", label: "Customer Name", type: "text" as const, required: true },
+          { name: "customerPhone", label: "Customer Phone", type: "text" as const, required: false },
+        ],
+      },
+    ];
+    const originalFetch = globalThis.fetch;
+    let patchBody: Record<string, unknown> | undefined;
+    globalThis.fetch = (async (input: string, init?: RequestInit) => {
+      const method = init?.method ?? "GET";
+      if (method === "GET" && input === "/api/projects/proj1/automations") {
+        return new Response(
+          JSON.stringify({ rules: [makeRule({ fieldName: "status", enabled: false })] }),
+          { status: 200, headers: { "content-type": "application/json" } },
+        );
+      }
+      if (method === "PATCH" && input === "/api/projects/proj1/automations/rule1") {
+        patchBody = JSON.parse(init!.body as string) as Record<string, unknown>;
+        return new Response(JSON.stringify({ rule: makeRule({ fieldName: patchBody.fieldName as string }) }), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        });
+      }
+      throw new Error(`unexpected request ${method} ${input}`);
+    }) as typeof fetch;
+
+    try {
+      renderPanelWith(project, () => {}, orderWithoutStatus);
+      await waitForCondition(() => document.querySelectorAll(".automations-rule-row").length === 1);
+
+      fireEvent.click(
+        Array.from(document.querySelectorAll(".automations-rule-actions button")).find((b) => b.textContent === "Edit") as HTMLButtonElement,
+      );
+
+      // Submits immediately, without touching the field dropdown -- the
+      // whole point is that a person who doesn't happen to re-click it
+      // (it visually shows a normal-looking field either way, per the
+      // DOM-fallback behavior noted above) must still get a request for
+      // a real, still-existing field.
+      fireEvent.submit(document.querySelector(".automations-create-form")!);
+      await waitForCondition(() => patchBody !== undefined);
+
+      assert.equal(
+        patchBody!.fieldName,
+        "customerName",
+        "must submit a real, still-existing field, not the stale 'status' value seeded from the disabled rule",
+      );
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+});
+
 test("submitting an edited rule calls the real PATCH endpoint and updates the rule in place, then returns the form to create mode", async () => {
   await withJsdom(async () => {
     const originalFetch = globalThis.fetch;
