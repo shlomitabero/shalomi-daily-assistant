@@ -879,10 +879,42 @@ async function deleteReplacedFileFields(
   );
 }
 
+/**
+ * EntitySchema's own `name` has no character-set restriction (round
+ * 844/845/846/847's own repeated finding) -- an AI-generated entity name
+ * isn't guaranteed to be a safe filesystem path segment the way a
+ * manually-added one is (deriveEntityName sanitizes that path only).
+ * migrate.ts's own tableNameFor SANITIZES an unsafe name for the SQL
+ * table it creates (replacing every non-alphanumeric character with "_"),
+ * rather than rejecting the build outright -- so a project with an entity
+ * literally named e.g. "../../../tmp/evil" still reaches status "built"
+ * successfully, with that exact unsafe string preserved verbatim in
+ * project.spec. Unlike the SQL table name, the upload route's own
+ * destination directory (below) is built directly from entity.name with
+ * no equivalent sanitization: path.join(uploadsDir, projectId,
+ * entityName) resolves "../../../tmp/evil" clean outside uploadsDir
+ * entirely, and multer would then write the attacker's uploaded file (up
+ * to 10 MB) wherever that resolves to -- a server-side arbitrary-file-write
+ * primitive, limited only by OS file permissions. Confirmed reachable:
+ * encodeURIComponent (the client's own, round 552/847-established
+ * convention for sending such a name at all) keeps a "/" within one URL
+ * path segment, and Express decodes it back to a literal "/" in
+ * req.params.entityName before this route's own handlers ever run.
+ */
+function isPathInsideDir(candidate: string, dir: string): boolean {
+  const resolvedDir = path.resolve(dir);
+  const resolvedCandidate = path.resolve(candidate);
+  return resolvedCandidate === resolvedDir || resolvedCandidate.startsWith(resolvedDir + path.sep);
+}
+
 function createUploadMiddleware(uploadsDir: string) {
   const storage = multer.diskStorage({
     destination: (req, _file, cb) => {
       const dir = path.join(uploadsDir, req.params.id, req.params.entityName);
+      if (!isPathInsideDir(dir, uploadsDir)) {
+        cb(new HttpError(400, `Entity "${req.params.entityName}" has a name that cannot be used as a storage path`, "UNSAFE_ENTITY_NAME"), dir);
+        return;
+      }
       try {
         mkdirSync(dir, { recursive: true });
       } catch (err) {
@@ -1969,6 +2001,13 @@ export function createProjectsRouter(
         const field = findField(entity, req.params.fieldName);
         if (field.type !== "file") {
           throw new HttpError(400, `Field "${field.name}" is not a file field`, "NOT_A_FILE_FIELD");
+        }
+        // Reject here too, before multer's own disk-storage middleware
+        // (which also checks this, defense-in-depth) ever starts parsing
+        // the multipart body -- matching this route's own stated goal
+        // just above of rejecting before anything gets written to disk.
+        if (!isPathInsideDir(path.join(uploadsDir, req.params.id, entity.name), uploadsDir)) {
+          throw new HttpError(400, `Entity "${entity.name}" has a name that cannot be used as a storage path`, "UNSAFE_ENTITY_NAME");
         }
         next();
       } catch (err) {

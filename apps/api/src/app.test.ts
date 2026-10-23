@@ -9748,6 +9748,74 @@ test("uploading to a field that isn't type 'file' is rejected before anything is
 });
 
 /**
+ * Round 848's finding: EntitySchema's own `name` has no character-set
+ * restriction, and migrate.ts's own tableNameFor SANITIZES an unsafe name
+ * for the SQL table it creates (replacing every non-alphanumeric
+ * character with "_") rather than rejecting the build outright -- so a
+ * project with an entity literally named "../../../tmp/evil" still
+ * reaches status "built", with that exact unsafe string preserved
+ * verbatim in project.spec. Before this fix, the upload route's own
+ * destination directory was built directly from entity.name with no
+ * equivalent sanitization or containment check: path.join(uploadsDir,
+ * projectId, entityName) resolved clean outside uploadsDir entirely, and
+ * multer would then write the attacker's uploaded file wherever that
+ * resolved to -- a server-side arbitrary-file-write primitive. Mirrors
+ * round 685's own path-traversal test for the READ/delete side
+ * (deleteUploadedFile), but for the WRITE/upload destination side, which
+ * had no equivalent guard at all. encodeURIComponent is what lets a "/"
+ * reach the server as a literal "/" in req.params.entityName in the first
+ * place (the same mechanism rounds 552/847 rely on to send a legitimate
+ * entity name containing one) -- Express decodes a %2F inside a single
+ * path segment back to "/" before any handler runs.
+ */
+test("uploading a file for an entity whose own name is a path-traversal attempt is rejected, and nothing is written outside uploadsDir", async () => {
+  await withServer(async (baseUrl, db, uploadsDir) => {
+    const email = `upload-entity-traversal-${randomUUID()}@example.com`;
+    const token = await signup(baseUrl, email);
+    const user = findUserByEmail(db, email)!;
+
+    const unsafeEntityName = "../../../tmp/evil";
+    const spec: ProductSpec = {
+      summary: "test",
+      personas: [],
+      roles: ["Admin"],
+      entities: [{ name: unsafeEntityName, fields: [{ name: "resume", type: "file", required: false }] }],
+      screens: [],
+      assumptions: [],
+      openQuestions: [],
+    };
+    const projectId = randomUUID();
+    insertProject(db, { id: projectId, ownerId: user.id, name: "Hiring", description: "test", spec });
+    diffAndMigrate(db, projectId, undefined, spec);
+    markProjectBuilt(db, projectId);
+
+    const canaryPath = path.join(tmpdir(), "evil", "canary-should-never-exist.txt");
+    assert.equal(existsSync(canaryPath), false, "sanity check: nothing must already exist at the attempted escape target");
+
+    const formData = new FormData();
+    formData.append("file", new File(["attacker-controlled content"], "x.txt", { type: "text/plain" }));
+    const res = await fetch(
+      `${baseUrl}/api/projects/${projectId}/entities/${encodeURIComponent(unsafeEntityName)}/fields/resume/upload`,
+      {
+        method: "POST",
+        headers: { authorization: `Bearer ${token}` },
+        body: formData,
+      },
+    );
+    assert.equal(res.status, 400, "the upload must be rejected, not silently written outside uploadsDir");
+    const body = (await res.json()) as { code: string };
+    assert.equal(body.code, "UNSAFE_ENTITY_NAME");
+
+    assert.equal(
+      existsSync(path.join(tmpdir(), "evil")),
+      false,
+      "the attacker's traversal target directory must never have been created at all",
+    );
+    assert.equal(existsSync(path.join(uploadsDir, projectId)), false, "nothing must have been written under uploadsDir either, since the request was rejected before multer ran");
+  });
+});
+
+/**
  * Same ordering guarantee as the test above, from the other direction:
  * a user with no access to this project must be rejected before multer
  * ever runs, even though the request is otherwise well-formed and
