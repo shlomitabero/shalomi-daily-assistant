@@ -139,6 +139,8 @@ them.
 ## Security
 
 Read `docs/security.md` before deploying this anywhere reachable by
-untrusted users. Auth and per-owner isolation are real (see
-`apps/api/src/app.test.ts`'s cross-user test), but there's no rate
-limiting, email verification, or password reset yet.
+untrusted users. Auth, per-owner isolation, editor/viewer project sharing,
+and password reset are all real (see `apps/api/src/app.test.ts`'s
+cross-user test), but there's no email verification yet, and the
+LLM-calling project endpoints (`POST /api/projects`, `.../refine`) aren't
+rate-limited.

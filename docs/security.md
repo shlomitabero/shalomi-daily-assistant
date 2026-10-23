@@ -15,21 +15,32 @@ real threats to a smaller, concrete list:
 - **Authentication.** Email/password accounts, `scrypt`-hashed (Node's
   `node:crypto`, no extra dependency) and compared with `timingSafeEqual`.
   Sessions are random 32-byte bearer tokens stored server-side with a
-  30-day expiry, checked on every request by `requireAuth` middleware.
-  There is no email verification and no password reset flow yet — see
-  "Before any real deployment" below.
+  30-day expiry, checked on every request by `requireAuth` middleware. A
+  real password-reset flow exists (`POST /api/auth/forgot-password` /
+  `POST /api/auth/reset-password`, `apps/api/src/routes/auth.ts`) — a
+  hashed, time-limited token, enumeration-safe (the same response whether
+  or not the email exists), rate-limited (see below). Email verification is
+  still genuinely absent — see "Before any real deployment" below.
 - **Authorization / multi-tenancy.** Every project has an `ownerId`.
   `requireProjectAccess` returns 404 — not 403 — for a project that doesn't
   exist, belongs to someone else, *and* isn't shared with the requesting
   user, so the API never confirms a project ID's existence to anyone
   without access to it. Covered by an explicit cross-user test in
   `apps/api/src/app.test.ts`.
-- **Project sharing (collaborators).** An owner can grant another existing
-  user identical full access to a project (`packages/db/src/collaborators.ts`);
-  managing who has that access — inviting or removing — is enforced
-  owner-only by a separate, stricter `requireProjectOwner` check, covered
-  by its own cross-user tests. This is still a flat grant, not a roles
-  system — see "No RBAC / organizations" below for what that would add.
+- **Project sharing (collaborators) with real RBAC.** An owner can invite
+  another existing user as a collaborator with one of two roles —
+  `"editor"` (identical access to the owner, except managing who else has
+  access) or `"viewer"` (read-only: `requireProjectWriteAccess`,
+  `apps/api/src/routes/projects.ts`, returns 403 `VIEWER_READ_ONLY` for
+  every mutating route — ~40 call sites covering every POST/PATCH/DELETE in
+  that file). `CollaboratorRole` (`packages/db/src/collaborators.ts`) is a
+  real `"editor" | "viewer"` type, surfaced and changeable in
+  `CollaboratorsPanel.tsx`'s role picker, and the frontend disables every
+  write affordance (`readOnly` props throughout `EntityPanel.tsx`,
+  `AutomationsPanel.tsx`, `WhatsAppPanel.tsx`, etc.) for a viewer, not just
+  the server. Managing who has access at all — inviting, removing, or
+  changing a role — is enforced owner-only by a separate, stricter
+  `requireProjectOwner` check, covered by its own cross-user tests.
 - **SQL injection.** No table or column name is ever built from
   string-concatenated, unsanitized input. `packages/db/src/identifiers.ts`
   sanitizes project IDs and entity names, and rejects (rather than
@@ -59,15 +70,17 @@ real threats to a smaller, concrete list:
 
 ### Explicitly not addressed yet (do not assume these exist)
 
-- **No rate limiting.** `POST /api/projects` and `POST /api/projects/:id/refine`
-  call a real LLM API when configured; nothing currently stops abuse of
-  either endpoint, or of `/api/auth/signup` (account-creation spam).
-- **No RBAC / organizations.** A project can now be shared with other
-  individual users (see "Project sharing" above), but there is still no
-  `Workspace`/`WorkspaceMember` concept and no roles: every collaborator
-  gets identical full access to everything the owner can do except manage
-  who else has access — no read-only or entity-scoped permission level
-  exists yet.
+- **No rate limiting on the LLM-calling project endpoints.**
+  `POST /api/projects` and `POST /api/projects/:id/refine` call a real LLM
+  API when configured; nothing currently stops abuse of either endpoint.
+  (The auth endpoints — signup, login, forgot-password — *are* now
+  rate-limited; see "Project sharing" above and `apps/api/src/auth/rateLimit.ts`.)
+- **No organizations / workspaces.** A project can be shared with other
+  individual users with a real editor/viewer role each (see "Project
+  sharing" above), but there is still no `Workspace`/`WorkspaceMember`
+  concept — sharing is per-project, not grouped under a team/org an owner
+  manages collectively, and there's no entity-scoped (as opposed to
+  whole-project) permission level.
 - **No CSRF protection**, since auth is bearer-token-in-header (not a
   cookie), which is inherently not CSRF-vulnerable — this is a property of
   the current design, not a gap, but would need revisiting if cookie-based
@@ -94,11 +107,12 @@ real threats to a smaller, concrete list:
 ## Before any real deployment
 
 1. Restrict CORS to the actual frontend origin.
-2. Add rate limiting on `POST /api/projects`, `POST /api/projects/:id/refine`,
-   and `POST /api/auth/signup` (the endpoints that spend real money or
-   enable abuse).
-3. Add email verification and a password-reset flow before treating
-   accounts as real user identities rather than a demo login.
+2. Add rate limiting on `POST /api/projects` and
+   `POST /api/projects/:id/refine` (the endpoints that spend real money) —
+   the auth endpoints (signup, login, forgot-password) are already covered.
+3. Add email verification before treating accounts as real user identities
+   rather than a demo login (password reset is already covered — see
+   "Authentication" above).
 4. Move `DB_PATH` to a persistent, backed-up volume.
 5. Add a session-revocation UI ("log out everywhere") — `deleteSession`
    exists in `packages/db` but is only wired to the current session's own
