@@ -31748,3 +31748,26 @@ Still no genuine reply from שלומי. Another "missed sibling" inside `package
 **Verification**: reverted the fix and reran -- the test failed exactly as predicted (`'garages' (plural) alone must match Vehicle`); restored, it passes. Only `packages/spec-engine` changed, so its own full suite ran: 157/157 pass. `apps/api`'s full suite was also run (cross-workspace dependency): 585/586 pass, the sole failure being the already-documented pre-existing `codegen.test.ts` process-exit hang flake, confirmed unrelated.
 
 **Status**: shipped and pushed.
+
+### Round 813: Courier's bare "שליח" keyword spuriously matched "sending X"/"errand(s)" -- a third consecutive missed-sibling finding in domainEntities.ts
+
+Still no genuine reply from שלומי. A third round in a row finding the same class of bug in `packages/spec-engine/src/domainEntities.ts`'s keyword-collision rules -- this time a plain, unbounded Hebrew substring collision rather than a gender pair (811) or an English plural (812).
+
+**The gap**: Courier's bare `"שליח"` ("courier"/"messenger") keyword is matched via plain `.includes()` substring matching (`matchesKeyword`, `heuristic.ts`), not a bounded regex. It's a literal 4-letter prefix of the construct-state `"שליחת"` ("sending of ___", extremely common phrasing: `"שליחת הודעות"`/`"שליחת חוזים"`/`"שליחת ניוזלטרים"`/`"שליחת מכתבים"`) and of the unrelated noun `"שליחות"`/`"שליחויות"` ("errand(s)") -- neither has anything to do with delivery drivers.
+
+**Why this is not deliberate**: the Courier rule's own inline comments carefully discuss two *other* collisions for this exact keyword list ("driver" ⊂ "screwdriver"/"webdriver", and the "delivery person"/"delivery people" irregular-plural gap fixed in round 584) -- the author audited this rule for collisions twice and still missed this one. No comment anywhere claims it's intentional, and no existing test exercises or protects this case.
+
+**Concrete failure scenario, verified empirically end-to-end** (not just the regex in isolation): calling the real `HeuristicSpecProvider.generate()` with zero other Courier keywords present in any input --
+- "אפליקציה לשליחת חוזים לחתימה דיגיטלית" (an app for sending contracts for digital signature) → `entities: ["Courier"]` only, instead of falling back to the generic `DEFAULT_ENTITY`.
+- "מערכת לשליחת ניוזלטרים למנויים" (a newsletter system) → `["Courier", "Subscription"]`, Courier pure noise.
+- "אפליקציה לשליחת הודעות ללקוחות" (a customer-messaging app) → `["Customer", "Courier"]`, same noise.
+
+**The fix**: `"שליח"` → `/שליח(?![תו])/`, narrowly scoped to exclude only the ת (construct-state "שליחת") and ו (errand noun "שליחות") continuations that are never a real courier reference. Deliberately left the ה-suffixed `"שליחה"` unexcluded, since that form can legitimately mean "female courier" -- the same genuinely-ambiguous-word judgment call this file already makes elsewhere (the survey separately flagged `"הזמנה"`/invitation as a true homonym not worth a narrow fix, for the same reason) rather than guessing at a dual-meaning word based on incomplete information.
+
+**Scope**: lives entirely in `packages/spec-engine` -- confirmed via grep that neither `apps/web` nor `apps/api/src/codegen.ts` reference `domainEntities`/`DOMAIN_ENTITY_RULES`/`HeuristicSpecProvider` at all; this logic runs once, server-side, before any exported app code exists, the same scoping already established for rounds 811/812.
+
+**The test**: added next to round 584's own existing Courier test -- confirms both the construct-state and errand-noun collisions no longer spuriously add Courier, and that a real standalone `"שליח"` (courier) phrase still correctly does.
+
+**Verification**: reverted the fix and reran -- the test failed exactly as predicted (`'שליחת חוזים' (sending contracts) alone must not spuriously match Courier`); restored, it passes. Also independently re-verified end-to-end (not just the isolated regex) that the real singular and plural courier cases still correctly produce the Courier entity, with no regression. Only `packages/spec-engine` changed, so its own full suite ran: 158/158 pass. `apps/api`'s full suite was also run (cross-workspace dependency): 585/586 pass, the sole failure being the already-documented pre-existing `codegen.test.ts` process-exit hang flake, confirmed unrelated.
+
+**Status**: shipped and pushed.
