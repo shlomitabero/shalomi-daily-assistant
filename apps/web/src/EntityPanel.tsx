@@ -2024,9 +2024,23 @@ export function EntityPanel({
   // bulk-actions bar's count and letting bulk delete/duplicate/edit (and
   // CSV-export-selected/print-selected, which both just read selectedIds)
   // act on records the user never saw.
+  //
+  // Gated on viewMode === "table": grouping/collapsing is only ever set
+  // from Table view (the Group-by select itself only renders there), but
+  // groupFieldName/collapsedGroups are view-mode-agnostic state that
+  // survives switching to Board/Calendar. Those views render every record
+  // from visibleRecords with no "collapsed" concept of their own, yet the
+  // toolbar's Copy/Export-CSV/Print-list buttons read effectivelyVisibleRecords
+  // unconditionally in every view -- so without this gate, grouping and
+  // collapsing a section in Table and then switching to Board/Calendar
+  // silently dropped that section's records from the exported CSV/
+  // clipboard/print output, despite the screen showing every record.
   const effectivelyVisibleRecords = useMemo(
-    () => (recordGroups ? recordGroups.flatMap((group) => (collapsedGroups.has(group.key) ? [] : group.records)) : visibleRecords),
-    [recordGroups, collapsedGroups, visibleRecords],
+    () =>
+      viewMode === "table" && recordGroups
+        ? recordGroups.flatMap((group) => (collapsedGroups.has(group.key) ? [] : group.records))
+        : visibleRecords,
+    [viewMode, recordGroups, collapsedGroups, visibleRecords],
   );
 
   // Totals row under the table -- sums each visible number-type column over

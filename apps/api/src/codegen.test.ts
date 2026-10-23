@@ -5276,6 +5276,127 @@ test("the exported EntityView's grand-total tfoot excludes a collapsed group's r
 });
 
 /**
+ * Round 804's finding: the test above confirms effectivelyVisibleRecords
+ * correctly excludes a collapsed group's records -- but only while still in
+ * Table view, the only place grouping/collapsing can be set from. Board and
+ * Calendar views render every record straight from visibleRecords, with no
+ * "collapsed" concept of their own, yet groupFieldName/collapsedGroups are
+ * view-mode-agnostic state that survives switching views, and the toolbar's
+ * Copy/Export-CSV/Print-list buttons read effectivelyVisibleRecords
+ * unconditionally in every view. Before this fix, grouping by "status" in
+ * Table, collapsing the "Won" group, then switching to Board view (which
+ * visibly shows every record, including "Won" ones, with no indication
+ * anything is collapsed) still silently excluded those same records from
+ * the exported CSV -- a mismatch between what the screen shows and what
+ * gets exported. effectivelyVisibleRecords now only applies the collapse
+ * filter when viewMode === "table". Mirrors the live preview's own
+ * EntityPanel.test.ts regression test (round 804).
+ */
+test("the exported EntityView's Export CSV button includes every record once the user leaves Table view, even with a group still collapsed from before", async () => {
+  const files = generateExportFiles(project);
+  const dir = writeGeneratedWebComponent(files);
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = (async () => ({
+    ok: true,
+    status: 200,
+    json: async () => ({
+      records: [
+        { id: 1, name: "Acme Corp", status: "New" },
+        { id: 2, name: "Beta Inc", status: "Won" },
+        { id: 3, name: "Gamma LLC", status: "Won" },
+      ],
+    }),
+  })) as typeof fetch;
+  const originalCreateObjectURL = (URL as unknown as { createObjectURL?: (b: Blob) => string }).createObjectURL;
+  const originalRevokeObjectURL = (URL as unknown as { revokeObjectURL?: (u: string) => void }).revokeObjectURL;
+  let capturedBlob: Blob | null = null;
+  (URL as unknown as { createObjectURL: (b: Blob) => string }).createObjectURL = (b: Blob) => {
+    capturedBlob = b;
+    return "blob:mock-url";
+  };
+  (URL as unknown as { revokeObjectURL: (u: string) => void }).revokeObjectURL = () => {};
+
+  try {
+    await withRealLocalStorage(async () => {
+      const { EntityView } = await import(path.join(dir, "web", "src", "components", "EntityView.jsx"));
+      const customerEntity = project.spec.entities.find((e) => e.name === "Customer")!;
+      const props = {
+        entity: customerEntity,
+        highlightRecordId: null,
+        onHighlightHandled: () => {},
+        onJumpToRecord: () => {},
+        onRecordCountChange: () => {},
+      };
+
+      const { container } = render(React.createElement(EntityView, props));
+      for (let i = 0; i < 40; i++) {
+        if (container.querySelector(".entity-group-by")) break;
+        await act(async () => {
+          await new Promise((resolve) => setTimeout(resolve, 0));
+        });
+      }
+      const groupBySelect = container.querySelector(".entity-group-by") as HTMLSelectElement;
+      await act(async () => {
+        fireEvent.change(groupBySelect, { target: { value: "status" } });
+      });
+      for (let i = 0; i < 40; i++) {
+        if (container.querySelectorAll(".entity-group-header-row").length === 2) break;
+        await act(async () => {
+          await new Promise((resolve) => setTimeout(resolve, 0));
+        });
+      }
+
+      const headerRows = Array.from(container.querySelectorAll(".entity-group-header-row"));
+      const wonToggle = headerRows[1].querySelector(".entity-group-toggle") as HTMLButtonElement;
+      await act(async () => {
+        fireEvent.click(wonToggle);
+      });
+      assert.equal(container.querySelectorAll("tbody tr").length, 3, "collapsing 'Won' must hide its own 2 record rows, leaving 2 headers + 1 'New' record");
+      assert.ok(!container.textContent?.includes("Beta Inc"), "the 'Won' group must actually be collapsed before switching views");
+
+      const boardToggle = container.querySelectorAll(".view-toggle-btn")[1] as HTMLButtonElement;
+      await act(async () => {
+        fireEvent.click(boardToggle);
+      });
+      for (let i = 0; i < 40; i++) {
+        if (container.querySelectorAll(".board-card").length === 3) break;
+        await act(async () => {
+          await new Promise((resolve) => setTimeout(resolve, 0));
+        });
+      }
+      assert.equal(
+        container.querySelectorAll(".board-card").length,
+        3,
+        "Board view must show all 3 records -- it has no 'collapsed group' concept of its own",
+      );
+
+      const exportBtn = container.querySelector(".csv-export-btn") as HTMLButtonElement;
+      await act(async () => {
+        fireEvent.click(exportBtn);
+      });
+      for (let i = 0; i < 40; i++) {
+        if (capturedBlob !== null) break;
+        await act(async () => {
+          await new Promise((resolve) => setTimeout(resolve, 0));
+        });
+      }
+
+      assert.ok(capturedBlob, "Export CSV must actually build and download a Blob");
+      const csvText = await (capturedBlob as unknown as Blob).text();
+      assert.match(csvText, /Acme Corp/, "the never-collapsed record must still be exported");
+      assert.match(csvText, /Beta Inc/, "a record from a group collapsed back in Table view must export once in Board view");
+      assert.match(csvText, /Gamma LLC/, "a record from a group collapsed back in Table view must export once in Board view");
+    });
+  } finally {
+    globalThis.fetch = originalFetch;
+    if (originalCreateObjectURL) (URL as unknown as { createObjectURL: (b: Blob) => string }).createObjectURL = originalCreateObjectURL;
+    if (originalRevokeObjectURL) (URL as unknown as { revokeObjectURL: (u: string) => void }).revokeObjectURL = originalRevokeObjectURL;
+    cleanup();
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+/**
  * Round 487's finding: selectedOrAllRecords's own contract is "export/print
  * what the table is currently showing" when nothing is selected -- but
  * handleExportCsv, handleCopy, and the print-list sheet all passed the flat

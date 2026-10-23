@@ -4622,6 +4622,80 @@ test("EntityPanel's Print list button (nothing selected) excludes records hidden
 });
 
 /**
+ * Round 804's finding: the two tests above confirm effectivelyVisibleRecords
+ * correctly excludes a collapsed group's records -- but only while still in
+ * Table view, the only place grouping/collapsing can be set from. Board and
+ * Calendar views render every record straight from visibleRecords, with no
+ * "collapsed" concept of their own, yet groupFieldName/collapsedGroups are
+ * view-mode-agnostic state that survives switching views, and the toolbar's
+ * Copy/Export-CSV/Print-list buttons read effectivelyVisibleRecords
+ * unconditionally in every view. Before this fix, grouping by "status" in
+ * Table, collapsing the "won" group, then switching to Board view (which
+ * visibly shows every record, including "won" ones, with no indication
+ * anything is collapsed) still silently excluded those same records from
+ * the exported CSV -- a mismatch between what the screen shows and what
+ * gets exported. effectivelyVisibleRecords now only applies the collapse
+ * filter when viewMode === "table".
+ */
+test("EntityPanel's Export CSV button includes every record once the user leaves Table view, even with a group still collapsed from before", async () => {
+  await withJsdom(async () => {
+    const store: EntityRecord[] = [
+      { id: 1, name: "Acme Corp", status: "new" },
+      { id: 2, name: "Beta Inc", status: "won" },
+      { id: 3, name: "Gamma LLC", status: "won" },
+    ];
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = mockRecordsFetch(store) as typeof fetch;
+    const originalCreateObjectURL = (URL as unknown as { createObjectURL?: (b: Blob) => string }).createObjectURL;
+    const originalRevokeObjectURL = (URL as unknown as { revokeObjectURL?: (u: string) => void }).revokeObjectURL;
+    let capturedBlob: Blob | null = null;
+    (URL as unknown as { createObjectURL: (b: Blob) => string }).createObjectURL = (b: Blob) => {
+      capturedBlob = b;
+      return "blob:mock-url";
+    };
+    (URL as unknown as { revokeObjectURL: (u: string) => void }).revokeObjectURL = () => {};
+    try {
+      renderEntityPanel();
+      await waitForCondition(() => document.querySelectorAll("table tbody tr").length === 3);
+
+      const groupBySelect = document.querySelector(".entity-group-by") as HTMLSelectElement;
+      fireEvent.change(groupBySelect, { target: { value: "status" } });
+      await waitForCondition(() => document.querySelectorAll(".entity-group-header-row").length === 2);
+
+      const headerRows = Array.from(document.querySelectorAll(".entity-group-header-row"));
+      const wonToggle = headerRows[1].querySelector(".entity-group-toggle") as HTMLButtonElement;
+      fireEvent.click(wonToggle);
+      await waitForCondition(() => document.querySelectorAll("table tbody tr").length === 3);
+      assert.ok(
+        !Array.from(document.querySelectorAll("table tbody tr")).some((r) => r.textContent?.includes("Beta Inc")),
+        "the 'Won' group must actually be collapsed before switching views",
+      );
+
+      const boardToggle = document.querySelectorAll(".view-toggle-btn")[1] as HTMLButtonElement;
+      fireEvent.click(boardToggle);
+      await waitForCondition(() => document.querySelectorAll(".board-card").length === 3);
+      assert.ok(
+        document.querySelectorAll(".board-card").length === 3,
+        "Board view must show all 3 records -- it has no 'collapsed group' concept of its own",
+      );
+
+      const exportBtn = document.querySelector(".csv-export-btn") as HTMLButtonElement;
+      fireEvent.click(exportBtn);
+
+      await waitForCondition(() => capturedBlob !== null);
+      const csvText = await (capturedBlob as unknown as Blob).text();
+      assert.match(csvText, /Acme Corp/, "the never-collapsed record must still be exported");
+      assert.match(csvText, /Beta Inc/, "a record from a group collapsed back in Table view must export once in Board view");
+      assert.match(csvText, /Gamma LLC/, "a record from a group collapsed back in Table view must export once in Board view");
+    } finally {
+      globalThis.fetch = originalFetch;
+      if (originalCreateObjectURL) (URL as unknown as { createObjectURL: (b: Blob) => string }).createObjectURL = originalCreateObjectURL;
+      if (originalRevokeObjectURL) (URL as unknown as { revokeObjectURL: (u: string) => void }).revokeObjectURL = originalRevokeObjectURL;
+    }
+  });
+});
+
+/**
  * Regression test for round 499's finding: round 487 (above) fixed Export
  * CSV/Copy/Print's own actions to use the grouping/collapse-aware
  * effectivelyVisibleRecords instead of the flat visibleRecords, but never

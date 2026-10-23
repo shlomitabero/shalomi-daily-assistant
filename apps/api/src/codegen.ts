@@ -3962,11 +3962,21 @@ export function EntityView({ entity, highlightRecordId, onHighlightHandled, onJu
   );
 
   // The records actually rendered in the table body right now -- unlike
-  // visibleRecords, this excludes a collapsed group's records. Mirrors the
-  // live preview's own effectivelyVisibleRecords (EntityPanel.tsx).
+  // visibleRecords, this excludes a collapsed group's records. Gated on
+  // viewMode === "table": grouping/collapsing is only ever set from Table
+  // view, but groupFieldName/collapsedGroups survive switching to Board/
+  // Calendar, which render every record from visibleRecords with no
+  // "collapsed" concept of their own -- so without this gate, the
+  // toolbar's view-mode-agnostic Copy/Export-CSV/Print-list buttons
+  // silently dropped a collapsed section's records from Board/Calendar
+  // export, despite the screen showing every record. Mirrors the live
+  // preview's own effectivelyVisibleRecords (EntityPanel.tsx).
   const effectivelyVisibleRecords = useMemo(
-    () => (recordGroups ? recordGroups.flatMap((group) => (collapsedGroups.has(group.key) ? [] : group.records)) : visibleRecords),
-    [recordGroups, collapsedGroups, visibleRecords],
+    () =>
+      viewMode === "table" && recordGroups
+        ? recordGroups.flatMap((group) => (collapsedGroups.has(group.key) ? [] : group.records))
+        : visibleRecords,
+    [viewMode, recordGroups, collapsedGroups, visibleRecords],
   );
 
   // Totals row under the table -- sums each visible number-type column over
