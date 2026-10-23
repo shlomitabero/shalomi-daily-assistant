@@ -32033,3 +32033,23 @@ Still no genuine reply from שלומי. `heuristic.ts`'s `BILLING_ENTITY_NAMES` 
 **Verification**: reverted the fix and reran -- failed exactly as predicted (`'Stripe'` expected, `'No payments'` actual); restored, passes, along with the full `packages/spec-engine` suite (161/161, including the previously-broken `חיוב`/`חיובי` test, confirmed clean once `Service` was removed). Full `apps/api` suite: 587/589 pass, with two pre-existing, independently-confirmed, unrelated flakes: `auth/password.test.ts`'s concurrent-hashing timing assertion (CPU-contention sensitive, already documented) and `codegen.test.ts`'s same recurring whole-file `SIGKILL`.
 
 **Status**: shipped and pushed.
+
+### Round 827: `WorkOrder`/`Case`/`Task` seed data silently reused Deal's sales-pitch titles
+
+Still no genuine reply from שלומי. `packages/db/src/seed.ts`'s `textSeedValueFor` -- the function that generates believable demo-record values per field name -- had the exact same "shared field name needs per-entity dispatch" shape its own `"name"` case was already written to handle, just never applied to the sibling `"title"` case a few lines above it.
+
+**The gap**: `case "title"` returned `pick(isHebrew ? DEAL_TITLES_HE : DEAL_TITLES_EN, index)` unconditionally, with zero `entityName` check -- unlike `case "name"` immediately below it, which dispatches through `CATALOG_NAME_ENTITIES`/`MenuItem`/`Project`/`Event`/`Course`/`Pet`/`Vendor` before falling back to a person name, and `case "description"`, which dispatches on `Expense` before falling back to a generic placeholder. `domainEntities.ts` has exactly four entities declaring a `"title"` field: `Deal` (the pool's original and only intended owner), `Task`, `WorkOrder`, and `Case` -- confirmed via grep before writing the fix.
+
+**Concrete failure scenario**: build any app whose spec includes `WorkOrder` (a "field service/repair" description) or `Case` (a "law firm case management" description). Verified empirically via direct `generateSeedRecords()` invocation before implementing anything: a fresh `WorkOrder`'s or `Case`'s very first demo rows showed `title` values like `"Annual contract"`/`"Service upgrade"` -- plausible as a sales deal, nonsensical as a repair job description or a legal matter's subject. `Task`'s titles were similarly off (`"Plan expansion"`/`"Initial setup"` read as deal stages, not to-dos), though less jarring.
+
+**Why the existing test missed it**: `seed.test.ts`'s own regression test for this exact family (titled "...each get believable seed values, not the generic placeholder formula") only asserted `caseRecord.title` doesn't match `/Case title/` -- the generic `"<Entity> - <field> N"` placeholder regex every *unhandled* field name falls back to. Since the bug's actual symptom was a *wrong but non-placeholder* value (a real Deal title string), that assertion passed cleanly every single time, silently masking the gap.
+
+**The fix**: added dedicated `WORK_ORDER_TITLES_HE/EN`, `CASE_TITLES_HE/EN`, and `TASK_TITLES_HE/EN` pools, and dispatched `case "title"` on `entityName` the same way `case "name"` already does, falling back to `DEAL_TITLES` only for `Deal` itself (and any custom/non-domain entity reusing the name "Deal", matching every other case's own fallback convention).
+
+**Scope**: `packages/db` only -- confirmed via grep that `seed.ts`'s pools/dispatch aren't referenced anywhere in `apps/web`/`codegen.ts` (seed-data generation is a server-side-only build step).
+
+**The tests**: added a new test asserting `WorkOrder`/`Case`/`Task`'s seeded titles are never one of `Deal`'s own sample values -- the semantic check the existing "not the generic placeholder" test couldn't provide.
+
+**Verification**: reverted the fix and reran -- failed exactly as predicted (`WorkOrder`'s title `"Service upgrade"` matched one of Deal's own sample titles); restored, passes. Full `packages/db` suite: 216/216 pass. Full `apps/api` suite: 588/589 pass, the lone failure is `codegen.test.ts`'s same recurring, already-documented, unrelated whole-file `SIGKILL`.
+
+**Status**: shipped and pushed.
