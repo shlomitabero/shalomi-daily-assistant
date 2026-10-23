@@ -422,6 +422,53 @@ test("Order's keyword match does not spuriously trigger on unrelated words that 
 });
 
 /**
+ * Round 869's finding: the `\b`-bounded fix above (round whichever closed
+ * the disorder/recorder/border collision) still left Order's own "order"
+ * keyword matching a completely different pitfall-1b shape -- the same
+ * idiom-co-occurrence collision this file's own Deal ("pipeline") and
+ * Appointment ("schedule") entities were already fixed for. "in order to"
+ * is one of the most common connector phrases in ordinary English, so a
+ * description for a yoga studio, an employee-compliance tracker, or a
+ * legal-aid case tool -- none of them e-commerce -- spuriously got a whole
+ * spare Order entity/table injected into its generated spec purely for
+ * using that phrase. Unlike "pipeline"/"schedule", bare "order" can't
+ * simply be dropped (the test above relies on it matching a genuine
+ * standalone use), so the fix narrows the match to exclude only the exact
+ * three-word idiom itself ("in" immediately before AND "to" immediately
+ * after the very same occurrence), confirmed here to still match every
+ * other real use -- including "orders" immediately followed by "to" in a
+ * genuine logistics sentence, which a cruder "exclude whenever followed by
+ * to" fix would have wrongly rejected too.
+ */
+test("Order's keyword match does not spuriously trigger on the common idiom 'in order to', in any domain unrelated to e-commerce", async () => {
+  const provider = new HeuristicSpecProvider();
+
+  const yoga = await provider.generate(
+    "An app for a yoga studio to manage class schedules, in order to help instructors plan their week.",
+  );
+  assert.ok(!yoga.entities.some((e) => e.name === "Order"), "a yoga studio's class-schedule app must not get a spurious Order entity from 'in order to'");
+
+  const compliance = await provider.generate("A tool to track employee certifications in order to stay compliant.");
+  assert.ok(
+    !compliance.entities.some((e) => e.name === "Order"),
+    "an employee-compliance tracker must not get a spurious Order entity from 'in order to'",
+  );
+
+  // The exclusion must be scoped to the exact idiom, not just "followed by
+  // to" alone -- a real order-tracking description that happens to use
+  // "orders"/"order" immediately followed by "to" for an unrelated reason
+  // (shipping a real order TO a destination, not "in order TO" as a
+  // connector) must still match.
+  const shipping = await provider.generate("An app for an online retailer to track shipping of customer orders to their destinations.");
+  assert.ok(shipping.entities.some((e) => e.name === "Order"), "'orders to their destinations' is a real order-tracking phrase and must still match Order");
+
+  // Nor should it suppress a real, standalone "order" mention elsewhere in
+  // the SAME description that also happens to use the idiom.
+  const both = await provider.generate("I built this app in order to track customer orders for my shop.");
+  assert.ok(both.entities.some((e) => e.name === "Order"), "a real 'orders' mention elsewhere in the text must still match Order, even alongside 'in order to'");
+});
+
+/**
  * Regression test for the same bug class round 279 fixed for Order's
  * "order" keyword, found by this round's Explore survey re-checking the
  * REST of domainEntities.ts's keyword lists via real execution (not just

@@ -259,7 +259,34 @@ export const DOMAIN_ENTITY_RULES: DomainEntityRule[] = [
       // style this file's "garage sale" disambiguation already uses) keeps
       // matching a real online-store description without matching a
       // library/hotel one that happens to use the bare word.
-      /\border(s)?\b/, "purchase", "checkout page", "checkout flow", "online checkout",
+      // "order"/"orders" as a plain \b-bounded word is still a substring
+      // collision of a different, idiom-co-occurrence shape (pitfall 1b,
+      // same class as Deal's removed "pipeline" and Appointment's removed
+      // "schedule" below): "in order to" is one of the most common
+      // connector phrases in ordinary English, so a description for a
+      // completely unrelated app -- a yoga studio's class schedule, an
+      // employee-compliance tracker, a legal-aid case tool -- that happens
+      // to use it ("...to help instructors plan their week, in order to
+      // keep classes on schedule") spuriously matches this entity too,
+      // confirmed with a real repro before fixing. Unlike "pipeline"/
+      // "schedule", bare "order" can't simply be dropped: two existing
+      // tests below rely on it matching a genuine standalone use ("Place
+      // an order for pickup.", "order-management"), and this entity's own
+      // other keywords (purchase/checkout/delivery) don't cover every
+      // legitimate order-tracking description on their own. The idiom
+      // itself has a fixed, three-word shape -- "in" immediately before
+      // AND "to" immediately after the very same "order(s)" occurrence --
+      // so excluding only that exact combination (not just "preceded by
+      // in" or just "followed by to" alone, either of which would also
+      // reject real uses like "order-management" or "ship orders to
+      // customers") keeps every other standalone use matching. This
+      // doesn't reach the rarer idioms that keep "order" as a genuine
+      // standalone word with unrelated meaning ("court order", "money
+      // order", "restraining order") -- accepted as residual risk, the
+      // same trade-off this file's other \b-bounded fixes already make,
+      // since "in order to" alone is overwhelmingly more common across
+      // ordinary app descriptions than all of those combined.
+      /(?<!\bin\s)\border(s)?\b|\border(s)?\b(?!\s+to\b)/, "purchase", "checkout page", "checkout flow", "online checkout",
       "delivery", "deliveries", "wolt",
       "הזמנה", "הזמנות", "רכישה", "רכישות", "משלוח", "משלוחים", "וולט",
     ],
