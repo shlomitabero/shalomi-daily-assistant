@@ -57,3 +57,25 @@ export function purgeEntityTabOrderForProject(projectId: string): void {
   delete store[projectId];
   writeStore(store);
 }
+
+/**
+ * Removes one entity name from a project's persisted tab order, called by
+ * entityPreferenceCleanup.ts's purgeEntityPreferences when a refine drops
+ * that entity. Unlike every sibling store there (keyed per `${projectId}:${entityName}`,
+ * so a whole-entry delete suffices), this store is keyed by projectId alone
+ * with the entity names living inside the array value -- so the dropped
+ * name has to be filtered out of that array instead. Without this, a later
+ * refine that reintroduces an entity with the SAME name would have its tab
+ * silently snap back into whatever position the old, unrelated entity
+ * occupied, instead of landing at the natural end like a genuinely new
+ * entity does via applyColumnOrder's own "ignore unknown names" fallback.
+ * A no-op (not an error) when the project was never reordered, or the name
+ * isn't present.
+ */
+export function purgeEntityNameFromTabOrder(projectId: string, entityName: string): void {
+  const store = readStore();
+  const order = store[projectId];
+  if (!order) return;
+  store[projectId] = order.filter((name) => name !== entityName);
+  writeStore(store);
+}

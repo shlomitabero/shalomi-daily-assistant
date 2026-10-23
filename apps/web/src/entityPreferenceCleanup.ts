@@ -8,6 +8,7 @@ import { purgeCollapsedGroupsForEntity } from "./collapsedGroupsPreference.js";
 import { purgeSortKeysForEntity } from "./sortKeysPreference.js";
 import { purgeViewModeForEntity } from "./viewModePreference.js";
 import { clearEntityRecentSearches } from "./entityRecentSearches.js";
+import { purgeEntityNameFromTabOrder } from "./entityTabOrder.js";
 
 /**
  * projectPreferenceCleanup.ts's own purgeProjectPreferences sweeps every
@@ -31,6 +32,13 @@ import { clearEntityRecentSearches } from "./entityRecentSearches.js";
  * newly-built one. Each underlying purge function is scoped to exactly
  * one project+entity and leaves every other entity's (and every other
  * project's) own entries untouched.
+ *
+ * entityTabOrder.ts's own purge is the one exception to that "scoped to
+ * one project+entity" shape: that store is keyed by projectId alone, with
+ * the entity name living inside its array value, so its purge filters the
+ * name out of that array instead of deleting a `${projectId}:${entityName}`
+ * entry outright -- added in round 865 after the other 9 stores here
+ * (round 853) left it as the one sibling never swept.
  */
 export function purgeEntityPreferences(projectId: string, entityName: string): void {
   clearColumnWidths(projectId, entityName);
@@ -43,4 +51,5 @@ export function purgeEntityPreferences(projectId: string, entityName: string): v
   purgeSortKeysForEntity(projectId, entityName);
   purgeViewModeForEntity(projectId, entityName);
   clearEntityRecentSearches(projectId, entityName);
+  purgeEntityNameFromTabOrder(projectId, entityName);
 }

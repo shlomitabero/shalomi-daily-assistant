@@ -2,7 +2,7 @@ import "./jsdomWarmup.js";
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { JSDOM } from "jsdom";
-import { getEntityTabOrder, setEntityTabOrder } from "./entityTabOrder.js";
+import { getEntityTabOrder, setEntityTabOrder, purgeEntityNameFromTabOrder } from "./entityTabOrder.js";
 
 /** Same full-jsdom-swap technique columnOrder.test.ts/columnWidths.test.ts/columnVisibility.test.ts already use: real localStorage, not a mock. */
 async function withJsdom(fn: () => void | Promise<void>): Promise<void> {
@@ -51,5 +51,37 @@ test("getEntityTabOrder falls back to an empty array for corrupted/foreign local
   await withJsdom(() => {
     localStorage.setItem("forge.entityTabOrder", "not real json{{{");
     assert.deepEqual(getEntityTabOrder("proj1"), []);
+  });
+});
+
+/**
+ * Round 865: a refine that drops one entity from a project never removed
+ * that entity's name from this project's own persisted tab order -- the
+ * one sibling store entityPreferenceCleanup.ts's round-853 sweep missed,
+ * since this store is keyed by projectId alone rather than
+ * `${projectId}:${entityName}`. Without this, a later refine that
+ * reintroduces an entity with the SAME name would silently inherit the
+ * stale position.
+ */
+test("purgeEntityNameFromTabOrder removes exactly one entity name from a project's tab order, leaving the rest of that order and a sibling project's order untouched", async () => {
+  await withJsdom(() => {
+    setEntityTabOrder("proj1", ["Task", "Deal", "Contact"]);
+    setEntityTabOrder("proj2", ["Deal", "Task"]);
+
+    purgeEntityNameFromTabOrder("proj1", "Deal");
+
+    assert.deepEqual(getEntityTabOrder("proj1"), ["Task", "Contact"], "the dropped entity's name must be removed, the rest of the order preserved");
+    assert.deepEqual(getEntityTabOrder("proj2"), ["Deal", "Task"], "an unrelated project's own order, including its own \"Deal\" entry, must survive untouched");
+  });
+});
+
+test("purgeEntityNameFromTabOrder is a no-op, not an error, when the project was never reordered or the name isn't present", async () => {
+  await withJsdom(() => {
+    assert.doesNotThrow(() => purgeEntityNameFromTabOrder("proj1", "Deal"));
+    assert.deepEqual(getEntityTabOrder("proj1"), []);
+
+    setEntityTabOrder("proj1", ["Task"]);
+    purgeEntityNameFromTabOrder("proj1", "Deal");
+    assert.deepEqual(getEntityTabOrder("proj1"), ["Task"]);
   });
 });
