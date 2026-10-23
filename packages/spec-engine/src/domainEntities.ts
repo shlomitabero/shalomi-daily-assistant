@@ -466,7 +466,18 @@ export const DOMAIN_ENTITY_RULES: DomainEntityRule[] = [
       // description) and "webdriver" (a QA/testing-tool description) --
       // same collision class as Order's "order" fix above. \b-bounded so
       // "driver"/"drivers" still matches as a real standalone word.
-      "courier", /\bdriver(s)?\b/, "delivery person", "שליח", "שליחים", "נהג", "נהגים",
+      // Round 813: bare "שליח" ("courier"/"messenger") is a literal
+      // 4-letter prefix of the construct-state "שליחת" ("sending of ___",
+      // e.g. "שליחת הודעות"/"שליחת חוזים"/"שליחת ניוזלטרים" -- ordinary,
+      // frequent phrasing with nothing to do with delivery drivers) and
+      // the unrelated noun "שליחות"/"שליחויות" ("errand(s)"). Excluded via
+      // lookahead the same way as this file's other short-root prefix
+      // collisions, narrowly scoped to just the ת/ו continuations that are
+      // never a real courier reference -- deliberately not excluding the
+      // ה-suffixed "שליחה" (which can legitimately mean "female courier"),
+      // the same genuinely-ambiguous-word judgment call this file already
+      // makes elsewhere rather than guessing at a dual-meaning word.
+      "courier", /\bdriver(s)?\b/, "delivery person", /שליח(?![תו])/, "שליחים", "נהג", "נהגים",
       // "delivery person" had no plural entry (round 584). Unlike this
       // file's other missing-plural fixes (576-583, all Hebrew ה→ות or
       // sofit-letter swaps, or an irregular Hebrew construct plural),

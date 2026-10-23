@@ -2268,6 +2268,42 @@ test("Courier's 'delivery person' keyword also matches its irregular plural 'del
 });
 
 /**
+ * Regression test for round 813's finding: Courier's bare "שליח"
+ * ("courier"/"messenger") is a literal 4-letter prefix of the
+ * construct-state "שליחת" ("sending of ___") -- ordinary, frequent Hebrew
+ * phrasing ("שליחת הודעות"/"שליחת חוזים"/"שליחת ניוזלטרים") with nothing
+ * to do with delivery drivers -- and of the unrelated noun "שליחות"
+ * ("errand(s)"). A description naming only an unrelated "sending X" or
+ * "errand" concept spuriously matched Courier. The test sentences
+ * deliberately avoid every other Courier keyword ("courier", "driver(s)",
+ * "delivery person(s)", "שליחים", "נהג"/"נהגים") so the assertion isolates
+ * "שליח" alone. Deliberately does NOT test bare "שליחה" (which can
+ * legitimately mean "female courier") -- this fix only excludes the ת/ו
+ * continuations that are never a real courier reference.
+ */
+test("Courier's 'שליח' keyword doesn't spuriously match inside 'שליחת' (sending of) or 'שליחות' (errand)", async () => {
+  const provider = new HeuristicSpecProvider();
+
+  const sendingContracts = await provider.generate("אפליקציה לשליחת חוזים לחתימה דיגיטלית.");
+  assert.ok(
+    !sendingContracts.entities.some((e) => e.name === "Courier"),
+    "'שליחת חוזים' (sending contracts) alone must not spuriously match Courier via the bare 'שליח' substring",
+  );
+
+  const errands = await provider.generate("אפליקציה למעקב אחרי שליחויות ברחבי העיר.");
+  assert.ok(
+    !errands.entities.some((e) => e.name === "Courier"),
+    "'שליחויות' (errands) alone must not spuriously match Courier via the bare 'שליח' substring",
+  );
+
+  // The real word still works on its own (this description avoids every
+  // other Courier keyword, so a match here can only come from a
+  // standalone "שליח" not followed by "ת"/"ו").
+  const realCourier = await provider.generate("אפליקציה למעקב אחרי שליח שמחלק חבילות ללקוחות בעיר.");
+  assert.ok(realCourier.entities.some((e) => e.name === "Courier"), "a standalone 'שליח' (courier) must still add the Courier entity");
+});
+
+/**
  * Regression test for round 585's finding: Rental's Hebrew construct-state
  * keyword "השכרת ציוד" (equipment rental) had no plural entry. Its plural
  * "השכרות ציוד" swaps the word-final ת for ות mid-word, the same
