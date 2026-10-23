@@ -5634,6 +5634,51 @@ test("switching a field's type to enum or relation requires the matching extra d
   });
 });
 
+/**
+ * Round 823's finding: unlike enumValues/relationTo just above (deliberately
+ * cleared whenever they no longer apply), enumLabels kept the field's OLD
+ * labels object verbatim whenever the new type stayed "enum" -- even when
+ * enumValues itself changed. SpecListItemRemover.tsx's "edit values" button
+ * (openDraftFor) re-submits this exact route with type staying "enum" but a
+ * user-edited enumValues list -- removing/renaming a value used to leave its
+ * old enumLabels entry permanently orphaned, with no other UI able to touch
+ * enumLabels afterward. Uses the CRM template's own Deal.stage field, which
+ * ships with real enumLabels for every one of its 5 declared values.
+ */
+test("switching a field's type to enum while also changing its enumValues drops enumLabels for any value no longer in the list", async () => {
+  await withServer(async (baseUrl) => {
+    const token = await signup(baseUrl, "field-type-enumlabels@example.com");
+    const createRes = await fetch(`${baseUrl}/api/projects/from-template`, {
+      method: "POST",
+      headers: authHeaders(token),
+      body: JSON.stringify({ templateId: "crm" }),
+    });
+    const { project } = (await createRes.json()) as {
+      project: { id: string; spec: { entities: { name: string; fields: { name: string; enumValues?: string[]; enumLabels?: Record<string, string> }[] }[] } };
+    };
+    const deal = project.spec.entities.find((e) => e.name === "Deal")!;
+    const stageField = deal.fields.find((f) => f.name === "stage")!;
+    assert.deepEqual(stageField.enumValues, ["lead", "qualified", "proposal", "won", "lost"]);
+    assert.deepEqual(Object.keys(stageField.enumLabels ?? {}).sort(), ["lead", "lost", "proposal", "qualified", "won"]);
+
+    const res = await fetch(`${baseUrl}/api/projects/${project.id}/entities/Deal/fields/stage/type`, {
+      method: "PATCH",
+      headers: authHeaders(token),
+      body: JSON.stringify({ type: "enum", enumValues: "lead, qualified, proposal, won, archived" }),
+    });
+    assert.equal(res.status, 200);
+    const { project: updated } = (await res.json()) as {
+      project: { spec: { entities: { name: string; fields: { name: string; enumValues?: string[]; enumLabels?: Record<string, string> }[] }[] } };
+    };
+    const updatedField = updated.spec.entities.find((e) => e.name === "Deal")!.fields.find((f) => f.name === "stage")!;
+    assert.deepEqual(updatedField.enumValues, ["lead", "qualified", "proposal", "won", "archived"]);
+    assert.equal(updatedField.enumLabels?.lost, undefined, "'lost' is no longer a declared value -- its old enumLabels entry must not survive");
+    assert.equal(updatedField.enumLabels?.archived, undefined, "'archived' is a brand-new value with no label of its own yet");
+    assert.equal(updatedField.enumLabels?.lead, "ליד", "a value that survived the edit unchanged must keep its own real label");
+    assert.equal(updatedField.enumLabels?.won, "נסגרה בהצלחה", "a value that survived the edit unchanged must keep its own real label");
+  });
+});
+
 test("adding a blank/whitespace-only field label is rejected with 400 instead of appending an invalid field", async () => {
   await withServer(async (baseUrl) => {
     const token = await signup(baseUrl, "field-add-blank@example.com");

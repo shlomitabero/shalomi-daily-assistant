@@ -2134,6 +2134,16 @@ export function createProjectsRouter(
    * Deliberately clears whichever of enumValues/relationTo no longer
    * applies (e.g. switching "enum" -> "text" drops enumValues) rather than
    * leaving it stranded on a field whose type no longer calls for it.
+   * enumLabels needs the same treatment one level deeper: the "edit
+   * values" flow (SpecListItemRemover.tsx's openDraftFor) re-submits this
+   * same route with type staying "enum" but a changed enumValues list --
+   * renaming or removing a value used to leave its old enumLabels entry
+   * permanently orphaned (and a newly-added value with no entry at all),
+   * surviving in the stored spec forever since there's no other UI to
+   * touch enumLabels directly. Filtered down to just the values that
+   * still exist in the new list, the same "stale derived data must not
+   * outlive the data it was derived from" rule already applied to
+   * enumValues/relationTo just above.
    */
   router.patch(
     "/projects/:id/entities/:entityName/fields/:fieldName/type",
@@ -2166,7 +2176,12 @@ export function createProjectsRouter(
                         ...f,
                         type: parsed.data.type,
                         enumValues: parsed.data.type === "enum" ? parsed.data.enumValues : undefined,
-                        enumLabels: parsed.data.type === "enum" ? f.enumLabels : undefined,
+                        enumLabels:
+                          parsed.data.type === "enum" && f.enumLabels
+                            ? Object.fromEntries(
+                                Object.entries(f.enumLabels).filter(([value]) => parsed.data.enumValues!.includes(value)),
+                              )
+                            : undefined,
                         relationTo: parsed.data.type === "relation" ? parsed.data.relationTo : undefined,
                       }
                     : f,
