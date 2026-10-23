@@ -1942,6 +1942,60 @@ test("App's handleGoHome resets view/project/selectedAnswers/additionalRequest A
 });
 
 /**
+ * Round 801: the identical "selectedAnswers/additionalRequest answered the
+ * now-abandoned draft's own open questions, not whatever comes next"
+ * cleanup handleBackToHome/handleGoHome/the auth-expiry effect/
+ * handleAccountDeleted all already carry (each with their own near-
+ * identical comment) was missing from the one other path that also lands
+ * back on the spec-review screen: BuildProgress's own "Back" button after
+ * a failed build, wired as a bare `onBack={() => setView("spec")}` with
+ * no cleanup at all. POST /projects/:id/answers (routes/projects.ts) calls
+ * generateSpec() again and fully replaces project.spec, including a
+ * brand-new openQuestions array -- different questions, different count,
+ * different order from whatever selectedAnswers was keyed against (by
+ * array index) before this build attempt. Left uncleared, re-submitting
+ * Build after clicking Back pairs a NEW question at index i with a STALE
+ * answer written for a completely different, now-gone question at that
+ * same index, silently feeding a mismatched pair into the next real
+ * generateSpec() call. Extracts the real onBack callback passed to
+ * BuildProgress for the "building" view the same way the handler tests
+ * above extract whole functions.
+ */
+test("App's building-view onBack clears selectedAnswers/additionalRequest before returning to spec review, the same cleanup handleBackToHome/handleGoHome already do", () => {
+  const appSrc = readFileSync(new URL("./App.tsx", import.meta.url), "utf8");
+  const onBackMatch = appSrc.match(/onBack=\{\(\) => \{[\s\S]*?\n {10}\}\}\n/);
+  assert.ok(onBackMatch, "expected to find the building view's onBack callback in App.tsx");
+  // Strips the JSX attribute's own wrapping "onBack={" / trailing "}" --
+  // the arrow function's own matching braces (`() => { ... }`) are left
+  // intact, producing a plain, directly assignable arrow function.
+  const innerFn = onBackMatch![0].replace(/^onBack=\{/, "").replace(/\}\n$/, "\n");
+  const { code } = transformSync(`const onBack = ${innerFn};`, { loader: "ts" });
+
+  const state: { view: string; selectedAnswers: Record<string, string>; additionalRequest: string } = {
+    view: "building",
+    selectedAnswers: { "0": "Yes, add loyalty points" },
+    additionalRequest: "also support refunds",
+  };
+
+  const fn = new Function(
+    "setSelectedAnswers",
+    "setAdditionalRequest",
+    "setView",
+    `${code}\nreturn onBack;`,
+  )(
+    (a: Record<string, string>) => (state.selectedAnswers = a),
+    (r: string) => (state.additionalRequest = r),
+    (v: string) => (state.view = v),
+  ) as () => void;
+
+  fn();
+
+  assert.equal(state.view, "spec", "must still navigate back to the spec-review screen");
+  assert.deepEqual(state.selectedAnswers, {}, "must clear answers keyed against the pre-/answers openQuestions array, which /answers just replaced with a different one");
+  assert.equal(state.additionalRequest, "", "must clear the additional-request text that was already incorporated into the spec /answers just generated");
+});
+
+/**
  * Round 403: DELETE /auth/account deletes every project the account owns
  * server-side via the exact same cascade handleDeleteProject/
  * handleBulkDeleteProjects use -- but unlike those two, handleAccountDeleted

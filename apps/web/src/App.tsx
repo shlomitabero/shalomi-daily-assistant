@@ -2030,7 +2030,22 @@ function AppContent() {
           projectName={project.name}
           run={(onEvent) => streamBuild(project.id, onEvent)}
           onComplete={handleBuildComplete}
-          onBack={() => setView("spec")}
+          onBack={() => {
+            // Mirrors handleBackToHome/handleGoHome's own identical cleanup
+            // (see their doc comments) -- the spec screen this lands back
+            // on, after a failed build, is showing project.spec as
+            // /answers just replaced it (a brand-new openQuestions array,
+            // different questions/count/order from whatever selectedAnswers
+            // was keyed against by array index before this build attempt).
+            // Without this, re-submitting Build pairs a NEW question at
+            // index i with a STALE answer written for a completely
+            // different, now-gone question at that same index, silently
+            // feeding a mismatched question/answer pair into the next real
+            // generateSpec() call with no warning shown anywhere.
+            setSelectedAnswers({});
+            setAdditionalRequest("");
+            setView("spec");
+          }}
           specProviderNotice={
             specProviderLabel(specProvider, t) && (
               <p className={specProvider === "anthropic-fallback" ? "error" : "muted small"}>{specProviderLabel(specProvider, t)}</p>
