@@ -1634,6 +1634,68 @@ test("diffAndMigrate leaves a toMode:\"field\" automation rule enabled when its 
 });
 
 /**
+ * Round 876's finding: the type_changed disable check above (and the
+ * sibling check in the "new_column reusing a physical column" branch
+ * nearby) only ever checked the NEW type, correctly catching a field
+ * tightening FROM text-like INTO a typed value (e.g. text -> boolean,
+ * where "yes" is no longer a valid stored fieldValue) but missing the
+ * mirror-image direction entirely: a field LOOSENING from a typed value
+ * (boolean/enum/number/date/relation) INTO text/longtext. A field_equals
+ * rule's own fieldValue is only ever validated against the field's type at
+ * creation time (validateAutomationFieldValue, routes/projects.ts) -- a
+ * later refine that loosens the field's type leaves that now-stale value
+ * fully enabled, and automations.ts's matchesTrigger does a pure
+ * `String(actual) === rule.fieldValue` comparison with no type awareness
+ * of its own, so a rule created against a boolean field with fieldValue
+ * "true" would start matching ANY record whose newly-freeform text value
+ * happens to literally equal "true" -- firing a real send for a reason
+ * with zero connection to the original boolean intent. Confirmed with a
+ * real repro against diffAndMigrate/matchesTrigger directly before fixing.
+ */
+test("diffAndMigrate disables a field_equals automation rule when its field is retyped FROM boolean/enum/number/date/relation INTO text/longtext, not just the other way around", () => {
+  const db = openDatabase(":memory:");
+  ensureAutomationRulesTable(db);
+  const boolSpec: ProductSpec = {
+    ...spec,
+    entities: [
+      { name: "Customer", fields: [{ name: "name", type: "text", required: true }, { name: "isVip", type: "boolean", required: false }] },
+      spec.entities[1],
+    ],
+  };
+  applyMigrations(db, "proj1", boolSpec);
+  const rule = insertAutomationRule(db, {
+    projectId: "proj1",
+    entityName: "Customer",
+    trigger: "field_equals",
+    fieldName: "isVip",
+    fieldValue: "true",
+    actionType: "send_whatsapp",
+    toMode: "static",
+    toNumber: "+15551234567",
+    messageTemplate: "VIP customer!",
+  });
+
+  const nextSpec: ProductSpec = {
+    ...boolSpec,
+    entities: [
+      { name: "Customer", fields: [{ name: "name", type: "text", required: true }, { name: "isVip", type: "text", required: false }] },
+      spec.entities[1],
+    ],
+  };
+  const changes = diffAndMigrate(db, "proj1", boolSpec, nextSpec);
+
+  assert.ok(
+    changes.some((c) => c.type === "type_changed" && c.column === "isVip" && c.fromType === "boolean" && c.toType === "text"),
+    "expected a type_changed entry for the loosened field",
+  );
+  assert.equal(
+    getAutomationRule(db, "proj1", rule.id)!.enabled,
+    false,
+    "a rule's own stale boolean-shaped fieldValue must not survive the field loosening to text, where it becomes an arbitrary free-text match",
+  );
+});
+
+/**
  * Round 614: an enum field kept by NAME and by TYPE can still invalidate a
  * field_equals automation rule, if the refine narrows its enumValues to drop
  * the exact option the rule's fieldValue was keyed to. Unlike the

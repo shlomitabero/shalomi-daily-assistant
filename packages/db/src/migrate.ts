@@ -60,6 +60,30 @@ function sqlTypeFor(field: Field): string {
 }
 
 /**
+ * Round 876: an automation rule's own `fieldValue` is only ever validated
+ * (validateAutomationFieldValue, routes/projects.ts) against a field's type
+ * at the moment the rule is created or edited -- never re-checked by a
+ * LATER refine that retypes the field. The "disable automations" branch
+ * just below this used to check only the NEW type (`field.type !== "text"
+ * && field.type !== "longtext"`), correctly catching a field tightening
+ * FROM text-like INTO a typed value (e.g. text -> boolean, where "yes" is
+ * no longer a valid stored fieldValue) but missing the mirror-image
+ * direction: a field loosening FROM a typed value INTO text-like (e.g.
+ * boolean -> text). automations.ts's matchesTrigger does a pure
+ * `String(actual) === rule.fieldValue` comparison with no type awareness
+ * of its own, so a rule created against a boolean field with fieldValue
+ * "true" survives such a refine fully enabled, and now matches ANY record
+ * whose newly-freeform text value happens to literally equal "true" --
+ * firing a WhatsApp send/webhook for a reason with zero connection to the
+ * original boolean intent. Used below by both directions of the
+ * type-changed check, so neither a tightening NOR a loosening transition
+ * leaves a stale, type-incompatible fieldValue silently enabled.
+ */
+function isTextLikeFieldType(type: Field["type"]): boolean {
+  return type === "text" || type === "longtext";
+}
+
+/**
  * Round 860: a relation field's relationTo is only ever checked for being
  * non-empty (FieldSchema's own refine, @forge/shared) -- never for actually
  * naming a real entity in the spec. generateCreateTableStatements/the
@@ -409,7 +433,7 @@ export function diffAndMigrate(
             fromType: prevField.type,
             toType: field.type,
           });
-          if (field.type !== "text" && field.type !== "longtext") {
+          if (!isTextLikeFieldType(prevField.type) || !isTextLikeFieldType(field.type)) {
             if (!fieldsNeedingAutomationDisable.has(entity.name)) {
               fieldsNeedingAutomationDisable.set(entity.name, new Set());
             }
