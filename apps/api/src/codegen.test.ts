@@ -15060,6 +15060,84 @@ test("the exported GlobalSearch shows a real error with a Retry button when a se
 });
 
 /**
+ * Round 816's finding: the same "live query vs. frozen highlightQuery"
+ * staleness bug round 815 (above) fixed for Show all/Copy/Download was
+ * also present in this one remaining spot in the same component -- the
+ * error banner's own "Try again" button, which still called
+ * runSearch(query) instead of runSearch(highlightQuery). Fails the search
+ * for "apple" (showing the error+Retry row), edits the box to "banana"
+ * WITHOUT resubmitting -- the box visibly shows "banana" while the error
+ * banner on screen still reflects the failed "apple" search -- then clicks
+ * Retry. Before the fix, Retry silently re-ran the edited-but-unsubmitted
+ * "banana" instead of actually retrying "apple".
+ */
+test("the exported GlobalSearch's Retry button re-runs the search that actually failed, not a since-edited-but-unsubmitted search box", async () => {
+  const files = generateExportFiles(project);
+  const dir = writeGeneratedWebComponent(files);
+  const originalFetch = globalThis.fetch;
+  let callCount = 0;
+  globalThis.fetch = (async (input: string) => {
+    callCount += 1;
+    if (callCount <= 2) {
+      return { ok: false, status: 500, json: async () => ({ error: "Server exploded" }) };
+    }
+    if (String(input).endsWith("/Customer")) {
+      return {
+        ok: true,
+        status: 200,
+        json: async () => ({ records: [{ id: 1, name: "Acme apple order" }, { id: 2, name: "Beta banana order" }] }),
+      };
+    }
+    return { ok: true, status: 200, json: async () => ({ records: [] }) };
+  }) as typeof fetch;
+
+  try {
+    await withRealLocalStorage(async () => {
+      const { GlobalSearch } = await import(path.join(dir, "web", "src", "components", "GlobalSearch.jsx"));
+      const props = { entities: project.spec.entities, onClose: () => {}, onJumpToEntity: () => {}, onJumpToRecord: () => {} };
+
+      const { container } = render(React.createElement(GlobalSearch, props));
+      const input = container.querySelector(".global-search-input") as HTMLInputElement;
+      await act(async () => {
+        fireEvent.change(input, { target: { value: "apple" } });
+        fireEvent.submit(container.querySelector("form.global-search-form")!);
+        await Promise.resolve();
+        await Promise.resolve();
+        await Promise.resolve();
+      });
+      assert.ok(container.querySelector(".error-retry-row"), "expected the failed 'apple' search to show the error+Retry row");
+
+      // Edit the box WITHOUT resubmitting -- the error banner on screen
+      // still reflects the failed "apple" search.
+      await act(async () => {
+        fireEvent.change(input, { target: { value: "banana" } });
+      });
+      assert.equal(input.value, "banana", "the box itself must show the edit (this is a real, ordinary thing a user can do)");
+      assert.ok(container.querySelector(".error-retry-row"), "editing the box alone, without resubmitting, must not touch the still-visible error banner");
+
+      const retryButton = container.querySelector(".error-retry-row button") as HTMLButtonElement;
+      await act(async () => {
+        fireEvent.click(retryButton);
+        await Promise.resolve();
+        await Promise.resolve();
+        await Promise.resolve();
+      });
+
+      assert.match(
+        container.textContent ?? "",
+        /Acme apple order/,
+        "Retry must re-run the search that actually failed ('apple'), not the edited-but-unsubmitted 'banana'",
+      );
+      assert.doesNotMatch(container.textContent ?? "", /Beta banana order/, "Retry must never silently switch to the live, unsubmitted box text");
+    });
+  } finally {
+    globalThis.fetch = originalFetch;
+    cleanup();
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+/**
  * New in this round: the exported app's GlobalSearch had the identical
  * dead end the live preview's own GlobalSearchPanel.tsx did before its own
  * "Show all" button -- a group capped its rows at 5 and printed a static
