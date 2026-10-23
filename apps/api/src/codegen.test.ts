@@ -13260,6 +13260,150 @@ test("the exported EntityView drops a persisted 'Group by' selection when a newe
 });
 
 /**
+ * Round 840: the exact same cross-export reachability path round 839 just
+ * closed for getPersistedGroupField, but for getPersistedViewMode --
+ * getPersistedViewMode only ever validated the stored string is one of
+ * "table"/"board"/"calendar", never whether the board/date field that
+ * mode depends on still exists on this entity. A newer export of the same
+ * project (after a refine removed the entity's own board-qualifying field)
+ * reloaded against a browser still holding an older export's
+ * "forge_view_mode" entry kept viewMode stuck on "board" even though
+ * boardField is now undefined: the table itself still rendered (
+ * effectivelyVisibleRecords falls back to visibleRecords), but the
+ * Group-by select stayed hidden (gated on viewMode === "table") and, with
+ * no date field either, the ENTIRE Table/Board/Calendar toggle -- the only
+ * in-app control that could otherwise reset viewMode back to "table" --
+ * never rendered at all (gated on boardField || dateField). Uses the same
+ * two-separate-exports simulation as round 839's test just above, since
+ * this file's own schema is frozen per export and can only change between
+ * two distinct exports, never through a live rerender of one.
+ */
+test("the exported EntityView drops a persisted Board/Calendar view mode when a newer export removed the field it depends on, instead of hiding its own recovery controls", async () => {
+  const customerWithBoardField: Entity = {
+    name: "Customer",
+    label: "Customers",
+    fields: [
+      { name: "name", label: "Name", type: "text", required: true },
+      {
+        name: "status",
+        label: "Status",
+        type: "enum",
+        required: true,
+        enumValues: ["Pending", "Shipped"],
+        enumLabels: { Pending: "Pending", Shipped: "Shipped" },
+      },
+    ],
+  };
+  // Retyped from enum to boolean, same as round 839's own retyping --
+  // still a groupable field (isGroupableField matches boolean too), but no
+  // longer an eligible board field (findBoardField only ever considers
+  // enum fields, via findFilterableEnumFields), and this entity has no
+  // date field either -- so after this refine, boardField and dateField
+  // are both gone while groupableFields stays non-empty.
+  const customerWithNeitherBoardNorDateField: Entity = {
+    name: "Customer",
+    label: "Customers",
+    fields: [
+      { name: "name", label: "Name", type: "text", required: true },
+      { name: "status", label: "Status", type: "boolean", required: true },
+    ],
+  };
+  const olderExportProject: Project = { ...project, spec: { ...project.spec, entities: [customerWithBoardField] } };
+  const newerExportProject: Project = {
+    ...project,
+    spec: { ...project.spec, entities: [customerWithNeitherBoardNorDateField] },
+  };
+  const store = [
+    { id: 1, name: "Acme Corp", status: "Pending" },
+    { id: 2, name: "Globex", status: "Shipped" },
+  ];
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = (async (input: string) => {
+    if (input === "/api/Customer") {
+      return new Response(JSON.stringify({ records: store }), { status: 200, headers: { "content-type": "application/json" } });
+    }
+    throw new Error(`unexpected request ${input}`);
+  }) as typeof fetch;
+
+  const olderDir = writeGeneratedWebComponent(generateExportFiles(olderExportProject));
+  const newerDir = writeGeneratedWebComponent(generateExportFiles(newerExportProject));
+  try {
+    await withRealLocalStorage(async () => {
+      // Simulates switching to Board view in an OLDER export, while the
+      // entity still had a board-qualifying field -- persists the real
+      // view mode via the real generated store functions.
+      const { EntityView: OlderEntityView } = await import(path.join(olderDir, "web", "src", "components", "EntityView.jsx"));
+      const olderEntity = olderExportProject.spec.entities[0];
+      const olderProps = {
+        entity: olderEntity,
+        highlightRecordId: null,
+        onHighlightHandled: () => {},
+        onJumpToRecord: () => {},
+        onRecordCountChange: () => {},
+      };
+      const older = render(React.createElement(OlderEntityView, olderProps));
+      for (let i = 0; i < 40; i++) {
+        if (older.container.querySelector(".view-toggle-btn")) break;
+        await act(async () => {
+          await new Promise((resolve) => setTimeout(resolve, 0));
+        });
+      }
+      const boardButton = Array.from(older.container.querySelectorAll(".view-toggle-btn")).find((b) => b.textContent?.includes("Board"));
+      assert.ok(boardButton, "sanity check: the older export must have rendered a Board toggle button");
+      await act(async () => {
+        fireEvent.click(boardButton as HTMLButtonElement);
+      });
+      assert.ok(
+        older.container.querySelector(".view-toggle-btn-active")?.textContent?.includes("Board"),
+        "sanity check: the older export's own Board view must have actually been set",
+      );
+      older.unmount();
+
+      // Simulates re-downloading/reloading a NEWER export of the same
+      // project at the same origin, after a refine removed the entity's
+      // own board-qualifying field (and it never had a date field) -- a
+      // fresh dynamic import, with the real browser localStorage from the
+      // older export still holding the stale "board" selection.
+      const { EntityView: NewerEntityView } = await import(path.join(newerDir, "web", "src", "components", "EntityView.jsx"));
+      const newerEntity = newerExportProject.spec.entities[0];
+      const newerProps = {
+        entity: newerEntity,
+        highlightRecordId: null,
+        onHighlightHandled: () => {},
+        onJumpToRecord: () => {},
+        onRecordCountChange: () => {},
+      };
+      const newer = render(React.createElement(NewerEntityView, newerProps));
+      for (let i = 0; i < 40; i++) {
+        if (newer.container.querySelectorAll("tbody tr[data-record-id]").length === 2) break;
+        await act(async () => {
+          await new Promise((resolve) => setTimeout(resolve, 0));
+        });
+      }
+      assert.equal(
+        newer.container.querySelectorAll("tbody tr[data-record-id]").length,
+        2,
+        "expected both records to have loaded and rendered as a real table, not left invisible under a stuck Board view",
+      );
+      assert.equal(
+        newer.container.querySelector(".view-toggle"),
+        null,
+        "sanity check: this retyped entity has neither a board nor a date field, so no view-toggle should render at all",
+      );
+      assert.ok(
+        newer.container.querySelector(".entity-group-by"),
+        "the Group-by select must be visible again -- it stayed hidden while viewMode was stuck on the now-impossible 'board' value",
+      );
+    });
+  } finally {
+    globalThis.fetch = originalFetch;
+    cleanup();
+    rmSync(olderDir, { recursive: true, force: true });
+    rmSync(newerDir, { recursive: true, force: true });
+  }
+});
+
+/**
  * Round 633's finding: unlike every sibling store in this exact same
  * family (getPersistedGroupField's typeof check, getPersistedViewMode's
  * enum check), getPersistedSortKeys had no per-element shape validation

@@ -3577,7 +3577,33 @@ export function EntityView({ entity, highlightRecordId, onHighlightHandled, onJu
   const [moveErrorId, setMoveErrorId] = useState(null);
   const [focusedRowId, setFocusedRowId] = useState(null);
   const [sortKeys, setSortKeys] = useState(() => getPersistedSortKeys(entity.name));
-  const [viewMode, setViewMode] = useState(() => getPersistedViewMode(entity.name));
+  // Mirrors the live Forge AI preview's own round-this-round fix to
+  // getPersistedViewMode's own sibling stores (getPersistedGroupField/Type,
+  // sanitizeFieldFilters): a mode persisted for an entity that USED to have
+  // a board/date field survives unchanged in a newer export's browser
+  // after a refine removed that field, since getPersistedViewMode only
+  // validates the stored string is one of "table"/"board"/"calendar", never
+  // whether the field it names still exists. Without this, the Table body
+  // still rendered (effectivelyVisibleRecords below falls back to
+  // visibleRecords when boardField is gone), but the Group-by select stayed
+  // hidden (gated on viewMode === "table"), j/k/Enter row navigation
+  // stopped working (same gate), and -- if both board and date fields were
+  // removed -- the entire Table/Board/Calendar toggle never rendered at
+  // all (gated on boardField || dateField), leaving no in-app control to
+  // recover short of clearing localStorage. findBoardField/findDateField
+  // are called directly here, duplicating the memoized boardField/
+  // dateField declared further down, the same precedent this file's own
+  // collapsedBoardColumns initializer above already uses for the same
+  // reason (a useState initializer runs before any useMemo declared later
+  // in the function body).
+  const [viewMode, setViewMode] = useState(() => {
+    const loaded = getPersistedViewMode(entity.name);
+    const stillValid =
+      loaded === "table" ||
+      (loaded === "board" && findBoardField(entity.fields)) ||
+      (loaded === "calendar" && findDateField(entity.fields));
+    return stillValid ? loaded : setPersistedViewMode(entity.name, "table");
+  });
   const [calendarMonth, setCalendarMonth] = useState(() => new Date());
   const [selectedIds, setSelectedIds] = useState(() => new Set());
   const [bulkEditField, setBulkEditField] = useState("");
