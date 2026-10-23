@@ -1774,6 +1774,72 @@ test("deleting the rule currently open for editing returns the form to create mo
 });
 
 /**
+ * Round 831's finding: the rule list's own Edit/Toggle/Delete buttons were
+ * only ever disabled by busyRuleId (toggle/delete's own in-flight state),
+ * never by createBusy (the shared create-form's own in-flight Save/Create
+ * submission). While a Save was still in flight for rule1, nothing stopped
+ * clicking Edit on rule2 -- which immediately overwrote editingRuleId and
+ * every form field with rule2's values. Once rule1's own PATCH resolved,
+ * handleSubmit's unconditional resetToCreateMode() call wiped the form
+ * back to "New rule", silently discarding whatever the user had already
+ * typed into rule2's in-progress edit, with zero warning. Confirms the row
+ * buttons now stay disabled for the whole window a Save/Create is in
+ * flight, closing the race rather than letting it happen and trying to
+ * detect it afterward.
+ */
+test("the rule list's Edit/Toggle/Delete buttons stay disabled while a Save/Create submission is in flight, not just during toggle/delete", async () => {
+  await withJsdom(async () => {
+    const originalFetch = globalThis.fetch;
+    let resolvePatch!: (value: Response) => void;
+    const patchHeld = new Promise<Response>((resolve) => {
+      resolvePatch = resolve;
+    });
+    globalThis.fetch = (async (input: string, init?: RequestInit) => {
+      const method = init?.method ?? "GET";
+      if (method === "GET" && input === "/api/projects/proj1/automations") {
+        return new Response(
+          JSON.stringify({ rules: [makeRule({ id: "rule1" }), makeRule({ id: "rule2" })] }),
+          { status: 200, headers: { "content-type": "application/json" } },
+        );
+      }
+      if (method === "PATCH" && input === "/api/projects/proj1/automations/rule1") {
+        return patchHeld; // the rule1 Save stays in flight until the test resolves it
+      }
+      throw new Error(`unexpected request ${method} ${input}`);
+    }) as typeof fetch;
+
+    try {
+      renderPanel();
+      await waitForCondition(() => document.querySelectorAll(".automations-rule-row").length === 2);
+
+      const firstRow = document.querySelectorAll(".automations-rule-row")[0] as HTMLElement;
+      fireEvent.click(Array.from(firstRow.querySelectorAll("button")).find((b) => b.textContent === "Edit") as HTMLButtonElement);
+      assert.match(document.querySelector(".automations-new-heading")!.textContent ?? "", /Edit rule/, "expected to actually be editing rule1 before saving");
+
+      const messageField = document.querySelector(".automations-create-form textarea") as HTMLTextAreaElement;
+      fireEvent.change(messageField, { target: { value: "rule1's edited message" } });
+      fireEvent.submit(document.querySelector(".automations-create-form")!);
+      await new Promise((resolve) => setTimeout(resolve, 0)); // let the PATCH call actually start before checking
+
+      const secondRow = document.querySelectorAll(".automations-rule-row")[1] as HTMLElement;
+      const secondRowEditButton = Array.from(secondRow.querySelectorAll("button")).find((b) => b.textContent === "Edit") as HTMLButtonElement;
+      assert.equal(secondRowEditButton.disabled, true, "rule2's own Edit button must stay disabled while rule1's Save is still in flight");
+
+      // Even if something clicked it anyway, the form must still be
+      // showing rule1's own in-progress edit, not rule2's.
+      fireEvent.click(secondRowEditButton);
+      assert.equal(messageField.value, "rule1's edited message", "rule1's own in-progress edit must survive an attempted click on a disabled Edit button");
+
+      resolvePatch(new Response(JSON.stringify({ rule: makeRule({ id: "rule1", messageTemplate: "rule1's edited message" }) }), { status: 200, headers: { "content-type": "application/json" } }));
+      await waitForCondition(() => !secondRowEditButton.disabled);
+      assert.match(document.querySelector(".automations-new-heading")!.textContent ?? "", /New rule/, "the form must return to create mode once rule1's own Save actually resolves");
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+});
+
+/**
  * Round 679: Automations was the one read-heavy diagnostic panel in this
  * app with no Copy/Download companions at all (Business Twin, WhatsApp
  * log, Time Machine, Global Search all already have both) -- a user

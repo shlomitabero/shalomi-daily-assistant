@@ -686,13 +686,22 @@ export function AutomationsPanel({
                     </span>
                     {!readOnly && (
                       <>
-                        <button type="button" className="secondary small" onClick={() => handleToggle(rule)} disabled={busyRuleId !== null}>
+                        {/* Also disabled by createBusy (round 831), not just busyRuleId -- the
+                            form's own Save/Create submission has no idea, once it resolves,
+                            whether editingRuleId still points at the same rule it started with.
+                            Without this, clicking Edit on a different rule while an earlier
+                            Save/Create was still in flight silently overwrote that in-progress
+                            edit's own data the moment the original submission's unconditional
+                            resetToCreateMode()/field-clearing code ran -- the same mutual-exclusion
+                            busyRuleId already enforces for toggle/delete, just never extended to
+                            the form's own in-flight submission. */}
+                        <button type="button" className="secondary small" onClick={() => handleToggle(rule)} disabled={busyRuleId !== null || createBusy}>
                           {rule.enabled ? t("automations.disable") : t("automations.enable")}
                         </button>
-                        <button type="button" className="secondary small" onClick={() => handleStartEdit(rule)} disabled={busyRuleId !== null}>
+                        <button type="button" className="secondary small" onClick={() => handleStartEdit(rule)} disabled={busyRuleId !== null || createBusy}>
                           {t("automations.edit")}
                         </button>
-                        <button type="button" className="danger small" onClick={() => handleDelete(rule)} disabled={busyRuleId !== null}>
+                        <button type="button" className="danger small" onClick={() => handleDelete(rule)} disabled={busyRuleId !== null || createBusy}>
                           {t("automations.delete")}
                         </button>
                       </>
