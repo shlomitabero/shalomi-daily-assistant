@@ -110,6 +110,31 @@ test("insertRecord rejects a boolean field value outside the true/false allowlis
   }
 });
 
+/**
+ * Round 855: coerceValue's default branch (text/longtext/file -- every
+ * field type not covered by an explicit `case` above) used to have no
+ * rejection path at all, unlike every other branch in this same function
+ * (number/relation, boolean, enum, date) -- `String(raw)` on an object or
+ * array silently stringifies it to `"[object Object]"` or a comma-joined
+ * string and writes that garbage with the write still reporting success.
+ * This is the exact same "a sibling branch in the same function already
+ * has this guard" shape round 546 already fixed for the boolean branch
+ * one case above -- same function, same reachability (routes/projects.ts
+ * passes req.body straight into insertRecord/updateRecord with nothing
+ * above coerceValue to catch this first), just the one branch that round
+ * never touched because it wasn't the one round 546 was fixing.
+ */
+test("insertRecord rejects an object or array value for a text field, instead of silently stringifying it to \"[object Object]\" or a comma-joined list", () => {
+  const db = setup();
+  for (const bad of [{ foo: "bar" }, [1, 2, 3], [], {}]) {
+    assert.throws(
+      () => insertRecord(db, "proj1", customer, { name: bad, status: "New" }),
+      ValidationError,
+      `expected ${JSON.stringify(bad)} to be rejected instead of silently stringified`,
+    );
+  }
+});
+
 const appointment: Entity = {
   name: "Appointment",
   fields: [

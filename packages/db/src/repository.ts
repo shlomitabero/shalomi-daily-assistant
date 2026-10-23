@@ -101,8 +101,25 @@ function coerceValue(field: Field, raw: unknown): string | number | null {
       }
       return str;
     }
-    default:
+    default: {
+      // text / longtext / file: unlike every branch above, this used to
+      // have no rejection path at all -- String(raw) on an object or array
+      // (e.g. a stray `{ foo: "bar" }` or `[1, 2, 3]` body, not valid JSON
+      // for any of these fields) silently stringifies it to "[object
+      // Object]" or "1,2,3" and writes that garbage with the request still
+      // reporting success, instead of throwing the same ValidationError
+      // every not-really-a-string input already gets for number/boolean/
+      // enum/date. A legitimate `file` field value is always a plain
+      // string by the time it reaches here -- the upload route's own doc
+      // comment confirms the caller PATCHes/POSTs the JSON descriptor
+      // already JSON.stringify'd, exactly like every other record write --
+      // so rejecting a non-string raw value here can never reject a real
+      // upload.
+      if (typeof raw !== "string" && typeof raw !== "number" && typeof raw !== "boolean") {
+        throw new ValidationError(`Field "${field.name}" must be a string`);
+      }
       return String(raw);
+    }
   }
 }
 
