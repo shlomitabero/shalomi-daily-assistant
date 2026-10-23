@@ -749,20 +749,68 @@ function backupFieldDisplayValue(field, value, recordIndexByEntity) {
   return String(value);
 }
 
+// Mirrors the live Forge AI preview's own backup.ts: reorders entity.fields
+// to match the user's drag-reordered column order for this entity's table
+// (EntityView.jsx's own getColumnOrder/applyColumnOrder) -- a field the
+// order mentions keeps its persisted relative position, and any field the
+// order doesn't mention (a newly added field, or an order saved before it
+// existed) is appended at the end in the entity's own declared order.
+function orderedFieldsFor(entity, columnOrders) {
+  const order = columnOrders[entity.name];
+  if (!order || order.length === 0) return entity.fields;
+  const byName = new Map(entity.fields.map((f) => [f.name, f]));
+  const ordered = [];
+  for (const name of order) {
+    const field = byName.get(name);
+    if (field) {
+      ordered.push(field);
+      byName.delete(name);
+    }
+  }
+  for (const field of entity.fields) {
+    if (byName.has(field.name)) ordered.push(field);
+  }
+  return ordered;
+}
+
+// Mirrors the live Forge AI preview's own backup.ts: the client's own
+// per-entity column order arrives as a single JSON-encoded query param
+// (this is a plain GET download with no request body) -- any malformed
+// shape (not valid JSON, not a plain object, a value that isn't an array
+// of strings) falls back to an empty map rather than throwing, since a
+// stale or malformed localStorage value making it onto the wire must
+// never break the backup.
+function parseColumnOrdersQueryParam(raw) {
+  if (typeof raw !== "string" || raw === "") return {};
+  try {
+    const parsed = JSON.parse(raw);
+    if (parsed === null || typeof parsed !== "object" || Array.isArray(parsed)) return {};
+    const result = {};
+    for (const [key, value] of Object.entries(parsed)) {
+      if (!Array.isArray(value)) continue;
+      const names = value.filter((v) => typeof v === "string");
+      if (names.length > 0) result[key] = names;
+    }
+    return result;
+  } catch {
+    return {};
+  }
+}
+
 // Resolving a relation field used to records.find(...) a full linear
 // scan of the related entity's whole record array, repeated once per
 // row -- O(N*M) for N rows and M related records. A per-entity
 // id->record Map (built once below, before any CSV is rendered) turns
 // that lookup into O(1).
-function entityToCsv(entity, records, recordIndexByEntity) {
+function entityToCsv(entity, records, recordIndexByEntity, orderedFields) {
   // Same label-collision gap recordsToCsv above is guarded against --
   // two fields on this entity can legally share a label.
   const labelOccurrences = {};
-  for (const f of entity.fields) {
+  for (const f of orderedFields) {
     const label = f.label || f.name;
     labelOccurrences[label] = (labelOccurrences[label] || 0) + 1;
   }
-  const header = entity.fields
+  const header = orderedFields
     .map((f) => {
       const label = f.label || f.name;
       const ambiguous = (labelOccurrences[label] || 0) > 1;
@@ -770,12 +818,13 @@ function entityToCsv(entity, records, recordIndexByEntity) {
     })
     .join(",");
   const rows = records.map((record) =>
-    entity.fields.map((f) => csvEscape(backupFieldDisplayValue(f, record[f.name], recordIndexByEntity))).join(","),
+    orderedFields.map((f) => csvEscape(backupFieldDisplayValue(f, record[f.name], recordIndexByEntity))).join(","),
   );
   return [header, ...rows].join("\\r\\n");
 }
 
-app.get("/api/backup", (_req, res) => {
+app.get("/api/backup", (req, res) => {
+  const columnOrders = parseColumnOrdersQueryParam(req.query.columnOrders);
   const recordsByEntity = {};
   const recordIndexByEntity = {};
   for (const entity of ENTITIES) {
@@ -786,7 +835,9 @@ app.get("/api/backup", (_req, res) => {
   }
   const zipEntries = ENTITIES.map((entity) => ({
     path: \`\${entity.name}.csv\`,
-    content: "\\uFEFF" + entityToCsv(entity, recordsByEntity[entity.name], recordIndexByEntity),
+    content:
+      "\\uFEFF" +
+      entityToCsv(entity, recordsByEntity[entity.name], recordIndexByEntity, orderedFieldsFor(entity, columnOrders)),
   }));
   const zip = buildZip(zipEntries);
   res.setHeader("content-type", "application/zip");
@@ -6348,6 +6399,44 @@ function reorderEntityTabs(order, sourceName, targetName) {
   return result;
 }
 
+// Reads the same "forge_column_order" store EntityView.jsx's own
+// getColumnOrder/setColumnOrder (components/EntityView.jsx) read/write --
+// duplicated here rather than imported (this file's own established
+// per-template duplication convention, e.g. ENTITY_TAB_ORDER_STORAGE_KEY
+// above) since the "Backup All Data" link below needs each entity's own
+// drag-reordered column order, and App.jsx has no other access to it.
+// Read-only here: only EntityView.jsx's own table ever writes this store.
+const COLUMN_ORDER_STORAGE_KEY = "forge_column_order";
+function getColumnOrder(entityName) {
+  try {
+    const raw = localStorage.getItem(COLUMN_ORDER_STORAGE_KEY);
+    if (!raw) return [];
+    const parsed = JSON.parse(raw);
+    if (parsed === null || typeof parsed !== "object" || Array.isArray(parsed)) return [];
+    return Array.isArray(parsed[entityName]) ? parsed[entityName] : [];
+  } catch {
+    return [];
+  }
+}
+
+// Builds the "Backup All Data" link's own href fresh on every render -- a
+// plain <a href> download link can't attach a fetch body the way the live
+// preview's handleBackup/backupProject (App.tsx/api.ts) can, so each
+// entity's column order is instead carried as a JSON-encoded columnOrders
+// query param, parsed server-side by server.js's own
+// parseColumnOrdersQueryParam. Mirrors the live preview's own
+// handleBackup, just computed inline for a static href instead of
+// gathered right before a fetch call.
+function buildBackupAllHref() {
+  const columnOrders = {};
+  for (const entity of ENTITIES) {
+    const order = getColumnOrder(entity.name);
+    if (order.length > 0) columnOrders[entity.name] = order;
+  }
+  const query = Object.keys(columnOrders).length > 0 ? \`?columnOrders=\${encodeURIComponent(JSON.stringify(columnOrders))}\` : "";
+  return \`/api/backup\${query}\`;
+}
+
 // Mirrors the live preview's own isEditableEventTarget (App.tsx) verbatim:
 // guards a single-character keyboard shortcut so it doesn't hijack that
 // character when it's typed into an ordinary text field instead.
@@ -6547,7 +6636,7 @@ export default function App() {
           <button type="button" className="search-trigger" onClick={() => setShowShortcuts(true)}>
             ⌨️ Keyboard shortcuts <span className="shortcut-hint">?</span>
           </button>
-          <a className="backup-all-btn" href="/api/backup" download="backup.zip">
+          <a className="backup-all-btn" href={buildBackupAllHref()} download="backup.zip">
             ⬇️ Backup All Data
           </a>
         </div>

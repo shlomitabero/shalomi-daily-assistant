@@ -9736,8 +9736,28 @@ test("the exported GlobalSearch's handleShowAll surfaces a failed fetch via setE
 test("the exported App.jsx renders a real 'Backup All Data' link pointing at the generated server's own /api/backup endpoint", () => {
   const files = generateExportFiles(project);
   const appJsx = files.find((f) => f.path === "web/src/App.jsx")!.content;
-  assert.match(appJsx, /href="\/api\/backup"/);
+  assert.match(appJsx, /href=\{buildBackupAllHref\(\)\}/);
   assert.match(appJsx, /backup-all-btn/);
+});
+
+/**
+ * Round 836: buildBackupAllHref's own generated source must read from the
+ * exact same "forge_column_order" localStorage key EntityView.jsx's own
+ * getColumnOrder/setColumnOrder write to -- these are two independently
+ * duplicated stores (this file's own established per-template
+ * duplication convention), so nothing at compile time would catch a key
+ * mismatch between them; only a real string-level check like this one
+ * would.
+ */
+test("the exported App.jsx's buildBackupAllHref reads from the exact same localStorage key EntityView.jsx's own column-order store writes to", () => {
+  const files = generateExportFiles(project);
+  const appJsx = files.find((f) => f.path === "web/src/App.jsx")!.content;
+  const entityViewJsx = files.find((f) => f.path === "web/src/components/EntityView.jsx")!.content;
+  const appKey = appJsx.match(/const COLUMN_ORDER_STORAGE_KEY = ("[^"]*")/)?.[1];
+  const entityViewKey = entityViewJsx.match(/const COLUMN_ORDER_STORAGE_KEY = ("[^"]*")/)?.[1];
+  assert.ok(appKey, "expected App.jsx to declare its own COLUMN_ORDER_STORAGE_KEY");
+  assert.ok(entityViewKey, "expected EntityView.jsx to declare its own COLUMN_ORDER_STORAGE_KEY");
+  assert.equal(appKey, entityViewKey, "both independently duplicated stores must use the identical storage key, or the backup link would silently read nothing");
 });
 
 test("the generated server.js's /api/backup endpoint returns a real ZIP with one CSV per entity, containing real inserted data", async () => {
@@ -9828,6 +9848,105 @@ test("the generated server.js's /api/backup endpoint returns a real ZIP with one
     child.kill();
     rmSync(dir, { recursive: true, force: true });
   }
+});
+
+/**
+ * Round 836: ports the live Forge AI preview's own round-835 fix to this
+ * exported app -- the on-screen table, per-entity CSV/Copy export, print
+ * sheets, Columns menu, board cards, the record form, and the bulk-edit/
+ * filter/group-by pickers all already follow a user's drag-reordered
+ * column order here (this exported app's own getColumnOrder/
+ * applyColumnOrder, EntityView.jsx), but this "Backup all data" ZIP
+ * ignored it, since it's a pure server GET route with no way to learn the
+ * browser's own localStorage preference without the client sending it.
+ * Exercises the real spawned server end-to-end, the same way the
+ * preceding test proves the endpoint's basic behavior, rather than just
+ * reading the generated source.
+ */
+test("the generated server's /api/backup endpoint honors a columnOrders query param, reordering each entity's CSV header and rows to match", async () => {
+  const files = generateExportFiles(project);
+  const serverJs = files.find((f) => f.path === "server.js")!.content;
+
+  const dir = mkdtempSync(path.join(tmpdir(), "codegen-backup-order-test-"));
+  const repoRoot = path.resolve(import.meta.dirname, "../../..");
+  symlinkSync(path.join(repoRoot, "node_modules"), path.join(dir, "node_modules"));
+  writeFileSync(path.join(dir, "server.js"), serverJs);
+
+  const port = 44000 + Math.floor(Math.random() * 5000);
+  const child = spawn(process.execPath, ["--experimental-sqlite", "server.js"], {
+    cwd: dir,
+    env: { ...process.env, PORT: String(port) },
+    stdio: ["ignore", "pipe", "pipe"],
+  });
+  let stderr = "";
+  child.stderr.on("data", (chunk) => {
+    stderr += chunk.toString();
+  });
+
+  try {
+    const deadline = Date.now() + 5000;
+    let lastErr: unknown;
+    while (Date.now() < deadline) {
+      if (child.exitCode !== null) {
+        throw new Error(`server.js exited early (code ${child.exitCode}):\n${stderr}`);
+      }
+      try {
+        await fetch(`http://localhost:${port}/api/entities`);
+        break;
+      } catch (err) {
+        lastErr = err;
+        await new Promise((r) => setTimeout(r, 100));
+      }
+    }
+    if (child.exitCode !== null) throw lastErr instanceof Error ? lastErr : new Error(String(lastErr));
+
+    await fetch(`http://localhost:${port}/api/Customer`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ name: "Dana Levi", status: "Won" }),
+    });
+
+    const columnOrders = encodeURIComponent(JSON.stringify({ Customer: ["status", "name"] }));
+    const backupRes = await fetch(`http://localhost:${port}/api/backup?columnOrders=${columnOrders}`);
+    assert.equal(backupRes.status, 200);
+    const zipBuffer = Buffer.from(await backupRes.arrayBuffer());
+
+    const zipPath = path.join(dir, "backup.zip");
+    writeFileSync(zipPath, zipBuffer);
+    const extractDir = path.join(dir, "extracted");
+    execFileSync("unzip", ["-o", zipPath, "-d", extractDir], { stdio: "pipe" });
+
+    const customerCsv = readFileSync(path.join(extractDir, "Customer.csv"), "utf8").replace(/^﻿/, "");
+    const [header, ...rows] = customerCsv.split("\r\n");
+    assert.equal(header, "סטטוס,שם", "the CSV header must follow the columnOrders query param, not the entity's declared field order");
+    assert.equal(rows[0], "הצליח,Dana Levi", "each row's own values must follow the exact same reordering as the header");
+  } finally {
+    child.kill();
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+/**
+ * Round 836: the client's own column order arrives as a single
+ * JSON-encoded query param (this is a plain GET download with no request
+ * body) -- malformed input must never throw or silently trust an unsafe
+ * shape, mirroring apps/web/src/columnOrder.ts's own readStore convention
+ * for the identical localStorage-sourced data, and the live preview's own
+ * backup.ts's parseColumnOrdersQueryParam.
+ */
+test("the exported server.js's own parseColumnOrdersQueryParam defensively falls back to an empty map for malformed input", () => {
+  const serverJs = generateExportFiles(project).find((f) => f.path === "server.js")!.content;
+  const parseColumnOrdersQueryParamSrc = serverJs.match(/function parseColumnOrdersQueryParam\(raw\) \{[\s\S]*?\n\}\n/)?.[0];
+  assert.ok(parseColumnOrdersQueryParamSrc, "expected to find parseColumnOrdersQueryParam in generated server.js");
+
+  const parseColumnOrdersQueryParam = new Function(`${parseColumnOrdersQueryParamSrc}\nreturn parseColumnOrdersQueryParam;`)();
+
+  assert.deepEqual(parseColumnOrdersQueryParam(undefined), {});
+  assert.deepEqual(parseColumnOrdersQueryParam(""), {});
+  assert.deepEqual(parseColumnOrdersQueryParam("not json"), {});
+  assert.deepEqual(parseColumnOrdersQueryParam(JSON.stringify(["array", "not", "object"])), {});
+  assert.deepEqual(parseColumnOrdersQueryParam(JSON.stringify({ Customer: "not an array" })), {});
+  assert.deepEqual(parseColumnOrdersQueryParam(JSON.stringify({ Customer: ["status", 123, "name"] })), { Customer: ["status", "name"] });
 });
 
 // Round 117 found that apps/api/src/backup.ts's boolean CSV rendering was
@@ -10146,7 +10265,7 @@ test("the exported server.js's own entityToCsv disambiguates two columns that sh
   const backupRecordDisplayLabelSrc = serverJs.match(/function backupRecordDisplayLabel\(entity, record\) \{[\s\S]*?\n\}\n/)?.[0];
   const backupPickDisplayFieldSrc = serverJs.match(/const BACKUP_DISPLAY_FIELD_HINTS[\s\S]*?\nfunction backupPickDisplayField\(entity\) \{[\s\S]*?\n\}\n/)?.[0];
   const backupFieldDisplayValueSrc = serverJs.match(/function backupFieldDisplayValue\(field, value, recordIndexByEntity\) \{[\s\S]*?\n\}\n/)?.[0];
-  const entityToCsvSrc = serverJs.match(/function entityToCsv\(entity, records, recordIndexByEntity\) \{[\s\S]*?\n\}\n/)?.[0];
+  const entityToCsvSrc = serverJs.match(/function entityToCsv\(entity, records, recordIndexByEntity, orderedFields\) \{[\s\S]*?\n\}\n/)?.[0];
   assert.ok(
     csvEscapeSrc && backupRecordDisplayLabelSrc && backupPickDisplayFieldSrc && backupFieldDisplayValueSrc && entityToCsvSrc,
     "expected to find csvEscape/backupRecordDisplayLabel/backupPickDisplayField/backupFieldDisplayValue/entityToCsv in generated server.js",
@@ -10164,7 +10283,7 @@ test("the exported server.js's own entityToCsv disambiguates two columns that sh
       { name: "shipping", label: "Amount", type: "number" },
     ],
   };
-  const csv = entityToCsv(entity, [{ subtotal: 800, shipping: 30 }], {});
+  const csv = entityToCsv(entity, [{ subtotal: 800, shipping: 30 }], {}, entity.fields);
   const lines = csv.split("\r\n");
   assert.equal(lines[0], "Amount (subtotal),Amount (shipping)");
   assert.equal(lines[1], "800,30");
@@ -10189,7 +10308,7 @@ test("the exported server.js's own backup-specific csvEscape double-guards a val
   const backupRecordDisplayLabelSrc = serverJs.match(/function backupRecordDisplayLabel\(entity, record\) \{[\s\S]*?\n\}\n/)?.[0];
   const backupPickDisplayFieldSrc = serverJs.match(/const BACKUP_DISPLAY_FIELD_HINTS[\s\S]*?\nfunction backupPickDisplayField\(entity\) \{[\s\S]*?\n\}\n/)?.[0];
   const backupFieldDisplayValueSrc = serverJs.match(/function backupFieldDisplayValue\(field, value, recordIndexByEntity\) \{[\s\S]*?\n\}\n/)?.[0];
-  const entityToCsvSrc = serverJs.match(/function entityToCsv\(entity, records, recordIndexByEntity\) \{[\s\S]*?\n\}\n/)?.[0];
+  const entityToCsvSrc = serverJs.match(/function entityToCsv\(entity, records, recordIndexByEntity, orderedFields\) \{[\s\S]*?\n\}\n/)?.[0];
   assert.ok(
     csvEscapeSrc && backupRecordDisplayLabelSrc && backupPickDisplayFieldSrc && backupFieldDisplayValueSrc && entityToCsvSrc,
     "expected to find csvEscape/backupRecordDisplayLabel/backupPickDisplayField/backupFieldDisplayValue/entityToCsv in generated server.js",
@@ -10201,7 +10320,7 @@ test("the exported server.js's own backup-specific csvEscape double-guards a val
   )([]);
 
   const entity = { name: "Customer", fields: [{ name: "name", label: "Name", type: "text" }] };
-  const csv = entityToCsv(entity, [{ name: "'-interesting" }], {});
+  const csv = entityToCsv(entity, [{ name: "'-interesting" }], {}, entity.fields);
   const lines = csv.split("\r\n");
   assert.equal(lines[1], "''-interesting");
 });
