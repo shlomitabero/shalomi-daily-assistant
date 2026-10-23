@@ -32113,3 +32113,23 @@ Still no genuine reply from שלומי. The same `"מ + root"` Hebrew prefix-col
 **Verification**: reverted the fix and reran -- failed exactly as predicted (`'מנהגי' (customs) alone must not spuriously match Courier` assertion failed); restored, passes. Full `packages/spec-engine` suite: 163/163 pass. Full `apps/api` suite: 588/589 pass, the lone failure is `codegen.test.ts`'s same recurring, already-documented, unrelated whole-file `SIGKILL`.
 
 **Status**: shipped and pushed.
+
+### Round 831: a Save/Create in flight never blocked the rule list's own Edit/Toggle/Delete buttons -- a real race, not just a UX glitch
+
+Still no genuine reply from שלומי. After four consecutive rounds on the Hebrew keyword-collision pattern, this round deliberately redirected to a fresh area -- and found a real, previously-unfixed client-side race in `AutomationsPanel.tsx`'s own form/list interaction.
+
+**The gap**: the rule list's Edit/Toggle/Delete buttons were disabled only by `busyRuleId !== null` (set while a *different* toggle or delete is in flight) -- never by `createBusy` (set while the shared create/edit form's own Save or Create submission is in flight). Nothing stopped clicking Edit on a different rule while an earlier submission was still awaiting its network round trip.
+
+**Concrete failure scenario (real data loss, not a cosmetic glitch)**: a user editing rule A changes its message template and clicks "Save changes" (`createBusy=true`, a real `await updateAutomationRule(...)` in flight). Before it resolves, they click Edit on rule B -- fully clickable, since `busyRuleId` is unrelated and still `null`. `handleStartEdit(B)` immediately overwrites `editingRuleId` and every form field with B's real values. When A's update resolves, the async `handleSubmit` call -- whose own `editingRuleId` reference was captured in its closure at invocation time, so it still correctly PATCHes A, not B -- unconditionally calls `resetToCreateMode()` with no check of what the form is currently showing. This wipes `editingRuleId` back to `null` and every field to blank "create" defaults, silently discarding whatever the user had already typed into B's edit, snapping the screen back to "New rule" with zero warning. A second variant hits the create path: starting a brand-new rule, submitting, then clicking Edit on an unrelated rule Y while the create is in flight -- once it resolves, its own unconditional partial reset (`fieldValue`/`toNumber`/`webhookUrl`/`messageTemplate` all cleared) blanks several of Y's own in-progress edit fields while `editingRuleId` is still correctly pointing at Y.
+
+**Why not already covered**: round 803 (closed) fixed a *different* race in this exact state machine -- deleting the rule currently being edited left the form stuck on a 404-bound edit -- but that fix only touches `handleDelete`'s own conditional reset. It never extended the row buttons' `disabled` condition to include `createBusy`, and `handleSubmit`'s own `resetToCreateMode()`/partial-reset calls remained completely unconditional. Confirmed via grep: no `disabled={createBusy` anywhere except the form's own Save/Cancel buttons; no combined "anything busy" flag exists anywhere in the component.
+
+**The fix**: extended the row buttons' `disabled` condition to `busyRuleId !== null || createBusy` -- mirroring exactly how `busyRuleId` already disables every row during a toggle/delete. This closes the race at its root (the conflicting click can never happen in the first place) rather than trying to detect and repair the damage after the fact, which would have required tracking the *current* `editingRuleId` via a ref (since the in-flight `handleSubmit` closure's own reference is frozen at invocation time and can't observe later state changes) -- a meaningfully larger, riskier change for the same outcome.
+
+**Scope**: `apps/web` only -- confirmed via grep that `codegen.ts` has no Automations feature at all (it requires the live server's own WhatsApp integration), so no parity fix applies.
+
+**The tests**: a new test holds a rule-A `PATCH` deliberately pending (a manually-resolved promise), confirms rule B's own Edit button is disabled for the entire window the Save is in flight, confirms clicking it anyway (defense in depth) leaves A's own in-progress edit untouched, then resolves the PATCH and confirms the form correctly returns to create mode once the submission actually completes.
+
+**Verification**: reverted the fix and reran -- failed exactly as predicted (`rule2's own Edit button must stay disabled... false !== true`); restored, passes. Full `apps/web` suite: 1132/1132 pass.
+
+**Status**: shipped and pushed.
