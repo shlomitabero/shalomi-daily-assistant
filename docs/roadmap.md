@@ -31636,3 +31636,21 @@ Still no genuine reply from שלומי. The same bug class as rounds 780/781/800
 **Verification**: reverted the three `fieldTypesKey` dependencies and reran -- the test failed exactly as predicted (`checkbox.checked` was `false`, the stale/invalid state); restored, it passes. Only `apps/web` changed this round, so its own full suite ran: 1120/1120 pass, no flakes. `tsc -b` clean.
 
 **Status**: shipped and pushed.
+
+### Round 807: docs/security.md and README.md still claimed RBAC, password reset, and auth rate limiting don't exist -- all three had already shipped
+
+Still no genuine reply from שלומי. A different bug class from every prior round this window: not a runtime logic gap, but the one document whose explicit job is "what's safe to assume" actively lying about three already-shipped safety features.
+
+**The gap**: `docs/security.md`'s "Explicitly not addressed yet (do not assume these exist)" section said "No RBAC / organizations... no read-only... permission level exists yet", its "Addressed" section said "There is no email verification and no password reset flow yet", and its rate-limiting bullet named `/api/auth/signup` as unprotected. `README.md`'s own Security section repeated the same three claims in one line ("there's no rate limiting, email verification, or password reset yet").
+
+**Why this is not deliberate**: `git log --oneline -- docs/security.md` shows the file was last touched at the collaborator-sharing commit, before the RBAC (editor/viewer roles + `requireProjectWriteAccess`), forgot-password/reset-password, and auth-rate-limiting commits all landed -- none of which touched this file. `README.md`'s Security section is older still. This is a plain "shipped the feature, never updated the one doc whose job is to list what's NOT yet addressed" gap, not a decision to leave the docs stale.
+
+**Concrete failure scenario**: the README itself instructs "Read `docs/security.md` before deploying this anywhere reachable by untrusted users." A reader following that instruction sees the bolded "do not assume these exist" heading directly above the false RBAC claim and concludes they need to build their own read-only/sharing permission layer before inviting outside collaborators -- duplicating work that's already done and tested -- or concludes password recovery is unavailable and tells a real user "there's no way to recover your account," when a working `/auth/forgot-password` flow already exists and is reachable from the login screen.
+
+**Verified directly against the current code (not just commit messages)** before editing anything: `requireProjectWriteAccess` (`apps/api/src/routes/projects.ts`) returns 403 `VIEWER_READ_ONLY` and is called ~40 times, covering every mutating route in that file; `CollaboratorRole` (`packages/db/src/collaborators.ts`) is a real `"editor" | "viewer"` type surfaced in `CollaboratorsPanel.tsx`'s role picker; `POST /api/auth/forgot-password` and `POST /api/auth/reset-password` (`apps/api/src/routes/auth.ts`) are real, enumeration-safe, hashed-token routes; `createRateLimiter` (`apps/api/src/auth/rateLimit.ts`) is wired to signup/login/forgot-password in `routes/auth.ts`. Also confirmed the inverse -- `routes/projects.ts`/`app.ts` never import `createRateLimiter` at all, so `POST /api/projects`/`.../refine` genuinely remain unprotected, and email verification is genuinely still absent -- so the fix narrows rather than deletes those two specific gaps.
+
+**The fix**: moved the real editor/viewer RBAC and the real password-reset flow from "Explicitly not addressed yet" into "Addressed", with their actual enforcement points named; narrowed the rate-limiting bullet and the "Before any real deployment" checklist to the two still-genuinely-unprotected LLM-calling endpoints instead of also naming the now-rate-limited `/api/auth/signup`; renamed "No RBAC / organizations" to "No organizations / workspaces" (the still-accurate half of that claim -- no `Workspace`/`WorkspaceMember` grouping concept, no entity-scoped permission level -- kept, the now-false "no roles at all" half removed). `README.md`'s one-line Security summary updated to match.
+
+**Scope**: docs-only, no application code changed -- no test suite or build to run, no `apps/web`/`apps/api`/`codegen.ts` parity question applies.
+
+**Status**: shipped and pushed.
