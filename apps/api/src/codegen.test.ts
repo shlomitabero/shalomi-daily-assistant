@@ -5245,6 +5245,120 @@ test("the exported EntityView's Add form refuses to create a new record for an e
 });
 
 /**
+ * Round 852's finding: round 798's own fix only blocked CREATE, reasoning
+ * "an existing record that already has a file ... keeps form[f.name]
+ * non-empty, so editing its OTHER fields is still possible" -- true only
+ * for a record created AFTER the field became required. A record
+ * predating that refine (migrate.ts deliberately never backfills NOT
+ * NULL against existing rows when a field's own required flag flips)
+ * still has an empty file field on edit too, permanently blocking a
+ * save -- even one that only touches a completely unrelated field -- with
+ * the generic "is a required field" message, reading like a fixable
+ * omission rather than the permanent dead end it actually is. Confirms
+ * editing an EXISTING record with no file (resume: null) shows the same
+ * specific, permanent message, disables Save, and never reaches PATCH --
+ * even when only the unrelated "name" field was changed.
+ */
+test("the exported EntityView's record form also refuses to save an EXISTING record with no file for its required file field, not just a brand-new one", async () => {
+  const withApplicant: Project = {
+    ...project,
+    spec: {
+      ...project.spec,
+      entities: [
+        ...project.spec.entities,
+        {
+          name: "Applicant",
+          label: "Applicant",
+          fields: [
+            { name: "name", label: "Name", type: "text", required: true },
+            { name: "resume", label: "Resume", type: "file", required: true },
+          ],
+        },
+      ],
+    },
+  };
+  const files = generateExportFiles(withApplicant);
+  const dir = writeGeneratedWebComponent(files);
+  const originalFetch = globalThis.fetch;
+  let patchCalled = false;
+  globalThis.fetch = (async (input: string, init?: RequestInit): Promise<Response> => {
+    const method = init?.method ?? "GET";
+    if (method === "GET" && input === "/api/Applicant") {
+      return new Response(JSON.stringify({ records: [{ id: 1, name: "Dana", resume: null }] }), { status: 200, headers: { "content-type": "application/json" } });
+    }
+    if (method === "PATCH" && input === "/api/Applicant/1") {
+      patchCalled = true;
+      return new Response(JSON.stringify({ record: { id: 1, name: "Dana Cohen", resume: null } }), { status: 200 });
+    }
+    throw new Error(`unexpected request ${method} ${input}`);
+  }) as typeof fetch;
+
+  try {
+    await withRealLocalStorage(async () => {
+      const { EntityView } = await import(path.join(dir, "web", "src", "components", "EntityView.jsx"));
+      const applicantEntity = withApplicant.spec.entities.find((e) => e.name === "Applicant")!;
+      const props = {
+        entity: applicantEntity,
+        highlightRecordId: null,
+        onHighlightHandled: () => {},
+        onJumpToRecord: () => {},
+        onRecordCountChange: () => {},
+      };
+
+      const { container } = render(React.createElement(EntityView, props));
+      for (let i = 0; i < 40; i++) {
+        if (container.querySelectorAll("tbody tr[data-record-id]").length === 1) break;
+        await act(async () => {
+          await new Promise((resolve) => setTimeout(resolve, 0));
+        });
+      }
+      const editButton = Array.from(container.querySelectorAll("button")).find((b) => b.textContent === "Edit") as HTMLButtonElement;
+      assert.ok(editButton, "expected a real 'Edit' button on the existing record's own row");
+      await act(async () => {
+        fireEvent.click(editButton);
+      });
+
+      const form = container.querySelector(".record-form") as HTMLFormElement;
+      assert.ok(form, "expected the record form to render in edit mode");
+
+      const saveButton = Array.from(form.querySelectorAll("button")).find((b) => b.textContent === "Save") as HTMLButtonElement;
+      assert.ok(saveButton, "expected a real 'Save' button while editing");
+      assert.equal(saveButton.disabled, true, "Save must be disabled upfront -- this existing record can never be saved here either");
+      assert.match(
+        form.textContent ?? "",
+        /has no file for its required "Resume" field/,
+        "the same specific, permanent explanation must already be visible without needing to click Save first",
+      );
+
+      // Changing only the unrelated "name" field must not help -- the
+      // record's own missing required file is what's blocking this, not
+      // anything about what was or wasn't edited.
+      const nameInput = form.querySelector('input[type="text"]') as HTMLInputElement;
+      assert.ok(nameInput, "expected a real text input for the 'name' field");
+      await act(async () => {
+        fireEvent.change(nameInput, { target: { value: "Dana Cohen" } });
+      });
+      await act(async () => {
+        fireEvent.submit(form);
+      });
+
+      assert.equal(patchCalled, false, "the existing record must never actually be saved, even when only an unrelated field was changed");
+      const errorEl = container.querySelector("p.error");
+      assert.ok(errorEl, "expected a specific error message");
+      assert.match(
+        errorEl!.textContent ?? "",
+        /has no file for its required/,
+        "must explain this existing record has no file, not the generic 'is a required field' message, and not the CREATE-only wording",
+      );
+    });
+  } finally {
+    globalThis.fetch = originalFetch;
+    cleanup();
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+/**
  * New in this round: once rows are selected in the exported app, the only
  * ways to leave selection mode were committing a real bulk delete/duplicate
  * (mutating data just to escape the mode) or unchecking every row one at a

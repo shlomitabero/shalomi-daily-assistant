@@ -4025,12 +4025,24 @@ export function EntityView({ entity, highlightRecordId, onHighlightHandled, onJu
   // currently, unsatisfiable. Mirrors the identical hazard this exact file
   // already recognizes and guards for CSV import (requiredUnsupported,
   // above) and the live preview's own EntityPanel.tsx already guards for
-  // handleDuplicate -- this single-record Add form was the one path left
-  // unguarded. Only blocks CREATE, not edit: an existing record that
-  // already has a file (exported after being uploaded in the live
-  // preview) keeps form[f.name] non-empty, so editing its OTHER fields is
-  // still possible, unaffected by this.
+  // handleDuplicate.
   const requiredFileField = entity.fields.find((f) => f.type === "file" && f.required);
+  // Round 852: round 798's own fix only blocked CREATE, reasoning "an
+  // existing record that already has a file ... keeps form[f.name]
+  // non-empty, so editing its OTHER fields is still possible" -- true
+  // only for a record created AFTER the field became required. A record
+  // predating that refine (an ordinary pattern: migrate.ts deliberately
+  // never backfills NOT NULL against existing rows when a field's own
+  // required flag flips, leaving its stored value exactly whatever it
+  // was before) still has form[f.name] === "" on edit too, hitting the
+  // exact same permanently-unsatisfiable dead end round 798 already
+  // named -- except now for a record that already exists, blocking an
+  // edit to any OTHER field on it as well, forever, with the generic
+  // missingField message reading like a fixable omission. Keyed on the
+  // CURRENT form value (not editingId) so a record that genuinely does
+  // have a file keeps editing its other fields unaffected, exactly as
+  // round 798's own comment intended.
+  const recordHasNoRequiredFile = requiredFileField && (form[requiredFileField.name] === "" || form[requiredFileField.name] == null);
   // The bulk-edit field picker, and the per-field filter dropdowns below,
   // are whole-record-set actions like the table's own column list -- they
   // follow the same drag-reordered column order (orderedFields) rather
@@ -4411,11 +4423,14 @@ export function EntityView({ entity, highlightRecordId, onHighlightHandled, onJu
     setError(null);
     // Checked first, and worded specifically, because the generic
     // missingField message below ("is a required field") reads like a
-    // fixable omission -- this is permanent for a brand-new record in an
-    // exported app (see requiredFileField's own doc comment above).
-    if (editingId == null && requiredFileField) {
+    // fixable omission -- this is permanent, for a brand-new record or an
+    // existing one with no file already attached, in an exported app
+    // (see recordHasNoRequiredFile's own doc comment above).
+    if (recordHasNoRequiredFile) {
       setError(
-        \`New \${entity.label} records can't be created in an exported app -- "\${requiredFileField.label || requiredFileField.name}" is a required file field, and only the live Forge AI preview supports file uploads.\`,
+        editingId == null
+          ? \`New \${entity.label} records can't be created in an exported app -- "\${requiredFileField.label || requiredFileField.name}" is a required file field, and only the live Forge AI preview supports file uploads.\`
+          : \`This \${entity.label} record has no file for its required "\${requiredFileField.label || requiredFileField.name}" field, and files can't be added in an exported app -- only the live Forge AI preview supports file uploads.\`,
       );
       return;
     }
@@ -5174,13 +5189,17 @@ export function EntityView({ entity, highlightRecordId, onHighlightHandled, onJu
             />
           </label>
         ))}
-        {editingId == null && requiredFileField && (
+        {recordHasNoRequiredFile && (
           <p className="muted small" role="alert">
-            New {entity.label} records can't be created in an exported app -- "{requiredFileField.label || requiredFileField.name}" is a required file field, and only the live Forge AI preview supports file uploads.
+            {editingId == null ? (
+              <>New {entity.label} records can't be created in an exported app -- "{requiredFileField.label || requiredFileField.name}" is a required file field, and only the live Forge AI preview supports file uploads.</>
+            ) : (
+              <>This {entity.label} record has no file for its required "{requiredFileField.label || requiredFileField.name}" field, and files can't be added in an exported app -- only the live Forge AI preview supports file uploads.</>
+            )}
           </p>
         )}
         <div>
-          <button type="submit" className="btn" disabled={editingId == null && !!requiredFileField}>
+          <button type="submit" className="btn" disabled={!!recordHasNoRequiredFile}>
             {editingId != null ? "Save" : "Add"}
           </button>
           {editingId != null && (
