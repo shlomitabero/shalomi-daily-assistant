@@ -419,6 +419,19 @@ export function AutomationsPanel({
     try {
       await deleteAutomationRule(projectId, rule.id);
       setRules((prev) => (prev ?? []).filter((r) => r.id !== rule.id));
+      // The rule list's own Delete button stays clickable on every row
+      // regardless of which one (if any) is currently open for editing
+      // below -- without this, deleting the exact rule the form is mid-edit
+      // on left editingRuleId pointing at an id that no longer exists on
+      // the server. The form kept showing "Editing automation rule",
+      // pre-filled with the now-deleted rule's stale data and a visible
+      // Save button, with nothing on screen signalling that saving was
+      // already impossible -- clicking it hit a confusing 404
+      // AUTOMATION_RULE_NOT_FOUND with no way out except Cancel. Mirrors
+      // EntityPanel.tsx's own identical "delete the record currently being
+      // edited" guard (its in-form Delete button only resets editingId
+      // once the delete actually went through).
+      if (editingRuleId === rule.id) resetToCreateMode();
     } catch (err) {
       setError((err as Error).message);
     } finally {

@@ -1715,6 +1715,65 @@ test("clicking Cancel while editing discards the in-progress edit and never call
 });
 
 /**
+ * Round 803: the rule list's own Delete button stays clickable on every
+ * row regardless of which one (if any) is currently open for editing
+ * below -- deleting the exact rule the form is mid-edit on used to leave
+ * editingRuleId pointing at an id that no longer exists on the server.
+ * The form kept showing "Edit rule", pre-filled with the now-deleted
+ * rule's stale data and a visible "Save changes" button, with nothing on
+ * screen signalling that saving was already impossible. Mirrors
+ * EntityPanel.tsx's own identical "delete the record currently being
+ * edited" guard. Confirms deleting the rule currently being edited
+ * returns the form to create mode (heading, unlocked entity select, no
+ * Cancel button, blank fields) instead of leaving it stuck mid-edit on a
+ * rule that's already gone.
+ */
+test("deleting the rule currently open for editing returns the form to create mode, instead of leaving it stuck mid-edit on a rule that no longer exists", async () => {
+  await withJsdom(async () => {
+    const originalFetch = globalThis.fetch;
+    const originalConfirm = globalThis.window.confirm;
+    globalThis.fetch = (async (input: string, init?: RequestInit) => {
+      const method = init?.method ?? "GET";
+      if (method === "GET" && input === "/api/projects/proj1/automations") {
+        return new Response(JSON.stringify({ rules: [makeRule()] }), { status: 200, headers: { "content-type": "application/json" } });
+      }
+      if (method === "DELETE" && input === "/api/projects/proj1/automations/rule1") {
+        return new Response(null, { status: 204 });
+      }
+      throw new Error(`unexpected request ${method} ${input} -- the form must never PATCH a rule that was already deleted`);
+    }) as typeof fetch;
+    globalThis.window.confirm = (() => true) as typeof window.confirm;
+
+    try {
+      renderPanel();
+      await waitForCondition(() => document.querySelectorAll(".automations-rule-row").length === 1);
+
+      fireEvent.click(
+        Array.from(document.querySelectorAll(".automations-rule-actions button")).find((b) => b.textContent === "Edit") as HTMLButtonElement,
+      );
+      assert.match(document.querySelector(".automations-new-heading")!.textContent ?? "", /Edit rule/, "expected the form to actually be in edit mode before deleting");
+
+      fireEvent.click(document.querySelector(".automations-rule-actions .danger") as HTMLButtonElement);
+      await waitForCondition(() => document.querySelectorAll(".automations-rule-row").length === 0);
+
+      assert.match(document.querySelector(".automations-new-heading")!.textContent ?? "", /New rule/, "the form must return to create mode once the rule it was editing is gone");
+      const entitySelect = document.querySelector(".automations-create-form select") as HTMLSelectElement;
+      assert.equal(entitySelect.disabled, false, "the entity select must unlock again -- it's no longer editing anything");
+      assert.equal(
+        Array.from(document.querySelectorAll(".automations-create-form button")).some((b) => b.textContent === "Cancel"),
+        false,
+        "the Cancel button must disappear -- there's nothing left to cancel",
+      );
+      const messageField = document.querySelector(".automations-create-form textarea") as HTMLTextAreaElement;
+      assert.equal(messageField.value, "", "the deleted rule's own stale message template must not still be sitting in the form");
+    } finally {
+      globalThis.fetch = originalFetch;
+      globalThis.window.confirm = originalConfirm;
+    }
+  });
+});
+
+/**
  * Round 679: Automations was the one read-heavy diagnostic panel in this
  * app with no Copy/Download companions at all (Business Twin, WhatsApp
  * log, Time Machine, Global Search all already have both) -- a user
