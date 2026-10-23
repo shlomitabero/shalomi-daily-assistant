@@ -463,11 +463,41 @@ export function AutomationsPanel({
     }
   }
 
+  // Two entities can legally share a label too (the Entity Label editor
+  // doesn't enforce uniqueness any more than the Field Label editor does
+  // -- routes/projects.ts's PATCH /entities/:entityName/label accepts any
+  // non-empty string with no collision check against sibling entities).
+  // Mirrors (rather than imports, matching this codebase's established
+  // per-surface convention -- see checkpointDiff.ts's own identical pair,
+  // itself mirroring pipeline.ts's) the entity-level twin of
+  // fieldLabelOccurrences/fieldDisplayLabel above. Without this, the
+  // entity <select> below rendered two visually-identical <option> rows
+  // with no way to tell which same-labeled entity a given one actually
+  // is, and describeRule's own rule-list text gave zero way to tell which
+  // of two same-labeled entities an EXISTING rule actually targets --
+  // directly undermining the one thing this panel exists for (reviewing
+  // which rule does what).
+  function entityLabelOccurrences(allEntities: Entity[]): Map<string, number> {
+    const occurrences = new Map<string, number>();
+    for (const e of allEntities) {
+      const label = e.label ?? e.name;
+      occurrences.set(label, (occurrences.get(label) ?? 0) + 1);
+    }
+    return occurrences;
+  }
+
+  function entityDisplayLabel(entity: Entity, occurrences: Map<string, number>): string {
+    const label = entity.label ?? entity.name;
+    return (occurrences.get(label) ?? 0) > 1 ? `${label} (${entity.name})` : label;
+  }
+
+  const entityOccurrences = useMemo(() => entityLabelOccurrences(entities), [entities]);
+
   // Resolves a rule's stored entityName/fieldName/toField/fieldValue (the
   // raw internal identifiers listRecords etc. also use) to the same
   // human-facing, disambiguated label this panel's own create-form selects
-  // already show (entities.map's `e.label ?? e.name`, fieldDisplayLabel
-  // for fields) -- a Hebrew-labeled entity/field must not come back from
+  // already show (entityDisplayLabel for entities, fieldDisplayLabel for
+  // fields) -- a Hebrew-labeled entity/field must not come back from
   // the server and then render in the rule list under its raw,
   // often-English internal name. Falls back to the raw identifier when the
   // entity/field can no longer be found (it was renamed or deleted after
@@ -478,7 +508,8 @@ export function AutomationsPanel({
   }
 
   function entityLabel(rule: AutomationRuleView): string {
-    return ruleEntity(rule)?.label ?? rule.entityName;
+    const entity = ruleEntity(rule);
+    return entity ? entityDisplayLabel(entity, entityOccurrences) : rule.entityName;
   }
 
   function fieldLabel(rule: AutomationRuleView, fieldName: string | null): string {
@@ -753,7 +784,7 @@ export function AutomationsPanel({
             <select value={entityName} onChange={(e) => setEntityName(e.target.value)} disabled={editingRuleId !== null}>
               {entities.map((e) => (
                 <option key={e.name} value={e.name}>
-                  {e.label ?? e.name}
+                  {entityDisplayLabel(e, entityOccurrences)}
                 </option>
               ))}
             </select>

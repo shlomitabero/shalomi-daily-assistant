@@ -792,6 +792,76 @@ test("AutomationsPanel's field_equals Field dropdown disambiguates two fields th
 });
 
 /**
+ * Round 864 regression test: the entity-level twin of round 770's own
+ * field-label fix just above. The "Create automation rule" Entity
+ * dropdown and the rule list's own describeRule text both rendered an
+ * entity's bare `label ?? name`, with no disambiguation for two entities
+ * sharing a label -- unlike checkpointDiff.ts's own HistoryPanel
+ * rendering (and this exact file's own already-fixed field-label case),
+ * which both call entityDisplayLabel/fieldDisplayLabel to append the
+ * entity/field's own unique name whenever its label collides with a
+ * sibling's.
+ */
+const duplicateEntityLabelProject: Project = {
+  id: "proj6",
+  ownerId: "owner1",
+  name: "CRM",
+  description: "A CRM",
+  status: "built",
+  createdAt: new Date().toISOString(),
+  spec: {
+    summary: "A CRM",
+    personas: [],
+    roles: ["Admin"],
+    entities: [
+      { name: "CustomerActive", label: "Customer", fields: [{ name: "name", label: "Name", type: "text", required: true }] },
+      { name: "CustomerArchived", label: "Customer", fields: [{ name: "name", label: "Name", type: "text", required: true }] },
+    ],
+    screens: [],
+    assumptions: [],
+    openQuestions: [],
+  },
+};
+
+test("AutomationsPanel's Entity dropdown disambiguates two entities that share the same label, and the rule list's own description uses the disambiguated label too", async () => {
+  await withJsdom(async () => {
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = (async (input: string) => {
+      if (input === "/api/projects/proj6/automations") {
+        return new Response(
+          JSON.stringify({ rules: [makeRule({ entityName: "CustomerArchived", trigger: "record_created", fieldName: null, fieldValue: null })] }),
+          { status: 200, headers: { "content-type": "application/json" } },
+        );
+      }
+      throw new Error(`unexpected request ${input}`);
+    }) as typeof fetch;
+
+    try {
+      renderPanelWith(duplicateEntityLabelProject);
+      await waitForCondition(() => document.body.textContent?.includes("record is created") ?? false);
+
+      const entitySelect = Array.from(document.querySelectorAll("label"))
+        .find((l) => l.textContent?.startsWith("Entity"))
+        ?.querySelector("select") as HTMLSelectElement;
+      assert.ok(entitySelect, "the create-form Entity dropdown must be rendered");
+      const optionTexts = Array.from(entitySelect.options).map((o) => o.textContent);
+      assert.deepEqual(
+        optionTexts,
+        ["Customer (CustomerActive)", "Customer (CustomerArchived)"],
+        "two entities sharing the label \"Customer\" must be disambiguated by their own unique name, exactly like every other entity picker in this app",
+      );
+
+      assert.ok(
+        document.body.textContent?.includes("Customer (CustomerArchived)"),
+        "the rule list's own description must name which of the two same-labeled entities this existing rule actually targets",
+      );
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+});
+
+/**
  * Round 748 regression test: the field_equals trigger's own "Field"
  * dropdown listed every field on the entity with no filter at all,
  * including a "file" field -- whose stored value (the raw upload JSON
