@@ -72,8 +72,26 @@ const PAYMENT_KEYWORDS: (string | RegExp)[] = [
  * only Property (whose own description/fields never hit PAYMENT_KEYWORDS)
  * and got recommended "No payments", even though selling or renting out
  * real estate is definitionally a paid transaction. Added "Property" below.
+ *
+ * Round 826: the exact same drift, for MenuItem -- a restaurant/cafe menu
+ * dish, with a *required* price field. "a cafe menu app to track dishes
+ * and prices" matched only MenuItem and got recommended "No payments",
+ * even though a priced dish on a restaurant's menu is definitionally for
+ * sale. Added "MenuItem" below.
+ *
+ * Service (same "business offers for sale" framing, and the same round-826
+ * finding's original motivation) was deliberately NOT added here: unlike
+ * Rental/Property/MenuItem's specifically-commercial trigger phrasing,
+ * Service's own keyword list matches on the bare, generic word "service"/
+ * "שירות" -- which shows up constantly in ordinary, non-commercial contexts
+ * ("customer service", "the service was great", feedback/review app
+ * copy). Adding it here broke an existing, unrelated test ("אפליקציה
+ * לאיסוף משוב חיובי מלקוחות על השירות שלנו" -- a feedback-collection app
+ * mentioning "our service" -- wrongly started recommending Stripe), proving
+ * Service's entity match alone isn't a reliable "this app needs payments"
+ * signal the way Rental/Property/MenuItem's narrower triggers are.
  */
-const BILLING_ENTITY_NAMES = new Set(["Invoice", "Order", "Donation", "Subscription", "Rental", "Property"]);
+const BILLING_ENTITY_NAMES = new Set(["Invoice", "Order", "Donation", "Subscription", "Rental", "Property", "MenuItem"]);
 
 interface HebrewLabels {
   labelHe: string;

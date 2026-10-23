@@ -268,6 +268,21 @@ test("asks about payments (recommending Stripe) for a real-estate description, e
   assert.equal(paymentQuestion!.recommendation, "Stripe");
 });
 
+test("asks about payments (recommending Stripe) for a restaurant-menu description, even though it names none of PAYMENT_KEYWORDS", async () => {
+  // "menu"/"dishes"/"restaurant" match only the MenuItem entity (whose own
+  // price field is REQUIRED, not optional) and share no substring with
+  // "payment"/"billing"/"invoice"/"checkout"/"stripe"/"subscription" -- a
+  // priced dish on a restaurant's menu is definitionally for sale, so
+  // recommending "No payments" here would be actively wrong. Same drift
+  // (round 826) as the Service fix just above.
+  const provider = new HeuristicSpecProvider();
+  const spec = await provider.generate("A cafe menu app to track dishes and prices for my restaurant.");
+  assert.deepEqual(spec.entities.map((e) => e.name), ["MenuItem"]);
+  const paymentQuestion = spec.openQuestions.find((q) => q.question.toLowerCase().includes("payment"));
+  assert.ok(paymentQuestion);
+  assert.equal(paymentQuestion!.recommendation, "Stripe");
+});
+
 test("does not ask about payments for a clothing-store description mentioning 'striped' shirts, but still asks when 'stripe' itself is used", async () => {
   // Regression test for a real bug found by a round 460 Explore survey:
   // PAYMENT_KEYWORDS's bare "stripe" hint matched via plain .includes(),
