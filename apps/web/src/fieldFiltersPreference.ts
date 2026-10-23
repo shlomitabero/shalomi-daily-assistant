@@ -71,3 +71,16 @@ export function purgeFieldFiltersForProject(projectId: string): void {
   }
   writeStore(store);
 }
+
+/**
+ * Removes just one entity's stored filter map, unlike
+ * purgeFieldFiltersForProject above (the whole project). Used when a
+ * single entity is dropped from an otherwise-surviving project's spec --
+ * see entityPreferenceCleanup.ts for why this exists alongside the
+ * project-wide purge.
+ */
+export function purgeFieldFiltersForEntity(projectId: string, entityName: string): void {
+  const store = readStore();
+  delete store[keyFor(projectId, entityName)];
+  writeStore(store);
+}

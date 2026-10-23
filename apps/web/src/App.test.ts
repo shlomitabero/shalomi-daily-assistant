@@ -1680,6 +1680,8 @@ test("App's handleBuildComplete falls back to the first entity when the previous
       "setAdditionalRequest",
       "setRefineRunning",
       "setView",
+      "project",
+      "purgeEntityPreferences",
       `${code}\nreturn handleBuildComplete;`,
     )(
       false, // refineRunning: false keeps this focused on the activeEntity logic itself, which runs unconditionally either way
@@ -1696,6 +1698,12 @@ test("App's handleBuildComplete falls back to the first entity when the previous
       () => {},
       () => {},
       () => {},
+      () => {},
+      // null: round 853's dropped-entity-preference purge (project?.spec.entities ?? [])
+      // is covered by its own dedicated test below, not this one, which is
+      // scoped to the activeEntity fallback logic -- null keeps droppedEntityNames
+      // empty so purgeEntityPreferences is never actually invoked here.
+      null,
       () => {},
     ) as (builtProject: Project) => void;
     fn(builtProject);
@@ -1746,6 +1754,8 @@ test("App's handleBuildComplete records the refine's own providerName (via extra
     "setAdditionalRequest",
     "setRefineRunning",
     "setView",
+    "project",
+    "purgeEntityPreferences",
     `${code}\nreturn handleBuildComplete;`,
   )(
     true,
@@ -1757,17 +1767,100 @@ test("App's handleBuildComplete records the refine's own providerName (via extra
     (updater: (prev: Array<{ providerName: string | null }>) => Array<{ providerName: string | null }>) => {
       historyEntries.push(...updater([]));
     },
-    () => {},
-    () => {},
-    () => {},
-    () => {},
-    () => {},
-    () => {},
+    () => {}, // setBuildWarning
+    () => {}, // setProject
+    () => {}, // setActiveEntity
+    () => {}, // setRefineText
+    () => {}, // setAdditionalRequest
+    () => {}, // setRefineRunning
+    () => {}, // setView
+    // null: this test is scoped to the providerName history-entry logic,
+    // not round 853's dropped-entity-preference purge -- see the sibling
+    // test above for why null is safe here too.
+    null,
     () => {},
   ) as (builtProject: Project) => void;
 
   fn(makeProject([makeEntity("Customer")]));
   assert.deepEqual(historyEntries.map((e) => e.providerName), ["anthropic-fallback"]);
+});
+
+/**
+ * Round 853: a refine that drops an entity from an otherwise-surviving
+ * project never purged that entity's own per-entity-keyed localStorage
+ * preferences (column widths/order/hidden fields, filters, group-by,
+ * collapsed board columns/groups, sort keys, view mode, recent searches)
+ * -- unlike whole-project deletion, which projectPreferenceCleanup.ts
+ * already sweeps thoroughly. See entityPreferenceCleanup.ts's own doc
+ * comment for the full mechanism (migrate.ts's deliberate non-backfill of
+ * NOT NULL meant round 798/852's own "an existing record keeps its file"
+ * reasoning doesn't generalize here the other way -- a STALE PREFERENCE
+ * can persist and silently reapply to a same-named entity reintroduced by
+ * a later refine). Confirms handleBuildComplete calls purgeEntityPreferences
+ * for exactly the entities present in the pre-refine project but absent
+ * from the newly-built one, with the real project id, and never for an
+ * entity that survived the refine.
+ */
+test("App's handleBuildComplete purges a dropped entity's own localStorage preferences, but never a surviving one's", () => {
+  const appSrc = readFileSync(new URL("./App.tsx", import.meta.url), "utf8");
+  const handlerMatch = appSrc.match(/ {2}function handleBuildComplete\(builtProject: Project, warning\?: string\) \{[\s\S]*?\n {2}\}\n/);
+  assert.ok(handlerMatch, "expected to find handleBuildComplete in App.tsx");
+  const { code } = transformSync(handlerMatch![0], { loader: "ts" });
+
+  const purgedEntities: Array<[string, string]> = [];
+  const fn = new Function(
+    "refineRunning",
+    "pendingRefineInstruction",
+    "refineEvents",
+    "t",
+    "summarizeRefineImpact",
+    "setRefineHistory",
+    "setBuildWarning",
+    "setProject",
+    "setActiveEntity",
+    "setRefineText",
+    "setAdditionalRequest",
+    "setRefineRunning",
+    "setView",
+    "project",
+    "purgeEntityPreferences",
+    `${code}\nreturn handleBuildComplete;`,
+  )(
+    false,
+    { current: null },
+    { current: [] },
+    (key: string) => key,
+    summarizeRefineImpact,
+    () => {},
+    () => {},
+    () => {},
+    () => {},
+    () => {},
+    () => {},
+    () => {},
+    () => {},
+    makeProject([makeEntity("Customer"), makeEntity("Deal"), makeEntity("Invoice")]),
+    (projectId: string, entityName: string) => {
+      purgedEntities.push([projectId, entityName]);
+    },
+  ) as (builtProject: Project) => void;
+
+  const rebuiltDroppingDealAndInvoice = makeProject([makeEntity("Customer")]);
+  fn(rebuiltDroppingDealAndInvoice);
+
+  assert.deepEqual(
+    [...purgedEntities].sort(),
+    [
+      [rebuiltDroppingDealAndInvoice.id, "Deal"],
+      [rebuiltDroppingDealAndInvoice.id, "Invoice"],
+    ].sort(),
+    "purgeEntityPreferences must be called once per dropped entity, with the built project's own id",
+  );
+  assert.equal(
+    purgedEntities.some(([, entityName]) => entityName === "Customer"),
+    false,
+    "purgeEntityPreferences must never be called for an entity that survived the refine",
+  );
 });
 
 /**

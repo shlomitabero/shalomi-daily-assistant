@@ -58,6 +58,19 @@ export function purgeColumnOrderForProject(projectId: string): void {
 }
 
 /**
+ * Removes just one entity's stored column order, unlike
+ * purgeColumnOrderForProject above (the whole project). Used when a single
+ * entity is dropped from an otherwise-surviving project's spec -- see
+ * entityPreferenceCleanup.ts for why this exists alongside the
+ * project-wide purge.
+ */
+export function purgeColumnOrderForEntity(projectId: string, entityName: string): void {
+  const store = readStore();
+  delete store[keyFor(projectId, entityName)];
+  writeStore(store);
+}
+
+/**
  * Applies a persisted (possibly stale) column order to the entity's current
  * real field list: a field the order mentions keeps its persisted relative
  * position, and any field the order doesn't mention -- a newly added field,

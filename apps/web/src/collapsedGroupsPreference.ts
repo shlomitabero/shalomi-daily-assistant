@@ -70,3 +70,21 @@ export function purgeCollapsedGroupsForProject(projectId: string): void {
   }
   writeStore(store);
 }
+
+/**
+ * Removes just one entity's stored collapsed-group sets (every
+ * groupFieldName this entity has ever used, since the key has a third
+ * segment this store-wide purge can't name in advance), unlike
+ * purgeCollapsedGroupsForProject above (the whole project). Used when a
+ * single entity is dropped from an otherwise-surviving project's spec --
+ * see entityPreferenceCleanup.ts for why this exists alongside the
+ * project-wide purge.
+ */
+export function purgeCollapsedGroupsForEntity(projectId: string, entityName: string): void {
+  const store = readStore();
+  const prefix = `${projectId}:${entityName}:`;
+  for (const key of Object.keys(store)) {
+    if (key.startsWith(prefix)) delete store[key];
+  }
+  writeStore(store);
+}

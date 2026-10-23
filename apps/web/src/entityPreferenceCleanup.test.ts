@@ -1,0 +1,137 @@
+import "./jsdomWarmup.js";
+import assert from "node:assert/strict";
+import { test } from "node:test";
+import { JSDOM } from "jsdom";
+import { getColumnWidths, setColumnWidth } from "./columnWidths.js";
+import { getColumnOrder, setColumnOrder } from "./columnOrder.js";
+import { getHiddenFields, toggleFieldVisibility } from "./columnVisibility.js";
+import { getFieldFilters, setFieldFilters } from "./fieldFiltersPreference.js";
+import { getGroupByField, setGroupByField, getGroupByFieldType, setGroupByFieldType } from "./groupByPreference.js";
+import { getCollapsedBoardColumns, setCollapsedBoardColumns } from "./collapsedBoardColumnsPreference.js";
+import { getCollapsedGroups, setCollapsedGroups } from "./collapsedGroupsPreference.js";
+import { getSortKeys, setSortKeys } from "./sortKeysPreference.js";
+import { getViewMode, setViewMode } from "./viewModePreference.js";
+import { addEntityRecentSearch, getEntityRecentSearches } from "./entityRecentSearches.js";
+import { purgeEntityPreferences } from "./entityPreferenceCleanup.js";
+
+/** Same full-jsdom-swap technique used by projectPreferenceCleanup.test.ts/columnWidths.test.ts: real localStorage, not a mock. */
+async function withJsdom(fn: () => void | Promise<void>): Promise<void> {
+  const dom = new JSDOM("<!doctype html><html><body></body></html>", { url: "http://localhost/" });
+  const originals: Record<string, unknown> = {};
+  const keys = ["window", "document", "navigator", "localStorage"];
+  for (const key of keys) {
+    originals[key] = (globalThis as Record<string, unknown>)[key];
+  }
+  try {
+    Object.defineProperty(globalThis, "window", { value: dom.window, configurable: true });
+    Object.defineProperty(globalThis, "document", { value: dom.window.document, configurable: true });
+    Object.defineProperty(globalThis, "navigator", { value: dom.window.navigator, configurable: true });
+    Object.defineProperty(globalThis, "localStorage", { value: dom.window.localStorage, configurable: true });
+    await fn();
+  } finally {
+    for (const key of keys) {
+      if (originals[key] !== undefined) Object.defineProperty(globalThis, key, { value: originals[key], configurable: true });
+      else delete (globalThis as Record<string, unknown>)[key];
+    }
+  }
+}
+
+/**
+ * Round 853: a refine that drops a single entity from an otherwise-
+ * surviving project (App.tsx's handleBuildComplete) never purged that
+ * entity's own per-entity-keyed localStorage preferences -- unlike whole-
+ * project deletion, which projectPreferenceCleanup.ts already sweeps.
+ * Mirrors that file's own test shape, but at entity granularity: seeds
+ * every relevant store for the entity being dropped ("abc"/"Customer"),
+ * a DIFFERENT entity in the SAME project ("abc"/"Deal", which must
+ * survive since only one entity was dropped), and the SAME entity name
+ * in a DIFFERENT project ("proj2"/"Customer", which must survive since
+ * it's a wholly unrelated project) -- confirming the purge is scoped to
+ * exactly the one project+entity pair, using the actual public read
+ * functions every other part of the app uses, not a mock of each store.
+ */
+test("purgeEntityPreferences removes exactly one project+entity's entries from every per-entity preference store, leaving a sibling entity and an unrelated project's same-named entity fully intact", async () => {
+  await withJsdom(() => {
+    // Seed "abc"/"Customer" -- the entity being dropped by a refine.
+    setColumnWidth("abc", "Customer", "name", 220);
+    setColumnOrder("abc", "Customer", ["name", "email"]);
+    toggleFieldVisibility("abc", "Customer", "email");
+    setFieldFilters("abc", "Customer", { status: "active" });
+    setGroupByField("abc", "Customer", "status");
+    setGroupByFieldType("abc", "Customer", "enum");
+    setCollapsedBoardColumns("abc", "Customer", "status", ["done"]);
+    setCollapsedGroups("abc", "Customer", "status", ["pending"]);
+    setSortKeys("abc", "Customer", [{ field: "name", direction: "asc" }]);
+    setViewMode("abc", "Customer", "board");
+    addEntityRecentSearch("abc", "Customer", "dana");
+
+    // Seed "abc"/"Deal" -- a sibling entity in the SAME project that must
+    // survive, since only "Customer" was dropped.
+    setColumnWidth("abc", "Deal", "amount", 150);
+    setColumnOrder("abc", "Deal", ["amount", "stage"]);
+    toggleFieldVisibility("abc", "Deal", "stage");
+    setFieldFilters("abc", "Deal", { stage: "won" });
+    setGroupByField("abc", "Deal", "stage");
+    setGroupByFieldType("abc", "Deal", "enum");
+    setCollapsedBoardColumns("abc", "Deal", "stage", ["lost"]);
+    setCollapsedGroups("abc", "Deal", "stage", ["open"]);
+    setSortKeys("abc", "Deal", [{ field: "amount", direction: "desc" }]);
+    setViewMode("abc", "Deal", "calendar");
+    addEntityRecentSearch("abc", "Deal", "yossi");
+
+    // Seed "proj2"/"Customer" -- the SAME entity name in a wholly
+    // unrelated project, which must survive untouched.
+    setColumnWidth("proj2", "Customer", "name", 300);
+    setColumnOrder("proj2", "Customer", ["email", "name"]);
+    toggleFieldVisibility("proj2", "Customer", "name");
+    setFieldFilters("proj2", "Customer", { status: "closed" });
+    setGroupByField("proj2", "Customer", "owner");
+    setGroupByFieldType("proj2", "Customer", "text");
+    setCollapsedBoardColumns("proj2", "Customer", "owner", ["archived"]);
+    setCollapsedGroups("proj2", "Customer", "owner", ["active"]);
+    setSortKeys("proj2", "Customer", [{ field: "email", direction: "desc" }]);
+    setViewMode("proj2", "Customer", "calendar");
+    addEntityRecentSearch("proj2", "Customer", "noa");
+
+    purgeEntityPreferences("abc", "Customer");
+
+    // "abc"/"Customer" is gone from every single store.
+    assert.deepEqual(getColumnWidths("abc", "Customer"), {}, "columnWidths must be purged");
+    assert.deepEqual(getColumnOrder("abc", "Customer"), [], "columnOrder must be purged");
+    assert.deepEqual(getHiddenFields("abc", "Customer"), new Set(), "columnVisibility must be purged");
+    assert.deepEqual(getFieldFilters("abc", "Customer"), {}, "fieldFilters must be purged");
+    assert.equal(getGroupByField("abc", "Customer"), "", "groupBy field must be purged");
+    assert.equal(getGroupByFieldType("abc", "Customer"), "", "groupBy field type must be purged alongside it");
+    assert.deepEqual(getCollapsedBoardColumns("abc", "Customer", "status"), [], "collapsedBoardColumns must be purged");
+    assert.deepEqual(getCollapsedGroups("abc", "Customer", "status"), [], "collapsedGroups must be purged");
+    assert.deepEqual(getSortKeys("abc", "Customer"), [], "sortKeys must be purged");
+    assert.equal(getViewMode("abc", "Customer"), "table", "viewMode must be purged");
+    assert.deepEqual(getEntityRecentSearches("abc", "Customer"), [], "entityRecentSearches must be purged");
+
+    // "abc"/"Deal" -- a sibling entity in the SAME project -- is completely untouched.
+    assert.deepEqual(getColumnWidths("abc", "Deal"), { amount: 150 }, "columnWidths must survive for a sibling entity");
+    assert.deepEqual(getColumnOrder("abc", "Deal"), ["amount", "stage"], "columnOrder must survive for a sibling entity");
+    assert.deepEqual(getHiddenFields("abc", "Deal"), new Set(["stage"]), "columnVisibility must survive for a sibling entity");
+    assert.deepEqual(getFieldFilters("abc", "Deal"), { stage: "won" }, "fieldFilters must survive for a sibling entity");
+    assert.equal(getGroupByField("abc", "Deal"), "stage", "groupBy field must survive for a sibling entity");
+    assert.equal(getGroupByFieldType("abc", "Deal"), "enum", "groupBy field type must survive for a sibling entity");
+    assert.deepEqual(getCollapsedBoardColumns("abc", "Deal", "stage"), ["lost"], "collapsedBoardColumns must survive for a sibling entity");
+    assert.deepEqual(getCollapsedGroups("abc", "Deal", "stage"), ["open"], "collapsedGroups must survive for a sibling entity");
+    assert.deepEqual(getSortKeys("abc", "Deal"), [{ field: "amount", direction: "desc" }], "sortKeys must survive for a sibling entity");
+    assert.equal(getViewMode("abc", "Deal"), "calendar", "viewMode must survive for a sibling entity");
+    assert.deepEqual(getEntityRecentSearches("abc", "Deal"), ["yossi"], "entityRecentSearches must survive for a sibling entity");
+
+    // "proj2"/"Customer" -- the same entity name in an unrelated project -- is also completely untouched.
+    assert.deepEqual(getColumnWidths("proj2", "Customer"), { name: 300 }, "columnWidths must survive for an unrelated project's same-named entity");
+    assert.deepEqual(getColumnOrder("proj2", "Customer"), ["email", "name"], "columnOrder must survive for an unrelated project's same-named entity");
+    assert.deepEqual(getHiddenFields("proj2", "Customer"), new Set(["name"]), "columnVisibility must survive for an unrelated project's same-named entity");
+    assert.deepEqual(getFieldFilters("proj2", "Customer"), { status: "closed" }, "fieldFilters must survive for an unrelated project's same-named entity");
+    assert.equal(getGroupByField("proj2", "Customer"), "owner", "groupBy field must survive for an unrelated project's same-named entity");
+    assert.equal(getGroupByFieldType("proj2", "Customer"), "text", "groupBy field type must survive for an unrelated project's same-named entity");
+    assert.deepEqual(getCollapsedBoardColumns("proj2", "Customer", "owner"), ["archived"], "collapsedBoardColumns must survive for an unrelated project's same-named entity");
+    assert.deepEqual(getCollapsedGroups("proj2", "Customer", "owner"), ["active"], "collapsedGroups must survive for an unrelated project's same-named entity");
+    assert.deepEqual(getSortKeys("proj2", "Customer"), [{ field: "email", direction: "desc" }], "sortKeys must survive for an unrelated project's same-named entity");
+    assert.equal(getViewMode("proj2", "Customer"), "calendar", "viewMode must survive for an unrelated project's same-named entity");
+    assert.deepEqual(getEntityRecentSearches("proj2", "Customer"), ["noa"], "entityRecentSearches must survive for an unrelated project's same-named entity");
+  });
+});

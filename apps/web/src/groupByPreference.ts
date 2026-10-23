@@ -131,3 +131,19 @@ export function purgeGroupByFieldTypeForProject(projectId: string): void {
   }
   writeTypeStore(store);
 }
+
+/**
+ * Removes just one entity's stored group-by field choice (and its paired
+ * TYPE entry), unlike purgeGroupByFieldForProject above (the whole
+ * project). Used when a single entity is dropped from an otherwise-
+ * surviving project's spec -- see entityPreferenceCleanup.ts for why this
+ * exists alongside the project-wide purge.
+ */
+export function purgeGroupByFieldForEntity(projectId: string, entityName: string): void {
+  const store = readStore();
+  delete store[keyFor(projectId, entityName)];
+  writeStore(store);
+  const typeStore = readTypeStore();
+  delete typeStore[keyFor(projectId, entityName)];
+  writeTypeStore(typeStore);
+}

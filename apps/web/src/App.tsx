@@ -59,6 +59,7 @@ import { getEntityTabOrder, setEntityTabOrder } from "./entityTabOrder.js";
 import { getPinnedIds, sortByPinned, togglePinned } from "./pinnedProjects.js";
 import { getSeenSharedTimestamps, markSharedProjectSeen, isNewShare } from "./sharedProjectSeen.js";
 import { purgeProjectPreferences } from "./projectPreferenceCleanup.js";
+import { purgeEntityPreferences } from "./entityPreferenceCleanup.js";
 import {
   addRecentProjectSearch,
   clearRecentProjectSearches,
@@ -1463,21 +1464,36 @@ function AppContent() {
       };
       setRefineHistory((prev) => [...prev, entry]);
     }
-    pendingRefineInstruction.current = null;
-    setBuildWarning(warning ?? null);
-    setProject(builtProject);
     // A refine's regenerated spec is free to drop an entity the previous
     // one had (the AI provider isn't guaranteed to keep every entity, e.g.
     // an instruction like "remove deals tracking, focus on invoices" --
-    // see routes/projects.ts's own comment on /refine). Keeping the stale
-    // `prev` tab name in that case leaves the entity-tabs filter matching
-    // nothing (`.filter((e) => e.name === activeEntity)`), so the preview
-    // pane goes blank with no tab visibly selected until the user manually
-    // clicks another one -- the same "stale activeEntity" failure mode
-    // handleLogout's own cleanup below already guards against.
+    // see routes/projects.ts's own comment on /refine). Captured before
+    // `setProject` below overwrites `project` with the new spec, so this
+    // is still the PRE-refine entity list.
+    const droppedEntityNames = (project?.spec.entities ?? [])
+      .filter((e) => !builtProject.spec.entities.some((be) => be.name === e.name))
+      .map((e) => e.name);
+    pendingRefineInstruction.current = null;
+    setBuildWarning(warning ?? null);
+    setProject(builtProject);
+    // Keeping the stale `prev` tab name in that case leaves the
+    // entity-tabs filter matching nothing (`.filter((e) => e.name ===
+    // activeEntity)`), so the preview pane goes blank with no tab visibly
+    // selected until the user manually clicks another one -- the same
+    // "stale activeEntity" failure mode handleLogout's own cleanup below
+    // already guards against.
     setActiveEntity((prev) =>
       prev && builtProject.spec.entities.some((e) => e.name === prev) ? prev : (builtProject.spec.entities[0]?.name ?? null),
     );
+    // Round 853: that same dropped entity's own per-entity-keyed
+    // localStorage preferences (column widths/order/hidden fields, field
+    // filters, group-by, collapsed board columns/groups, sort keys, view
+    // mode, recent searches) were never purged either -- unlike whole-
+    // project deletion, which projectPreferenceCleanup.ts already sweeps
+    // thoroughly. See entityPreferenceCleanup.ts's own doc comment.
+    for (const entityName of droppedEntityNames) {
+      purgeEntityPreferences(builtProject.id, entityName);
+    }
     setRefineText("");
     setAdditionalRequest("");
     setRefineRunning(false);
