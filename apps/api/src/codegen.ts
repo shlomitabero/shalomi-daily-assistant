@@ -1512,12 +1512,15 @@ function writeCollapsedGroupsStore(store) {
 }
 function getPersistedCollapsedGroups(entityName, groupFieldName) {
   const store = readCollapsedGroupsStore();
-  const keys = store[entityName + ":" + groupFieldName];
+  // JSON-encoded rather than colon-joined: entity/field names have no character
+  // restriction, so e.g. entity "Foo" + field "Bar:baz" would otherwise collide
+  // with entity "Foo:Bar" + field "baz" under a plain colon join.
+  const keys = store[JSON.stringify([entityName, groupFieldName])];
   return Array.isArray(keys) ? keys.filter((k) => typeof k === "string") : [];
 }
 function setPersistedCollapsedGroups(entityName, groupFieldName, keys) {
   const store = readCollapsedGroupsStore();
-  const mapKey = entityName + ":" + groupFieldName;
+  const mapKey = JSON.stringify([entityName, groupFieldName]);
   const deduped = [...new Set(keys)];
   if (deduped.length === 0) delete store[mapKey];
   else store[mapKey] = deduped;
@@ -1560,12 +1563,15 @@ function writeCollapsedBoardColumnsStore(store) {
 }
 function getPersistedCollapsedBoardColumns(entityName, boardFieldName) {
   const store = readCollapsedBoardColumnsStore();
-  const values = store[entityName + ":" + boardFieldName];
+  // JSON-encoded rather than colon-joined: entity/field names have no character
+  // restriction, so e.g. entity "Foo" + field "Bar:baz" would otherwise collide
+  // with entity "Foo:Bar" + field "baz" under a plain colon join.
+  const values = store[JSON.stringify([entityName, boardFieldName])];
   return Array.isArray(values) ? values.filter((v) => typeof v === "string") : [];
 }
 function setPersistedCollapsedBoardColumns(entityName, boardFieldName, values) {
   const store = readCollapsedBoardColumnsStore();
-  const mapKey = entityName + ":" + boardFieldName;
+  const mapKey = JSON.stringify([entityName, boardFieldName]);
   const deduped = [...new Set(values)];
   if (deduped.length === 0) delete store[mapKey];
   else store[mapKey] = deduped;

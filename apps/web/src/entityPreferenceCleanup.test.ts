@@ -146,3 +146,36 @@ test("purgeEntityPreferences removes exactly one project+entity's entries from e
     assert.deepEqual(getEntityTabOrder("proj2"), ["Customer", "Deal"], "an unrelated project's own tab order, including its own \"Customer\" entry, must survive fully untouched");
   });
 });
+
+/**
+ * Round 877: EntitySchema/FieldSchema place no character restriction on
+ * entity/field names (just a non-empty string, plus a case-insensitive
+ * duplicate-name refine that "Foo" and "Foo:Bar" don't trip), so two
+ * sibling entities named "Foo" and "Foo:Bar" can legally coexist in one
+ * project. collapsedBoardColumnsPreference.ts and collapsedGroupsPreference.ts
+ * are the only two per-entity preference stores with a third key segment
+ * (boardFieldName/groupFieldName) unknown at purge time, which used to
+ * force their *ForEntity purges to fall back to a colon-joined-string
+ * `key.startsWith(\`${projectId}:${entityName}:\`)` scan -- and
+ * `"proj:Foo:"` is a literal string-prefix of `"proj:Foo:Bar:stage"`, so
+ * dropping "Foo" silently wiped the unrelated, still-live "Foo:Bar"
+ * entity's own collapsed-board-column/collapsed-group preferences too.
+ * Both stores now key on JSON.stringify([projectId, entityName, field])
+ * instead, which makes segment boundaries unambiguous regardless of what
+ * characters a segment contains.
+ */
+test("purgeEntityPreferences for an entity named \"Foo\" does not also wipe a sibling entity literally named \"Foo:Bar\"", async () => {
+  await withJsdom(() => {
+    setCollapsedBoardColumns("proj1", "Foo", "stage", ["done"]);
+    setCollapsedGroups("proj1", "Foo", "stage", ["done"]);
+    setCollapsedBoardColumns("proj1", "Foo:Bar", "stage", ["archived"]);
+    setCollapsedGroups("proj1", "Foo:Bar", "stage", ["archived"]);
+
+    purgeEntityPreferences("proj1", "Foo");
+
+    assert.deepEqual(getCollapsedBoardColumns("proj1", "Foo", "stage"), [], "\"Foo\"'s own collapsedBoardColumns must be purged");
+    assert.deepEqual(getCollapsedGroups("proj1", "Foo", "stage"), [], "\"Foo\"'s own collapsedGroups must be purged");
+    assert.deepEqual(getCollapsedBoardColumns("proj1", "Foo:Bar", "stage"), ["archived"], "\"Foo:Bar\" must survive purging \"Foo\" -- its name merely starts with \"Foo:\", it is not a boardFieldName segment of \"Foo\"'s key");
+    assert.deepEqual(getCollapsedGroups("proj1", "Foo:Bar", "stage"), ["archived"], "\"Foo:Bar\" must survive purging \"Foo\" -- its name merely starts with \"Foo:\", it is not a groupFieldName segment of \"Foo\"'s key");
+  });
+});

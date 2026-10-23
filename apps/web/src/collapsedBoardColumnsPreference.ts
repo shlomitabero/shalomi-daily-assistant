@@ -1,7 +1,29 @@
 const STORAGE_KEY = "forge.collapsedBoardColumns";
 
+// JSON-encoded rather than colon-joined: entity/field names have no character
+// restriction (EntitySchema/FieldSchema just require a non-empty string), so two
+// sibling entities like "Foo" and "Foo:Bar" can both legally exist in one project.
+// A colon-joined key made purgeCollapsedBoardColumnsForEntity's prefix scan for
+// "Foo" also match "Foo:Bar"'s keys. JSON.stringify of the tuple makes each
+// segment boundary unambiguous regardless of what characters the segments contain.
 function keyFor(projectId: string, entityName: string, boardFieldName: string): string {
-  return `${projectId}:${entityName}:${boardFieldName}`;
+  return JSON.stringify([projectId, entityName, boardFieldName]);
+}
+
+function parseKey(key: string): [string, string, string] | null {
+  try {
+    const parsed = JSON.parse(key);
+    if (
+      Array.isArray(parsed) &&
+      parsed.length === 3 &&
+      parsed.every((part): part is string => typeof part === "string")
+    ) {
+      return parsed as [string, string, string];
+    }
+    return null;
+  } catch {
+    return null;
+  }
 }
 
 function readStore(): Record<string, string[]> {
@@ -68,9 +90,9 @@ export function setCollapsedBoardColumns(projectId: string, entityName: string, 
 /** Removes every stored collapsed-column set for this project, across all of its entities -- see columnWidths.ts's purgeColumnWidthsForProject for the full rationale. */
 export function purgeCollapsedBoardColumnsForProject(projectId: string): void {
   const store = readStore();
-  const prefix = `${projectId}:`;
   for (const key of Object.keys(store)) {
-    if (key.startsWith(prefix)) delete store[key];
+    const parsed = parseKey(key);
+    if (parsed && parsed[0] === projectId) delete store[key];
   }
   writeStore(store);
 }
@@ -86,9 +108,9 @@ export function purgeCollapsedBoardColumnsForProject(projectId: string): void {
  */
 export function purgeCollapsedBoardColumnsForEntity(projectId: string, entityName: string): void {
   const store = readStore();
-  const prefix = `${projectId}:${entityName}:`;
   for (const key of Object.keys(store)) {
-    if (key.startsWith(prefix)) delete store[key];
+    const parsed = parseKey(key);
+    if (parsed && parsed[0] === projectId && parsed[1] === entityName) delete store[key];
   }
   writeStore(store);
 }

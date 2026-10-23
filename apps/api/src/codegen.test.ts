@@ -14200,7 +14200,7 @@ test("the exported EntityView prunes a collapsed-group entry naming an enum valu
       );
       const collapsedGroupsStore = JSON.parse(localStorage.getItem("forge_collapsed_groups") ?? "{}");
       assert.deepEqual(
-        collapsedGroupsStore[`${newerEntity.name}:status`] ?? [],
+        collapsedGroupsStore[JSON.stringify([newerEntity.name, "status"])] ?? [],
         [],
         "the dead 'won' entry must be pruned from storage once 'status' no longer has that value, not left to sit there forever",
       );
@@ -14342,7 +14342,7 @@ test("the exported EntityView prunes a collapsed-board-column entry naming an en
       assert.equal(newer.container.querySelectorAll(".board-column").length, 3, "expected 3 board columns: 'Low', the now-empty 'Urgent', and a synthetic '(other)' for Globex's stale 'high' value");
       const collapsedBoardColumnsStore = JSON.parse(localStorage.getItem("forge_collapsed_board_columns") ?? "{}");
       assert.deepEqual(
-        collapsedBoardColumnsStore[`${newerEntity.name}:priority`] ?? [],
+        collapsedBoardColumnsStore[JSON.stringify([newerEntity.name, "priority"])] ?? [],
         [],
         "the dead 'high' entry must be pruned from storage once 'priority' no longer has that value, not left to sit there forever",
       );
@@ -14352,6 +14352,53 @@ test("the exported EntityView prunes a collapsed-board-column entry naming an en
     cleanup();
     rmSync(olderDir, { recursive: true, force: true });
     rmSync(newerDir, { recursive: true, force: true });
+  }
+});
+
+/**
+ * Round 877: entity/field names have no character restriction (just a
+ * non-empty string), and these two stores used to key on a plain
+ * `entityName + ":" + fieldName` join -- so entity "Foo" grouped/boarded
+ * by a field literally named "Bar:baz" produced the exact same storage
+ * key ("Foo:Bar:baz") as an unrelated entity "Foo:Bar" grouped/boarded by
+ * a field named "baz", letting one entity's collapse state silently leak
+ * into (or get overwritten by) the other's. Appends an export statement
+ * to the generated EntityView.jsx so this calls the real
+ * getPersistedCollapsedGroups/setPersistedCollapsedGroups and
+ * getPersistedCollapsedBoardColumns/setPersistedCollapsedBoardColumns
+ * functions directly with made-up entity/field names, rather than
+ * needing an actual entity literally named "Foo:Bar" in the spec (which
+ * would separately break codegen's unrelated use of entity names as raw
+ * JS identifiers in its generated import statements).
+ */
+test("getPersistedCollapsedGroups/getPersistedCollapsedBoardColumns never confuse entity \"Foo\" field \"Bar:baz\" with the unrelated entity \"Foo:Bar\" field \"baz\"", async () => {
+  const files = generateExportFiles(project).map((f) =>
+    f.path === "web/src/components/EntityView.jsx"
+      ? {
+          ...f,
+          content: `${f.content}\nexport { getPersistedCollapsedGroups, setPersistedCollapsedGroups, getPersistedCollapsedBoardColumns, setPersistedCollapsedBoardColumns };\n`,
+        }
+      : f,
+  );
+  const dir = writeGeneratedWebComponent(files);
+  try {
+    await withRealLocalStorage(async () => {
+      const storage = await import(path.join(dir, "web", "src", "components", "EntityView.jsx"));
+      storage.setPersistedCollapsedGroups("Foo", "Bar:baz", ["won"]);
+      assert.deepEqual(
+        storage.getPersistedCollapsedGroups("Foo:Bar", "baz"),
+        [],
+        "a plain colon-join of entityName+groupFieldName would make these two unrelated (entity, field) pairs collide on the identical storage key",
+      );
+      storage.setPersistedCollapsedBoardColumns("Foo", "Bar:baz", ["won"]);
+      assert.deepEqual(
+        storage.getPersistedCollapsedBoardColumns("Foo:Bar", "baz"),
+        [],
+        "same collision risk applies to the separate board-column-collapse store",
+      );
+    });
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
   }
 });
 
