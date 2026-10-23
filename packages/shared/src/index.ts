@@ -26,6 +26,33 @@ export const FIELD_TYPES = [
 const RESERVED_FIELD_NAMES = new Set(["id", "createdat"]);
 
 /**
+ * Mirrors packages/db/src/identifiers.ts's own SAFE_IDENTIFIER exactly
+ * (duplicated, not imported, for the same reason findSanitizedIdentifierCollisions
+ * below is: @forge/shared has no dependency on @forge/db) -- every field
+ * name reaches assertSafeIdentifier raw, with NO sanitization step first,
+ * in both migrate.ts (the live preview) and repository.ts's fieldColumns.
+ * That's unlike an entity name, which tableNameFor always sanitizes
+ * (replacing every non-ASCII-alphanumeric character with "_") before the
+ * identical assert, so an entity name never actually throws there.
+ * routes/projects.ts's own deriveFieldName (the manual "add field" UI
+ * path) already produces a name guaranteed to match this shape -- its own
+ * comment documents finding this exact gap at round 549 and closing it
+ * for that one call path specifically -- but an AI-generated spec's field
+ * name (anthropic.ts/debug.ts) is never run through deriveFieldName at
+ * all; only RESERVED_FIELD_NAMES and ProductSpecSchema.safeParse stand
+ * between the model's raw JSON and this crash point. A field name with a
+ * space, a hyphen, a leading digit, or any non-ASCII character (plausible
+ * for this app's Hebrew-primary user base, where `label` -- not `name` --
+ * is meant to carry the Hebrew display text) reached `diffAndMigrate`
+ * unguarded and threw a raw, uncaught-by-design Error there instead of
+ * being caught here, at the one point every spec is validated, where a
+ * rejected safeParse falls back to the heuristic provider invisibly (see
+ * RESERVED_FIELD_NAMES's own comment above for why that fallback is the
+ * intended outcome for exactly this class of risk).
+ */
+const SAFE_FIELD_NAME = /^[A-Za-z][A-Za-z0-9_]*$/;
+
+/**
  * SQLite compares identifiers (table names included) case-insensitively for
  * ASCII, even when double-quoted -- confirmed directly against this
  * project's actual SQLite binding: `CREATE TABLE IF NOT EXISTS "Order" (...)`
@@ -111,6 +138,9 @@ export const FieldSchema = z
   })
   .refine((f) => !RESERVED_FIELD_NAMES.has(f.name.toLowerCase()), (f) => ({
     message: `Field name "${f.name}" collides with a built-in column every table already has (id/createdAt) -- choose a different name`,
+  }))
+  .refine((f) => SAFE_FIELD_NAME.test(f.name), (f) => ({
+    message: `Field name "${f.name}" must be a plain ASCII identifier (letters, digits, underscore, starting with a letter) -- use "label" for a human-facing display name instead`,
   }));
 
 export type Field = z.infer<typeof FieldSchema>;

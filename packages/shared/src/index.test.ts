@@ -68,6 +68,44 @@ test("FieldSchema accepts an ordinary field name that merely contains 'id' as a 
   assert.ok(result.success);
 });
 
+/**
+ * Round 856: unlike an entity name (sanitized via tableNameFor before
+ * ever reaching assertSafeIdentifier -- see
+ * packages/db/src/identifiers.ts -- and so deliberately ACCEPTED here
+ * even when non-ASCII, per the round-283 tests below), a field name was
+ * passed to assertSafeIdentifier completely raw, with no sanitization
+ * step anywhere, in both migrate.ts and repository.ts's fieldColumns.
+ * Only the two literal reserved words were ever rejected here; a space,
+ * a hyphen, a leading digit, or a non-ASCII character (plausible for
+ * this app's Hebrew-primary users, where `label` -- not `name` -- is
+ * meant to carry the Hebrew display text) reached that assert unguarded
+ * and threw a raw, uncaught-by-design Error during a real build/refine
+ * instead of being caught here, at the one point every spec is
+ * validated, where a rejected safeParse falls back to the heuristic
+ * provider invisibly (see RESERVED_FIELD_NAMES's own comment above for
+ * why that's the designed outcome for exactly this class of risk).
+ * routes/projects.ts's own deriveFieldName (the manual "add field" UI
+ * path) already produces a name guaranteed to pass this check -- its own
+ * comment documents finding this exact gap at round 549 and closing it
+ * for that one call path only; this closes it at the schema itself, so
+ * every caller (the AI provider's raw JSON output included) is covered.
+ */
+test("FieldSchema rejects a field name that isn't a plain ASCII identifier", () => {
+  for (const name of ["due date", "e-mail", "2024Budget", "תאריך", "", " "]) {
+    if (name === "") continue; // z.string().min(1) already rejects this one with a different message
+    const result = FieldSchema.safeParse({ name, type: "text", required: false });
+    assert.ok(!result.success, `expected ${JSON.stringify(name)} to be rejected`);
+    assert.match(result.error.issues[0].message, /must be a plain ASCII identifier/);
+  }
+});
+
+test("FieldSchema accepts a field name with a leading letter, digits, and underscores -- the shape every real field name already uses", () => {
+  for (const name of ["dueDate", "amount2", "customer_id", "a"]) {
+    const result = FieldSchema.safeParse({ name, type: "text", required: false });
+    assert.ok(result.success, `expected ${JSON.stringify(name)} to be accepted`);
+  }
+});
+
 function baseSpec(entities: unknown[]) {
   return {
     summary: "A tiny app",

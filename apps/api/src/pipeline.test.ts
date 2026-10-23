@@ -24,7 +24,17 @@ const brokenSpec: ProductSpec = {
   // An unsafe field identifier is a real, guaranteed way to make the
   // Database agent's migration throw -- this is what actually reaching
   // the Debug Agent's recovery path in the pipeline looks like, whatever
-  // upstream cause produced a bad spec in practice.
+  // upstream cause produced a bad spec in practice. Round 856 closed this
+  // exact shape at the schema layer (FieldSchema's own new identifier-shape
+  // refine, mirroring assertSafeIdentifier's SAFE_IDENTIFIER), so this
+  // object can no longer survive a real ProductSpecSchema.parse -- it's
+  // only ever passed as `nextSpec` below (runBuildPipeline never
+  // re-validates that against the schema; it hands it straight to
+  // diffAndMigrate, which is where the real throw this test exercises still
+  // happens, exactly as it did for an already-stored legacy spec that
+  // predates this validation existing -- see insertProject below, which now
+  // stores `fixedSpec` instead so the project row itself still round-trips
+  // through getProject's own ProductSpecSchema.parse cleanly).
   entities: [{ name: "Customer", fields: [{ name: "name; DROP TABLE x;--", type: "text", required: true }] }],
 };
 
@@ -48,7 +58,13 @@ test("Debug Agent recovers from a real migration failure when ANTHROPIC_API_KEY 
     ownerId: "user1",
     name: "test",
     description: "test",
-    spec: brokenSpec,
+    // Stored as fixedSpec, not brokenSpec: insertProject round-trips
+    // through getProject's own ProductSpecSchema.parse, which round 856's
+    // new identifier-shape refine now rejects brokenSpec against (see
+    // brokenSpec's own comment above) -- brokenSpec is still what actually
+    // drives the real migration failure below, passed as `nextSpec`
+    // (runBuildPipeline never re-validates that against the schema).
+    spec: fixedSpec,
   });
 
   const originalKey = process.env.ANTHROPIC_API_KEY;
@@ -95,7 +111,13 @@ test("Debug Agent honestly reports it can't help when no ANTHROPIC_API_KEY is co
     ownerId: "user1",
     name: "test",
     description: "test",
-    spec: brokenSpec,
+    // Stored as fixedSpec, not brokenSpec: insertProject round-trips
+    // through getProject's own ProductSpecSchema.parse, which round 856's
+    // new identifier-shape refine now rejects brokenSpec against (see
+    // brokenSpec's own comment above) -- brokenSpec is still what actually
+    // drives the real migration failure below, passed as `nextSpec`
+    // (runBuildPipeline never re-validates that against the schema).
+    spec: fixedSpec,
   });
 
   const originalKey = process.env.ANTHROPIC_API_KEY;
@@ -140,7 +162,13 @@ test("every pipeline event message is plain English, even on the Debug Agent's r
     ownerId: "user1",
     name: "test",
     description: "test",
-    spec: brokenSpec,
+    // Stored as fixedSpec, not brokenSpec: insertProject round-trips
+    // through getProject's own ProductSpecSchema.parse, which round 856's
+    // new identifier-shape refine now rejects brokenSpec against (see
+    // brokenSpec's own comment above) -- brokenSpec is still what actually
+    // drives the real migration failure below, passed as `nextSpec`
+    // (runBuildPipeline never re-validates that against the schema).
+    spec: fixedSpec,
   });
 
   const originalKey = process.env.ANTHROPIC_API_KEY;
@@ -171,7 +199,13 @@ test("every pipeline event message is plain English, even on the Debug Agent's r
     ownerId: "user1",
     name: "test",
     description: "test",
-    spec: brokenSpec,
+    // Stored as fixedSpec, not brokenSpec: insertProject round-trips
+    // through getProject's own ProductSpecSchema.parse, which round 856's
+    // new identifier-shape refine now rejects brokenSpec against (see
+    // brokenSpec's own comment above) -- brokenSpec is still what actually
+    // drives the real migration failure below, passed as `nextSpec`
+    // (runBuildPipeline never re-validates that against the schema).
+    spec: fixedSpec,
   });
   const originalKey2 = process.env.ANTHROPIC_API_KEY;
   delete process.env.ANTHROPIC_API_KEY;
@@ -1085,7 +1119,13 @@ test("Debug Agent reports failure clearly when its own fix attempt is also inval
     ownerId: "user1",
     name: "test",
     description: "test",
-    spec: brokenSpec,
+    // Stored as fixedSpec, not brokenSpec: insertProject round-trips
+    // through getProject's own ProductSpecSchema.parse, which round 856's
+    // new identifier-shape refine now rejects brokenSpec against (see
+    // brokenSpec's own comment above) -- brokenSpec is still what actually
+    // drives the real migration failure below, passed as `nextSpec`
+    // (runBuildPipeline never re-validates that against the schema).
+    spec: fixedSpec,
   });
 
   const originalKey = process.env.ANTHROPIC_API_KEY;
