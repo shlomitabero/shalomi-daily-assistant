@@ -8148,6 +8148,144 @@ test("EntityPanel's record-form survives a different record's in-progress edit w
 });
 
 /**
+ * Round 833 regression: round 832 added formInstanceKeyRef/bumpFormInstanceKey
+ * so handleSubmit's success-path reset only fires if nothing has "moved on"
+ * since that submit began -- but it only converted startEdit/startCreateNew/
+ * startCreateForDate/startCreateForColumn/the in-form Delete button's reset
+ * to call bumpFormInstanceKey(). The Escape-to-cancel handler and the Cancel
+ * button (two more places that abandon the current editing session) were
+ * missed, so abandoning a slow save via Escape and then typing a fresh draft
+ * used to get that draft silently wiped out once the abandoned save resolved
+ * -- the exact same bug round 832 fixed, just reached a different way.
+ */
+test("EntityPanel's fresh draft started after Escape abandons a slow edit survives that edit's save resolving afterward", async () => {
+  await withJsdom(async () => {
+    const store: EntityRecord[] = [{ id: 1, name: "Acme Corp", status: "new" }];
+    const originalFetch = globalThis.fetch;
+    let resolvePatch!: (value: Response) => void;
+    const patchHeld = new Promise<Response>((resolve) => {
+      resolvePatch = resolve;
+    });
+    globalThis.fetch = (async (input: string, init?: RequestInit) => {
+      const method = init?.method ?? "GET";
+      if (method === "GET" && input === "/api/projects/proj1/entities/Deal") {
+        return new Response(JSON.stringify({ records: store }), { status: 200, headers: { "content-type": "application/json" } });
+      }
+      if (method === "PATCH" && input === "/api/projects/proj1/entities/Deal/1") {
+        return patchHeld; // the abandoned record's own Save stays in flight until the test resolves it
+      }
+      throw new Error(`unexpected request ${method} ${input}`);
+    }) as typeof fetch;
+
+    try {
+      renderEntityPanel();
+      await waitForCondition(() => document.querySelectorAll("table tbody tr").length === 1);
+
+      const editButton = () =>
+        Array.from(document.querySelectorAll("table tbody button")).find((b) => /edit/i.test(b.textContent ?? "")) as HTMLButtonElement;
+      const getNameInput = () => document.querySelector(".record-form input[type=text]") as HTMLInputElement;
+      const getForm = () => document.querySelector(".record-form") as HTMLFormElement;
+
+      fireEvent.click(editButton());
+      await waitForCondition(() => getNameInput().value === "Acme Corp");
+
+      fireEvent.change(getNameInput(), { target: { value: "Acme Corp EDITED" } });
+      fireEvent.submit(getForm());
+      await new Promise((resolve) => setTimeout(resolve, 0)); // let the PATCH actually start before abandoning it
+
+      // Escape discards the in-progress edit while that save is still in
+      // flight -- this must remount the form (bumpFormInstanceKey), so any
+      // reference captured before it must be re-queried fresh afterward.
+      fireEvent.keyDown(getForm(), { key: "Escape" });
+      await waitForCondition(() => getNameInput().value === "");
+
+      fireEvent.change(getNameInput(), { target: { value: "Brand New Draft" } });
+
+      store[0].name = "Acme Corp EDITED";
+      resolvePatch(
+        new Response(JSON.stringify({ record: { id: 1, name: "Acme Corp EDITED", status: "new" } }), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        }),
+      );
+      await waitForCondition(() => document.querySelector("table tbody tr")!.textContent?.includes("Acme Corp EDITED") ?? false);
+
+      assert.equal(
+        getNameInput().value,
+        "Brand New Draft",
+        "the fresh draft started after Escape must survive the abandoned edit's slow save resolving afterward",
+      );
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+});
+
+test("EntityPanel's fresh draft started after the Cancel button abandons a slow edit survives that edit's save resolving afterward", async () => {
+  await withJsdom(async () => {
+    const store: EntityRecord[] = [{ id: 1, name: "Acme Corp", status: "new" }];
+    const originalFetch = globalThis.fetch;
+    let resolvePatch!: (value: Response) => void;
+    const patchHeld = new Promise<Response>((resolve) => {
+      resolvePatch = resolve;
+    });
+    globalThis.fetch = (async (input: string, init?: RequestInit) => {
+      const method = init?.method ?? "GET";
+      if (method === "GET" && input === "/api/projects/proj1/entities/Deal") {
+        return new Response(JSON.stringify({ records: store }), { status: 200, headers: { "content-type": "application/json" } });
+      }
+      if (method === "PATCH" && input === "/api/projects/proj1/entities/Deal/1") {
+        return patchHeld; // the abandoned record's own Save stays in flight until the test resolves it
+      }
+      throw new Error(`unexpected request ${method} ${input}`);
+    }) as typeof fetch;
+
+    try {
+      renderEntityPanel();
+      await waitForCondition(() => document.querySelectorAll("table tbody tr").length === 1);
+
+      const editButton = () =>
+        Array.from(document.querySelectorAll("table tbody button")).find((b) => /edit/i.test(b.textContent ?? "")) as HTMLButtonElement;
+      const getNameInput = () => document.querySelector(".record-form input[type=text]") as HTMLInputElement;
+      const getCancelButton = () =>
+        Array.from(document.querySelectorAll(".record-form button[type=button]")).find((b) => /cancel/i.test(b.textContent ?? "")) as HTMLButtonElement;
+
+      fireEvent.click(editButton());
+      await waitForCondition(() => getNameInput().value === "Acme Corp");
+
+      fireEvent.change(getNameInput(), { target: { value: "Acme Corp EDITED" } });
+      fireEvent.submit(document.querySelector(".record-form")!);
+      await new Promise((resolve) => setTimeout(resolve, 0)); // let the PATCH actually start before abandoning it
+
+      // Cancel discards the in-progress edit while that save is still in
+      // flight -- this must remount the form (bumpFormInstanceKey), so any
+      // reference captured before it must be re-queried fresh afterward.
+      fireEvent.click(getCancelButton());
+      await waitForCondition(() => getNameInput().value === "");
+
+      fireEvent.change(getNameInput(), { target: { value: "Brand New Draft" } });
+
+      store[0].name = "Acme Corp EDITED";
+      resolvePatch(
+        new Response(JSON.stringify({ record: { id: 1, name: "Acme Corp EDITED", status: "new" } }), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        }),
+      );
+      await waitForCondition(() => document.querySelector("table tbody tr")!.textContent?.includes("Acme Corp EDITED") ?? false);
+
+      assert.equal(
+        getNameInput().value,
+        "Brand New Draft",
+        "the fresh draft started after Cancel must survive the abandoned edit's slow save resolving afterward",
+      );
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+});
+
+/**
  * Round 365 regression: EntityPanel never unmounts while an overlay dialog
  * (History, WhatsApp, Shortcuts, ...) is open on top of it (see App.tsx --
  * they render as siblings), so its own window-level "n"/j/k/x/Delete/d

@@ -1426,6 +1426,228 @@ test("the exported EntityView's record-form survives a different record's in-pro
   }
 });
 
+/**
+ * Round 833 regression, same gap as the corresponding apps/web fix: round
+ * 832's formInstanceKeyRef/bumpFormInstanceKey fix only converted
+ * startEdit/startCreateForColumn/startCreateForDate/startCreateNew/the
+ * in-form Delete button's reset -- the Escape-to-cancel handler and the
+ * Cancel button (which also abandon the current editing session) were
+ * missed in codegen.ts too, inheriting the exact same gap as the live
+ * preview's EntityPanel.tsx.
+ */
+test("the exported EntityView's fresh draft started after Escape abandons a slow edit survives that edit's save resolving afterward", async () => {
+  const files = generateExportFiles(project);
+  const dir = writeGeneratedWebComponent(files);
+  const store = [{ id: 1, name: "Acme Corp", status: "New" }];
+  const originalFetch = globalThis.fetch;
+  let resolvePatch!: (value: Response) => void;
+  const patchHeld = new Promise<Response>((resolve) => {
+    resolvePatch = resolve;
+  });
+  globalThis.fetch = (async (input: string, init?: RequestInit): Promise<Response> => {
+    const method = init?.method ?? "GET";
+    if (method === "GET" && input === "/api/Customer") {
+      return new Response(JSON.stringify({ records: store }), { status: 200, headers: { "content-type": "application/json" } });
+    }
+    if (method === "PATCH" && input === "/api/Customer/1") {
+      return patchHeld; // the abandoned record's own Save stays in flight until the test resolves it
+    }
+    throw new Error(`unexpected request ${method} ${input}`);
+  }) as typeof fetch;
+
+  try {
+    await withRealLocalStorage(async () => {
+      const { EntityView } = await import(path.join(dir, "web", "src", "components", "EntityView.jsx"));
+      const customerEntity = project.spec.entities.find((e) => e.name === "Customer")!;
+      const props = {
+        entity: customerEntity,
+        highlightRecordId: null,
+        onHighlightHandled: () => {},
+        onJumpToRecord: () => {},
+        onRecordCountChange: () => {},
+      };
+
+      const { container } = render(React.createElement(EntityView, props));
+      for (let i = 0; i < 40; i++) {
+        if (container.querySelectorAll("tbody tr").length === 1) break;
+        await act(async () => {
+          await new Promise((resolve) => setTimeout(resolve, 0));
+        });
+      }
+      assert.equal(container.querySelectorAll("tbody tr").length, 1, "expected the record to have loaded");
+
+      const editButton = Array.from(container.querySelectorAll("table tbody button")).find((b) => /edit/i.test(b.textContent ?? "")) as HTMLButtonElement;
+      const getNameInput = () => container.querySelector(".record-form input[type=text]") as HTMLInputElement;
+      const getForm = () => container.querySelector(".record-form") as HTMLFormElement;
+
+      await act(async () => {
+        fireEvent.click(editButton);
+      });
+      assert.equal(getNameInput().value, "Acme Corp");
+
+      await act(async () => {
+        fireEvent.change(getNameInput(), { target: { value: "Acme Corp EDITED" } });
+      });
+      await act(async () => {
+        fireEvent.submit(getForm());
+      });
+      await act(async () => {
+        await new Promise((resolve) => setTimeout(resolve, 0)); // let the PATCH actually start before abandoning it
+      });
+
+      // Escape discards the in-progress edit while that save is still in
+      // flight -- re-query every reference fresh afterward, since this
+      // remounts the form's own fields under a new formInstanceKey.
+      await act(async () => {
+        fireEvent.keyDown(getForm(), { key: "Escape" });
+      });
+      assert.equal(getNameInput().value, "", "sanity check: Escape must have reset the form to blank");
+
+      await act(async () => {
+        fireEvent.change(getNameInput(), { target: { value: "Brand New Draft" } });
+      });
+
+      store[0].name = "Acme Corp EDITED";
+      await act(async () => {
+        resolvePatch(
+          new Response(JSON.stringify({ record: { id: 1, name: "Acme Corp EDITED", status: "New" } }), {
+            status: 200,
+            headers: { "content-type": "application/json" },
+          }),
+        );
+        await new Promise((resolve) => setTimeout(resolve, 0));
+      });
+      for (let i = 0; i < 40; i++) {
+        if (container.querySelector("table tbody tr")?.textContent?.includes("Acme Corp EDITED")) break;
+        await act(async () => {
+          await new Promise((resolve) => setTimeout(resolve, 0));
+        });
+      }
+      assert.ok(
+        container.querySelector("table tbody tr")?.textContent?.includes("Acme Corp EDITED"),
+        "sanity check: the abandoned record's save must have actually resolved and refreshed the table",
+      );
+
+      assert.equal(
+        getNameInput().value,
+        "Brand New Draft",
+        "the fresh draft started after Escape must survive the abandoned edit's slow save resolving afterward",
+      );
+    });
+  } finally {
+    globalThis.fetch = originalFetch;
+    cleanup();
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("the exported EntityView's fresh draft started after the Cancel button abandons a slow edit survives that edit's save resolving afterward", async () => {
+  const files = generateExportFiles(project);
+  const dir = writeGeneratedWebComponent(files);
+  const store = [{ id: 1, name: "Acme Corp", status: "New" }];
+  const originalFetch = globalThis.fetch;
+  let resolvePatch!: (value: Response) => void;
+  const patchHeld = new Promise<Response>((resolve) => {
+    resolvePatch = resolve;
+  });
+  globalThis.fetch = (async (input: string, init?: RequestInit): Promise<Response> => {
+    const method = init?.method ?? "GET";
+    if (method === "GET" && input === "/api/Customer") {
+      return new Response(JSON.stringify({ records: store }), { status: 200, headers: { "content-type": "application/json" } });
+    }
+    if (method === "PATCH" && input === "/api/Customer/1") {
+      return patchHeld; // the abandoned record's own Save stays in flight until the test resolves it
+    }
+    throw new Error(`unexpected request ${method} ${input}`);
+  }) as typeof fetch;
+
+  try {
+    await withRealLocalStorage(async () => {
+      const { EntityView } = await import(path.join(dir, "web", "src", "components", "EntityView.jsx"));
+      const customerEntity = project.spec.entities.find((e) => e.name === "Customer")!;
+      const props = {
+        entity: customerEntity,
+        highlightRecordId: null,
+        onHighlightHandled: () => {},
+        onJumpToRecord: () => {},
+        onRecordCountChange: () => {},
+      };
+
+      const { container } = render(React.createElement(EntityView, props));
+      for (let i = 0; i < 40; i++) {
+        if (container.querySelectorAll("tbody tr").length === 1) break;
+        await act(async () => {
+          await new Promise((resolve) => setTimeout(resolve, 0));
+        });
+      }
+      assert.equal(container.querySelectorAll("tbody tr").length, 1, "expected the record to have loaded");
+
+      const editButton = Array.from(container.querySelectorAll("table tbody button")).find((b) => /edit/i.test(b.textContent ?? "")) as HTMLButtonElement;
+      const getNameInput = () => container.querySelector(".record-form input[type=text]") as HTMLInputElement;
+      const getCancelButton = () =>
+        Array.from(container.querySelectorAll(".record-form button[type=button]")).find((b) => /cancel/i.test(b.textContent ?? "")) as HTMLButtonElement;
+
+      await act(async () => {
+        fireEvent.click(editButton);
+      });
+      assert.equal(getNameInput().value, "Acme Corp");
+
+      await act(async () => {
+        fireEvent.change(getNameInput(), { target: { value: "Acme Corp EDITED" } });
+      });
+      await act(async () => {
+        fireEvent.submit(container.querySelector(".record-form")!);
+      });
+      await act(async () => {
+        await new Promise((resolve) => setTimeout(resolve, 0)); // let the PATCH actually start before abandoning it
+      });
+
+      // Cancel discards the in-progress edit while that save is still in
+      // flight -- re-query every reference fresh afterward, since this
+      // remounts the form's own fields under a new formInstanceKey.
+      await act(async () => {
+        fireEvent.click(getCancelButton());
+      });
+      assert.equal(getNameInput().value, "", "sanity check: Cancel must have reset the form to blank");
+
+      await act(async () => {
+        fireEvent.change(getNameInput(), { target: { value: "Brand New Draft" } });
+      });
+
+      store[0].name = "Acme Corp EDITED";
+      await act(async () => {
+        resolvePatch(
+          new Response(JSON.stringify({ record: { id: 1, name: "Acme Corp EDITED", status: "New" } }), {
+            status: 200,
+            headers: { "content-type": "application/json" },
+          }),
+        );
+        await new Promise((resolve) => setTimeout(resolve, 0));
+      });
+      for (let i = 0; i < 40; i++) {
+        if (container.querySelector("table tbody tr")?.textContent?.includes("Acme Corp EDITED")) break;
+        await act(async () => {
+          await new Promise((resolve) => setTimeout(resolve, 0));
+        });
+      }
+      assert.ok(
+        container.querySelector("table tbody tr")?.textContent?.includes("Acme Corp EDITED"),
+        "sanity check: the abandoned record's save must have actually resolved and refreshed the table",
+      );
+
+      assert.equal(
+        getNameInput().value,
+        "Brand New Draft",
+        "the fresh draft started after Cancel must survive the abandoned edit's slow save resolving afterward",
+      );
+    });
+  } finally {
+    globalThis.fetch = originalFetch;
+    cleanup();
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
 test("every generated .jsx/.js file is syntactically valid, checked with a real parser (esbuild)", async () => {
   const esbuild = await import("esbuild");
   const files = generateExportFiles(project);

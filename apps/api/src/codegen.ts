@@ -4877,6 +4877,13 @@ export function EntityView({ entity, highlightRecordId, onHighlightHandled, onJu
             e.preventDefault();
             setForm(emptyForm(entity));
             setEditingId(null);
+            // Mirrors the live Forge AI preview's own EntityPanel.tsx:
+            // without this, a save still in flight for the record just
+            // abandoned here would -- once it resolves -- see its own
+            // captured formInstanceKeyRef snapshot still match, and wipe
+            // out whatever the user has since typed into this now-blank
+            // form.
+            bumpFormInstanceKey();
           } else if ((e.ctrlKey || e.metaKey) && e.key === "Enter") {
             e.preventDefault();
             e.currentTarget.requestSubmit();
@@ -4918,6 +4925,11 @@ export function EntityView({ entity, highlightRecordId, onHighlightHandled, onJu
               onClick={() => {
                 setForm(emptyForm(entity));
                 setEditingId(null);
+                // Mirrors the live Forge AI preview's own EntityPanel.tsx:
+                // a save still in flight for the record just abandoned here
+                // must not be able to wipe out a fresh draft typed after
+                // this Cancel.
+                bumpFormInstanceKey();
               }}
             >
               Cancel

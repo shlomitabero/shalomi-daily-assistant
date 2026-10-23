@@ -3238,6 +3238,12 @@ export function EntityPanel({
             e.preventDefault();
             setEditingId(null);
             setForm(emptyForm(entity));
+            // Without this, a save still in flight for the record just
+            // abandoned here would -- once it resolves -- see its own
+            // captured formInstanceKeyRef snapshot still match, and wipe
+            // out whatever the user has since typed into this now-blank
+            // form (see handleSubmit's own formInstanceAtSubmitTime check).
+            bumpFormInstanceKey();
           } else if ((e.ctrlKey || e.metaKey) && e.key === "Enter") {
             // A longtext field's own <textarea> has no other way to submit --
             // a bare Enter there only inserts a newline, unlike every
@@ -3288,6 +3294,10 @@ export function EntityPanel({
               onClick={() => {
                 setEditingId(null);
                 setForm(emptyForm(entity));
+                // Same reasoning as the Escape handler above: a save still
+                // in flight for the record just abandoned here must not be
+                // able to wipe out a fresh draft typed after this Cancel.
+                bumpFormInstanceKey();
               }}
             >
               {t("entity.cancel")}
