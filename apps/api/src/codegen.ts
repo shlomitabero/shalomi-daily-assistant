@@ -359,6 +359,30 @@ for (const entity of ENTITIES) {
     columns.push(\`\${q(field.name)} \${sqlType(field.type)}\${field.required ? " NOT NULL" : ""}\${references}\`);
   }
   db.exec(\`CREATE TABLE IF NOT EXISTS \${q(entity.name)} (\${columns.join(", ")})\`);
+  // Round 802: CREATE TABLE IF NOT EXISTS is a silent no-op once the table
+  // already exists (the same SQLite semantics packages/shared's own
+  // findSanitizedIdentifierCollisions comment documents elsewhere in this
+  // codebase) -- so a field added to ENTITIES after the very first run,
+  // exactly as this file's own generated README's "Extending it" section
+  // instructs ("add a field... then restart -- existing columns are kept,
+  // and SQLite migrates new ones automatically"), was never actually added
+  // to the real table. Every POST/PATCH touching that field then hit a raw,
+  // untranslated "table X has no column named Y" SQLite error instead of
+  // the README's promised automatic migration. Mirrors migrate.ts's own
+  // additive-only approach exactly: NOT NULL is deliberately never added
+  // retroactively (SQLite can't satisfy it against existing rows -- it's
+  // added nullable, with required-ness still enforced by this same file's
+  // own coerce() for every write going forward), and a relation field still
+  // gets its REFERENCES clause, same as a brand-new table already gets
+  // above. A no-op for a table that was just CREATEd fresh above (every
+  // field is already present), so this only ever does real work on a
+  // table that already existed before this run.
+  const existingColumns = new Set(db.prepare(\`PRAGMA table_info(\${q(entity.name)})\`).all().map((c) => c.name));
+  for (const field of entity.fields) {
+    if (existingColumns.has(field.name)) continue;
+    const references = field.type === "relation" && field.relationTo && ENTITY_NAMES.has(field.relationTo) ? \` REFERENCES \${q(field.relationTo)}(id)\` : "";
+    db.exec(\`ALTER TABLE \${q(entity.name)} ADD COLUMN \${q(field.name)} \${sqlType(field.type)}\${references}\`);
+  }
 }
 
 const DATE_FORMAT = /^(\\d{4})-(\\d{2})-(\\d{2})$/;

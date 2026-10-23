@@ -200,6 +200,126 @@ test("generated server.js works end-to-end for an entity named after a reserved 
   }
 });
 
+/**
+ * Round 802: the generated server.js's own README ("Extending it") tells
+ * the user to add a field to ENTITIES and restart, promising "existing
+ * columns are kept, and SQLite migrates new ones automatically (ALTER
+ * TABLE, same as Forge AI's own migration engine)" -- but the schema loop
+ * only ever ran CREATE TABLE IF NOT EXISTS, a documented no-op once the
+ * table already exists (see packages/shared's own
+ * findSanitizedIdentifierCollisions comment on this exact SQLite
+ * semantics). A field added after the very first run was never actually
+ * added to the real table, so every write touching it hit a raw,
+ * untranslated SQLite error instead of the promised automatic migration.
+ * Reproduced here against two REAL spawned server.js processes sharing
+ * the same on-disk data.sqlite across a restart -- not just reading the
+ * schema-creation source text -- the same way the keyword-entity test
+ * above proves end-to-end behavior, not just that the code looks right.
+ */
+test("generated server.js migrates a field added to ENTITIES after the first run into the real, already-existing SQLite table, exactly as its own README promises", async () => {
+  const customerV1: Entity = {
+    name: "Customer",
+    label: "Customers",
+    fields: [{ name: "name", label: "Name", type: "text", required: true }],
+  };
+  const customerV2: Entity = {
+    name: "Customer",
+    label: "Customers",
+    fields: [
+      { name: "name", label: "Name", type: "text", required: true },
+      { name: "email", label: "Email", type: "text", required: false },
+    ],
+  };
+  const projectV1: Project = { ...project, spec: { ...project.spec, entities: [customerV1] } };
+  const projectV2: Project = { ...project, spec: { ...project.spec, entities: [customerV2] } };
+
+  const dir = mkdtempSync(path.join(tmpdir(), "codegen-migration-test-"));
+  const repoRoot = path.resolve(import.meta.dirname, "../../..");
+  symlinkSync(path.join(repoRoot, "node_modules"), path.join(dir, "node_modules"));
+
+  const port = 34000 + Math.floor(Math.random() * 5000);
+
+  async function runServer(project: Project, fn: (port: number) => Promise<void>): Promise<void> {
+    const serverJs = generateExportFiles(project).find((f) => f.path === "server.js")!.content;
+    writeFileSync(path.join(dir, "server.js"), serverJs);
+    const child = spawn(process.execPath, ["--experimental-sqlite", "server.js"], {
+      cwd: dir,
+      env: { ...process.env, PORT: String(port) },
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+    let stderr = "";
+    child.stderr.on("data", (chunk) => {
+      stderr += chunk.toString();
+    });
+    try {
+      const deadline = Date.now() + 5000;
+      let lastErr: unknown;
+      while (Date.now() < deadline) {
+        if (child.exitCode !== null) {
+          throw new Error(`server.js exited early (code ${child.exitCode}):\n${stderr}`);
+        }
+        try {
+          const res = await fetch(`http://localhost:${port}/api/Customer`);
+          assert.equal(res.status, 200);
+          await fn(port);
+          return;
+        } catch (err) {
+          lastErr = err;
+          await new Promise((r) => setTimeout(r, 100));
+        }
+      }
+      throw lastErr instanceof Error ? lastErr : new Error(String(lastErr));
+    } finally {
+      // Waits for the real process exit (not just calling kill() and moving
+      // on) -- the next run reopens the exact same data.sqlite file, which
+      // needs this process to have actually released its own handle on it
+      // first.
+      await new Promise<void>((resolve) => {
+        child.once("exit", () => resolve());
+        child.kill();
+      });
+    }
+  }
+
+  try {
+    await runServer(projectV1, async (port) => {
+      const createRes = await fetch(`http://localhost:${port}/api/Customer`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ name: "Dana" }),
+      });
+      assert.equal(createRes.status, 201, "the first run's own write must succeed before the table ever has an 'email' column");
+    });
+
+    await runServer(projectV2, async (port) => {
+      // The pre-existing row must have survived the restart, with the new
+      // column simply unset -- confirms the ALTER TABLE really did run
+      // against the SAME table CREATE TABLE IF NOT EXISTS silently skipped
+      // re-creating, not a fresh one.
+      const listRes = await fetch(`http://localhost:${port}/api/Customer`);
+      const { records } = (await listRes.json()) as { records: { name: string; email: string | null }[] };
+      assert.equal(records.length, 1, "Dana's own record from the first run must still be there");
+      assert.equal(records[0]!.name, "Dana");
+      assert.equal(records[0]!.email, null, "the new column must exist (not throw) and simply be unset for a pre-existing row");
+
+      const createRes = await fetch(`http://localhost:${port}/api/Customer`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ name: "Yossi", email: "yossi@example.com" }),
+      });
+      assert.equal(
+        createRes.status,
+        201,
+        "writing the newly-added field after a restart must succeed via a real migrated column, not fail with a raw 'table has no column' SQLite error",
+      );
+      const created = (await createRes.json()) as { record: { email: string } };
+      assert.equal(created.record.email, "yossi@example.com");
+    });
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
 // Regression test: the exported standalone app's own coerce() function
 // (a separate copy of packages/db/src/repository.ts's coerceValue, since
 // this app has no dependency on Forge AI at runtime) validated every
