@@ -91,6 +91,17 @@ const NEGATIVE_WORDS = [
   "unqualified",
   "disqualified",
   "unshipped",
+  // round 872: "success" and "completed" are both POSITIVE_WORDS entries
+  // too, and "unsuccessful"/"notcompleted" (the raw, no-space enum-value
+  // shape a PascalCase status like "NotCompleted" lowercases to) each
+  // contain one as a literal substring, the identical negated-positive-word
+  // shape round 458 already fixed for "unpaid"/"undelivered"/etc. "not
+  // completed" (with a space) is also listed, since a freeform AI-generated
+  // enum value isn't guaranteed to collapse the space the way a PascalCase
+  // name would.
+  "unsuccessful",
+  "notcompleted",
+  "not completed",
 ];
 
 const DATE_FORMAT = /^(\d{4})-(\d{2})-(\d{2})$/;

@@ -1722,6 +1722,10 @@ const POSITIVE_WORDS = ["won", "completed", "active", "paid", "delivered", "succ
 const NEGATIVE_WORDS = [
   "lost", "cancelled", "canceled", "inactive", "overdue", "no-show", "failed", "rejected", "declined", "denied",
   "unpaid", "undelivered", "unconfirmed", "unapproved", "disapproved", "unqualified", "disqualified", "unshipped",
+  // round 872: mirrors the live preview's own entityFormatting.ts fix --
+  // "unsuccessful"/"notcompleted"/"not completed" each contain a
+  // POSITIVE_WORDS entry ("success"/"completed") as a literal substring.
+  "unsuccessful", "notcompleted", "not completed",
 ];
 // Mirrors the live preview's own entityFormatting.ts formatRecordCreatedAt
 // (round 168): every record carries a real, server-assigned createdAt

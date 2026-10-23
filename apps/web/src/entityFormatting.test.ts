@@ -122,6 +122,27 @@ test("badgeTone recognizes common 'un-'/'dis-' negated status words as negative,
   assert.equal(badgeTone("Shipped"), "positive");
 });
 
+/**
+ * Round 872's finding: the same negated-positive-word collision round 458
+ * fixed for "unpaid"/"undelivered"/etc. also applied to "success"/
+ * "completed" -- two more POSITIVE_WORDS entries -- just never checked.
+ * "Unsuccessful" and "NotCompleted" (the raw, no-space shape a PascalCase
+ * enum value like that lowercases to) each contain their positive
+ * counterpart as a literal substring, so they were misread as a positive
+ * (green) badge, the exact opposite of their meaning -- confirmed with a
+ * real repro against this exact exported function before fixing. A
+ * freeform AI-generated enum value also isn't guaranteed to collapse the
+ * space the way a PascalCase name would, so "Not Completed" (with a
+ * space) is covered too.
+ */
+test("badgeTone recognizes 'Unsuccessful' and 'NotCompleted'/'Not Completed' as negative, not positive from matching 'success'/'completed' as a substring", () => {
+  assert.equal(badgeTone("Unsuccessful"), "negative");
+  assert.equal(badgeTone("Successful"), "positive");
+  assert.equal(badgeTone("NotCompleted"), "negative");
+  assert.equal(badgeTone("Not Completed"), "negative");
+  assert.equal(badgeTone("Completed"), "positive");
+});
+
 test("formatDateValue formats a valid ISO date per locale, and leaves an invalid one unchanged", () => {
   const result = formatDateValue("2026-03-15", "en");
   assert.match(result, /3\/15\/2026|15\/3\/2026/); // exact format is locale/engine-dependent, just confirm it parsed
