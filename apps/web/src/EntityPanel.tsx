@@ -2070,20 +2070,29 @@ export function EntityPanel({
   // Gated on viewMode === "table": grouping/collapsing is only ever set
   // from Table view (the Group-by select itself only renders there), but
   // groupFieldName/collapsedGroups are view-mode-agnostic state that
-  // survives switching to Board/Calendar. Those views render every record
-  // from visibleRecords with no "collapsed" concept of their own, yet the
-  // toolbar's Copy/Export-CSV/Print-list buttons read effectivelyVisibleRecords
-  // unconditionally in every view -- so without this gate, grouping and
-  // collapsing a section in Table and then switching to Board/Calendar
-  // silently dropped that section's records from the exported CSV/
-  // clipboard/print output, despite the screen showing every record.
-  const effectivelyVisibleRecords = useMemo(
-    () =>
-      viewMode === "table" && recordGroups
-        ? recordGroups.flatMap((group) => (collapsedGroups.has(group.key) ? [] : group.records))
-        : visibleRecords,
-    [viewMode, recordGroups, collapsedGroups, visibleRecords],
-  );
+  // survives switching to Board/Calendar. Calendar view really does render
+  // every record from visibleRecords with no "collapsed" concept of its
+  // own -- but Board view does have one: collapsedBoardColumns, toggled
+  // per-column via the board-column-toggle chevron, hides that column's
+  // cards from the screen the exact same way a collapsed Table group hides
+  // its rows ("!collapsed && column.records.map" below). Without its own
+  // branch here, collapsing a Board column visually hid its cards while
+  // the toolbar's view-mode-agnostic Copy/Export-CSV/Print-list buttons
+  // (which read effectivelyVisibleRecords unconditionally in every view)
+  // kept exporting them anyway. groupByField is called without its
+  // optional translator here since only column membership (value/records)
+  // is needed, never the "(other)" bucket's display label.
+  const effectivelyVisibleRecords = useMemo(() => {
+    if (viewMode === "table" && recordGroups) {
+      return recordGroups.flatMap((group) => (collapsedGroups.has(group.key) ? [] : group.records));
+    }
+    if (viewMode === "board" && boardField) {
+      return groupByField(visibleRecords, boardField).flatMap((column) =>
+        collapsedBoardColumns.has(column.value) ? [] : column.records,
+      );
+    }
+    return visibleRecords;
+  }, [viewMode, recordGroups, collapsedGroups, boardField, collapsedBoardColumns, visibleRecords]);
 
   // Totals row under the table -- sums each visible number-type column over
   // effectivelyVisibleRecords (not visibleRecords), so a collapsed group's

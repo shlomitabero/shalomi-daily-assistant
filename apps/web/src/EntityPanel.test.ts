@@ -4696,6 +4696,68 @@ test("EntityPanel's Export CSV button includes every record once the user leaves
 });
 
 /**
+ * Round 821's finding: effectivelyVisibleRecords' viewMode === "table" gate
+ * assumed Board/Calendar views have "no 'collapsed' concept of their own" --
+ * true for Calendar, but false for Board: collapsedBoardColumns hides that
+ * column's cards from the screen the exact same way a collapsed Table group
+ * hides its rows ("!collapsed && column.records.map" in the Board render).
+ * Collapsing a Board column still silently exported/copied/printed its
+ * hidden cards -- the mirror image of round 804's own finding (stale Table
+ * collapse leaking into a Board/Calendar export), for the one collapse
+ * mechanism Board view actually does have.
+ */
+test("EntityPanel's Export CSV button (nothing selected) excludes records hidden inside a collapsed Board column", async () => {
+  await withJsdom(async () => {
+    const store: EntityRecord[] = [
+      { id: 1, name: "Acme Corp", status: "new" },
+      { id: 2, name: "Beta Inc", status: "won" },
+      { id: 3, name: "Gamma LLC", status: "won" },
+    ];
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = mockRecordsFetch(store) as typeof fetch;
+    const originalCreateObjectURL = (URL as unknown as { createObjectURL?: (b: Blob) => string }).createObjectURL;
+    const originalRevokeObjectURL = (URL as unknown as { revokeObjectURL?: (u: string) => void }).revokeObjectURL;
+    let capturedBlob: Blob | null = null;
+    (URL as unknown as { createObjectURL: (b: Blob) => string }).createObjectURL = (b: Blob) => {
+      capturedBlob = b;
+      return "blob:mock-url";
+    };
+    (URL as unknown as { revokeObjectURL: (u: string) => void }).revokeObjectURL = () => {};
+    try {
+      renderEntityPanel();
+      await waitForCondition(() => document.querySelectorAll("table tbody tr").length === 3);
+
+      const boardToggle = document.querySelectorAll(".view-toggle-btn")[1] as HTMLButtonElement;
+      fireEvent.click(boardToggle);
+      await waitForCondition(() => document.querySelectorAll(".board-card").length === 3);
+
+      // status's enumValues are ["new", "won", "lost"] -- columns render in
+      // that declared order, so index 1 is "won" (Beta Inc, Gamma LLC).
+      const columnToggles = Array.from(document.querySelectorAll(".board-column-toggle")) as HTMLButtonElement[];
+      fireEvent.click(columnToggles[1]);
+      await waitForCondition(() => document.querySelectorAll(".board-card").length === 1);
+      assert.ok(
+        !Array.from(document.querySelectorAll(".board-card")).some((c) => c.textContent?.includes("Beta Inc")),
+        "the 'won' column must actually be collapsed before testing export",
+      );
+
+      const exportBtn = document.querySelector(".csv-export-btn") as HTMLButtonElement;
+      fireEvent.click(exportBtn);
+
+      await waitForCondition(() => capturedBlob !== null);
+      const csvText = await (capturedBlob as unknown as Blob).text();
+      assert.match(csvText, /Acme Corp/, "the never-collapsed record must still be exported");
+      assert.doesNotMatch(csvText, /Beta Inc/, "a record hidden inside a collapsed Board column must not be exported");
+      assert.doesNotMatch(csvText, /Gamma LLC/, "a record hidden inside a collapsed Board column must not be exported");
+    } finally {
+      globalThis.fetch = originalFetch;
+      if (originalCreateObjectURL) (URL as unknown as { createObjectURL: (b: Blob) => string }).createObjectURL = originalCreateObjectURL;
+      if (originalRevokeObjectURL) (URL as unknown as { revokeObjectURL: (u: string) => void }).revokeObjectURL = originalRevokeObjectURL;
+    }
+  });
+});
+
+/**
  * Regression test for round 499's finding: round 487 (above) fixed Export
  * CSV/Copy/Print's own actions to use the grouping/collapse-aware
  * effectivelyVisibleRecords instead of the flat visibleRecords, but never

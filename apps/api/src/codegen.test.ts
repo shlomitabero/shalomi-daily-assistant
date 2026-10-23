@@ -5397,6 +5397,114 @@ test("the exported EntityView's Export CSV button includes every record once the
 });
 
 /**
+ * Round 821's finding: the test above confirms effectivelyVisibleRecords
+ * correctly keeps every record once the user leaves Table view with a
+ * group still collapsed from before -- Board/Calendar have no "collapsed
+ * group" concept of their own. But Board view has its OWN, orthogonal
+ * collapse mechanism, collapsedBoardColumns, hiding that column's cards
+ * from the screen the exact same way a collapsed Table group hides its
+ * rows -- never consulted by effectivelyVisibleRecords, which only had a
+ * viewMode === "table" branch. Collapsing a Board column still silently
+ * exported its hidden cards. Mirrors the live preview's own
+ * EntityPanel.test.ts regression test (round 821).
+ */
+test("the exported EntityView's Export CSV button excludes records hidden inside a collapsed Board column", async () => {
+  const files = generateExportFiles(project);
+  const dir = writeGeneratedWebComponent(files);
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = (async () => ({
+    ok: true,
+    status: 200,
+    json: async () => ({
+      records: [
+        { id: 1, name: "Acme Corp", status: "New" },
+        { id: 2, name: "Beta Inc", status: "Won" },
+        { id: 3, name: "Gamma LLC", status: "Won" },
+      ],
+    }),
+  })) as typeof fetch;
+  const originalCreateObjectURL = (URL as unknown as { createObjectURL?: (b: Blob) => string }).createObjectURL;
+  const originalRevokeObjectURL = (URL as unknown as { revokeObjectURL?: (u: string) => void }).revokeObjectURL;
+  let capturedBlob: Blob | null = null;
+  (URL as unknown as { createObjectURL: (b: Blob) => string }).createObjectURL = (b: Blob) => {
+    capturedBlob = b;
+    return "blob:mock-url";
+  };
+  (URL as unknown as { revokeObjectURL: (u: string) => void }).revokeObjectURL = () => {};
+
+  try {
+    await withRealLocalStorage(async () => {
+      const { EntityView } = await import(path.join(dir, "web", "src", "components", "EntityView.jsx"));
+      const customerEntity = project.spec.entities.find((e) => e.name === "Customer")!;
+      const props = {
+        entity: customerEntity,
+        highlightRecordId: null,
+        onHighlightHandled: () => {},
+        onJumpToRecord: () => {},
+        onRecordCountChange: () => {},
+      };
+
+      const { container } = render(React.createElement(EntityView, props));
+      for (let i = 0; i < 40; i++) {
+        if (container.querySelectorAll("table tbody tr").length === 3) break;
+        await act(async () => {
+          await new Promise((resolve) => setTimeout(resolve, 0));
+        });
+      }
+
+      const boardToggle = container.querySelectorAll(".view-toggle-btn")[1] as HTMLButtonElement;
+      await act(async () => {
+        fireEvent.click(boardToggle);
+      });
+      for (let i = 0; i < 40; i++) {
+        if (container.querySelectorAll(".board-card").length === 3) break;
+        await act(async () => {
+          await new Promise((resolve) => setTimeout(resolve, 0));
+        });
+      }
+
+      // status's enumValues are ["New", "Won"] -- columns render in that
+      // declared order, so index 1 is "Won" (Beta Inc, Gamma LLC).
+      const columnToggles = Array.from(container.querySelectorAll(".board-column-toggle")) as HTMLButtonElement[];
+      await act(async () => {
+        fireEvent.click(columnToggles[1]);
+      });
+      for (let i = 0; i < 40; i++) {
+        if (container.querySelectorAll(".board-card").length === 1) break;
+        await act(async () => {
+          await new Promise((resolve) => setTimeout(resolve, 0));
+        });
+      }
+      assert.equal(container.querySelectorAll(".board-card").length, 1, "the 'Won' column must actually be collapsed before testing export");
+      assert.ok(!container.textContent?.includes("Beta Inc"), "the 'Won' column must actually be collapsed before testing export");
+
+      const exportBtn = container.querySelector(".csv-export-btn") as HTMLButtonElement;
+      await act(async () => {
+        fireEvent.click(exportBtn);
+      });
+      for (let i = 0; i < 40; i++) {
+        if (capturedBlob !== null) break;
+        await act(async () => {
+          await new Promise((resolve) => setTimeout(resolve, 0));
+        });
+      }
+
+      assert.ok(capturedBlob, "Export CSV must actually build and download a Blob");
+      const csvText = await (capturedBlob as unknown as Blob).text();
+      assert.match(csvText, /Acme Corp/, "the never-collapsed record must still be exported");
+      assert.doesNotMatch(csvText, /Beta Inc/, "a record hidden inside a collapsed Board column must not be exported");
+      assert.doesNotMatch(csvText, /Gamma LLC/, "a record hidden inside a collapsed Board column must not be exported");
+    });
+  } finally {
+    globalThis.fetch = originalFetch;
+    if (originalCreateObjectURL) (URL as unknown as { createObjectURL: (b: Blob) => string }).createObjectURL = originalCreateObjectURL;
+    if (originalRevokeObjectURL) (URL as unknown as { revokeObjectURL: (u: string) => void }).revokeObjectURL = originalRevokeObjectURL;
+    cleanup();
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+/**
  * Round 487's finding: selectedOrAllRecords's own contract is "export/print
  * what the table is currently showing" when nothing is selected -- but
  * handleExportCsv, handleCopy, and the print-list sheet all passed the flat
