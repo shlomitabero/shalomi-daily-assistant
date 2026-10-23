@@ -31548,3 +31548,25 @@ Still no genuine reply from שלומי. A documentation/implementation drift: th
 **Verification**: reverted the `ALTER TABLE` loop and reran -- the test failed exactly as predicted, with the added field missing entirely from the API response (`undefined`, not even `null`) for the pre-existing record; restored, it passes. Only `apps/api` changed this round, so its own full suite ran: 584/585 pass; the sole failure is the already-documented pre-existing `codegen.test.ts` process-exit hang flake, stopping at the identical subtest it has in every round's log since 787 -- confirmed unrelated, and the new test itself ran and passed inside this full run. `npm run build` (esbuild bundle) clean.
 
 **Status**: shipped and pushed.
+
+### Round 803: deleting the automation rule currently open for editing left the form stuck mid-edit
+
+Still no genuine reply from שלומי. The exact hazard class EntityPanel.tsx already learned to guard, never ported to its own close structural sibling.
+
+**The gap**: the rule list's own Delete button stays clickable on every row regardless of which one (if any) is currently open for editing below -- both the list and the single shared create/edit form are on screen at the same time. `handleDelete` never checked or cleared `editingRuleId`, so deleting the exact rule the form was mid-edit on left `editingRuleId` pointing at an id that no longer exists on the server.
+
+**Why this is not deliberate**: this exact hazard class -- deleting the very record currently open in an edit form -- was already identified and fixed in this app's own structurally-similar sibling, `EntityPanel.tsx`: its in-form Delete button only resets `editingId`/form once the delete actually went through. `AutomationsPanel.tsx`'s own `editingRuleId`/`handleStartEdit`/`resetToCreateMode` machinery is itself a close structural parallel to `EntityPanel`'s `editingId`/`startEdit`/`emptyForm` reset pattern, but the one case `EntityPanel` already learned to guard was never ported over when this edit feature was added here. The existing test suite had three dedicated tests for the Edit flow (seed-on-edit, submit-and-return-to-create-mode, Cancel-discards-edit) but none for delete-while-editing, confirming this interaction was simply never considered.
+
+**Concrete failure scenario**: click Edit on a rule (the form seeds from it, heading reads "Edit rule", entity select locks, a Cancel button appears). Without saving, click that same rule's own Delete button (still visible in the list above) and confirm. The DELETE succeeds and the row disappears, but the form keeps showing "Edit rule", pre-filled with the now-deleted rule's stale data, with a visible "Save changes" button -- nothing on screen signals that saving is already impossible. Clicking it correctly 404s with `AUTOMATION_RULE_NOT_FOUND`, but the form stays stuck in this broken edit state with no way out except manually clicking Cancel.
+
+**The fix**: `handleDelete` now checks `editingRuleId === rule.id` after a successful delete and calls `resetToCreateMode()` if so, returning the form to a clean create-mode state instead of leaving it dangling on a rule that's already gone.
+
+**Scope**: `apps/api` needs no fix -- the server already does the right thing (a clean, idempotent 404 via `getAutomationRule`/`NotFoundError`); the bug was purely client-side stale state. No `codegen.ts` parity concern -- the exported standalone app has no Automations feature at all (it requires the live server's own WhatsApp integration).
+
+**Not a controlled-element risk**: `editingRuleId` is a plain string id driving which branch of a conditional render shows, not a `<select>`/checkbox/radio whose own native DOM value could mask staleness -- verified entirely by reading `handleDelete`, `handleSubmit`'s edit branch, and the server route directly.
+
+**The test**: opens Edit on the one existing rule, confirms the form is genuinely in edit mode, then clicks that same rule's own Delete button and confirms. Asserts the form returns to create mode (heading, unlocked entity select, no Cancel button, blank message field) instead of staying stuck on "Edit rule" for a deleted id -- and that the mock fetch never receives a PATCH for the deleted rule.
+
+**Verification**: reverted just the new `editingRuleId` check and reran -- the test failed exactly as predicted ("Edit rule" instead of "New rule"); restored, it passes. Only `apps/web` changed this round, so its own full suite ran: 1117/1117 pass, no flakes. `tsc -b` clean.
+
+**Status**: shipped and pushed.
