@@ -249,6 +249,79 @@ test("computeCheckpointDiff reports a same-named enum field whose enumValues cha
   ]);
 });
 
+/**
+ * Round 818's finding: fieldSignature encoded a sorted enumValues string
+ * but never enumLabels -- real, pervasively user-rendered content (the
+ * displayed text in table cells, Kanban columns, form <select> options,
+ * automation rule conditions, calendar exports, and grouping/sort/search
+ * matching all read enumLabels, not the raw enumValue). Not cosmetic like
+ * `label` (deliberately excluded, see the test below) -- a refine that
+ * only re-labels an enum's existing options, leaving enumValues/type/
+ * required untouched, was invisible to this diff entirely.
+ */
+test("computeCheckpointDiff reports a same-named enum field as changedFieldNames when only its enumLabels differ, even with identical enumValues", () => {
+  const current = makeSpec([
+    {
+      name: "Order",
+      fields: [
+        {
+          name: "status",
+          label: "Status",
+          type: "enum",
+          required: true,
+          enumValues: ["New", "Done"],
+          enumLabels: { New: "חדש", Done: "בוצע" },
+        },
+      ],
+    },
+  ]);
+  const checkpoint = makeSpec([
+    { name: "Order", fields: [{ name: "status", label: "Status", type: "enum", required: true, enumValues: ["New", "Done"] }] },
+  ]);
+
+  const diff = computeCheckpointDiff(current, checkpoint);
+  assert.deepEqual(diff.changedEntities, [
+    { name: "Order", label: "Order", removedFieldNames: [], addedFieldNames: [], changedFieldNames: ["Status"], descriptionChanged: false },
+  ]);
+});
+
+test("computeCheckpointDiff does not flag an enum field as changed when enumLabels is undefined on both sides", () => {
+  const current = makeSpec([
+    { name: "Order", fields: [{ name: "status", label: "Status", type: "enum", required: true, enumValues: ["New", "Done"] }] },
+  ]);
+  const checkpoint = makeSpec([
+    { name: "Order", fields: [{ name: "status", label: "Status", type: "enum", required: true, enumValues: ["New", "Done"] }] },
+  ]);
+
+  const diff = computeCheckpointDiff(current, checkpoint);
+  assert.deepEqual(diff.changedEntities, [], "identical (absent) enumLabels on both sides must not be reported as a change");
+});
+
+/**
+ * Round 818's finding (isCheckpointCurrent side): the identical gap --
+ * a checkpoint whose enumValues/type/required all match the live spec but
+ * whose enumLabels differ used to be wrongly reported "Current", even
+ * though restoring it would visibly change every rendered instance of
+ * that enum field.
+ */
+test("isCheckpointCurrent is false when a same-named enum field's enumLabels differ, even though enumValues/type/required all match", () => {
+  const current = makeSpec([
+    {
+      name: "Order",
+      fields: [{ name: "status", type: "enum", required: true, enumValues: ["New", "Done"], enumLabels: { New: "חדש", Done: "בוצע" } }],
+    },
+  ]);
+  const enumLabelsChanged = makeSpec([
+    { name: "Order", fields: [{ name: "status", type: "enum", required: true, enumValues: ["New", "Done"] }] },
+  ]);
+
+  assert.equal(
+    isCheckpointCurrent(current, enumLabelsChanged),
+    false,
+    "same enumValues, type, and required must not be enough when the field's own enumLabels genuinely differ",
+  );
+});
+
 test("computeCheckpointDiff never flags a field as changed just because its label differs -- a label rename alone is cosmetic", () => {
   const current = makeSpec([
     {

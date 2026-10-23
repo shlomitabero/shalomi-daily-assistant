@@ -41,8 +41,26 @@ export interface CheckpointDiff {
  */
 function fieldSignature(f: Field): string {
   const enumPart = f.type === "enum" ? (f.enumValues ?? []).slice().sort().join(",") : "";
+  // Real, pervasively user-rendered content -- the displayed text in table
+  // cells, Kanban board columns, form <select> options, automation rule
+  // conditions, calendar exports, and grouping/sort/search matching all
+  // read enumLabels, not the raw enumValue (entityFormatting.ts, calendarIcs.ts,
+  // AutomationsPanel.tsx). Not cosmetic like `label` (excluded deliberately,
+  // see this function's own doc comment above) -- a refine that only
+  // re-labels an enum's existing options, leaving enumValues/type/required
+  // untouched, used to be invisible here. Stringified as sorted
+  // "rawValue:displayLabel" pairs so key order never produces a spurious
+  // diff; undefined and {} are deliberately the same signature (both mean
+  // "no overrides, raw values shown as-is").
+  const enumLabelsPart =
+    f.type === "enum"
+      ? Object.entries(f.enumLabels ?? {})
+          .sort(([a], [b]) => a.localeCompare(b))
+          .map(([value, label]) => `${value}:${label}`)
+          .join(",")
+      : "";
   const relationPart = f.type === "relation" ? (f.relationTo ?? "") : "";
-  return `${f.type}|${relationPart}|${enumPart}|${f.required ? "required" : "optional"}`;
+  return `${f.type}|${relationPart}|${enumPart}|${enumLabelsPart}|${f.required ? "required" : "optional"}`;
 }
 
 /**
