@@ -60,6 +60,43 @@ test("listCollaborators resolves each collaborator's real email (joined from use
   );
 });
 
+/**
+ * Round 824's finding: addedAt is a new Date().toISOString() string with
+ * only millisecond resolution, so two collaborators added in quick
+ * succession can share the exact same value, leaving the old
+ * `ORDER BY addedAt ASC, userId ASC` tiebreak sorting by an essentially
+ * random string (userId) unrelated to insertion order -- the same hazard
+ * checkpoints.ts/projects.ts/automations.ts's own listCheckpoints/
+ * listProjectsForOwner/listAutomationRules already guard against with an
+ * explicit rowid tiebreak (round 808), just with an actively wrong
+ * tiebreak here instead of an absent one. "zed" is chosen to sort
+ * alphabetically AFTER "amy" despite being added FIRST, so the old
+ * userId-based tiebreak reliably puts "amy" first on a tie -- the fixture
+ * the existing "orders by when they were added" test above never
+ * exercised (there, user1 is both added first AND sorts first
+ * alphabetically, so a userId tiebreak and a rowid tiebreak are
+ * indistinguishable). Unlike round 808's own automation_rules test (which
+ * only pins intended behavior, since that query plan already happened to
+ * preserve rowid order even with no explicit tiebreak at all), this test
+ * genuinely distinguishes the fix from its absence: the old code's
+ * tiebreak was an explicit, always-applied `userId ASC`, not a missing
+ * guarantee a query plan might coincidentally satisfy.
+ */
+test("listCollaborators returns collaborators added-first-first even when two share the exact same addedAt millisecond", () => {
+  const db = setup();
+  createUser(db, { id: "zed", email: "zed@example.com", passwordHash: "x" });
+  createUser(db, { id: "amy", email: "amy@example.com", passwordHash: "x" });
+  addCollaborator(db, "proj1", "zed");
+  addCollaborator(db, "proj1", "amy");
+
+  const collaborators = listCollaborators(db, "proj1");
+  assert.deepEqual(
+    collaborators.map((c) => c.userId),
+    ["zed", "amy"],
+    "the collaborator added first must sort first even on an addedAt tie, regardless of userId's own alphabetical order",
+  );
+});
+
 test("listCollaborators only returns collaborators for the requested project, not every project's collaborators", () => {
   const db = setup();
   createUser(db, { id: "user1", email: "user1@example.com", passwordHash: "x" });

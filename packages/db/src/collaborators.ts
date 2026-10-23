@@ -103,6 +103,18 @@ export function listCollaboratedProjectIds(db: ForgeDatabase, userId: string): s
   return rows.map((r) => r.projectId);
 }
 
+// addedAt has only millisecond resolution, so two collaborators added in
+// quick succession (e.g. two invites sent back-to-back, or two concurrent
+// requests) can share the same value -- exactly the hazard checkpoints.ts/
+// projects.ts/automations.ts's own listCheckpoints/listProjectsForUser/
+// listAutomationRules already guard against with a rowid tiebreak (round
+// 808). This query instead broke the tie on userId ASC, an essentially
+// random string unrelated to insertion order -- CollaboratorsPanel.tsx
+// renders this list directly, so a same-millisecond tie could display the
+// collaborator added second above the one added first. rowid strictly
+// increases with insertion order in this table (not declared WITHOUT
+// ROWID), so `rowid ASC` breaks the tie deterministically in favor of
+// "added first" -- matching this function's own ASC direction.
 export function listCollaborators(db: ForgeDatabase, projectId: string): ProjectCollaborator[] {
   const rows = db
     .prepare(
@@ -110,7 +122,7 @@ export function listCollaborators(db: ForgeDatabase, projectId: string): Project
        FROM project_collaborators
        JOIN users ON users.id = project_collaborators.userId
        WHERE project_collaborators.projectId = ?
-       ORDER BY project_collaborators.addedAt ASC, project_collaborators.userId ASC`,
+       ORDER BY project_collaborators.addedAt ASC, project_collaborators.rowid ASC`,
     )
     .all(projectId) as { userId: string; email: string; addedAt: string; role: CollaboratorRole }[];
   return rows;
