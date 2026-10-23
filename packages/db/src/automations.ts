@@ -257,9 +257,20 @@ export function getAutomationRule(db: ForgeDatabase, projectId: string, id: stri
   return row ? rowToRule(row) : undefined;
 }
 
+// createdAt has only millisecond resolution, so two rules created in quick
+// succession (e.g. two collaborators each adding one within the same
+// millisecond, or a doubled "Save rule" click) can share the same value;
+// ORDER BY createdAt ASC alone leaves that tie's order undefined --
+// exactly the hazard checkpoints.ts/projects.ts's own listCheckpoints/
+// listProjectsForUser already guard against with a rowid tiebreak, and
+// this same file's own listAutomationRuns (above) already applies for
+// automation_runs. rowid strictly increases with insertion order in this
+// table (not declared WITHOUT ROWID), so `rowid ASC` breaks the tie
+// deterministically in favor of "created first" -- exactly what "oldest
+// first" means for a tie, matching this function's own ASC direction.
 export function listAutomationRules(db: ForgeDatabase, projectId: string): AutomationRule[] {
   const rows = db
-    .prepare("SELECT * FROM automation_rules WHERE projectId = ? ORDER BY createdAt ASC")
+    .prepare("SELECT * FROM automation_rules WHERE projectId = ? ORDER BY createdAt ASC, rowid ASC")
     .all(projectId) as Record<string, unknown>[];
   return rows.map(rowToRule);
 }
@@ -268,10 +279,13 @@ export function listAutomationRules(db: ForgeDatabase, projectId: string): Autom
  * Enabled rules scoped to one entity -- the hot-path list evaluated on
  * every record create/update (apps/api/src/automations.ts), kept to only
  * enabled rows so a disabled rule is never even considered a candidate.
+ * Same rowid tiebreak as listAutomationRules above, for the same reason --
+ * this is the order two tied rules actually fire in for the same record
+ * change, not just a display-order cosmetic.
  */
 export function listEnabledAutomationRulesForEntity(db: ForgeDatabase, projectId: string, entityName: string): AutomationRule[] {
   const rows = db
-    .prepare("SELECT * FROM automation_rules WHERE projectId = ? AND entityName = ? AND enabled = 1 ORDER BY createdAt ASC")
+    .prepare("SELECT * FROM automation_rules WHERE projectId = ? AND entityName = ? AND enabled = 1 ORDER BY createdAt ASC, rowid ASC")
     .all(projectId, entityName) as Record<string, unknown>[];
   return rows.map(rowToRule);
 }
@@ -281,11 +295,12 @@ export function listEnabledAutomationRulesForEntity(db: ForgeDatabase, projectId
  * listEnabledAutomationRulesForEntity above, a schedule check has no
  * single record-change event to scope it to one entity/project, so the
  * periodic checker (apps/api/src/automations.ts's runScheduledAutomationsCheck)
- * evaluates this list globally on every tick instead.
+ * evaluates this list globally on every tick instead. Same rowid tiebreak
+ * as the two functions above, for the same reason.
  */
 export function listEnabledScheduledRules(db: ForgeDatabase): AutomationRule[] {
   const rows = db
-    .prepare("SELECT * FROM automation_rules WHERE trigger = 'schedule' AND enabled = 1 ORDER BY createdAt ASC")
+    .prepare("SELECT * FROM automation_rules WHERE trigger = 'schedule' AND enabled = 1 ORDER BY createdAt ASC, rowid ASC")
     .all() as Record<string, unknown>[];
   return rows.map(rowToRule);
 }

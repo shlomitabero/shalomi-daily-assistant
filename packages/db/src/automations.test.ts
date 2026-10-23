@@ -90,6 +90,33 @@ test("listAutomationRules returns only this project's rules, in creation order",
   );
 });
 
+test("listAutomationRules returns rules oldest-first even when two share the exact same createdAt millisecond", () => {
+  // createdAt is a new Date().toISOString() string with only millisecond
+  // resolution, so two rules created in quick succession can share the
+  // exact same value, leaving ORDER BY createdAt ASC alone with no
+  // SQL-defined tiebreak for that tie -- the same hazard checkpoints.ts's
+  // listCheckpoints/projects.ts's listProjectsForOwner, and this same
+  // file's own listAutomationRuns (automation_runs), already guard
+  // against with an explicit rowid tiebreak. This pins the intended,
+  // deterministic ordering contract going forward; node:sqlite's current
+  // table-scan-then-sort plan for this query happens to already return
+  // ties in rowid order even without the explicit tiebreak, so this test
+  // does not itself distinguish the fix from its absence in this specific
+  // engine/version -- the tiebreak is still worth having, since nothing in
+  // SQL guarantees that tie order stays stable across a different query
+  // plan (e.g. an index added later) or a different SQLite build.
+  const db = openDatabase(":memory:");
+  ensureAutomationRulesTable(db);
+  const a = insertAutomationRule(db, baseRule({ entityName: "Order" }));
+  const b = insertAutomationRule(db, baseRule({ entityName: "Ticket" }));
+  const rules = listAutomationRules(db, "proj1");
+  assert.deepEqual(
+    rules.map((r) => r.id),
+    [a.id, b.id],
+    "the rule created first must sort first even on a createdAt tie",
+  );
+});
+
 test("listEnabledAutomationRulesForEntity excludes disabled rules and other entities", () => {
   const db = openDatabase(":memory:");
   ensureAutomationRulesTable(db);
@@ -101,6 +128,24 @@ test("listEnabledAutomationRulesForEntity excludes disabled rules and other enti
   assert.deepEqual(
     rules.map((r) => r.id),
     [enabled.id],
+  );
+});
+
+test("listEnabledAutomationRulesForEntity returns rules oldest-first (the actual firing order) even when two share the exact same createdAt millisecond", () => {
+  // Same reasoning as listAutomationRules's own tiebreak test above, but
+  // for the hot-path list apps/api/src/automations.ts actually fires
+  // rules from on every record create/update -- here a tie isn't just a
+  // display-order cosmetic, it's the order two tied rules' real actions
+  // (e.g. two webhooks) fire in.
+  const db = openDatabase(":memory:");
+  ensureAutomationRulesTable(db);
+  const first = insertAutomationRule(db, baseRule({ entityName: "Order" }));
+  const second = insertAutomationRule(db, baseRule({ entityName: "Order" }));
+  const rules = listEnabledAutomationRulesForEntity(db, "proj1", "Order");
+  assert.deepEqual(
+    rules.map((r) => r.id),
+    [first.id, second.id],
+    "the rule created first must fire first even on a createdAt tie",
   );
 });
 
@@ -420,6 +465,27 @@ test("listEnabledScheduledRules returns only enabled schedule-trigger rules, acr
   assert.ok(rules.some((r) => r.projectId === "proj2"));
   assert.ok(!rules.some((r) => r.id === disabledSchedule.id));
   assert.ok(rules.every((r) => r.trigger === "schedule" && r.enabled));
+});
+
+test("listEnabledScheduledRules returns rules oldest-first even when two share the exact same createdAt millisecond", () => {
+  // Same reasoning as the two tiebreak tests above -- this is the global
+  // periodic scheduler's own evaluation order across every project.
+  const db = openDatabase(":memory:");
+  ensureAutomationRulesTable(db);
+  const first = insertAutomationRule(
+    db,
+    baseRule({ projectId: "proj1", trigger: "schedule", fieldName: null, fieldValue: null, scheduleTimeUtc: "09:00", toMode: "static", toField: null, toNumber: "1" }),
+  );
+  const second = insertAutomationRule(
+    db,
+    baseRule({ projectId: "proj1", trigger: "schedule", fieldName: null, fieldValue: null, scheduleTimeUtc: "10:00", toMode: "static", toField: null, toNumber: "2" }),
+  );
+  const rules = listEnabledScheduledRules(db);
+  assert.deepEqual(
+    rules.map((r) => r.id),
+    [first.id, second.id],
+    "the rule created first must sort first even on a createdAt tie",
+  );
 });
 
 test("insertAutomationRule supports actionType 'webhook' with a webhookUrl, and leaves it null for a send_whatsapp rule", () => {
