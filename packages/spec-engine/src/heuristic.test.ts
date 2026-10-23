@@ -469,6 +469,44 @@ test("Order's keyword match does not spuriously trigger on the common idiom 'in 
 });
 
 /**
+ * Round 870's finding: the same idiom-co-occurrence pitfall round 869 fixed
+ * for Order's "order" keyword also applied to Event's bare "conference"
+ * keyword, just never checked there. "video conference(s)" and "conference
+ * call(s)" are both ordinary phrases for a video-meeting/telehealth/
+ * sales-call tool with nothing to do with planning weddings or trade
+ * shows. Confirmed with a real repro before fixing: "A tool for scheduling
+ * and recording video conferences for remote teams" and "An app to manage
+ * video conference calls between doctors and patients" both spuriously
+ * matched Event (fields: name/date/venue/capacity/status). Unlike Order's
+ * single joined idiom ("in" before AND "to" after the same word), this is
+ * two INDEPENDENT exclusions -- "video " immediately before OR " call(s)"
+ * immediately after -- so either one alone is enough to exclude a match,
+ * confirmed here alongside the genuine standalone "conference" case this
+ * rule's own other keywords don't otherwise cover.
+ */
+test("Event's 'conference' keyword doesn't spuriously trigger on 'video conference(s)' or 'conference call(s)'", async () => {
+  const provider = new HeuristicSpecProvider();
+
+  const videoConf = await provider.generate("A tool for scheduling and recording video conferences for remote teams.");
+  assert.ok(!videoConf.entities.some((e) => e.name === "Event"), "'video conferences' alone must not spuriously match Event");
+
+  const telehealth = await provider.generate("An app to manage video conference calls between doctors and patients.");
+  assert.ok(!telehealth.entities.some((e) => e.name === "Event"), "'video conference calls' alone must not spuriously match Event");
+
+  const salesCalls = await provider.generate("A platform to host conference calls for a sales team.");
+  assert.ok(!salesCalls.entities.some((e) => e.name === "Event"), "'conference calls' alone must not spuriously match Event");
+
+  // The real word still works on its own, with no "video"/"call" nearby --
+  // this rule's other keywords ("event planning"/"wedding"/"trade show")
+  // don't cover a plain conference-organizing description at all.
+  const realConference = await provider.generate("An app to help organize a yearly conference, including attendee registration.");
+  assert.ok(realConference.entities.some((e) => e.name === "Event"), "a standalone 'conference' must still match Event");
+
+  const weddingsAndConferences = await provider.generate("An app to book venues for weddings and conferences.");
+  assert.ok(weddingsAndConferences.entities.some((e) => e.name === "Event"), "'conferences' alongside 'weddings' must still match Event");
+});
+
+/**
  * Regression test for the same bug class round 279 fixed for Order's
  * "order" keyword, found by this round's Explore survey re-checking the
  * REST of domainEntities.ts's keyword lists via real execution (not just

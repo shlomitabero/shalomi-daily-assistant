@@ -850,7 +850,29 @@ export const DOMAIN_ENTITY_RULES: DomainEntityRule[] = [
   },
   {
     keywords: [
-      "event planning", "conference", "wedding", "weddings", "trade show",
+      "event planning",
+      // Bare "conference" is a substring collision of a different shape
+      // than the ones below (pitfall 1b, the idiom-co-occurrence shape
+      // Deal's removed "pipeline", Appointment's removed "schedule", and
+      // Order's narrowed "order"/"in order to" fix all share): "video
+      // conference(s)" and "conference call(s)" are both ordinary phrases
+      // for a video-meeting/telehealth/sales-call tool that has nothing to
+      // do with planning weddings or trade shows, confirmed with a real
+      // repro before fixing ("A tool for scheduling and recording video
+      // conferences for remote teams" and "An app to manage video
+      // conference calls between doctors and patients" both spuriously
+      // matched Event). Unlike "pipeline"/"schedule", bare "conference"
+      // can't simply be dropped -- it's this rule's only keyword that
+      // matches a plain event/conference-planning description with no
+      // "wedding"/"trade show" wording at all, so dropping it would lose
+      // real recall. Two independent exclusions, not one joint idiom like
+      // Order's "in order to" -- "video " immediately before OR " call(s)"
+      // immediately after -- so either one alone (not just their
+      // combination) is enough to exclude a match, while a bare
+      // standalone "conference" (e.g. "organize a conference every year")
+      // still matches.
+      /(?<!\bvideo\s)\bconference(s)?\b(?!\s*calls?\b)/,
+      "wedding", "weddings", "trade show",
       "אירוע", "אירועים",
       // Bare "כנס" (round 562) is a substring of common כ.נ.ס
       // ("to enter"/"to log in") verb conjugations -- "להיכנס" (to log
