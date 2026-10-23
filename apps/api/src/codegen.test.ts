@@ -13550,6 +13550,296 @@ test("the exported EntityView drops a persisted sort key naming a field a newer 
 });
 
 /**
+ * Round 843: ports the live Forge AI preview's own round-842 fix to this
+ * exported app -- round 842's own scope note explicitly flagged this exact
+ * port as a follow-up. A collapsed group's own persisted key is the
+ * field's raw stored enum value, never re-validated against that field's
+ * CURRENT enumValues. A newer export loaded in a browser still holding an
+ * older export's collapsed-group entry for a value a refine then
+ * renamed/removed (same cross-export reachability path rounds
+ * 509/570/834/838/839/840/841 already established for this file's other
+ * sibling stores) keeps that dead key forever: records whose stored value
+ * no longer matches any current enumValue move to groupRecordsByField's
+ * own synthetic "(other)" bucket instead -- a different key the stale
+ * entry never matches again, so that group can never be re-collapsed from
+ * the UI (there's no control left for a value that no longer exists).
+ * Uses the same two-separate-exports simulation as rounds 839/840/841's
+ * own tests just above, since this file's own schema is frozen per export.
+ */
+test("the exported EntityView prunes a collapsed-group entry naming an enum value a newer export renamed away, instead of leaving it in storage forever", async () => {
+  const customerWithStatusField: Entity = {
+    name: "Customer",
+    label: "Customers",
+    fields: [
+      { name: "name", label: "Name", type: "text", required: true },
+      {
+        name: "status",
+        label: "Status",
+        type: "enum",
+        required: true,
+        enumValues: ["new", "won"],
+        enumLabels: { new: "New", won: "Won" },
+      },
+    ],
+  };
+  const customerWithRenamedStatusField: Entity = {
+    name: "Customer",
+    label: "Customers",
+    fields: [
+      { name: "name", label: "Name", type: "text", required: true },
+      {
+        name: "status",
+        label: "Status",
+        type: "enum",
+        required: true,
+        enumValues: ["new", "done"],
+        enumLabels: { new: "New", done: "Done" },
+      },
+    ],
+  };
+  const olderExportProject: Project = { ...project, spec: { ...project.spec, entities: [customerWithStatusField] } };
+  const newerExportProject: Project = { ...project, spec: { ...project.spec, entities: [customerWithRenamedStatusField] } };
+  const store = [
+    { id: 1, name: "Acme Corp", status: "new" },
+    { id: 2, name: "Globex", status: "won" },
+  ];
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = (async (input: string) => {
+    if (input === "/api/Customer") {
+      return new Response(JSON.stringify({ records: store }), { status: 200, headers: { "content-type": "application/json" } });
+    }
+    throw new Error(`unexpected request ${input}`);
+  }) as typeof fetch;
+
+  const olderDir = writeGeneratedWebComponent(generateExportFiles(olderExportProject));
+  const newerDir = writeGeneratedWebComponent(generateExportFiles(newerExportProject));
+  try {
+    await withRealLocalStorage(async () => {
+      // Simulates grouping by "status" and collapsing "Won" in an OLDER
+      // export, while the entity still had that value -- persists the
+      // real collapsed-group entry via the real generated store functions.
+      const { EntityView: OlderEntityView } = await import(path.join(olderDir, "web", "src", "components", "EntityView.jsx"));
+      const olderEntity = olderExportProject.spec.entities[0];
+      const olderProps = {
+        entity: olderEntity,
+        highlightRecordId: null,
+        onHighlightHandled: () => {},
+        onJumpToRecord: () => {},
+        onRecordCountChange: () => {},
+      };
+      const older = render(React.createElement(OlderEntityView, olderProps));
+      for (let i = 0; i < 40; i++) {
+        if (older.container.querySelector(".entity-group-by")) break;
+        await act(async () => {
+          await new Promise((resolve) => setTimeout(resolve, 0));
+        });
+      }
+      const groupBySelect = older.container.querySelector(".entity-group-by") as HTMLSelectElement;
+      await act(async () => {
+        fireEvent.change(groupBySelect, { target: { value: "status" } });
+      });
+      for (let i = 0; i < 40; i++) {
+        if (older.container.querySelectorAll(".entity-group-header-row").length === 2) break;
+        await act(async () => {
+          await new Promise((resolve) => setTimeout(resolve, 0));
+        });
+      }
+      const headerRows = Array.from(older.container.querySelectorAll(".entity-group-header-row"));
+      const wonToggle = headerRows.find((r) => r.textContent?.includes("Won"))!.querySelector(".entity-group-toggle") as HTMLButtonElement;
+      await act(async () => {
+        fireEvent.click(wonToggle);
+      });
+      assert.equal(
+        older.container.querySelectorAll("tbody tr[data-record-id]").length,
+        1,
+        "sanity check: collapsing 'Won' must have actually hidden its own record",
+      );
+      older.unmount();
+
+      // Simulates re-downloading/reloading a NEWER export of the same
+      // project at the same origin, after a refine renamed "won" ->
+      // "done" -- a fresh dynamic import, with the real browser
+      // localStorage from the older export still holding the stale "won"
+      // collapsed-group entry.
+      const { EntityView: NewerEntityView } = await import(path.join(newerDir, "web", "src", "components", "EntityView.jsx"));
+      const newerEntity = newerExportProject.spec.entities[0];
+      const newerProps = {
+        entity: newerEntity,
+        highlightRecordId: null,
+        onHighlightHandled: () => {},
+        onJumpToRecord: () => {},
+        onRecordCountChange: () => {},
+      };
+      const newer = render(React.createElement(NewerEntityView, newerProps));
+      for (let i = 0; i < 40; i++) {
+        if (newer.container.querySelectorAll("tbody tr[data-record-id]").length === 2) break;
+        await act(async () => {
+          await new Promise((resolve) => setTimeout(resolve, 0));
+        });
+      }
+      assert.equal(
+        newer.container.querySelectorAll("tbody tr[data-record-id]").length,
+        2,
+        "expected both records to have loaded",
+      );
+      const collapsedGroupsStore = JSON.parse(localStorage.getItem("forge_collapsed_groups") ?? "{}");
+      assert.deepEqual(
+        collapsedGroupsStore[`${newerEntity.name}:status`] ?? [],
+        [],
+        "the dead 'won' entry must be pruned from storage once 'status' no longer has that value, not left to sit there forever",
+      );
+    });
+  } finally {
+    globalThis.fetch = originalFetch;
+    cleanup();
+    rmSync(olderDir, { recursive: true, force: true });
+    rmSync(newerDir, { recursive: true, force: true });
+  }
+});
+
+/**
+ * Round 843, applied to the Kanban board's own collapse state instead of
+ * the table's -- same reasoning as the collapsed-group test just above.
+ * findBoardField only ever resolves to an enum field, so this exercises
+ * the exact same staleness guard on this file's own
+ * getPersistedCollapsedBoardColumns/setPersistedCollapsedBoardColumns.
+ */
+test("the exported EntityView prunes a collapsed-board-column entry naming an enum value a newer export renamed away, instead of leaving it in storage forever", async () => {
+  const customerWithPriorityField: Entity = {
+    name: "Customer",
+    label: "Customers",
+    fields: [
+      { name: "name", label: "Name", type: "text", required: true },
+      {
+        name: "priority",
+        label: "Priority",
+        type: "enum",
+        required: true,
+        enumValues: ["low", "high"],
+        enumLabels: { low: "Low", high: "High" },
+      },
+    ],
+  };
+  const customerWithRenamedPriorityField: Entity = {
+    name: "Customer",
+    label: "Customers",
+    fields: [
+      { name: "name", label: "Name", type: "text", required: true },
+      {
+        name: "priority",
+        label: "Priority",
+        type: "enum",
+        required: true,
+        enumValues: ["low", "urgent"],
+        enumLabels: { low: "Low", urgent: "Urgent" },
+      },
+    ],
+  };
+  const olderExportProject: Project = { ...project, spec: { ...project.spec, entities: [customerWithPriorityField] } };
+  const newerExportProject: Project = { ...project, spec: { ...project.spec, entities: [customerWithRenamedPriorityField] } };
+  const store = [
+    { id: 1, name: "Acme Corp", priority: "low" },
+    { id: 2, name: "Globex", priority: "high" },
+  ];
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = (async (input: string) => {
+    if (input === "/api/Customer") {
+      return new Response(JSON.stringify({ records: store }), { status: 200, headers: { "content-type": "application/json" } });
+    }
+    throw new Error(`unexpected request ${input}`);
+  }) as typeof fetch;
+
+  async function waitForBoardButton(container: HTMLElement): Promise<HTMLButtonElement> {
+    for (let i = 0; i < 40; i++) {
+      const found = Array.from(container.querySelectorAll("button")).find((b) => b.textContent?.includes("Board"));
+      if (found) return found as HTMLButtonElement;
+      await act(async () => {
+        await new Promise((resolve) => setTimeout(resolve, 0));
+      });
+    }
+    throw new Error("waitForBoardButton: Board view-toggle button never appeared");
+  }
+
+  const olderDir = writeGeneratedWebComponent(generateExportFiles(olderExportProject));
+  const newerDir = writeGeneratedWebComponent(generateExportFiles(newerExportProject));
+  try {
+    await withRealLocalStorage(async () => {
+      // Simulates switching to Board view and collapsing "High" in an
+      // OLDER export, while the entity still had that value.
+      const { EntityView: OlderEntityView } = await import(path.join(olderDir, "web", "src", "components", "EntityView.jsx"));
+      const olderEntity = olderExportProject.spec.entities[0];
+      const olderProps = {
+        entity: olderEntity,
+        highlightRecordId: null,
+        onHighlightHandled: () => {},
+        onJumpToRecord: () => {},
+        onRecordCountChange: () => {},
+      };
+      const older = render(React.createElement(OlderEntityView, olderProps));
+      const boardButton = await waitForBoardButton(older.container);
+      await act(async () => {
+        fireEvent.click(boardButton);
+      });
+      for (let i = 0; i < 40; i++) {
+        if (older.container.querySelectorAll(".board-column").length === 2) break;
+        await act(async () => {
+          await new Promise((resolve) => setTimeout(resolve, 0));
+        });
+      }
+      const columns = Array.from(older.container.querySelectorAll(".board-column")) as HTMLElement[];
+      const highColumn = columns.find((c) => c.querySelector(".board-column-header-info")?.textContent?.includes("High"))!;
+      await act(async () => {
+        fireEvent.click(highColumn.querySelector(".board-column-toggle") as HTMLButtonElement);
+      });
+      assert.equal(highColumn.querySelectorAll(".board-card").length, 0, "sanity check: collapsing 'High' must have actually hidden its own card");
+      older.unmount();
+
+      // Simulates re-downloading/reloading a NEWER export of the same
+      // project at the same origin, after a refine renamed "high" ->
+      // "urgent" -- a fresh dynamic import, with the real browser
+      // localStorage from the older export still holding the stale
+      // "high" collapsed-board-column entry.
+      const { EntityView: NewerEntityView } = await import(path.join(newerDir, "web", "src", "components", "EntityView.jsx"));
+      const newerEntity = newerExportProject.spec.entities[0];
+      const newerProps = {
+        entity: newerEntity,
+        highlightRecordId: null,
+        onHighlightHandled: () => {},
+        onJumpToRecord: () => {},
+        onRecordCountChange: () => {},
+      };
+      const newer = render(React.createElement(NewerEntityView, newerProps));
+      await waitForBoardButton(newer.container);
+      const newerBoardButton = await waitForBoardButton(newer.container);
+      await act(async () => {
+        fireEvent.click(newerBoardButton);
+      });
+      for (let i = 0; i < 40; i++) {
+        if (newer.container.querySelectorAll(".board-column").length === 3) break;
+        await act(async () => {
+          await new Promise((resolve) => setTimeout(resolve, 0));
+        });
+      }
+      // 3, not 2: Globex's own stored "high" value no longer matches either
+      // declared enumValue, so it lands in a 3rd, synthetic "(other)"
+      // column alongside "Low" and the now-empty "Urgent" column.
+      assert.equal(newer.container.querySelectorAll(".board-column").length, 3, "expected 3 board columns: 'Low', the now-empty 'Urgent', and a synthetic '(other)' for Globex's stale 'high' value");
+      const collapsedBoardColumnsStore = JSON.parse(localStorage.getItem("forge_collapsed_board_columns") ?? "{}");
+      assert.deepEqual(
+        collapsedBoardColumnsStore[`${newerEntity.name}:priority`] ?? [],
+        [],
+        "the dead 'high' entry must be pruned from storage once 'priority' no longer has that value, not left to sit there forever",
+      );
+    });
+  } finally {
+    globalThis.fetch = originalFetch;
+    cleanup();
+    rmSync(olderDir, { recursive: true, force: true });
+    rmSync(newerDir, { recursive: true, force: true });
+  }
+});
+
+/**
  * Round 633's finding: unlike every sibling store in this exact same
  * family (getPersistedGroupField's typeof check, getPersistedViewMode's
  * enum check), getPersistedSortKeys had no per-element shape validation

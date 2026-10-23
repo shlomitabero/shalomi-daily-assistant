@@ -3569,10 +3569,43 @@ export function EntityView({ entity, highlightRecordId, onHighlightHandled, onJu
     }
     return loaded;
   });
-  const [collapsedGroups, setCollapsedGroups] = useState(() => new Set(getPersistedCollapsedGroups(entity.name, groupFieldName)));
-  const [collapsedBoardColumns, setCollapsedBoardColumns] = useState(
-    () => new Set(getPersistedCollapsedBoardColumns(entity.name, (findBoardField(entity.fields) || {}).name || "")),
-  );
+  // Mirrors the live Forge AI preview's own round-842 fix: a collapsed
+  // group's own persisted key is the field's raw stored enum value, never
+  // re-validated against that field's CURRENT enumValues. A newer export
+  // loaded in a browser still holding an older export's collapsed-group
+  // entry for a value a refine then renamed/removed (same cross-export
+  // reachability path rounds 509/570/834/838/839/840/841 already
+  // established for this file's other sibling stores) kept that dead key
+  // forever: records whose stored value no longer matches any current
+  // enumValue move to groupRecordsByField's own synthetic "(other)"
+  // bucket instead -- a different key the stale entry never matches
+  // again, so that group can never be re-collapsed from the UI (there's
+  // no control left for a value that no longer exists). Boolean fields
+  // have a fixed, never-stale two-value space ("true"/"false" always), so
+  // only the enum case needs filtering.
+  const [collapsedGroups, setCollapsedGroups] = useState(() => {
+    const loaded = getPersistedCollapsedGroups(entity.name, groupFieldName);
+    const groupField = entity.fields.find((f) => f.name === groupFieldName);
+    if (groupField?.type !== "enum") return new Set(loaded);
+    const validValues = new Set(groupField.enumValues ?? []);
+    const filtered = loaded.filter((v) => validValues.has(v));
+    if (filtered.length !== loaded.length) setPersistedCollapsedGroups(entity.name, groupFieldName, filtered);
+    return new Set(filtered);
+  });
+  // Same reasoning as collapsedGroups' own guard just above -- findBoardField
+  // only ever resolves to an enum field, so a refine renaming/removing one
+  // of its enumValues leaves a collapsed column's own key matching nothing
+  // once those records move to the board's own "(other)" column instead.
+  const [collapsedBoardColumns, setCollapsedBoardColumns] = useState(() => {
+    const boardFieldForInit = findBoardField(entity.fields);
+    const boardFieldNameForInit = boardFieldForInit ? boardFieldForInit.name : "";
+    const loaded = getPersistedCollapsedBoardColumns(entity.name, boardFieldNameForInit);
+    if (!boardFieldForInit) return new Set(loaded);
+    const validValues = new Set(boardFieldForInit.enumValues ?? []);
+    const filtered = loaded.filter((v) => validValues.has(v));
+    if (filtered.length !== loaded.length) setPersistedCollapsedBoardColumns(entity.name, boardFieldNameForInit, filtered);
+    return new Set(filtered);
+  });
   const [highlightedRecordId, setHighlightedRecordId] = useState(null);
   const [moveErrorId, setMoveErrorId] = useState(null);
   const [focusedRowId, setFocusedRowId] = useState(null);
