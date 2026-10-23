@@ -303,7 +303,15 @@ export const DOMAIN_ENTITY_RULES: DomainEntityRule[] = [
     // ordinary words unrelated to selling a service, so they spuriously
     // matched this entity. \b-bounded, same pitfall-1 shape as the other
     // eleven collision fixes already in this file.
-    keywords: [/\bservice(s)?\b/, /\btreatment(s)?\b/, "שירות", "שירותים", "טיפול", "טיפולים"],
+    //
+    // Bare "שירות"/"שירותים" (round 829) are substrings of "כשירות"
+    // ("competency"/"fitness"/"eligibility" -- e.g. "כשירות משפטית" legal
+    // competency, "בדיקת כשירות גופנית" a physical fitness test), an
+    // ordinary Hebrew word with nothing to do with selling a service.
+    // Hebrew has no \b (same reason round 565's "מעובד" and round 825's
+    // "מצוות" fixes needed lookbehind too); this excludes the specific "כ"
+    // prefix while still matching every real "שירות"-based phrasing.
+    keywords: [/\bservice(s)?\b/, /\btreatment(s)?\b/, /(?<!כ)שירות/, /(?<!כ)שירותים/, "טיפול", "טיפולים"],
     labelHe: "שירותים",
     descriptionHe: "משהו שהעסק מציע למכירה.",
     fieldLabelsHe: { name: "שם", price: "מחיר", durationMinutes: "משך בדקות", description: "תיאור" },
