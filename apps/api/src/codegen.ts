@@ -3576,7 +3576,27 @@ export function EntityView({ entity, highlightRecordId, onHighlightHandled, onJu
   const [highlightedRecordId, setHighlightedRecordId] = useState(null);
   const [moveErrorId, setMoveErrorId] = useState(null);
   const [focusedRowId, setFocusedRowId] = useState(null);
-  const [sortKeys, setSortKeys] = useState(() => getPersistedSortKeys(entity.name));
+  // Mirrors the live Forge AI preview's own EntityPanel.tsx fix (its
+  // dedicated effect keyed on fieldNamesKey) for the exact same gap this
+  // file's own getPersistedGroupField/getPersistedViewMode already closed:
+  // getPersistedSortKeys/isSortKey only ever validated each entry's SHAPE
+  // (field is a string, direction is "asc"/"desc"), never whether \`field\`
+  // still names a field this entity actually has. A newer export loaded in
+  // a browser still holding an older export's "forge_sort_keys" entry for
+  // a field a refine then removed kept that dead key forever: no rendered
+  // column's aria-sort ever reflects it (every header's own keyIndex check
+  // looks for a field name that no longer matches any th), and if the user
+  // then added a real second sort key, it inherited the dead key's
+  // leftover array slot, misnumbering its own priority badge. "createdAt"
+  // is a valid field name here despite not being one of entity.fields --
+  // it's the one render-time-only sortable column with no backing field.
+  const [sortKeys, setSortKeys] = useState(() => {
+    const loaded = getPersistedSortKeys(entity.name);
+    const validFieldNames = new Set(entity.fields.map((f) => f.name));
+    validFieldNames.add("createdAt");
+    const filtered = loaded.filter((k) => validFieldNames.has(k.field));
+    return filtered.length === loaded.length ? loaded : setPersistedSortKeys(entity.name, filtered);
+  });
   // Mirrors the live Forge AI preview's own round-this-round fix to
   // getPersistedViewMode's own sibling stores (getPersistedGroupField/Type,
   // sanitizeFieldFilters): a mode persisted for an entity that USED to have

@@ -8424,7 +8424,7 @@ test("the exported EntityView's table headers support shift-click multi-column s
   const files = generateExportFiles(project);
   const entityViewJsx = files.find((f) => f.path === "web/src/components/EntityView.jsx")!.content;
 
-  assert.match(entityViewJsx, /const \[sortKeys, setSortKeys\] = useState\(\(\) => getPersistedSortKeys\(entity\.name\)\);/);
+  assert.match(entityViewJsx, /const \[sortKeys, setSortKeys\] = useState\(\(\) => \{/);
   // Plain click replaces the whole key list (or toggles direction in place
   // when the clicked field is already the sole key); shift-click appends a
   // tiebreaker or toggles an existing key's direction without moving it.
@@ -13393,6 +13393,152 @@ test("the exported EntityView drops a persisted Board/Calendar view mode when a 
       assert.ok(
         newer.container.querySelector(".entity-group-by"),
         "the Group-by select must be visible again -- it stayed hidden while viewMode was stuck on the now-impossible 'board' value",
+      );
+    });
+  } finally {
+    globalThis.fetch = originalFetch;
+    cleanup();
+    rmSync(olderDir, { recursive: true, force: true });
+    rmSync(newerDir, { recursive: true, force: true });
+  }
+});
+
+/**
+ * Round 841: the exact same cross-export reachability path rounds
+ * 838/839/840 already closed for groupFieldName/groupFieldType/viewMode,
+ * but for sortKeys -- getPersistedSortKeys/isSortKey only ever validated
+ * each entry's SHAPE (field is a string, direction is "asc"/"desc"), never
+ * whether `field` still names a field this entity actually has. A newer
+ * export of the same project (after a refine removed the sorted field)
+ * reloaded against a browser still holding an older export's
+ * "forge_sort_keys" entry kept that dead key forever, permanently
+ * occupying array index 0: no rendered column's aria-sort could ever
+ * reflect it (its own field no longer matches any th's keyIndex lookup),
+ * and a real sort key added afterward inherited the dead key's leftover
+ * array slot -- landing at index 1 instead of 0, so it never gets
+ * aria-sort="ascending"/"descending" and gets mislabeled with a
+ * sort-priority badge of "2" despite being the only real sort key in
+ * effect. Uses the same two-separate-exports simulation as rounds
+ * 839/840's own tests just above.
+ */
+test("the exported EntityView drops a persisted sort key naming a field a newer export removed, instead of misnumbering the next real sort key added", async () => {
+  const customerWithStatusField: Entity = {
+    name: "Customer",
+    label: "Customers",
+    fields: [
+      { name: "name", label: "Name", type: "text", required: true },
+      {
+        name: "status",
+        label: "Status",
+        type: "enum",
+        required: true,
+        enumValues: ["Pending", "Shipped"],
+        enumLabels: { Pending: "Pending", Shipped: "Shipped" },
+      },
+    ],
+  };
+  const customerWithoutStatusField: Entity = {
+    name: "Customer",
+    label: "Customers",
+    fields: [{ name: "name", label: "Name", type: "text", required: true }],
+  };
+  const olderExportProject: Project = { ...project, spec: { ...project.spec, entities: [customerWithStatusField] } };
+  const newerExportProject: Project = { ...project, spec: { ...project.spec, entities: [customerWithoutStatusField] } };
+  const store = [
+    { id: 1, name: "Acme Corp", status: "Pending" },
+    { id: 2, name: "Globex", status: "Shipped" },
+  ];
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = (async (input: string) => {
+    if (input === "/api/Customer") {
+      return new Response(JSON.stringify({ records: store }), { status: 200, headers: { "content-type": "application/json" } });
+    }
+    throw new Error(`unexpected request ${input}`);
+  }) as typeof fetch;
+
+  const olderDir = writeGeneratedWebComponent(generateExportFiles(olderExportProject));
+  const newerDir = writeGeneratedWebComponent(generateExportFiles(newerExportProject));
+  try {
+    await withRealLocalStorage(async () => {
+      // Simulates sorting by "status" in an OLDER export, while the
+      // entity still had that field -- persists the real sort key via the
+      // real generated store functions.
+      const { EntityView: OlderEntityView } = await import(path.join(olderDir, "web", "src", "components", "EntityView.jsx"));
+      const olderEntity = olderExportProject.spec.entities[0];
+      const olderProps = {
+        entity: olderEntity,
+        highlightRecordId: null,
+        onHighlightHandled: () => {},
+        onJumpToRecord: () => {},
+        onRecordCountChange: () => {},
+      };
+      const older = render(React.createElement(OlderEntityView, olderProps));
+      for (let i = 0; i < 40; i++) {
+        if (older.container.querySelectorAll("tbody tr").length > 0) break;
+        await act(async () => {
+          await new Promise((resolve) => setTimeout(resolve, 0));
+        });
+      }
+      const statusHeader = Array.from(older.container.querySelectorAll("thead th button.sort-header")).find((b) =>
+        b.textContent?.includes("Status"),
+      ) as HTMLButtonElement;
+      assert.ok(statusHeader, "sanity check: the older export must have rendered a sortable Status header");
+      await act(async () => {
+        fireEvent.click(statusHeader);
+      });
+      assert.equal(
+        older.container.querySelectorAll(".sort-priority").length,
+        0,
+        "sanity check: a single sort key must not show a priority badge",
+      );
+      older.unmount();
+
+      // Simulates re-downloading/reloading a NEWER export of the same
+      // project at the same origin, after a refine removed the "status"
+      // field entirely -- a fresh dynamic import, with the real browser
+      // localStorage from the older export still holding the stale
+      // "status" sort key. Shift-clicking "Created" (additive) is the
+      // first real sort action taken in this newer export -- without the
+      // fix, it appends after the still-present dead "status" key instead
+      // of becoming the sole, first sort key.
+      const { EntityView: NewerEntityView } = await import(path.join(newerDir, "web", "src", "components", "EntityView.jsx"));
+      const newerEntity = newerExportProject.spec.entities[0];
+      const newerProps = {
+        entity: newerEntity,
+        highlightRecordId: null,
+        onHighlightHandled: () => {},
+        onJumpToRecord: () => {},
+        onRecordCountChange: () => {},
+      };
+      const newer = render(React.createElement(NewerEntityView, newerProps));
+      for (let i = 0; i < 40; i++) {
+        if (newer.container.querySelectorAll("tbody tr[data-record-id]").length === 2) break;
+        await act(async () => {
+          await new Promise((resolve) => setTimeout(resolve, 0));
+        });
+      }
+      assert.equal(
+        newer.container.querySelectorAll("tbody tr[data-record-id]").length,
+        2,
+        "expected both records to have loaded",
+      );
+      const createdHeaderButton = Array.from(newer.container.querySelectorAll("thead th button.sort-header")).find((b) =>
+        b.textContent?.includes("Created"),
+      ) as HTMLButtonElement;
+      assert.ok(createdHeaderButton, "sanity check: the newer export must still render the always-present Created column");
+      await act(async () => {
+        fireEvent.click(createdHeaderButton, { shiftKey: true });
+      });
+      const createdTh = createdHeaderButton.closest("th") as HTMLElement;
+      assert.equal(
+        createdTh.getAttribute("aria-sort"),
+        "ascending",
+        "the newly-added Created sort key must be the FIRST (and only) effective key, not silently demoted behind a dead 'status' key that no longer names any real column",
+      );
+      assert.equal(
+        newer.container.querySelectorAll(".sort-priority").length,
+        0,
+        "must not show a priority badge for what is really the only effective sort key",
       );
     });
   } finally {
