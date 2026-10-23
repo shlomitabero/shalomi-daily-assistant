@@ -83,3 +83,20 @@ test("buildZip throws a clear, actionable error instead of a raw RangeError when
   // pre-fix accidental one.
   assert.throws(() => buildZip(tooMany), /Zip64/i);
 });
+
+test("buildZip throws a clear, actionable error instead of a raw RangeError when a single entry's own file name exceeds the non-Zip64 16-bit limit", () => {
+  // The local/central header's own file-name-length field is also 16-bit
+  // (a different fixed-width field than the entry-count one just above,
+  // but the identical failure shape) -- nothing upstream caps an
+  // entity/field name's length (EntitySchema/FieldSchema's own `name` has
+  // no `.max()`), so a long enough name reaches buildZip and would
+  // otherwise fail deep inside Buffer#writeUInt16LE with the same raw,
+  // unhelpful RangeError the entry-count guard above exists to avoid.
+  const tooLongName = "x".repeat(70000) + ".csv";
+  assert.throws(() => buildZip([{ path: tooLongName, content: "data" }]), /Zip64/i);
+
+  // A name right at the boundary must still succeed -- this isn't an
+  // overly strict guard rejecting ordinary long-but-valid names.
+  const atLimit = "y".repeat(0xffff);
+  assert.doesNotThrow(() => buildZip([{ path: atLimit, content: "data" }]));
+});
