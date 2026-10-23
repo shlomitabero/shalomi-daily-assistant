@@ -31506,3 +31506,25 @@ Still no genuine reply from שלומי. Round number 800 reached -- this is the 
 **Verification**: reverted just the new cancelling effect and reran -- the test failed cleanly in under 2 seconds with "the in-progress edit must be cancelled outright..." exactly as predicted (no hang -- this test's own DOM-vs-null checks were written as boolean comparisons from the start, per round 799's freshly-learned lesson). Restored, it passes. Only `apps/web` changed this round, so its own full suite ran: 1115/1115 pass, no flakes. `tsc -b` clean.
 
 **Status**: shipped and pushed.
+
+### Round 801: stale `selectedAnswers`/`additionalRequest` survived a failed build's "Back" button
+
+Still no genuine reply from שלומי. The same "clear the answer state before returning to spec review" invariant four other call sites already enforce, missed on the one sibling that uses a bare inline arrow function instead of a named handler.
+
+**The gap**: `handleBackToHome`, `handleGoHome`, the `subscribeAuthExpired` effect, and `handleAccountDeleted` all treat clearing `selectedAnswers`/`additionalRequest` as a known, named invariant whenever they leave or return to the pre-build spec-review screen -- each with its own near-identical doc comment ("those answered the now-abandoned draft's own open questions, not whatever gets created next"). The one remaining path that also lands back on that exact screen -- `BuildProgress`'s own "Back" button after a failed build -- was wired as a bare `onBack={() => setView("spec")}` with no cleanup at all.
+
+**Why this is not deliberate**: this is the same "missed sibling" shape as rounds 772, 780/781/800, and 795 -- a cleanup rule independently enforced at several call sites, never checked against the one remaining path that reaches the identical screen.
+
+**Concrete failure scenario**: a user answers the spec's open questions and/or types an additional request, then clicks Build. `handleBuild` pairs each answer with its question by array index and `POST`s to `/projects/:id/answers`, which calls `generateSpec()` again and fully replaces `project.spec` -- including a brand-new `openQuestions` array with a different set of questions, a different count, and a different order from whatever `selectedAnswers` was keyed against. The real `/build` pipeline then starts on this new spec. If that build fails (a real, reachable case -- `BuildProgress` shows "Back" precisely when a step errors), the user lands back on the spec screen showing the NEW `openQuestions`, but `selectedAnswers`/`additionalRequest` still hold the OLD values from before the first Build click. Clicking Build again without re-touching every chip re-pairs a NEW question at index `i` with a STALE answer written for a completely different, now-gone question at that same index -- silently feeding a mismatched question/answer pair into another real `generateSpec()` call, with zero error or warning shown anywhere.
+
+**The fix**: the "building" view's `onBack` callback now clears `selectedAnswers`/`additionalRequest` before switching back to the spec view, the exact same cleanup `handleBackToHome`/`handleGoHome` already do.
+
+**Not a controlled-element risk**: `selectedAnswers` drives plain `<button>` className comparisons and a controlled `<input type="text">`, never a `<select>`/checkbox/radio whose own native DOM semantics could mask staleness the way a prior round's rejected `HistoryPanel` candidate turned out to be -- this is pure stale React state, confirmed by reading the server route directly (`POST /answers` really does call `generateSpec()` again and really does replace `openQuestions`).
+
+**Scope**: purely client-side (`apps/web`, the pre-build authoring flow). No `codegen.ts` parity concern -- the exported standalone app has no multi-step AI spec-review/open-questions flow at all; it runs from an already-finalized spec.
+
+**The test**: extracts the real `onBack` callback from `App.tsx` the same way the existing `handleBackToHome`/`handleGoHome` tests extract their own functions, and confirms it clears both pieces of state (while still navigating back to `"spec"`) the same way those two already do.
+
+**Verification**: reverted via two separate cycles. First, reverting the callback back to its original bare one-liner made the test fail immediately with "expected to find the building view's onBack callback" (the regex no longer matches). Second, a more rigorous revert keeping the comment block but removing only the two state-clearing calls made the test fail on the actual assertion instead -- confirming the test catches the real logic gap, not just text matching. Restored, it passes both times. Only `apps/web` changed this round, so its own full suite ran: 1116/1116 pass, no flakes. `tsc -b` clean.
+
+**Status**: shipped and pushed.
