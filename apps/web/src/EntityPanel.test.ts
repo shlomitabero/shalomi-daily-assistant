@@ -10,6 +10,7 @@ import type { Entity, EntityRecord } from "@forge/shared";
 import { getColumnWidths, setColumnWidth } from "./columnWidths.js";
 import { getGroupByField } from "./groupByPreference.js";
 import { getCollapsedGroups } from "./collapsedGroupsPreference.js";
+import { getCollapsedBoardColumns } from "./collapsedBoardColumnsPreference.js";
 import { getViewMode } from "./viewModePreference.js";
 import { getSortKeys } from "./sortKeysPreference.js";
 import { getFieldFilters } from "./fieldFiltersPreference.js";
@@ -6693,6 +6694,171 @@ test("EntityPanel's board-column collapse state does not leak from one board fie
         statusLowColumn.querySelector(".board-column-toggle")!.getAttribute("aria-expanded"),
         "true",
         "the 'status' field's 'Low' column must start expanded -- the user never touched it",
+      );
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+});
+
+/**
+ * Round 842's finding: a collapsed group's own persisted key is the
+ * field's raw stored value (an enum value) -- but nothing previously
+ * re-validated that value against the field's CURRENT enumValues. A
+ * refine renaming/removing an enum value (e.g. "won" -> "done") doesn't
+ * touch existing records' own stored "won" strings (migrations are
+ * additive-only), so those records move to the "(other)" bucket instead
+ * -- a different key the stale "won" entry in collapsedGroups never
+ * matches again, leaving it to sit in storage forever with no UI path to
+ * ever remove it (and a latent collision risk if some future refine ever
+ * reintroduces the literal string "won" as a genuinely different value's
+ * own name). Confirms the stale entry is pruned from real persisted
+ * storage the moment the entity's own enumValues change, without needing
+ * a remount -- EntityPanel doesn't remount when a refine mutates the
+ * currently-active entity's own fields in place.
+ */
+test("EntityPanel prunes a collapsed-group entry naming an enum value a refine renamed away, instead of leaving it in storage forever", async () => {
+  await withJsdom(async () => {
+    const statusFieldV1 = {
+      name: "status",
+      label: "Status",
+      type: "enum" as const,
+      required: true,
+      enumValues: ["new", "won"],
+      enumLabels: { new: "New", won: "Won" },
+    };
+    const statusFieldV2 = {
+      name: "status",
+      label: "Status",
+      type: "enum" as const,
+      required: true,
+      enumValues: ["new", "done"],
+      enumLabels: { new: "New", done: "Done" },
+    };
+    const entityV1: Entity = {
+      name: "Deal",
+      label: "Deal",
+      fields: [{ name: "name", label: "Name", type: "text", required: true }, statusFieldV1],
+    };
+    const entityV2: Entity = {
+      name: "Deal",
+      label: "Deal",
+      fields: [{ name: "name", label: "Name", type: "text", required: true }, statusFieldV2],
+    };
+    const store: EntityRecord[] = [
+      { id: 1, name: "Acme Corp", status: "new" },
+      { id: 2, name: "Beta Inc", status: "won" },
+    ];
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = mockRecordsFetch(store) as typeof fetch;
+    try {
+      const view = renderEntityPanel({ entity: entityV1, allEntities: [entityV1] });
+      await waitForCondition(() => document.querySelectorAll("table tbody tr[data-record-id]").length === 2);
+
+      const groupBySelect = document.querySelector(".entity-group-by") as HTMLSelectElement;
+      fireEvent.change(groupBySelect, { target: { value: "status" } });
+      await waitForCondition(() => document.querySelectorAll(".entity-group-header-row").length === 2);
+
+      const headerRows = Array.from(document.querySelectorAll(".entity-group-header-row"));
+      const wonToggle = headerRows.find((r) => r.textContent?.includes("Won"))!.querySelector(".entity-group-toggle") as HTMLButtonElement;
+      fireEvent.click(wonToggle);
+      await waitForCondition(() => document.querySelectorAll("table tbody tr[data-record-id]").length === 1);
+      assert.deepEqual(
+        getCollapsedGroups("proj1", "Deal", "status"),
+        ["won"],
+        "sanity check: collapsing 'Won' must have actually persisted it",
+      );
+
+      // Simulate a refine renaming "won" -> "done" while this entity's tab
+      // stays open (EntityPanel doesn't remount for an in-place field edit).
+      view.rerender(buildEntityPanelElement({ entity: entityV2, allEntities: [entityV2] }));
+      await waitForCondition(() => document.querySelectorAll("table tbody tr[data-record-id]").length === 2);
+
+      assert.deepEqual(
+        getCollapsedGroups("proj1", "Deal", "status"),
+        [],
+        "the dead 'won' entry must be pruned from storage once 'status' no longer has that value, not left to sit there forever",
+      );
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+});
+
+/**
+ * Round 842's finding, applied to the Kanban board's own collapse state
+ * instead of the table's -- same reasoning as the collapsedGroups test
+ * just above. findBoardField only ever resolves to an enum field, so this
+ * exercises the exact same staleness guard on collapsedBoardColumnsPreference.ts's
+ * own side.
+ */
+test("EntityPanel prunes a collapsed-board-column entry naming an enum value a refine renamed away, instead of leaving it in storage forever", async () => {
+  await withJsdom(async () => {
+    const priorityFieldV1 = {
+      name: "priority",
+      label: "Priority",
+      type: "enum" as const,
+      required: true,
+      enumValues: ["low", "high"],
+      enumLabels: { low: "Low", high: "High" },
+    };
+    const priorityFieldV2 = {
+      name: "priority",
+      label: "Priority",
+      type: "enum" as const,
+      required: true,
+      enumValues: ["low", "urgent"],
+      enumLabels: { low: "Low", urgent: "Urgent" },
+    };
+    const entityV1: Entity = {
+      name: "Deal",
+      label: "Deal",
+      fields: [{ name: "name", label: "Name", type: "text", required: true }, priorityFieldV1],
+    };
+    const entityV2: Entity = {
+      name: "Deal",
+      label: "Deal",
+      fields: [{ name: "name", label: "Name", type: "text", required: true }, priorityFieldV2],
+    };
+    const store: EntityRecord[] = [
+      { id: 1, name: "Acme Corp", priority: "low" },
+      { id: 2, name: "Beta Inc", priority: "high" },
+    ];
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = mockRecordsFetch(store) as typeof fetch;
+    try {
+      const view = renderEntityPanel({ entity: entityV1, allEntities: [entityV1] });
+      await waitForCondition(() => document.querySelectorAll("table tbody tr[data-record-id]").length === 2);
+
+      const boardToggle = document.querySelectorAll(".view-toggle-btn")[1] as HTMLButtonElement;
+      fireEvent.click(boardToggle);
+      await waitForCondition(() => document.querySelectorAll(".board-column").length === 2);
+
+      function findColumn(label: string) {
+        return Array.from(document.querySelectorAll(".board-column")).find((col) =>
+          col.querySelector(".board-column-header-info")?.textContent?.includes(label),
+        ) as HTMLDivElement;
+      }
+      fireEvent.click(findColumn("High").querySelector(".board-column-toggle") as HTMLButtonElement);
+      await waitForCondition(() => findColumn("High").querySelectorAll(".board-card").length === 0);
+      assert.deepEqual(
+        getCollapsedBoardColumns("proj1", "Deal", "priority"),
+        ["high"],
+        "sanity check: collapsing 'High' must have actually persisted it",
+      );
+
+      // Simulate a refine renaming "high" -> "urgent" while this entity's
+      // tab stays open (EntityPanel doesn't remount for an in-place field edit).
+      // Beta Inc's own stored "high" value no longer matches either
+      // declared enumValue, so it lands in a 3rd, synthetic "(other)"
+      // column alongside "Low" and the now-empty "Urgent" column.
+      view.rerender(buildEntityPanelElement({ entity: entityV2, allEntities: [entityV2] }));
+      await waitForCondition(() => document.querySelectorAll(".board-column").length === 3);
+
+      assert.deepEqual(
+        getCollapsedBoardColumns("proj1", "Deal", "priority"),
+        [],
+        "the dead 'high' entry must be pruned from storage once 'priority' no longer has that value, not left to sit there forever",
       );
     } finally {
       globalThis.fetch = originalFetch;

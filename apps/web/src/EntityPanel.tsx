@@ -1412,9 +1412,37 @@ export function EntityPanel({
   // groupFieldName in the key, switching "Group by" from one boolean field
   // to another carried over the first field's collapsed set onto the
   // second, silently hiding rows the person never chose to hide there.
+  //
+  // A collapsed group's own key is the field's raw stored value (an enum
+  // value, or "true"/"false" for boolean) -- but unlike groupFieldName's
+  // own type-staleness guard above, nothing here re-validated that value
+  // against the field's CURRENT enumValues. A refine renaming or removing
+  // an enum value (e.g. "Closed" -> "Done") doesn't touch existing
+  // records' own stored "Closed" strings (migrations are additive-only),
+  // so those records' own group moved from a key named "Closed" to the
+  // synthetic "(other)" bucket (otherGroupKey) -- a DIFFERENT key the
+  // stale "Closed" entry in collapsedGroups never matches. The group the
+  // user had deliberately collapsed silently reappeared fully expanded,
+  // with no action by the user and no way to re-collapse the dead key
+  // back (a value that no longer exists can't be clicked in the UI).
+  // Boolean fields have a fixed, never-stale value space ("true"/"false"
+  // always), so only the enum case needs filtering.
+  const groupFieldEnumValuesKey = useMemo(() => {
+    const field = entity.fields.find((f) => f.name === groupFieldName);
+    return field?.type === "enum" ? (field.enumValues ?? []).join(",") : "";
+  }, [entity.fields, groupFieldName]);
   useEffect(() => {
-    setCollapsedGroups(new Set(getCollapsedGroups(projectId, entity.name, groupFieldName)));
-  }, [projectId, entity.name, groupFieldName]);
+    const loaded = getCollapsedGroups(projectId, entity.name, groupFieldName);
+    const field = entity.fields.find((f) => f.name === groupFieldName);
+    if (field?.type !== "enum") {
+      setCollapsedGroups(new Set(loaded));
+      return;
+    }
+    const validValues = new Set(field.enumValues ?? []);
+    const filtered = loaded.filter((v) => validValues.has(v));
+    if (filtered.length !== loaded.length) setCollapsedGroupsPreference(projectId, entity.name, groupFieldName, filtered);
+    setCollapsedGroups(new Set(filtered));
+  }, [projectId, entity.name, groupFieldName, groupFieldEnumValuesKey]);
 
   /** Toggles one group's collapsed state and persists the full updated set, mirroring handleFieldFilterChange's write-through-to-storage pattern. */
   function toggleGroupCollapsed(groupKey: string) {
@@ -1440,9 +1468,24 @@ export function EntityPanel({
   // whichever columns were collapsed under the field that used to hold
   // that role.
   const boardFieldName = boardField?.name ?? "";
+  // Same reasoning as collapsedGroups' own enum-staleness guard just
+  // above -- findBoardField only ever resolves to an enum field, so a
+  // refine renaming/removing one of its enumValues leaves a collapsed
+  // column's own key (the old enum value) matching nothing once those
+  // records move to the board's own "(other)" column instead, silently
+  // re-expanding a column the user had deliberately collapsed.
+  const boardFieldEnumValuesKey = useMemo(() => (boardField?.enumValues ?? []).join(","), [boardField]);
   useEffect(() => {
-    setCollapsedBoardColumns(new Set(getCollapsedBoardColumns(projectId, entity.name, boardFieldName)));
-  }, [projectId, entity.name, boardFieldName]);
+    const loaded = getCollapsedBoardColumns(projectId, entity.name, boardFieldName);
+    if (!boardField) {
+      setCollapsedBoardColumns(new Set(loaded));
+      return;
+    }
+    const validValues = new Set(boardField.enumValues ?? []);
+    const filtered = loaded.filter((v) => validValues.has(v));
+    if (filtered.length !== loaded.length) setCollapsedBoardColumnsPreference(projectId, entity.name, boardFieldName, filtered);
+    setCollapsedBoardColumns(new Set(filtered));
+  }, [projectId, entity.name, boardFieldName, boardFieldEnumValuesKey]);
 
   /** Mirrors toggleGroupCollapsed above, for board columns instead of table groups. */
   function toggleBoardColumnCollapsed(columnValue: string) {
