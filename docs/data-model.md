@@ -2,7 +2,7 @@
 
 ## What's implemented today
 
-Four tiers of storage, all in one SQLite database (default path
+Five tiers of storage, all in one SQLite database (default path
 `apps/api/data/forge.sqlite`, override with `DB_PATH`):
 
 ### 1. Accounts — `users` and `sessions` tables
@@ -24,7 +24,24 @@ Four tiers of storage, all in one SQLite database (default path
 | status      | TEXT | `draft` \| `built`                        |
 | createdAt   | TEXT | ISO 8601 timestamp                        |
 
-### 3. Time Machine — `checkpoints` table
+### 3. Collaboration — `project_collaborators` table
+
+| column    | type | notes                                                        |
+|-----------|------|---------------------------------------------------------------|
+| projectId | TEXT | the shared project, part of the composite primary key         |
+| userId    | TEXT | the invited `users.id`, part of the composite primary key     |
+| role      | TEXT | `"editor"` \| `"viewer"` (additive migration, defaults existing rows to `"editor"`) |
+| addedAt   | TEXT | ISO 8601 timestamp                                             |
+
+An owner can invite another existing user as either an `"editor"`
+(identical access to the owner, except managing who else has access) or a
+read-only `"viewer"` — enforced server-side by `requireProjectWriteAccess`
+(`apps/api/src/routes/projects.ts`, ~40 call sites covering every mutating
+route) and reflected client-side by disabling write affordances throughout
+the UI for a viewer. See "Project sharing" in `security.md` for the full
+picture.
+
+### 4. Time Machine — `checkpoints` table
 
 | column     | type | notes                                              |
 |------------|------|------------------------------------------------------|
@@ -39,7 +56,7 @@ build or refine (see `architecture.md`). Restoring sets `projects.spec_json`
 back to a checkpoint's `spec_json` — see "additive-only migrations" below
 for why that's always safe.
 
-### 4. Generated application data — one table per entity per project
+### 5. Generated application data — one table per entity per project
 
 For a project with id `proj1` and an entity named `Customer`, Forge AI
 creates a real table `entity_proj1_Customer` with:
@@ -83,9 +100,11 @@ larger entity set — `Workspace`, `WorkspaceMember`, `Conversation`,
 `Integration`, `SecretReference`, `TestRun`, `SecurityScan`, `Issue`,
 `Incident`, `UsageRecord`, `Subscription`, `AuditEvent`, and more.
 
-`User` and `Checkpoint` now exist for real (above); the rest doesn't yet.
-Today's model is single-owner-per-project — there is no `Workspace` or
-`WorkspaceMember` concept, so no team sharing, no organizations, and no
-RBAC beyond "the owner can do everything, nobody else can see it." See
-`roadmap.md` Phase 3/4 and `security.md` for what that gap means in
-practice.
+`User` and `Checkpoint` now exist for real (above); so does project-level
+sharing with a real editor/viewer role each (the `project_collaborators`
+table, tier 3 above) — but the rest of this larger vision doesn't yet.
+There is still no `Workspace` or `WorkspaceMember` concept: sharing is
+per-project, not grouped under a team/org an owner manages collectively,
+and there's no entity-scoped (as opposed to whole-project) permission
+level. See `roadmap.md` Phase 3/4 and `security.md` for what that
+narrower gap means in practice.
