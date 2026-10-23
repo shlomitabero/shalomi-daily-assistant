@@ -1,6 +1,6 @@
 import { Fragment, useEffect, useMemo, useRef, useState } from "react";
 import type { Entity, EntityRecord, Field, Project } from "@forge/shared";
-import { createRecord, deleteRecord, listRecords, updateRecord, uploadRecordFile } from "./api.js";
+import { createRecord, deleteRecord, listRecords, safeDownloadName, updateRecord, uploadRecordFile } from "./api.js";
 import { buildCalendarIcs, downloadCalendarIcs } from "./calendarIcs.js";
 import { getHiddenFields, toggleFieldVisibility } from "./columnVisibility.js";
 import {
@@ -2875,7 +2875,7 @@ export function EntityPanel({
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
     a.href = url;
-    a.download = `${entity.name}.csv`;
+    a.download = `${safeDownloadName(entity.name, "export")}.csv`;
     document.body.appendChild(a);
     a.click();
     a.remove();

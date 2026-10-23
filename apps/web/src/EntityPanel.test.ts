@@ -4906,6 +4906,70 @@ test("EntityPanel's Export CSV button downloads exactly the selected rows' CSV w
 });
 
 /**
+ * Round 846's finding: every other filename-bearing download in this
+ * codebase (project export/backup in api.ts, the calendar ICS export just
+ * below in this same file via downloadCalendarIcs) routes the name
+ * through safeDownloadName first -- stripping path separators and
+ * Windows-reserved characters a raw entity name could otherwise carry
+ * straight into a saved file's own name (EntitySchema's own `name` has no
+ * character-set restriction, per round 844/845's own finding). CSV export
+ * was the one download site built with an inline Blob+anchor that skipped
+ * it, handing entity.name straight to `a.download`. Confirms a "/" in the
+ * entity's own name never reaches the saved file's name unescaped.
+ */
+test("EntityPanel's Export CSV button sanitizes the entity name before using it as the downloaded file's own name", async () => {
+  await withJsdom(async () => {
+    const unsafeNamedEntity: Entity = {
+      name: "Foo/Bar",
+      label: "Foo/Bar",
+      fields: [{ name: "name", label: "Name", type: "text", required: true }],
+    };
+    const store: EntityRecord[] = [{ id: 1, name: "Dana" }];
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = (async (input: string) => {
+      if (input === "/api/projects/proj1/entities/Foo%2FBar") {
+        return new Response(JSON.stringify({ records: store }), { status: 200, headers: { "content-type": "application/json" } });
+      }
+      throw new Error(`unexpected request ${input}`);
+    }) as typeof fetch;
+    const originalCreateObjectURL = (URL as unknown as { createObjectURL?: (b: Blob) => string }).createObjectURL;
+    const originalRevokeObjectURL = (URL as unknown as { revokeObjectURL?: (u: string) => void }).revokeObjectURL;
+    (URL as unknown as { createObjectURL: (b: Blob) => string }).createObjectURL = () => "blob:mock-url";
+    (URL as unknown as { revokeObjectURL: (u: string) => void }).revokeObjectURL = () => {};
+    const originalCreateElement = document.createElement.bind(document) as typeof document.createElement;
+    let capturedDownload: string | undefined;
+    (document as unknown as { createElement: typeof document.createElement }).createElement = ((tag: string) => {
+      const el = originalCreateElement(tag);
+      if (tag === "a") {
+        const originalClick = (el as HTMLAnchorElement).click.bind(el);
+        (el as HTMLAnchorElement).click = () => {
+          capturedDownload = (el as HTMLAnchorElement).download;
+          originalClick();
+        };
+      }
+      return el;
+    }) as typeof document.createElement;
+    try {
+      renderEntityPanel({ entity: unsafeNamedEntity, allEntities: [unsafeNamedEntity] });
+      await waitForCondition(() => document.querySelectorAll("table tbody tr[data-record-id]").length === 1);
+
+      const exportBtn = document.querySelector(".csv-export-btn") as HTMLButtonElement;
+      fireEvent.click(exportBtn);
+
+      await waitForCondition(() => capturedDownload !== undefined);
+      assert.ok(capturedDownload, "expected the anchor's own click() to have been called with a real download name set");
+      assert.ok(!capturedDownload!.includes("/"), "the downloaded file's own name must not contain the raw '/' from the entity's own name");
+      assert.equal(capturedDownload, "FooBar.csv", "safeDownloadName must have stripped the unsafe character, matching downloadCalendarIcs' own sibling behavior");
+    } finally {
+      globalThis.fetch = originalFetch;
+      if (originalCreateObjectURL) (URL as unknown as { createObjectURL: (b: Blob) => string }).createObjectURL = originalCreateObjectURL;
+      if (originalRevokeObjectURL) (URL as unknown as { revokeObjectURL: (u: string) => void }).revokeObjectURL = originalRevokeObjectURL;
+      (document as unknown as { createElement: typeof document.createElement }).createElement = originalCreateElement;
+    }
+  });
+});
+
+/**
  * New in this round: EntityPanel -- the single most-used screen in the
  * app -- was the one data-bearing panel left with no "Copy" action next
  * to its Download/Export button, unlike BusinessTwinPanel/HistoryPanel/
