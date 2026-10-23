@@ -31831,3 +31831,23 @@ Still no genuine reply from שלומי. The very next round found the one remain
 **Verification**: reverted the fix and reran -- the test failed exactly as predicted (showed "Beta banana order" instead of "Acme apple order"); restored, it passes. All 23 GlobalSearch-related tests in `codegen.test.ts` pass in isolation.
 
 **Status**: shipped and pushed.
+
+### Round 817: Time Machine's diff/"Current" check never compared an entity's own description
+
+Still no genuine reply from שלומי. A code bug after a run of mostly-docs rounds followed by the GlobalSearch staleness pair -- this time in Time Machine's own diff/current-check logic.
+
+**The gap**: `checkpointDiff.ts`'s `computeCheckpointDiff` and `isCheckpointCurrent` compare `summary`/`roles`/`personas`/`screens`/`assumptions`/`openQuestions` at the top level, and every field's `fieldSignature` per entity -- but never an entity's own `description`. Unlike a field/entity `label` (deliberately excluded here, per the file's own doc comment, as "cosmetic"), `description` is real, user-rendered content: `EntityPanel.tsx` shows it as `{entity.description && <p className="muted">{entity.description}</p>}`, right above every entity's own table/form.
+
+**Why this is not deliberate**: the file's own structure proves the team already treats "does this property change what the user sees/does" as the test for inclusion -- `required` was added for exactly this reasoning (a prior round), and the top-level `isCheckpointCurrent` fields were each added one-by-one for the identical reason, per the function's own doc comment ("the live app's summary/role chips visibly differ... the opposite of what the doc comment above already promised"). `entity.description` sits in the exact same category but was simply never looked at -- no comment anywhere suggests it was ever considered and intentionally excluded, unlike `label`.
+
+**Concrete failure scenario**: a `/refine` call that regenerates an entity's description (the AI rewording it, or a different heuristic match) while leaving every field untouched is a completely ordinary case. Opening Time Machine afterward: the diff view shows no changes at all for that entity (not even listed), even though the on-screen note under its tab now reads differently than what that checkpoint would restore; if this was the *only* difference, `isCheckpointCurrent` wrongly reports `true` -- the checkpoint gets the "Current" chip and its own Restore button is permanently disabled, even though restoring it would genuinely change the visible description text.
+
+**The fix**: added `descriptionChanged` to `CheckpointDiff`'s `changedEntities` shape, set whenever an entity's `description` differs (even with every field byte-identical), and included it in the push condition so description-only changes are no longer invisible to the diff. Added the identical comparison to `isCheckpointCurrent`'s entity loop. `HistoryPanel.tsx` renders a new list item for a description-only change, with new he/en i18n keys (`history.diff.entityDescriptionChanged`).
+
+**Scope**: `apps/web` only -- confirmed via `grep -n "checkpoint" apps/api/src/codegen.ts` (no matches): the exported standalone app has no Time Machine/checkpoint-history feature at all, the same conclusion prior rounds already reached for this file.
+
+**The tests**: two new `checkpointDiff.test.ts` tests (an entity-description-only change is reported by `computeCheckpointDiff`, and identical-undefined descriptions on both sides are correctly NOT reported) plus one for `isCheckpointCurrent`, mirroring the existing `required`-flag test pair exactly. One new `HistoryPanel.test.ts` DOM-level test confirms the real rendered message appears instead of "No changes." Updated 9 existing `checkpointDiff.test.ts` fixtures whose `assert.deepEqual` calls needed the new `descriptionChanged: false` field added to their expected objects (none of their scenarios involve a description change, confirmed by checking none of their fixtures set `description` at all).
+
+**Verification**: reverted the fix (temporarily neutralizing just the two behavioral checks, not the type-shape change the other 9 tests depend on) and reran -- both new `checkpointDiff.test.ts` behavioral tests failed exactly as predicted; restored, all 3 pass. The `HistoryPanel.test.ts` test also failed without the fix (a module-level crash before reaching the detail-text assertion -- still a valid "module-load crash is a strong confirmation" per this session's own established convention) and passed once restored. Full `apps/web` suite: 1124/1124 pass, no flakes. `tsc -b` clean.
+
+**Status**: shipped and pushed.
