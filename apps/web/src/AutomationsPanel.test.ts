@@ -1543,6 +1543,73 @@ test("AutomationsPanel's 'schedule' trigger shows a time + day-of-week picker, f
 });
 
 /**
+ * Round 868's finding: the message-template textarea's own placeholder
+ * example and hint text advertised {{fieldName}} interpolation
+ * unconditionally, for every trigger -- but automations.ts's own
+ * fireScheduledRule sends a schedule rule's messageTemplate completely raw
+ * (its own doc comment: "a schedule rule has no triggering record at all
+ * ... no {{field}} placeholder could ever resolve to anything"), for both
+ * the WhatsApp and webhook action types this field is shared across. A
+ * user who followed the UI's own advice and wrote "{{customerName}}" into
+ * a schedule rule's message got that literal, unsubstituted text sent to a
+ * real WhatsApp recipient or webhook consumer, with nothing in the product
+ * warning this would happen. Confirms the hint/placeholder swap to a
+ * schedule-specific pair the moment "schedule" is chosen, and swaps back
+ * once a non-schedule trigger is chosen again -- proving this is a live,
+ * reversible UI state, not a one-way mistake.
+ */
+test("AutomationsPanel swaps the message-template hint/placeholder for a schedule-specific pair that never mentions {{fieldName}}, since a schedule rule is never interpolated", async () => {
+  await withJsdom(async () => {
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = (async (input: string) => {
+      if (input === "/api/projects/proj5/automations") {
+        return new Response(JSON.stringify({ rules: [] }), { status: 200, headers: { "content-type": "application/json" } });
+      }
+      throw new Error(`unexpected request ${input}`);
+    }) as typeof fetch;
+
+    try {
+      renderPanelWith(triggerFieldProject);
+      await waitForCondition(() => document.body.textContent?.includes("No automations yet") ?? false);
+
+      const messageField = document.querySelector(".automations-create-form textarea") as HTMLTextAreaElement;
+      assert.match(messageField.placeholder, /\{\{customerName\}\}/, "the default (non-schedule) placeholder must still advertise {{fieldName}} interpolation");
+      assert.match(
+        document.body.textContent ?? "",
+        /Use \{\{fieldName\}\}/,
+        "the default (non-schedule) hint must still advertise {{fieldName}} interpolation",
+      );
+
+      const triggerSelect = Array.from(document.querySelectorAll("select")).find((s) =>
+        Array.from(s.options).some((o) => o.value === "schedule"),
+      ) as HTMLSelectElement;
+      fireEvent.change(triggerSelect, { target: { value: "schedule" } });
+
+      await waitForCondition(() => !messageField.placeholder.includes("{{"));
+      assert.doesNotMatch(messageField.placeholder, /\{\{/, "a schedule rule's own placeholder example must never show {{fieldName}} syntax that will never be interpolated");
+      assert.doesNotMatch(
+        document.body.textContent ?? "",
+        /Use \{\{fieldName\}\}/,
+        "a schedule rule's own hint must not advertise interpolation that fireScheduledRule never performs",
+      );
+      assert.match(
+        document.body.textContent ?? "",
+        /sent exactly as written/,
+        "a schedule rule's own hint must explain the message is sent verbatim instead",
+      );
+
+      // Switching back to a non-schedule trigger must restore the original pair.
+      fireEvent.change(triggerSelect, { target: { value: "record_created" } });
+      await waitForCondition(() => messageField.placeholder.includes("{{"));
+      assert.match(messageField.placeholder, /\{\{customerName\}\}/, "switching away from 'schedule' must restore the field-interpolation placeholder");
+      assert.match(document.body.textContent ?? "", /Use \{\{fieldName\}\}/, "switching away from 'schedule' must restore the field-interpolation hint");
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+});
+
+/**
  * New: the "webhook" action type -- choosing it must swap out the
  * WhatsApp-specific toMode/destination controls for a plain URL input,
  * and the submitted request must carry actionType/webhookUrl with no

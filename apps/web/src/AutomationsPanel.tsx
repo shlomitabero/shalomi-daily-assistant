@@ -933,12 +933,22 @@ export function AutomationsPanel({
             {t("automations.messageTemplate.label")}
             <textarea
               rows={3}
-              placeholder={t("automations.messageTemplate.placeholder")}
+              placeholder={t(trigger === "schedule" ? "automations.messageTemplate.placeholder.schedule" : "automations.messageTemplate.placeholder")}
               value={messageTemplate}
               onChange={(e) => setMessageTemplate(e.target.value)}
             />
           </label>
-          <p className="muted small">{t("automations.messageTemplate.hint")}</p>
+          {/* Round 868: a schedule rule has no triggering record at all --
+              fireScheduledRule's own doc comment (automations.ts) states
+              this explicitly and sends messageTemplate completely raw, for
+              both the WhatsApp and webhook action types this field is
+              shared across (see the actionType branch above). Advertising
+              {{fieldName}} interpolation here anyway, same as every other
+              trigger, invited a user to write a placeholder that would
+              reach a real WhatsApp recipient or webhook consumer
+              completely unsubstituted -- a visibly broken message with no
+              warning anywhere in the product that this would happen. */}
+          <p className="muted small">{t(trigger === "schedule" ? "automations.messageTemplate.hint.schedule" : "automations.messageTemplate.hint")}</p>
 
           <div className="automations-form-actions">
             <button type="submit" disabled={createBusy || formIncomplete}>
