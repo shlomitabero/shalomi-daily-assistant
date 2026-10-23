@@ -31674,3 +31674,19 @@ Still no genuine reply from שלומי. A "missed sibling" within `packages/db` 
 **Scope**: `packages/db` only -- `apps/api`'s own full suite was also run (consumes these functions through `apps/api/src/automations.ts`) since the change affects shared, cross-workspace runtime SQL behavior: 585/586 pass, the sole failure being the already-documented pre-existing `codegen.test.ts` process-exit hang flake, confirmed unrelated. `packages/db`'s own full suite: 213/213 pass, including the three new tests.
 
 **Status**: shipped and pushed.
+
+### Round 809: docs/data-model.md carried the identical stale "no team sharing / no RBAC" claim round 807 fixed in two other docs, and never listed the `project_collaborators` table at all
+
+Still no genuine reply from שלומי. The same bug as round 807, in a third doc the first sweep never checked.
+
+**The gap**: `docs/data-model.md`'s closing section said "Today's model is single-owner-per-project -- there is no `Workspace` or `WorkspaceMember` concept, so no team sharing, no organizations, and no RBAC beyond 'the owner can do everything, nobody else can see it.'" Its "Four tiers of storage" inventory (accounts, projects, checkpoints, generated entity tables) never mentioned the `project_collaborators` table at all -- the schema inventory itself was incomplete, not just the closing paragraph.
+
+**Why this is not deliberate**: round 807's own commit explicitly names the two docs it fixed (`README.md`, `docs/security.md`) for this exact stale claim; `docs/data-model.md` carries the identical sentence pattern and was simply outside that round's sweep -- the textbook "same fix applied to two siblings, never checked against the third" gap, just one doc removed from round 807 rather than a code change.
+
+**Concrete failure scenario**: `docs/data-model.md` is the natural place to look for "what tables/access model exists today" in this repo -- more natural than `security.md`, which is framed around threats rather than schema. A reader checking there first would conclude collaborator sharing and viewer/editor permissions don't exist at all (the doc even cross-references `security.md` "for what that gap means in practice," actively pointing at a doc that, since round 807, says the opposite), and could duplicate the already-shipped feature or misjudge who can see/edit a project's data.
+
+**The fix**: added `project_collaborators` as a new tier 3 in the storage inventory (role column, its real `"editor"`/`"viewer"` values, the `requireProjectWriteAccess` enforcement point, a pointer to `security.md`), renumbered the two tiers after it (checkpoints, generated entity tables), and narrowed the closing paragraph to the gap that's still real -- no `Workspace`/`WorkspaceMember` grouping concept, no entity-scoped (vs. whole-project) permission level -- instead of denying RBAC exists at all, mirroring exactly what round 807 already wrote into `security.md`.
+
+**Scope**: docs-only, no application code changed -- no test suite or build to run, no parity question applies.
+
+**Status**: shipped and pushed.
