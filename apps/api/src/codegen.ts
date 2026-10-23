@@ -1255,6 +1255,52 @@ function setPersistedGroupField(entityName, fieldName) {
   return fieldName;
 }
 
+// The field TYPE that was current at the moment getPersistedGroupField's own
+// value above was last chosen -- a sibling store, not a second property on
+// the same entry, so the existing plain-string shape above stays untouched.
+// Mirrors the live Forge AI preview's own round-838 fix (groupByPreference.ts's
+// getGroupByFieldType/setGroupByFieldType): this exported app's own schema is
+// frozen at export time (no live refine while any component stays mounted,
+// the same reasoning round 751/780 used to rule out a live-refine-tracking
+// ref here), but the cross-export localStorage reachability path rounds
+// 509/570/834 already established for sibling stores applies identically to
+// this one -- a user loading a newer export of the same project (after a
+// refine retyped the grouped field, e.g. enum -> boolean) against a browser
+// still holding an older export's localStorage sees the stale field name
+// survive unchanged, and groupRecordsByField's boolean branch then coerces
+// the still-unconverted legacy values through Boolean(...), landing every
+// record under one confidently-labeled "Yes" group with no visible sign
+// anything is wrong.
+const GROUP_FIELD_TYPE_STORAGE_KEY = "forge_group_field_type";
+function readGroupFieldTypeStore() {
+  try {
+    const raw = localStorage.getItem(GROUP_FIELD_TYPE_STORAGE_KEY);
+    if (!raw) return {};
+    const parsed = JSON.parse(raw);
+    if (parsed === null || typeof parsed !== "object" || Array.isArray(parsed)) return {};
+    return parsed;
+  } catch {
+    return {};
+  }
+}
+function writeGroupFieldTypeStore(store) {
+  try {
+    localStorage.setItem(GROUP_FIELD_TYPE_STORAGE_KEY, JSON.stringify(store));
+  } catch {
+    // localStorage can be unavailable (private mode) -- the choice just won't survive a reload.
+  }
+}
+function getPersistedGroupFieldType(entityName) {
+  const store = readGroupFieldTypeStore();
+  return typeof store[entityName] === "string" ? store[entityName] : "";
+}
+function setPersistedGroupFieldType(entityName, type) {
+  const store = readGroupFieldTypeStore();
+  if (type) store[entityName] = type;
+  else delete store[entityName];
+  writeGroupFieldTypeStore(store);
+}
+
 const VIEW_MODE_STORAGE_KEY = "forge_view_mode";
 function readViewModeStore() {
   try {
@@ -3512,7 +3558,17 @@ export function EntityView({ entity, highlightRecordId, onHighlightHandled, onJu
   const [search, setSearch] = useState("");
   const [recentSearches, setRecentSearches] = useState(() => getEntityRecentSearches(entity.name));
   const [fieldFilters, setFieldFilters] = useState(() => sanitizeFieldFilters(getPersistedFieldFilters(entity.name), entity.fields));
-  const [groupFieldName, setGroupFieldName] = useState(() => getPersistedGroupField(entity.name));
+  const [groupFieldName, setGroupFieldName] = useState(() => {
+    const loaded = getPersistedGroupField(entity.name);
+    if (!loaded) return loaded;
+    const currentType = entity.fields.find((f) => f.name === loaded)?.type;
+    const recordedType = getPersistedGroupFieldType(entity.name);
+    if (!currentType || (recordedType && recordedType !== currentType)) {
+      setPersistedGroupFieldType(entity.name, "");
+      return setPersistedGroupField(entity.name, "");
+    }
+    return loaded;
+  });
   const [collapsedGroups, setCollapsedGroups] = useState(() => new Set(getPersistedCollapsedGroups(entity.name, groupFieldName)));
   const [collapsedBoardColumns, setCollapsedBoardColumns] = useState(
     () => new Set(getPersistedCollapsedBoardColumns(entity.name, (findBoardField(entity.fields) || {}).name || "")),
@@ -3768,6 +3824,7 @@ export function EntityView({ entity, highlightRecordId, onHighlightHandled, onJu
     });
     setViewMode(setPersistedViewMode(entity.name, "table"));
     setGroupFieldName(setPersistedGroupField(entity.name, ""));
+    setPersistedGroupFieldType(entity.name, "");
     setHighlightedRecordId(highlightRecordId);
     onHighlightHandled?.();
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -5182,7 +5239,11 @@ export function EntityView({ entity, highlightRecordId, onHighlightHandled, onJu
                 className="entity-group-by"
                 aria-label="Group by"
                 value={groupFieldName}
-                onChange={(e) => setGroupFieldName(setPersistedGroupField(entity.name, e.target.value))}
+                onChange={(e) => {
+                  const fieldName = e.target.value;
+                  setGroupFieldName(setPersistedGroupField(entity.name, fieldName));
+                  setPersistedGroupFieldType(entity.name, fieldName ? entity.fields.find((f) => f.name === fieldName)?.type ?? "" : "");
+                }}
               >
                 <option value="">No grouping</option>
                 {groupableFields.map((f) => (

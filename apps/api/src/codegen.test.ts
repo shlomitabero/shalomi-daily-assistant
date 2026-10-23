@@ -1966,7 +1966,7 @@ test("the exported EntityView's table can be grouped by an enum/boolean field, n
 
   assert.match(entityViewJsx, /function isGroupableField\(field, relatedRecords\) \{/);
   assert.match(entityViewJsx, /function groupRecordsByField\(records, field, relatedRecords\) \{/);
-  assert.match(entityViewJsx, /const \[groupFieldName, setGroupFieldName\] = useState\(\(\) => getPersistedGroupField\(entity\.name\)\);/);
+  assert.match(entityViewJsx, /const \[groupFieldName, setGroupFieldName\] = useState\(\(\) => \{/);
   assert.match(
     entityViewJsx,
     /const groupableFields = useMemo\(\s*\(\) => orderedFields\.filter\(\(f\) => isGroupableField\(f, relatedRecords\)\),\s*\[orderedFields, relatedRecords\],\s*\);/,
@@ -13121,6 +13121,142 @@ test("the exported EntityView's group-by/view-mode/sort-key choices are each per
   assert.deepEqual(getPersistedSortKeys("Customer"), [], "clearing all sort keys must round-trip back to empty");
   setPersistedFieldFilters("Customer", { status: "" });
   assert.deepEqual(getPersistedFieldFilters("Customer"), {}, "clearing a filter back to '' must drop it from storage entirely, not persist an empty string");
+});
+
+/**
+ * Round 839: ports the live Forge AI preview's own round-838 fix to this
+ * exported app -- the round-838 "scope note" explicitly flagged this exact
+ * port as a follow-up. getPersistedGroupField persists only the group-by
+ * field NAME, with no type-tracking mechanism at all (unlike the live
+ * preview, which now has both round 780's live-mount ref AND round 838's
+ * own persisted-type remount check -- this exported app's frozen-at-export
+ * schema never needs the live-mount half, the same reasoning round 751/780
+ * used to rule out a ref here, but the cross-export reachability path
+ * rounds 509/570/834 already established for sibling stores applies
+ * identically: a user re-exporting after a refine retypes the grouped
+ * field, reloaded against a browser still holding an older export's
+ * localStorage, sees the stale field name survive unchanged while
+ * groupRecordsByField's boolean branch coerces still-unconverted legacy
+ * values through Boolean(...), fabricating a confidently-labeled "Yes"
+ * group). Confirms the fix via two separate generated exports (simulating
+ * two different exports of the same project after a refine, rather than
+ * a live rerender -- this exported app's own schema can never change
+ * within one mount, so the only reachable path is a fresh mount of a
+ * DIFFERENT export, mirrored by two distinct generateExportFiles calls).
+ */
+test("the exported EntityView drops a persisted 'Group by' selection when a newer export retyped that field, instead of silently mislabeling every record", async () => {
+  const customerWithEnumStatus: Entity = {
+    name: "Customer",
+    label: "Customers",
+    fields: [
+      { name: "name", label: "Name", type: "text", required: true },
+      {
+        name: "status",
+        label: "Status",
+        type: "enum",
+        required: true,
+        enumValues: ["Pending", "Shipped"],
+        enumLabels: { Pending: "Pending", Shipped: "Shipped" },
+      },
+    ],
+  };
+  const customerWithBooleanStatus: Entity = {
+    name: "Customer",
+    label: "Customers",
+    fields: [
+      { name: "name", label: "Name", type: "text", required: true },
+      { name: "status", label: "Status", type: "boolean", required: true },
+    ],
+  };
+  const olderExportProject: Project = { ...project, spec: { ...project.spec, entities: [customerWithEnumStatus] } };
+  const newerExportProject: Project = { ...project, spec: { ...project.spec, entities: [customerWithBooleanStatus] } };
+  const store = [
+    { id: 1, name: "Acme Corp", status: true },
+    { id: 2, name: "Globex", status: false },
+  ];
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = (async (input: string) => {
+    if (input === "/api/Customer") {
+      return new Response(JSON.stringify({ records: store }), { status: 200, headers: { "content-type": "application/json" } });
+    }
+    throw new Error(`unexpected request ${input}`);
+  }) as typeof fetch;
+
+  const olderDir = writeGeneratedWebComponent(generateExportFiles(olderExportProject));
+  const newerDir = writeGeneratedWebComponent(generateExportFiles(newerExportProject));
+  try {
+    await withRealLocalStorage(async () => {
+      // Simulates grouping by "status" in an OLDER export, while it was
+      // still an enum -- persists the real field name AND type via the
+      // real generated store functions.
+      const { EntityView: OlderEntityView } = await import(path.join(olderDir, "web", "src", "components", "EntityView.jsx"));
+      const olderEntity = olderExportProject.spec.entities[0];
+      const olderProps = {
+        entity: olderEntity,
+        highlightRecordId: null,
+        onHighlightHandled: () => {},
+        onJumpToRecord: () => {},
+        onRecordCountChange: () => {},
+      };
+      const older = render(React.createElement(OlderEntityView, olderProps));
+      for (let i = 0; i < 40; i++) {
+        if (older.container.querySelectorAll("tbody tr").length > 0) break;
+        await act(async () => {
+          await new Promise((resolve) => setTimeout(resolve, 0));
+        });
+      }
+      const groupBySelect = older.container.querySelector(".entity-group-by") as HTMLSelectElement;
+      await act(async () => {
+        fireEvent.change(groupBySelect, { target: { value: "status" } });
+      });
+      assert.equal(groupBySelect.value, "status", "sanity check: the older export's own grouping must have actually been set");
+      older.unmount();
+
+      // Simulates re-downloading/reloading a NEWER export of the same
+      // project at the same origin, after a refine retyped "status" to
+      // boolean -- a fresh dynamic import (a genuinely different
+      // generated module, not a rerender of the same instance), with
+      // the real browser localStorage from the older export still
+      // holding the stale "status" selection.
+      const { EntityView: NewerEntityView } = await import(path.join(newerDir, "web", "src", "components", "EntityView.jsx"));
+      const newerEntity = newerExportProject.spec.entities[0];
+      const newerProps = {
+        entity: newerEntity,
+        highlightRecordId: null,
+        onHighlightHandled: () => {},
+        onJumpToRecord: () => {},
+        onRecordCountChange: () => {},
+      };
+      const newer = render(React.createElement(NewerEntityView, newerProps));
+      for (let i = 0; i < 40; i++) {
+        if (newer.container.querySelectorAll("tbody tr[data-record-id]").length === 2) break;
+        await act(async () => {
+          await new Promise((resolve) => setTimeout(resolve, 0));
+        });
+      }
+      assert.equal(
+        newer.container.querySelectorAll("tbody tr[data-record-id]").length,
+        2,
+        "expected both records to have loaded",
+      );
+
+      assert.equal(
+        (newer.container.querySelector(".entity-group-by") as HTMLSelectElement).value,
+        "",
+        "the newer export must drop the stale 'Group by' selection, not keep pointing at the now-retyped field",
+      );
+      assert.doesNotMatch(
+        newer.container.querySelector("table tbody")?.textContent ?? "",
+        /Yes/,
+        "must never show a fabricated 'Yes' group mislabeling both records from their stale enum values",
+      );
+    });
+  } finally {
+    globalThis.fetch = originalFetch;
+    cleanup();
+    rmSync(olderDir, { recursive: true, force: true });
+    rmSync(newerDir, { recursive: true, force: true });
+  }
 });
 
 /**
