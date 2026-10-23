@@ -32867,3 +32867,21 @@ Still no genuine reply from שלומי. After three consecutive rounds on `domai
 **Verification**: confirmed failing cleanly without the fix -- via two independent `git stash` / run / `git stash pop` cycles, one per file, each keeping its own test file in place -- and passing with each fix restored. The full `entityFormatting.test.ts` suite (198 tests) and `apps/web`'s `tsc -b` ran clean, as did the full `apps/web` suite (1149 tests, up from 1148), the full `apps/api` suite (497 tests, every file except the SIGKILL-prone `codegen.test.ts` itself), and `apps/api`'s build.
 
 **Status**: shipped and pushed, `apps/web/src/entityFormatting.ts` + `apps/web/src/entityFormatting.test.ts` + `apps/api/src/codegen.ts` + `apps/api/src/codegen.test.ts`.
+
+### Round 873: badgeTone also misread "NotWon"/"NotActive" as positive -- a second pair of POSITIVE_WORDS entries round 458's own fix never got a negated counterpart for
+
+Still no genuine reply from שלומי. Immediately after round 872 fixed "success"/"completed", this round's survey re-checked the REST of `badgeTone`'s `POSITIVE_WORDS` list against the same question and found two more unfixed entries: "won" and "active".
+
+**The gap**: "NotWon"/"Not Won" and "NotActive"/"Not Active" each contain their positive counterpart ("won"/"active") as a literal substring, and neither was listed in `NEGATIVE_WORDS`, so both fell through to the `POSITIVE_WORDS` check and rendered a green "positive" badge -- the exact opposite of their meaning. "NotActive" is worth noting specifically: it's a genuinely different spelling from "Inactive" (already in `NEGATIVE_WORDS` since the function's very first version), not merely a no-space/space variant of it, so the existing entry gave it no coverage at all.
+
+**Confirmed empirically before fixing**: ran the real exported `badgeTone` directly -- `"NotWon"`, `"Not Won"`, `"NotActive"`, and `"Not Active"` all returned `"positive"`.
+
+**Why this is reachable**: Deal/Opportunity's own built-in "Won"/"Lost" status pair (`spec-engine/domainEntities.ts`) makes "Not Won" an obvious variant a user or AI-generated spec would reach for, and active/inactive-style status fields are equally common across the built-in domain library. Same two real consumers as round 872 (`EntityPanel.tsx`'s table-cell and Kanban column-header badges), and the identical duplicated `POSITIVE_WORDS`/`NEGATIVE_WORDS`/`badgeTone` copy in `apps/api/src/codegen.ts`'s exported standalone app needed the same parity fix.
+
+**The fix**: added `"notwon"`, `"not won"`, `"notactive"`, `"not active"` to `NEGATIVE_WORDS` in both files, mirroring round 872's exact approach.
+
+**The tests**: a new `entityFormatting.test.ts` test (direct call) and a new `codegen.test.ts` test (extracted from real generated output, matching that file's established parity-test pattern).
+
+**Verification**: confirmed failing cleanly without the fix -- via two independent `git stash` / run / `git stash pop` cycles, one per file -- and passing with each fix restored. The full `entityFormatting.test.ts` suite (199 tests, up from 198) and `apps/web`'s `tsc -b` ran clean, as did the full `apps/web` suite (1150 tests, up from 1149). The full `apps/api` suite showed one failure on first run -- `password.test.ts`'s own "concurrent hashPassword calls run in parallel" timing assertion, a known, pre-existing CPU-contention flake under full-suite load (already documented in this routine's own accumulated lessons) -- confirmed unrelated to this round's change by re-running that one test in isolation, where it passed cleanly. `apps/api`'s build ran clean.
+
+**Status**: shipped and pushed, `apps/web/src/entityFormatting.ts` + `apps/web/src/entityFormatting.test.ts` + `apps/api/src/codegen.ts` + `apps/api/src/codegen.test.ts`.
