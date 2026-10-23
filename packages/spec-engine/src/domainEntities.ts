@@ -179,7 +179,12 @@ export const DOMAIN_ENTITY_RULES: DomainEntityRule[] = [
       // has no \b (same reason round 518's "מלאי" and round 564's "מוצר"
       // fixes needed lookbehind too); this excludes the specific "מ" pu'al
       // prefix while still matching every real "עובד"-based phrasing.
-      /(?<!מ)עובד/, /(?<!מ)עובדת/, /(?<!מ)עובדים/, "צוות",
+      /(?<!מ)עובד/, /(?<!מ)עובדת/, /(?<!מ)עובדים/,
+      // Bare "צוות" (round 825) is a substring of "מצוות" ("commandments"/
+      // "mitzvot" -- a religious-observance tracker or bar/bat-mitzvah
+      // planning app description), the same "מ + root" collision shape
+      // "עובד" just above was fixed for.
+      /(?<!מ)צוות/,
     ],
     labelHe: "עובדים",
     descriptionHe: "מישהו שעובד בעסק.",
@@ -1442,9 +1447,14 @@ export const ROLE_RULES: Record<string, RoleRule> = {
   // pu'al "מעובד" collision (round 565) as the Employee entity rule's own
   // Hebrew keywords -- lookbehind-bounded here too. Also same "staff"/
   // "Staffordshire" collision (round 574) as the Employee entity rule's
-  // own fix above -- \b-bounded here too.
+  // own fix above -- \b-bounded here too. Also same bare "צוות"/"מצוות"
+  // collision (round 825) as the Employee entity rule's own fix above --
+  // lookbehind-bounded here too.
   Employee: {
-    keywords: ["employee", /\bstaff\b/, /\bworkers?\b/, "team member", /(?<!מ)עובד/, /(?<!מ)עובדת/, /(?<!מ)עובדים/, "צוות"],
+    keywords: [
+      "employee", /\bstaff\b/, /\bworkers?\b/, "team member",
+      /(?<!מ)עובד/, /(?<!מ)עובדת/, /(?<!מ)עובדים/, /(?<!מ)צוות/,
+    ],
     labelHe: "עובד/ת",
   },
   Customer: { keywords: ["customer portal", "client portal", "self-service", "פורטל לקוחות", "גישת לקוחות"], labelHe: "לקוח/ה" },

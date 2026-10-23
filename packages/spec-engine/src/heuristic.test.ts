@@ -1892,6 +1892,39 @@ test("Employee's 'עובד' keyword doesn't spuriously match 'מעובד' (proce
 });
 
 /**
+ * Regression test for round 825's finding: Employee's bare Hebrew keyword
+ * "צוות" ("team"/"staff") -- in both DOMAIN_ENTITY_RULES and ROLE_RULES --
+ * is a substring of "מצוות" ("commandments"/"mitzvot"), an ordinary word
+ * in religious-observance or bar/bat-mitzvah planning app descriptions
+ * with nothing to do with staff. The same "מ + root" collision shape
+ * "עובד"/"עובדת"/"עובדים" were already fixed for (round 565, test above),
+ * just left bare for "צוות" in the same keyword array. JS's \b doesn't
+ * bound Hebrew, so this excludes the specific "מ" prefix while still
+ * matching real usage like "צוות"/"הצוות".
+ */
+test("Employee's 'צוות' keyword doesn't spuriously match 'מצוות' (commandments), for both the entity and the role", async () => {
+  const provider = new HeuristicSpecProvider();
+
+  const mitzvot = await provider.generate("אפליקציה למעקב אחר קיום מצוות ומנהגים");
+  assert.ok(
+    !mitzvot.entities.some((e) => e.name === "Employee"),
+    "'מצוות' (commandments) alone must not spuriously match Employee via a bare 'צוות' substring",
+  );
+  assert.ok(
+    !mitzvot.roles.includes("עובד/ת"),
+    "'מצוות' (commandments) alone must not spuriously add an Employee role via a bare 'צוות' substring",
+  );
+
+  // The real word still works, bare and with the definite article "ה"
+  // prefix (not "מ"), for both the entity and the role -- this description
+  // avoids this rule's other keywords, so a match here can only come from
+  // "צוות" itself.
+  const realTeam = await provider.generate("אפליקציה לניהול הצוות שלנו במסעדה");
+  assert.ok(realTeam.entities.some((e) => e.name === "Employee"), "'הצוות' must still match Employee");
+  assert.ok(realTeam.roles.includes("עובד/ת"), "'הצוות' must still add the Employee role");
+});
+
+/**
  * Regression test for round 571's finding: Vendor's bare Hebrew keyword
  * "ספק" ("supplier"/"vendor") is a true Hebrew homograph, not just an
  * unbounded substring like the file's other fixes -- the identical
