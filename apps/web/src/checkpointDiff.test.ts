@@ -322,6 +322,57 @@ test("isCheckpointCurrent is false when a same-named enum field's enumLabels dif
   );
 });
 
+/**
+ * Round 820's finding: fieldSignature's enumPart sorted enumValues before
+ * joining it into the signature, so a refine that only reorders the same set
+ * of values (no addition/removal/relabeling) produced an identical signature
+ * either way. Declared order is real, user-rendered content, not cosmetic --
+ * groupByField (entityFormatting.ts) renders Kanban board columns in exactly
+ * the enum's declared order, and the record form's enum <select> renders its
+ * <option>s in that same order, so reordering enumValues visibly reorders
+ * both.
+ */
+test("computeCheckpointDiff reports a same-named enum field as changedFieldNames when only its enumValues order differs, with the identical set of values", () => {
+  const current = makeSpec([
+    { name: "Order", fields: [{ name: "status", label: "Status", type: "enum", required: true, enumValues: ["Cancelled", "New", "Shipped"] }] },
+  ]);
+  const checkpoint = makeSpec([
+    { name: "Order", fields: [{ name: "status", label: "Status", type: "enum", required: true, enumValues: ["New", "Shipped", "Cancelled"] }] },
+  ]);
+
+  const diff = computeCheckpointDiff(current, checkpoint);
+  assert.deepEqual(diff.changedEntities, [
+    { name: "Order", label: "Order", removedFieldNames: [], addedFieldNames: [], changedFieldNames: ["Status"], descriptionChanged: false },
+  ]);
+});
+
+test("computeCheckpointDiff does not flag an enum field as changed when enumValues is identical in both set and order", () => {
+  const current = makeSpec([
+    { name: "Order", fields: [{ name: "status", label: "Status", type: "enum", required: true, enumValues: ["New", "Shipped", "Cancelled"] }] },
+  ]);
+  const checkpoint = makeSpec([
+    { name: "Order", fields: [{ name: "status", label: "Status", type: "enum", required: true, enumValues: ["New", "Shipped", "Cancelled"] }] },
+  ]);
+
+  const diff = computeCheckpointDiff(current, checkpoint);
+  assert.deepEqual(diff.changedEntities, [], "identical order (and set) of enumValues on both sides must not be reported as a change");
+});
+
+test("isCheckpointCurrent is false when a same-named enum field's enumValues order differs, even with the identical set of values", () => {
+  const current = makeSpec([
+    { name: "Order", fields: [{ name: "status", type: "enum", required: true, enumValues: ["Cancelled", "New", "Shipped"] }] },
+  ]);
+  const reordered = makeSpec([
+    { name: "Order", fields: [{ name: "status", type: "enum", required: true, enumValues: ["New", "Shipped", "Cancelled"] }] },
+  ]);
+
+  assert.equal(
+    isCheckpointCurrent(current, reordered),
+    false,
+    "same set of enumValues, type, and required must not be enough when the field's own declared order genuinely differs",
+  );
+});
+
 test("computeCheckpointDiff never flags a field as changed just because its label differs -- a label rename alone is cosmetic", () => {
   const current = makeSpec([
     {

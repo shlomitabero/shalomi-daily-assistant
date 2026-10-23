@@ -40,7 +40,16 @@ export interface CheckpointDiff {
  * tightened), rather than silently read as "the same field, unchanged".
  */
 function fieldSignature(f: Field): string {
-  const enumPart = f.type === "enum" ? (f.enumValues ?? []).slice().sort().join(",") : "";
+  // Declared order, not sorted -- groupByField (entityFormatting.ts) renders
+  // Kanban board columns in exactly this declared order (its own doc comment:
+  // "in the enum's own declared order, not first-seen order"), and the record
+  // form's <select> (EntityPanel.tsx) renders <option>s in the same order, so
+  // a refine that only reorders enumValues -- same values, same labels, same
+  // required flag -- visibly reorders every rendered instance of this enum
+  // field. Sorting here (as an earlier version of this line did) made that
+  // reorder invisible to both of this function's callers, the same miss this
+  // file already fixed twice for enumLabels and description.
+  const enumPart = f.type === "enum" ? (f.enumValues ?? []).join(",") : "";
   // Real, pervasively user-rendered content -- the displayed text in table
   // cells, Kanban board columns, form <select> options, automation rule
   // conditions, calendar exports, and grouping/sort/search matching all
