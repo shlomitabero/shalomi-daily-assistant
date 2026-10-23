@@ -2250,6 +2250,27 @@ test("the exported EntityView's Kanban board has a real '+' button per column th
 });
 
 /**
+ * Round 837: mirrors the live preview's own round-837 fix. The exported
+ * app's grouped TABLE already shows a per-group numeric subtotal (the
+ * test just above this one), but its Kanban board groups by the exact
+ * same kind of field and only ever showed a bare card count per column --
+ * confirmed absent from codegen.ts via grep before this round (only
+ * groupNumericTotals/numericFieldTotals existed, both table-only).
+ */
+test("the exported EntityView's Kanban board shows a numeric subtotal per column, matching the grouped table's own per-group totals", () => {
+  const files = generateExportFiles(project);
+  const entityViewJsx = files.find((f) => f.path === "web/src/components/EntityView.jsx")!.content;
+
+  assert.match(entityViewJsx, /const boardColumnNumericTotals = useMemo\(\(\) => \{/);
+  assert.match(entityViewJsx, /totals\[column\.value\] = sumNumericFields\(column\.records, visibleFields\);/);
+  assert.match(entityViewJsx, /className="muted small board-column-total"/);
+  assert.match(
+    entityViewJsx,
+    /Total: \{\(boardColumnNumericTotals\?\.\[column\.value\]\?\.\[f\.name\] \?\? 0\)\.toLocaleString\(\)\}/,
+  );
+});
+
+/**
  * Round 821's finding: startCreateForColumn/startCreateForDate were each
  * one line away from their sibling startCreateNew, which already called the
  * shared scrollIntoViewRespectingMotion helper after resetting the form --

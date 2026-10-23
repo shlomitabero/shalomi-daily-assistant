@@ -4088,6 +4088,22 @@ export function EntityView({ entity, highlightRecordId, onHighlightHandled, onJu
     return totals;
   }, [hasNumericVisibleField, recordGroups, visibleFields]);
 
+  // Same reasoning as groupNumericTotals above, for Board view: groupByField
+  // groups records by exactly the same kind of field (enum/boolean) Table
+  // view's own "Group by" does, so a person tracking e.g. deal value by
+  // pipeline stage on a Kanban board gets the identical "compare totals
+  // across columns" value Table view's grouping already provides, instead
+  // of only each column's bare card count. Mirrors the live preview's own
+  // EntityPanel.tsx (round 837).
+  const boardColumnNumericTotals = useMemo(() => {
+    if (!hasNumericVisibleField || viewMode !== "board" || !boardField) return null;
+    const totals = {};
+    for (const column of groupByField(visibleRecords, boardField)) {
+      totals[column.value] = sumNumericFields(column.records, visibleFields);
+    }
+    return totals;
+  }, [hasNumericVisibleField, viewMode, boardField, visibleRecords, visibleFields]);
+
   // Exactly the records the calendar grid's current month is showing -- lets
   // the ICS export button disable itself when the visible month is
   // genuinely empty, not just when the whole entity has no records.
@@ -5338,6 +5354,14 @@ export function EntityView({ entity, highlightRecordId, onHighlightHandled, onJu
                       </button>
                       <span className={\`badge badge-\${badgeTone(column.value)}\`}>{column.label}</span>
                       <span className="muted small">{column.records.length}</span>
+                      {hasNumericVisibleField &&
+                        visibleFields
+                          .filter((f) => f.type === "number")
+                          .map((f) => (
+                            <span key={f.name} className="muted small board-column-total">
+                              Total: {(boardColumnNumericTotals?.[column.value]?.[f.name] ?? 0).toLocaleString()}
+                            </span>
+                          ))}
                     </div>
                     {!column.isOther && (
                       <button

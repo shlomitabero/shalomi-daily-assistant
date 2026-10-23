@@ -2136,6 +2136,21 @@ export function EntityPanel({
     return totals;
   }, [hasNumericVisibleField, recordGroups, visibleFields]);
 
+  // Same reasoning as groupNumericTotals above, for Board view: groupByField
+  // groups records by exactly the same kind of field (enum/boolean) Table
+  // view's own "Group by" does, so a person tracking e.g. deal value by
+  // pipeline stage on a Kanban board gets the identical "compare totals
+  // across columns" value Table view's grouping already provides, instead
+  // of only each column's bare card count.
+  const boardColumnNumericTotals = useMemo(() => {
+    if (!hasNumericVisibleField || viewMode !== "board" || !boardField) return null;
+    const totals: Record<string, Record<string, number>> = {};
+    for (const column of groupByField(visibleRecords, boardField, t)) {
+      totals[column.value] = sumNumericFields(column.records, visibleFields);
+    }
+    return totals;
+  }, [hasNumericVisibleField, viewMode, boardField, visibleRecords, t, visibleFields]);
+
   // Scrolls the just-highlighted row into view once it's actually in the
   // rendered table -- runs after visibleRecords updates (the same render
   // that picks up the filter-clearing above), not just after
@@ -3699,6 +3714,14 @@ export function EntityPanel({
                       </button>
                       <span className={`badge badge-${badgeTone(column.value)}`}>{column.label}</span>
                       <span className="muted small">{column.records.length}</span>
+                      {hasNumericVisibleField &&
+                        visibleFields
+                          .filter((f) => f.type === "number")
+                          .map((f) => (
+                            <span key={f.name} className="muted small board-column-total">
+                              {t("entity.table.total")}: {formatNumberValue(boardColumnNumericTotals?.[column.value]?.[f.name] ?? 0, lang)}
+                            </span>
+                          ))}
                     </div>
                     {!column.isOther && !readOnly && (
                       <button

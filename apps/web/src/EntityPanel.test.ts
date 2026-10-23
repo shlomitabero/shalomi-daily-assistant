@@ -10815,6 +10815,84 @@ test("EntityPanel's grouped table shows a numeric subtotal row per group, summin
 });
 
 /**
+ * Round 837: Board view groups records by exactly the same kind of field
+ * (enum/boolean) Table view's own "Group by" does -- the test just above
+ * confirms Table view shows each group's own numeric subtotal for exactly
+ * this reason (comparing revenue across "Paid" vs "Pending" without
+ * re-adding each group's rows by eye), but Board view's own column header
+ * showed only a bare card count, with no way to compare e.g. deal value
+ * across pipeline-stage columns despite grouping by the identical field.
+ */
+test("EntityPanel's Board view shows a numeric subtotal per column, summing only that column's own records", async () => {
+  await withJsdom(async () => {
+    const orderEntity: Entity = {
+      name: "Order",
+      label: "Order",
+      fields: [
+        { name: "client", label: "Client", type: "text", required: true },
+        {
+          name: "status",
+          label: "Status",
+          type: "enum",
+          required: true,
+          enumValues: ["paid", "pending"],
+          enumLabels: { paid: "Paid", pending: "Pending" },
+        },
+        { name: "amount", label: "Amount", type: "number", required: true },
+      ],
+    };
+    const store: EntityRecord[] = [
+      { id: 1, createdAt: "x", client: "Acme Corp", status: "paid", amount: 1000 },
+      { id: 2, createdAt: "x", client: "Globex", status: "paid", amount: 500 },
+      { id: 3, createdAt: "x", client: "Initech", status: "pending", amount: 300 },
+    ];
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = (async (input: string) => {
+      if (input === "/api/projects/proj1/entities/Order") {
+        return new Response(JSON.stringify({ records: store }), { status: 200, headers: { "content-type": "application/json" } });
+      }
+      throw new Error(`unexpected request ${input}`);
+    }) as typeof fetch;
+    try {
+      renderEntityPanel({ entity: orderEntity, allEntities: [orderEntity] });
+      await waitForCondition(() => document.querySelectorAll("table tbody tr").length === 3);
+
+      const boardToggle = document.querySelectorAll(".view-toggle-btn")[1] as HTMLButtonElement;
+      fireEvent.click(boardToggle);
+      await waitForCondition(() => document.querySelectorAll(".board-column").length === 2);
+
+      // Each card's own move-select lists every declared status as an
+      // <option> (so a card can be dragged OR moved via that dropdown),
+      // meaning every column's full textContent contains both "Paid" and
+      // "Pending" regardless of which column it is -- only the column's
+      // own header badge is unique to its own column.
+      const findColumnByBadge = (label: string) =>
+        Array.from(document.querySelectorAll(".board-column")).find((col) => col.querySelector(".badge")?.textContent === label)!;
+      const paidColumn = findColumnByBadge("Paid");
+      const pendingColumn = findColumnByBadge("Pending");
+
+      assert.match(
+        paidColumn.querySelector(".board-column-header")!.textContent ?? "",
+        /1,500/,
+        "the Paid column's subtotal (1000 + 500) must be 1,500, not the whole board's total",
+      );
+      assert.doesNotMatch(
+        paidColumn.querySelector(".board-column-header")!.textContent ?? "",
+        /300/,
+        "the Paid column's subtotal must not include Pending's amount",
+      );
+      assert.match(
+        pendingColumn.querySelector(".board-column-header")!.textContent ?? "",
+        /(?<!,)300/,
+        "the Pending column's subtotal must be its own single record's amount (300), not 1,500 or 1,800",
+      );
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+});
+
+/**
  * Regression test for round 491's finding: numericFieldTotals (the grand
  * total shown in the table's tfoot) was computed from visibleRecords
  * rather than effectivelyVisibleRecords -- the same collapse-aware value
