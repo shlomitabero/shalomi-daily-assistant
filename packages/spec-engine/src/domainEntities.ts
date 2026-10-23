@@ -740,7 +740,15 @@ export const DOMAIN_ENTITY_RULES: DomainEntityRule[] = [
       // substring-in-a-longer-word pitfall above, \b alone can't fix this
       // since "garage" word-boundary-matches correctly in "garage sale"
       // too -- the negative lookahead excludes only that specific phrase.
-      /\bgarage\b(?!\s+sales?\b)/, /\bmechanic(s)?\b/, "car dealership",
+      // Round 812: the fix never added plural support -- unlike every
+      // sibling keyword in this file (the very next one, mechanic(s)?,
+      // plus driver(s)?/worker(s)?/service(s)?/product(s)? etc. below),
+      // which all explicitly handle their natural plural right next to
+      // the \b bound. \b can't match inside "garages" at all (no boundary
+      // between "garage" and the trailing "s"), so a description naming
+      // only "garages" (plural, no "garage sale(s)" to worry about either)
+      // fell through to the generic DEFAULT_ENTITY instead of Vehicle.
+      /\bgarages?\b(?!\s+sales?\b)/, /\bmechanic(s)?\b/, "car dealership",
       // Bare "רכב" (round 567) is a literal prefix-substring of "רכבת"
       // ("train") and its plural "רכבות" ("trains") -- extremely common
       // everyday words (Israel Railways is "רכבת ישראל"), with nothing to

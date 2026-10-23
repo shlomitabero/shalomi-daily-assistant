@@ -1064,6 +1064,36 @@ test("Vehicle's 'garage' keyword doesn't spuriously match 'garage sale'", async 
 });
 
 /**
+ * Regression test for round 812's finding: round 454's own fix above
+ * \b-bounded "garage" and excluded "garage sale(s)", but never added
+ * plural support for "garage" itself -- unlike every sibling keyword in
+ * this same list (the very next one, "mechanic(s)?", plus driver(s)?/
+ * worker(s)?/service(s)?/product(s)? elsewhere in this file), all of
+ * which explicitly handle their natural plural next to the \b bound.
+ * `\b` can't match inside "garages" at all (no boundary between "garage"
+ * and the trailing "s"), so a description naming only the plural fell
+ * through to the generic DEFAULT_ENTITY instead of Vehicle -- the exact
+ * same gap round 577 (above) already found and fixed for this same
+ * keyword's own Hebrew plural "מוסכים", just never checked against its
+ * English sibling "garages" in the same rule.
+ */
+test("Vehicle's 'garage' keyword also matches its plural 'garages', which the round-454 \\b-bound alone can't reach", async () => {
+  const provider = new HeuristicSpecProvider();
+
+  const pluralOnly = await provider.generate("A platform for a group of garages to coordinate repairs.");
+  assert.ok(pluralOnly.entities.some((e) => e.name === "Vehicle"), "'garages' (plural) alone must match Vehicle");
+
+  // The plural exclusion of "garage sale(s)" must still hold too.
+  const garageSalesStillExcluded = await provider.generate(
+    "An app to list items for our weekend garage sales in the neighborhood.",
+  );
+  assert.ok(
+    !garageSalesStillExcluded.entities.some((e) => e.name === "Vehicle"),
+    "'garage sales' alone must still not spuriously match Vehicle via the plural 'garages'",
+  );
+});
+
+/**
  * Regression test for a real bug found in round 567: Vehicle's bare "רכב"
  * ("car"/"vehicle") keyword is a literal prefix-substring of the ordinary,
  * extremely common Hebrew word "רכבת" ("train") and its plural "רכבות"
