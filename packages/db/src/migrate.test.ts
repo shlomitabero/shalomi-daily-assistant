@@ -838,6 +838,68 @@ test("diffAndMigrate reports relation_missing_fk for a brand-new REQUIRED relati
 });
 
 /**
+ * Round 863: the mirror-image gap of round 860's own fix, one step later
+ * in a field's life. Round 860 covers a relation field created with an
+ * unresolvable relationTo from the start. This covers a field that
+ * SURVIVED unchanged from previousSpec, but whose own relationTo now
+ * names an entity a refine just removed entirely -- expectedFkTable
+ * (the prevField-relation branch's own comparison target) is undefined
+ * either way a relationTo fails to resolve, so neither of that branch's
+ * two existing conditions (both require expectedFkTable truthy) could
+ * ever fire for this case before this round. Confirmed empirically
+ * before fixing: PRAGMA foreign_key_list on the real column still shows
+ * the genuine, now-orphaned FK after the target entity is removed --
+ * additive-only migration never drops the physical table or its FK, it
+ * just stops being represented anywhere in the live spec.
+ */
+test("diffAndMigrate reports relation_missing_fk when a REQUIRED relation field survives a refine unchanged but its own relationTo's target entity is removed, but never for an optional one", () => {
+  const baseSpecWithDriver: ProductSpec = {
+    ...spec,
+    entities: [...spec.entities, { name: "Driver", fields: [{ name: "name", type: "text", required: true }] }],
+  };
+  const driverRemovedSpec: ProductSpec = { ...spec }; // Driver entity gone; Order's own fields are untouched below.
+
+  // (1) Required field: must be flagged.
+  {
+    const withRequiredDriverId: ProductSpec = {
+      ...baseSpecWithDriver,
+      entities: [baseSpecWithDriver.entities[0], { ...baseSpecWithDriver.entities[1], fields: [...baseSpecWithDriver.entities[1].fields, { name: "driverId", type: "relation", required: true, relationTo: "Driver" }] }, baseSpecWithDriver.entities[2]],
+    };
+    const nextWithoutDriver: ProductSpec = {
+      ...driverRemovedSpec,
+      entities: [driverRemovedSpec.entities[0], { ...driverRemovedSpec.entities[1], fields: [...driverRemovedSpec.entities[1].fields, { name: "driverId", type: "relation", required: true, relationTo: "Driver" }] }],
+    };
+    const db = openDatabase(":memory:");
+    applyMigrations(db, "proj1", withRequiredDriverId);
+    const fkBefore = db.prepare('PRAGMA foreign_key_list("entity_proj1_Order")').all() as { table: string }[];
+    assert.ok(fkBefore.some((fk) => fk.table === "entity_proj1_Driver"), "the real FK to Driver must exist before Driver is removed, for this test to mean anything");
+
+    const changes = diffAndMigrate(db, "proj1", withRequiredDriverId, nextWithoutDriver);
+    assert.ok(
+      changes.some((c) => c.type === "relation_missing_fk" && c.table === "entity_proj1_Order" && c.column === "driverId" && c.toRelationTo === "Driver"),
+      "a required relation field surviving a refine must be flagged once its own target entity is removed entirely",
+    );
+  }
+
+  // (2) Optional field with the identical shape: must never be flagged --
+  // this is domainEntities.ts's own deliberate placeholder pattern.
+  {
+    const withOptionalDriverId: ProductSpec = {
+      ...baseSpecWithDriver,
+      entities: [baseSpecWithDriver.entities[0], { ...baseSpecWithDriver.entities[1], fields: [...baseSpecWithDriver.entities[1].fields, { name: "driverId", type: "relation", required: false, relationTo: "Driver" }] }, baseSpecWithDriver.entities[2]],
+    };
+    const nextWithoutDriverOptional: ProductSpec = {
+      ...driverRemovedSpec,
+      entities: [driverRemovedSpec.entities[0], { ...driverRemovedSpec.entities[1], fields: [...driverRemovedSpec.entities[1].fields, { name: "driverId", type: "relation", required: false, relationTo: "Driver" }] }],
+    };
+    const db = openDatabase(":memory:");
+    applyMigrations(db, "proj1", withOptionalDriverId);
+    const changes = diffAndMigrate(db, "proj1", withOptionalDriverId, nextWithoutDriverOptional);
+    assert.ok(!changes.some((c) => c.type === "relation_missing_fk"), "an optional relation field must never be flagged this way, even when its target entity is removed");
+  }
+});
+
+/**
  * Regression test: the entity-level twin of the field-reuse gaps above.
  * previousSpec is only ever the spec immediately before THIS ONE
  * diffAndMigrate call, so an entity removed on one refine and re-added

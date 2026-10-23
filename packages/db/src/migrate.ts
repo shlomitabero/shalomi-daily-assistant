@@ -212,7 +212,7 @@ export interface MigrationChange {
   /** Only set for "relation_target_changed": the field's old and new relationTo entity name. Only set for "relation_missing_fk": the relationTo the field claims, with no "from" since the reused column never had any FK to begin with. */
   fromRelationTo?: string;
   toRelationTo?: string;
-  /** Only set for "relation_missing_fk" on a newly-created column/table (round 860's own addition to this type): true when relationTo never named a real entity at all, as opposed to the original reused-column case (a relationTo that DOES resolve, but whose physical FK was lost through an earlier type oscillation). Lets describeMigrationHazards word the one shared message accurately for either root cause without a second MigrationChange type. */
+  /** Only set for "relation_missing_fk" when relationTo doesn't resolve to any CURRENT entity at all (round 860: a newly-created column/table whose relationTo never named a real entity; round 863: a surviving field whose relationTo named an entity a later refine removed entirely) -- as opposed to the original reused-column case (a relationTo that DOES resolve, but whose physical FK was lost through an earlier type oscillation). Lets describeMigrationHazards word the one shared message accurately for any of these root causes without a second MigrationChange type. */
   relationToNeverExisted?: boolean;
   /** Only set for "automation_rule_disabled": how many rules this one disable call actually turned off. */
   disabledCount?: number;
@@ -507,6 +507,38 @@ export function diffAndMigrate(
             // the column now has zero referential-integrity protection, so a
             // rule's stored id can't be trusted to still name a record of the
             // field's own current relationTo at all.
+            if (!fieldsNeedingAutomationDisable.has(entity.name)) {
+              fieldsNeedingAutomationDisable.set(entity.name, new Set());
+            }
+            fieldsNeedingAutomationDisable.get(entity.name)!.add(field.name);
+          } else if (field.required && field.relationTo && !entityNames.has(field.relationTo)) {
+            // Round 863: the mirror-image gap of round 860's own fix, one
+            // step later in a field's life. Round 860 covers a relation
+            // field created with an unresolvable relationTo from the start
+            // (missingFkChangesForNewColumns, the new_table/new_column
+            // branches). This field SURVIVED unchanged from previousSpec,
+            // but its OWN relationTo now names an entity this refine just
+            // removed entirely -- expectedFkTable above is undefined
+            // either way (relationTo doesn't resolve), so neither branch
+            // above can ever fire; without this, a REQUIRED relation field
+            // whose target entity gets removed produces zero hazard, even
+            // though additive-only migration means the physical table and
+            // its FK still exist, bound to an entity that's now invisible
+            // anywhere in the live spec (confirmed empirically: PRAGMA
+            // foreign_key_list still shows the real, now-orphaned FK).
+            // Scoped to required fields only, mirroring round 860's own
+            // domainEntities.ts-safe reasoning exactly -- an optional
+            // relation field losing its target this way is the identical
+            // deliberate "not assigned to anything real" placeholder shape
+            // round 415 already protects, just reached by removal instead
+            // of never having existed.
+            changes.push({
+              type: "relation_missing_fk",
+              table,
+              column: columnName,
+              toRelationTo: field.relationTo,
+              relationToNeverExisted: true,
+            });
             if (!fieldsNeedingAutomationDisable.has(entity.name)) {
               fieldsNeedingAutomationDisable.set(entity.name, new Set());
             }
