@@ -32903,3 +32903,25 @@ Still no genuine reply from שלומי. A first survey attempt this round propos
 **Verification**: confirmed failing cleanly without the fix via a `git stash push -- apps/web/src/checkpointDiff.ts` / run / `git stash pop` cycle, and passing with the fix restored. The full `checkpointDiff.test.ts` suite (48 tests, up from 47) and `apps/web`'s `tsc -b` ran clean, as did the full `apps/web` suite (1151 tests, up from 1150).
 
 **Status**: shipped and pushed, `apps/web/src/checkpointDiff.ts` + `apps/web/src/checkpointDiff.test.ts` only -- `apps/api/src/codegen.ts` (the exported standalone app) has no Time Machine / checkpoint-restore feature of its own at all (established in round 866), so there is no sibling to port this to.
+
+### Round 875: GlobalSearch's Enter key hijacked a freshly-edited query to a stale, previously arrow-selected result group instead of submitting it
+
+Still no genuine reply from שלומי. This round's survey found a real, user-reachable keyboard-interaction bug in `GlobalSearchPanel.tsx`, with zero existing test coverage for the exact sequence that triggers it.
+
+**The gap**: `selectedIndex` (which result group is arrow-key-highlighted) was only ever reset to `null` inside `runSearch` itself -- once for the empty-query early-return, once when real results arrive -- never the moment the query text changed, before that new search ever ran. The input's own `onChange` did nothing to it. `handleInputKeyDown`'s Enter branch only checked `selectedIndex !== null`, never that it still corresponded to the text currently in the box.
+
+**Reachable sequence**: type a query, submit, get results; press ArrowDown to highlight the first result group; without pressing Enter yet, edit the query to something unrelated; press Enter. Because `selectedIndex` is still non-null from the old search, `e.preventDefault()` fires and `onJumpToEntity` is called with the OLD entity name -- the form's `onSubmit` (which would run the new search) never runs at all. The user's new query is silently discarded and the panel instead navigates to an unrelated, stale entity tab. This directly contradicts the component's own doc comment ("Enter with nothing highlighted still submits the form as a normal search, so this never changes behavior for someone who just types and hits Enter once") -- the comment's premise (no highlight survives into a new query) turned out to be false.
+
+**Confirmed empirically before fixing**: wrote a real jsdom/Testing-Library repro using the actual component (not a reimplementation) -- searched "widget", ArrowDown-selected the first group, changed the input to an unrelated string, fired a real `keydown Enter`. `onJumpToEntity` was called with the stale entity instead of `[]`.
+
+**The fix**: a single `useEffect(() => setSelectedIndex(null), [query])`, keyed on the query text alone rather than patched into each individual handler -- covers every way the text can change (typing, the existing Escape-to-clear branch, the separate "clear query" button) in one place, rather than three scattered resets that could drift out of sync later.
+
+**`apps/api/src/codegen.ts` had the identical, independently-duplicated copy** of this component (`GlobalSearch.jsx`, per this codebase's established per-surface duplication pattern) with the byte-for-byte same bug -- confirmed by reading its own `handleInputKeyDown`/`runSearch`/`onChange` directly. Same fix applied there.
+
+**The tests**: a new `GlobalSearchPanel.test.ts` test (real DOM interaction) and a new `codegen.test.ts` test rendering the real generated `GlobalSearch.jsx` end to end (not an extracted function, since the bug lives in the interaction between the input's `onChange` and the keydown handler, not in either alone).
+
+**Verification**: confirmed failing cleanly without the fix -- via two independent `git stash` / run / `git stash pop` cycles, one per file -- recording the stale jump instead of an empty array, and passing with each fix restored. The full `GlobalSearchPanel.test.ts` suite (25 tests, up from 24) and `apps/web`'s `tsc -b` ran clean, as did every GlobalSearch-related `codegen.test.ts` test (28, up from 27, run targeted since the full file SIGKILLs). The full `apps/web` suite (1152 tests, up from 1151), the full `apps/api` suite (497 tests, every file except the SIGKILL-prone `codegen.test.ts` itself), and `apps/api`'s build all ran clean.
+
+**Status**: shipped and pushed, `apps/web/src/GlobalSearchPanel.tsx` + `apps/web/src/GlobalSearchPanel.test.ts` + `apps/api/src/codegen.ts` + `apps/api/src/codegen.test.ts`.
+
+**Also this round**: a first survey attempt proposed a plausible entity-vs-entity ZIP path collision in `backup.ts`, which was investigated and proven unreachable (see round 874's own closing note for the full mathematical/empirical argument) -- not a repeat of that finding, just confirming it stayed closed before a second survey found this round's genuine GlobalSearch bug.
