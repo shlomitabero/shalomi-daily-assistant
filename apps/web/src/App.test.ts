@@ -2383,15 +2383,19 @@ test("App's HistoryPanel onRestored callback clears a stale build-warning banner
     "setActiveEntity",
     "setBuildWarning",
     "setShowHistory",
+    "project",
+    "purgeEntityPreferences",
     `return ${code}`,
   )(
     (p: unknown) => (state.project = p),
     (e: string | null) => (state.activeEntity = e),
     (w: string | null) => (state.buildWarning = w),
     (v: boolean) => (state.showHistory = v),
-  ) as (restored: { spec: { entities: { name: string }[] } }) => void;
+    makeProject([makeEntity("Customer")]),
+    () => {},
+  ) as (restored: { id: string; spec: { entities: { name: string }[] } }) => void;
 
-  const restoredProject = { spec: { entities: [{ name: "Customer" }] } };
+  const restoredProject = { id: "proj1", spec: { entities: [{ name: "Customer" }] } };
   fn(restoredProject);
 
   assert.equal(state.project, restoredProject, "must still set the restored project, same as before");
@@ -2402,6 +2406,60 @@ test("App's HistoryPanel onRestored callback clears a stale build-warning banner
     "must clear a stale build-warning banner from a later build that doesn't apply to the checkpoint just restored to",
   );
   assert.equal(state.showHistory, false, "must still close the history panel, same as before");
+});
+
+/**
+ * New in this round (866): restoring an older Time Machine checkpoint is,
+ * like a refine (handleBuildComplete's own round-853 purge above), a normal
+ * way for an entity to disappear from the live spec -- routes/projects.ts's
+ * own restore-checkpoint comment explicitly names "missing an entity/field
+ * the user has been actively using" as an expected outcome. Confirms
+ * onRestored now calls purgeEntityPreferences for exactly the entities
+ * present in the pre-restore project but absent from the restored one, with
+ * the restored project's own id, and never for an entity that survived.
+ */
+test("App's HistoryPanel onRestored callback purges a dropped entity's own localStorage preferences, but never a surviving one's", () => {
+  const appSrc = readFileSync(new URL("./App.tsx", import.meta.url), "utf8");
+  const handlerMatch = appSrc.match(/ {14}onRestored=\{\((restored\) => \{[\s\S]*?\n {14}\})\}\n/);
+  assert.ok(handlerMatch, "expected to find the HistoryPanel onRestored callback in App.tsx");
+  const { code } = transformSync(`(${handlerMatch![1]}`, { loader: "ts" });
+
+  const purgedEntities: Array<[string, string]> = [];
+  const fn = new Function(
+    "setProject",
+    "setActiveEntity",
+    "setBuildWarning",
+    "setShowHistory",
+    "project",
+    "purgeEntityPreferences",
+    `return ${code}`,
+  )(
+    () => {},
+    () => {},
+    () => {},
+    () => {},
+    makeProject([makeEntity("Customer"), makeEntity("Deal"), makeEntity("Invoice")]),
+    (projectId: string, entityName: string) => {
+      purgedEntities.push([projectId, entityName]);
+    },
+  ) as (restored: { id: string; spec: { entities: { name: string }[] } }) => void;
+
+  const restoredDroppingDealAndInvoice = { id: "proj1", spec: { entities: [{ name: "Customer" }] } };
+  fn(restoredDroppingDealAndInvoice);
+
+  assert.deepEqual(
+    [...purgedEntities].sort(),
+    [
+      [restoredDroppingDealAndInvoice.id, "Deal"],
+      [restoredDroppingDealAndInvoice.id, "Invoice"],
+    ].sort(),
+    "purgeEntityPreferences must be called once per entity missing from the restored checkpoint, with the restored project's own id",
+  );
+  assert.equal(
+    purgedEntities.some(([, entityName]) => entityName === "Customer"),
+    false,
+    "purgeEntityPreferences must never be called for an entity the restored checkpoint still has",
+  );
 });
 
 /**

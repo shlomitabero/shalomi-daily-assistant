@@ -2314,10 +2314,29 @@ function AppContent() {
               currentSpec={project.spec}
               onClose={() => setShowHistory(false)}
               onRestored={(restored) => {
+                // Restoring an older checkpoint is, like a refine
+                // (handleBuildComplete above), a normal way for an entity to
+                // disappear from the live spec -- routes/projects.ts's own
+                // restore-checkpoint comment explicitly names "missing an
+                // entity/field the user has been actively using" as an
+                // expected outcome. Captured before `setProject` below
+                // overwrites `project` with the restored spec, so this is
+                // still the PRE-restore entity list.
+                const droppedEntityNames = (project?.spec.entities ?? [])
+                  .filter((e) => !restored.spec.entities.some((re) => re.name === e.name))
+                  .map((e) => e.name);
                 setProject(restored);
                 setActiveEntity(restored.spec.entities[0]?.name ?? null);
                 setBuildWarning(null);
                 setShowHistory(false);
+                // Round 866: the same per-entity-keyed localStorage sweep
+                // handleBuildComplete already runs for a refine's dropped
+                // entities (entityPreferenceCleanup.ts) was never run here,
+                // even though a checkpoint restore drops entities just as
+                // routinely.
+                for (const entityName of droppedEntityNames) {
+                  purgeEntityPreferences(restored.id, entityName);
+                }
               }}
               readOnly={myRole === "viewer"}
             />
