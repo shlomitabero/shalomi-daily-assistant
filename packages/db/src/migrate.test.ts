@@ -746,6 +746,98 @@ test("diffAndMigrate reports relation_missing_fk once an invalid relationTo's ta
 });
 
 /**
+ * Round 860: relationTo is only ever checked for being non-empty
+ * (FieldSchema's own refine, @forge/shared) -- never for actually naming a
+ * real entity in the spec. Before this round, a brand-new table/column for
+ * a RELATION field whose relationTo names an entity that was never in the
+ * spec at all got no FK (generateCreateTableStatements/the new-column ALTER
+ * branch both silently drop the REFERENCES clause) and no diagnostic
+ * anywhere -- unlike the sibling case just above (round 444), which only
+ * catches a field that ALREADY existed, oscillating between invalid and
+ * valid relationTo across refines. Round 415 already tried a hard
+ * ProductSpecSchema-level rejection for this exact gap and reverted it in
+ * full: domainEntities.ts's own built-in library deliberately keeps a
+ * relation field's relationTo naming a possibly-absent entity (e.g.
+ * Order.courierId -> "Courier"), and every one of its own such fields is
+ * `required: false` -- its own comment explains why null is a legitimate,
+ * honest "not assigned yet" value there. Scoping this new, non-blocking
+ * hazard note to REQUIRED relation fields only (never fired for the
+ * deliberate placeholder pattern, which is always optional) is the
+ * distinguishing mechanism round 415's own revert note asked for.
+ *
+ * Covers all three ways a brand-new relation column/table can appear:
+ * the very first build (previousSpec undefined), a brand-new entity added
+ * by a refine, and a brand-new field added to an already-existing entity
+ * by a refine -- and confirms an OPTIONAL relation field with the exact
+ * same unresolvable relationTo is correctly left unflagged in every one of
+ * them, proving the required-only scoping actually holds.
+ */
+test("diffAndMigrate reports relation_missing_fk for a brand-new REQUIRED relation field whose relationTo never named a real entity, but never for an optional one", () => {
+  const ghostSpecEntity = (fieldRequired: boolean): ProductSpec => ({
+    ...spec,
+    entities: [...spec.entities, { name: "Task", fields: [{ name: "assigneeId", type: "relation", required: fieldRequired, relationTo: "Ghost" }] }],
+  });
+
+  // (1) The very first build of a project (previousSpec undefined) --
+  // the overwhelmingly common case (every POST /projects/:id/build call).
+  {
+    const db = openDatabase(":memory:");
+    const changes = diffAndMigrate(db, "proj1", undefined, ghostSpecEntity(true));
+    assert.ok(
+      changes.some((c) => c.type === "relation_missing_fk" && c.table === "entity_proj1_Task" && c.column === "assigneeId" && c.toRelationTo === "Ghost"),
+      "a required relation field with no real target must be flagged even on the very first build",
+    );
+
+    const dbOptional = openDatabase(":memory:");
+    const optionalChanges = diffAndMigrate(dbOptional, "proj1", undefined, ghostSpecEntity(false));
+    assert.ok(
+      !optionalChanges.some((c) => c.type === "relation_missing_fk"),
+      "an OPTIONAL relation field with the identical unresolvable target must never be flagged -- this is domainEntities.ts's own deliberate placeholder shape",
+    );
+  }
+
+  // (2) A brand-new entity added by a refine.
+  {
+    const db = openDatabase(":memory:");
+    applyMigrations(db, "proj1", spec);
+    const changes = diffAndMigrate(db, "proj1", spec, ghostSpecEntity(true));
+    assert.ok(
+      changes.some((c) => c.type === "relation_missing_fk" && c.table === "entity_proj1_Task" && c.column === "assigneeId" && c.toRelationTo === "Ghost"),
+      "a required relation field on a brand-new entity (added via refine) with no real target must be flagged",
+    );
+
+    const dbOptional = openDatabase(":memory:");
+    applyMigrations(dbOptional, "proj1", spec);
+    const optionalChanges = diffAndMigrate(dbOptional, "proj1", spec, ghostSpecEntity(false));
+    assert.ok(!optionalChanges.some((c) => c.type === "relation_missing_fk"));
+  }
+
+  // (3) A brand-new FIELD added to an already-existing entity by a refine.
+  {
+    const withNewRequiredField: ProductSpec = {
+      ...spec,
+      entities: [spec.entities[0], { ...spec.entities[1], fields: [...spec.entities[1].fields, { name: "driverId", type: "relation", required: true, relationTo: "Ghost" }] }],
+    };
+    const db = openDatabase(":memory:");
+    applyMigrations(db, "proj1", spec);
+    const changes = diffAndMigrate(db, "proj1", spec, withNewRequiredField);
+    assert.ok(
+      changes.some((c) => c.type === "relation_missing_fk" && c.table === "entity_proj1_Order" && c.column === "driverId" && c.toRelationTo === "Ghost"),
+      "a required relation field newly added to an existing entity via refine, with no real target, must be flagged",
+    );
+
+    const withNewOptionalField: ProductSpec = {
+      ...spec,
+      entities: [spec.entities[0], { ...spec.entities[1], fields: [...spec.entities[1].fields, { name: "driverId", type: "relation", required: false, relationTo: "Ghost" }] }],
+    };
+    const dbOptional = openDatabase(":memory:");
+    applyMigrations(dbOptional, "proj1", spec);
+    const optionalChanges = diffAndMigrate(dbOptional, "proj1", spec, withNewOptionalField);
+    assert.ok(!optionalChanges.some((c) => c.type === "relation_missing_fk"));
+  }
+});
+
+/**
  * Regression test: the entity-level twin of the field-reuse gaps above.
  * previousSpec is only ever the spec immediately before THIS ONE
  * diffAndMigrate call, so an entity removed on one refine and re-added
@@ -1186,7 +1278,7 @@ test("describeMigrationHazards reports nothing for new_table/new_column entries,
     describeMigrationHazards([
       { type: "relation_missing_fk", table: "entity_proj1_Order", column: "customerId", toRelationTo: "Customer" },
     ]),
-    " Note: entity_proj1_Order.customerId (→ Customer) is a relation field reusing a column that was never linked to anything — existing and new values in it are not protected against pointing at a record that doesn't exist.",
+    " Note: entity_proj1_Order.customerId (→ Customer) is a relation field with no real foreign-key link to the entity it names — existing and new values in it are not protected against pointing at a record that doesn't exist.",
   );
 
   // Round 687: the automation-rule-disable sweep used to silently discard
@@ -1226,7 +1318,7 @@ test("describeMigrationHazards reports nothing for new_table/new_column entries,
     ]),
     " Note: entity_proj1_Deal.won (boolean → text) kept the original database column type — existing data was not converted." +
       " Note: entity_proj1_Order.customerId (Customer → Courier) kept pointing at the original related table — existing data was not re-linked." +
-      " Note: entity_proj1_Order.driverId (→ Driver) is a relation field reusing a column that was never linked to anything — existing and new values in it are not protected against pointing at a record that doesn't exist." +
+      " Note: entity_proj1_Order.driverId (→ Driver) is a relation field with no real foreign-key link to the entity it names — existing and new values in it are not protected against pointing at a record that doesn't exist." +
       " Note: 1 automation rule(s) were disabled because they referenced a field or entity that no longer exists — re-enable them from the Automations panel if still needed.",
   );
 });

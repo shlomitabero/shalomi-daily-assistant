@@ -60,6 +60,49 @@ function sqlTypeFor(field: Field): string {
 }
 
 /**
+ * Round 860: a relation field's relationTo is only ever checked for being
+ * non-empty (FieldSchema's own refine, @forge/shared) -- never for actually
+ * naming a real entity in the spec. generateCreateTableStatements/the
+ * new-column ALTER branch below both silently drop the REFERENCES clause
+ * when relationTo doesn't resolve (`fk = ""`), with no diagnostic anywhere
+ * -- round 415 already tried a schema-level hard rejection for this and
+ * reverted it in full: domainEntities.ts's own built-in library
+ * deliberately keeps a relation field's relationTo naming an entity that
+ * may not be included in a given generated spec (e.g. Order.courierId ->
+ * "Courier"), with its own comment explaining why null is a legitimate,
+ * honest value for "not assigned yet" -- a hard reject can't tell that
+ * deliberate placeholder apart from a genuine AI/heuristic typo or a
+ * refine that renamed/removed the real target entity, since both look
+ * identical structurally.
+ *
+ * The distinguishing signal round 415's own revert note asked for: every
+ * one of domainEntities.ts's own relationTo-to-a-possibly-absent-entity
+ * fields is `required: false` (confirmed by reading every relationTo
+ * declaration in that file directly) -- its own comment says exactly why
+ * ("required here would either force an invalid reference or block the
+ * build"). A REQUIRED relation field whose target doesn't exist has no
+ * such legitimate interpretation: every record write would need a real
+ * value for a column with nothing to meaningfully point at, which the
+ * domain library itself never does. Scoping this diagnostic to required
+ * fields only means it can never fire for the deliberate placeholder
+ * pattern, while still surfacing the genuinely dangerous case -- as a
+ * non-blocking hazard note (describeMigrationHazards), never a build
+ * failure or schema rejection, so nothing round 415 found is at risk of
+ * breaking again.
+ */
+function missingFkChangesForNewColumns(table: string, fields: Field[], entityNames: Set<string>): MigrationChange[] {
+  return fields
+    .filter((f) => f.type === "relation" && f.required && f.relationTo && !entityNames.has(f.relationTo))
+    .map((f) => ({
+      type: "relation_missing_fk" as const,
+      table,
+      column: f.name,
+      toRelationTo: f.relationTo,
+      relationToNeverExisted: true,
+    }));
+}
+
+/**
  * Builds one CREATE TABLE statement per entity. Every generated app gets a
  * real SQL schema — this is the "Database Engineer Agent" of the Forge AI
  * vision reduced to its honest Phase 1 form: deterministic schema-from-spec,
@@ -169,6 +212,8 @@ export interface MigrationChange {
   /** Only set for "relation_target_changed": the field's old and new relationTo entity name. Only set for "relation_missing_fk": the relationTo the field claims, with no "from" since the reused column never had any FK to begin with. */
   fromRelationTo?: string;
   toRelationTo?: string;
+  /** Only set for "relation_missing_fk" on a newly-created column/table (round 860's own addition to this type): true when relationTo never named a real entity at all, as opposed to the original reused-column case (a relationTo that DOES resolve, but whose physical FK was lost through an earlier type oscillation). Lets describeMigrationHazards word the one shared message accurately for either root cause without a second MigrationChange type. */
+  relationToNeverExisted?: boolean;
   /** Only set for "automation_rule_disabled": how many rules this one disable call actually turned off. */
   disabledCount?: number;
 }
@@ -196,7 +241,7 @@ export function describeMigrationHazards(changes: MigrationChange[]): string {
       ? ` Note: ${relationTargetChanges.map((c) => `${c.table}.${c.column} (${c.fromRelationTo} → ${c.toRelationTo})`).join(", ")} kept pointing at the original related table — existing data was not re-linked.`
       : "") +
     (relationMissingFkChanges.length > 0
-      ? ` Note: ${relationMissingFkChanges.map((c) => `${c.table}.${c.column} (→ ${c.toRelationTo})`).join(", ")} is a relation field reusing a column that was never linked to anything — existing and new values in it are not protected against pointing at a record that doesn't exist.`
+      ? ` Note: ${relationMissingFkChanges.map((c) => `${c.table}.${c.column} (→ ${c.toRelationTo})`).join(", ")} ${relationMissingFkChanges.length === 1 ? "is a relation field" : "are relation fields"} with no real foreign-key link to the entity it names — existing and new values in it are not protected against pointing at a record that doesn't exist.`
       : "") +
     (automationDisables.length > 0
       ? ` Note: ${automationDisables.reduce((sum, c) => sum + (c.disabledCount ?? 0), 0)} automation rule(s) were disabled because they referenced a field or entity that no longer exists — re-enable them from the Automations panel if still needed.`
@@ -232,7 +277,11 @@ export function diffAndMigrate(
 ): MigrationChange[] {
   if (!previousSpec) {
     applyMigrations(db, projectId, nextSpec);
-    return nextSpec.entities.map((e) => ({ type: "new_table" as const, table: tableNameFor(projectId, e.name) }));
+    const entityNames = new Set(nextSpec.entities.map((e) => e.name));
+    return nextSpec.entities.flatMap((e) => {
+      const table = tableNameFor(projectId, e.name);
+      return [{ type: "new_table" as const, table }, ...missingFkChangesForNewColumns(table, e.fields, entityNames)];
+    });
   }
 
   const statements = generateCreateTableStatements(projectId, nextSpec);
@@ -299,7 +348,7 @@ export function diffAndMigrate(
 
     if (!prevEntity && currentColumns.size === 0) {
       db.exec(statements[index]);
-      changes.push({ type: "new_table", table });
+      changes.push({ type: "new_table", table }, ...missingFkChangesForNewColumns(table, entity.fields, entityNames));
       if (hasCheckpointHistoryTable(db)) recordEntityNameInHistory(db, projectId, entity.name);
       return;
     }
@@ -621,7 +670,7 @@ export function diffAndMigrate(
         }
         db.exec(`ALTER TABLE ${quoteIdentifier(table)} ADD COLUMN ${quoteIdentifier(columnName)} ${sqlType}${fk}`);
       }
-      changes.push({ type: "new_column", table, column: columnName });
+      changes.push({ type: "new_column", table, column: columnName }, ...missingFkChangesForNewColumns(table, [field], entityNames));
     }
     if (hasCheckpointHistoryTable(db)) recordEntityNameInHistory(db, projectId, entity.name);
   });
