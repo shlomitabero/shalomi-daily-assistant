@@ -1003,6 +1003,41 @@ export function createProjectsRouter(
   });
 
   /**
+   * Round 862: the WhatsApp integration's connect/disconnect/send routes
+   * had no volumetric throttle at all, unlike the AI-generation routes
+   * right above (round 858) and every unauthenticated auth route (rounds
+   * 847-857). `send`'s own `to` is a free-form string (WhatsAppSendSchema
+   * only checks it's non-empty, never that it matches an existing
+   * record's phone number) sent through this project's own real, linked
+   * WhatsApp account -- any owner or editor collaborator (requireProjectWriteAccess
+   * grants both identical access) can script repeated calls to spam an
+   * arbitrary third-party number, or just this project's own real
+   * business number, with no server-side cap. whatsappWeb.ts's own
+   * sendSpacingMs paces consecutive sends (avoiding a bursty shape
+   * WhatsApp's own abuse detection flags) but never caps total volume --
+   * at the default 1.2s spacing that's still ~3,000 sends/hour sustained,
+   * exactly the kind of automated-behavior pattern this module's own
+   * doc comments already disclose as a real ban risk for the connected
+   * number, now with a lever any collaborator can pull deliberately or
+   * by accident. connect/disconnect get the same shared limiter: each
+   * opens or tears down a real Baileys socket, and a tight reconnect
+   * loop is its own real resource/detection-risk pattern -- reusing one
+   * limiter rather than three, since "how much can this account churn
+   * this project's WhatsApp integration" is one budget, the same
+   * shared-budget reasoning aiGenerationRateLimiter above already uses.
+   * Never reached by an automation rule's own WhatsApp send
+   * (automations.ts calls whatsapp.sendMessage directly, never through
+   * this HTTP route at all), so a legitimate rule firing often is
+   * unaffected.
+   */
+  const whatsappRateLimiter = createRateLimiter({
+    windowMs: 15 * 60 * 1000,
+    max: 30,
+    keyGenerator: (req) => req.userId ?? "unknown",
+    message: "Too many WhatsApp requests. Please try again later.",
+  });
+
+  /**
    * /build, /refine, and /answers each read `project.spec` once at the
    * start of the request, then spend real time (an AI/heuristic
    * spec-generation call, and for /build and /refine also a migration)
@@ -1764,6 +1799,7 @@ export function createProjectsRouter(
 
   router.post(
     "/projects/:id/integrations/whatsapp/connect",
+    whatsappRateLimiter,
     asyncRoute(async (req, res) => {
       const project = requireProjectWriteAccess(db, req.params.id, req.userId!);
       res.json(await whatsapp.connect(project.id));
@@ -1772,6 +1808,7 @@ export function createProjectsRouter(
 
   router.post(
     "/projects/:id/integrations/whatsapp/disconnect",
+    whatsappRateLimiter,
     asyncRoute(async (req, res) => {
       const project = requireProjectWriteAccess(db, req.params.id, req.userId!);
       await whatsapp.disconnect(project.id);
@@ -1781,6 +1818,7 @@ export function createProjectsRouter(
 
   router.post(
     "/projects/:id/integrations/whatsapp/send",
+    whatsappRateLimiter,
     asyncRoute(async (req, res) => {
       const project = requireProjectWriteAccess(db, req.params.id, req.userId!);
       const parsed = WhatsAppSendSchema.safeParse(req.body ?? {});

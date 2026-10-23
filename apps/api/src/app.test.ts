@@ -142,7 +142,10 @@ function createFakeWhatsAppSocket(opts?: { logout?: () => Promise<void>; sendMes
   };
 }
 
-function createTestWhatsAppManager(db: ForgeDatabase, opts?: { logout?: () => Promise<void>; sendMessage?: () => Promise<void> }) {
+function createTestWhatsAppManager(
+  db: ForgeDatabase,
+  opts?: { logout?: () => Promise<void>; sendMessage?: () => Promise<void>; sendSpacingMs?: number },
+) {
   const createdSockets: ReturnType<typeof createFakeWhatsAppSocket>[] = [];
   const manager = new WhatsAppWebManager({
     db,
@@ -153,6 +156,7 @@ function createTestWhatsAppManager(db: ForgeDatabase, opts?: { logout?: () => Pr
       return { sock: fake.sock, saveCreds: async () => {} };
     },
     qrToDataUrl: async (qr) => `data:image/png;base64,FAKE(${qr})`,
+    sendSpacingMs: opts?.sendSpacingMs,
   });
   return { manager, createdSockets };
 }
@@ -7266,6 +7270,54 @@ test("WhatsApp send succeeds once connected, is logged as an outgoing message, a
         return created.manager;
       },
     },
+  );
+});
+
+/**
+ * Round 862: every other outward-facing-cost route in this API already
+ * has a volumetric rate limiter (the AI-generation routes, round 858;
+ * every unauthenticated auth route, rounds 847-857) -- the WhatsApp
+ * connect/disconnect/send routes had none at all, despite /send's own
+ * `to` being a completely free-form destination (not checked against any
+ * real record) sent through this project's real, linked WhatsApp
+ * account. whatsappWeb.ts's own sendSpacingMs only paces consecutive
+ * sends to avoid a bursty shape; it never caps total volume. Confirms
+ * the new shared, per-user limiter: calls to /send and /connect draw
+ * from the SAME budget (not one counter per route), and a disconnected
+ * /send call (409, before ever reaching whatsapp.sendMessage) still
+ * counts against it, since the limiter runs before the route's own
+ * connection-status check.
+ */
+test("WhatsApp connect/disconnect/send share one per-user rate limit: the 31st call across routes is rejected with 429", async () => {
+  await withServer(
+    async (baseUrl) => {
+      const token = await signup(baseUrl, "rate-limit-whatsapp@example.com");
+      const createRes = await fetch(`${baseUrl}/api/projects`, {
+        method: "POST",
+        headers: authHeaders(token),
+        body: JSON.stringify({ description: "A CRM with customers and deals." }),
+      });
+      const { project } = (await createRes.json()) as { project: { id: string } };
+
+      for (let i = 0; i < 30; i++) {
+        const res = await fetch(`${baseUrl}/api/projects/${project.id}/integrations/whatsapp/send`, {
+          method: "POST",
+          headers: authHeaders(token),
+          body: JSON.stringify({ to: "972501234567", message: "hi" }),
+        });
+        assert.notEqual(res.status, 429, `send call ${i + 1} of 30 (within the limit) must not be rate-limited yet`);
+      }
+
+      // The 31st call across the SAME budget, on a DIFFERENT route --
+      // proves the limit is shared, not one independent counter per route.
+      const blocked = await fetch(`${baseUrl}/api/projects/${project.id}/integrations/whatsapp/connect`, {
+        method: "POST",
+        headers: authHeaders(token),
+      });
+      assert.equal(blocked.status, 429);
+      assert.equal(((await blocked.json()) as { code?: string }).code, "RATE_LIMITED");
+    },
+    { whatsapp: (db) => createTestWhatsAppManager(db, { sendSpacingMs: 0 }).manager },
   );
 });
 
