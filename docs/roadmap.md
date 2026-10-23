@@ -32075,3 +32075,21 @@ Still no genuine reply from שלומי. The exact same shape as round 827's just
 **Unverified lead, not yet investigated**: this round's survey also flagged that `domainEntities.ts`'s `Service` entity keyword `"שירות"` may collide with `"כשירות"` (fitness/eligibility/competency, e.g. "כשירות משפטית"/"בדיקת כשירות גופנית") via the `כ` prefix -- a substring match confirmed directly in Node, but not yet confirmed to produce an actual wrong `HeuristicSpecProvider.generate()` outcome. Left for a future round's dedicated verification rather than bundled into this one.
 
 **Status**: shipped and pushed.
+
+### Round 829: `Service`'s bare `"שירות"`/`"שירותים"` keywords spuriously matched `"כשירות"` (competency/fitness)
+
+Still no genuine reply from שלומי. This round's own instruction was to verify, before anything else, the unconfirmed lead round 828 flagged -- and it checked out as a real, empirically-reproducible bug, not just a theoretical substring argument.
+
+**Verification before fixing**: called `HeuristicSpecProvider.generate()` directly (independently, not just trusting the survey's own report) on realistic, non-commercial `"כשירות"`-using descriptions. A physical-fitness-assessment app for a gym ("אפליקציה לניהול בדיקות כשירות גופנית במכון כושר") matched only the generic `Service` entity instead of anything fitness-related. A legal-competency tracker ("אפליקציה למעקב אחר כשירות משפטית של עובדים בחברה") spuriously added `Service` alongside the legitimately-matched `Employee`. Both outcomes reproduced cleanly on a fresh, independent run.
+
+**The gap**: `domainEntities.ts`'s `Service` entity rule included bare `"שירות"`/`"שירותים"` ("service"/"services") in its keyword list -- plain substrings of `"כשירות"` ("competency"/"fitness"/"eligibility"), via the `כ` prefix. This is the same "Hebrew prefix letter doesn't break substring matching the way `\b` would in English" shape already fixed for `"מעובד"`/`"עובד"` (round 565) and `"מצוות"`/`"צוות"` (round 825) -- same file, same root cause, different prefix letter and different root word. Confirmed via grep that this is the *only* bare keyword-matching occurrence of `"שירות"` anywhere in the file; the other two occurrences are field-label/enum-label translation strings, never consulted for keyword matching at all.
+
+**The fix**: replaced the two bare strings with `/(?<!כ)שירות/` and `/(?<!כ)שירותים/` -- the identical lookbehind pattern this file already uses for the other prefix-collision fixes. Verified the regex behaves correctly in isolation before writing any test: rejects `"כשירות"`/`"כשירותים"`, still matches `"שירות"`/`"שירותים"` bare or with the definite-article `"ה"` prefix.
+
+**Scope**: `packages/spec-engine` only -- this logic is consumed purely server-side at spec-generation time; confirmed via grep that neither `ROLE_RULES` nor `DOMAIN_ENTITY_RULES` are referenced anywhere in `apps/web`/`codegen.ts`.
+
+**The tests**: a new test mirrors round 565/825's own structure exactly -- confirms a fitness-assessment description and a legal-competency description no longer spuriously add the `Service` entity, while real usage (`"השירות"`/`"השירותים"`, with the definite-article prefix rather than `"כ"`) still matches.
+
+**Verification**: reverted the fix and reran -- failed exactly as predicted (`'כשירות' (fitness) alone must not spuriously match Service` assertion failed); restored, passes. Full `packages/spec-engine` suite: 162/162 pass. Full `apps/api` suite: 588/589 pass, the lone failure is `codegen.test.ts`'s same recurring, already-documented, unrelated whole-file `SIGKILL`.
+
+**Status**: shipped and pushed.
