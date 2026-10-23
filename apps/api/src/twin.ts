@@ -85,6 +85,34 @@ export interface BusinessTwin {
 }
 
 /**
+ * The entity-level twin of the field-label-collision guard every observation
+ * below already carries for FIELD labels (each builds its own local
+ * `labelOccurrences` map) -- mirroring checkpointDiff.ts's/pipeline.ts's own
+ * identical `entityLabelOccurrences`/`entityDisplayLabel` pair. An entity's
+ * own display label is just as unenforced-unique as a field's: the Entity
+ * Label editor and its PATCH /entities/:entityName/label route (see
+ * routes/projects.ts) accept any non-empty string with no collision check
+ * against sibling entities, so two different entities can legally share a
+ * label. Computed once per computeBusinessTwin call, over this project's
+ * current live entity list -- unlike pipeline.ts's refine-impact version,
+ * the Business Twin never compares two specs, so there's no previous-vs-next
+ * union to build here.
+ */
+function entityLabelOccurrences(entities: Entity[]): Map<string, number> {
+  const occurrences = new Map<string, number>();
+  for (const e of entities) {
+    const label = e.label ?? e.name;
+    occurrences.set(label, (occurrences.get(label) ?? 0) + 1);
+  }
+  return occurrences;
+}
+
+function entityDisplayLabel(entity: Entity, occurrences: Map<string, number>): string {
+  const label = entity.label ?? entity.name;
+  return (occurrences.get(label) ?? 0) > 1 ? `${label} (${entity.name})` : label;
+}
+
+/**
  * Reports how well a relation field is actually being used -- e.g. "3 of 5
  * tickets have no customer linked" -- for any entity that has one, not
  * special-cased to a particular entity/field name. This is exactly the
@@ -96,6 +124,7 @@ function computeRelationCoverageObservations(
   recordsByEntity: Map<string, EntityRecord[]>,
   project: Project,
   hebrew: boolean,
+  entityLabels: Map<string, number>,
 ): { text: string; entityName: string }[] {
   const observations: { text: string; entityName: string }[] = [];
   for (const entity of project.spec.entities) {
@@ -120,7 +149,7 @@ function computeRelationCoverageObservations(
     for (const field of relationFields) {
       const unassigned = records.filter((r) => r[field.name] === null || r[field.name] === undefined).length;
       if (unassigned === 0) continue;
-      const entityLabel = entity.label ?? entity.name;
+      const entityLabel = entityDisplayLabel(entity, entityLabels);
       const fieldLabel = field.label ?? field.name;
       const ambiguous = (labelOccurrences.get(fieldLabel) ?? 0) > 1;
       observations.push({
@@ -147,6 +176,7 @@ function computeRelationHubObservation(
   recordsByEntity: Map<string, EntityRecord[]>,
   project: Project,
   hebrew: boolean,
+  entityLabels: Map<string, number>,
 ): { text: string; entityName: string; recordId: number } | null {
   const entities = project.spec.entities;
   // targetEntityName -> targetRecordId -> [{ sourceLabel, fieldLabel, count }]
@@ -174,7 +204,7 @@ function computeRelationHubObservation(
       if (!breakdownByTarget.has(targetName)) breakdownByTarget.set(targetName, new Map());
       const perId = breakdownByTarget.get(targetName)!;
       for (const [id, count] of countsById) {
-        const entry = { sourceLabel: sourceEntity.label ?? sourceEntity.name, fieldLabel: field.label ?? field.name, count };
+        const entry = { sourceLabel: entityDisplayLabel(sourceEntity, entityLabels), fieldLabel: field.label ?? field.name, count };
         perId.set(id, [...(perId.get(id) ?? []), entry]);
       }
     }
@@ -233,7 +263,7 @@ function computeRelationHubObservation(
     })
     .join(", ");
   const label = recordDisplayLabel(targetEntity, targetRecord);
-  const entityLabel = targetEntity.label ?? targetEntity.name;
+  const entityLabel = entityDisplayLabel(targetEntity, entityLabels);
 
   return {
     text: hebrew
@@ -278,6 +308,7 @@ function computeDuplicateObservations(
   recordsByEntity: Map<string, EntityRecord[]>,
   project: Project,
   hebrew: boolean,
+  entityLabels: Map<string, number>,
 ): { text: string; entityName: string }[] {
   const observations: { text: string; entityName: string }[] = [];
   for (const entity of project.spec.entities) {
@@ -298,7 +329,7 @@ function computeDuplicateObservations(
       }
     }
 
-    const entityLabel = entity.label ?? entity.name;
+    const entityLabel = entityDisplayLabel(entity, entityLabels);
     for (const { count, displayLabel } of groupsByNormalizedLabel.values()) {
       if (count < 2) continue;
       observations.push({
@@ -333,6 +364,7 @@ function computeActivityObservations(
   recordsByEntity: Map<string, EntityRecord[]>,
   project: Project,
   hebrew: boolean,
+  entityLabels: Map<string, number>,
 ): { observations: string[]; jumpableObservations: { text: string; entityName: string }[] } {
   const observations: string[] = [];
   const jumpableObservations: { text: string; entityName: string }[] = [];
@@ -352,7 +384,7 @@ function computeActivityObservations(
       if (ageMs <= 7 * DAY_MS) recentCount += 1;
       if (ageMs < newestAgeMs) newestAgeMs = ageMs;
     }
-    if (newestAgeMs > 30 * DAY_MS) staleEntities.push({ name: entity.name, label: entity.label ?? entity.name });
+    if (newestAgeMs > 30 * DAY_MS) staleEntities.push({ name: entity.name, label: entityDisplayLabel(entity, entityLabels) });
   }
 
   if (recentCount > 0) {
@@ -390,6 +422,7 @@ function computeNumericAggregateObservations(
   recordsByEntity: Map<string, EntityRecord[]>,
   project: Project,
   hebrew: boolean,
+  entityLabels: Map<string, number>,
 ): {
   text: string;
   entityName: string;
@@ -407,7 +440,7 @@ function computeNumericAggregateObservations(
     const records = recordsByEntity.get(entity.name) ?? [];
     if (records.length === 0) continue;
 
-    const entityLabel = entity.label ?? entity.name;
+    const entityLabel = entityDisplayLabel(entity, entityLabels);
     // Same label-collision gap as computeRelationCoverageObservations above
     // (field labels aren't unique, only names are) -- two number fields on
     // the same entity (e.g. Order.subtotal and Order.shipping both renamed
@@ -494,6 +527,7 @@ function computeEnumDistributionObservations(
   recordsByEntity: Map<string, EntityRecord[]>,
   project: Project,
   hebrew: boolean,
+  entityLabels: Map<string, number>,
 ): {
   text: string;
   entityName: string;
@@ -511,7 +545,7 @@ function computeEnumDistributionObservations(
     const records = recordsByEntity.get(entity.name) ?? [];
     if (records.length === 0) continue;
 
-    const entityLabel = entity.label ?? entity.name;
+    const entityLabel = entityDisplayLabel(entity, entityLabels);
     // Same label-collision gap as computeRelationCoverageObservations/
     // computeNumericAggregateObservations above -- two enum/boolean fields
     // on the same entity sharing a label would otherwise produce two
@@ -578,9 +612,17 @@ export function computeBusinessTwin(db: ForgeDatabase, project: Project): Busine
     recordsByEntity.set(entity.name, listRecords(db, project.id, entity));
   }
 
+  // Computed once here and threaded into every helper below, rather than
+  // each one re-deriving its own occurrence count independently -- the
+  // occurrence count must be taken over the SAME full entity list every
+  // helper is called against (this project's live spec), so sharing one Map
+  // also guarantees every observation agrees on which labels are actually
+  // ambiguous, not just each helper's own local view.
+  const entityLabels = entityLabelOccurrences(project.spec.entities);
+
   const entities: BusinessTwinEntityStat[] = project.spec.entities.map((entity) => ({
     name: entity.name,
-    label: entity.label ?? entity.name,
+    label: entityDisplayLabel(entity, entityLabels),
     count: recordsByEntity.get(entity.name)?.length ?? 0,
   }));
 
@@ -626,13 +668,13 @@ export function computeBusinessTwin(db: ForgeDatabase, project: Project): Busine
         entityName: e.name,
       });
     }
-    mostLinkedRecord = computeRelationHubObservation(db, recordsByEntity, project, hebrew);
-    jumpableObservations.push(...computeRelationCoverageObservations(recordsByEntity, project, hebrew));
-    jumpableObservations.push(...computeDuplicateObservations(recordsByEntity, project, hebrew));
-    numericStats.push(...computeNumericAggregateObservations(recordsByEntity, project, hebrew));
-    distributions.push(...computeEnumDistributionObservations(recordsByEntity, project, hebrew));
+    mostLinkedRecord = computeRelationHubObservation(db, recordsByEntity, project, hebrew, entityLabels);
+    jumpableObservations.push(...computeRelationCoverageObservations(recordsByEntity, project, hebrew, entityLabels));
+    jumpableObservations.push(...computeDuplicateObservations(recordsByEntity, project, hebrew, entityLabels));
+    numericStats.push(...computeNumericAggregateObservations(recordsByEntity, project, hebrew, entityLabels));
+    distributions.push(...computeEnumDistributionObservations(recordsByEntity, project, hebrew, entityLabels));
     jumpableObservations.push(...numericStats, ...distributions);
-    const activity = computeActivityObservations(recordsByEntity, project, hebrew);
+    const activity = computeActivityObservations(recordsByEntity, project, hebrew, entityLabels);
     observations.push(...activity.observations);
     jumpableObservations.push(...activity.jumpableObservations);
   }

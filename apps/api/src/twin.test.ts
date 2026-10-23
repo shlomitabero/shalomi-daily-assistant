@@ -352,6 +352,215 @@ test("computeBusinessTwin's most-linked breakdown disambiguates two relation fie
   );
 });
 
+/**
+ * Round 867: every one of twin.ts's observation builders (relation
+ * coverage/hub, duplicate detection, activity staleness, numeric
+ * aggregates, enum distributions) and the top-level `entities` stat array
+ * read an entity's own display label (`entity.label ?? entity.name`) raw,
+ * with no collision check against sibling entities -- unlike the FIELD-label
+ * collision guard every single one of those builders already carries (each
+ * via its own local `labelOccurrences` map, several already exercised by
+ * this file's own "...disambiguate two [relation/number/enum] fields..."
+ * tests above/below). The Entity Label editor and its PATCH
+ * /entities/:entityName/label route (routes/projects.ts) enforce no
+ * uniqueness at all -- any real user can relabel two different entities to
+ * the exact same string in one UI action -- and checkpointDiff.ts's/
+ * pipeline.ts's own entityLabelOccurrences/entityDisplayLabel pair already
+ * establish this as a legal, expected state elsewhere in this codebase.
+ * Mirrors that exact pair into twin.ts, computed once per
+ * computeBusinessTwin call and threaded into every helper, so two
+ * same-labeled entities are disambiguated by their own (always-unique)
+ * name everywhere the Business Twin names an entity -- the stat tiles
+ * (entities/mostActive/unused), and every prose observation below.
+ */
+test("computeBusinessTwin's entities/mostActive/unused stats disambiguate two entities that share the same label", () => {
+  const dualLabelProject: Project = {
+    ...project,
+    description: "I need to track active and archived customers separately",
+    spec: {
+      ...project.spec,
+      entities: [
+        { name: "CustomerActive", label: "Customer", fields: [{ name: "name", type: "text", required: true }] },
+        { name: "CustomerArchived", label: "Customer", fields: [{ name: "name", type: "text", required: true }] },
+      ],
+    },
+  };
+  const db = openDatabase(":memory:");
+  applyMigrations(db, dualLabelProject.id, dualLabelProject.spec);
+  const [active, archived] = dualLabelProject.spec.entities;
+  insertRecord(db, dualLabelProject.id, active, { name: "Dana Levi" });
+  insertRecord(db, dualLabelProject.id, active, { name: "Yossi Cohen" });
+
+  const twin = computeBusinessTwin(db, dualLabelProject);
+  const activeStat = twin.entities.find((e) => e.name === "CustomerActive")!;
+  const archivedStat = twin.entities.find((e) => e.name === "CustomerArchived")!;
+  assert.equal(activeStat.label, "Customer (CustomerActive)", `expected the active entity's own label to be disambiguated, got: ${JSON.stringify(twin.entities)}`);
+  assert.equal(archivedStat.label, "Customer (CustomerArchived)", `expected the archived entity's own label to be disambiguated, got: ${JSON.stringify(twin.entities)}`);
+
+  assert.ok(twin.mostActive);
+  assert.equal(twin.mostActive!.label, "Customer (CustomerActive)", "mostActive must reuse the already-disambiguated stat, not a bare 'Customer'");
+  assert.ok(
+    twin.mostActiveObservation!.text.includes("Customer (CustomerActive)"),
+    `expected the most-active prose to name which of the two same-labeled entities it means, got: "${twin.mostActiveObservation!.text}"`,
+  );
+
+  assert.equal(twin.unused.length, 1);
+  assert.equal(twin.unused[0].label, "Customer (CustomerArchived)");
+  const unusedObservation = twin.jumpableObservations.find((o) => o.entityName === "CustomerArchived");
+  assert.ok(
+    unusedObservation?.text.includes("Customer (CustomerArchived)"),
+    `expected the unused-entity prose to name which of the two same-labeled entities it means, got: ${JSON.stringify(twin.jumpableObservations)}`,
+  );
+});
+
+test("computeBusinessTwin's duplicate-detection and activity-staleness observations disambiguate two entities that share the same label", () => {
+  const dualLabelProject: Project = {
+    ...project,
+    description: "I need to track active and archived customers separately",
+    spec: {
+      ...project.spec,
+      entities: [
+        { name: "CustomerActive", label: "Customer", fields: [{ name: "name", type: "text", required: true }] },
+        { name: "CustomerArchived", label: "Customer", fields: [{ name: "name", type: "text", required: true }] },
+      ],
+    },
+  };
+  const db = openDatabase(":memory:");
+  applyMigrations(db, dualLabelProject.id, dualLabelProject.spec);
+  const [active, archived] = dualLabelProject.spec.entities;
+  // Two active-customer records share the exact same display name -- a
+  // genuine duplicate-detection hit.
+  insertRecord(db, dualLabelProject.id, active, { name: "Repeated Name" });
+  insertRecord(db, dualLabelProject.id, active, { name: "Repeated Name" });
+  // The archived entity's one record is backdated past the staleness
+  // threshold -- a genuine activity-staleness hit.
+  const { id: archivedRecordId } = insertRecord(db, dualLabelProject.id, archived, { name: "Old Record" });
+  backdateRecord(db, dualLabelProject.id, "CustomerArchived", archivedRecordId, 40);
+
+  const twin = computeBusinessTwin(db, dualLabelProject);
+  const duplicateObservation = twin.jumpableObservations.find((o) => o.entityName === "CustomerActive" && o.text.includes("Repeated Name"));
+  assert.ok(duplicateObservation, `expected a duplicate-name observation, got: ${JSON.stringify(twin.jumpableObservations)}`);
+  assert.ok(
+    duplicateObservation!.text.includes("Customer (CustomerActive)"),
+    `expected the duplicate observation to disambiguate which same-labeled entity it's about, got: "${duplicateObservation!.text}"`,
+  );
+
+  const staleObservation = twin.jumpableObservations.find((o) => o.entityName === "CustomerArchived" && /30/.test(o.text));
+  assert.ok(staleObservation, `expected a staleness observation, got: ${JSON.stringify(twin.jumpableObservations)}`);
+  assert.ok(
+    staleObservation!.text.includes("Customer (CustomerArchived)"),
+    `expected the staleness observation to disambiguate which same-labeled entity it's about, got: "${staleObservation!.text}"`,
+  );
+});
+
+test("computeBusinessTwin's relation-coverage, numeric-aggregate, and enum-distribution observations disambiguate the ENTITY label (not just the field label already covered above) when two entities share a label", () => {
+  const dualLabelProject: Project = {
+    ...project,
+    description: "I need to track active and archived orders separately",
+    spec: {
+      ...project.spec,
+      entities: [
+        { name: "Courier", label: "Couriers", fields: [{ name: "name", type: "text", required: true }] },
+        {
+          name: "OrderActive",
+          label: "Orders",
+          fields: [
+            { name: "amount", type: "number", required: false },
+            { name: "status", type: "enum", required: false, enumValues: ["pending", "shipped"] },
+            { name: "courierId", type: "relation", required: false, relationTo: "Courier" },
+          ],
+        },
+        {
+          name: "OrderArchived",
+          label: "Orders",
+          fields: [
+            { name: "amount", type: "number", required: false },
+            { name: "status", type: "enum", required: false, enumValues: ["pending", "shipped"] },
+            { name: "courierId", type: "relation", required: false, relationTo: "Courier" },
+          ],
+        },
+      ],
+    },
+  };
+  const db = openDatabase(":memory:");
+  applyMigrations(db, dualLabelProject.id, dualLabelProject.spec);
+  const [, orderActive, orderArchived] = dualLabelProject.spec.entities;
+  insertRecord(db, dualLabelProject.id, orderActive, { amount: 100, status: "pending", courierId: null });
+  insertRecord(db, dualLabelProject.id, orderArchived, { amount: 50, status: "shipped", courierId: null });
+  insertRecord(db, dualLabelProject.id, orderArchived, { amount: 70, status: "pending", courierId: null });
+
+  const twin = computeBusinessTwin(db, dualLabelProject);
+
+  const coverageActive = twin.jumpableObservations.find((o) => o.entityName === "OrderActive" && /no\b/i.test(o.text));
+  assert.ok(coverageActive?.text.includes("Orders (OrderActive)"), `expected OrderActive's relation-coverage observation disambiguated, got: ${JSON.stringify(twin.jumpableObservations)}`);
+  const coverageArchived = twin.jumpableObservations.find((o) => o.entityName === "OrderArchived" && /no\b/i.test(o.text));
+  assert.ok(coverageArchived?.text.includes("Orders (OrderArchived)"), `expected OrderArchived's relation-coverage observation disambiguated, got: ${JSON.stringify(twin.jumpableObservations)}`);
+
+  const aggregateActive = twin.numericStats.find((s) => s.entityName === "OrderActive");
+  assert.equal(aggregateActive?.entityLabel, "Orders (OrderActive)");
+  assert.ok(aggregateActive?.text.includes("Orders (OrderActive)"));
+  const aggregateArchived = twin.numericStats.find((s) => s.entityName === "OrderArchived");
+  assert.equal(aggregateArchived?.entityLabel, "Orders (OrderArchived)");
+  assert.ok(aggregateArchived?.text.includes("Orders (OrderArchived)"));
+
+  const distributionArchived = twin.distributions.find((d) => d.entityName === "OrderArchived");
+  assert.equal(distributionArchived?.entityLabel, "Orders (OrderArchived)");
+  assert.ok(distributionArchived?.text.includes("Orders (OrderArchived)"));
+});
+
+test("computeBusinessTwin's relation-hub observation disambiguates both the SOURCE entities' and the TARGET entity's own label when either collides with a sibling", () => {
+  const dualLabelProject: Project = {
+    ...project,
+    description: "I need to track active and archived customers, and orders from two systems",
+    spec: {
+      ...project.spec,
+      entities: [
+        { name: "CustomerActive", label: "Customer", fields: [{ name: "name", type: "text", required: true }] },
+        { name: "CustomerArchived", label: "Customer", fields: [{ name: "name", type: "text", required: true }] },
+        {
+          name: "OrderOld",
+          label: "Orders",
+          fields: [
+            { name: "total", type: "number", required: true },
+            { name: "customerId", type: "relation", required: false, relationTo: "CustomerActive" },
+          ],
+        },
+        {
+          name: "OrderNew",
+          label: "Orders",
+          fields: [
+            { name: "total", type: "number", required: true },
+            { name: "customerId", type: "relation", required: false, relationTo: "CustomerActive" },
+          ],
+        },
+      ],
+    },
+  };
+  const db = openDatabase(":memory:");
+  applyMigrations(db, dualLabelProject.id, dualLabelProject.spec);
+  const [active, , orderOld, orderNew] = dualLabelProject.spec.entities;
+  const { id: dana } = insertRecord(db, dualLabelProject.id, active, { name: "Dana Levi" });
+  insertRecord(db, dualLabelProject.id, orderOld, { total: 50, customerId: dana });
+  insertRecord(db, dualLabelProject.id, orderOld, { total: 30, customerId: dana });
+  insertRecord(db, dualLabelProject.id, orderNew, { total: 10, customerId: dana });
+
+  const twin = computeBusinessTwin(db, dualLabelProject);
+  assert.ok(twin.mostLinkedRecord, `expected a most-linked-record insight, got: ${JSON.stringify(twin.mostLinkedRecord)}`);
+  const hubObservation = twin.mostLinkedRecord!.text;
+  assert.ok(
+    hubObservation.includes("Customer (CustomerActive)"),
+    `expected the hub record's own TARGET entity label to be disambiguated, got: "${hubObservation}"`,
+  );
+  assert.ok(
+    hubObservation.includes('2 in "Orders (OrderOld)"'),
+    `expected OrderOld's own SOURCE entity label to be disambiguated, got: "${hubObservation}"`,
+  );
+  assert.ok(
+    hubObservation.includes('1 in "Orders (OrderNew)"'),
+    `expected OrderNew's own SOURCE entity label to be disambiguated, got: "${hubObservation}"`,
+  );
+});
+
 test("computeBusinessTwin falls back to the next real candidate when the top-linked id no longer resolves to a real record, instead of dropping the insight entirely", () => {
   // deleteRecord itself can't produce this state today: migrate.ts declares
   // a real REFERENCES constraint on every relation column and openDatabase
