@@ -1423,7 +1423,20 @@ export const ROLE_RULES: Record<string, RoleRule> = {
   // optional -- excludes both "מנהל מערכת" and "מנהלת מערכת" while still
   // matching a standalone "מנהל"/"מנהלת" (e.g. "מנהל/ת חנות", a store
   // manager) that isn't naming a system admin.
-  Manager: { keywords: ["manager", /\bmanagement\b/, /מנהל(?!ת?\s*מערכת)/, "ניהול"], labelHe: "מנהל/ת" },
+  // Round 814: a third inflection of the same word family -- the Hebrew
+  // construct-state plural "מנהלי מערכת" ("system administrators"), the
+  // standard phrasing for naming the role/permission group rather than one
+  // person (e.g. "רק מנהלי מערכת יכולים לגשת לדוחות"). After "מנהל" the
+  // next letter is "י" (not "ת" or whitespace), so neither the round-659
+  // nor round-811 lookahead fires for it. Admin's own "מנהל מערכת" keyword
+  // doesn't match the plural either (the extra "י" breaks the contiguous
+  // substring), but that's harmless -- matchRoles adds Admin unconditionally
+  // regardless of its own keyword match (see its own doc comment in
+  // heuristic.ts) -- only Manager's spurious match needed fixing. The "י"
+  // made optional alongside the existing "ת", matching all three
+  // inflections while still matching a real standalone "מנהל"/"מנהלת"/
+  // "מנהלי" (e.g. "מנהלי חנות", real store managers, plural).
+  Manager: { keywords: ["manager", /\bmanagement\b/, /מנהל(?!י?ת?\s*מערכת)/, "ניהול"], labelHe: "מנהל/ת" },
   // Same bare-substring collision as the Employee entity rule above
   // ("coworker" contains "worker") -- \b-bounded here too. Also same
   // pu'al "מעובד" collision (round 565) as the Employee entity rule's own

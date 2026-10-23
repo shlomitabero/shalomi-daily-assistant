@@ -1643,6 +1643,37 @@ test("Manager's 'מנהל'/'מנהלת' keywords don't spuriously match inside A
 });
 
 /**
+ * Regression test for round 814's finding: a third inflection of the same
+ * word family rounds 659/811 (above) already fixed for the masculine and
+ * feminine singular -- the Hebrew construct-state plural "מנהלי מערכת"
+ * ("system administrators"), the standard phrasing for naming the role/
+ * permission group rather than one person. After "מנהל" the next letter
+ * is "י" (not "ת" or whitespace), so neither prior lookahead fires for it.
+ * A description naming only system administrators, in this far more
+ * natural plural phrasing, spuriously got Manager too, silently
+ * suppressing the generic Member fallback the same way rounds 659/811's
+ * own bugs did for the singular forms.
+ */
+test("Manager's 'מנהל' keyword doesn't spuriously match inside Admin's own construct-plural 'מנהלי מערכת' phrase", async () => {
+  const provider = new HeuristicSpecProvider();
+
+  const adminOnly = await provider.generate("האפליקציה מיועדת למנהלי מערכת בלבד, בלי תפקידים אחרים.");
+  assert.ok(
+    !adminOnly.roles.includes("מנהל/ת"),
+    "a description naming only system administrators (plural) must not spuriously add a Manager role via the 'מנהל' substring",
+  );
+  assert.ok(
+    adminOnly.roles.includes("חבר/ת צוות"),
+    "with no second real role detected, the generic Member fallback must still be added, not silently suppressed",
+  );
+
+  // The real construct-plural word still works on its own, the same way
+  // rounds 659/811's own singular counterparts do.
+  const realManagers = await provider.generate("אפליקציה למנהלי חנות שעוקבים אחרי המלאי והעובדים.");
+  assert.ok(realManagers.roles.includes("מנהל/ת"), "a standalone 'מנהלי' (plural store managers) must still add the Manager role");
+});
+
+/**
  * Regression test for round 561's finding: Student's bare "pupil" keyword
  * is a whole-word genuine polysemy collision (not a substring issue) with
  * the ophthalmology/optometry term "pupil" (the part of the eye) -- the
