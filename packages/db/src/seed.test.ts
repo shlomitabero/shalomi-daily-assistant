@@ -283,6 +283,35 @@ test("the WorkOrder, Volunteer, and Case entities each get believable seed value
   assert.doesNotMatch(caseRecord.title as string, /Case title/);
 });
 
+/**
+ * Round 827's finding: the test above only ever checked that WorkOrder's
+ * and Case's "title" field wasn't the generic "<Entity> title" placeholder
+ * -- it already wasn't, but only because textSeedValueFor's "title" case
+ * had no entity-aware dispatch at all (unlike its "name"/"description"
+ * siblings just below it), so every entity with a "title" field silently
+ * got Deal's own sample titles instead ("Annual contract", "Service
+ * upgrade") -- nonsensical as a repair job description or a legal case
+ * subject. Confirms WorkOrder/Case/Task each get their own dedicated,
+ * field-appropriate title pool now, not Deal's.
+ */
+test("WorkOrder, Case, and Task each get their own field-appropriate 'title' seed values, not Deal's sales-pitch titles", () => {
+  const workOrder: Entity = { name: "WorkOrder", fields: [{ name: "title", type: "text", required: true }] };
+  const legalCase: Entity = { name: "Case", fields: [{ name: "title", type: "text", required: true }] };
+  const task: Entity = { name: "Task", fields: [{ name: "title", type: "text", required: true }] };
+  const deal: Entity = { name: "Deal", fields: [{ name: "title", type: "text", required: true }] };
+
+  const dealTitles = new Set(generateSeedRecords(deal, 4).map((r) => r.title as string));
+
+  const workOrderTitles = generateSeedRecords(workOrder, 4).map((r) => r.title as string);
+  for (const title of workOrderTitles) assert.ok(!dealTitles.has(title), `WorkOrder's title "${title}" must not be one of Deal's own sample titles`);
+
+  const caseTitles = generateSeedRecords(legalCase, 4).map((r) => r.title as string);
+  for (const title of caseTitles) assert.ok(!dealTitles.has(title), `Case's title "${title}" must not be one of Deal's own sample titles`);
+
+  const taskTitles = generateSeedRecords(task, 4).map((r) => r.title as string);
+  for (const title of taskTitles) assert.ok(!dealTitles.has(title), `Task's title "${title}" must not be one of Deal's own sample titles`);
+});
+
 test("an unrecognized field name still gets a labeled fallback value instead of throwing", () => {
   const custom: Entity = { name: "Widget", fields: [{ name: "colorPreference", type: "text", required: false }] };
   const [record] = generateSeedRecords(custom, 1);

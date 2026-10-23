@@ -28,6 +28,12 @@ const ROLES_HE = ["מוכר/ת", "טכנאי/ת", "מנהל/ת משמרת", "ר�
 const ROLES_EN = ["Sales Associate", "Technician", "Shift Manager", "Service Coordinator"];
 const DEAL_TITLES_HE = ["שדרוג חבילת שירות", "התקנה ראשונית", "חוזה שנתי", "הרחבת מנוי"];
 const DEAL_TITLES_EN = ["Service upgrade", "Initial setup", "Annual contract", "Plan expansion"];
+const WORK_ORDER_TITLES_HE = ["תיקון ברז דולף", "בדיקת מזגן", "החלפת חלון שבור", "בדק שנתי"];
+const WORK_ORDER_TITLES_EN = ["Fix leaking faucet", "HVAC inspection", "Replace broken window", "Annual maintenance check"];
+const CASE_TITLES_HE = ["מחלוקת חוזית", "סכסוך גבולות מקרקעין", "תביעת פיטורים", "תביעת נזקי גוף"];
+const CASE_TITLES_EN = ["Contract dispute", "Property boundary dispute", "Employment termination claim", "Personal injury claim"];
+const TASK_TITLES_HE = ["כתיבת דוח רבעוני", "תיקון באג בהתחברות", "פולו-אפ עם לקוח", "עדכון תיעוד הפרויקט"];
+const TASK_TITLES_EN = ["Write quarterly report", "Fix login bug", "Follow up with client", "Update project documentation"];
 // Pools for the domain entities added later (MenuItem, Property, Course,
 // Project, Event, Pet, Vehicle, Rental) -- see packages/spec-engine/src/
 // domainEntities.ts. Same principle: believable, field-appropriate values
@@ -176,6 +182,16 @@ function textSeedValueFor(fieldName: string, entityName: string, isHebrew: boole
     case "sku":
       return `SKU-${1000 + index * 42}`;
     case "title":
+      // Same "field name reused across unrelated entity shapes" principle
+      // as the "name" case below -- a Deal's title is a sales pitch, but a
+      // WorkOrder's title is a repair job description, a Case's title is a
+      // legal matter's subject, and a Task's title is a plain to-do, not a
+      // sales phrase. Without this, WorkOrder/Case/Task seed records all
+      // showed Deal's own sample titles ("Annual contract", "Service
+      // upgrade") -- nonsensical as a repair job or legal case.
+      if (entityName === "WorkOrder") return pick(isHebrew ? WORK_ORDER_TITLES_HE : WORK_ORDER_TITLES_EN, index);
+      if (entityName === "Case") return pick(isHebrew ? CASE_TITLES_HE : CASE_TITLES_EN, index);
+      if (entityName === "Task") return pick(isHebrew ? TASK_TITLES_HE : TASK_TITLES_EN, index);
       return pick(isHebrew ? DEAL_TITLES_HE : DEAL_TITLES_EN, index);
     case "customerName":
     case "owner":
