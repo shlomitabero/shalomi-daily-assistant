@@ -54,7 +54,7 @@ test("computeCheckpointDiff reports fields present now but missing from the chec
   assert.deepEqual(diff.removedEntities, []);
   assert.deepEqual(
     diff.changedEntities,
-    [{ name: "Customer", label: "Customers", removedFieldNames: ["Loyalty Points"], addedFieldNames: [], changedFieldNames: [] }],
+    [{ name: "Customer", label: "Customers", removedFieldNames: ["Loyalty Points"], addedFieldNames: [], changedFieldNames: [], descriptionChanged: false }],
   );
 });
 
@@ -63,7 +63,7 @@ test("computeCheckpointDiff falls back to the raw name when a field or entity ha
   const checkpoint = makeSpec([{ name: "Customer", fields: [{ name: "name", type: "text", required: true }] }]);
 
   const diff = computeCheckpointDiff(current, checkpoint);
-  assert.deepEqual(diff.changedEntities, [{ name: "Customer", label: "Customer", removedFieldNames: ["notes"], addedFieldNames: [], changedFieldNames: [] }]);
+  assert.deepEqual(diff.changedEntities, [{ name: "Customer", label: "Customer", removedFieldNames: ["notes"], addedFieldNames: [], changedFieldNames: [], descriptionChanged: false }]);
 });
 
 /**
@@ -95,7 +95,7 @@ test("computeCheckpointDiff disambiguates an added/removed field name against a 
 
   const diff = computeCheckpointDiff(current, checkpoint);
   assert.deepEqual(diff.changedEntities, [
-    { name: "Order", label: "Order", removedFieldNames: [], addedFieldNames: ["Amount (shipping)"], changedFieldNames: [] },
+    { name: "Order", label: "Order", removedFieldNames: [], addedFieldNames: ["Amount (shipping)"], changedFieldNames: [], descriptionChanged: false },
   ]);
 });
 
@@ -126,7 +126,7 @@ test("computeCheckpointDiff disambiguates a changed entity's label against a sib
 
   const diff = computeCheckpointDiff(current, checkpoint);
   assert.deepEqual(diff.changedEntities, [
-    { name: "Product", label: "Items (Product)", removedFieldNames: [], addedFieldNames: ["Price"], changedFieldNames: [] },
+    { name: "Product", label: "Items (Product)", removedFieldNames: [], addedFieldNames: ["Price"], changedFieldNames: [], descriptionChanged: false },
   ]);
 });
 
@@ -146,7 +146,7 @@ test("computeCheckpointDiff reports checkpoint-only entities/fields as additions
   const diff = computeCheckpointDiff(current, checkpointWithExtra);
   assert.deepEqual(diff.removedEntities, []);
   assert.deepEqual(diff.addedEntities, [{ name: "Order", label: "Orders" }]);
-  assert.deepEqual(diff.changedEntities, [{ name: "Customer", label: "Customer", removedFieldNames: [], addedFieldNames: ["Phone"], changedFieldNames: [] }]);
+  assert.deepEqual(diff.changedEntities, [{ name: "Customer", label: "Customer", removedFieldNames: [], addedFieldNames: ["Phone"], changedFieldNames: [], descriptionChanged: false }]);
 });
 
 test("computeCheckpointDiff reports a brand-new entity in the checkpoint as addedEntities, never as a removal -- this is what makes resolveCompareSpec's 'what did a later refine add' comparison actually work", () => {
@@ -192,7 +192,7 @@ test("computeCheckpointDiff reports an entity that both lost and gained fields a
 
   const diff = computeCheckpointDiff(current, checkpoint);
   assert.deepEqual(diff.changedEntities, [
-    { name: "Customer", label: "Customers", removedFieldNames: ["Notes"], addedFieldNames: ["Phone"], changedFieldNames: [] },
+    { name: "Customer", label: "Customers", removedFieldNames: ["Notes"], addedFieldNames: ["Phone"], changedFieldNames: [], descriptionChanged: false },
   ]);
 });
 
@@ -228,7 +228,7 @@ test("computeCheckpointDiff reports a same-named field that changed type as chan
 
   const diff = computeCheckpointDiff(current, checkpoint);
   assert.deepEqual(diff.changedEntities, [
-    { name: "Order", label: "Orders", removedFieldNames: [], addedFieldNames: [], changedFieldNames: ["Status"] },
+    { name: "Order", label: "Orders", removedFieldNames: [], addedFieldNames: [], changedFieldNames: ["Status"], descriptionChanged: false },
   ]);
 });
 
@@ -245,7 +245,7 @@ test("computeCheckpointDiff reports a same-named enum field whose enumValues cha
 
   const diff = computeCheckpointDiff(current, checkpoint);
   assert.deepEqual(diff.changedEntities, [
-    { name: "Order", label: "Order", removedFieldNames: [], addedFieldNames: [], changedFieldNames: ["Status"] },
+    { name: "Order", label: "Order", removedFieldNames: [], addedFieldNames: [], changedFieldNames: ["Status"], descriptionChanged: false },
   ]);
 });
 
@@ -281,7 +281,7 @@ test("computeCheckpointDiff reports a same-named, same-typed field as changedFie
 
   const diff = computeCheckpointDiff(current, checkpoint);
   assert.deepEqual(diff.changedEntities, [
-    { name: "Order", label: "Order", removedFieldNames: [], addedFieldNames: [], changedFieldNames: ["Order Status"] },
+    { name: "Order", label: "Order", removedFieldNames: [], addedFieldNames: [], changedFieldNames: ["Order Status"], descriptionChanged: false },
   ]);
 });
 
@@ -317,6 +317,59 @@ test("isCheckpointCurrent is false when a same-named, same-typed field's require
     isCheckpointCurrent(current, requiredChanged),
     false,
     "same field name, type, and count must not be enough when the field's own required flag genuinely differs",
+  );
+});
+
+/**
+ * Round 817's finding: an entity's own `description` is real, user-rendered
+ * content (EntityPanel.tsx: {entity.description && <p className="muted">
+ * {entity.description}</p>}, shown above every entity's own table/form) --
+ * not cosmetic like `label` (see the "label rename alone is cosmetic" test
+ * above). Neither computeCheckpointDiff nor isCheckpointCurrent ever
+ * compared it, so a refine that only rewords an entity's description,
+ * leaving every field untouched, was invisible to the diff entirely.
+ */
+test("computeCheckpointDiff reports an entity as changed when only its own description differs, even with every field byte-identical", () => {
+  const current = makeSpec([
+    { name: "Customer", description: "The individual or organization purchasing services.", fields: [{ name: "name", type: "text", required: true }] },
+  ]);
+  const checkpoint = makeSpec([
+    { name: "Customer", description: "A person or company the business serves.", fields: [{ name: "name", type: "text", required: true }] },
+  ]);
+
+  const diff = computeCheckpointDiff(current, checkpoint);
+  assert.deepEqual(diff.changedEntities, [
+    { name: "Customer", label: "Customer", removedFieldNames: [], addedFieldNames: [], changedFieldNames: [], descriptionChanged: true },
+  ]);
+});
+
+test("computeCheckpointDiff does not flag an entity as changed when its description is identical, even if undefined on both sides", () => {
+  const current = makeSpec([{ name: "Customer", fields: [{ name: "name", type: "text", required: true }] }]);
+  const checkpoint = makeSpec([{ name: "Customer", fields: [{ name: "name", type: "text", required: true }] }]);
+
+  const diff = computeCheckpointDiff(current, checkpoint);
+  assert.deepEqual(diff.changedEntities, [], "identical (absent) descriptions on both sides must not be reported as a change");
+});
+
+/**
+ * Round 817's finding: isCheckpointCurrent had the identical gap -- a
+ * checkpoint whose entities/fields match the live spec byte-for-byte but
+ * whose description text differs used to be wrongly reported "Current",
+ * the same category of gap this function's own doc comment already
+ * describes for summary/roles/personas/screens/assumptions/openQuestions.
+ */
+test("isCheckpointCurrent is false when an entity's own description differs, even though every field is byte-identical", () => {
+  const current = makeSpec([
+    { name: "Customer", description: "The individual or organization purchasing services.", fields: [{ name: "name", type: "text", required: true }] },
+  ]);
+  const descriptionChanged = makeSpec([
+    { name: "Customer", description: "A person or company the business serves.", fields: [{ name: "name", type: "text", required: true }] },
+  ]);
+
+  assert.equal(
+    isCheckpointCurrent(current, descriptionChanged),
+    false,
+    "identical entities/fields must not be enough when the entity's own description genuinely differs",
   );
 });
 

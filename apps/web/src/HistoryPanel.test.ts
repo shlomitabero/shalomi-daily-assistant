@@ -1818,3 +1818,97 @@ test("HistoryPanel's diff panel shows a real, rendered message when a checkpoint
     }
   });
 });
+
+/**
+ * Round 817's finding: an entity's own `description` is real, user-rendered
+ * content (EntityPanel.tsx renders it as a <p> right above the entity's
+ * table/form), but checkpointDiff.ts never compared it -- so a checkpoint
+ * whose only real difference from the live spec was one entity's
+ * description used to show "No changes" here, even though restoring it
+ * would genuinely change the visible text under that entity's tab.
+ */
+test("HistoryPanel's diff panel shows a real, rendered message when a checkpoint entity's description differs from the live spec, not 'no changes'", async () => {
+  await withJsdom(async () => {
+    const originalFetch = globalThis.fetch;
+    const cp: Checkpoint = {
+      id: "cp1",
+      projectId: "proj1",
+      label: "Initial build",
+      kind: "build",
+      spec: {
+        summary: "s",
+        personas: [],
+        roles: ["Admin"],
+        entities: [
+          {
+            name: "Customer",
+            label: "Customers",
+            description: "A person or company the business serves.",
+            fields: [{ name: "name", label: "Name", type: "text", required: true }],
+          },
+        ],
+        screens: [],
+        assumptions: [],
+        openQuestions: [],
+      },
+      createdAt: new Date().toISOString(),
+    };
+    const currentSpec: ProductSpec = {
+      ...cp.spec,
+      entities: [
+        {
+          name: "Customer",
+          label: "Customers",
+          description: "The individual or organization purchasing services.",
+          fields: [{ name: "name", label: "Name", type: "text", required: true }],
+        },
+      ],
+    };
+
+    globalThis.fetch = (async (input: string, init?: RequestInit): Promise<Response> => {
+      const method = init?.method ?? "GET";
+      if (method === "GET" && input === "/api/projects/proj1/checkpoints") {
+        return new Response(JSON.stringify({ checkpoints: [cp] }), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        });
+      }
+      throw new Error(`unexpected request ${method} ${input}`);
+    }) as typeof fetch;
+
+    try {
+      render(
+        React.createElement(
+          ThemeProvider,
+          null,
+          React.createElement(
+            LanguageProvider,
+            null,
+            React.createElement(HistoryPanel, {
+              projectId: "proj1",
+              projectName: "Test Project",
+              currentSpec,
+              onRestored: () => {},
+              onClose: () => {},
+            }),
+          ),
+        ),
+      );
+      await waitForCondition(() => document.querySelectorAll(".checkpoint-list li").length === 1);
+
+      const toggle = document.querySelector(".detail-toggle") as HTMLButtonElement;
+      fireEvent.click(toggle);
+      await waitForCondition(() => document.querySelector(".detail-list") !== null);
+
+      const detailText = document.querySelector(".detail-list")!.textContent ?? "";
+      assert.match(
+        detailText,
+        /Customers.*description.*change/,
+        "an entity whose description genuinely differs must be reported as a real change, not silently as 'no changes'",
+      );
+      assert.doesNotMatch(document.body.textContent ?? "", /No changes -- restoring/, "must never show the no-changes message when an entity's description genuinely differs");
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+});

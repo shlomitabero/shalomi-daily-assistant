@@ -7,7 +7,14 @@ const LOCALE: Record<Lang, string> = { he: "he-IL", en: "en-US" };
 export interface CheckpointDiff {
   removedEntities: { name: string; label: string }[];
   addedEntities: { name: string; label: string }[];
-  changedEntities: { name: string; label: string; removedFieldNames: string[]; addedFieldNames: string[]; changedFieldNames: string[] }[];
+  changedEntities: {
+    name: string;
+    label: string;
+    removedFieldNames: string[];
+    addedFieldNames: string[];
+    changedFieldNames: string[];
+    descriptionChanged: boolean;
+  }[];
 }
 
 /**
@@ -127,6 +134,7 @@ export function computeCheckpointDiff(currentSpec: ProductSpec, checkpointSpec: 
     removedFieldNames: string[];
     addedFieldNames: string[];
     changedFieldNames: string[];
+    descriptionChanged: boolean;
   }[] = [];
 
   for (const entity of currentSpec.entities) {
@@ -157,8 +165,23 @@ export function computeCheckpointDiff(currentSpec: ProductSpec, checkpointSpec: 
         return inCheckpointField !== undefined && fieldSignature(f) !== fieldSignature(inCheckpointField);
       })
       .map((f) => fieldDisplayLabel(f, labelOccurrences));
-    if (removedFieldNames.length > 0 || addedFieldNames.length > 0 || changedFieldNames.length > 0) {
-      changedEntities.push({ name: entity.name, label: entityDisplayLabel(entity, entityLabels), removedFieldNames, addedFieldNames, changedFieldNames });
+    // Real, user-rendered content (EntityPanel.tsx: {entity.description &&
+    // <p className="muted">{entity.description}</p>}, shown above every
+    // entity's own table/form) -- not cosmetic like label (see
+    // entityLabelOccurrences' own doc comment above for why label is never
+    // compared here). A refine that only rewords an entity's description,
+    // leaving every field untouched, used to be invisible to this diff
+    // entirely.
+    const descriptionChanged = (entity.description ?? "") !== (inCheckpoint.description ?? "");
+    if (removedFieldNames.length > 0 || addedFieldNames.length > 0 || changedFieldNames.length > 0 || descriptionChanged) {
+      changedEntities.push({
+        name: entity.name,
+        label: entityDisplayLabel(entity, entityLabels),
+        removedFieldNames,
+        addedFieldNames,
+        changedFieldNames,
+        descriptionChanged,
+      });
     }
   }
 
@@ -219,6 +242,12 @@ export function isCheckpointCurrent(currentSpec: ProductSpec, checkpointSpec: Pr
   const checkpointEntities = new Map(checkpointSpec.entities.map((e) => [e.name, e]));
   for (const entity of currentSpec.entities) {
     const inCheckpoint = checkpointEntities.get(entity.name)!;
+    // Real, user-rendered content (see computeCheckpointDiff's own
+    // descriptionChanged comment above) -- a checkpoint whose entities/
+    // fields match byte-for-byte but whose description text differs used
+    // to be wrongly reported "Current", the same category of gap this
+    // function's own doc comment already describes for summary/roles/etc.
+    if ((entity.description ?? "") !== (inCheckpoint.description ?? "")) return false;
     const currentFieldsByName = new Map(entity.fields.map((f) => [f.name, f]));
     const checkpointFieldsByName = new Map(inCheckpoint.fields.map((f) => [f.name, f]));
     if (currentFieldsByName.size !== checkpointFieldsByName.size) return false;
