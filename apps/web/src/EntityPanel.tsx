@@ -1650,6 +1650,48 @@ export function EntityPanel({
   }, [fieldTypesKey]);
 
   /**
+   * Round 805: the fourth sibling of the same "field TYPE changes while its
+   * NAME survives a live refine" bug class rounds 780/781/800 already
+   * fixed for groupFieldName, bulkEditField/bulkEditValue, and
+   * editingCell/cellDraft -- the main add/edit record form's own `form`
+   * state. Unlike those three (each a single selected field name), `form`
+   * holds one value per EVERY field at once, so a retyped field is tracked
+   * by its own per-field type snapshot (formFieldTypesRef) instead of a
+   * single ref, and only THAT field's own value is reset to its new type's
+   * empty default -- emptyForm's own per-field logic -- leaving every other
+   * field the user already filled in untouched. The baseline snapshot is
+   * captured on entity.name (the same dependency the full form reset above
+   * already uses), so an entity switch's own full reset is never second-
+   * guessed by this effect as a stale diff. Without this, FieldInput's
+   * boolean branch (`checked={Boolean(value)}`) coerces a stale leftover
+   * enum/text value (e.g. "High") into a pre-checked checkbox the user
+   * never touched: submitting a NEW record sends `form` whole (unlike
+   * editing, which already diffs against editingOriginalRef -- round 644),
+   * so the server's own coerceValue rejects the entire create over one
+   * field the user never meant to set; submitting an EDIT is worse -- if
+   * the user unchecks the bogus box, that now genuinely differs from the
+   * original snapshot and silently gets PATCHed as a real, unintended
+   * change.
+   */
+  const formFieldTypesRef = useRef<Record<string, string>>({});
+  useEffect(() => {
+    formFieldTypesRef.current = Object.fromEntries(entity.fields.map((f) => [f.name, f.type]));
+  }, [entity.name]);
+  useEffect(() => {
+    const prevTypes = formFieldTypesRef.current;
+    const retypedFields = entity.fields.filter((f) => prevTypes[f.name] && prevTypes[f.name] !== f.type);
+    if (retypedFields.length > 0) {
+      setForm((prev) => {
+        const next = { ...prev };
+        for (const f of retypedFields) next[f.name] = f.type === "boolean" ? false : "";
+        return next;
+      });
+    }
+    formFieldTypesRef.current = Object.fromEntries(entity.fields.map((f) => [f.name, f.type]));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [fieldTypesKey]);
+
+  /**
    * Drag-to-resize a column header. Only attaches real mousemove/mouseup
    * listeners while a drag is actually in progress (resizingField set),
    * removing them the instant it ends -- not a permanent global listener

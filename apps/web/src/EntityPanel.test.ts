@@ -7077,6 +7077,78 @@ test("EntityPanel cancels an in-progress inline cell edit when a live refine cha
 });
 
 /**
+ * Round 805: the fourth sibling of the same "field TYPE changes while its
+ * NAME survives a live refine" bug class rounds 780/781/800 already fixed
+ * for groupFieldName, bulkEditField/bulkEditValue, and editingCell/
+ * cellDraft -- the main add/edit record form's own `form` state. Fills in
+ * the enum field with "High" in the (always-visible) create form, then
+ * simulates a refine retyping that same field to boolean while the panel
+ * stays mounted (same entity.name, no remount) -- the identical live-
+ * refine scenario the three sibling tests above exercise. Before the fix,
+ * FieldInput's boolean branch would render `checked={Boolean("High")}` --
+ * true, a pre-checked checkbox the user never touched. Also confirms the
+ * fix resets only the retyped field, not the user's already-typed "name"
+ * value, matching the sibling fixes' own "preserve everything else"
+ * behavior (bulkEditValue/groupFieldName recompute just their one field;
+ * this is the multi-field analog).
+ */
+test("EntityPanel resets a stale create-form value when a live refine changes that field's type, instead of rendering a misleadingly pre-checked checkbox", async () => {
+  await withJsdom(async () => {
+    const priorityEnumField = {
+      name: "priority",
+      label: "Priority",
+      type: "enum" as const,
+      required: false,
+      enumValues: ["Low", "Medium", "High"],
+      enumLabels: { Low: "Low", Medium: "Medium", High: "High" },
+    };
+    const priorityBooleanField = { name: "priority", label: "Priority", type: "boolean" as const, required: false };
+    const entityWithEnumPriority: Entity = {
+      name: "Deal",
+      label: "Deal",
+      fields: [{ name: "name", label: "Name", type: "text", required: true }, priorityEnumField],
+    };
+    const entityWithBooleanPriority: Entity = {
+      name: "Deal",
+      label: "Deal",
+      fields: [{ name: "name", label: "Name", type: "text", required: true }, priorityBooleanField],
+    };
+    const store: EntityRecord[] = [];
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = mockRecordsFetch(store) as typeof fetch;
+    try {
+      const view = renderEntityPanel({ entity: entityWithEnumPriority, allEntities: [entityWithEnumPriority] });
+      await waitForCondition(() => document.querySelector(".record-form select") !== null);
+
+      const nameInput = document.querySelector(".record-form input[type='text']") as HTMLInputElement;
+      fireEvent.change(nameInput, { target: { value: "Acme Corp" } });
+      const prioritySelect = document.querySelector(".record-form select") as HTMLSelectElement;
+      fireEvent.change(prioritySelect, { target: { value: "High" } });
+      await waitForCondition(() => prioritySelect.value === "High");
+
+      // Simulate a refine that retypes "priority" from enum to boolean
+      // while staying on the exact same entity.name ("Deal") and the exact
+      // same field name ("priority"), with the create form still open and
+      // "priority" still holding the stale enum value -- the same live-
+      // refine, no-remount scenario the three sibling tests above exercise.
+      view.rerender(buildEntityPanelElement({ entity: entityWithBooleanPriority, allEntities: [entityWithBooleanPriority] }));
+      await waitForCondition(() => document.querySelector(".record-form input[type='checkbox']") !== null);
+
+      const checkbox = document.querySelector(".record-form input[type='checkbox']") as HTMLInputElement;
+      assert.equal(
+        checkbox.checked,
+        false,
+        "the stale enum value \"High\" must never be coerced into a pre-checked checkbox the user never actually chose",
+      );
+      const nameInputAfterRetype = document.querySelector(".record-form input[type='text']") as HTMLInputElement;
+      assert.equal(nameInputAfterRetype.value, "Acme Corp", "a field unaffected by the retype must keep whatever the user already typed into it");
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+});
+
+/**
  * Regression test for round 500's finding: sortKeys' own re-validation
  * effect (sibling to viewMode's and fieldFilters', fixed in rounds 490 and
  * 493 respectively) was never given the same fix -- it only dropped a sort
