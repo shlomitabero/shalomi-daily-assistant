@@ -12,6 +12,7 @@ import {
   findUserById,
   getPasswordHash,
   getSessionUser,
+  hashSessionToken,
   updatePasswordHash,
 } from "./users.js";
 
@@ -56,11 +57,50 @@ test("createSession opportunistically prunes already-expired sessions on every c
   // A brand-new login issues a new session -- this alone should also clean up the old one.
   createSession(db, { token: "new-session", userId: "u2", expiresAt: new Date(Date.now() + HOUR_MS).toISOString() });
 
+  // Round 861: the stored token column now holds hashSessionToken's own
+  // output, not the plaintext token createSession was called with -- see
+  // its own doc comment. Compares against the real stored hash directly
+  // (rather than switching to getSessionUser, which would also implicitly
+  // depend on hashSessionToken) to keep this test's own original intent
+  // (exactly which physical rows survived the prune) unchanged.
   const after = db.prepare("SELECT token FROM sessions").all() as { token: string }[];
   assert.deepEqual(
     after.map((r) => r.token),
-    ["new-session"],
+    [hashSessionToken("new-session")],
   );
+});
+
+/**
+ * Round 861: this is the actual security property the fix exists for --
+ * the two other bearer-style secrets in this app (password reset tokens,
+ * login codes) are already stored hashed, specifically "so a DB leak
+ * alone can't be replayed" (see routes/auth.ts's own hashResetToken/
+ * hashLoginCode doc comments); the session token -- the one credential
+ * used on every single authenticated request, for up to 30 days -- was
+ * the one exception, stored as the exact raw, directly-replayable
+ * string. Confirms createSession never writes the plaintext token
+ * anywhere in the row, and that a real, valid session can still be read
+ * back correctly despite that (getSessionUser must be hashing the
+ * lookup key the same way, not just happening to pass by coincidence).
+ */
+test("createSession never stores the plaintext token -- only its hash -- while getSessionUser can still look up a real session by the original plaintext", () => {
+  const db = openDatabase(":memory:");
+  ensureUsersTable(db);
+  db.prepare("INSERT INTO users (id, email, passwordHash, createdAt) VALUES (?, ?, ?, ?)").run(
+    "u1",
+    "dana@example.com",
+    "hash",
+    new Date().toISOString(),
+  );
+  const plaintextToken = "super-secret-session-token";
+  createSession(db, { token: plaintextToken, userId: "u1", expiresAt: new Date(Date.now() + HOUR_MS).toISOString() });
+
+  const row = db.prepare("SELECT token FROM sessions").get() as { token: string };
+  assert.notEqual(row.token, plaintextToken, "the row must never hold the raw plaintext token a DB leak could replay directly");
+  assert.equal(row.token, hashSessionToken(plaintextToken), "the row must hold exactly hashSessionToken's own output, not some other transformation");
+
+  const user = getSessionUser(db, plaintextToken);
+  assert.equal(user?.email, "dana@example.com", "a real session must still be found by its own original plaintext token");
 });
 
 test("getSessionUser still works correctly around the cleanup -- a real user can be looked up by a real, unexpired session token", () => {
@@ -100,14 +140,18 @@ test("getSessionUser returns undefined for a session token that still exists in 
     "hash",
     new Date().toISOString(),
   );
+  // Round 861: inserted as hashSessionToken's own output, matching what
+  // createSession itself now stores, so getSessionUser's rejection below
+  // is genuinely due to the expiresAt filter this test is about -- not a
+  // hash mismatch that would return undefined for an unrelated reason.
   db.prepare("INSERT INTO sessions (token, userId, expiresAt) VALUES (?, ?, ?)").run(
-    "long-expired-token",
+    hashSessionToken("long-expired-token"),
     "u1",
     new Date(Date.now() - HOUR_MS).toISOString(),
   );
 
   // The row is genuinely still there -- this isn't testing deletion.
-  const stillPresent = db.prepare("SELECT token FROM sessions WHERE token = ?").get("long-expired-token");
+  const stillPresent = db.prepare("SELECT token FROM sessions WHERE token = ?").get(hashSessionToken("long-expired-token"));
   assert.ok(stillPresent, "the expired session row must still exist in the table for this test to mean anything");
 
   assert.equal(getSessionUser(db, "long-expired-token"), undefined);

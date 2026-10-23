@@ -1,5 +1,40 @@
+import { createHash } from "node:crypto";
 import type { User } from "@forge/shared";
 import type { ForgeDatabase } from "./connection.js";
+
+/**
+ * Round 861: unlike this app's two other bearer-style secrets (both
+ * hashed before storage -- see routes/auth.ts's own hashResetToken/
+ * hashLoginCode, each with a doc comment explicitly stating "the token/
+ * code itself is never stored -- only this hash -- so a DB leak alone
+ * can't be replayed into a reset/login the way a leaked session token
+ * could"), the session token itself -- the one credential actually used
+ * on every single authenticated API request, for up to 30 days -- was
+ * stored and looked up as a raw, directly-replayable string. Anything
+ * that exposes a row from this table (a DB admin's read access, a future
+ * read-only diagnostics feature, a verbose logger capturing bound SQL
+ * parameters, a leaked/stolen SQLite file -- a single file, trivially
+ * copyable) hands over a ready-to-use 30-day credential with no
+ * cracking required at all, exactly the risk the two sibling secrets
+ * were already deliberately protected against, just never extended to
+ * the one secret that matters most and lives longest. Deliberately the
+ * same fast sha256 those two already use, not hashPassword's scrypt: a
+ * session token's own defense is its 256 bits of randomness (randomBytes
+ * in routes/auth.ts's issueSession) plus its TTL, not hash cost -- there
+ * is no attempts-counter/brute-force concern here any more than there is
+ * for a password-reset token.
+ *
+ * Exported (unlike hashResetToken/hashLoginCode, which stay private to
+ * routes/auth.ts) specifically so users.test.ts can construct a raw
+ * session row matching a known plaintext token for a test that
+ * deliberately bypasses createSession's own write path (see e.g. the
+ * expiry-filter test, which inserts directly via SQL to isolate
+ * getSessionUser's own expiresAt comparison from createSession's
+ * opportunistic pruning).
+ */
+export function hashSessionToken(token: string): string {
+  return createHash("sha256").update(token).digest("hex");
+}
 
 export function ensureUsersTable(db: ForgeDatabase): void {
   db.exec(`
@@ -80,7 +115,7 @@ export function createSession(
 ): void {
   deleteExpiredSessions(db);
   db.prepare("INSERT INTO sessions (token, userId, expiresAt) VALUES (?, ?, ?)").run(
-    session.token,
+    hashSessionToken(session.token),
     session.userId,
     session.expiresAt,
   );
@@ -93,12 +128,12 @@ export function getSessionUser(db: ForgeDatabase, token: string): User | undefin
        JOIN users ON users.id = sessions.userId
        WHERE sessions.token = ? AND sessions.expiresAt > ?`,
     )
-    .get(token, new Date().toISOString()) as Record<string, unknown> | undefined;
+    .get(hashSessionToken(token), new Date().toISOString()) as Record<string, unknown> | undefined;
   return row ? rowToUser(row) : undefined;
 }
 
 export function deleteSession(db: ForgeDatabase, token: string): void {
-  db.prepare("DELETE FROM sessions WHERE token = ?").run(token);
+  db.prepare("DELETE FROM sessions WHERE token = ?").run(hashSessionToken(token));
 }
 
 /** For the change-password route: verifying the caller's *current* password before accepting a new one. Not part of the public User type, so this stays its own narrow lookup rather than widening findUserById. */
@@ -126,7 +161,7 @@ export function deleteAllSessionsForUser(db: ForgeDatabase, userId: string): voi
  * requireAuth needs to stay valid so the response can still succeed).
  */
 export function deleteOtherSessionsForUser(db: ForgeDatabase, userId: string, keepToken: string): void {
-  db.prepare("DELETE FROM sessions WHERE userId = ? AND token != ?").run(userId, keepToken);
+  db.prepare("DELETE FROM sessions WHERE userId = ? AND token != ?").run(userId, hashSessionToken(keepToken));
 }
 
 /**
