@@ -585,6 +585,22 @@ function buildZip(entries) {
 
   for (const entry of entries) {
     const nameBuf = Buffer.from(entry.path, "utf8");
+    // Same reasoning as the entries.length guard above, applied to the
+    // other fixed-width field this writer has to fill in per entry: the
+    // local/central header's own file-name-length field is also 16-bit
+    // (writeUInt16LE(nameBuf.length, ...) below). Nothing upstream caps
+    // an entity/field name's length (assertSafe's own SAFE_IDENTIFIER
+    // regex bounds the character set, never the length), so a long
+    // enough entity name reaches this app's own /api/backup route and
+    // would otherwise fail deep inside Buffer#writeUInt16LE with the same
+    // generic, unhelpful RangeError this file's other guard exists to
+    // avoid -- matches the identical guard apps/api/src/zip.ts (the live
+    // app's own ZIP writer this was ported from) already has.
+    if (nameBuf.length > 0xffff) {
+      throw new Error(
+        \`buildZip: entry "\${entry.path}"'s own file name is \${nameBuf.length} bytes, exceeding the 65535-byte limit of this writer's 16-bit field (no Zip64 support)\`,
+      );
+    }
     const dataBuf = Buffer.from(entry.content, "utf8");
     const crc = crc32(dataBuf);
 

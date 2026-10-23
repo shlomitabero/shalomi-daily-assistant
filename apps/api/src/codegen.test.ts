@@ -10350,17 +10350,21 @@ test("the exported server.js's own backup-specific csvEscape double-guards a val
 // necessary copy of apps/api/src/zip.ts, since the exported app has zero
 // runtime dependency on this repo) had drifted from it -- missing the
 // UTF-8 general-purpose-bit-flag zip.ts's own test below documents, and
-// missing the >65535-entries guard zip.test.ts has. Neither was reachable
-// through this app's own backup endpoint (entity names are always plain
-// ASCII identifiers -- see codegen.ts's own assertSafe -- and a real
-// project has nowhere near 65535 entities), so it was never a live bug,
-// but it's still worth keeping the two copies in sync rather than letting
-// a real reader-compatibility/entry-count fix applied to zip.ts silently
-// never reach the exported app. Extracts and executes the real generated
-// buildZip/crc32/CRC_TABLE (not a reimplementation) via a direct Python
-// zipfile check, the same "spec-strict reader" technique zip.test.ts uses
-// (the system `unzip` auto-detects UTF-8 regardless of the flag, so it
-// wouldn't catch a regression here).
+// missing the >65535-entries guard zip.test.ts has. This test's own
+// original comment reasoned neither was reachable through this app's own
+// backup endpoint, since "entity names are always plain ASCII
+// identifiers... and a real project has nowhere near 65535 entities" --
+// but round 844 directly invalidated half of that premise: assertSafe's
+// own SAFE_IDENTIFIER regex bounds the character set, never the length,
+// and EntitySchema/FieldSchema's own `name` has no `.max()` anywhere
+// upstream either. A long-but-all-ASCII entity name is exactly what
+// reaches this code path, and round 845 found codegen.ts's own buildZip
+// never got the entry-name-length guard round 844 added to zip.ts's
+// (round 844 touched only zip.ts/zip.test.ts). Extracts and executes the
+// real generated buildZip/crc32/CRC_TABLE (not a reimplementation) via a
+// direct Python zipfile check, the same "spec-strict reader" technique
+// zip.test.ts uses (the system `unzip` auto-detects UTF-8 regardless of
+// the flag, so it wouldn't catch a regression here).
 test("the exported app's embedded buildZip sets the UTF-8 flag and rejects more than 65535 entries, matching the live zip.ts", () => {
   const serverJs = generateExportFiles(project).find((f) => f.path === "server.js")!.content;
   const crcTableSrc = serverJs.match(/const CRC_TABLE = \(\(\) => \{[\s\S]*?\n\}\)\(\);\n/)?.[0];
@@ -10389,6 +10393,33 @@ test("the exported app's embedded buildZip sets the UTF-8 flag and rejects more 
 
   const tooMany = Array.from({ length: 65536 }, (_, i) => ({ path: `f${i}.txt`, content: "x" }));
   assert.throws(() => buildZip(tooMany), /Zip64/i);
+});
+
+/**
+ * Round 845: the exported app's own embedded buildZip never got the
+ * entry-name-length guard round 844 added to zip.ts (the live app's own
+ * ZIP writer this was ported from) -- the exact "missed sibling" the test
+ * just above's own doc comment warns against ("a real ... fix applied to
+ * zip.ts silently never reach[ing] the exported app"). Reuses the same
+ * source-extraction technique (no multi-gigabyte buffers needed: the
+ * 65535-byte boundary is reachable with an ordinary string, the same way
+ * zip.test.ts's own analogous test already proves it cheaply).
+ */
+test("the exported app's embedded buildZip rejects a single entry whose own file name exceeds the non-Zip64 16-bit limit, matching the live zip.ts", () => {
+  const serverJs = generateExportFiles(project).find((f) => f.path === "server.js")!.content;
+  const crcTableSrc = serverJs.match(/const CRC_TABLE = \(\(\) => \{[\s\S]*?\n\}\)\(\);\n/)?.[0];
+  const crc32Src = serverJs.match(/function crc32\(buf\) \{[\s\S]*?\n\}\n/)?.[0];
+  const dosSrc = serverJs.match(/const DOS_TIME[\s\S]*?const DOS_DATE.*\n/)?.[0];
+  const buildZipSrc = serverJs.match(/function buildZip\(entries\) \{[\s\S]*?\n\}\n/)?.[0];
+  assert.ok(crcTableSrc && crc32Src && dosSrc && buildZipSrc, "expected to find CRC_TABLE/crc32/DOS_TIME/DOS_DATE/buildZip in generated server.js");
+
+  const buildZip = new Function(`${crcTableSrc}\n${crc32Src}\n${dosSrc}\n${buildZipSrc}\nreturn buildZip;`)();
+
+  const tooLongName = "x".repeat(70000) + ".csv";
+  assert.throws(() => buildZip([{ path: tooLongName, content: "data" }]), /Zip64/i);
+
+  const atLimit = "y".repeat(0xffff);
+  assert.doesNotThrow(() => buildZip([{ path: atLimit, content: "data" }]));
 });
 
 // PWA support for the exported standalone app -- installable to a phone's
