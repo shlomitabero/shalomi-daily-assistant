@@ -64,6 +64,7 @@ import { generateExportFiles } from "../codegen.js";
 import { generateBackupZipEntries, parseColumnOrdersQueryParam } from "../backup.js";
 import { buildZip } from "../zip.js";
 import { computeBusinessTwin } from "../twin.js";
+import { isPathInsideDir } from "../uploadPaths.js";
 import type { WhatsAppWebManager } from "../whatsappWeb.js";
 import { findMatchingRecord } from "../whatsapp.js";
 import { isAllowedWebhookUrl, runAutomationsForRecordChange } from "../automations.js";
@@ -893,33 +894,30 @@ async function deleteReplacedFileFields(
   );
 }
 
-/**
- * EntitySchema's own `name` has no character-set restriction (round
- * 844/845/846/847's own repeated finding) -- an AI-generated entity name
- * isn't guaranteed to be a safe filesystem path segment the way a
- * manually-added one is (deriveEntityName sanitizes that path only).
- * migrate.ts's own tableNameFor SANITIZES an unsafe name for the SQL
- * table it creates (replacing every non-alphanumeric character with "_"),
- * rather than rejecting the build outright -- so a project with an entity
- * literally named e.g. "../../../tmp/evil" still reaches status "built"
- * successfully, with that exact unsafe string preserved verbatim in
- * project.spec. Unlike the SQL table name, the upload route's own
- * destination directory (below) is built directly from entity.name with
- * no equivalent sanitization: path.join(uploadsDir, projectId,
- * entityName) resolves "../../../tmp/evil" clean outside uploadsDir
- * entirely, and multer would then write the attacker's uploaded file (up
- * to 10 MB) wherever that resolves to -- a server-side arbitrary-file-write
- * primitive, limited only by OS file permissions. Confirmed reachable:
- * encodeURIComponent (the client's own, round 552/847-established
- * convention for sending such a name at all) keeps a "/" within one URL
- * path segment, and Express decodes it back to a literal "/" in
- * req.params.entityName before this route's own handlers ever run.
- */
-function isPathInsideDir(candidate: string, dir: string): boolean {
-  const resolvedDir = path.resolve(dir);
-  const resolvedCandidate = path.resolve(candidate);
-  return resolvedCandidate === resolvedDir || resolvedCandidate.startsWith(resolvedDir + path.sep);
-}
+// EntitySchema's own `name` has no character-set restriction (round
+// 844/845/846/847's own repeated finding) -- an AI-generated entity name
+// isn't guaranteed to be a safe filesystem path segment the way a
+// manually-added one is (deriveEntityName sanitizes that path only).
+// migrate.ts's own tableNameFor SANITIZES an unsafe name for the SQL
+// table it creates (replacing every non-alphanumeric character with "_"),
+// rather than rejecting the build outright -- so a project with an entity
+// literally named e.g. "../../../tmp/evil" still reaches status "built"
+// successfully, with that exact unsafe string preserved verbatim in
+// project.spec. The upload route's own destination directory (below) is
+// built directly from entity.name: path.join(uploadsDir, projectId,
+// entityName) resolves "../../../tmp/evil" clean outside uploadsDir
+// entirely, and multer would then write the attacker's uploaded file (up
+// to 10 MB) wherever that resolves to -- a server-side arbitrary-file-write
+// primitive, limited only by OS file permissions. Confirmed reachable:
+// encodeURIComponent (the client's own, round 552/847-established
+// convention for sending such a name at all) keeps a "/" within one URL
+// path segment, and Express decodes it back to a literal "/" in
+// req.params.entityName before this route's own handlers ever run.
+// isPathInsideDir itself lives in uploadPaths.ts (round 850), shared with
+// automations.ts's own findTemplateFileAttachment -- the identical
+// unguarded path.join shape reached a third way, via a WhatsApp
+// automation's file attachment (a read+exfiltration primitive, not just
+// a write/delete one).
 
 function createUploadMiddleware(uploadsDir: string) {
   const storage = multer.diskStorage({

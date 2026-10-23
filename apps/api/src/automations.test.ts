@@ -468,6 +468,33 @@ test("findTemplateFileAttachment resolves the first file-type field referenced i
   assert.deepEqual(attachment, { filePath: "/uploads/proj1/Order/abc123.pdf", fileName: "invoice-203.pdf", mimeType: "application/pdf" });
 });
 
+/**
+ * Round 850's finding: this function builds the identical kind of path
+ * from the identical unrestricted entity.name string rounds 848/849
+ * already found exploitable on the write (upload-destination) and delete
+ * (deleteUploadedFile) sides -- but reached here through a READ: the
+ * resolved path is handed straight to performSend's own readFile and
+ * sent as a real WhatsApp document attachment to whatever toNumber/
+ * toField the automation rule names, an arbitrary-file-read-and-
+ * exfiltration primitive rather than a write-or-delete one. Confirms the
+ * traversal-named entity case returns null (no attachment, matching this
+ * function's own existing "silently fall back to plain text" contract
+ * for every other malformed case) instead of a path that resolves
+ * outside uploadsDir.
+ */
+test("findTemplateFileAttachment returns null instead of a path that escapes uploadsDir, when the entity's own name is a path-traversal attempt", () => {
+  const unsafeEntity: Entity = {
+    name: "../../../tmp/evil",
+    label: "../../../tmp/evil",
+    fields: [{ name: "invoice", label: "Invoice", type: "file", required: false }],
+  };
+  const record = {
+    invoice: JSON.stringify({ url: "/api/uploads/x/y/abc123.pdf", name: "invoice-203.pdf", size: 27, mimeType: "application/pdf" }),
+  };
+  const attachment = findTemplateFileAttachment("/uploads", "proj1", unsafeEntity, "Here's {{invoice}}", record);
+  assert.equal(attachment, null, "must never return a filePath that resolves outside uploadsDir");
+});
+
 test("findTemplateFileAttachment returns null when the template references no file field, references one with no value, or the field isn't a 'file' type at all", () => {
   const entityWithInvoice: Entity = {
     ...orderEntity,

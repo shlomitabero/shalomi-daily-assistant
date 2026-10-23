@@ -13,6 +13,7 @@ import {
 } from "@forge/db";
 import { isHebrewText } from "@forge/spec-engine";
 import { recordDisplayLabel } from "./displayField.js";
+import { isPathInsideDir } from "./uploadPaths.js";
 import { findMatchingRecord } from "./whatsapp.js";
 import type { WhatsAppAttachment, WhatsAppWebManager } from "./whatsappWeb.js";
 
@@ -115,6 +116,23 @@ export function resolveFileFieldsForWebhook(entity: Entity, record: EntityRecord
  * value -- WhatsApp (and Baileys) only support one media attachment per
  * message, so a template naming more than one file field can only ever
  * attach one of them regardless of how this picks.
+ *
+ * Round 850's finding: this comment already called out mirroring
+ * deleteUploadedFile, but never actually mirrored its round-849 fix --
+ * EntitySchema's own `name` has no character-set restriction, so
+ * `path.join(uploadsDir, projectId, entity.name, storedFilename)` could
+ * resolve outside uploadsDir entirely the same way the write/delete
+ * sides already (and separately) proved exploitable in rounds 848/849,
+ * except here the result is READ and then attached to and sent as a real
+ * WhatsApp message to whatever `toNumber`/`toField` the automation rule
+ * names -- an arbitrary-file-read-and-exfiltration primitive, not just a
+ * write or delete one, reachable by any user who controls a project (an
+ * entity name, a file field's own unvalidated JSON value, and a WhatsApp
+ * automation rule are all things an ordinary project owner can set).
+ * Returns null (no attachment) rather than throwing when the resolved
+ * path would escape uploadsDir, matching this function's own existing
+ * "silently skip, fall back to plain text" contract for every other
+ * malformed-descriptor case right above.
  */
 export function findTemplateFileAttachment(
   uploadsDir: string,
@@ -138,7 +156,9 @@ export function findTemplateFileAttachment(
     if (typeof parsed.url !== "string" || typeof parsed.name !== "string" || typeof parsed.mimeType !== "string") continue;
     const storedFilename = parsed.url.slice(parsed.url.lastIndexOf("/") + 1);
     if (!storedFilename) continue;
-    return { filePath: path.join(uploadsDir, projectId, entity.name, storedFilename), fileName: parsed.name, mimeType: parsed.mimeType };
+    const filePath = path.join(uploadsDir, projectId, entity.name, storedFilename);
+    if (!isPathInsideDir(filePath, uploadsDir)) continue;
+    return { filePath, fileName: parsed.name, mimeType: parsed.mimeType };
   }
   return null;
 }
