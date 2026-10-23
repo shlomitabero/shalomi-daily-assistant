@@ -31728,3 +31728,23 @@ Still no genuine reply from שלומי. A real code bug this round, after three 
 **Verification**: reverted the fix and reran -- the test failed exactly as predicted (`AssertionError`, Manager was present); restored, it passes. Only `packages/spec-engine` changed, so its own full suite ran: 156/156 pass. `apps/api`'s full suite (consumes `@forge/spec-engine` for spec generation) was also run since this is a cross-workspace dependency change: 585/586 pass, the sole failure being the already-documented pre-existing `codegen.test.ts` process-exit hang flake, confirmed unrelated.
 
 **Status**: shipped and pushed.
+
+### Round 812: Vehicle's bare "garage" keyword never got plural support, unlike every sibling keyword in the same rule -- and unlike its own Hebrew plural, already fixed once before
+
+Still no genuine reply from שלומי. Another "missed sibling" inside `packages/spec-engine`'s keyword-collision rules, this time a plain English singular/plural gap, found via the same fresh sweep style round 811 used.
+
+**The gap**: round 454 `\b`-bounded Vehicle's bare `"garage"` keyword and added a negative lookahead excluding `"garage sale(s)"` -- but never added plural support for `"garage"` itself, unlike literally the next keyword in the same array (`/\bmechanic(s)?\b/`) and every other `\b`-bounded keyword in this file (`driver(s)?`, `worker(s)?`, `service(s)?`, `product(s)?`, etc.). Because `\b` only fires at a transition between a word character and a non-word character, `/\bgarage\b/` cannot match inside `"garages"` at all -- there's no boundary between `"garage"` and the trailing `"s"`.
+
+**Why this is not deliberate**: this exact same keyword's Hebrew plural already had the identical gap, found and fixed in round 577 ("מוסכים" isn't a substring of "מוסך" the way most Hebrew plurals in this file are of their singulars) -- but that round never checked back against the same rule's English sibling `"garage"`/`"garages"`, the same shape of oversight round 811 (this window) just found for a different word family entirely. Every other `\b`-bounded keyword in the surrounding list demonstrates the house convention of handling natural plurals right next to the bound; "garage" is the one that was never given it.
+
+**Concrete failure scenario, verified empirically end-to-end**: calling the real `HeuristicSpecProvider.generate()` with "A platform for a group of garages to coordinate repairs" (a description unambiguously about an auto-repair business, using only the plural) returned `entities: ["Item"]` -- it fell through to the generic `DEFAULT_ENTITY` instead of producing the `Vehicle` entity the description obviously calls for.
+
+**The fix**: `/\bgarage\b(?!\s+sales?\b)/` → `/\bgarages?\b(?!\s+sales?\b)/`, mirroring the `sales?` plural handling already present in the same regex's own lookahead. Verified directly with Node's regex engine against all four cases (`"garage"`, `"garages"`, `"garage sale"`, `"garage sales"`) before touching any test.
+
+**Scope**: lives entirely in `packages/spec-engine` -- confirmed `apps/api/src/pipeline.ts` only calls `HeuristicSpecProvider` as an opaque dependency (no reimplementation of `DOMAIN_ENTITY_RULES`), and `codegen.ts` has zero references to `domainEntities`/`ROLE_RULES`/"garage" at all (it doesn't duplicate the heuristic NLP entity-matching feature). No `apps/web`/`apps/api` route/`codegen.ts` parity needed.
+
+**The test**: added next to round 454's own existing test -- confirms the plural-only description now matches Vehicle, and that the `"garage sale(s)"` exclusion still holds (re-verified end-to-end with the real provider, not just the regex in isolation) so the plural change doesn't reopen the original round-454 gap.
+
+**Verification**: reverted the fix and reran -- the test failed exactly as predicted (`'garages' (plural) alone must match Vehicle`); restored, it passes. Only `packages/spec-engine` changed, so its own full suite ran: 157/157 pass. `apps/api`'s full suite was also run (cross-workspace dependency): 585/586 pass, the sole failure being the already-documented pre-existing `codegen.test.ts` process-exit hang flake, confirmed unrelated.
+
+**Status**: shipped and pushed.
