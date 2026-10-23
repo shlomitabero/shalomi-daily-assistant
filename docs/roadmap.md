@@ -31811,3 +31811,23 @@ Still no genuine reply from שלומי. A code bug in `apps/web`-vs-`codegen.ts`
 **Verification**: reverted the fix and reran -- the test failed exactly as predicted (`0 !== 7`, reproducing the real-world symptom precisely); restored, it passes. All 21 GlobalSearch-related tests in `codegen.test.ts` pass in isolation (`--test-name-pattern="GlobalSearch"`). A full isolated run of `codegen.test.ts` hit the already-documented, pre-existing process-exit hang flake (SIGKILL at the exact same test, "the exported EntityView's Escape shortcut clears the table's multi-row selection without calling the API", as seen every round since 787) before reaching this round's tests later in the file -- confirmed unrelated via the targeted pattern-matched runs above, consistent with every prior round's experience of this flake.
 
 **Status**: shipped and pushed.
+
+### Round 816: the exported GlobalSearch's own "Try again" button missed round 815's highlightQuery fix
+
+Still no genuine reply from שלומי. The very next round found the one remaining spot round 815 didn't catch within the same component -- a "missed sibling" inside a round that had just fixed three of its four siblings.
+
+**The gap**: round 815 added `highlightQuery` (frozen to the query that actually produced the results/error on screen) and fixed Show all/Copy/Download to read it instead of the live, still-editable `query` state -- but left one remaining call site in the same `GlobalSearch` component untouched: the error banner's own "Try again" button still called `runSearch(query)` (`apps/api/src/codegen.ts` line 5925). `apps/web/src/GlobalSearchPanel.tsx` already has this fixed (`runSearch(highlightQuery)` at its own Retry button) -- codegen.ts's otherwise-complete round-815 fix simply didn't catch this one call site within the same file.
+
+**Why this is not deliberate**: it's the identical button in the identical component, fixed one way in the live preview and left unfixed in codegen.ts's independent copy -- the same "fixed in one twin, missed in the other" pattern round 815 itself was. codegen.ts's `GlobalSearch` already demonstrates the intent for full parity (it carries the `highlightQuery` state and uses it correctly in three of the four relevant places); this is simply the fourth call site that round 815's own sweep didn't reach.
+
+**Concrete failure scenario**: a search for "apple" fails for every entity, showing the error+Retry row. Without resubmitting, the user edits the box to "banana" (maybe typo-fixing) -- the error banner on screen still reflects the failed "apple" search. Clicking "Try again," expecting it to retry what just failed, silently fires a brand-new search for "banana" instead, with no indication anything other than a plain retry happened -- the exact class of surprise round 815's fix was written to prevent for the other three actions in this same component.
+
+**The fix**: `runSearch(query)` → `runSearch(highlightQuery)`, a one-line change at the same call site.
+
+**Scope**: only `apps/api/src/codegen.ts` needed the fix -- `apps/web`'s own `GlobalSearchPanel.tsx` already has the correct behavior.
+
+**The test**: fails a search for "apple" (showing the error+Retry row), edits the box to "banana" without resubmitting, confirms the error banner is unaffected by the mere edit, then confirms Retry re-runs "apple" (not "banana").
+
+**Verification**: reverted the fix and reran -- the test failed exactly as predicted (showed "Beta banana order" instead of "Acme apple order"); restored, it passes. All 23 GlobalSearch-related tests in `codegen.test.ts` pass in isolation.
+
+**Status**: shipped and pushed.
