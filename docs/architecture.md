@@ -87,8 +87,13 @@ the pipeline's shape, and additive-only migrations. Summary:
   `packages/spec-engine` picks Anthropic when `ANTHROPIC_API_KEY` is set,
   otherwise a deterministic offline heuristic.
 - **`node:sqlite` over `better-sqlite3`** — no native-module build step.
-- **One generic CRUD engine, not per-project generated code** — real schema,
-  real persistence, real validation, but not yet an exportable codebase.
+- **One generic CRUD engine serves the live app** — real schema, real
+  persistence, real validation, from a single hand-written engine rather
+  than per-project generated server code running in production. A real,
+  independently-runnable per-project codebase (Vite+React+Express,
+  `npm install && npm start`, no dependency on this repo) is also
+  generatable on demand via Export Code / `GET /api/projects/:id/export`
+  (`apps/api/src/codegen.ts`) — see ADR 0003 and ADR 0005.
 - **Bearer-token sessions**, `scrypt`-hashed passwords, a 404 (not 403) on
   another user's project to avoid confirming its existence.
 - **The agent pipeline is a sequential async generator streamed as SSE over
