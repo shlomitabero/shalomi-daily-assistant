@@ -8836,6 +8836,7 @@ test("the exported GlobalSearch's runSearch shows results from every entity that
     "setError",
     "setResults",
     "setSearched",
+    "setHighlightQuery",
     "setSelectedIndex",
     "searchRequestId",
     "lastRecordsByEntityRef",
@@ -8853,6 +8854,7 @@ test("the exported GlobalSearch's runSearch shows results from every entity that
     (results: unknown[]) => {
       capturedResults = results;
     },
+    () => {},
     () => {},
     () => {},
     { current: 0 },
@@ -8916,6 +8918,7 @@ test("the exported GlobalSearch's runSearch orders entity groups by totalMatches
     "setError",
     "setResults",
     "setSearched",
+    "setHighlightQuery",
     "setSelectedIndex",
     "searchRequestId",
     "lastRecordsByEntityRef",
@@ -8929,6 +8932,7 @@ test("the exported GlobalSearch's runSearch orders entity groups by totalMatches
     (results: unknown[]) => {
       capturedResults = results;
     },
+    () => {},
     () => {},
     () => {},
     { current: 0 },
@@ -8976,7 +8980,7 @@ test("the exported GlobalSearch's handleShowAll writes the data it just fetched 
     "setError",
     "setExpandedSamples",
     "setResults",
-    "query",
+    "highlightQuery",
     "searchRequestId",
     "lastRecordsByEntityRef",
     `${matchesSearchSrc}\n${handleShowAllSrc}\nreturn handleShowAll;`,
@@ -9041,6 +9045,7 @@ test("the exported GlobalSearch's runSearch ignores a stale, still-in-flight sea
     "setError",
     "setResults",
     "setSearched",
+    "setHighlightQuery",
     "setSelectedIndex",
     "searchRequestId",
     "lastRecordsByEntityRef",
@@ -9060,6 +9065,7 @@ test("the exported GlobalSearch's runSearch ignores a stale, still-in-flight sea
     (results: unknown[]) => {
       capturedResultsByCall.push(results);
     },
+    () => {},
     () => {},
     () => {},
     searchRequestId,
@@ -9122,7 +9128,7 @@ test("the exported GlobalSearch's handleShowAll ignores a stale, still-in-flight
     "listRecords",
     "searchRequestId",
     "setShowAllLoading",
-    "query",
+    "highlightQuery",
     "lastRecordsByEntityRef",
     "setExpandedSamples",
     `${matchesSearchSrc}\n${handleShowAllSrc}\nreturn handleShowAll;`,
@@ -9180,7 +9186,7 @@ test("the exported GlobalSearch's handleShowAll surfaces a failed fetch via setE
     "listRecords",
     "searchRequestId",
     "setShowAllLoading",
-    "query",
+    "highlightQuery",
     "lastRecordsByEntityRef",
     "setExpandedSamples",
     "setError",
@@ -15284,6 +15290,105 @@ test("the exported GlobalSearch's Retry button clears a stale 'Show all' expansi
     assert.match(container.textContent ?? "", /FRESH-A/);
     assert.match(container.textContent ?? "", /FRESH-B/);
     assert.doesNotMatch(container.textContent ?? "", /Widget item 7/, "the stale pre-retry sample must not survive the retry");
+  } finally {
+    globalThis.fetch = originalFetch;
+    cleanup();
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+/**
+ * Round 815's finding: the exported GlobalSearch bound "Show all"/Copy/
+ * Download to the live, still-editable `query` state instead of a frozen
+ * snapshot of the query that actually produced the results on screen --
+ * the exact staleness bug the live preview's own GlobalSearchPanel.tsx
+ * already guards against with its own separate `highlightQuery` state (set
+ * only once a search actually completes), which this exported duplicate
+ * never got. Submits "widget" (7 real matches, so a real "Show all" button
+ * appears), then edits the search box to "zzz" (which matches nothing)
+ * WITHOUT resubmitting -- `query` now holds "zzz" while the 7 widget
+ * results are still the ones on screen. Confirms "Show all" still expands
+ * to all 7 real "widget" matches (not the 0 a live "zzz" filter would
+ * produce), and that Copy's own report header still names "widget" (the
+ * search that actually produced its listed rows), not the edited-but-
+ * unsubmitted "zzz".
+ */
+test("the exported GlobalSearch's 'Show all'/Copy stay locked to the search that produced the results on screen, not a since-edited-but-unsubmitted search box", async () => {
+  const files = generateExportFiles(project);
+  const dir = writeGeneratedWebComponent(files);
+  const customerRecords = Array.from({ length: 7 }, (_, i) => ({ id: i + 1, name: `Widget item ${i + 1}` }));
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = (async (input: string) => {
+    if (String(input).endsWith("/Customer")) {
+      return { ok: true, status: 200, json: async () => ({ records: customerRecords }) };
+    }
+    return { ok: true, status: 200, json: async () => ({ records: [] }) };
+  }) as typeof fetch;
+
+  let writtenText: string | undefined;
+  Object.defineProperty(navigator, "clipboard", {
+    value: { writeText: async (text: string) => void (writtenText = text) },
+    configurable: true,
+  });
+
+  try {
+    const { GlobalSearch } = await import(path.join(dir, "web", "src", "components", "GlobalSearch.jsx"));
+    const { container } = render(
+      React.createElement(GlobalSearch, {
+        entities: project.spec.entities,
+        onClose: () => {},
+        onJumpToEntity: () => {},
+        onJumpToRecord: () => {},
+      }),
+    );
+
+    const input = container.querySelector(".global-search-input") as HTMLInputElement;
+    await act(async () => {
+      fireEvent.change(input, { target: { value: "widget" } });
+      fireEvent.submit(container.querySelector("form.global-search-form")!);
+      await Promise.resolve();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    assert.equal(container.querySelectorAll(".global-search-hit-button").length, 5, "expected the default 5-row sample before expanding");
+
+    // Edit the box WITHOUT resubmitting -- the 7 "widget" results on
+    // screen are unaffected, but the live query state now says "zzz".
+    await act(async () => {
+      fireEvent.change(input, { target: { value: "zzz" } });
+    });
+    assert.equal(input.value, "zzz", "the box itself must show the edit (this is a real, ordinary thing a user can do)");
+    assert.equal(
+      container.querySelectorAll(".global-search-hit-button").length,
+      5,
+      "editing the box alone, without resubmitting, must not change what's already on screen",
+    );
+
+    const showAllButton = container.querySelector(".global-search-show-all") as HTMLButtonElement;
+    assert.ok(showAllButton, "expected a real 'Show all' button when more matches exist than the sample shows");
+    await act(async () => {
+      fireEvent.click(showAllButton);
+      await Promise.resolve();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    assert.equal(
+      container.querySelectorAll(".global-search-hit-button").length,
+      7,
+      "'Show all' must expand to every real 'widget' match -- the search that's actually on screen -- not re-filter against the edited-but-unsubmitted 'zzz'",
+    );
+
+    const copyButton = Array.from(container.querySelectorAll("button")).find((b) => b.textContent === "Copy") as HTMLButtonElement;
+    await act(async () => {
+      fireEvent.click(copyButton);
+      await Promise.resolve();
+    });
+    assert.match(
+      writtenText ?? "",
+      /"widget"/,
+      "the Copy report's own header must still name the search that actually produced its listed rows ('widget'), not the edited-but-unsubmitted 'zzz'",
+    );
+    assert.doesNotMatch(writtenText ?? "", /"zzz"/, "the Copy report must never embed the live, unsubmitted box text instead of the real search");
   } finally {
     globalThis.fetch = originalFetch;
     cleanup();

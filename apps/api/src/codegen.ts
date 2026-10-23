@@ -5630,6 +5630,14 @@ function clearGlobalSearchRecentSearches() {
  */
 export function GlobalSearch({ entities, onClose, onJumpToEntity, onJumpToRecord }) {
   const [query, setQuery] = useState("");
+  // Mirrors the live preview's own GlobalSearchPanel.tsx: the search box
+  // is editable at all times, so "query" itself can drift ahead of what's
+  // actually on screen the moment a user edits the box without
+  // resubmitting. Show all/Copy/Download must stay locked to the search
+  // that actually produced the visible results, not whatever text
+  // currently sits in the box -- set only once a search actually
+  // completes (runSearch below), never on every keystroke.
+  const [highlightQuery, setHighlightQuery] = useState("");
   const [results, setResults] = useState([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
@@ -5741,6 +5749,7 @@ export function GlobalSearch({ entities, onClose, onJumpToEntity, onJumpToRecord
     if (!q.trim()) {
       setResults([]);
       setSearched(false);
+      setHighlightQuery("");
       setSelectedIndex(null);
       return;
     }
@@ -5752,6 +5761,7 @@ export function GlobalSearch({ entities, onClose, onJumpToEntity, onJumpToRecord
     lastRecordsByEntityRef.current = recordsByEntity;
     setResults(succeeded);
     setSearched(true);
+    setHighlightQuery(q);
     setSelectedIndex(null);
     if (failures.length > 0) {
       setError(
@@ -5812,7 +5822,7 @@ export function GlobalSearch({ entities, onClose, onJumpToEntity, onJumpToRecord
       // entity's data as it stood at the ORIGINAL search, not the fresh
       // snapshot already sitting right here in memory.
       lastRecordsByEntityRef.current = { ...lastRecordsByEntityRef.current, [entityName]: records };
-      const full = records.filter((r) => matchesSearch(r, entity.fields, query, lastRecordsByEntityRef.current));
+      const full = records.filter((r) => matchesSearch(r, entity.fields, highlightQuery, lastRecordsByEntityRef.current));
       setExpandedSamples((prev) => ({ ...prev, [entityName]: full }));
       setResults((prev) => prev.map((r) => (r.entityName === entityName ? { ...r, totalMatches: full.length } : r)));
     } catch (err) {
@@ -5837,7 +5847,7 @@ export function GlobalSearch({ entities, onClose, onJumpToEntity, onJumpToRecord
 
   async function handleCopy() {
     try {
-      await navigator.clipboard.writeText(formatGlobalSearchReport(results, entities, expandedSamples, query));
+      await navigator.clipboard.writeText(formatGlobalSearchReport(results, entities, expandedSamples, highlightQuery));
       setCopyStatus("copied");
     } catch {
       setCopyStatus("failed");
@@ -5845,7 +5855,7 @@ export function GlobalSearch({ entities, onClose, onJumpToEntity, onJumpToRecord
   }
 
   function handleDownload() {
-    const text = formatGlobalSearchReport(results, entities, expandedSamples, query);
+    const text = formatGlobalSearchReport(results, entities, expandedSamples, highlightQuery);
     const blob = new Blob([text], { type: "text/plain;charset=utf-8" });
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
