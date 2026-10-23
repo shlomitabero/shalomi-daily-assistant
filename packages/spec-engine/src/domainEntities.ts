@@ -615,7 +615,20 @@ export const DOMAIN_ENTITY_RULES: DomainEntityRule[] = [
       // those specific phrases, the same disambiguation style "garage"
       // (round 454) and "checkout" (round 550) already use.
       /\b(?<!intellectual\s)(?<!lost[\s-])propert(?:y|ies)\b(?!\s+damage\b)/,
-      "real estate", /\blisting(s)?\b/, "apartment for rent", "נכס", "נכסים",
+      // Bare "listing(s)" (round 457's own \b-bounded fix) is still a
+      // genuinely ambiguous whole word, the same "property" shape just
+      // above -- "job listing(s)" (a recruitment/job-board app) and
+      // "product listing(s)" (an e-commerce/inventory app) are both
+      // ordinary, extremely common idioms with nothing to do with real
+      // estate. Confirmed empirically before fixing: a job-posting
+      // description and a job-board description each spuriously matched
+      // ONLY Property via HeuristicSpecProvider's real matchEntities --
+      // the real JobApplicant entity never even appeared -- and a
+      // product-listings description injected a bogus Property sibling
+      // alongside the correct Product entity. Lookbehind excludes only
+      // those two specific predecessors, same style as "property"'s own
+      // exclusions right above.
+      "real estate", /\b(?<!job\s)(?<!product\s)listing(s)?\b/, "apartment for rent", "נכס", "נכסים",
       "נדל\"ן", "דירה למכירה", "דירה להשכרה",
       // "דירה למכירה"/"דירה להשכרה" (apartment for sale/rent) had no plural
       // entries (round 580). Their plurals "דירות למכירה"/"דירות להשכרה"

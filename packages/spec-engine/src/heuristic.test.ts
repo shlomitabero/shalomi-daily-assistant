@@ -1443,6 +1443,36 @@ test("Property's 'listing' keyword doesn't spuriously match 'enlisting'", async 
 });
 
 /**
+ * Round 881's finding: Property's bare "listing(s)" keyword is still a
+ * genuinely ambiguous whole word, the same "property" shape (round 558)
+ * just below -- "job listing(s)" and "product listing(s)" are both
+ * ordinary, extremely common idioms with nothing to do with real estate.
+ * Confirmed with a real repro before fixing: a job-posting description and
+ * a job-board description each produced ONLY a bogus Property entity via
+ * HeuristicSpecProvider's real matchEntities (the real JobApplicant entity
+ * never even appeared), and a product-listings description injected a
+ * bogus Property sibling alongside the correct Product entity.
+ */
+test("Property's 'listing' keyword doesn't spuriously match 'job listing(s)' or 'product listing(s)'", async () => {
+  const provider = new HeuristicSpecProvider();
+
+  const jobListing = await provider.generate("An app to post job listings and track their status over time.");
+  assert.ok(!jobListing.entities.some((e) => e.name === "Property"), "'job listings' alone must not spuriously match Property");
+
+  const jobBoard = await provider.generate("A job board where companies can post job listings and candidates can browse them.");
+  assert.ok(!jobBoard.entities.some((e) => e.name === "Property"), "'job listings' alone must not spuriously match Property");
+
+  const productListing = await provider.generate("An app for small sellers to manage their product listings and inventory levels.");
+  assert.ok(!productListing.entities.some((e) => e.name === "Property"), "'product listings' alone must not spuriously match Property");
+
+  // The real estate term still works, with no "job"/"product" nearby (the
+  // test just above already covers this, but re-confirmed here against
+  // this exact fix's own regex).
+  const realListing = await provider.generate("An app for an agent to manage each listing and schedule viewings with buyers.");
+  assert.ok(realListing.entities.some((e) => e.name === "Property"), "a standalone 'listing' must still match Property");
+});
+
+/**
  * Regression test for round 558's finding: Property's bare "property"
  * keyword is genuinely ambiguous English -- it means a real-estate asset
  * in most descriptions, but "intellectual property" (patents/trademarks),
