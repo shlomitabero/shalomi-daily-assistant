@@ -535,6 +535,50 @@ test("searchEntityRecords returns null for an empty query or when nothing in thi
   assert.equal(searchEntityRecords(customer, records, "no-such-match"), null);
 });
 
+/**
+ * Round 878: EntitySchema/ProductSpecSchema only enforce uniqueness on an
+ * entity's `name` (findCaseInsensitiveDuplicateEntityNames/
+ * findSanitizedIdentifierCollisions), never its display `label` -- so two
+ * different entities (e.g. an active-customers table and an
+ * archived-customers one) can legally share the identical label via the
+ * already-shipped Entity Label editor. Without disambiguation, Global
+ * Search's own per-entity result-group header would render two completely
+ * indistinguishable headers for "Customers", each with its own "Go to tab"
+ * button, with no way to tell which group (or which jump target) is which.
+ */
+test("searchEntityRecords disambiguates two entities that share the same label, the same way a field's own duplicate label is disambiguated", () => {
+  const activeCustomer: Entity = {
+    name: "ActiveCustomer",
+    label: "Customers",
+    fields: [{ name: "name", type: "text", required: true }],
+  };
+  const archivedCustomer: Entity = {
+    name: "ArchivedCustomer",
+    label: "Customers",
+    fields: [{ name: "name", type: "text", required: true }],
+  };
+  const allEntities = [activeCustomer, archivedCustomer];
+  const activeRecords = [{ id: 1, name: "Dana Levi" }];
+  const archivedRecords = [{ id: 2, name: "Dana Cohen" }];
+
+  const activeResult = searchEntityRecords(activeCustomer, activeRecords, "dana", 5, allEntities);
+  const archivedResult = searchEntityRecords(archivedCustomer, archivedRecords, "dana", 5, allEntities);
+  assert.ok(activeResult);
+  assert.ok(archivedResult);
+  assert.equal(activeResult!.entityLabel, "Customers (ActiveCustomer)", "a shared label must gain its own entity's unique name as a suffix");
+  assert.equal(archivedResult!.entityLabel, "Customers (ArchivedCustomer)", "the sibling entity's own suffix must name itself, not the other entity");
+  assert.notEqual(activeResult!.entityLabel, archivedResult!.entityLabel, "two entities sharing a label must never produce the identical displayed entityLabel");
+});
+
+test("searchEntityRecords leaves entityLabel bare when no other entity in allEntities shares its label", () => {
+  const customer: Entity = { name: "Customer", label: "Customers", fields: [{ name: "name", type: "text", required: true }] };
+  const order: Entity = { name: "Order", label: "Orders", fields: [{ name: "total", type: "number", required: true }] };
+  const records = [{ id: 1, name: "Dana Levi" }];
+  const result = searchEntityRecords(customer, records, "dana", 5, [customer, order]);
+  assert.ok(result);
+  assert.equal(result!.entityLabel, "Customers", "a unique label must never gain a suffix");
+});
+
 test("sortRecords sorts numbers, strings, and booleans correctly in both directions", () => {
   const records = [{ id: 1, amount: 30 }, { id: 2, amount: 10 }, { id: 3, amount: 20 }];
   const asc = sortRecords(records, "amount", "asc");

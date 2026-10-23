@@ -9794,11 +9794,13 @@ test("the exported GlobalSearch's runSearch shows results from every entity that
   const entityViewJsx = files.find((f) => f.path === "web/src/components/EntityView.jsx")!.content;
 
   const matchesSearchSrc = entityViewJsx.match(/export function matchesSearch\([\s\S]*?\n\}\n/)?.[0]?.replace("export ", "");
+  const entityLabelOccurrencesSrc = entityViewJsx.match(/function entityLabelOccurrences\([\s\S]*?\n\}\n/)?.[0];
+  const entityDisplayLabelSrc = entityViewJsx.match(/function entityDisplayLabel\([\s\S]*?\n\}\n/)?.[0];
   const searchAllEntitiesSrc = globalSearchJsx.match(/async function searchAllEntities\([\s\S]*?\n\}\n/)?.[0];
   const runSearchSrc = globalSearchJsx.match(/ {2}async function runSearch\(q\) \{[\s\S]*?\n {2}\}\n/)?.[0];
   assert.ok(
-    matchesSearchSrc && searchAllEntitiesSrc && runSearchSrc,
-    "expected to find matchesSearch/searchAllEntities/runSearch in generated output",
+    matchesSearchSrc && entityLabelOccurrencesSrc && entityDisplayLabelSrc && searchAllEntitiesSrc && runSearchSrc,
+    "expected to find matchesSearch/entityLabelOccurrences/entityDisplayLabel/searchAllEntities/runSearch in generated output",
   );
 
   const entityA = { name: "Alpha", label: "Alpha", fields: [{ name: "name", label: "Name", type: "text" }] };
@@ -9820,7 +9822,7 @@ test("the exported GlobalSearch's runSearch shows results from every entity that
     "setSelectedIndex",
     "searchRequestId",
     "lastRecordsByEntityRef",
-    `${matchesSearchSrc}\n${searchAllEntitiesSrc}\n${runSearchSrc}\nreturn runSearch;`,
+    `${matchesSearchSrc}\n${entityLabelOccurrencesSrc}\n${entityDisplayLabelSrc}\n${searchAllEntitiesSrc}\n${runSearchSrc}\nreturn runSearch;`,
   )(
     [entityA, entityB, entityC],
     async (entityName: string) => {
@@ -9860,6 +9862,49 @@ test("the exported GlobalSearch's runSearch shows results from every entity that
 });
 
 /**
+ * Round 878: EntitySchema/ProductSpecSchema only enforce uniqueness on an
+ * entity's `name`, never its display `label` -- so two different entities
+ * can legally share the identical label via the Entity Label editor.
+ * Without disambiguation, the exported app's own Global Search result-group
+ * header rendered two completely indistinguishable headers for two
+ * different entities, mirroring the live preview's own searchEntityRecords
+ * bug (fixed the same round, in entityFormatting.ts). Runs the real
+ * generated searchAllEntities/entityLabelOccurrences/entityDisplayLabel
+ * directly against two entities sharing a label.
+ */
+test("the exported GlobalSearch's searchAllEntities disambiguates two entities that share the same label", async () => {
+  const files = generateExportFiles(project);
+  const globalSearchJsx = files.find((f) => f.path === "web/src/components/GlobalSearch.jsx")!.content;
+  const entityViewJsx = files.find((f) => f.path === "web/src/components/EntityView.jsx")!.content;
+
+  const matchesSearchSrc = entityViewJsx.match(/export function matchesSearch\([\s\S]*?\n\}\n/)?.[0]?.replace("export ", "");
+  const entityLabelOccurrencesSrc = entityViewJsx.match(/function entityLabelOccurrences\([\s\S]*?\n\}\n/)?.[0];
+  const entityDisplayLabelSrc = entityViewJsx.match(/function entityDisplayLabel\([\s\S]*?\n\}\n/)?.[0];
+  const searchAllEntitiesSrc = globalSearchJsx.match(/async function searchAllEntities\([\s\S]*?\n\}\n/)?.[0];
+  assert.ok(
+    matchesSearchSrc && entityLabelOccurrencesSrc && entityDisplayLabelSrc && searchAllEntitiesSrc,
+    "expected to find matchesSearch/entityLabelOccurrences/entityDisplayLabel/searchAllEntities in generated output",
+  );
+
+  const activeCustomer = { name: "ActiveCustomer", label: "Customers", fields: [{ name: "name", label: "Name", type: "text" }] };
+  const archivedCustomer = { name: "ArchivedCustomer", label: "Customers", fields: [{ name: "name", label: "Name", type: "text" }] };
+
+  const searchAllEntities = new Function(
+    "listRecords",
+    `${matchesSearchSrc}\n${entityLabelOccurrencesSrc}\n${entityDisplayLabelSrc}\n${searchAllEntitiesSrc}\nreturn searchAllEntities;`,
+  )(async (entityName: string) =>
+    entityName === "ActiveCustomer" ? { records: [{ id: 1, name: "Dana Levi" }] } : { records: [{ id: 2, name: "Dana Cohen" }] },
+  ) as (entities: unknown[], query: string) => Promise<{ results: { entityName: string; entityLabel: string }[] }>;
+
+  const { results } = await searchAllEntities([activeCustomer, archivedCustomer], "dana");
+  const active = results.find((r) => r.entityName === "ActiveCustomer");
+  const archived = results.find((r) => r.entityName === "ArchivedCustomer");
+  assert.equal(active?.entityLabel, "Customers (ActiveCustomer)", "a shared label must gain its own entity's unique name as a suffix");
+  assert.equal(archived?.entityLabel, "Customers (ArchivedCustomer)", "the sibling entity's own suffix must name itself, not the other entity");
+  assert.notEqual(active?.entityLabel, archived?.entityLabel, "two entities sharing a label must never produce the identical displayed entityLabel");
+});
+
+/**
  * New in this round: the exported app's own GlobalSearch.jsx is a
  * deliberate duplicate of the live-preview GlobalSearchPanel.tsx's
  * runSearch, and it had the exact same ordering gap that round's own fix
@@ -9877,11 +9922,13 @@ test("the exported GlobalSearch's runSearch orders entity groups by totalMatches
   const entityViewJsx = files.find((f) => f.path === "web/src/components/EntityView.jsx")!.content;
 
   const matchesSearchSrc = entityViewJsx.match(/export function matchesSearch\([\s\S]*?\n\}\n/)?.[0]?.replace("export ", "");
+  const entityLabelOccurrencesSrc = entityViewJsx.match(/function entityLabelOccurrences\([\s\S]*?\n\}\n/)?.[0];
+  const entityDisplayLabelSrc = entityViewJsx.match(/function entityDisplayLabel\([\s\S]*?\n\}\n/)?.[0];
   const searchAllEntitiesSrc = globalSearchJsx.match(/async function searchAllEntities\([\s\S]*?\n\}\n/)?.[0];
   const runSearchSrc = globalSearchJsx.match(/ {2}async function runSearch\(q\) \{[\s\S]*?\n {2}\}\n/)?.[0];
   assert.ok(
-    matchesSearchSrc && searchAllEntitiesSrc && runSearchSrc,
-    "expected to find matchesSearch/searchAllEntities/runSearch in generated output",
+    matchesSearchSrc && entityLabelOccurrencesSrc && entityDisplayLabelSrc && searchAllEntitiesSrc && runSearchSrc,
+    "expected to find matchesSearch/entityLabelOccurrences/entityDisplayLabel/searchAllEntities/runSearch in generated output",
   );
 
   const entityA = { name: "Alpha", label: "Alpha", fields: [{ name: "name", label: "Name", type: "text" }] };
@@ -9902,7 +9949,7 @@ test("the exported GlobalSearch's runSearch orders entity groups by totalMatches
     "setSelectedIndex",
     "searchRequestId",
     "lastRecordsByEntityRef",
-    `${matchesSearchSrc}\n${searchAllEntitiesSrc}\n${runSearchSrc}\nreturn runSearch;`,
+    `${matchesSearchSrc}\n${entityLabelOccurrencesSrc}\n${entityDisplayLabelSrc}\n${searchAllEntitiesSrc}\n${runSearchSrc}\nreturn runSearch;`,
   )(
     [entityA, entityB, entityC],
     async (entityName: string) =>
@@ -10001,11 +10048,13 @@ test("the exported GlobalSearch's runSearch ignores a stale, still-in-flight sea
   const entityViewJsx = files.find((f) => f.path === "web/src/components/EntityView.jsx")!.content;
 
   const matchesSearchSrc = entityViewJsx.match(/export function matchesSearch\([\s\S]*?\n\}\n/)?.[0]?.replace("export ", "");
+  const entityLabelOccurrencesSrc = entityViewJsx.match(/function entityLabelOccurrences\([\s\S]*?\n\}\n/)?.[0];
+  const entityDisplayLabelSrc = entityViewJsx.match(/function entityDisplayLabel\([\s\S]*?\n\}\n/)?.[0];
   const searchAllEntitiesSrc = globalSearchJsx.match(/async function searchAllEntities\([\s\S]*?\n\}\n/)?.[0];
   const runSearchSrc = globalSearchJsx.match(/ {2}async function runSearch\(q\) \{[\s\S]*?\n {2}\}\n/)?.[0];
   assert.ok(
-    matchesSearchSrc && searchAllEntitiesSrc && runSearchSrc,
-    "expected to find matchesSearch/searchAllEntities/runSearch in generated output",
+    matchesSearchSrc && entityLabelOccurrencesSrc && entityDisplayLabelSrc && searchAllEntitiesSrc && runSearchSrc,
+    "expected to find matchesSearch/entityLabelOccurrences/entityDisplayLabel/searchAllEntities/runSearch in generated output",
   );
 
   const entityA = { name: "Alpha", label: "Alpha", fields: [{ name: "name", label: "Name", type: "text" }] };
@@ -10029,7 +10078,7 @@ test("the exported GlobalSearch's runSearch ignores a stale, still-in-flight sea
     "setSelectedIndex",
     "searchRequestId",
     "lastRecordsByEntityRef",
-    `${matchesSearchSrc}\n${searchAllEntitiesSrc}\n${runSearchSrc}\nreturn runSearch;`,
+    `${matchesSearchSrc}\n${entityLabelOccurrencesSrc}\n${entityDisplayLabelSrc}\n${searchAllEntitiesSrc}\n${runSearchSrc}\nreturn runSearch;`,
   )(
     [entityA],
     async () => {

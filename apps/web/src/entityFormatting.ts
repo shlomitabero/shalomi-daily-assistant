@@ -476,6 +476,33 @@ export interface EntitySearchResult {
 }
 
 /**
+ * Entity labels aren't guaranteed unique -- ProductSpecSchema only enforces
+ * uniqueness on an entity's `name` (findCaseInsensitiveDuplicateEntityNames/
+ * findSanitizedIdentifierCollisions), never its display `label` -- so two
+ * different entities (e.g. an active-customers table and an
+ * archived-customers one) can legally share the same label. Mirrors
+ * fieldLabelOccurrences/fieldDisplayLabel just below for fields, and the
+ * same entityLabelOccurrences/entityDisplayLabel pair already used by
+ * checkpointDiff.ts/twin.ts/pipeline.ts for entities: count how many
+ * entities among the given list share each label, then entityDisplayLabel
+ * appends an entity's own (always-unique) name whenever its label isn't
+ * unique.
+ */
+export function entityLabelOccurrences(entities: Entity[]): Map<string, number> {
+  const occurrences = new Map<string, number>();
+  for (const e of entities) {
+    const label = e.label ?? e.name;
+    occurrences.set(label, (occurrences.get(label) ?? 0) + 1);
+  }
+  return occurrences;
+}
+
+export function entityDisplayLabel(entity: Entity, occurrences: Map<string, number>): string {
+  const label = entity.label ?? entity.name;
+  return (occurrences.get(label) ?? 0) > 1 ? `${label} (${entity.name})` : label;
+}
+
+/**
  * Filters one entity's already-fetched records against a global search
  * query -- the building block for project-wide search across every entity
  * tab at once, reusing the exact same match rule `matchesSearch` uses
@@ -483,6 +510,12 @@ export interface EntitySearchResult {
  * null for an empty query or when nothing in this entity matched, so a
  * caller can simply filter out the nulls rather than special-casing "no
  * results" per entity.
+ *
+ * entityLabel is disambiguated against `allEntities` (when given) via
+ * entityDisplayLabel, so Global Search's own per-entity result-group header
+ * never renders two indistinguishable groups for two entities that happen
+ * to share a label -- the same way `matchesSearch` already uses
+ * `allEntities` to resolve a relation field to its related record's label.
  */
 export function searchEntityRecords(
   entity: Entity,
@@ -498,7 +531,7 @@ export function searchEntityRecords(
   if (matches.length === 0) return null;
   return {
     entityName: entity.name,
-    entityLabel: entity.label ?? entity.name,
+    entityLabel: allEntities ? entityDisplayLabel(entity, entityLabelOccurrences(allEntities)) : (entity.label ?? entity.name),
     totalMatches: matches.length,
     sample: matches.slice(0, limit),
   };

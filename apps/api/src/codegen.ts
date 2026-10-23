@@ -2211,6 +2211,26 @@ function fieldDisplayLabel(field, occurrences) {
   return (occurrences[label] || 0) > 1 ? label + " (" + field.name + ")" : label;
 }
 
+// Same reasoning as fieldLabelOccurrences/fieldDisplayLabel just above, one
+// level up: an entity's display label is never enforced unique either (only
+// its name is), so two different entities can legally share a label. Global
+// Search's own per-entity result-group header is the one place in this
+// exported app that renders every entity's label together, so it needs the
+// same disambiguation.
+export function entityLabelOccurrences(entities) {
+  const occurrences = {};
+  for (const e of entities) {
+    const label = e.label || e.name;
+    occurrences[label] = (occurrences[label] || 0) + 1;
+  }
+  return occurrences;
+}
+
+export function entityDisplayLabel(entity, occurrences) {
+  const label = entity.label || entity.name;
+  return (occurrences[label] || 0) > 1 ? label + " (" + entity.name + ")" : label;
+}
+
 // Builds a real, Excel-friendly CSV (CRLF line endings, quoted fields
 // where needed) from an entity's records -- so "download my data" means
 // an actual spreadsheet, not a JSON dump. includeId, when true, prepends
@@ -5867,6 +5887,8 @@ import {
   DIALOG_FOCUSABLE_SELECTOR,
   hideDialogBackgroundFromAssistiveTech,
   scrollIntoViewRespectingMotion,
+  entityLabelOccurrences,
+  entityDisplayLabel,
 } from "./EntityView.jsx";
 
 // Fetches every entity's own records once, then searches all of them using
@@ -5888,13 +5910,19 @@ async function searchAllEntities(entities, query) {
       recordsByEntity[name] = records;
     }
   }
+  const entityLabelCounts = entityLabelOccurrences(entities);
   const results = entities
     .map((entity) => {
       const records = recordsByEntity[entity.name];
       if (!records) return null;
       const matches = records.filter((r) => matchesSearch(r, entity.fields, query, recordsByEntity));
       if (matches.length === 0) return null;
-      return { entityName: entity.name, entityLabel: entity.label, totalMatches: matches.length, sample: matches.slice(0, 5) };
+      return {
+        entityName: entity.name,
+        entityLabel: entityDisplayLabel(entity, entityLabelCounts),
+        totalMatches: matches.length,
+        sample: matches.slice(0, 5),
+      };
     })
     .filter((r) => r !== null);
   // Entity groups are shown in descending totalMatches order rather than
