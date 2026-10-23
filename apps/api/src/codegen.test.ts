@@ -4375,6 +4375,7 @@ test("the exported EntityView's handleBulkDuplicate and handleBulkUpdate keep on
     const createdCopies: Record<string, unknown>[] = [];
     const fn = new Function(
       "bulkActionBusy",
+      "requiredFileField",
       "entity",
       "records",
       "selectedIds",
@@ -4386,6 +4387,7 @@ test("the exported EntityView's handleBulkDuplicate and handleBulkUpdate keep on
       `${handleBulkDuplicateSrc}\nreturn handleBulkDuplicate;`,
     )(
       false,
+      undefined,
       { fields: [{ name: "name" }] },
       [{ id: 1, name: "A" }, { id: 2, name: "B" }, { id: 3, name: "C" }],
       new Set([1, 2, 3]),
@@ -4660,6 +4662,7 @@ test("the exported EntityView's generated handleBulkDuplicate never calls create
   const createdCopies: Record<string, unknown>[] = [];
   const fn = new Function(
     "bulkActionBusy",
+    "requiredFileField",
     "entity",
     "records",
     "selectedIds",
@@ -4671,6 +4674,7 @@ test("the exported EntityView's generated handleBulkDuplicate never calls create
     `${handleBulkDuplicateSrc}\nreturn handleBulkDuplicate;`,
   )(
     false,
+    undefined,
     { fields: [{ name: "name" }] },
     // id 2 is selected but no longer present in records -- simulates a
     // collaborator (or another tab) deleting it after it was selected but
@@ -4732,6 +4736,7 @@ test("the exported EntityView's generated handleBulkDuplicate refuses to start a
   function makeHandler() {
     return new Function(
       "bulkActionBusy",
+      "requiredFileField",
       "entity",
       "records",
       "selectedIds",
@@ -4743,6 +4748,7 @@ test("the exported EntityView's generated handleBulkDuplicate refuses to start a
       `${handleBulkDuplicateSrc}\nreturn handleBulkDuplicate;`,
     )(
       state.bulkActionBusy,
+      undefined,
       { fields: [{ name: "name" }] },
       [{ id: 1, name: "A" }, { id: 2, name: "B" }],
       state.selectedIds,
@@ -4781,6 +4787,150 @@ test("the exported EntityView's generated handleBulkDuplicate refuses to start a
   assert.equal(state.bulkActionBusy, false, "the busy flag must be cleared once the first (real) batch finishes");
   assert.equal(refreshCalled, 1, "the first batch's own refresh must still run exactly once");
   assert.equal(state.error, null, "a duplicate batch that genuinely succeeded must never report an error");
+});
+
+/**
+ * Round 851's finding: this file's own requiredFileField (defined once,
+ * above the Add form's own gate) was wrongly assumed to already cover
+ * handleDuplicate/handleBulkDuplicate -- its own doc comment names "the
+ * live preview's own EntityPanel.tsx already guards for handleDuplicate"
+ * as the reason the Add form was "the one path left unguarded", when
+ * actually codegen.ts's own handleDuplicate/handleBulkDuplicate (an
+ * independently-duplicated copy of the live preview's logic, not a
+ * shared implementation) never received the equivalent guard at all.
+ * Without it, duplicating a record with a `file`-type field copied the
+ * exact same {url, name, size, mimeType} descriptor into the new record
+ * -- pointing at the same file on disk as the original, with no way to
+ * clear or replace it afterward in an exported app (its own FieldInput
+ * file branch is read-only). Worse for a REQUIRED file field: Duplicate
+ * silently created a record presenting as having its own signed/uploaded
+ * document it never actually received, directly circumventing the Add
+ * form's own deliberate "can't create records with a required file
+ * field here" restriction one click away. Mirrors the live preview's own
+ * fix exactly (null out every file field's value on the copy; refuse
+ * outright when any file field is required, since nulling it would just
+ * surface a generic required-field rejection from createRecord instead).
+ */
+test("the exported EntityView's handleDuplicate/handleBulkDuplicate null out a 'file'-type field's value, instead of pointing the new record at the same uploaded file as the original", async () => {
+  const entityViewJsx = generateExportFiles(project).find((f) => f.path === "web/src/components/EntityView.jsx")!.content;
+  const handleDuplicateSrc = entityViewJsx.match(/async function handleDuplicate\(id\) \{[\s\S]*?\n  \}\n/)?.[0];
+  const handleBulkDuplicateSrc = entityViewJsx.match(/async function handleBulkDuplicate\(\) \{[\s\S]*?\n  \}\n/)?.[0];
+  assert.ok(handleDuplicateSrc && handleBulkDuplicateSrc, "expected to find handleDuplicate/handleBulkDuplicate in generated output");
+
+  const entityWithFile = {
+    name: "Applicant",
+    fields: [{ name: "name", type: "text" }, { name: "resume", type: "file", required: false }],
+  };
+  const record = { id: 1, name: "Dana", resume: JSON.stringify({ url: "/api/uploads/p1/Applicant/abc.pdf", name: "resume.pdf", size: 10, mimeType: "application/pdf" }) };
+
+  {
+    let capturedCopy: Record<string, unknown> | undefined;
+    const fn = new Function(
+      "entity",
+      "records",
+      "setError",
+      "createRecord",
+      "refresh",
+      `const requiredFileField = undefined;\n${handleDuplicateSrc}\nreturn handleDuplicate;`,
+    )(entityWithFile, [record], () => {}, async (_entityName: string, copy: Record<string, unknown>) => {
+      capturedCopy = copy;
+    }, async () => {});
+    await fn(1);
+    assert.equal(capturedCopy?.resume, null, "handleDuplicate must null out the file field, not copy the original's own file descriptor");
+    assert.equal(capturedCopy?.name, "Dana", "every non-file field must still be copied normally");
+  }
+
+  {
+    const createdCopies: Record<string, unknown>[] = [];
+    const fn = new Function(
+      "bulkActionBusy",
+      "entity",
+      "records",
+      "selectedIds",
+      "setBulkActionBusy",
+      "setSelectedIds",
+      "setError",
+      "createRecord",
+      "refresh",
+      `const requiredFileField = undefined;\n${handleBulkDuplicateSrc}\nreturn handleBulkDuplicate;`,
+    )(
+      false,
+      entityWithFile,
+      [record],
+      new Set([1]),
+      () => {},
+      () => {},
+      () => {},
+      async (_entityName: string, copy: Record<string, unknown>) => {
+        createdCopies.push(copy);
+      },
+      async () => {},
+    );
+    await fn();
+    assert.equal(createdCopies[0]?.resume, null, "handleBulkDuplicate must null out the file field too");
+  }
+});
+
+test("the exported EntityView's handleDuplicate/handleBulkDuplicate refuse outright, without ever calling createRecord, when the entity has a REQUIRED 'file'-type field", async () => {
+  const entityViewJsx = generateExportFiles(project).find((f) => f.path === "web/src/components/EntityView.jsx")!.content;
+  const handleDuplicateSrc = entityViewJsx.match(/async function handleDuplicate\(id\) \{[\s\S]*?\n  \}\n/)?.[0];
+  const handleBulkDuplicateSrc = entityViewJsx.match(/async function handleBulkDuplicate\(\) \{[\s\S]*?\n  \}\n/)?.[0];
+  assert.ok(handleDuplicateSrc && handleBulkDuplicateSrc, "expected to find handleDuplicate/handleBulkDuplicate in generated output");
+
+  const requiredFileField = { name: "resume", label: "Resume", type: "file", required: true };
+  const entityWithRequiredFile = { name: "Applicant", fields: [{ name: "name", type: "text" }, requiredFileField] };
+  const record = { id: 1, name: "Dana", resume: JSON.stringify({ url: "/api/uploads/p1/Applicant/abc.pdf", name: "resume.pdf", size: 10, mimeType: "application/pdf" }) };
+
+  {
+    let createCalled = false;
+    let capturedError: string | undefined;
+    const fn = new Function(
+      "requiredFileField",
+      "entity",
+      "records",
+      "setError",
+      "createRecord",
+      "refresh",
+      `${handleDuplicateSrc}\nreturn handleDuplicate;`,
+    )(requiredFileField, entityWithRequiredFile, [record], (msg: string) => (capturedError = msg), async () => {
+      createCalled = true;
+    }, async () => {});
+    await fn(1);
+    assert.equal(createCalled, false, "handleDuplicate must never call createRecord when a required file field can't be filled in");
+    assert.match(capturedError ?? "", /resume/i, "the error must name the required field standing in the way");
+  }
+
+  {
+    let createCalled = false;
+    const fn = new Function(
+      "bulkActionBusy",
+      "requiredFileField",
+      "entity",
+      "records",
+      "selectedIds",
+      "setBulkActionBusy",
+      "setSelectedIds",
+      "setError",
+      "createRecord",
+      "refresh",
+      `${handleBulkDuplicateSrc}\nreturn handleBulkDuplicate;`,
+    )(
+      false,
+      requiredFileField,
+      entityWithRequiredFile,
+      [record],
+      new Set([1]),
+      () => {},
+      () => {},
+      () => {},
+      async () => {
+        createCalled = true;
+      },
+      async () => {},
+    );
+    await fn();
+    assert.equal(createCalled, false, "handleBulkDuplicate must refuse the whole batch upfront, never calling createRecord once");
+  }
 });
 
 test("the exported EntityView renders a real Duplicate action (table and board views) that copies a record via a real createRecord call", () => {
@@ -4841,6 +4991,7 @@ test("the exported EntityView's handleDuplicate/handleMove surface a failed requ
     let capturedError: string | undefined;
     const fn = new Function(
       "window",
+      "requiredFileField",
       "entity",
       "records",
       "selectedIds",
@@ -4854,6 +5005,7 @@ test("the exported EntityView's handleDuplicate/handleMove surface a failed requ
       `${displayFieldHintsSrc}\n${pickDisplayFieldSrc}\n${recordDisplayLabelSrc}\n${handleMoveFieldsSrc}\n${handlerSrc}\nreturn ${handlerSrc.match(/^async function (\w+)/)![1]};`,
     )(
       { confirm: () => true },
+      undefined,
       entity,
       records,
       new Set([1]),

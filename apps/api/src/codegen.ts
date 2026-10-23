@@ -4598,9 +4598,28 @@ export function EntityView({ entity, highlightRecordId, onHighlightHandled, onJu
     const record = records.find((r) => r.id === id);
     if (!record) return;
     setError(null);
+    // Mirrors the live Forge AI preview's own EntityPanel.tsx fix: a
+    // required "file" field can never be filled in by a duplicate (see
+    // the file-nulling comment below), so refuse upfront instead of
+    // reaching createRecord only to be rejected by its own required-field
+    // check. This same requiredFileField already guards the Add form
+    // above and was wrongly assumed to cover this function too (its own
+    // doc comment there named this as the live preview's own already-
+    // guarded sibling, when it was actually still unguarded here).
+    if (requiredFileField) {
+      setError(
+        \`Can't duplicate: "\${requiredFileField.label || requiredFileField.name}" requires a file to be uploaded, and duplicating can't copy an existing file.\`,
+      );
+      return;
+    }
     try {
       const copy = {};
-      for (const f of entity.fields) copy[f.name] = record[f.name];
+      // A "file" field's stored value is just the uploaded file's own
+      // descriptor -- copying it verbatim would make the new record point
+      // at the exact same file on disk as the original, with no "clone
+      // the underlying file" operation to call instead. Mirrors the live
+      // preview's own fix.
+      for (const f of entity.fields) copy[f.name] = f.type === "file" ? null : record[f.name];
       await createRecord(entity.name, copy);
       await refresh();
     } catch (err) {
@@ -4671,6 +4690,16 @@ export function EntityView({ entity, highlightRecordId, onHighlightHandled, onJu
     if (bulkActionBusy) return;
     const ids = [...selectedIds];
     if (ids.length === 0) return;
+    // Same upfront refusal as handleDuplicate above -- a required "file"
+    // field would doom every single one of these requests identically, so
+    // this refuses the whole batch once rather than firing N requests that
+    // all fail the same way. Mirrors the live preview's own fix.
+    if (requiredFileField) {
+      setError(
+        \`Can't duplicate: "\${requiredFileField.label || requiredFileField.name}" requires a file to be uploaded, and duplicating can't copy an existing file.\`,
+      );
+      return;
+    }
     setBulkActionBusy(true);
     setError(null);
     try {
@@ -4679,7 +4708,9 @@ export function EntityView({ entity, highlightRecordId, onHighlightHandled, onJu
           const record = records.find((r) => r.id === id);
           if (!record) return Promise.reject(new Error("This record no longer exists."));
           const copy = {};
-          for (const f of entity.fields) copy[f.name] = record[f.name];
+          // Same shared-file-reference hazard as handleDuplicate above,
+          // and the same fix -- see its own comment for why.
+          for (const f of entity.fields) copy[f.name] = f.type === "file" ? null : record[f.name];
           return createRecord(entity.name, copy);
         }),
       );
