@@ -32093,3 +32093,23 @@ Still no genuine reply from שלומי. This round's own instruction was to veri
 **Verification**: reverted the fix and reran -- failed exactly as predicted (`'כשירות' (fitness) alone must not spuriously match Service` assertion failed); restored, passes. Full `packages/spec-engine` suite: 162/162 pass. Full `apps/api` suite: 588/589 pass, the lone failure is `codegen.test.ts`'s same recurring, already-documented, unrelated whole-file `SIGKILL`.
 
 **Status**: shipped and pushed.
+
+### Round 830: `Courier`'s bare `"נהג"`/`"נהגים"` keywords spuriously matched `"מנהג"`/`"מנהגים"` (custom/tradition)
+
+Still no genuine reply from שלומי. The same `"מ + root"` Hebrew prefix-collision shape, found for a fourth distinct keyword in two rounds -- and this one was sitting directly next to a fix for a *different* sibling bug in the exact same sentence.
+
+**Verification before fixing**: called `HeuristicSpecProvider.generate()` directly on realistic, non-commercial `"מנהג"`-using descriptions. A family-holiday-customs app ("אפליקציה לניהול מנהגי המשפחה לחג") and a Jewish-customs documentation app ("אפליקציה לתיעוד מנהגים יהודיים") both spuriously matched only the `Courier` entity -- nothing about couriers, drivers, or deliveries in either description. Both reproduced cleanly on a fresh, independent run.
+
+**The gap**: `domainEntities.ts`'s `Courier` entity rule included bare `"נהג"`/`"נהגים"` ("driver"/"drivers") -- plain substrings of `"מנהג"`/`"מנהגים"` ("custom"/"tradition"), via the `מ` prefix. The same collision class already fixed for `"מעובד"`/`"עובד"` (round 565), `"מצוות"`/`"צוות"` (round 825), and `"כשירות"`/`"שירות"` (round 829) -- same root cause, different prefix-root pair each time.
+
+**The irony that led to this find**: round 825's own regression test proves `"מצוות"` doesn't spuriously match `Employee` using the exact description `"אפליקציה למעקב אחר קיום מצוות ומנהגים"` -- which also contains `"ומנהגים"`. Nobody had checked that same sentence against `Courier`, where this bug let it spuriously match. The sibling bug was sitting right next to the fix for a related sibling bug, in the same test fixture's own sentence.
+
+**The fix**: replaced the two bare strings with `/(?<!מ)נהג/` and `/(?<!מ)נהגים/` -- the identical lookbehind pattern this file already uses. Verified the regex behaves correctly in isolation first: rejects `"מנהג"`/`"מנהגים"`, still matches `"נהג"`/`"נהגים"` bare or with the definite-article `"ה"` prefix. Confirmed via grep this is the only occurrence of these keywords anywhere in the file (no `ROLE_RULES.Courier` entry exists at all).
+
+**Scope**: `packages/spec-engine` only -- confirmed via grep that neither `ROLE_RULES` nor `DOMAIN_ENTITY_RULES` are referenced in `apps/web`/`codegen.ts`.
+
+**The tests**: a new test mirrors round 565/825/829's own structure -- confirms both customs-themed descriptions no longer spuriously add `Courier`, while real usage (`"הנהג"`/`"נהגים"`, with the definite-article prefix rather than `"מ"`) still matches. Also confirmed round 825's own `"מצוות"` test (which shares the exact `"ומנהגים"` phrase) still passes unaffected, since it only ever checks the `Employee` entity.
+
+**Verification**: reverted the fix and reran -- failed exactly as predicted (`'מנהגי' (customs) alone must not spuriously match Courier` assertion failed); restored, passes. Full `packages/spec-engine` suite: 163/163 pass. Full `apps/api` suite: 588/589 pass, the lone failure is `codegen.test.ts`'s same recurring, already-documented, unrelated whole-file `SIGKILL`.
+
+**Status**: shipped and pushed.
