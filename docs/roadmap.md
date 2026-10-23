@@ -31891,3 +31891,25 @@ Still no genuine reply from שלומי. This round closes the one surviving crac
 **Verification**: reverted the fix and reran -- the new test failed exactly as predicted (missing `type_changed` entry, `new_column` only); restored, all 40 tests in `migrate.test.ts` pass. Full `packages/db` suite: 214/214 pass. Full `apps/api` suite: 106/107 individual tests pass; the 107th subtest is `codegen.test.ts` as a whole, which was `SIGKILL`'d partway through both in the full run and when re-run in total isolation -- reproduced identically, taking ~150s either way, with no assertion failure anywhere in its own output. `codegen.ts` has zero relation to this change (confirmed above), so this is an unrelated environment resource/timeout flake, documented candidly rather than either dismissed or treated as blocking this round.
 
 **Status**: shipped and pushed.
+
+### Round 820: `fieldSignature`'s third and final missing-property gap, enum value *order*
+
+Still no genuine reply from שלומי. This closes the last open instance of the series rounds 817-818 started: `fieldSignature` (`apps/web/src/checkpointDiff.ts`) now accounts for every field-shape property that's real, rendered behavior rather than cosmetic label text.
+
+**The gap**: `fieldSignature`'s `enumPart` sorted `enumValues` before joining it into the comparison string (`(f.enumValues ?? []).slice().sort().join(",")`), so a refine that reorders the exact same set of values -- no addition, removal, or relabeling -- produced an identical signature either way.
+
+**Why order is real, not cosmetic**: `groupByField` (`entityFormatting.ts`) renders Kanban board columns "in the enum's own declared order, not first-seen order" -- that's the function's own doc comment, not an inference. The record form's enum `<select>` (`EntityPanel.tsx`) renders its `<option>`s in that same declared order via the same `uniqueEnumValues` helper. So reordering `enumValues` on a refine visibly reorders both the board's columns and the dropdown's options app-wide -- squarely the same bar round 818 set for `enumLabels` ("a refine that... visibly changes every rendered instance of that enum field").
+
+**Concrete failure scenario**: a `status` enum field declared as `["New", "Shipped", "Cancelled"]` gets checkpointed, then a later refine reorders it to `["Cancelled", "New", "Shipped"]` with the identical three values, same type, same required flag. `fieldSignature` produced `"enum||Cancelled,New,Shipped||...|optional"` for *both* specs before the fix (sorted either way), so `computeCheckpointDiff` silently omitted `"status"` from `changedFieldNames`, and `isCheckpointCurrent` wrongly reported the older checkpoint as `[Current]` even though restoring it would visibly reorder the live board's columns.
+
+**Why not deliberate**: no test in `checkpointDiff.test.ts` covered a pure-reorder scenario (confirmed via grep before writing the fix), and the `.sort()` call carried no rationale comment, unlike every other deliberate exclusion in this file (e.g. `label`, documented two lines above `fieldSignature` itself). Round 817/818's own precedent -- closing `description` and `enumLabels` as the same kind of oversight -- applies identically here.
+
+**The fix**: dropped the `.sort()` call so `enumPart` reflects declared order directly (`(f.enumValues ?? []).join(",")`), with the accompanying comment pointing at `groupByField`'s own doc comment as the evidence this is real behavior, not an incidental string-equality quirk.
+
+**Scope**: `apps/web` only -- `fieldSignature` is private to `checkpointDiff.ts`, consumed only by `computeCheckpointDiff`/`isCheckpointCurrent` within this file. No `apps/api`/`codegen.ts` parity applies (same reasoning as rounds 817/818: no checkpoint-diff feature exists there at all).
+
+**The tests**: three new tests mirroring the exact structure of round 818's `enumLabels` trio -- a same-named enum field with only value *order* differing is reported by `computeCheckpointDiff`; identical order (and set) on both sides is correctly NOT reported; and `isCheckpointCurrent` is `false` when only the order differs.
+
+**Verification**: reverted the fix and reran -- both order-sensitive tests failed exactly as predicted (`[]` instead of the expected changed-entity entry; `true !== false`); restored, all 50 tests in `checkpointDiff.test.ts` pass. `tsc -b`: clean. Full `apps/web` suite: 1130/1130 pass (one run was mistaken for a hang after stalling at the same test count twice in a row under tight time budgets -- isolating `EntityPanel.test.ts` alone confirmed it's simply the suite's slowest file, not a real hang: a longer background timeout let the full run finish cleanly in ~302s, and `EntityPanel.test.ts`/`.tsx` have zero references to `checkpointDiff.ts` regardless, confirming this had nothing to do with the change).
+
+**Status**: shipped and pushed.
