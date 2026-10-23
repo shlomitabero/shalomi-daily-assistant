@@ -7458,6 +7458,101 @@ test("the exported EntityView's 'd' shortcut does not fire while GlobalSearch is
 });
 
 /**
+ * Round 875's finding: the exported app's own GlobalSearch.jsx is a
+ * deliberate duplicate of the live-preview GlobalSearchPanel.tsx and had
+ * the identical bug that round's own fix closed there -- selectedIndex was
+ * only ever reset inside runSearch itself, never the moment the query text
+ * changed. Arrow-selecting a result group, then editing the query to
+ * something unrelated, left selectedIndex pointing at the stale group, so
+ * handleInputKeyDown's Enter branch jumped to it instead of letting the
+ * form submit the newly-edited query. Renders the real generated
+ * GlobalSearch.jsx end to end (not an extracted function), since the bug
+ * lives in the interaction between the input's onChange and the keydown
+ * handler, not in either alone.
+ */
+test("the exported GlobalSearch does not jump to a stale arrow-selected result once the query has been edited past it", async () => {
+  const files = generateExportFiles(project);
+  const dir = writeGeneratedWebComponent(files);
+  const customerRecords = [{ id: 1, name: "Acme widget order" }];
+  const serviceRecords = [{ id: 1, title: "Acme widget order" }];
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = (async (input: string): Promise<Response> => {
+    if (input === "/api/Customer") {
+      return new Response(JSON.stringify({ records: customerRecords }), { status: 200, headers: { "content-type": "application/json" } });
+    }
+    if (input === "/api/Service") {
+      return new Response(JSON.stringify({ records: serviceRecords }), { status: 200, headers: { "content-type": "application/json" } });
+    }
+    throw new Error(`unexpected request ${input}`);
+  }) as typeof fetch;
+
+  try {
+    await withRealLocalStorage(async () => {
+      const { GlobalSearch } = await import(path.join(dir, "web", "src", "components", "GlobalSearch.jsx"));
+      const jumps: string[] = [];
+      const { container } = render(
+        React.createElement(GlobalSearch, {
+          entities: project.spec.entities,
+          onClose: () => {},
+          onJumpToEntity: (entityName: string) => jumps.push(entityName),
+          onJumpToRecord: () => {},
+        }),
+      );
+
+      const input = container.querySelector(".global-search-input") as HTMLInputElement;
+      const form = container.querySelector("form.global-search-form") as HTMLFormElement;
+      await act(async () => {
+        fireEvent.change(input, { target: { value: "widget" } });
+        fireEvent.submit(form);
+      });
+      for (let i = 0; i < 40; i++) {
+        if (container.querySelectorAll(".global-search-group").length === 2) break;
+        await act(async () => {
+          await new Promise((resolve) => setTimeout(resolve, 0));
+        });
+      }
+      assert.equal(container.querySelectorAll(".global-search-group").length, 2, "expected both entities to match 'widget'");
+
+      await act(async () => {
+        fireEvent.keyDown(input, { key: "ArrowDown" });
+      });
+      assert.equal(
+        container.querySelectorAll(".global-search-group")[0].classList.contains("global-search-group-selected"),
+        true,
+        "the first ArrowDown must highlight the first group",
+      );
+
+      await act(async () => {
+        fireEvent.change(input, { target: { value: "zzz-totally-unrelated-query" } });
+      });
+      await act(async () => {
+        fireEvent.keyDown(input, { key: "Enter" });
+      });
+      assert.deepEqual(jumps, [], "Enter must not jump to the stale, pre-edit highlighted entity");
+
+      await act(async () => {
+        fireEvent.submit(form);
+      });
+      for (let i = 0; i < 40; i++) {
+        if (container.querySelectorAll(".global-search-group").length === 0 && container.textContent?.includes("No matching results")) break;
+        await act(async () => {
+          await new Promise((resolve) => setTimeout(resolve, 0));
+        });
+      }
+      assert.equal(
+        container.querySelectorAll(".global-search-group").length,
+        0,
+        "the new, edited query must reach a real search with no stale groups left over",
+      );
+    });
+  } finally {
+    globalThis.fetch = originalFetch;
+    cleanup();
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+/**
  * Round 494's finding: the exported app's GlobalSearch never got the live
  * preview's own round-290 "Escape clears the query first" behavior
  * (GlobalSearchPanel.tsx's own handleInputKeyDown + its

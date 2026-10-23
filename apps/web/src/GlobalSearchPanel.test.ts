@@ -654,6 +654,67 @@ test("GlobalSearchPanel's arrow keys move the highlighted result group and Enter
 });
 
 /**
+ * Round 875's finding: selectedIndex was only ever reset to null inside
+ * runSearch itself (both the empty-query early-return and the real-results
+ * branch) -- never the moment the query TEXT changed, before that new
+ * search ever runs. Arrow-key selecting a result group, then editing the
+ * query to something unrelated, left selectedIndex pointing at a group
+ * from the OLD search. handleInputKeyDown's Enter branch only checked
+ * `selectedIndex !== null`, never that it still corresponded to the text
+ * now in the box, so Enter called preventDefault() and jumped to the
+ * stale entity instead of letting the form's own onSubmit run the new
+ * search the user just typed -- the user's edited query was silently
+ * discarded. Confirms editing the query after an arrow-key selection, then
+ * pressing Enter, submits a genuinely new search (reaching the "No
+ * results" state for a query that matches nothing) instead of jumping to
+ * the stale, previously-highlighted entity.
+ */
+test("GlobalSearchPanel submits a newly-edited query on Enter instead of jumping to a stale arrow-selected result from before the edit", async () => {
+  await withJsdom(async () => {
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = mockGlobalSearchFetch() as typeof fetch;
+    const jumps: string[] = [];
+    try {
+      renderGlobalSearchPanel((entityName) => jumps.push(entityName));
+
+      const input = document.querySelector(".global-search-input") as HTMLInputElement;
+      fireEvent.change(input, { target: { value: "widget" } });
+      const form = document.querySelector("form.global-search-form")!;
+      fireEvent.submit(form);
+      await waitForCondition(() => document.querySelectorAll(".global-search-group").length === 2);
+
+      fireEvent.keyDown(input, { key: "ArrowDown" });
+      let groups = document.querySelectorAll(".global-search-group");
+      assert.equal(groups[0].classList.contains("global-search-group-selected"), true, "the first ArrowDown must highlight the first group");
+
+      // Edit the query to something that matches nothing, without
+      // submitting yet -- the stale highlight must not survive this.
+      fireEvent.change(input, { target: { value: "zzz-totally-unrelated-query" } });
+
+      fireEvent.keyDown(input, { key: "Enter" });
+      assert.deepEqual(jumps, [], "Enter must not jump to the stale, pre-edit highlighted entity");
+
+      // handleInputKeyDown's Enter branch no longer intercepts this
+      // keydown (selectedIndex was reset the moment the query changed),
+      // so the browser's own native "Enter submits the enclosing form"
+      // behavior is what would actually run the new search -- jsdom
+      // doesn't implement that implicit submission, so it's simulated
+      // explicitly here, the same way a real browser's default action
+      // would once handleInputKeyDown stops calling preventDefault().
+      fireEvent.submit(form);
+      await waitForCondition(() => document.body.textContent?.includes("No matching results") ?? false);
+      assert.equal(
+        document.querySelectorAll(".global-search-group").length,
+        0,
+        "the new, edited query must reach a real search with no stale groups left over",
+      );
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+});
+
+/**
  * jsdom's own HTMLElement doesn't implement scrollIntoView at all (confirmed
  * empirically: `typeof el.scrollIntoView === "undefined"` under this jsdom
  * version), so this test installs a minimal stub -- mirroring the

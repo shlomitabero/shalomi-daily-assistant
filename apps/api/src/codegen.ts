@@ -6094,6 +6094,18 @@ export function GlobalSearch({ entities, onClose, onJumpToEntity, onJumpToRecord
     scrollIntoViewRespectingMotion(group, { behavior: "smooth", block: "nearest" });
   }, [selectedIndex]);
 
+  // Mirrors the live preview's own GlobalSearchPanel.tsx fix: runSearch
+  // above already resets selectedIndex once a new search completes, but
+  // nothing reset it the moment the query text itself changed, before
+  // that new search ever runs -- so arrow-selecting a result group, then
+  // editing the query to something else, left selectedIndex pointing at a
+  // stale group from the OLD search, and handleInputKeyDown's Enter
+  // branch would jump to it instead of letting the form submit the new
+  // query.
+  useEffect(() => {
+    setSelectedIndex(null);
+  }, [query]);
+
   async function runSearch(q) {
     if (!q.trim()) {
       setResults([]);

@@ -320,6 +320,27 @@ export function GlobalSearchPanel({
     scrollIntoViewRespectingMotion(group, { behavior: "smooth", block: "nearest" });
   }, [selectedIndex]);
 
+  // Round 875: runSearch itself already resets selectedIndex once a new
+  // search actually completes (both the empty-query early-return and the
+  // real-results branch above) -- but nothing reset it the moment the
+  // query text itself changed, before that new search ever runs. Arrow-key
+  // selecting a result group, then editing the query to something else
+  // entirely, left selectedIndex pointing at a group from the OLD search.
+  // handleInputKeyDown's Enter branch only checks `selectedIndex !== null`,
+  // never that it still corresponds to the text currently in the box, so
+  // pressing Enter called preventDefault() and jumped to that stale
+  // entity instead of letting the form's own onSubmit run the new search
+  // the user just typed -- contradicting this component's own doc comment
+  // a few lines below ("Enter with nothing highlighted still submits the
+  // form as a normal search"), whose premise (no highlight survives into
+  // a new query) this didn't actually hold. Keyed on `query` alone (not a
+  // handler-specific fix) so it covers every way the text can change --
+  // typing, the Escape-to-clear branch below, and the separate "clear
+  // query" button -- in one place rather than three scattered resets.
+  useEffect(() => {
+    setSelectedIndex(null);
+  }, [query]);
+
   /**
    * Down/Up move a highlight across the result groups (not individual
    * records -- "jump" always lands on an entity tab, so the group is the
