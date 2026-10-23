@@ -143,6 +143,29 @@ test("badgeTone recognizes 'Unsuccessful' and 'NotCompleted'/'Not Completed' as 
   assert.equal(badgeTone("Completed"), "positive");
 });
 
+/**
+ * Round 873's finding: the same negated-positive-word collision rounds 458
+ * and 872 fixed also applied to "won"/"active" -- two more POSITIVE_WORDS
+ * entries -- just never checked. "NotWon"/"Not Won" and "NotActive"/"Not
+ * Active" each contain their positive counterpart as a literal substring,
+ * so they were misread as a positive (green) badge, the exact opposite of
+ * their meaning -- confirmed with a real repro against this exact exported
+ * function before fixing. "NotActive" is a genuinely different spelling
+ * from "Inactive" (already in NEGATIVE_WORDS), not merely its no-space/
+ * space variant, so it needed its own entry. Deal/Opportunity's own
+ * built-in "Won"/"Lost" status pair (see spec-engine/domainEntities.ts)
+ * makes "Not Won" an obvious variant a user or AI-generated spec would
+ * reach for.
+ */
+test("badgeTone recognizes 'NotWon'/'Not Won' and 'NotActive'/'Not Active' as negative, not positive from matching 'won'/'active' as a substring", () => {
+  assert.equal(badgeTone("NotWon"), "negative");
+  assert.equal(badgeTone("Not Won"), "negative");
+  assert.equal(badgeTone("Won"), "positive");
+  assert.equal(badgeTone("NotActive"), "negative");
+  assert.equal(badgeTone("Not Active"), "negative");
+  assert.equal(badgeTone("Active"), "positive");
+});
+
 test("formatDateValue formats a valid ISO date per locale, and leaves an invalid one unchanged", () => {
   const result = formatDateValue("2026-03-15", "en");
   assert.match(result, /3\/15\/2026|15\/3\/2026/); // exact format is locale/engine-dependent, just confirm it parsed

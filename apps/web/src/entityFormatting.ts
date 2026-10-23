@@ -102,6 +102,18 @@ const NEGATIVE_WORDS = [
   "unsuccessful",
   "notcompleted",
   "not completed",
+  // round 873: "won" and "active" are also POSITIVE_WORDS entries, with the
+  // exact same negated-word gap -- "notwon"/"not won" each contain "won" as
+  // a literal substring, and "notactive"/"not active" (a different, genuine
+  // spelling from "inactive" just above, not merely its no-space/space
+  // variant) each contain "active". Deal/Opportunity's own built-in
+  // "Won"/"Lost" status pair (see spec-engine/domainEntities.ts) makes
+  // "Not Won" an obvious variant a user or AI-generated spec would reach
+  // for.
+  "notwon",
+  "not won",
+  "notactive",
+  "not active",
 ];
 
 const DATE_FORMAT = /^(\d{4})-(\d{2})-(\d{2})$/;

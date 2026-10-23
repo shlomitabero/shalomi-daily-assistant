@@ -1726,6 +1726,10 @@ const NEGATIVE_WORDS = [
   // "unsuccessful"/"notcompleted"/"not completed" each contain a
   // POSITIVE_WORDS entry ("success"/"completed") as a literal substring.
   "unsuccessful", "notcompleted", "not completed",
+  // round 873: mirrors the live preview's own entityFormatting.ts fix --
+  // "notwon"/"not won"/"notactive"/"not active" each contain a
+  // POSITIVE_WORDS entry ("won"/"active") as a literal substring.
+  "notwon", "not won", "notactive", "not active",
 ];
 // Mirrors the live preview's own entityFormatting.ts formatRecordCreatedAt
 // (round 168): every record carries a real, server-assigned createdAt

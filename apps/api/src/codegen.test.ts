@@ -11229,6 +11229,27 @@ test("the exported EntityView's badgeTone classifies 'Unsuccessful'/'NotComplete
 });
 
 /**
+ * Regression test for round 873's finding: the same negated-positive-word
+ * collision round 872 fixed here for "success"/"completed" also applied
+ * to "won"/"active" -- two more POSITIVE_WORDS entries -- in this exact
+ * exported copy too, mirroring the live-preview fix. Runs the real
+ * generated badgeTone, not a reference copy.
+ */
+test("the exported EntityView's badgeTone classifies 'NotWon'/'NotActive' as negative, not positive from matching 'won'/'active' as a substring", () => {
+  const entityViewJsx = generateExportFiles(project).find((f) => f.path === "web/src/components/EntityView.jsx")!.content;
+  const badgeToneSrc = entityViewJsx.match(/const POSITIVE_WORDS[\s\S]*?\nfunction badgeTone\(rawValue\) \{[\s\S]*?\n\}\n/)?.[0];
+  assert.ok(badgeToneSrc, "expected to find POSITIVE_WORDS/NEGATIVE_WORDS/badgeTone in generated output");
+
+  const badgeTone = new Function(`${badgeToneSrc}\nreturn badgeTone;`)() as (v: string) => string;
+  assert.equal(badgeTone("NotWon"), "negative");
+  assert.equal(badgeTone("Not Won"), "negative");
+  assert.equal(badgeTone("Won"), "positive");
+  assert.equal(badgeTone("NotActive"), "negative");
+  assert.equal(badgeTone("Not Active"), "negative");
+  assert.equal(badgeTone("Active"), "positive");
+});
+
+/**
  * New in this round: the exported standalone app's entity table columns
  * were a fixed auto-layout width, unlike the live Forge AI preview (round
  * 185's own drag-to-resize columns, persisted per entity via
