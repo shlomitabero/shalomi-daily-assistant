@@ -1881,7 +1881,7 @@ test("the exported EntityView's Kanban board has a real '+' button per column th
 
   assert.match(
     entityViewJsx,
-    /function startCreateForColumn\(value, field\) \{\s*setEditingId\(null\);\s*setForm\(\{ \.\.\.emptyForm\(entity\), \[field\.name\]: value \}\);\s*setFormInstanceKey\(\(k\) => k \+ 1\);\s*\}/,
+    /function startCreateForColumn\(value, field\) \{\s*setEditingId\(null\);\s*setForm\(\{ \.\.\.emptyForm\(entity\), \[field\.name\]: value \}\);\s*setFormInstanceKey\(\(k\) => k \+ 1\);\s*scrollIntoViewRespectingMotion\(document\.querySelector\("\.record-form"\), \{ behavior: "smooth", block: "start" \}\);\s*\}/,
   );
   assert.match(entityViewJsx, /className="board-add-card-btn"/);
   assert.match(entityViewJsx, /onClick=\{\(\) => startCreateForColumn\(column\.value, boardField\)\}/);
@@ -1892,6 +1892,54 @@ test("the exported EntityView's Kanban board has a real '+' button per column th
   const stylesCss = files.find((f) => f.path === "web/src/styles.css")!.content;
   assert.match(stylesCss, /\.board-column-header-info/);
   assert.match(stylesCss, /\.board-add-card-btn/);
+});
+
+/**
+ * Round 821's finding: startCreateForColumn/startCreateForDate were each
+ * one line away from their sibling startCreateNew, which already called the
+ * shared scrollIntoViewRespectingMotion helper after resetting the form --
+ * the live preview's EntityPanel.tsx applies the identical call to all three
+ * siblings with no distinction between them. Here, only startCreateNew did,
+ * so clicking a Kanban column's "+" button (or an empty calendar day) while
+ * scrolled past the record form pre-filled it correctly but never moved the
+ * viewport, leaving the user looking at an unchanged screen with no visible
+ * sign a form was waiting for them above. Executes the real generated
+ * startCreateForColumn (extracted from real codegen output, not
+ * reimplemented) to confirm the scroll helper is actually invoked, not just
+ * present in the source as dead code the test above's regex alone couldn't
+ * rule out.
+ */
+test("the exported EntityView's Kanban board '+' button scrolls the create form into view, the same as the general create button", () => {
+  const files = generateExportFiles(project);
+  const entityViewJsx = files.find((f) => f.path === "web/src/components/EntityView.jsx")!.content;
+
+  const startCreateSrc = entityViewJsx.match(/function startCreateForColumn\(value, field\) \{[\s\S]*?\n {2}\}\n/)?.[0];
+  assert.ok(startCreateSrc, "expected to find startCreateForColumn in generated output");
+
+  let capturedForm = null;
+  let capturedEditingId = "unset";
+  const scrollCalls: unknown[] = [];
+  const startCreateForColumn = new Function(
+    "entity",
+    "emptyForm",
+    "setForm",
+    "setEditingId",
+    "setFormInstanceKey",
+    "scrollIntoViewRespectingMotion",
+    `${startCreateSrc}\nreturn startCreateForColumn;`,
+  )(
+    { fields: [] },
+    () => ({}),
+    (f: unknown) => (capturedForm = f),
+    (id: unknown) => (capturedEditingId = id),
+    () => {},
+    (...args: unknown[]) => scrollCalls.push(args),
+  ) as (value: string, field: { name: string }) => void;
+
+  startCreateForColumn("won", { name: "status" });
+  assert.equal(capturedEditingId, null, "clicking a column's '+' button must switch out of edit mode, not silently continue editing a different record");
+  assert.deepEqual(capturedForm, { status: "won" }, "the pre-filled value must be the exact column clicked");
+  assert.equal(scrollCalls.length, 1, "startCreateForColumn must call scrollIntoViewRespectingMotion exactly once, the same as startCreateNew already does");
 });
 
 test("the exported EntityView renders a real month-calendar view for entities with a date field", () => {
@@ -1957,7 +2005,10 @@ test("the exported EntityView's calendar has a real clickable day that pre-fills
   const files = generateExportFiles(withDate);
   const entityViewJsx = files.find((f) => f.path === "web/src/components/EntityView.jsx")!.content;
 
-  assert.match(entityViewJsx, /function startCreateForDate\(date, field\) \{\s*setEditingId\(null\);\s*setForm\(\{ \.\.\.emptyForm\(entity\), \[field\.name\]: formatDateForInput\(date\) \}\);\s*setFormInstanceKey\(\(k\) => k \+ 1\);\s*\}/);
+  assert.match(
+    entityViewJsx,
+    /function startCreateForDate\(date, field\) \{\s*setEditingId\(null\);\s*setForm\(\{ \.\.\.emptyForm\(entity\), \[field\.name\]: formatDateForInput\(date\) \}\);\s*setFormInstanceKey\(\(k\) => k \+ 1\);\s*scrollIntoViewRespectingMotion\(document\.querySelector\("\.record-form"\), \{ behavior: "smooth", block: "start" \}\);\s*\}/,
+  );
   assert.match(entityViewJsx, /onDayClick=\{\(date\) => startCreateForDate\(date, dateField\)\}/);
   // The day cell's className is now built from a dayClasses array (round
   // 294's own today-highlight needed a third independent condition, which
@@ -1983,8 +2034,9 @@ test("the exported EntityView's calendar has a real clickable day that pre-fills
     "setForm",
     "setEditingId",
     "setFormInstanceKey",
+    "scrollIntoViewRespectingMotion",
     `${formatDateSrc}\n${startCreateSrc}\nreturn startCreateForDate;`,
-  )({ fields: [] }, () => ({}), (f) => (capturedForm = f), (id) => (capturedEditingId = id), () => {});
+  )({ fields: [] }, () => ({}), (f) => (capturedForm = f), (id) => (capturedEditingId = id), () => {}, () => {});
 
   startCreateForDate(new Date(2026, 8, 15), { name: "date" }); // September 15, 2026 (month is 0-indexed)
   assert.equal(capturedEditingId, null, "clicking a day must switch out of edit mode, not silently continue editing a different record");
@@ -10634,7 +10686,10 @@ test("the exported EntityView's scrollIntoViewRespectingMotion substitutes behav
 // specific old call patterns each site used (not a blanket "no
 // .scrollIntoView(" scan, which would also flag the wrapper's own,
 // necessary internal call); the function's own correctness is covered
-// end-to-end above.
+// end-to-end above. Round 821's own fix added two more EntityView.jsx call
+// sites (startCreateForColumn/startCreateForDate, the Board/Calendar
+// siblings of startCreateNew that used to skip the scroll entirely) --
+// counted below alongside the original four.
 test("every scrollIntoView call site in the exported app routes through scrollIntoViewRespectingMotion, not a direct DOM call", () => {
   const files = generateExportFiles(project);
   const entityViewJsx = files.find((f) => f.path === "web/src/components/EntityView.jsx")!.content;
@@ -10645,7 +10700,11 @@ test("every scrollIntoView call site in the exported app routes through scrollIn
   assert.doesNotMatch(globalSearchJsx, /group\.scrollIntoView\(/, "the arrow-key result-group scroll must no longer call scrollIntoView directly");
 
   const entityViewCallCount = (entityViewJsx.match(/scrollIntoViewRespectingMotion\(/g) ?? []).length;
-  assert.equal(entityViewCallCount, 4, "expected exactly 4 occurrences in EntityView.jsx: the function's own definition, the highlighted-row effect, the focused-row effect, and startCreateNew");
+  assert.equal(
+    entityViewCallCount,
+    6,
+    "expected exactly 6 occurrences in EntityView.jsx: the function's own definition, the highlighted-row effect, the focused-row effect, startCreateNew, startCreateForColumn, and startCreateForDate",
+  );
 
   assert.match(globalSearchJsx, /scrollIntoViewRespectingMotion,\n\} from "\.\/EntityView\.jsx";/, "GlobalSearch.jsx must import the shared helper from EntityView.jsx rather than duplicating it");
   const globalSearchCallCount = (globalSearchJsx.match(/scrollIntoViewRespectingMotion\(/g) ?? []).length;

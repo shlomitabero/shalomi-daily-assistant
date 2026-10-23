@@ -4230,12 +4230,14 @@ export function EntityView({ entity, highlightRecordId, onHighlightHandled, onJu
     setEditingId(null);
     setForm({ ...emptyForm(entity), [field.name]: value });
     setFormInstanceKey((k) => k + 1);
+    scrollIntoViewRespectingMotion(document.querySelector(".record-form"), { behavior: "smooth", block: "start" });
   }
 
   function startCreateForDate(date, field) {
     setEditingId(null);
     setForm({ ...emptyForm(entity), [field.name]: formatDateForInput(date) });
     setFormInstanceKey((k) => k + 1);
+    scrollIntoViewRespectingMotion(document.querySelector(".record-form"), { behavior: "smooth", block: "start" });
   }
 
   // The "n" shortcut's own target -- discards an in-progress edit (if
