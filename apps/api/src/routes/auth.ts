@@ -164,7 +164,10 @@ export function createAuthRouter(
    * signup/login/verify-code/reset-password -- the realistic attack there
    * is one machine iterating quickly -- but by the target *email* for
    * forgot-password, since the actual harm (spamming one inbox) doesn't
-   * depend on which IP the request comes from. Created fresh per
+   * depend on which IP the request comes from, and by the authenticated
+   * *user id* for change-password (round 896), since that route's own
+   * identity is already established by requireAuth before it ever runs.
+   * Created fresh per
    * createAuthRouter() call, the same convention app.ts's own
    * `activePipelines` already follows, so app.test.ts's withServer (which
    * calls createApp() fresh per test) never leaks rate-limit state between
@@ -230,6 +233,30 @@ export function createAuthRouter(
     max: 30,
     keyGenerator: (req) => req.ip ?? "unknown",
     message: "Too many password reset attempts. Please try again later.",
+  });
+  /**
+   * Round 896: the one credential-CHECKING route in this exact file that
+   * stayed unthrottled -- every sibling that calls verifyPassword/compares
+   * a secret (login, verify-code, now reset-password's own lookup) got a
+   * rate limiter in rounds 857/894; this one, PATCH /auth/password's own
+   * `currentPassword` check, was missed. Unlike those routes, the caller
+   * here already holds a valid session token (requireAuth ran first) --
+   * the realistic attacker is someone who stole or is sharing that token
+   * but doesn't know the real password, using it to brute-force the
+   * account's actual credential at whatever rate their own hardware
+   * allows (scrypt's own cost is real but attacker-side, not a
+   * server-enforced limit -- the same rationale this file's very first
+   * rate-limiter comment above gives for /auth/login). Keyed by the
+   * authenticated user's own id (requireAuth runs first in the chain
+   * below, so req.userId is already set) rather than IP, since the
+   * identity is already established here and the harm is scoped to this
+   * one account regardless of which IP the stolen token is used from.
+   */
+  const changePasswordRateLimiter = createRateLimiter({
+    windowMs: RATE_LIMIT_WINDOW_MS,
+    max: 30,
+    keyGenerator: (req) => req.userId ?? "unknown",
+    message: "Too many password change attempts. Please try again later.",
   });
 
   router.post("/auth/signup", signupRateLimiter, async (req, res, next) => {
@@ -509,7 +536,7 @@ export function createAuthRouter(
    * while deliberately keeping this exact request's own session alive, so
    * the 204 response below still has a valid session to return against.
    */
-  router.patch("/auth/password", requireAuth(db), async (req, res, next) => {
+  router.patch("/auth/password", requireAuth(db), changePasswordRateLimiter, async (req, res, next) => {
     const parsed = ChangePasswordSchema.safeParse(req.body);
     if (!parsed.success) {
       next(new HttpError(400, formatValidationError(parsed.error), "VALIDATION_ERROR"));

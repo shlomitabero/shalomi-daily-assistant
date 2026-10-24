@@ -10593,3 +10593,58 @@ test("POST /auth/reset-password is rate-limited per IP: the 31st request in the 
     assert.equal(((await blocked.json()) as { code?: string }).code, "RATE_LIMITED");
   });
 });
+
+/**
+ * Round 896: the one credential-CHECKING route in routes/auth.ts that
+ * stayed unthrottled -- every sibling that compares a real secret (login,
+ * verify-code, reset-password's own lookup) already got a rate limiter in
+ * rounds 857/894; PATCH /auth/password's own `currentPassword` check was
+ * missed. The realistic attacker here already holds a valid stolen/shared
+ * session token but not the real password, using this route to brute-force
+ * it at whatever rate their own hardware allows. Keyed by the authenticated
+ * user's own id (not IP), so this confirms the limit follows the account,
+ * not the source -- a DIFFERENT account's own attempts, from the same test
+ * run, must be unaffected by the first account's own block.
+ */
+test("PATCH /auth/password is rate-limited per authenticated account: the 31st wrong-currentPassword attempt is rejected with 429, while a different account is unaffected", async () => {
+  await withServer(async (baseUrl) => {
+    const email = `change-pw-rate-limit-${Date.now()}@example.com`;
+    const signupRes = await fetch(`${baseUrl}/api/auth/signup`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ email, password: "original-password" }),
+    });
+    const { token } = (await signupRes.json()) as { token: string };
+
+    for (let i = 0; i < 30; i++) {
+      const res = await fetch(`${baseUrl}/api/auth/password`, {
+        method: "PATCH",
+        headers: authHeaders(token),
+        body: JSON.stringify({ currentPassword: `wrong-password-${i}`, newPassword: "brand-new-password" }),
+      });
+      assert.notEqual(res.status, 429, `password-change attempt ${i + 1} of 30 (within the limit) must not be rate-limited yet`);
+      assert.equal(res.status, 401, "a wrong currentPassword must still get the normal invalid-password response, not a 429");
+    }
+    const blocked = await fetch(`${baseUrl}/api/auth/password`, {
+      method: "PATCH",
+      headers: authHeaders(token),
+      body: JSON.stringify({ currentPassword: "wrong-password-30", newPassword: "brand-new-password" }),
+    });
+    assert.equal(blocked.status, 429);
+    assert.equal(((await blocked.json()) as { code?: string }).code, "RATE_LIMITED");
+
+    const otherEmail = `change-pw-rate-limit-other-${Date.now()}@example.com`;
+    const otherSignupRes = await fetch(`${baseUrl}/api/auth/signup`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ email: otherEmail, password: "original-password" }),
+    });
+    const { token: otherToken } = (await otherSignupRes.json()) as { token: string };
+    const otherRes = await fetch(`${baseUrl}/api/auth/password`, {
+      method: "PATCH",
+      headers: authHeaders(otherToken),
+      body: JSON.stringify({ currentPassword: "original-password", newPassword: "brand-new-password" }),
+    });
+    assert.equal(otherRes.status, 204, "a different account must not be collaterally blocked by another account's own rate limit");
+  });
+});
