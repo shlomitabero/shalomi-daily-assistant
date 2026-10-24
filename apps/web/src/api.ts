@@ -879,11 +879,15 @@ export function listCheckpoints(projectId: string): Promise<{ checkpoints: Check
   return request(`/projects/${projectId}/checkpoints`);
 }
 
+/** Round 956: same idempotency-key shape as deleteCheckpoint's own fix (round 944) -- a lost response after this restore already committed must replay that exact outcome (migrationWarning included) on retry, not silently re-diff the already-restored spec against itself and come back with no warning. */
 export function restoreCheckpoint(
   projectId: string,
   checkpointId: string,
 ): Promise<{ project: Project; migrationWarning: string | null }> {
-  return request(`/projects/${projectId}/checkpoints/${checkpointId}/restore`, { method: "POST" });
+  return request(`/projects/${projectId}/checkpoints/${checkpointId}/restore`, {
+    method: "POST",
+    headers: { "x-idempotency-key": crypto.randomUUID() },
+  });
 }
 
 export function renameCheckpoint(projectId: string, checkpointId: string, label: string): Promise<{ checkpoint: Checkpoint }> {

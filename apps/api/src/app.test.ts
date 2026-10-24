@@ -9648,6 +9648,98 @@ test("restoring a checkpoint surfaces a migrationWarning when a reused column's 
 });
 
 /**
+ * Round 956: unlike deleteCheckpoint (round 944, a plain 204 with nothing
+ * to get wrong on replay), POST .../restore's response PAYLOAD itself
+ * depends on reading project.spec BEFORE the restore overwrites it. A
+ * response lost in transit after the server already committed used to mean
+ * the retry re-read project.spec as the value THIS SAME restore had just
+ * written (now equal to checkpoint.spec), diffed it against itself, and
+ * came back with migrationWarning: null -- silently downgrading a real
+ * hazard warning to "nothing to report." Reuses the exact same
+ * boolean-retyped-to-text fixture as the migrationWarning test just above,
+ * so the first call is proven to produce a genuine, non-null warning before
+ * the retry is checked against it.
+ */
+test("POST .../restore retried with the same idempotency key after the first attempt already succeeded replays the original migrationWarning, instead of silently re-diffing the already-restored spec against itself", async () => {
+  await withServer(async (baseUrl, db) => {
+    const email = `restore-idem-${randomUUID()}@example.com`;
+    const token = await signup(baseUrl, email);
+    const user = findUserByEmail(db, email)!;
+
+    const specWithBooleanWon: ProductSpec = {
+      summary: "test",
+      personas: [],
+      roles: ["Admin"],
+      entities: [
+        {
+          name: "Deal",
+          fields: [
+            { name: "title", type: "text", required: true },
+            { name: "won", type: "boolean", required: false },
+          ],
+        },
+      ],
+      screens: [],
+      assumptions: [],
+      openQuestions: [],
+    };
+    const specWithTextWon: ProductSpec = {
+      ...specWithBooleanWon,
+      entities: [
+        {
+          name: "Deal",
+          fields: [
+            { name: "title", type: "text", required: true },
+            { name: "won", type: "text", required: false },
+          ],
+        },
+      ],
+    };
+
+    const projectId = randomUUID();
+    insertProject(db, {
+      id: projectId,
+      ownerId: user.id,
+      name: "Deal tracker",
+      description: "A CRM for tracking deals.",
+      spec: specWithBooleanWon,
+    });
+    diffAndMigrate(db, projectId, undefined, specWithBooleanWon);
+    const checkpoint = insertCheckpoint(db, {
+      id: randomUUID(),
+      projectId,
+      label: "Initial build",
+      kind: "build",
+      spec: specWithBooleanWon,
+    });
+    diffAndMigrate(db, projectId, specWithBooleanWon, specWithTextWon);
+    updateProjectSpec(db, projectId, specWithTextWon);
+
+    const headers = { ...authHeaders(token), "x-idempotency-key": "restore-repro-key" };
+    const firstRes = await fetch(`${baseUrl}/api/projects/${projectId}/checkpoints/${checkpoint.id}/restore`, {
+      method: "POST",
+      headers,
+    });
+    assert.equal(firstRes.status, 200);
+    const firstBody = (await firstRes.json()) as { migrationWarning: string | null };
+    assert.ok(firstBody.migrationWarning, "the first call must produce a genuine warning -- the premise this test depends on");
+    assert.match(firstBody.migrationWarning!, /won \(text → boolean\)/);
+
+    const retryRes = await fetch(`${baseUrl}/api/projects/${projectId}/checkpoints/${checkpoint.id}/restore`, {
+      method: "POST",
+      headers,
+    });
+    assert.equal(retryRes.status, 200);
+    const retryBody = (await retryRes.json()) as { migrationWarning: string | null };
+    assert.equal(
+      retryBody.migrationWarning,
+      firstBody.migrationWarning,
+      "a retried restore with the same idempotency key must replay the exact original warning, not silently re-diff the already-restored spec against itself and report nothing",
+    );
+  });
+});
+
+/**
  * Round 929: a checkpoint's own spec is a frozen snapshot from whenever it
  * was taken -- restoring it straight, unmodified, used to silently revert
  * any entity/field label the user customized AFTER that checkpoint via
