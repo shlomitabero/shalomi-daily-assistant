@@ -62,6 +62,34 @@ test("formatAutomationsReport disambiguates two fields that share the same label
 });
 
 /**
+ * Round 952 regression test: the entity-level counterpart of the round-772
+ * test just above -- the exact same bug class round 864 fixed in
+ * AutomationsPanel.tsx's own live rule list (entityLabelOccurrences/
+ * entityDisplayLabel), never ported into this module's own hand-duplicated
+ * entityLabel. Two entities (e.g. an active-customers table and an
+ * archived-customers table) can legally share a label since the Entity
+ * Label editor enforces no uniqueness, same as the Field Label editor --
+ * without disambiguation, this report's "When a 'X' record is..." line
+ * showed two rules targeting two differently-named-but-same-labeled
+ * entities as textually identical, with no way to tell which rule
+ * actually does what.
+ */
+test("formatAutomationsReport disambiguates two entities that share the same label, in the rule's own condition line", () => {
+  const t = (key: string, params?: Record<string, string | number>) => translate("en", key, params);
+  const customerActive: Entity = { name: "CustomerActive", label: "Customer", fields: [{ name: "name", type: "text", required: true }] };
+  const customerArchived: Entity = { name: "CustomerArchived", label: "Customer", fields: [{ name: "name", type: "text", required: true }] };
+  const rule = makeRule({ entityName: "CustomerArchived", trigger: "record_created", fieldName: null, fieldValue: null });
+
+  const report = formatAutomationsReport([rule], [customerActive, customerArchived], "Shop", "en", t);
+
+  assert.match(
+    report,
+    /Customer \(CustomerArchived\)/,
+    "the rule's own targeted entity must be disambiguated by its own unique name, exactly like the live rule list already does",
+  );
+});
+
+/**
  * Round 935: this module's own describeLastRun -- deliberately a
  * hand-duplicated sibling of AutomationsPanel.tsx's own version (see
  * this file's top comment) -- interpolated a send_whatsapp rule's own

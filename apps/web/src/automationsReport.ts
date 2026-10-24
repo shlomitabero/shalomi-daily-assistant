@@ -26,8 +26,39 @@ function ruleEntity(rule: AutomationRuleView, entities: Entity[]): Entity | unde
   return entities.find((e) => e.name === rule.entityName);
 }
 
+// Round 952: mirrors (rather than imports, matching this codebase's
+// established per-surface convention -- see checkpointDiff.ts's/
+// pipeline.ts's own identical pair, and AutomationsPanel.tsx's own
+// entityLabelOccurrences/entityDisplayLabel this is ported from) the
+// entity-level twin of fieldLabel's own field-disambiguation just below.
+// Two entities can legally share a label (the Entity Label editor doesn't
+// enforce uniqueness any more than the Field Label editor does --
+// routes/projects.ts's PATCH /entities/:entityName/label accepts any
+// non-empty string with no collision check against siblings) -- without
+// this, this report's own "When a 'X' record is..." line showed two
+// different rules targeting two differently-named-but-same-labeled
+// entities as textually identical, with no way to tell which rule does
+// what, directly undermining the one thing this shareable report exists
+// for. Round 864 already fixed the identical gap in AutomationsPanel.tsx's
+// own live rule list; this self-contained sibling module never got the
+// matching fix.
+function entityLabelOccurrences(entities: Entity[]): Map<string, number> {
+  const occurrences = new Map<string, number>();
+  for (const e of entities) {
+    const label = e.label ?? e.name;
+    occurrences.set(label, (occurrences.get(label) ?? 0) + 1);
+  }
+  return occurrences;
+}
+
+function entityDisplayLabel(entity: Entity, occurrences: Map<string, number>): string {
+  const label = entity.label ?? entity.name;
+  return (occurrences.get(label) ?? 0) > 1 ? `${label} (${entity.name})` : label;
+}
+
 function entityLabel(rule: AutomationRuleView, entities: Entity[]): string {
-  return ruleEntity(rule, entities)?.label ?? rule.entityName;
+  const entity = ruleEntity(rule, entities);
+  return entity ? entityDisplayLabel(entity, entityLabelOccurrences(entities)) : rule.entityName;
 }
 
 function fieldLabel(rule: AutomationRuleView, fieldName: string | null, entities: Entity[]): string {
