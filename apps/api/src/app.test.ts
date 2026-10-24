@@ -4529,6 +4529,251 @@ test("renaming a role at a now-stale index is rejected (409) instead of silently
   });
 });
 
+/**
+ * Round 943: the sibling entity/field DELETE routes already got
+ * withIdempotency protection in round 941; these six index-addressed
+ * roles/assumptions/personas DELETE and PATCH routes never did. A response
+ * lost in transit after a removal/rename already succeeded means
+ * fetchWithWakeRetry's retry runs assertIndexStillMatches against the
+ * already-shifted/already-renamed list -- throwing a confusing
+ * *_STALE_INDEX for a mutation that, from the user's point of view,
+ * already fully succeeded. Mirrors round 941's own identical fix/test
+ * shape for the entity/field routes, one test per route.
+ */
+test("DELETE .../roles/:index retried with the same idempotency key after the first attempt already succeeded replays the original 200, instead of a stale-index conflict", async () => {
+  await withServer(async (baseUrl) => {
+    const token = await signup(baseUrl, "role-remove-idem@example.com");
+    const createRes = await fetch(`${baseUrl}/api/projects`, {
+      method: "POST",
+      headers: authHeaders(token),
+      body: JSON.stringify({ description: "A CRM with customers and deals, used by a sales manager and a customer portal for self-service." }),
+    });
+    const { project } = (await createRes.json()) as { project: { id: string; spec: { roles: string[] } } };
+    assert.ok(project.spec.roles.length >= 3);
+    const first = project.spec.roles[0];
+
+    const headers = { ...authHeaders(token), "x-idempotency-key": "role-remove-repro-key" };
+    const firstRes = await fetch(`${baseUrl}/api/projects/${project.id}/roles/0`, {
+      method: "DELETE",
+      headers,
+      body: JSON.stringify({ expect: first }),
+    });
+    assert.equal(firstRes.status, 200);
+    const { project: afterFirst } = (await firstRes.json()) as { project: { spec: { roles: string[] } } };
+    assert.ok(!afterFirst.spec.roles.includes(first), "the role must genuinely be gone after the first call");
+
+    const retryRes = await fetch(`${baseUrl}/api/projects/${project.id}/roles/0`, {
+      method: "DELETE",
+      headers,
+      body: JSON.stringify({ expect: first }),
+    });
+    assert.equal(
+      retryRes.status,
+      200,
+      "a retried removal with the same idempotency key must replay the original success, not a stale-index conflict on the already-removed role",
+    );
+    const { project: afterRetry } = (await retryRes.json()) as { project: { spec: { roles: string[] } } };
+    assert.deepEqual(afterRetry.spec.roles, afterFirst.spec.roles, "the replayed response must match the original success exactly");
+  });
+});
+
+test("PATCH .../roles/:index retried with the same idempotency key after the first attempt already succeeded replays the original 200, instead of a stale-index conflict", async () => {
+  await withServer(async (baseUrl) => {
+    const token = await signup(baseUrl, "role-rename-idem@example.com");
+    const createRes = await fetch(`${baseUrl}/api/projects`, {
+      method: "POST",
+      headers: authHeaders(token),
+      body: JSON.stringify({ description: "A CRM with customers and deals." }),
+    });
+    const { project } = (await createRes.json()) as { project: { id: string; spec: { roles: string[] } } };
+    const original = project.spec.roles[0];
+
+    const headers = { ...authHeaders(token), "x-idempotency-key": "role-rename-repro-key" };
+    const firstRes = await fetch(`${baseUrl}/api/projects/${project.id}/roles/0`, {
+      method: "PATCH",
+      headers,
+      body: JSON.stringify({ role: "Renamed Role", expect: original }),
+    });
+    assert.equal(firstRes.status, 200);
+    const { project: afterFirst } = (await firstRes.json()) as { project: { spec: { roles: string[] } } };
+    assert.equal(afterFirst.spec.roles[0], "Renamed Role", "the role must genuinely be renamed after the first call");
+
+    const retryRes = await fetch(`${baseUrl}/api/projects/${project.id}/roles/0`, {
+      method: "PATCH",
+      headers,
+      body: JSON.stringify({ role: "Renamed Role", expect: original }),
+    });
+    assert.equal(
+      retryRes.status,
+      200,
+      "a retried rename with the same idempotency key must replay the original success, not a stale-index conflict against the now-already-renamed role",
+    );
+    const { project: afterRetry } = (await retryRes.json()) as { project: { spec: { roles: string[] } } };
+    assert.deepEqual(afterRetry.spec.roles, afterFirst.spec.roles, "the replayed response must match the original success exactly");
+  });
+});
+
+test("DELETE .../assumptions/:index retried with the same idempotency key after the first attempt already succeeded replays the original 200, instead of a stale-index conflict", async () => {
+  await withServer(async (baseUrl) => {
+    const token = await signup(baseUrl, "assumption-remove-idem@example.com");
+    const createRes = await fetch(`${baseUrl}/api/projects`, {
+      method: "POST",
+      headers: authHeaders(token),
+      body: JSON.stringify({ description: "A CRM with customers and deals." }),
+    });
+    const { project } = (await createRes.json()) as { project: { id: string; spec: { assumptions: string[] } } };
+    assert.ok(project.spec.assumptions.length >= 1);
+    const first = project.spec.assumptions[0];
+
+    const headers = { ...authHeaders(token), "x-idempotency-key": "assumption-remove-repro-key" };
+    const firstRes = await fetch(`${baseUrl}/api/projects/${project.id}/assumptions/0`, {
+      method: "DELETE",
+      headers,
+      body: JSON.stringify({ expect: first }),
+    });
+    assert.equal(firstRes.status, 200);
+    const { project: afterFirst } = (await firstRes.json()) as { project: { spec: { assumptions: string[] } } };
+    assert.ok(!afterFirst.spec.assumptions.includes(first), "the assumption must genuinely be gone after the first call");
+
+    const retryRes = await fetch(`${baseUrl}/api/projects/${project.id}/assumptions/0`, {
+      method: "DELETE",
+      headers,
+      body: JSON.stringify({ expect: first }),
+    });
+    assert.equal(
+      retryRes.status,
+      200,
+      "a retried removal with the same idempotency key must replay the original success, not a stale-index conflict on the already-removed assumption",
+    );
+    const { project: afterRetry } = (await retryRes.json()) as { project: { spec: { assumptions: string[] } } };
+    assert.deepEqual(afterRetry.spec.assumptions, afterFirst.spec.assumptions, "the replayed response must match the original success exactly");
+  });
+});
+
+test("PATCH .../assumptions/:index retried with the same idempotency key after the first attempt already succeeded replays the original 200, instead of a stale-index conflict", async () => {
+  await withServer(async (baseUrl) => {
+    const token = await signup(baseUrl, "assumption-rename-idem@example.com");
+    const createRes = await fetch(`${baseUrl}/api/projects`, {
+      method: "POST",
+      headers: authHeaders(token),
+      body: JSON.stringify({ description: "A CRM with customers and deals." }),
+    });
+    const { project } = (await createRes.json()) as { project: { id: string; spec: { assumptions: string[] } } };
+    const original = project.spec.assumptions[0];
+
+    const headers = { ...authHeaders(token), "x-idempotency-key": "assumption-rename-repro-key" };
+    const firstRes = await fetch(`${baseUrl}/api/projects/${project.id}/assumptions/0`, {
+      method: "PATCH",
+      headers,
+      body: JSON.stringify({ assumption: "Renamed Assumption", expect: original }),
+    });
+    assert.equal(firstRes.status, 200);
+    const { project: afterFirst } = (await firstRes.json()) as { project: { spec: { assumptions: string[] } } };
+    assert.equal(afterFirst.spec.assumptions[0], "Renamed Assumption", "the assumption must genuinely be renamed after the first call");
+
+    const retryRes = await fetch(`${baseUrl}/api/projects/${project.id}/assumptions/0`, {
+      method: "PATCH",
+      headers,
+      body: JSON.stringify({ assumption: "Renamed Assumption", expect: original }),
+    });
+    assert.equal(
+      retryRes.status,
+      200,
+      "a retried rename with the same idempotency key must replay the original success, not a stale-index conflict against the now-already-renamed assumption",
+    );
+    const { project: afterRetry } = (await retryRes.json()) as { project: { spec: { assumptions: string[] } } };
+    assert.deepEqual(afterRetry.spec.assumptions, afterFirst.spec.assumptions, "the replayed response must match the original success exactly");
+  });
+});
+
+test("DELETE .../personas/:index retried with the same idempotency key after the first attempt already succeeded replays the original 200, instead of a stale-index conflict", async () => {
+  await withServer(async (baseUrl) => {
+    const token = await signup(baseUrl, "persona-remove-idem@example.com");
+    const createRes = await fetch(`${baseUrl}/api/projects`, {
+      method: "POST",
+      headers: authHeaders(token),
+      body: JSON.stringify({ description: "A CRM with customers and deals." }),
+    });
+    const { project } = (await createRes.json()) as { project: { id: string } };
+
+    const addRes = await fetch(`${baseUrl}/api/projects/${project.id}/personas`, {
+      method: "POST",
+      headers: { ...authHeaders(token), "x-idempotency-key": "persona-seed-key" },
+      body: JSON.stringify({ persona: "Busy small-business owner" }),
+    });
+    const { project: withPersona } = (await addRes.json()) as { project: { spec: { personas: string[] } } };
+    const index = withPersona.spec.personas.length - 1;
+    const first = withPersona.spec.personas[index];
+
+    const headers = { ...authHeaders(token), "x-idempotency-key": "persona-remove-repro-key" };
+    const firstRes = await fetch(`${baseUrl}/api/projects/${project.id}/personas/${index}`, {
+      method: "DELETE",
+      headers,
+      body: JSON.stringify({ expect: first }),
+    });
+    assert.equal(firstRes.status, 200);
+    const { project: afterFirst } = (await firstRes.json()) as { project: { spec: { personas: string[] } } };
+    assert.ok(!afterFirst.spec.personas.includes(first), "the persona must genuinely be gone after the first call");
+
+    const retryRes = await fetch(`${baseUrl}/api/projects/${project.id}/personas/${index}`, {
+      method: "DELETE",
+      headers,
+      body: JSON.stringify({ expect: first }),
+    });
+    assert.equal(
+      retryRes.status,
+      200,
+      "a retried removal with the same idempotency key must replay the original success, not a stale-index conflict on the already-removed persona",
+    );
+    const { project: afterRetry } = (await retryRes.json()) as { project: { spec: { personas: string[] } } };
+    assert.deepEqual(afterRetry.spec.personas, afterFirst.spec.personas, "the replayed response must match the original success exactly");
+  });
+});
+
+test("PATCH .../personas/:index retried with the same idempotency key after the first attempt already succeeded replays the original 200, instead of a stale-index conflict", async () => {
+  await withServer(async (baseUrl) => {
+    const token = await signup(baseUrl, "persona-rename-idem@example.com");
+    const createRes = await fetch(`${baseUrl}/api/projects`, {
+      method: "POST",
+      headers: authHeaders(token),
+      body: JSON.stringify({ description: "A CRM with customers and deals." }),
+    });
+    const { project } = (await createRes.json()) as { project: { id: string } };
+
+    const addRes = await fetch(`${baseUrl}/api/projects/${project.id}/personas`, {
+      method: "POST",
+      headers: { ...authHeaders(token), "x-idempotency-key": "persona-seed-key-2" },
+      body: JSON.stringify({ persona: "Busy small-business owner" }),
+    });
+    const { project: withPersona } = (await addRes.json()) as { project: { spec: { personas: string[] } } };
+    const index = withPersona.spec.personas.length - 1;
+    const original = withPersona.spec.personas[index];
+
+    const headers = { ...authHeaders(token), "x-idempotency-key": "persona-rename-repro-key" };
+    const firstRes = await fetch(`${baseUrl}/api/projects/${project.id}/personas/${index}`, {
+      method: "PATCH",
+      headers,
+      body: JSON.stringify({ persona: "Renamed Persona", expect: original }),
+    });
+    assert.equal(firstRes.status, 200);
+    const { project: afterFirst } = (await firstRes.json()) as { project: { spec: { personas: string[] } } };
+    assert.equal(afterFirst.spec.personas[index], "Renamed Persona", "the persona must genuinely be renamed after the first call");
+
+    const retryRes = await fetch(`${baseUrl}/api/projects/${project.id}/personas/${index}`, {
+      method: "PATCH",
+      headers,
+      body: JSON.stringify({ persona: "Renamed Persona", expect: original }),
+    });
+    assert.equal(
+      retryRes.status,
+      200,
+      "a retried rename with the same idempotency key must replay the original success, not a stale-index conflict against the now-already-renamed persona",
+    );
+    const { project: afterRetry } = (await retryRes.json()) as { project: { spec: { personas: string[] } } };
+    assert.deepEqual(afterRetry.spec.personas, afterFirst.spec.personas, "the replayed response must match the original success exactly");
+  });
+});
+
 test("deleting an assumption at a now-stale index is rejected (409) instead of silently removing the wrong assumption", async () => {
   await withServer(async (baseUrl) => {
     const token = await signup(baseUrl, "assumption-stale-index1@example.com");

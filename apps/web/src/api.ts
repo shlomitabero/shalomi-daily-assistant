@@ -527,21 +527,35 @@ export function deleteProject(projectId: string): Promise<void> {
  * index. The server rejects the request (409) if `expect` no longer
  * matches instead of mutating the wrong entry -- see assertIndexStillMatches
  * in apps/api/src/routes/projects.ts.
+ *
+ * Round 943: same idempotency-key shape as removeEntity's/removeField's own
+ * fix (round 941) -- a lost response after this role was already removed
+ * must replay that success on retry, not surface a confusing "stale index"
+ * conflict for a removal that, from the user's point of view, already
+ * fully succeeded.
  */
 export function removeRole(projectId: string, index: number, expect: string): Promise<{ project: Project }> {
-  return request(`/projects/${projectId}/roles/${index}`, { method: "DELETE", body: JSON.stringify({ expect }) });
-}
-
-export function removeAssumption(projectId: string, index: number, expect: string): Promise<{ project: Project }> {
-  return request(`/projects/${projectId}/assumptions/${index}`, {
+  return request(`/projects/${projectId}/roles/${index}`, {
     method: "DELETE",
+    headers: { "x-idempotency-key": crypto.randomUUID() },
     body: JSON.stringify({ expect }),
   });
 }
 
+/** Round 943: same idempotency-key shape as removeRole's own fix just above -- see its own comment. */
+export function removeAssumption(projectId: string, index: number, expect: string): Promise<{ project: Project }> {
+  return request(`/projects/${projectId}/assumptions/${index}`, {
+    method: "DELETE",
+    headers: { "x-idempotency-key": crypto.randomUUID() },
+    body: JSON.stringify({ expect }),
+  });
+}
+
+/** Round 943: same idempotency-key shape as removeRole's own fix above -- see its own comment. */
 export function removePersona(projectId: string, index: number, expect: string): Promise<{ project: Project }> {
   return request(`/projects/${projectId}/personas/${index}`, {
     method: "DELETE",
+    headers: { "x-idempotency-key": crypto.randomUUID() },
     body: JSON.stringify({ expect }),
   });
 }
@@ -573,6 +587,7 @@ export function addPersona(projectId: string, persona: string): Promise<{ projec
   });
 }
 
+/** Round 943: same idempotency-key shape as removeRole's own fix above -- a lost response after a successful rename must replay that success on retry, not surface a confusing "stale index" conflict (the retried `expect` would otherwise no longer match the already-renamed value). */
 export function renameRole(
   projectId: string,
   index: number,
@@ -581,10 +596,12 @@ export function renameRole(
 ): Promise<{ project: Project }> {
   return request(`/projects/${projectId}/roles/${index}`, {
     method: "PATCH",
+    headers: { "x-idempotency-key": crypto.randomUUID() },
     body: JSON.stringify({ role, expect }),
   });
 }
 
+/** Round 943: same idempotency-key shape as renameRole's own fix just above -- see its own comment. */
 export function renameAssumption(
   projectId: string,
   index: number,
@@ -593,10 +610,12 @@ export function renameAssumption(
 ): Promise<{ project: Project }> {
   return request(`/projects/${projectId}/assumptions/${index}`, {
     method: "PATCH",
+    headers: { "x-idempotency-key": crypto.randomUUID() },
     body: JSON.stringify({ assumption, expect }),
   });
 }
 
+/** Round 943: same idempotency-key shape as renameRole's own fix above -- see its own comment. */
 export function renamePersona(
   projectId: string,
   index: number,
@@ -605,6 +624,7 @@ export function renamePersona(
 ): Promise<{ project: Project }> {
   return request(`/projects/${projectId}/personas/${index}`, {
     method: "PATCH",
+    headers: { "x-idempotency-key": crypto.randomUUID() },
     body: JSON.stringify({ persona, expect }),
   });
 }

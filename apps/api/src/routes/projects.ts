@@ -2516,6 +2516,19 @@ export function createProjectsRouter(
     }),
   );
 
+  /**
+   * Round 943: same withIdempotency() extension, and the same reason, as
+   * the entity/field DELETE routes above (round 941) -- fetchWithWakeRetry
+   * (apps/web/src/wakeRetry.ts) retries on ANY thrown fetch() error, so a
+   * response lost in transit after this role was already removed meant the
+   * retry's own assertIndexStillMatches ran against the already-shortened
+   * list and threw a confusing ROLE_STALE_INDEX for a removal that, from
+   * the user's point of view, already fully succeeded. parseListIndex/
+   * assertIndexStillMatches and the last-item check all move inside the
+   * withIdempotency callback -- not stay where they were, above -- so a
+   * genuine retry replays the first call's cached success instead of
+   * re-running them against spec state the first call already changed.
+   */
   router.delete(
     "/projects/:id/roles/:index",
     asyncRoute(async (req, res) => {
@@ -2524,17 +2537,22 @@ export function createProjectsRouter(
       if (activePipelines.has(project.id)) {
         throw new HttpError(409, "A build or refine is already running for this project", "PIPELINE_IN_PROGRESS");
       }
-      const index = parseListIndex(req.params.index, project.spec.roles, "ROLE_NOT_FOUND");
-      assertIndexStillMatches(project.spec.roles, index, (req.body as { expect?: unknown })?.expect, "ROLE_STALE_INDEX");
-      if (project.spec.roles.length <= 1) {
-        throw new HttpError(400, "Cannot remove the last remaining role -- at least one role is required", "VALIDATION_ERROR");
-      }
-      const nextSpec = { ...project.spec, roles: project.spec.roles.filter((_, i) => i !== index) };
-      const updated = updateProjectSpec(db, project.id, nextSpec);
-      res.json({ project: updated });
+      const idempotencyKey = req.header("X-Idempotency-Key") || undefined;
+      const { status, body } = await withIdempotency(db, idempotencyKey, req.userId!, `DELETE /projects/${project.id}/roles/${req.params.index}`, async () => {
+        const index = parseListIndex(req.params.index, project.spec.roles, "ROLE_NOT_FOUND");
+        assertIndexStillMatches(project.spec.roles, index, (req.body as { expect?: unknown })?.expect, "ROLE_STALE_INDEX");
+        if (project.spec.roles.length <= 1) {
+          throw new HttpError(400, "Cannot remove the last remaining role -- at least one role is required", "VALIDATION_ERROR");
+        }
+        const nextSpec = { ...project.spec, roles: project.spec.roles.filter((_, i) => i !== index) };
+        const updated = updateProjectSpec(db, project.id, nextSpec);
+        return { status: 200, body: { project: updated } };
+      });
+      res.status(status).json(body);
     }),
   );
 
+  /** Round 943: same withIdempotency() extension as the roles DELETE route just above -- see its own doc comment. */
   router.delete(
     "/projects/:id/assumptions/:index",
     asyncRoute(async (req, res) => {
@@ -2543,20 +2561,35 @@ export function createProjectsRouter(
       if (activePipelines.has(project.id)) {
         throw new HttpError(409, "A build or refine is already running for this project", "PIPELINE_IN_PROGRESS");
       }
-      const index = parseListIndex(req.params.index, project.spec.assumptions, "ASSUMPTION_NOT_FOUND");
-      assertIndexStillMatches(
-        project.spec.assumptions,
-        index,
-        (req.body as { expect?: unknown })?.expect,
-        "ASSUMPTION_STALE_INDEX",
+      const idempotencyKey = req.header("X-Idempotency-Key") || undefined;
+      const { status, body } = await withIdempotency(
+        db,
+        idempotencyKey,
+        req.userId!,
+        `DELETE /projects/${project.id}/assumptions/${req.params.index}`,
+        async () => {
+          const index = parseListIndex(req.params.index, project.spec.assumptions, "ASSUMPTION_NOT_FOUND");
+          assertIndexStillMatches(
+            project.spec.assumptions,
+            index,
+            (req.body as { expect?: unknown })?.expect,
+            "ASSUMPTION_STALE_INDEX",
+          );
+          const nextSpec = { ...project.spec, assumptions: project.spec.assumptions.filter((_, i) => i !== index) };
+          const updated = updateProjectSpec(db, project.id, nextSpec);
+          return { status: 200, body: { project: updated } };
+        },
       );
-      const nextSpec = { ...project.spec, assumptions: project.spec.assumptions.filter((_, i) => i !== index) };
-      const updated = updateProjectSpec(db, project.id, nextSpec);
-      res.json({ project: updated });
+      res.status(status).json(body);
     }),
   );
 
-  /** See POST /projects/:id/personas's own doc comment above -- same extension, same reasoning. No last-item guard: personas carries no `.min(1)` floor. */
+  /**
+   * See POST /projects/:id/personas's own doc comment above -- same
+   * extension, same reasoning. No last-item guard: personas carries no
+   * `.min(1)` floor. Round 943: same withIdempotency() extension as the
+   * roles/assumptions DELETE routes above -- see their own doc comment.
+   */
   router.delete(
     "/projects/:id/personas/:index",
     asyncRoute(async (req, res) => {
@@ -2565,11 +2598,21 @@ export function createProjectsRouter(
       if (activePipelines.has(project.id)) {
         throw new HttpError(409, "A build or refine is already running for this project", "PIPELINE_IN_PROGRESS");
       }
-      const index = parseListIndex(req.params.index, project.spec.personas, "PERSONA_NOT_FOUND");
-      assertIndexStillMatches(project.spec.personas, index, (req.body as { expect?: unknown })?.expect, "PERSONA_STALE_INDEX");
-      const nextSpec = { ...project.spec, personas: project.spec.personas.filter((_, i) => i !== index) };
-      const updated = updateProjectSpec(db, project.id, nextSpec);
-      res.json({ project: updated });
+      const idempotencyKey = req.header("X-Idempotency-Key") || undefined;
+      const { status, body } = await withIdempotency(
+        db,
+        idempotencyKey,
+        req.userId!,
+        `DELETE /projects/${project.id}/personas/${req.params.index}`,
+        async () => {
+          const index = parseListIndex(req.params.index, project.spec.personas, "PERSONA_NOT_FOUND");
+          assertIndexStillMatches(project.spec.personas, index, (req.body as { expect?: unknown })?.expect, "PERSONA_STALE_INDEX");
+          const nextSpec = { ...project.spec, personas: project.spec.personas.filter((_, i) => i !== index) };
+          const updated = updateProjectSpec(db, project.id, nextSpec);
+          return { status: 200, body: { project: updated } };
+        },
+      );
+      res.status(status).json(body);
     }),
   );
 
@@ -2583,6 +2626,19 @@ export function createProjectsRouter(
    * a near-duplicate schema. In-place index replacement via .map, mirroring
    * renameFieldLabel's own PATCH-by-identity approach above.
    */
+  /**
+   * Round 943: same withIdempotency() extension, and the same reason, as
+   * the DELETE roles route above -- a lost response after a successful
+   * rename meant a retry's assertIndexStillMatches compared its `expect`
+   * (the OLD value) against the list which, post-rename, now holds the NEW
+   * value at that index -- the same confusing ROLE_STALE_INDEX for a rename
+   * that already fully succeeded. parseListIndex/assertIndexStillMatches
+   * move inside the callback for the same reason as the DELETE route;
+   * AddRoleSchema's own body-shape validation stays outside, matching the
+   * add-field route's own convention (deterministic, side-effect-free, so
+   * safe to re-run even on a retry that the idempotency wrap short-circuits
+   * before ever reaching here).
+   */
   router.patch(
     "/projects/:id/roles/:index",
     asyncRoute(async (req, res) => {
@@ -2591,18 +2647,23 @@ export function createProjectsRouter(
       if (activePipelines.has(project.id)) {
         throw new HttpError(409, "A build or refine is already running for this project", "PIPELINE_IN_PROGRESS");
       }
-      const index = parseListIndex(req.params.index, project.spec.roles, "ROLE_NOT_FOUND");
-      assertIndexStillMatches(project.spec.roles, index, (req.body as { expect?: unknown })?.expect, "ROLE_STALE_INDEX");
       const parsed = AddRoleSchema.safeParse(req.body);
       if (!parsed.success) {
         throw new HttpError(400, formatValidationError(parsed.error), "VALIDATION_ERROR");
       }
-      const nextSpec = { ...project.spec, roles: project.spec.roles.map((r, i) => (i === index ? parsed.data.role : r)) };
-      const updated = updateProjectSpec(db, project.id, nextSpec);
-      res.json({ project: updated });
+      const idempotencyKey = req.header("X-Idempotency-Key") || undefined;
+      const { status, body } = await withIdempotency(db, idempotencyKey, req.userId!, `PATCH /projects/${project.id}/roles/${req.params.index}`, async () => {
+        const index = parseListIndex(req.params.index, project.spec.roles, "ROLE_NOT_FOUND");
+        assertIndexStillMatches(project.spec.roles, index, (req.body as { expect?: unknown })?.expect, "ROLE_STALE_INDEX");
+        const nextSpec = { ...project.spec, roles: project.spec.roles.map((r, i) => (i === index ? parsed.data.role : r)) };
+        const updated = updateProjectSpec(db, project.id, nextSpec);
+        return { status: 200, body: { project: updated } };
+      });
+      res.status(status).json(body);
     }),
   );
 
+  /** Round 943: same withIdempotency() extension as the roles PATCH route just above -- see its own doc comment. */
   router.patch(
     "/projects/:id/assumptions/:index",
     asyncRoute(async (req, res) => {
@@ -2611,27 +2672,43 @@ export function createProjectsRouter(
       if (activePipelines.has(project.id)) {
         throw new HttpError(409, "A build or refine is already running for this project", "PIPELINE_IN_PROGRESS");
       }
-      const index = parseListIndex(req.params.index, project.spec.assumptions, "ASSUMPTION_NOT_FOUND");
-      assertIndexStillMatches(
-        project.spec.assumptions,
-        index,
-        (req.body as { expect?: unknown })?.expect,
-        "ASSUMPTION_STALE_INDEX",
-      );
       const parsed = AddAssumptionSchema.safeParse(req.body);
       if (!parsed.success) {
         throw new HttpError(400, formatValidationError(parsed.error), "VALIDATION_ERROR");
       }
-      const nextSpec = {
-        ...project.spec,
-        assumptions: project.spec.assumptions.map((a, i) => (i === index ? parsed.data.assumption : a)),
-      };
-      const updated = updateProjectSpec(db, project.id, nextSpec);
-      res.json({ project: updated });
+      const idempotencyKey = req.header("X-Idempotency-Key") || undefined;
+      const { status, body } = await withIdempotency(
+        db,
+        idempotencyKey,
+        req.userId!,
+        `PATCH /projects/${project.id}/assumptions/${req.params.index}`,
+        async () => {
+          const index = parseListIndex(req.params.index, project.spec.assumptions, "ASSUMPTION_NOT_FOUND");
+          assertIndexStillMatches(
+            project.spec.assumptions,
+            index,
+            (req.body as { expect?: unknown })?.expect,
+            "ASSUMPTION_STALE_INDEX",
+          );
+          const nextSpec = {
+            ...project.spec,
+            assumptions: project.spec.assumptions.map((a, i) => (i === index ? parsed.data.assumption : a)),
+          };
+          const updated = updateProjectSpec(db, project.id, nextSpec);
+          return { status: 200, body: { project: updated } };
+        },
+      );
+      res.status(status).json(body);
     }),
   );
 
-  /** See the roles/assumptions PATCH routes' own doc comment above -- same extension, same reasoning. Reuses AddPersonaSchema verbatim for the rename body, same as roles/assumptions reuse their own add schemas. */
+  /**
+   * See the roles/assumptions PATCH routes' own doc comment above -- same
+   * extension, same reasoning. Reuses AddPersonaSchema verbatim for the
+   * rename body, same as roles/assumptions reuse their own add schemas.
+   * Round 943: same withIdempotency() extension as the roles/assumptions
+   * PATCH routes above -- see their own doc comment.
+   */
   router.patch(
     "/projects/:id/personas/:index",
     asyncRoute(async (req, res) => {
@@ -2640,18 +2717,28 @@ export function createProjectsRouter(
       if (activePipelines.has(project.id)) {
         throw new HttpError(409, "A build or refine is already running for this project", "PIPELINE_IN_PROGRESS");
       }
-      const index = parseListIndex(req.params.index, project.spec.personas, "PERSONA_NOT_FOUND");
-      assertIndexStillMatches(project.spec.personas, index, (req.body as { expect?: unknown })?.expect, "PERSONA_STALE_INDEX");
       const parsed = AddPersonaSchema.safeParse(req.body);
       if (!parsed.success) {
         throw new HttpError(400, formatValidationError(parsed.error), "VALIDATION_ERROR");
       }
-      const nextSpec = {
-        ...project.spec,
-        personas: project.spec.personas.map((p, i) => (i === index ? parsed.data.persona : p)),
-      };
-      const updated = updateProjectSpec(db, project.id, nextSpec);
-      res.json({ project: updated });
+      const idempotencyKey = req.header("X-Idempotency-Key") || undefined;
+      const { status, body } = await withIdempotency(
+        db,
+        idempotencyKey,
+        req.userId!,
+        `PATCH /projects/${project.id}/personas/${req.params.index}`,
+        async () => {
+          const index = parseListIndex(req.params.index, project.spec.personas, "PERSONA_NOT_FOUND");
+          assertIndexStillMatches(project.spec.personas, index, (req.body as { expect?: unknown })?.expect, "PERSONA_STALE_INDEX");
+          const nextSpec = {
+            ...project.spec,
+            personas: project.spec.personas.map((p, i) => (i === index ? parsed.data.persona : p)),
+          };
+          const updated = updateProjectSpec(db, project.id, nextSpec);
+          return { status: 200, body: { project: updated } };
+        },
+      );
+      res.status(status).json(body);
     }),
   );
 
