@@ -755,6 +755,98 @@ test("generated server.js rejects an object or array value for a text field, ins
 });
 
 /**
+ * Regression test (round 910): the exported standalone app's own
+ * coerce() never got round 908's "file" field write-time validation --
+ * round 908's own writeup explicitly flagged this as left open (no
+ * coerceValue-equivalent write-time funnel exists in this generated
+ * server at all), not as a deliberate design decision, so a file field's
+ * value fell straight through to the generic text/longtext fallthrough
+ * with zero structural check, unlike every other field type right above
+ * it in coerce(). parseFileFieldValue's own round-908 scheme check
+ * already stops a bad url from ever being rendered as a clickable link,
+ * so this was a data-integrity/error-reporting gap (a silent 201 on
+ * garbage input) rather than live XSS -- the same class of gap this
+ * function's own number/boolean/enum/date branches above all exist to
+ * close for their own types. Reproduced here against a real spawned
+ * server, the same standard every other coerce() test above uses.
+ */
+test("generated server.js rejects a malformed or scripted-scheme file field descriptor, instead of silently storing it", async () => {
+  const applicantProject: Project = {
+    ...project,
+    spec: {
+      ...project.spec,
+      entities: [
+        {
+          name: "Applicant",
+          fields: [{ name: "resume", type: "file", required: false }],
+        },
+      ],
+    },
+  };
+  const files = generateExportFiles(applicantProject);
+  const serverJs = files.find((f) => f.path === "server.js")!.content;
+
+  const dir = mkdtempSync(path.join(tmpdir(), "codegen-file-coerce-test-"));
+  const repoRoot = path.resolve(import.meta.dirname, "../../..");
+  symlinkSync(path.join(repoRoot, "node_modules"), path.join(dir, "node_modules"));
+  writeFileSync(path.join(dir, "server.js"), serverJs);
+
+  const port = 44000 + Math.floor(Math.random() * 5000);
+  const child = spawn(process.execPath, ["--experimental-sqlite", "server.js"], {
+    cwd: dir,
+    env: { ...process.env, PORT: String(port) },
+    stdio: ["ignore", "pipe", "pipe"],
+  });
+  let stderr = "";
+  child.stderr.on("data", (chunk) => {
+    stderr += chunk.toString();
+  });
+
+  try {
+    const deadline = Date.now() + 5000;
+    let lastErr: unknown;
+    while (Date.now() < deadline) {
+      if (child.exitCode !== null) {
+        throw new Error(`server.js exited early (code ${child.exitCode}):\n${stderr}`);
+      }
+      try {
+        await fetch(`http://localhost:${port}/api/entities`);
+        break;
+      } catch (err) {
+        lastErr = err;
+        await new Promise((r) => setTimeout(r, 100));
+      }
+    }
+    if (child.exitCode !== null) throw lastErr instanceof Error ? lastErr : new Error(String(lastErr));
+
+    const validRes = await fetch(`http://localhost:${port}/api/Applicant`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ resume: JSON.stringify({ url: "/api/uploads/proj1/Applicant/abc.pdf", name: "resume.pdf", size: 1, mimeType: "" }) }),
+    });
+    assert.equal(validRes.status, 201, "a real upload-shaped descriptor must still be accepted");
+
+    const badDescriptors = [
+      JSON.stringify({ url: "javascript:alert(1)", name: "x", size: 0, mimeType: "" }),
+      JSON.stringify({ url: "data:text/html,<script>alert(1)</script>", name: "x", size: 0, mimeType: "" }),
+      JSON.stringify({ name: "no url at all" }),
+      "not even json",
+    ];
+    for (const bad of badDescriptors) {
+      const badRes = await fetch(`http://localhost:${port}/api/Applicant`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ resume: bad }),
+      });
+      assert.equal(badRes.status, 400, `expected ${bad} to be rejected instead of silently stored`);
+    }
+  } finally {
+    child.kill();
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+/**
  * Regression test: the exported standalone app's own coerce() -- same
  * copy-pasted logic as packages/db/src/repository.ts's coerceValue, round
  * 408 found and fixed in both places -- only checked a value against the

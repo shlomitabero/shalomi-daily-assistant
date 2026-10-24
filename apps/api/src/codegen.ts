@@ -437,6 +437,32 @@ function coerce(field, value) {
     if (!isValidDate(str)) throw new Error(\`Field "\${field.name}" must be a valid date in YYYY-MM-DD format\`);
     return str;
   }
+  if (field.type === "file") {
+    // Round 910: coerceValue (packages/db/src/repository.ts) got this
+    // same check in round 908, but this generated server's own coerce()
+    // -- round 908's own writeup explicitly flagged this as left open,
+    // not as a design decision -- never did. Without it, any client with
+    // API access to this exported app could POST/PATCH a file field
+    // directly with a malformed descriptor (missing url, not even JSON,
+    // or a scheme this server never generates) and get a clean 201/200
+    // instead of the same clear 400 every other field type already gets
+    // for bad input. parseFileFieldValue's own scheme check (round 908,
+    // just above) already stops a bad url from being rendered as a
+    // clickable link, so this isn't live XSS -- it's the same
+    // data-integrity gap this function's own number/boolean/enum/date
+    // branches above all exist to close for their own types.
+    const str = String(value);
+    let parsed;
+    try {
+      parsed = JSON.parse(str);
+    } catch {
+      throw new Error(\`Field "\${field.name}" must be a valid file descriptor\`);
+    }
+    if (typeof parsed?.url !== "string" || !/^\\/api\\/uploads\\/[^/]+\\/[^/]+\\/[^/]+$/.test(parsed.url)) {
+      throw new Error(\`Field "\${field.name}" must be a valid file descriptor\`);
+    }
+    return str;
+  }
   if (typeof value !== "string" && typeof value !== "number" && typeof value !== "boolean") {
     throw new Error(\`Field "\${field.name}" must be a string\`);
   }
