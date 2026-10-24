@@ -149,6 +149,45 @@ function entityDisplayLabel(entity: Entity, occurrences: Map<string, number>): s
   return (occurrences.get(label) ?? 0) > 1 ? `${label} (${entity.name})` : label;
 }
 
+/**
+ * Round 915: `EntityLabelEditor`/`FieldLabelEditor` (EntityPanel.tsx) let a
+ * user rename an entity's or field's display label post-build -- but
+ * SpecProvider.generate (both HeuristicSpecProvider and
+ * AnthropicSpecProvider) has no `previousSpec` parameter at all, so it has
+ * no way to know a label was ever customized. Every `/refine` call
+ * regenerates the WHOLE spec from `combinedDescription` alone, and
+ * `runBuildPipeline` persists that freshly generated spec wholesale via
+ * `updateProjectSpec` with no reconciliation step anywhere -- so the very
+ * next refine after a label rename (an entirely unrelated one, e.g. "add a
+ * notes field") silently discarded the rename, with no hazard warning
+ * (`describeImpactHazards` below only ever covers removed fields/tightened
+ * rules, never a reverted label). Mirrors `diffAndMigrate`'s own
+ * name-matching convention (packages/db/src/migrate.ts) -- an entity/field
+ * that survives a refine under the same name keeps its own prior label
+ * (and an enum field's own prior enumLabels), the same "additive, never
+ * silently lose something the user already has" principle migrations
+ * themselves already follow for the underlying schema. Mutates `nextSpec`
+ * in place (the same convention `diffAndMigrate` itself follows for
+ * `nextSpec.entities[].fields[].relationTo` normalization), since the
+ * caller never reads the pre-mutation object again.
+ */
+export function carryForwardLabels(previousSpec: ProductSpec | undefined, nextSpec: ProductSpec): void {
+  if (!previousSpec) return;
+  const previousEntities = new Map(previousSpec.entities.map((e) => [e.name, e]));
+  for (const entity of nextSpec.entities) {
+    const prevEntity = previousEntities.get(entity.name);
+    if (!prevEntity) continue;
+    if (prevEntity.label !== undefined) entity.label = prevEntity.label;
+    const prevFields = new Map(prevEntity.fields.map((f) => [f.name, f]));
+    for (const field of entity.fields) {
+      const prevField = prevFields.get(field.name);
+      if (!prevField) continue;
+      if (prevField.label !== undefined) field.label = prevField.label;
+      if (prevField.enumLabels !== undefined) field.enumLabels = prevField.enumLabels;
+    }
+  }
+}
+
 export function computeImpact(previousSpec: ProductSpec | undefined, nextSpec: ProductSpec): ImpactSummary {
   const previousEntities = new Map((previousSpec?.entities ?? []).map((e) => [e.name, e]));
   const nextEntityNames = new Set(nextSpec.entities.map((e) => e.name));
@@ -427,6 +466,11 @@ export async function* runBuildPipeline(
 ): AsyncGenerator<AgentStepEvent> {
   const { previousSpec, changeLabel, providerName } = options;
   let nextSpec = options.nextSpec;
+  // Preserves any entity/field label (and enum label) a user customized
+  // post-build, which the freshly generated nextSpec otherwise silently
+  // overwrites on every refine -- see carryForwardLabels's own doc
+  // comment above. A no-op for a plain /build (previousSpec is undefined).
+  carryForwardLabels(previousSpec, nextSpec);
 
   yield {
     agent: "Architect",
@@ -464,6 +508,10 @@ export async function* runBuildPipeline(
     let fixedSpec: ProductSpec;
     try {
       fixedSpec = await requestSpecFix(nextSpec, dbError, { apiKey, model: process.env.ANTHROPIC_MODEL });
+      // requestSpecFix is itself a fresh AI call with no more knowledge of
+      // a user's customized labels than generateSpec had -- carries them
+      // forward again here, same as the initial nextSpec just above.
+      carryForwardLabels(previousSpec, fixedSpec);
       changes = diffAndMigrate(db, project.id, previousSpec, fixedSpec);
     } catch (fixErr) {
       yield {

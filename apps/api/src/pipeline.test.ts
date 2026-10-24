@@ -12,7 +12,7 @@ import {
   listRecords,
   openDatabase,
 } from "@forge/db";
-import { describeImpactHazards, runBuildPipeline, runQaChecks, runSecurityScan } from "./pipeline.js";
+import { carryForwardLabels, describeImpactHazards, runBuildPipeline, runQaChecks, runSecurityScan } from "./pipeline.js";
 
 const brokenSpec: ProductSpec = {
   summary: "test",
@@ -1681,4 +1681,135 @@ test("describeImpactHazards returns an empty string when nothing structurally ha
 
   assert.equal(describeImpactHazards(previousSpec, previousSpec), "", "identical specs must report no hazards");
   assert.equal(describeImpactHazards(previousSpec, nextSpec), "", "a purely additive change (a new optional field) must report no hazards");
+});
+
+/**
+ * Round 915's finding: SpecProvider.generate (both HeuristicSpecProvider
+ * and AnthropicSpecProvider) has no previousSpec parameter at all, so a
+ * freshly regenerated nextSpec never carries a user's post-build
+ * EntityLabelEditor/FieldLabelEditor customization forward -- every
+ * /refine silently reverted it, with no hazard warning anywhere.
+ * carryForwardLabels mirrors diffAndMigrate's own name-matching
+ * convention: an entity/field that survives a refine under the same name
+ * keeps its own prior label (and an enum field's own prior enumLabels).
+ */
+test("carryForwardLabels keeps a surviving entity's/field's own prior label (and an enum field's own prior enumLabels), but never invents one for a genuinely new entity/field", () => {
+  const previousSpec: ProductSpec = {
+    summary: "test",
+    personas: [],
+    roles: ["Admin"],
+    screens: [],
+    assumptions: [],
+    openQuestions: [],
+    entities: [
+      {
+        name: "Customer",
+        label: "Clients",
+        fields: [
+          { name: "name", type: "text", required: true, label: "Full Name" },
+          { name: "status", type: "enum", required: true, enumValues: ["Active", "Inactive"], enumLabels: { Active: "פעיל", Inactive: "לא פעיל" } },
+        ],
+      },
+    ],
+  };
+  // Simulates a fresh regeneration: the same two entities/fields by name,
+  // but with none of the customized labels (exactly what
+  // HeuristicSpecProvider/AnthropicSpecProvider actually produce, since
+  // neither has any way to know about a prior customization), plus one
+  // genuinely NEW entity and NEW field this refine actually added.
+  const nextSpec: ProductSpec = {
+    ...previousSpec,
+    entities: [
+      {
+        name: "Customer",
+        fields: [
+          { name: "name", type: "text", required: true },
+          { name: "status", type: "enum", required: true, enumValues: ["Active", "Inactive"] },
+          { name: "notes", type: "longtext", required: false },
+        ],
+      },
+      { name: "Order", fields: [{ name: "total", type: "number", required: true }] },
+    ],
+  };
+
+  carryForwardLabels(previousSpec, nextSpec);
+
+  const customer = nextSpec.entities.find((e) => e.name === "Customer")!;
+  assert.equal(customer.label, "Clients", "a surviving entity must keep its own prior label");
+  const nameField = customer.fields.find((f) => f.name === "name")!;
+  assert.equal(nameField.label, "Full Name", "a surviving field must keep its own prior label");
+  const statusField = customer.fields.find((f) => f.name === "status")!;
+  assert.deepEqual(statusField.enumLabels, { Active: "פעיל", Inactive: "לא פעיל" }, "a surviving enum field must keep its own prior enumLabels");
+
+  const notesField = customer.fields.find((f) => f.name === "notes")!;
+  assert.equal(notesField.label, undefined, "a genuinely NEW field has no prior label to carry forward");
+  const order = nextSpec.entities.find((e) => e.name === "Order")!;
+  assert.equal(order.label, undefined, "a genuinely NEW entity has no prior label to carry forward");
+});
+
+test("carryForwardLabels is a harmless no-op for a plain /build (no previousSpec)", () => {
+  const nextSpec: ProductSpec = {
+    summary: "test",
+    personas: [],
+    roles: ["Admin"],
+    screens: [],
+    assumptions: [],
+    openQuestions: [],
+    entities: [{ name: "Customer", fields: [{ name: "name", type: "text", required: true }] }],
+  };
+  carryForwardLabels(undefined, nextSpec);
+  assert.equal(nextSpec.entities[0].label, undefined);
+});
+
+/**
+ * End-to-end through the real pipeline (not just the unit-level function
+ * above): a label set via EntityLabelEditor's own real route survives an
+ * unrelated refine that regenerates the entity from scratch with no label
+ * at all -- exactly the reachable sequence round 915 found: rename an
+ * entity's label, then make ANY unrelated refine, and the rename used to
+ * vanish silently.
+ */
+test("a real refine through runBuildPipeline preserves an entity's previously-set label, even though the freshly regenerated nextSpec has none", async () => {
+  const spec: ProductSpec = {
+    summary: "test",
+    personas: [],
+    roles: ["Admin"],
+    screens: [],
+    assumptions: [],
+    openQuestions: [],
+    entities: [{ name: "Customer", label: "Clients", fields: [{ name: "name", type: "text", required: true }] }],
+  };
+  const db = openDatabase(":memory:");
+  ensureProjectsTable(db);
+  ensureCheckpointsTable(db);
+  const project = insertProject(db, { id: "proj1", ownerId: "user1", name: "test", description: "test", spec });
+  await collect(runBuildPipeline(db, project, { nextSpec: spec, changeLabel: "Initial build" }));
+
+  // The freshly regenerated spec for this refine, exactly as the real
+  // HeuristicSpecProvider/AnthropicSpecProvider would actually produce it
+  // -- the same entity by name, a genuinely new field, but no label at
+  // all (neither provider has any way to know "Clients" was ever set).
+  const refinedSpec: ProductSpec = {
+    ...spec,
+    entities: [
+      {
+        name: "Customer",
+        fields: [
+          { name: "name", type: "text", required: true },
+          { name: "notes", type: "longtext", required: false },
+        ],
+      },
+    ],
+  };
+  const events = await collect(runBuildPipeline(db, project, { previousSpec: spec, nextSpec: refinedSpec, changeLabel: "Refine: add notes" }));
+
+  const forgeEvent = events.find((e) => e.agent === "Forge");
+  assert.ok(forgeEvent, "pipeline should reach the Forge finalize step");
+  assert.equal(forgeEvent!.status, "success");
+  const finalProject = (forgeEvent!.detail as { project: Project }).project;
+  assert.equal(
+    finalProject.spec.entities[0].label,
+    "Clients",
+    "the previously-set label must survive this unrelated refine, not silently revert to unset",
+  );
 });
