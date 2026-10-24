@@ -327,13 +327,16 @@ export function runQaChecks(
       // REQUIRED file field: insertRecord would reject validRecord itself,
       // before recordMissingThisField below ever deletes the field this
       // loop is actually testing, for the unrelated file field instead. A
-      // placeholder value (coerceValue's own "file" case stores it as a
-      // plain string with no shape validation at all, same as every other
-      // unrecognized type) is never submitted for real -- it only fills in
+      // placeholder value is never submitted for real -- it only fills in
       // a SIBLING required field here, so testing that same file field
       // itself still correctly deletes it below and still gets rejected.
+      // Round 908: coerceValue's "file" case now rejects any url that
+      // isn't this server's own /api/uploads/<project>/<entity>/<filename>
+      // shape, so the placeholder's url must match that shape too (an
+      // empty string, as used before round 908, is now itself rejected).
       for (const f of entity.fields) {
-        if (f.type === "file" && f.required) validRecord[f.name] = JSON.stringify({ url: "", name: "placeholder", size: 0, mimeType: "" });
+        if (f.type === "file" && f.required)
+          validRecord[f.name] = JSON.stringify({ url: "/api/uploads/qa-placeholder/qa-placeholder/placeholder.txt", name: "placeholder", size: 0, mimeType: "" });
       }
       for (const requiredField of requiredFields) {
         const recordMissingThisField = { ...validRecord };

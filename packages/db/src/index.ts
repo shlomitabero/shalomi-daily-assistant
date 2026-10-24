@@ -73,7 +73,7 @@ export {
   recordEntityNameInHistory,
 } from "./checkpoints.js";
 export { generateSeedRecords, orderForSeeding } from "./seed.js";
-export { tableNameFor, assertSafeIdentifier } from "./identifiers.js";
+export { tableNameFor, assertSafeIdentifier, quoteIdentifier } from "./identifiers.js";
 export {
   ensureWhatsAppConnectionsTable,
   getWhatsAppConnection,

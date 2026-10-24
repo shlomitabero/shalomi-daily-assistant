@@ -20,6 +20,18 @@ export interface FileFieldValue {
   mimeType: string;
 }
 
+// Round 908: the only `url` shape the server itself ever generates for a
+// file field (createUploadMiddleware's response, routes/projects.ts) is
+// its own /api/uploads/<projectId>/<entityName>/<filename> route -- and
+// since round 908, coerceValue (packages/db/src/repository.ts) rejects
+// any other shape at write time. This mirrors that same check here, as
+// defense-in-depth against a record whose file field was written before
+// that guard shipped: both call sites below render `url` as a real,
+// clickable `<a href>`/`<img src>` with no scheme check of their own, so
+// an un-caught "javascript:..."/"data:..." value would be a stored-XSS
+// primitive against whichever collaborator later clicks the file link.
+const SAFE_FILE_URL = /^\/api\/uploads\/[^/]+\/[^/]+\/[^/]+$/;
+
 /**
  * A `file` field's stored value is a JSON-encoded descriptor (set by the
  * upload endpoint's response, see api.ts's uploadRecordFile) rather than a
@@ -32,7 +44,7 @@ export function parseFileFieldValue(value: unknown): FileFieldValue | null {
   if (typeof value !== "string" || value === "") return null;
   try {
     const parsed = JSON.parse(value) as Partial<FileFieldValue>;
-    if (typeof parsed.url === "string" && typeof parsed.name === "string") {
+    if (typeof parsed.url === "string" && SAFE_FILE_URL.test(parsed.url) && typeof parsed.name === "string") {
       return { url: parsed.url, name: parsed.name, size: Number(parsed.size) || 0, mimeType: String(parsed.mimeType ?? "") };
     }
   } catch {

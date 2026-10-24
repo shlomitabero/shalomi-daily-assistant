@@ -1811,12 +1811,23 @@ function getDateUrgency(value, today) {
 // with no file chosen yet, or one from before this field existed, stores
 // "" or null instead, so this returns null rather than throwing on
 // anything that doesn't parse as the expected shape. Mirrors the live
-// preview's own entityFormatting.ts parseFileFieldValue.
+// preview's own entityFormatting.ts parseFileFieldValue. Round 908: also
+// requires \`url\` to match this exported app's own /api/uploads/<project>/
+// <entity>/<filename> shape (the only one its own server ever generates)
+// as defense-in-depth against a "javascript:..."/"data:..." descriptor
+// stored directly through this app's own record create/update API --
+// unlike the live Forge AI preview's own server, this one has no shared
+// coerceValue-style write-time funnel to reject it at write time instead,
+// and both call sites below render \`url\` as a real, clickable
+// <a href>/<img src> with no scheme check of their own. The check is kept
+// inline (not a separate top-level const) so every regex-based extraction
+// of this function's own source text in codegen.test.ts keeps working
+// without also needing to supply a second, now-missing free variable.
 function parseFileFieldValue(value) {
   if (typeof value !== "string" || value === "") return null;
   try {
     const parsed = JSON.parse(value);
-    if (typeof parsed.url === "string" && typeof parsed.name === "string") {
+    if (typeof parsed.url === "string" && /^\\/api\\/uploads\\/[^/]+\\/[^/]+\\/[^/]+$/.test(parsed.url) && typeof parsed.name === "string") {
       return { url: parsed.url, name: parsed.name, size: Number(parsed.size) || 0, mimeType: String(parsed.mimeType || "") };
     }
   } catch {

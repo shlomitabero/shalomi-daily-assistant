@@ -101,20 +101,46 @@ function coerceValue(field: Field, raw: unknown): string | number | null {
       }
       return str;
     }
+    case "file": {
+      // Round 908: a file field's stored value is an otherwise-
+      // unvalidated, client-settable JSON descriptor -- nothing ties it
+      // to an actual upload, since a normal record create/update call can
+      // set this field directly, bypassing the real
+      // /fields/:fieldName/upload endpoint entirely. EntityPanel.tsx (and
+      // codegen.ts's own duplicated twin) render this descriptor's `url`
+      // as a real, clickable `<a href>`/`<img src>` with no scheme check
+      // anywhere -- a crafted "javascript:..."/"data:..." url stored by
+      // one collaborator would run in whichever OTHER collaborator's
+      // browser later clicks the resulting file link, a stored-XSS/
+      // session-theft primitive reachable by any editor collaborator
+      // against any other collaborator or the owner. The only `url` shape
+      // this server itself ever generates is createUploadMiddleware's own
+      // /api/uploads/<projectId>/<entityName>/<filename>
+      // (routes/projects.ts's upload route response) -- reject anything
+      // else here, the one place every real record write (create or
+      // update, not just the upload route) already funnels through.
+      const str = String(raw);
+      let parsed: unknown;
+      try {
+        parsed = JSON.parse(str);
+      } catch {
+        throw new ValidationError(`Field "${field.name}" must be a valid file descriptor`);
+      }
+      const url = (parsed as { url?: unknown } | null)?.url;
+      if (typeof url !== "string" || !/^\/api\/uploads\/[^/]+\/[^/]+\/[^/]+$/.test(url)) {
+        throw new ValidationError(`Field "${field.name}" must be a valid file descriptor`);
+      }
+      return str;
+    }
     default: {
-      // text / longtext / file: unlike every branch above, this used to
-      // have no rejection path at all -- String(raw) on an object or array
-      // (e.g. a stray `{ foo: "bar" }` or `[1, 2, 3]` body, not valid JSON
-      // for any of these fields) silently stringifies it to "[object
-      // Object]" or "1,2,3" and writes that garbage with the request still
-      // reporting success, instead of throwing the same ValidationError
-      // every not-really-a-string input already gets for number/boolean/
-      // enum/date. A legitimate `file` field value is always a plain
-      // string by the time it reaches here -- the upload route's own doc
-      // comment confirms the caller PATCHes/POSTs the JSON descriptor
-      // already JSON.stringify'd, exactly like every other record write --
-      // so rejecting a non-string raw value here can never reject a real
-      // upload.
+      // text / longtext (file has its own case above, round 908): unlike
+      // every branch above, this used to have no rejection path at all --
+      // String(raw) on an object or array (e.g. a stray `{ foo: "bar" }`
+      // or `[1, 2, 3]` body, not valid JSON for either of these fields)
+      // silently stringifies it to "[object Object]" or "1,2,3" and
+      // writes that garbage with the request still reporting success,
+      // instead of throwing the same ValidationError every not-really-a-
+      // string input already gets for number/boolean/enum/date.
       if (typeof raw !== "string" && typeof raw !== "number" && typeof raw !== "boolean") {
         throw new ValidationError(`Field "${field.name}" must be a string`);
       }
