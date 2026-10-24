@@ -1047,6 +1047,49 @@ test("Customer's 'client'/'קליינט' keywords don't spuriously match the sof
 });
 
 /**
+ * Regression test for a real bug found in round 890: the identical
+ * grammatical-polysemy shape rounds 888/889 fixed for "patient"/"client",
+ * but on Review's bare Hebrew "ביקורת"/"ביקורות" keywords. Both are true
+ * Hebrew homographs -- the identical spelling also means "audit" (an
+ * internal/financial/regulatory-compliance process: "ביקורת פנים"
+ * [internal audit], "ביקורת חשבונות" [accounting audit], "ביקורת
+ * תקנים"/"ביקורת איכות"/"ביקורת בטיחות" [standards/quality/safety audit]),
+ * with zero connection to customer feedback. An unguarded bare substring
+ * match fired on the audit sense exactly as readily as the review sense,
+ * fabricating a star-rating/moderation Review entity for an app that is
+ * actually about managing compliance findings, confirmed empirically
+ * before fixing. Fixed with a single regex covering both the singular and
+ * plural root, excluding only the specific audit co-occurrences actually
+ * found, while confirming ordinary customer-review usage (singular and
+ * plural) still matches.
+ */
+test("Review's 'ביקורת'/'ביקורות' keywords don't spuriously match the audit sense, and ordinary customer-review usage still matches", async () => {
+  const provider = new HeuristicSpecProvider();
+
+  const internalAudit = await provider.generate("אפליקציה לניהול ביקורת פנים בחברה, עם ממצאים ותיקון ליקויים.", true);
+  assert.ok(!internalAudit.entities.some((e) => e.name === "Review"), "'ביקורת פנים' (internal audit) must not spuriously match Review");
+
+  const accountingAudit = await provider.generate("מערכת לניהול ביקורת חשבונות שנתית במשרד רואי חשבון.", true);
+  assert.ok(!accountingAudit.entities.some((e) => e.name === "Review"), "'ביקורת חשבונות' (accounting audit) must not spuriously match Review");
+
+  const standardsAudit = await provider.generate("אפליקציה למעקב אחר ביקורת תקנים ורגולציה בבית חולים.", true);
+  assert.ok(!standardsAudit.entities.some((e) => e.name === "Review"), "'ביקורת תקנים' (standards audit) must not spuriously match Review");
+
+  const qualityAudit = await provider.generate("אפליקציה לניהול ביקורת איכות במפעל.", true);
+  assert.ok(!qualityAudit.entities.some((e) => e.name === "Review"), "'ביקורת איכות' (quality audit) must not spuriously match Review");
+
+  const safetyAudit = await provider.generate("אפליקציה לניהול ביקורת בטיחות באתרי בנייה.", true);
+  assert.ok(!safetyAudit.entities.some((e) => e.name === "Review"), "'ביקורת בטיחות' (safety audit) must not spuriously match Review");
+
+  // Ordinary customer-review usage, singular and plural, must still match.
+  const realFeedback = await provider.generate("אפליקציה לניהול ביקורות ומשוב מלקוחות על המוצרים שלנו.", true);
+  assert.ok(realFeedback.entities.some((e) => e.name === "Review"));
+
+  const restaurantReviews = await provider.generate("אתר לכתיבת ביקורות על מסעדות.", true);
+  assert.ok(restaurantReviews.entities.some((e) => e.name === "Review"));
+});
+
+/**
  * Regression test for a real bug found in round 446: Employee's bare
  * "worker" keyword (used both in DOMAIN_ENTITY_RULES and ROLE_RULES) is a
  * substring of "coworker" -- an ordinary word in a plain personal

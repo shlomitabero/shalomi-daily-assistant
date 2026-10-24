@@ -1397,9 +1397,31 @@ export const DOMAIN_ENTITY_RULES: DomainEntityRule[] = [
     // own header warns about (same reason Event's own keywords below use
     // "event planning"/"conference" instead of bare "event"). The
     // multi-word phrases here don't have that problem.
+    //
+    // Round 890: "ביקורת"/"ביקורות" are true Hebrew homographs, the same
+    // grammatical-polysemy shape rounds 888/889 fixed for "patient"/
+    // "client" -- the identical spelling also means "audit" (an internal/
+    // financial/regulatory-compliance process, e.g. "ביקורת פנים" =
+    // internal audit, "ביקורת חשבונות" = accounting audit, "ביקורת
+    // תקנים"/"ביקורת איכות"/"ביקורת בטיחות" = standards/quality/safety
+    // audit), with zero connection to customer feedback. An unguarded
+    // bare substring match fired on the audit sense exactly as readily
+    // as the review sense (confirmed empirically before fixing: a
+    // company-internal-audit description, an accounting-audit
+    // description, and a regulatory/standards-audit description all
+    // produced only `[Review]`, fabricating a star-rating/moderation
+    // entity for an app with nothing to do with customer reviews). Fixed
+    // with a single regex covering both the singular and plural root
+    // (the plural replaces the final ת with ות, so "ביקורת" is NOT a
+    // substring of "ביקורות" -- same ת→ות shape round 576's "עמותה"/
+    // "עמותות" fix needed, confirmed these are two separate keyword
+    // strings in the pre-fix code above), excluding only the specific
+    // audit co-occurrences actually found. "ביקור" (visit) alone, with
+    // neither the ת nor ות suffix, still correctly never matches.
     keywords: [
       "customer review", "customer feedback", "product review", "testimonial",
-      "ביקורת", "ביקורות", "חוות דעת", "משוב", "דירוג",
+      /ביקור(?:ות|ת)(?!\s*(?:פנים|פנימית|חשבונות|תקנים|תקן|איכות|בטיחות|מס|רגולטורית|חוקית))/,
+      "חוות דעת", "משוב", "דירוג",
     ],
     labelHe: "ביקורות",
     descriptionHe: "ביקורת או משוב שהשאיר לקוח.",
