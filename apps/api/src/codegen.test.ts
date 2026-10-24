@@ -9852,6 +9852,85 @@ test("the exported EntityView's CSV export (with includeId) and import round-tri
 });
 
 /**
+ * Round 942: the live preview's own fix for the same gap (apps/web/src/
+ * entityFormatting.ts) applies identically here -- this exported, standalone
+ * app's own independent copy of buildImportRecords trusted a bare "id"
+ * header column unconditionally, with no way to distinguish this app's own
+ * re-exported CSV from a genuinely external spreadsheet's own unrelated "ID"
+ * column (a membership number, an external reference), whose numeric values
+ * could coincidentally collide with an existing record's real id in this
+ * entity, silently PATCH-overwriting that unrelated real record instead of
+ * creating a new one. Now only trusted once every one of the entity's own
+ * real fields is also present in the header, exactly what recordsToCsv's own
+ * export always produces.
+ */
+test("the exported EntityView's CSV import ignores an \"id\" column (treats every row as a brand-new record) when the header doesn't also cover every one of the entity's own real fields", () => {
+  const files = generateExportFiles(project);
+  const entityViewJsx = files.find((f) => f.path === "web/src/components/EntityView.jsx")!.content;
+
+  const fieldLabelOccurrencesSrc = entityViewJsx.match(/function fieldLabelOccurrences\(fields\) \{[\s\S]*?\n\}\n/)?.[0];
+  const fieldDisplayLabelSrc = entityViewJsx.match(/function fieldDisplayLabel\(field, occurrences\) \{[\s\S]*?\n\}\n/)?.[0];
+  const headerSrc = entityViewJsx.match(/function matchesImportHeader\(header, field, labelOccurrences\) \{[\s\S]*?\n\}\n/)?.[0];
+  const importSrc = entityViewJsx.match(/function buildImportRecords\(fields, rows, relatedRecords\) \{[\s\S]*?\n\}\n/)?.[0];
+  assert.ok(
+    fieldLabelOccurrencesSrc && fieldDisplayLabelSrc && headerSrc && importSrc,
+    "expected to find fieldLabelOccurrences/fieldDisplayLabel/matchesImportHeader/buildImportRecords in generated output",
+  );
+
+  const buildImportRecords = new Function(
+    `${fieldLabelOccurrencesSrc}\n${fieldDisplayLabelSrc}\n${headerSrc}\n${importSrc}\nreturn buildImportRecords;`,
+  )();
+
+  const fields = [
+    { name: "name", label: "Name", type: "text", required: true },
+    { name: "email", label: "Email", type: "text" },
+  ];
+  const rows = [
+    ["ID", "Name"],
+    ["7", "Dana"],
+  ];
+  const { records, errors } = buildImportRecords(fields, rows);
+
+  assert.deepEqual(errors, []);
+  assert.deepEqual(
+    records,
+    [{ name: "Dana", email: null }],
+    "the external ID value must never be mistaken for this app's own record id -- this row must create a new record (no `id` key at all), not attempt to update record #7",
+  );
+});
+
+test("the exported EntityView's CSV import still trusts the \"id\" column once the header covers every one of the entity's own real fields", () => {
+  const files = generateExportFiles(project);
+  const entityViewJsx = files.find((f) => f.path === "web/src/components/EntityView.jsx")!.content;
+
+  const fieldLabelOccurrencesSrc = entityViewJsx.match(/function fieldLabelOccurrences\(fields\) \{[\s\S]*?\n\}\n/)?.[0];
+  const fieldDisplayLabelSrc = entityViewJsx.match(/function fieldDisplayLabel\(field, occurrences\) \{[\s\S]*?\n\}\n/)?.[0];
+  const headerSrc = entityViewJsx.match(/function matchesImportHeader\(header, field, labelOccurrences\) \{[\s\S]*?\n\}\n/)?.[0];
+  const importSrc = entityViewJsx.match(/function buildImportRecords\(fields, rows, relatedRecords\) \{[\s\S]*?\n\}\n/)?.[0];
+  assert.ok(
+    fieldLabelOccurrencesSrc && fieldDisplayLabelSrc && headerSrc && importSrc,
+    "expected to find fieldLabelOccurrences/fieldDisplayLabel/matchesImportHeader/buildImportRecords in generated output",
+  );
+
+  const buildImportRecords = new Function(
+    `${fieldLabelOccurrencesSrc}\n${fieldDisplayLabelSrc}\n${headerSrc}\n${importSrc}\nreturn buildImportRecords;`,
+  )();
+
+  const fields = [
+    { name: "name", label: "Name", type: "text", required: true },
+    { name: "email", label: "Email", type: "text" },
+  ];
+  const rows = [
+    ["id", "Name", "Email"],
+    ["7", "Dana", "dana@example.com"],
+  ];
+  const { records, errors } = buildImportRecords(fields, rows);
+
+  assert.deepEqual(errors, []);
+  assert.deepEqual(records, [{ id: 7, name: "Dana", email: "dana@example.com" }]);
+});
+
+/**
  * Round 712: the live preview's own buildImportRecords (apps/web/src/
  * entityFormatting.ts) gained real relation-cell resolution this round --
  * before it, a relation column was always ignored, even though

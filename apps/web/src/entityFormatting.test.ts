@@ -2371,6 +2371,61 @@ test("buildImportRecords never confuses a field whose own label happens to be \"
   assert.deepEqual(result.records, [{ id: 5, customerId: "CUST-5" }]);
 });
 
+/**
+ * Round 942: a header cell literally "id" alone was, before this round,
+ * enough to trust a column as this app's own round-trip primary key --
+ * but CSV import is equally meant for migrating in a genuinely external
+ * spreadsheet (this function's own doc comment: "a spreadsheet often
+ * carries extra notes columns"), and an ordinary external file can just
+ * as plausibly have its own unrelated column literally named "ID" (a
+ * membership number, an external reference) that has nothing to do with
+ * this app's row ids. If that column's numeric values happened to
+ * collide with existing records' real ids, the old behavior would
+ * silently PATCH (overwrite) those unrelated records instead of
+ * creating new ones. Confirms the id column is now only trusted once
+ * EVERY one of the entity's own real fields is also present in the
+ * header -- exactly what a genuine re-export always has (recordsToCsv
+ * emits every field, every time) -- and ignored (new record, not an
+ * update) the moment even one field is missing from the header,
+ * regardless of how plausible the id column itself looks.
+ */
+test("buildImportRecords ignores an \"id\" column (treats every row as a brand-new record) when the header doesn't also cover every one of the entity's own real fields -- an external spreadsheet's own unrelated ID column must never be mistaken for this app's own round-trip key", () => {
+  const fields: Field[] = [
+    { name: "name", label: "Name", type: "text", required: true },
+    { name: "email", label: "Email", type: "text", required: false },
+  ];
+  // A plausible external customer list: its own "ID" column (e.g. a
+  // membership number) plus a Name column -- but no Email column at
+  // all, so this header can never be this entity's own genuine
+  // re-export (which would always include Email too).
+  const rows = [
+    ["ID", "Name"],
+    ["7", "Dana"],
+  ];
+  const result = buildImportRecords(fields, rows);
+  assert.deepEqual(result.errors, []);
+  assert.deepEqual(
+    result.records,
+    [{ name: "Dana", email: null }],
+    "the external ID value must never be mistaken for this app's own record id -- this row must create a new record (no `id` key at all), not attempt to update record #7",
+  );
+});
+
+/** Sibling of the test above: the id column IS trusted once the header covers every real field, confirming the fix doesn't regress the legitimate re-export case for a multi-field entity (round 683's own existing tests only ever used a single-field entity). */
+test("buildImportRecords still trusts the \"id\" column once the header covers every one of the entity's own real fields", () => {
+  const fields: Field[] = [
+    { name: "name", label: "Name", type: "text", required: true },
+    { name: "email", label: "Email", type: "text", required: false },
+  ];
+  const rows = [
+    ["id", "Name", "Email"],
+    ["7", "Dana", "dana@example.com"],
+  ];
+  const result = buildImportRecords(fields, rows);
+  assert.deepEqual(result.errors, []);
+  assert.deepEqual(result.records, [{ id: 7, name: "Dana", email: "dana@example.com" }]);
+});
+
 test("uniqueEnumValues de-dupes while preserving first-occurrence order, and tolerates a missing array", () => {
   assert.deepEqual(uniqueEnumValues(["New", "New", "Won", "Lost", "Won"]), ["New", "Won", "Lost"]);
   assert.deepEqual(uniqueEnumValues([]), []);

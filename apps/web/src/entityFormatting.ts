@@ -1606,6 +1606,29 @@ export function buildImportRecords(
     return match ?? null;
   });
 
+  // Round 942: a header cell literally "id" is, on its own, nowhere near
+  // enough signal that this file is actually one of this app's own
+  // re-exports -- CSV import is equally meant for migrating in a
+  // genuinely external spreadsheet (this function's own doc comment,
+  // "a spreadsheet often carries extra notes columns"), and an ordinary
+  // external file can just as plausibly have its own unrelated column
+  // literally named "ID" (a membership number, an external reference)
+  // with no connection to this app's row ids at all. If that column's
+  // values happen to be plain integers that coincide with existing
+  // records' real ids in this entity -- near-certain for any import of
+  // more than a handful of rows into an entity with small sequential
+  // ids -- trusting it blindly would silently PATCH (overwrite) those
+  // unrelated real records instead of creating new ones, discarding
+  // both the file's own real data AND the external id, with no error
+  // anywhere. recordsToCsv(..., includeId: true) always emits a header
+  // column for EVERY one of this entity's own fields (even a `file`
+  // field, whose own cell is simply its filename/blank) -- something a
+  // coincidental external match is vanishingly unlikely to also satisfy
+  // in full -- so the id column is only trusted once every real field
+  // is actually present in this header too, exactly the shape a genuine
+  // re-export always has.
+  const idColumnTrusted = idColumnIndex !== -1 && fields.every((f) => columnFields.some((cf) => cf?.name === f.name));
+
   const records: Record<string, unknown>[] = [];
   const errors: string[] = [];
 
@@ -1616,7 +1639,7 @@ export function buildImportRecords(
     const record: Record<string, unknown> = {};
     let rowError: string | null = null;
 
-    if (idColumnIndex !== -1) {
+    if (idColumnTrusted) {
       const rawId = (row[idColumnIndex] ?? "").trim();
       if (rawId !== "") {
         const parsedId = Number(rawId);

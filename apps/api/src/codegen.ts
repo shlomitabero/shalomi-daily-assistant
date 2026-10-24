@@ -2470,6 +2470,16 @@ function buildImportRecords(fields, rows, relatedRecords) {
     return match || null;
   });
 
+  // Round 942: mirrors the live preview's own identical fix -- a header
+  // cell literally "id" alone isn't enough signal that this file is
+  // actually one of this app's own re-exports, since an ordinary
+  // external spreadsheet can just as plausibly have its own unrelated
+  // "ID" column whose values could coincidentally collide with this
+  // entity's existing real ids, silently overwriting unrelated records.
+  // Only trusted once every one of this entity's own real fields is
+  // also present in the header, exactly what a genuine re-export always has.
+  const idColumnTrusted = idColumnIndex !== -1 && fields.every((f) => columnFields.some((cf) => cf && cf.name === f.name));
+
   const records = [];
   const errors = [];
 
@@ -2480,7 +2490,7 @@ function buildImportRecords(fields, rows, relatedRecords) {
     const record = {};
     let rowError = null;
 
-    if (idColumnIndex !== -1) {
+    if (idColumnTrusted) {
       const rawId = (row[idColumnIndex] || "").trim();
       if (rawId !== "") {
         const parsedId = Number(rawId);
