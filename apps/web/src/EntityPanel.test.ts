@@ -7808,6 +7808,182 @@ test("EntityPanel cancels an in-progress inline cell edit when a live refine cha
 });
 
 /**
+ * Round 892: rounds 780/781/800's own guards (`currentType && ... &&
+ * currentType !== ref.current`) only ever fire when the selected field
+ * RETYPES while its name survives a live refine -- not when the field is
+ * REMOVED from the entity outright. A removal leaves `currentType`
+ * undefined, which makes `currentType &&` false, so the guard silently
+ * no-opped.
+ *
+ * Confirmed with an independently observable, single-action symptom for
+ * two of the three siblings: groupFieldName's persisted storage stayed
+ * pointed at the deleted field name (the test just below), and
+ * bulkEditField's "Apply" button -- gated only on `bulkEditField` being
+ * truthy, not on the field still existing -- stayed clickable with a
+ * stale, now-nonexistent field name even after its own value control
+ * (FieldInput) had already vanished (the test after that). The third
+ * sibling, editingCell, shares the identical buggy guard shape, but was
+ * checked and found to have NO independently observable single-action
+ * symptom: the editing `<td>` itself is only ever rendered by iterating
+ * the CURRENT entity.fields, so it (and cellDraft) disappear from the DOM
+ * the instant the field is removed regardless of whether editingCell's
+ * own React state was actually reset -- there is no live user
+ * interaction left that can reach the stale reference. Its matching code
+ * fix (removing the same `currentType &&` guard) is kept anyway as a
+ * harmless, correct consistency fix mirroring its two confirmed
+ * siblings -- cancelling a dangling edit is never wrong -- but is
+ * deliberately NOT claimed as fixing an observed bug, and has no test of
+ * its own here, to avoid a dishonest regression test that would pass
+ * before and after a "fix" with no real behavioral difference to prove.
+ */
+test("EntityPanel drops the 'Group by' selection when a live refine REMOVES that field outright, not just retypes it", async () => {
+  await withJsdom(async () => {
+    // "active" (boolean, also groupable) stays present on BOTH versions
+    // of the entity below, so groupableFields never empties out and the
+    // "Group by" <select> itself keeps rendering after "status" is
+    // removed -- isolating this test to the actual claim (groupFieldName
+    // resets to "", not that the control disappears because nothing else
+    // is groupable).
+    const activeBooleanField = { name: "active", label: "Active", type: "boolean" as const, required: false };
+    const statusEnumField = {
+      name: "status",
+      label: "Status",
+      type: "enum" as const,
+      required: true,
+      enumValues: ["Pending", "Shipped"],
+      enumLabels: { Pending: "Pending", Shipped: "Shipped" },
+    };
+    const entityWithEnumStatus: Entity = {
+      name: "Deal",
+      label: "Deal",
+      fields: [{ name: "name", label: "Name", type: "text", required: true }, statusEnumField, activeBooleanField],
+    };
+    const entityWithoutStatus: Entity = {
+      name: "Deal",
+      label: "Deal",
+      fields: [{ name: "name", label: "Name", type: "text", required: true }, activeBooleanField],
+    };
+    const store: EntityRecord[] = [
+      { id: 1, createdAt: "x", name: "Acme Corp", status: "Pending", active: true },
+      { id: 2, createdAt: "x", name: "Globex", status: "Shipped", active: false },
+    ];
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = mockRecordsFetch(store) as typeof fetch;
+    try {
+      const view = renderEntityPanel({ entity: entityWithEnumStatus, allEntities: [entityWithEnumStatus] });
+      await waitForCondition(() => document.querySelectorAll("table tbody tr").length === 2);
+
+      const groupBySelect = document.querySelector(".entity-group-by") as HTMLSelectElement;
+      fireEvent.change(groupBySelect, { target: { value: "status" } });
+      await waitForCondition(() => document.querySelectorAll(".entity-group-header-row").length === 2);
+      assert.equal(getGroupByField("proj1", "Deal"), "status", "sanity check: grouping must actually be persisted before the removal");
+
+      // Simulate a refine that REMOVES "status" entirely -- not a retype,
+      // a genuine deletion -- while staying on the exact same
+      // entity.name ("Deal"), with "Group by: status" still selected.
+      view.rerender(buildEntityPanelElement({ entity: entityWithoutStatus, allEntities: [entityWithoutStatus] }));
+      await waitForCondition(() => getGroupByField("proj1", "Deal") === "");
+
+      // Asserts on the PERSISTED storage, not the <select> element's own
+      // .value -- an HTML select whose controlled value matches no
+      // rendered <option> silently falls back its own DOM .value to the
+      // first real option regardless of what groupFieldName's actual
+      // React state holds (the exact round-883 test-design pitfall: a
+      // bare DOM-value assertion can pass even against genuinely buggy
+      // code, since "status" disappearing from groupableFields already
+      // makes groupField resolve to null and the table render ungrouped
+      // either way -- that part was never broken). The real bug is
+      // whether groupFieldName/storage itself actually got reset, which
+      // only a check independent of the select's own display can catch.
+      assert.equal(
+        getGroupByField("proj1", "Deal"),
+        "",
+        "the persisted 'Group by' selection must be cleared, not keep pointing at a field name that no longer exists",
+      );
+      assert.equal(document.querySelectorAll(".entity-group-header-row").length, 0, "the table must render flat, not grouped");
+      assert.equal(document.querySelectorAll("table tbody tr").length, 2, "both records must render as a normal, ungrouped table");
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+});
+
+test("EntityPanel clears a stale bulk-edit field selection when a live refine REMOVES that field outright, not just retypes it", async () => {
+  await withJsdom(async () => {
+    const statusEnumField = {
+      name: "status",
+      label: "Status",
+      type: "enum" as const,
+      required: false,
+      enumValues: ["Pending", "Shipped"],
+      enumLabels: { Pending: "Pending", Shipped: "Shipped" },
+    };
+    const entityWithEnumStatus: Entity = {
+      name: "Deal",
+      label: "Deal",
+      fields: [{ name: "name", label: "Name", type: "text", required: true }, statusEnumField],
+    };
+    const entityWithoutStatus: Entity = {
+      name: "Deal",
+      label: "Deal",
+      fields: [{ name: "name", label: "Name", type: "text", required: true }],
+    };
+    const store: EntityRecord[] = [
+      { id: 1, createdAt: "x", name: "Acme Corp", status: "Pending" },
+      { id: 2, createdAt: "x", name: "Globex", status: "Shipped" },
+    ];
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = mockRecordsFetch(store) as typeof fetch;
+    try {
+      const view = renderEntityPanel({ entity: entityWithEnumStatus, allEntities: [entityWithEnumStatus] });
+      await waitForCondition(() => document.querySelectorAll("table tbody tr").length === 2);
+
+      for (const checkbox of document.querySelectorAll('td.select-col input[type="checkbox"]')) {
+        fireEvent.click(checkbox);
+      }
+      await waitForCondition(() => document.querySelector(".bulk-actions-bar") !== null);
+
+      const fieldPicker = document.querySelector(".bulk-edit-field-label select") as HTMLSelectElement;
+      fireEvent.change(fieldPicker, { target: { value: "status" } });
+      await waitForCondition(() => document.querySelectorAll(".bulk-actions-bar select").length === 2);
+      const valueSelect = document.querySelectorAll(".bulk-actions-bar select")[1] as HTMLSelectElement;
+      fireEvent.change(valueSelect, { target: { value: "Shipped" } });
+      await waitForCondition(() => valueSelect.value === "Shipped");
+
+      // Simulate a refine that REMOVES "status" entirely -- not a
+      // retype -- while staying on the exact same entity.name ("Deal"),
+      // with the bulk-edit panel still open and "status" still selected.
+      view.rerender(buildEntityPanelElement({ entity: entityWithoutStatus, allEntities: [entityWithoutStatus] }));
+
+      const applyButton = () => Array.from(document.querySelectorAll(".bulk-actions-bar button")).find((b) => b.textContent?.includes("Apply"));
+      await waitForCondition(() => applyButton() === undefined);
+
+      // Asserts on the Apply button's own presence, not the field
+      // <select>'s DOM .value -- that value falls back to the select's
+      // first real <option> (the empty placeholder here) the instant
+      // "status" disappears from bulkEditableFields' own option list,
+      // regardless of whether bulkEditField's actual React state was
+      // ever reset (the exact round-883 test-design pitfall: a bare
+      // DOM-value assertion can pass even against genuinely buggy code).
+      // The Apply button's own render guard is `{bulkEditField && (...)}`
+      // -- truthy string "status" alone is enough to keep it rendered,
+      // with nothing stopping a user from clicking it and sending a PATCH
+      // for a field name the server no longer recognizes on this entity
+      // at all, even though the value control (FieldInput) right next to
+      // it already vanished (its own guard also requires the now-missing
+      // field definition).
+      assert.equal(
+        applyButton(),
+        undefined,
+        "the 'Apply' button must disappear once bulkEditField is actually cleared, not stay clickable with a stale, now-nonexistent field name",
+      );
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+});
+
+/**
  * Round 805: the fourth sibling of the same "field TYPE changes while its
  * NAME survives a live refine" bug class rounds 780/781/800 already fixed
  * for groupFieldName, bulkEditField/bulkEditValue, and editingCell/

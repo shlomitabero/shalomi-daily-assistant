@@ -1767,7 +1767,16 @@ export function EntityPanel({
   useEffect(() => {
     if (!groupFieldName) return;
     const currentType = entity.fields.find((f) => f.name === groupFieldName)?.type;
-    if (currentType && groupedFieldTypeRef.current && currentType !== groupedFieldTypeRef.current) {
+    // Round 892: deliberately NOT `currentType &&` -- that guard only ever
+    // fires when the field RETYPES while its name survives. A refine that
+    // REMOVES the grouped field outright leaves currentType undefined, so
+    // that guard silently no-ops: groupFieldName stays pointed at a name
+    // entity.fields no longer has at all, the exact "stale value has no
+    // <option>" blank-select hazard this effect's own doc comment above
+    // claims to close, just for a removal instead of a retype. Comparing
+    // against undefined directly (currentType !== groupedFieldTypeRef.current)
+    // catches both shapes with the same clearing path.
+    if (groupedFieldTypeRef.current && currentType !== groupedFieldTypeRef.current) {
       setGroupFieldName(setGroupByField(projectId, entity.name, ""));
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -1805,8 +1814,18 @@ export function EntityPanel({
   useEffect(() => {
     if (!bulkEditField) return;
     const currentType = entity.fields.find((f) => f.name === bulkEditField)?.type;
-    if (currentType && bulkEditFieldTypeRef.current && currentType !== bulkEditFieldTypeRef.current) {
-      if (currentType === "file") {
+    // Round 892: deliberately NOT `currentType &&` -- see groupFieldName's
+    // own effect above for why. A refine that REMOVES bulkEditField
+    // outright, not just retypes it, left this guard silently no-oping
+    // (currentType undefined, so the guard was false), so bulkEditField
+    // stayed pointed at a name entity.fields no longer has, leaving the
+    // bulk-edit field <select> with a stale value matching no <option>.
+    // A removal can't be handled by handleBulkEditFieldChange the way a
+    // retype is (it would just set bulkEditField back to the same
+    // now-nonexistent name) -- clear outright instead, the same "stale
+    // value has no <option>" path the "file" branch below already uses.
+    if (bulkEditFieldTypeRef.current && currentType !== bulkEditFieldTypeRef.current) {
+      if (!currentType || currentType === "file") {
         setBulkEditField("");
         setBulkEditValue("");
       } else {
@@ -1844,7 +1863,13 @@ export function EntityPanel({
   useEffect(() => {
     if (!editingCell) return;
     const currentType = entity.fields.find((f) => f.name === editingCell.field)?.type;
-    if (currentType && editingCellFieldTypeRef.current && currentType !== editingCellFieldTypeRef.current) {
+    // Round 892: deliberately NOT `currentType &&` -- see groupFieldName's
+    // own effect above for why. A refine that REMOVES the field currently
+    // being inline-edited, not just retypes it, left this guard silently
+    // no-oping, so an in-progress edit of a now-nonexistent field was
+    // never cancelled -- blurring it would try to PATCH a field name the
+    // server no longer recognizes on this entity at all.
+    if (editingCellFieldTypeRef.current && currentType !== editingCellFieldTypeRef.current) {
       cancelInlineEdit();
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
