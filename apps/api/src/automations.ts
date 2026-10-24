@@ -79,7 +79,26 @@ function fileFieldDisplayName(value: unknown): string {
  * that isn't a real file descriptor at all (empty, malformed) is left
  * exactly as-is -- the same graceful degradation fileFieldDisplayName
  * already uses for the identical class of bad input.
+ *
+ * Round 916: `coerceValue` (packages/db/src/repository.ts, round 908) is
+ * the only write-time funnel that rejects a file-field url outside this
+ * server's own upload-route shape -- it doesn't retroactively sanitize a
+ * row written before that guard shipped. Round 908 added the matching
+ * read-time scheme check to every OTHER place that parses this same
+ * descriptor (entityFormatting.ts's and codegen.ts's own
+ * parseFileFieldValue) as defense-in-depth for exactly that legacy data,
+ * but missed this one: `new URL(parsed.url, baseUrl)` silently ignores
+ * `baseUrl` whenever `parsed.url` is itself absolute (has its own
+ * scheme) -- confirmed directly: `new URL("javascript:...", "https://
+ * example.com").toString()` returns the untouched "javascript:..." string
+ * -- so a pre-908 "javascript:"/"data:"/attacker-controlled-absolute-URL
+ * descriptor passed straight through, verbatim, into this webhook's own
+ * JSON payload, one hop further than round 908 ever checked. Rejected the
+ * same way a malformed descriptor already is (left untouched, not
+ * thrown), mirroring entityFormatting.ts's own SAFE_FILE_URL regex.
  */
+const SAFE_FILE_URL = /^\/api\/uploads\/[^/]+\/[^/]+\/[^/]+$/;
+
 export function resolveFileFieldsForWebhook(entity: Entity, record: EntityRecord, baseUrl: string): Record<string, unknown> {
   const resolved: Record<string, unknown> = { ...record };
   for (const field of entity.fields) {
@@ -92,7 +111,7 @@ export function resolveFileFieldsForWebhook(entity: Entity, record: EntityRecord
     } catch {
       continue;
     }
-    if (typeof parsed.url !== "string") continue;
+    if (typeof parsed.url !== "string" || !SAFE_FILE_URL.test(parsed.url)) continue;
     resolved[field.name] = { url: new URL(parsed.url, baseUrl).toString(), name: parsed.name, size: parsed.size, mimeType: parsed.mimeType };
   }
   return resolved;

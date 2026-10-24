@@ -1135,6 +1135,56 @@ test("resolveFileFieldsForWebhook leaves every non-file field untouched and leav
   assert.deepEqual(resolveFileFieldsForWebhook(entityWithInvoice, malformedRecord, "https://example.com"), malformedRecord);
 });
 
+/**
+ * Round 916's finding: coerceValue (packages/db/src/repository.ts, round
+ * 908) rejects a file-field url outside this server's own upload-route
+ * shape only at WRITE time -- it never retroactively sanitizes a row
+ * written before that guard existed. `new URL(parsed.url, baseUrl)`
+ * silently ignores `baseUrl` whenever `parsed.url` is itself absolute
+ * (has its own scheme), so a pre-908 "javascript:"/attacker-controlled
+ * descriptor passed straight through, verbatim, into this webhook's own
+ * JSON payload -- the one read sink round 908's own entityFormatting.ts/
+ * codegen.ts scheme-check sweep missed. Confirms the descriptor is left
+ * untouched (the same "malformed -> leave as-is" convention the test
+ * just above already covers), not resolved into a followable url, while
+ * a genuine relative upload path still resolves correctly.
+ */
+test("resolveFileFieldsForWebhook never resolves a scripted-scheme or attacker-controlled absolute url -- new URL() would silently ignore baseUrl for it", () => {
+  const entityWithInvoice: Entity = {
+    ...orderEntity,
+    fields: [...orderEntity.fields, { name: "invoice", type: "file", required: false }],
+  };
+
+  const scriptedRecord = {
+    customerName: "Dana",
+    invoice: JSON.stringify({ url: "javascript:alert(document.cookie)", name: "invoice.pdf", size: 1, mimeType: "application/pdf" }),
+  };
+  assert.deepEqual(
+    resolveFileFieldsForWebhook(entityWithInvoice, scriptedRecord, "https://example.com"),
+    scriptedRecord,
+    "a javascript: url must be left untouched, not passed through into the webhook payload",
+  );
+
+  const absoluteRecord = {
+    customerName: "Dana",
+    invoice: JSON.stringify({ url: "https://attacker.example/steal", name: "invoice.pdf", size: 1, mimeType: "application/pdf" }),
+  };
+  assert.deepEqual(
+    resolveFileFieldsForWebhook(entityWithInvoice, absoluteRecord, "https://example.com"),
+    absoluteRecord,
+    "an attacker-controlled absolute url must be left untouched too -- new URL() would otherwise ignore baseUrl entirely for it",
+  );
+
+  const realRecord = {
+    customerName: "Dana",
+    invoice: JSON.stringify({ url: "/api/uploads/proj1/Order/abc123.pdf", name: "invoice.pdf", size: 1, mimeType: "application/pdf" }),
+  };
+  assert.deepEqual(resolveFileFieldsForWebhook(entityWithInvoice, realRecord, "https://example.com"), {
+    customerName: "Dana",
+    invoice: { url: "https://example.com/api/uploads/proj1/Order/abc123.pdf", name: "invoice.pdf", size: 1, mimeType: "application/pdf" },
+  });
+});
+
 test("runAutomationsForRecordChange records a failed outcome when the webhook responds with a non-2xx status, without throwing", async () => {
   const { db, project } = setupProject();
   const rule = insertAutomationRule(db, {
