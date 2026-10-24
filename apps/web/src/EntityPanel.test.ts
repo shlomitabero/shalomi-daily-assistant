@@ -8129,6 +8129,81 @@ test("EntityPanel resets a stale create-form value when a live refine changes th
 });
 
 /**
+ * Round 898: the identical "field TYPE changes while its NAME survives a
+ * live refine" bug class round 805's own fix just above closes, but
+ * reached through a path that fix's own `formFieldTypesRef` cannot see --
+ * removing a field via one refine, then a SECOND, separate refine adding
+ * back a field with the exact same name but a different type. The round
+ * 805 effect unconditionally rebuilds formFieldTypesRef.current from only
+ * the CURRENT entity.fields on every run (line ~1931), so a field's entry
+ * is silently dropped from the ref the instant it's removed -- when it
+ * later reappears under the same name, prevTypes[f.name] is undefined,
+ * the `retypedFields` filter's `prevTypes[f.name] && ...` is falsy, and
+ * the field is never flagged as retyped. The stale pre-removal value sits
+ * in `form` the whole time (removal itself doesn't render anything that
+ * needs resetting), then leaks straight through once the field returns.
+ */
+test("EntityPanel resets a stale create-form value when a field is removed by one live refine and a differently-typed field reappears under the same name in a later one", async () => {
+  await withJsdom(async () => {
+    const priorityEnumField = {
+      name: "priority",
+      label: "Priority",
+      type: "enum" as const,
+      required: false,
+      enumValues: ["Low", "Medium", "High"],
+      enumLabels: { Low: "Low", Medium: "Medium", High: "High" },
+    };
+    const priorityBooleanField = { name: "priority", label: "Priority", type: "boolean" as const, required: false };
+    const entityWithEnumPriority: Entity = {
+      name: "Deal",
+      label: "Deal",
+      fields: [{ name: "name", label: "Name", type: "text", required: true }, priorityEnumField],
+    };
+    const entityWithoutPriority: Entity = {
+      name: "Deal",
+      label: "Deal",
+      fields: [{ name: "name", label: "Name", type: "text", required: true }],
+    };
+    const entityWithBooleanPriority: Entity = {
+      name: "Deal",
+      label: "Deal",
+      fields: [{ name: "name", label: "Name", type: "text", required: true }, priorityBooleanField],
+    };
+    const store: EntityRecord[] = [];
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = mockRecordsFetch(store) as typeof fetch;
+    try {
+      const view = renderEntityPanel({ entity: entityWithEnumPriority, allEntities: [entityWithEnumPriority] });
+      await waitForCondition(() => document.querySelector(".record-form select") !== null);
+
+      const prioritySelect = document.querySelector(".record-form select") as HTMLSelectElement;
+      fireEvent.change(prioritySelect, { target: { value: "High" } });
+      await waitForCondition(() => prioritySelect.value === "High");
+
+      // First refine: removes "priority" entirely, with the create form
+      // still open and "priority" still holding the stale enum value.
+      view.rerender(buildEntityPanelElement({ entity: entityWithoutPriority, allEntities: [entityWithoutPriority] }));
+      await waitForCondition(() => document.querySelector(".record-form select") === null);
+
+      // Second, separate refine: adds back a field named "priority", but
+      // as a boolean this time -- the exact same entity.name ("Deal"),
+      // still no remount, create form still open.
+      view.rerender(buildEntityPanelElement({ entity: entityWithBooleanPriority, allEntities: [entityWithBooleanPriority] }));
+      await waitForCondition(() => document.querySelector(".record-form input[type='checkbox']") !== null);
+
+      const checkbox = document.querySelector(".record-form input[type='checkbox']") as HTMLInputElement;
+      assert.equal(
+        checkbox.checked,
+        false,
+        "the stale enum value \"High\" (from before the field was removed) must never be coerced into a pre-checked checkbox the user never actually chose",
+      );
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+});
+
+/**
  * Regression test for round 500's finding: sortKeys' own re-validation
  * effect (sibling to viewMode's and fieldFilters', fixed in rounds 490 and
  * 493 respectively) was never given the same fix -- it only dropped a sort

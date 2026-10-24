@@ -1928,7 +1928,16 @@ export function EntityPanel({
         return next;
       });
     }
-    formFieldTypesRef.current = Object.fromEntries(entity.fields.map((f) => [f.name, f.type]));
+    // Round 898: merged onto the previous snapshot, not replaced outright
+    // -- a field's own prior type must survive even while the field is
+    // temporarily absent (removed by one live refine), so a LATER, separate
+    // refine that re-adds a same-named field under a genuinely different
+    // type is still correctly detected as a retype on ITS OWN run of this
+    // effect, instead of looking brand new with no prior type to compare
+    // against (prevTypes[f.name] undefined, silently skipping the reset
+    // above and leaking the field's stale pre-removal value straight
+    // through to FieldInput's new, differently-typed branch).
+    formFieldTypesRef.current = { ...prevTypes, ...Object.fromEntries(entity.fields.map((f) => [f.name, f.type])) };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [fieldTypesKey]);
 
