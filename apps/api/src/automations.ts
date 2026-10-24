@@ -5,6 +5,7 @@ import {
   getProject,
   getRecord,
   insertWhatsAppMessage,
+  listAutomationRuns,
   listEnabledAutomationRulesForEntity,
   listEnabledScheduledRules,
   recordAutomationRun,
@@ -499,12 +500,25 @@ async function fireWebhookAction(
   rule: AutomationRule,
   record: EntityRecord | null,
   baseUrl: string | null,
+  // Round 924: defaults to the real current time for every existing
+  // (record-triggered) caller, unchanged -- fireScheduledRule below
+  // passes its own already-injected `now` instead, so a scheduled rule's
+  // recorded run timestamp lines up with the same clock
+  // hasTooManyConsecutiveFailuresToday judges "today" against, rather
+  // than silently drifting to the real wall clock.
+  now: Date = new Date(),
 ): Promise<void> {
   if (!rule.webhookUrl || !isAllowedWebhookUrl(rule.webhookUrl)) {
-    recordAutomationRun(db, project.id, rule.id, {
-      status: "failed",
-      error: "This rule has no valid webhook URL configured",
-    });
+    recordAutomationRun(
+      db,
+      project.id,
+      rule.id,
+      {
+        status: "failed",
+        error: "This rule has no valid webhook URL configured",
+      },
+      now,
+    );
     return;
   }
   const message =
@@ -551,15 +565,27 @@ async function fireWebhookAction(
       signal: controller.signal,
       redirect: "manual",
     });
-    recordAutomationRun(db, project.id, rule.id, {
-      status: res.ok ? "sent" : "failed",
-      error: res.ok ? null : `Webhook responded with status ${res.status}`,
-    });
+    recordAutomationRun(
+      db,
+      project.id,
+      rule.id,
+      {
+        status: res.ok ? "sent" : "failed",
+        error: res.ok ? null : `Webhook responded with status ${res.status}`,
+      },
+      now,
+    );
   } catch (err) {
-    recordAutomationRun(db, project.id, rule.id, {
-      status: "failed",
-      error: err instanceof Error ? err.message : "Webhook request failed",
-    });
+    recordAutomationRun(
+      db,
+      project.id,
+      rule.id,
+      {
+        status: "failed",
+        error: err instanceof Error ? err.message : "Webhook request failed",
+      },
+      now,
+    );
   } finally {
     clearTimeout(timeout);
   }
@@ -681,22 +707,35 @@ export async function fireScheduledRule(
   whatsapp: WhatsAppWebManager,
   project: Project,
   rule: AutomationRule,
+  // Round 924: same purpose as fireWebhookAction's own `now` parameter --
+  // defaults to the real current time, but runScheduledAutomationsCheck
+  // passes its own already-injected `now` so the recorded run's own
+  // timestamp lines up with the exact clock that decided this rule was
+  // due, which hasTooManyConsecutiveFailuresToday then judges "today"
+  // against.
+  now: Date = new Date(),
 ): Promise<void> {
   if (rule.actionType === "webhook") {
-    await fireWebhookAction(db, project, null, rule, null, null);
+    await fireWebhookAction(db, project, null, rule, null, null, now);
     return;
   }
   const to = rule.toNumber;
   if (!to || !to.trim()) {
-    recordAutomationRun(db, project.id, rule.id, {
-      status: "failed",
-      error: "This rule has no destination phone number configured",
-    });
+    recordAutomationRun(
+      db,
+      project.id,
+      rule.id,
+      {
+        status: "failed",
+        error: "This rule has no destination phone number configured",
+      },
+      now,
+    );
     return;
   }
   const status = whatsapp.getStatus(project.id);
   if (status.status !== "connected") {
-    recordAutomationRun(db, project.id, rule.id, { status: "failed", error: "WhatsApp is not connected" });
+    recordAutomationRun(db, project.id, rule.id, { status: "failed", error: "WhatsApp is not connected" }, now);
     return;
   }
   const result = await whatsapp.sendMessage(project.id, to, rule.messageTemplate);
@@ -714,10 +753,54 @@ export async function fireScheduledRule(
     matchedLabel: match?.label ?? null,
     status: result.ok ? "sent" : "failed",
   });
-  recordAutomationRun(db, project.id, rule.id, {
-    status: result.ok ? "sent" : "failed",
-    error: result.ok ? null : (result.error ?? "Send failed"),
-  });
+  recordAutomationRun(
+    db,
+    project.id,
+    rule.id,
+    {
+      status: result.ok ? "sent" : "failed",
+      error: result.ok ? null : (result.error ?? "Send failed"),
+    },
+    now,
+  );
+}
+
+// Round 924: how many consecutive failed attempts a scheduled rule may
+// retry on within a single day before this tick stops firing it for the
+// rest of that day -- see hasTooManyConsecutiveFailuresToday's own doc
+// comment just below for why this exists.
+const MAX_CONSECUTIVE_SCHEDULE_FAILURES_PER_DAY = 5;
+
+/**
+ * Round 924: caps how many times a scheduled rule's own daily attempt
+ * retries against a destination that keeps failing. isScheduledRuleDue
+ * above deliberately keeps a failed attempt "due" on every subsequent
+ * tick for the rest of the day -- by design, to recover from a
+ * transient WhatsApp disconnect (see its own doc comment) -- but that
+ * same design retried a PERMANENTLY failing destination (a wrong or
+ * blocked number, a webhook that reliably errors) every single minute,
+ * forever, with no cap at all: a real WhatsApp-Web number-flagging risk
+ * whatsappWeb.ts's own module comment already warns about, and
+ * unbounded hammering of a webhook endpoint.
+ *
+ * Reuses the rule's own already-retained recent runs (recordAutomationRun
+ * keeps the newest AUTOMATION_RUNS_RETENTION_LIMIT=20, comfortably more
+ * than this needs) rather than adding a new counter column: looks at the
+ * most recent MAX_CONSECUTIVE_SCHEDULE_FAILURES_PER_DAY runs, newest
+ * first, and stops retrying only once every one of them is both
+ * "failed" AND from today. A single success breaks the streak
+ * immediately (the newest run is "sent", not "failed"), and a new UTC
+ * day does too (yesterday's failed runs no longer match "today"), so
+ * this never permanently disables a rule -- it only quiets a storm of
+ * identical failures within the one day they happened, exactly
+ * mirroring isScheduledRuleDue's own "retry today, fresh start
+ * tomorrow" contract.
+ */
+function hasTooManyConsecutiveFailuresToday(db: ForgeDatabase, rule: AutomationRule, now: Date): boolean {
+  const todayUtc = now.toISOString().slice(0, 10);
+  const runs = listAutomationRuns(db, rule.projectId, rule.id, MAX_CONSECUTIVE_SCHEDULE_FAILURES_PER_DAY);
+  if (runs.length < MAX_CONSECUTIVE_SCHEDULE_FAILURES_PER_DAY) return false;
+  return runs.every((run) => run.status === "failed" && run.triggeredAt.slice(0, 10) === todayUtc);
 }
 
 /**
@@ -741,10 +824,11 @@ export async function runScheduledAutomationsCheck(
   const rules = listEnabledScheduledRules(db);
   for (const rule of rules) {
     if (!isScheduledRuleDue(rule, now)) continue;
+    if (hasTooManyConsecutiveFailuresToday(db, rule, now)) continue;
     const project = getProject(db, rule.projectId);
     if (!project) continue;
     try {
-      await fireScheduledRule(db, whatsapp, project, rule);
+      await fireScheduledRule(db, whatsapp, project, rule, now);
     } catch (err) {
       console.error(`Scheduled automation rule ${rule.id} on project ${project.id} failed unexpectedly`, err);
     }

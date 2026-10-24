@@ -369,8 +369,9 @@ export function recordAutomationRun(
   projectId: string,
   id: string,
   outcome: { status: "sent" | "failed"; error?: string | null },
+  at: Date = new Date(),
 ): void {
-  const now = new Date().toISOString();
+  const now = at.toISOString();
   db.prepare(
     `UPDATE automation_rules SET lastTriggeredAt = ?, lastStatus = ?, lastError = ? WHERE projectId = ? AND id = ?`,
   ).run(now, outcome.status, outcome.error ?? null, projectId, id);

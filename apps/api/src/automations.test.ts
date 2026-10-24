@@ -887,6 +887,43 @@ test("runScheduledAutomationsCheck fires exactly the rules that are due right no
   assert.equal(getAutomationRule(db, "proj1", disabledDue.id)!.lastStatus, null, "disabled -- must never be considered even though its time has passed");
 });
 
+/**
+ * Round 924: isScheduledRuleDue deliberately keeps retrying a failed
+ * attempt on every subsequent tick for the rest of the day (to recover
+ * from a transient WhatsApp disconnect), but before this round's fix
+ * there was no cap at all -- a destination that fails PERMANENTLY (wrong
+ * number, blocked recipient) got hit again every single 60s tick,
+ * forever. Fires the same due, failing rule many times across the same
+ * UTC day and confirms it stops sending after
+ * MAX_CONSECUTIVE_SCHEDULE_FAILURES_PER_DAY (5) real attempts, not every
+ * tick -- then confirms a genuinely new UTC day gives it a fresh start.
+ */
+test("runScheduledAutomationsCheck stops retrying a scheduled rule after 5 consecutive failures the same day, and retries again fresh the next day", async () => {
+  const { db } = setupProject();
+  const rule = insertAutomationRule(db, scheduleRuleBase({ scheduleTimeUtc: "09:00", toNumber: "972501234567" }));
+
+  const { manager, sendCalls } = createFakeWhatsApp({ connected: true, sendResult: { ok: false, error: "recipient not found" } });
+
+  // Six ticks across the same day, each past the scheduled time -- a
+  // real 60s-interval scheduler would fire on every one of these if
+  // nothing capped it.
+  for (const minute of ["09:00", "09:01", "09:02", "09:03", "09:04", "09:05"]) {
+    await runScheduledAutomationsCheck(db, manager, new Date(`2026-03-15T${minute}:00.000Z`));
+  }
+
+  assert.equal(sendCalls.length, 5, "must stop sending after the 5th consecutive failure, not keep retrying every tick");
+  assert.equal(getAutomationRule(db, "proj1", rule.id)!.lastStatus, "failed");
+
+  // One more tick, still the same day -- must still be suppressed.
+  await runScheduledAutomationsCheck(db, manager, new Date("2026-03-15T09:06:00.000Z"));
+  assert.equal(sendCalls.length, 5, "a later tick the same day must still be suppressed, not add a 6th attempt");
+
+  // A genuinely new UTC day -- must get a fresh start, same as
+  // isScheduledRuleDue's own "retry today, fresh tomorrow" contract.
+  await runScheduledAutomationsCheck(db, manager, new Date("2026-03-16T09:00:00.000Z"));
+  assert.equal(sendCalls.length, 6, "a new day must retry again, not stay suppressed forever");
+});
+
 test("isAllowedWebhookUrl accepts a real public http(s) URL and rejects non-http(s) schemes, malformed URLs, and local/private hosts", () => {
   assert.equal(isAllowedWebhookUrl("https://hooks.example.com/abc"), true);
   assert.equal(isAllowedWebhookUrl("http://hooks.example.com/abc"), true);
