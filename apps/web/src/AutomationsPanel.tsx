@@ -74,8 +74,17 @@ export function AutomationsPanel({
   // re-fetch.
   const [expandedHistoryRuleId, setExpandedHistoryRuleId] = useState<string | null>(null);
   const [runsByRuleId, setRunsByRuleId] = useState<Record<string, AutomationRunView[]>>({});
-  const [historyError, setHistoryError] = useState<string | null>(null);
-  const [historyLoading, setHistoryLoading] = useState(false);
+  // Round 922: keyed per rule id, mirroring runsByRuleId right above --
+  // these used to be single, panel-wide values shared across every rule's
+  // own history fetch. Expanding rule A's history (fetch in flight), then
+  // switching to rule B's before A's settles, let A's fetch's own
+  // .catch/.finally write into the SAME shared slot B's row was now
+  // reading: B's panel could show A's unrelated error message (and never
+  // clear it, since a successful fetch never reset historyError), or
+  // briefly flash B's "no runs yet" empty state when A's .finally fired
+  // while B's own fetch was still pending.
+  const [historyErrorByRuleId, setHistoryErrorByRuleId] = useState<Record<string, string>>({});
+  const [loadingHistoryRuleIds, setLoadingHistoryRuleIds] = useState<Record<string, boolean>>({});
   const dialogRef = useDialogFocusTrap<HTMLDivElement>(onClose);
 
   const [entityName, setEntityName] = useState(entities[0]?.name ?? "");
@@ -654,13 +663,24 @@ export function AutomationsPanel({
       return;
     }
     setExpandedHistoryRuleId(rule.id);
-    setHistoryError(null);
+    setHistoryErrorByRuleId((prev) => {
+      if (!(rule.id in prev)) return prev;
+      const next = { ...prev };
+      delete next[rule.id];
+      return next;
+    });
     if (runsByRuleId[rule.id]) return;
-    setHistoryLoading(true);
+    setLoadingHistoryRuleIds((prev) => ({ ...prev, [rule.id]: true }));
     listAutomationRuns(projectId, rule.id)
       .then(({ runs }) => setRunsByRuleId((prev) => ({ ...prev, [rule.id]: runs })))
-      .catch((err) => setHistoryError((err as Error).message))
-      .finally(() => setHistoryLoading(false));
+      .catch((err) => setHistoryErrorByRuleId((prev) => ({ ...prev, [rule.id]: (err as Error).message })))
+      .finally(() =>
+        setLoadingHistoryRuleIds((prev) => {
+          const next = { ...prev };
+          delete next[rule.id];
+          return next;
+        }),
+      );
   }
 
   function handleDownload() {
@@ -786,13 +806,13 @@ export function AutomationsPanel({
                   </div>
                   {expandedHistoryRuleId === rule.id && (
                     <div className="automations-rule-history">
-                      {historyLoading && !runsByRuleId[rule.id] ? (
+                      {loadingHistoryRuleIds[rule.id] && !runsByRuleId[rule.id] ? (
                         <p className="muted small" role="status">
                           {t("automations.history.loading")}
                         </p>
-                      ) : historyError ? (
+                      ) : historyErrorByRuleId[rule.id] ? (
                         <p className="error small" role="alert">
-                          {historyError}
+                          {historyErrorByRuleId[rule.id]}
                         </p>
                       ) : (runsByRuleId[rule.id]?.length ?? 0) === 0 ? (
                         <p className="muted small">{t("automations.history.empty")}</p>

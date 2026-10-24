@@ -2273,6 +2273,83 @@ test("AutomationsPanel's History button shows a real empty state for a rule that
 });
 
 /**
+ * Round 922: expandedHistoryRuleId and runsByRuleId are correctly keyed
+ * per rule, but the sibling historyError/historyLoading (now
+ * historyErrorByRuleId/loadingHistoryRuleIds) used to be single,
+ * panel-wide values shared across every rule's own history fetch.
+ * Expanding rule A's history (its fetch left in flight), then switching
+ * to rule B's before A's settles, used to let A's fetch's own .catch
+ * write an error into the one shared slot B's row was now reading --
+ * this confirms that no longer happens: B's panel must show B's own real
+ * run list, never rule A's unrelated, later-arriving error.
+ */
+test("AutomationsPanel's History panel for one rule never shows a DIFFERENT rule's error from a late-arriving, stale fetch", async () => {
+  await withJsdom(async () => {
+    const originalFetch = globalThis.fetch;
+    let resolveRule1: ((value: Response) => void) | undefined;
+    const rule1Gate = new Promise<Response>((resolve) => {
+      resolveRule1 = resolve;
+    });
+    globalThis.fetch = (async (input: string) => {
+      if (input === "/api/projects/proj1/automations") {
+        return new Response(
+          JSON.stringify({ rules: [makeRule({ id: "rule1" }), makeRule({ id: "rule2", fieldName: "stage" })] }),
+          { status: 200, headers: { "content-type": "application/json" } },
+        );
+      }
+      if (input === "/api/projects/proj1/automations/rule1/runs") {
+        return rule1Gate; // left pending until the test resolves it below
+      }
+      if (input === "/api/projects/proj1/automations/rule2/runs") {
+        return new Response(
+          JSON.stringify({
+            runs: [{ id: "run2", ruleId: "rule2", status: "sent", error: null, triggeredAt: new Date("2026-03-15T10:00:00Z").toISOString() }],
+          }),
+          { status: 200, headers: { "content-type": "application/json" } },
+        );
+      }
+      throw new Error(`unexpected request ${input}`);
+    }) as typeof fetch;
+
+    try {
+      renderPanel();
+      await waitForCondition(() => document.querySelectorAll(".automations-rule-row").length === 2);
+
+      const rows = Array.from(document.querySelectorAll(".automations-rule-row"));
+      const historyButtonFor = (row: Element) => Array.from(row.querySelectorAll("button")).find((b) => b.textContent === "History") as HTMLButtonElement;
+
+      // Expand rule1's history -- its own fetch is gated, still in flight.
+      fireEvent.click(historyButtonFor(rows[0]));
+      await waitForCondition(() => document.querySelector(".automations-rule-history") !== null);
+
+      // Switch to rule2's history before rule1's fetch ever settles.
+      fireEvent.click(historyButtonFor(rows[1]));
+      await waitForCondition(() => document.querySelectorAll(".automations-rule-history-list li").length === 1);
+      assert.match(document.querySelector(".automations-rule-history-list li")?.textContent ?? "", /sent/i, "sanity check: rule2's own real run must be showing");
+
+      // NOW rule1's stale fetch finally rejects, well after rule2's own
+      // history is already showing successfully.
+      resolveRule1!(new Response(JSON.stringify({ error: "rule1 boom" }), { status: 500, headers: { "content-type": "application/json" } }));
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      await new Promise((resolve) => setTimeout(resolve, 0));
+
+      assert.equal(
+        document.querySelector('.automations-rule-history p[role="alert"]') !== null,
+        false,
+        "rule2's still-open history panel must never show rule1's unrelated, later-arriving error",
+      );
+      assert.equal(
+        document.querySelectorAll(".automations-rule-history-list li").length,
+        1,
+        "rule2's real run list must still be showing, undisturbed by rule1's stale fetch settling later",
+      );
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+});
+
+/**
  * Round 806: the fifth sibling of the "field TYPE changes while its NAME
  * survives a live refine" bug class -- distinct from the four already-fixed
  * EntityPanel.tsx siblings (groupFieldName, bulkEditField/bulkEditValue,
