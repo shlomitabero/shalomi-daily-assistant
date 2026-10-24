@@ -26,3 +26,16 @@ test("formatDocumentTitle prefixes a real unread WhatsApp count ahead of everyth
 test("formatDocumentTitle's unread prefix still applies with no project open", () => {
   assert.equal(formatDocumentTitle(null, 7), "(7) Forge AI");
 });
+
+test("formatDocumentTitle also prefixes a real failing-automations count, the same Gmail/Slack-style way as unread WhatsApp", () => {
+  assert.equal(formatDocumentTitle("My Shop", 0, 2), "(2) My Shop · Forge AI");
+});
+
+test("formatDocumentTitle combines unread WhatsApp and failing-automations counts into one prefix, instead of only ever reflecting one signal", () => {
+  assert.equal(formatDocumentTitle("My Shop", 3, 2), "(5) My Shop · Forge AI");
+});
+
+test("formatDocumentTitle omits the prefix entirely when both counts are zero or unspecified", () => {
+  assert.equal(formatDocumentTitle("My Shop", 0, 0), "My Shop · Forge AI");
+  assert.equal(formatDocumentTitle("My Shop"), "My Shop · Forge AI");
+});

@@ -2693,28 +2693,34 @@ test("App.tsx wires onClose into useDialogFocusTrap for every one of its 8 dialo
 });
 
 /**
- * New in this round: the browser tab's own title already changed per
- * project (documentTitle.ts), and the in-page WhatsApp badge already
- * tracked whatsappUnreadCount, but the two were never connected -- the tab
- * title never showed a Gmail/Slack-style "(N) " unread prefix visible from
- * the tab bar or alt-tab switcher while working in a different tab. Checks
+ * The browser tab's own title already changed per project
+ * (documentTitle.ts), and the in-page WhatsApp badge already tracked
+ * whatsappUnreadCount, but the two were never connected -- the tab title
+ * never showed a Gmail/Slack-style "(N) " unread prefix visible from the
+ * tab bar or alt-tab switcher while working in a different tab. Checks
  * the real source (not an extracted handler, since this lives inside a
  * useEffect's own body/deps, not a standalone function) for both the real
  * call passing whatsappUnreadCount through and the dependency array
  * actually including it -- a title effect with the right call but a stale
  * deps array would silently never re-run when the count changes.
+ *
+ * Round 900: the same gap existed for automationsFailingCount (round 710)
+ * -- a standing automation failure (webhook down, WhatsApp disconnected)
+ * is at least as worth surfacing from the tab bar/alt-tab switcher as an
+ * unread WhatsApp message, by this same effect's own stated rationale,
+ * but the title effect never depended on it at all.
  */
-test("App.tsx's document-title effect passes whatsappUnreadCount into formatDocumentTitle and includes it in the effect's own dependency array", () => {
+test("App.tsx's document-title effect passes both whatsappUnreadCount and automationsFailingCount into formatDocumentTitle and includes both in the effect's own dependency array", () => {
   const appSrc = readFileSync(new URL("./App.tsx", import.meta.url), "utf8");
   assert.match(
     appSrc,
-    /document\.title = formatDocumentTitle\(project\?\.name \?\? null, whatsappUnreadCount\);/,
-    "expected the title effect to pass the real whatsappUnreadCount through, not just the project name",
+    /document\.title = formatDocumentTitle\(project\?\.name \?\? null, whatsappUnreadCount, automationsFailingCount\);/,
+    "expected the title effect to pass both the real whatsappUnreadCount and automationsFailingCount through, not just the project name or only one count",
   );
   assert.match(
     appSrc,
-    /document\.title = formatDocumentTitle\(project\?\.name \?\? null, whatsappUnreadCount\);\s*\}, \[project, whatsappUnreadCount\]\);/,
-    "expected whatsappUnreadCount in the effect's own dependency array, or it would never re-run when the count changes",
+    /document\.title = formatDocumentTitle\(project\?\.name \?\? null, whatsappUnreadCount, automationsFailingCount\);\s*\}, \[project, whatsappUnreadCount, automationsFailingCount\]\);/,
+    "expected both whatsappUnreadCount and automationsFailingCount in the effect's own dependency array, or it would silently never re-run when either count changes",
   );
 });
 

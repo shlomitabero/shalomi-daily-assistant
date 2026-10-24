@@ -1107,15 +1107,17 @@ function AppContent() {
    * effects for why that placement is required).
    *
    * Also prefixes a real unread-WhatsApp count (whatsappUnreadCount, the
-   * same state the in-page whatsapp-unread-badge already renders) -- that
-   * in-page badge only ever caught someone's eye while this tab was
-   * already focused; a count in the tab's own title/favicon-adjacent text
-   * is visible from the tab bar or alt-tab switcher while working in a
+   * same state the in-page whatsapp-unread-badge already renders) and a
+   * failing-automations count (automationsFailingCount, the same state the
+   * in-page automations-failing-badge already renders) -- those in-page
+   * badges only ever caught someone's eye while this tab was already
+   * focused; a count in the tab's own title/favicon-adjacent text is
+   * visible from the tab bar or alt-tab switcher while working in a
    * completely different tab, the same Gmail/Slack convention.
    */
   useEffect(() => {
-    document.title = formatDocumentTitle(project?.name ?? null, whatsappUnreadCount);
-  }, [project, whatsappUnreadCount]);
+    document.title = formatDocumentTitle(project?.name ?? null, whatsappUnreadCount, automationsFailingCount);
+  }, [project, whatsappUnreadCount, automationsFailingCount]);
 
   /**
    * Fetches every entity's record count once per built project, for the
