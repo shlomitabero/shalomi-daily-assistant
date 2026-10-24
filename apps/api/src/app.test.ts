@@ -10559,3 +10559,37 @@ test("POST /auth/login/verify-code is rate-limited per IP: the 31st request in t
     { emailSender },
   );
 });
+
+/**
+ * Round 894: the one unauthenticated POST route in routes/auth.ts that was
+ * missed when round 857 (just above) and the original signup/login/
+ * forgot-password rate limiters were added -- confirmed by direct
+ * inspection that it had no rate-limiting middleware applied at all. Not a
+ * token-guessing test (the reset token is a high-entropy random value, so
+ * brute-forcing it is already infeasible regardless of any rate limit) --
+ * this confirms the separate, previously-missing IP-keyed throttle on
+ * request volume itself, the identical class of gap round 857 closed for
+ * verify-code. Uses garbage token values purely as a cheap way to generate
+ * 31 real requests to this route; each individually still returns 401
+ * RESET_TOKEN_INVALID, which is all this test needs.
+ */
+test("POST /auth/reset-password is rate-limited per IP: the 31st request in the window is rejected with 429", async () => {
+  await withServer(async (baseUrl) => {
+    for (let i = 0; i < 30; i++) {
+      const res = await fetch(`${baseUrl}/api/auth/reset-password`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ token: `garbage-token-${i}`, newPassword: "correct-horse-battery" }),
+      });
+      assert.notEqual(res.status, 429, `reset-password request ${i + 1} of 30 (within the limit) must not be rate-limited yet`);
+      assert.equal(res.status, 401, "a garbage token must still get the normal invalid-token response, not a 429");
+    }
+    const blocked = await fetch(`${baseUrl}/api/auth/reset-password`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ token: "garbage-token-30", newPassword: "correct-horse-battery" }),
+    });
+    assert.equal(blocked.status, 429);
+    assert.equal(((await blocked.json()) as { code?: string }).code, "RATE_LIMITED");
+  });
+});

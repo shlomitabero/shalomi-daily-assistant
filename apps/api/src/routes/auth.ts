@@ -152,7 +152,7 @@ export function createAuthRouter(
 
   /**
    * There was previously no limit at all on how many times any of these
-   * four routes could be called -- verifyPassword's scrypt cost (see
+   * routes could be called -- verifyPassword's scrypt cost (see
    * dummyPasswordHashPromise's own comment) is real attacker-side CPU, not
    * a server-enforced limit, so an unbounded /auth/login loop could
    * brute-force a password at whatever rate the attacker's own hardware
@@ -161,13 +161,14 @@ export function createAuthRouter(
    * known victim email sends that victim a real reset email on every
    * single call with no throttle at all (email-bombing their inbox, and
    * burning this deployment's Resend quota). Keyed by IP for
-   * signup/login/verify-code -- the realistic attack there is one machine
-   * iterating quickly -- but by the target *email* for forgot-password,
-   * since the actual harm (spamming one inbox) doesn't depend on which IP
-   * the request comes from. Created fresh per createAuthRouter() call, the
-   * same convention app.ts's own `activePipelines` already follows, so
-   * app.test.ts's withServer (which calls createApp() fresh per test)
-   * never leaks rate-limit state between unrelated tests.
+   * signup/login/verify-code/reset-password -- the realistic attack there
+   * is one machine iterating quickly -- but by the target *email* for
+   * forgot-password, since the actual harm (spamming one inbox) doesn't
+   * depend on which IP the request comes from. Created fresh per
+   * createAuthRouter() call, the same convention app.ts's own
+   * `activePipelines` already follows, so app.test.ts's withServer (which
+   * calls createApp() fresh per test) never leaks rate-limit state between
+   * unrelated tests.
    */
   const signupRateLimiter = createRateLimiter({
     windowMs: RATE_LIMIT_WINDOW_MS,
@@ -207,6 +208,28 @@ export function createAuthRouter(
     max: 30,
     keyGenerator: (req) => req.ip ?? "unknown",
     message: "Too many login code attempts. Please try again later.",
+  });
+  /**
+   * Round 894: the one unauthenticated POST route in this exact file that
+   * was missed when the comment above added throttles to its four
+   * siblings. Not a token-guessing defense -- the reset token is a
+   * high-entropy random value (see hashResetToken/getPasswordResetToken
+   * ByHash), so brute-forcing it is already infeasible regardless of any
+   * rate limit. This closes the same separate gap verifyLoginCodeRateLimiter
+   * above closed for its own route: unbounded REQUEST VOLUME against the
+   * cheapest unauthenticated POST endpoint in the whole API (sha256 +
+   * timingSafeEqual, no scrypt) -- flooding it with garbage tokens costs
+   * this server a real DB lookup per request with no throttle at all,
+   * unlike every sibling route. Keyed by IP, same rationale as
+   * signup/login/verify-code above (the realistic attack is one machine
+   * iterating quickly, not a targeted-victim attack the way forgot-
+   * password's own email-keyed limiter defends against).
+   */
+  const resetPasswordRateLimiter = createRateLimiter({
+    windowMs: RATE_LIMIT_WINDOW_MS,
+    max: 30,
+    keyGenerator: (req) => req.ip ?? "unknown",
+    message: "Too many password reset attempts. Please try again later.",
   });
 
   router.post("/auth/signup", signupRateLimiter, async (req, res, next) => {
@@ -424,7 +447,7 @@ export function createAuthRouter(
    * this request's own to preserve, so every existing session is revoked,
    * forcing a fresh login with the new password on every device.
    */
-  router.post("/auth/reset-password", async (req, res, next) => {
+  router.post("/auth/reset-password", resetPasswordRateLimiter, async (req, res, next) => {
     const parsed = ResetPasswordSchema.safeParse(req.body);
     if (!parsed.success) {
       next(new HttpError(400, formatValidationError(parsed.error), "VALIDATION_ERROR"));
