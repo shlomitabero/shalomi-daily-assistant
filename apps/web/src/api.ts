@@ -1042,8 +1042,15 @@ export interface WhatsAppSendResult {
  * with no fixed shape, so it can't be translated and is shown as-is).
  * Mapped to the same `error.<CODE>` translation convention every other
  * server error already uses, via resolveErrorMessage below.
+ *
+ * Exported so AutomationsPanel.tsx/automationsReport.ts (round 935) can
+ * translate the identical raw codes a `send_whatsapp` automation's own
+ * failed run stores verbatim (apps/api/src/automations.ts never
+ * translates them, by design -- that's a client-side concern) using this
+ * same canonical list, instead of maintaining a second copy that could
+ * drift out of sync with this one.
  */
-const KNOWN_WHATSAPP_SEND_ERROR_CODES = new Set(["not_connected", "invalid_phone_number", "missing_country_code"]);
+export const KNOWN_WHATSAPP_SEND_ERROR_CODES = new Set(["not_connected", "invalid_phone_number", "missing_country_code"]);
 
 export async function sendWhatsAppMessage(projectId: string, to: string, message: string): Promise<WhatsAppSendResult> {
   const token = getToken();

@@ -1,7 +1,7 @@
 import type { Entity } from "@forge/shared";
-import { safeDownloadName, type AutomationRuleView } from "./api.js";
+import { KNOWN_WHATSAPP_SEND_ERROR_CODES, safeDownloadName, type AutomationRuleView } from "./api.js";
 import { fieldDisplayLabel, fieldLabelOccurrences, parseFieldDate, recordDisplayLabel, type RelatedRecordsByEntity } from "./entityFormatting.js";
-import type { Lang } from "./i18n/language.js";
+import { resolveErrorMessage, type Lang } from "./i18n/language.js";
 
 const LOCALE: Record<Lang, string> = { he: "he-IL", en: "en-US" };
 
@@ -111,6 +111,20 @@ function describeDestination(
   return t("automations.rule.sends", { destination });
 }
 
+// Round 935: mirrors AutomationsPanel.tsx's own translateAutomationError
+// (see its comment) -- this report is deliberately self-contained (see
+// this file's own top comment), so it gets its own copy rather than
+// importing that panel's closure, but reuses the exact same canonical
+// KNOWN_WHATSAPP_SEND_ERROR_CODES list and error.WHATSAPP_SEND_<CODE>
+// i18n keys so the downloaded report never disagrees with the live panel
+// about which errors are known or how they're phrased.
+function translateAutomationError(rule: AutomationRuleView, error: string, lang: Lang): string {
+  if (rule.actionType === "send_whatsapp" && KNOWN_WHATSAPP_SEND_ERROR_CODES.has(error)) {
+    return resolveErrorMessage(lang, { code: `WHATSAPP_SEND_${error.toUpperCase()}`, error });
+  }
+  return error;
+}
+
 function describeLastRun(
   rule: AutomationRuleView,
   lang: Lang,
@@ -120,7 +134,7 @@ function describeLastRun(
   const time = new Date(rule.lastTriggeredAt).toLocaleString(LOCALE[lang]);
   return rule.lastStatus === "sent"
     ? t("automations.lastRun.sent", { time })
-    : t("automations.lastRun.failed", { time, error: rule.lastError ?? "" });
+    : t("automations.lastRun.failed", { time, error: translateAutomationError(rule, rule.lastError ?? "", lang) });
 }
 
 export function formatAutomationsReport(

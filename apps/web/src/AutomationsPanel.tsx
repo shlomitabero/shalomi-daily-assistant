@@ -7,6 +7,7 @@ import {
   listAutomationRuns,
   listRecords,
   updateAutomationRule,
+  KNOWN_WHATSAPP_SEND_ERROR_CODES,
   type AutomationActionType,
   type AutomationRuleView,
   type AutomationRunView,
@@ -17,6 +18,7 @@ import { downloadAutomationsReport, formatAutomationsReport } from "./automation
 import { applyColumnOrder, getColumnOrder } from "./columnOrder.js";
 import { fieldDisplayLabel, fieldLabelOccurrences, parseFieldDate, recordDisplayLabel, uniqueEnumValues, type RelatedRecordsByEntity } from "./entityFormatting.js";
 import { useTranslation } from "./i18n/LanguageContext.js";
+import { resolveErrorMessage } from "./i18n/language.js";
 import { useDialogFocusTrap } from "./useDialogFocusTrap.js";
 
 const LOCALE: Record<string, string> = { he: "he-IL", en: "en-US" };
@@ -644,17 +646,38 @@ export function AutomationsPanel({
     return t("automations.rule.sends", { destination });
   }
 
+  // Round 935: apps/api/src/automations.ts stores a `send_whatsapp`
+  // rule's failed-run error as the exact stable snake_case code
+  // whatsappWeb.ts's sendMessage returns ("missing_country_code" is the
+  // COMMON case for a toMode:"field" rule reading a locally-formatted
+  // phone field, per that file's own doc comment) -- never translated,
+  // by design, since that's a client concern. api.ts's own
+  // sendWhatsAppMessage (the manual "Send WhatsApp" panel) already
+  // translates these same three codes via the `error.WHATSAPP_SEND_<CODE>`
+  // i18n keys; this panel's own run-history/last-run text never did,
+  // leaking the bare English code into this Hebrew-primary app's UI with
+  // no actionable guidance. A webhook rule's error is passed through
+  // unchanged, same as before.
+  function translateAutomationError(actionType: AutomationActionType, error: string): string {
+    if (actionType === "send_whatsapp" && KNOWN_WHATSAPP_SEND_ERROR_CODES.has(error)) {
+      return resolveErrorMessage(lang, { code: `WHATSAPP_SEND_${error.toUpperCase()}`, error });
+    }
+    return error;
+  }
+
   function describeLastRun(rule: AutomationRuleView): string {
     if (!rule.lastTriggeredAt) return t("automations.lastRun.never");
     const time = new Date(rule.lastTriggeredAt).toLocaleString(LOCALE[lang]);
     return rule.lastStatus === "sent"
       ? t("automations.lastRun.sent", { time })
-      : t("automations.lastRun.failed", { time, error: rule.lastError ?? "" });
+      : t("automations.lastRun.failed", { time, error: translateAutomationError(rule.actionType, rule.lastError ?? "") });
   }
 
-  function describeRunStatus(run: AutomationRunView): string {
+  function describeRunStatus(run: AutomationRunView, actionType: AutomationActionType): string {
     const time = new Date(run.triggeredAt).toLocaleString(LOCALE[lang]);
-    return run.status === "sent" ? t("automations.lastRun.sent", { time }) : t("automations.lastRun.failed", { time, error: run.error ?? "" });
+    return run.status === "sent"
+      ? t("automations.lastRun.sent", { time })
+      : t("automations.lastRun.failed", { time, error: translateAutomationError(actionType, run.error ?? "") });
   }
 
   function handleToggleHistory(rule: AutomationRuleView) {
@@ -820,7 +843,7 @@ export function AutomationsPanel({
                         <ul className="automations-rule-history-list">
                           {runsByRuleId[rule.id]!.map((run) => (
                             <li key={run.id} className="muted small">
-                              {describeRunStatus(run)}
+                              {describeRunStatus(run, rule.actionType)}
                             </li>
                           ))}
                         </ul>

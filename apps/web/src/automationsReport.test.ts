@@ -61,6 +61,27 @@ test("formatAutomationsReport disambiguates two fields that share the same label
   );
 });
 
+/**
+ * Round 935: this module's own describeLastRun -- deliberately a
+ * hand-duplicated sibling of AutomationsPanel.tsx's own version (see
+ * this file's top comment) -- interpolated a send_whatsapp rule's own
+ * failed-run error verbatim, the exact raw snake_case code
+ * apps/api/src/automations.ts stores (e.g. "missing_country_code", the
+ * COMMON case for a toMode:"field" rule reading a locally-formatted
+ * phone field), instead of the already-written, already-translated
+ * message api.ts's own sendWhatsAppMessage shows one click away in the
+ * manual "Send WhatsApp" panel.
+ */
+test("formatAutomationsReport translates a send_whatsapp rule's known raw error code instead of showing the bare code", () => {
+  const t = (key: string, params?: Record<string, string | number>) => translate("en", key, params);
+  const rule = makeRule({ lastTriggeredAt: "2026-03-15T09:00:00Z", lastStatus: "failed", lastError: "missing_country_code" });
+
+  const report = formatAutomationsReport([rule], [], "Shop", "en", t);
+
+  assert.match(report, /missing a country code/, "the report must show the translated message");
+  assert.equal(report.includes("missing_country_code"), false, "the bare raw error code must never leak into the report");
+});
+
 test("formatAutomationsReport shows a field's bare label unchanged when no other field on the entity shares it", () => {
   const t = (key: string, params?: Record<string, string | number>) => translate("en", key, params);
   const entity: Entity = {

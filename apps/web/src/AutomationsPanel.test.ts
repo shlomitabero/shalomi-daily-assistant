@@ -2243,6 +2243,60 @@ test("AutomationsPanel's History button fetches and shows every real run for tha
   });
 });
 
+/**
+ * Round 935: apps/api/src/automations.ts stores a failed send_whatsapp
+ * run's error as the exact stable snake_case code whatsappWeb.ts's
+ * sendMessage returns ("missing_country_code" is the COMMON case for a
+ * toMode:"field" rule reading a locally-formatted phone field, per its
+ * own doc comment) -- the manual "Send WhatsApp" panel (api.ts's own
+ * sendWhatsAppMessage) already translates these same three codes, but
+ * this panel's rule-row summary and run-history list never did, leaking
+ * the bare English code into this Hebrew-primary app's UI.
+ */
+test("AutomationsPanel translates a send_whatsapp rule's known raw error code (e.g. missing_country_code) in both its rule-row summary and its run-history list, instead of showing the bare code", async () => {
+  await withJsdom(async () => {
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = (async (input: string) => {
+      if (input === "/api/projects/proj1/automations") {
+        return new Response(
+          JSON.stringify({
+            rules: [makeRule({ lastTriggeredAt: new Date("2026-03-15T09:00:00Z").toISOString(), lastStatus: "failed", lastError: "missing_country_code" })],
+          }),
+          { status: 200, headers: { "content-type": "application/json" } },
+        );
+      }
+      if (input === "/api/projects/proj1/automations/rule1/runs") {
+        return new Response(
+          JSON.stringify({
+            runs: [{ id: "run1", ruleId: "rule1", status: "failed", error: "missing_country_code", triggeredAt: new Date("2026-03-15T09:00:00Z").toISOString() }],
+          }),
+          { status: 200, headers: { "content-type": "application/json" } },
+        );
+      }
+      throw new Error(`unexpected request ${input}`);
+    }) as typeof fetch;
+
+    try {
+      renderPanel();
+      await waitForCondition(() => document.querySelectorAll(".automations-rule-row").length === 1);
+
+      const row = document.querySelector(".automations-rule-row") as HTMLElement;
+      assert.match(row.textContent ?? "", /missing a country code/, "the rule row's own last-run summary must show the translated message");
+      assert.equal(row.textContent?.includes("missing_country_code") ?? true, false, "the bare raw error code must never leak into the rule row");
+
+      const historyButton = Array.from(document.querySelectorAll("button")).find((b) => b.textContent === "History") as HTMLButtonElement;
+      fireEvent.click(historyButton);
+      await waitForCondition(() => document.querySelectorAll(".automations-rule-history-list li").length === 1);
+
+      const historyText = document.querySelector(".automations-rule-history-list")?.textContent ?? "";
+      assert.match(historyText, /missing a country code/, "the run-history list must also show the translated message");
+      assert.equal(historyText.includes("missing_country_code"), false, "the bare raw error code must never leak into the run-history list either");
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+});
+
 test("AutomationsPanel's History button shows a real empty state for a rule that has never fired", async () => {
   await withJsdom(async () => {
     const originalFetch = globalThis.fetch;
