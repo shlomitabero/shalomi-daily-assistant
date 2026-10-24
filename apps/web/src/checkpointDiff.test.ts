@@ -2,6 +2,8 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import type { Checkpoint, ProductSpec } from "@forge/shared";
 import {
+  checkpointDisplayLabel,
+  checkpointLabelOccurrences,
   computeCheckpointDiff,
   filterCheckpoints,
   filterCheckpointsByType,
@@ -887,8 +889,50 @@ test("formatCompareTarget names the current app state by default, and the real c
   const checkpoints: Checkpoint[] = [
     { id: "cp1", projectId: "p1", label: "Initial build", kind: "build", spec: makeSpec([]), createdAt: "2026-01-01T00:00:00.000Z" },
   ];
-  assert.equal(formatCompareTarget(checkpoints, null, t), "Current app state");
-  assert.equal(formatCompareTarget(checkpoints, "cp1", t), "Initial build");
+  assert.equal(formatCompareTarget(checkpoints, null, t, "en"), "Current app state");
+  assert.equal(formatCompareTarget(checkpoints, "cp1", t, "en"), "Initial build");
+});
+
+test("checkpointDisplayLabel returns the bare label when no other checkpoint shares it", () => {
+  const checkpoints: Checkpoint[] = [
+    { id: "cp1", projectId: "p1", label: "Initial build", kind: "build", spec: makeSpec([]), createdAt: "2026-01-01T00:00:00.000Z" },
+    { id: "cp2", projectId: "p1", label: "Refine: add invoices", kind: "refine", spec: makeSpec([]), createdAt: "2026-01-02T00:00:00.000Z" },
+  ];
+  const occurrences = checkpointLabelOccurrences(checkpoints);
+  assert.equal(checkpointDisplayLabel(checkpoints[0], occurrences, "en"), "Initial build");
+});
+
+/**
+ * Round 927: checkpoint labels are freely renamable (CheckpointLabelEditor)
+ * with no uniqueness check anywhere in the save path, so two checkpoints
+ * can legally end up sharing the exact same label -- the "Compare with"
+ * dropdown and the "Comparing to" header both used to render that shared
+ * label with nothing to tell the two apart. Confirms a disambiguator
+ * (the checkpoint's own createdAt, already what the main list shows under
+ * each label) is appended only when the label is genuinely ambiguous.
+ */
+test("checkpointDisplayLabel appends a date disambiguator when two checkpoints share the identical label", () => {
+  const checkpoints: Checkpoint[] = [
+    { id: "cp1", projectId: "p1", label: "v1", kind: "refine", spec: makeSpec([]), createdAt: "2026-01-01T10:00:00.000Z" },
+    { id: "cp2", projectId: "p1", label: "v1", kind: "refine", spec: makeSpec([]), createdAt: "2026-01-02T15:30:00.000Z" },
+  ];
+  const occurrences = checkpointLabelOccurrences(checkpoints);
+  const label1 = checkpointDisplayLabel(checkpoints[0], occurrences, "en");
+  const label2 = checkpointDisplayLabel(checkpoints[1], occurrences, "en");
+  assert.notEqual(label1, label2, "the two same-labeled checkpoints must now render as genuinely distinct strings");
+  assert.match(label1, /^v1 \(.+\)$/, "must still lead with the real label, with the disambiguator appended, not replacing it");
+  assert.match(label2, /^v1 \(.+\)$/);
+});
+
+test("formatCompareTarget disambiguates two same-labeled checkpoints in the 'Comparing to' header, not just the bare label", () => {
+  const t = (key: string, params?: Record<string, string | number>) => translate("en", key, params);
+  const checkpoints: Checkpoint[] = [
+    { id: "cp1", projectId: "p1", label: "v1", kind: "refine", spec: makeSpec([]), createdAt: "2026-01-01T10:00:00.000Z" },
+    { id: "cp2", projectId: "p1", label: "v1", kind: "refine", spec: makeSpec([]), createdAt: "2026-01-02T15:30:00.000Z" },
+  ];
+  const result1 = formatCompareTarget(checkpoints, "cp1", t, "en");
+  const result2 = formatCompareTarget(checkpoints, "cp2", t, "en");
+  assert.notEqual(result1, result2, "comparing against each of the two same-labeled checkpoints must read as genuinely different targets");
 });
 
 test("computeCheckpointDiff correctly compares two arbitrary checkpoints against each other, not just a checkpoint against currentSpec", () => {

@@ -1109,6 +1109,81 @@ test("HistoryPanel's 'Compare with' dropdown lets you diff one checkpoint agains
 });
 
 /**
+ * Round 927: checkpoint labels are freely renamable (CheckpointLabelEditor)
+ * with no uniqueness check anywhere in the save path, so two checkpoints
+ * can legally end up sharing the exact same label -- before this round's
+ * fix, the "Compare with" dropdown's own <option>s both rendered the bare,
+ * identical label, with no way for a real user to tell which one they'd
+ * actually be comparing against. Builds three checkpoints where two of
+ * them share the label "v1" with genuinely different timestamps, expands
+ * the THIRD checkpoint's own diff (so both "v1" checkpoints appear
+ * together as sibling options in its dropdown), and confirms the two
+ * options now read as distinct strings.
+ */
+test("HistoryPanel's 'Compare with' dropdown shows two checkpoints sharing an identical label as genuinely distinct options", async () => {
+  await withJsdom(async () => {
+    const originalFetch = globalThis.fetch;
+    const first = makeCheckpoint("cp1", "Initial build");
+    const ambiguousOld = { ...makeCheckpoint("cp2", "v1"), createdAt: "2026-01-01T10:00:00.000Z" };
+    const ambiguousNew = { ...makeCheckpoint("cp3", "v1"), createdAt: "2026-01-02T15:30:00.000Z" };
+
+    globalThis.fetch = (async (input: string, init?: RequestInit) => {
+      const method = init?.method ?? "GET";
+      if (method === "GET" && input === "/api/projects/proj1/checkpoints") {
+        return new Response(JSON.stringify({ checkpoints: [first, ambiguousOld, ambiguousNew] }), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        });
+      }
+      throw new Error(`unexpected request ${method} ${input}`);
+    }) as typeof fetch;
+
+    try {
+      render(
+        React.createElement(
+          ThemeProvider,
+          null,
+          React.createElement(
+            LanguageProvider,
+            null,
+            React.createElement(HistoryPanel, {
+              projectId: "proj1",
+              projectName: "Test Project",
+              currentSpec: first.spec,
+              onRestored: () => {},
+              onClose: () => {},
+            }),
+          ),
+        ),
+      );
+      await waitForCondition(() => document.querySelectorAll(".checkpoint-list li").length === 3);
+
+      const items = document.querySelectorAll(".checkpoint-list li");
+      // newest-first order: "first" uses makeCheckpoint's own default
+      // createdAt (the real current time), which is newer than the two
+      // literal 2026-01-01/02 timestamps below, so it sorts first -- expand
+      // it so BOTH "v1" checkpoints show up together as sibling options in
+      // its own dropdown.
+      const firstItem = items[0];
+      assert.match(firstItem.textContent ?? "", /Initial build/);
+      fireEvent.click(firstItem.querySelector(".detail-toggle") as HTMLButtonElement);
+      await waitForCondition(() => firstItem.querySelector(".checkpoint-compare-row select") !== null);
+
+      const select = firstItem.querySelector(".checkpoint-compare-row select") as HTMLSelectElement;
+      const v1Options = Array.from(select.options).filter((o) => o.textContent?.startsWith("v1"));
+      assert.equal(v1Options.length, 2, "expected both same-labeled checkpoints to appear as separate options");
+      assert.notEqual(
+        v1Options[0].textContent,
+        v1Options[1].textContent,
+        "the two same-labeled checkpoints must render as genuinely distinct option text, not an indistinguishable duplicate pair",
+      );
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+});
+
+/**
  * New in this round: every build/refine adds a checkpoint forever with no
  * way to prune a single unwanted one (an experimental refine that went
  * nowhere, say) -- the same real gap round 208 closed for the WhatsApp

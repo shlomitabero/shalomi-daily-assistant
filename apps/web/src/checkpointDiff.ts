@@ -128,6 +128,36 @@ function entityDisplayLabel(entity: Entity, occurrences: Map<string, number>): s
 }
 
 /**
+ * Round 927: a checkpoint's own label is just as unenforced-unique as an
+ * entity's or field's (RenameCheckpointSchema in routes/projects.ts
+ * accepts any non-empty string, no collision check against sibling
+ * checkpoints), so two checkpoints in the same project can legally end up
+ * sharing a label via CheckpointLabelEditor. Without this,
+ * HistoryPanel.tsx's own "Compare with" dropdown and its "Comparing to: X"
+ * header both rendered a raw label with nothing to tell two same-labeled
+ * checkpoints apart -- picking either option looked identical, with no
+ * way to verify which checkpoint was actually chosen. Mirrors
+ * entityLabelOccurrences/entityDisplayLabel and fieldLabelOccurrences/
+ * fieldDisplayLabel above exactly, using each checkpoint's own createdAt
+ * (already what the main checkpoint list shows directly under its label)
+ * as the disambiguator rather than an id, which would mean nothing to a
+ * real user.
+ */
+export function checkpointLabelOccurrences(checkpoints: Checkpoint[]): Map<string, number> {
+  const occurrences = new Map<string, number>();
+  for (const c of checkpoints) {
+    occurrences.set(c.label, (occurrences.get(c.label) ?? 0) + 1);
+  }
+  return occurrences;
+}
+
+export function checkpointDisplayLabel(checkpoint: Checkpoint, occurrences: Map<string, number>, lang: Lang): string {
+  return (occurrences.get(checkpoint.label) ?? 0) > 1
+    ? `${checkpoint.label} (${new Date(checkpoint.createdAt).toLocaleString(LOCALE[lang])})`
+    : checkpoint.label;
+}
+
+/**
  * Restoring never destroys data (migrations are additive-only, see
  * projects.ts's restore route), but it DOES move which entities/fields the
  * live app currently *shows* -- so before clicking Restore, a real question
@@ -451,10 +481,12 @@ export function formatCompareTarget(
   checkpoints: Checkpoint[],
   compareTargetId: string | null,
   t: (key: string, params?: Record<string, string | number>) => string,
+  lang: Lang,
 ): string {
   if (compareTargetId == null) return t("history.diff.currentState");
   const target = checkpoints.find((c) => c.id === compareTargetId);
-  return target ? target.label : t("history.diff.currentState");
+  if (!target) return t("history.diff.currentState");
+  return checkpointDisplayLabel(target, checkpointLabelOccurrences(checkpoints), lang);
 }
 
 /** Saves the already-rendered history text as a real downloaded .txt file, the same browser-download mechanics twinReport.ts's downloadTwinReport uses. */

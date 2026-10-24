@@ -10,6 +10,8 @@ import {
 } from "./historyRecentSearches.js";
 import {
   type CheckpointType,
+  checkpointDisplayLabel,
+  checkpointLabelOccurrences,
   computeCheckpointDiff,
   downloadCheckpointHistory,
   filterCheckpoints,
@@ -57,6 +59,12 @@ export function HistoryPanel({
   const [copyStatus, setCopyStatus] = useState<"idle" | "copied" | "failed">("idle");
   const dialogRef = useDialogFocusTrap<HTMLDivElement>(onClose);
   const visibleCheckpoints = filterCheckpointsByType(filterCheckpoints(checkpoints, search), typeFilter);
+  // Round 927: counted over the FULL checkpoint list (not just the
+  // search/type-filtered visibleCheckpoints above) -- two checkpoints
+  // sharing a label are still ambiguous to each other in the "Compare
+  // with" dropdown even when a filter happens to hide one of them from
+  // the main list right now.
+  const checkpointLabels = checkpointLabelOccurrences(checkpoints);
 
   function loadHistory() {
     setLoadError(null);
@@ -364,14 +372,14 @@ export function HistoryPanel({
                                 .filter((c) => c.id !== checkpoint.id)
                                 .map((c) => (
                                   <option key={c.id} value={c.id}>
-                                    {c.label}
+                                    {checkpointDisplayLabel(c, checkpointLabels, lang)}
                                   </option>
                                 ))}
                             </select>
                           </label>
                         )}
                         <p className="muted small">
-                          {t("history.diff.comparingTo", { label: formatCompareTarget(checkpoints, compareTargetId, t) })}
+                          {t("history.diff.comparingTo", { label: formatCompareTarget(checkpoints, compareTargetId, t, lang) })}
                         </p>
                         {!hasChanges ? (
                           <p className="muted small">{t("history.diff.noChanges")}</p>
