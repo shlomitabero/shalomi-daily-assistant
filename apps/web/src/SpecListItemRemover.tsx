@@ -54,7 +54,10 @@ function useRemovableSpecItem(remove: () => Promise<{ project: Project }>, onRem
     }
   }
 
-  return { busy, error, handleRemove };
+  // Exposed so a caller with sibling error states of its own (FieldChip's
+  // requiredError/typeError -- see round 931) can clear this one too when
+  // one of those siblings starts; unused by every other caller of this hook.
+  return { busy, error, handleRemove, clearError: () => setError(null) };
 }
 
 /**
@@ -576,7 +579,7 @@ export function FieldChip({
   readOnly?: boolean;
 }) {
   const { t } = useTranslation();
-  const { busy, error, handleRemove } = useRemovableSpecItem(
+  const { busy, error, handleRemove, clearError } = useRemovableSpecItem(
     () => removeField(projectId, entityName, field.name),
     onChanged,
   );
@@ -598,6 +601,15 @@ export function FieldChip({
   async function handleToggleRequired() {
     setRequiredBusy(true);
     setRequiredError(null);
+    // Round 931: this chip renders `error`/requiredError/typeError all
+    // unconditionally together below, with nothing indicating which
+    // action produced which -- mirroring WhatsAppPanel's own
+    // handleRetry/handleDeleteMessage cross-clear (rounds 902/909),
+    // starting any one of this chip's three actions clears the other
+    // two's stale banners too, so a failed required-toggle's error can't
+    // outlive a later, unrelated successful type change (or removal).
+    setTypeError(null);
+    clearError();
     try {
       const { project } = await setFieldRequired(projectId, entityName, field.name, !field.required);
       onChanged(project);
@@ -606,6 +618,16 @@ export function FieldChip({
     } finally {
       setRequiredBusy(false);
     }
+  }
+
+  // Round 931: handleRemove comes from the shared useRemovableSpecItem
+  // hook above (reused by RoleChip/AssumptionItem/PersonaItem too), which
+  // has no knowledge of this chip's own requiredError/typeError -- so the
+  // cross-clear has to wrap it here instead of living inside the hook.
+  async function handleRemoveField() {
+    setRequiredError(null);
+    setTypeError(null);
+    await handleRemove();
   }
 
   // The last correction gap in this family: an existing field's own
@@ -623,6 +645,10 @@ export function FieldChip({
   async function commitTypeChange(type: Field["type"], opts?: { enumValues?: string; relationTo?: string }) {
     setTypeBusy(true);
     setTypeError(null);
+    // Round 931: mirrors handleToggleRequired's own cross-clear above --
+    // same chip, same three unconditionally-rendered error spans.
+    setRequiredError(null);
+    clearError();
     try {
       const { project } = await setFieldType(projectId, entityName, field.name, type, opts);
       onChanged(project);
@@ -825,7 +851,7 @@ export function FieldChip({
       <button
         type="button"
         className="chip-remove"
-        onClick={handleRemove}
+        onClick={handleRemoveField}
         disabled={busy || !canRemove}
         aria-label={t("spec.fields.remove")}
         title={canRemove ? t("spec.fields.remove") : t("spec.fields.lastOneHint")}

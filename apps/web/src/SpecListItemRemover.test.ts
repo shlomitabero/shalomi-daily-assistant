@@ -1227,6 +1227,59 @@ test("a field chip's required checkbox reflects the field's current state, and t
   });
 });
 
+/**
+ * Round 931: this chip has three independent error states (remove's own
+ * `error`, requiredError, typeError) that all render unconditionally
+ * together at the bottom, with nothing distinguishing which action
+ * produced which. Before this round, each handler only ever cleared its
+ * OWN error at the start of its own action -- so a failed required-toggle
+ * left its banner on screen untouched even past a later, completely
+ * unrelated, SUCCESSFUL type change, confusingly implying the chip (or
+ * the type change that just worked) was still broken.
+ */
+test("a field chip's required-toggle error banner is cleared by a later, unrelated successful type change", async () => {
+  await withJsdom(async () => {
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = (async (input: string, init?: RequestInit) => {
+      const method = init?.method ?? "GET";
+      if (method === "PATCH" && input === "/api/projects/proj1/entities/Customer/fields/email/required") {
+        return new Response(JSON.stringify({ error: "network blip" }), { status: 500, headers: { "content-type": "application/json" } });
+      }
+      if (method === "PATCH" && input === "/api/projects/proj1/entities/Customer/fields/email/type") {
+        const body = JSON.parse(init!.body as string) as { type: string };
+        const updated = {
+          ...baseProject,
+          spec: {
+            ...baseProject.spec,
+            entities: [{ ...baseProject.spec.entities[0], fields: [{ name: "email", type: body.type, required: true }] }],
+          },
+        };
+        return new Response(JSON.stringify({ project: updated }), { status: 200, headers: { "content-type": "application/json" } });
+      }
+      throw new Error(`unexpected request ${method} ${input}`);
+    }) as typeof fetch;
+
+    try {
+      const changedProjects: Project[] = [];
+      renderFieldChip((p) => changedProjects.push(p), true, { name: "email", type: "text", required: true });
+
+      fireEvent.click(document.querySelector(".chip-field-required input") as HTMLInputElement);
+      await waitForCondition(() => document.querySelector(".chip-removable")?.textContent?.includes("network blip") ?? false);
+
+      fireEvent.change(document.querySelector(".chip-field-type") as HTMLSelectElement, { target: { value: "number" } });
+      await waitForCondition(() => changedProjects.length === 1);
+
+      assert.equal(
+        document.querySelector(".chip-removable")?.textContent?.includes("network blip") ?? false,
+        false,
+        "a stale required-toggle error must not survive a later, unrelated successful type change",
+      );
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+});
+
 test("changing a field chip's type select to a plain type (no extra data needed) commits immediately via the real PATCH type endpoint", async () => {
   await withJsdom(async () => {
     const originalFetch = globalThis.fetch;
