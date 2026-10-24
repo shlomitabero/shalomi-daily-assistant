@@ -17,6 +17,7 @@ import {
   streamBuild,
   subscribeAuthExpired,
   subscribeProjectGone,
+  uploadRecordFile,
 } from "./api.js";
 import { DEFAULT_DELAYS_MS } from "./wakeRetry.js";
 
@@ -547,6 +548,91 @@ test("subscribeProjectGone's returned unsubscribe function actually stops delive
     ),
   );
   assert.equal(fired, 0);
+});
+
+/**
+ * Round 950: streamPipeline (the shared helper behind streamBuild/
+ * streamRefine) is one of four special-purpose fetch wrappers in this file
+ * that each do their own local error handling instead of going through the
+ * generic request() helper above -- docs/roadmap.md's own writeup
+ * introducing subscribeProjectGone explicitly named all four as a known,
+ * deliberately out-of-scope follow-up ("a genuine follow-up if the same
+ * 'stuck on a 404 forever' shape turns out to matter there too"). Round 933
+ * closed the VIEWER_READ_ONLY half of that follow-up for all four; this
+ * closes the PROJECT_NOT_FOUND half the same way -- requireProjectAccess
+ * throws it for Build/Refine exactly as it does for every other route, the
+ * moment this project was deleted or this account's own access was revoked
+ * mid-session.
+ */
+test("subscribeProjectGone's listener also fires for a streaming request (streamBuild) that gets a 404 PROJECT_NOT_FOUND", async () => {
+  let firedWith: [string, string] | undefined;
+  const unsubscribe = subscribeProjectGone((projectId, message) => {
+    firedWith = [projectId, message];
+  });
+  try {
+    await assert.rejects(() =>
+      withFakeFetch(new Response(JSON.stringify({ error: 'Project "proj1" not found', code: "PROJECT_NOT_FOUND" }), { status: 404 }), () =>
+        streamBuild("proj1", () => undefined),
+      ),
+    );
+    assert.deepEqual(firedWith, ["proj1", "Project not found."]);
+  } finally {
+    unsubscribe();
+  }
+});
+
+test("subscribeProjectGone's listener also fires for a download request (exportProject) that gets a 404 PROJECT_NOT_FOUND", async () => {
+  let firedWith: [string, string] | undefined;
+  const unsubscribe = subscribeProjectGone((projectId, message) => {
+    firedWith = [projectId, message];
+  });
+  try {
+    await assert.rejects(() =>
+      withFakeDocument(() =>
+        withFakeFetch(new Response(JSON.stringify({ error: 'Project "proj1" not found', code: "PROJECT_NOT_FOUND" }), { status: 404 }), () =>
+          exportProject("proj1", "My CRM App"),
+        ),
+      ),
+    );
+    assert.deepEqual(firedWith, ["proj1", "Project not found."]);
+  } finally {
+    unsubscribe();
+  }
+});
+
+test("subscribeProjectGone's listener also fires for sendWhatsAppMessage's own normalize-without-throwing path when the project itself is gone", async () => {
+  let firedWith: [string, string] | undefined;
+  const unsubscribe = subscribeProjectGone((projectId, message) => {
+    firedWith = [projectId, message];
+  });
+  try {
+    const result = await withFakeFetch(
+      new Response(JSON.stringify({ error: 'Project "proj1" not found', code: "PROJECT_NOT_FOUND" }), { status: 404 }),
+      () => sendWhatsAppMessage("proj1", "972501234567", "hi"),
+    );
+    assert.equal(result.ok, false);
+    assert.deepEqual(firedWith, ["proj1", "Project not found."]);
+  } finally {
+    unsubscribe();
+  }
+});
+
+test("subscribeProjectGone's listener also fires for uploadRecordFile when the project itself is gone", async () => {
+  let firedWith: [string, string] | undefined;
+  const unsubscribe = subscribeProjectGone((projectId, message) => {
+    firedWith = [projectId, message];
+  });
+  try {
+    const file = new File(["hello"], "note.txt", { type: "text/plain" });
+    await assert.rejects(() =>
+      withFakeFetch(new Response(JSON.stringify({ error: 'Project "proj1" not found', code: "PROJECT_NOT_FOUND" }), { status: 404 }), () =>
+        uploadRecordFile("proj1", "Customer", "attachment", file),
+      ),
+    );
+    assert.deepEqual(firedWith, ["proj1", "Project not found."]);
+  } finally {
+    unsubscribe();
+  }
 });
 
 /**

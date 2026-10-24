@@ -685,9 +685,20 @@ export function answerQuestions(
  * over a plain fetch, so the same Authorization header works — EventSource
  * can't set custom headers). Calls onEvent for every agent step as it
  * arrives and resolves once the stream ends.
+ *
+ * Round 950: `projectId` is passed explicitly (every real caller already
+ * has it in scope) rather than regex-matched out of `path`, same as the
+ * fix below for the PROJECT_NOT_FOUND gap this function had -- requireProjectAccess
+ * (apps/api/src/routes/projects.ts) throws that code the moment this
+ * project was deleted, or this account's own collaborator access to it was
+ * revoked, which can happen while a Build/Refine is mid-click; without
+ * calling notifyProjectGone here (the generic request() helper already
+ * does, see its own doc comment), the project shell just kept rendering
+ * forever, with every retry hitting the identical 404 again.
  */
 async function streamPipeline(
   path: string,
+  projectId: string,
   onEvent: (event: AgentStepEvent) => void,
   body?: unknown,
 ): Promise<void> {
@@ -700,12 +711,11 @@ async function streamPipeline(
   if (!res.ok || !res.body) {
     const errorBody = await res.json().catch(() => ({ error: `Request failed (${res.status})`, code: "REQUEST_FAILED" }));
     const code = (errorBody as { code?: string }).code;
+    const message = resolveErrorMessage(errorBody as { error?: string; code?: string });
     if (code === "SESSION_EXPIRED" || code === "AUTH_REQUIRED") notifyAuthExpired();
-    if (code === "VIEWER_READ_ONLY") {
-      const match = path.match(/^\/projects\/([^/]+)/);
-      if (match) notifyViewerDemoted(match[1]);
-    }
-    throw new Error(resolveErrorMessage(errorBody as { error?: string; code?: string }));
+    if (code === "PROJECT_NOT_FOUND") notifyProjectGone(projectId, message);
+    if (code === "VIEWER_READ_ONLY") notifyViewerDemoted(projectId);
+    throw new Error(message);
   }
   const reader = res.body.getReader();
   const decoder = new TextDecoder();
@@ -737,7 +747,7 @@ async function streamPipeline(
 }
 
 export function streamBuild(projectId: string, onEvent: (event: AgentStepEvent) => void): Promise<void> {
-  return streamPipeline(`/projects/${projectId}/build`, onEvent);
+  return streamPipeline(`/projects/${projectId}/build`, projectId, onEvent);
 }
 
 export function streamRefine(
@@ -745,7 +755,7 @@ export function streamRefine(
   instruction: string,
   onEvent: (event: AgentStepEvent) => void,
 ): Promise<void> {
-  return streamPipeline(`/projects/${projectId}/refine`, onEvent, { instruction });
+  return streamPipeline(`/projects/${projectId}/refine`, projectId, onEvent, { instruction });
 }
 
 /**
@@ -770,8 +780,13 @@ export function safeDownloadName(projectName: string, fallback: string): string 
  * <a href> won't work) and saves it via the browser's normal download
  * flow -- the shared mechanics behind exportProject and backupProject,
  * which differed only in the URL path and the download filename.
+ *
+ * Round 950: same PROJECT_NOT_FOUND gap, and the same fix, as
+ * streamPipeline's own identical fix just above -- requireProjectAccess
+ * throws it the moment this project was deleted or this account's own
+ * access was revoked, and export/backup go through that same check.
  */
-async function downloadBlob(path: string, downloadName: string): Promise<void> {
+async function downloadBlob(path: string, projectId: string, downloadName: string): Promise<void> {
   const token = getToken();
   const res = await fetchApi(path, {
     headers: token ? { authorization: `Bearer ${token}` } : {},
@@ -779,8 +794,10 @@ async function downloadBlob(path: string, downloadName: string): Promise<void> {
   if (!res.ok) {
     const body = await res.json().catch(() => ({ error: `Request failed (${res.status})`, code: "REQUEST_FAILED" }));
     const code = (body as { code?: string }).code;
+    const message = resolveErrorMessage(body as { error?: string; code?: string });
     if (code === "SESSION_EXPIRED" || code === "AUTH_REQUIRED") notifyAuthExpired();
-    throw new Error(resolveErrorMessage(body as { error?: string; code?: string }));
+    if (code === "PROJECT_NOT_FOUND") notifyProjectGone(projectId, message);
+    throw new Error(message);
   }
   const blob = await res.blob();
   const url = URL.createObjectURL(blob);
@@ -795,7 +812,7 @@ async function downloadBlob(path: string, downloadName: string): Promise<void> {
 
 /** Downloads the real, standalone exported app as a .zip and saves it via the browser's normal download flow. */
 export function exportProject(projectId: string, projectName: string): Promise<void> {
-  return downloadBlob(`/api/projects/${projectId}/export`, `${safeDownloadName(projectName, "forge-app")}.zip`);
+  return downloadBlob(`/api/projects/${projectId}/export`, projectId, `${safeDownloadName(projectName, "forge-app")}.zip`);
 }
 
 /**
@@ -810,7 +827,7 @@ export function exportProject(projectId: string, projectName: string): Promise<v
  */
 export function backupProject(projectId: string, projectName: string, columnOrders: Record<string, string[]>): Promise<void> {
   const query = Object.keys(columnOrders).length > 0 ? `?columnOrders=${encodeURIComponent(JSON.stringify(columnOrders))}` : "";
-  return downloadBlob(`/api/projects/${projectId}/backup${query}`, `${safeDownloadName(projectName, "forge-app")}-backup.zip`);
+  return downloadBlob(`/api/projects/${projectId}/backup${query}`, projectId, `${safeDownloadName(projectName, "forge-app")}-backup.zip`);
 }
 
 export interface BusinessTwinEntityStat {
@@ -954,9 +971,13 @@ export async function uploadRecordFile(
   if (!res.ok) {
     const body = await res.json().catch(() => ({ error: `Request failed (${res.status})`, code: "REQUEST_FAILED" }));
     const code = (body as { code?: string }).code;
+    const message = resolveErrorMessage(body as { error?: string; code?: string });
     if (code === "SESSION_EXPIRED" || code === "AUTH_REQUIRED") notifyAuthExpired();
+    // Round 950: same PROJECT_NOT_FOUND gap, and the same fix, as
+    // streamPipeline's/downloadBlob's own identical fix above.
+    if (code === "PROJECT_NOT_FOUND") notifyProjectGone(projectId, message);
     if (code === "VIEWER_READ_ONLY") notifyViewerDemoted(projectId);
-    throw new Error(resolveErrorMessage(body as { error?: string; code?: string }));
+    throw new Error(message);
   }
   const body = (await res.json()) as { file: { url: string; name: string; size: number; mimeType: string } };
   return body.file;
@@ -1115,6 +1136,10 @@ export async function sendWhatsAppMessage(projectId: string, to: string, message
     return body as WhatsAppSendResult;
   }
   if (body.code === "SESSION_EXPIRED" || body.code === "AUTH_REQUIRED") notifyAuthExpired();
+  // Round 950: same PROJECT_NOT_FOUND gap, and the same fix, as
+  // streamPipeline's/downloadBlob's/uploadRecordFile's own identical fix
+  // above.
+  if (body.code === "PROJECT_NOT_FOUND") notifyProjectGone(projectId, resolveErrorMessage(body));
   if (body.code === "VIEWER_READ_ONLY") notifyViewerDemoted(projectId);
   return { ok: false, error: resolveErrorMessage(body) };
 }
