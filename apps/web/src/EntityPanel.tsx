@@ -1435,12 +1435,6 @@ export function EntityPanel({
     setColumnOrderState(getColumnOrder(projectId, entity.name));
   }, [projectId, entity.name]);
 
-  // Same reasoning as hiddenFields' own effect just above -- resized column
-  // widths are scoped per project+entity too.
-  useEffect(() => {
-    setColumnWidths(getColumnWidths(projectId, entity.name));
-  }, [projectId, entity.name]);
-
   // Same reasoning as hiddenFields' own effect just above -- a chosen "Group
   // by" field is scoped per project+entity too. Previously groupFieldName
   // was reset to "" on every entity switch (see the combined reset effect
@@ -1641,6 +1635,27 @@ export function EntityPanel({
     const validFieldNames = new Set(fieldNamesKey ? fieldNamesKey.split(",") : []);
     validFieldNames.add("createdAt");
     setSortKeys(getSortKeysPreference(projectId, entity.name).filter((k) => validFieldNames.has(k.field)));
+  }, [projectId, entity.name, fieldNamesKey]);
+
+  // Round 897: the identical "drop a persisted key referencing a field this
+  // entity no longer has" gap sortKeys' own effect just above already
+  // closes, missed for columnWidths -- unlike every sibling preference
+  // module (columnOrder, columnVisibility, fieldFiltersPreference,
+  // groupByPreference, sortKeysPreference, viewModePreference,
+  // collapsedGroupsPreference, collapsedBoardColumnsPreference), this one
+  // was never keyed on fieldNamesKey at all, only projectId/entity.name --
+  // so a resized column's width survived a live refine that removed that
+  // exact field, with nothing left in the UI that it could possibly still
+  // be sizing. Object.keys(columnWidths).length > 0 (below) still read
+  // true purely from the dead key, wrongly locking the whole table into
+  // entity-table-resized's fixed-layout/ellipsis mode and leaving the
+  // "Reset column widths" button visible for a resize that no longer
+  // affects anything rendered.
+  useEffect(() => {
+    const validFieldNames = new Set(fieldNamesKey ? fieldNamesKey.split(",") : []);
+    setColumnWidths(
+      Object.fromEntries(Object.entries(getColumnWidths(projectId, entity.name)).filter(([field]) => validFieldNames.has(field))),
+    );
   }, [projectId, entity.name, fieldNamesKey]);
 
   // Same reasoning as sortKeys' own effect just above -- the chosen per-field

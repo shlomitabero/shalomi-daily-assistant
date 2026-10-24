@@ -6664,6 +6664,79 @@ test("EntityPanel's 'Reset column widths' button only appears once a column has 
 });
 
 /**
+ * Round 897: the identical "drop a persisted key referencing a field this
+ * entity no longer has" gap sortKeys' own effect already closes (round
+ * 509) was never applied to columnWidths -- unlike every sibling
+ * preference module, its load effect was keyed only on
+ * [projectId, entity.name], never on fieldNamesKey. Resize a column, then
+ * have a live refine remove that exact field (same no-remount precondition
+ * rounds 780/882/892 already rely on): before the fix, the dead key stayed
+ * in both state and storage, so Object.keys(columnWidths).length > 0 kept
+ * reading true purely from a field nothing on screen can still reference --
+ * wrongly locking the table into entity-table-resized's fixed-layout mode
+ * and leaving the "Reset column widths" button visible with nothing real
+ * left to reset.
+ */
+test("EntityPanel drops a persisted column width when a live refine REMOVES that field outright, instead of wrongly locking the table into fixed-layout mode forever", async () => {
+  await withJsdom(async () => {
+    const entityWithStatus: Entity = {
+      name: "Deal",
+      label: "Deal",
+      fields: [
+        { name: "name", label: "Name", type: "text", required: true },
+        {
+          name: "status",
+          label: "Status",
+          type: "enum",
+          required: true,
+          enumValues: ["new", "won", "lost"],
+          enumLabels: { new: "New", won: "Won", lost: "Lost" },
+        },
+      ],
+    };
+    const entityWithoutStatus: Entity = {
+      name: "Deal",
+      label: "Deal",
+      fields: [{ name: "name", label: "Name", type: "text", required: true }],
+    };
+    const store: EntityRecord[] = [{ id: 1, name: "Acme Corp", status: "new" }];
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = mockRecordsFetch(store) as typeof fetch;
+    try {
+      const view = renderEntityPanel({ entity: entityWithStatus, allEntities: [entityWithStatus] });
+      await waitForCondition(() => document.querySelectorAll("table tbody tr").length === 1);
+
+      const statusHeader = document.querySelectorAll("th.resizable-col")[1] as HTMLTableCellElement;
+      const handle = statusHeader.querySelector(".column-resize-handle") as HTMLSpanElement;
+      fireEvent.mouseDown(handle, { clientX: 100 });
+      fireEvent.mouseMove(window, { clientX: 160 });
+      fireEvent.mouseUp(window, { clientX: 160 });
+      assert.deepEqual(getColumnWidths("proj1", "Deal"), { status: 60 }, "sanity check: the drag itself must have actually persisted a resized width");
+      assert.ok(document.querySelector(".entity-table-resized"), "sanity check: the table must be in fixed-layout mode right after resizing");
+
+      // Simulate a refine that REMOVES "status" entirely -- not a retype --
+      // while staying on the exact same entity.name ("Deal"), with the
+      // resized width still held in both the live columnWidths state and
+      // persisted storage.
+      view.rerender(buildEntityPanelElement({ entity: entityWithoutStatus, allEntities: [entityWithoutStatus] }));
+      await waitForCondition(() => document.querySelector(".entity-table-resized") === null);
+
+      // Asserts on the table's own rendered class and the reset button's
+      // presence -- the actual observable symptoms the bug describes --
+      // rather than persisted storage, which this fix (mirroring sortKeys'
+      // own established pattern just above: filter the loaded state
+      // against the surviving field set, without rewriting storage) never
+      // touches; the dead key can keep sitting in storage harmlessly,
+      // exactly as sortKeys' own analogous fix already does.
+      assert.equal(document.querySelector(".entity-table-resized"), null, "the table must return to normal automatic sizing, not stay locked into fixed-layout mode for a field that no longer exists");
+      assert.equal(document.querySelector(".entity-reset-column-widths"), null, "the 'Reset column widths' button must disappear too, since there is nothing real left to reset");
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+});
+
+/**
  * New in this round: the board view's card <select> (still there, and
  * still the accessible/keyboard-reachable way to move a card) was the only
  * way to move a card between columns -- a real Kanban board is expected to
