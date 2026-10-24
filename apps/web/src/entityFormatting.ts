@@ -515,6 +515,28 @@ export function entityDisplayLabel(entity: Entity, occurrences: Map<string, numb
 }
 
 /**
+ * Finds the one entity+field a phone number from an unmatched WhatsApp
+ * message should be pre-filled into, when (and only when) the spec makes
+ * that unambiguous: exactly one entity across the whole spec has a
+ * phone-shaped field. Multiple candidate entities (e.g. both a "Lead" and
+ * an "Agent" entity each with their own phone field) have no reliable way
+ * to pick the right one from a bare inbound number alone, so this
+ * deliberately returns null rather than guessing -- WhatsAppPanel's own
+ * "create new record" button simply doesn't render in that case, the
+ * same "don't show a control that can't do the right thing" principle
+ * readOnly already applies elsewhere in this app. Reuses findPhoneField
+ * (below) per entity rather than re-matching PHONE_FIELD_NAME_HINTS here.
+ */
+export function findSinglePhoneFieldTarget(entities: Entity[]): { entityName: string; fieldName: string } | null {
+  const candidates: { entityName: string; fieldName: string }[] = [];
+  for (const entity of entities) {
+    const field = findPhoneField(entity.fields);
+    if (field) candidates.push({ entityName: entity.name, fieldName: field.name });
+  }
+  return candidates.length === 1 ? candidates[0] : null;
+}
+
+/**
  * Filters one entity's already-fetched records against a global search
  * query -- the building block for project-wide search across every entity
  * tab at once, reusing the exact same match rule `matchesSearch` uses

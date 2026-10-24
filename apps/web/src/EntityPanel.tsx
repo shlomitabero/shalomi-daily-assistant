@@ -1151,6 +1151,8 @@ export function EntityPanel({
   onEntityRenamed,
   highlightRecordId,
   onHighlightHandled,
+  createPrefill,
+  onCreatePrefillHandled,
   onJumpToRecord,
   onSendWhatsApp,
   onRecordCountChange,
@@ -1166,6 +1168,10 @@ export function EntityPanel({
   highlightRecordId?: number | null;
   /** Called once the incoming highlightRecordId has actually been applied, so the caller can clear it and not re-trigger on the next render. */
   onHighlightHandled?: () => void;
+  /** A single field+value to pre-fill the create form with once this entity's tab is open, e.g. from WhatsAppPanel's own "create new record from this message" button -- mirrors startCreateForColumn's own shape, just driven from outside rather than a click inside this panel. */
+  createPrefill?: { fieldName: string; value: string } | null;
+  /** Called once the incoming createPrefill has actually been applied, so the caller can clear it and not re-trigger on the next render -- the same convention onHighlightHandled above already uses for highlightRecordId. */
+  onCreatePrefillHandled?: () => void;
   /** Called when a relation cell's value (in the table or a board card) is clicked, so the caller can switch to the target entity's own tab and highlight that record there -- the same "jump to record" mechanism Global Search, WhatsApp log, and Business Twin already trigger from their own panels. */
   onJumpToRecord?: (targetEntity: string, recordId: number) => void;
   /** Called with a record's raw phone-field value when the row's "Send WhatsApp" action is clicked, so the caller can open the WhatsApp panel with that number prefilled -- the reverse direction of onJumpToRecord, which already exists for an inbound WhatsApp message resolving to a record. */
@@ -2079,6 +2085,24 @@ export function EntityPanel({
     onHighlightHandled?.();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [highlightRecordId, loading]);
+
+  /**
+   * Round 921: applies an incoming createPrefill (e.g. WhatsAppPanel's own
+   * "create new record from this message" button, carrying the message's
+   * phone number) once this entity's own tab is actually open and loaded --
+   * mirrors the highlightRecordId effect just above, and reuses
+   * startCreateForColumn's own body (defined further below in this same
+   * component) rather than duplicating it, since opening the create form
+   * pre-filled with one field's value is exactly what that function already
+   * does for the Kanban board's "add to this column" click.
+   */
+  useEffect(() => {
+    if (!createPrefill || loading) return;
+    const field = entity.fields.find((f) => f.name === createPrefill.fieldName);
+    if (field) startCreateForColumn(createPrefill.value, field);
+    onCreatePrefillHandled?.();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [createPrefill, loading]);
 
   // Auto-fades the highlight a few seconds after it lands, so an old
   // "jump to record" doesn't stay visually marked forever if the user just

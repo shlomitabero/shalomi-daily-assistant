@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from "react";
+import type { Entity } from "@forge/shared";
 import { useTranslation } from "./i18n/LanguageContext.js";
 import { useDialogFocusTrap } from "./useDialogFocusTrap.js";
 import {
@@ -12,7 +13,7 @@ import {
   type WhatsAppMessageLogEntry,
   type WhatsAppStatusView,
 } from "./api.js";
-import { splitHighlightSegments } from "./entityFormatting.js";
+import { findSinglePhoneFieldTarget, splitHighlightSegments } from "./entityFormatting.js";
 import {
   downloadWhatsAppLog,
   filterWhatsAppMessages,
@@ -108,9 +109,11 @@ function mergeFreshMessages(
 export function WhatsAppPanel({
   projectId,
   projectName,
+  entities,
   onClose,
   onJumpToEntity,
   onJumpToRecord,
+  onCreateRecordFromMessage,
   prefillTo,
   onMessageDeleted,
   onHistoryCleared,
@@ -118,6 +121,8 @@ export function WhatsAppPanel({
 }: {
   projectId: string;
   projectName: string;
+  /** The project's own spec.entities -- used only to find the single unambiguous phone-field entity+field for the "create new record from this message" button below; see findSinglePhoneFieldTarget's own doc comment. */
+  entities: Entity[];
   onClose: () => void;
   /** True for a "viewer" collaborator -- the server already rejects every write here with 403 VIEWER_READ_ONLY; this just keeps a viewer from clicking a control that can only ever fail. */
   readOnly?: boolean;
@@ -133,6 +138,19 @@ export function WhatsAppPanel({
    * deleted (matchedRecordId null, matchedEntityName not).
    */
   onJumpToRecord: (entityName: string, recordId: number) => void;
+  /**
+   * Round 921: an UNmatched inbound message (a brand-new contact --
+   * matchedEntityName/matchedRecordId both null) had no path at all,
+   * manual or automated, to becoming a real record -- the one real "data
+   * entry point" this app's own product vision leads with (a WhatsApp
+   * lead turning into a CRM record) that every OTHER entry point
+   * (manual Add, CSV import, refine) already has. Called with the single
+   * unambiguous phone-field entity+field findSinglePhoneFieldTarget
+   * found and the message's own fromNumber, so the caller can switch to
+   * that entity's tab with its create form pre-filled -- the same
+   * "jump, don't guess" principle onJumpToRecord above already follows.
+   */
+  onCreateRecordFromMessage: (entityName: string, fieldName: string, phoneNumber: string) => void;
   /** A phone number to open the test-send form pre-filled with, e.g. from an EntityPanel row's "Send WhatsApp" action -- the reverse direction of onJumpToRecord above. App.tsx only ever mounts this panel fresh (conditional render, not a persistent one), so a plain lazy useState initializer is enough; no effect is needed to react to a later change while already mounted. */
   prefillTo?: string | null;
   /**
@@ -157,6 +175,11 @@ export function WhatsAppPanel({
   onHistoryCleared?: () => void;
 }) {
   const { t, lang } = useTranslation();
+  // Computed once per render from the project's own entity list, not per
+  // message row -- the result is identical for every unmatched message in
+  // the log, since it only depends on the spec's own fields, never on any
+  // one message.
+  const phoneFieldTarget = findSinglePhoneFieldTarget(entities);
   const [status, setStatus] = useState<WhatsAppStatusView | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
   /**
@@ -1103,6 +1126,21 @@ export function WhatsAppPanel({
                   {m.direction === "in" && s === "connected" && !readOnly && (
                     <button type="button" className="secondary small" onClick={() => handleReplyToMessage(m)}>
                       {t("whatsapp.log.reply")}
+                    </button>
+                  )}
+                  {/* Round 921: a brand-new contact's first message (no
+                      matchedEntityName at all) previously had no path to
+                      becoming a real record -- see onCreateRecordFromMessage's
+                      own doc comment above. Doesn't require s === "connected"
+                      the way Reply does, since creating a record from an
+                      already-stored message needs no live connection at all. */}
+                  {m.direction === "in" && !m.matchedEntityName && phoneFieldTarget && !readOnly && (
+                    <button
+                      type="button"
+                      className="secondary small"
+                      onClick={() => onCreateRecordFromMessage(phoneFieldTarget.entityName, phoneFieldTarget.fieldName, m.fromNumber)}
+                    >
+                      {t("whatsapp.log.createRecord")}
                     </button>
                   )}
                   {!readOnly && (

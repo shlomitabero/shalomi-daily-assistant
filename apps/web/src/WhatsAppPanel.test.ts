@@ -6,6 +6,7 @@ import { transformSync } from "esbuild";
 import { JSDOM } from "jsdom";
 import React from "react";
 import { act, cleanup, fireEvent, render } from "@testing-library/react";
+import type { Entity } from "@forge/shared";
 import type { WhatsAppMessageLogEntry } from "./api.js";
 import { WhatsAppPanel } from "./WhatsAppPanel.js";
 import { getWhatsAppLogFilter } from "./whatsappLogFilter.js";
@@ -887,7 +888,7 @@ test("WhatsAppPanel shows a real error with a Retry button when the initial stat
         React.createElement(
           ThemeProvider,
           null,
-          React.createElement(LanguageProvider, null, React.createElement(WhatsAppPanel, { projectId: "proj1", projectName: "Test Project", onClose: () => {}, onJumpToEntity: () => {}, onJumpToRecord: () => {} })),
+          React.createElement(LanguageProvider, null, React.createElement(WhatsAppPanel, { projectId: "proj1", projectName: "Test Project", onClose: () => {}, onJumpToEntity: () => {}, onJumpToRecord: () => {}, entities: [], onCreateRecordFromMessage: () => {} })),
         ),
       );
       await waitForCondition(() => document.querySelector(".error-retry-row") !== null);
@@ -965,7 +966,7 @@ test("WhatsAppPanel's QR-pairing poll offers a real Retry button after 5 consecu
           React.createElement(
             LanguageProvider,
             null,
-            React.createElement(WhatsAppPanel, { projectId: "proj1", projectName: "Test Project", onClose: () => {}, onJumpToEntity: () => {}, onJumpToRecord: () => {} }),
+            React.createElement(WhatsAppPanel, { projectId: "proj1", projectName: "Test Project", onClose: () => {}, onJumpToEntity: () => {}, onJumpToRecord: () => {}, entities: [], onCreateRecordFromMessage: () => {} }),
           ),
         ),
       );
@@ -1057,7 +1058,7 @@ test("WhatsAppPanel sends the exact typed recipient/message and refreshes the me
         React.createElement(
           ThemeProvider,
           null,
-          React.createElement(LanguageProvider, null, React.createElement(WhatsAppPanel, { projectId: "proj1", projectName: "Test Project", onClose: () => {}, onJumpToEntity: () => {}, onJumpToRecord: () => {} })),
+          React.createElement(LanguageProvider, null, React.createElement(WhatsAppPanel, { projectId: "proj1", projectName: "Test Project", onClose: () => {}, onJumpToEntity: () => {}, onJumpToRecord: () => {}, entities: [], onCreateRecordFromMessage: () => {} })),
         ),
       );
       await waitForCondition(() => document.querySelector(".whatsapp-test-form") !== null);
@@ -1120,7 +1121,7 @@ test("WhatsAppPanel clears the recipient and message inputs after a successful s
         React.createElement(
           ThemeProvider,
           null,
-          React.createElement(LanguageProvider, null, React.createElement(WhatsAppPanel, { projectId: "proj1", projectName: "Test Project", onClose: () => {}, onJumpToEntity: () => {}, onJumpToRecord: () => {} })),
+          React.createElement(LanguageProvider, null, React.createElement(WhatsAppPanel, { projectId: "proj1", projectName: "Test Project", onClose: () => {}, onJumpToEntity: () => {}, onJumpToRecord: () => {}, entities: [], onCreateRecordFromMessage: () => {} })),
         ),
       );
       await waitForCondition(() => document.querySelector(".whatsapp-test-form") !== null);
@@ -1181,7 +1182,7 @@ test("WhatsAppPanel's Reply button clears any already-drafted message, not just 
         React.createElement(
           ThemeProvider,
           null,
-          React.createElement(LanguageProvider, null, React.createElement(WhatsAppPanel, { projectId: "proj1", projectName: "Test Project", onClose: () => {}, onJumpToEntity: () => {}, onJumpToRecord: () => {} })),
+          React.createElement(LanguageProvider, null, React.createElement(WhatsAppPanel, { projectId: "proj1", projectName: "Test Project", onClose: () => {}, onJumpToEntity: () => {}, onJumpToRecord: () => {}, entities: [], onCreateRecordFromMessage: () => {} })),
         ),
       );
       await waitForCondition(() => document.querySelectorAll(".whatsapp-log-list li").length === 1);
@@ -1279,7 +1280,7 @@ test("WhatsAppPanel disables every message's Retry button while any one retry is
           React.createElement(
             LanguageProvider,
             null,
-            React.createElement(WhatsAppPanel, { projectId: "proj1", projectName: "Test Project", onClose: () => {}, onJumpToEntity: () => {}, onJumpToRecord: () => {} }),
+            React.createElement(WhatsAppPanel, { projectId: "proj1", projectName: "Test Project", onClose: () => {}, onJumpToEntity: () => {}, onJumpToRecord: () => {}, entities: [], onCreateRecordFromMessage: () => {} }),
           ),
         ),
       );
@@ -1397,7 +1398,7 @@ test("WhatsAppPanel's Delete and Clear History buttons are disabled while a retr
         React.createElement(
           ThemeProvider,
           null,
-          React.createElement(LanguageProvider, null, React.createElement(WhatsAppPanel, { projectId: "proj1", projectName: "Test Project", onClose: () => {}, onJumpToEntity: () => {}, onJumpToRecord: () => {} })),
+          React.createElement(LanguageProvider, null, React.createElement(WhatsAppPanel, { projectId: "proj1", projectName: "Test Project", onClose: () => {}, onJumpToEntity: () => {}, onJumpToRecord: () => {}, entities: [], onCreateRecordFromMessage: () => {} })),
         ),
       );
       await waitForCondition(() => document.querySelectorAll(".whatsapp-log-list li").length === 2);
@@ -1477,6 +1478,8 @@ test("WhatsAppPanel's prefillTo prop pre-fills the real test-send 'to' input, wh
             LanguageProvider,
             null,
             React.createElement(WhatsAppPanel, {
+              entities: [],
+              onCreateRecordFromMessage: () => {},
               projectId: "proj1",
               projectName: "Test Project",
               onClose: () => {},
@@ -1555,7 +1558,7 @@ test("WhatsAppPanel's Reply button on an inbound message fills the real test-sen
         React.createElement(
           ThemeProvider,
           null,
-          React.createElement(LanguageProvider, null, React.createElement(WhatsAppPanel, { projectId: "proj1", projectName: "Test Project", onClose: () => {}, onJumpToEntity: () => {}, onJumpToRecord: () => {} })),
+          React.createElement(LanguageProvider, null, React.createElement(WhatsAppPanel, { projectId: "proj1", projectName: "Test Project", onClose: () => {}, onJumpToEntity: () => {}, onJumpToRecord: () => {}, entities: [], onCreateRecordFromMessage: () => {} })),
         ),
       );
       await waitForCondition(() => document.querySelectorAll(".whatsapp-log-list li").length === 1);
@@ -1580,6 +1583,188 @@ test("WhatsAppPanel's Reply button on an inbound message fills the real test-sen
       const parsed = JSON.parse(capturedSendBody!);
       assert.equal(parsed.to, "972521112233", "sending after Reply must use the replied-to sender, not a stale or empty value");
       assert.equal(parsed.message, "Yes, it's in stock!");
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+});
+
+/**
+ * Round 921: an UNmatched inbound message (a brand-new contact --
+ * matchedEntityName/matchedRecordId both null) previously had no path at
+ * all, manual or automated, to becoming a real record -- the one real
+ * "data entry point" this app's own product vision leads with. Confirms
+ * the new "Create new record" button appears on exactly such a row (not on
+ * a matched row, which already has a real record to jump to instead), and
+ * that clicking it calls onCreateRecordFromMessage with the single
+ * unambiguous phone-field entity+field plus the message's own fromNumber.
+ */
+test("WhatsAppPanel's 'Create new record' button appears only on an unmatched inbound message, and fires onCreateRecordFromMessage with the right entity/field/number", async () => {
+  await withJsdom(async () => {
+    const originalFetch = globalThis.fetch;
+    const messages: WhatsAppMessageLogEntry[] = [
+      {
+        id: "m1",
+        direction: "in",
+        fromNumber: "972521112233",
+        toNumber: "972501234567",
+        body: "Hi, is this the real estate agency?",
+        matchedLabel: null,
+        matchedEntityName: null,
+        matchedRecordId: null,
+        status: "received",
+        createdAt: new Date().toISOString(),
+      },
+      {
+        id: "m2",
+        direction: "in",
+        fromNumber: "972529998888",
+        toNumber: "972501234567",
+        body: "Following up on my lead",
+        matchedLabel: "Dana Levi",
+        matchedEntityName: "Lead",
+        matchedRecordId: 7,
+        status: "received",
+        createdAt: new Date().toISOString(),
+      },
+    ];
+    const entities: Entity[] = [
+      {
+        name: "Lead",
+        fields: [
+          { name: "name", type: "text", required: true },
+          { name: "phone", type: "text", required: false },
+        ],
+      },
+    ];
+    let captured: [string, string, string] | undefined;
+    globalThis.fetch = (async (input: string, init?: RequestInit): Promise<Response> => {
+      const method = init?.method ?? "GET";
+      if (method === "GET" && input === "/api/projects/proj1/integrations/whatsapp/status") {
+        return new Response(
+          JSON.stringify({ status: "connected", phoneNumber: "972501234567", qrDataUrl: null, error: null }),
+          { status: 200, headers: { "content-type": "application/json" } },
+        );
+      }
+      if (method === "GET" && input === "/api/projects/proj1/integrations/whatsapp/messages") {
+        return new Response(JSON.stringify({ messages }), { status: 200, headers: { "content-type": "application/json" } });
+      }
+      throw new Error(`unexpected request ${method} ${input}`);
+    }) as typeof fetch;
+    try {
+      render(
+        React.createElement(
+          ThemeProvider,
+          null,
+          React.createElement(
+            LanguageProvider,
+            null,
+            React.createElement(WhatsAppPanel, {
+              projectId: "proj1",
+              projectName: "Test Project",
+              entities,
+              onClose: () => {},
+              onJumpToEntity: () => {},
+              onJumpToRecord: () => {},
+              onCreateRecordFromMessage: (entityName: string, fieldName: string, phoneNumber: string) => {
+                captured = [entityName, fieldName, phoneNumber];
+              },
+            }),
+          ),
+        ),
+      );
+      await waitForCondition(() => document.querySelectorAll(".whatsapp-log-list li").length === 2);
+
+      const rows = [...document.querySelectorAll(".whatsapp-log-list li")];
+      const unmatchedRow = rows.find((r) => r.textContent?.includes("972521112233"))!;
+      const matchedRow = rows.find((r) => r.textContent?.includes("Dana Levi"))!;
+      assert.ok(unmatchedRow && matchedRow, "sanity check: expected one unmatched and one matched row");
+
+      const createButtonOnUnmatched = [...unmatchedRow.querySelectorAll("button")].find((b) => b.textContent === "Create new record");
+      assert.ok(createButtonOnUnmatched, "expected a real 'Create new record' button on the unmatched row");
+
+      const createButtonOnMatched = [...matchedRow.querySelectorAll("button")].find((b) => b.textContent === "Create new record");
+      // Compared as a boolean, not the raw DOM node -- see round 666's own
+      // documented lesson: a direct assert.equal(domNode, undefined/null)
+      // that unexpectedly fails tries to format the real DOM node and can
+      // hang for minutes instead of failing fast.
+      assert.equal(createButtonOnMatched === undefined, true, "a matched message already has a real record -- it must not also offer to create a new one");
+
+      fireEvent.click(createButtonOnUnmatched!);
+      assert.deepEqual(captured, ["Lead", "phone", "972521112233"], "clicking it must pass the single phone-field entity+field and this message's own sender number");
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+});
+
+/**
+ * Round 921: when the spec has zero or multiple phone-field entities,
+ * findSinglePhoneFieldTarget deliberately returns null (see its own doc
+ * comment) -- confirms the button simply doesn't render in that case
+ * rather than guessing at the wrong entity.
+ */
+test("WhatsAppPanel's 'Create new record' button does not render when no single phone-field entity exists", async () => {
+  await withJsdom(async () => {
+    const originalFetch = globalThis.fetch;
+    const messages: WhatsAppMessageLogEntry[] = [
+      {
+        id: "m1",
+        direction: "in",
+        fromNumber: "972521112233",
+        toNumber: "972501234567",
+        body: "Hi there",
+        matchedLabel: null,
+        matchedEntityName: null,
+        matchedRecordId: null,
+        status: "received",
+        createdAt: new Date().toISOString(),
+      },
+    ];
+    const entities: Entity[] = [
+      { name: "Lead", fields: [{ name: "phone", type: "text", required: false }] },
+      { name: "Agent", fields: [{ name: "mobile", type: "text", required: false }] },
+    ];
+    globalThis.fetch = (async (input: string, init?: RequestInit): Promise<Response> => {
+      const method = init?.method ?? "GET";
+      if (method === "GET" && input === "/api/projects/proj1/integrations/whatsapp/status") {
+        return new Response(
+          JSON.stringify({ status: "connected", phoneNumber: "972501234567", qrDataUrl: null, error: null }),
+          { status: 200, headers: { "content-type": "application/json" } },
+        );
+      }
+      if (method === "GET" && input === "/api/projects/proj1/integrations/whatsapp/messages") {
+        return new Response(JSON.stringify({ messages }), { status: 200, headers: { "content-type": "application/json" } });
+      }
+      throw new Error(`unexpected request ${method} ${input}`);
+    }) as typeof fetch;
+    try {
+      render(
+        React.createElement(
+          ThemeProvider,
+          null,
+          React.createElement(
+            LanguageProvider,
+            null,
+            React.createElement(WhatsAppPanel, {
+              projectId: "proj1",
+              projectName: "Test Project",
+              entities,
+              onClose: () => {},
+              onJumpToEntity: () => {},
+              onJumpToRecord: () => {},
+              onCreateRecordFromMessage: () => {},
+            }),
+          ),
+        ),
+      );
+      await waitForCondition(() => document.querySelectorAll(".whatsapp-log-list li").length === 1);
+
+      const row = document.querySelector(".whatsapp-log-list li")!;
+      const createButton = [...row.querySelectorAll("button")].find((b) => b.textContent === "Create new record");
+      // Compared as a boolean -- see round 666's documented lesson on
+      // comment above createButtonOnMatched's own assertion.
+      assert.equal(createButton === undefined, true, "two candidate entities means no reliable single target -- the button must not render at all");
     } finally {
       globalThis.fetch = originalFetch;
     }
@@ -1645,7 +1830,7 @@ test("WhatsAppPanel marks the newest loaded message as 'seen' in localStorage on
         React.createElement(
           ThemeProvider,
           null,
-          React.createElement(LanguageProvider, null, React.createElement(WhatsAppPanel, { projectId: "proj1", projectName: "Test Project", onClose: () => {}, onJumpToEntity: () => {}, onJumpToRecord: () => {} })),
+          React.createElement(LanguageProvider, null, React.createElement(WhatsAppPanel, { projectId: "proj1", projectName: "Test Project", onClose: () => {}, onJumpToEntity: () => {}, onJumpToRecord: () => {}, entities: [], onCreateRecordFromMessage: () => {} })),
         ),
       );
       await waitForCondition(() => document.querySelectorAll(".whatsapp-log-list li").length === 2);
@@ -1709,7 +1894,7 @@ test("WhatsAppPanel's notification toggle requests permission on click and refle
         React.createElement(
           ThemeProvider,
           null,
-          React.createElement(LanguageProvider, null, React.createElement(WhatsAppPanel, { projectId: "proj1", projectName: "Test Project", onClose: () => {}, onJumpToEntity: () => {}, onJumpToRecord: () => {} })),
+          React.createElement(LanguageProvider, null, React.createElement(WhatsAppPanel, { projectId: "proj1", projectName: "Test Project", onClose: () => {}, onJumpToEntity: () => {}, onJumpToRecord: () => {}, entities: [], onCreateRecordFromMessage: () => {} })),
         ),
       );
       await waitForCondition(() => document.querySelector(".whatsapp-connected-box") !== null);
@@ -1760,7 +1945,7 @@ test("WhatsAppPanel shows a blocked message, not an enable button, when notifica
         React.createElement(
           ThemeProvider,
           null,
-          React.createElement(LanguageProvider, null, React.createElement(WhatsAppPanel, { projectId: "proj1", projectName: "Test Project", onClose: () => {}, onJumpToEntity: () => {}, onJumpToRecord: () => {} })),
+          React.createElement(LanguageProvider, null, React.createElement(WhatsAppPanel, { projectId: "proj1", projectName: "Test Project", onClose: () => {}, onJumpToEntity: () => {}, onJumpToRecord: () => {}, entities: [], onCreateRecordFromMessage: () => {} })),
         ),
       );
       await waitForCondition(() => document.querySelector(".whatsapp-connected-box") !== null);
@@ -1815,7 +2000,7 @@ test("WhatsAppPanel remembers a sent test number as a clickable recent-number ch
         React.createElement(
           ThemeProvider,
           null,
-          React.createElement(LanguageProvider, null, React.createElement(WhatsAppPanel, { projectId: "proj1", projectName: "Test Project", onClose: () => {}, onJumpToEntity: () => {}, onJumpToRecord: () => {} })),
+          React.createElement(LanguageProvider, null, React.createElement(WhatsAppPanel, { projectId: "proj1", projectName: "Test Project", onClose: () => {}, onJumpToEntity: () => {}, onJumpToRecord: () => {}, entities: [], onCreateRecordFromMessage: () => {} })),
         ),
       );
       await waitForCondition(() => document.querySelector(".whatsapp-test-form") !== null);
@@ -1874,7 +2059,7 @@ test("WhatsAppPanel's recent-number chip has a working per-number remove button"
         React.createElement(
           ThemeProvider,
           null,
-          React.createElement(LanguageProvider, null, React.createElement(WhatsAppPanel, { projectId: "proj1", projectName: "Test Project", onClose: () => {}, onJumpToEntity: () => {}, onJumpToRecord: () => {} })),
+          React.createElement(LanguageProvider, null, React.createElement(WhatsAppPanel, { projectId: "proj1", projectName: "Test Project", onClose: () => {}, onJumpToEntity: () => {}, onJumpToRecord: () => {}, entities: [], onCreateRecordFromMessage: () => {} })),
         ),
       );
       await waitForCondition(() => document.querySelector(".whatsapp-test-form") !== null);
@@ -1942,7 +2127,7 @@ test("WhatsAppPanel's log search box remembers a query on Enter, shows it as a c
         React.createElement(
           ThemeProvider,
           null,
-          React.createElement(LanguageProvider, null, React.createElement(WhatsAppPanel, { projectId: "proj1", projectName: "Test Project", onClose: () => {}, onJumpToEntity: () => {}, onJumpToRecord: () => {} })),
+          React.createElement(LanguageProvider, null, React.createElement(WhatsAppPanel, { projectId: "proj1", projectName: "Test Project", onClose: () => {}, onJumpToEntity: () => {}, onJumpToRecord: () => {}, entities: [], onCreateRecordFromMessage: () => {} })),
         ),
       );
       await waitForCondition(() => document.querySelector(".whatsapp-log-search") !== null);
@@ -2035,6 +2220,8 @@ test("WhatsAppPanel's log search box has a 'Clear search' button and Escape-to-c
             LanguageProvider,
             null,
             React.createElement(WhatsAppPanel, {
+              entities: [],
+              onCreateRecordFromMessage: () => {},
               projectId: "proj1",
               projectName: "Test Project",
               onClose: () => {
@@ -2133,7 +2320,7 @@ test("WhatsAppPanel's message log shows each message's own real timestamp", asyn
         React.createElement(
           ThemeProvider,
           null,
-          React.createElement(LanguageProvider, null, React.createElement(WhatsAppPanel, { projectId: "proj1", projectName: "Test Project", onClose: () => {}, onJumpToEntity: () => {}, onJumpToRecord: () => {} })),
+          React.createElement(LanguageProvider, null, React.createElement(WhatsAppPanel, { projectId: "proj1", projectName: "Test Project", onClose: () => {}, onJumpToEntity: () => {}, onJumpToRecord: () => {}, entities: [], onCreateRecordFromMessage: () => {} })),
         ),
       );
       await waitForCondition(() => document.querySelectorAll(".whatsapp-log-list li").length === 1);
@@ -2220,6 +2407,8 @@ test("WhatsAppPanel's message log makes a matched sender's name a real jump-to-R
             LanguageProvider,
             null,
             React.createElement(WhatsAppPanel, {
+              entities: [],
+              onCreateRecordFromMessage: () => {},
               projectId: "proj1",
               projectName: "Test Project",
               onClose: () => {},
@@ -2302,6 +2491,8 @@ test("WhatsAppPanel falls back to onJumpToEntity when a message matched an entit
             LanguageProvider,
             null,
             React.createElement(WhatsAppPanel, {
+              entities: [],
+              onCreateRecordFromMessage: () => {},
               projectId: "proj1",
               projectName: "Test Project",
               onClose: () => {},
@@ -2393,7 +2584,7 @@ test("WhatsAppPanel's message log shows a download button only once there are me
         React.createElement(
           ThemeProvider,
           null,
-          React.createElement(LanguageProvider, null, React.createElement(WhatsAppPanel, { projectId: "proj1", projectName: "Flower Shop", onClose: () => {}, onJumpToEntity: () => {}, onJumpToRecord: () => {} })),
+          React.createElement(LanguageProvider, null, React.createElement(WhatsAppPanel, { projectId: "proj1", projectName: "Flower Shop", onClose: () => {}, onJumpToEntity: () => {}, onJumpToRecord: () => {}, entities: [], onCreateRecordFromMessage: () => {} })),
         ),
       );
       // Before any messages load, an empty log must not offer to download
@@ -2481,7 +2672,7 @@ test("WhatsAppPanel shows a search box only once the log passes the threshold, f
         React.createElement(
           ThemeProvider,
           null,
-          React.createElement(LanguageProvider, null, React.createElement(WhatsAppPanel, { projectId: "proj1", projectName: "Flower Shop", onClose: () => {}, onJumpToEntity: () => {}, onJumpToRecord: () => {} })),
+          React.createElement(LanguageProvider, null, React.createElement(WhatsAppPanel, { projectId: "proj1", projectName: "Flower Shop", onClose: () => {}, onJumpToEntity: () => {}, onJumpToRecord: () => {}, entities: [], onCreateRecordFromMessage: () => {} })),
         ),
       );
       await waitForCondition(() => document.querySelectorAll(".whatsapp-log-list li").length === 6);
@@ -2586,7 +2777,7 @@ test("WhatsAppPanel's search box highlights the matched text within both a messa
         React.createElement(
           ThemeProvider,
           null,
-          React.createElement(LanguageProvider, null, React.createElement(WhatsAppPanel, { projectId: "proj1", projectName: "Flower Shop", onClose: () => {}, onJumpToEntity: () => {}, onJumpToRecord: () => {} })),
+          React.createElement(LanguageProvider, null, React.createElement(WhatsAppPanel, { projectId: "proj1", projectName: "Flower Shop", onClose: () => {}, onJumpToEntity: () => {}, onJumpToRecord: () => {}, entities: [], onCreateRecordFromMessage: () => {} })),
         ),
       );
       await waitForCondition(() => document.querySelectorAll(".whatsapp-log-list li").length === 6);
@@ -2677,7 +2868,7 @@ test("WhatsAppPanel's direction filter narrows the real rendered log to incoming
         React.createElement(
           ThemeProvider,
           null,
-          React.createElement(LanguageProvider, null, React.createElement(WhatsAppPanel, { projectId: "proj1", projectName: "Flower Shop", onClose: () => {}, onJumpToEntity: () => {}, onJumpToRecord: () => {} })),
+          React.createElement(LanguageProvider, null, React.createElement(WhatsAppPanel, { projectId: "proj1", projectName: "Flower Shop", onClose: () => {}, onJumpToEntity: () => {}, onJumpToRecord: () => {}, entities: [], onCreateRecordFromMessage: () => {} })),
         ),
       );
       await waitForCondition(() => document.querySelectorAll(".whatsapp-log-list li").length === 7);
@@ -2804,7 +2995,7 @@ test("WhatsAppPanel's per-message delete button sends a real DELETE for that one
         React.createElement(
           ThemeProvider,
           null,
-          React.createElement(LanguageProvider, null, React.createElement(WhatsAppPanel, { projectId: "proj1", projectName: "Test Project", onClose: () => {}, onJumpToEntity: () => {}, onJumpToRecord: () => {} })),
+          React.createElement(LanguageProvider, null, React.createElement(WhatsAppPanel, { projectId: "proj1", projectName: "Test Project", onClose: () => {}, onJumpToEntity: () => {}, onJumpToRecord: () => {}, entities: [], onCreateRecordFromMessage: () => {} })),
         ),
       );
       await waitForCondition(() => document.querySelectorAll(".whatsapp-log-list li").length === 2);
@@ -2882,7 +3073,7 @@ test("WhatsAppPanel's per-message delete button sends no request at all when the
         React.createElement(
           ThemeProvider,
           null,
-          React.createElement(LanguageProvider, null, React.createElement(WhatsAppPanel, { projectId: "proj1", projectName: "Test Project", onClose: () => {}, onJumpToEntity: () => {}, onJumpToRecord: () => {} })),
+          React.createElement(LanguageProvider, null, React.createElement(WhatsAppPanel, { projectId: "proj1", projectName: "Test Project", onClose: () => {}, onJumpToEntity: () => {}, onJumpToRecord: () => {}, entities: [], onCreateRecordFromMessage: () => {} })),
         ),
       );
       await waitForCondition(() => document.querySelectorAll(".whatsapp-log-list li").length === 1);
@@ -2959,6 +3150,8 @@ test("WhatsAppPanel's per-message delete button calls onMessageDeleted with the 
             LanguageProvider,
             null,
             React.createElement(WhatsAppPanel, {
+              entities: [],
+              onCreateRecordFromMessage: () => {},
               projectId: "proj1",
               projectName: "Test Project",
               onClose: () => {},
@@ -3032,6 +3225,8 @@ test("WhatsAppPanel's 'Clear history' button calls onHistoryCleared", async () =
             LanguageProvider,
             null,
             React.createElement(WhatsAppPanel, {
+              entities: [],
+              onCreateRecordFromMessage: () => {},
               projectId: "proj1",
               projectName: "Test Project",
               onClose: () => {},
@@ -3115,6 +3310,8 @@ test("WhatsAppPanel's 'Clear history' also clears a stale deleteError banner lef
             LanguageProvider,
             null,
             React.createElement(WhatsAppPanel, {
+              entities: [],
+              onCreateRecordFromMessage: () => {},
               projectId: "proj1",
               projectName: "Test Project",
               onClose: () => {},
@@ -3203,6 +3400,8 @@ test("WhatsAppPanel's Disconnect also clears a stale deleteError banner left ove
             LanguageProvider,
             null,
             React.createElement(WhatsAppPanel, {
+              entities: [],
+              onCreateRecordFromMessage: () => {},
               projectId: "proj1",
               projectName: "Test Project",
               onClose: () => {},
@@ -3303,6 +3502,8 @@ test("WhatsAppPanel's successful delete of one message also clears a stale retry
             LanguageProvider,
             null,
             React.createElement(WhatsAppPanel, {
+              entities: [],
+              onCreateRecordFromMessage: () => {},
               projectId: "proj1",
               projectName: "Test Project",
               onClose: () => {},
@@ -3403,6 +3604,8 @@ test("WhatsAppPanel's successful retry of one message also clears a stale delete
             LanguageProvider,
             null,
             React.createElement(WhatsAppPanel, {
+              entities: [],
+              onCreateRecordFromMessage: () => {},
               projectId: "proj1",
               projectName: "Test Project",
               onClose: () => {},
@@ -3493,7 +3696,7 @@ test("WhatsAppPanel's copy button writes the real formatted log to the clipboard
           React.createElement(
             LanguageProvider,
             null,
-            React.createElement(WhatsAppPanel, { projectId: "proj1", projectName: "Flower Shop", onClose: () => {}, onJumpToEntity: () => {}, onJumpToRecord: () => {} }),
+            React.createElement(WhatsAppPanel, { projectId: "proj1", projectName: "Flower Shop", onClose: () => {}, onJumpToEntity: () => {}, onJumpToRecord: () => {}, entities: [], onCreateRecordFromMessage: () => {} }),
           ),
         ),
       );
@@ -3583,7 +3786,7 @@ test("WhatsAppPanel's copy button shows a failure label when navigator.clipboard
           React.createElement(
             LanguageProvider,
             null,
-            React.createElement(WhatsAppPanel, { projectId: "proj1", projectName: "Flower Shop", onClose: () => {}, onJumpToEntity: () => {}, onJumpToRecord: () => {} }),
+            React.createElement(WhatsAppPanel, { projectId: "proj1", projectName: "Flower Shop", onClose: () => {}, onJumpToEntity: () => {}, onJumpToRecord: () => {}, entities: [], onCreateRecordFromMessage: () => {} }),
           ),
         ),
       );
@@ -3660,7 +3863,7 @@ test("WhatsAppPanel's log filter choice survives a real unmount+remount, and is 
           React.createElement(
             LanguageProvider,
             null,
-            React.createElement(WhatsAppPanel, { projectId, projectName: "Test Project", onClose: () => {}, onJumpToEntity: () => {}, onJumpToRecord: () => {} }),
+            React.createElement(WhatsAppPanel, { projectId, projectName: "Test Project", onClose: () => {}, onJumpToEntity: () => {}, onJumpToRecord: () => {}, entities: [], onCreateRecordFromMessage: () => {} }),
           ),
         ),
       );
@@ -3786,7 +3989,7 @@ test("WhatsAppPanel's 'Load older messages' button appends the next page without
           React.createElement(
             LanguageProvider,
             null,
-            React.createElement(WhatsAppPanel, { projectId: "proj1", projectName: "Test Project", onClose: () => {}, onJumpToEntity: () => {}, onJumpToRecord: () => {} }),
+            React.createElement(WhatsAppPanel, { projectId: "proj1", projectName: "Test Project", onClose: () => {}, onJumpToEntity: () => {}, onJumpToRecord: () => {}, entities: [], onCreateRecordFromMessage: () => {} }),
           ),
         ),
       );
@@ -3929,7 +4132,7 @@ test("WhatsAppPanel's 'Clear history' button is disabled while 'Load older messa
           React.createElement(
             LanguageProvider,
             null,
-            React.createElement(WhatsAppPanel, { projectId: "proj1", projectName: "Test Project", onClose: () => {}, onJumpToEntity: () => {}, onJumpToRecord: () => {} }),
+            React.createElement(WhatsAppPanel, { projectId: "proj1", projectName: "Test Project", onClose: () => {}, onJumpToEntity: () => {}, onJumpToRecord: () => {}, entities: [], onCreateRecordFromMessage: () => {} }),
           ),
         ),
       );
@@ -4074,7 +4277,7 @@ test("WhatsAppPanel's 'Load older messages' doesn't duplicate a message that's b
           React.createElement(
             LanguageProvider,
             null,
-            React.createElement(WhatsAppPanel, { projectId: "proj1", projectName: "Test Project", onClose: () => {}, onJumpToEntity: () => {}, onJumpToRecord: () => {} }),
+            React.createElement(WhatsAppPanel, { projectId: "proj1", projectName: "Test Project", onClose: () => {}, onJumpToEntity: () => {}, onJumpToRecord: () => {}, entities: [], onCreateRecordFromMessage: () => {} }),
           ),
         ),
       );
@@ -4187,7 +4390,7 @@ test("WhatsAppPanel's handleSendTest preserves older pages loaded via 'Load olde
           React.createElement(
             LanguageProvider,
             null,
-            React.createElement(WhatsAppPanel, { projectId: "proj1", projectName: "Test Project", onClose: () => {}, onJumpToEntity: () => {}, onJumpToRecord: () => {} }),
+            React.createElement(WhatsAppPanel, { projectId: "proj1", projectName: "Test Project", onClose: () => {}, onJumpToEntity: () => {}, onJumpToRecord: () => {}, entities: [], onCreateRecordFromMessage: () => {} }),
           ),
         ),
       );

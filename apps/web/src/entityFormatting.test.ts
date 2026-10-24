@@ -16,6 +16,7 @@ import {
   findFilterableFields,
   findPhoneField,
   findRecordPhoneNumber,
+  findSinglePhoneFieldTarget,
   formatDateForInput,
   formatDateValue,
   formatEntityRecordCount,
@@ -957,6 +958,54 @@ test("findRecordPhoneNumber returns null when every phone-like field is blank or
   ];
   const recordWithNeitherSet = { id: 1, name: "Dana Levi", phone: "", mobile: null };
   assert.equal(findRecordPhoneNumber(fields, recordWithNeitherSet), null);
+});
+
+/**
+ * Round 921: findSinglePhoneFieldTarget is WhatsAppPanel's own "which
+ * entity+field does an unmatched message's phone number belong in" lookup --
+ * the client-side counterpart to findPhoneField above, but across the whole
+ * spec rather than one entity, since an unmatched message has no entity
+ * context to begin with.
+ */
+test("findSinglePhoneFieldTarget picks the one entity+field when exactly one entity has a phone-like field", () => {
+  const entities: Entity[] = [
+    {
+      name: "Lead",
+      fields: [
+        { name: "name", type: "text", required: true },
+        { name: "phone", type: "text", required: false },
+      ],
+    },
+    {
+      name: "Property",
+      fields: [{ name: "address", type: "text", required: true }],
+    },
+  ];
+  assert.deepEqual(findSinglePhoneFieldTarget(entities), { entityName: "Lead", fieldName: "phone" });
+});
+
+test("findSinglePhoneFieldTarget returns null when no entity has a phone-like field", () => {
+  const entities: Entity[] = [
+    {
+      name: "Property",
+      fields: [{ name: "address", type: "text", required: true }],
+    },
+  ];
+  assert.equal(findSinglePhoneFieldTarget(entities), null);
+});
+
+test("findSinglePhoneFieldTarget returns null when more than one entity has a phone-like field -- no reliable way to pick one from a bare number alone", () => {
+  const entities: Entity[] = [
+    {
+      name: "Lead",
+      fields: [{ name: "phone", type: "text", required: false }],
+    },
+    {
+      name: "Agent",
+      fields: [{ name: "mobile", type: "text", required: false }],
+    },
+  ];
+  assert.equal(findSinglePhoneFieldTarget(entities), null);
 });
 
 /**

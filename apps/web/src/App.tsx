@@ -525,6 +525,12 @@ function AppContent() {
   // action, so the panel opens with that record's number already in the
   // test-send box instead of the user having to copy/paste it themselves.
   const [whatsappPrefillTo, setWhatsappPrefillTo] = useState<string | null>(null);
+  // Round 921: set by WhatsAppPanel's own "Create new record from this
+  // message" button (an unmatched inbound message -- a brand-new contact --
+  // had no path at all to becoming a record), carried through to the single
+  // EntityPanel mount below as its createPrefill prop, the same way
+  // highlightRecordId is carried through for "jump to record".
+  const [createPrefill, setCreatePrefill] = useState<{ fieldName: string; value: string } | null>(null);
   const [whatsappUnreadCount, setWhatsappUnreadCount] = useState(0);
   // Count of enabled automation rules whose lastStatus is "failed" -- a
   // standing problem (webhook endpoint down, WhatsApp disconnected, a stale
@@ -2438,6 +2444,8 @@ function AppContent() {
                     onEntityRenamed={setProject}
                     highlightRecordId={highlightRecordId}
                     onHighlightHandled={() => setHighlightRecordId(null)}
+                    createPrefill={createPrefill}
+                    onCreatePrefillHandled={() => setCreatePrefill(null)}
                     onJumpToRecord={(targetEntity, recordId) => {
                       setActiveEntity(targetEntity);
                       setHighlightRecordId(recordId);
@@ -2511,6 +2519,7 @@ function AppContent() {
             <WhatsAppPanel
               projectId={project.id}
               projectName={project.name}
+              entities={project.spec.entities}
               onClose={() => {
                 setShowWhatsApp(false);
                 setWhatsappPrefillTo(null);
@@ -2523,6 +2532,12 @@ function AppContent() {
               onJumpToRecord={(entityName, recordId) => {
                 setActiveEntity(entityName);
                 setHighlightRecordId(recordId);
+                setShowWhatsApp(false);
+                setWhatsappPrefillTo(null);
+              }}
+              onCreateRecordFromMessage={(entityName, fieldName, phoneNumber) => {
+                setActiveEntity(entityName);
+                setCreatePrefill({ fieldName, value: phoneNumber });
                 setShowWhatsApp(false);
                 setWhatsappPrefillTo(null);
               }}

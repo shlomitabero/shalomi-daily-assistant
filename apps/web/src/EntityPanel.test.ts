@@ -5936,6 +5936,49 @@ test("EntityPanel's 'jump to record' clears grouping too, so a record hidden ins
 });
 
 /**
+ * Round 921: createPrefill is WhatsAppPanel's own "create new record from
+ * this message" button's path into this panel -- carried down from App.tsx
+ * the same way highlightRecordId is, for the opposite case (no existing
+ * record to jump to, so a NEW one must be started instead, pre-filled with
+ * the message's own phone number). Reuses startCreateForColumn's own body
+ * (see its own doc comment), so this confirms the wiring end to end: the
+ * create form opens (not edit mode), the named field holds the given value,
+ * and onCreatePrefillHandled fires so the caller can clear its own copy.
+ */
+test("EntityPanel applies an incoming createPrefill by opening the create form pre-filled with that field's value", async () => {
+  await withJsdom(async () => {
+    const store: EntityRecord[] = [{ id: 1, createdAt: "x", name: "Acme Corp", status: "new" }];
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = mockRecordsFetch(store) as typeof fetch;
+    let handledCount = 0;
+    const onCreatePrefillHandled = () => {
+      handledCount++;
+    };
+    try {
+      const view = render(buildEntityPanelElement({ onCreatePrefillHandled }));
+      await waitForCondition(() => document.querySelectorAll("table tbody tr").length === 1);
+
+      view.rerender(buildEntityPanelElement({ createPrefill: { fieldName: "name", value: "972521112233" }, onCreatePrefillHandled }));
+
+      await waitForCondition(() => handledCount === 1);
+      const nameInput = document.querySelector(".record-form input[type=text]") as HTMLInputElement;
+      assert.equal(nameInput.value, "972521112233", "the named field must hold the prefilled value");
+
+      const submitButton = document.querySelector(".form-actions button[type=submit]") as HTMLButtonElement;
+      assert.equal(submitButton.textContent, "Add", "must be in create mode, not edit mode");
+      // Compared as a boolean, not the raw DOM node itself -- an
+      // assert.equal(domNode, null) that unexpectedly fails tries to format
+      // the real (circular) DOM node for its diff message and can hang for
+      // minutes instead of failing fast (see round 666's own documented
+      // lesson in docs/roadmap.md).
+      assert.equal(document.querySelector(".form-actions button.secondary") !== null, false, "no Cancel button -- confirms this isn't edit mode");
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+});
+
+/**
  * New in this round: the table's own sort was always single-column --
  * clicking a second header threw away the first one entirely, so there
  * was no way to sort by, say, status and THEN by name within each status.
