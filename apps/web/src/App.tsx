@@ -2204,6 +2204,20 @@ function AppContent() {
             </p>
           )}
 
+          {/* Round 905: the spec-review screen (pre-build) already had this
+              editor, but it was never mounted here -- project.description is
+              re-sent as AI context on every /refine call for the entire
+              post-build life of the project (see ProjectDescriptionEditor's
+              own comment), yet a built project had no way to ever see or fix
+              it again. The server's PATCH /projects/:id/description route
+              already supports this unconditionally (no project.status
+              guard); only the UI was missing. */}
+          <section className="preview-description-section">
+            <h2>{t("spec.description.heading")}</h2>
+            <p className="muted small">{t("spec.description.hint")}</p>
+            <ProjectDescriptionEditor project={project} onChanged={setProject} readOnly={myRole === "viewer"} />
+          </section>
+
           <div className="preview-body">
             <div className="preview-chat-pane">
               {refineRunning ? (

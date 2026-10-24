@@ -1215,6 +1215,32 @@ test("App's openExistingProject routes a built project to the live preview and a
 });
 
 /**
+ * Round 905: ProjectDescriptionEditor was only ever mounted on the
+ * pre-build "spec" view, never on the built project's own "preview" view
+ * -- but project.description is resent as real AI context on every single
+ * /refine call (routes/projects.ts's own combinedDescription), for the
+ * entire post-build life of the project, which is reachable ONLY from the
+ * preview screen. A typo or wrong requirement in the original description
+ * had no way to ever be corrected once a project was built, even though
+ * the server's own PATCH /projects/:id/description route already supports
+ * it unconditionally (no project.status guard at all). Checks the real
+ * source (App.tsx is never fully rendered in this test file; every other
+ * preview-view test here works the same way, either extracting a handler
+ * or, like this one, matching the real JSX text) for the editor actually
+ * appearing inside the `view === "preview"` block, not just the `"spec"` one.
+ */
+test("App.tsx renders ProjectDescriptionEditor on the built-project preview screen too, not just the pre-build spec-review screen", () => {
+  const appSrc = readFileSync(new URL("./App.tsx", import.meta.url), "utf8");
+  const previewBlockMatch = appSrc.match(/\{view === "preview" && project && \([\s\S]*?<div className="preview-body">/);
+  assert.ok(previewBlockMatch, "expected to find the preview view's own JSX block, up to its chat/entity body");
+  assert.match(
+    previewBlockMatch![0],
+    /<ProjectDescriptionEditor project=\{project\} onChanged=\{setProject\} readOnly=\{myRole === "viewer"\} \/>/,
+    "expected the built-project preview screen to render ProjectDescriptionEditor too, the same way the spec-review screen already does",
+  );
+});
+
+/**
  * Regression test for handleDeleteProject (the home-screen "Your
  * projects" list's delete button): a real, irreversible action gated
  * behind window.confirm -- declining the confirm must leave everything
