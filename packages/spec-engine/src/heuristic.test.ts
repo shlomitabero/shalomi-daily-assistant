@@ -931,6 +931,54 @@ test("Patient's 'patient' keyword doesn't spuriously match 'impatient', and 'out
 });
 
 /**
+ * Regression test for a real bug found in round 888: round 372's own
+ * `\b`-bounded fix above only guards against "patient" being a SUBSTRING
+ * of an unrelated word ("impatient"). It does nothing when "patient" is
+ * used as its own correctly-spelled, whole-word ADJECTIVE ("calm, able to
+ * wait"), a completely different meaning from the medical noun this
+ * entity is about -- a plain support-ticketing description telling reps
+ * to "be patient with" frustrated customers spuriously matched Patient,
+ * fabricating a medical entity (with a date-of-birth field and a
+ * "medical notes" field) for an app with nothing to do with healthcare.
+ * Fixed by excluding the specific idiomatic shapes the adjective actually
+ * appears in (directly after a copula/intensifier like "be"/"stay"/
+ * "remain"/"very", or directly before " with"), while confirming every
+ * real medical phrasing from the existing tests above still matches.
+ */
+test("Patient's 'patient' keyword doesn't spuriously match the adjective 'patient' (calm, able to wait), and real medical phrasings still match", async () => {
+  const provider = new HeuristicSpecProvider();
+
+  const bePatientWith = await provider.generate(
+    "A ticketing app for our support team; train reps to be patient with frustrated customers during calls.",
+  );
+  assert.ok(
+    !bePatientWith.entities.some((e) => e.name === "Patient"),
+    "'be patient with' (the adjective) must not spuriously match Patient",
+  );
+
+  const stayPatientWith = await provider.generate("Stay patient with angry callers and log every complaint.");
+  assert.ok(
+    !stayPatientWith.entities.some((e) => e.name === "Patient"),
+    "'stay patient with' (the adjective) must not spuriously match Patient",
+  );
+
+  const remainPatientWith = await provider.generate("A support app; remind agents to remain patient with upset clients.");
+  assert.ok(
+    !remainPatientWith.entities.some((e) => e.name === "Patient"),
+    "'remain patient with' (the adjective) must not spuriously match Patient",
+  );
+
+  // The real medical term, including the plural (never ambiguous, since
+  // the adjective has no -s plural) and a bare singular with no adjacent
+  // copula/intensifier or trailing "with", must still match.
+  const realPatient = await provider.generate("A clinic app to track patient visits and medical history.");
+  assert.ok(realPatient.entities.some((e) => e.name === "Patient"));
+
+  const realPatients = await provider.generate("An app for a clinic to manage patients.");
+  assert.ok(realPatients.entities.some((e) => e.name === "Patient"));
+});
+
+/**
  * Regression test for a real bug found in round 446: Employee's bare
  * "worker" keyword (used both in DOMAIN_ENTITY_RULES and ROLE_RULES) is a
  * substring of "coworker" -- an ordinary word in a plain personal

@@ -751,7 +751,33 @@ export const DOMAIN_ENTITY_RULES: DomainEntityRule[] = [
     // "out" and "patient" in "outpatient" (both are word characters), so
     // `\bpatient\b` alone can't see it, even though it's a real,
     // legitimate healthcare term this entity should still catch.
-    keywords: [/\bpatient(s)?\b/, "outpatient", "clinic patient", "מטופל", "מטופלת", "מטופלים"],
+    //
+    // Round 888: a THIRD, distinct shape no `\b` boundary or substring fix
+    // can touch -- the singular "patient" is also an ordinary English
+    // ADJECTIVE ("calm, able to wait"), a correctly-spelled, `\b`-bounded
+    // whole word with a completely unrelated meaning from the medical
+    // noun this entity is about (e.g. "train reps to be patient with
+    // frustrated customers during calls" for a plain support-ticketing
+    // app). Unlike pitfall 1b's two-separate-words idiom (Deal's removed
+    // "pipeline"), this is the SAME single word carrying two unrelated
+    // meanings (grammatical polysemy) -- word boundaries can't help,
+    // since the adjective spelling and the noun spelling are identical.
+    // The plural "patients" is unambiguous (English adjectives never take
+    // an -s plural), so it keeps its own unconditional regex. The
+    // singular is narrowed to exclude only the specific idiomatic shapes
+    // the adjective actually appears in: directly after a copula/
+    // intensifier that's only grammatical before an adjective (be/being/
+    // been/stay/staying/remain/remaining/very/so/quite/extremely/
+    // incredibly/too), or directly before " with" ("patient with
+    // customers/them/each other", the standard "tolerant of" idiom this
+    // adjective is almost always used in) -- neither excludes any real
+    // medical phrasing ("a patient visit", "patient records", "manage
+    // patients"), confirmed empirically before fixing.
+    keywords: [
+      /\bpatients\b/,
+      /(?<!\b(?:be|being|been|stay|staying|remain|remaining|very|so|quite|extremely|incredibly|too)\s)\bpatient\b(?!\s+with\b)/,
+      "outpatient", "clinic patient", "מטופל", "מטופלת", "מטופלים",
+    ],
     labelHe: "מטופלים",
     descriptionHe: "מי שמקבל טיפול רפואי מהעסק.",
     fieldLabelsHe: { name: "שם", phone: "טלפון", dateOfBirth: "תאריך לידה", notes: "הערות רפואיות" },
