@@ -82,6 +82,34 @@ test("formatAutomationsReport translates a send_whatsapp rule's known raw error 
   assert.equal(report.includes("missing_country_code"), false, "the bare raw error code must never leak into the report");
 });
 
+/**
+ * Round 948: same fix as AutomationsPanel.tsx's own identical regression
+ * (see its own comment) -- editing a rule's actionType never
+ * retroactively clears/updates its own already-stored lastError
+ * (updateAutomationRule never touches it), so the rule's CURRENT
+ * actionType (now "webhook") is not what was actually in effect when
+ * lastError was recorded. lastActionType is the snapshot taken at that
+ * moment; without falling back to it, this report would stop translating
+ * a still-WhatsApp-specific code the instant the rule's action type is
+ * edited.
+ */
+test("formatAutomationsReport still translates a known WhatsApp error code after the rule's own actionType was edited away from send_whatsapp, using the snapshotted lastActionType instead of the rule's current one", () => {
+  const t = (key: string, params?: Record<string, string | number>) => translate("en", key, params);
+  const rule = makeRule({
+    actionType: "webhook",
+    webhookUrl: "https://example.com/hook",
+    lastTriggeredAt: "2026-03-15T09:00:00Z",
+    lastStatus: "failed",
+    lastError: "missing_country_code",
+    lastActionType: "send_whatsapp",
+  });
+
+  const report = formatAutomationsReport([rule], [], "Shop", "en", t);
+
+  assert.match(report, /missing a country code/, "lastActionType, not the rule's now-webhook actionType, must still be used to translate the stale lastError");
+  assert.equal(report.includes("missing_country_code"), false, "the bare raw error code must never leak into the report even after the rule was edited");
+});
+
 test("formatAutomationsReport shows a field's bare label unchanged when no other field on the entity shares it", () => {
   const t = (key: string, params?: Record<string, string | number>) => translate("en", key, params);
   const entity: Entity = {

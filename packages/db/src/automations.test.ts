@@ -189,6 +189,57 @@ test("recordAutomationRun stamps lastTriggeredAt/lastStatus/lastError, and silen
   assert.doesNotThrow(() => recordAutomationRun(db, "proj1", "nonexistent", { status: "sent" }));
 });
 
+/**
+ * Round 948: a rule's actionType can be edited after it last fired
+ * (updateAutomationRule never touches lastTriggeredAt/lastStatus/lastError),
+ * so a live `rule.actionType` read at display time is NOT necessarily the
+ * actionType that actually produced the stored lastError -- the exact
+ * regression apps/web/src/AutomationsPanel.tsx's translateAutomationError
+ * (round 935) could otherwise reopen via an edit. recordAutomationRun must
+ * snapshot the actionType it's given into automation_rules.lastActionType
+ * (and into the new automation_runs row too, so every historical run keeps
+ * its own correct actionType even after a later edit), not leave it to be
+ * read live off the rule's own actionType column.
+ */
+test("recordAutomationRun snapshots the given actionType onto both the rule's own lastActionType and the new automation_runs row, surviving a later actionType edit on the rule itself", () => {
+  const db = openDatabase(":memory:");
+  ensureAutomationRulesTable(db);
+  const rule = insertAutomationRule(db, baseRule({ actionType: "send_whatsapp" }));
+  recordAutomationRun(db, "proj1", rule.id, { status: "failed", error: "missing_country_code" }, "send_whatsapp");
+
+  const afterFirstRun = getAutomationRule(db, "proj1", rule.id)!;
+  assert.equal(afterFirstRun.lastActionType, "send_whatsapp", "the rule's own lastActionType must reflect the actionType it actually fired under");
+  const [run] = listAutomationRuns(db, "proj1", rule.id);
+  assert.equal(run.actionType, "send_whatsapp", "the individual run row must carry its own actionType, independent of the rule");
+
+  // Simulates editing the rule's action type to webhook, same as
+  // updateAutomationRule actually does -- it never touches
+  // lastTriggeredAt/lastStatus/lastError/lastActionType at all.
+  updateAutomationRule(db, "proj1", rule.id, { actionType: "webhook" });
+
+  const afterEdit = getAutomationRule(db, "proj1", rule.id)!;
+  assert.equal(afterEdit.actionType, "webhook", "the rule's own live actionType must reflect the edit");
+  assert.equal(
+    afterEdit.lastActionType,
+    "send_whatsapp",
+    "lastActionType must survive the edit unchanged -- it describes what was true when lastError was recorded, not what's true now",
+  );
+  const [stillSameRun] = listAutomationRuns(db, "proj1", rule.id);
+  assert.equal(stillSameRun.actionType, "send_whatsapp", "a historical run's own actionType must never retroactively change just because the rule was edited later");
+});
+
+test("recordAutomationRun called with no actionType argument (every pre-round-948 call site) leaves lastActionType/the run's own actionType null, not throwing or defaulting to the rule's current one", () => {
+  const db = openDatabase(":memory:");
+  ensureAutomationRulesTable(db);
+  const rule = insertAutomationRule(db, baseRule({ actionType: "send_whatsapp" }));
+  recordAutomationRun(db, "proj1", rule.id, { status: "sent" });
+
+  const afterRun = getAutomationRule(db, "proj1", rule.id)!;
+  assert.equal(afterRun.lastActionType, null);
+  const [run] = listAutomationRuns(db, "proj1", rule.id);
+  assert.equal(run.actionType, null);
+});
+
 test("deleteAutomationRule removes the row and throws NotFoundError for a second delete", () => {
   const db = openDatabase(":memory:");
   ensureAutomationRulesTable(db);

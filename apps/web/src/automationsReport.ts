@@ -118,8 +118,15 @@ function describeDestination(
 // KNOWN_WHATSAPP_SEND_ERROR_CODES list and error.WHATSAPP_SEND_<CODE>
 // i18n keys so the downloaded report never disagrees with the live panel
 // about which errors are known or how they're phrased.
+// Round 948: same fix as AutomationsPanel.tsx's own identical helper (see
+// its comment) -- rule.actionType is the rule's CURRENT, possibly
+// since-edited value, not necessarily what it was when lastError was
+// actually recorded. lastActionType is that snapshot; falls back to the
+// current actionType only for a legacy row recorded before that column
+// existed.
 function translateAutomationError(rule: AutomationRuleView, error: string, lang: Lang): string {
-  if (rule.actionType === "send_whatsapp" && KNOWN_WHATSAPP_SEND_ERROR_CODES.has(error)) {
+  const actionType = rule.lastActionType ?? rule.actionType;
+  if (actionType === "send_whatsapp" && KNOWN_WHATSAPP_SEND_ERROR_CODES.has(error)) {
     return resolveErrorMessage(lang, { code: `WHATSAPP_SEND_${error.toUpperCase()}`, error });
   }
   return error;

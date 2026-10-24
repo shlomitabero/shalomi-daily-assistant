@@ -574,6 +574,11 @@ test("runAutomationsForRecordChange records the outcome on the rule itself (last
   assert.ok(after.lastTriggeredAt);
   assert.equal(after.lastStatus, "sent");
   assert.equal(after.lastError, null);
+  // Round 948: confirms fireRule's own real recordAutomationRun call site
+  // actually passes rule.actionType through end-to-end -- not just that
+  // the lower-level recordAutomationRun function accepts it in isolation
+  // (packages/db/src/automations.test.ts already covers that).
+  assert.equal(after.lastActionType, "send_whatsapp");
 });
 
 test("runAutomationsForRecordChange never calls sendMessage and records a failure when WhatsApp is not connected", async () => {

@@ -1171,6 +1171,8 @@ export interface AutomationRuleView {
   lastTriggeredAt: string | null;
   lastStatus: "sent" | "failed" | null;
   lastError: string | null;
+  /** Round 948: the actionType this rule actually HAD when lastError was last written -- see packages/db's AutomationRule.lastActionType for why the live `actionType` above must never be used to translate a stale lastError. Null if the rule has never fired, or fired before this column existed. */
+  lastActionType: AutomationActionType | null;
 }
 
 export function listAutomationRules(projectId: string): Promise<{ rules: AutomationRuleView[] }> {
@@ -1182,6 +1184,8 @@ export interface AutomationRunView {
   ruleId: string;
   status: "sent" | "failed";
   error: string | null;
+  /** Round 948: the rule's own actionType AT THE TIME this run fired -- see packages/db's AutomationRun.actionType for why. Null for a run recorded before this column existed. */
+  actionType: AutomationActionType | null;
   triggeredAt: string;
 }
 

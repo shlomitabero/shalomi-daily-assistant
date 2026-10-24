@@ -517,6 +517,7 @@ async function fireWebhookAction(
         status: "failed",
         error: "This rule has no valid webhook URL configured",
       },
+      rule.actionType,
       now,
     );
     return;
@@ -573,6 +574,7 @@ async function fireWebhookAction(
         status: res.ok ? "sent" : "failed",
         error: res.ok ? null : `Webhook responded with status ${res.status}`,
       },
+      rule.actionType,
       now,
     );
   } catch (err) {
@@ -584,6 +586,7 @@ async function fireWebhookAction(
         status: "failed",
         error: err instanceof Error ? err.message : "Webhook request failed",
       },
+      rule.actionType,
       now,
     );
   } finally {
@@ -607,15 +610,18 @@ async function fireRule(
   }
   const to = rule.toMode === "static" ? rule.toNumber : rule.toField ? record[rule.toField] : null;
   if (!to || typeof to !== "string" || !to.trim()) {
-    recordAutomationRun(db, project.id, rule.id, {
-      status: "failed",
-      error: "This record has no value in the configured phone-number field",
-    });
+    recordAutomationRun(
+      db,
+      project.id,
+      rule.id,
+      { status: "failed", error: "This record has no value in the configured phone-number field" },
+      rule.actionType,
+    );
     return;
   }
   const status = whatsapp.getStatus(project.id);
   if (status.status !== "connected") {
-    recordAutomationRun(db, project.id, rule.id, { status: "failed", error: "WhatsApp is not connected" });
+    recordAutomationRun(db, project.id, rule.id, { status: "failed", error: "WhatsApp is not connected" }, rule.actionType);
     return;
   }
   const templateRecord = resolveRelationFieldsForTemplate(db, project.id, entity, project.spec.entities, record);
@@ -647,10 +653,13 @@ async function fireRule(
     matchedLabel: match?.label ?? null,
     status: result.ok ? "sent" : "failed",
   });
-  recordAutomationRun(db, project.id, rule.id, {
-    status: result.ok ? "sent" : "failed",
-    error: result.ok ? null : (result.error ?? "Send failed"),
-  });
+  recordAutomationRun(
+    db,
+    project.id,
+    rule.id,
+    { status: result.ok ? "sent" : "failed", error: result.ok ? null : (result.error ?? "Send failed") },
+    rule.actionType,
+  );
 }
 
 /**
@@ -729,13 +738,14 @@ export async function fireScheduledRule(
         status: "failed",
         error: "This rule has no destination phone number configured",
       },
+      rule.actionType,
       now,
     );
     return;
   }
   const status = whatsapp.getStatus(project.id);
   if (status.status !== "connected") {
-    recordAutomationRun(db, project.id, rule.id, { status: "failed", error: "WhatsApp is not connected" }, now);
+    recordAutomationRun(db, project.id, rule.id, { status: "failed", error: "WhatsApp is not connected" }, rule.actionType, now);
     return;
   }
   const result = await whatsapp.sendMessage(project.id, to, rule.messageTemplate);
@@ -761,6 +771,7 @@ export async function fireScheduledRule(
       status: result.ok ? "sent" : "failed",
       error: result.ok ? null : (result.error ?? "Send failed"),
     },
+    rule.actionType,
     now,
   );
 }

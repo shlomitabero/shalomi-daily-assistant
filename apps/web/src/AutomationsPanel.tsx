@@ -665,19 +665,40 @@ export function AutomationsPanel({
     return error;
   }
 
+  // Round 948: a rule's actionType can be edited after it last fired
+  // (UpdateAutomationRuleSchema/updateAutomationRule never touch
+  // lastTriggeredAt/lastStatus/lastError) -- using the rule's CURRENT
+  // actionType to translate a stale lastError meant switching a rule from
+  // send_whatsapp to webhook (or back) made its old, already-stored
+  // WhatsApp error code render raw/untranslated again, the exact
+  // regression round 935 closed, just reopened via an edit instead of a
+  // fresh failure. lastActionType is the actionType snapshotted at the
+  // moment lastError was actually written (recordAutomationRun,
+  // packages/db/src/automations.ts) -- falls back to the rule's own
+  // current actionType only for a legacy row recorded before that column
+  // existed, where no better information is available.
   function describeLastRun(rule: AutomationRuleView): string {
     if (!rule.lastTriggeredAt) return t("automations.lastRun.never");
     const time = new Date(rule.lastTriggeredAt).toLocaleString(LOCALE[lang]);
     return rule.lastStatus === "sent"
       ? t("automations.lastRun.sent", { time })
-      : t("automations.lastRun.failed", { time, error: translateAutomationError(rule.actionType, rule.lastError ?? "") });
+      : t("automations.lastRun.failed", {
+          time,
+          error: translateAutomationError(rule.lastActionType ?? rule.actionType, rule.lastError ?? ""),
+        });
   }
 
-  function describeRunStatus(run: AutomationRunView, actionType: AutomationActionType): string {
+  // Round 948: same reasoning as describeLastRun above, but for every
+  // individual historical run in the "History" list -- each run's OWN
+  // actionType (snapshotted when it fired) must be used, not the rule's
+  // current one, or editing a rule's actionType once would make every
+  // past send_whatsapp failure in its history render raw/untranslated too,
+  // not just the newest one.
+  function describeRunStatus(run: AutomationRunView, ruleActionType: AutomationActionType): string {
     const time = new Date(run.triggeredAt).toLocaleString(LOCALE[lang]);
     return run.status === "sent"
       ? t("automations.lastRun.sent", { time })
-      : t("automations.lastRun.failed", { time, error: translateAutomationError(actionType, run.error ?? "") });
+      : t("automations.lastRun.failed", { time, error: translateAutomationError(run.actionType ?? ruleActionType, run.error ?? "") });
   }
 
   function handleToggleHistory(rule: AutomationRuleView) {

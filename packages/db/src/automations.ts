@@ -43,6 +43,8 @@ export interface AutomationRule {
   lastTriggeredAt: string | null;
   lastStatus: AutomationLastStatus;
   lastError: string | null;
+  /** Round 948: the actionType this rule actually HAD when lastTriggeredAt/lastStatus/lastError were last written -- see AutomationRun's own identical field for why a live `actionType` reference isn't safe to translate lastError against. Null for a run recorded before this column existed, or if the rule has never fired at all. */
+  lastActionType: AutomationActionType | null;
   createdAt: string;
   updatedAt: string;
 }
@@ -53,6 +55,18 @@ export interface AutomationRun {
   ruleId: string;
   status: "sent" | "failed";
   error: string | null;
+  /**
+   * Round 948: the rule's own actionType AT THE TIME this run fired, not a
+   * live reference to the rule -- a rule's actionType can be edited after
+   * the fact (UpdateAutomationRuleSchema/updateAutomationRule never touch
+   * run history), so without its own snapshot, re-rendering an older run
+   * after the rule's actionType changed would translate (or fail to
+   * translate) its stored `error` using the WRONG rule's current action
+   * type. Null only for a run recorded before this column existed
+   * (additive-only migration, no backfill, same convention as every other
+   * column this table/automation_rules has ever added).
+   */
+  actionType: AutomationActionType | null;
   triggeredAt: string;
 }
 
@@ -77,6 +91,15 @@ export function ensureAutomationRunsTable(db: ForgeDatabase): void {
       triggeredAt TEXT NOT NULL
     )
   `);
+  // Round 948: additive-only, same discipline as automation_rules' own
+  // scheduleTimeUtc/scheduleDaysOfWeek/webhookUrl column migrations just
+  // below -- a table created before this round has no actionType column at
+  // all. Stays nullable, no backfill: a pre-existing run's own actionType
+  // at the time it fired is genuinely unknowable now.
+  const runColumns = (db.prepare("PRAGMA table_info(automation_runs)").all() as { name: string }[]).map((c) => c.name);
+  if (!runColumns.includes("actionType")) {
+    db.exec("ALTER TABLE automation_runs ADD COLUMN actionType TEXT");
+  }
 }
 
 function rowToRun(row: Record<string, unknown>): AutomationRun {
@@ -86,6 +109,7 @@ function rowToRun(row: Record<string, unknown>): AutomationRun {
     ruleId: row.ruleId as string,
     status: row.status as "sent" | "failed",
     error: (row.error as string | null) ?? null,
+    actionType: (row.actionType as AutomationActionType | null) ?? null,
     triggeredAt: row.triggeredAt as string,
   };
 }
@@ -178,6 +202,13 @@ export function ensureAutomationRulesTable(db: ForgeDatabase): void {
   if (!columns.includes("webhookUrl")) {
     db.exec("ALTER TABLE automation_rules ADD COLUMN webhookUrl TEXT");
   }
+  // Round 948: same additive-only convention as the three columns above --
+  // pairs with lastTriggeredAt/lastStatus/lastError (see AutomationRule's
+  // own doc comment on this column for why a live actionType reference
+  // can't be trusted to translate a stale lastError).
+  if (!columns.includes("lastActionType")) {
+    db.exec("ALTER TABLE automation_rules ADD COLUMN lastActionType TEXT");
+  }
 }
 
 function rowToRule(row: Record<string, unknown>): AutomationRule {
@@ -200,6 +231,7 @@ function rowToRule(row: Record<string, unknown>): AutomationRule {
     lastTriggeredAt: (row.lastTriggeredAt as string | null) ?? null,
     lastStatus: (row.lastStatus as AutomationLastStatus) ?? null,
     lastError: (row.lastError as string | null) ?? null,
+    lastActionType: (row.lastActionType as AutomationActionType | null) ?? null,
     createdAt: row.createdAt as string,
     updatedAt: row.updatedAt as string,
   };
@@ -369,19 +401,28 @@ export function recordAutomationRun(
   projectId: string,
   id: string,
   outcome: { status: "sent" | "failed"; error?: string | null },
+  // Round 948: optional, defaulting to null, specifically so every existing
+  // caller that doesn't care about actionType-stale-error translation
+  // (this module's own test suite, which fires runs against a bare
+  // `{status, error}` with no rule context in hand) keeps working
+  // unchanged. Every real caller in apps/api/src/automations.ts passes its
+  // own rule.actionType explicitly -- see AutomationRun's own doc comment
+  // for why this must be snapshotted per-run rather than read live off the
+  // rule at render time.
+  actionType: AutomationActionType | null = null,
   at: Date = new Date(),
 ): void {
   const now = at.toISOString();
   db.prepare(
-    `UPDATE automation_rules SET lastTriggeredAt = ?, lastStatus = ?, lastError = ? WHERE projectId = ? AND id = ?`,
-  ).run(now, outcome.status, outcome.error ?? null, projectId, id);
+    `UPDATE automation_rules SET lastTriggeredAt = ?, lastStatus = ?, lastError = ?, lastActionType = ? WHERE projectId = ? AND id = ?`,
+  ).run(now, outcome.status, outcome.error ?? null, actionType, projectId, id);
   // The rule row above stays a cheap, already-wired-up "most recent
   // outcome" summary; this is the actual history, inserted alongside it
   // rather than instead of it so no existing lastTriggeredAt/lastStatus/
   // lastError reader needs to change.
   db.prepare(
-    `INSERT INTO automation_runs (id, projectId, ruleId, status, error, triggeredAt) VALUES (?, ?, ?, ?, ?, ?)`,
-  ).run(randomUUID(), projectId, id, outcome.status, outcome.error ?? null, now);
+    `INSERT INTO automation_runs (id, projectId, ruleId, status, error, actionType, triggeredAt) VALUES (?, ?, ?, ?, ?, ?, ?)`,
+  ).run(randomUUID(), projectId, id, outcome.status, outcome.error ?? null, actionType, now);
   // Prune anything beyond AUTOMATION_RUNS_RETENTION_LIMIT right away --
   // ordered identically to listAutomationRuns's own ORDER BY, so "the
   // rows that survive" and "the rows listAutomationRuns would return"

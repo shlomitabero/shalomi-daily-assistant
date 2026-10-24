@@ -2297,6 +2297,80 @@ test("AutomationsPanel translates a send_whatsapp rule's known raw error code (e
   });
 });
 
+/**
+ * Round 948: editing a rule's actionType (switching it between
+ * send_whatsapp and webhook) never clears/retroactively updates its own
+ * already-stored lastError/run history -- a rule's CURRENT actionType is
+ * therefore not necessarily what it was when a given error was actually
+ * recorded. Without lastActionType/run.actionType (both snapshotted at the
+ * moment they're written -- see packages/db/src/automations.ts's
+ * recordAutomationRun), translateAutomationError would read the rule's
+ * now-webhook actionType and stop translating a WhatsApp-specific code
+ * that's still sitting in lastError/an older run from before the edit --
+ * the exact round-935 regression, reopened purely by editing the rule.
+ */
+test("AutomationsPanel still translates a known WhatsApp error code after the rule's own actionType was edited away from send_whatsapp, using the snapshotted lastActionType/run actionType instead of the rule's current one", async () => {
+  await withJsdom(async () => {
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = (async (input: string) => {
+      if (input === "/api/projects/proj1/automations") {
+        return new Response(
+          JSON.stringify({
+            rules: [
+              makeRule({
+                actionType: "webhook",
+                webhookUrl: "https://example.com/hook",
+                lastTriggeredAt: new Date("2026-03-15T09:00:00Z").toISOString(),
+                lastStatus: "failed",
+                lastError: "missing_country_code",
+                lastActionType: "send_whatsapp",
+              }),
+            ],
+          }),
+          { status: 200, headers: { "content-type": "application/json" } },
+        );
+      }
+      if (input === "/api/projects/proj1/automations/rule1/runs") {
+        return new Response(
+          JSON.stringify({
+            runs: [
+              {
+                id: "run1",
+                ruleId: "rule1",
+                status: "failed",
+                error: "missing_country_code",
+                actionType: "send_whatsapp",
+                triggeredAt: new Date("2026-03-15T09:00:00Z").toISOString(),
+              },
+            ],
+          }),
+          { status: 200, headers: { "content-type": "application/json" } },
+        );
+      }
+      throw new Error(`unexpected request ${input}`);
+    }) as typeof fetch;
+
+    try {
+      renderPanel();
+      await waitForCondition(() => document.querySelectorAll(".automations-rule-row").length === 1);
+
+      const row = document.querySelector(".automations-rule-row") as HTMLElement;
+      assert.match(row.textContent ?? "", /missing a country code/, "lastActionType, not the rule's now-webhook actionType, must still be used to translate the stale lastError");
+      assert.equal(row.textContent?.includes("missing_country_code") ?? true, false, "the bare raw error code must never leak into the rule row even after the rule was edited");
+
+      const historyButton = Array.from(document.querySelectorAll("button")).find((b) => b.textContent === "History") as HTMLButtonElement;
+      fireEvent.click(historyButton);
+      await waitForCondition(() => document.querySelectorAll(".automations-rule-history-list li").length === 1);
+
+      const historyText = document.querySelector(".automations-rule-history-list")?.textContent ?? "";
+      assert.match(historyText, /missing a country code/, "a historical run's own actionType must still be used to translate its error, independent of the rule's current actionType");
+      assert.equal(historyText.includes("missing_country_code"), false, "the bare raw error code must never leak into the run-history list after the rule was edited either");
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+});
+
 test("AutomationsPanel's History button shows a real empty state for a rule that has never fired", async () => {
   await withJsdom(async () => {
     const originalFetch = globalThis.fetch;
