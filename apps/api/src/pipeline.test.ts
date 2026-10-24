@@ -1747,6 +1747,119 @@ test("carryForwardLabels keeps a surviving entity's/field's own prior label (and
   assert.equal(order.label, undefined, "a genuinely NEW entity has no prior label to carry forward");
 });
 
+/**
+ * Round 917's finding: the test just above keeps the enum field's own
+ * enumValues IDENTICAL across the refine -- it never exercises the far
+ * more common everyday case of a refine that adds/removes/renames one of
+ * that same field's own options (round 887's own named hazard class),
+ * which the original carryForwardLabels (round 915) got wrong: it copied
+ * the ENTIRE prior enumLabels map verbatim, discarding the fresh
+ * generation's own correct label for a genuinely NEW value and leaving a
+ * stale label behind for a removed one. Confirms the fix merges instead:
+ * an unchanged value keeps its own PRIOR label, a brand-new value keeps
+ * whatever label the fresh generation already supplied for it.
+ */
+test("carryForwardLabels merges enumLabels by value when a refine changes that same field's own enumValues, instead of overwriting the fresh generation's own labels wholesale", () => {
+  const previousSpec: ProductSpec = {
+    summary: "test",
+    personas: [],
+    roles: ["Admin"],
+    screens: [],
+    assumptions: [],
+    openQuestions: [],
+    entities: [
+      {
+        name: "Order",
+        fields: [
+          {
+            name: "status",
+            type: "enum",
+            required: true,
+            enumValues: ["pending", "shipped"],
+            enumLabels: { pending: "ממתין", shipped: "נשלח" },
+          },
+        ],
+      },
+    ],
+  };
+  // Simulates exactly what the real HeuristicSpecProvider/
+  // AnthropicSpecProvider actually produce for a refine instruction like
+  // "add a cancelled status" -- a fresh, complete enumLabels for the NEW
+  // value set, correctly including the brand-new value's own label.
+  const nextSpec: ProductSpec = {
+    ...previousSpec,
+    entities: [
+      {
+        name: "Order",
+        fields: [
+          {
+            name: "status",
+            type: "enum",
+            required: true,
+            enumValues: ["pending", "shipped", "cancelled"],
+            enumLabels: { pending: "ממתין", shipped: "נשלח", cancelled: "בוטל" },
+          },
+        ],
+      },
+    ],
+  };
+
+  carryForwardLabels(previousSpec, nextSpec);
+
+  const statusField = nextSpec.entities[0].fields[0];
+  assert.deepEqual(
+    statusField.enumLabels,
+    { pending: "ממתין", shipped: "נשלח", cancelled: "בוטל" },
+    "unchanged values keep their own prior label, and the brand-new value keeps the fresh generation's own label for it -- neither gets lost",
+  );
+});
+
+/**
+ * The symmetric case: a refine that REMOVES one of the field's own
+ * options must not leave that removed value's stale label sitting in the
+ * persisted enumLabels map.
+ */
+test("carryForwardLabels drops a removed enum value's own stale label, rather than leaving it behind forever", () => {
+  const previousSpec: ProductSpec = {
+    summary: "test",
+    personas: [],
+    roles: ["Admin"],
+    screens: [],
+    assumptions: [],
+    openQuestions: [],
+    entities: [
+      {
+        name: "Order",
+        fields: [
+          {
+            name: "status",
+            type: "enum",
+            required: true,
+            enumValues: ["pending", "shipped", "cancelled"],
+            enumLabels: { pending: "ממתין", shipped: "נשלח", cancelled: "בוטל" },
+          },
+        ],
+      },
+    ],
+  };
+  const nextSpec: ProductSpec = {
+    ...previousSpec,
+    entities: [
+      {
+        name: "Order",
+        fields: [
+          { name: "status", type: "enum", required: true, enumValues: ["pending", "shipped"], enumLabels: { pending: "ממתין", shipped: "נשלח" } },
+        ],
+      },
+    ],
+  };
+
+  carryForwardLabels(previousSpec, nextSpec);
+
+  const statusField = nextSpec.entities[0].fields[0];
+  assert.deepEqual(statusField.enumLabels, { pending: "ממתין", shipped: "נשלח" }, "the removed value's own stale label must not survive");
+});
+
 test("carryForwardLabels is a harmless no-op for a plain /build (no previousSpec)", () => {
   const nextSpec: ProductSpec = {
     summary: "test",

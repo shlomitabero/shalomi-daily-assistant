@@ -170,6 +170,25 @@ function entityDisplayLabel(entity: Entity, occurrences: Map<string, number>): s
  * in place (the same convention `diffAndMigrate` itself follows for
  * `nextSpec.entities[].fields[].relationTo` normalization), since the
  * caller never reads the pre-mutation object again.
+ *
+ * Round 917's own survey caught a self-regression in the enumLabels half
+ * of this, two rounds later: the original version copied the ENTIRE prior
+ * enumLabels map verbatim, with no check that `field.type` was still
+ * "enum" and no check that a given key still exists in the freshly
+ * regenerated `field.enumValues`. Round 887 already named "a refine that
+ * narrows/widens/renames an enum field's own options, without changing
+ * the field's own name or type" as a recurring, everyday hazard class in
+ * this codebase -- an entirely ordinary refine ("add a cancelled
+ * status") hits it on every single call, with no manual label edit
+ * needed first. The naive copy both (a) left a newly-added value (e.g.
+ * "cancelled") with no label at all, discarding the label the fresh
+ * generation had JUST correctly supplied for it, and (b) left a stale
+ * label behind for a value the refine had just removed or renamed away.
+ * Fixed by merging instead of overwriting: a value present in BOTH the
+ * prior and the fresh enumValues keeps its own PRIOR label (consistent
+ * with this function's own label-carrying half); a value that's new to
+ * this refine keeps whatever label the fresh generation already gave it,
+ * since there's no prior label to carry forward for it at all.
  */
 export function carryForwardLabels(previousSpec: ProductSpec | undefined, nextSpec: ProductSpec): void {
   if (!previousSpec) return;
@@ -183,7 +202,13 @@ export function carryForwardLabels(previousSpec: ProductSpec | undefined, nextSp
       const prevField = prevFields.get(field.name);
       if (!prevField) continue;
       if (prevField.label !== undefined) field.label = prevField.label;
-      if (prevField.enumLabels !== undefined) field.enumLabels = prevField.enumLabels;
+      if (field.type === "enum" && field.enumValues && prevField.enumLabels) {
+        const merged: Record<string, string> = { ...field.enumLabels };
+        for (const value of field.enumValues) {
+          if (prevField.enumLabels[value] !== undefined) merged[value] = prevField.enumLabels[value];
+        }
+        field.enumLabels = merged;
+      }
     }
   }
 }
