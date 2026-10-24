@@ -3319,6 +3319,11 @@ button.sort-header:hover:not(:disabled) {
   color: var(--accent);
 }
 
+.whatsapp-log-entity {
+  flex-shrink: 0;
+  white-space: nowrap;
+}
+
 .whatsapp-log-body {
   overflow-wrap: anywhere;
   flex: 1;

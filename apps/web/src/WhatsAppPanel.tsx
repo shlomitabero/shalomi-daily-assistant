@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import type { Entity } from "@forge/shared";
 import { useTranslation } from "./i18n/LanguageContext.js";
 import { useDialogFocusTrap } from "./useDialogFocusTrap.js";
@@ -180,6 +180,38 @@ export function WhatsAppPanel({
   // the log, since it only depends on the spec's own fields, never on any
   // one message.
   const phoneFieldTarget = findSinglePhoneFieldTarget(entities);
+  // Round 957: the log mixes messages matched against every phone-bearing
+  // entity in the spec (any of this app's own seed templates, e.g. a
+  // delivery app with both Customer and Courier phone fields, matches more
+  // than one) into one flat chronological list with no indication at all of
+  // which entity a given matched name belongs to -- the API already
+  // resolves the match down to a specific entity+record (see
+  // findMatchingRecord, apps/api/src/whatsapp.ts), this panel just never
+  // showed which one. Hand-duplicated entityLabelOccurrences/
+  // entityDisplayLabel pair, same shape as every other consuming module in
+  // this codebase (AutomationsPanel.tsx, automationsReport.ts,
+  // checkpointDiff.ts, pipeline.ts) -- the Entity/Field Label editors don't
+  // enforce uniqueness, so two entities can legitimately share one label,
+  // and every other display surface disambiguates that with the entity's
+  // own raw name in parens.
+  function entityLabelOccurrences(allEntities: Entity[]): Map<string, number> {
+    const occurrences = new Map<string, number>();
+    for (const e of allEntities) {
+      const label = e.label ?? e.name;
+      occurrences.set(label, (occurrences.get(label) ?? 0) + 1);
+    }
+    return occurrences;
+  }
+  function entityDisplayLabel(entity: Entity, occurrences: Map<string, number>): string {
+    const label = entity.label ?? entity.name;
+    return (occurrences.get(label) ?? 0) > 1 ? `${label} (${entity.name})` : label;
+  }
+  const entityOccurrences = useMemo(() => entityLabelOccurrences(entities), [entities]);
+  /** Falls back to the raw stored entityName when the entity has since been renamed or deleted -- same convention as AutomationsPanel's own entityLabel helper for a rule whose entity no longer resolves. */
+  function matchedEntityLabel(entityName: string): string {
+    const entity = entities.find((e) => e.name === entityName);
+    return entity ? entityDisplayLabel(entity, entityOccurrences) : entityName;
+  }
   const [status, setStatus] = useState<WhatsAppStatusView | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
   /**
@@ -1082,18 +1114,21 @@ export function WhatsAppPanel({
                     {m.direction === "in" ? "⬇️" : "⬆️"}
                   </span>
                   {m.matchedEntityName ? (
-                    <button
-                      type="button"
-                      className="whatsapp-log-who whatsapp-log-who-link"
-                      aria-label={t("whatsapp.log.jumpTo", { name: m.matchedLabel ?? "" })}
-                      onClick={() =>
-                        m.matchedRecordId != null
-                          ? onJumpToRecord(m.matchedEntityName!, m.matchedRecordId)
-                          : onJumpToEntity(m.matchedEntityName!)
-                      }
-                    >
-                      <Highlighted text={m.matchedLabel!} query={search} />
-                    </button>
+                    <>
+                      <button
+                        type="button"
+                        className="whatsapp-log-who whatsapp-log-who-link"
+                        aria-label={t("whatsapp.log.jumpTo", { name: m.matchedLabel ?? "" })}
+                        onClick={() =>
+                          m.matchedRecordId != null
+                            ? onJumpToRecord(m.matchedEntityName!, m.matchedRecordId)
+                            : onJumpToEntity(m.matchedEntityName!)
+                        }
+                      >
+                        <Highlighted text={m.matchedLabel!} query={search} />
+                      </button>
+                      <span className="whatsapp-log-entity muted small">{matchedEntityLabel(m.matchedEntityName)}</span>
+                    </>
                   ) : (
                     <span className="whatsapp-log-who">
                       <Highlighted text={m.matchedLabel ?? (m.direction === "in" ? m.fromNumber : m.toNumber)} query={search} />

@@ -2518,6 +2518,117 @@ test("WhatsAppPanel falls back to onJumpToEntity when a message matched an entit
 });
 
 /**
+ * Round 957: findMatchingRecord (apps/api/src/whatsapp.ts) checks EVERY
+ * phone-bearing entity in the spec, so any project with more than one (e.g.
+ * a delivery app with both Customer and Courier phone fields) can match
+ * messages against several different entities in the same flat,
+ * chronological log -- which previously showed only the bare matched name,
+ * with no way to tell which entity it belonged to short of clicking "jump
+ * to" and seeing where it lands. Confirms the log now shows each matched
+ * message's entity label next to its name, and -- mirroring every other
+ * consuming module's own entityLabelOccurrences/entityDisplayLabel
+ * convention -- disambiguates with the entity's raw name in parens when two
+ * entities happen to share the exact same label.
+ */
+test("WhatsAppPanel's log shows which entity a matched message belongs to, disambiguating two entities that share the same label", async () => {
+  await withJsdom(async () => {
+    const originalFetch = globalThis.fetch;
+    const messages: WhatsAppMessageLogEntry[] = [
+      {
+        id: "m1",
+        direction: "in",
+        fromNumber: "972521112233",
+        toNumber: "972501234567",
+        body: "Where's my delivery?",
+        matchedLabel: "Dana Levi",
+        matchedEntityName: "Customer",
+        matchedRecordId: 1,
+        status: "received",
+        createdAt: new Date().toISOString(),
+      },
+      {
+        id: "m2",
+        direction: "in",
+        fromNumber: "972529998877",
+        toNumber: "972501234567",
+        body: "On my way",
+        matchedLabel: "Yossi Cohen",
+        matchedEntityName: "Courier",
+        matchedRecordId: 2,
+        status: "received",
+        createdAt: new Date().toISOString(),
+      },
+    ];
+    // "Customer" and "Courier" are deliberately given the IDENTICAL label
+    // "Contact" -- a real scenario the Entity Label editor allows (it
+    // enforces no uniqueness), and the exact case entityDisplayLabel's own
+    // disambiguation suffix exists for.
+    const entities: Entity[] = [
+      {
+        name: "Customer",
+        label: "Contact",
+        fields: [
+          { name: "name", type: "text", required: true },
+          { name: "phone", type: "text", required: false },
+        ],
+      },
+      {
+        name: "Courier",
+        label: "Contact",
+        fields: [
+          { name: "name", type: "text", required: true },
+          { name: "phone", type: "text", required: false },
+        ],
+      },
+    ];
+    globalThis.fetch = (async (input: string, init?: RequestInit): Promise<Response> => {
+      const method = init?.method ?? "GET";
+      if (method === "GET" && input === "/api/projects/proj1/integrations/whatsapp/status") {
+        return new Response(
+          JSON.stringify({ status: "connected", phoneNumber: "972501234567", qrDataUrl: null, error: null }),
+          { status: 200, headers: { "content-type": "application/json" } },
+        );
+      }
+      if (method === "GET" && input === "/api/projects/proj1/integrations/whatsapp/messages") {
+        return new Response(JSON.stringify({ messages }), { status: 200, headers: { "content-type": "application/json" } });
+      }
+      throw new Error(`unexpected request ${method} ${input}`);
+    }) as typeof fetch;
+    try {
+      render(
+        React.createElement(
+          ThemeProvider,
+          null,
+          React.createElement(
+            LanguageProvider,
+            null,
+            React.createElement(WhatsAppPanel, {
+              entities,
+              onCreateRecordFromMessage: () => {},
+              projectId: "proj1",
+              projectName: "Test Project",
+              onClose: () => {},
+              onJumpToEntity: () => {},
+              onJumpToRecord: () => {},
+            }),
+          ),
+        ),
+      );
+      await waitForCondition(() => document.querySelectorAll(".whatsapp-log-entity").length === 2);
+
+      const entityLabels = Array.from(document.querySelectorAll(".whatsapp-log-entity")).map((el) => el.textContent);
+      assert.deepEqual(
+        entityLabels,
+        ["Contact (Customer)", "Contact (Courier)"],
+        "each matched message must show its own entity's label, disambiguated with the raw entity name since both share the label \"Contact\"",
+      );
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+});
+
+/**
  * New in this round: the message log had no way to keep a real record of a
  * WhatsApp conversation before using the panel's own "Clear history"
  * button, which is irreversible -- exactly the gap Business Twin's report
