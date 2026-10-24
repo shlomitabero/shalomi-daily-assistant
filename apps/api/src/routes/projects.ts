@@ -3342,6 +3342,27 @@ export function createProjectsRouter(
     }),
   );
 
+  /**
+   * Round 953: same withIdempotency() extension, and the same reason, as
+   * the roles/assumptions/personas PATCH routes above (round 943) -- this
+   * feature's own sibling POST (create) route already got it in round
+   * 600, but PATCH/DELETE were missed. fetchWithWakeRetry retries on ANY
+   * thrown fetch() error, so a response lost in transit after this update
+   * already succeeded meant a retry re-read the now-already-patched rule
+   * as `existing`, re-applied the same patch on top of itself (harmless
+   * for most fields, but re-running validateAutomationFieldValue/
+   * validateAutomationToField against already-current data is redundant
+   * work this guards against needing to reason about) and risked clobbering
+   * a genuinely different concurrent edit that landed in between. All of
+   * `existing`/`next`-dependent validation and the mutation itself move
+   * inside the withIdempotency callback -- not stay where they were, above
+   * -- so a genuine retry replays the first call's cached success instead
+   * of re-running them against state the first call already changed.
+   * UpdateAutomationRuleSchema's own body-shape validation stays outside,
+   * matching the roles/assumptions PATCH routes' own convention -- it's
+   * deterministic and side-effect-free, so safe to re-run even though a
+   * genuine retry never reaches it.
+   */
   router.patch(
     "/projects/:id/automations/:ruleId",
     asyncRoute(async (req, res) => {
@@ -3350,53 +3371,74 @@ export function createProjectsRouter(
       if (!parsed.success) {
         throw new HttpError(400, formatValidationError(parsed.error), "VALIDATION_ERROR");
       }
-      const existing = getAutomationRule(db, project.id, req.params.ruleId);
-      if (!existing) {
-        throw new HttpError(404, `Automation rule "${req.params.ruleId}" not found`, "AUTOMATION_RULE_NOT_FOUND");
-      }
-      // Validate the merged result (the same `{ ...existing, ...patch }`
-      // updateAutomationRule itself does), not just the patch in
-      // isolation -- see findAutomationRuleInvariantViolation's own
-      // comment for why a patch-only check would miss an inconsistency
-      // this merge creates against a field the patch doesn't even touch.
-      const next = { ...existing, ...parsed.data };
-      const invariantError = findAutomationRuleInvariantViolation(next);
-      if (invariantError) {
-        throw new HttpError(400, invariantError, "VALIDATION_ERROR");
-      }
-      const entity = findEntity(project, existing.entityName);
-      if (next.trigger === "field_equals" && next.fieldName) {
-        const field = findField(entity, next.fieldName);
-        if (next.fieldValue) validateAutomationFieldValue(field, next.fieldValue);
-      }
-      if (next.toMode === "field" && next.toField) {
-        validateAutomationToField(findField(entity, next.toField));
-      }
-      try {
-        const rule = updateAutomationRule(db, project.id, req.params.ruleId, parsed.data);
-        res.json({ rule });
-      } catch (err) {
-        if (err instanceof NotFoundError) {
-          throw new HttpError(404, `Automation rule "${req.params.ruleId}" not found`, "AUTOMATION_RULE_NOT_FOUND");
-        }
-        throw err;
-      }
+      const idempotencyKey = req.header("X-Idempotency-Key") || undefined;
+      const { status, body } = await withIdempotency(
+        db,
+        idempotencyKey,
+        req.userId!,
+        `PATCH /projects/${project.id}/automations/${req.params.ruleId}`,
+        async () => {
+          const existing = getAutomationRule(db, project.id, req.params.ruleId);
+          if (!existing) {
+            throw new HttpError(404, `Automation rule "${req.params.ruleId}" not found`, "AUTOMATION_RULE_NOT_FOUND");
+          }
+          // Validate the merged result (the same `{ ...existing, ...patch }`
+          // updateAutomationRule itself does), not just the patch in
+          // isolation -- see findAutomationRuleInvariantViolation's own
+          // comment for why a patch-only check would miss an inconsistency
+          // this merge creates against a field the patch doesn't even touch.
+          const next = { ...existing, ...parsed.data };
+          const invariantError = findAutomationRuleInvariantViolation(next);
+          if (invariantError) {
+            throw new HttpError(400, invariantError, "VALIDATION_ERROR");
+          }
+          const entity = findEntity(project, existing.entityName);
+          if (next.trigger === "field_equals" && next.fieldName) {
+            const field = findField(entity, next.fieldName);
+            if (next.fieldValue) validateAutomationFieldValue(field, next.fieldValue);
+          }
+          if (next.toMode === "field" && next.toField) {
+            validateAutomationToField(findField(entity, next.toField));
+          }
+          try {
+            const rule = updateAutomationRule(db, project.id, req.params.ruleId, parsed.data);
+            return { status: 200, body: { rule } };
+          } catch (err) {
+            if (err instanceof NotFoundError) {
+              throw new HttpError(404, `Automation rule "${req.params.ruleId}" not found`, "AUTOMATION_RULE_NOT_FOUND");
+            }
+            throw err;
+          }
+        },
+      );
+      res.status(status).json(body);
     }),
   );
 
+  /** Round 953: same withIdempotency() extension as the PATCH route just above -- see its own doc comment. */
   router.delete(
     "/projects/:id/automations/:ruleId",
     asyncRoute(async (req, res) => {
       const project = requireProjectWriteAccess(db, req.params.id, req.userId!);
-      try {
-        deleteAutomationRule(db, project.id, req.params.ruleId);
-      } catch (err) {
-        if (err instanceof NotFoundError) {
-          throw new HttpError(404, `Automation rule "${req.params.ruleId}" not found`, "AUTOMATION_RULE_NOT_FOUND");
-        }
-        throw err;
-      }
-      res.status(204).end();
+      const idempotencyKey = req.header("X-Idempotency-Key") || undefined;
+      const { status } = await withIdempotency(
+        db,
+        idempotencyKey,
+        req.userId!,
+        `DELETE /projects/${project.id}/automations/${req.params.ruleId}`,
+        async () => {
+          try {
+            deleteAutomationRule(db, project.id, req.params.ruleId);
+          } catch (err) {
+            if (err instanceof NotFoundError) {
+              throw new HttpError(404, `Automation rule "${req.params.ruleId}" not found`, "AUTOMATION_RULE_NOT_FOUND");
+            }
+            throw err;
+          }
+          return { status: 204, body: null };
+        },
+      );
+      res.status(status).end();
     }),
   );
 

@@ -1242,6 +1242,7 @@ export function createAutomationRule(
   });
 }
 
+/** Round 953: same idempotency-key shape as createAutomationRule's own fix (round 600) -- a lost response after this rule was already updated must replay that success on retry, not risk clobbering a genuinely different concurrent edit. */
 export function updateAutomationRule(
   projectId: string,
   ruleId: string,
@@ -1262,10 +1263,15 @@ export function updateAutomationRule(
 ): Promise<{ rule: AutomationRuleView }> {
   return request(`/projects/${projectId}/automations/${ruleId}`, {
     method: "PATCH",
+    headers: { "x-idempotency-key": crypto.randomUUID() },
     body: JSON.stringify(patch),
   });
 }
 
+/** Round 953: same idempotency-key shape as createAutomationRule's own fix (round 600) -- a lost response after this rule was already deleted must replay that success on retry, not surface a confusing "not found". */
 export function deleteAutomationRule(projectId: string, ruleId: string): Promise<void> {
-  return request(`/projects/${projectId}/automations/${ruleId}`, { method: "DELETE" });
+  return request(`/projects/${projectId}/automations/${ruleId}`, {
+    method: "DELETE",
+    headers: { "x-idempotency-key": crypto.randomUUID() },
+  });
 }

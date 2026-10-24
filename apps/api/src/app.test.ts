@@ -2400,6 +2400,90 @@ test("POST /projects/:id/entities/:entityName/automations retried with the same 
 });
 
 /**
+ * Round 953: the sibling POST (create) route above already got
+ * withIdempotency protection in round 600; this PATCH route never did.
+ * fetchWithWakeRetry retries on ANY thrown fetch() error, so a response
+ * lost in transit after an update already succeeded meant the retry
+ * re-applied the same patch against the now-already-updated rule --
+ * harmless for this specific patch, but the same "re-running validation
+ * against state the first call already changed" class round 943 fixed
+ * for roles/assumptions/personas.
+ */
+test("PATCH /projects/:id/automations/:ruleId retried with the same idempotency key after the first attempt already succeeded replays the original response instead of re-running validation", async () => {
+  await withServer(async (baseUrl) => {
+    const token = await signup(baseUrl, "automation-patch-idem1@example.com");
+    const createRes = await fetch(`${baseUrl}/api/projects`, {
+      method: "POST",
+      headers: authHeaders(token),
+      body: JSON.stringify({ description: "A CRM with customers and deals." }),
+    });
+    const { project } = (await createRes.json()) as { project: { id: string; spec: { entities: { name: string }[] } } };
+    const entityName = project.spec.entities[0].name;
+
+    const ruleRes = await fetch(`${baseUrl}/api/projects/${project.id}/entities/${entityName}/automations`, {
+      method: "POST",
+      headers: { ...authHeaders(token), "x-idempotency-key": "automation-patch-seed-key" },
+      body: JSON.stringify({ trigger: "record_created", actionType: "send_whatsapp", toMode: "static", toNumber: "972500000000", messageTemplate: "hi" }),
+    });
+    const { rule } = (await ruleRes.json()) as { rule: { id: string } };
+
+    const headers = { ...authHeaders(token), "x-idempotency-key": "automation-patch-repro-key" };
+    const patchBody = { messageTemplate: "updated message" };
+
+    const firstRes = await fetch(`${baseUrl}/api/projects/${project.id}/automations/${rule.id}`, { method: "PATCH", headers, body: JSON.stringify(patchBody) });
+    assert.equal(firstRes.status, 200);
+    const first = (await firstRes.json()) as { rule: { messageTemplate: string } };
+    assert.equal(first.rule.messageTemplate, "updated message");
+
+    const retryRes = await fetch(`${baseUrl}/api/projects/${project.id}/automations/${rule.id}`, { method: "PATCH", headers, body: JSON.stringify(patchBody) });
+    assert.equal(retryRes.status, 200, "a retried update with the same idempotency key must replay the original success, not re-run validation against the already-updated rule");
+    const retry = (await retryRes.json()) as { rule: { messageTemplate: string } };
+    assert.deepEqual(retry, first, "the replayed response must match the original success exactly");
+  });
+});
+
+/**
+ * Round 953: same withIdempotency() extension as the PATCH route just
+ * above -- see its own comment. deleteAutomationRule
+ * (packages/db/src/automations.ts) throws NotFoundError once the row is
+ * already gone, with no special case for a retry.
+ */
+test("DELETE /projects/:id/automations/:ruleId retried with the same idempotency key after the first attempt already succeeded replays the original 204, instead of 404ing on the already-deleted rule", async () => {
+  await withServer(async (baseUrl) => {
+    const token = await signup(baseUrl, "automation-delete-idem1@example.com");
+    const createRes = await fetch(`${baseUrl}/api/projects`, {
+      method: "POST",
+      headers: authHeaders(token),
+      body: JSON.stringify({ description: "A CRM with customers and deals." }),
+    });
+    const { project } = (await createRes.json()) as { project: { id: string; spec: { entities: { name: string }[] } } };
+    const entityName = project.spec.entities[0].name;
+
+    const ruleRes = await fetch(`${baseUrl}/api/projects/${project.id}/entities/${entityName}/automations`, {
+      method: "POST",
+      headers: { ...authHeaders(token), "x-idempotency-key": "automation-delete-seed-key" },
+      body: JSON.stringify({ trigger: "record_created", actionType: "send_whatsapp", toMode: "static", toNumber: "972500000000", messageTemplate: "hi" }),
+    });
+    const { rule } = (await ruleRes.json()) as { rule: { id: string } };
+
+    const headers = { ...authHeaders(token), "x-idempotency-key": "automation-delete-repro-key" };
+    const firstRes = await fetch(`${baseUrl}/api/projects/${project.id}/automations/${rule.id}`, { method: "DELETE", headers });
+    assert.equal(firstRes.status, 204);
+
+    const getAfterFirst = await fetch(`${baseUrl}/api/projects/${project.id}/automations`, { headers: authHeaders(token) });
+    const { rules: afterFirst } = (await getAfterFirst.json()) as { rules: { id: string }[] };
+    assert.equal(afterFirst.length, 0, "the rule must genuinely be gone after the first call");
+
+    const retryRes = await fetch(`${baseUrl}/api/projects/${project.id}/automations/${rule.id}`, { method: "DELETE", headers });
+    assert.equal(
+      retryRes.status,
+      204,
+      "a retried deletion with the same idempotency key must replay the original success, not 404 on the already-deleted rule",
+    );
+  });
+});
+
+/**
  * Round 682: a rule's own lastTriggeredAt/lastStatus/lastError (already
  * returned by GET /automations) only ever showed the single most recent
  * firing -- a rule that failed repeatedly and then happened to succeed on
