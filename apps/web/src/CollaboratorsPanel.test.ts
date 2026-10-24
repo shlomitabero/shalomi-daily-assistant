@@ -182,6 +182,48 @@ test("CollaboratorsPanel shows a real error with a Retry button when the initial
 });
 
 /**
+ * Round 901: the invite form was gated only on `isOwner`, never on whether
+ * the initial collaborator list actually loaded. handleInvite's own
+ * "already a collaborator, role unchanged" pre-check (see the comment
+ * block above it) only works by checking the submitted email against the
+ * real list already on screen -- but while that list failed to load,
+ * `collaborators` stays at its null initial value, so the pre-check
+ * silently evaluates against `[]` instead. Re-inviting someone already on
+ * the project in that state would 201 as a no-op (addCollaborator's own
+ * documented idempotency) with zero "role unchanged" feedback -- the exact
+ * deceptive-success hazard the pre-check exists to catch, just reached via
+ * a failed initial load instead of a normal one. Confirms the submit
+ * button is disabled while in that state, and that no POST is ever sent.
+ */
+test("CollaboratorsPanel disables the invite submit button while the initial collaborator list has failed to load, instead of letting a re-invite silently no-op with zero feedback", async () => {
+  await withJsdom(async () => {
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = (async (input: string, init?: RequestInit): Promise<Response> => {
+      const method = init?.method ?? "GET";
+      if (method === "GET" && input === "/api/projects/proj1/collaborators") {
+        return new Response(JSON.stringify({ error: "Server exploded" }), { status: 500, headers: { "content-type": "application/json" } });
+      }
+      throw new Error(`unexpected request ${method} ${input} -- the invite form must not be able to submit while the list has failed to load`);
+    }) as typeof fetch;
+
+    try {
+      renderPanel(true);
+      await waitForCondition(() => document.querySelector(".error-retry-row") !== null);
+
+      const emailInput = document.querySelector("input[type='email']") as HTMLInputElement;
+      const submitButton = document.querySelector(".collab-invite-form button[type='submit']") as HTMLButtonElement;
+      assert.ok(emailInput, "expected the invite form to still render");
+      assert.equal(submitButton.disabled, true, "expected the submit button to be disabled while collaborators is still null (load failed)");
+
+      fireEvent.change(emailInput, { target: { value: "dana@example.com" } });
+      assert.equal(submitButton.disabled, true, "typing a real email must not re-enable the button while the list has failed to load");
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+});
+
+/**
  * New in this round: removing a collaborator (unlike every other real
  * destructive action in this app -- deleting a project, round 123;
  * deleting a record, round 73) had NO confirmation at all -- one click on

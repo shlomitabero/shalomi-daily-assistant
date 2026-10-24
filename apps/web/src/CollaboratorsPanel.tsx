@@ -213,8 +213,20 @@ export function CollaboratorsPanel({
                 setCollaborators(...) replace can just as easily resurrect
                 a collaborator a still-pending remove/role-change already
                 resolved locally, so invite must wait for those too, not
-                just its own inviteBusy. */}
-            <button type="submit" disabled={inviteBusy || !email.trim() || removingUserId !== null || updatingRoleUserId !== null}>
+                just its own inviteBusy.
+                Also gated on collaborators !== null: handleInvite's own
+                "already a collaborator" pre-check (above) only works
+                against the real list already on screen -- while the
+                initial load is still in flight, or failed and left
+                `collaborators` at its null initial value, that check
+                silently evaluates against [] instead, so a re-invite of
+                someone already on the project would 201 as a no-op
+                (addCollaborator's own documented idempotency) with zero
+                "role unchanged" feedback, looking like a genuine success. */}
+            <button
+              type="submit"
+              disabled={inviteBusy || !email.trim() || removingUserId !== null || updatingRoleUserId !== null || collaborators === null}
+            >
               {inviteBusy ? t("collab.invite.busy") : t("collab.invite")}
             </button>
           </form>
