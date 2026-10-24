@@ -66,7 +66,37 @@ export const DOMAIN_ENTITY_RULES: DomainEntityRule[] = [
     // "leadership", a common phrase in descriptions about internal team
     // structure that has nothing to do with sales leads. "sales lead" is
     // the actual business term and doesn't have that problem.
-    keywords: ["customer", "client", "sales lead", "לקוח", "לקוחה", "לקוחות", "קליינט"],
+    //
+    // Round 889: bare "client"/"קליינט" are both correctly-spelled whole
+    // words with a completely unrelated SECOND meaning -- the ordinary
+    // software sense (a client-server/network client), the same
+    // grammatical-polysemy shape round 888 fixed for Patient's "patient",
+    // but reachable even more often here since this spec-engine is itself
+    // routinely used to describe developer tools and technical products
+    // ("an email client", "a REST API client library", "client-side
+    // errors", "database client connections", "a mobile client app") --
+    // none of those describe a business-to-customer relationship, yet
+    // every one of them spuriously fabricated a full CRM Customer entity
+    // (confirmed empirically with the real matchEntities before fixing).
+    // `\b` alone can't help (both senses are the identical whole word);
+    // narrowed to exclude only the specific technical collocations the
+    // software sense actually appears in -- a known tech-noun immediately
+    // before ("email"/"mail"/"api"/"database"/"db"/"web"/"mobile"/
+    // "desktop"/"git"/"ssh"/"ftp"/"rest"/"graphql"/"http"/"thick"/"thin"),
+    // or a known technical suffix immediately after ("-side"/"library"/
+    // "app"/"connection(s)"/"server"/"sdk") -- neither touches an ordinary
+    // business usage ("our clients", "client intake", "client meetings",
+    // "client payments"). קליינט gets the mirrored Hebrew exclusions for
+    // the same handful of common technical phrasings ("קליינט אימייל",
+    // "קליינט API", "צד קליינט" [client-side], "קליינט-שרת"
+    // [client-server]); real business usage ("קליינטים", "ניהול
+    // הקליינטים") is unaffected.
+    keywords: [
+      "customer", "sales lead",
+      /(?<!\b(?:email|mail|api|database|db|web|mobile|desktop|git|ssh|ftp|rest|graphql|http|thick|thin)[\s-])\bclient(s)?\b(?![\s-](?:side|library|libraries|app|apps|connection|connections|server|sdk))/i,
+      "לקוח", "לקוחה", "לקוחות",
+      /(?<!צד\s)קליינט(ים)?(?!\s*(?:ה)?(?:אימייל|מייל|api|דאטהבייס|מובייל|שרת)|-שרת)/,
+    ],
     labelHe: "לקוחות",
     descriptionHe: "לקוח או חברה שהעסק משרת.",
     fieldLabelsHe: {

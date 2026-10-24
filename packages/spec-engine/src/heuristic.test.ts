@@ -979,6 +979,74 @@ test("Patient's 'patient' keyword doesn't spuriously match the adjective 'patien
 });
 
 /**
+ * Regression test for a real bug found in round 889: the exact same
+ * grammatical-polysemy shape round 888 fixed for Patient's "patient", but
+ * on Customer's bare "client"/"קליינט" keywords. Both are correctly-
+ * spelled whole words with a completely unrelated SECOND meaning -- the
+ * ordinary software sense (a client-server/network client) -- reachable
+ * even more often than "patient" since this spec-engine is itself
+ * routinely used to describe developer tools and technical products. An
+ * email-client, API-client-library, client-side-errors, database-client,
+ * or mobile-client description spuriously fabricated a full CRM Customer
+ * entity for an app with nothing to do with an actual business customer.
+ * Fixed by excluding the specific technical collocations the software
+ * sense actually appears in (a tech noun immediately before, like
+ * "email"/"api"/"database"/"mobile", or a technical suffix immediately
+ * after, like "-side"/"library"/"app"/"connection(s)"/"server"), with the
+ * mirrored Hebrew exclusions for קליינט, while confirming ordinary
+ * business usage in both languages still matches.
+ */
+test("Customer's 'client'/'קליינט' keywords don't spuriously match the software sense (client-server), and ordinary business usage still matches", async () => {
+  const provider = new HeuristicSpecProvider();
+
+  const emailClient = await provider.generate("An app to manage our email client configuration for support staff.");
+  assert.ok(!emailClient.entities.some((e) => e.name === "Customer"), "'email client' (the software sense) must not spuriously match Customer");
+
+  const apiClientLibrary = await provider.generate("A tool for building a REST API client library for internal developers.");
+  assert.ok(
+    !apiClientLibrary.entities.some((e) => e.name === "Customer"),
+    "'API client library' (the software sense) must not spuriously match Customer",
+  );
+
+  const clientSide = await provider.generate("An internal dashboard to track which client-side errors happen most often in our web app.");
+  assert.ok(!clientSide.entities.some((e) => e.name === "Customer"), "'client-side' (the software sense) must not spuriously match Customer");
+
+  const databaseClient = await provider.generate("A tool to help developers configure their database client connections.");
+  assert.ok(
+    !databaseClient.entities.some((e) => e.name === "Customer"),
+    "'database client connections' (the software sense) must not spuriously match Customer",
+  );
+
+  const mobileClientApp = await provider.generate("A tool to track bugs reported by our mobile client app across releases.");
+  assert.ok(
+    !mobileClientApp.entities.some((e) => e.name === "Customer"),
+    "'mobile client app' (the software sense) must not spuriously match Customer",
+  );
+
+  // Ordinary business usage, in both languages, must still match.
+  const realClients = await provider.generate("A CRM that helps our sales team close more deals with current clients.");
+  assert.ok(realClients.entities.some((e) => e.name === "Customer"));
+
+  const realClientProject = await provider.generate("An invoicing app that tracks invoices and a payment schedule for each client project.");
+  assert.ok(realClientProject.entities.some((e) => e.name === "Customer"));
+
+  const hebrewEmailClient = await provider.generate("אפליקציה לניהול קליינט המייל של הצוות.", true);
+  assert.ok(
+    !hebrewEmailClient.entities.some((e) => e.name === "Customer"),
+    "'קליינט המייל' (the software sense) must not spuriously match Customer",
+  );
+
+  const hebrewApiClient = await provider.generate("כלי לבניית קליינט API לפיתוח.", true);
+  assert.ok(
+    !hebrewApiClient.entities.some((e) => e.name === "Customer"),
+    "'קליינט API' (the software sense) must not spuriously match Customer",
+  );
+
+  const hebrewRealClients = await provider.generate("אפליקציה לניהול הקליינטים שלנו.", true);
+  assert.ok(hebrewRealClients.entities.some((e) => e.name === "Customer"), "ordinary business usage of 'קליינטים' must still match Customer");
+});
+
+/**
  * Regression test for a real bug found in round 446: Employee's bare
  * "worker" keyword (used both in DOMAIN_ENTITY_RULES and ROLE_RULES) is a
  * substring of "coworker" -- an ordinary word in a plain personal
