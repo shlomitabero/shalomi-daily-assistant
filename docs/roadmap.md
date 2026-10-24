@@ -33776,3 +33776,17 @@ Still awaiting שלומי's review of round 925's architecture foundation, and h
 **Verification**: all three updated tests confirm the panel state (and staged payloads) actually reset, not just the pre-existing fields. Confirmed to fail against the pre-fix code (a clean `closeAllPanels is not defined` crash on all three) and pass with the fix restored, via `git stash`. Only `apps/web` changed, so ran its full suite (1195 tests, 0 failures) and build clean. `codegen.ts`'s exported app has no project-switching concept at all, so no parity port needed.
 
 **Status**: shipped and pushed, `apps/web/src/App.{tsx,test.ts}` only.
+
+### Round 929: restoring a Time Machine checkpoint silently reverted any entity/field label customized after that checkpoint was taken
+
+Still awaiting שלומי's review of round 925's architecture foundation, and her confirmation on the Render deploy fix.
+
+**The gap**: `apps/api/src/routes/projects.ts`'s restore route persisted `checkpoint.spec` -- a frozen snapshot from whenever it was taken -- completely unmodified, straight into `updateProjectSpec`. Any entity/field label (or enum-value label) the user customized via `EntityLabelEditor`/`FieldLabelEditor` *after* that checkpoint was taken got silently discarded, with zero warning (`describeImpactHazards` only ever flags structural field changes -- new/removed/tightened fields -- never label differences). Confirmed live against the real `createApp()`/`createStore(":memory:")` harness: build a project, rename an entity's label via its dedicated editor, then restore the checkpoint taken *seconds earlier* (before the rename) -- the label reverts to unset, no warning at all. This is an everyday sequence: fix an awkward auto-generated label, then later restore any checkpoint (even a recent one, to undo an unrelated mistake) to lose the fix.
+
+**Why real and not already covered**: this is the identical "a previous customization should survive, by name, onto whatever spec replaces it" problem `carryForwardLabels` (`apps/api/src/pipeline.ts`) already solves for `/refine` (rounds 915/917) -- the restore route simply never called it. The standing denylist's "roles/personas/assumptions preservation across /refine regeneration" (round 915, deferred) is a different, narrower gap specific to roles/assumptions having no stable cross-regeneration identity; this is squarely about entity/field labels on the restore path, which 915/917 never touched.
+
+**The fix**: `carryForwardLabels(project.spec, checkpoint.spec)` called before `diffAndMigrate`/`updateProjectSpec` in the restore route -- the current (still-customized) spec's labels win over the checkpoint's own frozen ones for any entity/field surviving under the same name, mutating `checkpoint.spec` in place before it becomes the new live spec (matching `carryForwardLabels`'s own established convention).
+
+**Verification**: new test restores the most-recently-taken checkpoint (seconds before a label rename) and confirms the rename survives. Confirmed to fail against the pre-fix code (the label reverts to `undefined`, exactly as described) and pass with the fix restored, via `git stash`. Only `apps/api` changed, so ran its full suite (633/634, the one failure being `codegen.test.ts`'s already-confirmed round-895/923 pre-existing flake, unrelated since `codegen.ts` itself wasn't touched) and its build clean. `codegen.ts` has no checkpoint/restore feature at all, so no parity port needed.
+
+**Status**: shipped and pushed, `apps/api/src/routes/projects.ts` + `apps/api/src/app.test.ts` only.
