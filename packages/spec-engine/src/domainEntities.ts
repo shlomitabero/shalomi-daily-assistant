@@ -1096,9 +1096,24 @@ export const DOMAIN_ENTITY_RULES: DomainEntityRule[] = [
     },
   },
   {
+    // Round 913: bare "תמיכה"/"תמיכת" is the generic Hebrew root for
+    // "support" in general, not specifically customer/ticket support --
+    // it's the same word used in "קבוצת תמיכה" (peer support group),
+    // "תמיכה נפשית" (emotional/mental-health support), "תמיכה כלכלית"
+    // (financial support/aid), and "תמיכת גב" (ergonomic back support),
+    // none of which have anything to do with a help desk. Confirmed via a
+    // real repro against matchEntities directly: a peer-support-group app
+    // and a mental-health-support app each got Ticket as their ONLY
+    // entity, the same severity rounds 911/912 already fixed for
+    // Deal/Expense. Excludes just these confirmed idioms (a lookbehind
+    // for "קבוצת " immediately before, a lookahead for "נפשית"/"כלכלית"
+    // immediately after "תמיכה", and "גב" immediately after "תמיכת") --
+    // the construct-state "תמיכת לקוחות" (customer support) this entry's
+    // own existing test already relies on is untouched, since none of
+    // those three exclusions match it.
     keywords: [
       "support ticket", "help desk", "helpdesk", "ticketing system", "customer support",
-      "תמיכה", "תמיכת", "כרטיסי תמיכה", "פניות תמיכה", "מוקד תמיכה",
+      /(?<!קבוצת )תמיכה(?!\s*(נפשית|כלכלית))/, /תמיכת(?!\s*גב)/, "כרטיסי תמיכה", "פניות תמיכה", "מוקד תמיכה",
     ],
     labelHe: "פניות תמיכה",
     descriptionHe: "פנייה של לקוח שדורשת מענה או טיפול.",

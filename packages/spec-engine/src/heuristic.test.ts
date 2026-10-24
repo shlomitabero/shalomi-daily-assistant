@@ -2962,3 +2962,52 @@ test("Expense's 'הוצאה'/'הוצאות' keywords don't spuriously trigger on
   const realExpense = await provider.generate("אפליקציה למעקב אחרי הוצאות עסקיות וקבלות");
   assert.ok(realExpense.entities.some((e) => e.name === "Expense"), "'הוצאות עסקיות' alone must still match Expense");
 });
+
+/**
+ * Round 913's finding: Ticket's bare "תמיכה"/"תמיכת" keywords had the
+ * same idiom-co-occurrence shape rounds 911/912 just fixed for Deal/
+ * Expense -- "תמיכה" is the generic Hebrew root for "support" in
+ * general, not specifically customer/ticket support, and is also the
+ * root of "קבוצת תמיכה" (peer support group), "תמיכה נפשית" (emotional/
+ * mental-health support), "תמיכה כלכלית" (financial support/aid), and
+ * "תמיכת גב" (ergonomic back support). Confirmed with a real repro
+ * before fixing: a peer-support-group app and a mental-health-support
+ * app each got Ticket as their ONLY entity via HeuristicSpecProvider's
+ * real matchEntities, losing the app's real (nonexistent) domain
+ * entirely.
+ */
+test("Ticket's 'תמיכה'/'תמיכת' keywords don't spuriously trigger on 'קבוצת תמיכה' (support group), 'תמיכה נפשית'/'תמיכה כלכלית' (support ≠ help desk), or 'תמיכת גב' (back support)", async () => {
+  const provider = new HeuristicSpecProvider();
+
+  const supportGroup = await provider.generate(
+    "אפליקציה לניהול קבוצת תמיכה לאמהות טריות, עם מפגשים שבועיים ורשימת חברות",
+  );
+  assert.ok(
+    !supportGroup.entities.some((e) => e.name === "Ticket"),
+    "'קבוצת תמיכה' (support group) alone must not spuriously match Ticket, let alone become the app's only entity",
+  );
+
+  const mentalHealth = await provider.generate("אפליקציה שמנהלת תמיכה נפשית לנערים במצוקה");
+  assert.ok(
+    !mentalHealth.entities.some((e) => e.name === "Ticket"),
+    "'תמיכה נפשית' (mental-health support) alone must not spuriously match Ticket",
+  );
+
+  const financialAid = await provider.generate("אפליקציה לניהול תמיכה כלכלית למשפחות במצוקה דרך עמותה");
+  assert.ok(
+    !financialAid.entities.some((e) => e.name === "Ticket"),
+    "'תמיכה כלכלית' (financial aid) alone must not spuriously match Ticket",
+  );
+
+  const backSupport = await provider.generate("אפליקציה למכירת כריות תמיכת גב ארגונומיות לבית ולרכב");
+  assert.ok(
+    !backSupport.entities.some((e) => e.name === "Ticket"),
+    "'תמיכת גב' (back support) alone must not spuriously match Ticket",
+  );
+
+  // The genuine customer-support reading, inflected as the construct-state
+  // "תמיכת לקוחות" this entry's own existing test already relies on,
+  // still works (re-confirmed here against this fix's own regex).
+  const realTicket = await provider.generate("אפליקציית תמיכת לקוחות לניהול פניות");
+  assert.ok(realTicket.entities.some((e) => e.name === "Ticket"), "'תמיכת לקוחות' must still match Ticket");
+});
