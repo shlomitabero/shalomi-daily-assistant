@@ -346,7 +346,22 @@ export async function runAutomationsForRecordChange(
 // wrongly blocked, even though it isn't a private IP at all -- a false
 // positive with no security benefit, just a webhook URL a real business
 // has no way to use.
-const BLOCKED_IPV4_HOSTNAME_PATTERNS = [/^127\./, /^0\.0\.0\.0$/, /^10\./, /^172\.(1[6-9]|2\d|3[01])\./, /^192\.168\./, /^169\.254\./];
+// Round 899: 100.64.0.0/10 is the shared/CGNAT address space (RFC 6598).
+// It is reachable the same way the other private ranges above are, and it
+// matters for this guard specifically because it hosts Alibaba Cloud's
+// instance-metadata endpoint (100.100.100.200) -- the Alibaba-cloud
+// equivalent of the AWS/GCP/Azure 169.254.169.254 metadata IP this list
+// already blocks. The second octet runs 64-127, expressed the same
+// non-byte-aligned way as the existing 172.16-172.31 entry above.
+const BLOCKED_IPV4_HOSTNAME_PATTERNS = [
+  /^127\./,
+  /^0\.0\.0\.0$/,
+  /^10\./,
+  /^172\.(1[6-9]|2\d|3[01])\./,
+  /^192\.168\./,
+  /^169\.254\./,
+  /^100\.(6[4-9]|[7-9]\d|1[01]\d|12[0-7])\./,
+];
 
 // Safe to run against any hostname as-is: "localhost" is an exact match,
 // and a colon is never valid in an ordinary DNS hostname (only inside the

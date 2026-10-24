@@ -981,6 +981,30 @@ test("isAllowedWebhookUrl blocks real IPv6 unique-local (fc00::/7) and link-loca
 });
 
 /**
+ * Round 899: 100.64.0.0/10 (RFC 6598's shared/CGNAT address space) was
+ * entirely open before this fix, despite hosting Alibaba Cloud's own
+ * instance-metadata endpoint at 100.100.100.200 -- the Alibaba-cloud
+ * equivalent of the AWS/GCP/Azure 169.254.169.254 metadata IP this guard
+ * already blocks. Any project collaborator could point an Automation
+ * Rule's webhook at it and fireWebhookAction would actually POST there.
+ */
+test("isAllowedWebhookUrl blocks the 100.64.0.0/10 shared address space (CGNAT), including Alibaba Cloud's instance-metadata IP", () => {
+  assert.equal(isAllowedWebhookUrl("http://100.100.100.200/latest/meta-data/"), false, "Alibaba Cloud's instance-metadata IP specifically must be blocked");
+  assert.equal(isAllowedWebhookUrl("http://100.64.0.0/abc"), false, "the bottom edge of the real 100.64.0.0/10 range must be blocked");
+  assert.equal(isAllowedWebhookUrl("http://100.64.0.1/abc"), false);
+  assert.equal(isAllowedWebhookUrl("http://100.100.0.1/abc"), false);
+  assert.equal(isAllowedWebhookUrl("http://100.127.255.255/abc"), false, "the top edge of the real 100.64.0.0/10 range must be blocked");
+  // Just outside the real range on either side is genuinely public and
+  // must not be blocked.
+  assert.equal(isAllowedWebhookUrl("http://100.63.255.255/abc"), true, "just below the real 100.64.0.0/10 range, this is not shared address space");
+  assert.equal(isAllowedWebhookUrl("http://100.128.0.0/abc"), true, "just above the real 100.64.0.0/10 range, this is not shared address space");
+  // A public hostname merely starting with the same digits must not be
+  // wrongly blocked (same false-positive guard as the other ranges above).
+  assert.equal(isAllowedWebhookUrl("https://100.example.com/webhook"), true, "a public hostname starting with '100.' is not shared address space");
+  assert.equal(isAllowedWebhookUrl("https://100.64.example.com/webhook"), true, "a public hostname starting with '100.64.' is not shared address space");
+});
+
+/**
  * New: the "webhook" action type -- fireRule's own branch, reached through
  * the real event-driven path (runAutomationsForRecordChange), not a direct
  * call (fireRule itself isn't exported). Mocks the global fetch this
