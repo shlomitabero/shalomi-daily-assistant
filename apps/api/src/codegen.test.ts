@@ -1335,6 +1335,13 @@ test("the exported EntityView's handleSubmit saves only the field the user actua
       formInstanceKeyRef.current += 1;
       setFormInstanceKey(formInstanceKeyRef.current);
     }
+    // handleSubmit's own closure (round 798/852) also reaches these two --
+    // Customer (this test's entity) has no file field, so requiredFileField
+    // is always undefined here and recordHasNoRequiredFile always falsy,
+    // matching the real generated component's own behavior for this entity
+    // regardless of when within a render it's (re-)computed.
+    const requiredFileField = entity.fields.find((f) => f.type === "file" && f.required);
+    const recordHasNoRequiredFile = requiredFileField && (form[requiredFileField.name] === "" || form[requiredFileField.name] == null);
     ${startEditSrc}
     ${handleSubmitSrc}
     return { startEdit, handleSubmit, getForm: () => form };
