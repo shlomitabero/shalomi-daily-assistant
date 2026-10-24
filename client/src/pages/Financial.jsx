@@ -10,6 +10,7 @@ export default function Financial() {
   const [trade, setTrade] = useState({ symbol: '', side: 'long', entryPrice: '', exitPrice: '', quantity: '' });
   const [error, setError] = useState('');
   const [refreshingId, setRefreshingId] = useState(null);
+  const [refreshingAll, setRefreshingAll] = useState(false);
 
   function refresh() {
     api.getFinancialWatchlist().then((r) => { setWatchlist(r.watchlist); setConnected(r.connected); }).catch((err) => setError(err.data?.error || err.message));
@@ -40,6 +41,28 @@ export default function Financial() {
       setError(err.data?.error || err.message);
     } finally {
       setRefreshingId(null);
+    }
+  }
+
+  // Without this, catching up N stale prices after first setting
+  // MARKET_DATA_API_KEY (or just after being away a while) meant clicking
+  // "רענן מחיר" once per symbol — tedious and easy to miss one. Refreshes
+  // run one at a time (not Promise.all) so a single slow/failing symbol
+  // doesn't race its error against the others' successful updates.
+  async function onRefreshAll() {
+    setError('');
+    setRefreshingAll(true);
+    try {
+      for (const w of watchlist) {
+        try {
+          await api.refreshWatchlistEntry(w.id);
+        } catch (err) {
+          setError(err.data?.error || err.message);
+        }
+      }
+      refresh();
+    } finally {
+      setRefreshingAll(false);
     }
   }
 
@@ -74,7 +97,19 @@ export default function Financial() {
       <p className="hint">{connected ? 'מקור נתוני שוק מחובר.' : 'לא מחובר מקור נתוני שוק אמיתי — הוסף MARKET_DATA_API_KEY.'} מסחר כאן הוא סימולציה בלבד — אין חיבור לברוקר אמיתי.</p>
 
       <div className="card form">
-        <h3>מעקב סימבול</h3>
+        <div className="section-header">
+          <h3 style={{ margin: 0 }}>מעקב סימבול</h3>
+          {watchlist.length > 1 && (
+            <button
+              className="btn btn-ghost"
+              onClick={onRefreshAll}
+              disabled={refreshingAll || refreshingId !== null || !connected}
+              title={!connected ? 'מקור נתוני שוק לא מחובר' : undefined}
+            >
+              {refreshingAll ? 'מרענן הכל…' : 'רענן הכל'}
+            </button>
+          )}
+        </div>
         <form onSubmit={onAddSymbol} className="field-row">
           <input value={symbol} onChange={(e) => setSymbol(e.target.value)} placeholder="AAPL" />
           <button className="btn btn-ghost" type="submit">הוסף</button>
@@ -87,7 +122,7 @@ export default function Financial() {
             <button
               className="btn btn-ghost"
               onClick={() => onRefreshSymbol(w.id)}
-              disabled={refreshingId === w.id || !connected}
+              disabled={refreshingId === w.id || refreshingAll || !connected}
               title={!connected ? 'מקור נתוני שוק לא מחובר' : undefined}
             >
               {refreshingId === w.id ? 'מרענן…' : 'רענן מחיר'}
