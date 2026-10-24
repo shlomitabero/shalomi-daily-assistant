@@ -3651,6 +3651,40 @@ test("editing a project's description rejects an empty or whitespace-only value 
   });
 });
 
+/**
+ * Round 919's finding: CreateProjectSchema's `description` and
+ * EnhanceIdeaSchema's `idea` were the two free-text schemas in this file
+ * that never got the `.trim()` every sibling schema already has
+ * (RenameProjectSchema, UpdateProjectDescriptionSchema -- confirmed by the
+ * test just above for exactly this reason -- RenameEntityLabelSchema,
+ * RenameCheckpointSchema, RenameFieldLabelSchema). A whitespace-only value
+ * passes `min(1)` unchanged (length 1+), reaches
+ * HeuristicSpecProvider.generate's/HeuristicPromptEnhancer.enhance's own
+ * "must not be empty" guard, and that bare Error propagates past
+ * asyncRoute's catch all the way to errorMiddleware's generic branch --
+ * a raw 500, not the clean 400 every other malformed-input case here
+ * already gets. Confirmed live against the real server before fixing.
+ */
+test("creating a project or enhancing an idea with a whitespace-only value is rejected with a clean 400, not a raw 500", async () => {
+  await withServer(async (baseUrl) => {
+    const token = await signup(baseUrl, "whitespace-create@example.com");
+
+    const createRes = await fetch(`${baseUrl}/api/projects`, {
+      method: "POST",
+      headers: authHeaders(token),
+      body: JSON.stringify({ description: "   " }),
+    });
+    assert.equal(createRes.status, 400, "a whitespace-only description must be rejected with a clean 400, not a raw 500");
+
+    const enhanceRes = await fetch(`${baseUrl}/api/ideas/enhance`, {
+      method: "POST",
+      headers: authHeaders(token),
+      body: JSON.stringify({ idea: "   " }),
+    });
+    assert.equal(enhanceRes.status, 400, "a whitespace-only idea must be rejected with a clean 400, not a raw 500");
+  });
+});
+
 test("editing a project's description on a project you have no access to still 404s, the same as any other project route", async () => {
   await withServer(async (baseUrl) => {
     const ownerToken = await signup(baseUrl, "desc-owner3@example.com");

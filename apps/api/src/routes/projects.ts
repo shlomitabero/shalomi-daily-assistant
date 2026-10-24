@@ -71,7 +71,16 @@ import { findMatchingRecord } from "../whatsapp.js";
 import { isAllowedWebhookUrl, runAutomationsForRecordChange } from "../automations.js";
 
 const CreateProjectSchema = z.object({
-  description: z.string().min(1, "description is required"),
+  // Round 919: every other free-text schema in this file that accepts a
+  // user-typed string already trims first (RenameProjectSchema,
+  // UpdateProjectDescriptionSchema, RenameEntityLabelSchema, etc. just
+  // below) -- this one and EnhanceIdeaSchema's own `idea` were the two
+  // left out, letting a whitespace-only value (length 1+, so it passes
+  // `min(1)` unchanged) reach generateSpec/HeuristicSpecProvider.generate,
+  // whose own "description must not be empty" guard throws a bare Error
+  // neither this route nor errorMiddleware ever catches as anything but
+  // a raw 500 -- confirmed live against the real running server.
+  description: z.string().trim().min(1, "description is required"),
   name: z.string().optional(),
 });
 
@@ -81,7 +90,11 @@ const FromTemplateSchema = z.object({
 });
 
 const EnhanceIdeaSchema = z.object({
-  idea: z.string().min(1, "idea is required"),
+  // Round 919: the identical gap CreateProjectSchema's own `description`
+  // just above had -- a whitespace-only `idea` reaches
+  // HeuristicPromptEnhancer.enhance's own "must not be empty" guard,
+  // surfacing as a raw 500 instead of this schema's own clean 400.
+  idea: z.string().trim().min(1, "idea is required"),
 });
 
 const RefineSchema = z.object({
