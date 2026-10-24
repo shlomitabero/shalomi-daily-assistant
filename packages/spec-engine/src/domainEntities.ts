@@ -1375,11 +1375,27 @@ export const DOMAIN_ENTITY_RULES: DomainEntityRule[] = [
     },
   },
   {
-    // "הוצאה"/"הוצאות" (expense/expenses). Checked against every existing
-    // keyword's root -- no collision.
+    // "הוצאה"/"הוצאות" (expense/expenses). The entry's own original
+    // comment only ever checked this against every OTHER keyword's root
+    // for a substring collision (pitfall 1) -- it never checked pitfall
+    // 1b, the idiom-co-occurrence shape rounds 869-871/888-890/911 each
+    // found a new instance of. "הוצאה" is a real, correctly-spelled
+    // standalone word, but it's also the first half of two unrelated,
+    // extremely common Hebrew idioms: "הוצאה לאור" (publishing house,
+    // literally "bringing to light") and "הוצאה לפועל" (the debt-
+    // collection/enforcement office, "Hotza'a LaPo'al"). Confirmed via a
+    // real repro against matchEntities directly: a publishing-house app
+    // description got Expense as its ONLY entity (the real domain
+    // entirely lost, round 880's own "menu" severity), and a debt-
+    // collection-office app got a bogus Expense alongside the real Case
+    // entity. Round 912's fix: exclude "הוצאה"/"הוצאות" when immediately
+    // followed by " לאור"/" לפועל" (JS's own `\b` doesn't recognize
+    // Hebrew word characters at all, so this file's other Hebrew
+    // exclusions -- e.g. "תפריט"/"שליח" above -- use a bare lookahead the
+    // same way, not a `\b`-bounded one).
     keywords: [
       "expense", "expenses", "expense tracking", "business expenses",
-      "הוצאה", "הוצאות", "מעקב הוצאות",
+      /הוצאה(?!\s*לאור|\s*לפועל)/, /הוצאות(?!\s*לאור|\s*לפועל)/, "מעקב הוצאות",
     ],
     labelHe: "הוצאות",
     descriptionHe: "הוצאה עסקית שהעסק שילם.",

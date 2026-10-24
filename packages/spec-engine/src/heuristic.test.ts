@@ -2925,3 +2925,40 @@ test("Deal's 'deals' keyword doesn't spuriously trigger on the phrasal verb 'dea
   const realDeal = await provider.generate("A CRM that helps our sales team close more deals with current clients.");
   assert.ok(realDeal.entities.some((e) => e.name === "Deal"), "'close more deals with' must still match Deal");
 });
+
+/**
+ * Round 912's finding: Expense's bare "הוצאה"/"הוצאות" keywords had the
+ * same idiom-co-occurrence shape round 911 just fixed for Deal's "deals
+ * with" -- "הוצאה" is a real standalone word (expense/expenditure), but
+ * it's also the first half of two unrelated, extremely common Hebrew
+ * idioms: "הוצאה לאור" (publishing house) and "הוצאה לפועל" (the debt-
+ * collection/enforcement office). Confirmed with a real repro before
+ * fixing: a publishing-house app description got Expense as its ONLY
+ * entity via HeuristicSpecProvider's real matchEntities, losing the
+ * app's real (nonexistent) domain entirely, and a debt-collection-office
+ * app got a bogus Expense alongside the real Case entity.
+ */
+test("Expense's 'הוצאה'/'הוצאות' keywords don't spuriously trigger on 'הוצאה לאור' (publishing house) or 'הוצאה לפועל' (debt-collection office)", async () => {
+  const provider = new HeuristicSpecProvider();
+
+  const publishingHouse = await provider.generate(
+    "מערכת לניהול הוצאה לאור - קטלוג ספרים, סופרים וזכויות יוצרים",
+  );
+  assert.ok(
+    !publishingHouse.entities.some((e) => e.name === "Expense"),
+    "'הוצאה לאור' (publishing house) alone must not spuriously match Expense, let alone become the app's only entity",
+  );
+
+  const debtCollection = await provider.generate(
+    "מערכת לניהול תיקי הוצאה לפועל למשרד עורכי דין הגובה חובות",
+  );
+  assert.ok(
+    !debtCollection.entities.some((e) => e.name === "Expense"),
+    "'הוצאה לפועל' (debt-collection office) alone must not spuriously match Expense",
+  );
+
+  // The genuine expense-tracking reading, with no "לאור"/"לפועל"
+  // immediately after, still works.
+  const realExpense = await provider.generate("אפליקציה למעקב אחרי הוצאות עסקיות וקבלות");
+  assert.ok(realExpense.entities.some((e) => e.name === "Expense"), "'הוצאות עסקיות' alone must still match Expense");
+});
