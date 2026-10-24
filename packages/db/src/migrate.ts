@@ -364,6 +364,23 @@ export function diffAndMigrate(
         (name) => name !== entity.name && tableNameFor(projectId, name).toLowerCase() === tableLower,
       );
       if (collidingName) {
+        // Round 955 investigated giving a PURE case-only rename (e.g.
+        // "Order" -> "order", fields unchanged) a lowercased fallback here
+        // too, the same leniency fields already get via prevFieldByLowerName
+        // a few lines down -- but rejected it: this guard's whole purpose is
+        // to catch an ambiguous name collision with ANY entity from this
+        // project's history, unrelated renames included (see the לקוח/מוצר
+        // test below, which collides via sanitization, not case), and it has
+        // no reliable way to tell "the same entity, just renamed" apart from
+        // "a different entity reusing a similar name" -- the very ambiguity
+        // this guard exists to refuse rather than silently guess at. Unlike
+        // a field rename (which only risks an ALTER on the SAME rows), an
+        // entity rename that guessed wrong risks silently merging two
+        // different entities' actual data. Loosening this is a deliberate
+        // data-safety trade-off, not a bug -- see the dedicated test "...
+        // differs from the removed one only by letter case" below, which
+        // exists specifically to keep this guard firing even when the
+        // collision is pure letter-case.
         throw new ValidationError(
           `Entity "${entity.name}" sanitizes to the same database table as entity "${collidingName}", which existed earlier in this project's history -- refusing to silently merge their data. Choose a name that differs in its ASCII letters/digits, not just punctuation or non-ASCII characters.`,
         );
