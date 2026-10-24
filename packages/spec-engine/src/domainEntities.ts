@@ -453,7 +453,32 @@ export const DOMAIN_ENTITY_RULES: DomainEntityRule[] = [
     // idiom-co-occurrence shape pitfall 1b describes -- confirmed with a
     // real repro before fixing, per round 371's own lesson not to assume a
     // RegExp fix transfers between the two shapes.
-    keywords: [/\bdeals\b/, "negotiation", "עסקה", "עסקאות", "משא ומתן"],
+    //
+    // "deals with" (round 911): the far more common pitfall-1b shape this
+    // entry never got -- "deals with" is the ordinary English phrasal
+    // verb for "handles/manages" ("a help desk app that deals with
+    // customer complaints", "a tool that deals with scheduling
+    // conflicts"), nothing to do with sales, and a bare `\bdeals\b` fires
+    // on it every time via the real HeuristicSpecProvider. Confirmed via
+    // matchEntities directly: a scheduling-conflict description got Deal
+    // as its ONLY entity, with the app's real (nonexistent) domain
+    // entirely lost -- the same severity as round 880's "menu" finding.
+    // Can't just exclude "deals with" outright, though: the sales reading
+    // genuinely uses the identical three words ("close more deals with
+    // current clients", already covered by this file's own existing
+    // tests) -- the two readings differ in what comes *before* "deals",
+    // not what follows it. Only the sales-closing-verb reading re-allows
+    // "deals with"; every other case (the far more common phrasal-verb
+    // reading, where "deals" itself is the sentence's own main verb) is
+    // excluded, the same two-independent-exclusions shape MenuItem's own
+    // "dish" entry above already uses for an analogous idiom collision.
+    keywords: [
+      /\bdeals\b(?!\s+with\b)|(?<=\b(?:close|closing|closed)\b(?:\s+\S+){0,2}\s)\bdeals\b(?=\s+with\b)/,
+      "negotiation",
+      "עסקה",
+      "עסקאות",
+      "משא ומתן",
+    ],
     labelHe: "עסקאות",
     descriptionHe: "עסקת מכירה פוטנציאלית.",
     fieldLabelsHe: { title: "כותרת", value: "שווי", stage: "שלב", owner: "אחראי/ת" },

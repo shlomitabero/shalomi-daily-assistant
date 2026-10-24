@@ -2883,3 +2883,45 @@ test("Rental's 'השכרת ציוד' keyword also matches its plural 'השכרו
     "'השכרת ציוד' (singular) must still match Rental",
   );
 });
+
+/**
+ * Round 911's finding: Deal's bare `\bdeals\b` keyword had the
+ * idiom-co-occurrence shape MenuItem's "dish"/"menu" fixes (rounds 871,
+ * 880) already established a pattern for, but on a far more common
+ * collision -- "deals with" is the ordinary English phrasal verb for
+ * "handles/manages" ("a help desk app that deals with customer
+ * complaints"), nothing to do with sales, and every one of these
+ * spuriously fabricated a Deal entity via HeuristicSpecProvider's real
+ * matchEntities, confirmed with a real repro before fixing. The most
+ * severe case -- a plain scheduling-conflict description -- got Deal as
+ * its ONLY entity, with no real entity for the app's actual (nonexistent)
+ * domain at all. Can't exclude "deals with" outright, though: the
+ * existing "close more deals with current clients" tests above use the
+ * identical three words for the genuine sales reading -- the two
+ * readings differ in what comes *before* "deals", not what follows it,
+ * so only a sales-closing verb immediately before re-allows it.
+ */
+test("Deal's 'deals' keyword doesn't spuriously trigger on the phrasal verb 'deals with' (handles/manages), only on the sales-closing reading", async () => {
+  const provider = new HeuristicSpecProvider();
+
+  const helpDesk = await provider.generate(
+    "A help desk app that deals with customer complaints and tracks resolution time.",
+  );
+  assert.ok(!helpDesk.entities.some((e) => e.name === "Deal"), "'deals with customer complaints' alone must not spuriously match Deal");
+
+  const onboarding = await provider.generate("An internal tool that deals with employee onboarding paperwork.");
+  assert.ok(!onboarding.entities.some((e) => e.name === "Deal"), "'deals with employee onboarding' alone must not spuriously match Deal");
+
+  const scheduling = await provider.generate("A system that deals with scheduling conflicts between teams.");
+  assert.ok(
+    !scheduling.entities.some((e) => e.name === "Deal"),
+    "'deals with scheduling conflicts' alone must not spuriously match Deal, let alone become the app's only entity",
+  );
+
+  // The genuine sales-closing reading, immediately preceded by a verb
+  // like "close"/"closing"/"closed", still works (the existing tests
+  // above already cover this exact phrasing; re-confirmed here against
+  // this fix's own regex).
+  const realDeal = await provider.generate("A CRM that helps our sales team close more deals with current clients.");
+  assert.ok(realDeal.entities.some((e) => e.name === "Deal"), "'close more deals with' must still match Deal");
+});
