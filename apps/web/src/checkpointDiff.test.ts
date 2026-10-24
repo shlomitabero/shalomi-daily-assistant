@@ -236,6 +236,48 @@ test("computeCheckpointDiff still reports a case-only-renamed field as changedFi
 });
 
 /**
+ * Round 954: the entity-level counterpart of round 946's own field-level
+ * fix just above -- an entity renamed ONLY by letter case (e.g. "customer"
+ * -> "Customer" via refine) is, same as a field, a true no-op per
+ * migrate.ts's own hardening (SQLite compares table identifiers
+ * case-insensitively, same physical table, same data). The exact-string
+ * entity lookups in computeCheckpointDiff never got the same lowercased
+ * fallback round 946 gave this file's own field-name matching, so this one
+ * entity was reported as simultaneously removed ("customer") AND added
+ * ("Customer") in the same diff.
+ */
+test("computeCheckpointDiff never reports a case-only entity rename as both removed and added -- a case-only rename is a true no-op, same as migrate.ts treats it", () => {
+  const current = makeSpec([{ name: "Customer", label: "Customers", fields: [{ name: "email", type: "text", required: false }] }]);
+  const checkpoint = makeSpec([{ name: "customer", label: "Customers", fields: [{ name: "email", type: "text", required: false }] }]);
+
+  const diff = computeCheckpointDiff(current, checkpoint);
+  assert.deepEqual(diff.removedEntities, [], "a case-only entity rename alone must never report the entity as removed");
+  assert.deepEqual(diff.addedEntities, [], "a case-only entity rename alone must never report the entity as added either");
+  assert.deepEqual(diff.changedEntities, [], "a case-only entity rename alone, with every field untouched, must report no change at all for that entity");
+});
+
+test("computeCheckpointDiff still reports a genuinely added field on a case-only-renamed entity, instead of masking it as a false removed+added entity pair", () => {
+  const current = makeSpec([
+    {
+      name: "Customer",
+      label: "Customers",
+      fields: [
+        { name: "email", type: "text", required: false },
+        { name: "phone", type: "text", required: false },
+      ],
+    },
+  ]);
+  const checkpoint = makeSpec([{ name: "customer", label: "Customers", fields: [{ name: "email", type: "text", required: false }] }]);
+
+  const diff = computeCheckpointDiff(current, checkpoint);
+  assert.deepEqual(diff.removedEntities, []);
+  assert.deepEqual(diff.addedEntities, []);
+  assert.deepEqual(diff.changedEntities, [
+    { name: "Customer", label: "Customers", removedFieldNames: ["phone"], addedFieldNames: [], changedFieldNames: [], descriptionChanged: false },
+  ]);
+});
+
+/**
  * New in this round: a same-named field that changed TYPE between the two
  * specs (e.g. a free-text "status" field a refine turned into an enum) was
  * previously invisible to computeCheckpointDiff -- name-matching alone

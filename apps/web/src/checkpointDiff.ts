@@ -176,12 +176,34 @@ export function checkpointDisplayLabel(checkpoint: Checkpoint, occurrences: Map<
 export function computeCheckpointDiff(currentSpec: ProductSpec, checkpointSpec: ProductSpec): CheckpointDiff {
   const checkpointEntities = new Map(checkpointSpec.entities.map((e) => [e.name, e]));
   const currentEntities = new Map(currentSpec.entities.map((e) => [e.name, e]));
+  // Round 954: the entity-level counterpart of round 946's own
+  // lowercased-fallback fix just below for FIELD names in this exact
+  // function -- an entity renamed only by letter case (e.g. "Customer" ->
+  // "customer" via refine) is, same as a field, a true no-op per
+  // migrate.ts's own hardening (rounds 617-620): the same physical SQLite
+  // table, same data, nothing actually migrated. Without this fallback,
+  // the exact-string lookups below missed that case-only rename in BOTH
+  // directions at once -- this one entity was reported as simultaneously
+  // removed ("customer") AND added ("Customer") in the same diff, the
+  // identical contradictory message round 946 already fixed one level
+  // down (fields), just never extended to entities in this same file.
+  const checkpointEntitiesByLowerName = new Map(checkpointSpec.entities.map((e) => [e.name.toLowerCase(), e]));
+  const currentEntityNamesLower = new Set(currentSpec.entities.map((e) => e.name.toLowerCase()));
   // Counted over every entity that exists on EITHER side (deduped by name),
   // mirroring the identical field-level domain choice below -- see this
   // function's own doc comment for why.
+  // Round 954: keyed by LOWERCASE name (not exact name) so a case-only
+  // rename -- e.g. "customer" in the checkpoint vs "Customer" in current --
+  // is counted as the SAME entity here too, not two separate ones. Without
+  // this, entityLabelOccurrences saw two distinct map entries sharing one
+  // label and wrongly appended a "(Customer)" disambiguation suffix to a
+  // label that, for a true case-only rename, isn't actually ambiguous at
+  // all. Current's own definition wins (its loop runs second), matching
+  // this same function's established "current's definition wins for an
+  // item present on both sides" convention used elsewhere below.
   const allEntitiesByName = new Map<string, Entity>();
-  for (const e of checkpointSpec.entities) allEntitiesByName.set(e.name, e);
-  for (const e of currentSpec.entities) allEntitiesByName.set(e.name, e);
+  for (const e of checkpointSpec.entities) allEntitiesByName.set(e.name.toLowerCase(), e);
+  for (const e of currentSpec.entities) allEntitiesByName.set(e.name.toLowerCase(), e);
   const entityLabels = entityLabelOccurrences(Array.from(allEntitiesByName.values()));
   const removedEntities: { name: string; label: string }[] = [];
   const addedEntities: { name: string; label: string }[] = [];
@@ -195,7 +217,7 @@ export function computeCheckpointDiff(currentSpec: ProductSpec, checkpointSpec: 
   }[] = [];
 
   for (const entity of currentSpec.entities) {
-    const inCheckpoint = checkpointEntities.get(entity.name);
+    const inCheckpoint = checkpointEntities.get(entity.name) ?? checkpointEntitiesByLowerName.get(entity.name.toLowerCase());
     if (!inCheckpoint) {
       removedEntities.push({ name: entity.name, label: entityDisplayLabel(entity, entityLabels) });
       continue;
@@ -257,7 +279,7 @@ export function computeCheckpointDiff(currentSpec: ProductSpec, checkpointSpec: 
   }
 
   for (const entity of checkpointSpec.entities) {
-    if (!currentEntities.has(entity.name)) {
+    if (!currentEntities.has(entity.name) && !currentEntityNamesLower.has(entity.name.toLowerCase())) {
       addedEntities.push({ name: entity.name, label: entityDisplayLabel(entity, entityLabels) });
     }
   }
@@ -303,6 +325,17 @@ export function isCheckpointCurrent(currentSpec: ProductSpec, checkpointSpec: Pr
   if (JSON.stringify(currentSpec.assumptions) !== JSON.stringify(checkpointSpec.assumptions)) return false;
   if (JSON.stringify(currentSpec.openQuestions) !== JSON.stringify(checkpointSpec.openQuestions)) return false;
 
+  // Round 954: unlike computeCheckpointDiff above, an entity renamed only
+  // by letter case does NOT need a lowercased fallback here -- this
+  // exact-string containment check already returns false for it
+  // (checkpointNames is keyed by the checkpoint's own casing, so it
+  // genuinely doesn't contain the current spec's differently-cased name),
+  // which is the CORRECT outcome for this function's own stricter "is
+  // this EXACTLY what's on screen right now" question: with no explicit
+  // label override, the entity's own rendered name text really does
+  // differ by case between the two specs, so restoring would genuinely
+  // change what's on screen. Mirrors the identical, already-established
+  // reasoning for FIELD-name matching a few lines below.
   const currentNames = new Set(currentSpec.entities.map((e) => e.name));
   const checkpointNames = new Set(checkpointSpec.entities.map((e) => e.name));
   if (currentNames.size !== checkpointNames.size) return false;
