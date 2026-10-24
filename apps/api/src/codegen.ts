@@ -6141,6 +6141,12 @@ export function GlobalSearch({ entities, onClose, onJumpToEntity, onJumpToRecord
   // handleShowAll's own relation-field matches resolve to the real display
   // label, not a raw foreign-key id, with zero extra network calls.
   const lastRecordsByEntityRef = useRef({});
+  // Round 904: error is shared between runSearch's own partial/full-
+  // failure message and handleShowAll's own catch -- a successful
+  // handleShowAll must only clear it when IT was the one that set it, not
+  // when the currently-shown error is runSearch's own still-unresolved
+  // failure for a completely different, unrelated entity.
+  const errorFromShowAllRef = useRef(false);
   const dialogRef = useRef(null);
   // Captured during render, not inside the effect below: an effect runs
   // after React has already committed this render's DOM, which includes
@@ -6247,6 +6253,7 @@ export function GlobalSearch({ entities, onClose, onJumpToEntity, onJumpToRecord
     const requestId = ++searchRequestId.current;
     setLoading(true);
     setError(null);
+    errorFromShowAllRef.current = false;
     const { results: succeeded, failures, recordsByEntity } = await searchAllEntities(entities, q);
     if (searchRequestId.current !== requestId) return;
     lastRecordsByEntityRef.current = recordsByEntity;
@@ -6316,8 +6323,18 @@ export function GlobalSearch({ entities, onClose, onJumpToEntity, onJumpToRecord
       const full = records.filter((r) => matchesSearch(r, entity.fields, highlightQuery, lastRecordsByEntityRef.current));
       setExpandedSamples((prev) => ({ ...prev, [entityName]: full }));
       setResults((prev) => prev.map((r) => (r.entityName === entityName ? { ...r, totalMatches: full.length } : r)));
+      // Round 904: a failed "Show all" (just below) surfaces through this
+      // same shared error banner -- succeeding on a later retry must clear
+      // it, but error is ALSO used for runSearch's own still-unresolved
+      // partial/full-search failure, which this entity's unrelated,
+      // successful "Show all" must never silently dismiss.
+      if (errorFromShowAllRef.current) {
+        setError(null);
+        errorFromShowAllRef.current = false;
+      }
     } catch (err) {
       setError(err.message);
+      errorFromShowAllRef.current = true;
     } finally {
       setShowAllLoading((prev) => {
         const next = new Set(prev);

@@ -104,6 +104,13 @@ export function GlobalSearchPanel({
   // whichever OTHER entity a relation field happens to point at. handleShowAll
   // reuses it too, since it's a same-query follow-up on results already shown.
   const lastRecordsByEntityRef = useRef<RelatedRecordsByEntity>({});
+  // Round 904: `error` is shared between runSearch's own partial/full-
+  // failure message and handleShowAll's round-663 catch -- a successful
+  // handleShowAll must only clear it when IT was the one that set it (a
+  // failed, now-retried "Show all" for this same entity), never when the
+  // currently-shown error is actually runSearch's own still-unresolved
+  // failure for a completely different, unrelated entity.
+  const errorFromShowAllRef = useRef(false);
 
   // Promise.allSettled rather than Promise.all: a single entity whose
   // records fail to load (a transient network blip, a cold-starting
@@ -122,6 +129,7 @@ export function GlobalSearchPanel({
     const requestId = ++searchRequestId.current;
     setLoading(true);
     setError(null);
+    errorFromShowAllRef.current = false;
     const settled = await Promise.allSettled(
       entities.map(async (entity) => {
         const { records } = await listRecords(projectId, entity.name);
@@ -253,8 +261,22 @@ export function GlobalSearchPanel({
       setResults((prev) =>
         prev.map((r) => (r.entityName === entityName ? { ...r, totalMatches: full?.sample.length ?? 0 } : r)),
       );
+      // Round 904: a failed "Show all" (just below) surfaces through this
+      // same shared `error` banner -- succeeding on a later retry must
+      // clear it, the same self-healing convention runSearch's own clear-
+      // on-start already follows. But `error` is ALSO used for runSearch's
+      // own still-unresolved partial/full-search failure, which this
+      // entity's unrelated, successful "Show all" must never silently
+      // dismiss -- errorFromShowAllRef (set only in the catch below, reset
+      // by runSearch's own clear-on-start) is what tells these two sources
+      // apart.
+      if (errorFromShowAllRef.current) {
+        setError(null);
+        errorFromShowAllRef.current = false;
+      }
     } catch (err) {
       setError((err as Error).message);
+      errorFromShowAllRef.current = true;
     } finally {
       setShowAllLoading((prev) => {
         const next = new Set(prev);

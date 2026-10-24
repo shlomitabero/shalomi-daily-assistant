@@ -55,6 +55,7 @@ test("GlobalSearchPanel's runSearch shows results from every entity that succeed
     "setSelectedIndex",
     "searchRequestId",
     "lastRecordsByEntityRef",
+    "errorFromShowAllRef",
     "lang",
     `${code}\nreturn runSearch;`,
   )(
@@ -78,6 +79,7 @@ test("GlobalSearchPanel's runSearch shows results from every entity that succeed
     () => {},
     { current: 0 },
     { current: {} },
+    { current: false },
     "en",
   ) as (q: string) => Promise<void>;
 
@@ -117,6 +119,7 @@ test("GlobalSearchPanel's runSearch still surfaces the raw error message when ev
     "setSelectedIndex",
     "searchRequestId",
     "lastRecordsByEntityRef",
+    "errorFromShowAllRef",
     "lang",
     `${code}\nreturn runSearch;`,
   )(
@@ -137,6 +140,7 @@ test("GlobalSearchPanel's runSearch still surfaces the raw error message when ev
     () => {},
     { current: 0 },
     { current: {} },
+    { current: false },
     "en",
   ) as (q: string) => Promise<void>;
 
@@ -186,6 +190,7 @@ test("GlobalSearchPanel's runSearch orders entity groups by totalMatches descend
     "setSelectedIndex",
     "searchRequestId",
     "lastRecordsByEntityRef",
+    "errorFromShowAllRef",
     "lang",
     `${code}\nreturn runSearch;`,
   )(
@@ -204,6 +209,7 @@ test("GlobalSearchPanel's runSearch orders entity groups by totalMatches descend
     () => {},
     { current: 0 },
     { current: {} },
+    { current: false },
     "en",
   ) as (q: string) => Promise<void>;
 
@@ -265,6 +271,7 @@ test("GlobalSearchPanel's runSearch ignores a stale, still-in-flight search's re
     "setSelectedIndex",
     "searchRequestId",
     "lastRecordsByEntityRef",
+    "errorFromShowAllRef",
     "lang",
     `${code}\nreturn runSearch;`,
   )(
@@ -290,6 +297,7 @@ test("GlobalSearchPanel's runSearch ignores a stale, still-in-flight search's re
     () => {},
     searchRequestId,
     { current: {} },
+    { current: false },
     "en",
   ) as (q: string) => Promise<void>;
 
@@ -351,6 +359,7 @@ test("GlobalSearchPanel's handleShowAll ignores a stale, still-in-flight fetch o
     "setExpandedSamples",
     "searchRequestId",
     "lang",
+    "setError",
     `${code}\nreturn handleShowAll;`,
   )(
     [entityA],
@@ -368,6 +377,7 @@ test("GlobalSearchPanel's handleShowAll ignores a stale, still-in-flight fetch o
     },
     searchRequestId,
     "en",
+    () => {},
   ) as (entityName: string) => Promise<void>;
 
   const showAllPromise = fn("Alpha");
@@ -415,6 +425,7 @@ test("GlobalSearchPanel's handleShowAll surfaces a failed fetch via setError, in
     "searchRequestId",
     "lang",
     "setError",
+    "errorFromShowAllRef",
     `${code}\nreturn handleShowAll;`,
   )(
     [entityA],
@@ -434,6 +445,7 @@ test("GlobalSearchPanel's handleShowAll surfaces a failed fetch via setError, in
     (msg: string) => {
       capturedError = msg;
     },
+    { current: false },
   ) as (entityName: string) => Promise<void>;
 
   await fn("Alpha");
@@ -1089,6 +1101,66 @@ test("GlobalSearchPanel's 'Show all' button disappears once the fresh fetch reve
         true,
         "the 'Show all' button must disappear once the fresh fetch shows every real match actually exists -- it must not keep promising 2 more matches that no longer exist, based on the original search's now-stale totalMatches",
       );
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+});
+
+/**
+ * Round 904: unlike runSearch (which clears `error` at its own start,
+ * line 124), handleShowAll only ever SET `error` (in its round-663 catch
+ * block) and never cleared it on success -- a failed "Show all" attempt
+ * left its error banner showing forever, even after the user retried the
+ * exact same "Show all" button and it succeeded, since nothing short of
+ * starting a whole new top-level search (runSearch's own unrelated clear)
+ * could ever remove it.
+ */
+test("GlobalSearchPanel's 'Show all' button clears a stale error banner from an earlier failed 'Show all' attempt, once retried successfully", async () => {
+  await withJsdom(async () => {
+    const originalFetch = globalThis.fetch;
+    let customerCallCount = 0;
+    globalThis.fetch = (async (input: string): Promise<Response> => {
+      if (input === "/api/projects/proj1/entities/Customer") {
+        customerCallCount += 1;
+        if (customerCallCount === 2) {
+          // The initial search (call 1) succeeds; this entity's own first
+          // "Show all" attempt (call 2) fails.
+          return new Response(JSON.stringify({ error: "Show all failed" }), {
+            status: 500,
+            headers: { "content-type": "application/json" },
+          });
+        }
+        const records: EntityRecord[] = Array.from({ length: 7 }, (_, i) => ({ id: i + 1, name: `Widget item ${i + 1}` }));
+        return new Response(JSON.stringify({ records }), { status: 200, headers: { "content-type": "application/json" } });
+      }
+      if (input === "/api/projects/proj1/entities/Order") {
+        return new Response(JSON.stringify({ records: [] }), { status: 200, headers: { "content-type": "application/json" } });
+      }
+      throw new Error(`unexpected request ${input}`);
+    }) as typeof fetch;
+    try {
+      renderGlobalSearchPanel(() => {});
+
+      const input = document.querySelector(".global-search-input") as HTMLInputElement;
+      fireEvent.change(input, { target: { value: "widget" } });
+      fireEvent.submit(document.querySelector("form.global-search-form")!);
+      await waitForCondition(() => document.querySelectorAll(".global-search-hit-button").length === 5);
+
+      const showAllButton = document.querySelector(".global-search-show-all") as HTMLButtonElement;
+      assert.ok(showAllButton, "expected a 'Show all' button for the original 7-match count");
+      fireEvent.click(showAllButton);
+      await waitForCondition(() => document.querySelector(".error") !== null);
+      assert.match(document.body.textContent ?? "", /Show all failed/, "expected the failed 'Show all' attempt's error banner to render");
+
+      // Click the SAME "Show all" button again (the natural retry action),
+      // which this time succeeds.
+      fireEvent.click(document.querySelector(".global-search-show-all") as HTMLButtonElement);
+      await waitForCondition(() => document.querySelectorAll(".global-search-hit-button").length === 7);
+
+      // Checked as a boolean, not a bare assert.equal(node, null) -- see
+      // the round-556 test above for why.
+      assert.equal(document.querySelector(".error") === null, true, "the stale error banner must not survive a later, successful retry of the exact same 'Show all' action");
     } finally {
       globalThis.fetch = originalFetch;
     }

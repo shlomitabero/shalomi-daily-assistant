@@ -10042,6 +10042,7 @@ test("the exported GlobalSearch's runSearch shows results from every entity that
     "setSelectedIndex",
     "searchRequestId",
     "lastRecordsByEntityRef",
+    "errorFromShowAllRef",
     `${matchesSearchSrc}\n${entityLabelOccurrencesSrc}\n${entityDisplayLabelSrc}\n${searchAllEntitiesSrc}\n${runSearchSrc}\nreturn runSearch;`,
   )(
     [entityA, entityB, entityC],
@@ -10061,6 +10062,7 @@ test("the exported GlobalSearch's runSearch shows results from every entity that
     () => {},
     { current: 0 },
     { current: {} },
+    { current: false },
   ) as (q: string) => Promise<void>;
 
   await fn("match");
@@ -10169,6 +10171,7 @@ test("the exported GlobalSearch's runSearch orders entity groups by totalMatches
     "setSelectedIndex",
     "searchRequestId",
     "lastRecordsByEntityRef",
+    "errorFromShowAllRef",
     `${matchesSearchSrc}\n${entityLabelOccurrencesSrc}\n${entityDisplayLabelSrc}\n${searchAllEntitiesSrc}\n${runSearchSrc}\nreturn runSearch;`,
   )(
     [entityA, entityB, entityC],
@@ -10184,6 +10187,7 @@ test("the exported GlobalSearch's runSearch orders entity groups by totalMatches
     () => {},
     { current: 0 },
     { current: {} },
+    { current: false },
   ) as (q: string) => Promise<void>;
 
   await fn("match");
@@ -10230,6 +10234,7 @@ test("the exported GlobalSearch's handleShowAll writes the data it just fetched 
     "highlightQuery",
     "searchRequestId",
     "lastRecordsByEntityRef",
+    "errorFromShowAllRef",
     `${matchesSearchSrc}\n${handleShowAllSrc}\nreturn handleShowAll;`,
   )(
     [courierEntity],
@@ -10241,6 +10246,7 @@ test("the exported GlobalSearch's handleShowAll writes the data it just fetched 
     "Dana",
     { current: 0 },
     lastRecordsByEntityRef,
+    { current: false },
   ) as (entityName: string) => Promise<void>;
 
   await fn("Courier");
@@ -10298,6 +10304,7 @@ test("the exported GlobalSearch's runSearch ignores a stale, still-in-flight sea
     "setSelectedIndex",
     "searchRequestId",
     "lastRecordsByEntityRef",
+    "errorFromShowAllRef",
     `${matchesSearchSrc}\n${entityLabelOccurrencesSrc}\n${entityDisplayLabelSrc}\n${searchAllEntitiesSrc}\n${runSearchSrc}\nreturn runSearch;`,
   )(
     [entityA],
@@ -10319,6 +10326,7 @@ test("the exported GlobalSearch's runSearch ignores a stale, still-in-flight sea
     () => {},
     searchRequestId,
     { current: {} },
+    { current: false },
   ) as (q: string) => Promise<void>;
 
   const stalePromise = fn("target");
@@ -10439,6 +10447,7 @@ test("the exported GlobalSearch's handleShowAll surfaces a failed fetch via setE
     "lastRecordsByEntityRef",
     "setExpandedSamples",
     "setError",
+    "errorFromShowAllRef",
     `${handleShowAllSrc}\nreturn handleShowAll;`,
   )(
     [entityA],
@@ -10455,6 +10464,7 @@ test("the exported GlobalSearch's handleShowAll surfaces a failed fetch via setE
     (msg: string) => {
       capturedError = msg;
     },
+    { current: false },
   ) as (entityName: string) => Promise<void>;
 
   await fn("Alpha");
@@ -17696,6 +17706,87 @@ test("the exported GlobalSearch's 'Show all' button disappears once the fresh fe
       container.querySelector(".global-search-show-all") === null,
       true,
       "the 'Show all' button must disappear once the fresh fetch shows every real match actually exists -- it must not keep promising 2 more matches that no longer exist, based on the original search's now-stale totalMatches",
+    );
+  } finally {
+    globalThis.fetch = originalFetch;
+    cleanup();
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+/**
+ * Round 904: mirrors GlobalSearchPanel.test.ts's own new regression test.
+ * Unlike runSearch (which clears `error` at its own start), the exported
+ * app's handleShowAll only ever SET `error` (round 663) and never cleared
+ * it on success -- a failed "Show all" attempt left its error banner
+ * showing forever, even after the user retried the exact same button and
+ * it succeeded.
+ */
+test("the exported GlobalSearch's 'Show all' button clears a stale error banner from an earlier failed 'Show all' attempt, once retried successfully", async () => {
+  const files = generateExportFiles(project);
+  const dir = writeGeneratedWebComponent(files);
+  const originalFetch = globalThis.fetch;
+  let customerCallCount = 0;
+  globalThis.fetch = (async (input: string) => {
+    if (String(input).endsWith("/Customer")) {
+      customerCallCount += 1;
+      if (customerCallCount === 2) {
+        // The initial search (call 1) succeeds; this entity's own first
+        // "Show all" attempt (call 2) fails.
+        return { ok: false, status: 500, json: async () => ({ error: "Show all failed" }) };
+      }
+      const records = Array.from({ length: 7 }, (_, i) => ({ id: i + 1, name: `Widget item ${i + 1}` }));
+      return { ok: true, status: 200, json: async () => ({ records }) };
+    }
+    return { ok: true, status: 200, json: async () => ({ records: [] }) };
+  }) as typeof fetch;
+
+  try {
+    const { GlobalSearch } = await import(path.join(dir, "web", "src", "components", "GlobalSearch.jsx"));
+    const { container } = render(
+      React.createElement(GlobalSearch, {
+        entities: project.spec.entities,
+        onClose: () => {},
+        onJumpToEntity: () => {},
+        onJumpToRecord: () => {},
+      }),
+    );
+
+    const input = container.querySelector(".global-search-input") as HTMLInputElement;
+    await act(async () => {
+      fireEvent.change(input, { target: { value: "widget" } });
+      fireEvent.submit(container.querySelector("form.global-search-form")!);
+      await Promise.resolve();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    assert.equal(container.querySelectorAll(".global-search-hit-button").length, 5, "expected the default 5-row sample");
+
+    const showAllButton = container.querySelector(".global-search-show-all") as HTMLButtonElement | null;
+    assert.ok(showAllButton, "expected a 'Show all' button for the original 7-match count");
+
+    await act(async () => {
+      fireEvent.click(showAllButton!);
+      await Promise.resolve();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    assert.ok(container.querySelector(".error"), "expected the failed 'Show all' attempt's error banner to render");
+
+    await act(async () => {
+      fireEvent.click(container.querySelector(".global-search-show-all") as HTMLButtonElement);
+      await Promise.resolve();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    assert.equal(container.querySelectorAll(".global-search-hit-button").length, 7, "expected every real match once the retried 'Show all' succeeds");
+    // Checked as a boolean, not a bare assert.equal(node, null) -- see the
+    // round-556 test above for why.
+    assert.equal(
+      container.querySelector(".error") === null,
+      true,
+      "the stale error banner must not survive a later, successful retry of the exact same 'Show all' action",
     );
   } finally {
     globalThis.fetch = originalFetch;
