@@ -42,6 +42,24 @@ const PAYMENT_KEYWORDS: (string | RegExp)[] = [
   // martial arts) -- same collision class and fix as domainEntities.ts's
   // own Subscription keyword (see that file's comment).
   /מנוי(?!ות)/,
+  // Round 893: an ordinary online-store/retail description ("An online
+  // store where customers buy products from our catalog") matches only
+  // Customer/Product -- neither BILLING_ENTITY_NAMES below (Product was
+  // never added there, deliberately -- see that Set's own comment) nor
+  // any existing PAYMENT_KEYWORDS phrase, so it got recommended "No
+  // payments" despite being the single most common real-world paid
+  // business shape this provider is used for. Adding bare "store" or
+  // "sell"/"selling" here instead of these specific e-commerce phrases
+  // would have been too broad: the round-460 test just above
+  // ("An inventory tracker for a clothing store selling striped shirts...")
+  // deliberately expects "No payments" for a plain inventory tracker that
+  // also happens to use "store"/"selling" in its own wording, matching
+  // the same over-broad-signal problem this file's own BILLING_ENTITY_
+  // NAMES comment already documents rejecting for Service. These phrases
+  // are specific enough to the customer-facing storefront concept itself
+  // that they don't fire for an internal inventory-tracking description.
+  "online store", "storefront", "shopping cart", "add to cart", "e-commerce", "ecommerce",
+  "חנות מקוונת", "חנות אונליין", "עגלת קניות",
 ];
 
 /**

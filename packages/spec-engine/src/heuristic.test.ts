@@ -283,6 +283,44 @@ test("asks about payments (recommending Stripe) for a restaurant-menu descriptio
   assert.equal(paymentQuestion!.recommendation, "Stripe");
 });
 
+/**
+ * Round 893: an ordinary online-store/retail description matches only
+ * Customer/Product -- neither of which is in BILLING_ENTITY_NAMES (Product
+ * was deliberately never added there, since -- unlike Rental/Property/
+ * MenuItem's narrowly commercial trigger phrasing -- a plain Product match
+ * alone isn't a reliable "this needs payments" signal: the round-460 test
+ * below this one expects "No payments" for a pure inventory-tracker
+ * description that also happens to use "store"/"selling" in its own
+ * wording, the same over-broad-signal problem this file's own
+ * BILLING_ENTITY_NAMES comment documents rejecting for Service). Fixed
+ * instead by adding specific e-commerce phrases ("online store",
+ * "storefront", etc.) to PAYMENT_KEYWORDS, narrow enough that they don't
+ * fire for that same inventory-tracker description.
+ */
+test("asks about payments (recommending Stripe) for an online-store description, even though it names none of the original PAYMENT_KEYWORDS or BILLING_ENTITY_NAMES", async () => {
+  const provider = new HeuristicSpecProvider();
+  const spec = await provider.generate("An online store where customers buy products from our catalog, with prices and stock levels.");
+  assert.deepEqual(spec.entities.map((e) => e.name).sort(), ["Customer", "Product"]);
+  const paymentQuestion = spec.openQuestions.find((q) => q.question.toLowerCase().includes("payment"));
+  assert.ok(paymentQuestion);
+  assert.equal(paymentQuestion!.recommendation, "Stripe");
+
+  // A plain inventory tracker that also happens to say "store"/"selling"
+  // must still get "No payments" -- the new keywords are deliberately
+  // narrower than bare "store"/"sell", so this existing round-460
+  // description (confirmed just below) is untouched by this fix.
+  const inventoryTracker = await provider.generate(
+    "An inventory tracker for a clothing store selling striped shirts, scarves, and seasonal collections.",
+  );
+  const inventoryPaymentQuestion = inventoryTracker.openQuestions.find((q) => q.question.toLowerCase().includes("payment"));
+  assert.ok(inventoryPaymentQuestion);
+  assert.equal(
+    inventoryPaymentQuestion!.recommendation,
+    "No payments",
+    "a plain inventory tracker mentioning 'store'/'selling' must not be swept up by the new, narrower e-commerce phrases",
+  );
+});
+
 test("does not ask about payments for a clothing-store description mentioning 'striped' shirts, but still asks when 'stripe' itself is used", async () => {
   // Regression test for a real bug found by a round 460 Explore survey:
   // PAYMENT_KEYWORDS's bare "stripe" hint matched via plain .includes(),
