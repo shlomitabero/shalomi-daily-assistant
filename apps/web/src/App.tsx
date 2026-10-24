@@ -705,6 +705,37 @@ function AppContent() {
   useEffect(() => subscribeWakeStatus(setWaking), []);
 
   /**
+   * Round 928: every one of the 7 overlay panels is rendered only inside
+   * `view === "preview" && project && (...)` below -- so when `project`
+   * gets nulled out (handleGoHome, or the subscribeProjectGone/
+   * subscribeAuthExpired effects further down) while a panel's own
+   * show* boolean is still true, the panel just unmounts along with the
+   * rest of the preview, with nothing having ever reset that boolean back
+   * to false. The next project opened (openExistingProject touches none
+   * of these either) re-enters `view === "preview"` with that same stale
+   * boolean still true, popping that panel open again, unprompted, for a
+   * completely unrelated project -- carrying over whatsappPrefillTo/
+   * highlightRecordId/createPrefill too if either was staged (e.g. a
+   * phone number from a "Send WhatsApp" row action on the project the
+   * viewer just lost access to). Every one of these flags is otherwise
+   * only ever cleared by a panel's own onClose, onJumpTo*, or onLeft
+   * callback, which never runs when the panel is torn down by project/view
+   * changing out from under it instead of a user actually closing it.
+   */
+  function closeAllPanels() {
+    setShowHistory(false);
+    setShowTwin(false);
+    setShowWhatsApp(false);
+    setShowAutomations(false);
+    setShowCollaborators(false);
+    setShowSearch(false);
+    setShowShortcuts(false);
+    setWhatsappPrefillTo(null);
+    setHighlightRecordId(null);
+    setCreatePrefill(null);
+  }
+
+  /**
    * The seven overlay panels (History, Business Twin, WhatsApp,
    * Automations, Collaborators, Search, Shortcuts) are each a full-screen backdrop (see
    * "history-overlay" in styles.css) -- opening one without closing the
@@ -930,10 +961,17 @@ function AppContent() {
    * either handler runs, WhatsAppPanel's own onClose/onJumpTo* callbacks
    * have already cleared this. This effect is the one path that forces the
    * same sign-out from an async 401 instead of a click, so it's the one
-   * way to land back on the login screen with WhatsAppPanel still mounted
-   * and whatsappPrefillTo never cleared -- surfacing on the next login, in
-   * the same tab, as a stale phone number silently pre-filled into the
-   * WhatsApp panel's "To" field from a completely unrelated prior session.
+   * way to land back on the login screen with any of the 7 overlay panels
+   * still mounted and their own state never cleared -- surfacing on the
+   * next login, in the same tab, as a stale panel (and, for WhatsApp, a
+   * stale phone number silently pre-filled into its "To" field) from a
+   * completely unrelated prior session. Round 928: originally this only
+   * reset whatsappPrefillTo, reasoning (correctly, for handleLogout/
+   * handleAccountDeleted's OWN resets) that the focus-trap guard above
+   * makes those two button-driven paths unreachable while a panel is
+   * open -- but this effect is itself the one path that fires reactively,
+   * bypassing any click or focus trap, so it needed the full
+   * closeAllPanels() reset the other two never did.
    */
   useEffect(() => {
     return subscribeAuthExpired(() => {
@@ -950,7 +988,7 @@ function AppContent() {
       setRefineText("");
       setRefineHistory([]);
       setRefineHistorySearch("");
-      setWhatsappPrefillTo(null);
+      closeAllPanels();
     });
   }, []);
 
@@ -1402,6 +1440,7 @@ function AppContent() {
     setSelectedAnswers({});
     setAdditionalRequest("");
     setBuildWarning(null);
+    closeAllPanels();
   }
 
   /**
@@ -1426,6 +1465,7 @@ function AppContent() {
     setRefineHistory([]);
     setRefineHistorySearch("");
     setBuildWarning(null);
+    closeAllPanels();
   }
 
   async function handleExport() {

@@ -1943,7 +1943,14 @@ test("App's handleBackToHome resets view/project/selectedAnswers/additionalReque
   const appSrc = readFileSync(new URL("./App.tsx", import.meta.url), "utf8");
   const handlerMatch = appSrc.match(/ {2}function handleBackToHome\(\) \{[\s\S]*?\n {2}\}\n/);
   assert.ok(handlerMatch, "expected to find handleBackToHome in App.tsx");
-  const { code } = transformSync(handlerMatch![0], { loader: "ts" });
+  // Round 928: handleBackToHome now also calls the separately-defined
+  // closeAllPanels helper (cheap insurance against stale panel state --
+  // see its own doc comment), a free variable from this extracted
+  // handler's own point of view -- extracted alongside it, same
+  // convention as the handleGoHome/subscribeAuthExpired tests.
+  const helperMatch = appSrc.match(/ {2}function closeAllPanels\(\) \{[\s\S]*?\n {2}\}\n/);
+  assert.ok(helperMatch, "expected to find closeAllPanels in App.tsx");
+  const { code } = transformSync(`${helperMatch![0]}\n${handlerMatch![0]}`, { loader: "ts" });
 
   const state: {
     view: string;
@@ -1952,6 +1959,8 @@ test("App's handleBackToHome resets view/project/selectedAnswers/additionalReque
     enhanceProvider: string | null;
     selectedAnswers: Record<string, string>;
     additionalRequest: string;
+    showWhatsApp: boolean;
+    whatsappPrefillTo: string | null;
   } = {
     view: "spec",
     project: makeProject([makeEntity("Customer")]),
@@ -1959,6 +1968,8 @@ test("App's handleBackToHome resets view/project/selectedAnswers/additionalReque
     enhanceProvider: "anthropic",
     selectedAnswers: { "Which plan?": "Pro" },
     additionalRequest: "also add a discount field",
+    showWhatsApp: true,
+    whatsappPrefillTo: "972501234567",
   };
 
   let setDescriptionCalls = 0;
@@ -1972,6 +1983,16 @@ test("App's handleBackToHome resets view/project/selectedAnswers/additionalReque
     "setAdditionalRequest",
     "setBuildWarning",
     "setDescription",
+    "setShowHistory",
+    "setShowTwin",
+    "setShowWhatsApp",
+    "setShowAutomations",
+    "setShowCollaborators",
+    "setShowSearch",
+    "setShowShortcuts",
+    "setWhatsappPrefillTo",
+    "setHighlightRecordId",
+    "setCreatePrefill",
     `${code}\nreturn handleBackToHome;`,
   )(
     (v: string) => (state.view = v),
@@ -1984,6 +2005,16 @@ test("App's handleBackToHome resets view/project/selectedAnswers/additionalReque
     () => {
       setDescriptionCalls += 1;
     },
+    () => {},
+    () => {},
+    (v: boolean) => (state.showWhatsApp = v),
+    () => {},
+    () => {},
+    () => {},
+    () => {},
+    (v: string | null) => (state.whatsappPrefillTo = v),
+    () => {},
+    () => {},
   ) as () => void;
 
   fn();
@@ -2000,6 +2031,8 @@ test("App's handleBackToHome resets view/project/selectedAnswers/additionalReque
     "must clear a stale non-terminal build-warning banner from the abandoned draft's own prior build (round 469)",
   );
   assert.equal(setDescriptionCalls, 0, "must never touch description -- the typed idea text should survive going back");
+  assert.equal(state.showWhatsApp, false, "round 928: must also close any leftover open panel");
+  assert.equal(state.whatsappPrefillTo, null, "round 928: must also clear any leftover staged panel payload");
 });
 
 /**
@@ -2019,7 +2052,14 @@ test("App's handleGoHome resets view/project/selectedAnswers/additionalRequest A
   const appSrc = readFileSync(new URL("./App.tsx", import.meta.url), "utf8");
   const handlerMatch = appSrc.match(/ {2}function handleGoHome\(\) \{[\s\S]*?\n {2}\}\n/);
   assert.ok(handlerMatch, "expected to find handleGoHome in App.tsx");
-  const { code } = transformSync(handlerMatch![0], { loader: "ts" });
+  // Round 928: handleGoHome now calls the separately-defined closeAllPanels
+  // helper (a free variable from handleGoHome's own extracted body's point
+  // of view) -- extracted alongside it, same as this file's own convention
+  // elsewhere for a handler that calls a cooperating helper, rather than
+  // stubbing it out and losing real coverage of what it actually resets.
+  const helperMatch = appSrc.match(/ {2}function closeAllPanels\(\) \{[\s\S]*?\n {2}\}\n/);
+  assert.ok(helperMatch, "expected to find closeAllPanels in App.tsx");
+  const { code } = transformSync(`${helperMatch![0]}\n${handlerMatch![0]}`, { loader: "ts" });
 
   const state: {
     view: string;
@@ -2032,6 +2072,16 @@ test("App's handleGoHome resets view/project/selectedAnswers/additionalRequest A
     refineText: string;
     refineHistory: unknown[];
     refineHistorySearch: string;
+    showHistory: boolean;
+    showTwin: boolean;
+    showWhatsApp: boolean;
+    showAutomations: boolean;
+    showCollaborators: boolean;
+    showSearch: boolean;
+    showShortcuts: boolean;
+    whatsappPrefillTo: string | null;
+    highlightRecordId: number | null;
+    createPrefill: unknown;
   } = {
     view: "preview",
     project: makeProject([makeEntity("Customer")]),
@@ -2043,6 +2093,19 @@ test("App's handleGoHome resets view/project/selectedAnswers/additionalRequest A
     refineText: "add a loyalty field",
     refineHistory: [{ instruction: "add invoices", createdAt: "2026-01-01" }],
     refineHistorySearch: "invoices",
+    // Round 928: simulates a panel left open (and WhatsApp prefilled) from
+    // the project being abandoned -- the exact leftover state that used to
+    // silently pop back open, unprompted, on whatever project opens next.
+    showHistory: false,
+    showTwin: false,
+    showWhatsApp: true,
+    showAutomations: false,
+    showCollaborators: false,
+    showSearch: false,
+    showShortcuts: false,
+    whatsappPrefillTo: "972501234567",
+    highlightRecordId: 42,
+    createPrefill: { fieldName: "phone", value: "972501234567" },
   };
 
   let setDescriptionCalls = 0;
@@ -2060,6 +2123,16 @@ test("App's handleGoHome resets view/project/selectedAnswers/additionalRequest A
     "setRefineHistorySearch",
     "setBuildWarning",
     "setDescription",
+    "setShowHistory",
+    "setShowTwin",
+    "setShowWhatsApp",
+    "setShowAutomations",
+    "setShowCollaborators",
+    "setShowSearch",
+    "setShowShortcuts",
+    "setWhatsappPrefillTo",
+    "setHighlightRecordId",
+    "setCreatePrefill",
     `${code}\nreturn handleGoHome;`,
   )(
     (v: string) => (state.view = v),
@@ -2076,9 +2149,24 @@ test("App's handleGoHome resets view/project/selectedAnswers/additionalRequest A
     () => {
       setDescriptionCalls += 1;
     },
+    (v: boolean) => (state.showHistory = v),
+    (v: boolean) => (state.showTwin = v),
+    (v: boolean) => (state.showWhatsApp = v),
+    (v: boolean) => (state.showAutomations = v),
+    (v: boolean) => (state.showCollaborators = v),
+    (v: boolean) => (state.showSearch = v),
+    (v: boolean) => (state.showShortcuts = v),
+    (v: string | null) => (state.whatsappPrefillTo = v),
+    (v: number | null) => (state.highlightRecordId = v),
+    (v: unknown) => (state.createPrefill = v),
   ) as () => void;
 
   fn();
+
+  assert.equal(state.showWhatsApp, false, "must close a panel left open on the abandoned project, or it silently pops back open on whatever project opens next");
+  assert.equal(state.whatsappPrefillTo, null, "must clear a stale prefilled phone number carried over from the abandoned project's own record");
+  assert.equal(state.highlightRecordId, null);
+  assert.equal(state.createPrefill, null);
 
   assert.equal(state.view, "home", "must navigate back to the home view from the live preview screen, not just spec review");
   assert.equal(state.project, null, "must clear the project being left behind");
@@ -3141,11 +3229,17 @@ test("App's handleMoveEntityTab moves an entity tab earlier/later and persists v
  * `useState(() => prefillTo ?? "")` lazy init reads it fresh on the next
  * mount), risking a message sent to the wrong person entirely.
  */
-test("App's subscribeAuthExpired effect clears the token and resets user/project/view/whatsappPrefillTo/etc to force the login screen", () => {
+test("App's subscribeAuthExpired effect clears the token and resets user/project/view/panels/etc to force the login screen", () => {
   const appSrc = readFileSync(new URL("./App.tsx", import.meta.url), "utf8");
   const effectMatch = appSrc.match(/ {2}useEffect\(\(\) => \{\n {4}return subscribeAuthExpired\(\(\) => \{[\s\S]*?\n {2}\}, \[\]\);\n/);
   assert.ok(effectMatch, "expected to find the subscribeAuthExpired effect in App.tsx");
-  const { code } = transformSync(effectMatch![0], { loader: "ts" });
+  // Round 928: the effect now calls the separately-defined closeAllPanels
+  // helper (a free variable from this extracted effect's own point of
+  // view) instead of setWhatsappPrefillTo directly -- extracted alongside
+  // it, same convention as the handleGoHome test above.
+  const helperMatch = appSrc.match(/ {2}function closeAllPanels\(\) \{[\s\S]*?\n {2}\}\n/);
+  assert.ok(helperMatch, "expected to find closeAllPanels in App.tsx");
+  const { code } = transformSync(`${helperMatch![0]}\n${effectMatch![0]}`, { loader: "ts" });
 
   let subscribedListener: (() => void) | undefined;
   let tokenCleared = false;
@@ -3161,7 +3255,10 @@ test("App's subscribeAuthExpired effect clears the token and resets user/project
   let refineTextSet: unknown = "untouched";
   let refineHistorySet: unknown = "untouched";
   let refineHistorySearchSet: unknown = "untouched";
+  let showWhatsAppSet: unknown = "untouched";
   let whatsappPrefillToSet: unknown = "untouched";
+  let highlightRecordIdSet: unknown = "untouched";
+  let createPrefillSet: unknown = "untouched";
 
   const fn = new Function(
     "useEffect",
@@ -3179,7 +3276,16 @@ test("App's subscribeAuthExpired effect clears the token and resets user/project
     "setRefineText",
     "setRefineHistory",
     "setRefineHistorySearch",
+    "setShowHistory",
+    "setShowTwin",
+    "setShowWhatsApp",
+    "setShowAutomations",
+    "setShowCollaborators",
+    "setShowSearch",
+    "setShowShortcuts",
     "setWhatsappPrefillTo",
+    "setHighlightRecordId",
+    "setCreatePrefill",
     `${code}`,
   ) as (
     useEffect: (effect: () => void, deps: unknown[]) => void,
@@ -3197,7 +3303,16 @@ test("App's subscribeAuthExpired effect clears the token and resets user/project
     setRefineText: (v: unknown) => void,
     setRefineHistory: (v: unknown) => void,
     setRefineHistorySearch: (v: unknown) => void,
+    setShowHistory: (v: unknown) => void,
+    setShowTwin: (v: unknown) => void,
+    setShowWhatsApp: (v: unknown) => void,
+    setShowAutomations: (v: unknown) => void,
+    setShowCollaborators: (v: unknown) => void,
+    setShowSearch: (v: unknown) => void,
+    setShowShortcuts: (v: unknown) => void,
     setWhatsappPrefillTo: (v: unknown) => void,
+    setHighlightRecordId: (v: unknown) => void,
+    setCreatePrefill: (v: unknown) => void,
   ) => void;
 
   fn(
@@ -3223,7 +3338,16 @@ test("App's subscribeAuthExpired effect clears the token and resets user/project
     (v) => (refineTextSet = v),
     (v) => (refineHistorySet = v),
     (v) => (refineHistorySearchSet = v),
+    () => {},
+    () => {},
+    (v) => (showWhatsAppSet = v),
+    () => {},
+    () => {},
+    () => {},
+    () => {},
     (v) => (whatsappPrefillToSet = v),
+    (v) => (highlightRecordIdSet = v),
+    (v) => (createPrefillSet = v),
   );
 
   assert.ok(subscribedListener, "the effect must call subscribeAuthExpired with a real listener");
@@ -3244,10 +3368,17 @@ test("App's subscribeAuthExpired effect clears the token and resets user/project
   assert.deepEqual(refineHistorySet, [], "must clear refineHistory, same as handleAccountDeleted");
   assert.equal(refineHistorySearchSet, "", "must clear refineHistorySearch, same as handleAccountDeleted");
   assert.equal(
+    showWhatsAppSet,
+    false,
+    "round 928: must close an open panel too (via closeAllPanels), not just clear whatsappPrefillTo -- otherwise the panel itself silently pops back open on the next project",
+  );
+  assert.equal(
     whatsappPrefillToSet,
     null,
     "must clear whatsappPrefillTo, the one reset neither handleLogout nor handleAccountDeleted needs (their own trigger buttons are inert-blocked while WhatsAppPanel is open) but this async-401 path does",
   );
+  assert.equal(highlightRecordIdSet, null, "round 928: closeAllPanels must also clear highlightRecordId");
+  assert.equal(createPrefillSet, null, "round 928: closeAllPanels must also clear createPrefill");
 });
 
 /**
