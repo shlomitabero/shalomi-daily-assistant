@@ -138,8 +138,21 @@ export function RoleChip({
   readOnly?: boolean;
 }) {
   const { t } = useTranslation();
-  const { busy, error, handleRemove } = useRemovableSpecItem(() => removeRole(projectId, index, role), onRemoved);
+  const { busy, error, handleRemove, clearError } = useRemovableSpecItem(() => removeRole(projectId, index, role), onRemoved);
   const rename = useRenamableSpecItem(role, (value) => renameRole(projectId, index, value, role), onRenamed);
+
+  // Round 932: clearError() lives on the OTHER hook (useRemovableSpecItem)
+  // from the one startEditing() belongs to (useRenamableSpecItem), which
+  // has no knowledge of it -- so, same shape as round 931's
+  // handleRemoveField, the cross-clear has to wrap startEditing here. A
+  // stale remove error is hidden (not cleared) while rename.editing is
+  // true, since this chip's two error states render in mutually exclusive
+  // branches -- so without this, it would silently reappear the moment a
+  // completely unrelated, successful rename returns to this branch.
+  function handleStartRename() {
+    clearError();
+    rename.startEditing();
+  }
 
   if (readOnly) {
     return <span className="chip">{role}</span>;
@@ -176,14 +189,14 @@ export function RoleChip({
     <span className="chip chip-removable">
       <span
         className="chip-text"
-        onClick={rename.startEditing}
+        onClick={handleStartRename}
         title={t("spec.roles.rename")}
         role="button"
         tabIndex={0}
         onKeyDown={(e) => {
           if (e.key !== "Enter" && e.key !== " ") return;
           e.preventDefault();
-          rename.startEditing();
+          handleStartRename();
         }}
       >
         {role}
@@ -224,7 +237,7 @@ export function AssumptionItem({
   readOnly?: boolean;
 }) {
   const { t } = useTranslation();
-  const { busy, error, handleRemove } = useRemovableSpecItem(
+  const { busy, error, handleRemove, clearError } = useRemovableSpecItem(
     () => removeAssumption(projectId, index, assumption),
     onRemoved,
   );
@@ -233,6 +246,12 @@ export function AssumptionItem({
     (value) => renameAssumption(projectId, index, value, assumption),
     onRenamed,
   );
+
+  /** Round 932: see RoleChip's own handleStartRename -- same gap, same fix. */
+  function handleStartRename() {
+    clearError();
+    rename.startEditing();
+  }
 
   if (readOnly) {
     return <li className="assumption-item">{assumption}</li>;
@@ -269,14 +288,14 @@ export function AssumptionItem({
     <li className="assumption-item">
       <span
         className="assumption-text"
-        onClick={rename.startEditing}
+        onClick={handleStartRename}
         title={t("spec.assumptions.rename")}
         role="button"
         tabIndex={0}
         onKeyDown={(e) => {
           if (e.key !== "Enter" && e.key !== " ") return;
           e.preventDefault();
-          rename.startEditing();
+          handleStartRename();
         }}
       >
         {assumption}
@@ -328,8 +347,17 @@ export function PersonaItem({
   readOnly?: boolean;
 }) {
   const { t } = useTranslation();
-  const { busy, error, handleRemove } = useRemovableSpecItem(() => removePersona(projectId, index, persona), onRemoved);
+  const { busy, error, handleRemove, clearError } = useRemovableSpecItem(
+    () => removePersona(projectId, index, persona),
+    onRemoved,
+  );
   const rename = useRenamableSpecItem(persona, (value) => renamePersona(projectId, index, value, persona), onRenamed);
+
+  /** Round 932: see RoleChip's own handleStartRename -- same gap, same fix. */
+  function handleStartRename() {
+    clearError();
+    rename.startEditing();
+  }
 
   if (readOnly) {
     return <li className="persona-item">{persona}</li>;
@@ -366,14 +394,14 @@ export function PersonaItem({
     <li className="persona-item">
       <span
         className="persona-text"
-        onClick={rename.startEditing}
+        onClick={handleStartRename}
         title={t("spec.personas.rename")}
         role="button"
         tabIndex={0}
         onKeyDown={(e) => {
           if (e.key !== "Enter" && e.key !== " ") return;
           e.preventDefault();
-          rename.startEditing();
+          handleStartRename();
         }}
       >
         {persona}
@@ -438,12 +466,18 @@ export function EntitySummaryItem({
   readOnly?: boolean;
 }) {
   const { t } = useTranslation();
-  const { busy, error, handleRemove } = useRemovableSpecItem(() => removeEntity(projectId, entity.name), onRemoved);
+  const { busy, error, handleRemove, clearError } = useRemovableSpecItem(() => removeEntity(projectId, entity.name), onRemoved);
   const rename = useRenamableSpecItem(
     entity.label ?? entity.name,
     (value) => renameEntityLabel(projectId, entity.name, value),
     onRenamed,
   );
+
+  /** Round 932: see RoleChip's own handleStartRename -- same gap, same fix. */
+  function handleStartRename() {
+    clearError();
+    rename.startEditing();
+  }
 
   if (readOnly) {
     return (
@@ -501,14 +535,14 @@ export function EntitySummaryItem({
       <div className="entity-summary-header">
         <strong
           className="entity-summary-label"
-          onClick={rename.startEditing}
+          onClick={handleStartRename}
           title={t("spec.entities.rename")}
           role="button"
           tabIndex={0}
           onKeyDown={(e) => {
             if (e.key !== "Enter" && e.key !== " ") return;
             e.preventDefault();
-            rename.startEditing();
+            handleStartRename();
           }}
         >
           {entity.label ?? entity.name}
@@ -660,6 +694,15 @@ export function FieldChip({
     }
   }
 
+  // Round 932: see RoleChip's own handleStartRename for the general shape
+  // -- this chip just has three siblings to cross-clear instead of one.
+  function handleStartRename() {
+    clearError();
+    setRequiredError(null);
+    setTypeError(null);
+    rename.startEditing();
+  }
+
   // Shared by handleTypeSelectChange's enum/relation branch below and the
   // "edit values"/"edit target" button rendered when the field is ALREADY
   // that type (see that button's own comment for why a type-switch away
@@ -734,14 +777,14 @@ export function FieldChip({
     <span className="chip chip-removable">
       <span
         className="chip-text"
-        onClick={rename.startEditing}
+        onClick={handleStartRename}
         title={t("spec.fields.rename")}
         role="button"
         tabIndex={0}
         onKeyDown={(e) => {
           if (e.key !== "Enter" && e.key !== " ") return;
           e.preventDefault();
-          rename.startEditing();
+          handleStartRename();
         }}
       >
         {field.label ?? field.name}

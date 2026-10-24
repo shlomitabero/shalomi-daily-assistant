@@ -342,6 +342,67 @@ test("a role chip surfaces a real removal error (e.g. the last-role guard) inste
   });
 });
 
+/**
+ * Round 932: a role chip's remove-error and rename-error are two
+ * independent states (one per hook) rendered in mutually exclusive
+ * branches -- the remove error only in the normal view, the rename error
+ * only in the rename-edit view. Before this round, starting a rename
+ * only ever cleared the rename hook's OWN error, never the OTHER one --
+ * so a stale remove error, merely hidden (not cleared) while editing,
+ * reappeared the instant a completely unrelated, successful rename
+ * returned to the normal view.
+ */
+test("a role chip's stale remove-error is cleared once a rename is started, instead of reappearing after a later, unrelated successful rename", async () => {
+  await withJsdom(async () => {
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = (async (input: string, init?: RequestInit) => {
+      const method = init?.method ?? "GET";
+      if (method === "DELETE") {
+        return new Response(JSON.stringify({ error: "Cannot remove the last remaining role -- at least one role is required" }), {
+          status: 400,
+          headers: { "content-type": "application/json" },
+        });
+      }
+      if (method === "PATCH" && input === "/api/projects/proj1/roles/1") {
+        const renamed = { ...baseProject, spec: { ...baseProject.spec, roles: ["Admin", "Warehouse Manager"] } };
+        return new Response(JSON.stringify({ project: renamed }), { status: 200, headers: { "content-type": "application/json" } });
+      }
+      throw new Error(`unexpected request ${method} ${input}`);
+    }) as typeof fetch;
+
+    try {
+      const renamedProjects: Project[] = [];
+      renderRoleChip(
+        () => {},
+        true,
+        (p) => renamedProjects.push(p),
+      );
+
+      fireEvent.click(document.querySelector(".chip-remove") as HTMLButtonElement);
+      await waitForCondition(() => document.querySelector(".chip-removable .error") !== null);
+
+      fireEvent.click(document.querySelector(".chip-text") as HTMLElement);
+      const input = document.querySelector(".chip-rename-edit input") as HTMLInputElement;
+      assert.ok(input, "expected an inline edit input after clicking the role text");
+      fireEvent.change(input, { target: { value: "Warehouse Manager" } });
+      fireEvent.blur(input);
+
+      await waitForCondition(() => renamedProjects.length === 1);
+      // Compared as a boolean, never the raw node -- round 666's own
+      // documented lesson: assert.equal on a real (non-null) DOM element
+      // can hang for 90s-2min formatting its circular structure for the
+      // failure message instead of failing fast.
+      assert.equal(
+        document.querySelector(".chip-removable .error") === null,
+        true,
+        "a stale remove error from before the rename must not survive a later, unrelated successful rename",
+      );
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+});
+
 test("clicking a role chip's text opens an inline edit, and saving it calls the real PATCH endpoint by index", async () => {
   await withJsdom(async () => {
     const originalFetch = globalThis.fetch;
@@ -1592,6 +1653,63 @@ test("clicking Cancel while editing an existing relation field's target closes t
       // boolean rather than assert.equal(element, null, ...) directly.
       assert.equal(document.querySelector(".chip-field-type-confirm") === null, true, "the draft confirm step must close");
       assert.ok(document.querySelector(".chip-field-edit-values"), "the edit-target button must reappear so the draft can be reopened");
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+});
+
+/**
+ * Round 932: FieldChip's own version of the same gap, but with three
+ * siblings instead of one -- `error` (remove), requiredError, and
+ * typeError are all hidden (not cleared) while rename.editing is shown,
+ * so any of the three could resurface after a later, unrelated,
+ * successful rename. Covers requiredError specifically, since
+ * handleStartRename has to clear all three together here.
+ */
+test("a field chip's stale required-toggle error is cleared once a rename is started, instead of reappearing after a later, unrelated successful rename", async () => {
+  await withJsdom(async () => {
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = (async (input: string, init?: RequestInit) => {
+      const method = init?.method ?? "GET";
+      if (method === "PATCH" && input === "/api/projects/proj1/entities/Customer/fields/email/required") {
+        return new Response(JSON.stringify({ error: "network blip" }), { status: 500, headers: { "content-type": "application/json" } });
+      }
+      if (method === "PATCH" && input === "/api/projects/proj1/entities/Customer/fields/email/label") {
+        const body = JSON.parse(init!.body as string) as { label: string };
+        const renamed = {
+          ...baseProject,
+          spec: {
+            ...baseProject.spec,
+            entities: [{ ...baseProject.spec.entities[0], fields: [{ name: "email", type: "text", required: true, label: body.label }] }],
+          },
+        };
+        return new Response(JSON.stringify({ project: renamed }), { status: 200, headers: { "content-type": "application/json" } });
+      }
+      throw new Error(`unexpected request ${method} ${input}`);
+    }) as typeof fetch;
+
+    try {
+      const changedProjects: Project[] = [];
+      renderFieldChip((p) => changedProjects.push(p), true, { name: "email", type: "text", required: true });
+
+      fireEvent.click(document.querySelector(".chip-field-required input") as HTMLInputElement);
+      await waitForCondition(() => document.querySelector(".chip-removable")?.textContent?.includes("network blip") ?? false);
+
+      fireEvent.click(document.querySelector(".chip-text") as HTMLElement);
+      const input = document.querySelector(".chip-rename-edit input") as HTMLInputElement;
+      assert.ok(input, "expected an inline edit input after clicking the field text");
+      fireEvent.change(input, { target: { value: "Email Address" } });
+      fireEvent.blur(input);
+
+      await waitForCondition(() => changedProjects.length === 1);
+      // Compared as a boolean, never the raw node -- round 666's own
+      // documented lesson about assert.equal hanging on a real DOM node.
+      assert.equal(
+        document.querySelector(".chip-removable")?.textContent?.includes("network blip") ?? false,
+        false,
+        "a stale required-toggle error from before the rename must not survive a later, unrelated successful rename",
+      );
     } finally {
       globalThis.fetch = originalFetch;
     }
