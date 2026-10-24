@@ -6480,6 +6480,41 @@ test("deleting a project you have no access to still 404s, the same as any other
   });
 });
 
+/**
+ * Round 945: same withIdempotency gap, and the same fix, as
+ * deleteRecord's/deleteCheckpoint's own fix (rounds 792/944) -- the single
+ * most destructive route in the app (an irreversible, cascading
+ * whole-project delete) had zero idempotency coverage. fetchWithWakeRetry
+ * retries on ANY thrown fetch() error, so a response lost in transit after
+ * the project was already deleted used to surface a confusing 404 for a
+ * delete that, from the user's point of view, already fully succeeded.
+ */
+test("DELETE /projects/:id retried with the same idempotency key after the first attempt already succeeded replays the original 204, instead of 404ing on the already-deleted project", async () => {
+  await withServer(async (baseUrl) => {
+    const token = await signup(baseUrl, "project-delete-idem@example.com");
+    const createRes = await fetch(`${baseUrl}/api/projects`, {
+      method: "POST",
+      headers: authHeaders(token),
+      body: JSON.stringify({ description: "A CRM with customers and deals." }),
+    });
+    const { project } = (await createRes.json()) as { project: { id: string } };
+
+    const headers = { ...authHeaders(token), "x-idempotency-key": "project-delete-repro-key" };
+    const firstRes = await fetch(`${baseUrl}/api/projects/${project.id}`, { method: "DELETE", headers });
+    assert.equal(firstRes.status, 204);
+
+    const getAfterFirst = await fetch(`${baseUrl}/api/projects/${project.id}`, { headers: authHeaders(token) });
+    assert.equal(getAfterFirst.status, 404, "the project must genuinely be gone after the first call");
+
+    const retryRes = await fetch(`${baseUrl}/api/projects/${project.id}`, { method: "DELETE", headers });
+    assert.equal(
+      retryRes.status,
+      204,
+      "a retried deletion with the same idempotency key must replay the original success, not 404 on the already-deleted project",
+    );
+  });
+});
+
 test("deleting a project with a live WhatsApp connection tears the connection down cleanly instead of erroring", async () => {
   let createdSockets: ReturnType<typeof createFakeWhatsAppSocket>[] = [];
   await withServer(

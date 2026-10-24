@@ -1366,35 +1366,64 @@ export function createProjectsRouter(
    * update to completion, and return 200 for a change that deleteProject()
    * erases moments later with no error ever reaching that caller.
    */
+  /**
+   * Round 945: same withIdempotency() extension, and the same reason, as
+   * deleteRecord's/deleteCheckpoint's own fix (rounds 792/944) -- this is
+   * the single most destructive route in the app (an irreversible,
+   * cascading whole-project delete), yet it was the one real-effect
+   * mutation route with zero idempotency coverage. fetchWithWakeRetry
+   * retries any thrown fetch() error, so a response lost in transit after
+   * the project was already deleted meant the retry's own
+   * requireProjectOwner found no such row and threw a plain 404 for a
+   * delete that, from the user's own point of view, already fully
+   * succeeded -- App.tsx's handleDeleteProject treats that 404 as a
+   * genuine failure (its success-path cleanup, including removing the
+   * project from the visible list, never runs), leaving the UI showing an
+   * already-gone project as if the delete had failed.
+   *
+   * Unlike entities/fields/checkpoints (identified by a name/id that
+   * stays meaningful even after the retry-sensitive "not found" check),
+   * the resource this route's own 404 depends on (the project itself) is
+   * also the one requireProjectOwner needs to look up to authorize the
+   * request at all -- so requireProjectOwner itself has to move INSIDE
+   * the withIdempotency callback (a genuine retry never reaches it; the
+   * wrap short-circuits first), and the idempotency route key is built
+   * from req.params.id directly rather than project.id, since no `project`
+   * exists yet at that point.
+   */
   router.delete(
     "/projects/:id",
     asyncRoute(async (req, res) => {
-      const project = requireProjectOwner(db, req.params.id, req.userId!);
-      if (activePipelines.has(project.id)) {
-        throw new HttpError(409, "A build or refine is already running for this project", "PIPELINE_IN_PROGRESS");
-      }
-      // This route has its own genuine await (whatsapp.disconnect() -> a
-      // real network round-trip to the WhatsApp Web socket, when one is
-      // connected) before deleteProject() actually runs -- the same kind
-      // of gap /build/refine/answers/restore already guard against via
-      // activePipelines, just on this route's own side instead of a
-      // pipeline's. Without marking this project id busy for that window,
-      // any ordinary quick mutation route (add a role, rename, add an
-      // entity, ...) that only *checks* activePipelines -- never sets it
-      // itself -- can read the still-present project row, run its entire
-      // update to completion, and return 200 with what looks like a
-      // persisted change, moments before deleteProject() below erases the
-      // row (and that "persisted" change) out from under it with no error
-      // ever surfacing to that caller.
-      activePipelines.add(project.id);
-      try {
-        await whatsapp.disconnect(project.id).catch(() => {});
-        deleteProject(db, project.id);
-        await deleteProjectUploads(uploadsDir, project.id);
-      } finally {
-        activePipelines.delete(project.id);
-      }
-      res.status(204).end();
+      const idempotencyKey = req.header("X-Idempotency-Key") || undefined;
+      const { status } = await withIdempotency(db, idempotencyKey, req.userId!, `DELETE /projects/${req.params.id}`, async () => {
+        const project = requireProjectOwner(db, req.params.id, req.userId!);
+        if (activePipelines.has(project.id)) {
+          throw new HttpError(409, "A build or refine is already running for this project", "PIPELINE_IN_PROGRESS");
+        }
+        // This route has its own genuine await (whatsapp.disconnect() -> a
+        // real network round-trip to the WhatsApp Web socket, when one is
+        // connected) before deleteProject() actually runs -- the same kind
+        // of gap /build/refine/answers/restore already guard against via
+        // activePipelines, just on this route's own side instead of a
+        // pipeline's. Without marking this project id busy for that window,
+        // any ordinary quick mutation route (add a role, rename, add an
+        // entity, ...) that only *checks* activePipelines -- never sets it
+        // itself -- can read the still-present project row, run its entire
+        // update to completion, and return 200 with what looks like a
+        // persisted change, moments before deleteProject() below erases the
+        // row (and that "persisted" change) out from under it with no error
+        // ever surfacing to that caller.
+        activePipelines.add(project.id);
+        try {
+          await whatsapp.disconnect(project.id).catch(() => {});
+          deleteProject(db, project.id);
+          await deleteProjectUploads(uploadsDir, project.id);
+        } finally {
+          activePipelines.delete(project.id);
+        }
+        return { status: 204, body: null };
+      });
+      res.status(status).end();
     }),
   );
 

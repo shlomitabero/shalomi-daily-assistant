@@ -513,8 +513,12 @@ export function setFieldType(
   );
 }
 
+/** Round 945: same idempotency-key shape as deleteCheckpoint's own fix (round 944) -- a lost response after this project was already deleted must replay that success on retry, not surface a confusing "not found" for the single most destructive action in the app. */
 export function deleteProject(projectId: string): Promise<void> {
-  return request(`/projects/${projectId}`, { method: "DELETE" });
+  return request(`/projects/${projectId}`, {
+    method: "DELETE",
+    headers: { "x-idempotency-key": crypto.randomUUID() },
+  });
 }
 
 /**
