@@ -882,6 +882,18 @@ export function createRecord(
  * `content-type: application/json` or a JSON.stringify()'d body; the
  * browser sets its own multipart boundary header once given a real
  * FormData.
+ *
+ * Round 907: the same X-Idempotency-Key mechanism createRecord/
+ * sendWhatsAppMessage already send -- this call goes through fetchApi's
+ * own fetchWithWakeRetry just like every other request, and a FormData
+ * wrapping a real File is a re-readable Blob, not a one-shot stream, so a
+ * retry after a dropped connection (even one where the server already
+ * finished and only the response itself got lost) successfully re-sends
+ * the identical file bytes. Without a key, the server has no way to tell
+ * that retry apart from a genuinely new upload, and multer names every
+ * file with a fresh random UUID -- so each retry silently wrote a second,
+ * orphaned file to disk forever, with no cleanup mechanism anywhere for a
+ * file no record ends up referencing.
  */
 export async function uploadRecordFile(
   projectId: string,
@@ -896,7 +908,10 @@ export async function uploadRecordFile(
     `/api/projects/${projectId}/entities/${encodeURIComponent(entityName)}/fields/${encodeURIComponent(fieldName)}/upload`,
     {
       method: "POST",
-      headers: token ? { authorization: `Bearer ${token}` } : {},
+      headers: {
+        ...(token ? { authorization: `Bearer ${token}` } : {}),
+        "x-idempotency-key": crypto.randomUUID(),
+      },
       body: formData,
     },
   );

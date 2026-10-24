@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { createHash, randomUUID } from "node:crypto";
-import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { test } from "node:test";
@@ -9327,6 +9327,77 @@ test("uploading a file for a 'file' field stores it on disk, serves it back at t
     const getRes = await fetch(`${baseUrl}/api/projects/${projectId}/entities/Applicant`, { headers: authHeaders(token) });
     const { records } = (await getRes.json()) as { records: { id: number; resume: string }[] };
     assert.deepEqual(JSON.parse(records.find((r) => r.id === record.id)!.resume), uploadBody.file);
+  });
+});
+
+/**
+ * Round 907: multer's own disk-storage middleware names every file with a
+ * fresh randomUUID, so a retried upload (fetchApi's own fetchWithWakeRetry
+ * auto-retries on a dropped connection, even one where the server already
+ * fully finished and only the response itself got lost -- a FormData
+ * wrapping a real File is a re-readable Blob, not a one-shot stream, so
+ * the retry successfully re-sends the identical bytes) was physically
+ * indistinguishable from a brand-new upload and wrote a second, orphaned
+ * file to disk forever, with no cleanup mechanism anywhere for a file no
+ * record ever ends up referencing. Confirms a retry with the same
+ * idempotency key replays the exact same file descriptor (not a second,
+ * different URL) and that only ONE file actually exists on disk
+ * afterward, not two.
+ */
+test("uploading with the same idempotency key after the first attempt already finished replays the original file descriptor, instead of writing a second orphaned file to disk", async () => {
+  await withServer(async (baseUrl, db, uploadsDir) => {
+    const email = `upload-idem-${randomUUID()}@example.com`;
+    const token = await signup(baseUrl, email);
+    const user = findUserByEmail(db, email)!;
+
+    const spec: ProductSpec = {
+      summary: "test",
+      personas: [],
+      roles: ["Admin"],
+      entities: [
+        {
+          name: "Applicant",
+          fields: [
+            { name: "name", type: "text", required: true },
+            { name: "resume", type: "file", required: false },
+          ],
+        },
+      ],
+      screens: [],
+      assumptions: [],
+      openQuestions: [],
+    };
+    const projectId = randomUUID();
+    insertProject(db, { id: projectId, ownerId: user.id, name: "Hiring", description: "test", spec });
+    diffAndMigrate(db, projectId, undefined, spec);
+    markProjectBuilt(db, projectId);
+
+    const headers = { authorization: `Bearer ${token}`, "x-idempotency-key": "upload-repro-key" };
+    const fileBody = "%PDF-fake-resume-contents";
+
+    const firstFormData = new FormData();
+    firstFormData.append("file", new File([fileBody], "resume.pdf", { type: "application/pdf" }));
+    const firstRes = await fetch(`${baseUrl}/api/projects/${projectId}/entities/Applicant/fields/resume/upload`, {
+      method: "POST",
+      headers,
+      body: firstFormData,
+    });
+    assert.equal(firstRes.status, 200);
+    const first = (await firstRes.json()) as { file: { url: string; name: string; size: number; mimeType: string } };
+
+    const retryFormData = new FormData();
+    retryFormData.append("file", new File([fileBody], "resume.pdf", { type: "application/pdf" }));
+    const retryRes = await fetch(`${baseUrl}/api/projects/${projectId}/entities/Applicant/fields/resume/upload`, {
+      method: "POST",
+      headers,
+      body: retryFormData,
+    });
+    assert.equal(retryRes.status, 200);
+    const retry = (await retryRes.json()) as { file: { url: string; name: string; size: number; mimeType: string } };
+    assert.deepEqual(retry, first, "the retry must replay the exact same file descriptor, not a second, different one");
+
+    const filesOnDisk = readdirSync(path.join(uploadsDir, projectId, "Applicant"));
+    assert.equal(filesOnDisk.length, 1, "a retried upload with the same idempotency key must never write a second orphaned file to disk");
   });
 });
 

@@ -2113,32 +2113,70 @@ export function createProjectsRouter(
         next(err);
       }
     },
-    (req, res, next) => {
-      upload.single("file")(req, res, (err: unknown) => {
-        if (err instanceof MulterError) {
-          if (err.code === "LIMIT_FILE_SIZE") {
-            next(new HttpError(400, "File is too large (max 10 MB)", "FILE_TOO_LARGE"));
-            return;
-          }
-          next(new HttpError(400, "File upload failed", "UPLOAD_ERROR"));
-          return;
-        }
-        next(err);
-      });
-    },
+    // Round 907: multer's own disk-storage middleware (invoked below,
+    // inside withIdempotency's run callback rather than as a separate
+    // Express middleware stage) names every file with a fresh randomUUID
+    // -- a retried upload (fetchApi's own fetchWithWakeRetry auto-retries
+    // on a dropped connection, even one where the server already fully
+    // finished and the response just never arrived) is physically
+    // indistinguishable from a brand-new one, so each retry wrote a
+    // completely separate orphaned file to disk forever, with no cleanup
+    // mechanism anywhere for a file that no record ever ends up
+    // referencing. Every structurally identical write path in this file
+    // already opts into withIdempotency (createRecord's own POST chief
+    // among them) -- this route was the one holdout. Wrapping multer's own
+    // invocation inside the run callback (not just the response-building
+    // after it) is what actually matters here: withIdempotency's own
+    // existing/"done" replay check runs BEFORE run() -- and therefore
+    // before multer ever touches disk -- so a genuine replay never writes
+    // a second file at all, not merely "writes one but the client doesn't
+    // see its URL."
     asyncRoute(async (req, res) => {
-      const file = req.file;
-      if (!file) {
-        throw new HttpError(400, "No file was uploaded", "NO_FILE_UPLOADED");
-      }
-      res.json({
-        file: {
-          url: `/api/uploads/${req.params.id}/${req.params.entityName}/${file.filename}`,
-          name: decodeMojibakeFilename(file.originalname),
-          size: file.size,
-          mimeType: file.mimetype,
+      const project = requireProjectWriteAccess(db, req.params.id, req.userId!);
+      const entity = findEntity(project, req.params.entityName);
+      const field = findField(entity, req.params.fieldName);
+      const idempotencyKey = req.header("X-Idempotency-Key") || undefined;
+      const { status, body } = await withIdempotency(
+        db,
+        idempotencyKey,
+        req.userId!,
+        `POST /projects/${project.id}/entities/${entity.name}/fields/${field.name}/upload`,
+        async () => {
+          await new Promise<void>((resolve, reject) => {
+            upload.single("file")(req, res, (err: unknown) => {
+              if (err instanceof MulterError) {
+                if (err.code === "LIMIT_FILE_SIZE") {
+                  reject(new HttpError(400, "File is too large (max 10 MB)", "FILE_TOO_LARGE"));
+                  return;
+                }
+                reject(new HttpError(400, "File upload failed", "UPLOAD_ERROR"));
+                return;
+              }
+              if (err) {
+                reject(err as Error);
+                return;
+              }
+              resolve();
+            });
+          });
+          const file = req.file;
+          if (!file) {
+            throw new HttpError(400, "No file was uploaded", "NO_FILE_UPLOADED");
+          }
+          return {
+            status: 200,
+            body: {
+              file: {
+                url: `/api/uploads/${req.params.id}/${req.params.entityName}/${file.filename}`,
+                name: decodeMojibakeFilename(file.originalname),
+                size: file.size,
+                mimeType: file.mimetype,
+              },
+            },
+          };
         },
-      });
+      );
+      res.status(status).json(body);
     }),
   );
 
