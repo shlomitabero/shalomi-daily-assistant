@@ -2,6 +2,7 @@ import { isIP } from "node:net";
 import path from "node:path";
 import type { Entity, EntityRecord, Project } from "@forge/shared";
 import {
+  AUTOMATION_RUNS_RETENTION_LIMIT,
   getProject,
   getRecord,
   insertWhatsAppMessage,
@@ -9,6 +10,7 @@ import {
   listEnabledAutomationRulesForEntity,
   listEnabledScheduledRules,
   recordAutomationRun,
+  WHATSAPP_NOT_CONNECTED_ERROR,
   type AutomationRule,
   type ForgeDatabase,
 } from "@forge/db";
@@ -621,7 +623,7 @@ async function fireRule(
   }
   const status = whatsapp.getStatus(project.id);
   if (status.status !== "connected") {
-    recordAutomationRun(db, project.id, rule.id, { status: "failed", error: "WhatsApp is not connected" }, rule.actionType);
+    recordAutomationRun(db, project.id, rule.id, { status: "failed", error: WHATSAPP_NOT_CONNECTED_ERROR }, rule.actionType);
     return;
   }
   const templateRecord = resolveRelationFieldsForTemplate(db, project.id, entity, project.spec.entities, record);
@@ -745,7 +747,7 @@ export async function fireScheduledRule(
   }
   const status = whatsapp.getStatus(project.id);
   if (status.status !== "connected") {
-    recordAutomationRun(db, project.id, rule.id, { status: "failed", error: "WhatsApp is not connected" }, rule.actionType, now);
+    recordAutomationRun(db, project.id, rule.id, { status: "failed", error: WHATSAPP_NOT_CONNECTED_ERROR }, rule.actionType, now);
     return;
   }
   const result = await whatsapp.sendMessage(project.id, to, rule.messageTemplate);
@@ -817,14 +819,30 @@ const MAX_CONSECUTIVE_SCHEDULE_FAILURES_PER_DAY = 5;
  * isScheduledRuleDue's own documented guarantee of recovering "even
  * after the owner reconnects minutes later" -- a daily report could go
  * completely unsent for the rest of the day over a 5-minute outage.
- * Looks further back than MAX_CONSECUTIVE_SCHEDULE_FAILURES_PER_DAY
- * itself (the full retention window) so enough genuine failures can
- * still be found even with disconnect runs interleaved among them.
+ *
+ * Round 951: isScheduledRuleDue keeps this rule "due" every single tick
+ * (every 60s, startScheduledAutomationsLoop) for the rest of the day after
+ * ANY failure, disconnect included -- so one ordinary outage can easily
+ * produce dozens of consecutive "WhatsApp is not connected" rows, far more
+ * than this function's old default lookback (listAutomationRuns' own
+ * default limit, matching AUTOMATION_RUNS_RETENTION_LIMIT exactly). That
+ * let a disconnect flood evict a real failure from the table entirely
+ * (recordAutomationRun's own retention prune, packages/db/src/automations.ts,
+ * used to cut across both kinds of row together) before a second real
+ * failure could ever join it in the same lookback window -- silently
+ * defeating this cap for the very ordinary combination of a permanently
+ * wrong destination plus a long outage, exactly the number-flagging risk
+ * round 924 exists to bound. recordAutomationRun's prune now keeps the
+ * newest AUTOMATION_RUNS_RETENTION_LIMIT rows of EACH kind independently,
+ * so a disconnect flood of any length can no longer evict a real failure
+ * -- but this function's own lookback still has to be widened to match,
+ * or it would just fail to ever SEE those real rows within its own
+ * narrower fetch, even though they're still safely in the table.
  */
 function hasTooManyConsecutiveFailuresToday(db: ForgeDatabase, rule: AutomationRule, now: Date): boolean {
   const todayUtc = now.toISOString().slice(0, 10);
-  const runs = listAutomationRuns(db, rule.projectId, rule.id)
-    .filter((run) => run.error !== "WhatsApp is not connected")
+  const runs = listAutomationRuns(db, rule.projectId, rule.id, 2 * AUTOMATION_RUNS_RETENTION_LIMIT)
+    .filter((run) => run.error !== WHATSAPP_NOT_CONNECTED_ERROR)
     .slice(0, MAX_CONSECUTIVE_SCHEDULE_FAILURES_PER_DAY);
   if (runs.length < MAX_CONSECUTIVE_SCHEDULE_FAILURES_PER_DAY) return false;
   return runs.every((run) => run.status === "failed" && run.triggeredAt.slice(0, 10) === todayUtc);

@@ -17,6 +17,16 @@ export type AutomationActionType = "send_whatsapp" | "webhook";
 export type AutomationToMode = "static" | "field";
 export type AutomationLastStatus = "sent" | "failed" | null;
 
+/**
+ * Round 951: exported so apps/api/src/automations.ts's fireRule/
+ * fireScheduledRule (the only real producers of this exact error) and this
+ * module's own run-retention pruning (recordAutomationRun below) agree on
+ * one literal instead of two independently-typed copies silently drifting
+ * apart. See recordAutomationRun's own doc comment for why pruning needs
+ * to single this error out specifically.
+ */
+export const WHATSAPP_NOT_CONNECTED_ERROR = "WhatsApp is not connected";
+
 export interface AutomationRule {
   id: string;
   projectId: string;
@@ -115,19 +125,29 @@ function rowToRun(row: Record<string, unknown>): AutomationRun {
 }
 
 /**
- * listAutomationRuns below never reads past its own default `limit` (no
- * caller anywhere in this codebase ever passes a different one), so a
- * busy rule -- a daily "schedule" trigger, or a "record_created"/
- * "field_equals" rule on an active entity -- accumulated one row per
- * firing *forever* with nothing ever reading past the most recent 20:
- * pure unbounded growth for zero benefit. Unlike whatsapp_messages and
- * checkpoints (each of which at least got a manual, user-initiated
- * single-row delete -- deleteWhatsAppMessage, deleteCheckpoint), this
- * table had no deletion path at all short of deleting the whole rule or
- * project. Matches listAutomationRuns's own default exactly, so pruning
- * to this cap can never discard a row any current reader could still see.
+ * listAutomationRuns' own default `limit` (AutomationsPanel's "History"
+ * list never passes a different one), so a busy rule -- a daily
+ * "schedule" trigger, or a "record_created"/"field_equals" rule on an
+ * active entity -- accumulated one row per firing *forever* with nothing
+ * ever reading past the most recent 20: pure unbounded growth for zero
+ * benefit. Unlike whatsapp_messages and checkpoints (each of which at
+ * least got a manual, user-initiated single-row delete --
+ * deleteWhatsAppMessage, deleteCheckpoint), this table had no deletion
+ * path at all short of deleting the whole rule or project. Matches
+ * listAutomationRuns's own default exactly, so pruning to this cap can
+ * never discard a row the History panel's own default view could still
+ * see.
+ *
+ * Round 951: apps/api/src/automations.ts's own hasTooManyConsecutiveFailuresToday
+ * (the round-924/934 scheduled-rule failure cap) now reads past this
+ * default on purpose -- see recordAutomationRun's own doc comment just
+ * below for why this single limit used to let an ordinary WhatsApp
+ * disconnect quietly defeat that cap, and exported so that caller's own
+ * lookback limit can stay derived from this one instead of an
+ * independently-chosen number that could silently drift out of sync with
+ * it.
  */
-const AUTOMATION_RUNS_RETENTION_LIMIT = 20;
+export const AUTOMATION_RUNS_RETENTION_LIMIT = 20;
 
 /**
  * The most recent runs for one rule, newest first -- capped at `limit`
@@ -423,15 +443,36 @@ export function recordAutomationRun(
   db.prepare(
     `INSERT INTO automation_runs (id, projectId, ruleId, status, error, actionType, triggeredAt) VALUES (?, ?, ?, ?, ?, ?, ?)`,
   ).run(randomUUID(), projectId, id, outcome.status, outcome.error ?? null, actionType, now);
-  // Prune anything beyond AUTOMATION_RUNS_RETENTION_LIMIT right away --
-  // ordered identically to listAutomationRuns's own ORDER BY, so "the
-  // rows that survive" and "the rows listAutomationRuns would return"
-  // are always the same set.
+  // Round 951: pruned in two independent buckets -- the newest
+  // AUTOMATION_RUNS_RETENTION_LIMIT "WhatsApp is not connected" rows, and
+  // the newest AUTOMATION_RUNS_RETENTION_LIMIT rows of everything else --
+  // instead of one single top-N cut across both kinds at once. A scheduled
+  // rule stays "due" (isScheduledRuleDue) for the rest of the day after any
+  // failure, including a disconnect, so a single ordinary WhatsApp outage
+  // (round 934's own "no auto-reconnect" reality) can genuinely produce one
+  // disconnect row per minute for however long it lasts -- a single-bucket
+  // top-20 cut let that volume alone evict a REAL failure recorded just
+  // before the outage, with no trace left for
+  // hasTooManyConsecutiveFailuresToday (apps/api/src/automations.ts) to
+  // ever find again. That function's own round-934 doc comment already
+  // claims it "looks further back... so enough genuine failures can still
+  // be found even with disconnect runs interleaved among them" -- true of
+  // its own in-memory filter, but pointless if the rows it would have
+  // found were already gone from the table before that filter ever ran.
+  // Splitting the prune into two buckets guarantees a disconnect flood of
+  // any length can never evict a real row (and vice versa), so those real
+  // rows are always still there for that function's own widened lookback
+  // (see its own updated doc comment) to find.
   db.prepare(
-    `DELETE FROM automation_runs WHERE projectId = ? AND ruleId = ? AND id NOT IN (
-      SELECT id FROM automation_runs WHERE projectId = ? AND ruleId = ? ORDER BY triggeredAt DESC, rowid DESC LIMIT ?
+    `DELETE FROM automation_runs WHERE projectId = ? AND ruleId = ? AND error = ? AND id NOT IN (
+      SELECT id FROM automation_runs WHERE projectId = ? AND ruleId = ? AND error = ? ORDER BY triggeredAt DESC, rowid DESC LIMIT ?
     )`,
-  ).run(projectId, id, projectId, id, AUTOMATION_RUNS_RETENTION_LIMIT);
+  ).run(projectId, id, WHATSAPP_NOT_CONNECTED_ERROR, projectId, id, WHATSAPP_NOT_CONNECTED_ERROR, AUTOMATION_RUNS_RETENTION_LIMIT);
+  db.prepare(
+    `DELETE FROM automation_runs WHERE projectId = ? AND ruleId = ? AND (error IS NULL OR error != ?) AND id NOT IN (
+      SELECT id FROM automation_runs WHERE projectId = ? AND ruleId = ? AND (error IS NULL OR error != ?) ORDER BY triggeredAt DESC, rowid DESC LIMIT ?
+    )`,
+  ).run(projectId, id, WHATSAPP_NOT_CONNECTED_ERROR, projectId, id, WHATSAPP_NOT_CONNECTED_ERROR, AUTOMATION_RUNS_RETENTION_LIMIT);
 }
 
 export function deleteAutomationRule(db: ForgeDatabase, projectId: string, id: string): void {

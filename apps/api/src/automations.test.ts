@@ -973,6 +973,63 @@ test("runScheduledAutomationsCheck still fires a scheduled rule the same day onc
   assert.equal(getAutomationRule(db, "proj1", rule.id)!.lastStatus, "sent");
 });
 
+/**
+ * Round 951: recordAutomationRun's own run-retention prune
+ * (packages/db/src/automations.ts) used to cut a single top-20 window
+ * across BOTH "WhatsApp is not connected" rows and genuine-failure rows
+ * together. isScheduledRuleDue keeps a rule "due" on every single 60s
+ * tick for the rest of the day after ANY failure, disconnect included --
+ * so one ordinary, multi-tick outage (round 934's own "no auto-reconnect"
+ * reality) can genuinely produce dozens of consecutive disconnect rows,
+ * comfortably past that old single-bucket cap of 20. That volume alone
+ * could evict an earlier GENUINE failure from the table entirely, before
+ * a second genuine failure ever got the chance to join it in
+ * hasTooManyConsecutiveFailuresToday's own lookback window -- silently
+ * defeating the round-924 cap for the very ordinary real-world
+ * combination of a permanently wrong destination plus a long outage.
+ * Alternates one genuine connected failure with a 25-tick disconnect
+ * burst (past the old single-bucket retention of 20) seven times over,
+ * all within one UTC day, and confirms the cap still stops genuine send
+ * attempts at exactly 5 -- not all 7.
+ */
+test("runScheduledAutomationsCheck's 5-per-day failure cap survives a long WhatsApp outage interleaved between genuine failures, not just a brief one", async () => {
+  const { db } = setupProject();
+  const rule = insertAutomationRule(db, scheduleRuleBase({ scheduleTimeUtc: "09:00", toNumber: "972501234567" }));
+
+  let connected = true;
+  const sendCalls: { to: string }[] = [];
+  const manager = {
+    getStatus() {
+      return { status: connected ? "connected" : "disconnected", qrDataUrl: null, phoneNumber: connected ? "972500000000" : null, error: null };
+    },
+    async sendMessage(_projectId: string, to: string) {
+      sendCalls.push({ to });
+      return { ok: false, error: "recipient not found" };
+    },
+  } as unknown as WhatsAppWebManager;
+
+  const startedAt = new Date("2026-03-15T09:00:00.000Z").getTime();
+  let minute = 0;
+  const tickAt = () => new Date(startedAt + minute * 60_000);
+
+  for (let rep = 0; rep < 7; rep++) {
+    connected = true;
+    await runScheduledAutomationsCheck(db, manager, tickAt());
+    minute += 1;
+    connected = false;
+    for (let i = 0; i < 25; i++) {
+      await runScheduledAutomationsCheck(db, manager, tickAt());
+      minute += 1;
+    }
+  }
+
+  assert.equal(
+    sendCalls.length,
+    5,
+    "a long disconnect burst interleaved between genuine failures must never let more than 5 real send attempts through in one day",
+  );
+});
+
 test("isAllowedWebhookUrl accepts a real public http(s) URL and rejects non-http(s) schemes, malformed URLs, and local/private hosts", () => {
   assert.equal(isAllowedWebhookUrl("https://hooks.example.com/abc"), true);
   assert.equal(isAllowedWebhookUrl("http://hooks.example.com/abc"), true);

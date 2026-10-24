@@ -3,6 +3,7 @@ import { test } from "node:test";
 import { openDatabase } from "./connection.js";
 import { NotFoundError } from "./repository.js";
 import {
+  AUTOMATION_RUNS_RETENTION_LIMIT,
   deleteAutomationRule,
   deleteAutomationRulesForProject,
   deleteAutomationRunsForRule,
@@ -17,6 +18,7 @@ import {
   listEnabledScheduledRules,
   recordAutomationRun,
   updateAutomationRule,
+  WHATSAPP_NOT_CONNECTED_ERROR,
 } from "./automations.js";
 
 function baseRule(overrides: Partial<Parameters<typeof insertAutomationRule>[1]> = {}) {
@@ -361,6 +363,67 @@ test("recordAutomationRun prunes automation_runs to its retention cap, not just 
     .prepare("SELECT triggeredAt FROM automation_runs WHERE projectId = ? AND ruleId = ? ORDER BY triggeredAt ASC, rowid ASC")
     .all("proj1", rule.id) as { triggeredAt: string }[];
   assert.equal(timestamps.length, 20, "sanity check: exactly 20 rows must remain in insertion order too");
+});
+
+/**
+ * Round 951: before this round, the prune above cut a single top-20
+ * window across every kind of run together -- a scheduled rule stays
+ * "due" every tick for the rest of the day after any failure, disconnect
+ * included, so a single ordinary WhatsApp outage could record far more
+ * than 20 consecutive "WhatsApp is not connected" rows and, under the old
+ * single-bucket prune, evict an earlier GENUINE failure out of the table
+ * entirely -- with no trace left for apps/api/src/automations.ts's own
+ * hasTooManyConsecutiveFailuresToday to ever find again, silently
+ * defeating its 5-per-day cap. Confirms the fix: a disconnect flood of
+ * any length can no longer evict a genuine row, because each kind is now
+ * pruned to its own independent top-20 window.
+ */
+test("recordAutomationRun's retention prune keeps the newest 20 genuine-failure rows and the newest 20 WhatsApp-disconnect rows independently, so one kind can never evict the other", () => {
+  const db = openDatabase(":memory:");
+  ensureAutomationRulesTable(db);
+  const rule = insertAutomationRule(db, baseRule());
+
+  // One genuine failure first...
+  recordAutomationRun(db, "proj1", rule.id, { status: "failed", error: "recipient not found" });
+  // ...then a disconnect flood far past the old single-bucket cap of 20.
+  // Under the pre-fix single-bucket prune, this alone would have evicted
+  // the genuine failure above.
+  for (let i = 0; i < 30; i++) {
+    recordAutomationRun(db, "proj1", rule.id, { status: "failed", error: WHATSAPP_NOT_CONNECTED_ERROR });
+  }
+
+  const genuineCount = (
+    db
+      .prepare("SELECT COUNT(*) AS c FROM automation_runs WHERE projectId = ? AND ruleId = ? AND error != ?")
+      .get("proj1", rule.id, WHATSAPP_NOT_CONNECTED_ERROR) as { c: number }
+  ).c;
+  assert.equal(genuineCount, 1, "the one genuine failure must survive a disconnect flood of any length, not just a short one");
+
+  const disconnectCount = (
+    db
+      .prepare("SELECT COUNT(*) AS c FROM automation_runs WHERE projectId = ? AND ruleId = ? AND error = ?")
+      .get("proj1", rule.id, WHATSAPP_NOT_CONNECTED_ERROR) as { c: number }
+  ).c;
+  assert.equal(disconnectCount, AUTOMATION_RUNS_RETENTION_LIMIT, "the disconnect rows must still be capped at the normal retention limit, just in their own independent bucket");
+
+  // Mirrors the existing sibling test just above, the other direction:
+  // a flood of GENUINE failures must likewise never evict disconnect rows
+  // beyond their own independent cap.
+  for (let i = 0; i < 30; i++) {
+    recordAutomationRun(db, "proj1", rule.id, { status: "failed", error: "recipient not found" });
+  }
+  const genuineCountAfter = (
+    db
+      .prepare("SELECT COUNT(*) AS c FROM automation_runs WHERE projectId = ? AND ruleId = ? AND error != ?")
+      .get("proj1", rule.id, WHATSAPP_NOT_CONNECTED_ERROR) as { c: number }
+  ).c;
+  const disconnectCountAfter = (
+    db
+      .prepare("SELECT COUNT(*) AS c FROM automation_runs WHERE projectId = ? AND ruleId = ? AND error = ?")
+      .get("proj1", rule.id, WHATSAPP_NOT_CONNECTED_ERROR) as { c: number }
+  ).c;
+  assert.equal(genuineCountAfter, AUTOMATION_RUNS_RETENTION_LIMIT, "genuine-failure rows must be capped at the normal retention limit too");
+  assert.equal(disconnectCountAfter, AUTOMATION_RUNS_RETENTION_LIMIT, "a flood of genuine failures must never evict the disconnect bucket's own retained rows either");
 });
 
 test("deleteAutomationRule also wipes that rule's own run history", () => {

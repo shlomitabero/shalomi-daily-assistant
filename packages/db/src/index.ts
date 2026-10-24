@@ -135,6 +135,8 @@ export {
   deleteAutomationRunsForProject,
   disableAutomationRulesForEntity,
   disableAutomationRulesForField,
+  WHATSAPP_NOT_CONNECTED_ERROR,
+  AUTOMATION_RUNS_RETENTION_LIMIT,
   type AutomationRule,
   type AutomationRun,
   type AutomationTrigger,
