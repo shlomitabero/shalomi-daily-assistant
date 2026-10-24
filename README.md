@@ -35,11 +35,12 @@ There's also a big **emergency stop** button in Settings that blocks every actio
 | Variable | What it's for | Where to get it |
 |---|---|---|
 | `OWNER_PASSWORD` | Your login password — required, there is no default | Pick your own |
-| `JWT_SECRET` | Keeps you logged in across server restarts | Any long random string (Render can auto-generate this) |
+| `JWT_SECRET` | Keeps you logged in across server restarts | Any long random string (set it explicitly — if unset, a new random secret is generated on every boot, which logs you out on every redeploy) |
+| `DATA_DIR` | Where `db.json` is stored | Point this at a mounted persistent volume on your host (e.g. Railway's volume mount path) so data survives a redeploy |
 | `ANTHROPIC_API_KEY` | Real AI-written product content instead of demo placeholders | console.anthropic.com → API Keys |
 | `PADDLE_API_KEY` | Lets the server create real checkout prices and open the billing portal | vendors.paddle.com → Developer tools → Authentication |
 | `PADDLE_CLIENT_TOKEN` | Lets the checkout popup open in the browser (safe to be public) | same page, "Client-side tokens" |
-| `PADDLE_WEBHOOK_SECRET` | Lets Paddle securely confirm a real sale happened | vendors.paddle.com → Notifications → add destination `https://your-app.onrender.com/api/billing/webhook`, subscribe to `transaction.completed` |
+| `PADDLE_WEBHOOK_SECRET` | Lets Paddle securely confirm a real sale happened | vendors.paddle.com → Notifications → add destination `https://<your-deployed-domain>/api/billing/webhook`, subscribe to `transaction.completed` |
 | `PADDLE_ENV` | `sandbox` for fake test purchases (default), `production` once Paddle approves your account | set it yourself |
 | `MARKET_DATA_API_KEY` | Turns on real stock-price tracking for the financial module (simulated trading only — see below) | a free-tier provider such as twelvedata.com |
 
@@ -51,15 +52,19 @@ This tracks real prices (once `MARKET_DATA_API_KEY` is set) and lets you run **s
 
 ## Data storage
 
-Everything (opportunities, the ledger, the audit log) is stored in a JSON file on disk, not a real database. **All data is lost on every restart/redeploy** on most free hosting. This is fine for proving the product works end to end; before relying on this for real ongoing operation, it should move to a real database — every place that touches data goes through one file (`server/src/db/store.js`), so that's the only file that migration touches.
+Everything (opportunities, the ledger, the audit log) is stored in a JSON file on disk (`db.json`), not a real database — every place that touches data goes through one file (`server/src/db/store.js`), so that's the only file a future migration to a real database would touch. Each write goes to a temp file first and is renamed into place, so a crash or redeploy mid-write can't leave a half-written, corrupted file.
+
+Whether data actually survives a redeploy depends entirely on where this runs: on **Render's free tier** (or any host with an ephemeral filesystem), the container's disk is thrown away on every redeploy, so all data is lost unless `DATA_DIR` points at a persistent volume. The deployed instance runs on **Railway** with a volume mounted at `/data` and `DATA_DIR` set to it, so data there does survive redeploys.
 
 ## The scheduler
 
-A daily job (source re-check + digest) runs inside the server process via `node-cron`. This only works while the process is alive — **on Render's free tier the service spins down when idle**, so this is not a guarantee it runs every day unattended. A free workaround: use an external pinger (e.g. cron-job.org) to hit `https://your-app.onrender.com/api/health` once a day, which keeps the service awake long enough for the scheduled job to fire.
+A daily job (source re-check + digest) and the autonomous scan (every 4 hours) run inside the server process via `node-cron`. This only works while the process is alive — on a host that spins the service down when idle (e.g. Render's free tier), this is not a guarantee it runs unattended. A free workaround on such a host: use an external pinger (e.g. cron-job.org) to hit `/api/health` periodically, which keeps the service awake long enough for the scheduled job to fire. Railway's always-on plans don't need this.
 
 ## How it's built
 
-- `server/src/engine/*.js` — pure, dependency-free business logic (feasibility math, multi-factor ranking, budget gating, mode gating, ledger math, paper-trading simulation, the daily digest text, idempotency keys, Paddle signature verification). Every module has unit tests (`npm test` — 61 tests).
+- `server/src/engine/*.js` — pure, dependency-free business logic (feasibility math, multi-factor ranking, budget gating, mode gating, ledger math, paper-trading simulation, the daily digest text, idempotency keys, Paddle signature verification).
 - `server/src/services/*.js` — the I/O layer (file-backed store, the gated+idempotent+audit-logged execution choke point every paid action goes through, Paddle API calls, market data).
+- `server/src/routes/*.js` — thin Express route handlers over the services/engine above.
 - `client/` — React (Vite) Hebrew RTL mobile-first dashboard: today's cash in/out, verified net profit (kept separate from forecasts), outstanding receivables, active opportunities, pending approvals, and which sources are actually producing money vs. costing without result.
-- `render.yaml` — one-click deploy blueprint for Render.
+- `npm test` (run from `server/`) runs the full unit test suite across engine, services and routes.
+- `render.yaml` — a one-click deploy blueprint for Render, kept for anyone who prefers that host. The deployed instance actually runs on Railway (see Data storage above).
