@@ -55,6 +55,8 @@ test("WhatsAppPanel's handleDisconnect resumes the background connected-poll aft
     "setMessages",
     "setHasMoreMessages",
     "nextCursorRef",
+    "setRetryError",
+    "setDeleteError",
     "setLoadError",
     "startConnectedPolling",
     "projectId",
@@ -76,6 +78,8 @@ test("WhatsAppPanel's handleDisconnect resumes the background connected-poll aft
     () => {},
     () => {},
     nextCursorRef,
+    () => {},
+    () => {},
     (msg: string) => {
       capturedLoadError = msg;
     },
@@ -118,6 +122,8 @@ test("WhatsAppPanel's handleDisconnect does not resume connected-polling after a
     "setMessages",
     "setHasMoreMessages",
     "nextCursorRef",
+    "setRetryError",
+    "setDeleteError",
     "setLoadError",
     "startConnectedPolling",
     "projectId",
@@ -135,6 +141,8 @@ test("WhatsAppPanel's handleDisconnect does not resume connected-polling after a
     () => {},
     () => {},
     nextCursorRef,
+    () => {},
+    () => {},
     () => {},
     () => {
       startConnectedPollingCalls += 1;
@@ -3044,6 +3052,180 @@ test("WhatsAppPanel's 'Clear history' button calls onHistoryCleared", async () =
       await waitForCondition(() => document.querySelectorAll(".whatsapp-log-list li").length === 0);
 
       assert.equal(historyClearedCalls, 1, "onHistoryCleared must fire exactly once after a successful clear");
+    } finally {
+      globalThis.fetch = originalFetch;
+      globalThis.window.confirm = originalConfirm;
+    }
+  });
+});
+
+/**
+ * Round 902: handleClearHistory already resets retryError to null on a
+ * successful clear (so a stale "retry failed" banner doesn't outlive the
+ * wipe), but deleteError was missed -- a failed single-message delete
+ * right before a Clear History leaves a red "delete failed" banner
+ * rendered unconditionally (no gate on messages.length) above the now-
+ * empty log, referring to a message that no longer exists anywhere.
+ */
+test("WhatsAppPanel's 'Clear history' also clears a stale deleteError banner left over from an earlier failed single-message delete", async () => {
+  await withJsdom(async () => {
+    const originalFetch = globalThis.fetch;
+    const originalConfirm = globalThis.window.confirm;
+    globalThis.window.confirm = (() => true) as typeof window.confirm;
+    const message: WhatsAppMessageLogEntry = {
+      id: "m1",
+      direction: "in",
+      fromNumber: "972521112233",
+      toNumber: "972501234567",
+      body: "clear me",
+      matchedLabel: null,
+      matchedEntityName: null,
+      matchedRecordId: null,
+      status: "received",
+      createdAt: new Date("2026-03-15T14:32:00Z").toISOString(),
+    };
+    let deleteOneCalls = 0;
+    globalThis.fetch = (async (input: string, init?: RequestInit): Promise<Response> => {
+      const method = init?.method ?? "GET";
+      if (method === "GET" && input === "/api/projects/proj1/integrations/whatsapp/status") {
+        return new Response(
+          JSON.stringify({ status: "connected", phoneNumber: "972501234567", qrDataUrl: null, error: null }),
+          { status: 200, headers: { "content-type": "application/json" } },
+        );
+      }
+      if (method === "GET" && input === "/api/projects/proj1/integrations/whatsapp/messages") {
+        return new Response(JSON.stringify({ messages: [message] }), { status: 200, headers: { "content-type": "application/json" } });
+      }
+      const deleteOneMatch = /^\/api\/projects\/proj1\/integrations\/whatsapp\/messages\/([^/]+)$/.exec(input);
+      if (method === "DELETE" && deleteOneMatch) {
+        deleteOneCalls += 1;
+        return new Response(JSON.stringify({ error: "Delete failed" }), { status: 500, headers: { "content-type": "application/json" } });
+      }
+      if (method === "DELETE" && input === "/api/projects/proj1/integrations/whatsapp/messages") {
+        return new Response(null, { status: 204 });
+      }
+      throw new Error(`unexpected request ${method} ${input}`);
+    }) as typeof fetch;
+    try {
+      render(
+        React.createElement(
+          ThemeProvider,
+          null,
+          React.createElement(
+            LanguageProvider,
+            null,
+            React.createElement(WhatsAppPanel, {
+              projectId: "proj1",
+              projectName: "Test Project",
+              onClose: () => {},
+              onJumpToEntity: () => {},
+              onJumpToRecord: () => {},
+            }),
+          ),
+        ),
+      );
+      await waitForCondition(() => document.querySelectorAll(".whatsapp-log-list li").length === 1);
+
+      const deleteButton = document.querySelector(".whatsapp-log-delete") as HTMLButtonElement;
+      assert.ok(deleteButton, "expected a per-message delete button");
+      fireEvent.click(deleteButton);
+      await waitForCondition(() => deleteOneCalls === 1 && document.querySelector(".error") !== null);
+      assert.match(document.body.textContent ?? "", /Delete failed/, "expected the failed delete's error banner to render");
+
+      const clearButton = Array.from(document.querySelectorAll("button")).find((b) => b.textContent === "Clear history");
+      assert.ok(clearButton, "expected a 'Clear history' button");
+      fireEvent.click(clearButton!);
+      await waitForCondition(() => document.querySelectorAll(".whatsapp-log-list li").length === 0);
+
+      assert.equal(document.querySelector(".error") === null, true, "the stale deleteError banner must not survive the clear -- no message it could refer to still exists");
+    } finally {
+      globalThis.fetch = originalFetch;
+      globalThis.window.confirm = originalConfirm;
+    }
+  });
+});
+
+/**
+ * Round 902: the same staleness as above, reached via Disconnect instead
+ * of Clear History -- handleDisconnect's own successful path wipes
+ * `messages` to `[]` but, before this fix, reset neither retryError nor
+ * deleteError, so a stale "delete failed" banner from just before
+ * disconnecting persisted into the disconnected view.
+ */
+test("WhatsAppPanel's Disconnect also clears a stale deleteError banner left over from an earlier failed single-message delete", async () => {
+  await withJsdom(async () => {
+    const originalFetch = globalThis.fetch;
+    const originalConfirm = globalThis.window.confirm;
+    globalThis.window.confirm = (() => true) as typeof window.confirm;
+    const message: WhatsAppMessageLogEntry = {
+      id: "m1",
+      direction: "in",
+      fromNumber: "972521112233",
+      toNumber: "972501234567",
+      body: "disconnect me",
+      matchedLabel: null,
+      matchedEntityName: null,
+      matchedRecordId: null,
+      status: "received",
+      createdAt: new Date("2026-03-15T14:32:00Z").toISOString(),
+    };
+    let deleteOneCalls = 0;
+    globalThis.fetch = (async (input: string, init?: RequestInit): Promise<Response> => {
+      const method = init?.method ?? "GET";
+      if (method === "GET" && input === "/api/projects/proj1/integrations/whatsapp/status") {
+        return new Response(
+          JSON.stringify({ status: "connected", phoneNumber: "972501234567", qrDataUrl: null, error: null }),
+          { status: 200, headers: { "content-type": "application/json" } },
+        );
+      }
+      if (method === "GET" && input === "/api/projects/proj1/integrations/whatsapp/messages") {
+        return new Response(JSON.stringify({ messages: [message] }), { status: 200, headers: { "content-type": "application/json" } });
+      }
+      const deleteOneMatch = /^\/api\/projects\/proj1\/integrations\/whatsapp\/messages\/([^/]+)$/.exec(input);
+      if (method === "DELETE" && deleteOneMatch) {
+        deleteOneCalls += 1;
+        return new Response(JSON.stringify({ error: "Delete failed" }), { status: 500, headers: { "content-type": "application/json" } });
+      }
+      if (method === "POST" && input === "/api/projects/proj1/integrations/whatsapp/disconnect") {
+        return new Response(
+          JSON.stringify({ status: "disconnected", phoneNumber: null, qrDataUrl: null, error: null }),
+          { status: 200, headers: { "content-type": "application/json" } },
+        );
+      }
+      throw new Error(`unexpected request ${method} ${input}`);
+    }) as typeof fetch;
+    try {
+      render(
+        React.createElement(
+          ThemeProvider,
+          null,
+          React.createElement(
+            LanguageProvider,
+            null,
+            React.createElement(WhatsAppPanel, {
+              projectId: "proj1",
+              projectName: "Test Project",
+              onClose: () => {},
+              onJumpToEntity: () => {},
+              onJumpToRecord: () => {},
+            }),
+          ),
+        ),
+      );
+      await waitForCondition(() => document.querySelectorAll(".whatsapp-log-list li").length === 1);
+
+      const deleteButton = document.querySelector(".whatsapp-log-delete") as HTMLButtonElement;
+      assert.ok(deleteButton, "expected a per-message delete button");
+      fireEvent.click(deleteButton);
+      await waitForCondition(() => deleteOneCalls === 1 && document.querySelector(".error") !== null);
+      assert.match(document.body.textContent ?? "", /Delete failed/, "expected the failed delete's error banner to render");
+
+      const disconnectButton = Array.from(document.querySelectorAll("button")).find((b) => b.textContent === "Disconnect");
+      assert.ok(disconnectButton, "expected a 'Disconnect' button");
+      fireEvent.click(disconnectButton!);
+      await waitForCondition(() => document.querySelectorAll(".whatsapp-log-list li").length === 0);
+
+      assert.equal(document.querySelector(".error") === null, true, "the stale deleteError banner must not survive a successful disconnect -- no message it could refer to still exists");
     } finally {
       globalThis.fetch = originalFetch;
       globalThis.window.confirm = originalConfirm;

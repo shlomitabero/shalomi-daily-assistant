@@ -483,6 +483,12 @@ export function WhatsAppPanel({
       setMessages([]);
       setHasMoreMessages(false);
       nextCursorRef.current = null;
+      // Round 902: same staleness handleClearHistory already guards
+      // against -- a retryError/deleteError from a failed retry/delete
+      // just before this disconnect otherwise survives the message wipe
+      // into the disconnected view, with no message left for it to refer to.
+      setRetryError(null);
+      setDeleteError(null);
     } catch (err) {
       setLoadError((err as Error).message);
       // The disconnect request itself failed -- nothing changed
@@ -731,6 +737,11 @@ export function WhatsAppPanel({
       setHasMoreMessages(false);
       nextCursorRef.current = null;
       setRetryError(null);
+      // Round 902: a stale deleteError (e.g. from a failed delete attempt
+      // just before this clear) otherwise survives the wipe -- the panel
+      // would show an empty log with a red "delete failed" banner on top,
+      // referring to a message that no longer exists anywhere.
+      setDeleteError(null);
       onHistoryCleared?.();
     } catch (err) {
       setLoadError((err as Error).message);
