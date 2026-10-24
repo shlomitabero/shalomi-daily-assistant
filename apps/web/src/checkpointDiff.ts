@@ -201,7 +201,21 @@ export function computeCheckpointDiff(currentSpec: ProductSpec, checkpointSpec: 
       continue;
     }
     const checkpointFieldsByName = new Map(inCheckpoint.fields.map((f) => [f.name, f]));
+    // Round 946: a case-only field rename (e.g. "email" -> "Email" via
+    // refine) is, per migrate.ts's own hardening across rounds 617-620, a
+    // true no-op -- the same physical SQLite column, same data, nothing
+    // actually migrated. Without this lowercased fallback (mirroring
+    // migrate.ts's identical prevFieldsByName.get(name) ?? prevFieldByLowerName
+    // convention), the exact-string lookup below misses in BOTH directions
+    // at once -- checkpointFieldsByName has no "Email" entry (it's keyed by
+    // the checkpoint's own differently-cased "email"), and currentFieldNames
+    // has no "email" entry (it's keyed by the current spec's "Email") -- so
+    // this one field was reported as simultaneously removed ("Email") AND
+    // added ("email") in the same diff, a flatly contradictory message for
+    // a change that doesn't actually lose or gain anything.
+    const checkpointFieldsByLowerName = new Map(inCheckpoint.fields.map((f) => [f.name.toLowerCase(), f]));
     const currentFieldNames = new Set(entity.fields.map((f) => f.name));
+    const currentFieldNamesLower = new Set(entity.fields.map((f) => f.name.toLowerCase()));
     // Counted over every field that exists on EITHER side (deduped by name,
     // the current spec's definition winning for a field present on both),
     // not just whichever of removed/added/changed list a field lands in --
@@ -211,14 +225,14 @@ export function computeCheckpointDiff(currentSpec: ProductSpec, checkpointSpec: 
     for (const f of entity.fields) allFieldsByName.set(f.name, f);
     const labelOccurrences = fieldLabelOccurrences(Array.from(allFieldsByName.values()));
     const removedFieldNames = entity.fields
-      .filter((f) => !checkpointFieldsByName.has(f.name))
+      .filter((f) => !checkpointFieldsByName.has(f.name) && !checkpointFieldsByLowerName.has(f.name.toLowerCase()))
       .map((f) => fieldDisplayLabel(f, labelOccurrences));
     const addedFieldNames = inCheckpoint.fields
-      .filter((f) => !currentFieldNames.has(f.name))
+      .filter((f) => !currentFieldNames.has(f.name) && !currentFieldNamesLower.has(f.name.toLowerCase()))
       .map((f) => fieldDisplayLabel(f, labelOccurrences));
     const changedFieldNames = entity.fields
       .filter((f) => {
-        const inCheckpointField = checkpointFieldsByName.get(f.name);
+        const inCheckpointField = checkpointFieldsByName.get(f.name) ?? checkpointFieldsByLowerName.get(f.name.toLowerCase());
         return inCheckpointField !== undefined && fieldSignature(f) !== fieldSignature(inCheckpointField);
       })
       .map((f) => fieldDisplayLabel(f, labelOccurrences));

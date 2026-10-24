@@ -199,6 +199,43 @@ test("computeCheckpointDiff reports an entity that both lost and gained fields a
 });
 
 /**
+ * Round 946: a field renamed ONLY by letter case (same physical column, same
+ * data -- per migrate.ts's own case-only-rename hardening across rounds
+ * 617-620) used to match neither exact-string lookup in either direction at
+ * once, so the exact same field was reported as BOTH removed ("Email") and
+ * added ("email") in the same diff -- a flatly contradictory message for a
+ * change that doesn't actually lose or gain anything. Since fieldSignature
+ * never compares a field's own name, a correctly-matched case-only rename
+ * (same type/required/enum shape) must report no change at all for that
+ * entity -- matching migrate.ts's own treatment of this as a true no-op.
+ */
+test("computeCheckpointDiff never reports a case-only field rename as both removed and added -- a case-only rename is a true no-op, same as migrate.ts treats it", () => {
+  const current = makeSpec([
+    { name: "Customer", label: "Customers", fields: [{ name: "Email", type: "text", required: false }] },
+  ]);
+  const checkpoint = makeSpec([
+    { name: "Customer", label: "Customers", fields: [{ name: "email", type: "text", required: false }] },
+  ]);
+
+  const diff = computeCheckpointDiff(current, checkpoint);
+  assert.deepEqual(diff.changedEntities, [], "a case-only field rename alone must report no change at all, not a contradictory removed+added pair");
+});
+
+test("computeCheckpointDiff still reports a case-only-renamed field as changedFieldNames when it ALSO genuinely changed type, instead of missing the real change", () => {
+  const current = makeSpec([
+    { name: "Customer", label: "Customers", fields: [{ name: "Status", type: "enum", enumValues: ["open", "closed"], required: true }] },
+  ]);
+  const checkpoint = makeSpec([
+    { name: "Customer", label: "Customers", fields: [{ name: "status", type: "text", required: true }] },
+  ]);
+
+  const diff = computeCheckpointDiff(current, checkpoint);
+  assert.deepEqual(diff.changedEntities, [
+    { name: "Customer", label: "Customers", removedFieldNames: [], addedFieldNames: [], changedFieldNames: ["Status"], descriptionChanged: false },
+  ]);
+});
+
+/**
  * New in this round: a same-named field that changed TYPE between the two
  * specs (e.g. a free-text "status" field a refine turned into an enum) was
  * previously invisible to computeCheckpointDiff -- name-matching alone
