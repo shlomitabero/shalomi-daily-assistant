@@ -2344,7 +2344,17 @@ function AppContent() {
                       refineEvents.current.push(event);
                       onEvent(event);
                     };
-                    return streamRefine(project.id, refineText, wrappedOnEvent);
+                    // Round 938: refineText itself stays untrimmed until
+                    // handleBuildComplete clears it at the very end of this
+                    // whole stream -- sending it raw here, instead of the
+                    // already-trimmed pendingRefineInstruction.current
+                    // handleRefine set just above, would bake a stray
+                    // leading/trailing space the user typed into this
+                    // checkpoint's own PERMANENT label (changeLabel on the
+                    // server), while the local refine-history chat pane
+                    // right next to it shows the clean, trimmed text for
+                    // the exact same action.
+                    return streamRefine(project.id, pendingRefineInstruction.current ?? refineText, wrappedOnEvent);
                   }}
                   onComplete={handleBuildComplete}
                   onBack={() => setRefineRunning(false)}

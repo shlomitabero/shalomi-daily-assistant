@@ -2781,6 +2781,58 @@ test("POST /refine on a Hebrew project with a plain-English instruction still la
   });
 });
 
+/**
+ * Round 938: RefineSchema's own `instruction` field was the one free-text
+ * schema in this file missing `.trim()` -- every sibling
+ * (description/idea/name/label/role/assumption/persona, round 919's own
+ * idea fix) already has it. A stray leading/trailing space the client
+ * sent (e.g. via the live preview's own refine box, where refineText
+ * isn't trimmed before the network call) reached this route's permanent
+ * checkpoint changeLabel verbatim, stored forever in the Time Machine
+ * history with a visible stray space.
+ */
+test("POST /refine trims a leading/trailing space from the instruction before baking it into the permanent checkpoint label", async () => {
+  await withServer(async (baseUrl) => {
+    const token = await signup(baseUrl);
+    const createRes = await fetch(`${baseUrl}/api/projects`, {
+      method: "POST",
+      headers: authHeaders(token),
+      body: JSON.stringify({ description: "A CRM to track customers and their orders for my shop." }),
+    });
+    assert.equal(createRes.status, 201);
+    const created = (await createRes.json()) as { project: { id: string } };
+    const projectId = created.project.id;
+
+    const buildRes = await fetch(`${baseUrl}/api/projects/${projectId}/build`, {
+      method: "POST",
+      headers: authHeaders(token),
+    });
+    assert.equal(buildRes.status, 200);
+    await collectSSE(buildRes);
+
+    const refineRes = await fetch(`${baseUrl}/api/projects/${projectId}/refine`, {
+      method: "POST",
+      headers: authHeaders(token),
+      body: JSON.stringify({ instruction: "  fix the invoice total  " }),
+    });
+    assert.equal(refineRes.status, 200);
+    const refineEvents = await collectSSE(refineRes);
+    assert.ok(refineEvents.every((e) => e.status !== "failed"), "refine should succeed on valid input");
+
+    const checkpointsRes = await fetch(`${baseUrl}/api/projects/${projectId}/checkpoints`, {
+      headers: authHeaders(token),
+    });
+    const { checkpoints } = (await checkpointsRes.json()) as { checkpoints: { label: string }[] };
+    const refineCheckpoint = checkpoints.find((c) => c.label.includes("fix the invoice total"));
+    assert.ok(refineCheckpoint, "expected a checkpoint for the refine");
+    assert.equal(
+      refineCheckpoint!.label,
+      "Refine: fix the invoice total",
+      `the stray leading/trailing space must never reach the permanent checkpoint label -- got "${refineCheckpoint!.label}"`,
+    );
+  });
+});
+
 test("POST /build a second time on an already-built project is rejected, instead of silently inserting a second checkpoint mislabeled 'Initial build'", async () => {
   await withServer(async (baseUrl) => {
     const token = await signup(baseUrl);

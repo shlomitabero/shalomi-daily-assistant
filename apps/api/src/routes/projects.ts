@@ -98,7 +98,13 @@ const EnhanceIdeaSchema = z.object({
 });
 
 const RefineSchema = z.object({
-  instruction: z.string().min(1, "instruction is required"),
+  // Round 938: matches every sibling free-text schema in this file
+  // (description/idea/name/label/role/assumption/persona above, round
+  // 919's own idea fix) -- this one alone was missing .trim(), so a
+  // stray leading/trailing space the client sent reached this route's
+  // own permanent checkpoint changeLabel (`Refine: ${instruction}`)
+  // verbatim, stored forever in the Time Machine history.
+  instruction: z.string().trim().min(1, "instruction is required"),
 });
 
 /**
