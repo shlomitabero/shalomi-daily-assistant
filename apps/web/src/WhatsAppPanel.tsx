@@ -35,7 +35,7 @@ import {
   getWhatsAppLogRecentSearches,
   removeWhatsAppLogRecentSearch,
 } from "./whatsappLogRecentSearches.js";
-import { setWhatsAppLastSeenId } from "./whatsappUnread.js";
+import { setWhatsAppLastSeen } from "./whatsappUnread.js";
 
 /**
  * Mirrors EntityPanel.tsx's and GlobalSearchPanel.tsx's own Highlighted
@@ -452,9 +452,18 @@ export function WhatsAppPanel({
    * `messages` itself (not just its length) so a message removed via
    * "delete" or "clear" -- which never advances how far the owner has
    * genuinely read -- doesn't spuriously bump the marker either.
+   *
+   * Only self-heals this way while THIS browser's panel happens to be
+   * open (round 940): a different collaborator deleting this exact
+   * tracked message from a different session leaves this marker stale
+   * here, with no live signal of any kind to resync it from. Stores the
+   * message's own createdAt alongside its id for exactly that reason --
+   * see countUnreadWhatsAppMessages' own doc comment for how that lets
+   * the unread count stay correct even once this marker's tracked id no
+   * longer exists.
    */
   useEffect(() => {
-    if (messages.length > 0) setWhatsAppLastSeenId(projectId, messages[0].id);
+    if (messages.length > 0) setWhatsAppLastSeen(projectId, { id: messages[0].id, createdAt: messages[0].createdAt });
   }, [projectId, messages]);
 
   /**

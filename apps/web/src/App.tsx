@@ -76,7 +76,7 @@ import {
 } from "./projectStatusFilter.js";
 import { clearIdeaDraft, getIdeaDraft, saveIdeaDraft } from "./ideaDraft.js";
 import { formatDocumentTitle } from "./documentTitle.js";
-import { countUnreadWhatsAppMessages, getWhatsAppLastSeenId } from "./whatsappUnread.js";
+import { countUnreadWhatsAppMessages, getWhatsAppLastSeen } from "./whatsappUnread.js";
 import { findNewInboundMessages } from "./whatsappNotify.js";
 import { LanguageProvider, useTranslation } from "./i18n/LanguageContext.js";
 import { LanguageSwitcher } from "./i18n/LanguageSwitcher.js";
@@ -811,7 +811,7 @@ function AppContent() {
         const { messages } = await listWhatsAppMessages(projectId);
         if (cancelled) return;
         setWhatsappUnreadCount(
-          showWhatsAppRef.current ? 0 : countUnreadWhatsAppMessages(messages, getWhatsAppLastSeenId(projectId)),
+          showWhatsAppRef.current ? 0 : countUnreadWhatsAppMessages(messages, getWhatsAppLastSeen(projectId)),
         );
         maybeNotifyNewWhatsAppMessages(messages, lastNotifiedWhatsAppIdRef, document.hidden, tRef.current);
       } catch {
