@@ -5606,7 +5606,7 @@ export function EntityView({ entity, highlightRecordId, onHighlightHandled, onJu
             )}
             {viewMode === "calendar" && dateField && (
               <button type="button" className="ics-export-btn" onClick={handleExportIcs} disabled={icsMonthRecords.length === 0}>
-                📅 Export to Calendar (ICS)
+                {\`📅 Export \${calendarMonth.toLocaleDateString(undefined, { month: "long", year: "numeric" })} to Calendar (ICS)\`}
               </button>
             )}
             <button

@@ -3844,7 +3844,16 @@ export function EntityPanel({
                 onClick={handleExportIcs}
                 disabled={icsMonthRecords.length === 0}
               >
-                {t("entity.exportIcs")}
+                {/* Round 937: unlike its sibling Export CSV button right
+                    next to it (which already says "Export N selected" when
+                    scoped), this button gave zero indication it only ever
+                    exports the calendar grid's CURRENTLY-SHOWN month --
+                    silently missing every other month's records with no
+                    warning, confusing anyone expecting "export my bookings"
+                    the way Export CSV means "export my records". */}
+                {t("entity.exportIcs.month", {
+                  month: calendarMonth.toLocaleDateString(LOCALE[lang], { month: "long", year: "numeric" }),
+                })}
               </button>
             )}
             <button

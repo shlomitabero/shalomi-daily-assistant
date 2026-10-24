@@ -3466,6 +3466,56 @@ test("EntityPanel's ICS export button only appears in calendar view, and is disa
   });
 });
 
+/**
+ * Round 937: this button's own text used to be a flat "Export to
+ * Calendar (ICS)" with zero indication that it only ever exports the
+ * calendar grid's CURRENTLY-SHOWN month -- unlike its sibling Export CSV
+ * button right next to it, which already says "Export N selected" when
+ * its own scope narrows. Confirms the button's text names the real
+ * visible month (the exact same label the calendar grid's own nav
+ * header shows), and that it updates when the user pages to a different
+ * month -- so the label never silently disagrees with what a click
+ * would actually export.
+ */
+test("EntityPanel's ICS export button names the real month it will export, matching the calendar grid's own month label, and updates when paging months", async () => {
+  await withJsdom(async () => {
+    const today = isoDateToday();
+    const store: EntityRecord[] = [{ id: 1, title: "Dana's appointment", date: today }];
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = mockListRecordsFetch(store) as typeof fetch;
+    try {
+      renderAppointmentPanel();
+      await waitForCondition(() => document.querySelector(".entity-toolbar") !== null);
+
+      const calendarToggle = document.querySelectorAll(".view-toggle-btn")[1] as HTMLButtonElement;
+      fireEvent.click(calendarToggle);
+      await waitForCondition(() => document.querySelector(".calendar-month-label") !== null);
+
+      const monthLabel = () => document.querySelector(".calendar-month-label")!.textContent ?? "";
+      const icsBtnText = () => (document.querySelector(".ics-export-btn") as HTMLElement).textContent ?? "";
+
+      const currentMonthLabel = monthLabel();
+      assert.ok(currentMonthLabel, "expected a real month label from the calendar grid's own nav header");
+      assert.ok(
+        icsBtnText().includes(currentMonthLabel),
+        "the export button's own text must name the exact same month the calendar grid is showing",
+      );
+
+      const nextBtn = document.querySelector('[aria-label="Next month"]') as HTMLButtonElement;
+      fireEvent.click(nextBtn);
+      await waitForCondition(() => monthLabel() !== currentMonthLabel);
+
+      const nextMonthLabel = monthLabel();
+      assert.ok(
+        icsBtnText().includes(nextMonthLabel),
+        "paging to a different month must update the button's own text to name the new month, not keep showing the old one",
+      );
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+});
+
 const RENTAL_ENTITY: Entity = {
   name: "Rental",
   label: "Rental",

@@ -3558,7 +3558,13 @@ test("the exported EntityView renders a real 'Export to Calendar (ICS)' button b
   assert.match(entityViewJsx, /function buildCalendarIcs/);
   assert.match(entityViewJsx, /function handleExportIcs/);
   assert.match(entityViewJsx, /ics-export-btn/);
-  assert.match(entityViewJsx, /Export to Calendar \(ICS\)/);
+  // Round 937: the button's own label now states which month it exports
+  // (unlike before, when it silently exported only the calendar grid's
+  // currently-shown month with zero indication of that scope) -- the
+  // source text is the two literal halves of a template-literal
+  // expression around calendarMonth, not one contiguous string anymore.
+  assert.match(entityViewJsx, /Export \$\{calendarMonth\.toLocaleDateString/);
+  assert.match(entityViewJsx, /to Calendar \(ICS\)/);
   assert.match(entityViewJsx, /new Blob\(\[ics\], \{ type: "text\/calendar;charset=utf-8" \}\)/);
 
   const stylesCss = files.find((f) => f.path === "web/src/styles.css")!.content;
