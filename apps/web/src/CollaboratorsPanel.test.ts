@@ -505,6 +505,80 @@ test("CollaboratorsPanel tells the owner their role pick was ignored when re-inv
 });
 
 /**
+ * Round 930: the "role wasn't changed" message above was computed from
+ * existingCollaborator -- a snapshot of this panel's own collaborators
+ * state captured BEFORE the invite request was sent. If something else
+ * changed this collaborator's real role between this panel's last fetch
+ * and this submit (another tab/session, or a role-dropdown change still
+ * in flight), that stale snapshot can disagree with the FRESH role the
+ * POST response actually returns. Dana is shown as "viewer" (stale) when
+ * this panel loaded, but the server's real, current role for her is
+ * already "editor" (changed elsewhere) -- confirmed by the POST response
+ * itself returning her as "editor". The owner re-invites her AT "editor",
+ * matching her real, current role exactly: the message must say she
+ * already has access, not falsely claim the pick was ignored.
+ */
+test("CollaboratorsPanel's re-invite message reflects the fresh server response, not a stale pre-request snapshot of the collaborator's role", async () => {
+  await withJsdom(async () => {
+    const originalFetch = globalThis.fetch;
+    const staleDana = makeCollaborator("u1", "dana@example.com", "viewer");
+    const freshDana = makeCollaborator("u1", "dana@example.com", "editor");
+
+    globalThis.fetch = (async (input: string, init?: RequestInit) => {
+      const method = init?.method ?? "GET";
+      if (method === "GET" && input === "/api/projects/proj1/collaborators") {
+        // The panel's own initial load sees Dana as "viewer" -- stale by
+        // the time the invite below is actually submitted.
+        return new Response(JSON.stringify({ collaborators: [staleDana], owner: { userId: "owner1", email: "amit@example.com" } }), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        });
+      }
+      if (method === "POST" && input === "/api/projects/proj1/collaborators") {
+        // The real, current state: Dana's role was already "editor" by the
+        // time this request reached the server (addCollaborator's own
+        // idempotent no-op leaves it untouched) -- exactly matching the
+        // role the owner is about to pick below.
+        return new Response(
+          JSON.stringify({ collaborators: [freshDana], owner: { userId: "owner1", email: "amit@example.com" } }),
+          { status: 201, headers: { "content-type": "application/json" } },
+        );
+      }
+      throw new Error(`unexpected request ${method} ${input}`);
+    }) as typeof fetch;
+
+    try {
+      renderPanel(true);
+      await waitForCondition(() => document.querySelectorAll(".collab-list li").length === 2);
+
+      fireEvent.change(document.querySelector('.collab-invite-form input[type="email"]') as HTMLInputElement, {
+        target: { value: "dana@example.com" },
+      });
+      fireEvent.change(document.querySelector('.collab-invite-form select[aria-label]') as HTMLSelectElement, {
+        target: { value: "editor" },
+      });
+      fireEvent.submit(document.querySelector(".collab-invite-form")!);
+
+      // Note: waiting on "dana@example.com" alone would resolve
+      // immediately -- her email is already in the list from the initial
+      // (stale) GET, before the invite's own response is even processed.
+      // Wait on the actual invite-result message instead.
+      await waitForCondition(() => document.body.textContent?.includes("already has access to this project.") ?? false);
+      assert.ok(
+        !document.body.textContent?.includes("role wasn't changed"),
+        "Dana's real, current role (from the fresh response) already matches what the owner picked -- must not claim the pick was ignored",
+      );
+      assert.ok(
+        document.body.textContent?.includes("already has access to this project."),
+        "must show the plain 'already has access' message, matching the fresh server state",
+      );
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+});
+
+/**
  * The other half: a genuinely NEW collaborator must never trigger the
  * "already has access" message -- it's conditional on the invited email
  * already being in the list BEFORE the request, not a blanket message

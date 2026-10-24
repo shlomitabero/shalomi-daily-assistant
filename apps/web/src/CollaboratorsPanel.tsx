@@ -93,8 +93,20 @@ export function CollaboratorsPanel({
         // who's already an Editor) would see the same plain "already has
         // access" message and reasonably believe the role they just picked
         // took effect.
+        //
+        // Round 930: compares against the collaborator's role in the FRESH
+        // response above, not existingCollaborator's own role (a snapshot
+        // from BEFORE this request was sent) -- if something else changed
+        // this person's role between this panel's last fetch and this
+        // submit (another tab/session, or a same-tab role-dropdown change
+        // still in flight), the stale snapshot could disagree with what the
+        // server actually has, telling the owner their pick "wasn't
+        // changed" even when it already matches, or vice versa. The fresh
+        // list just set via setCollaborators above is the one genuinely
+        // authoritative read of this person's CURRENT role.
+        const currentRole = collaborators.find((c) => c.userId === existingCollaborator.userId)?.role ?? existingCollaborator.role;
         setInviteInfo(
-          existingCollaborator.role === inviteRole
+          currentRole === inviteRole
             ? t("collab.alreadyCollaborator", { email: trimmed })
             : t("collab.alreadyCollaboratorRoleUnchanged", { email: trimmed }),
         );
