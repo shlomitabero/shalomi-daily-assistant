@@ -795,10 +795,26 @@ const MAX_CONSECUTIVE_SCHEDULE_FAILURES_PER_DAY = 5;
  * identical failures within the one day they happened, exactly
  * mirroring isScheduledRuleDue's own "retry today, fresh start
  * tomorrow" contract.
+ *
+ * Round 934: a "WhatsApp is not connected" failure (fireScheduledRule's
+ * own pre-send check, just above) is excluded from this count entirely
+ * -- it's evidence the owner simply hadn't reconnected yet, not evidence
+ * the destination itself is broken, and counting it toward this cap
+ * could trip it on nothing more than a brief disconnect. Once tripped,
+ * this check returns true forever for the rest of the day (no new run
+ * ever gets recorded to change the window), which directly contradicts
+ * isScheduledRuleDue's own documented guarantee of recovering "even
+ * after the owner reconnects minutes later" -- a daily report could go
+ * completely unsent for the rest of the day over a 5-minute outage.
+ * Looks further back than MAX_CONSECUTIVE_SCHEDULE_FAILURES_PER_DAY
+ * itself (the full retention window) so enough genuine failures can
+ * still be found even with disconnect runs interleaved among them.
  */
 function hasTooManyConsecutiveFailuresToday(db: ForgeDatabase, rule: AutomationRule, now: Date): boolean {
   const todayUtc = now.toISOString().slice(0, 10);
-  const runs = listAutomationRuns(db, rule.projectId, rule.id, MAX_CONSECUTIVE_SCHEDULE_FAILURES_PER_DAY);
+  const runs = listAutomationRuns(db, rule.projectId, rule.id)
+    .filter((run) => run.error !== "WhatsApp is not connected")
+    .slice(0, MAX_CONSECUTIVE_SCHEDULE_FAILURES_PER_DAY);
   if (runs.length < MAX_CONSECUTIVE_SCHEDULE_FAILURES_PER_DAY) return false;
   return runs.every((run) => run.status === "failed" && run.triggeredAt.slice(0, 10) === todayUtc);
 }

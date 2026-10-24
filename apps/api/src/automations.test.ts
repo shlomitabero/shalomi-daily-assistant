@@ -924,6 +924,50 @@ test("runScheduledAutomationsCheck stops retrying a scheduled rule after 5 conse
   assert.equal(sendCalls.length, 6, "a new day must retry again, not stay suppressed forever");
 });
 
+/**
+ * Round 934: a WhatsApp disconnect (not a genuinely broken destination)
+ * must never trip hasTooManyConsecutiveFailuresToday's cap -- that would
+ * directly contradict isScheduledRuleDue's own documented guarantee of
+ * recovering "even after the owner reconnects minutes later." Before
+ * this round, 5 ticks landing during a disconnect tripped the cap
+ * exactly like 5 genuine send failures would, and -- since the cap, once
+ * tripped, suppresses every later tick before it can record a NEW run
+ * that would change the window -- there was no way to recover the same
+ * day even the instant WhatsApp reconnected.
+ */
+test("runScheduledAutomationsCheck still fires a scheduled rule the same day once WhatsApp reconnects, even after 5 consecutive disconnect-caused failures", async () => {
+  const { db } = setupProject();
+  const rule = insertAutomationRule(db, scheduleRuleBase({ scheduleTimeUtc: "09:00", toNumber: "972501234567" }));
+
+  const sendCalls: { to: string; body: string }[] = [];
+  let connected = false;
+  const manager = {
+    getStatus() {
+      return { status: connected ? "connected" : "disconnected", qrDataUrl: null, phoneNumber: connected ? "972500000000" : null, error: null };
+    },
+    async sendMessage(_projectId: string, to: string, body: string) {
+      sendCalls.push({ to, body });
+      return { ok: true };
+    },
+  } as unknown as WhatsAppWebManager;
+
+  // 5 consecutive ticks while WhatsApp is disconnected -- exactly as many
+  // as the cap's own threshold, which a genuinely broken destination
+  // would trip on.
+  for (const minute of ["09:00", "09:01", "09:02", "09:03", "09:04"]) {
+    await runScheduledAutomationsCheck(db, manager, new Date(`2026-03-15T${minute}:00.000Z`));
+  }
+  assert.equal(sendCalls.length, 0, "no send should have been attempted while disconnected");
+  assert.equal(getAutomationRule(db, "proj1", rule.id)!.lastStatus, "failed");
+
+  // The owner reconnects, and the next tick arrives -- still the same day.
+  connected = true;
+  await runScheduledAutomationsCheck(db, manager, new Date("2026-03-15T09:05:00.000Z"));
+
+  assert.equal(sendCalls.length, 1, "must actually attempt the send now that WhatsApp is connected again, not stay suppressed for the rest of the day");
+  assert.equal(getAutomationRule(db, "proj1", rule.id)!.lastStatus, "sent");
+});
+
 test("isAllowedWebhookUrl accepts a real public http(s) URL and rejects non-http(s) schemes, malformed URLs, and local/private hosts", () => {
   assert.equal(isAllowedWebhookUrl("https://hooks.example.com/abc"), true);
   assert.equal(isAllowedWebhookUrl("http://hooks.example.com/abc"), true);
