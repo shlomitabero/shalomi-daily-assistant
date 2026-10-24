@@ -210,6 +210,23 @@ export function AuthScreen({ onAuthenticated }: { onAuthenticated: (user: User) 
                     {error}
                   </p>
                 )}
+                {/* Round 914: an expired/already-consumed/unknown token
+                    (RESET_TOKEN_INVALID) rejects this form unconditionally
+                    on every resubmission -- retyping the password can
+                    never fix it, unlike a transient error. Before this,
+                    the only two sibling branches in this component (the
+                    resetDone success state two cases above, and
+                    forgotPasswordMode's own pre-send state below) both
+                    have a back-to-login escape hatch; this was the one
+                    branch missing it, leaving a user who followed an
+                    emailed link past its TTL with no in-app way back to
+                    login at all. Reuses handleBackToLogin (already does
+                    the right full reset, including stripping the token
+                    from the URL) and the existing "back to login" string
+                    the forgotPassword branch's own back button uses. */}
+                <button type="button" className="secondary link-button" disabled={busy} onClick={handleBackToLogin}>
+                  {t("auth.forgotPassword.back")}
+                </button>
               </>
             )
           ) : forgotPasswordMode ? (

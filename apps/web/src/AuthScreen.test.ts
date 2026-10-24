@@ -547,6 +547,55 @@ test("AuthScreen strips the resetToken query param from the URL the moment the r
   );
 });
 
+/**
+ * Round 914's finding: a server-rejected token (expired, already
+ * consumed, or unknown -- RESET_TOKEN_INVALID) left the user on a dead-
+ * end screen with only the error paragraph and no navigation control at
+ * all, unlike the sibling resetDone success branch two cases above (has
+ * a "back to login" button) and forgotPasswordMode's own pre-send branch
+ * (has one too). The rejection is unconditional on every resubmission --
+ * retyping the password can never fix it -- so the user had no in-app
+ * way back to login short of manually editing the browser URL.
+ */
+test("AuthScreen's reset-password form shows a 'back to login' button after the server rejects the token, not just a dead-end error", async () => {
+  await withJsdom(
+    async () => {
+      const originalFetch = globalThis.fetch;
+      globalThis.fetch = (async () =>
+        new Response(JSON.stringify({ error: "This reset link has expired or is invalid. Please request a new one.", code: "RESET_TOKEN_INVALID" }), {
+          status: 401,
+          headers: { "content-type": "application/json" },
+        })) as typeof fetch;
+      try {
+        renderAuthScreen(() => {});
+        const [newPasswordInput, confirmPasswordInput] = document.querySelectorAll('input[type="password"]') as NodeListOf<HTMLInputElement>;
+        fireEvent.change(newPasswordInput, { target: { value: "brand-new-password" } });
+        fireEvent.change(confirmPasswordInput, { target: { value: "brand-new-password" } });
+
+        await act(async () => {
+          fireEvent.submit(document.querySelector("form.auth-form")!);
+          await Promise.resolve();
+          await Promise.resolve();
+        });
+
+        assert.ok(document.querySelector(".error"), "expected the real rejection error to render");
+
+        const backButton = Array.from(document.querySelectorAll("button")).find((b) => b.textContent?.includes("login")) as
+          | HTMLButtonElement
+          | undefined;
+        assert.ok(backButton, "expected a 'back to login' button even after the token is rejected, not a dead end");
+
+        fireEvent.click(backButton!);
+        assert.ok(document.querySelector('input[type="email"]'), "clicking it must return to the normal login form");
+        assert.equal(window.location.search, "", "the invalid resetToken query param must be stripped from the URL too");
+      } finally {
+        globalThis.fetch = originalFetch;
+      }
+    },
+    "http://localhost/?resetToken=abc123",
+  );
+});
+
 test("AuthScreen's reset-password form rejects a mismatched confirmation client-side, with zero requests sent", async () => {
   await withJsdom(
     async () => {
