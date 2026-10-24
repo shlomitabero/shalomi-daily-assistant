@@ -193,13 +193,24 @@ function entityDisplayLabel(entity: Entity, occurrences: Map<string, number>): s
 export function carryForwardLabels(previousSpec: ProductSpec | undefined, nextSpec: ProductSpec): void {
   if (!previousSpec) return;
   const previousEntities = new Map(previousSpec.entities.map((e) => [e.name, e]));
+  // Round 947: mirrors migrate.ts's own lowercased-fallback convention
+  // (rounds 617-620) -- ProductSpecSchema's case-insensitive-duplicate
+  // check only rejects a collision WITHIN one spec, so an ordinary refine
+  // can genuinely regenerate an entity/field with only its letter case
+  // changed (e.g. "email" -> "Email"), which migrate.ts's own hardening
+  // already treats as the same physical column, not a drop+add. Without
+  // this fallback, the exact-string lookup below missed that case-only
+  // rename entirely, silently discarding any label/enumLabels customization
+  // the user had set on that exact entity/field.
+  const previousEntitiesByLowerName = new Map(previousSpec.entities.map((e) => [e.name.toLowerCase(), e]));
   for (const entity of nextSpec.entities) {
-    const prevEntity = previousEntities.get(entity.name);
+    const prevEntity = previousEntities.get(entity.name) ?? previousEntitiesByLowerName.get(entity.name.toLowerCase());
     if (!prevEntity) continue;
     if (prevEntity.label !== undefined) entity.label = prevEntity.label;
     const prevFields = new Map(prevEntity.fields.map((f) => [f.name, f]));
+    const prevFieldsByLowerName = new Map(prevEntity.fields.map((f) => [f.name.toLowerCase(), f]));
     for (const field of entity.fields) {
-      const prevField = prevFields.get(field.name);
+      const prevField = prevFields.get(field.name) ?? prevFieldsByLowerName.get(field.name.toLowerCase());
       if (!prevField) continue;
       if (prevField.label !== undefined) field.label = prevField.label;
       if (field.type === "enum" && field.enumValues && prevField.enumLabels) {
@@ -215,7 +226,17 @@ export function carryForwardLabels(previousSpec: ProductSpec | undefined, nextSp
 
 export function computeImpact(previousSpec: ProductSpec | undefined, nextSpec: ProductSpec): ImpactSummary {
   const previousEntities = new Map((previousSpec?.entities ?? []).map((e) => [e.name, e]));
+  // Round 947: same lowercased-fallback convention as carryForwardLabels
+  // just above (mirroring migrate.ts's own rounds 617-620 hardening) --
+  // without it, a case-only entity/field rename (a genuine refine
+  // artifact, not a real structural change) was reported as the SAME
+  // entity/field being both newly added AND removed at once, which
+  // describeImpactHazards below turns into a false, alarming "lost
+  // field(s) -- data no longer reachable" warning streamed straight to
+  // the user for a change that doesn't actually lose or gain anything.
+  const previousEntitiesByLowerName = new Map((previousSpec?.entities ?? []).map((e) => [e.name.toLowerCase(), e]));
   const nextEntityNames = new Set(nextSpec.entities.map((e) => e.name));
+  const nextEntityNamesLower = new Set(nextSpec.entities.map((e) => e.name.toLowerCase()));
   // Counted over every entity that exists on EITHER side of this refine
   // (deduped by name, mirroring the identical field-level domain choice
   // above), so a removed entity's label is checked against a surviving
@@ -235,15 +256,17 @@ export function computeImpact(previousSpec: ProductSpec | undefined, nextSpec: P
   }[] = [];
 
   for (const entity of nextSpec.entities) {
-    const prev = previousEntities.get(entity.name);
+    const prev = previousEntities.get(entity.name) ?? previousEntitiesByLowerName.get(entity.name.toLowerCase());
     if (!prev) {
       newEntities.push({ name: entity.name, label: entityDisplayLabel(entity, entityLabels) });
       continue;
     }
     const prevFieldsByName = new Map(prev.fields.map((f) => [f.name, f]));
+    const prevFieldsByLowerName = new Map(prev.fields.map((f) => [f.name.toLowerCase(), f]));
     const nextFieldNames = new Set(entity.fields.map((f) => f.name));
-    const newFields = entity.fields.filter((f) => !prevFieldsByName.has(f.name));
-    const removedFields = prev.fields.filter((f) => !nextFieldNames.has(f.name));
+    const nextFieldNamesLower = new Set(entity.fields.map((f) => f.name.toLowerCase()));
+    const newFields = entity.fields.filter((f) => !prevFieldsByName.has(f.name) && !prevFieldsByLowerName.has(f.name.toLowerCase()));
+    const removedFields = prev.fields.filter((f) => !nextFieldNames.has(f.name) && !nextFieldNamesLower.has(f.name.toLowerCase()));
     // A same-named field that keeps existing on both sides is invisible to
     // the new/removed check above, but can still tighten in a way that
     // matters: becoming required where it wasn't, or (for an enum) losing
@@ -254,7 +277,7 @@ export function computeImpact(previousSpec: ProductSpec | undefined, nextSpec: P
     // nothing told the user this constraint changed at all, unlike a field
     // being added/removed outright.
     const tightenedFields = entity.fields.filter((f) => {
-      const prevField = prevFieldsByName.get(f.name);
+      const prevField = prevFieldsByName.get(f.name) ?? prevFieldsByLowerName.get(f.name.toLowerCase());
       if (!prevField) return false;
       if (f.required && !prevField.required) return true;
       if (f.type === "enum" && prevField.type === "enum") {
@@ -286,7 +309,7 @@ export function computeImpact(previousSpec: ProductSpec | undefined, nextSpec: P
   }
 
   const removedEntities = (previousSpec?.entities ?? [])
-    .filter((e) => !nextEntityNames.has(e.name))
+    .filter((e) => !nextEntityNames.has(e.name) && !nextEntityNamesLower.has(e.name.toLowerCase()))
     .map((e) => ({ name: e.name, label: entityDisplayLabel(e, entityLabels) }));
 
   return {

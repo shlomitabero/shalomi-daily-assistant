@@ -1684,6 +1684,93 @@ test("describeImpactHazards returns an empty string when nothing structurally ha
 });
 
 /**
+ * Round 947: ProductSpecSchema's case-insensitive-duplicate check only
+ * rejects a collision WITHIN one spec, so an ordinary refine can genuinely
+ * regenerate a field (or entity) whose name only changed letter case (e.g.
+ * "email" -> "Email") -- the exact scenario migrate.ts had to harden
+ * against across rounds 617-620, since it's the same physical SQLite
+ * column, same data, a true no-op. Before this fix, computeImpact's own
+ * exact-string name matching missed that case-only rename in BOTH
+ * directions at once, reporting the SAME field as newly added AND removed
+ * -- which this function turns into a false, alarming "lost field(s) --
+ * data no longer reachable" warning for a change that loses nothing.
+ */
+test("describeImpactHazards reports no hazard at all for a field or entity renamed only by letter case, since it's the same physical column/table per migrate.ts's own treatment", () => {
+  const previousSpec: ProductSpec = {
+    summary: "test",
+    personas: [],
+    roles: ["Admin"],
+    screens: [],
+    assumptions: [],
+    openQuestions: [],
+    entities: [
+      { name: "customer", fields: [{ name: "email", type: "text", required: false }] },
+    ],
+  };
+  const nextSpec: ProductSpec = {
+    ...previousSpec,
+    entities: [{ name: "Customer", fields: [{ name: "Email", type: "text", required: false }] }],
+  };
+
+  assert.equal(
+    describeImpactHazards(previousSpec, nextSpec),
+    "",
+    "a case-only entity/field rename alone must report no hazard -- it is a true no-op, not a loss",
+  );
+});
+
+test("describeImpactHazards still reports a genuinely tightened field even when it was ALSO renamed only by letter case, instead of masking the real change as a false add+remove", () => {
+  const previousSpec: ProductSpec = {
+    summary: "test",
+    personas: [],
+    roles: ["Admin"],
+    screens: [],
+    assumptions: [],
+    openQuestions: [],
+    entities: [{ name: "Customer", fields: [{ name: "name", type: "text", required: true }, { name: "email", type: "text", required: false }] }],
+  };
+  const nextSpec: ProductSpec = {
+    ...previousSpec,
+    entities: [{ name: "Customer", fields: [{ name: "name", type: "text", required: true }, { name: "Email", type: "text", required: true }] }],
+  };
+
+  const hazards = describeImpactHazards(previousSpec, nextSpec);
+  assert.match(hazards, /Customer now enforces stricter rules on: Email/);
+  assert.doesNotMatch(hazards, /lost field/, "a case-only rename that also genuinely tightened must never be reported as a lost field too");
+});
+
+/**
+ * Round 947: carryForwardLabels' own counterpart to the describeImpactHazards
+ * tests above -- a case-only entity/field rename must still carry the
+ * user's own prior label forward, the exact same label-loss regression
+ * class rounds 915/917 fixed for an identically-cased refine, just reopened
+ * via the case-rename path neither of those rounds considered.
+ */
+test("carryForwardLabels keeps a surviving entity's/field's own prior label across a refine that renames either one only by letter case", () => {
+  const previousSpec: ProductSpec = {
+    summary: "test",
+    personas: [],
+    roles: ["Admin"],
+    screens: [],
+    assumptions: [],
+    openQuestions: [],
+    entities: [
+      { name: "customer", label: "Clients", fields: [{ name: "email", type: "text", required: false, label: "Email Address" }] },
+    ],
+  };
+  const nextSpec: ProductSpec = {
+    ...previousSpec,
+    entities: [{ name: "Customer", fields: [{ name: "Email", type: "text", required: false }] }],
+  };
+
+  carryForwardLabels(previousSpec, nextSpec);
+
+  const customer = nextSpec.entities[0];
+  assert.equal(customer.label, "Clients", "a case-only renamed entity must still keep its own prior label");
+  assert.equal(customer.fields[0].label, "Email Address", "a case-only renamed field must still keep its own prior label");
+});
+
+/**
  * Round 915's finding: SpecProvider.generate (both HeuristicSpecProvider
  * and AnthropicSpecProvider) has no previousSpec parameter at all, so a
  * freshly regenerated nextSpec never carries a user's post-build
