@@ -2620,7 +2620,20 @@ export function EntityPanel({
     // through t() -- the one piece of user-facing text in this entire,
     // fully-Hebrew-translated form that would otherwise show up in English
     // regardless of the app's own language setting.
-    const missingField = entity.fields.find((f) => f.required && (form[f.name] === "" || form[f.name] == null));
+    //
+    // Round 939: a whitespace-only string (" ") passed `!== ""` here, so
+    // this friendly, field-specific message never fired for it -- it fell
+    // through to the real submit, which the server's own coerceValue
+    // (packages/db/src/repository.ts) already treats as empty via its own
+    // trim-aware isEmpty check, rejecting it with the generic
+    // VALIDATION_ERROR message instead ("check the form", no field
+    // named) -- a real step down from this check's own specific "X is
+    // required" text, for an input that's blank in every way that
+    // matters. String(...) first so a non-string required value (a
+    // number/boolean) is never coerced into looking empty by trim()
+    // alone -- e.g. a required number field genuinely holding 0 stays
+    // "0", never "".
+    const missingField = entity.fields.find((f) => f.required && String(form[f.name] ?? "").trim() === "");
     if (missingField) {
       setError(t("entity.form.requiredField", { field: missingField.label ?? missingField.name }));
       return;
@@ -3031,7 +3044,10 @@ export function EntityPanel({
     // every one rejected server-side, surfaced only as the generic
     // VALIDATION_ERROR string with no field name at all.
     const bulkEditFieldDef = entity.fields.find((f) => f.name === bulkEditField);
-    if (bulkEditFieldDef?.required && (bulkEditValue === "" || bulkEditValue == null)) {
+    // Round 939: mirrors the single-record form's own missingField fix --
+    // trims before comparing, so a whitespace-only value doesn't slip
+    // past this friendly check into the generic server-side rejection.
+    if (bulkEditFieldDef?.required && String(bulkEditValue ?? "").trim() === "") {
       setError(t("entity.form.requiredField", { field: bulkEditFieldDef.label ?? bulkEditFieldDef.name }));
       return;
     }
@@ -3359,7 +3375,10 @@ export function EntityPanel({
     // misleading here, since it says "check the form" while inline cell
     // editing never shows a form, just one table cell.
     const fieldDef = entity.fields.find((f) => f.name === field);
-    if (fieldDef?.required && (value === "" || value == null)) {
+    // Round 939: mirrors the single-record form's own missingField fix --
+    // trims before comparing, so a whitespace-only value doesn't slip
+    // past this friendly check into the generic server-side rejection.
+    if (fieldDef?.required && String(value ?? "").trim() === "") {
       setError(t("entity.form.requiredField", { field: fieldDef.label ?? fieldDef.name }));
       setMoveErrorId(recordId);
       return;

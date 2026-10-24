@@ -4796,6 +4796,58 @@ test("the exported EntityView's handleBulkDuplicate and handleBulkUpdate keep on
     }
   }
 
+  // Round 939: a whitespace-only value compared `!== ""` as "filled in"
+  // (same gap the live preview's own missingField check had), falling
+  // through to a real PATCH per selected record -- rejected server-side
+  // with this exported app's own request() helper showing that bare,
+  // internal-field-name server message verbatim (no translation layer
+  // at all here, unlike the live preview), instead of this friendly,
+  // labeled one.
+  {
+    const originalConfirm = globalThis.window?.confirm;
+    let confirmCalled = false;
+    let capturedError: string | undefined;
+    let updateCalled = false;
+    (globalThis.window as unknown as { confirm: () => boolean }).confirm = () => {
+      confirmCalled = true;
+      return true;
+    };
+    try {
+      const fn = new Function(
+        "bulkActionBusy",
+        "entity",
+        "bulkEditField",
+        "bulkEditValue",
+        "selectedIds",
+        "setBulkActionBusy",
+        "setSelectedIds",
+        "setError",
+        "updateRecord",
+        "refresh",
+        `${handleBulkUpdateSrc}\nreturn handleBulkUpdate;`,
+      )(
+        false,
+        { name: "Order", fields: [{ name: "status", label: "Status", required: true }] },
+        "status",
+        "   ",
+        new Set([1, 2, 3]),
+        () => {},
+        () => {},
+        (msg: string) => (capturedError = msg),
+        async () => {
+          updateCalled = true;
+        },
+        async () => {},
+      );
+      await fn();
+      assert.match(capturedError!, /"Status" is a required field/, "a whitespace-only value must trigger this check's own field-specific message");
+      assert.equal(confirmCalled, false, "must refuse before even asking for confirmation");
+      assert.equal(updateCalled, false, "must not call updateRecord at all when the chosen required field is whitespace-only");
+    } finally {
+      if (originalConfirm) (globalThis.window as unknown as { confirm: () => boolean }).confirm = originalConfirm;
+    }
+  }
+
   // Sibling of the guard above: a required field with a real value must
   // still proceed normally.
   {

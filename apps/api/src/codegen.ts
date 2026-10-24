@@ -4614,7 +4614,15 @@ export function EntityView({ entity, highlightRecordId, onHighlightHandled, onJu
     // Checked client-side (with noValidate on the <form>) rather than
     // relying on the browser's own native required-field validation --
     // mirrors the live preview's own identical fix.
-    const missingField = entity.fields.find((f) => f.required && (form[f.name] === "" || form[f.name] == null));
+    //
+    // Round 939: trims before comparing (mirrors the live preview's own
+    // identical fix) -- this exported app's own request() helper has no
+    // translation layer at all, so a whitespace-only value that slipped
+    // past this check used to reach the server's own coerceValue
+    // (required-field rejection) and show its bare, internal-field-name
+    // message verbatim (e.g. Field "customerName" is required) instead
+    // of this friendly, labeled one.
+    const missingField = entity.fields.find((f) => f.required && String(form[f.name] ?? "").trim() === "");
     if (missingField) {
       setError(\`"\${missingField.label || missingField.name}" is a required field\`);
       return;
@@ -4938,7 +4946,9 @@ export function EntityView({ entity, highlightRecordId, onHighlightHandled, onJu
     // check above -- without it, leaving a required field at its default
     // blank value fires one doomed PATCH per selected record.
     const bulkEditFieldDef = entity.fields.find((f) => f.name === bulkEditField);
-    if (bulkEditFieldDef?.required && (bulkEditValue === "" || bulkEditValue == null)) {
+    // Round 939: trims before comparing -- mirrors the single-record
+    // form's own identical fix just above.
+    if (bulkEditFieldDef?.required && String(bulkEditValue ?? "").trim() === "") {
       setError(\`"\${bulkEditFieldDef.label || bulkEditFieldDef.name}" is a required field\`);
       return;
     }
@@ -5008,7 +5018,9 @@ export function EntityView({ entity, highlightRecordId, onHighlightHandled, onJu
     // Mirrors handleBulkUpdate's own identical check above -- without it,
     // clearing a required cell and committing fires a doomed PATCH.
     const fieldDef = entity.fields.find((f) => f.name === field);
-    if (fieldDef?.required && (value === "" || value == null)) {
+    // Round 939: trims before comparing -- mirrors handleBulkUpdate's own
+    // identical fix above.
+    if (fieldDef?.required && String(value ?? "").trim() === "") {
       setError(\`"\${fieldDef.label || fieldDef.name}" is a required field\`);
       setMoveErrorId(recordId);
       return;

@@ -12505,6 +12505,58 @@ test("EntityPanel shows a translated required-field error instead of relying on 
 });
 
 /**
+ * Round 939: the missingField check above compared the raw value to `""`
+ * directly, so a whitespace-only value (e.g. a single space, easy via a
+ * stray keystroke or autocomplete) passed it as "filled in" and fell
+ * through to the real submit -- rejected server-side with a much less
+ * helpful message than this check's own field-specific one (the server's
+ * own message either names the raw internal field name verbatim, in an
+ * exported app with no translation layer, or gets masked into a generic
+ * "check the form" string in the live preview -- either way, a real step
+ * down from naming exactly which field is still effectively blank).
+ */
+test("EntityPanel's required-field check treats a whitespace-only value as blank, not as filled in", async () => {
+  await withJsdom(async () => {
+    const store: EntityRecord[] = [{ id: 1, name: "Globex", status: "won" }];
+    const originalFetch = globalThis.fetch;
+    let postCount = 0;
+    globalThis.fetch = (async (input: string, init?: RequestInit): Promise<Response> => {
+      const method = init?.method ?? "GET";
+      if (method === "GET" && input === "/api/projects/proj1/entities/Deal") {
+        return new Response(JSON.stringify({ records: store }), { status: 200, headers: { "content-type": "application/json" } });
+      }
+      if (method === "POST" && input === "/api/projects/proj1/entities/Deal") {
+        postCount += 1;
+        const record = { id: 2, ...JSON.parse(init!.body as string) };
+        store.push(record);
+        return new Response(JSON.stringify({ record }), { status: 201, headers: { "content-type": "application/json" } });
+      }
+      throw new Error(`unexpected request ${method} ${input}`);
+    }) as typeof fetch;
+
+    try {
+      renderEntityPanel();
+      await waitForCondition(() => document.querySelectorAll("table tbody tr").length === 1);
+
+      const nameInput = document.querySelector('.record-form input[type="text"]') as HTMLInputElement;
+      const statusSelect = document.querySelector(".record-form select") as HTMLSelectElement;
+      fireEvent.change(nameInput, { target: { value: "   " } });
+      fireEvent.change(statusSelect, { target: { value: "new" } });
+
+      const submitButton = document.querySelector(".record-form button[type=submit]") as HTMLButtonElement;
+      fireEvent.click(submitButton);
+      await waitForCondition(() => document.querySelector(".record-form + p.error") !== null);
+
+      const errorEl = document.querySelector(".record-form + p.error") as HTMLElement;
+      assert.match(errorEl.textContent ?? "", /Name/, "a whitespace-only value must trigger this check's own field-specific message, not slip through to the real submit");
+      assert.equal(postCount, 0, "the API must never be called while the required field is still effectively blank");
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+});
+
+/**
  * New in this round: a longtext field's own <textarea> had no keyboard way
  * to submit the form at all -- a bare Enter there just inserts a newline
  * (unlike every single-line input, where Enter already submits the form
