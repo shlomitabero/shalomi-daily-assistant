@@ -6,8 +6,16 @@ services:
     buildCommand: npm install && npm run build
     startCommand: npm start
     envVars:
+      # Pinned to an exact version Render's build resolver is confirmed to
+      # have, not a loose range -- Render's own docs warn an unbounded
+      # range (e.g. >=18) can silently pick up an unexpected release, and
+      # a specific old pinned patch can likewise stop being offered by
+      # Render's build image over time, breaking every subsequent deploy
+      # identically until the pin is updated. This exact version is the
+      # one this project's own build/test/boot cycle was just verified
+      # against end to end.
       - key: NODE_VERSION
-        value: 22.13.0
+        value: 22.22.0
       - key: ANTHROPIC_API_KEY
         sync: false
       # Optional: set this (Resend's API key, from resend.com) to turn on
