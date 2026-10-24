@@ -1241,6 +1241,44 @@ test("App.tsx renders ProjectDescriptionEditor on the built-project preview scre
 });
 
 /**
+ * Round 906: the same round-905 gap, for roles/personas/assumptions
+ * instead of the description -- RoleChip/PersonaItem/AssumptionItem (and
+ * their Add*Form siblings) were only ever mounted on the pre-build
+ * spec-review screen, which becomes permanently unreachable once a
+ * project builds. The server's own routes for all three have no
+ * project.status guard at all (the same shape round 905 already found
+ * for the description route), so a built project had no way to ever see
+ * or correct a role/persona/assumption the AI/heuristic engine got wrong,
+ * even though the exact fix already existed one component away.
+ */
+test("App.tsx renders the roles/personas/assumptions editors on the built-project preview screen too, not just the pre-build spec-review screen", () => {
+  const appSrc = readFileSync(new URL("./App.tsx", import.meta.url), "utf8");
+  const previewBlockMatch = appSrc.match(/\{view === "preview" && project && \([\s\S]*?<div className="preview-body">/);
+  assert.ok(previewBlockMatch, "expected to find the preview view's own JSX block, up to its chat/entity body");
+  assert.match(
+    previewBlockMatch![0],
+    /<RoleChip\b/,
+    "expected the built-project preview screen to render RoleChip too, the same way the spec-review screen already does",
+  );
+  assert.match(previewBlockMatch![0], /<AddRoleForm projectId=\{project\.id\} onAdded=\{setProject\} readOnly=\{myRole === "viewer"\} \/>/);
+  assert.match(
+    previewBlockMatch![0],
+    /<PersonaItem\b/,
+    "expected the built-project preview screen to render PersonaItem too",
+  );
+  assert.match(previewBlockMatch![0], /<AddPersonaForm projectId=\{project\.id\} onAdded=\{setProject\} readOnly=\{myRole === "viewer"\} \/>/);
+  assert.match(
+    previewBlockMatch![0],
+    /<AssumptionItem\b/,
+    "expected the built-project preview screen to render AssumptionItem too",
+  );
+  assert.match(
+    previewBlockMatch![0],
+    /<AddAssumptionForm projectId=\{project\.id\} onAdded=\{setProject\} readOnly=\{myRole === "viewer"\} \/>/,
+  );
+});
+
+/**
  * Regression test for handleDeleteProject (the home-screen "Your
  * projects" list's delete button): a real, irreversible action gated
  * behind window.confirm -- declining the confirm must leave everything

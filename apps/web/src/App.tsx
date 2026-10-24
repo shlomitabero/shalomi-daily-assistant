@@ -2218,6 +2218,75 @@ function AppContent() {
             <ProjectDescriptionEditor project={project} onChanged={setProject} readOnly={myRole === "viewer"} />
           </section>
 
+          {/* Round 906: the same round-905 gap, for roles/personas/
+              assumptions instead of the description -- these three edit
+              controls (RoleChip/PersonaItem/AssumptionItem + their Add*Form
+              siblings) were only ever mounted on the pre-build spec-review
+              screen, which becomes permanently unreachable once a project
+              builds (App.tsx's own openExistingProject/handleBuildComplete
+              always route a built project to "preview", never "spec"
+              again). The server's own POST/DELETE/PATCH routes for all
+              three have no project.status guard at all (only the same
+              activePipelines check every other spec-edit route already
+              has) -- their own comment explicitly analogizes them to the
+              entity/field-label routes, which already DO have a working
+              post-build UI path via EntityPanel.tsx. Reuses the exact same
+              JSX the spec-review screen already renders, unchanged. */}
+          <section className="preview-roles-section">
+            <h2>{t("spec.roles.heading")}</h2>
+            <div className="chips">
+              {project.spec.roles.map((r, i) => (
+                <RoleChip
+                  key={`${i}-${r}`}
+                  role={r}
+                  projectId={project.id}
+                  index={i}
+                  canRemove={project.spec.roles.length > 1}
+                  onRenamed={setProject}
+                  onRemoved={setProject}
+                  readOnly={myRole === "viewer"}
+                />
+              ))}
+            </div>
+            <AddRoleForm projectId={project.id} onAdded={setProject} readOnly={myRole === "viewer"} />
+          </section>
+
+          <section className="preview-personas-section">
+            <h2>{t("spec.personas.heading")}</h2>
+            <ul>
+              {project.spec.personas.map((p, i) => (
+                <PersonaItem
+                  key={`${i}-${p}`}
+                  persona={p}
+                  projectId={project.id}
+                  index={i}
+                  onRenamed={setProject}
+                  onRemoved={setProject}
+                  readOnly={myRole === "viewer"}
+                />
+              ))}
+            </ul>
+            <AddPersonaForm projectId={project.id} onAdded={setProject} readOnly={myRole === "viewer"} />
+          </section>
+
+          <section className="preview-assumptions-section">
+            <h2>{t("spec.assumptions.heading")}</h2>
+            <ul>
+              {project.spec.assumptions.map((a, i) => (
+                <AssumptionItem
+                  key={`${i}-${a}`}
+                  assumption={a}
+                  projectId={project.id}
+                  index={i}
+                  onRenamed={setProject}
+                  onRemoved={setProject}
+                  readOnly={myRole === "viewer"}
+                />
+              ))}
+            </ul>
+            <AddAssumptionForm projectId={project.id} onAdded={setProject} readOnly={myRole === "viewer"} />
+          </section>
+
           <div className="preview-body">
             <div className="preview-chat-pane">
               {refineRunning ? (
