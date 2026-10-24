@@ -1241,6 +1241,153 @@ test("HistoryPanel's delete button does nothing when the confirm is declined", a
 });
 
 /**
+ * Round 903: error/restoreWarning (from handleRestore) and deleteError
+ * (from handleDelete) all render unconditionally, independent of which
+ * action produced them -- but each handler only ever cleared its OWN
+ * error state at its own start, never its sibling's. A failed restore of
+ * one checkpoint left its error banner showing even after a later,
+ * successful delete of a totally different checkpoint, exactly the
+ * stale-sibling-banner shape round 902 already fixed for WhatsAppPanel.tsx.
+ */
+test("HistoryPanel's successful delete clears a stale restore-error banner left over from an earlier failed restore of a different checkpoint", async () => {
+  await withJsdom(async () => {
+    const originalFetch = globalThis.fetch;
+    const originalConfirm = globalThis.window.confirm;
+    globalThis.window.confirm = (() => true) as typeof window.confirm;
+    const cp1 = makeCheckpoint("cp1", "Initial build");
+    const cp2 = makeCheckpoint("cp2", "Refine: add invoices");
+
+    globalThis.fetch = (async (input: string, init?: RequestInit): Promise<Response> => {
+      const method = init?.method ?? "GET";
+      if (method === "GET" && input === "/api/projects/proj1/checkpoints") {
+        return new Response(JSON.stringify({ checkpoints: [cp1, cp2] }), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        });
+      }
+      if (method === "POST" && input === "/api/projects/proj1/checkpoints/cp1/restore") {
+        return new Response(JSON.stringify({ error: "Restore failed" }), {
+          status: 500,
+          headers: { "content-type": "application/json" },
+        });
+      }
+      if (method === "DELETE" && input === "/api/projects/proj1/checkpoints/cp2") {
+        return new Response(null, { status: 204 });
+      }
+      throw new Error(`unexpected request ${method} ${input}`);
+    }) as typeof fetch;
+
+    try {
+      render(
+        React.createElement(
+          ThemeProvider,
+          null,
+          React.createElement(
+            LanguageProvider,
+            null,
+            React.createElement(HistoryPanel, {
+              projectId: "proj1",
+              projectName: "Test Project",
+              currentSpec: { ...cp1.spec, entities: [] },
+              onRestored: () => {},
+              onClose: () => {},
+            }),
+          ),
+        ),
+      );
+      await waitForCondition(() => document.querySelectorAll(".checkpoint-list li").length === 2);
+
+      const restoreButtons = Array.from(document.querySelectorAll(".checkpoint-restore-btn")) as HTMLButtonElement[];
+      fireEvent.click(restoreButtons[0]); // cp1's own button
+      await waitForCondition(() => document.querySelector(".error") !== null);
+      assert.match(document.body.textContent ?? "", /Restore failed/, "expected the failed restore's error banner to render");
+
+      const deleteButtons = Array.from(document.querySelectorAll(".checkpoint-delete-btn")) as HTMLButtonElement[];
+      fireEvent.click(deleteButtons[1]); // cp2's own button
+      await waitForCondition(() => document.querySelectorAll(".checkpoint-list li").length === 1);
+
+      assert.equal(document.querySelector(".error") === null, true, "the stale restore-error banner must not survive an unrelated, successful delete");
+    } finally {
+      globalThis.fetch = originalFetch;
+      globalThis.window.confirm = originalConfirm;
+    }
+  });
+});
+
+/**
+ * Round 903: the symmetric direction of the test above -- a failed delete
+ * of one checkpoint left its deleteError banner showing even after a
+ * later, successful restore of a different checkpoint.
+ */
+test("HistoryPanel's successful restore clears a stale delete-error banner left over from an earlier failed delete of a different checkpoint", async () => {
+  await withJsdom(async () => {
+    const originalFetch = globalThis.fetch;
+    const originalConfirm = globalThis.window.confirm;
+    globalThis.window.confirm = (() => true) as typeof window.confirm;
+    const cp1 = makeCheckpoint("cp1", "Initial build");
+    const cp2 = makeCheckpoint("cp2", "Refine: add invoices");
+
+    globalThis.fetch = (async (input: string, init?: RequestInit): Promise<Response> => {
+      const method = init?.method ?? "GET";
+      if (method === "GET" && input === "/api/projects/proj1/checkpoints") {
+        return new Response(JSON.stringify({ checkpoints: [cp1, cp2] }), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        });
+      }
+      if (method === "DELETE" && input === "/api/projects/proj1/checkpoints/cp2") {
+        return new Response(JSON.stringify({ error: "Delete failed" }), {
+          status: 500,
+          headers: { "content-type": "application/json" },
+        });
+      }
+      if (method === "POST" && input === "/api/projects/proj1/checkpoints/cp1/restore") {
+        return new Response(JSON.stringify({ project: { id: "proj1" }, migrationWarning: null }), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        });
+      }
+      throw new Error(`unexpected request ${method} ${input}`);
+    }) as typeof fetch;
+
+    try {
+      render(
+        React.createElement(
+          ThemeProvider,
+          null,
+          React.createElement(
+            LanguageProvider,
+            null,
+            React.createElement(HistoryPanel, {
+              projectId: "proj1",
+              projectName: "Test Project",
+              currentSpec: { ...cp1.spec, entities: [] },
+              onRestored: () => {},
+              onClose: () => {},
+            }),
+          ),
+        ),
+      );
+      await waitForCondition(() => document.querySelectorAll(".checkpoint-list li").length === 2);
+
+      const deleteButtons = Array.from(document.querySelectorAll(".checkpoint-delete-btn")) as HTMLButtonElement[];
+      fireEvent.click(deleteButtons[1]); // cp2's own button
+      await waitForCondition(() => document.querySelector(".error") !== null);
+      assert.match(document.body.textContent ?? "", /Delete failed/, "expected the failed delete's error banner to render");
+
+      const restoreButtons = Array.from(document.querySelectorAll(".checkpoint-restore-btn")) as HTMLButtonElement[];
+      fireEvent.click(restoreButtons[0]); // cp1's own button
+      await waitForCondition(() => document.querySelectorAll(".checkpoint-list li").length === 2 && document.querySelector(".error") === null);
+
+      assert.equal(document.querySelector(".error") === null, true, "the stale delete-error banner must not survive an unrelated, successful restore");
+    } finally {
+      globalThis.fetch = originalFetch;
+      globalThis.window.confirm = originalConfirm;
+    }
+  });
+});
+
+/**
  * Mirrors the identical restore-vs-restore concurrency guard already
  * established above, extended to the new delete action: restore and
  * delete now share the risk of a second action firing while the first is

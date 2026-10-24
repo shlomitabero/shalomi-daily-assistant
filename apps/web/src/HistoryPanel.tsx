@@ -107,6 +107,12 @@ export function HistoryPanel({
     setBusyId(checkpoint.id);
     setError(null);
     setRestoreWarning(null);
+    // Round 903: a stale deleteError from an earlier failed delete of a
+    // DIFFERENT checkpoint otherwise outlives this restore -- all three
+    // banners below render unconditionally, so a successful restore would
+    // leave a "delete failed" message about an unrelated checkpoint still
+    // showing, same shape round 902 already fixed for WhatsAppPanel.tsx.
+    setDeleteError(null);
     try {
       const { project, migrationWarning } = await restoreCheckpoint(projectId, checkpoint.id);
       onRestored(project);
@@ -134,6 +140,11 @@ export function HistoryPanel({
     if (!window.confirm(t("history.confirmDelete", { label: checkpoint.label }))) return;
     setDeletingId(checkpoint.id);
     setDeleteError(null);
+    // Round 903: the symmetric case of the comment in handleRestore above
+    // -- a stale restore error/migrationWarning from an earlier action on
+    // a DIFFERENT checkpoint must not outlive this delete either.
+    setError(null);
+    setRestoreWarning(null);
     try {
       await deleteCheckpoint(projectId, checkpoint.id);
       setCheckpoints((prev) => prev.filter((c) => c.id !== checkpoint.id));
