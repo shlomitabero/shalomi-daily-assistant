@@ -4943,6 +4943,47 @@ test("removing an entity name that doesn't exist in the spec 404s with ENTITY_NO
   });
 });
 
+/**
+ * Round 941: the sibling POST (add entity) route already got
+ * withIdempotency protection; this DELETE route never did. A response
+ * lost in transit after the entity was already removed means
+ * fetchWithWakeRetry's retry lands on spec state that no longer has
+ * that entity, and the route's own "no such entity" check used to run
+ * on every call (including the retry) -- throwing ENTITY_NOT_FOUND for
+ * a removal that, from the user's point of view, already fully
+ * succeeded. Mirrors round 792's own identical fix/test shape for
+ * record deletion.
+ */
+test("DELETE .../entities/:entityName retried with the same idempotency key after the first attempt already succeeded replays the original 200, instead of 404ing on the already-removed entity", async () => {
+  await withServer(async (baseUrl) => {
+    const token = await signup(baseUrl, "entity-remove-idem@example.com");
+    const createRes = await fetch(`${baseUrl}/api/projects`, {
+      method: "POST",
+      headers: authHeaders(token),
+      body: JSON.stringify({ description: "A CRM with customers and deals." }),
+    });
+    const { project } = (await createRes.json()) as { project: { id: string; spec: { entities: { name: string }[] } } };
+    const originalNames = project.spec.entities.map((e) => e.name);
+    assert.ok(originalNames.length >= 2, "expected the heuristic spec to generate at least two entities to safely remove one");
+    const toRemove = originalNames[0];
+
+    const headers = { ...authHeaders(token), "x-idempotency-key": "entity-remove-repro-key" };
+    const firstRes = await fetch(`${baseUrl}/api/projects/${project.id}/entities/${toRemove}`, { method: "DELETE", headers });
+    assert.equal(firstRes.status, 200);
+    const { project: afterFirst } = (await firstRes.json()) as { project: { spec: { entities: { name: string }[] } } };
+    assert.ok(!afterFirst.spec.entities.some((e) => e.name === toRemove), "the entity must genuinely be gone after the first call");
+
+    const retryRes = await fetch(`${baseUrl}/api/projects/${project.id}/entities/${toRemove}`, { method: "DELETE", headers });
+    assert.equal(
+      retryRes.status,
+      200,
+      "a retried removal with the same idempotency key must replay the original success, not 404 on the already-removed entity",
+    );
+    const { project: afterRetry } = (await retryRes.json()) as { project: { spec: { entities: { name: string }[] } } };
+    assert.deepEqual(afterRetry.spec.entities, afterFirst.spec.entities, "the replayed response must match the original success exactly");
+  });
+});
+
 test("removing entities down to the last remaining one is rejected with 400 instead of crashing -- ProductSpecSchema requires entities.min(1)", async () => {
   await withServer(async (baseUrl) => {
     const token = await signup(baseUrl, "entity-remove-lastone@example.com");
@@ -5889,6 +5930,55 @@ test("removing a field deletes it from the entity's fields list and reports the 
       "the removed field must no longer be present",
     );
     assert.equal(updatedEntity.fields.length, project.spec.entities[0].fields.length - 1);
+  });
+});
+
+/**
+ * Round 941: same withIdempotency gap, and the same fix, as the
+ * entity-removal DELETE route's own identical test above -- the
+ * sibling POST (add field) route already has this protection; this
+ * DELETE route never did. A response lost in transit after the field
+ * was already removed must replay that success on retry, not 404 on
+ * the already-removed field.
+ */
+test("DELETE .../fields/:fieldName retried with the same idempotency key after the first attempt already succeeded replays the original 200, instead of 404ing on the already-removed field", async () => {
+  await withServer(async (baseUrl) => {
+    const token = await signup(baseUrl, "field-remove-idem@example.com");
+    const createRes = await fetch(`${baseUrl}/api/projects`, {
+      method: "POST",
+      headers: authHeaders(token),
+      body: JSON.stringify({ description: "A CRM with customers and deals." }),
+    });
+    const { project } = (await createRes.json()) as {
+      project: { id: string; spec: { entities: { name: string; fields: { name: string }[] }[] } };
+    };
+    const entityName = project.spec.entities[0].name;
+    assert.ok(project.spec.entities[0].fields.length > 1, "the Customer entity from a plain CRM description should have more than one field");
+    const fieldToRemove = project.spec.entities[0].fields[1].name;
+
+    const headers = { ...authHeaders(token), "x-idempotency-key": "field-remove-repro-key" };
+    const firstRes = await fetch(`${baseUrl}/api/projects/${project.id}/entities/${entityName}/fields/${fieldToRemove}`, {
+      method: "DELETE",
+      headers,
+    });
+    assert.equal(firstRes.status, 200);
+    const { project: afterFirst } = (await firstRes.json()) as { project: { spec: { entities: { name: string; fields: { name: string }[] }[] } } };
+    assert.ok(
+      !afterFirst.spec.entities.find((e) => e.name === entityName)!.fields.some((f) => f.name === fieldToRemove),
+      "the field must genuinely be gone after the first call",
+    );
+
+    const retryRes = await fetch(`${baseUrl}/api/projects/${project.id}/entities/${entityName}/fields/${fieldToRemove}`, {
+      method: "DELETE",
+      headers,
+    });
+    assert.equal(
+      retryRes.status,
+      200,
+      "a retried removal with the same idempotency key must replay the original success, not 404 on the already-removed field",
+    );
+    const { project: afterRetry } = (await retryRes.json()) as { project: { spec: { entities: { name: string; fields: { name: string }[] }[] } } };
+    assert.deepEqual(afterRetry.spec.entities, afterFirst.spec.entities, "the replayed response must match the original success exactly");
   });
 });
 

@@ -479,8 +479,12 @@ export function addField(
   });
 }
 
+/** Round 941: same idempotency-key shape as deleteRecord's own fix (round 792) -- a lost response after this field was already removed must replay that success on retry, not surface a confusing "not found". */
 export function removeField(projectId: string, entityName: string, fieldName: string): Promise<{ project: Project }> {
-  return request(`/projects/${projectId}/entities/${encodeURIComponent(entityName)}/fields/${encodeURIComponent(fieldName)}`, { method: "DELETE" });
+  return request(`/projects/${projectId}/entities/${encodeURIComponent(entityName)}/fields/${encodeURIComponent(fieldName)}`, {
+    method: "DELETE",
+    headers: { "x-idempotency-key": crypto.randomUUID() },
+  });
 }
 
 export function setFieldRequired(
@@ -605,8 +609,12 @@ export function renamePersona(
   });
 }
 
+/** Round 941: same idempotency-key shape as deleteRecord's own fix (round 792) -- a lost response after this entity was already removed must replay that success on retry, not surface a confusing "not found". */
 export function removeEntity(projectId: string, entityName: string): Promise<{ project: Project }> {
-  return request(`/projects/${projectId}/entities/${encodeURIComponent(entityName)}`, { method: "DELETE" });
+  return request(`/projects/${projectId}/entities/${encodeURIComponent(entityName)}`, {
+    method: "DELETE",
+    headers: { "x-idempotency-key": crypto.randomUUID() },
+  });
 }
 
 /** See createProject's own doc comment for why this generates one idempotency key per call, here protecting against a duplicate entity from the same click/retry. */

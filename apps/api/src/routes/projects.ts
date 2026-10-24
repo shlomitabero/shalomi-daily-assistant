@@ -2675,6 +2675,21 @@ export function createProjectsRouter(
    * it from the spec alone would silently desync the spec from the actual
    * running app instead of actually undoing anything.
    */
+  /**
+   * Round 941: the sibling POST (add) route just below already got
+   * withIdempotency protection; this one never did. Unlike add, a
+   * retried delete doesn't just risk a no-op -- the exact round-792
+   * hazard round already fixed for record deletion, just missed here:
+   * fetchWithWakeRetry (apps/web/src/wakeRetry.ts) retries on ANY
+   * thrown fetch() error, not only a Render cold start, so a response
+   * lost in transit AFTER this entity was already removed means the
+   * retry's own "not found" check below throws ENTITY_NOT_FOUND for a
+   * removal that, from the user's point of view, already fully
+   * succeeded. The "not found" check itself has to move inside the
+   * withIdempotency callback (not stay where it was, above) so a
+   * genuine retry replays the first call's cached success instead of
+   * re-running against spec state the first call already changed.
+   */
   router.delete(
     "/projects/:id/entities/:entityName",
     asyncRoute(async (req, res) => {
@@ -2691,29 +2706,39 @@ export function createProjectsRouter(
       if (activePipelines.has(project.id)) {
         throw new HttpError(409, "A build or refine is already running for this project", "PIPELINE_IN_PROGRESS");
       }
-      if (!project.spec.entities.some((e) => e.name === req.params.entityName)) {
-        throw new HttpError(404, "No such screen in this project's spec", "ENTITY_NOT_FOUND");
-      }
-      if (project.spec.entities.length <= 1) {
-        throw new HttpError(400, "Cannot remove the last remaining screen -- at least one is required", "VALIDATION_ERROR");
-      }
-      const dependent = project.spec.entities.find(
-        (e) => e.name !== req.params.entityName && e.fields.some((f) => f.type === "relation" && f.relationTo === req.params.entityName),
+      const idempotencyKey = req.header("X-Idempotency-Key") || undefined;
+      const { status, body } = await withIdempotency(
+        db,
+        idempotencyKey,
+        req.userId!,
+        `DELETE /projects/${project.id}/entities/${req.params.entityName}`,
+        async () => {
+          if (!project.spec.entities.some((e) => e.name === req.params.entityName)) {
+            throw new HttpError(404, "No such screen in this project's spec", "ENTITY_NOT_FOUND");
+          }
+          if (project.spec.entities.length <= 1) {
+            throw new HttpError(400, "Cannot remove the last remaining screen -- at least one is required", "VALIDATION_ERROR");
+          }
+          const dependent = project.spec.entities.find(
+            (e) => e.name !== req.params.entityName && e.fields.some((f) => f.type === "relation" && f.relationTo === req.params.entityName),
+          );
+          if (dependent) {
+            throw new HttpError(
+              400,
+              `Cannot remove this screen -- "${dependent.label ?? dependent.name}" still links to it`,
+              "ENTITY_HAS_DEPENDENT_RELATIONS",
+            );
+          }
+          const nextSpec = {
+            ...project.spec,
+            entities: project.spec.entities.filter((e) => e.name !== req.params.entityName),
+            screens: project.spec.screens.filter((s) => s.entity !== req.params.entityName),
+          };
+          const updated = updateProjectSpec(db, project.id, nextSpec);
+          return { status: 200, body: { project: updated } };
+        },
       );
-      if (dependent) {
-        throw new HttpError(
-          400,
-          `Cannot remove this screen -- "${dependent.label ?? dependent.name}" still links to it`,
-          "ENTITY_HAS_DEPENDENT_RELATIONS",
-        );
-      }
-      const nextSpec = {
-        ...project.spec,
-        entities: project.spec.entities.filter((e) => e.name !== req.params.entityName),
-        screens: project.spec.screens.filter((s) => s.entity !== req.params.entityName),
-      };
-      const updated = updateProjectSpec(db, project.id, nextSpec);
-      res.json({ project: updated });
+      res.status(status).json(body);
     }),
   );
 
@@ -2852,6 +2877,13 @@ export function createProjectsRouter(
    * rather than an uncaught schema-validation error inside
    * updateProjectSpec. Same pre-build-only gate as every other
    * spec-shape-changing route in this file.
+   *
+   * Round 941: same withIdempotency() extension, and the same reason, as
+   * the entity-removal DELETE route above -- see its own doc comment.
+   * findField's own 404 is the retry-sensitive check here, so it (and
+   * the mutation) moves inside the callback; findEntity stays outside,
+   * same as the sibling add-field route just above, since it's needed
+   * for the idempotency route key regardless.
    */
   router.delete(
     "/projects/:id/entities/:entityName/fields/:fieldName",
@@ -2866,18 +2898,28 @@ export function createProjectsRouter(
         throw new HttpError(409, "A build or refine is already running for this project", "PIPELINE_IN_PROGRESS");
       }
       const entity = findEntity(project, req.params.entityName);
-      findField(entity, req.params.fieldName);
-      if (entity.fields.length <= 1) {
-        throw new HttpError(400, "Cannot remove the last remaining field -- at least one is required", "VALIDATION_ERROR");
-      }
-      const nextSpec = {
-        ...project.spec,
-        entities: project.spec.entities.map((e) =>
-          e.name === entity.name ? { ...e, fields: e.fields.filter((f) => f.name !== req.params.fieldName) } : e,
-        ),
-      };
-      const updated = updateProjectSpec(db, project.id, nextSpec);
-      res.json({ project: updated });
+      const idempotencyKey = req.header("X-Idempotency-Key") || undefined;
+      const { status, body } = await withIdempotency(
+        db,
+        idempotencyKey,
+        req.userId!,
+        `DELETE /projects/${project.id}/entities/${entity.name}/fields/${req.params.fieldName}`,
+        async () => {
+          findField(entity, req.params.fieldName);
+          if (entity.fields.length <= 1) {
+            throw new HttpError(400, "Cannot remove the last remaining field -- at least one is required", "VALIDATION_ERROR");
+          }
+          const nextSpec = {
+            ...project.spec,
+            entities: project.spec.entities.map((e) =>
+              e.name === entity.name ? { ...e, fields: e.fields.filter((f) => f.name !== req.params.fieldName) } : e,
+            ),
+          };
+          const updated = updateProjectSpec(db, project.id, nextSpec);
+          return { status: 200, body: { project: updated } };
+        },
+      );
+      res.status(status).json(body);
     }),
   );
 
