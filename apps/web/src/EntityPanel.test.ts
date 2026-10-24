@@ -4269,6 +4269,66 @@ test("EntityPanel's Print list action fills the print sheet with only the curren
 });
 
 /**
+ * Round 884: the on-screen table's own grand-total row (numericFieldTotals/
+ * <tfoot>, round 297) was never ported to RecordListPrintSheet, even
+ * though this print sheet was extended several times afterward (field-
+ * label disambiguation, boolean/enum/relation/file cell rendering,
+ * orderedFields column order) in parallel with the on-screen table's own
+ * evolution. A printed list showed every record's own number column but
+ * never the one number a person printing a list of amounts is very
+ * plausibly printing it FOR -- the total. Confirms the printed sheet now
+ * carries its own totals row, computed from the records actually being
+ * printed (not the on-screen numericFieldTotals, which is always over the
+ * full visible set and would be wrong when printing just a selection).
+ */
+test("EntityPanel's Print list sheet includes a grand-total row for a numeric field, matching the on-screen table's own total", async () => {
+  const dealWithAmount: Entity = {
+    name: "Deal",
+    label: "Deal",
+    fields: [
+      { name: "name", label: "Name", type: "text", required: true },
+      { name: "amount", label: "Amount", type: "number", required: true },
+    ],
+  };
+  await withJsdom(async () => {
+    const store: EntityRecord[] = [
+      { id: 1, name: "Acme Corp", amount: 800 },
+      { id: 2, name: "Globex", amount: 1000 },
+    ];
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = mockRecordsFetch(store) as typeof fetch;
+    const originalPrint = window.print;
+    let printCalls = 0;
+    window.print = () => {
+      printCalls += 1;
+    };
+    try {
+      renderEntityPanel({ entity: dealWithAmount, allEntities: [dealWithAmount] });
+      await waitForCondition(() => document.querySelectorAll("table tbody tr").length === 2);
+
+      assert.match(
+        document.querySelector(".entity-totals-row")?.textContent ?? "",
+        /1,800/,
+        "sanity check: the on-screen table's own total must show 1,800 (800 + 1000)",
+      );
+
+      const printListBtn = Array.from(document.querySelectorAll("button")).find((b) => b.textContent?.includes("Print list"))!;
+      fireEvent.click(printListBtn);
+      await waitForCondition(() => printCalls === 1);
+
+      assert.match(
+        document.querySelector(".print-list-totals-row")?.textContent ?? "",
+        /1,800/,
+        "the printed list must carry its own total row showing the same grand total (800 + 1000) as the on-screen table",
+      );
+    } finally {
+      globalThis.fetch = originalFetch;
+      window.print = originalPrint;
+    }
+  });
+});
+
+/**
  * Regression test for a real bug found by round 638's Explore survey: the
  * same label-collision gap already fixed in Business Twin (635), the
  * calendar export (636), and CSV export (637), confirmed to reach three

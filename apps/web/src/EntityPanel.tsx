@@ -378,6 +378,17 @@ function RecordListPrintSheet({
 }) {
   if (!show) return <div className="print-list-sheet" />;
   const labelOccurrences = fieldLabelOccurrences(fields);
+  // Mirrors the on-screen table's own numericFieldTotals/<tfoot> (round
+  // 297, collapse-aware since round 491) -- recomputed directly from
+  // `records`/`fields` rather than threading the on-screen total down as
+  // a prop, since `records` here can be just a selection
+  // (selectedOrAllRecords at the call site), which the on-screen total
+  // (always over the full effectivelyVisibleRecords) would get wrong.
+  // Previously the printed list showed every record's own number column
+  // but never the one number a person printing a list of amounts/prices
+  // is very plausibly printing it FOR -- the total.
+  const hasNumericField = fields.some((f) => f.type === "number");
+  const totals = hasNumericField ? sumNumericFields(records, fields) : {};
   return (
     <div className="print-list-sheet">
       <h1>{entity.label ?? entity.name}</h1>
@@ -408,6 +419,21 @@ function RecordListPrintSheet({
             </tr>
           ))}
         </tbody>
+        {hasNumericField && (
+          <tfoot>
+            <tr className="print-list-totals-row">
+              {fields.map((f) => (
+                <td key={f.name}>
+                  {f.type === "number" && (
+                    <>
+                      {t("entity.table.total")}: {formatNumberValue(totals[f.name] ?? 0, lang)}
+                    </>
+                  )}
+                </td>
+              ))}
+            </tr>
+          </tfoot>
+        )}
       </table>
       <p className="print-record-footer">
         {t("entity.printList.footer", { count: records.length, date: new Date().toLocaleString(LOCALE[lang]) })}

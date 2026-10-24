@@ -3196,9 +3196,19 @@ function RecordPrintSheet({ entity, fields, record, relatedRecords }) {
 // Same idea as RecordPrintSheet, but for the current table's rows -- whatever
 // is checkbox-selected, or every visible row if nothing is selected, same as
 // the existing Export CSV button's own selectedOrAllRecords convention.
+// Round 884: mirrors the live Forge AI preview's own EntityPanel.tsx fix
+// for the identical gap -- the on-screen table's own numericFieldTotals/
+// its own total row (above) was never ported to this print sheet, even
+// though this component was extended several times afterward in parallel
+// with the on-screen table's own evolution. Recomputed directly from
+// records/fields rather than reusing the on-screen numericFieldTotals,
+// since records here can be just a selection, which the on-screen total
+// (always over every visible record) would get wrong.
 function RecordListPrintSheet({ entity, fields, records, relatedRecords, show }) {
   if (!show) return <div className="print-list-sheet" />;
   const labelOccurrences = fieldLabelOccurrences(fields);
+  const hasNumericField = fields.some((f) => f.type === "number");
+  const totals = hasNumericField ? sumNumericFields(records, fields) : {};
   return (
     <div className="print-list-sheet">
       <h1>{entity.label}</h1>
@@ -3225,6 +3235,15 @@ function RecordListPrintSheet({ entity, fields, records, relatedRecords, show })
             </tr>
           ))}
         </tbody>
+        {hasNumericField && (
+          <tfoot>
+            <tr className="print-list-totals-row">
+              {fields.map((f) => (
+                <td key={f.name}>{f.type === "number" && <>Total: {(totals[f.name] ?? 0).toLocaleString()}</>}</td>
+              ))}
+            </tr>
+          </tfoot>
+        )}
       </table>
       <p className="print-record-footer">{records.length} records · Printed on {new Date().toLocaleString()}</p>
     </div>
@@ -7312,6 +7331,7 @@ nav button.active .tab-count { background: rgba(255, 255, 255, 0.25); color: inh
 .print-list-sheet table { width: 100%; border-collapse: collapse; }
 .print-list-sheet th, .print-list-sheet td { text-align: start; padding: 6px 10px; border-bottom: 1px solid var(--border-soft); font-size: 13px; overflow-wrap: anywhere; }
 .print-list-sheet th { font-weight: 600; color: var(--muted); }
+.print-list-totals-row td { font-weight: 700; border-top: 2px solid var(--border); }
 @media print {
   body * { visibility: hidden; }
   .print-record-sheet, .print-record-sheet *, .print-list-sheet, .print-list-sheet * { visibility: visible !important; }

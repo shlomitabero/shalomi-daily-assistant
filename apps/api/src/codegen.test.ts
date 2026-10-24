@@ -8511,6 +8511,107 @@ test("the exported EntityView's table has a conditional totals-row <tfoot> backe
   );
 });
 
+/**
+ * Round 884: mirrors the live Forge AI preview's own EntityPanel.tsx fix
+ * for the identical gap -- RecordListPrintSheet (the "Print list" sheet)
+ * never carried a totals row for a numeric field, even though the
+ * on-screen table's own hasNumericVisibleField/numericFieldTotals/<tfoot>
+ * (confirmed by the test just above) was ported to this exported app
+ * long ago. A printed list showed every record's own number column but
+ * never the one number a person printing a list of amounts is very
+ * plausibly printing it FOR -- the total. Renders the real generated
+ * EntityView.jsx end to end and clicks the real "Print list" button,
+ * rather than just asserting on the generated source text, since the fix
+ * recomputes the total from the records actually being printed.
+ */
+test("the exported EntityView's Print list sheet includes a grand-total row for a numeric field", async () => {
+  const numberProject: Project = {
+    ...project,
+    spec: {
+      ...project.spec,
+      entities: [
+        {
+          name: "Invoice",
+          label: "Invoice",
+          fields: [
+            { name: "client", label: "Client", type: "text", required: true },
+            { name: "amount", label: "Amount", type: "number", required: true },
+          ],
+        },
+      ],
+    },
+  };
+  const files = generateExportFiles(numberProject);
+  const dir = writeGeneratedWebComponent(files);
+  const originalFetch = globalThis.fetch;
+  const store = [
+    { id: 1, client: "Acme Corp", amount: 800 },
+    { id: 2, client: "Globex", amount: 1000 },
+  ];
+  globalThis.fetch = (async (input: string, init?: RequestInit): Promise<Response> => {
+    const method = init?.method ?? "GET";
+    if (method === "GET" && input === "/api/Invoice") {
+      return new Response(JSON.stringify({ records: store }), { status: 200, headers: { "content-type": "application/json" } });
+    }
+    throw new Error(`unexpected request ${method} ${input}`);
+  }) as typeof fetch;
+  const originalPrint = window.print;
+  let printCalls = 0;
+  window.print = () => {
+    printCalls += 1;
+  };
+
+  try {
+    await withRealLocalStorage(async () => {
+      const { EntityView } = await import(path.join(dir, "web", "src", "components", "EntityView.jsx"));
+      const invoiceEntity = numberProject.spec.entities[0];
+      const props = {
+        entity: invoiceEntity,
+        highlightRecordId: null,
+        onHighlightHandled: () => {},
+        onJumpToRecord: () => {},
+        onRecordCountChange: () => {},
+      };
+
+      const { container } = render(React.createElement(EntityView, props));
+      for (let i = 0; i < 40; i++) {
+        if (container.querySelectorAll("tbody tr").length === 2) break;
+        await act(async () => {
+          await new Promise((resolve) => setTimeout(resolve, 0));
+        });
+      }
+
+      assert.match(
+        container.querySelector(".entity-totals-row")?.textContent ?? "",
+        /1,800/,
+        "sanity check: the on-screen table's own total must show 1,800 (800 + 1000)",
+      );
+
+      const printListButton = Array.from(container.querySelectorAll("button")).find((b) => b.textContent?.includes("Print"))!;
+      await act(async () => {
+        fireEvent.click(printListButton);
+      });
+      for (let i = 0; i < 40; i++) {
+        if (printCalls === 1) break;
+        await act(async () => {
+          await new Promise((resolve) => setTimeout(resolve, 0));
+        });
+      }
+
+      assert.match(
+        container.querySelector(".print-list-totals-row")?.textContent ?? "",
+        /1,800/,
+        "the printed list must carry its own total row showing the same grand total (800 + 1000) as the on-screen table",
+      );
+    });
+  } finally {
+    globalThis.fetch = originalFetch;
+    window.print = originalPrint;
+    cleanup();
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
 test("the exported EntityView asks for confirmation before deleting a single record, naming it by its own display label, not just count", () => {
   const files = generateExportFiles(project);
   const entityViewJsx = files.find((f) => f.path === "web/src/components/EntityView.jsx")!.content;

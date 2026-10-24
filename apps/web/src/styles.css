@@ -3495,6 +3495,11 @@ button.sort-header:hover:not(:disabled) {
   color: #444;
 }
 
+.print-list-totals-row td {
+  font-weight: 700;
+  border-top: 2px solid #999;
+}
+
 @media print {
   body * {
     visibility: hidden;
