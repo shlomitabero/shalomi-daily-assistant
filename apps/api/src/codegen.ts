@@ -3204,11 +3204,29 @@ function RecordPrintSheet({ entity, fields, record, relatedRecords }) {
 // records/fields rather than reusing the on-screen numericFieldTotals,
 // since records here can be just a selection, which the on-screen total
 // (always over every visible record) would get wrong.
-function RecordListPrintSheet({ entity, fields, records, relatedRecords, show }) {
+// Round 885: groups is the same group/column structure the on-screen
+// table (recordGroups) or board (groupByField) already give -- null for
+// an ungrouped view or when printing an explicit row selection, which has
+// no group boundary of its own to mirror. Previously grouping a table by
+// an enum field specifically to compare totals across groups lost all of
+// that structure the moment it was printed: one continuous table with no
+// group heading or subtotal, only the flat grand total at the bottom.
+function RecordListPrintSheet({ entity, fields, records, groups, relatedRecords, show }) {
   if (!show) return <div className="print-list-sheet" />;
   const labelOccurrences = fieldLabelOccurrences(fields);
   const hasNumericField = fields.some((f) => f.type === "number");
   const totals = hasNumericField ? sumNumericFields(records, fields) : {};
+  function renderRow(r) {
+    return (
+      <tr key={r.id}>
+        {fields.map((f) => (
+          <td key={f.name}>
+            <Cell field={f} value={r[f.name]} relationLabel={f.type === "relation" ? relationDisplayLabel(f, r[f.name], relatedRecords) : undefined} />
+          </td>
+        ))}
+      </tr>
+    );
+  }
   return (
     <div className="print-list-sheet">
       <h1>{entity.label}</h1>
@@ -3220,21 +3238,28 @@ function RecordListPrintSheet({ entity, fields, records, relatedRecords, show })
             ))}
           </tr>
         </thead>
-        <tbody>
-          {records.map((r) => (
-            <tr key={r.id}>
-              {fields.map((f) => (
-                <td key={f.name}>
-                  <Cell
-                    field={f}
-                    value={r[f.name]}
-                    relationLabel={f.type === "relation" ? relationDisplayLabel(f, r[f.name], relatedRecords) : undefined}
-                  />
-                </td>
-              ))}
-            </tr>
-          ))}
-        </tbody>
+        {groups ? (
+          groups.map((group) => {
+            const groupTotals = hasNumericField ? sumNumericFields(group.records, fields) : {};
+            return (
+              <tbody key={group.label} className="print-list-group">
+                <tr className="print-list-group-header-row">
+                  <td colSpan={fields.length}>{group.label} ({group.records.length})</td>
+                </tr>
+                {group.records.map(renderRow)}
+                {hasNumericField && (
+                  <tr className="print-list-group-totals-row">
+                    {fields.map((f) => (
+                      <td key={f.name}>{f.type === "number" && <>Total: {(groupTotals[f.name] ?? 0).toLocaleString()}</>}</td>
+                    ))}
+                  </tr>
+                )}
+              </tbody>
+            );
+          })
+        ) : (
+          <tbody>{records.map(renderRow)}</tbody>
+        )}
         {hasNumericField && (
           <tfoot>
             <tr className="print-list-totals-row">
@@ -4351,6 +4376,29 @@ export function EntityView({ entity, highlightRecordId, onHighlightHandled, onJu
     }
     return totals;
   }, [hasNumericVisibleField, viewMode, boardField, visibleRecords, visibleFields]);
+
+  // Round 885: threads the same recordGroups/groupByField structure above
+  // into RecordListPrintSheet so "Print list" mirrors it instead of
+  // flattening every group/column into one continuous table with no
+  // heading or subtotal. Mirrors the live preview's own EntityPanel.tsx.
+  // Collapsed groups/columns are excluded, the same rule
+  // effectivelyVisibleRecords above already applies to the grand total.
+  // Null while an explicit row selection is active: a hand-picked,
+  // possibly cross-group selection has no group boundary to mirror, so it
+  // falls back to the flat, ungrouped rendering (and the flat grand
+  // total) exactly as round 884 already does.
+  const printGroups = useMemo(() => {
+    if (selectedIds.size > 0) return null;
+    if (viewMode === "table" && recordGroups) {
+      return recordGroups.filter((g) => !collapsedGroups.has(g.key)).map((g) => ({ label: g.label, records: g.records }));
+    }
+    if (viewMode === "board" && boardField) {
+      return groupByField(visibleRecords, boardField)
+        .filter((c) => !collapsedBoardColumns.has(c.value))
+        .map((c) => ({ label: c.label, records: c.records }));
+    }
+    return null;
+  }, [selectedIds, viewMode, recordGroups, collapsedGroups, boardField, visibleRecords, collapsedBoardColumns]);
 
   // Exactly the records the calendar grid's current month is showing -- lets
   // the ICS export button disable itself when the visible month is
@@ -5905,6 +5953,7 @@ export function EntityView({ entity, highlightRecordId, onHighlightHandled, onJu
         entity={entity}
         fields={orderedFields}
         records={selectedOrAllRecords(records, effectivelyVisibleRecords, selectedIds)}
+        groups={printGroups}
         relatedRecords={relatedRecords}
         show={showPrintList}
       />
@@ -7332,6 +7381,8 @@ nav button.active .tab-count { background: rgba(255, 255, 255, 0.25); color: inh
 .print-list-sheet th, .print-list-sheet td { text-align: start; padding: 6px 10px; border-bottom: 1px solid var(--border-soft); font-size: 13px; overflow-wrap: anywhere; }
 .print-list-sheet th { font-weight: 600; color: var(--muted); }
 .print-list-totals-row td { font-weight: 700; border-top: 2px solid var(--border); }
+.print-list-group-header-row td { background: var(--surface-subtle); font-weight: 600; }
+.print-list-group-totals-row td { background: var(--surface-subtle); font-weight: 600; border-bottom: 1px solid var(--border); }
 @media print {
   body * { visibility: hidden; }
   .print-record-sheet, .print-record-sheet *, .print-list-sheet, .print-list-sheet * { visibility: visible !important; }

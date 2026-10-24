@@ -8612,6 +8612,118 @@ test("the exported EntityView's Print list sheet includes a grand-total row for 
   }
 });
 
+/**
+ * Round 885: a feature round 884 (just above) didn't reach -- grouping the
+ * table by an enum field gives the on-screen table its own per-group
+ * heading and numeric subtotal (recordGroups/groupNumericTotals), the
+ * same way the live preview's own EntityPanel.tsx does. "Print list"
+ * previously lost all of that structure, printing one continuous table
+ * with no group headings or subtotals.
+ */
+test("the exported EntityView's Print list sheet mirrors the on-screen table's own group headings and per-group subtotals when grouped", async () => {
+  const numberProject: Project = {
+    ...project,
+    spec: {
+      ...project.spec,
+      entities: [
+        {
+          name: "Deal",
+          label: "Deal",
+          fields: [
+            { name: "name", label: "Name", type: "text", required: true },
+            { name: "status", label: "Status", type: "enum", required: true, enumValues: ["New", "Won"], enumLabels: { New: "New", Won: "Won" } },
+            { name: "amount", label: "Amount", type: "number", required: true },
+          ],
+        },
+      ],
+    },
+  };
+  const files = generateExportFiles(numberProject);
+  const dir = writeGeneratedWebComponent(files);
+  const originalFetch = globalThis.fetch;
+  const store = [
+    { id: 1, name: "Acme Corp", status: "New", amount: 500 },
+    { id: 2, name: "Beta Inc", status: "Won", amount: 800 },
+    { id: 3, name: "Gamma LLC", status: "Won", amount: 1000 },
+  ];
+  globalThis.fetch = (async (input: string, init?: RequestInit): Promise<Response> => {
+    const method = init?.method ?? "GET";
+    if (method === "GET" && input === "/api/Deal") {
+      return new Response(JSON.stringify({ records: store }), { status: 200, headers: { "content-type": "application/json" } });
+    }
+    throw new Error(`unexpected request ${method} ${input}`);
+  }) as typeof fetch;
+  const originalPrint = window.print;
+  let printCalls = 0;
+  window.print = () => {
+    printCalls += 1;
+  };
+
+  try {
+    await withRealLocalStorage(async () => {
+      const { EntityView } = await import(path.join(dir, "web", "src", "components", "EntityView.jsx"));
+      const dealEntity = numberProject.spec.entities[0];
+      const props = {
+        entity: dealEntity,
+        highlightRecordId: null,
+        onHighlightHandled: () => {},
+        onJumpToRecord: () => {},
+        onRecordCountChange: () => {},
+      };
+
+      const { container } = render(React.createElement(EntityView, props));
+      for (let i = 0; i < 40; i++) {
+        if (container.querySelectorAll("tbody tr").length === 3) break;
+        await act(async () => {
+          await new Promise((resolve) => setTimeout(resolve, 0));
+        });
+      }
+
+      const groupBySelect = container.querySelector(".entity-group-by") as HTMLSelectElement;
+      await act(async () => {
+        fireEvent.change(groupBySelect, { target: { value: "status" } });
+      });
+      for (let i = 0; i < 40; i++) {
+        if (container.querySelectorAll(".entity-group-header-row").length === 2) break;
+        await act(async () => {
+          await new Promise((resolve) => setTimeout(resolve, 0));
+        });
+      }
+
+      const printListButton = Array.from(container.querySelectorAll("button")).find((b) => b.textContent?.includes("Print"))!;
+      await act(async () => {
+        fireEvent.click(printListButton);
+      });
+      for (let i = 0; i < 40; i++) {
+        if (printCalls === 1) break;
+        await act(async () => {
+          await new Promise((resolve) => setTimeout(resolve, 0));
+        });
+      }
+
+      const groupHeaders = Array.from(container.querySelectorAll(".print-list-group-header-row"));
+      assert.equal(groupHeaders.length, 2, "the printed list must have one group heading per group, matching the on-screen table");
+      assert.match(groupHeaders[0].textContent ?? "", /New/, "the first printed group heading must name the 'New' group");
+      assert.match(groupHeaders[1].textContent ?? "", /Won/, "the second printed group heading must name the 'Won' group");
+
+      const groupTotalsRows = Array.from(container.querySelectorAll(".print-list-group-totals-row"));
+      assert.match(groupTotalsRows[0].textContent ?? "", /500/, "'New' group's own printed subtotal must be 500");
+      assert.match(groupTotalsRows[1].textContent ?? "", /1,800/, "'Won' group's own printed subtotal must be 1,800 (800 + 1000), not the flat grand total");
+
+      assert.match(
+        container.querySelector(".print-list-totals-row")?.textContent ?? "",
+        /2,300/,
+        "the flat grand total at the very end must still be the full 2,300 (500 + 800 + 1000) across every group",
+      );
+    });
+  } finally {
+    globalThis.fetch = originalFetch;
+    window.print = originalPrint;
+    cleanup();
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
 test("the exported EntityView asks for confirmation before deleting a single record, naming it by its own display label, not just count", () => {
   const files = generateExportFiles(project);
   const entityViewJsx = files.find((f) => f.path === "web/src/components/EntityView.jsx")!.content;

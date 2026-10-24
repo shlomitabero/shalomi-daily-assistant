@@ -361,6 +361,7 @@ function RecordListPrintSheet({
   entity,
   fields,
   records,
+  groups,
   show,
   lang,
   t,
@@ -370,6 +371,17 @@ function RecordListPrintSheet({
   entity: Entity;
   fields: Field[];
   records: EntityRecord[];
+  // Round 885: mirrors the on-screen table's own group-header/per-group-
+  // subtotal rendering (Table view's recordGroups/groupNumericTotals, or
+  // Board view's own columns/boardColumnNumericTotals) -- null for an
+  // ungrouped view or when printing an explicit row selection, where there
+  // is no obvious group boundary for an arbitrary hand-picked set of rows
+  // to mirror. Previously grouping a table by Status specifically to
+  // compare "Paid" vs "Pending" vs "Cancelled" totals -- exactly what
+  // grouping exists for -- lost all of that structure the moment it was
+  // printed: one continuous table with zero group headings or subtotals,
+  // only round 884's own flat grand total at the very bottom.
+  groups: { label: string; records: EntityRecord[] }[] | null;
   show: boolean;
   lang: Lang;
   t: (key: string, params?: Record<string, string | number>) => string;
@@ -389,6 +401,23 @@ function RecordListPrintSheet({
   // is very plausibly printing it FOR -- the total.
   const hasNumericField = fields.some((f) => f.type === "number");
   const totals = hasNumericField ? sumNumericFields(records, fields) : {};
+  function renderRow(record: EntityRecord) {
+    return (
+      <tr key={record.id as number}>
+        {fields.map((f) => (
+          <td key={f.name}>
+            <Cell
+              field={f}
+              value={record[f.name]}
+              lang={lang}
+              t={t}
+              relationLabel={f.type === "relation" ? relationDisplayLabel(f, record[f.name], allEntities, relatedRecords) : undefined}
+            />
+          </td>
+        ))}
+      </tr>
+    );
+  }
   return (
     <div className="print-list-sheet">
       <h1>{entity.label ?? entity.name}</h1>
@@ -400,25 +429,36 @@ function RecordListPrintSheet({
             ))}
           </tr>
         </thead>
-        <tbody>
-          {records.map((record) => (
-            <tr key={record.id as number}>
-              {fields.map((f) => (
-                <td key={f.name}>
-                  <Cell
-                    field={f}
-                    value={record[f.name]}
-                    lang={lang}
-                    t={t}
-                    relationLabel={
-                      f.type === "relation" ? relationDisplayLabel(f, record[f.name], allEntities, relatedRecords) : undefined
-                    }
-                  />
-                </td>
-              ))}
-            </tr>
-          ))}
-        </tbody>
+        {groups ? (
+          groups.map((group) => {
+            const groupTotals = hasNumericField ? sumNumericFields(group.records, fields) : {};
+            return (
+              <tbody key={group.label} className="print-list-group">
+                <tr className="print-list-group-header-row">
+                  <td colSpan={fields.length}>
+                    {group.label} <span className="muted small">({group.records.length})</span>
+                  </td>
+                </tr>
+                {group.records.map(renderRow)}
+                {hasNumericField && (
+                  <tr className="print-list-group-totals-row">
+                    {fields.map((f) => (
+                      <td key={f.name}>
+                        {f.type === "number" && (
+                          <>
+                            {t("entity.table.total")}: {formatNumberValue(groupTotals[f.name] ?? 0, lang)}
+                          </>
+                        )}
+                      </td>
+                    ))}
+                  </tr>
+                )}
+              </tbody>
+            );
+          })
+        ) : (
+          <tbody>{records.map(renderRow)}</tbody>
+        )}
         {hasNumericField && (
           <tfoot>
             <tr className="print-list-totals-row">
@@ -2296,6 +2336,30 @@ export function EntityPanel({
     return totals;
   }, [hasNumericVisibleField, viewMode, boardField, visibleRecords, t, visibleFields]);
 
+  // Round 885: the same grouping structure recordGroups/groupByField above
+  // already give the on-screen table/board -- threaded into
+  // RecordListPrintSheet so "Print list" mirrors it instead of flattening
+  // every group into one continuous table with no heading or subtotal.
+  // Collapsed groups/columns are excluded, the same "a collapsed group
+  // drops out" rule effectivelyVisibleRecords above already applies to the
+  // grand total. Deliberately null while an explicit row selection is
+  // active (selectedIds.size > 0): a hand-picked, possibly cross-group
+  // selection has no group boundary of its own to mirror, so it falls back
+  // to the flat, ungrouped rendering (and round 884's own flat grand
+  // total) exactly as before this round.
+  const printGroups = useMemo(() => {
+    if (selectedIds.size > 0) return null;
+    if (viewMode === "table" && recordGroups) {
+      return recordGroups.filter((g) => !collapsedGroups.has(g.key)).map((g) => ({ label: g.label, records: g.records }));
+    }
+    if (viewMode === "board" && boardField) {
+      return groupByField(visibleRecords, boardField, t)
+        .filter((c) => !collapsedBoardColumns.has(c.value))
+        .map((c) => ({ label: c.label, records: c.records }));
+    }
+    return null;
+  }, [selectedIds, viewMode, recordGroups, collapsedGroups, boardField, visibleRecords, t, collapsedBoardColumns]);
+
   // Scrolls the just-highlighted row into view once it's actually in the
   // rendered table -- runs after visibleRecords updates (the same render
   // that picks up the filter-clearing above), not just after
@@ -4149,6 +4213,7 @@ export function EntityPanel({
         entity={entity}
         fields={orderedFields}
         records={selectedOrAllRecords(records, effectivelyVisibleRecords, selectedIds)}
+        groups={printGroups}
         show={showPrintList}
         lang={lang}
         t={t}

@@ -4329,6 +4329,151 @@ test("EntityPanel's Print list sheet includes a grand-total row for a numeric fi
 });
 
 /**
+ * Round 885: a feature round 884 (just above) didn't reach -- grouping a
+ * table by an enum/boolean field (Table view's "Group by") gives the
+ * on-screen table its own per-group heading and numeric subtotal row
+ * (recordGroups/groupNumericTotals), specifically so a person can compare
+ * e.g. "New" vs "Won" revenue at a glance. Previously "Print list" lost
+ * all of that structure the moment it was printed: one continuous table
+ * with zero group headings or subtotals, only round 884's own flat grand
+ * total at the very bottom. Confirms the printed sheet now carries its
+ * own group heading + per-group subtotal rows, matching the on-screen
+ * table's own grouped structure, while the flat grand total still appears
+ * once at the very end.
+ */
+test("EntityPanel's Print list sheet mirrors the on-screen table's own group headings and per-group subtotals when grouped", async () => {
+  const dealWithAmount: Entity = {
+    name: "Deal",
+    label: "Deal",
+    fields: [
+      { name: "name", label: "Name", type: "text", required: true },
+      {
+        name: "status",
+        label: "Status",
+        type: "enum",
+        required: true,
+        enumValues: ["new", "won"],
+        enumLabels: { new: "New", won: "Won" },
+      },
+      { name: "amount", label: "Amount", type: "number", required: true },
+    ],
+  };
+  await withJsdom(async () => {
+    const store: EntityRecord[] = [
+      { id: 1, name: "Acme Corp", status: "new", amount: 500 },
+      { id: 2, name: "Beta Inc", status: "won", amount: 800 },
+      { id: 3, name: "Gamma LLC", status: "won", amount: 1000 },
+    ];
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = mockRecordsFetch(store) as typeof fetch;
+    const originalPrint = window.print;
+    let printCalls = 0;
+    window.print = () => {
+      printCalls += 1;
+    };
+    try {
+      renderEntityPanel({ entity: dealWithAmount, allEntities: [dealWithAmount] });
+      await waitForCondition(() => document.querySelectorAll("table tbody tr").length === 3);
+
+      const groupBySelect = document.querySelector(".entity-group-by") as HTMLSelectElement;
+      fireEvent.change(groupBySelect, { target: { value: "status" } });
+      await waitForCondition(() => document.querySelectorAll(".entity-group-header-row").length === 2);
+
+      const printListBtn = Array.from(document.querySelectorAll("button")).find((b) => b.textContent?.includes("Print list"))!;
+      fireEvent.click(printListBtn);
+      await waitForCondition(() => printCalls === 1);
+
+      const groupHeaders = Array.from(document.querySelectorAll(".print-list-group-header-row"));
+      assert.equal(groupHeaders.length, 2, "the printed list must have one group heading per group, matching the on-screen table");
+      assert.match(groupHeaders[0].textContent ?? "", /New/, "the first printed group heading must name the 'New' group");
+      assert.match(groupHeaders[1].textContent ?? "", /Won/, "the second printed group heading must name the 'Won' group");
+
+      const groupTotalsRows = Array.from(document.querySelectorAll(".print-list-group-totals-row"));
+      assert.equal(groupTotalsRows.length, 2, "the printed list must have one subtotal row per group");
+      assert.match(groupTotalsRows[0].textContent ?? "", /500/, "'New' group's own printed subtotal must be 500 (just Acme Corp)");
+      assert.match(
+        groupTotalsRows[1].textContent ?? "",
+        /1,800/,
+        "'Won' group's own printed subtotal must be 1,800 (800 + 1000), not the flat grand total",
+      );
+
+      assert.match(
+        document.querySelector(".print-list-totals-row")?.textContent ?? "",
+        /2,300/,
+        "the flat grand total at the very end must still be the full 2,300 (500 + 800 + 1000) across every group",
+      );
+    } finally {
+      globalThis.fetch = originalFetch;
+      window.print = originalPrint;
+    }
+  });
+});
+
+/**
+ * Round 885's sibling case: Board view's own columns (groupByField,
+ * boardColumnNumericTotals) give the exact same "compare totals across
+ * groups" value Table view's grouping does -- Copy/Export-CSV/Print list
+ * are the same view-mode-agnostic toolbar in every view, so this must
+ * have the identical print-grouping gap.
+ */
+test("EntityPanel's Print list sheet mirrors the Board view's own column headings and per-column subtotals", async () => {
+  const dealWithAmount: Entity = {
+    name: "Deal",
+    label: "Deal",
+    fields: [
+      { name: "name", label: "Name", type: "text", required: true },
+      {
+        name: "status",
+        label: "Status",
+        type: "enum",
+        required: true,
+        enumValues: ["new", "won"],
+        enumLabels: { new: "New", won: "Won" },
+      },
+      { name: "amount", label: "Amount", type: "number", required: true },
+    ],
+  };
+  await withJsdom(async () => {
+    const store: EntityRecord[] = [
+      { id: 1, name: "Acme Corp", status: "new", amount: 500 },
+      { id: 2, name: "Beta Inc", status: "won", amount: 800 },
+      { id: 3, name: "Gamma LLC", status: "won", amount: 1000 },
+    ];
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = mockRecordsFetch(store) as typeof fetch;
+    const originalPrint = window.print;
+    let printCalls = 0;
+    window.print = () => {
+      printCalls += 1;
+    };
+    try {
+      renderEntityPanel({ entity: dealWithAmount, allEntities: [dealWithAmount] });
+      await waitForCondition(() => document.querySelectorAll("table tbody tr").length === 3);
+
+      const boardToggle = document.querySelectorAll(".view-toggle-btn")[1] as HTMLButtonElement;
+      fireEvent.click(boardToggle);
+      await waitForCondition(() => document.querySelectorAll(".board-card").length === 3);
+
+      const printListBtn = Array.from(document.querySelectorAll("button")).find((b) => b.textContent?.includes("Print list"))!;
+      fireEvent.click(printListBtn);
+      await waitForCondition(() => printCalls === 1);
+
+      const groupHeaders = Array.from(document.querySelectorAll(".print-list-group-header-row"));
+      assert.equal(groupHeaders.length, 2, "the printed list must have one column heading per Board column");
+      assert.match(groupHeaders[0].textContent ?? "", /New/, "the first printed column heading must name the 'New' column");
+      assert.match(groupHeaders[1].textContent ?? "", /Won/, "the second printed column heading must name the 'Won' column");
+
+      const groupTotalsRows = Array.from(document.querySelectorAll(".print-list-group-totals-row"));
+      assert.match(groupTotalsRows[0].textContent ?? "", /500/, "'New' column's own printed subtotal must be 500");
+      assert.match(groupTotalsRows[1].textContent ?? "", /1,800/, "'Won' column's own printed subtotal must be 1,800 (800 + 1000)");
+    } finally {
+      globalThis.fetch = originalFetch;
+      window.print = originalPrint;
+    }
+  });
+});
+
+/**
  * Regression test for a real bug found by round 638's Explore survey: the
  * same label-collision gap already fixed in Business Twin (635), the
  * calendar export (636), and CSV export (637), confirmed to reach three

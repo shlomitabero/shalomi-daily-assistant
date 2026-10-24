@@ -3500,6 +3500,17 @@ button.sort-header:hover:not(:disabled) {
   border-top: 2px solid #999;
 }
 
+.print-list-group-header-row td {
+  background: #f1f1f1;
+  font-weight: 600;
+}
+
+.print-list-group-totals-row td {
+  background: #f1f1f1;
+  font-weight: 600;
+  border-bottom: 1px solid #999;
+}
+
 @media print {
   body * {
     visibility: hidden;
