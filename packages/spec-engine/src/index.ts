@@ -16,6 +16,24 @@ export {
   AnthropicPromptEnhancer,
   type PromptEnhancer,
 } from "./promptEnhancer.js";
+// Round 925: the new Lovable.dev/Base44-style "AI Code Mode" foundation
+// (system prompt + XML action parser + patch engine) -- see eliteAgent.ts's
+// own doc comment. Exported here like every other provider above, but
+// deliberately NOT wired into selectProvider: that function drives the
+// EXISTING, already-live spec-driven generation flow, which must keep
+// working unchanged while this new path is built out and proven.
+export {
+  ELITE_SYSTEM_PROMPT,
+  parseAgentResponse,
+  parsePatchHunks,
+  applyPatch,
+  generateEliteCodeResponse,
+  type AgentAction,
+  type PatchHunk,
+  type ApplyPatchResult,
+  type EliteAgentOptions,
+  type EliteAgentResult,
+} from "./eliteAgent.js";
 
 /**
  * Picks the best available provider: a real Claude model call when
