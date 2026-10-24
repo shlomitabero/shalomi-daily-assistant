@@ -57,3 +57,16 @@ test('an empty ledger produces all zeros, not an error', () => {
     outstandingReceivables: 0, pendingObligations: 0, netProfitAllTime: 0,
   });
 });
+
+test('a corrupted entry amount is excluded instead of poisoning every total with NaN', () => {
+  const entries = [
+    { type: 'revenue', amount: 100, verified: true, date: TODAY },
+    { type: 'revenue', amount: NaN, verified: true, date: TODAY },
+    { type: 'revenue', amount: undefined, verified: true, date: TODAY },
+    { type: 'revenue', amount: 'oops', verified: true, date: TODAY },
+  ];
+  const summary = summarizeLedger(entries, TODAY);
+  assert.equal(summary.cashInToday, 100);
+  assert.ok(Number.isFinite(summary.netProfitToday));
+  assert.ok(Number.isFinite(summary.netProfitAllTime));
+});
