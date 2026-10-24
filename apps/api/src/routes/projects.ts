@@ -1746,13 +1746,36 @@ export function createProjectsRouter(
    * even if guessed. Never touches the project's own current spec (that
    * lives on the project row, independent of this table), so deleting even
    * the checkpoint that happens to match the current state is harmless.
+   *
+   * Round 944: same withIdempotency() extension, and the same reason, as
+   * deleteRecord's own fix (round 792) -- deleteCheckpoint throws
+   * NotFoundError once the row is actually gone, with no special case for
+   * a retry. fetchWithWakeRetry (apps/web/src/wakeRetry.ts) retries on ANY
+   * thrown fetch() error, so a response lost in transit after the server
+   * already deleted the checkpoint meant the retry got back a confusing
+   * 404 for a delete that, from the user's own point of view, already
+   * fully succeeded -- and since HistoryPanel.tsx's handleDelete is
+   * deliberately non-optimistic (only removes the row from state on an
+   * actual 200/204 response), the checkpoint stayed visibly listed right
+   * next to that error, with no way to resolve the contradiction short of
+   * a page reload.
    */
   router.delete(
     "/projects/:id/checkpoints/:checkpointId",
     asyncRoute(async (req, res) => {
       const project = requireProjectWriteAccess(db, req.params.id, req.userId!);
-      deleteCheckpoint(db, project.id, req.params.checkpointId);
-      res.status(204).end();
+      const idempotencyKey = req.header("X-Idempotency-Key") || undefined;
+      const { status } = await withIdempotency(
+        db,
+        idempotencyKey,
+        req.userId!,
+        `DELETE /projects/${project.id}/checkpoints/${req.params.checkpointId}`,
+        async () => {
+          deleteCheckpoint(db, project.id, req.params.checkpointId);
+          return { status: 204, body: null };
+        },
+      );
+      res.status(status).end();
     }),
   );
 

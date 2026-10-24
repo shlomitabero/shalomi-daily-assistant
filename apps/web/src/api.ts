@@ -869,8 +869,12 @@ export function renameCheckpoint(projectId: string, checkpointId: string, label:
   return request(`/projects/${projectId}/checkpoints/${checkpointId}`, { method: "PATCH", body: JSON.stringify({ label }) });
 }
 
+/** Round 944: same idempotency-key shape as deleteRecord's own fix (round 792) -- a lost response after this checkpoint was already deleted must replay that success on retry, not surface a confusing "not found". */
 export function deleteCheckpoint(projectId: string, checkpointId: string): Promise<void> {
-  return request(`/projects/${projectId}/checkpoints/${checkpointId}`, { method: "DELETE" });
+  return request(`/projects/${projectId}/checkpoints/${checkpointId}`, {
+    method: "DELETE",
+    headers: { "x-idempotency-key": crypto.randomUUID() },
+  });
 }
 
 export function listRecords(projectId: string, entityName: string): Promise<{ records: EntityRecord[] }> {

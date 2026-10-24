@@ -7020,6 +7020,56 @@ test("deleting a checkpoint by id removes exactly that one, leaving the rest of 
   });
 });
 
+/**
+ * Round 944: same withIdempotency gap, and the same fix, as deleteRecord's
+ * own fix (round 792) -- deleteCheckpoint (packages/db/src/checkpoints.ts)
+ * throws NotFoundError once the row is actually gone, with no special case
+ * for a retry. fetchWithWakeRetry retries on ANY thrown fetch() error, so a
+ * response lost in transit after the checkpoint was already deleted used
+ * to surface a confusing 404 for a delete that, from the user's point of
+ * view, already fully succeeded.
+ */
+test("DELETE .../checkpoints/:checkpointId retried with the same idempotency key after the first attempt already succeeded replays the original 204, instead of 404ing on the already-deleted checkpoint", async () => {
+  await withServer(async (baseUrl) => {
+    const token = await signup(baseUrl, "checkpoint-delete-idem@example.com");
+    const createRes = await fetch(`${baseUrl}/api/projects`, {
+      method: "POST",
+      headers: authHeaders(token),
+      body: JSON.stringify({ description: "A CRM with customers and deals." }),
+    });
+    const { project } = (await createRes.json()) as { project: { id: string } };
+    const buildRes = await fetch(`${baseUrl}/api/projects/${project.id}/build`, { method: "POST", headers: authHeaders(token) });
+    await collectSSE(buildRes);
+
+    const beforeRes = await fetch(`${baseUrl}/api/projects/${project.id}/checkpoints`, { headers: authHeaders(token) });
+    const { checkpoints: before } = (await beforeRes.json()) as { checkpoints: { id: string }[] };
+    const toDelete = before[0].id;
+
+    const headers = { ...authHeaders(token), "x-idempotency-key": "checkpoint-delete-repro-key" };
+    const firstRes = await fetch(`${baseUrl}/api/projects/${project.id}/checkpoints/${toDelete}`, { method: "DELETE", headers });
+    assert.equal(firstRes.status, 204);
+
+    const afterFirstRes = await fetch(`${baseUrl}/api/projects/${project.id}/checkpoints`, { headers: authHeaders(token) });
+    const { checkpoints: afterFirst } = (await afterFirstRes.json()) as { checkpoints: { id: string }[] };
+    assert.ok(!afterFirst.some((c) => c.id === toDelete), "the checkpoint must genuinely be gone after the first call");
+
+    const retryRes = await fetch(`${baseUrl}/api/projects/${project.id}/checkpoints/${toDelete}`, { method: "DELETE", headers });
+    assert.equal(
+      retryRes.status,
+      204,
+      "a retried deletion with the same idempotency key must replay the original success, not 404 on the already-deleted checkpoint",
+    );
+
+    const afterRetryRes = await fetch(`${baseUrl}/api/projects/${project.id}/checkpoints`, { headers: authHeaders(token) });
+    const { checkpoints: afterRetry } = (await afterRetryRes.json()) as { checkpoints: { id: string }[] };
+    assert.deepEqual(
+      afterRetry.map((c) => c.id),
+      afterFirst.map((c) => c.id),
+      "the replayed response must leave the project's history exactly as it was after the original success",
+    );
+  });
+});
+
 test("deleting a checkpoint id that doesn't exist in this project 404s, and the project's own history is left untouched", async () => {
   await withServer(async (baseUrl) => {
     const token = await signup(baseUrl, "checkpoint-delete-owner2@example.com");
