@@ -43,6 +43,38 @@ export function normalizePhone(value: string): string {
   return value.replace(/\D/g, "").replace(/^0+/, "");
 }
 
+/**
+ * Round 926: normalizePhone's own leading-zero strip only ever catches a
+ * trunk zero sitting at the very START of the digit string -- a number
+ * stored with BOTH the country code and the local trunk zero still in
+ * place (e.g. "+972-050-1234567", an entirely ordinary way for a business
+ * owner to type a familiar local number with a country code tacked on the
+ * front without remembering to drop the 0) normalizes to "9720501234567",
+ * one digit LONGER than the exact same number as WhatsApp actually
+ * delivers it ("972501234567") -- the extra "0" sits in the middle, past
+ * where normalizePhone's own `/^0+/` can see it, so the plain `endsWith`
+ * suffix check below never matches, and that customer's real messages
+ * never auto-match their own record, silently, forever.
+ *
+ * Tries removing exactly one "0" character from `longer` (one position at
+ * a time) and checking for EXACT equality with `shorter` -- not just
+ * another suffix check -- which is why this stays safe against false
+ * positives: two genuinely different numbers would need to be identical
+ * in every other digit for a single dropped "0" to produce a false match,
+ * which real phone numbers essentially never are. Only tried when the
+ * lengths already differ by exactly one, the shape this specific embedded-
+ * trunk-zero case always produces.
+ */
+function matchesWithOneEmbeddedZeroRemoved(shorter: string, longer: string): boolean {
+  if (longer.length !== shorter.length + 1) return false;
+  for (let i = 0; i < longer.length; i++) {
+    if (longer[i] === "0" && longer.slice(0, i) + longer.slice(i + 1) === shorter) {
+      return true;
+    }
+  }
+  return false;
+}
+
 export interface MatchedRecord {
   entityName: string;
   entityLabel: string;
@@ -84,7 +116,7 @@ export function findMatchingRecord(db: ForgeDatabase, project: Project, fromNumb
         if (!normalizedStored) continue;
         const shorter = normalizedStored.length <= normalizedFrom.length ? normalizedStored : normalizedFrom;
         const longer = normalizedStored.length <= normalizedFrom.length ? normalizedFrom : normalizedStored;
-        if (shorter.length >= 7 && longer.endsWith(shorter)) {
+        if (shorter.length >= 7 && (longer.endsWith(shorter) || matchesWithOneEmbeddedZeroRemoved(shorter, longer))) {
           return {
             entityName: entity.name,
             entityLabel: entity.label ?? entity.name,
