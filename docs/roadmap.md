@@ -33275,3 +33275,19 @@ The failing test (`codegen.test.ts`, "...handleSubmit saves only the field the u
 **Verification**: the specific fixed test confirmed passing in isolation, repeatedly, both alone and as part of partial runs. No other individual test's pass/fail outcome ever changed across any of this round's many full-suite and isolated-file attempts. `apps/api`'s build ran clean (test-only change, no source files touched).
 
 **Status**: shipped and pushed, `apps/api/src/codegen.test.ts` only.
+
+### Round 896: `PATCH /auth/password` had no rate limiter -- the one credential-CHECKING route in routes/auth.ts missed by rounds 857/894's own hardening sweep
+
+Still no genuine reply from שלומי. This round's survey was explicitly steered to check for other unthrottled auth routes, given round 894 had just found one -- it found a second.
+
+**The gap**: `PATCH /auth/password` compares a real secret (`verifyPassword(currentPassword, storedHash)`, scrypt-based) and had no rate limiter at all, unlike every other sibling route that does the same kind of credential check -- `loginRateLimiter`, `verifyLoginCodeRateLimiter` (round 857), and `resetPasswordRateLimiter` (round 894) are all wired onto their routes. The realistic attacker here already holds a valid, stolen or shared session bearer token (a leaked localStorage token, an XSS exfiltration, an unattended device) but not the real password -- this route let them brute-force it at whatever rate their own hardware allows, with scrypt's own cost being real but entirely attacker-side, never a server-enforced limit, the exact rationale this file's very first rate limiter (login) was already built around.
+
+**Reachable sequence, confirmed empirically before fixing**: signed up a fresh account, then fired 60 consecutive `PATCH /auth/password` requests with the correct bearer token and a wrong `currentPassword` each time -- all 60 returned 401, none ever 429. The same loop against `POST /auth/reset-password` (which does carry a limiter) returned 429 well before 60 attempts, confirming the comparison methodology was sound and this route really was the one unthrottled exception.
+
+**The fix**: added `changePasswordRateLimiter`, keyed by the authenticated user's own id rather than IP -- unlike every sibling route (where identity isn't yet established at rate-limit time), `requireAuth` runs first here and already knows exactly which account is being targeted, so keying by `req.userId` scopes the limit to the one account under attack regardless of which IP a stolen token happens to be used from, placed as middleware after `requireAuth` in the route's own chain so `req.userId` is populated when the limiter's `keyGenerator` runs.
+
+**The test**: a new `app.test.ts` test (mirroring the existing rate-limit tests' own structure, plus the WhatsApp/AI-generation per-user limiters' own "a different account is unaffected" check) firing 30 wrong-`currentPassword` attempts against one account (each a normal 401, not 429), confirming the 31st is rejected with 429/`RATE_LIMITED`, then confirming a completely different account's own legitimate password change still succeeds (204) in the same test run -- proven failing without the fix (a clean 401-vs-429 assertion mismatch) and passing with it restored, via a `git stash` cycle (explicitly re-verified with `git status`/`git diff` at every step).
+
+**Verification**: confirmed the new test failing cleanly without the fix and passing with it restored. The full `apps/api` suite ran clean except for the same pre-existing `codegen.test.ts` SIGKILL fragility round 895 already investigated and documented in full (confirmed unrelated: this round never touched `codegen.ts`/`codegen.test.ts` at all). `apps/api`'s build ran clean. No `codegen.ts` parity needed -- the exported standalone app has no auth/user-account concept at all.
+
+**Status**: shipped and pushed, `apps/api/src/routes/auth.ts` + `apps/api/src/app.test.ts` only.
