@@ -3234,6 +3234,210 @@ test("WhatsAppPanel's Disconnect also clears a stale deleteError banner left ove
 });
 
 /**
+ * Round 909: handleClearHistory/handleDisconnect already cross-clear both
+ * retryError and deleteError (round 902 above), but handleRetry and
+ * handleDeleteMessage -- the file's own other pair of per-action handlers
+ * -- were never given the same treatment. A failed retry leaves a stale
+ * "retry failed" banner rendered unconditionally (no gate on which row it
+ * was about); a later, unrelated, successful delete must not leave it
+ * stranded on screen with no action short of Clear History/Disconnect
+ * able to remove it.
+ */
+test("WhatsAppPanel's successful delete of one message also clears a stale retryError banner left over from an earlier failed retry of a different message", async () => {
+  await withJsdom(async () => {
+    const originalFetch = globalThis.fetch;
+    const originalConfirm = globalThis.window.confirm;
+    globalThis.window.confirm = (() => true) as typeof window.confirm;
+    const failedOutbound: WhatsAppMessageLogEntry = {
+      id: "m1",
+      direction: "out",
+      fromNumber: "972501234567",
+      toNumber: "972521112233",
+      body: "retry me",
+      matchedLabel: null,
+      matchedEntityName: null,
+      matchedRecordId: null,
+      status: "failed",
+      createdAt: new Date("2026-03-15T14:32:00Z").toISOString(),
+    };
+    const other: WhatsAppMessageLogEntry = {
+      id: "m2",
+      direction: "in",
+      fromNumber: "972521112233",
+      toNumber: "972501234567",
+      body: "delete me",
+      matchedLabel: null,
+      matchedEntityName: null,
+      matchedRecordId: null,
+      status: "received",
+      createdAt: new Date("2026-03-15T14:33:00Z").toISOString(),
+    };
+    let deleteOneCalls = 0;
+    globalThis.fetch = (async (input: string, init?: RequestInit): Promise<Response> => {
+      const method = init?.method ?? "GET";
+      if (method === "GET" && input === "/api/projects/proj1/integrations/whatsapp/status") {
+        return new Response(
+          JSON.stringify({ status: "connected", phoneNumber: "972501234567", qrDataUrl: null, error: null }),
+          { status: 200, headers: { "content-type": "application/json" } },
+        );
+      }
+      if (method === "GET" && input === "/api/projects/proj1/integrations/whatsapp/messages") {
+        return new Response(JSON.stringify({ messages: [failedOutbound, other] }), { status: 200, headers: { "content-type": "application/json" } });
+      }
+      if (method === "POST" && input === "/api/projects/proj1/integrations/whatsapp/send") {
+        return new Response(JSON.stringify({ ok: false, error: "Send failed" }), { status: 200, headers: { "content-type": "application/json" } });
+      }
+      const deleteOneMatch = /^\/api\/projects\/proj1\/integrations\/whatsapp\/messages\/([^/]+)$/.exec(input);
+      if (method === "DELETE" && deleteOneMatch) {
+        deleteOneCalls += 1;
+        return new Response(null, { status: 204 });
+      }
+      throw new Error(`unexpected request ${method} ${input}`);
+    }) as typeof fetch;
+    try {
+      render(
+        React.createElement(
+          ThemeProvider,
+          null,
+          React.createElement(
+            LanguageProvider,
+            null,
+            React.createElement(WhatsAppPanel, {
+              projectId: "proj1",
+              projectName: "Test Project",
+              onClose: () => {},
+              onJumpToEntity: () => {},
+              onJumpToRecord: () => {},
+            }),
+          ),
+        ),
+      );
+      await waitForCondition(() => document.querySelectorAll(".whatsapp-log-list li").length === 2);
+
+      const rows = document.querySelectorAll(".whatsapp-log-list li");
+      const retryButton = rows[0].querySelector("button.secondary.small") as HTMLButtonElement;
+      assert.ok(retryButton, "expected the failed message's own Retry button");
+      fireEvent.click(retryButton);
+      await waitForCondition(() => document.querySelector(".error") !== null);
+      assert.match(document.body.textContent ?? "", /Send failed/, "expected the failed retry's error banner to render");
+
+      const deleteButton = document.querySelectorAll(".whatsapp-log-list li")[1].querySelector(".whatsapp-log-delete") as HTMLButtonElement;
+      assert.ok(deleteButton, "expected the other message's own delete button");
+      fireEvent.click(deleteButton);
+      await waitForCondition(() => deleteOneCalls === 1 && document.querySelectorAll(".whatsapp-log-list li").length === 1);
+
+      assert.equal(
+        document.querySelector(".error") === null,
+        true,
+        "the stale retryError banner must not survive an unrelated, successful delete of a different message",
+      );
+    } finally {
+      globalThis.fetch = originalFetch;
+      globalThis.window.confirm = originalConfirm;
+    }
+  });
+});
+
+/**
+ * Round 909: the symmetric case -- a failed delete leaves a stale
+ * "delete failed" banner, and a later, unrelated, successful retry must
+ * not leave it stranded on screen either.
+ */
+test("WhatsAppPanel's successful retry of one message also clears a stale deleteError banner left over from an earlier failed delete of a different message", async () => {
+  await withJsdom(async () => {
+    const originalFetch = globalThis.fetch;
+    const originalConfirm = globalThis.window.confirm;
+    globalThis.window.confirm = (() => true) as typeof window.confirm;
+    const failedOutbound: WhatsAppMessageLogEntry = {
+      id: "m1",
+      direction: "out",
+      fromNumber: "972501234567",
+      toNumber: "972521112233",
+      body: "retry me",
+      matchedLabel: null,
+      matchedEntityName: null,
+      matchedRecordId: null,
+      status: "failed",
+      createdAt: new Date("2026-03-15T14:32:00Z").toISOString(),
+    };
+    const other: WhatsAppMessageLogEntry = {
+      id: "m2",
+      direction: "in",
+      fromNumber: "972521112233",
+      toNumber: "972501234567",
+      body: "delete me",
+      matchedLabel: null,
+      matchedEntityName: null,
+      matchedRecordId: null,
+      status: "received",
+      createdAt: new Date("2026-03-15T14:33:00Z").toISOString(),
+    };
+    let sendCalls = 0;
+    globalThis.fetch = (async (input: string, init?: RequestInit): Promise<Response> => {
+      const method = init?.method ?? "GET";
+      if (method === "GET" && input === "/api/projects/proj1/integrations/whatsapp/status") {
+        return new Response(
+          JSON.stringify({ status: "connected", phoneNumber: "972501234567", qrDataUrl: null, error: null }),
+          { status: 200, headers: { "content-type": "application/json" } },
+        );
+      }
+      if (method === "GET" && input === "/api/projects/proj1/integrations/whatsapp/messages") {
+        return new Response(JSON.stringify({ messages: [failedOutbound, other] }), { status: 200, headers: { "content-type": "application/json" } });
+      }
+      const deleteOneMatch = /^\/api\/projects\/proj1\/integrations\/whatsapp\/messages\/([^/]+)$/.exec(input);
+      if (method === "DELETE" && deleteOneMatch) {
+        return new Response(JSON.stringify({ error: "Delete failed" }), { status: 500, headers: { "content-type": "application/json" } });
+      }
+      if (method === "POST" && input === "/api/projects/proj1/integrations/whatsapp/send") {
+        sendCalls += 1;
+        return new Response(JSON.stringify({ ok: true }), { status: 200, headers: { "content-type": "application/json" } });
+      }
+      throw new Error(`unexpected request ${method} ${input}`);
+    }) as typeof fetch;
+    try {
+      render(
+        React.createElement(
+          ThemeProvider,
+          null,
+          React.createElement(
+            LanguageProvider,
+            null,
+            React.createElement(WhatsAppPanel, {
+              projectId: "proj1",
+              projectName: "Test Project",
+              onClose: () => {},
+              onJumpToEntity: () => {},
+              onJumpToRecord: () => {},
+            }),
+          ),
+        ),
+      );
+      await waitForCondition(() => document.querySelectorAll(".whatsapp-log-list li").length === 2);
+
+      const deleteButton = document.querySelectorAll(".whatsapp-log-list li")[1].querySelector(".whatsapp-log-delete") as HTMLButtonElement;
+      assert.ok(deleteButton, "expected the second message's own delete button");
+      fireEvent.click(deleteButton);
+      await waitForCondition(() => document.querySelector(".error") !== null);
+      assert.match(document.body.textContent ?? "", /Delete failed/, "expected the failed delete's error banner to render");
+
+      const retryButton = document.querySelectorAll(".whatsapp-log-list li")[0].querySelector("button.secondary.small") as HTMLButtonElement;
+      assert.ok(retryButton, "expected the first message's own Retry button");
+      fireEvent.click(retryButton);
+      await waitForCondition(() => sendCalls === 1 && document.querySelector(".error") === null);
+
+      assert.equal(
+        document.querySelector(".error") === null,
+        true,
+        "the stale deleteError banner must not survive an unrelated, successful retry of a different message",
+      );
+    } finally {
+      globalThis.fetch = originalFetch;
+      globalThis.window.confirm = originalConfirm;
+    }
+  });
+});
+
+/**
  * New in this round: the same "Copy report" companion action round 222
  * added to Business Twin's own Download button, mirrored here -- the log
  * is already formatted as plain, shareable text (formatWhatsAppLog), but

@@ -619,6 +619,15 @@ export function WhatsAppPanel({
   async function handleRetry(m: WhatsAppMessageLogEntry) {
     setRetryingId(m.id);
     setRetryError(null);
+    // Round 909: handleClearHistory/handleDisconnect already cross-clear
+    // both retryError and deleteError (round 902) -- this function and
+    // handleDeleteMessage just below are the file's own other pair of
+    // per-action handlers, and were never given the same treatment. A
+    // delete that succeeds for the exact message a retry just failed for
+    // (or any other message, while an unrelated retry succeeds) must not
+    // leave the OTHER action's stale error banner on screen, since both
+    // render unconditionally with no gate on which action produced them.
+    setDeleteError(null);
     try {
       const result = await sendWhatsAppMessage(projectId, m.toNumber, m.body);
       // A retry can fail for a reason that never reaches insertWhatsAppMessage
@@ -715,6 +724,8 @@ export function WhatsAppPanel({
     if (!window.confirm(t("whatsapp.log.confirmDeleteOne"))) return;
     setDeletingId(m.id);
     setDeleteError(null);
+    // Round 909: mirrors handleRetry's own cross-clear just above.
+    setRetryError(null);
     try {
       await deleteWhatsAppMessage(projectId, m.id);
       messagesVersionRef.current += 1;
