@@ -16,11 +16,23 @@ export function CheckpointLabelEditor({
   checkpoint,
   projectId,
   onRenamed,
+  onEditStart,
   readOnly = false,
 }: {
   checkpoint: Checkpoint;
   projectId: string;
   onRenamed: (checkpoint: Checkpoint) => void;
+  /**
+   * Round 933: HistoryPanel's own error/restoreWarning/deleteError (from
+   * handleRestore/handleDelete) render unconditionally at the top of the
+   * dialog -- unlike this editor's own `error` just below, they're never
+   * hidden by entering edit mode. Without this, a stale one of those
+   * three could sit there, fully visible, right through a completely
+   * unrelated, successful rename -- this is the hook that lets
+   * HistoryPanel clear them the moment editing starts, same as
+   * handleRestore/handleDelete already do for each other (round 903).
+   */
+  onEditStart?: () => void;
   /** True for a "viewer" collaborator -- the server already rejects this rename with 403 VIEWER_READ_ONLY; this just renders the label as plain, non-editable text instead of a click target that can only ever fail. */
   readOnly?: boolean;
 }) {
@@ -34,6 +46,7 @@ export function CheckpointLabelEditor({
   function startEditing() {
     setDraft(checkpoint.label);
     setError(null);
+    onEditStart?.();
     setEditing(true);
   }
 

@@ -83,6 +83,18 @@ export function HistoryPanel({
     setCheckpoints((prev) => prev.map((c) => (c.id === renamed.id ? renamed : c)));
   }
 
+  // Round 933: error/restoreWarning/deleteError render unconditionally
+  // above (unlike CheckpointLabelEditor's own error, they're never
+  // hidden by entering edit mode), so without this a stale one of them
+  // -- from an earlier, unrelated failed restore/delete -- would sit
+  // there, fully visible, right through a later successful rename.
+  // Mirrors handleRestore/handleDelete's own cross-clear (round 903).
+  function handleCheckpointEditStart() {
+    setError(null);
+    setRestoreWarning(null);
+    setDeleteError(null);
+  }
+
   function handleDownload() {
     downloadCheckpointHistory(formatCheckpointHistory(checkpoints, currentSpec, projectName, lang, t), projectName);
   }
@@ -336,7 +348,13 @@ export function HistoryPanel({
               return (
                 <li key={checkpoint.id}>
                   <div>
-                    <CheckpointLabelEditor checkpoint={checkpoint} projectId={projectId} onRenamed={handleCheckpointRenamed} readOnly={readOnly} />
+                    <CheckpointLabelEditor
+                      checkpoint={checkpoint}
+                      projectId={projectId}
+                      onRenamed={handleCheckpointRenamed}
+                      onEditStart={handleCheckpointEditStart}
+                      readOnly={readOnly}
+                    />
                     {isCurrent && <span className="chip checkpoint-current-chip">{t("history.current")}</span>}
                     <div className="muted small">
                       {new Date(checkpoint.createdAt).toLocaleString(LOCALE[lang])}

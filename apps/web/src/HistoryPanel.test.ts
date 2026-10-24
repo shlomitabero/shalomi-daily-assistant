@@ -1605,6 +1605,92 @@ test("HistoryPanel's checkpoint label is a real click-to-rename control wired in
 });
 
 /**
+ * Round 933: round 903 cross-cleared handleRestore/handleDelete's own
+ * error/restoreWarning/deleteError against EACH OTHER, but never against
+ * this panel's third sibling action on the exact same list -- renaming a
+ * checkpoint's label. Unlike CheckpointLabelEditor's own `error` just
+ * below the input, these three banners render unconditionally at the
+ * TOP of the dialog, never hidden by entering edit mode -- so a stale
+ * one sat there, fully visible, right through a later, completely
+ * unrelated, successful rename.
+ */
+test("HistoryPanel's successful rename clears a stale delete-error banner left over from an earlier failed delete of a different checkpoint", async () => {
+  await withJsdom(async () => {
+    const originalFetch = globalThis.fetch;
+    const originalConfirm = globalThis.window.confirm;
+    globalThis.window.confirm = (() => true) as typeof window.confirm;
+    const cp1 = makeCheckpoint("cp1", "Initial build");
+    const cp2 = makeCheckpoint("cp2", "Refine: add invoices");
+
+    globalThis.fetch = (async (input: string, init?: RequestInit): Promise<Response> => {
+      const method = init?.method ?? "GET";
+      if (method === "GET" && input === "/api/projects/proj1/checkpoints") {
+        return new Response(JSON.stringify({ checkpoints: [cp1, cp2] }), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        });
+      }
+      if (method === "DELETE" && input === "/api/projects/proj1/checkpoints/cp1") {
+        return new Response(JSON.stringify({ error: "Delete failed" }), {
+          status: 500,
+          headers: { "content-type": "application/json" },
+        });
+      }
+      if (method === "PATCH" && input === "/api/projects/proj1/checkpoints/cp2") {
+        const body = JSON.parse(init!.body as string) as { label: string };
+        return new Response(JSON.stringify({ checkpoint: { ...cp2, label: body.label } }), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        });
+      }
+      throw new Error(`unexpected request ${method} ${input}`);
+    }) as typeof fetch;
+
+    try {
+      render(
+        React.createElement(
+          ThemeProvider,
+          null,
+          React.createElement(
+            LanguageProvider,
+            null,
+            React.createElement(HistoryPanel, {
+              projectId: "proj1",
+              projectName: "Test Project",
+              currentSpec: { ...cp1.spec, entities: [] },
+              onRestored: () => {},
+              onClose: () => {},
+            }),
+          ),
+        ),
+      );
+      await waitForCondition(() => document.querySelectorAll(".checkpoint-list li").length === 2);
+
+      const deleteButtons = Array.from(document.querySelectorAll(".checkpoint-delete-btn")) as HTMLButtonElement[];
+      fireEvent.click(deleteButtons[0]); // cp1's own button
+      await waitForCondition(() => document.querySelector(".error") !== null);
+      assert.match(document.body.textContent ?? "", /Delete failed/, "expected the failed delete's error banner to render");
+
+      const labels = Array.from(document.querySelectorAll(".checkpoint-label")) as HTMLElement[];
+      fireEvent.click(labels[1]); // cp2's own label -- a different, unrelated checkpoint
+      const input = document.querySelector(".checkpoint-label-edit input") as HTMLInputElement;
+      fireEvent.change(input, { target: { value: "before the pricing overhaul" } });
+      fireEvent.blur(input);
+
+      await waitForCondition(() => /before the pricing overhaul/.test(document.body.textContent ?? ""));
+      assert.equal(
+        document.querySelector(".error") === null,
+        true,
+        "the stale delete-error banner must not survive an unrelated, successful rename",
+      );
+    } finally {
+      globalThis.fetch = originalFetch;
+      globalThis.window.confirm = originalConfirm;
+    }
+  });
+});
+
+/**
  * New in this round: real bug found while surveying for gaps, not a
  * speculative one. useDialogFocusTrap.ts's own keydown listener (on the
  * dialog's container div) closes the WHOLE dialog on any Escape keydown
