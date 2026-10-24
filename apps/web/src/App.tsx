@@ -92,6 +92,8 @@ const LOCALE: Record<string, string> = { he: "he-IL", en: "en-US" };
 const WHATSAPP_UNREAD_POLL_INTERVAL_MS = 20000;
 /** How often the topbar's own failing-automations badge poll re-checks rule status. Slightly longer than WHATSAPP_UNREAD_POLL_INTERVAL_MS since a rule's lastStatus only changes when it actually fires (schedule/webhook/field-change), not on every incoming message. */
 const AUTOMATIONS_FAILING_POLL_INTERVAL_MS = 30000;
+/** How often a non-owner's own myRole poll re-checks their real collaborator role. Longer than the other two polls above since a role change is rarer than either an incoming message or a firing automation rule. */
+const MY_ROLE_POLL_INTERVAL_MS = 45000;
 
 /** A project card's own creation date, locale-formatted -- separated out (rather than inlined in the JSX) purely so it's directly unit-testable, matching this file's own summarizeRefineImpact/filterAndSortProjects convention. */
 export function formatProjectCreatedDate(createdAt: string, lang: Lang): string {
@@ -988,6 +990,47 @@ function AppContent() {
       setMyRole("viewer");
     });
   }, [project]);
+
+  /**
+   * subscribeViewerDemoted just above only fires on the back of a failed
+   * write (a VIEWER_READ_ONLY 403) -- it structurally can't ever catch
+   * the mirror-image case, a collaborator PROMOTED (e.g. viewer ->
+   * editor) while they still have the project open: their next write
+   * would simply succeed server-side, generating no error to hook into,
+   * so myRole stayed stuck at the stale, now-too-restrictive role with no
+   * way for the UI to catch up short of leaving and reopening the
+   * project. Mirrors the WhatsApp-unread/failing-automations polls above
+   * (same immediate-check-then-interval shape) to periodically re-derive
+   * myRole the same way openExistingProject's own initial fetch does --
+   * this also means a demotion is now caught at most MY_ROLE_POLL_
+   * INTERVAL_MS sooner than waiting on the next failed write, a free
+   * side benefit, not this poll's primary purpose.
+   */
+  useEffect(() => {
+    if (!project || !user || project.ownerId === user.id) return;
+    const projectId = project.id;
+    const userId = user.id;
+    let cancelled = false;
+    let intervalId: ReturnType<typeof setInterval> | null = null;
+
+    async function checkMyRole() {
+      try {
+        const { collaborators } = await listCollaborators(projectId);
+        if (cancelled) return;
+        const mine = collaborators.find((c) => c.userId === userId);
+        setMyRole(mine?.role ?? "editor");
+      } catch {
+        // A single failed background check isn't worth surfacing to the
+        // user -- just skip this tick and try again on the next one.
+      }
+    }
+
+    intervalId = setInterval(checkMyRole, MY_ROLE_POLL_INTERVAL_MS);
+    return () => {
+      cancelled = true;
+      if (intervalId) clearInterval(intervalId);
+    };
+  }, [project?.id, project?.ownerId, user?.id]);
 
   /**
    * `project` is plain in-memory React state with nothing behind it once

@@ -3497,6 +3497,61 @@ test("App's checkFailingAutomations counts only enabled rules with lastStatus \"
   assert.equal(stateHealthy.count, 0, "expected 0 when no enabled rule is currently failing");
 });
 
+/**
+ * Round 891: subscribeViewerDemoted (round 886) only ever fires on the
+ * back of a failed write (a VIEWER_READ_ONLY 403) -- it structurally
+ * cannot catch the mirror-image case, a collaborator PROMOTED (e.g.
+ * viewer -> editor) while they still have the project open: their next
+ * write would simply succeed server-side, generating no error to hook
+ * into, so myRole stayed stuck at the stale, now-too-restrictive role
+ * with no way for the UI to catch up short of leaving and reopening the
+ * project. Mirrors the WhatsApp-unread/failing-automations polls' own
+ * extraction-and-run test pattern above. Extracts the real checkMyRole
+ * poll handler from App.tsx and confirms it re-derives myRole from a
+ * fresh listCollaborators call, both upward (viewer -> editor) and
+ * downward (editor -> viewer), and falls back to "editor" if this
+ * account's own collaborator entry is ever missing from the response --
+ * the same fallback openExistingProject's own initial fetch already
+ * uses.
+ */
+test("App's checkMyRole re-derives myRole from a fresh listCollaborators call, in either direction", async () => {
+  const appSrc = readFileSync(new URL("./App.tsx", import.meta.url), "utf8");
+  const handlerMatch = appSrc.match(/ {4}async function checkMyRole\(\) \{[\s\S]*?\n {4}\}\n/);
+  assert.ok(handlerMatch, "expected to find checkMyRole in App.tsx");
+  const { code } = transformSync(handlerMatch![0], { loader: "ts" });
+
+  function run(collaborators: Array<{ userId: string; role: "editor" | "viewer" }>) {
+    const state: { role: unknown } = { role: "untouched" };
+    const fn = new Function(
+      "projectId",
+      "userId",
+      "cancelled",
+      "listCollaborators",
+      "setMyRole",
+      `${code}\nreturn checkMyRole;`,
+    )(
+      "project-1",
+      "user-1",
+      false,
+      async () => ({ collaborators }),
+      (v: unknown) => (state.role = v),
+    ) as () => Promise<void>;
+    return { fn, state };
+  }
+
+  const { fn: fnPromoted, state: statePromoted } = run([{ userId: "user-1", role: "editor" }]);
+  await fnPromoted();
+  assert.equal(statePromoted.role, "editor", "a promotion (viewer -> editor) found on the next poll tick must flip myRole upward");
+
+  const { fn: fnDemoted, state: stateDemoted } = run([{ userId: "user-1", role: "viewer" }]);
+  await fnDemoted();
+  assert.equal(stateDemoted.role, "viewer", "a demotion (editor -> viewer) found on the next poll tick must flip myRole downward too");
+
+  const { fn: fnMissing, state: stateMissing } = run([{ userId: "someone-else", role: "viewer" }]);
+  await fnMissing();
+  assert.equal(stateMissing.role, "editor", "falls back to 'editor' if this account's own collaborator entry is missing, mirroring openExistingProject's own fallback");
+});
+
 test("App's checkUnread reads tRef.current fresh on every tick instead of closing over a stale `t` from whenever the poll effect last (re)started", async () => {
   // Round 592 regression test: useTranslation()'s `t` is a brand-new closure
   // on every language change, but the poll effect that owns checkUnread only
