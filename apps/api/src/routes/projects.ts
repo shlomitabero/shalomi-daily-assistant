@@ -65,7 +65,7 @@ import { generateExportFiles } from "../codegen.js";
 import { generateBackupZipEntries, parseColumnOrdersQueryParam } from "../backup.js";
 import { buildZip } from "../zip.js";
 import { computeBusinessTwin } from "../twin.js";
-import { isPathInsideDir } from "../uploadPaths.js";
+import { isPathInsideDir, UPLOADED_FILENAME } from "../uploadPaths.js";
 import type { WhatsAppWebManager } from "../whatsappWeb.js";
 import { findMatchingRecord } from "../whatsapp.js";
 import { isAllowedWebhookUrl, runAutomationsForRecordChange } from "../automations.js";
@@ -818,11 +818,6 @@ export async function deleteProjectUploads(uploadsDir: string, projectId: string
   await rm(path.join(uploadsDir, projectId), { recursive: true, force: true }).catch(() => {});
 }
 
-// Matches exactly what createUploadMiddleware's own filename callback below
-// always generates (randomUUID() + safeFileExtension's optional dotted
-// extension) -- never anything else.
-const UPLOADED_FILENAME = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}(\.[a-z0-9]{1,10})?$/;
-
 /**
  * Deletes one `file`-type field's currently-stored upload from disk,
  * best-effort -- the per-record sibling of deleteProjectUploads above,
@@ -914,11 +909,11 @@ async function deleteReplacedFileFields(
 // convention for sending such a name at all) keeps a "/" within one URL
 // path segment, and Express decodes it back to a literal "/" in
 // req.params.entityName before this route's own handlers ever run.
-// isPathInsideDir itself lives in uploadPaths.ts (round 850), shared with
-// automations.ts's own findTemplateFileAttachment -- the identical
-// unguarded path.join shape reached a third way, via a WhatsApp
-// automation's file attachment (a read+exfiltration primitive, not just
-// a write/delete one).
+// isPathInsideDir (and, since round 918, UPLOADED_FILENAME) live in
+// uploadPaths.ts (round 850), shared with automations.ts's own
+// findTemplateFileAttachment -- the identical unguarded path.join shape
+// reached a third way, via a WhatsApp automation's file attachment (a
+// read+exfiltration primitive, not just a write/delete one).
 
 function createUploadMiddleware(uploadsDir: string) {
   const storage = multer.diskStorage({

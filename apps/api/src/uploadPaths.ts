@@ -22,3 +22,24 @@ export function isPathInsideDir(candidate: string, dir: string): boolean {
   const resolvedCandidate = path.resolve(candidate);
   return resolvedCandidate === resolvedDir || resolvedCandidate.startsWith(resolvedDir + path.sep);
 }
+
+/**
+ * Matches exactly what createUploadMiddleware's own filename callback
+ * (routes/projects.ts) always generates (randomUUID() + safeFileExtension's
+ * optional dotted extension) -- never anything else. `isPathInsideDir`
+ * above only bounds a path to uploadsDir itself, not to any one project's
+ * or entity's own subdirectory within it -- entity.name has no character
+ * restriction (this file's own doc comment above), so
+ * `path.join(uploadsDir, projectId, entityName, filename)` can resolve
+ * into a DIFFERENT project's/entity's own upload directory while still
+ * legitimately satisfying `isPathInsideDir`. Requiring the filename's own
+ * final segment to match this exact shape (round 848/849) doesn't stop
+ * that cross-project resolution, but it does narrow what it can actually
+ * reach there to a file some upload somewhere was really once named --
+ * never an arbitrary path a crafted file-field value could otherwise
+ * invent. Shared by every place that reads, attaches, or deletes a `file`
+ * field's own stored upload by filename (round 918: round 849's own
+ * deleteUploadedFile and round 850's own findTemplateFileAttachment both
+ * build this same path and need this same guard).
+ */
+export const UPLOADED_FILENAME = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}(\.[a-z0-9]{1,10})?$/;

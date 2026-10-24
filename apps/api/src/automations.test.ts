@@ -429,7 +429,7 @@ test("runAutomationsForRecordChange attaches a real uploaded file when the messa
 
   const uploadsDir = await mkdtemp(path.join(tmpdir(), "forge-automations-attachment-test-"));
   try {
-    const storedFilename = "abc123.pdf";
+    const storedFilename = "a1b2c3d4-e5f6-7890-abcd-ef1234567890.pdf";
     await mkdir(path.join(uploadsDir, project.id, "Order"), { recursive: true });
     await writeFile(path.join(uploadsDir, project.id, "Order", storedFilename), "%PDF-fake-invoice-contents");
 
@@ -462,10 +462,19 @@ test("findTemplateFileAttachment resolves the first file-type field referenced i
   };
   const record = {
     customerName: "Dana",
-    invoice: JSON.stringify({ url: "/api/uploads/proj1/Order/abc123.pdf", name: "invoice-203.pdf", size: 27, mimeType: "application/pdf" }),
+    invoice: JSON.stringify({
+      url: "/api/uploads/proj1/Order/a1b2c3d4-e5f6-7890-abcd-ef1234567890.pdf",
+      name: "invoice-203.pdf",
+      size: 27,
+      mimeType: "application/pdf",
+    }),
   };
   const attachment = findTemplateFileAttachment("/uploads", "proj1", entityWithInvoice, "Hi {{customerName}}, here's {{invoice}}", record);
-  assert.deepEqual(attachment, { filePath: "/uploads/proj1/Order/abc123.pdf", fileName: "invoice-203.pdf", mimeType: "application/pdf" });
+  assert.deepEqual(attachment, {
+    filePath: "/uploads/proj1/Order/a1b2c3d4-e5f6-7890-abcd-ef1234567890.pdf",
+    fileName: "invoice-203.pdf",
+    mimeType: "application/pdf",
+  });
 });
 
 /**
@@ -493,6 +502,33 @@ test("findTemplateFileAttachment returns null instead of a path that escapes upl
   };
   const attachment = findTemplateFileAttachment("/uploads", "proj1", unsafeEntity, "Here's {{invoice}}", record);
   assert.equal(attachment, null, "must never return a filePath that resolves outside uploadsDir");
+});
+
+/**
+ * Round 918's finding: `deleteUploadedFile` (routes/projects.ts) already
+ * requires the filename's own final segment to match UPLOADED_FILENAME --
+ * the one shape this server itself ever actually generates -- but this
+ * function never got the same guard, despite building the identical path
+ * from the identical unrestricted entity.name. `isPathInsideDir` alone
+ * only bounds the resolved path to uploadsDir ITSELF, not to this
+ * specific project+entity's own subdirectory within it, so (matching
+ * round 849's own documented caveat for the delete primitive) this guard
+ * doesn't fully close a crafted entity name resolving into a DIFFERENT
+ * project's own folder -- it confines what can be read-and-exfiltrated
+ * there to a file some upload, somewhere, was really once named, never
+ * an arbitrary filename a crafted descriptor could otherwise invent.
+ */
+test("findTemplateFileAttachment returns null when the stored filename doesn't match this server's own UPLOADED_FILENAME shape", () => {
+  const entityWithInvoice: Entity = {
+    ...orderEntity,
+    fields: [...orderEntity.fields, { name: "invoice", type: "file", required: false }],
+  };
+  const record = {
+    customerName: "Dana",
+    invoice: JSON.stringify({ url: "/api/uploads/proj1/Order/not-a-real-upload-name.pdf", name: "invoice.pdf", size: 27, mimeType: "application/pdf" }),
+  };
+  const attachment = findTemplateFileAttachment("/uploads", "proj1", entityWithInvoice, "Here's {{invoice}}", record);
+  assert.equal(attachment, null, "a filename this server itself never actually generated must never be read and attached");
 });
 
 test("findTemplateFileAttachment returns null when the template references no file field, references one with no value, or the field isn't a 'file' type at all", () => {

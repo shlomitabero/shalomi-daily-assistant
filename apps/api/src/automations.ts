@@ -13,7 +13,7 @@ import {
 } from "@forge/db";
 import { isHebrewText } from "@forge/spec-engine";
 import { recordDisplayLabel } from "./displayField.js";
-import { isPathInsideDir } from "./uploadPaths.js";
+import { isPathInsideDir, UPLOADED_FILENAME } from "./uploadPaths.js";
 import { findMatchingRecord } from "./whatsapp.js";
 import type { WhatsAppAttachment, WhatsAppWebManager } from "./whatsappWeb.js";
 
@@ -152,6 +152,23 @@ export function resolveFileFieldsForWebhook(entity: Entity, record: EntityRecord
  * path would escape uploadsDir, matching this function's own existing
  * "silently skip, fall back to plain text" contract for every other
  * malformed-descriptor case right above.
+ *
+ * Round 918: this comment named the exact fix needed (round 849's own
+ * UPLOADED_FILENAME check) but the function below never actually applied
+ * it -- `isPathInsideDir` alone only bounds the resolved path to
+ * uploadsDir ITSELF, not to this specific project+entity's own
+ * subdirectory within it, so an entity named e.g.
+ * "../someOtherProjectId/SomeEntity" still passes that check while
+ * resolving into a DIFFERENT project's own upload folder (the exact
+ * cross-project reach round 849's own writeup already named as reachable
+ * against the delete primitive, "directly usable against another
+ * project's real uploads too"). Requiring the filename to match
+ * UPLOADED_FILENAME doesn't stop that cross-project resolution, but it
+ * does confine what it can actually read-and-exfiltrate there to a file
+ * some upload, somewhere, was really once named -- never an arbitrary
+ * path a crafted descriptor could otherwise invent -- the same
+ * defense-in-depth deleteUploadedFile already has for the identical
+ * path-construction shape.
  */
 export function findTemplateFileAttachment(
   uploadsDir: string,
@@ -174,7 +191,7 @@ export function findTemplateFileAttachment(
     }
     if (typeof parsed.url !== "string" || typeof parsed.name !== "string" || typeof parsed.mimeType !== "string") continue;
     const storedFilename = parsed.url.slice(parsed.url.lastIndexOf("/") + 1);
-    if (!storedFilename) continue;
+    if (!storedFilename || !UPLOADED_FILENAME.test(storedFilename)) continue;
     const filePath = path.join(uploadsDir, projectId, entity.name, storedFilename);
     if (!isPathInsideDir(filePath, uploadsDir)) continue;
     return { filePath, fileName: parsed.name, mimeType: parsed.mimeType };
