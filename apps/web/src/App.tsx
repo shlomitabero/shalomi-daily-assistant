@@ -24,6 +24,7 @@ import {
   streamRefine,
   subscribeAuthExpired,
   subscribeProjectGone,
+  subscribeViewerDemoted,
   subscribeWakeStatus,
   type CollaboratorRole,
   type TemplateSummary,
@@ -966,6 +967,25 @@ function AppContent() {
       purgeProjectPreferences(projectId);
       handleGoHome();
       setError(message);
+    });
+  }, [project]);
+
+  /**
+   * myRole is fetched once, in openExistingProject, and never revalidated
+   * afterward -- there's no poll or websocket for it. If the project
+   * owner demotes this collaborator to "viewer" while they still have the
+   * project open, every write control kept rendering as before and the
+   * next action just 403ed with VIEWER_READ_ONLY, repeating indefinitely
+   * with no way for the UI to catch up. Any write request hitting that
+   * same 403 now calls notifyViewerDemoted (see api.ts), so just flip
+   * myRole to "viewer" here and let the existing readOnly={myRole ===
+   * "viewer"} wiring already threaded through every panel take it from
+   * there -- no reset-to-home needed, unlike subscribeProjectGone above.
+   */
+  useEffect(() => {
+    return subscribeViewerDemoted((projectId) => {
+      if (project?.id !== projectId) return;
+      setMyRole("viewer");
     });
   }, [project]);
 

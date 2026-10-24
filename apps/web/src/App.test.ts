@@ -3255,6 +3255,62 @@ test("App's subscribeProjectGone effect resets to the home screen and purges pre
 });
 
 /**
+ * Round 886: myRole is fetched exactly once, in openExistingProject, and
+ * never revalidated afterward. If the project owner demotes this
+ * collaborator from editor to viewer while the project stays open here,
+ * every write-affordance kept rendering as before the demotion, and the
+ * next write attempt just 403ed with VIEWER_READ_ONLY (requireProjectWriteAccess)
+ * over and over with no way for the UI to catch up. api.ts now calls
+ * notifyViewerDemoted whenever any request hits that 403; confirms the
+ * listener flips myRole to "viewer" for the currently-open project only,
+ * leaving an unrelated/stale notification for a different project id
+ * untouched (mirroring subscribeProjectGone's own project-id guard above).
+ */
+test("App's subscribeViewerDemoted effect flips myRole to viewer, but only for the currently-open project", () => {
+  const appSrc = readFileSync(new URL("./App.tsx", import.meta.url), "utf8");
+  const effectMatch = appSrc.match(/ {2}useEffect\(\(\) => \{\n {4}return subscribeViewerDemoted\(\(projectId\) => \{[\s\S]*?\n {2}\}, \[project\]\);\n/);
+  assert.ok(effectMatch, "expected to find the subscribeViewerDemoted effect in App.tsx");
+  const { code } = transformSync(effectMatch![0], { loader: "ts" });
+
+  let subscribedListener: ((projectId: string) => void) | undefined;
+  let roleSet: unknown = "untouched";
+
+  function buildEffect(project: { id: string } | null) {
+    roleSet = "untouched";
+    const fn = new Function(
+      "useEffect",
+      "subscribeViewerDemoted",
+      "project",
+      "setMyRole",
+      `${code}`,
+    ) as (
+      useEffect: (effect: () => void, deps: unknown[]) => void,
+      subscribeViewerDemoted: (listener: (projectId: string) => void) => () => void,
+      project: { id: string } | null,
+      setMyRole: (v: unknown) => void,
+    ) => void;
+    fn(
+      (effect) => effect(),
+      (listener) => {
+        subscribedListener = listener;
+        return () => undefined;
+      },
+      project,
+      (v) => (roleSet = v),
+    );
+  }
+
+  buildEffect({ id: "proj1" });
+  assert.ok(subscribedListener, "the effect must call subscribeViewerDemoted with a real listener");
+
+  subscribedListener!("proj2");
+  assert.equal(roleSet, "untouched", "a notification for a DIFFERENT project than the one currently open must be ignored entirely");
+
+  subscribedListener!("proj1");
+  assert.equal(roleSet, "viewer", "a notification for the currently-open project must flip myRole to viewer so the existing readOnly wiring takes over");
+});
+
+/**
  * The decorative 3D hero graphic on the home screen (a rotating CSS cube,
  * no WebGL/three.js dependency) is purely presentational -- it has no
  * state or handler to test, and jsdom has no real 3D rendering to assert

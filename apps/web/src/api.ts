@@ -101,6 +101,37 @@ function notifyProjectGone(projectId: string, message: string): void {
   for (const listener of projectGoneListeners) listener(projectId, message);
 }
 
+type ViewerDemotedListener = (projectId: string) => void;
+const viewerDemotedListeners = new Set<ViewerDemotedListener>();
+
+/**
+ * Round 886: App.tsx's own `myRole` is fetched exactly once, in
+ * openExistingProject, with no revalidation path afterward -- there's no
+ * poll, no websocket, and nothing else ever re-fetches it for an
+ * already-open project. If the owner demotes this collaborator to
+ * "viewer" (CollaboratorsPanel's own per-row role select) while the
+ * project stays open in this browser, every write-affordance (the record
+ * form, row Edit/Delete/Duplicate, board-card drag, bulk-selection,
+ * Automations' Add/Delete, WhatsApp's Connect/Send/Delete, Time Machine's
+ * Restore/Delete, etc.) kept rendering exactly as before -- the server
+ * correctly rejects the very next write with a real 403 VIEWER_READ_ONLY
+ * (requireProjectWriteAccess, apps/api/src/routes/projects.ts), but
+ * nothing ever told the UI to actually hide the control that triggered
+ * it, so the same confusing failure repeats indefinitely. (A collaborator
+ * fully REMOVED, rather than merely demoted, is already covered by
+ * subscribeProjectGone above -- requireProjectAccess throws
+ * PROJECT_NOT_FOUND for that case, not VIEWER_READ_ONLY.) Mirrors
+ * subscribeProjectGone's own project-id-scoped shape.
+ */
+export function subscribeViewerDemoted(listener: ViewerDemotedListener): () => void {
+  viewerDemotedListeners.add(listener);
+  return () => viewerDemotedListeners.delete(listener);
+}
+
+function notifyViewerDemoted(projectId: string): void {
+  for (const listener of viewerDemotedListeners) listener(projectId);
+}
+
 /**
  * A generous ceiling on the *whole* request, retries included -- meant to be
  * comfortably above the server's own 60s Anthropic-call timeout (see
@@ -230,6 +261,10 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
     if (code === "PROJECT_NOT_FOUND") {
       const match = path.match(/^\/projects\/([^/]+)/);
       if (match) notifyProjectGone(match[1], message);
+    }
+    if (code === "VIEWER_READ_ONLY") {
+      const match = path.match(/^\/projects\/([^/]+)/);
+      if (match) notifyViewerDemoted(match[1]);
     }
     throw new Error(message);
   }
@@ -634,6 +669,10 @@ async function streamPipeline(
     const errorBody = await res.json().catch(() => ({ error: `Request failed (${res.status})`, code: "REQUEST_FAILED" }));
     const code = (errorBody as { code?: string }).code;
     if (code === "SESSION_EXPIRED" || code === "AUTH_REQUIRED") notifyAuthExpired();
+    if (code === "VIEWER_READ_ONLY") {
+      const match = path.match(/^\/projects\/([^/]+)/);
+      if (match) notifyViewerDemoted(match[1]);
+    }
     throw new Error(resolveErrorMessage(errorBody as { error?: string; code?: string }));
   }
   const reader = res.body.getReader();
@@ -865,6 +904,7 @@ export async function uploadRecordFile(
     const body = await res.json().catch(() => ({ error: `Request failed (${res.status})`, code: "REQUEST_FAILED" }));
     const code = (body as { code?: string }).code;
     if (code === "SESSION_EXPIRED" || code === "AUTH_REQUIRED") notifyAuthExpired();
+    if (code === "VIEWER_READ_ONLY") notifyViewerDemoted(projectId);
     throw new Error(resolveErrorMessage(body as { error?: string; code?: string }));
   }
   const body = (await res.json()) as { file: { url: string; name: string; size: number; mimeType: string } };
@@ -1017,6 +1057,7 @@ export async function sendWhatsAppMessage(projectId: string, to: string, message
     return body as WhatsAppSendResult;
   }
   if (body.code === "SESSION_EXPIRED" || body.code === "AUTH_REQUIRED") notifyAuthExpired();
+  if (body.code === "VIEWER_READ_ONLY") notifyViewerDemoted(projectId);
   return { ok: false, error: resolveErrorMessage(body) };
 }
 
