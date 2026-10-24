@@ -54,3 +54,23 @@ test('a NaN maxLoss also fails safe', () => {
   assert.equal(result.allowed, false);
   assert.match(result.reason, /ערך לא תקין/);
 });
+
+test('a non-numeric budget fails safe (blocks) instead of silently disabling the guardrail', () => {
+  // "10 > undefined" is false in JS, so without an explicit guard a corrupted
+  // budget value would let every spend through as if no budget cap were set.
+  const result = canSpend({ amount: 20, budgetConfigured: true, budget: undefined });
+  assert.equal(result.allowed, false);
+  assert.match(result.reason, /תקציב מוגדר לערך לא תקין/);
+});
+
+test('a NaN budget also fails safe', () => {
+  const result = canSpend({ amount: 20, budgetConfigured: true, budget: NaN });
+  assert.equal(result.allowed, false);
+  assert.match(result.reason, /תקציב מוגדר לערך לא תקין/);
+});
+
+test('a negative budget also fails safe', () => {
+  const result = canSpend({ amount: 20, budgetConfigured: true, budget: -50 });
+  assert.equal(result.allowed, false);
+  assert.match(result.reason, /תקציב מוגדר לערך לא תקין/);
+});

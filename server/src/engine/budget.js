@@ -10,6 +10,13 @@ export function canSpend({ amount, budgetConfigured, budget, spentSoFar = 0, max
   if (emergencyStop) return { allowed: false, reason: 'עצירת חירום פעילה' };
   if (!budgetConfigured) return { allowed: false, reason: 'עדיין לא הוגדר תקציב' };
   if (!(amount > 0)) return { allowed: false, reason: 'סכום ההוצאה חייב להיות חיובי' };
+  // A non-numeric budget (corrupted data, a bad write that slipped past
+  // validation) must never silently disable this guardrail — "10 > undefined"
+  // and "10 > NaN" are both false in JS, so without this guard a broken
+  // budget value would let every spend through as if no cap were set at all.
+  if (!Number.isFinite(budget) || budget < 0) {
+    return { allowed: false, reason: `תקציב מוגדר לערך לא תקין (${JSON.stringify(budget)}) — תקן בהגדרות לפני ביצוע הוצאה` };
+  }
   if (spentSoFar + amount > budget) {
     return { allowed: false, reason: `יחרוג מהתקציב (${spentSoFar} + ${amount} > ${budget})` };
   }
