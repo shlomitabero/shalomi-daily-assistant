@@ -275,6 +275,14 @@ export function GlobalSearchPanel({
         errorFromShowAllRef.current = false;
       }
     } catch (err) {
+      // Round 923: the success path above already discards a stale
+      // "Show all" fetch a newer top-level search has since superseded
+      // (the requestId check just above it, round 412) -- this catch
+      // never got the same guard when round 663 added it, so a stale
+      // fetch that rejects AFTER the user has already moved on to a new
+      // search used to surface its own unrelated error over the new
+      // search's current results.
+      if (searchRequestId.current !== requestId) return;
       setError((err as Error).message);
       errorFromShowAllRef.current = true;
     } finally {

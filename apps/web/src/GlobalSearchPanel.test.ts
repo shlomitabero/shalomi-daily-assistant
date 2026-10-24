@@ -394,6 +394,81 @@ test("GlobalSearchPanel's handleShowAll ignores a stale, still-in-flight fetch o
 });
 
 /**
+ * Round 923: the SUCCESS path above already discards a stale "Show all"
+ * fetch via the searchRequestId check right after the await -- but the
+ * catch block added later (round 663, to surface a failed fetch through
+ * the shared `error` banner) never got the same guard. Mirrors the test
+ * above exactly, except the held-open listRecords call REJECTS instead
+ * of resolving, to prove a stale failure can't surface its own unrelated
+ * error over whatever the user's current, superseding search already
+ * put on screen.
+ */
+test("GlobalSearchPanel's handleShowAll never surfaces a stale, still-in-flight fetch's error once a newer search has already completed", async () => {
+  const handlerMatch = globalSearchPanelSrc.match(/ {2}async function handleShowAll\(entityName: string\) \{[\s\S]*?\n {2}\}\n/);
+  assert.ok(handlerMatch, "expected to find handleShowAll in GlobalSearchPanel.tsx");
+  const { code } = transformSync(handlerMatch![0], { loader: "ts" });
+
+  const entityA = { name: "Alpha", label: "Alpha", fields: [] };
+
+  function fakeSearchEntityRecords(entity: { name: string; label: string }, records: unknown[]) {
+    return { entityName: entity.name, entityLabel: entity.label, totalMatches: records.length, sample: records };
+  }
+
+  let rejectShowAllCall!: (err: Error) => void;
+  const showAllCallHeld = new Promise<never>((_resolve, reject) => {
+    rejectShowAllCall = reject;
+  });
+
+  const errorCalls: unknown[] = [];
+  const searchRequestId = { current: 0 };
+
+  const fn = new Function(
+    "entities",
+    "projectId",
+    "listRecords",
+    "searchEntityRecords",
+    "highlightQuery",
+    "lastRecordsByEntityRef",
+    "setShowAllLoading",
+    "setExpandedSamples",
+    "searchRequestId",
+    "lang",
+    "setError",
+    "errorFromShowAllRef",
+    `${code}\nreturn handleShowAll;`,
+  )(
+    [entityA],
+    "proj1",
+    async () => {
+      await showAllCallHeld; // "Show all"'s own network call stays open, then rejects below
+    },
+    fakeSearchEntityRecords,
+    "stale query",
+    { current: {} },
+    () => {},
+    () => {},
+    searchRequestId,
+    "en",
+    (message: unknown) => {
+      errorCalls.push(message);
+    },
+    { current: false },
+  ) as (entityName: string) => Promise<void>;
+
+  const showAllPromise = fn("Alpha");
+  await Promise.resolve(); // let "Show all" actually start and reach its held-open listRecords call
+  searchRequestId.current += 1; // a newer search completed while "Show all" was still in flight
+  rejectShowAllCall(new Error("stale show-all failure"));
+  await showAllPromise;
+
+  assert.equal(
+    errorCalls.length,
+    0,
+    "a Show all fetch superseded by a newer search must never surface its own stale error over the current search's results",
+  );
+});
+
+/**
  * Regression test for round 663: handleShowAll had no catch clause at all,
  * unlike runSearch's own identical listRecords call above it in this same
  * file -- a rejected fetch (a timeout, a cold-starting backend, an entity

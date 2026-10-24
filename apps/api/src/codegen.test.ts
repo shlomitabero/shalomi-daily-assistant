@@ -10350,6 +10350,74 @@ test("the exported GlobalSearch's handleShowAll writes the data it just fetched 
 });
 
 /**
+ * Round 923: the exported app's handleShowAll is a deliberate duplicate
+ * of the live-preview GlobalSearchPanel.tsx's own handleShowAll, and had
+ * the identical staleness gap round 923 fixed there -- the success path
+ * already discards a stale "Show all" fetch via its own searchRequestId
+ * check, but the catch block (added for a different reason, surfacing a
+ * genuine failure) never got the same guard. Holds the fetch open past a
+ * newer search's own completion, then rejects it, confirming the stale
+ * failure can't surface its own error over the current search's results.
+ */
+test("the exported GlobalSearch's handleShowAll never surfaces a stale, still-in-flight fetch's error once a newer search has already completed", async () => {
+  const files = generateExportFiles(project);
+  const globalSearchJsx = files.find((f) => f.path === "web/src/components/GlobalSearch.jsx")!.content;
+  const handleShowAllSrc = globalSearchJsx.match(/ {2}async function handleShowAll\(entityName\) \{[\s\S]*?\n {2}\}\n/)?.[0];
+  assert.ok(handleShowAllSrc, "expected to find handleShowAll in generated output");
+
+  const courierEntity = { name: "Courier", label: "Courier", fields: [{ name: "name", label: "Name", type: "text" }] };
+
+  let rejectShowAllCall!: (err: Error) => void;
+  const showAllCallHeld = new Promise<never>((_resolve, reject) => {
+    rejectShowAllCall = reject;
+  });
+
+  const errorCalls: unknown[] = [];
+  const searchRequestId = { current: 0 };
+
+  const fn = new Function(
+    "entities",
+    "listRecords",
+    "setShowAllLoading",
+    "setError",
+    "setExpandedSamples",
+    "setResults",
+    "highlightQuery",
+    "searchRequestId",
+    "lastRecordsByEntityRef",
+    "errorFromShowAllRef",
+    `${handleShowAllSrc}\nreturn handleShowAll;`,
+  )(
+    [courierEntity],
+    async () => {
+      await showAllCallHeld; // "Show all"'s own network call stays open, then rejects below
+    },
+    () => {},
+    (message: unknown) => {
+      errorCalls.push(message);
+    },
+    () => {},
+    () => {},
+    "Dana",
+    searchRequestId,
+    { current: {} },
+    { current: false },
+  ) as (entityName: string) => Promise<void>;
+
+  const showAllPromise = fn("Courier");
+  await Promise.resolve(); // let "Show all" actually start and reach its held-open listRecords call
+  searchRequestId.current += 1; // a newer search completed while "Show all" was still in flight
+  rejectShowAllCall(new Error("stale show-all failure"));
+  await showAllPromise;
+
+  assert.equal(
+    errorCalls.length,
+    0,
+    "a Show all fetch superseded by a newer search must never surface its own stale error over the current search's results",
+  );
+});
+
+/**
  * Regression test: the exported app's own GlobalSearch.jsx is a deliberate
  * duplicate of the live-preview GlobalSearchPanel.tsx's runSearch, and it
  * had the exact same stale-async-overwrites-newer-setState race this
