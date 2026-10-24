@@ -59,7 +59,7 @@ import { enhancePrompt, generateSpec, isHebrewText, TEMPLATES } from "@forge/spe
 import { formatValidationError, HttpError } from "../httpError.js";
 import { requireAuth } from "../auth/middleware.js";
 import { createRateLimiter } from "../auth/rateLimit.js";
-import { describeImpactHazards, runBuildPipeline } from "../pipeline.js";
+import { carryForwardLabels, describeImpactHazards, runBuildPipeline } from "../pipeline.js";
 import { withIdempotency } from "../idempotency.js";
 import { generateExportFiles } from "../codegen.js";
 import { generateBackupZipEntries, parseColumnOrdersQueryParam } from "../backup.js";
@@ -1675,6 +1675,19 @@ export function createProjectsRouter(
       // here, right where it's needed just as much, left a restored project
       // render stale/mismatched values (e.g. a boolean cell reading
       // Boolean("some real note text") as true) with no warning at all.
+      // Round 929: the checkpoint's own spec is a frozen snapshot from
+      // whenever it was taken -- restoring it straight, unmodified, silently
+      // reverted any entity/field label (and enum-value label) the user
+      // customized AFTER that checkpoint via EntityLabelEditor/
+      // FieldLabelEditor, with zero warning (describeImpactHazards only
+      // ever looks at structural field changes, never labels). This is the
+      // exact same "a previous customization should survive, by name, onto
+      // whatever spec replaces it" problem carryForwardLabels already
+      // solves for /refine (round 915/917) -- previousSpec is the CURRENT,
+      // still-customized spec being replaced; nextSpec is the checkpoint's
+      // own spec about to become the live one, mutated in place so its
+      // labels win for any entity/field that survives under the same name.
+      carryForwardLabels(project.spec, checkpoint.spec);
       const changes = diffAndMigrate(db, project.id, project.spec, checkpoint.spec);
       const updated = updateProjectSpec(db, project.id, checkpoint.spec);
       // An older checkpoint being restored to isn't guaranteed to be a

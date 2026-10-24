@@ -9050,6 +9050,83 @@ test("restoring a checkpoint surfaces a migrationWarning when a reused column's 
 });
 
 /**
+ * Round 929: a checkpoint's own spec is a frozen snapshot from whenever it
+ * was taken -- restoring it straight, unmodified, used to silently revert
+ * any entity/field label the user customized AFTER that checkpoint via
+ * EntityLabelEditor/FieldLabelEditor, with zero warning (describeImpactHazards
+ * only ever looks at structural field changes, never labels). This is the
+ * exact same "a previous customization should survive, by name, onto
+ * whatever spec replaces it" problem carryForwardLabels already solves for
+ * /refine (round 915/917) -- restore just never called it. Restores the
+ * MOST RECENT checkpoint (the one taken seconds before the label rename) to
+ * confirm this isn't some edge case about an old checkpoint -- renaming a
+ * label and then immediately restoring the checkpoint from right before
+ * that rename must still keep the rename, not revert it.
+ */
+test("restoring a checkpoint keeps an entity/field label customized after that checkpoint was taken, instead of silently reverting it", async () => {
+  await withServer(async (baseUrl, db) => {
+    const email = `restore-label-${randomUUID()}@example.com`;
+    const token = await signup(baseUrl, email);
+    const user = findUserByEmail(db, email)!;
+
+    const spec: ProductSpec = {
+      summary: "test",
+      personas: [],
+      roles: ["Admin"],
+      entities: [
+        {
+          name: "Customer",
+          fields: [{ name: "name", type: "text", required: true }],
+        },
+      ],
+      screens: [],
+      assumptions: [],
+      openQuestions: [],
+    };
+
+    const projectId = randomUUID();
+    insertProject(db, {
+      id: projectId,
+      ownerId: user.id,
+      name: "Customer tracker",
+      description: "A CRM for tracking customers.",
+      spec,
+    });
+    diffAndMigrate(db, projectId, undefined, spec);
+    const checkpoint = insertCheckpoint(db, {
+      id: randomUUID(),
+      projectId,
+      label: "Initial build",
+      kind: "build",
+      spec,
+    });
+
+    const renameRes = await fetch(`${baseUrl}/api/projects/${projectId}/entities/Customer/label`, {
+      method: "PATCH",
+      headers: { ...authHeaders(token), "content-type": "application/json" },
+      body: JSON.stringify({ label: "לקוחות" }),
+    });
+    assert.equal(renameRes.status, 200, "sanity check: the label rename itself must succeed");
+
+    // Restoring the SAME checkpoint just taken, seconds before the rename
+    // above -- its own frozen spec has no label at all on "Customer".
+    const restoreRes = await fetch(`${baseUrl}/api/projects/${projectId}/checkpoints/${checkpoint.id}/restore`, {
+      method: "POST",
+      headers: authHeaders(token),
+    });
+    assert.equal(restoreRes.status, 200);
+    const restoreBody = (await restoreRes.json()) as {
+      project: { spec: { entities: { name: string; label?: string }[] } };
+    };
+    assert.equal(
+      restoreBody.project.spec.entities.find((e) => e.name === "Customer")!.label,
+      "לקוחות",
+      "the restore must keep the label customized after this checkpoint was taken, not silently revert it to the checkpoint's own frozen (unset) label",
+    );
+  });
+});
+
+/**
  * Round 787: /build and /refine already warn about a field becoming
  * required where it wasn't, or an entity/field disappearing from the spec
  * entirely (pipeline.ts's own "Architect" message, via computeImpact) --
