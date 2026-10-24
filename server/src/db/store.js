@@ -64,7 +64,16 @@ function load() {
 
 function persist() {
   if (!existsSync(DATA_DIR)) mkdirSync(DATA_DIR, { recursive: true });
-  writeFileSync(DB_FILE, JSON.stringify(state, null, 2));
+  // Write to a temp file first, then rename over the real one. A rename
+  // within the same directory is atomic on POSIX filesystems — so a crash
+  // or kill mid-write (Railway redeploys roughly hourly) leaves either the
+  // old complete db.json or the new one, never a half-written file. Without
+  // this, writeFileSync directly to DB_FILE could be interrupted partway
+  // through, and load()'s corrupt-file recovery above would then wipe the
+  // entire ledger/opportunities/approvals state on the very next boot.
+  const tmpFile = `${DB_FILE}.tmp-${process.pid}`;
+  writeFileSync(tmpFile, JSON.stringify(state, null, 2));
+  renameSync(tmpFile, DB_FILE);
 }
 
 export function makeId(prefix) {

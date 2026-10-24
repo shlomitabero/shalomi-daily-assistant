@@ -1,6 +1,12 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import { existsSync, readdirSync, readFileSync } from 'node:fs';
+import { dirname, join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { resolveDataDir, db, __resetForTests, makeId } from './store.js';
+
+const __dirname = dirname(fileURLToPath(import.meta.url));
+const DATA_DIR = process.env.DATA_DIR || join(__dirname, '..', '..', 'data');
 
 test('resolveDataDir uses the env override when set', () => {
   assert.equal(resolveDataDir('/data', '/app/server/data'), '/data');
@@ -55,4 +61,22 @@ test('where() only returns rows matching the predicate', () => {
   db.actions_log.insert({ id: makeId('act'), type: 'a', result: 'failed' });
   assert.equal(db.actions_log.where((a) => a.type === 'a').length, 2);
   assert.equal(db.actions_log.where((a) => a.result === 'failed').length, 2);
+});
+
+// persist() writes to db.json on every insert/update/delete (not just in
+// tests — this is the real write path a Railway redeploy can interrupt
+// mid-write). It must write atomically (temp file + rename) rather than
+// directly, or a crash partway through could leave db.json half-written —
+// corrupting the owner's entire ledger/opportunities/approvals state.
+test('persist() writes db.json atomically, leaving no stray temp file and always valid JSON', () => {
+  __resetForTests();
+  const row = db.actions_log.insert({ id: makeId('act'), type: 'atomic-write-check', result: 'success' });
+
+  const dbFile = join(DATA_DIR, 'db.json');
+  assert.ok(existsSync(dbFile));
+  const onDisk = JSON.parse(readFileSync(dbFile, 'utf-8'));
+  assert.deepEqual(onDisk.actions_log[row.id], row);
+
+  const leftoverTmp = readdirSync(DATA_DIR).filter((f) => f.startsWith('db.json.tmp-'));
+  assert.deepEqual(leftoverTmp, []);
 });
