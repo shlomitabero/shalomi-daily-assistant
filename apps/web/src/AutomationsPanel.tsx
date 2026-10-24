@@ -134,6 +134,18 @@ export function AutomationsPanel({
     [selectedEntity],
   );
 
+  // A Refine can also narrow, widen, or rename an enum field's own options
+  // while the field keeps the exact same name AND type ("enum" -> "enum")
+  // -- fieldTypesKey alone doesn't notice, since neither of those changed.
+  // EntityPanel.tsx hit this same gap for its own fieldFilters state in
+  // round 882 (fieldEnumCountsKey there). Joins the full option list, not
+  // just its length, so a same-count rename (e.g. "InProgress" -> "Active")
+  // is caught too, not just a widen/narrow.
+  const fieldEnumValuesKey = useMemo(
+    () => (selectedEntity ? selectedEntity.fields.map((f) => `${f.name}:${f.type === "enum" ? uniqueEnumValues(f.enumValues).join("|") : ""}`).join(",") : ""),
+    [selectedEntity],
+  );
+
   // The user's own drag-reordered column order (EntityPanel.tsx's table)
   // is the layout they see as their real field order everywhere else in
   // the app (bulk-edit, filters, CSV export, both Print sheets) -- without
@@ -213,7 +225,7 @@ export function AutomationsPanel({
       }
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [fieldName, fieldTypesKey]);
+  }, [fieldName, fieldTypesKey, fieldEnumValuesKey]);
 
   // The "Value" control's relation branch (below) needs the target
   // entity's own records loaded, to render a real picker instead of

@@ -2403,3 +2403,136 @@ test("AutomationsPanel resets a stale field_equals value when a live refine chan
     }
   });
 });
+
+/**
+ * Round 887: a sibling gap to the retype test just above, but narrower --
+ * a live refine that narrows the SAME still-selected enum field's own
+ * options, without ever changing its name or its type ("enum" stays
+ * "enum"). fieldTypesKey (name:type) doesn't change, so before this fix
+ * the fieldValue-revalidation effect never re-ran at all: fieldValue
+ * stayed the now-removed option "InProgress", the <select> itself fell
+ * back to showing some other option (an HTML select's own .value quietly
+ * ignores a controlled value with no matching option), and submitting
+ * without touching the dropdown would send the stale, now-invalid
+ * "InProgress" straight to the server, which validateAutomationFieldValue
+ * (apps/api/src/routes/projects.ts) rejects with a 400 the user never
+ * consciously chose and can't see reflected on screen.
+ */
+test("AutomationsPanel resets a stale field_equals value when a live refine narrows the selected enum field's own options, instead of submitting a now-removed option", async () => {
+  await withJsdom(async () => {
+    const entityWithThreeStatuses: Project["spec"]["entities"][number] = {
+      name: "Ticket",
+      label: "Ticket",
+      fields: [
+        { name: "title", label: "Title", type: "text", required: true },
+        {
+          name: "status",
+          label: "Status",
+          type: "enum",
+          required: false,
+          enumValues: ["New", "InProgress", "Done"],
+          enumLabels: { New: "New", InProgress: "In Progress", Done: "Done" },
+        },
+      ],
+    };
+    const entityWithStatusNarrowed: Project["spec"]["entities"][number] = {
+      name: "Ticket",
+      label: "Ticket",
+      fields: [
+        { name: "title", label: "Title", type: "text", required: true },
+        {
+          name: "status",
+          label: "Status",
+          type: "enum",
+          required: false,
+          enumValues: ["New", "Done"],
+          enumLabels: { New: "New", Done: "Done" },
+        },
+      ],
+    };
+    const narrowProject: Project = {
+      ...triggerFieldProject,
+      spec: { ...triggerFieldProject.spec, entities: [entityWithThreeStatuses] },
+    };
+    const originalFetch = globalThis.fetch;
+    let createBody: Record<string, unknown> | undefined;
+    globalThis.fetch = (async (input: string, init?: RequestInit) => {
+      const method = init?.method ?? "GET";
+      if (method === "GET" && input === "/api/projects/proj5/automations") {
+        return new Response(JSON.stringify({ rules: [] }), { status: 200, headers: { "content-type": "application/json" } });
+      }
+      if (method === "POST" && input === "/api/projects/proj5/entities/Ticket/automations") {
+        createBody = JSON.parse(init!.body as string);
+        return new Response(JSON.stringify({ rule: { id: "rule9", ...createBody } }), {
+          status: 201,
+          headers: { "content-type": "application/json" },
+        });
+      }
+      throw new Error(`unexpected request ${method} ${input}`);
+    }) as typeof fetch;
+
+    try {
+      const view = renderPanelWith(narrowProject, () => {}, [entityWithThreeStatuses]);
+      await waitForCondition(() => document.body.textContent?.includes("No automations yet") ?? false);
+
+      const triggerSelect = Array.from(document.querySelectorAll("select")).find((s) =>
+        Array.from(s.options).some((o) => o.value === "field_equals"),
+      ) as HTMLSelectElement;
+      fireEvent.change(triggerSelect, { target: { value: "field_equals" } });
+
+      const fieldSelect = Array.from(document.querySelectorAll("select")).find((s) =>
+        Array.from(s.options).some((o) => o.value === "status"),
+      ) as HTMLSelectElement;
+      fireEvent.change(fieldSelect, { target: { value: "status" } });
+
+      const valueSelect = Array.from(document.querySelectorAll("select")).find((s) =>
+        Array.from(s.options).some((o) => o.value === "InProgress"),
+      ) as HTMLSelectElement;
+      fireEvent.change(valueSelect, { target: { value: "InProgress" } });
+      await waitForCondition(() => valueSelect.value === "InProgress");
+
+      // Simulate a refine that narrows "status" from
+      // [New, InProgress, Done] to [New, Done] -- same entityName, same
+      // fieldName, same type ("enum"), just a changed option list, with
+      // the create form still open and "status" still selected. The
+      // panel stays mounted, just like the already-fixed retype test above.
+      view.rerender(
+        React.createElement(
+          ThemeProvider,
+          null,
+          React.createElement(
+            LanguageProvider,
+            null,
+            React.createElement(AutomationsPanel, {
+              projectId: narrowProject.id,
+              project: { ...narrowProject, spec: { ...narrowProject.spec, entities: [entityWithStatusNarrowed] } },
+              entities: [entityWithStatusNarrowed],
+              onClose: () => {},
+            }),
+          ),
+        ),
+      );
+
+      const newValueSelect = () =>
+        Array.from(document.querySelectorAll("select")).find((s) => Array.from(s.options).some((o) => o.value === "New")) as
+          | HTMLSelectElement
+          | undefined;
+      await waitForCondition(() => newValueSelect()?.value !== "InProgress");
+
+      assert.equal(
+        newValueSelect()?.value,
+        "New",
+        "the stale, now-removed option \"InProgress\" must be reset to the first remaining real option",
+      );
+
+      const messageField = document.querySelector(".automations-create-form textarea") as HTMLTextAreaElement;
+      fireEvent.change(messageField, { target: { value: "Status narrowed" } });
+      fireEvent.submit(document.querySelector(".automations-create-form")!);
+
+      await waitForCondition(() => createBody !== undefined);
+      assert.equal(createBody?.fieldValue, "New", "the submitted value must be the reset real option, never the stale, now-removed \"InProgress\"");
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+});
