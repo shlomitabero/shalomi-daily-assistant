@@ -3638,7 +3638,11 @@ test("the exported EntityView's real generated buildCalendarIcs produces a genui
 
   assert.match(ics, /^BEGIN:VCALENDAR\r\nVERSION:2\.0/);
   assert.match(ics, /END:VCALENDAR$/);
-  assert.match(ics, /UID:Appointment-5@forge-ai/);
+  // Round 936: scoped by the source project's own id (baked in at
+  // generation time, see that round's codegen.ts comment) rather than a
+  // fixed "@forge-ai" every exported app shared, which could collide
+  // across two different exported apps' same-named entity.
+  assert.match(ics, /UID:Appointment-5@proj1\.forge-ai/);
   assert.match(ics, /DTSTART;VALUE=DATE:20260315/);
   assert.match(ics, /DTEND;VALUE=DATE:20260316/, "an all-day single-day event's DTEND must be the next day (exclusive end), not the same day");
   assert.match(ics, /SUMMARY:Dana\\, Levi/, "a comma in the summary must be backslash-escaped per RFC 5545 §3.3.11");
@@ -4100,8 +4104,8 @@ test("the exported EntityView's real generated buildCalendarIcs escapes an entit
   const records = [{ id: 3, customerName: "Dana Levi", date: "2026-03-15" }];
 
   const ics = buildCalendarIcs(entity, dateField, labelField, records, {}, new Date("2026-01-01T00:00:00Z"));
-  assert.match(ics, /UID:Weird\\;Name\\,With\\\\Chars-3@forge-ai/);
-  assert.doesNotMatch(ics, /UID:Weird;Name,With\\Chars-3@forge-ai/, "the raw unescaped name must never reach the UID line");
+  assert.match(ics, /UID:Weird\\;Name\\,With\\\\Chars-3@proj1\.forge-ai/);
+  assert.doesNotMatch(ics, /UID:Weird;Name,With\\Chars-3@proj1\.forge-ai/, "the raw unescaped name must never reach the UID line");
 });
 
 // Regression test for the enum-field gap fixed this round: the exported

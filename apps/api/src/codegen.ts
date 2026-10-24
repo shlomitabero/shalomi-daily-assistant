@@ -3020,7 +3020,15 @@ function buildCalendarIcs(entity, dateField, labelField, records, relatedRecords
       })
       .filter((line) => line !== null);
     lines.push("BEGIN:VEVENT");
-    lines.push(foldIcsLine(\`UID:\${icsEscapeText(entity.name)}-\${record.id}@forge-ai\`));
+    // Round 936: mirrors the live preview's own calendarIcs.ts fix --
+    // entity.name+record.id alone collides across two DIFFERENT exported
+    // apps sharing a common entity name (e.g. "Booking"), and a calendar
+    // client treats a repeated UID as an update of the existing event,
+    // not a new one. This exported app has no runtime multi-project
+    // concept (it's generated from exactly one project), so the source
+    // project's own id is baked in here as a literal at generation time,
+    // the same way allEntitiesJson above bakes in the entity schema.
+    lines.push(foldIcsLine(\`UID:\${icsEscapeText(entity.name)}-\${record.id}@${project.id}.forge-ai\`));
     lines.push(\`DTSTAMP:\${dtstamp}\`);
     lines.push(\`DTSTART;VALUE=DATE:\${formatIcsDate(start)}\`);
     lines.push(\`DTEND;VALUE=DATE:\${formatIcsDate(end)}\`);

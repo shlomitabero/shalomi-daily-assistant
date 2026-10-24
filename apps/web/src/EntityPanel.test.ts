@@ -3554,7 +3554,7 @@ test("EntityPanel's ICS export emits exactly one VEVENT per ranged record, not o
       const icsText = await (capturedBlob as unknown as Blob).text();
       const veventCount = (icsText.match(/BEGIN:VEVENT/g) ?? []).length;
       assert.equal(veventCount, 1, "a single 3-day stay must export as exactly one VEVENT, not one per night it spans");
-      const uidLines = icsText.match(/UID:Rental-1@forge-ai/g) ?? [];
+      const uidLines = icsText.match(/UID:Rental-1@proj1\.forge-ai/g) ?? [];
       assert.equal(uidLines.length, 1, "the record's UID must appear exactly once, confirming it wasn't duplicated");
     } finally {
       globalThis.fetch = originalFetch;

@@ -51,7 +51,38 @@ test("buildCalendarIcs's SUMMARY uses the label field's value, and UID is unique
   ];
   const ics = buildCalendarIcs(entity, dateField, nameField, records, [], {});
   assert.match(ics, /SUMMARY:Yossi Cohen/);
-  assert.match(ics, /UID:Appointment-7@forge-ai/);
+  // projectId defaults to "" when omitted (as here) -- round 936's own
+  // project-scoping test below covers passing a real one.
+  assert.match(ics, /UID:Appointment-7@\.forge-ai/);
+});
+
+/**
+ * Round 936: entity.name+record.id alone is only unique *within* one
+ * project -- record ids restart from 1 per entity per project
+ * (insertRecord's own auto-increment), and entity names routinely repeat
+ * across unrelated projects (this app's own domain-library templates
+ * generate common names like "Booking"/"Appointment"/"Order"). RFC 5545
+ * requires UID to be unique across every calendar it's imported into,
+ * and every mainstream calendar client treats importing an already-seen
+ * UID as an UPDATE of that existing event, not a new one -- so exporting
+ * two different projects' same-named entity's record #1 into the same
+ * real calendar app would silently overwrite one project's event with
+ * the other's, with no error anywhere. Confirms the UID now also
+ * includes projectId, so the identical entity+record id from two
+ * different projects produces two genuinely distinct UIDs.
+ */
+test("buildCalendarIcs's UID also scopes by projectId, so the same entity+record id from two different projects never collides", () => {
+  const records: EntityRecord[] = [
+    { id: 7, appointmentDate: "2026-01-01", customerName: "Yossi Cohen", notes: null, courierId: null },
+  ];
+  const icsA = buildCalendarIcs(entity, dateField, nameField, records, [], {}, new Date(), null, undefined, "en", "projA");
+  const icsB = buildCalendarIcs(entity, dateField, nameField, records, [], {}, new Date(), null, undefined, "en", "projB");
+
+  assert.match(icsA, /UID:Appointment-7@projA\.forge-ai/);
+  assert.match(icsB, /UID:Appointment-7@projB\.forge-ai/);
+  const uidA = icsA.match(/UID:[^\r\n]+/)?.[0];
+  const uidB = icsB.match(/UID:[^\r\n]+/)?.[0];
+  assert.notEqual(uidA, uidB, "the identical entity+record id from two different projects must produce two genuinely distinct UIDs");
 });
 
 test("buildCalendarIcs's DESCRIPTION includes every other field as 'Label: value', excluding the date and label fields themselves", () => {
@@ -205,8 +236,8 @@ test("buildCalendarIcs escapes an entity name containing RFC-5545-significant ch
     { id: 3, appointmentDate: "2026-03-15", customerName: "Dana Levi", notes: null, courierId: null },
   ];
   const ics = buildCalendarIcs(unsafeEntity, dateField, nameField, records, [], {});
-  assert.match(ics, /UID:Weird\\;Name\\,With\\\\Chars-3@forge-ai/);
-  assert.doesNotMatch(ics, /UID:Weird;Name,With\\Chars-3@forge-ai/, "the raw unescaped name must never reach the UID line");
+  assert.match(ics, /UID:Weird\\;Name\\,With\\\\Chars-3@\.forge-ai/);
+  assert.doesNotMatch(ics, /UID:Weird;Name,With\\Chars-3@\.forge-ai/, "the raw unescaped name must never reach the UID line");
 });
 
 /**

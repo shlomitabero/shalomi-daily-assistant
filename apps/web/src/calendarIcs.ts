@@ -132,6 +132,13 @@ export function buildCalendarIcs(
   endField?: Field | null,
   orderedFields: Field[] = entity.fields,
   lang: Lang = "en",
+  // Round 936: see UID's own comment below -- defaults to "" (matching
+  // this function's own established "new trailing param gets a default,
+  // not a signature-breaking required one" convention from round 686's
+  // orderedFields) rather than widening every one of this file's own
+  // unrelated test call sites, which don't care about cross-project UID
+  // scoping at all.
+  projectId: string = "",
 ): string {
   const dtstamp = formatIcsTimestamp(now);
   const descriptionFields = orderedFields.filter(
@@ -264,7 +271,19 @@ export function buildCalendarIcs(
     // this line was first written, even though PRODID's own round-551
     // fix comment already described UID as one of the lines that
     // *should* be escaped like SUMMARY/DESCRIPTION.
-    lines.push(foldIcsLine(`UID:${icsEscapeText(entity.name)}-${record.id}@forge-ai`));
+    //
+    // Round 936: scoped by projectId -- entity.name+record.id alone
+    // isn't globally unique, only unique *within* one project (record
+    // ids restart from 1 per entity per project, and entity names like
+    // "Booking"/"Appointment" routinely repeat across unrelated
+    // projects, including this app's own domain-library templates). A
+    // calendar client treats importing a UID that already exists as an
+    // UPDATE of that existing event, not a new one -- exporting two
+    // different projects' same-named entity into the same real calendar
+    // app would silently overwrite one project's events with the
+    // other's, with no error anywhere. projectId is a real UUID
+    // (routes/projects.ts's own randomUUID()), safe to embed unescaped.
+    lines.push(foldIcsLine(`UID:${icsEscapeText(entity.name)}-${record.id}@${projectId}.forge-ai`));
     lines.push(`DTSTAMP:${dtstamp}`);
     lines.push(`DTSTART;VALUE=DATE:${formatIcsDate(start)}`);
     lines.push(`DTEND;VALUE=DATE:${formatIcsDate(end)}`);
