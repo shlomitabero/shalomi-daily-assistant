@@ -2396,10 +2396,25 @@ export function createProjectsRouter(
    * renaming or removing a value used to leave its old enumLabels entry
    * permanently orphaned (and a newly-added value with no entry at all),
    * surviving in the stored spec forever since there's no other UI to
-   * touch enumLabels directly. Filtered down to just the values that
+   * touch enumLabels directly. Carried forward to just the values that
    * still exist in the new list, the same "stale derived data must not
    * outlive the data it was derived from" rule already applied to
    * enumValues/relationTo just above.
+   *
+   * Round 949: a THIRD, independently-unswept instance of the case-only-
+   * rename bug class rounds 946/947 already closed elsewhere -- an exact-
+   * string lookup here (the original `.includes(value)` filter) mishandled
+   * a value renamed only by letter case (e.g. editing "lost" to "Lost" in
+   * the "edit values" form, a purely cosmetic fix) the exact same way: the
+   * old label survived under the key "lost", which no longer exists in the
+   * new list, so it was silently dropped -- and no entry was created for
+   * the new "Lost" key either, since nothing in the fresh submission ever
+   * supplies one. Mirrors pipeline.ts's carryForwardLabels (round 947):
+   * each NEW value's label is looked up by exact match first, falling back
+   * to a case-insensitive match against the OLD enumLabels keys, so a
+   * case-only rename carries its label forward onto the new key instead of
+   * losing it. Only a genuinely removed value (no match either way) drops
+   * its label; a genuinely new value stays unlabeled, same as before.
    */
   router.patch(
     "/projects/:id/entities/:entityName/fields/:fieldName/type",
@@ -2434,9 +2449,17 @@ export function createProjectsRouter(
                         enumValues: parsed.data.type === "enum" ? parsed.data.enumValues : undefined,
                         enumLabels:
                           parsed.data.type === "enum" && f.enumLabels
-                            ? Object.fromEntries(
-                                Object.entries(f.enumLabels).filter(([value]) => parsed.data.enumValues!.includes(value)),
-                              )
+                            ? (() => {
+                                const prevLabelsByLowerValue = new Map(
+                                  Object.entries(f.enumLabels!).map(([value, label]) => [value.toLowerCase(), label]),
+                                );
+                                const next: Record<string, string> = {};
+                                for (const value of parsed.data.enumValues!) {
+                                  const label = f.enumLabels![value] ?? prevLabelsByLowerValue.get(value.toLowerCase());
+                                  if (label !== undefined) next[value] = label;
+                                }
+                                return next;
+                              })()
                             : undefined,
                         relationTo: parsed.data.type === "relation" ? parsed.data.relationTo : undefined,
                       }

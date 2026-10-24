@@ -6057,6 +6057,48 @@ test("switching a field's type to enum while also changing its enumValues drops 
   });
 });
 
+/**
+ * Round 949: a third, independently-unswept instance of the case-only-
+ * rename bug class rounds 946/947 already closed (checkpointDiff.ts,
+ * pipeline.ts's carryForwardLabels/computeImpact) -- the exact-string
+ * `.includes(value)` filter just above mishandled a value renamed ONLY by
+ * letter case (e.g. correcting "lost" to "Lost" via the "edit values"
+ * form) the same way: the old label survived keyed by "lost", which the
+ * exact-string check no longer finds in the new list, so it was silently
+ * dropped, with no label ever created for the new "Lost" key either --
+ * discarding a real Hebrew translation for a purely cosmetic edit.
+ */
+test("switching a field's enumValues case-only-renames one value (same value, different letter case) and its own enumLabels entry survives, carried forward onto the new key", async () => {
+  await withServer(async (baseUrl) => {
+    const token = await signup(baseUrl, "field-type-enumlabels-case@example.com");
+    const createRes = await fetch(`${baseUrl}/api/projects/from-template`, {
+      method: "POST",
+      headers: authHeaders(token),
+      body: JSON.stringify({ templateId: "crm" }),
+    });
+    const { project } = (await createRes.json()) as { project: { id: string } };
+
+    const res = await fetch(`${baseUrl}/api/projects/${project.id}/entities/Deal/fields/stage/type`, {
+      method: "PATCH",
+      headers: authHeaders(token),
+      body: JSON.stringify({ type: "enum", enumValues: "lead, qualified, proposal, won, Lost" }),
+    });
+    assert.equal(res.status, 200);
+    const { project: updated } = (await res.json()) as {
+      project: { spec: { entities: { name: string; fields: { name: string; enumValues?: string[]; enumLabels?: Record<string, string> }[] }[] } };
+    };
+    const updatedField = updated.spec.entities.find((e) => e.name === "Deal")!.fields.find((f) => f.name === "stage")!;
+    assert.deepEqual(updatedField.enumValues, ["lead", "qualified", "proposal", "won", "Lost"]);
+    assert.equal(
+      updatedField.enumLabels?.Lost,
+      "אבדה",
+      "a value renamed only by letter case must carry its own real label forward onto the new, re-cased key",
+    );
+    assert.equal(updatedField.enumLabels?.lost, undefined, "the old, now-unused casing must not also linger as a separate stale entry");
+    assert.equal(updatedField.enumLabels?.lead, "ליד", "every other, untouched value must still keep its own real label");
+  });
+});
+
 test("adding a blank/whitespace-only field label is rejected with 400 instead of appending an invalid field", async () => {
   await withServer(async (baseUrl) => {
     const token = await signup(baseUrl, "field-add-blank@example.com");
