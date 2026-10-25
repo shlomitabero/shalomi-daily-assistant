@@ -1097,7 +1097,7 @@ test("App's openExistingProject routes a built project to the live preview and a
       specProvider: string | null;
       enhanceProvider: string | null;
       buildWarning: string | null;
-      markSeenCalls: Array<[string, string]>;
+      markSeenCalls: Array<[string, string, string]>;
       myRole: string;
     } = {
       project: null,
@@ -1130,8 +1130,8 @@ test("App's openExistingProject routes a built project to the live preview and a
       (w: string | null) => (state.buildWarning = w),
       (v: string) => (state.view = v),
       currentUser,
-      (id: string, sharedAt: string) => {
-        state.markSeenCalls.push([id, sharedAt]);
+      (userId: string, id: string, sharedAt: string) => {
+        state.markSeenCalls.push([userId, id, sharedAt]);
         return new Map([[id, sharedAt]]);
       },
       (_m: Map<string, string>) => {},
@@ -1194,8 +1194,8 @@ test("App's openExistingProject routes a built project to the live preview and a
   const sharedResult = run(sharedProject, collaborator);
   assert.deepEqual(
     sharedResult.markSeenCalls,
-    [[sharedProject.id, "2026-03-01T00:00:00.000Z"]],
-    "opening a project someone else owns must mark it seen with its own id and current sharedAt",
+    [[collaborator.id, sharedProject.id, "2026-03-01T00:00:00.000Z"]],
+    "opening a project someone else owns must mark it seen under the SIGNED-IN collaborator's own id, with the project's own id and current sharedAt",
   );
   assert.equal(
     sharedResult.myRole,

@@ -1,5 +1,5 @@
 import { removePinnedProject } from "./pinnedProjects.js";
-import { removeSeenSharedProject } from "./sharedProjectSeen.js";
+import { purgeSeenSharedProjectsForProject } from "./sharedProjectSeen.js";
 import { purgeEntityTabOrderForProject } from "./entityTabOrder.js";
 import { purgeColumnWidthsForProject } from "./columnWidths.js";
 import { purgeColumnOrderForProject } from "./columnOrder.js";
@@ -50,7 +50,7 @@ import { clearWhatsAppLastSeenId } from "./whatsappUnread.js";
  */
 export function purgeProjectPreferences(projectId: string): void {
   removePinnedProject(projectId);
-  removeSeenSharedProject(projectId);
+  purgeSeenSharedProjectsForProject(projectId);
   purgeEntityTabOrderForProject(projectId);
   purgeColumnWidthsForProject(projectId);
   purgeColumnOrderForProject(projectId);

@@ -567,7 +567,16 @@ function AppContent() {
   const [templates, setTemplates] = useState<TemplateSummary[]>([]);
   const [templateBusy, setTemplateBusy] = useState<string | null>(null);
   const [pinnedIds, setPinnedIds] = useState<Set<string>>(() => getPinnedIds());
-  const [seenShared, setSeenShared] = useState<Map<string, string>>(() => getSeenSharedTimestamps());
+  // Round 995: this used to lazy-init via getSeenSharedTimestamps() with no
+  // userId at all -- `user` is still null at this exact first-render
+  // moment (the async session-check effect just below hasn't resolved
+  // yet), so there was never a real user id available here anyway. Starts
+  // empty and gets properly populated, scoped to the real signed-in
+  // user's own id, inside that same session-check effect the moment
+  // `user` becomes known -- see its own updated comment there. The home
+  // screen that actually reads this (isNewShare, below) never renders
+  // before that resolves, gated by `checkingSession`.
+  const [seenShared, setSeenShared] = useState<Map<string, string>>(new Map());
   const [projectSortMode, setProjectSortModeState] = useState<ProjectSortMode>(() => getProjectSortMode());
   const [projectSearch, setProjectSearch] = useState("");
   const [recentProjectSearches, setRecentProjectSearches] = useState<string[]>(() => getRecentProjectSearches());
@@ -936,7 +945,13 @@ function AppContent() {
       return;
     }
     me()
-      .then(({ user }) => setUser(user))
+      .then(({ user }) => {
+        setUser(user);
+        // Round 995: seenShared's own lazy init (above) couldn't know this
+        // user's own id yet -- this is the first point it's actually
+        // known, so this is where its real, per-user content gets loaded.
+        setSeenShared(getSeenSharedTimestamps(user.id));
+      })
       .catch(() => clearToken())
       .finally(() => setCheckingSession(false));
   }, []);
@@ -1199,7 +1214,7 @@ function AppContent() {
     setEnhanceProvider(null);
     setBuildWarning(null);
     setView(p.status === "built" ? "preview" : "spec");
-    if (user && p.ownerId !== user.id && p.sharedAt) setSeenShared(markSharedProjectSeen(p.id, p.sharedAt));
+    if (user && p.ownerId !== user.id && p.sharedAt) setSeenShared(markSharedProjectSeen(user.id, p.id, p.sharedAt));
     if (!user || p.ownerId === user.id) {
       setMyRole("owner");
     } else {
