@@ -83,7 +83,8 @@ export interface WhatsAppSocket {
       | { text: string }
       | { document: Buffer; mimetype: string; fileName: string; caption?: string }
       | { image: Buffer; mimetype: string; caption?: string }
-      | { video: Buffer; mimetype: string; caption?: string },
+      | { video: Buffer; mimetype: string; caption?: string }
+      | { audio: Buffer; mimetype: string; ptt?: boolean },
   ): Promise<unknown>;
   logout(): Promise<void>;
 }
@@ -599,6 +600,25 @@ export class WhatsAppWebManager {
           await session.sock.sendMessage(jid, { image: fileBuffer, mimetype: attachment.mimeType, caption: body });
         } else if (attachment.mimeType.startsWith("video/")) {
           await session.sock.sendMessage(jid, { video: fileBuffer, mimetype: attachment.mimeType, caption: body });
+        } else if (attachment.mimeType.startsWith("audio/")) {
+          // Round 966: same degradation round 965 fixed for image/video,
+          // but Baileys' own real audio content shape (confirmed directly
+          // against node_modules/@whiskeysockets/baileys's own type
+          // definitions, Types/Message.d.ts's AnyMediaMessageContent) has
+          // no `caption` field at all, unlike image/video/document --
+          // WhatsApp itself has no "voice note with a caption" concept in
+          // its own real UI either, so this isn't a gap this app's code
+          // could paper over even by passing one through. messageTemplate
+          // is always non-empty (CreateAutomationRuleSchema's own
+          // `.min(1)`), so silently dropping it the way naively copying
+          // the image/video branch's shape would (an untyped field Baileys
+          // simply never serializes) would silently discard a caption the
+          // user explicitly wrote, every single time. Sending it as its
+          // own text message first, immediately before the now-playable
+          // (not generic-document) audio attachment, preserves it in full
+          // instead.
+          await session.sock.sendMessage(jid, { text: body });
+          await session.sock.sendMessage(jid, { audio: fileBuffer, mimetype: attachment.mimeType, ptt: false });
         } else {
           await session.sock.sendMessage(jid, { document: fileBuffer, mimetype: attachment.mimeType, fileName: attachment.fileName, caption: body });
         }

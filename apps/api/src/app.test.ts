@@ -2274,6 +2274,108 @@ test("an automation's file attachment sends as a real inline image when the refe
 });
 
 /**
+ * Round 966: same degradation round 965 fixed for image/video, but Baileys'
+ * own real audio content shape has no `caption` field at all (confirmed
+ * directly against node_modules/@whiskeysockets/baileys's own type
+ * definitions) -- unlike image/video/document, which all support one.
+ * Confirms an audio attachment now sends as a real, playable Baileys
+ * `{ audio: ... }` message (not a generic document), AND that the rule's
+ * own messageTemplate text -- which would otherwise be silently dropped,
+ * since Baileys simply never serializes an unrecognized `caption` field on
+ * an audio message -- is preserved in full by sending it as its own
+ * separate text message immediately before the audio.
+ */
+test("an automation's file attachment sends as a real playable audio message when the referenced file is audio, with its own caption text preserved as a separate message first", async () => {
+  let createdSockets: ReturnType<typeof createFakeWhatsAppSocket>[] = [];
+  await withServer(
+    async (baseUrl, db) => {
+      const email = `whatsapp-audio-attachment-${randomUUID()}@example.com`;
+      const token = await signup(baseUrl, email);
+      const user = findUserByEmail(db, email)!;
+
+      const spec: ProductSpec = {
+        summary: "test",
+        personas: [],
+        roles: ["Admin"],
+        entities: [
+          {
+            name: "Order",
+            fields: [
+              { name: "name", type: "text", required: true },
+              { name: "voiceNote", type: "file", required: false },
+            ],
+          },
+        ],
+        screens: [],
+        assumptions: [],
+        openQuestions: [],
+      };
+      const projectId = randomUUID();
+      insertProject(db, { id: projectId, ownerId: user.id, name: "Orders", description: "test", spec });
+      diffAndMigrate(db, projectId, undefined, spec);
+      markProjectBuilt(db, projectId);
+
+      insertAutomationRule(db, {
+        projectId,
+        entityName: "Order",
+        trigger: "record_created",
+        actionType: "send_whatsapp",
+        toMode: "static",
+        toNumber: "972501234567",
+        messageTemplate: "Here's your order confirmation! {{voiceNote}}",
+      });
+
+      await fetch(`${baseUrl}/api/projects/${projectId}/integrations/whatsapp/connect`, { method: "POST", headers: authHeaders(token) });
+      createdSockets[0].sock.user = { id: "15550001111:1@s.whatsapp.net" };
+      createdSockets[0].emitConnectionUpdate({ connection: "open" });
+
+      const audioFormData = new FormData();
+      audioFormData.append("file", new File(["OggS-fake-audio-bytes"], "confirmation.ogg", { type: "audio/ogg" }));
+      const audioUploadRes = await fetch(`${baseUrl}/api/projects/${projectId}/entities/Order/fields/voiceNote/upload`, {
+        method: "POST",
+        headers: { authorization: `Bearer ${token}` },
+        body: audioFormData,
+      });
+      assert.equal(audioUploadRes.status, 200);
+      const audioUpload = (await audioUploadRes.json()) as { file: { url: string; name: string; mimeType: string } };
+
+      await fetch(`${baseUrl}/api/projects/${projectId}/entities/Order`, {
+        method: "POST",
+        headers: authHeaders(token),
+        body: JSON.stringify({ name: "Order #1", voiceNote: JSON.stringify(audioUpload.file) }),
+      });
+      for (let i = 0; i < 40 && createdSockets[0].sendCalls.length < 2; i++) {
+        await new Promise((resolve) => setTimeout(resolve, 0));
+      }
+      assert.equal(
+        createdSockets[0].sendCalls.length,
+        2,
+        "an audio attachment must send as two physical messages -- the caption text, then the playable audio",
+      );
+
+      const textContent = createdSockets[0].sendCalls[0]!.content as { text?: string };
+      assert.equal(
+        textContent.text,
+        "Here's your order confirmation! confirmation.ogg",
+        "the rule's own caption text must be sent in full as its own message, not silently dropped",
+      );
+
+      const audioContent = createdSockets[0].sendCalls[1]!.content as { audio?: Buffer; document?: Buffer; mimetype?: string; ptt?: boolean };
+      assert.ok("audio" in audioContent, "the attachment itself must send as Baileys' own real playable audio content, not a generic document");
+      assert.equal("document" in audioContent, false);
+      assert.equal(audioContent.mimetype, "audio/ogg");
+    },
+    {
+      whatsapp: (db) => {
+        const created = createTestWhatsAppManager(db);
+        createdSockets = created.createdSockets;
+        return created.manager;
+      },
+    },
+  );
+});
+
+/**
  * Round 643's Explore survey found that CSV import (EntityPanel.tsx's
  * handleImportFile) POSTs every parsed row through this exact route,
  * concurrently via Promise.allSettled -- before this round's fix, each one
