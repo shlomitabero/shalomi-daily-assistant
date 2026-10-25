@@ -778,6 +778,14 @@ function backupRecordDisplayLabel(entity, record) {
   if (field && field.type === "boolean") return value ? "TRUE" : "FALSE";
   if (field && field.type === "enum") return (field.enumLabels && field.enumLabels[String(value)]) || String(value);
   if (field && field.type === "relation") return \`#\${record.id}\`;
+  // Round 982: fixed the same gap in every OTHER copy of this logic
+  // (apps/api/src/displayField.ts, apps/web/src/entityFormatting.ts, and
+  // this file's own recordDisplayLabel above) but missed this fourth,
+  // separately-named copy too -- when backupPickDisplayField's own last-
+  // resort step lands on a file field, the file's raw JSON upload
+  // descriptor (including its internal /api/uploads/... path) was leaked
+  // into the backup CSV as this record's own label.
+  if (field && field.type === "file") return \`#\${record.id}\`;
   return String(value);
 }
 
@@ -1752,6 +1760,15 @@ export function recordDisplayLabel(entity, record) {
   if (field?.type === "boolean") return value ? "TRUE" : "FALSE";
   if (field?.type === "enum") return field.enumLabels?.[String(value)] ?? String(value);
   if (field?.type === "relation") return \`#\${record.id}\`;
+  // Round 982: the same last-resort fallback can also land on a "file"
+  // field -- an attachment/join entity like Enrollment { certificate:
+  // file, studentId: relation->Student } has no name/title/text/enum
+  // field at all, only a file and a relation, so pickDisplayField's own
+  // final step picks whichever was declared first regardless. Falling
+  // through to String(value) here would String() the file's raw JSON
+  // upload descriptor as the record's own label. #\${record.id} matches
+  // the exact same fallback the relation branch just above already uses.
+  if (field?.type === "file") return \`#\${record.id}\`;
   return String(value);
 }
 

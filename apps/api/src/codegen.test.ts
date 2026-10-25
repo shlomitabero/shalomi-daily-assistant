@@ -3403,6 +3403,48 @@ test("the exported EntityView's recordDisplayLabel falls back to this record's o
 });
 
 /**
+ * New in round 982: mirrors the live preview's own identical fix
+ * (entityFormatting.ts). The exact same bug class as the relation fix
+ * just above, never done for "file" -- an attachment/join entity like
+ * Enrollment { certificate: file, studentId: relation->Student } has no
+ * name/title/text/enum/boolean field at all; when the file field is
+ * declared FIRST, pickDisplayField's purely positional last-resort step
+ * lands on it, and the exported app's recordDisplayLabel used to
+ * String() the file's raw JSON upload descriptor as the record's own
+ * label.
+ */
+test("the exported EntityView's recordDisplayLabel falls back to this record's own #<id>, not the file field's raw JSON upload descriptor, when the display field is itself a file", () => {
+  const files = generateExportFiles(project);
+  const entityViewJsx = files.find((f) => f.path === "web/src/components/EntityView.jsx")!.content;
+
+  const displayFieldHintsSrc = entityViewJsx.match(/const DISPLAY_FIELD_NAME_HINTS = .*;\n/)?.[0];
+  const pickDisplayFieldSrc = entityViewJsx.match(/export function pickDisplayField\([\s\S]*?\n\}\n/)?.[0]?.replace("export ", "");
+  const recordDisplayLabelSrc = entityViewJsx.match(/export function recordDisplayLabel\(entity, record\) \{[\s\S]*?\n\}\n/)?.[0]?.replace("export ", "");
+  assert.ok(
+    displayFieldHintsSrc && pickDisplayFieldSrc && recordDisplayLabelSrc,
+    "expected to find DISPLAY_FIELD_NAME_HINTS/pickDisplayField/recordDisplayLabel in generated output",
+  );
+
+  const recordDisplayLabel = new Function(
+    `${displayFieldHintsSrc}\n${pickDisplayFieldSrc}\n${recordDisplayLabelSrc}\nreturn recordDisplayLabel;`,
+  )() as (entity: unknown, record: unknown) => string;
+
+  const entity = {
+    name: "Enrollment",
+    fields: [
+      { name: "certificate", type: "file" },
+      { name: "studentId", type: "relation", relationTo: "Student" },
+    ],
+  };
+  const fileDescriptor = JSON.stringify({ url: "/api/uploads/proj1/Enrollment/1/certificate/abc.pdf", name: "cert.pdf", size: 123, mimeType: "application/pdf" });
+  assert.equal(
+    recordDisplayLabel(entity, { id: 5, certificate: fileDescriptor, studentId: 2 }),
+    "#5",
+    "must fall back to this record's own id, not String() the file's raw JSON upload descriptor as the label",
+  );
+});
+
+/**
  * Round 762: mirrors the live preview's own fix -- pickDisplayField's
  * "first text field" step only ever checked "text", never "longtext",
  * even though the two are the same free-text kind everywhere else in
@@ -11292,6 +11334,45 @@ test("the exported server.js's own backupRecordDisplayLabel falls back to this r
     backupFieldDisplayValue(membershipField, 2, { Membership: new Map([[2, { id: 2, userId: 4, groupId: 20 }]]) }),
     "#2",
     "a second, genuinely different record sharing the exact same relation value (userId: 4) must get its own distinct label",
+  );
+});
+
+/**
+ * New in round 982: the exact same bug class as the relation fix just
+ * above, never done for "file" in this fourth, separately-named copy
+ * either -- when backupPickDisplayField's own last-resort step lands on
+ * a file field, backupRecordDisplayLabel used to String() the file's raw
+ * JSON upload descriptor (including its internal /api/uploads/... path)
+ * straight into a downloaded backup CSV's relation column.
+ */
+test("the exported server.js's own backupRecordDisplayLabel falls back to this record's own #<id>, not the file field's raw JSON upload descriptor, when the display field is itself a file", () => {
+  const serverJs = generateExportFiles(project).find((f) => f.path === "server.js")!.content;
+  const backupRecordDisplayLabelSrc = serverJs.match(/function backupRecordDisplayLabel\(entity, record\) \{[\s\S]*?\n\}\n/)?.[0];
+  const backupPickDisplayFieldSrc = serverJs.match(/const BACKUP_DISPLAY_FIELD_HINTS[\s\S]*?\nfunction backupPickDisplayField\(entity\) \{[\s\S]*?\n\}\n/)?.[0];
+  const backupFieldDisplayValueSrc = serverJs.match(/function backupFieldDisplayValue\(field, value, recordIndexByEntity\) \{[\s\S]*?\n\}\n/)?.[0];
+  assert.ok(
+    backupRecordDisplayLabelSrc && backupPickDisplayFieldSrc && backupFieldDisplayValueSrc,
+    "expected to find backupRecordDisplayLabel/backupPickDisplayField/backupFieldDisplayValue in generated server.js",
+  );
+
+  const enrollmentEntity = {
+    name: "Enrollment",
+    fields: [
+      { name: "certificate", type: "file" },
+      { name: "studentId", type: "relation", relationTo: "Student" },
+    ],
+  };
+  const backupFieldDisplayValue = new Function(
+    "ENTITIES",
+    `${backupPickDisplayFieldSrc}\n${backupRecordDisplayLabelSrc}\n${backupFieldDisplayValueSrc}\nreturn backupFieldDisplayValue;`,
+  )([enrollmentEntity]);
+
+  const enrollmentField = { name: "enrollment", type: "relation", relationTo: "Enrollment" };
+  const fileDescriptor = JSON.stringify({ url: "/api/uploads/proj1/Enrollment/1/certificate/abc.pdf", name: "cert.pdf", size: 123, mimeType: "application/pdf" });
+  assert.equal(
+    backupFieldDisplayValue(enrollmentField, 5, { Enrollment: new Map([[5, { id: 5, certificate: fileDescriptor, studentId: 2 }]]) }),
+    "#5",
+    "must fall back to this record's own id, not String() the file's raw JSON upload descriptor into the backup CSV",
   );
 });
 

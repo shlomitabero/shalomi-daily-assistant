@@ -1174,6 +1174,23 @@ export function recordDisplayLabel(entity: Entity, record: EntityRecord): string
   if (field?.type === "boolean") return value ? "TRUE" : "FALSE";
   if (field?.type === "enum") return field.enumLabels?.[String(value)] ?? String(value);
   if (field?.type === "relation") return `#${record.id}`;
+  // Round 982: the SAME last-resort fallback can also land on a `file`
+  // field -- an attachment/join entity like `Enrollment { certificate:
+  // file, studentId: relation->Student }` has no name/title/text/enum
+  // field at all, only a file and a relation, so pickDisplayField's own
+  // final step picks whichever was declared first regardless (its own
+  // doc comment already calls this hazard out, but only ever fixed the
+  // EXCLUSION above, not this safety net). Falling through to
+  // `String(value)` here would String() the file's raw JSON upload
+  // descriptor (`{"url":...,"name":...,"size":...,"mimeType":...}`,
+  // including the server's internal upload path) as the record's own
+  // label -- everywhere a record is shown by name (Global Search, a
+  // relation picker, CSV export/import's relation-cell matching, an
+  // Automation Rule's condition display). `#${record.id}` matches the
+  // exact same fallback the relation branch just above already uses, for
+  // the identical reason: always unique per record, unlike the file's own
+  // name (routinely reused across unrelated uploads).
+  if (field?.type === "file") return `#${record.id}`;
   return String(value);
 }
 

@@ -320,3 +320,34 @@ test("recordDisplayLabel falls back to this record's own #<id>, not the relation
     "two different records must never render as the exact same, indistinguishable label",
   );
 });
+
+/**
+ * Round 982 regression test: mirrors apps/web/src/entityFormatting.ts's
+ * own identical fix. The exact same bug class as the enum (761), boolean
+ * (771), and relation (968) fixes above, never done for "file" --
+ * pickDisplayField's own doc comment (round 749) already calls out this
+ * exact hazard, but that round only ever fixed the EXCLUSION inside
+ * pickDisplayField, never this safety net. An attachment/join entity
+ * like Enrollment { certificate: file, studentId: relation->Student } has
+ * no name/title/text/enum/boolean field at all -- when the file field is
+ * declared FIRST, pickDisplayField's purely positional last-resort step
+ * lands on it, and recordDisplayLabel used to String() the file's raw
+ * JSON upload descriptor (including the server's internal upload URL
+ * path) as the record's own label, reachable from this file's own real
+ * callers (automations.ts, twin.ts, backup.ts, whatsapp.ts).
+ */
+test("recordDisplayLabel falls back to this record's own #<id>, not the file field's raw JSON upload descriptor, when the display field is itself a file", () => {
+  const entity: Entity = {
+    name: "Enrollment",
+    fields: [
+      { name: "certificate", type: "file", required: false },
+      { name: "studentId", type: "relation", relationTo: "Student", required: true },
+    ],
+  };
+  const fileDescriptor = JSON.stringify({ url: "/api/uploads/proj1/Enrollment/1/certificate/abc.pdf", name: "cert.pdf", size: 123, mimeType: "application/pdf" });
+  assert.equal(
+    recordDisplayLabel(entity, { id: 5, createdAt: "", certificate: fileDescriptor, studentId: 2 }),
+    "#5",
+    "must fall back to this record's own id, not String() the file's raw JSON upload descriptor as the label",
+  );
+});
