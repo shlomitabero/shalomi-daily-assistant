@@ -768,10 +768,22 @@ export function disableAutomationRulesForField(
   // harmless field cleanup, with the UI only ever surfacing a generic "N
   // automation rule(s) disabled" migration hazard and no way to tell this
   // disable was spurious.
+  // Round 999: emailSubject (round 996's own "send_email" column) is
+  // interpolated completely independently of messageTemplate --
+  // apps/api/src/automations.ts's fireEmailAction runs each of
+  // emailSubject/messageTemplate through interpolateTemplate separately,
+  // for the email's subject and body respectively -- so a "send_email"
+  // rule whose {{field}} placeholder appears ONLY in its subject line (not
+  // in messageTemplate, the body) was never caught by this sweep at all:
+  // it stayed enabled and kept sending real emails with the literal,
+  // unresolved "{{field}}" text baked into every subject, the exact
+  // user-facing failure mode this whole function exists to prevent.
   const candidates = db
-    .prepare("SELECT id, messageTemplate FROM automation_rules WHERE projectId = ? AND entityName = ? AND enabled = 1 AND trigger != 'schedule'")
-    .all(projectId, entityName) as { id: string; messageTemplate: string }[];
-  const templateMatchIds = candidates.filter((r) => templateReferencesField(r.messageTemplate, fieldName)).map((r) => r.id);
+    .prepare("SELECT id, messageTemplate, emailSubject FROM automation_rules WHERE projectId = ? AND entityName = ? AND enabled = 1 AND trigger != 'schedule'")
+    .all(projectId, entityName) as { id: string; messageTemplate: string; emailSubject: string | null }[];
+  const templateMatchIds = candidates
+    .filter((r) => templateReferencesField(r.messageTemplate, fieldName) || (r.emailSubject != null && templateReferencesField(r.emailSubject, fieldName)))
+    .map((r) => r.id);
   for (const id of templateMatchIds) {
     db.prepare("UPDATE automation_rules SET enabled = 0, updatedAt = ? WHERE id = ?").run(now, id);
   }

@@ -1580,6 +1580,52 @@ test("diffAndMigrate disables an automation rule whose messageTemplate reference
 });
 
 /**
+ * Round 999: round 996's own "send_email" action type added a SEPARATE
+ * emailSubject column, interpolated completely independently of
+ * messageTemplate (apps/api/src/automations.ts's fireEmailAction runs each
+ * through interpolateTemplate on its own, for the email's subject and body
+ * respectively) -- but the sweep just above only ever scanned
+ * messageTemplate. A send_email rule whose {{field}} placeholder appears
+ * ONLY in its subject line (never in its messageTemplate body) was never
+ * caught at all, and kept sending real emails with the literal, unresolved
+ * "{{status}}" text baked into every subject after the field it referenced
+ * was removed.
+ */
+test("diffAndMigrate disables a send_email automation rule whose emailSubject (not messageTemplate) references a field removed from a surviving entity", () => {
+  const db = openDatabase(":memory:");
+  ensureAutomationRulesTable(db);
+  applyMigrations(db, "proj1", spec);
+  const subjectReferenceRule = insertAutomationRule(db, {
+    projectId: "proj1",
+    entityName: "Customer",
+    trigger: "record_created",
+    actionType: "send_email",
+    toMode: "static",
+    toEmail: "owner@example.com",
+    emailSubject: "Status update: {{status}}",
+    // Deliberately does NOT reference "status" -- only emailSubject does,
+    // proving the body-only scan from the test above is insufficient.
+    messageTemplate: "Hi {{name}}, thanks for your order!",
+  });
+
+  const nextSpec: ProductSpec = {
+    ...spec,
+    entities: [{ ...spec.entities[0], fields: spec.entities[0].fields.filter((f) => f.name !== "status") }, spec.entities[1]],
+  };
+  const changes = diffAndMigrate(db, "proj1", spec, nextSpec);
+
+  assert.equal(
+    getAutomationRule(db, "proj1", subjectReferenceRule.id)!.enabled,
+    false,
+    "a send_email rule whose emailSubject references the removed field must be disabled, even though messageTemplate doesn't reference it at all",
+  );
+  assert.deepEqual(
+    changes.filter((c) => c.type === "automation_rule_disabled"),
+    [{ type: "automation_rule_disabled", table: "entity_proj1_Customer", column: "status", disabledCount: 1 }],
+  );
+});
+
+/**
  * Round 970 regression test: unlike every OTHER trigger type, a
  * "schedule" rule's own messageTemplate is never run through
  * interpolateTemplate at all -- apps/api/src/automations.ts's
