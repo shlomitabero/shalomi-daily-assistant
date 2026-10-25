@@ -134,6 +134,8 @@ export function AutomationsPanel({
   const [actionType, setActionType] = useState<AutomationActionType>("send_whatsapp");
   const [webhookUrl, setWebhookUrl] = useState("");
   const [webhookSecret, setWebhookSecret] = useState("");
+  const [toEmail, setToEmail] = useState("");
+  const [emailSubject, setEmailSubject] = useState("");
 
   // A schedule rule has no triggering record at all, so there's nothing a
   // toMode:"field" destination could ever read from (the server rejects
@@ -361,6 +363,8 @@ export function AutomationsPanel({
     setActionType("send_whatsapp");
     setWebhookUrl("");
     setWebhookSecret("");
+    setToEmail("");
+    setEmailSubject("");
   }
 
   // Seeds every form field from an existing rule and switches the form
@@ -416,6 +420,8 @@ export function AutomationsPanel({
     setToNumber(rule.toNumber ?? "");
     setWebhookUrl(rule.webhookUrl ?? "");
     setWebhookSecret(rule.webhookSecret ?? "");
+    setToEmail(rule.toEmail ?? "");
+    setEmailSubject(rule.emailSubject ?? "");
     setMessageTemplate(rule.messageTemplate);
   }
 
@@ -440,8 +446,10 @@ export function AutomationsPanel({
     (trigger === "field_equals" && (!fieldName || !fieldValue.trim())) ||
     (trigger === "schedule" && (!scheduleTimeUtc || scheduleDays.length === 0)) ||
     (actionType === "webhook" && !webhookUrl.trim()) ||
-    (actionType === "send_whatsapp" && toMode === "field" && !toField) ||
-    (actionType === "send_whatsapp" && toMode === "static" && !toNumber.trim());
+    ((actionType === "send_whatsapp" || actionType === "send_email") && toMode === "field" && !toField) ||
+    (actionType === "send_whatsapp" && toMode === "static" && !toNumber.trim()) ||
+    (actionType === "send_email" && toMode === "static" && !toEmail.trim()) ||
+    (actionType === "send_email" && !emailSubject.trim());
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
@@ -468,10 +476,12 @@ export function AutomationsPanel({
           scheduleTimezone: trigger === "schedule" ? scheduleTimezone : null,
           actionType,
           toMode,
-          toField: actionType === "send_whatsapp" && toMode === "field" ? toField : null,
+          toField: (actionType === "send_whatsapp" || actionType === "send_email") && toMode === "field" ? toField : null,
           toNumber: actionType === "send_whatsapp" && toMode === "static" ? toNumber.trim() : null,
           webhookUrl: actionType === "webhook" ? webhookUrl.trim() : null,
           webhookSecret: actionType === "webhook" ? webhookSecret.trim() || null : null,
+          toEmail: actionType === "send_email" && toMode === "static" ? toEmail.trim() : null,
+          emailSubject: actionType === "send_email" ? emailSubject.trim() : null,
           messageTemplate: messageTemplate.trim(),
         });
         setRules((prev) => (prev ?? []).map((r) => (r.id === rule.id ? rule : r)));
@@ -486,10 +496,12 @@ export function AutomationsPanel({
           scheduleTimezone: trigger === "schedule" ? scheduleTimezone : undefined,
           actionType,
           toMode,
-          toField: actionType === "send_whatsapp" && toMode === "field" ? toField : undefined,
+          toField: (actionType === "send_whatsapp" || actionType === "send_email") && toMode === "field" ? toField : undefined,
           toNumber: actionType === "send_whatsapp" && toMode === "static" ? toNumber.trim() : undefined,
           webhookUrl: actionType === "webhook" ? webhookUrl.trim() : undefined,
           webhookSecret: actionType === "webhook" ? webhookSecret.trim() || undefined : undefined,
+          toEmail: actionType === "send_email" && toMode === "static" ? toEmail.trim() : undefined,
+          emailSubject: actionType === "send_email" ? emailSubject.trim() : undefined,
           messageTemplate: messageTemplate.trim(),
         });
         setRules((prev) => [...(prev ?? []), rule]);
@@ -497,6 +509,8 @@ export function AutomationsPanel({
         setToNumber("");
         setWebhookUrl("");
         setWebhookSecret("");
+        setToEmail("");
+        setEmailSubject("");
         setMessageTemplate("");
       }
     } catch (err) {
@@ -673,6 +687,13 @@ export function AutomationsPanel({
   function describeDestination(rule: AutomationRuleView): string {
     if (rule.actionType === "webhook") {
       return t("automations.rule.callsWebhook", { url: rule.webhookUrl ?? "" });
+    }
+    if (rule.actionType === "send_email") {
+      const emailDestination =
+        rule.toMode === "field"
+          ? t("automations.rule.sendsField", { field: fieldLabel(rule, rule.toField) })
+          : t("automations.rule.sendsStatic", { number: rule.toEmail ?? "" });
+      return t("automations.rule.sendsEmail", { destination: emailDestination });
     }
     const destination =
       rule.toMode === "field"
@@ -1093,6 +1114,7 @@ export function AutomationsPanel({
             <select value={actionType} onChange={(e) => setActionType(e.target.value as AutomationActionType)}>
               <option value="send_whatsapp">{t("automations.actionType.sendWhatsapp")}</option>
               <option value="webhook">{t("automations.actionType.webhook")}</option>
+              <option value="send_email">{t("automations.actionType.sendEmail")}</option>
             </select>
           </label>
 
@@ -1137,6 +1159,14 @@ export function AutomationsPanel({
                 </select>
               ) : toMode === "field" && selectedEntity ? (
                 <p role="alert">{t("automations.toField.none")}</p>
+              ) : actionType === "send_email" ? (
+                <input
+                  type="email"
+                  placeholder={t("automations.toEmail.placeholder")}
+                  aria-label={t("automations.toEmail.placeholder")}
+                  value={toEmail}
+                  onChange={(e) => setToEmail(e.target.value)}
+                />
               ) : (
                 <input
                   type="text"
@@ -1144,6 +1174,16 @@ export function AutomationsPanel({
                   aria-label={t("automations.toNumber.placeholder")}
                   value={toNumber}
                   onChange={(e) => setToNumber(e.target.value)}
+                />
+              )}
+
+              {actionType === "send_email" && (
+                <input
+                  type="text"
+                  placeholder={t("automations.emailSubject.placeholder")}
+                  aria-label={t("automations.emailSubject.placeholder")}
+                  value={emailSubject}
+                  onChange={(e) => setEmailSubject(e.target.value)}
                 />
               )}
             </>

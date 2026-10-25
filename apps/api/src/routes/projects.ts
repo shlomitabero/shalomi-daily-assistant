@@ -70,6 +70,7 @@ import { deleteUploadedFile, isPathInsideDir, UPLOADED_FILENAME } from "../uploa
 import type { WhatsAppAttachment, WhatsAppWebManager } from "../whatsappWeb.js";
 import { findMatchingRecord } from "../whatsapp.js";
 import { fireRule, fireScheduledRule, hasTooManyConsecutiveFailuresToday, isAllowedWebhookUrl, runAutomationsForRecordChange } from "../automations.js";
+import type { EmailSender } from "../email.js";
 
 const CreateProjectSchema = z.object({
   // Round 919: every other free-text schema in this file that accepts a
@@ -194,12 +195,14 @@ const CreateAutomationRuleSchema = z
       .regex(SCHEDULE_DAYS_OF_WEEK_PATTERN, "scheduleDaysOfWeek must be comma-separated day numbers 0-6")
       .optional(),
     scheduleTimezone: ScheduleTimezoneSchema.optional(),
-    actionType: z.enum(["send_whatsapp", "webhook"]),
+    actionType: z.enum(["send_whatsapp", "webhook", "send_email"]),
     toMode: z.enum(["static", "field"]),
     toNumber: z.string().min(1).optional(),
     toField: z.string().min(1).optional(),
     webhookUrl: z.string().min(1).optional(),
     webhookSecret: z.string().min(1).optional(),
+    toEmail: z.string().email("toEmail must be a valid email address").optional(),
+    emailSubject: z.string().min(1).optional(),
     messageTemplate: z.string().min(1, "messageTemplate is required"),
   })
   .refine((data) => data.trigger !== "field_equals" || (!!data.fieldName && !!data.fieldValue), {
@@ -229,6 +232,18 @@ const CreateAutomationRuleSchema = z
   .refine((data) => data.actionType !== "webhook" || !data.webhookUrl || isAllowedWebhookUrl(data.webhookUrl), {
     message: "webhookUrl must be a real http(s) URL, and can't point at a local/private address",
     path: ["webhookUrl"],
+  })
+  .refine((data) => data.actionType !== "send_email" || data.toMode !== "static" || !!data.toEmail, {
+    message: "toEmail is required when toMode is static",
+    path: ["toEmail"],
+  })
+  .refine((data) => data.actionType !== "send_email" || data.toMode !== "field" || !!data.toField, {
+    message: "toField is required when toMode is field",
+    path: ["toField"],
+  })
+  .refine((data) => data.actionType !== "send_email" || !!data.emailSubject, {
+    message: "emailSubject is required when actionType is send_email",
+    path: ["emailSubject"],
   });
 
 const UpdateAutomationRuleSchema = z.object({
@@ -242,12 +257,14 @@ const UpdateAutomationRuleSchema = z.object({
     .nullable()
     .optional(),
   scheduleTimezone: ScheduleTimezoneSchema.nullable().optional(),
-  actionType: z.enum(["send_whatsapp", "webhook"]).optional(),
+  actionType: z.enum(["send_whatsapp", "webhook", "send_email"]).optional(),
   toMode: z.enum(["static", "field"]).optional(),
   toNumber: z.string().min(1).nullable().optional(),
   toField: z.string().min(1).nullable().optional(),
   webhookUrl: z.string().min(1).nullable().optional(),
   webhookSecret: z.string().min(1).nullable().optional(),
+  toEmail: z.string().email("toEmail must be a valid email address").nullable().optional(),
+  emailSubject: z.string().min(1).nullable().optional(),
   messageTemplate: z.string().min(1).optional(),
   enabled: z.boolean().optional(),
 });
@@ -276,6 +293,8 @@ export function findAutomationRuleInvariantViolation(rule: {
   toNumber: string | null;
   toField: string | null;
   webhookUrl: string | null;
+  toEmail: string | null;
+  emailSubject: string | null;
 }): string | null {
   if (rule.trigger === "field_equals" && !(rule.fieldName && rule.fieldValue)) {
     return "fieldName and fieldValue are required when trigger is field_equals";
@@ -297,6 +316,15 @@ export function findAutomationRuleInvariantViolation(rule: {
   }
   if (rule.actionType === "send_whatsapp" && rule.toMode === "field" && !rule.toField) {
     return "toField is required when toMode is field";
+  }
+  if (rule.actionType === "send_email" && rule.toMode === "static" && !rule.toEmail) {
+    return "toEmail is required when toMode is static";
+  }
+  if (rule.actionType === "send_email" && rule.toMode === "field" && !rule.toField) {
+    return "toField is required when toMode is field";
+  }
+  if (rule.actionType === "send_email" && !rule.emailSubject) {
+    return "emailSubject is required when actionType is send_email";
   }
   return null;
 }
@@ -683,7 +711,7 @@ function validateAutomationToField(field: Field): void {
   if (field.type !== "text" && field.type !== "longtext") {
     throw new HttpError(
       400,
-      `Field "${field.name}" can't be used as a WhatsApp destination -- only a text field can hold a phone number`,
+      `Field "${field.name}" can't be used as a destination -- only a text field can hold a phone number or email address`,
       "VALIDATION_ERROR",
     );
   }
@@ -1010,6 +1038,7 @@ export function createProjectsRouter(
   db: ForgeDatabase,
   provider: SpecProvider | undefined,
   whatsapp: WhatsAppWebManager,
+  emailSender: EmailSender,
   activePipelines: Set<string>,
   uploadsDir: string,
 ): Router {
@@ -2342,6 +2371,7 @@ export function createProjectsRouter(
             void runAutomationsForRecordChange(
               db,
               whatsapp,
+              emailSender,
               project,
               entity,
               "created",
@@ -3521,6 +3551,7 @@ export function createProjectsRouter(
             void runAutomationsForRecordChange(
               db,
               whatsapp,
+              emailSender,
               project,
               entity,
               "updated",
@@ -3621,7 +3652,7 @@ export function createProjectsRouter(
           // behavior as every other bulk *user* action already is, not the
           // backfill-of-pre-existing-data case suppression exists for.
           if (before) {
-            void runAutomationsForRecordChange(db, whatsapp, project, entity, "deleted", before, new Set(), uploadsDir, `${req.protocol}://${req.get("host")}`);
+            void runAutomationsForRecordChange(db, whatsapp, emailSender, project, entity, "deleted", before, new Set(), uploadsDir, `${req.protocol}://${req.get("host")}`);
           }
           return { status: 204, body: null };
         },
@@ -3777,7 +3808,7 @@ export function createProjectsRouter(
           req.userId!,
           `POST /projects/${project.id}/automations/${rule.id}/runs/${run.id}/retry`,
           async () => {
-            await fireScheduledRule(db, whatsapp, project, rule);
+            await fireScheduledRule(db, whatsapp, emailSender, project, rule);
             const [latestRun] = listAutomationRuns(db, project.id, rule.id, 1);
             return { status: 200, body: { run: latestRun ?? null } };
           },
@@ -3818,7 +3849,7 @@ export function createProjectsRouter(
         req.userId!,
         `POST /projects/${project.id}/automations/${rule.id}/runs/${run.id}/retry`,
         async () => {
-          await fireRule(db, whatsapp, project, entity, rule, record, uploadsDir, `${req.protocol}://${req.get("host")}`);
+          await fireRule(db, whatsapp, emailSender, project, entity, rule, record, uploadsDir, `${req.protocol}://${req.get("host")}`);
           const [latestRun] = listAutomationRuns(db, project.id, rule.id, 1);
           return { status: 200, body: { run: latestRun ?? null } };
         },
@@ -3880,6 +3911,8 @@ export function createProjectsRouter(
             toField: data.toField ?? null,
             webhookUrl: data.webhookUrl ?? null,
             webhookSecret: data.webhookSecret ?? null,
+            toEmail: data.toEmail ?? null,
+            emailSubject: data.emailSubject ?? null,
             messageTemplate: data.messageTemplate,
           });
           return { status: 201, body: { rule } };

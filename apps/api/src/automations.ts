@@ -16,6 +16,7 @@ import {
 } from "@forge/db";
 import { isHebrewText } from "@forge/spec-engine";
 import { recordDisplayLabel } from "./displayField.js";
+import type { EmailSender } from "./email.js";
 import { isPathInsideDir, UPLOADED_FILENAME } from "./uploadPaths.js";
 import { findMatchingRecord } from "./whatsapp.js";
 import type { WhatsAppAttachment, WhatsAppWebManager } from "./whatsappWeb.js";
@@ -365,6 +366,7 @@ export function matchesTrigger(
 export async function runAutomationsForRecordChange(
   db: ForgeDatabase,
   whatsapp: WhatsAppWebManager,
+  emailSender: EmailSender,
   project: Project,
   entity: Entity,
   event: "created" | "updated" | "deleted",
@@ -377,7 +379,7 @@ export async function runAutomationsForRecordChange(
   for (const rule of rules) {
     if (!matchesTrigger(rule, event, record, changedFields)) continue;
     try {
-      await fireRule(db, whatsapp, project, entity, rule, record, uploadsDir, baseUrl);
+      await fireRule(db, whatsapp, emailSender, project, entity, rule, record, uploadsDir, baseUrl);
     } catch (err) {
       // Defensive only -- fireRule's own try/catch below already handles
       // every expected failure mode. This exists so a genuinely
@@ -639,6 +641,85 @@ async function fireWebhookAction(
 }
 
 /**
+ * Round 996: the email counterpart to fireWebhookAction above, following
+ * its exact same shape -- `entity`/`record` are null for a schedule rule
+ * (no triggering record at all), in which case messageTemplate/emailSubject
+ * are sent verbatim rather than interpolated, same as fireWebhookAction's
+ * own payload message and fireScheduledRule's own WhatsApp path already do
+ * for the identical reason. `emailSender.configured` is false whenever
+ * RESEND_API_KEY isn't set (see email.ts's own doc comment) -- checked
+ * first, mirroring fireRule's own pre-send whatsapp.getStatus() check,
+ * so a deployment that never configured email support fails this one
+ * rule's own run with a clear, specific error instead of throwing.
+ */
+async function fireEmailAction(
+  db: ForgeDatabase,
+  emailSender: EmailSender,
+  project: Project,
+  entity: Entity | null,
+  rule: AutomationRule,
+  record: EntityRecord | null,
+  now: Date = new Date(),
+): Promise<void> {
+  // Round 991: see AutomationRun.recordSnapshot's own doc comment --
+  // "record_deleted" is the one trigger a later retry can never re-fetch
+  // the record for, since the triggering event IS that record's deletion.
+  const recordSnapshot = rule.trigger === "record_deleted" && record ? JSON.stringify(record) : null;
+  const to = rule.toMode === "static" ? rule.toEmail : rule.toField && record ? record[rule.toField] : null;
+  if (!to || typeof to !== "string" || !to.trim()) {
+    recordAutomationRun(
+      db,
+      project.id,
+      rule.id,
+      { status: "failed", error: "This rule has no destination email address configured" },
+      rule.actionType,
+      record ? Number(record.id) : null,
+      recordSnapshot,
+      now,
+    );
+    return;
+  }
+  if (!emailSender.configured) {
+    recordAutomationRun(
+      db,
+      project.id,
+      rule.id,
+      { status: "failed", error: "Email sending is not configured for this deployment" },
+      rule.actionType,
+      record ? Number(record.id) : null,
+      recordSnapshot,
+      now,
+    );
+    return;
+  }
+  const lang: Lang = isHebrewText(project.description) ? "he" : "en";
+  const subjectTemplate = rule.emailSubject ?? "";
+  const bodyTemplate = rule.messageTemplate;
+  let subject = subjectTemplate;
+  let body = bodyTemplate;
+  if (entity && record) {
+    const templateRecord = resolveRelationFieldsForTemplate(db, project.id, entity, project.spec.entities, record);
+    subject = interpolateTemplate(subjectTemplate, entity, templateRecord, lang);
+    body = interpolateTemplate(bodyTemplate, entity, templateRecord, lang);
+  }
+  try {
+    await emailSender.send(to, subject, body);
+    recordAutomationRun(db, project.id, rule.id, { status: "sent", error: null }, rule.actionType, record ? Number(record.id) : null, recordSnapshot, now);
+  } catch (err) {
+    recordAutomationRun(
+      db,
+      project.id,
+      rule.id,
+      { status: "failed", error: err instanceof Error ? err.message : "Email send failed" },
+      rule.actionType,
+      record ? Number(record.id) : null,
+      recordSnapshot,
+      now,
+    );
+  }
+}
+
+/**
  * Round 971: exported so routes/projects.ts's manual Retry route (POST
  * .../runs/:runId/retry) can re-invoke this SAME single-attempt logic
  * directly, against the record's current state, instead of duplicating
@@ -647,6 +728,7 @@ async function fireWebhookAction(
 export async function fireRule(
   db: ForgeDatabase,
   whatsapp: WhatsAppWebManager,
+  emailSender: EmailSender,
   project: Project,
   entity: Entity,
   rule: AutomationRule,
@@ -656,6 +738,10 @@ export async function fireRule(
 ): Promise<void> {
   if (rule.actionType === "webhook") {
     await fireWebhookAction(db, project, entity, rule, record, baseUrl);
+    return;
+  }
+  if (rule.actionType === "send_email") {
+    await fireEmailAction(db, emailSender, project, entity, rule, record);
     return;
   }
   // Round 991: see AutomationRun.recordSnapshot's own doc comment --
@@ -824,6 +910,7 @@ export function isScheduledRuleDue(rule: AutomationRule, now: Date): boolean {
 export async function fireScheduledRule(
   db: ForgeDatabase,
   whatsapp: WhatsAppWebManager,
+  emailSender: EmailSender,
   project: Project,
   rule: AutomationRule,
   // Round 924: same purpose as fireWebhookAction's own `now` parameter --
@@ -836,6 +923,10 @@ export async function fireScheduledRule(
 ): Promise<void> {
   if (rule.actionType === "webhook") {
     await fireWebhookAction(db, project, null, rule, null, null, now);
+    return;
+  }
+  if (rule.actionType === "send_email") {
+    await fireEmailAction(db, emailSender, project, null, rule, null, now);
     return;
   }
   const to = rule.toNumber;
@@ -995,6 +1086,7 @@ export function hasTooManyConsecutiveFailuresToday(db: ForgeDatabase, rule: Auto
 export async function runScheduledAutomationsCheck(
   db: ForgeDatabase,
   whatsapp: WhatsAppWebManager,
+  emailSender: EmailSender,
   now: Date = new Date(),
 ): Promise<void> {
   const rules = listEnabledScheduledRules(db);
@@ -1004,7 +1096,7 @@ export async function runScheduledAutomationsCheck(
     const project = getProject(db, rule.projectId);
     if (!project) continue;
     try {
-      await fireScheduledRule(db, whatsapp, project, rule, now);
+      await fireScheduledRule(db, whatsapp, emailSender, project, rule, now);
     } catch (err) {
       console.error(`Scheduled automation rule ${rule.id} on project ${project.id} failed unexpectedly`, err);
     }
@@ -1023,6 +1115,7 @@ export async function runScheduledAutomationsCheck(
 export function startScheduledAutomationsLoop(
   db: ForgeDatabase,
   whatsapp: WhatsAppWebManager,
+  emailSender: EmailSender,
   intervalMs = 60_000,
 ): () => void {
   // isScheduledRuleDue's own "already sent today" guard reads
@@ -1052,7 +1145,7 @@ export function startScheduledAutomationsLoop(
   const timer = setInterval(() => {
     if (tickInFlight) return;
     tickInFlight = true;
-    void runScheduledAutomationsCheck(db, whatsapp).finally(() => {
+    void runScheduledAutomationsCheck(db, whatsapp, emailSender).finally(() => {
       tickInFlight = false;
     });
   }, intervalMs);

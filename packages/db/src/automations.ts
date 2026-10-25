@@ -22,7 +22,7 @@ import { NotFoundError } from "./repository.js";
  * a toMode:"field" destination from.
  */
 export type AutomationTrigger = "record_created" | "field_equals" | "schedule" | "record_deleted";
-export type AutomationActionType = "send_whatsapp" | "webhook";
+export type AutomationActionType = "send_whatsapp" | "webhook" | "send_email";
 export type AutomationToMode = "static" | "field";
 export type AutomationLastStatus = "sent" | "failed" | null;
 
@@ -77,10 +77,20 @@ export interface AutomationRule {
    */
   scheduleTimezone: string | null;
   actionType: AutomationActionType;
-  /** "static" sends to toNumber; "field" reads the destination number from the triggering record's own toField. Meaningless (always "static", ignored) for actionType "webhook" -- stored anyway since the column itself has never been nullable. */
+  /**
+   * "static" sends to toNumber (actionType "send_whatsapp") or toEmail
+   * (actionType "send_email"); "field" reads the destination number/email
+   * from the triggering record's own toField instead. Meaningless
+   * (always "static", ignored) for actionType "webhook" -- stored anyway
+   * since the column itself has never been nullable.
+   */
   toMode: AutomationToMode;
   toNumber: string | null;
   toField: string | null;
+  /** Round 996: required when actionType is "send_email" and toMode is "static"; null otherwise. The recipient address a "send_email" rule emails directly, mirroring toNumber's own identical role for "send_whatsapp". */
+  toEmail: string | null;
+  /** Round 996: required when actionType is "send_email"; null otherwise. The outgoing email's subject line -- messageTemplate below is reused as the email BODY, the same way it's already reused as "send_whatsapp"'s message text and "webhook"'s payload message field. */
+  emailSubject: string | null;
   /** Required when actionType is "webhook"; null otherwise. The outbound URL the rule POSTs a JSON payload to -- see apps/api/src/automations.ts's own fireWebhookAction for the exact payload shape and the SSRF-hardening host checks applied before every request. */
   webhookUrl: string | null;
   /**
@@ -342,6 +352,13 @@ export function ensureAutomationRulesTable(db: ForgeDatabase): void {
   if (!columns.includes("webhookSecret")) {
     db.exec("ALTER TABLE automation_rules ADD COLUMN webhookSecret TEXT");
   }
+  // Round 996: see AutomationRule's own doc comment on these two columns.
+  if (!columns.includes("toEmail")) {
+    db.exec("ALTER TABLE automation_rules ADD COLUMN toEmail TEXT");
+  }
+  if (!columns.includes("emailSubject")) {
+    db.exec("ALTER TABLE automation_rules ADD COLUMN emailSubject TEXT");
+  }
 }
 
 function rowToRule(row: Record<string, unknown>): AutomationRule {
@@ -361,6 +378,8 @@ function rowToRule(row: Record<string, unknown>): AutomationRule {
     toField: (row.toField as string | null) ?? null,
     webhookUrl: (row.webhookUrl as string | null) ?? null,
     webhookSecret: (row.webhookSecret as string | null) ?? null,
+    toEmail: (row.toEmail as string | null) ?? null,
+    emailSubject: (row.emailSubject as string | null) ?? null,
     messageTemplate: row.messageTemplate as string,
     enabled: Boolean(row.enabled),
     lastTriggeredAt: (row.lastTriggeredAt as string | null) ?? null,
@@ -389,6 +408,8 @@ export function insertAutomationRule(
     toField?: string | null;
     webhookUrl?: string | null;
     webhookSecret?: string | null;
+    toEmail?: string | null;
+    emailSubject?: string | null;
     messageTemplate: string;
   },
 ): AutomationRule {
@@ -396,8 +417,8 @@ export function insertAutomationRule(
   const now = new Date().toISOString();
   db.prepare(
     `INSERT INTO automation_rules
-       (id, projectId, entityName, trigger, fieldName, fieldValue, scheduleTimeUtc, scheduleDaysOfWeek, scheduleTimezone, actionType, toMode, toNumber, toField, webhookUrl, webhookSecret, messageTemplate, enabled, lastTriggeredAt, lastStatus, lastError, createdAt, updatedAt)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, NULL, NULL, NULL, ?, ?)`,
+       (id, projectId, entityName, trigger, fieldName, fieldValue, scheduleTimeUtc, scheduleDaysOfWeek, scheduleTimezone, actionType, toMode, toNumber, toField, webhookUrl, webhookSecret, toEmail, emailSubject, messageTemplate, enabled, lastTriggeredAt, lastStatus, lastError, createdAt, updatedAt)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, NULL, NULL, NULL, ?, ?)`,
   ).run(
     id,
     rule.projectId,
@@ -414,6 +435,8 @@ export function insertAutomationRule(
     rule.toField ?? null,
     rule.webhookUrl ?? null,
     rule.webhookSecret ?? null,
+    rule.toEmail ?? null,
+    rule.emailSubject ?? null,
     rule.messageTemplate,
     now,
     now,
@@ -494,6 +517,8 @@ export function updateAutomationRule(
     toField: string | null;
     webhookUrl: string | null;
     webhookSecret: string | null;
+    toEmail: string | null;
+    emailSubject: string | null;
     messageTemplate: string;
     enabled: boolean;
   }>,
@@ -505,7 +530,7 @@ export function updateAutomationRule(
   const next = { ...existing, ...patch };
   db.prepare(
     `UPDATE automation_rules SET
-       entityName = ?, trigger = ?, fieldName = ?, fieldValue = ?, scheduleTimeUtc = ?, scheduleDaysOfWeek = ?, scheduleTimezone = ?, actionType = ?, toMode = ?, toNumber = ?, toField = ?, webhookUrl = ?, webhookSecret = ?, messageTemplate = ?, enabled = ?, updatedAt = ?
+       entityName = ?, trigger = ?, fieldName = ?, fieldValue = ?, scheduleTimeUtc = ?, scheduleDaysOfWeek = ?, scheduleTimezone = ?, actionType = ?, toMode = ?, toNumber = ?, toField = ?, webhookUrl = ?, webhookSecret = ?, toEmail = ?, emailSubject = ?, messageTemplate = ?, enabled = ?, updatedAt = ?
      WHERE projectId = ? AND id = ?`,
   ).run(
     next.entityName,
@@ -521,6 +546,8 @@ export function updateAutomationRule(
     next.toField,
     next.webhookUrl,
     next.webhookSecret,
+    next.toEmail,
+    next.emailSubject,
     next.messageTemplate,
     next.enabled ? 1 : 0,
     new Date().toISOString(),

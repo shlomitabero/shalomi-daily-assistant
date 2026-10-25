@@ -31,6 +31,7 @@ import {
   runScheduledAutomationsCheck,
   startScheduledAutomationsLoop,
 } from "./automations.js";
+import type { EmailSender } from "./email.js";
 import type { WhatsAppAttachment, WhatsAppConnectionState, WhatsAppSendResult, WhatsAppWebManager } from "./whatsappWeb.js";
 
 /**
@@ -51,6 +52,23 @@ const UNUSED_UPLOADS_DIR = "/tmp/forge-automations-test-unused-uploads";
  * The dedicated webhook-file test uses a real, meaningful base URL.
  */
 const UNUSED_BASE_URL = "https://unused.example.com";
+
+/**
+ * None of the existing fixtures below fire a "send_email" rule (round 996's
+ * own dedicated tests construct their own real, inspectable EmailSender
+ * double instead), so every pre-existing runAutomationsForRecordChange/
+ * fireScheduledRule/runScheduledAutomationsCheck/startScheduledAutomationsLoop
+ * call site just needs a value to pass for the new emailSender parameter --
+ * `configured: false` so a test that accidentally exercises a "send_email"
+ * rule fails loudly (a recorded "not configured" failure) rather than
+ * silently invoking `send` and getting away with it.
+ */
+const UNUSED_EMAIL_SENDER: EmailSender = {
+  configured: false,
+  async send() {
+    throw new Error("UNUSED_EMAIL_SENDER.send() should never be called by a test that doesn't fire a send_email rule");
+  },
+};
 
 const orderEntity: Entity = {
   name: "Order",
@@ -416,7 +434,7 @@ test("runAutomationsForRecordChange sends a WhatsApp message when a matching rul
   const { manager, sendCalls } = createFakeWhatsApp({ connected: true });
   const record = { id: 1, customerName: "Dana", customerPhone: "972501234567", status: "Delivered" };
 
-  await runAutomationsForRecordChange(db, manager, project, orderEntity, "updated", record, new Set(["status"]), UNUSED_UPLOADS_DIR, UNUSED_BASE_URL);
+  await runAutomationsForRecordChange(db, manager, UNUSED_EMAIL_SENDER, project, orderEntity, "updated", record, new Set(["status"]), UNUSED_UPLOADS_DIR, UNUSED_BASE_URL);
 
   assert.equal(sendCalls.length, 1);
   assert.equal(sendCalls[0]!.to, "972501234567");
@@ -488,7 +506,7 @@ test("runAutomationsForRecordChange attaches a real uploaded file when the messa
       invoice: JSON.stringify({ url: `/api/uploads/${project.id}/Order/${storedFilename}`, name: "invoice-203.pdf", size: 27, mimeType: "application/pdf" }),
     };
 
-    await runAutomationsForRecordChange(db, manager, project, entityWithInvoice, "updated", record, new Set(["status"]), uploadsDir, UNUSED_BASE_URL);
+    await runAutomationsForRecordChange(db, manager, UNUSED_EMAIL_SENDER, project, entityWithInvoice, "updated", record, new Set(["status"]), uploadsDir, UNUSED_BASE_URL);
 
     assert.equal(sendCalls.length, 1);
     assert.equal(sendCalls[0]!.body, "Hi Dana, here's your invoice: invoice-203.pdf", "the plain text itself still only names the file, same as before this round");
@@ -615,7 +633,7 @@ test("runAutomationsForRecordChange records the outcome on the rule itself (last
   const record = { id: 2, customerName: "Noa", customerPhone: null, status: "New" };
 
   assert.equal(rule.lastTriggeredAt, null);
-  await runAutomationsForRecordChange(db, manager, project, orderEntity, "created", record, new Set(Object.keys(record)), UNUSED_UPLOADS_DIR, UNUSED_BASE_URL);
+  await runAutomationsForRecordChange(db, manager, UNUSED_EMAIL_SENDER, project, orderEntity, "created", record, new Set(Object.keys(record)), UNUSED_UPLOADS_DIR, UNUSED_BASE_URL);
 
   const after = getAutomationRule(db, project.id, rule.id)!;
   assert.ok(after.lastTriggeredAt);
@@ -642,7 +660,7 @@ test("runAutomationsForRecordChange never calls sendMessage and records a failur
   const { manager, sendCalls } = createFakeWhatsApp({ connected: false });
   const record = { id: 3, customerName: "Omer", customerPhone: null, status: "New" };
 
-  await runAutomationsForRecordChange(db, manager, project, orderEntity, "created", record, new Set(Object.keys(record)), UNUSED_UPLOADS_DIR, UNUSED_BASE_URL);
+  await runAutomationsForRecordChange(db, manager, UNUSED_EMAIL_SENDER, project, orderEntity, "created", record, new Set(Object.keys(record)), UNUSED_UPLOADS_DIR, UNUSED_BASE_URL);
 
   assert.equal(sendCalls.length, 0);
   const after = getAutomationRule(db, project.id, rule.id)!;
@@ -664,7 +682,7 @@ test("runAutomationsForRecordChange records a failure, never attempts a send, wh
   const { manager, sendCalls } = createFakeWhatsApp({ connected: true });
   const record = { id: 4, customerName: "Yossi", customerPhone: null, status: "New" };
 
-  await runAutomationsForRecordChange(db, manager, project, orderEntity, "created", record, new Set(Object.keys(record)), UNUSED_UPLOADS_DIR, UNUSED_BASE_URL);
+  await runAutomationsForRecordChange(db, manager, UNUSED_EMAIL_SENDER, project, orderEntity, "created", record, new Set(Object.keys(record)), UNUSED_UPLOADS_DIR, UNUSED_BASE_URL);
 
   assert.equal(sendCalls.length, 0);
   const after = getAutomationRule(db, project.id, rule.id)!;
@@ -687,7 +705,7 @@ test("runAutomationsForRecordChange never evaluates a disabled rule", async () =
   const { manager, sendCalls } = createFakeWhatsApp({ connected: true });
   const record = { id: 5, customerName: "Tal", customerPhone: null, status: "New" };
 
-  await runAutomationsForRecordChange(db, manager, project, orderEntity, "created", record, new Set(Object.keys(record)), UNUSED_UPLOADS_DIR, UNUSED_BASE_URL);
+  await runAutomationsForRecordChange(db, manager, UNUSED_EMAIL_SENDER, project, orderEntity, "created", record, new Set(Object.keys(record)), UNUSED_UPLOADS_DIR, UNUSED_BASE_URL);
 
   assert.equal(sendCalls.length, 0);
   const after = getAutomationRule(db, project.id, rule.id)!;
@@ -710,7 +728,7 @@ test("runAutomationsForRecordChange does nothing (no rules match) for a non-matc
   const { manager, sendCalls } = createFakeWhatsApp({ connected: true });
   const record = { id: 6, customerName: "Ron", customerPhone: null, status: "Cancelled" };
 
-  await runAutomationsForRecordChange(db, manager, project, orderEntity, "updated", record, new Set(["status"]), UNUSED_UPLOADS_DIR, UNUSED_BASE_URL);
+  await runAutomationsForRecordChange(db, manager, UNUSED_EMAIL_SENDER, project, orderEntity, "updated", record, new Set(["status"]), UNUSED_UPLOADS_DIR, UNUSED_BASE_URL);
 
   assert.equal(sendCalls.length, 0);
   const after = getAutomationRule(db, project.id, rule.id)!;
@@ -773,7 +791,7 @@ test("runAutomationsForRecordChange interpolates a relation field's display labe
   const { manager, sendCalls } = createFakeWhatsApp({ connected: true });
   const record = { id: 1, customer: customer.id, status: "Won" };
 
-  await runAutomationsForRecordChange(db, manager, project, dealEntity, "updated", record, new Set(["status"]), UNUSED_UPLOADS_DIR, UNUSED_BASE_URL);
+  await runAutomationsForRecordChange(db, manager, UNUSED_EMAIL_SENDER, project, dealEntity, "updated", record, new Set(["status"]), UNUSED_UPLOADS_DIR, UNUSED_BASE_URL);
 
   assert.equal(sendCalls.length, 1);
   assert.equal(
@@ -969,7 +987,7 @@ test("fireScheduledRule sends the messageTemplate verbatim (no {{field}} interpo
   const rule = insertAutomationRule(db, scheduleRuleBase({ messageTemplate: "Reminder: check {{anything}} today." }));
   const { manager, sendCalls } = createFakeWhatsApp({ connected: true });
 
-  await fireScheduledRule(db, manager, project, rule);
+  await fireScheduledRule(db, manager, UNUSED_EMAIL_SENDER, project, rule);
 
   assert.equal(sendCalls.length, 1);
   assert.equal(sendCalls[0]!.to, "972501234567");
@@ -982,7 +1000,7 @@ test("fireScheduledRule records a failed outcome with no destination configured 
   const rule = insertAutomationRule(db, scheduleRuleBase({ toNumber: null }));
   const { manager, sendCalls } = createFakeWhatsApp({ connected: true });
 
-  await fireScheduledRule(db, manager, project, rule);
+  await fireScheduledRule(db, manager, UNUSED_EMAIL_SENDER, project, rule);
 
   assert.equal(sendCalls.length, 0);
   const after = getAutomationRule(db, project.id, rule.id)!;
@@ -995,7 +1013,7 @@ test("fireScheduledRule records a failed outcome when WhatsApp isn't connected, 
   const rule = insertAutomationRule(db, scheduleRuleBase());
   const { manager, sendCalls } = createFakeWhatsApp({ connected: false });
 
-  await fireScheduledRule(db, manager, project, rule);
+  await fireScheduledRule(db, manager, UNUSED_EMAIL_SENDER, project, rule);
 
   assert.equal(sendCalls.length, 0);
   assert.equal(getAutomationRule(db, project.id, rule.id)!.lastStatus, "failed");
@@ -1020,7 +1038,7 @@ test("runScheduledAutomationsCheck fires exactly the rules that are due right no
   updateAutomationRule(db, "proj1", disabledDue.id, { enabled: false });
 
   const { manager, sendCalls } = createFakeWhatsApp({ connected: true });
-  await runScheduledAutomationsCheck(db, manager, new Date("2026-03-15T09:00:00.000Z"));
+  await runScheduledAutomationsCheck(db, manager, UNUSED_EMAIL_SENDER, new Date("2026-03-15T09:00:00.000Z"));
 
   assert.equal(sendCalls.length, 1, "exactly the one due, enabled rule must fire");
   assert.equal(sendCalls[0]!.to, "111");
@@ -1068,7 +1086,7 @@ test("startScheduledAutomationsLoop never starts a new tick while the previous t
     },
   } as unknown as WhatsAppWebManager;
 
-  const stop = startScheduledAutomationsLoop(db, manager, 20);
+  const stop = startScheduledAutomationsLoop(db, manager, UNUSED_EMAIL_SENDER, 20);
   try {
     // Several 20ms ticks would fire during this window without the guard --
     // the very first send is still held open throughout.
@@ -1106,19 +1124,19 @@ test("runScheduledAutomationsCheck stops retrying a scheduled rule after 5 conse
   // real 60s-interval scheduler would fire on every one of these if
   // nothing capped it.
   for (const minute of ["09:00", "09:01", "09:02", "09:03", "09:04", "09:05"]) {
-    await runScheduledAutomationsCheck(db, manager, new Date(`2026-03-15T${minute}:00.000Z`));
+    await runScheduledAutomationsCheck(db, manager, UNUSED_EMAIL_SENDER, new Date(`2026-03-15T${minute}:00.000Z`));
   }
 
   assert.equal(sendCalls.length, 5, "must stop sending after the 5th consecutive failure, not keep retrying every tick");
   assert.equal(getAutomationRule(db, "proj1", rule.id)!.lastStatus, "failed");
 
   // One more tick, still the same day -- must still be suppressed.
-  await runScheduledAutomationsCheck(db, manager, new Date("2026-03-15T09:06:00.000Z"));
+  await runScheduledAutomationsCheck(db, manager, UNUSED_EMAIL_SENDER, new Date("2026-03-15T09:06:00.000Z"));
   assert.equal(sendCalls.length, 5, "a later tick the same day must still be suppressed, not add a 6th attempt");
 
   // A genuinely new UTC day -- must get a fresh start, same as
   // isScheduledRuleDue's own "retry today, fresh tomorrow" contract.
-  await runScheduledAutomationsCheck(db, manager, new Date("2026-03-16T09:00:00.000Z"));
+  await runScheduledAutomationsCheck(db, manager, UNUSED_EMAIL_SENDER, new Date("2026-03-16T09:00:00.000Z"));
   assert.equal(sendCalls.length, 6, "a new day must retry again, not stay suppressed forever");
 });
 
@@ -1153,14 +1171,14 @@ test("runScheduledAutomationsCheck still fires a scheduled rule the same day onc
   // as the cap's own threshold, which a genuinely broken destination
   // would trip on.
   for (const minute of ["09:00", "09:01", "09:02", "09:03", "09:04"]) {
-    await runScheduledAutomationsCheck(db, manager, new Date(`2026-03-15T${minute}:00.000Z`));
+    await runScheduledAutomationsCheck(db, manager, UNUSED_EMAIL_SENDER, new Date(`2026-03-15T${minute}:00.000Z`));
   }
   assert.equal(sendCalls.length, 0, "no send should have been attempted while disconnected");
   assert.equal(getAutomationRule(db, "proj1", rule.id)!.lastStatus, "failed");
 
   // The owner reconnects, and the next tick arrives -- still the same day.
   connected = true;
-  await runScheduledAutomationsCheck(db, manager, new Date("2026-03-15T09:05:00.000Z"));
+  await runScheduledAutomationsCheck(db, manager, UNUSED_EMAIL_SENDER, new Date("2026-03-15T09:05:00.000Z"));
 
   assert.equal(sendCalls.length, 1, "must actually attempt the send now that WhatsApp is connected again, not stay suppressed for the rest of the day");
   assert.equal(getAutomationRule(db, "proj1", rule.id)!.lastStatus, "sent");
@@ -1207,11 +1225,11 @@ test("runScheduledAutomationsCheck's 5-per-day failure cap survives a long Whats
 
   for (let rep = 0; rep < 7; rep++) {
     connected = true;
-    await runScheduledAutomationsCheck(db, manager, tickAt());
+    await runScheduledAutomationsCheck(db, manager, UNUSED_EMAIL_SENDER, tickAt());
     minute += 1;
     connected = false;
     for (let i = 0; i < 25; i++) {
-      await runScheduledAutomationsCheck(db, manager, tickAt());
+      await runScheduledAutomationsCheck(db, manager, UNUSED_EMAIL_SENDER, tickAt());
       minute += 1;
     }
   }
@@ -1403,7 +1421,7 @@ test("runAutomationsForRecordChange posts a JSON payload to the webhook URL and 
     return new Response(null, { status: 200 });
   }) as typeof fetch;
   try {
-    await runAutomationsForRecordChange(db, {} as WhatsAppWebManager, project, orderEntity, "created", record, new Set(), UNUSED_UPLOADS_DIR, UNUSED_BASE_URL);
+    await runAutomationsForRecordChange(db, {} as WhatsAppWebManager, UNUSED_EMAIL_SENDER, project, orderEntity, "created", record, new Set(), UNUSED_UPLOADS_DIR, UNUSED_BASE_URL);
   } finally {
     globalThis.fetch = originalFetch;
   }
@@ -1449,7 +1467,7 @@ test("runAutomationsForRecordChange sends the rule's webhookSecret as an Authori
     return new Response(null, { status: 200 });
   }) as typeof fetch;
   try {
-    await runAutomationsForRecordChange(db, {} as WhatsAppWebManager, project, orderEntity, "created", record, new Set(), UNUSED_UPLOADS_DIR, UNUSED_BASE_URL);
+    await runAutomationsForRecordChange(db, {} as WhatsAppWebManager, UNUSED_EMAIL_SENDER, project, orderEntity, "created", record, new Set(), UNUSED_UPLOADS_DIR, UNUSED_BASE_URL);
   } finally {
     globalThis.fetch = originalFetch;
   }
@@ -1515,7 +1533,7 @@ test("runAutomationsForRecordChange resolves a 'file' field in the webhook paylo
     return new Response(null, { status: 200 });
   }) as typeof fetch;
   try {
-    await runAutomationsForRecordChange(db, {} as WhatsAppWebManager, project, entityWithInvoice, "created", record, new Set(), UNUSED_UPLOADS_DIR, "https://forge-ai-m7p7.onrender.com");
+    await runAutomationsForRecordChange(db, {} as WhatsAppWebManager, UNUSED_EMAIL_SENDER, project, entityWithInvoice, "created", record, new Set(), UNUSED_UPLOADS_DIR, "https://forge-ai-m7p7.onrender.com");
   } finally {
     globalThis.fetch = originalFetch;
   }
@@ -1612,7 +1630,7 @@ test("runAutomationsForRecordChange records a failed outcome when the webhook re
   const originalFetch = globalThis.fetch;
   globalThis.fetch = (async () => new Response(null, { status: 500 })) as typeof fetch;
   try {
-    await runAutomationsForRecordChange(db, {} as WhatsAppWebManager, project, orderEntity, "created", record, new Set(), UNUSED_UPLOADS_DIR, UNUSED_BASE_URL);
+    await runAutomationsForRecordChange(db, {} as WhatsAppWebManager, UNUSED_EMAIL_SENDER, project, orderEntity, "created", record, new Set(), UNUSED_UPLOADS_DIR, UNUSED_BASE_URL);
   } finally {
     globalThis.fetch = originalFetch;
   }
@@ -1657,7 +1675,7 @@ test("runAutomationsForRecordChange's webhook fetch call passes redirect: \"manu
     return new Response(null, { status: 200 });
   }) as typeof fetch;
   try {
-    await runAutomationsForRecordChange(db, {} as WhatsAppWebManager, project, orderEntity, "created", record, new Set(), UNUSED_UPLOADS_DIR, UNUSED_BASE_URL);
+    await runAutomationsForRecordChange(db, {} as WhatsAppWebManager, UNUSED_EMAIL_SENDER, project, orderEntity, "created", record, new Set(), UNUSED_UPLOADS_DIR, UNUSED_BASE_URL);
   } finally {
     globalThis.fetch = originalFetch;
   }
@@ -1693,7 +1711,7 @@ test("runAutomationsForRecordChange records a failed outcome when the (unfollowe
   const originalFetch = globalThis.fetch;
   globalThis.fetch = (async () => new Response(null, { status: 302, headers: { location: "http://169.254.169.254/latest/meta-data/" } })) as typeof fetch;
   try {
-    await runAutomationsForRecordChange(db, {} as WhatsAppWebManager, project, orderEntity, "created", record, new Set(), UNUSED_UPLOADS_DIR, UNUSED_BASE_URL);
+    await runAutomationsForRecordChange(db, {} as WhatsAppWebManager, UNUSED_EMAIL_SENDER, project, orderEntity, "created", record, new Set(), UNUSED_UPLOADS_DIR, UNUSED_BASE_URL);
   } finally {
     globalThis.fetch = originalFetch;
   }
@@ -1721,7 +1739,7 @@ test("runAutomationsForRecordChange records a failed outcome when the webhook re
     throw new Error("network down");
   }) as typeof fetch;
   try {
-    await runAutomationsForRecordChange(db, {} as WhatsAppWebManager, project, orderEntity, "created", record, new Set(), UNUSED_UPLOADS_DIR, UNUSED_BASE_URL);
+    await runAutomationsForRecordChange(db, {} as WhatsAppWebManager, UNUSED_EMAIL_SENDER, project, orderEntity, "created", record, new Set(), UNUSED_UPLOADS_DIR, UNUSED_BASE_URL);
   } finally {
     globalThis.fetch = originalFetch;
   }
@@ -1755,7 +1773,7 @@ test("runAutomationsForRecordChange rejects (records failed, never calls fetch) 
     return new Response(null, { status: 200 });
   }) as typeof fetch;
   try {
-    await runAutomationsForRecordChange(db, {} as WhatsAppWebManager, project, orderEntity, "created", record, new Set(), UNUSED_UPLOADS_DIR, UNUSED_BASE_URL);
+    await runAutomationsForRecordChange(db, {} as WhatsAppWebManager, UNUSED_EMAIL_SENDER, project, orderEntity, "created", record, new Set(), UNUSED_UPLOADS_DIR, UNUSED_BASE_URL);
   } finally {
     globalThis.fetch = originalFetch;
   }
@@ -1785,7 +1803,7 @@ test("fireScheduledRule's webhook action sends messageTemplate verbatim with a n
     return new Response(null, { status: 200 });
   }) as typeof fetch;
   try {
-    await fireScheduledRule(db, {} as WhatsAppWebManager, project, rule);
+    await fireScheduledRule(db, {} as WhatsAppWebManager, UNUSED_EMAIL_SENDER, project, rule);
   } finally {
     globalThis.fetch = originalFetch;
   }
@@ -1796,5 +1814,165 @@ test("fireScheduledRule's webhook action sends messageTemplate verbatim with a n
   assert.equal(payload.entity, null);
   assert.equal(payload.record, null);
   assert.equal(payload.message, "Good morning! {{anything}}", "no record to interpolate {{anything}} from, so it must be left exactly as typed");
+  assert.equal(getAutomationRule(db, project.id, rule.id)!.lastStatus, "sent");
+});
+
+/**
+ * Round 996: a controllable EmailSender double for the send_email action
+ * tests below -- mirrors app.test.ts's own createFakeEmailSender (the
+ * login-code tests' identical need), just local to this file since nothing
+ * else here needs it.
+ */
+function createFakeEmailSender(opts?: { configured?: boolean; failWith?: Error }): EmailSender & {
+  sentTo: { to: string; subject: string; text: string }[];
+} {
+  const sentTo: { to: string; subject: string; text: string }[] = [];
+  return {
+    configured: opts?.configured ?? true,
+    sentTo,
+    async send(to, subject, text) {
+      if (opts?.failWith) throw opts.failWith;
+      sentTo.push({ to, subject, text });
+    },
+  };
+}
+
+test("runAutomationsForRecordChange sends a 'send_email' rule's email to a static toEmail, interpolating both subject and body, and records a sent outcome", async () => {
+  const { db, project } = setupProject();
+  const rule = insertAutomationRule(db, {
+    projectId: project.id,
+    entityName: "Order",
+    trigger: "record_created",
+    actionType: "send_email",
+    toMode: "static",
+    toEmail: "owner@example.com",
+    emailSubject: "New order from {{customerName}}",
+    messageTemplate: "Order status: {{status}}",
+  });
+  const record = { id: 1, customerName: "Dana Levi", customerPhone: "972501234567", status: "New" };
+  const emailSender = createFakeEmailSender();
+
+  await runAutomationsForRecordChange(db, {} as WhatsAppWebManager, emailSender, project, orderEntity, "created", record, new Set(), UNUSED_UPLOADS_DIR, UNUSED_BASE_URL);
+
+  assert.equal(emailSender.sentTo.length, 1);
+  assert.equal(emailSender.sentTo[0]!.to, "owner@example.com");
+  assert.equal(emailSender.sentTo[0]!.subject, "New order from Dana Levi");
+  assert.equal(emailSender.sentTo[0]!.text, "Order status: New");
+  assert.equal(getAutomationRule(db, project.id, rule.id)!.lastStatus, "sent");
+});
+
+test("runAutomationsForRecordChange sends a 'send_email' rule's email to a toField-resolved destination when toMode is field", async () => {
+  const { db, project } = setupProject();
+  insertAutomationRule(db, {
+    projectId: project.id,
+    entityName: "Order",
+    trigger: "record_created",
+    actionType: "send_email",
+    toMode: "field",
+    toField: "customerPhone",
+    emailSubject: "Order update",
+    messageTemplate: "Hi {{customerName}}!",
+  });
+  // customerPhone is just a plain text field -- reused here to hold an
+  // email address, same as toNumber/toField's own existing convention of
+  // not caring about a field's own name, only its type (text/longtext).
+  const record = { id: 1, customerName: "Dana Levi", customerPhone: "dana@example.com", status: "New" };
+  const emailSender = createFakeEmailSender();
+
+  await runAutomationsForRecordChange(db, {} as WhatsAppWebManager, emailSender, project, orderEntity, "created", record, new Set(), UNUSED_UPLOADS_DIR, UNUSED_BASE_URL);
+
+  assert.equal(emailSender.sentTo.length, 1);
+  assert.equal(emailSender.sentTo[0]!.to, "dana@example.com");
+  assert.equal(emailSender.sentTo[0]!.text, "Hi Dana Levi!");
+});
+
+test("runAutomationsForRecordChange records a failed outcome, never calls send, when a 'send_email' rule has no destination email configured", async () => {
+  const { db, project } = setupProject();
+  const rule = insertAutomationRule(db, {
+    projectId: project.id,
+    entityName: "Order",
+    trigger: "record_created",
+    actionType: "send_email",
+    toMode: "static",
+    emailSubject: "Subject",
+    messageTemplate: "Body",
+  });
+  const record = { id: 1, customerName: "Dana Levi", customerPhone: "972501234567", status: "New" };
+  const emailSender = createFakeEmailSender();
+
+  await runAutomationsForRecordChange(db, {} as WhatsAppWebManager, emailSender, project, orderEntity, "created", record, new Set(), UNUSED_UPLOADS_DIR, UNUSED_BASE_URL);
+
+  assert.equal(emailSender.sentTo.length, 0);
+  const updated = getAutomationRule(db, project.id, rule.id)!;
+  assert.equal(updated.lastStatus, "failed");
+  assert.match(updated.lastError ?? "", /no destination email address/);
+});
+
+test("runAutomationsForRecordChange records a failed outcome, never calls send, when no EmailSender is configured for this deployment", async () => {
+  const { db, project } = setupProject();
+  const rule = insertAutomationRule(db, {
+    projectId: project.id,
+    entityName: "Order",
+    trigger: "record_created",
+    actionType: "send_email",
+    toMode: "static",
+    toEmail: "owner@example.com",
+    emailSubject: "Subject",
+    messageTemplate: "Body",
+  });
+  const record = { id: 1, customerName: "Dana Levi", customerPhone: "972501234567", status: "New" };
+  const emailSender = createFakeEmailSender({ configured: false });
+
+  await runAutomationsForRecordChange(db, {} as WhatsAppWebManager, emailSender, project, orderEntity, "created", record, new Set(), UNUSED_UPLOADS_DIR, UNUSED_BASE_URL);
+
+  assert.equal(emailSender.sentTo.length, 0);
+  const updated = getAutomationRule(db, project.id, rule.id)!;
+  assert.equal(updated.lastStatus, "failed");
+  assert.match(updated.lastError ?? "", /not configured/);
+});
+
+test("runAutomationsForRecordChange records a failed outcome with the real error message when EmailSender.send() itself throws, without throwing", async () => {
+  const { db, project } = setupProject();
+  const rule = insertAutomationRule(db, {
+    projectId: project.id,
+    entityName: "Order",
+    trigger: "record_created",
+    actionType: "send_email",
+    toMode: "static",
+    toEmail: "owner@example.com",
+    emailSubject: "Subject",
+    messageTemplate: "Body",
+  });
+  const record = { id: 1, customerName: "Dana Levi", customerPhone: "972501234567", status: "New" };
+  const emailSender = createFakeEmailSender({ failWith: new Error("Resend API request failed (401): invalid api key") });
+
+  await runAutomationsForRecordChange(db, {} as WhatsAppWebManager, emailSender, project, orderEntity, "created", record, new Set(), UNUSED_UPLOADS_DIR, UNUSED_BASE_URL);
+
+  const updated = getAutomationRule(db, project.id, rule.id)!;
+  assert.equal(updated.lastStatus, "failed");
+  assert.equal(updated.lastError, "Resend API request failed (401): invalid api key");
+});
+
+test("fireScheduledRule's send_email action sends messageTemplate/emailSubject verbatim with no record to interpolate from", async () => {
+  const { db, project } = setupProject();
+  const rule = insertAutomationRule(db, {
+    projectId: project.id,
+    entityName: "Order",
+    trigger: "schedule",
+    scheduleTimeUtc: "09:00",
+    actionType: "send_email",
+    toMode: "static",
+    toEmail: "owner@example.com",
+    emailSubject: "Daily report {{anything}}",
+    messageTemplate: "Good morning! {{anything}}",
+  });
+  const emailSender = createFakeEmailSender();
+
+  await fireScheduledRule(db, {} as WhatsAppWebManager, emailSender, project, rule);
+
+  assert.equal(emailSender.sentTo.length, 1);
+  assert.equal(emailSender.sentTo[0]!.to, "owner@example.com");
+  assert.equal(emailSender.sentTo[0]!.subject, "Daily report {{anything}}", "no record to interpolate {{anything}} from, so it must be left exactly as typed");
+  assert.equal(emailSender.sentTo[0]!.text, "Good morning! {{anything}}");
   assert.equal(getAutomationRule(db, project.id, rule.id)!.lastStatus, "sent");
 });

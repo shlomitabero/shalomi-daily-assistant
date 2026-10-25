@@ -816,6 +816,90 @@ test("ensureAutomationRulesTable adds webhookSecret to a pre-existing table from
   assert.equal(getAutomationRule(db, "proj1", "old-rule")!.fieldName, "status");
 });
 
+/**
+ * Round 996: insertAutomationRule stores a "send_email" rule's toEmail/
+ * emailSubject, and leaves both null when omitted -- mirrors the webhookUrl/
+ * webhookSecret tests above.
+ */
+test("insertAutomationRule stores a send_email rule's toEmail/emailSubject, and leaves both null when omitted", () => {
+  const db = openDatabase(":memory:");
+  ensureAutomationRulesTable(db);
+  const withEmail = insertAutomationRule(
+    db,
+    baseRule({
+      actionType: "send_email",
+      toMode: "static",
+      toField: null,
+      toEmail: "owner@example.com",
+      emailSubject: "Your order shipped!",
+    }),
+  );
+  assert.equal(withEmail.toEmail, "owner@example.com");
+  assert.equal(withEmail.emailSubject, "Your order shipped!");
+
+  const withoutEmail = insertAutomationRule(db, baseRule({ actionType: "send_email", toMode: "field", toField: "customerEmail" }));
+  assert.equal(withoutEmail.toEmail, null);
+  assert.equal(withoutEmail.emailSubject, null);
+});
+
+test("updateAutomationRule can set and clear a send_email rule's toEmail/emailSubject", () => {
+  const db = openDatabase(":memory:");
+  ensureAutomationRulesTable(db);
+  const rule = insertAutomationRule(db, baseRule({ actionType: "send_email", toMode: "static", toField: null, toEmail: "owner@example.com", emailSubject: "Hi" }));
+  assert.equal(rule.toEmail, "owner@example.com");
+  assert.equal(rule.emailSubject, "Hi");
+
+  const updated = updateAutomationRule(db, "proj1", rule.id, { toEmail: "new@example.com", emailSubject: "New subject" });
+  assert.equal(updated.toEmail, "new@example.com");
+  assert.equal(updated.emailSubject, "New subject");
+
+  const cleared = updateAutomationRule(db, "proj1", rule.id, { toEmail: null, emailSubject: null });
+  assert.equal(cleared.toEmail, null);
+  assert.equal(cleared.emailSubject, null);
+});
+
+/** Mirrors the identical additive-migration test for webhookSecret above, for the toEmail/emailSubject columns. */
+test("ensureAutomationRulesTable adds toEmail/emailSubject to a pre-existing table from an older app version, leaving existing rows intact, and is idempotent", () => {
+  const db = openDatabase(":memory:");
+  db.exec(`
+    CREATE TABLE automation_rules (
+      id TEXT PRIMARY KEY,
+      projectId TEXT NOT NULL,
+      entityName TEXT NOT NULL,
+      trigger TEXT NOT NULL,
+      fieldName TEXT,
+      fieldValue TEXT,
+      actionType TEXT NOT NULL,
+      toMode TEXT NOT NULL,
+      toNumber TEXT,
+      toField TEXT,
+      webhookUrl TEXT,
+      webhookSecret TEXT,
+      messageTemplate TEXT NOT NULL,
+      enabled INTEGER NOT NULL DEFAULT 1,
+      lastTriggeredAt TEXT,
+      lastStatus TEXT,
+      lastError TEXT,
+      createdAt TEXT NOT NULL,
+      updatedAt TEXT NOT NULL
+    )
+  `);
+  db.prepare(
+    `INSERT INTO automation_rules (id, projectId, entityName, trigger, fieldName, fieldValue, actionType, toMode, toNumber, toField, webhookUrl, webhookSecret, messageTemplate, enabled, createdAt, updatedAt)
+     VALUES ('old-rule', 'proj1', 'Order', 'field_equals', 'status', 'Delivered', 'send_whatsapp', 'field', NULL, 'customerPhone', NULL, NULL, 'Hi!', 1, '2026-01-01T00:00:00.000Z', '2026-01-01T00:00:00.000Z')`,
+  ).run();
+
+  ensureAutomationRulesTable(db);
+
+  const oldRule = getAutomationRule(db, "proj1", "old-rule")!;
+  assert.equal(oldRule.toEmail, null);
+  assert.equal(oldRule.emailSubject, null);
+  assert.equal(oldRule.fieldName, "status", "the migration must not disturb an existing row's other columns");
+
+  assert.doesNotThrow(() => ensureAutomationRulesTable(db));
+  assert.equal(getAutomationRule(db, "proj1", "old-rule")!.fieldName, "status");
+});
+
 /** Mirrors the identical additive-migration test for scheduleTimeUtc/scheduleDaysOfWeek above, for the webhookUrl column. */
 test("ensureAutomationRulesTable adds webhookUrl to a pre-existing table from an older app version, leaving existing rows intact, and is idempotent", () => {
   const db = openDatabase(":memory:");

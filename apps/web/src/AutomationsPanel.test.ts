@@ -2176,6 +2176,8 @@ test("submitting an edited rule calls the real PATCH endpoint and updates the ru
         toNumber: null,
         webhookUrl: null,
         webhookSecret: null,
+        toEmail: null,
+        emailSubject: null,
         messageTemplate: "Hi {{customerName}}, your order shipped!",
       });
 

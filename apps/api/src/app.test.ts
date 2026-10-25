@@ -3190,7 +3190,7 @@ test("GET /projects/:id/automations reports pausedForToday: true for a schedule 
     } as unknown as WhatsAppWebManager;
 
     for (let i = 0; i < 6; i++) {
-      await runScheduledAutomationsCheck(db, fakeManager, new Date());
+      await runScheduledAutomationsCheck(db, fakeManager, createFakeEmailSender(), new Date());
     }
 
     const listRes = await fetch(`${baseUrl}/api/projects/${project.id}/automations`, { headers: authHeaders(token) });
@@ -3268,7 +3268,7 @@ test("POST .../automations/:ruleId/runs/:runId/retry re-fires a PAUSED schedule 
         },
       } as unknown as WhatsAppWebManager;
       for (let i = 0; i < 6; i++) {
-        await runScheduledAutomationsCheck(db, alwaysFailsManager, new Date());
+        await runScheduledAutomationsCheck(db, alwaysFailsManager, createFakeEmailSender(), new Date());
       }
 
       const beforeRes = await fetch(`${baseUrl}/api/projects/${projectId}/automations`, { headers: authHeaders(token) });
@@ -13239,6 +13239,97 @@ test("a webhook automation rule's webhookSecret is optional, round-trips through
     assert.equal(clearedRes.status, 200);
     assert.equal(((await clearedRes.json()) as { rule: { webhookSecret: string | null } }).rule.webhookSecret, null);
   });
+});
+
+/**
+ * Round 996: end-to-end coverage for the new "send_email" automation
+ * action through the real HTTP routes -- validation (toEmail/emailSubject
+ * required, same shape as webhookUrl's own required-field tests above),
+ * create/PATCH round-tripping, and a real record_created event actually
+ * reaching the configured EmailSender's send() with interpolated
+ * subject/body.
+ */
+test("creating a 'send_email' automation rule requires toEmail (or toField) and emailSubject, and a real record_created event sends through the configured EmailSender", async () => {
+  const emailSender = createFakeEmailSender();
+  await withServer(
+    async (baseUrl, db) => {
+      const email = `send-email-automation-${randomUUID()}@example.com`;
+      const token = await signup(baseUrl, email);
+      const owner = findUserByEmail(db, email)!;
+
+      const spec: ProductSpec = {
+        summary: "test",
+        personas: [],
+        roles: ["Admin"],
+        entities: [
+          {
+            name: "Order",
+            fields: [
+              { name: "customerName", type: "text", required: true },
+              { name: "status", type: "text", required: true },
+            ],
+          },
+        ],
+        screens: [],
+        assumptions: [],
+        openQuestions: [],
+      };
+      const projectId = randomUUID();
+      insertProject(db, { id: projectId, ownerId: owner.id, name: "Orders", description: "test", spec });
+      diffAndMigrate(db, projectId, undefined, spec);
+      markProjectBuilt(db, projectId);
+
+      const baseBody = { trigger: "record_created", actionType: "send_email", toMode: "static", messageTemplate: "New order from {{customerName}}" };
+
+      const missingEmail = await fetch(`${baseUrl}/api/projects/${projectId}/entities/Order/automations`, {
+        method: "POST",
+        headers: authHeaders(token),
+        body: JSON.stringify({ ...baseBody, emailSubject: "New order" }),
+      });
+      assert.equal(missingEmail.status, 400, "toEmail is required when toMode is static");
+      assert.equal(((await missingEmail.json()) as { code?: string }).code, "VALIDATION_ERROR");
+
+      const missingSubject = await fetch(`${baseUrl}/api/projects/${projectId}/entities/Order/automations`, {
+        method: "POST",
+        headers: authHeaders(token),
+        body: JSON.stringify({ ...baseBody, toEmail: "owner@example.com" }),
+      });
+      assert.equal(missingSubject.status, 400, "emailSubject is required for a send_email rule");
+      assert.equal(((await missingSubject.json()) as { code?: string }).code, "VALIDATION_ERROR");
+
+      const invalidEmail = await fetch(`${baseUrl}/api/projects/${projectId}/entities/Order/automations`, {
+        method: "POST",
+        headers: authHeaders(token),
+        body: JSON.stringify({ ...baseBody, toEmail: "not-an-email", emailSubject: "New order" }),
+      });
+      assert.equal(invalidEmail.status, 400, "toEmail must be a real email address");
+
+      const createRes = await fetch(`${baseUrl}/api/projects/${projectId}/entities/Order/automations`, {
+        method: "POST",
+        headers: authHeaders(token),
+        body: JSON.stringify({ ...baseBody, toEmail: "owner@example.com", emailSubject: "New order from {{customerName}}" }),
+      });
+      assert.equal(createRes.status, 201);
+      const { rule } = (await createRes.json()) as { rule: { id: string; toEmail: string | null; emailSubject: string | null } };
+      assert.equal(rule.toEmail, "owner@example.com");
+      assert.equal(rule.emailSubject, "New order from {{customerName}}");
+
+      const createOrderRes = await fetch(`${baseUrl}/api/projects/${projectId}/entities/Order`, {
+        method: "POST",
+        headers: authHeaders(token),
+        body: JSON.stringify({ customerName: "Dana Levi", status: "New" }),
+      });
+      assert.equal(createOrderRes.status, 201);
+
+      for (let i = 0; i < 40 && emailSender.sentTo.length === 0; i++) {
+        await new Promise((resolve) => setTimeout(resolve, 0));
+      }
+      assert.deepEqual(emailSender.sentTo, [
+        { to: "owner@example.com", subject: "New order from Dana Levi", text: "New order from Dana Levi" },
+      ]);
+    },
+    { emailSender },
+  );
 });
 
 /**

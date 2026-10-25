@@ -107,7 +107,7 @@ export function createApp(
     }),
   );
   app.use("/api", createAuthRouter(db, whatsappManager, resolvedEmailSender, activePipelines, uploadsDir));
-  app.use("/api", createProjectsRouter(db, provider, whatsappManager, activePipelines, uploadsDir));
+  app.use("/api", createProjectsRouter(db, provider, whatsappManager, resolvedEmailSender, activePipelines, uploadsDir));
 
   if (staticDir && existsSync(staticDir)) {
     app.use(express.static(staticDir));

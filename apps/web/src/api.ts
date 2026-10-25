@@ -1269,7 +1269,7 @@ export function deleteWhatsAppMessage(projectId: string, messageId: string): Pro
 
 export type AutomationTrigger = "record_created" | "field_equals" | "schedule" | "record_deleted";
 export type AutomationToMode = "static" | "field";
-export type AutomationActionType = "send_whatsapp" | "webhook";
+export type AutomationActionType = "send_whatsapp" | "webhook" | "send_email";
 
 export interface AutomationRuleView {
   id: string;
@@ -1288,6 +1288,10 @@ export interface AutomationRuleView {
   webhookUrl: string | null;
   /** Round 974: sent as an `Authorization: Bearer <webhookSecret>` header on every outbound webhook request when set -- see packages/db's AutomationRule.webhookSecret. Null leaves the request with no Authorization header at all, same as before this field existed. */
   webhookSecret: string | null;
+  /** Round 996: the recipient address for actionType "send_email" when toMode is "static" -- see packages/db's AutomationRule.toEmail. */
+  toEmail: string | null;
+  /** Round 996: the outgoing email's subject line for actionType "send_email" -- messageTemplate below is reused as the email body. */
+  emailSubject: string | null;
   messageTemplate: string;
   enabled: boolean;
   lastTriggeredAt: string | null;
@@ -1359,6 +1363,8 @@ export function createAutomationRule(
     toField?: string;
     webhookUrl?: string;
     webhookSecret?: string;
+    toEmail?: string;
+    emailSubject?: string;
     messageTemplate: string;
   },
 ): Promise<{ rule: AutomationRuleView }> {
@@ -1386,6 +1392,8 @@ export function updateAutomationRule(
     toField: string | null;
     webhookUrl: string | null;
     webhookSecret: string | null;
+    toEmail: string | null;
+    emailSubject: string | null;
     messageTemplate: string;
     enabled: boolean;
   }>,
