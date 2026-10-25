@@ -36,10 +36,37 @@ export interface AutomationRule {
   fieldName: string | null;
   /** Required when trigger is "field_equals"; null for "record_created". Compared as a string against the record's own field value. */
   fieldValue: string | null;
-  /** Required when trigger is "schedule"; null otherwise. "HH:MM" in 24-hour UTC -- there's no stored per-project timezone anywhere in this app (see automations.ts's own interpolateTemplate comment on lang having the same gap), so a schedule rule's time is UTC, same as this app's own hourly-trigger-style scheduling elsewhere. */
+  /**
+   * Required when trigger is "schedule"; null otherwise. "HH:MM", 24-hour --
+   * despite the field's own name (kept as-is for backward compatibility
+   * with every existing stored rule and API caller rather than renamed),
+   * this is wall-clock time in `scheduleTimezone` below, not literally
+   * UTC, as of round 967. A rule with no `scheduleTimezone` set (every
+   * rule created before round 967) is still interpreted as UTC exactly as
+   * before -- see isScheduledRuleDue's own doc comment (apps/api/src/automations.ts).
+   */
   scheduleTimeUtc: string | null;
-  /** Only meaningful when trigger is "schedule". Comma-separated day-of-week numbers (0 = Sunday .. 6 = Saturday, matching Date.prototype.getUTCDay()); null or empty means every day. */
+  /**
+   * Only meaningful when trigger is "schedule". Comma-separated day-of-week
+   * numbers (0 = Sunday .. 6 = Saturday), in the same `scheduleTimezone`
+   * wall-clock terms as scheduleTimeUtc above (not necessarily UTC, despite
+   * sibling field's own name); null or empty means every day.
+   */
   scheduleDaysOfWeek: string | null;
+  /**
+   * Round 967: the IANA timezone (e.g. "Asia/Jerusalem") that
+   * scheduleTimeUtc/scheduleDaysOfWeek are wall-clock values in. Null for
+   * every rule created before this column existed, and treated identically
+   * to the literal string "UTC" everywhere this is read -- so an existing
+   * schedule rule's real-world firing time is completely unchanged by this
+   * column's addition. Storing the zone itself (rather than converting the
+   * user's local time to a fixed UTC HH:MM once, at save time) is what lets
+   * isScheduledRuleDue get DST transitions right automatically, by asking
+   * the platform's own timezone database what the current wall-clock time
+   * in that zone is on every check, instead of a UTC offset baked in at
+   * creation time silently going stale twice a year.
+   */
+  scheduleTimezone: string | null;
   actionType: AutomationActionType;
   /** "static" sends to toNumber; "field" reads the destination number from the triggering record's own toField. Meaningless (always "static", ignored) for actionType "webhook" -- stored anyway since the column itself has never been nullable. */
   toMode: AutomationToMode;
@@ -229,6 +256,10 @@ export function ensureAutomationRulesTable(db: ForgeDatabase): void {
   if (!columns.includes("lastActionType")) {
     db.exec("ALTER TABLE automation_rules ADD COLUMN lastActionType TEXT");
   }
+  // Round 967: see AutomationRule's own doc comment on this column.
+  if (!columns.includes("scheduleTimezone")) {
+    db.exec("ALTER TABLE automation_rules ADD COLUMN scheduleTimezone TEXT");
+  }
 }
 
 function rowToRule(row: Record<string, unknown>): AutomationRule {
@@ -241,6 +272,7 @@ function rowToRule(row: Record<string, unknown>): AutomationRule {
     fieldValue: (row.fieldValue as string | null) ?? null,
     scheduleTimeUtc: (row.scheduleTimeUtc as string | null) ?? null,
     scheduleDaysOfWeek: (row.scheduleDaysOfWeek as string | null) ?? null,
+    scheduleTimezone: (row.scheduleTimezone as string | null) ?? null,
     actionType: row.actionType as AutomationActionType,
     toMode: row.toMode as AutomationToMode,
     toNumber: (row.toNumber as string | null) ?? null,
@@ -267,6 +299,7 @@ export function insertAutomationRule(
     fieldValue?: string | null;
     scheduleTimeUtc?: string | null;
     scheduleDaysOfWeek?: string | null;
+    scheduleTimezone?: string | null;
     actionType: AutomationActionType;
     toMode: AutomationToMode;
     toNumber?: string | null;
@@ -279,8 +312,8 @@ export function insertAutomationRule(
   const now = new Date().toISOString();
   db.prepare(
     `INSERT INTO automation_rules
-       (id, projectId, entityName, trigger, fieldName, fieldValue, scheduleTimeUtc, scheduleDaysOfWeek, actionType, toMode, toNumber, toField, webhookUrl, messageTemplate, enabled, lastTriggeredAt, lastStatus, lastError, createdAt, updatedAt)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, NULL, NULL, NULL, ?, ?)`,
+       (id, projectId, entityName, trigger, fieldName, fieldValue, scheduleTimeUtc, scheduleDaysOfWeek, scheduleTimezone, actionType, toMode, toNumber, toField, webhookUrl, messageTemplate, enabled, lastTriggeredAt, lastStatus, lastError, createdAt, updatedAt)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, NULL, NULL, NULL, ?, ?)`,
   ).run(
     id,
     rule.projectId,
@@ -290,6 +323,7 @@ export function insertAutomationRule(
     rule.fieldValue ?? null,
     rule.scheduleTimeUtc ?? null,
     rule.scheduleDaysOfWeek ?? null,
+    rule.scheduleTimezone ?? null,
     rule.actionType,
     rule.toMode,
     rule.toNumber ?? null,
@@ -368,6 +402,7 @@ export function updateAutomationRule(
     fieldValue: string | null;
     scheduleTimeUtc: string | null;
     scheduleDaysOfWeek: string | null;
+    scheduleTimezone: string | null;
     actionType: AutomationActionType;
     toMode: AutomationToMode;
     toNumber: string | null;
@@ -384,7 +419,7 @@ export function updateAutomationRule(
   const next = { ...existing, ...patch };
   db.prepare(
     `UPDATE automation_rules SET
-       entityName = ?, trigger = ?, fieldName = ?, fieldValue = ?, scheduleTimeUtc = ?, scheduleDaysOfWeek = ?, actionType = ?, toMode = ?, toNumber = ?, toField = ?, webhookUrl = ?, messageTemplate = ?, enabled = ?, updatedAt = ?
+       entityName = ?, trigger = ?, fieldName = ?, fieldValue = ?, scheduleTimeUtc = ?, scheduleDaysOfWeek = ?, scheduleTimezone = ?, actionType = ?, toMode = ?, toNumber = ?, toField = ?, webhookUrl = ?, messageTemplate = ?, enabled = ?, updatedAt = ?
      WHERE projectId = ? AND id = ?`,
   ).run(
     next.entityName,
@@ -393,6 +428,7 @@ export function updateAutomationRule(
     next.fieldValue,
     next.scheduleTimeUtc,
     next.scheduleDaysOfWeek,
+    next.scheduleTimezone,
     next.actionType,
     next.toMode,
     next.toNumber,

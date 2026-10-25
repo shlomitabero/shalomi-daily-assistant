@@ -1525,6 +1525,14 @@ test("AutomationsPanel shows uppercase TRUE/FALSE for a boolean field_equals rul
  * of the rule exactly as typed/toggled.
  */
 test("AutomationsPanel's 'schedule' trigger shows a time + day-of-week picker, forces toMode to static, and submits the exact schedule chosen", async () => {
+  // Round 967: pins the viewer's own detected timezone for the duration
+  // of this test (same technique as entityFormatting.test.ts's own
+  // formatDateValue tests) so the assertion on createBody.scheduleTimezone
+  // below -- and the hint text's own displayed zone name -- aren't
+  // dependent on whatever zone this happens to run in.
+  const originalTz = process.env.TZ;
+  process.env.TZ = "America/New_York";
+  try {
   await withJsdom(async () => {
     const originalFetch = globalThis.fetch;
     let createBody: Record<string, unknown> | undefined;
@@ -1583,10 +1591,20 @@ test("AutomationsPanel's 'schedule' trigger shows a time + day-of-week picker, f
       assert.equal(createBody?.toMode, "static");
       assert.equal(createBody?.toNumber, "972501234567");
       assert.equal(createBody?.fieldName, undefined, "a schedule rule has no triggering field at all");
+      // Round 967: a brand-new schedule rule must default to the viewer's
+      // OWN detected zone, not silently mean UTC.
+      assert.equal(createBody?.scheduleTimezone, "America/New_York");
+      assert.ok(
+        document.querySelector(".automations-create-form")?.textContent?.includes("America/New_York"),
+        "the schedule form must disclose which real timezone it's scheduling in",
+      );
     } finally {
       globalThis.fetch = originalFetch;
     }
   });
+  } finally {
+    process.env.TZ = originalTz;
+  }
 });
 
 /**
@@ -1794,6 +1812,85 @@ test("AutomationsPanel's Edit button seeds the create-form from the chosen rule 
 });
 
 /**
+ * Round 967: editing an existing "schedule" rule must show (and, if saved
+ * unchanged, keep) that rule's own stored scheduleTimezone -- never
+ * silently re-default it to whatever zone the editing browser happens to
+ * be in. A rule created by one collaborator and later edited by another
+ * (in a different real-world timezone) must not have its actual firing
+ * time quietly shifted just because someone opened the edit form.
+ */
+test("editing an existing schedule rule preserves its own stored scheduleTimezone, not the editing browser's own detected zone", async () => {
+  const originalTz = process.env.TZ;
+  process.env.TZ = "America/New_York";
+  try {
+  await withJsdom(async () => {
+    const originalFetch = globalThis.fetch;
+    let patchBody: Record<string, unknown> | undefined;
+    const scheduleRule = makeRule({
+      id: "rule1",
+      trigger: "schedule",
+      fieldName: null,
+      fieldValue: null,
+      scheduleTimeUtc: "08:00",
+      scheduleDaysOfWeek: null,
+      scheduleTimezone: "Asia/Jerusalem",
+      toMode: "static",
+      toNumber: "972501234567",
+      toField: null,
+    });
+    globalThis.fetch = (async (input: string, init?: RequestInit) => {
+      const method = init?.method ?? "GET";
+      if (method === "GET" && input === "/api/projects/proj1/automations") {
+        return new Response(JSON.stringify({ rules: [scheduleRule] }), { status: 200, headers: { "content-type": "application/json" } });
+      }
+      if (method === "PATCH" && input === "/api/projects/proj1/automations/rule1") {
+        patchBody = JSON.parse(init!.body as string) as Record<string, unknown>;
+        return new Response(JSON.stringify({ rule: { ...scheduleRule, messageTemplate: patchBody.messageTemplate } }), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        });
+      }
+      throw new Error(`unexpected request ${method} ${input}`);
+    }) as typeof fetch;
+
+    try {
+      renderPanel();
+      await waitForCondition(() => document.querySelectorAll(".automations-rule-row").length === 1);
+
+      fireEvent.click(
+        Array.from(document.querySelectorAll(".automations-rule-actions button")).find((b) => b.textContent === "Edit") as HTMLButtonElement,
+      );
+
+      assert.ok(
+        document.querySelector(".automations-create-form")?.textContent?.includes("Asia/Jerusalem"),
+        "the form must disclose the rule's OWN stored zone while editing, even though the editing browser's own zone is America/New_York",
+      );
+      assert.equal(
+        document.querySelector(".automations-create-form")?.textContent?.includes("America/New_York"),
+        false,
+        "must not silently show the editing browser's own zone instead of the rule's real stored one",
+      );
+
+      const messageField = document.querySelector(".automations-create-form textarea") as HTMLTextAreaElement;
+      fireEvent.change(messageField, { target: { value: "Updated reminder text" } });
+      fireEvent.submit(document.querySelector(".automations-create-form")!);
+
+      await waitForCondition(() => patchBody !== undefined);
+      assert.equal(
+        patchBody?.scheduleTimezone,
+        "Asia/Jerusalem",
+        "saving an edit that never touched the schedule must send the rule's own original zone back, not the editing browser's",
+      );
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+  } finally {
+    process.env.TZ = originalTz;
+  }
+});
+
+/**
  * Round 883: disableAutomationRulesForField (packages/db/src/automations.ts)
  * disables a rule when its field is removed by a live refine, but
  * deliberately leaves fieldName/toField as the now-stale string in
@@ -1925,6 +2022,7 @@ test("submitting an edited rule calls the real PATCH endpoint and updates the ru
         fieldValue: "Delivered",
         scheduleTimeUtc: null,
         scheduleDaysOfWeek: null,
+        scheduleTimezone: null,
         actionType: "send_whatsapp",
         toMode: "field",
         toField: "customerPhone",

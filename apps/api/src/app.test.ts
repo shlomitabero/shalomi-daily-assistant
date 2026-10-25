@@ -11736,6 +11736,87 @@ test("creating a 'schedule' automation rule requires scheduleTimeUtc and toMode:
 });
 
 /**
+ * Round 967: a schedule rule's scheduleTimeUtc/scheduleDaysOfWeek are now
+ * wall-clock values in its own scheduleTimezone (see isScheduledRuleDue's
+ * own doc comment, apps/api/src/automations.ts), not literal UTC --
+ * confirms the real IANA zone is validated at creation (an invalid one is
+ * rejected before it could ever reach isScheduledRuleDue's own
+ * Intl.DateTimeFormat call and throw there instead), round-trips through
+ * GET, and can be changed via PATCH.
+ */
+test("creating a 'schedule' automation rule accepts and stores a real IANA scheduleTimezone, rejects a bogus one, and PATCH can change it", async () => {
+  await withServer(async (baseUrl, db) => {
+    const email = `schedule-timezone-${randomUUID()}@example.com`;
+    const token = await signup(baseUrl, email);
+    const owner = findUserByEmail(db, email)!;
+
+    const spec: ProductSpec = {
+      summary: "test",
+      personas: [],
+      roles: ["Admin"],
+      entities: [{ name: "Reminder", fields: [{ name: "title", type: "text", required: true }] }],
+      screens: [],
+      assumptions: [],
+      openQuestions: [],
+    };
+    const projectId = randomUUID();
+    insertProject(db, { id: projectId, ownerId: owner.id, name: "Reminders", description: "test", spec });
+    diffAndMigrate(db, projectId, undefined, spec);
+    markProjectBuilt(db, projectId);
+
+    const baseBody = {
+      trigger: "schedule",
+      actionType: "send_whatsapp",
+      messageTemplate: "Good morning!",
+      scheduleTimeUtc: "08:00",
+      toMode: "static",
+      toNumber: "972500000000",
+    };
+
+    const bogusZone = await fetch(`${baseUrl}/api/projects/${projectId}/entities/Reminder/automations`, {
+      method: "POST",
+      headers: authHeaders(token),
+      body: JSON.stringify({ ...baseBody, scheduleTimezone: "Not/A_Real_Zone" }),
+    });
+    assert.equal(bogusZone.status, 400, "a scheduleTimezone that isn't a real IANA zone name must be rejected at creation, not silently stored");
+    assert.equal(((await bogusZone.json()) as { code?: string }).code, "VALIDATION_ERROR");
+
+    const goodRes = await fetch(`${baseUrl}/api/projects/${projectId}/entities/Reminder/automations`, {
+      method: "POST",
+      headers: authHeaders(token),
+      body: JSON.stringify({ ...baseBody, scheduleTimezone: "Asia/Jerusalem" }),
+    });
+    assert.equal(goodRes.status, 201);
+    const { rule } = (await goodRes.json()) as { rule: { id: string; scheduleTimezone: string } };
+    assert.equal(rule.scheduleTimezone, "Asia/Jerusalem");
+
+    const listRes = await fetch(`${baseUrl}/api/projects/${projectId}/automations`, { headers: authHeaders(token) });
+    const { rules } = (await listRes.json()) as { rules: { id: string; scheduleTimezone: string }[] };
+    assert.equal(
+      rules.find((r) => r.id === rule.id)?.scheduleTimezone,
+      "Asia/Jerusalem",
+      "scheduleTimezone must round-trip through GET, not just the create response",
+    );
+
+    const patchRes = await fetch(`${baseUrl}/api/projects/${projectId}/automations/${rule.id}`, {
+      method: "PATCH",
+      headers: authHeaders(token),
+      body: JSON.stringify({ scheduleTimezone: "America/New_York" }),
+    });
+    assert.equal(patchRes.status, 200);
+    const { rule: patched } = (await patchRes.json()) as { rule: { scheduleTimezone: string } };
+    assert.equal(patched.scheduleTimezone, "America/New_York");
+
+    const patchBogus = await fetch(`${baseUrl}/api/projects/${projectId}/automations/${rule.id}`, {
+      method: "PATCH",
+      headers: authHeaders(token),
+      body: JSON.stringify({ scheduleTimezone: "Not/A_Real_Zone" }),
+    });
+    assert.equal(patchBogus.status, 400, "PATCH must validate scheduleTimezone the same way creation does");
+  });
+});
+
+/**
  * The real HTTP route's own validation for the new "webhook" automation
  * action type: requires a real webhookUrl, rejects one pointing at a
  * blocked local/private host, and doesn't require toNumber/toField at

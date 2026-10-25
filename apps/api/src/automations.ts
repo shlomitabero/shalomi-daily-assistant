@@ -664,6 +664,44 @@ async function fireRule(
   );
 }
 
+const WEEKDAY_SHORT_NAME_TO_INDEX: Record<string, number> = { Sun: 0, Mon: 1, Tue: 2, Wed: 3, Thu: 4, Fri: 5, Sat: 6 };
+
+/**
+ * Round 967: the rule's own wall-clock date/time/day-of-week in
+ * `timeZone`, read off the real IANA timezone database (via Intl) rather
+ * than computed as a fixed UTC offset -- this is what makes a schedule
+ * rule's day-of-week and time-of-day stay correct across a DST
+ * transition with zero code re-running anywhere: the same `timeZone`
+ * string ("Asia/Jerusalem", say) means a different real UTC offset in
+ * January than in July, and Intl already knows exactly which, for every
+ * date, forever (including past/future DST rule changes a government
+ * might legislate, as long as Node's own bundled tzdata is kept current).
+ * Passing `timeZone: "UTC"` reproduces the exact previous behavior
+ * (`now.toISOString()`'s own date/time components, `now.getUTCDay()`) --
+ * the default every rule created before this column existed still gets.
+ */
+function wallClockIn(now: Date, timeZone: string): { date: string; hhmm: string; dayOfWeek: number } {
+  const parts = new Intl.DateTimeFormat("en-US", {
+    timeZone,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    weekday: "short",
+    hour: "2-digit",
+    minute: "2-digit",
+    hour12: false,
+  }).formatToParts(now);
+  const get = (type: string) => parts.find((p) => p.type === type)!.value;
+  // Some ICU builds return "24" rather than "00" for midnight even with
+  // hour12:false -- a known Intl quirk, not specific to any one timeZone.
+  const hour = get("hour") === "24" ? "00" : get("hour");
+  return {
+    date: `${get("year")}-${get("month")}-${get("day")}`,
+    hhmm: `${hour}:${get("minute")}`,
+    dayOfWeek: WEEKDAY_SHORT_NAME_TO_INDEX[get("weekday")],
+  };
+}
+
 /**
  * Whether a "schedule" rule is due to fire at `now`. Checks "has its
  * scheduled time of day already passed today" rather than "does the
@@ -674,8 +712,20 @@ async function fireRule(
  * `lastTriggeredAt`/`lastStatus` (already recorded by recordAutomationRun
  * on every fire) to track "already *succeeded* today" means this needs no
  * extra column for that -- once it's actually sent today, it stays
- * not-due until the UTC date rolls over, however many ticks happen in
- * between.
+ * not-due until the rule's own local date (see wallClockIn above) rolls
+ * over, however many ticks happen in between.
+ *
+ * Round 967: "today," "time of day," and "day of week" are all now the
+ * rule's own wall-clock values in its `scheduleTimezone` (defaulting to
+ * "UTC" for a rule with none set -- every rule created before this round
+ * -- which reproduces the exact previous UTC-only behavior bit-for-bit).
+ * Before this, scheduleTimeUtc/scheduleDaysOfWeek were always interpreted
+ * as literal UTC with no way to express "my own local time" at all -- a
+ * user in a timezone ahead of UTC picking, say, local Monday 00:30 had to
+ * know to check the "Sunday" box instead, since that moment falls on UTC
+ * Sunday, not Monday. Storing the real IANA zone instead of asking the
+ * user to do that conversion themselves means this also self-corrects
+ * across DST twice a year, with no stale baked-in offset to go stale.
  *
  * Deliberately gated on `lastStatus === "sent"`, not just "already
  * attempted today" -- WhatsApp disconnects are an acknowledged,
@@ -691,13 +741,15 @@ async function fireRule(
  */
 export function isScheduledRuleDue(rule: AutomationRule, now: Date): boolean {
   if (rule.trigger !== "schedule" || !rule.scheduleTimeUtc) return false;
-  const todayUtc = now.toISOString().slice(0, 10);
-  if (rule.lastTriggeredAt && rule.lastTriggeredAt.slice(0, 10) === todayUtc && rule.lastStatus === "sent") return false;
+  const timeZone = rule.scheduleTimezone ?? "UTC";
+  const { date: today, hhmm: currentHHMM, dayOfWeek } = wallClockIn(now, timeZone);
+  if (rule.lastTriggeredAt && wallClockIn(new Date(rule.lastTriggeredAt), timeZone).date === today && rule.lastStatus === "sent") {
+    return false;
+  }
   if (rule.scheduleDaysOfWeek) {
     const days = rule.scheduleDaysOfWeek.split(",").map(Number);
-    if (!days.includes(now.getUTCDay())) return false;
+    if (!days.includes(dayOfWeek)) return false;
   }
-  const currentHHMM = now.toISOString().slice(11, 16);
   return currentHHMM >= rule.scheduleTimeUtc;
 }
 
@@ -849,6 +901,14 @@ const MAX_CONSECUTIVE_SCHEDULE_FAILURES_PER_DAY = 5;
  * rollover, since fixing the destination doesn't itself clear this cap --
  * only a new successful run or a new UTC day does, and neither happens
  * while the scheduler keeps skipping the rule.
+ *
+ * Round 967: deliberately left on a plain UTC "today" boundary, unlike
+ * isScheduledRuleDue's own switch to the rule's scheduleTimezone -- this
+ * is an internal safety cap on retry volume, not a user-visible "did my
+ * message go out today" guarantee, so its day boundary landing a few
+ * hours off from the rule's own local midnight has no real-world
+ * consequence (the cap still resets once per real day, just not exactly
+ * at this rule's own local midnight). Not an oversight to "fix" later.
  */
 export function hasTooManyConsecutiveFailuresToday(db: ForgeDatabase, rule: AutomationRule, now: Date): boolean {
   const todayUtc = now.toISOString().slice(0, 10);

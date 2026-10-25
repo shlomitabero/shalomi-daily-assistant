@@ -108,7 +108,7 @@ function describeSchedule(
   const days = rule.scheduleDaysOfWeek
     ? rule.scheduleDaysOfWeek.split(",").map(Number).sort().map((d) => scheduleDayLabel(d, lang)).join(", ")
     : t("automations.schedule.everyDay");
-  return t("automations.rule.when.schedule", { time: rule.scheduleTimeUtc ?? "", days });
+  return t("automations.rule.when.schedule", { time: rule.scheduleTimeUtc ?? "", days, timezone: rule.scheduleTimezone ?? "UTC" });
 }
 
 function describeRule(

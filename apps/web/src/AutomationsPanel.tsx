@@ -113,6 +113,16 @@ export function AutomationsPanel({
   // string, so the common case doesn't bloat every stored rule with a
   // redundant value meaning the same thing as leaving it unset.
   const [scheduleDays, setScheduleDays] = useState<number[]>([0, 1, 2, 3, 4, 5, 6]);
+  // Round 967: the real IANA timezone scheduleTimeUtc/scheduleDays are
+  // wall-clock values in -- defaults to the browser's own detected zone
+  // for a brand-new rule, so "Create automation rule" now schedules in
+  // the user's own local time/day by default instead of silently meaning
+  // UTC. Overwritten by handleStartEdit with the rule's own stored zone
+  // when editing an existing one (see its own comment there for why this
+  // is NOT re-defaulted to the browser's zone on edit).
+  const [scheduleTimezone, setScheduleTimezone] = useState<string>(
+    () => Intl.DateTimeFormat().resolvedOptions().timeZone,
+  );
   const [actionType, setActionType] = useState<AutomationActionType>("send_whatsapp");
   const [webhookUrl, setWebhookUrl] = useState("");
 
@@ -338,6 +348,7 @@ export function AutomationsPanel({
     setMessageTemplate("");
     setScheduleTimeUtc("09:00");
     setScheduleDays([0, 1, 2, 3, 4, 5, 6]);
+    setScheduleTimezone(Intl.DateTimeFormat().resolvedOptions().timeZone);
     setActionType("send_whatsapp");
     setWebhookUrl("");
   }
@@ -382,6 +393,13 @@ export function AutomationsPanel({
     setFieldValue(rule.fieldValue ?? "");
     setScheduleTimeUtc(rule.scheduleTimeUtc ?? "09:00");
     setScheduleDays(rule.scheduleDaysOfWeek ? rule.scheduleDaysOfWeek.split(",").map(Number) : [0, 1, 2, 3, 4, 5, 6]);
+    // Shows (and, if saved unchanged, keeps) the rule's OWN stored zone --
+    // never re-defaulted to the browser's own zone here. A rule created by
+    // a different collaborator, or before this column existed at all
+    // ("UTC" shown for a pre-round-967 rule, matching its real stored
+    // meaning), must not silently start meaning "whichever computer last
+    // opened the edit form" the moment anyone edits an unrelated field.
+    setScheduleTimezone(rule.scheduleTimezone ?? "UTC");
     setActionType(rule.actionType);
     setToMode(rule.toMode);
     setToField(rulePhoneFields.some((f) => f.name === rule.toField) ? rule.toField ?? "" : rulePhoneFields[0]?.name ?? "");
@@ -436,6 +454,7 @@ export function AutomationsPanel({
           fieldValue: trigger === "field_equals" ? fieldValue.trim() : null,
           scheduleTimeUtc: trigger === "schedule" ? scheduleTimeUtc : null,
           scheduleDaysOfWeek: trigger === "schedule" && !everyDay ? [...scheduleDays].sort().join(",") : null,
+          scheduleTimezone: trigger === "schedule" ? scheduleTimezone : null,
           actionType,
           toMode,
           toField: actionType === "send_whatsapp" && toMode === "field" ? toField : null,
@@ -452,6 +471,7 @@ export function AutomationsPanel({
           fieldValue: trigger === "field_equals" ? fieldValue.trim() : undefined,
           scheduleTimeUtc: trigger === "schedule" ? scheduleTimeUtc : undefined,
           scheduleDaysOfWeek: trigger === "schedule" && !everyDay ? [...scheduleDays].sort().join(",") : undefined,
+          scheduleTimezone: trigger === "schedule" ? scheduleTimezone : undefined,
           actionType,
           toMode,
           toField: actionType === "send_whatsapp" && toMode === "field" ? toField : undefined,
@@ -622,7 +642,7 @@ export function AutomationsPanel({
     const days = rule.scheduleDaysOfWeek
       ? rule.scheduleDaysOfWeek.split(",").map(Number).sort().map(scheduleDayLabel).join(", ")
       : t("automations.schedule.everyDay");
-    return t("automations.rule.when.schedule", { time: rule.scheduleTimeUtc ?? "", days });
+    return t("automations.rule.when.schedule", { time: rule.scheduleTimeUtc ?? "", days, timezone: rule.scheduleTimezone ?? "UTC" });
   }
 
   function describeRule(rule: AutomationRuleView): string {
@@ -919,7 +939,7 @@ export function AutomationsPanel({
                 {t("automations.schedule.time.label")}
                 <input type="time" value={scheduleTimeUtc} onChange={(e) => setScheduleTimeUtc(e.target.value)} required />
               </label>
-              <p className="muted small">{t("automations.schedule.time.hint")}</p>
+              <p className="muted small">{t("automations.schedule.time.hint", { timezone: scheduleTimezone })}</p>
               <fieldset className="automations-schedule-days">
                 <legend>{t("automations.schedule.days.label")}</legend>
                 {[0, 1, 2, 3, 4, 5, 6].map((day) => (

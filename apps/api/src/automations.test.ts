@@ -819,6 +819,96 @@ test("isScheduledRuleDue respects scheduleDaysOfWeek when set, and treats null a
   assert.equal(isScheduledRuleDue(everyDay, new Date("2026-03-15T09:00:00.000Z")), true, "null scheduleDaysOfWeek means every day, including Sunday");
 });
 
+/**
+ * Round 967: the exact bug the survey that prompted this round flagged --
+ * before scheduleTimezone existed, scheduleDaysOfWeek/scheduleTimeUtc were
+ * always literal UTC, so a business in a timezone AHEAD of UTC (e.g.
+ * Israel) wanting a message at their own local midnight-ish had to select
+ * the PREVIOUS day's checkbox, not the day they actually meant -- a wrong-
+ * day send with no error anywhere. These two UTC instants are chosen so
+ * the UTC calendar day and the Asia/Jerusalem calendar day actually
+ * disagree: 2026-01-04T22:30:00.000Z is UTC Sunday, but already
+ * Asia/Jerusalem Monday 00:30 (confirmed directly against Intl, not
+ * assumed). A rule whose scheduleDaysOfWeek is "1" (Monday only) and
+ * scheduleTimezone "Asia/Jerusalem" must fire at that instant -- the
+ * moment a Jerusalem-based owner actually means by "Monday at 00:30" --
+ * even though the OLD, UTC-only logic (now.getUTCDay()) would have called
+ * this exact instant "Sunday" and refused to fire for a whole extra day.
+ */
+test("isScheduledRuleDue evaluates scheduleDaysOfWeek and scheduleTimeUtc as wall-clock values in the rule's own scheduleTimezone, not literal UTC", () => {
+  const mondayMidnightJerusalem = {
+    ...scheduleRuleBase({ scheduleTimeUtc: "00:30", scheduleDaysOfWeek: "1", scheduleTimezone: "Asia/Jerusalem" }),
+    id: "r1",
+    createdAt: "",
+    updatedAt: "",
+    lastTriggeredAt: null,
+    lastStatus: null,
+    lastError: null,
+    enabled: true,
+  } as unknown as Parameters<typeof isScheduledRuleDue>[0];
+
+  assert.equal(
+    isScheduledRuleDue(mondayMidnightJerusalem, new Date("2026-01-04T22:30:00.000Z")),
+    true,
+    "this instant is already Monday 00:30 in Asia/Jerusalem (winter, UTC+2), even though its own UTC calendar date is still Sunday",
+  );
+  assert.equal(
+    isScheduledRuleDue(mondayMidnightJerusalem, new Date("2026-01-04T21:29:00.000Z")),
+    false,
+    "one minute before Jerusalem's own local Monday 00:30 (still Sunday 23:29 there) must not be due yet",
+  );
+
+  // Same real-world local moment, but in July -- Israel observes DST
+  // (IDT, UTC+3) then, a full hour different from January's UTC+2. A
+  // fixed UTC offset baked in once at creation time could never get both
+  // of these right from the same stored scheduleTimeUtc/scheduleTimezone;
+  // only asking the real IANA tzdata what time it actually is in that
+  // zone, for the specific date in question, can.
+  assert.equal(
+    isScheduledRuleDue(mondayMidnightJerusalem, new Date("2026-07-05T21:30:00.000Z")),
+    true,
+    "this instant is already Monday 00:30 in Asia/Jerusalem (summer, UTC+3 under DST), even though its own UTC calendar date is still Sunday",
+  );
+  assert.equal(
+    isScheduledRuleDue(mondayMidnightJerusalem, new Date("2026-07-05T20:29:00.000Z")),
+    false,
+    "one minute before Jerusalem's own local Monday 00:30 in July (still Sunday 23:29 there under DST) must not be due yet",
+  );
+});
+
+/**
+ * Round 967: the "already fired today" gate (lastTriggeredAt/lastStatus)
+ * must compare the rule's own LOCAL calendar date, not the UTC one --
+ * otherwise a rule whose local day rolls over at a different moment than
+ * UTC's could either re-fire twice on the same local day, or stay
+ * wrongly gated into what's already its next local day. Uses the same
+ * Asia/Jerusalem local-Monday-00:30 instant as the test above.
+ */
+test("isScheduledRuleDue's 'already fired today' gate compares the rule's own local calendar date, not the UTC one", () => {
+  const rule = {
+    ...scheduleRuleBase({ scheduleTimeUtc: "00:30", scheduleDaysOfWeek: null, scheduleTimezone: "Asia/Jerusalem" }),
+    id: "r1",
+    createdAt: "",
+    updatedAt: "",
+    // Fired at Asia/Jerusalem Monday 00:35 (UTC Sunday 22:35).
+    lastTriggeredAt: "2026-01-04T22:35:00.000Z",
+    lastStatus: "sent" as const,
+    lastError: null,
+    enabled: true,
+  } as unknown as Parameters<typeof isScheduledRuleDue>[0];
+
+  assert.equal(
+    isScheduledRuleDue(rule, new Date("2026-01-05T08:00:00.000Z")),
+    false,
+    "still the same Jerusalem-local Monday (now 10:00 local) as when it already successfully fired -- must not fire again",
+  );
+  assert.equal(
+    isScheduledRuleDue(rule, new Date("2026-01-05T22:30:00.000Z")),
+    true,
+    "Jerusalem's own local Tuesday 00:30 has arrived -- a new local day, so it's due again",
+  );
+});
+
 test("isScheduledRuleDue is always false for a non-schedule trigger or a schedule rule with no scheduleTimeUtc", () => {
   const notSchedule = { ...scheduleRuleBase(), trigger: "field_equals" as const, id: "r1", createdAt: "", updatedAt: "", lastTriggeredAt: null, lastStatus: null, lastError: null, enabled: true } as unknown as Parameters<typeof isScheduledRuleDue>[0];
   assert.equal(isScheduledRuleDue(notSchedule, new Date("2026-03-15T09:00:00.000Z")), false);

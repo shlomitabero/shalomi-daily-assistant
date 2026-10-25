@@ -507,6 +507,43 @@ test("updateAutomationRule can set and clear scheduleTimeUtc/scheduleDaysOfWeek"
 });
 
 /**
+ * Round 967: scheduleTimezone is the IANA zone scheduleTimeUtc/
+ * scheduleDaysOfWeek are wall-clock values in -- see AutomationRule's own
+ * doc comment on this column. Stored/updated/cleared exactly like its two
+ * sibling schedule columns above.
+ */
+test("insertAutomationRule stores scheduleTimezone, and updateAutomationRule can change or clear it", () => {
+  const db = openDatabase(":memory:");
+  ensureAutomationRulesTable(db);
+  const rule = insertAutomationRule(
+    db,
+    baseRule({
+      trigger: "schedule",
+      fieldName: null,
+      fieldValue: null,
+      scheduleTimeUtc: "09:00",
+      scheduleDaysOfWeek: null,
+      scheduleTimezone: "Asia/Jerusalem",
+      toMode: "static",
+      toField: null,
+      toNumber: "972501234567",
+    }),
+  );
+  assert.equal(rule.scheduleTimezone, "Asia/Jerusalem");
+
+  const noZone = insertAutomationRule(
+    db,
+    baseRule({ trigger: "schedule", fieldName: null, fieldValue: null, scheduleTimeUtc: "09:00", toMode: "static", toField: null, toNumber: "1" }),
+  );
+  assert.equal(noZone.scheduleTimezone, null, "a rule created without an explicit scheduleTimezone must leave it null, not default to a literal string");
+
+  const updated = updateAutomationRule(db, "proj1", rule.id, { scheduleTimezone: "America/New_York" });
+  assert.equal(updated.scheduleTimezone, "America/New_York");
+  const cleared = updateAutomationRule(db, "proj1", rule.id, { scheduleTimezone: null });
+  assert.equal(cleared.scheduleTimezone, null);
+});
+
+/**
  * Mirrors checkpoints.test.ts's own "old-shape table, run the migration,
  * confirm it backfills without disturbing existing rows, and is idempotent
  * on a second run" pattern -- automation_rules gets the identical
@@ -548,6 +585,7 @@ test("ensureAutomationRulesTable adds scheduleTimeUtc/scheduleDaysOfWeek to a pr
   const oldRule = getAutomationRule(db, "proj1", "old-rule")!;
   assert.equal(oldRule.scheduleTimeUtc, null);
   assert.equal(oldRule.scheduleDaysOfWeek, null);
+  assert.equal(oldRule.scheduleTimezone, null, "round 967's scheduleTimezone column must also be added additively, defaulting to null for a pre-existing row");
   assert.equal(oldRule.fieldName, "status", "the migration must not disturb an existing row's other columns");
 
   // Running it again (every app startup) must stay a no-op.

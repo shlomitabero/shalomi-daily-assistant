@@ -143,6 +143,28 @@ const WhatsAppSendSchema = z.object({
 const SCHEDULE_TIME_UTC_PATTERN = /^([01]\d|2[0-3]):[0-5]\d$/;
 const SCHEDULE_DAYS_OF_WEEK_PATTERN = /^[0-6](,[0-6]){0,6}$/;
 
+/**
+ * Round 967: validates a schedule rule's own `scheduleTimezone` is a real
+ * IANA zone name Node's own Intl implementation recognizes (e.g.
+ * "Asia/Jerusalem"), rather than trusting an arbitrary client-supplied
+ * string straight into isScheduledRuleDue's own Intl.DateTimeFormat call
+ * (apps/api/src/automations.ts) -- an unrecognized zone throws there, not
+ * silently misbehaves, so this is a real system-boundary validation, not
+ * a defensive nicety for an unreachable case.
+ */
+function isValidIanaTimeZone(tz: string): boolean {
+  try {
+    new Intl.DateTimeFormat(undefined, { timeZone: tz });
+    return true;
+  } catch {
+    return false;
+  }
+}
+const ScheduleTimezoneSchema = z
+  .string()
+  .min(1)
+  .refine(isValidIanaTimeZone, "scheduleTimezone must be a real IANA time zone name (e.g. \"Asia/Jerusalem\")");
+
 const CreateAutomationRuleSchema = z
   .object({
     trigger: z.enum(["record_created", "field_equals", "schedule"]),
@@ -153,6 +175,7 @@ const CreateAutomationRuleSchema = z
       .string()
       .regex(SCHEDULE_DAYS_OF_WEEK_PATTERN, "scheduleDaysOfWeek must be comma-separated day numbers 0-6")
       .optional(),
+    scheduleTimezone: ScheduleTimezoneSchema.optional(),
     actionType: z.enum(["send_whatsapp", "webhook"]),
     toMode: z.enum(["static", "field"]),
     toNumber: z.string().min(1).optional(),
@@ -199,6 +222,7 @@ const UpdateAutomationRuleSchema = z.object({
     .regex(SCHEDULE_DAYS_OF_WEEK_PATTERN, "scheduleDaysOfWeek must be comma-separated day numbers 0-6")
     .nullable()
     .optional(),
+  scheduleTimezone: ScheduleTimezoneSchema.nullable().optional(),
   actionType: z.enum(["send_whatsapp", "webhook"]).optional(),
   toMode: z.enum(["static", "field"]).optional(),
   toNumber: z.string().min(1).nullable().optional(),
@@ -3485,6 +3509,7 @@ export function createProjectsRouter(
             fieldValue: data.fieldValue ?? null,
             scheduleTimeUtc: data.scheduleTimeUtc ?? null,
             scheduleDaysOfWeek: data.scheduleDaysOfWeek ?? null,
+            scheduleTimezone: data.scheduleTimezone ?? null,
             actionType: data.actionType,
             toMode: data.toMode,
             toNumber: data.toNumber ?? null,

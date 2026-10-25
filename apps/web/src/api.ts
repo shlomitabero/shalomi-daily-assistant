@@ -1218,6 +1218,8 @@ export interface AutomationRuleView {
   fieldValue: string | null;
   scheduleTimeUtc: string | null;
   scheduleDaysOfWeek: string | null;
+  /** Round 967: the IANA timezone scheduleTimeUtc/scheduleDaysOfWeek are wall-clock values in; null (treated as "UTC") for a rule created before this field existed. */
+  scheduleTimezone: string | null;
   actionType: AutomationActionType;
   toMode: AutomationToMode;
   toNumber: string | null;
@@ -1261,6 +1263,7 @@ export function createAutomationRule(
     fieldValue?: string;
     scheduleTimeUtc?: string;
     scheduleDaysOfWeek?: string;
+    scheduleTimezone?: string;
     actionType: AutomationActionType;
     toMode: AutomationToMode;
     toNumber?: string;
@@ -1286,6 +1289,7 @@ export function updateAutomationRule(
     fieldValue: string | null;
     scheduleTimeUtc: string | null;
     scheduleDaysOfWeek: string | null;
+    scheduleTimezone: string | null;
     actionType: AutomationActionType;
     toMode: AutomationToMode;
     toNumber: string | null;
