@@ -1183,6 +1183,68 @@ test("GlobalSearchPanel's 'Show all' button disappears once the fresh fetch reve
 });
 
 /**
+ * Round 983's finding: round 556's own fix just above only ever considered
+ * a fresh re-fetch count that shrinks but stays positive (e.g. 7 -> 5).
+ * When EVERY one of this entity's previously-matching records has since
+ * been deleted or edited away (another tab, a collaborator, a WhatsApp-
+ * triggered automation write), handleShowAll's own fresh search returns
+ * null (searchEntityRecords's documented "nothing matched" contract) --
+ * the old code patched totalMatches to a literal 0 instead of removing the
+ * group, leaving it permanently stuck on screen: the header still reads
+ * "0 results", the hit list is empty, and `remaining` (0 - 0) is never > 0
+ * either, so the one button that reaches this code path never reappears --
+ * no control anywhere lets the user dismiss it short of typing a whole new
+ * query. This also breaks runSearch's own invariant (a 0-match entity is
+ * filtered out of `results` and never shown at all).
+ */
+test("GlobalSearchPanel's entity group disappears entirely, not stuck showing '0 results', once every real match is gone by the time 'Show all' re-fetches", async () => {
+  await withJsdom(async () => {
+    const originalFetch = globalThis.fetch;
+    let customerCallCount = 0;
+    globalThis.fetch = (async (input: string): Promise<Response> => {
+      if (input === "/api/projects/proj1/entities/Customer") {
+        customerCallCount += 1;
+        // Call 1 is the initial search: 7 matches, capped to a 5-row
+        // sample with a "Show all" button for the other 2. Call 2 is
+        // "Show all"'s own re-fetch -- by then every matching record has
+        // been edited/deleted elsewhere, so none of the 7 still match.
+        const records: EntityRecord[] =
+          customerCallCount === 1
+            ? Array.from({ length: 7 }, (_, i) => ({ id: i + 1, name: `Widget item ${i + 1}` }))
+            : Array.from({ length: 7 }, (_, i) => ({ id: i + 1, name: `Renamed away ${i + 1}` }));
+        return new Response(JSON.stringify({ records }), { status: 200, headers: { "content-type": "application/json" } });
+      }
+      if (input === "/api/projects/proj1/entities/Order") {
+        return new Response(JSON.stringify({ records: [] }), { status: 200, headers: { "content-type": "application/json" } });
+      }
+      throw new Error(`unexpected request ${input}`);
+    }) as typeof fetch;
+    try {
+      renderGlobalSearchPanel(() => {});
+
+      const input = document.querySelector(".global-search-input") as HTMLInputElement;
+      fireEvent.change(input, { target: { value: "widget" } });
+      fireEvent.submit(document.querySelector("form.global-search-form")!);
+      await waitForCondition(() => document.querySelectorAll(".global-search-hit-button").length === 5);
+
+      const showAllButton = document.querySelector(".global-search-show-all") as HTMLButtonElement;
+      assert.ok(showAllButton, "expected a 'Show all' button for the original 7-match count");
+      fireEvent.click(showAllButton);
+
+      await waitForCondition(() => document.querySelectorAll(".global-search-group").length === 0);
+
+      assert.equal(
+        document.querySelectorAll(".global-search-group").length,
+        0,
+        "the Customer group must be removed entirely, not left stuck showing '0 results' with an empty list and no 'Show all' button to dismiss it",
+      );
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+});
+
+/**
  * Round 904: unlike runSearch (which clears `error` at its own start,
  * line 124), handleShowAll only ever SET `error` (in its round-663 catch
  * block) and never cleared it on success -- a failed "Show all" attempt

@@ -6447,8 +6447,20 @@ export function GlobalSearch({ entities, onClose, onJumpToEntity, onJumpToRecord
       // snapshot already sitting right here in memory.
       lastRecordsByEntityRef.current = { ...lastRecordsByEntityRef.current, [entityName]: records };
       const full = records.filter((r) => matchesSearch(r, entity.fields, highlightQuery, lastRecordsByEntityRef.current));
-      setExpandedSamples((prev) => ({ ...prev, [entityName]: full }));
-      setResults((prev) => prev.map((r) => (r.entityName === entityName ? { ...r, totalMatches: full.length } : r)));
+      if (full.length === 0) {
+        // Round 983: mirrors the live preview's own fix (GlobalSearchPanel.tsx)
+        // -- when every one of this entity's previously-matching records has
+        // since been deleted or edited away, remove this entity's group from
+        // results entirely instead of patching totalMatches to 0, which left
+        // a permanently stuck, empty group with no way to dismiss it (the
+        // "Show all" button that's the only way to reach this code path
+        // never reappears once remaining is 0).
+        setResults((prev) => prev.filter((r) => r.entityName !== entityName));
+        setSelectedIndex(null);
+      } else {
+        setExpandedSamples((prev) => ({ ...prev, [entityName]: full }));
+        setResults((prev) => prev.map((r) => (r.entityName === entityName ? { ...r, totalMatches: full.length } : r)));
+      }
       // Round 904: a failed "Show all" (just below) surfaces through this
       // same shared error banner -- succeeding on a later retry must clear
       // it, but error is ALSO used for runSearch's own still-unresolved

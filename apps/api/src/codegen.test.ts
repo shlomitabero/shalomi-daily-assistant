@@ -18296,6 +18296,80 @@ test("the exported GlobalSearch's 'Show all' button disappears once the fresh fe
 });
 
 /**
+ * Round 983's finding: mirrors GlobalSearchPanel.test.ts's own new
+ * regression test. Round 556's own fix just above only ever considered a
+ * fresh re-fetch count that shrinks but stays positive. When EVERY one of
+ * this entity's previously-matching records has since been edited away,
+ * the old code patched totalMatches to a literal 0 instead of removing
+ * the group, leaving it permanently stuck on screen with an empty list
+ * and no "Show all" button to dismiss it (remaining = 0 - 0 is never
+ * > 0).
+ */
+test("the exported GlobalSearch's entity group disappears entirely, not stuck showing '0 results', once every real match is gone by the time 'Show all' re-fetches", async () => {
+  const files = generateExportFiles(project);
+  const dir = writeGeneratedWebComponent(files);
+  const originalFetch = globalThis.fetch;
+  let customerCallCount = 0;
+  globalThis.fetch = (async (input: string) => {
+    if (String(input).endsWith("/Customer")) {
+      customerCallCount += 1;
+      // Call 1 is the initial search: 7 matches, capped to a 5-row sample
+      // with a "Show all" button for the other 2. Call 2 is "Show all"'s
+      // own re-fetch -- by then every matching record has been edited
+      // away, so none of the 7 still match.
+      const records =
+        customerCallCount === 1
+          ? Array.from({ length: 7 }, (_, i) => ({ id: i + 1, name: `Widget item ${i + 1}` }))
+          : Array.from({ length: 7 }, (_, i) => ({ id: i + 1, name: `Renamed away ${i + 1}` }));
+      return { ok: true, status: 200, json: async () => ({ records }) };
+    }
+    return { ok: true, status: 200, json: async () => ({ records: [] }) };
+  }) as typeof fetch;
+
+  try {
+    const { GlobalSearch } = await import(path.join(dir, "web", "src", "components", "GlobalSearch.jsx"));
+    const { container } = render(
+      React.createElement(GlobalSearch, {
+        entities: project.spec.entities,
+        onClose: () => {},
+        onJumpToEntity: () => {},
+        onJumpToRecord: () => {},
+      }),
+    );
+
+    const input = container.querySelector(".global-search-input") as HTMLInputElement;
+    await act(async () => {
+      fireEvent.change(input, { target: { value: "widget" } });
+      fireEvent.submit(container.querySelector("form.global-search-form")!);
+      await Promise.resolve();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    assert.equal(container.querySelectorAll(".global-search-hit-button").length, 5, "expected the default 5-row sample");
+
+    const showAllButton = container.querySelector(".global-search-show-all") as HTMLButtonElement | null;
+    assert.ok(showAllButton, "expected a 'Show all' button for the original 7-match count");
+
+    await act(async () => {
+      fireEvent.click(showAllButton!);
+      await Promise.resolve();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    assert.equal(
+      container.querySelectorAll(".global-search-group").length,
+      0,
+      "the Customer group must be removed entirely, not left stuck showing '0 results' with an empty list and no 'Show all' button to dismiss it",
+    );
+  } finally {
+    globalThis.fetch = originalFetch;
+    cleanup();
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+/**
  * Round 904: mirrors GlobalSearchPanel.test.ts's own new regression test.
  * Unlike runSearch (which clears `error` at its own start), the exported
  * app's handleShowAll only ever SET `error` (round 663) and never cleared

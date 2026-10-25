@@ -232,6 +232,15 @@ export function GlobalSearchPanel({
    * with zero visible indication anything went wrong, unlike runSearch's
    * own identical listRecords call just above, which already surfaces a
    * failure through this same error banner.
+   *
+   * Round 983: round 556's own totalMatches patch above only ever
+   * considered a fresh count that shrinks but stays positive -- when
+   * every one of this entity's previously-matching records has since
+   * been deleted or edited away, this entity's group is removed from
+   * `results` entirely instead, restoring runSearch's own invariant that
+   * a 0-match entity is never shown. See the removal branch's own
+   * comment inline for why patching to a literal 0 instead left a
+   * permanently stuck, empty group with no way to dismiss it.
    */
   async function handleShowAll(entityName: string) {
     const entity = entities.find((e) => e.name === entityName);
@@ -257,10 +266,32 @@ export function GlobalSearchPanel({
         lastRecordsByEntityRef.current,
         lang,
       );
-      setExpandedSamples((prev) => ({ ...prev, [entityName]: full?.sample ?? [] }));
-      setResults((prev) =>
-        prev.map((r) => (r.entityName === entityName ? { ...r, totalMatches: full?.sample.length ?? 0 } : r)),
-      );
+      if (!full) {
+        // Round 983: every one of this entity's previously-matching
+        // records has since been deleted or edited away (a collaborator,
+        // a WhatsApp-triggered automation write, another tab) -- there is
+        // nothing left to show. runSearch's own normal path already
+        // filters out any entity searchEntityRecords returns null for
+        // (a 0-match entity group is never supposed to be visible at
+        // all), but patching totalMatches to 0 here instead of removing
+        // the group left it rendered forever: the header still read "0
+        // results", the list was empty, and remaining (0 - 0) was never
+        // > 0 either, so the one button that reaches this code path
+        // never reappeared -- a permanently stuck, empty group with no
+        // way to dismiss it short of starting a brand-new search.
+        // Resetting selectedIndex too: removing an entry shifts every
+        // later index down, which could otherwise leave a keyboard-
+        // highlighted selection pointing past the end of the shrunk
+        // array (or at the wrong group), and Enter on an out-of-bounds
+        // index would throw.
+        setResults((prev) => prev.filter((r) => r.entityName !== entityName));
+        setSelectedIndex(null);
+      } else {
+        setExpandedSamples((prev) => ({ ...prev, [entityName]: full.sample }));
+        setResults((prev) =>
+          prev.map((r) => (r.entityName === entityName ? { ...r, totalMatches: full.sample.length } : r)),
+        );
+      }
       // Round 904: a failed "Show all" (just below) surfaces through this
       // same shared `error` banner -- succeeding on a later retry must
       // clear it, the same self-healing convention runSearch's own clear-
