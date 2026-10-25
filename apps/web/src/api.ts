@@ -439,10 +439,16 @@ export function updateProjectDescription(projectId: string, description: string)
  * Hebrew alike -- the browser already percent-encodes non-ASCII bytes on the
  * wire either way), so this changes nothing for any project that works today.
  */
+/** Round 960: same idempotency-key shape as removeField's own fix (round 941) -- a lost response after this rename already committed must replay that success on retry, not re-apply the same now-stale label a second time and silently revert a genuinely newer edit that landed in between. */
 export function renameEntityLabel(projectId: string, entityName: string, label: string): Promise<{ project: Project }> {
-  return request(`/projects/${projectId}/entities/${encodeURIComponent(entityName)}/label`, { method: "PATCH", body: JSON.stringify({ label }) });
+  return request(`/projects/${projectId}/entities/${encodeURIComponent(entityName)}/label`, {
+    method: "PATCH",
+    headers: { "x-idempotency-key": crypto.randomUUID() },
+    body: JSON.stringify({ label }),
+  });
 }
 
+/** Round 960: same idempotency-key shape as renameEntityLabel's own fix just above -- see its own comment. */
 export function renameFieldLabel(
   projectId: string,
   entityName: string,
@@ -451,6 +457,7 @@ export function renameFieldLabel(
 ): Promise<{ project: Project }> {
   return request(`/projects/${projectId}/entities/${encodeURIComponent(entityName)}/fields/${encodeURIComponent(fieldName)}/label`, {
     method: "PATCH",
+    headers: { "x-idempotency-key": crypto.randomUUID() },
     body: JSON.stringify({ label }),
   });
 }
@@ -487,6 +494,7 @@ export function removeField(projectId: string, entityName: string, fieldName: st
   });
 }
 
+/** Round 960: same idempotency-key shape as renameEntityLabel's own fix -- see its own comment. */
 export function setFieldRequired(
   projectId: string,
   entityName: string,
@@ -495,11 +503,14 @@ export function setFieldRequired(
 ): Promise<{ project: Project }> {
   return request(
     `/projects/${projectId}/entities/${encodeURIComponent(entityName)}/fields/${encodeURIComponent(fieldName)}/required`,
-    { method: "PATCH", body: JSON.stringify({ required }) },
+    { method: "PATCH", headers: { "x-idempotency-key": crypto.randomUUID() }, body: JSON.stringify({ required }) },
   );
 }
 
-/** See addField's own comment on the `enumValues` shape -- same comma-separated-string convention, split server-side. */
+/**
+ * See addField's own comment on the `enumValues` shape -- same comma-separated-string convention, split server-side.
+ * Round 960: same idempotency-key shape as renameEntityLabel's own fix -- see its own comment.
+ */
 export function setFieldType(
   projectId: string,
   entityName: string,
@@ -509,7 +520,7 @@ export function setFieldType(
 ): Promise<{ project: Project }> {
   return request(
     `/projects/${projectId}/entities/${encodeURIComponent(entityName)}/fields/${encodeURIComponent(fieldName)}/type`,
-    { method: "PATCH", body: JSON.stringify({ type, ...opts }) },
+    { method: "PATCH", headers: { "x-idempotency-key": crypto.randomUUID() }, body: JSON.stringify({ type, ...opts }) },
   );
 }
 

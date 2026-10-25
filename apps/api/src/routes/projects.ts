@@ -2336,6 +2336,23 @@ export function createProjectsRouter(
    * a request to .../entities/Customer/label is never mistaken for an
    * update to a record literally named "label".
    */
+  /**
+   * Round 960: same withIdempotency() extension, and the same reason, as
+   * the roles/assumptions/personas PATCH/DELETE routes (round 943) --
+   * this route reads project.spec, computes a targeted patch, and writes
+   * it back, with no idempotency protection at all. A response lost in
+   * transit after the server already committed the rename means
+   * fetchWithWakeRetry's automatic retry re-applies the SAME, now-stale
+   * label a second time -- harmless if nothing else changed, but if a
+   * genuinely different, newer edit to this exact entity's label landed
+   * in between (another collaborator, or this same user from a second
+   * tab), the retry silently reverts it back to the old value, with no
+   * error to either side. findEntity moves inside the callback (not just
+   * the mutation) since it reads live state that could have changed by
+   * the time a request actually runs; RenameEntityLabelSchema's own
+   * request-body-shape validation stays outside, matching every sibling
+   * PATCH route's established convention.
+   */
   router.patch(
     "/projects/:id/entities/:entityName/label",
     asyncRoute(async (req, res) => {
@@ -2348,17 +2365,27 @@ export function createProjectsRouter(
       if (activePipelines.has(project.id)) {
         throw new HttpError(409, "A build or refine is already running for this project", "PIPELINE_IN_PROGRESS");
       }
-      const entity = findEntity(project, req.params.entityName);
       const parsed = RenameEntityLabelSchema.safeParse(req.body);
       if (!parsed.success) {
         throw new HttpError(400, formatValidationError(parsed.error), "VALIDATION_ERROR");
       }
-      const nextSpec = {
-        ...project.spec,
-        entities: project.spec.entities.map((e) => (e.name === entity.name ? { ...e, label: parsed.data.label } : e)),
-      };
-      const updated = updateProjectSpec(db, project.id, nextSpec);
-      res.json({ project: updated });
+      const idempotencyKey = req.header("X-Idempotency-Key") || undefined;
+      const { status, body } = await withIdempotency(
+        db,
+        idempotencyKey,
+        req.userId!,
+        `PATCH /projects/${project.id}/entities/${req.params.entityName}/label`,
+        async () => {
+          const entity = findEntity(project, req.params.entityName);
+          const nextSpec = {
+            ...project.spec,
+            entities: project.spec.entities.map((e) => (e.name === entity.name ? { ...e, label: parsed.data.label } : e)),
+          };
+          const updated = updateProjectSpec(db, project.id, nextSpec);
+          return { status: 200, body: { project: updated } };
+        },
+      );
+      res.status(status).json(body);
     }),
   );
 
@@ -2372,6 +2399,7 @@ export function createProjectsRouter(
    * longer route -- unlike the entity-label route, there's no registration-
    * order concern here.
    */
+  /** Round 960: same withIdempotency() extension as the entity-label PATCH route just above -- see its own doc comment. */
   router.patch(
     "/projects/:id/entities/:entityName/fields/:fieldName/label",
     asyncRoute(async (req, res) => {
@@ -2381,22 +2409,32 @@ export function createProjectsRouter(
       if (activePipelines.has(project.id)) {
         throw new HttpError(409, "A build or refine is already running for this project", "PIPELINE_IN_PROGRESS");
       }
-      const entity = findEntity(project, req.params.entityName);
-      const field = findField(entity, req.params.fieldName);
       const parsed = RenameFieldLabelSchema.safeParse(req.body);
       if (!parsed.success) {
         throw new HttpError(400, formatValidationError(parsed.error), "VALIDATION_ERROR");
       }
-      const nextSpec = {
-        ...project.spec,
-        entities: project.spec.entities.map((e) =>
-          e.name === entity.name
-            ? { ...e, fields: e.fields.map((f) => (f.name === field.name ? { ...f, label: parsed.data.label } : f)) }
-            : e,
-        ),
-      };
-      const updated = updateProjectSpec(db, project.id, nextSpec);
-      res.json({ project: updated });
+      const idempotencyKey = req.header("X-Idempotency-Key") || undefined;
+      const { status, body } = await withIdempotency(
+        db,
+        idempotencyKey,
+        req.userId!,
+        `PATCH /projects/${project.id}/entities/${req.params.entityName}/fields/${req.params.fieldName}/label`,
+        async () => {
+          const entity = findEntity(project, req.params.entityName);
+          const field = findField(entity, req.params.fieldName);
+          const nextSpec = {
+            ...project.spec,
+            entities: project.spec.entities.map((e) =>
+              e.name === entity.name
+                ? { ...e, fields: e.fields.map((f) => (f.name === field.name ? { ...f, label: parsed.data.label } : f)) }
+                : e,
+            ),
+          };
+          const updated = updateProjectSpec(db, project.id, nextSpec);
+          return { status: 200, body: { project: updated } };
+        },
+      );
+      res.status(status).json(body);
     }),
   );
 
@@ -2411,6 +2449,7 @@ export function createProjectsRouter(
    * never touches a real column -- pre-build only, same gate as every
    * other field-shape route here).
    */
+  /** Round 960: same withIdempotency() extension as the entity-label PATCH route above -- see its own doc comment. */
   router.patch(
     "/projects/:id/entities/:entityName/fields/:fieldName/required",
     asyncRoute(async (req, res) => {
@@ -2421,22 +2460,32 @@ export function createProjectsRouter(
       if (activePipelines.has(project.id)) {
         throw new HttpError(409, "A build or refine is already running for this project", "PIPELINE_IN_PROGRESS");
       }
-      const entity = findEntity(project, req.params.entityName);
-      const field = findField(entity, req.params.fieldName);
       const parsed = SetFieldRequiredSchema.safeParse(req.body);
       if (!parsed.success) {
         throw new HttpError(400, formatValidationError(parsed.error), "VALIDATION_ERROR");
       }
-      const nextSpec = {
-        ...project.spec,
-        entities: project.spec.entities.map((e) =>
-          e.name === entity.name
-            ? { ...e, fields: e.fields.map((f) => (f.name === field.name ? { ...f, required: parsed.data.required } : f)) }
-            : e,
-        ),
-      };
-      const updated = updateProjectSpec(db, project.id, nextSpec);
-      res.json({ project: updated });
+      const idempotencyKey = req.header("X-Idempotency-Key") || undefined;
+      const { status, body } = await withIdempotency(
+        db,
+        idempotencyKey,
+        req.userId!,
+        `PATCH /projects/${project.id}/entities/${req.params.entityName}/fields/${req.params.fieldName}/required`,
+        async () => {
+          const entity = findEntity(project, req.params.entityName);
+          const field = findField(entity, req.params.fieldName);
+          const nextSpec = {
+            ...project.spec,
+            entities: project.spec.entities.map((e) =>
+              e.name === entity.name
+                ? { ...e, fields: e.fields.map((f) => (f.name === field.name ? { ...f, required: parsed.data.required } : f)) }
+                : e,
+            ),
+          };
+          const updated = updateProjectSpec(db, project.id, nextSpec);
+          return { status: 200, body: { project: updated } };
+        },
+      );
+      res.status(status).json(body);
     }),
   );
 
@@ -2479,6 +2528,7 @@ export function createProjectsRouter(
    * losing it. Only a genuinely removed value (no match either way) drops
    * its label; a genuinely new value stays unlabeled, same as before.
    */
+  /** Round 960: same withIdempotency() extension as the entity-label PATCH route above -- see its own doc comment. */
   router.patch(
     "/projects/:id/entities/:entityName/fields/:fieldName/type",
     asyncRoute(async (req, res) => {
@@ -2489,8 +2539,6 @@ export function createProjectsRouter(
       if (activePipelines.has(project.id)) {
         throw new HttpError(409, "A build or refine is already running for this project", "PIPELINE_IN_PROGRESS");
       }
-      const entity = findEntity(project, req.params.entityName);
-      const field = findField(entity, req.params.fieldName);
       const parsed = SetFieldTypeSchema.safeParse(req.body);
       if (!parsed.success) {
         throw new HttpError(400, formatValidationError(parsed.error), "VALIDATION_ERROR");
@@ -2498,42 +2546,54 @@ export function createProjectsRouter(
       if (parsed.data.type === "relation" && !project.spec.entities.some((e) => e.name === parsed.data.relationTo)) {
         throw new HttpError(400, `"${parsed.data.relationTo}" is not an entity in this project`, "RELATION_TARGET_NOT_FOUND");
       }
-      const nextSpec = {
-        ...project.spec,
-        entities: project.spec.entities.map((e) =>
-          e.name === entity.name
-            ? {
-                ...e,
-                fields: e.fields.map((f) =>
-                  f.name === field.name
-                    ? {
-                        ...f,
-                        type: parsed.data.type,
-                        enumValues: parsed.data.type === "enum" ? parsed.data.enumValues : undefined,
-                        enumLabels:
-                          parsed.data.type === "enum" && f.enumLabels
-                            ? (() => {
-                                const prevLabelsByLowerValue = new Map(
-                                  Object.entries(f.enumLabels!).map(([value, label]) => [value.toLowerCase(), label]),
-                                );
-                                const next: Record<string, string> = {};
-                                for (const value of parsed.data.enumValues!) {
-                                  const label = f.enumLabels![value] ?? prevLabelsByLowerValue.get(value.toLowerCase());
-                                  if (label !== undefined) next[value] = label;
-                                }
-                                return next;
-                              })()
-                            : undefined,
-                        relationTo: parsed.data.type === "relation" ? parsed.data.relationTo : undefined,
-                      }
-                    : f,
-                ),
-              }
-            : e,
-        ),
-      };
-      const updated = updateProjectSpec(db, project.id, nextSpec);
-      res.json({ project: updated });
+      const idempotencyKey = req.header("X-Idempotency-Key") || undefined;
+      const { status, body } = await withIdempotency(
+        db,
+        idempotencyKey,
+        req.userId!,
+        `PATCH /projects/${project.id}/entities/${req.params.entityName}/fields/${req.params.fieldName}/type`,
+        async () => {
+          const entity = findEntity(project, req.params.entityName);
+          const field = findField(entity, req.params.fieldName);
+          const nextSpec = {
+            ...project.spec,
+            entities: project.spec.entities.map((e) =>
+              e.name === entity.name
+                ? {
+                    ...e,
+                    fields: e.fields.map((f) =>
+                      f.name === field.name
+                        ? {
+                            ...f,
+                            type: parsed.data.type,
+                            enumValues: parsed.data.type === "enum" ? parsed.data.enumValues : undefined,
+                            enumLabels:
+                              parsed.data.type === "enum" && f.enumLabels
+                                ? (() => {
+                                    const prevLabelsByLowerValue = new Map(
+                                      Object.entries(f.enumLabels!).map(([value, label]) => [value.toLowerCase(), label]),
+                                    );
+                                    const next: Record<string, string> = {};
+                                    for (const value of parsed.data.enumValues!) {
+                                      const label = f.enumLabels![value] ?? prevLabelsByLowerValue.get(value.toLowerCase());
+                                      if (label !== undefined) next[value] = label;
+                                    }
+                                    return next;
+                                  })()
+                                : undefined,
+                            relationTo: parsed.data.type === "relation" ? parsed.data.relationTo : undefined,
+                          }
+                        : f,
+                    ),
+                  }
+                : e,
+            ),
+          };
+          const updated = updateProjectSpec(db, project.id, nextSpec);
+          return { status: 200, body: { project: updated } };
+        },
+      );
+      res.status(status).json(body);
     }),
   );
 

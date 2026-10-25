@@ -3993,6 +3993,64 @@ test("renaming an entity's label rejects an empty or whitespace-only value", asy
   });
 });
 
+/**
+ * Round 960: same withIdempotency gap, and the same fix, as the roles/
+ * assumptions/personas PATCH routes (round 943) -- this route reads
+ * project.spec and writes it back with no protection at all. A response
+ * lost in transit after the rename already committed meant
+ * fetchWithWakeRetry's automatic retry re-applied the SAME, now-stale
+ * label a second time -- if a genuinely newer edit to this exact entity's
+ * label landed in between, the retry silently reverted it back to the old
+ * value, with no error to either side.
+ */
+test("PATCH .../entities/:entityName/label retried with the same idempotency key after a newer edit landed in between replays the original response, instead of reverting the newer edit back to the stale value", async () => {
+  await withServer(async (baseUrl) => {
+    const token = await signup(baseUrl, "entity-label-idem@example.com");
+    const createRes = await fetch(`${baseUrl}/api/projects`, {
+      method: "POST",
+      headers: authHeaders(token),
+      body: JSON.stringify({ description: "A CRM with customers and deals." }),
+    });
+    const { project } = (await createRes.json()) as { project: { id: string; spec: { entities: { name: string }[] } } };
+    const entityName = project.spec.entities[0].name;
+
+    const headers = { ...authHeaders(token), "x-idempotency-key": "entity-label-repro-key" };
+    const firstRes = await fetch(`${baseUrl}/api/projects/${project.id}/entities/${entityName}/label`, {
+      method: "PATCH",
+      headers,
+      body: JSON.stringify({ label: "Stale Label" }),
+    });
+    assert.equal(firstRes.status, 200);
+    const firstBody = await firstRes.json();
+
+    // A genuinely newer edit lands in between -- a different request, no
+    // idempotency key, exactly like a second browser tab or a different
+    // collaborator would send.
+    const newerRes = await fetch(`${baseUrl}/api/projects/${project.id}/entities/${entityName}/label`, {
+      method: "PATCH",
+      headers: authHeaders(token),
+      body: JSON.stringify({ label: "Fresher Label" }),
+    });
+    assert.equal(newerRes.status, 200);
+
+    const retryRes = await fetch(`${baseUrl}/api/projects/${project.id}/entities/${entityName}/label`, {
+      method: "PATCH",
+      headers,
+      body: JSON.stringify({ label: "Stale Label" }),
+    });
+    assert.equal(retryRes.status, 200);
+    assert.deepEqual(await retryRes.json(), firstBody, "a retry with the same idempotency key must replay the original response verbatim, not re-run the mutation");
+
+    const getRes = await fetch(`${baseUrl}/api/projects/${project.id}`, { headers: authHeaders(token) });
+    const { project: current } = (await getRes.json()) as { project: { spec: { entities: { name: string; label?: string }[] } } };
+    assert.equal(
+      current.spec.entities.find((e) => e.name === entityName)!.label,
+      "Fresher Label",
+      "the retry must never revert the genuinely newer edit back to the stale label",
+    );
+  });
+});
+
 test("renaming a non-existent entity's label 404s, the same as any other entity route", async () => {
   await withServer(async (baseUrl) => {
     const token = await signup(baseUrl, "entity-label-owner3@example.com");
@@ -4086,6 +4144,54 @@ test("the owner can rename a field's display label, and a collaborator can too -
     };
     const collabField = relabeledByCollab.spec.entities.find((e) => e.name === entityName)!.fields.find((f) => f.name === fieldName)!;
     assert.equal(collabField.label, "Relabeled by the collaborator");
+  });
+});
+
+/** Round 960: same withIdempotency gap, and the same fix, as the entity-label PATCH route's own round-960 fix just above -- see its own comment. */
+test("PATCH .../fields/:fieldName/label retried with the same idempotency key after a newer edit landed in between replays the original response, instead of reverting the newer edit back to the stale value", async () => {
+  await withServer(async (baseUrl) => {
+    const token = await signup(baseUrl, "field-label-idem@example.com");
+    const createRes = await fetch(`${baseUrl}/api/projects`, {
+      method: "POST",
+      headers: authHeaders(token),
+      body: JSON.stringify({ description: "A CRM with customers and deals." }),
+    });
+    const { project } = (await createRes.json()) as {
+      project: { id: string; spec: { entities: { name: string; fields: { name: string }[] }[] } };
+    };
+    const entityName = project.spec.entities[0].name;
+    const fieldName = project.spec.entities[0].fields[0].name;
+
+    const headers = { ...authHeaders(token), "x-idempotency-key": "field-label-repro-key" };
+    const firstRes = await fetch(`${baseUrl}/api/projects/${project.id}/entities/${entityName}/fields/${fieldName}/label`, {
+      method: "PATCH",
+      headers,
+      body: JSON.stringify({ label: "Stale Label" }),
+    });
+    assert.equal(firstRes.status, 200);
+    const firstBody = await firstRes.json();
+
+    const newerRes = await fetch(`${baseUrl}/api/projects/${project.id}/entities/${entityName}/fields/${fieldName}/label`, {
+      method: "PATCH",
+      headers: authHeaders(token),
+      body: JSON.stringify({ label: "Fresher Label" }),
+    });
+    assert.equal(newerRes.status, 200);
+
+    const retryRes = await fetch(`${baseUrl}/api/projects/${project.id}/entities/${entityName}/fields/${fieldName}/label`, {
+      method: "PATCH",
+      headers,
+      body: JSON.stringify({ label: "Stale Label" }),
+    });
+    assert.equal(retryRes.status, 200);
+    assert.deepEqual(await retryRes.json(), firstBody, "a retry with the same idempotency key must replay the original response verbatim, not re-run the mutation");
+
+    const getRes = await fetch(`${baseUrl}/api/projects/${project.id}`, { headers: authHeaders(token) });
+    const { project: current } = (await getRes.json()) as {
+      project: { spec: { entities: { name: string; fields: { name: string; label?: string }[] }[] } };
+    };
+    const currentField = current.spec.entities.find((e) => e.name === entityName)!.fields.find((f) => f.name === fieldName)!;
+    assert.equal(currentField.label, "Fresher Label", "the retry must never revert the genuinely newer edit back to the stale label");
   });
 });
 
@@ -6066,6 +6172,54 @@ test("PATCH .../fields/:fieldName/required toggles an existing field's required 
   });
 });
 
+/** Round 960: same withIdempotency gap, and the same fix, as the entity-label PATCH route's own round-960 fix above -- see its own comment. */
+test("PATCH .../fields/:fieldName/required retried with the same idempotency key after a newer edit landed in between replays the original response, instead of reverting the newer edit back to the stale value", async () => {
+  await withServer(async (baseUrl) => {
+    const token = await signup(baseUrl, "field-required-idem@example.com");
+    const createRes = await fetch(`${baseUrl}/api/projects`, {
+      method: "POST",
+      headers: authHeaders(token),
+      body: JSON.stringify({ description: "A CRM with customers and deals." }),
+    });
+    const { project } = (await createRes.json()) as {
+      project: { id: string; spec: { entities: { name: string; fields: { name: string; required: boolean }[] }[] } };
+    };
+    const entityName = project.spec.entities[0].name;
+    const fieldName = project.spec.entities[0].fields[0].name;
+
+    const headers = { ...authHeaders(token), "x-idempotency-key": "field-required-repro-key" };
+    const firstRes = await fetch(`${baseUrl}/api/projects/${project.id}/entities/${entityName}/fields/${fieldName}/required`, {
+      method: "PATCH",
+      headers,
+      body: JSON.stringify({ required: true }),
+    });
+    assert.equal(firstRes.status, 200);
+    const firstBody = await firstRes.json();
+
+    const newerRes = await fetch(`${baseUrl}/api/projects/${project.id}/entities/${entityName}/fields/${fieldName}/required`, {
+      method: "PATCH",
+      headers: authHeaders(token),
+      body: JSON.stringify({ required: false }),
+    });
+    assert.equal(newerRes.status, 200);
+
+    const retryRes = await fetch(`${baseUrl}/api/projects/${project.id}/entities/${entityName}/fields/${fieldName}/required`, {
+      method: "PATCH",
+      headers,
+      body: JSON.stringify({ required: true }),
+    });
+    assert.equal(retryRes.status, 200);
+    assert.deepEqual(await retryRes.json(), firstBody, "a retry with the same idempotency key must replay the original response verbatim, not re-run the mutation");
+
+    const getRes = await fetch(`${baseUrl}/api/projects/${project.id}`, { headers: authHeaders(token) });
+    const { project: current } = (await getRes.json()) as {
+      project: { spec: { entities: { name: string; fields: { name: string; required: boolean }[] }[] } };
+    };
+    const currentField = current.spec.entities.find((e) => e.name === entityName)!.fields.find((f) => f.name === fieldName)!;
+    assert.equal(currentField.required, false, "the retry must never revert the genuinely newer edit back to the stale required value");
+  });
+});
+
 /**
  * Round 676: type/required/enumValues could only ever be set when a field
  * was first created (round 675) -- an existing field's type was otherwise
@@ -6110,6 +6264,55 @@ test("PATCH .../fields/:fieldName/type changes a plain field's type directly, an
     });
     assert.equal(afterBuildRes.status, 409);
     assert.equal(((await afterBuildRes.json()) as { code?: string }).code, "FIELD_EDIT_AFTER_BUILD");
+  });
+});
+
+/** Round 960: same withIdempotency gap, and the same fix, as the entity-label PATCH route's own round-960 fix above -- see its own comment. */
+test("PATCH .../fields/:fieldName/type retried with the same idempotency key after a newer edit landed in between replays the original response, instead of reverting the newer edit back to the stale type", async () => {
+  await withServer(async (baseUrl) => {
+    const token = await signup(baseUrl, "field-type-idem@example.com");
+    const createRes = await fetch(`${baseUrl}/api/projects`, {
+      method: "POST",
+      headers: authHeaders(token),
+      body: JSON.stringify({ description: "A CRM with customers and deals." }),
+    });
+    const { project } = (await createRes.json()) as {
+      project: { id: string; spec: { entities: { name: string; fields: { name: string; type: string }[] }[] } };
+    };
+    const entityName = project.spec.entities[0].name;
+    const fieldName = project.spec.entities[0].fields[0].name;
+    assert.equal(project.spec.entities[0].fields[0].type, "text");
+
+    const headers = { ...authHeaders(token), "x-idempotency-key": "field-type-repro-key" };
+    const firstRes = await fetch(`${baseUrl}/api/projects/${project.id}/entities/${entityName}/fields/${fieldName}/type`, {
+      method: "PATCH",
+      headers,
+      body: JSON.stringify({ type: "number" }),
+    });
+    assert.equal(firstRes.status, 200);
+    const firstBody = await firstRes.json();
+
+    const newerRes = await fetch(`${baseUrl}/api/projects/${project.id}/entities/${entityName}/fields/${fieldName}/type`, {
+      method: "PATCH",
+      headers: authHeaders(token),
+      body: JSON.stringify({ type: "date" }),
+    });
+    assert.equal(newerRes.status, 200);
+
+    const retryRes = await fetch(`${baseUrl}/api/projects/${project.id}/entities/${entityName}/fields/${fieldName}/type`, {
+      method: "PATCH",
+      headers,
+      body: JSON.stringify({ type: "number" }),
+    });
+    assert.equal(retryRes.status, 200);
+    assert.deepEqual(await retryRes.json(), firstBody, "a retry with the same idempotency key must replay the original response verbatim, not re-run the mutation");
+
+    const getRes = await fetch(`${baseUrl}/api/projects/${project.id}`, { headers: authHeaders(token) });
+    const { project: current } = (await getRes.json()) as {
+      project: { spec: { entities: { name: string; fields: { name: string; type: string }[] }[] } };
+    };
+    const currentField = current.spec.entities.find((e) => e.name === entityName)!.fields.find((f) => f.name === fieldName)!;
+    assert.equal(currentField.type, "date", "the retry must never revert the genuinely newer edit back to the stale type");
   });
 });
 
