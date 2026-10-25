@@ -525,14 +525,47 @@ export function disableAutomationRulesForEntity(db: ForgeDatabase, projectId: st
 }
 
 /**
+ * Mirrors apps/api/src/automations.ts's own interpolateTemplate placeholder
+ * regex exactly (hand-duplicated rather than imported: apps/api depends on
+ * this package, never the other way around, the same cross-package-boundary
+ * duplication convention this codebase already uses for entityLabelOccurrences/
+ * entityDisplayLabel across several consuming modules). Extracting every
+ * placeholder name and checking set membership, rather than building a
+ * per-field RegExp from untrusted interpolation, also sidesteps any regex-
+ * injection risk from a field name containing a regex metacharacter.
+ */
+function templateReferencesField(template: string, fieldName: string): boolean {
+  for (const match of template.matchAll(/\{\{\s*([a-zA-Z0-9_]+)\s*\}\}/g)) {
+    if (match[1] === fieldName) return true;
+  }
+  return false;
+}
+
+/**
  * Called from diffAndMigrate for a field removed from a surviving entity.
- * A rule can reference a field two ways -- as the field_equals trigger's
- * own fieldName, or as a toMode: "field" destination's toField -- so both
- * are checked. Scoped by entityName too, the same way
- * disableAutomationRulesForEntity is, since fieldName/toField are plain
- * strings that could otherwise coincide with an unrelated entity's own
- * field of the same name. Disables rather than deletes for the same
- * restore-safety reason as disableAutomationRulesForEntity above.
+ * A rule can reference a field three ways -- as the field_equals trigger's
+ * own fieldName, as a toMode: "field" destination's toField, or as a
+ * "{{fieldName}}" placeholder inside messageTemplate -- so all three are
+ * checked. Round 961: the messageTemplate case was missing entirely --
+ * unlike a trigger/toField reference to a since-removed field (which the
+ * record routes that would fire it harmlessly 404 on via findEntity/
+ * findField), interpolateTemplate (apps/api/src/automations.ts) fails OPEN
+ * on a missing field: `record[fieldName]` is undefined once rowToRecord
+ * stops copying a column no field in the current spec names (migrations
+ * are additive-only, so the physical column survives, but EntityRecord
+ * never gets a key for it), and interpolateTemplate's own replacer
+ * function returns the literal unresolved "{{fieldName}}" text rather than
+ * failing -- so a record_created/schedule rule whose trigger is on a
+ * DIFFERENT field, but whose messageTemplate names the removed one, kept
+ * firing forever, recording a normal "sent" run while actually sending
+ * "Hi Dana, your order {{orderId}} is ready!" to a real WhatsApp contact,
+ * with zero warning anywhere.
+ *
+ * Scoped by entityName too, the same way disableAutomationRulesForEntity
+ * is, since fieldName/toField/a placeholder name are plain strings that
+ * could otherwise coincide with an unrelated entity's own field of the
+ * same name. Disables rather than deletes for the same restore-safety
+ * reason as disableAutomationRulesForEntity above.
  *
  * Returns the number of rules actually disabled, same reason as
  * disableAutomationRulesForEntity's own return value.
@@ -543,8 +576,21 @@ export function disableAutomationRulesForField(
   entityName: string,
   fieldName: string,
 ): number {
-  const result = db
-    .prepare("UPDATE automation_rules SET enabled = 0, updatedAt = ? WHERE projectId = ? AND entityName = ? AND (fieldName = ? OR toField = ?)")
-    .run(new Date().toISOString(), projectId, entityName, fieldName, fieldName);
-  return Number(result.changes);
+  const now = new Date().toISOString();
+  const directResult = db
+    .prepare("UPDATE automation_rules SET enabled = 0, updatedAt = ? WHERE projectId = ? AND entityName = ? AND enabled = 1 AND (fieldName = ? OR toField = ?)")
+    .run(now, projectId, entityName, fieldName, fieldName);
+  // A second, separate pass: only the rules the direct UPDATE above didn't
+  // already catch (enabled = 1 still holds, since that update just ran)
+  // need their messageTemplate inspected in JS -- SQLite has no portable
+  // regex support to express "contains this placeholder, allowing internal
+  // whitespace" directly in SQL.
+  const candidates = db
+    .prepare("SELECT id, messageTemplate FROM automation_rules WHERE projectId = ? AND entityName = ? AND enabled = 1")
+    .all(projectId, entityName) as { id: string; messageTemplate: string }[];
+  const templateMatchIds = candidates.filter((r) => templateReferencesField(r.messageTemplate, fieldName)).map((r) => r.id);
+  for (const id of templateMatchIds) {
+    db.prepare("UPDATE automation_rules SET enabled = 0, updatedAt = ? WHERE id = ?").run(now, id);
+  }
+  return Number(directResult.changes) + templateMatchIds.length;
 }

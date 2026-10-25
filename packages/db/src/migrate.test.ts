@@ -1502,6 +1502,84 @@ test("diffAndMigrate disables an automation rule referencing a field removed fro
 });
 
 /**
+ * Round 961: disableAutomationRulesForField only ever checked a rule's
+ * trigger fieldName or toMode:"field" destination toField -- never its
+ * messageTemplate. A record_created/schedule rule whose TRIGGER is on a
+ * totally different, surviving field, but whose messageTemplate names
+ * "{{status}}" (the field this refine removes), stayed fully enabled and
+ * kept firing: interpolateTemplate (apps/api/src/automations.ts) fails
+ * OPEN on a value that's gone missing from the record rather than
+ * throwing, leaving the literal unresolved "{{status}}" text in every
+ * future send with zero warning. Also confirms the whitespace-tolerant
+ * "{{ status }}" placeholder form (interpolateTemplate's own regex allows
+ * internal whitespace) is matched the same way, and that a rule whose
+ * template merely contains the SUBSTRING "status" without the "{{...}}"
+ * placeholder wrapper is correctly left alone.
+ */
+test("diffAndMigrate disables an automation rule whose messageTemplate references a field removed from a surviving entity, even when the rule's own trigger is on a different field entirely", () => {
+  const db = openDatabase(":memory:");
+  ensureAutomationRulesTable(db);
+  applyMigrations(db, "proj1", spec);
+  const templateReferenceRule = insertAutomationRule(db, {
+    projectId: "proj1",
+    entityName: "Customer",
+    trigger: "record_created",
+    actionType: "send_whatsapp",
+    toMode: "static",
+    toNumber: "+15551234567",
+    messageTemplate: "Hi {{name}}, your status is {{status}}!",
+  });
+  const whitespacePlaceholderRule = insertAutomationRule(db, {
+    projectId: "proj1",
+    entityName: "Customer",
+    trigger: "record_created",
+    actionType: "send_whatsapp",
+    toMode: "static",
+    toNumber: "+15551234567",
+    messageTemplate: "Hi {{name}}, your status is {{ status }}!",
+  });
+  // Mentions the word "status" in plain prose, never as a "{{status}}"
+  // placeholder -- must survive untouched, proving this isn't just a
+  // naive substring search.
+  const plainWordRule = insertAutomationRule(db, {
+    projectId: "proj1",
+    entityName: "Customer",
+    trigger: "record_created",
+    actionType: "send_whatsapp",
+    toMode: "static",
+    toNumber: "+15551234567",
+    messageTemplate: "Thanks for checking your status on our site!",
+  });
+
+  const nextSpec: ProductSpec = {
+    ...spec,
+    entities: [{ ...spec.entities[0], fields: spec.entities[0].fields.filter((f) => f.name !== "status") }, spec.entities[1]],
+  };
+  const changes = diffAndMigrate(db, "proj1", spec, nextSpec);
+
+  assert.equal(
+    getAutomationRule(db, "proj1", templateReferenceRule.id)!.enabled,
+    false,
+    "a rule whose messageTemplate references the removed field must be disabled, even though its own trigger is on a different field",
+  );
+  assert.equal(
+    getAutomationRule(db, "proj1", whitespacePlaceholderRule.id)!.enabled,
+    false,
+    "the whitespace-tolerant '{{ status }}' placeholder form must be matched the same way interpolateTemplate's own regex matches it",
+  );
+  assert.equal(
+    getAutomationRule(db, "proj1", plainWordRule.id)!.enabled,
+    true,
+    "a rule that merely mentions the word 'status' in prose, never as a {{status}} placeholder, must not be disabled",
+  );
+  assert.deepEqual(
+    changes.filter((c) => c.type === "automation_rule_disabled"),
+    [{ type: "automation_rule_disabled", table: "entity_proj1_Customer", column: "status", disabledCount: 2 }],
+    "the two genuinely-matching rules must be reported as one combined migration hazard, not silently discarded",
+  );
+});
+
+/**
  * Round 620: this same automation-disable sweep's own nextFieldNames
  * lookup is exact-string, the identical mistake rounds 617/618 already
  * fixed for the main per-field diff loop earlier in diffAndMigrate
