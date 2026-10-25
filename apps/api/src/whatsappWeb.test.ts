@@ -698,6 +698,66 @@ test("connect() waits for a concurrent disconnect()'s auth-dir cleanup to finish
   assert.equal(createSocketCalls, 2, "connect() must proceed once cleanup has actually finished");
 });
 
+/**
+ * Round 990: the test just above only ever exercises ONE connect() racing
+ * ONE disconnect()'s own pending cleanup -- that single caller correctly
+ * awaits pendingCleanup and then proceeds safely, since nothing else
+ * touched the session map while it waited. Before this round's fix, a
+ * SECOND connect() landing in the exact same cleanup window read `existing`
+ * as undefined too (it's read once, before the pendingCleanup await, and
+ * never re-checked after resuming), passed the same guard, and awaited the
+ * identical pendingCleanup promise -- so when it resolved, BOTH calls'
+ * continuations went on to build their own fresh session and call
+ * createSocket() concurrently against the same auth directory, before
+ * either one's own identity check could react. Two real project
+ * collaborators clicking "Connect" near-simultaneously shortly after
+ * either disconnects reaches this exact window -- the frontend's own
+ * per-tab disable state only prevents one tab from firing two connects
+ * itself, not two different callers racing the same backend manager.
+ */
+test("two connect() calls landing in the same disconnect-cleanup window join a single connect attempt, instead of both calling createSocket against the same auth directory", async () => {
+  const db = openDatabase(":memory:");
+  ensureProjectsTable(db);
+  ensureWhatsAppConnectionsTable(db);
+  ensureWhatsAppMessagesTable(db);
+
+  let resolveRemoveAuthDir!: () => void;
+  let createSocketCalls = 0;
+  const manager = new WhatsAppWebManager({
+    db,
+    sessionsRootDir: "/tmp/forge-whatsapp-test-sessions-double-connect",
+    createSocket: async () => {
+      createSocketCalls++;
+      return { sock: createFakeSocket().sock, saveCreds: async () => {} };
+    },
+    qrToDataUrl: async (qr) => `data:image/png;base64,FAKE(${qr})`,
+    removeAuthDir: () => new Promise((resolve) => { resolveRemoveAuthDir = resolve; }),
+  });
+
+  await manager.connect("proj1");
+  assert.equal(createSocketCalls, 1, "sanity check: the initial connect must have created one socket");
+  void manager.disconnect("proj1");
+  // Let disconnect() run past its own logout() call and reach the point
+  // where it deletes the session and starts the (held-open) cleanup.
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(manager.getStatus("proj1").status, "disconnected", "status must flip before cleanup finishes");
+
+  // Two SEPARATE callers both arrive while the exact same cleanup is still pending.
+  const connectA = manager.connect("proj1");
+  const connectB = manager.connect("proj1");
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(createSocketCalls, 1, "neither connect() call must have created a socket yet -- cleanup is still pending");
+
+  resolveRemoveAuthDir();
+  await Promise.all([connectA, connectB]);
+
+  assert.equal(
+    createSocketCalls,
+    2,
+    "exactly one new socket must be created for this pair of concurrent calls, not two racing createSocket() calls against the same auth directory",
+  );
+});
+
 test("a DB error inside a connection.update handler is caught, recorded on the session, and never escapes as an unhandled promise rejection", async () => {
   const { manager, createdSockets, db } = setupManager();
   const unhandled: unknown[] = [];

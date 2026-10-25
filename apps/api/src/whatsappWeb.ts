@@ -309,6 +309,36 @@ export class WhatsAppWebManager {
     const pendingCleanup = this.pendingCleanup.get(projectId);
     if (pendingCleanup) await pendingCleanup;
 
+    // Round 990: `existing` above was read and checked BEFORE this await --
+    // a real suspension point -- and never re-checked after resuming. Two
+    // connect() calls landing in the same disconnect-cleanup window (two
+    // collaborators both clicking Connect near-simultaneously shortly after
+    // a disconnect, or one impatiently double-clicking across two tabs --
+    // the frontend's own per-tab disable state only ever prevents the FIRST
+    // of those) both read `existing` as undefined, both pass the guard
+    // above, and both await this exact same pendingCleanup promise. Without
+    // re-checking here, BOTH would then build their own fresh session and
+    // call runConnectAttempt -> createSocket() -> useMultiFileAuthState()
+    // concurrently against the identical auth directory on disk, before
+    // runConnectAttempt's own identity check (below) ever gets a chance to
+    // react -- two real Baileys sockets racing to read/write the same
+    // credential files. Checking pendingConnect (rather than just
+    // `sessions`) is what actually closes the gap: whichever caller's
+    // continuation resumes first runs everything from here through this
+    // function's own `pendingConnect.set` below with no further await in
+    // between, so that registration is always visible to every other
+    // caller's continuation before any of them gets a turn to run --
+    // ordinary single-threaded JS semantics, not a new assumption.
+    const alreadyConnecting = this.pendingConnect.get(projectId);
+    if (alreadyConnecting) {
+      await alreadyConnecting;
+      return this.getStatus(projectId);
+    }
+    const nowExisting = this.sessions.get(projectId);
+    if (nowExisting && nowExisting.status !== "disconnected") {
+      return this.getStatus(projectId);
+    }
+
     const session: ManagedSession = { sock: null, status: "connecting", qrDataUrl: null, phoneNumber: null, error: null };
     this.sessions.set(projectId, session);
 
