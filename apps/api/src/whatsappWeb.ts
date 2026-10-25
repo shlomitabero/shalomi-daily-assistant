@@ -77,7 +77,14 @@ export interface WhatsAppSocket {
     on(event: "messages.upsert", listener: (upsert: BaileysMessagesUpsert) => void): void;
   };
   user?: { id: string } | null;
-  sendMessage(jid: string, content: { text: string } | { document: Buffer; mimetype: string; fileName: string; caption?: string }): Promise<unknown>;
+  sendMessage(
+    jid: string,
+    content:
+      | { text: string }
+      | { document: Buffer; mimetype: string; fileName: string; caption?: string }
+      | { image: Buffer; mimetype: string; caption?: string }
+      | { video: Buffer; mimetype: string; caption?: string },
+  ): Promise<unknown>;
   logout(): Promise<void>;
 }
 
@@ -576,7 +583,25 @@ export class WhatsAppWebManager {
       // send FAILURE the way a genuine Baileys/network error below does.
       const fileBuffer = attachment ? await readFile(attachment.filePath).catch(() => null) : null;
       if (fileBuffer && attachment) {
-        await session.sock.sendMessage(jid, { document: fileBuffer, mimetype: attachment.mimeType, fileName: attachment.fileName, caption: body });
+        // Round 965: a photo/video attachment sent as a generic "document"
+        // renders in the recipient's real WhatsApp client as a plain
+        // download/file icon with the filename, not an inline, chat-
+        // rendered thumbnail/preview -- a real degradation for exactly the
+        // use case a "file" field attached to an automation was built for
+        // (shipping photos, menu images, damage reports). Baileys itself
+        // (the real library this interface's own doc comment says this is
+        // "the slice of" -- see WhatsAppSocket above) natively supports
+        // `{ image: ... }`/`{ video: ... }` content for this; only a
+        // mimeType this app doesn't recognize as either still falls back to
+        // the generic document shape, which is the correct choice for an
+        // actual document (PDF, spreadsheet, etc.).
+        if (attachment.mimeType.startsWith("image/")) {
+          await session.sock.sendMessage(jid, { image: fileBuffer, mimetype: attachment.mimeType, caption: body });
+        } else if (attachment.mimeType.startsWith("video/")) {
+          await session.sock.sendMessage(jid, { video: fileBuffer, mimetype: attachment.mimeType, caption: body });
+        } else {
+          await session.sock.sendMessage(jid, { document: fileBuffer, mimetype: attachment.mimeType, fileName: attachment.fileName, caption: body });
+        }
       } else {
         await session.sock.sendMessage(jid, { text: body });
       }

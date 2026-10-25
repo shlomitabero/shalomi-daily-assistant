@@ -112,7 +112,10 @@ async function withServer(
 function createFakeWhatsAppSocket(opts?: { logout?: () => Promise<void>; sendMessage?: () => Promise<void> }) {
   let connectionUpdateHandler: ((u: BaileysConnectionUpdate) => void) | undefined;
   let messagesUpsertHandler: ((u: BaileysMessagesUpsert) => void) | undefined;
-  const sendCalls: { jid: string; text: string }[] = [];
+  // `content` (round 965) is the full, real content object sendMessage
+  // received -- the `text`/`document`/`image`/`video` shape -- alongside
+  // `text`, kept for every existing caller's own convenience.
+  const sendCalls: { jid: string; text?: string; content: Parameters<WhatsAppSocket["sendMessage"]>[1] }[] = [];
   const sock: WhatsAppSocket = {
     ev: {
       on(event, listener) {
@@ -126,7 +129,7 @@ function createFakeWhatsAppSocket(opts?: { logout?: () => Promise<void>; sendMes
     // to deterministically land inside POST .../whatsapp/send's own in-flight
     // window (round 536's own convention, mirroring opts.logout below).
     async sendMessage(jid, content) {
-      sendCalls.push({ jid, text: content.text });
+      sendCalls.push({ jid, text: "text" in content ? content.text : undefined, content });
       await opts?.sendMessage?.();
       return {};
     },
@@ -2146,6 +2149,131 @@ test("creating or updating a toMode:\"field\" automation rule whose destination 
 });
 
 /**
+ * Round 965: performSend (whatsappWeb.ts) always attached a referenced
+ * "file"-field value as a generic Baileys "document" message -- even when
+ * its mimeType is a real photo. A real WhatsApp client renders a document
+ * attachment as a plain download/file icon, not the inline, chat-rendered
+ * photo preview a "document" (menu photo, product shot, shipping photo)
+ * -based business workflow actually wants. Confirms an image mimeType now
+ * sends Baileys' own `{ image: ... }` content shape, and that an ordinary
+ * document mimeType (e.g. a PDF) still correctly sends `{ document: ... }`
+ * -- this is a mimeType-driven branch, not a blanket behavior change.
+ */
+test("an automation's file attachment sends as a real inline image when the referenced file is a photo, but still as a plain document otherwise", async () => {
+  let createdSockets: ReturnType<typeof createFakeWhatsAppSocket>[] = [];
+  await withServer(
+    async (baseUrl, db) => {
+      const email = `whatsapp-image-attachment-${randomUUID()}@example.com`;
+      const token = await signup(baseUrl, email);
+      const user = findUserByEmail(db, email)!;
+
+      const spec: ProductSpec = {
+        summary: "test",
+        personas: [],
+        roles: ["Admin"],
+        entities: [
+          {
+            name: "Product",
+            fields: [
+              { name: "name", type: "text", required: true },
+              { name: "photo", type: "file", required: false },
+            ],
+          },
+        ],
+        screens: [],
+        assumptions: [],
+        openQuestions: [],
+      };
+      const projectId = randomUUID();
+      insertProject(db, { id: projectId, ownerId: user.id, name: "Catalog", description: "test", spec });
+      diffAndMigrate(db, projectId, undefined, spec);
+      markProjectBuilt(db, projectId);
+
+      insertAutomationRule(db, {
+        projectId,
+        entityName: "Product",
+        trigger: "record_created",
+        actionType: "send_whatsapp",
+        toMode: "static",
+        toNumber: "972501234567",
+        messageTemplate: "New product! {{photo}}",
+      });
+
+      await fetch(`${baseUrl}/api/projects/${projectId}/integrations/whatsapp/connect`, { method: "POST", headers: authHeaders(token) });
+      createdSockets[0].sock.user = { id: "15550001111:1@s.whatsapp.net" };
+      createdSockets[0].emitConnectionUpdate({ connection: "open" });
+
+      const imageFormData = new FormData();
+      imageFormData.append("file", new File(["\xff\xd8\xff-fake-jpeg-bytes"], "product.jpg", { type: "image/jpeg" }));
+      const imageUploadRes = await fetch(`${baseUrl}/api/projects/${projectId}/entities/Product/fields/photo/upload`, {
+        method: "POST",
+        headers: { authorization: `Bearer ${token}` },
+        body: imageFormData,
+      });
+      assert.equal(imageUploadRes.status, 200);
+      const imageUpload = (await imageUploadRes.json()) as { file: { url: string; name: string; mimeType: string } };
+
+      await fetch(`${baseUrl}/api/projects/${projectId}/entities/Product`, {
+        method: "POST",
+        headers: authHeaders(token),
+        body: JSON.stringify({ name: "Widget", photo: JSON.stringify(imageUpload.file) }),
+      });
+      for (let i = 0; i < 40 && createdSockets[0].sendCalls.length < 1; i++) {
+        await new Promise((resolve) => setTimeout(resolve, 0));
+      }
+      assert.equal(createdSockets[0].sendCalls.length, 1);
+      const imageContent = createdSockets[0].sendCalls[0]!.content as { image?: Buffer; document?: Buffer; mimetype?: string; caption?: string };
+      assert.ok("image" in imageContent, "a photo attachment must send as Baileys' own inline image content, not a generic document");
+      assert.equal("document" in imageContent, false, "must not also send the old document shape");
+      assert.equal(imageContent.mimetype, "image/jpeg");
+      assert.equal(imageContent.caption, "New product! product.jpg");
+
+      const pdfFormData = new FormData();
+      pdfFormData.append("file", new File(["%PDF-fake-spec-sheet"], "spec-sheet.pdf", { type: "application/pdf" }));
+      const pdfUploadRes = await fetch(`${baseUrl}/api/projects/${projectId}/entities/Product/fields/photo/upload`, {
+        method: "POST",
+        headers: { authorization: `Bearer ${token}` },
+        body: pdfFormData,
+      });
+      assert.equal(pdfUploadRes.status, 200);
+      const pdfUpload = (await pdfUploadRes.json()) as { file: { url: string; name: string; mimeType: string } };
+
+      await fetch(`${baseUrl}/api/projects/${projectId}/entities/Product`, {
+        method: "POST",
+        headers: authHeaders(token),
+        body: JSON.stringify({ name: "Gadget", photo: JSON.stringify(pdfUpload.file) }),
+      });
+      for (let i = 0; i < 40 && createdSockets[0].sendCalls.length < 2; i++) {
+        await new Promise((resolve) => setTimeout(resolve, 0));
+      }
+      assert.equal(createdSockets[0].sendCalls.length, 2);
+      const documentContent = createdSockets[0].sendCalls[1]!.content as {
+        image?: Buffer;
+        document?: Buffer;
+        mimetype?: string;
+        fileName?: string;
+        caption?: string;
+      };
+      assert.ok("document" in documentContent, "a non-image attachment (e.g. a PDF) must still send as a plain document");
+      assert.equal("image" in documentContent, false);
+      assert.equal(documentContent.mimetype, "application/pdf");
+      assert.equal(documentContent.fileName, "spec-sheet.pdf");
+    },
+    {
+      whatsapp: (db) => {
+        // sendSpacingMs: 0 -- this test fires two automation sends back to
+        // back; the real default (1200ms, so a real WhatsApp account never
+        // gets rate-limited for spamming) would hold the second one in the
+        // queue well past this test's own 40-iteration poll window.
+        const created = createTestWhatsAppManager(db, { sendSpacingMs: 0 });
+        createdSockets = created.createdSockets;
+        return created.manager;
+      },
+    },
+  );
+});
+
+/**
  * Round 643's Explore survey found that CSV import (EntityPanel.tsx's
  * handleImportFile) POSTs every parsed row through this exact route,
  * concurrently via Promise.allSettled -- before this round's fix, each one
@@ -2217,7 +2345,9 @@ test("POST .../entities/:entityName with X-Suppress-Automations skips the record
       for (let i = 0; i < 40 && createdSockets[0].sendCalls.length === 0; i++) {
         await new Promise((resolve) => setTimeout(resolve, 0));
       }
-      assert.deepEqual(createdSockets[0].sendCalls, [{ jid: "972500000002@s.whatsapp.net", text: "Welcome!" }]);
+      assert.deepEqual(createdSockets[0].sendCalls, [
+        { jid: "972500000002@s.whatsapp.net", text: "Welcome!", content: { text: "Welcome!" } },
+      ]);
     },
     {
       whatsapp: (db) => {
@@ -2325,7 +2455,9 @@ test("PATCH .../entities/:entityName/:recordId with X-Suppress-Automations skips
       for (let i = 0; i < 40 && createdSockets[0].sendCalls.length === 0; i++) {
         await new Promise((resolve) => setTimeout(resolve, 0));
       }
-      assert.deepEqual(createdSockets[0].sendCalls, [{ jid: "972500000004@s.whatsapp.net", text: "Updated!" }]);
+      assert.deepEqual(createdSockets[0].sendCalls, [
+        { jid: "972500000004@s.whatsapp.net", text: "Updated!", content: { text: "Updated!" } },
+      ]);
     },
     {
       whatsapp: (db) => {
@@ -8218,7 +8350,9 @@ test("WhatsApp send succeeds once connected, is logged as an outgoing message, a
       });
       assert.equal(sendRes.status, 200);
       assert.deepEqual((await sendRes.json()) as { ok: boolean }, { ok: true });
-      assert.deepEqual(createdSockets[0].sendCalls, [{ jid: "972501234567@s.whatsapp.net", text: "מתי אפשר להגיע?" }]);
+      assert.deepEqual(createdSockets[0].sendCalls, [
+        { jid: "972501234567@s.whatsapp.net", text: "מתי אפשר להגיע?", content: { text: "מתי אפשר להגיע?" } },
+      ]);
 
       const messagesRes = await fetch(`${baseUrl}/api/projects/${project.id}/integrations/whatsapp/messages`, { headers: authHeaders(token) });
       const { messages } = (await messagesRes.json()) as { messages: { direction: string; status: string; body: string }[] };
