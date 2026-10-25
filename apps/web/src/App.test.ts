@@ -2367,6 +2367,8 @@ test("App's handleAccountDeleted purges client-side preferences for every owned 
     "setView",
     "setDescription",
     "clearIdeaDraft",
+    "clearRecentProjectSearches",
+    "setRecentProjectSearches",
     "setError",
     "setActiveEntity",
     "setSelectedAnswers",
@@ -2382,6 +2384,8 @@ test("App's handleAccountDeleted purges client-side preferences for every owned 
     (v: unknown) => (state.user = v),
     (v: unknown) => (state.project = v),
     (v: string) => (state.view = v),
+    noop,
+    noop,
     noop,
     noop,
     noop,
@@ -2416,6 +2420,8 @@ test("App's handleAccountDeleted purges client-side preferences for every owned 
     "setView",
     "setDescription",
     "clearIdeaDraft",
+    "clearRecentProjectSearches",
+    "setRecentProjectSearches",
     "setError",
     "setActiveEntity",
     "setSelectedAnswers",
@@ -2426,6 +2432,8 @@ test("App's handleAccountDeleted purges client-side preferences for every owned 
     `${code}\nreturn handleAccountDeleted;`,
   )(
     (id: string) => noneOwned.purgeCalls.push(id),
+    noop,
+    noop,
     noop,
     noop,
     noop,
@@ -3372,6 +3380,8 @@ test("App's subscribeAuthExpired effect clears the token and resets user/project
   let viewSet: unknown = "untouched";
   let descriptionSet: unknown = "untouched";
   let ideaDraftCleared = false;
+  let recentProjectSearchesCleared = false;
+  let recentProjectSearchesSet: unknown = "untouched";
   let errorSet: unknown = "untouched";
   let activeEntitySet: unknown = "untouched";
   let selectedAnswersSet: unknown = "untouched";
@@ -3393,6 +3403,8 @@ test("App's subscribeAuthExpired effect clears the token and resets user/project
     "setView",
     "setDescription",
     "clearIdeaDraft",
+    "clearRecentProjectSearches",
+    "setRecentProjectSearches",
     "setError",
     "setActiveEntity",
     "setSelectedAnswers",
@@ -3420,6 +3432,8 @@ test("App's subscribeAuthExpired effect clears the token and resets user/project
     setView: (v: unknown) => void,
     setDescription: (v: unknown) => void,
     clearIdeaDraft: () => void,
+    clearRecentProjectSearches: () => void,
+    setRecentProjectSearches: (v: unknown) => void,
     setError: (v: unknown) => void,
     setActiveEntity: (v: unknown) => void,
     setSelectedAnswers: (v: unknown) => void,
@@ -3455,6 +3469,10 @@ test("App's subscribeAuthExpired effect clears the token and resets user/project
     () => {
       ideaDraftCleared = true;
     },
+    () => {
+      recentProjectSearchesCleared = true;
+    },
+    (v) => (recentProjectSearchesSet = v),
     (v) => (errorSet = v),
     (v) => (activeEntitySet = v),
     (v) => (selectedAnswersSet = v),
@@ -3484,6 +3502,12 @@ test("App's subscribeAuthExpired effect clears the token and resets user/project
   assert.equal(viewSet, "home", "must reset view to home so a later re-login lands on the home screen, not a dead view");
   assert.equal(descriptionSet, "", "must clear the idea description, same as handleAccountDeleted");
   assert.equal(ideaDraftCleared, true, "must clear the persisted idea draft, same as handleAccountDeleted");
+  assert.equal(
+    recentProjectSearchesCleared,
+    true,
+    "round 993: must clear the persisted recent-project-searches too, the same unscoped localStorage leak ideaDraft was already cleared for -- otherwise a different user signing into the same tab sees the previous account's typed search terms",
+  );
+  assert.deepEqual(recentProjectSearchesSet, [], "round 993: must also reset the in-memory recentProjectSearches state, not just the localStorage entry");
   assert.equal(errorSet, null, "must clear any stale error banner, same as handleAccountDeleted");
   assert.equal(activeEntitySet, null, "must clear activeEntity so a later project doesn't inherit a stale tab name");
   assert.deepEqual(selectedAnswersSet, {}, "must clear selectedAnswers, same as handleAccountDeleted");

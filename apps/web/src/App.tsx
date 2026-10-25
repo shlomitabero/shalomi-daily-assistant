@@ -988,6 +988,13 @@ function AppContent() {
       setRefineText("");
       setRefineHistory([]);
       setRefineHistorySearch("");
+      // Round 993: see handleLogout's own identical reset for why this
+      // must be cleared here too -- this effect is the one path that
+      // signs a user out reactively (an expired/revoked session), so it
+      // needs the same reset handleLogout/handleAccountDeleted apply on
+      // their own button-driven paths.
+      clearRecentProjectSearches();
+      setRecentProjectSearches([]);
       closeAllPanels();
     });
   }, []);
@@ -1652,6 +1659,17 @@ function AppContent() {
     setRefineText("");
     setRefineHistory([]);
     setRefineHistorySearch("");
+    // Round 993: recentProjectSearches is ideaDraft's own direct sibling --
+    // a single flat, global, unscoped localStorage key holding freeform
+    // user-typed text on this same home screen -- but was never added here
+    // when ideaDraft's own clear was. Without this, a different user
+    // logging into the same shared-machine tab (the exact scenario this
+    // function's own comment above already describes) sees the PREVIOUS
+    // account's typed search terms in the Recent Searches dropdown, and
+    // (unlike the in-memory-only state above) that leak survives even a
+    // full page reload since it's backed by localStorage.
+    clearRecentProjectSearches();
+    setRecentProjectSearches([]);
   }
 
   /**
@@ -1698,6 +1716,10 @@ function AppContent() {
     setRefineText("");
     setRefineHistory([]);
     setRefineHistorySearch("");
+    // Round 993: see handleLogout's own identical reset, just above, for
+    // why this must be cleared here too.
+    clearRecentProjectSearches();
+    setRecentProjectSearches([]);
   }
 
   return (
