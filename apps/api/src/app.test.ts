@@ -12528,6 +12528,101 @@ test("creating a 'webhook' automation rule requires a real, non-local webhookUrl
 });
 
 /**
+ * Round 974: a webhook rule's own outbound request carried no auth of any
+ * kind -- unlike webhookUrl, webhookSecret is optional (a plain webhook
+ * with no auth requirement is still a legitimate configuration), but when
+ * set it must actually reach the real outbound request as a real
+ * `Authorization: Bearer <secret>` header, and must be settable/clearable
+ * through the same create/PATCH routes webhookUrl already goes through.
+ */
+test("a webhook automation rule's webhookSecret is optional, round-trips through create/PATCH, and is sent as a real Authorization header", async () => {
+  await withServer(async (baseUrl, db) => {
+    const email = `webhook-secret-${randomUUID()}@example.com`;
+    const token = await signup(baseUrl, email);
+    const owner = findUserByEmail(db, email)!;
+
+    const spec: ProductSpec = {
+      summary: "test",
+      personas: [],
+      roles: ["Admin"],
+      entities: [{ name: "Order", fields: [{ name: "status", type: "text", required: true }] }],
+      screens: [],
+      assumptions: [],
+      openQuestions: [],
+    };
+    const projectId = randomUUID();
+    insertProject(db, { id: projectId, ownerId: owner.id, name: "Orders", description: "test", spec });
+    diffAndMigrate(db, projectId, undefined, spec);
+    markProjectBuilt(db, projectId);
+
+    const createRes = await fetch(`${baseUrl}/api/projects/${projectId}/entities/Order/automations`, {
+      method: "POST",
+      headers: authHeaders(token),
+      body: JSON.stringify({
+        trigger: "record_created",
+        actionType: "webhook",
+        toMode: "static",
+        messageTemplate: "New order!",
+        webhookUrl: "https://hooks.example.com/forge",
+      }),
+    });
+    assert.equal(createRes.status, 201, "no webhookSecret given, and none should be required for a webhook action");
+    const { rule } = (await createRes.json()) as { rule: { id: string; webhookSecret: string | null } };
+    assert.equal(rule.webhookSecret, null);
+
+    const patchRes = await fetch(`${baseUrl}/api/projects/${projectId}/automations/${rule.id}`, {
+      method: "PATCH",
+      headers: authHeaders(token),
+      body: JSON.stringify({ webhookSecret: "s3cr3t-token" }),
+    });
+    assert.equal(patchRes.status, 200);
+    const { rule: patched } = (await patchRes.json()) as { rule: { webhookSecret: string | null } };
+    assert.equal(patched.webhookSecret, "s3cr3t-token");
+
+    // Mocking the global fetch here also intercepts this test's OWN HTTP
+    // calls to its own local test server (both go through the same global
+    // `fetch` binding) -- unlike automations.test.ts's direct-call tests
+    // above, which never make a real HTTP request at all. Only the real
+    // webhook destination is faked; every other URL (the local server
+    // itself) passes straight through to the real fetch.
+    const originalFetch = globalThis.fetch;
+    const calls: { url: string; init: RequestInit }[] = [];
+    globalThis.fetch = (async (url: string, init?: RequestInit) => {
+      if (url === "https://hooks.example.com/forge") {
+        calls.push({ url, init: init! });
+        return new Response(null, { status: 200 });
+      }
+      return originalFetch(url, init);
+    }) as typeof fetch;
+    try {
+      const createOrderRes = await fetch(`${baseUrl}/api/projects/${projectId}/entities/Order`, {
+        method: "POST",
+        headers: authHeaders(token),
+        body: JSON.stringify({ status: "New" }),
+      });
+      assert.equal(createOrderRes.status, 201);
+      // runAutomationsForRecordChange is deliberately fire-and-forget (not
+      // awaited by the create-record route) -- give it a chance to run
+      // before asserting on its effect, same convention as this file's
+      // other fire-and-forget automation tests.
+      await new Promise((resolve) => setTimeout(resolve, 20));
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+    assert.equal(calls.length, 1, "creating the record must have fired the webhook rule exactly once");
+    assert.equal((calls[0]!.init.headers as Record<string, string>).authorization, "Bearer s3cr3t-token");
+
+    const clearedRes = await fetch(`${baseUrl}/api/projects/${projectId}/automations/${rule.id}`, {
+      method: "PATCH",
+      headers: authHeaders(token),
+      body: JSON.stringify({ webhookSecret: null }),
+    });
+    assert.equal(clearedRes.status, 200);
+    assert.equal(((await clearedRes.json()) as { rule: { webhookSecret: string | null } }).rule.webhookSecret, null);
+  });
+});
+
+/**
  * Real role enforcement (RBAC): until this round, "collaborator" was a
  * single flat grant -- identical full access to the owner, no exceptions
  * (see the "identical full access" tests above this one). This adds a

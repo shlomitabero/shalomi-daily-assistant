@@ -588,9 +588,15 @@ async function fireWebhookAction(
     // browser-only type) -- res.ok below is already false for any 3xx, so
     // this alone, with no other change, turns a followed redirect into an
     // ordinary reported failure.
+    // Round 974: see AutomationRule's own doc comment on webhookSecret --
+    // null (every rule created before this round, or one that simply never
+    // set it) leaves this identical to the request this function always
+    // sent.
+    const headers: Record<string, string> = { "content-type": "application/json" };
+    if (rule.webhookSecret) headers.authorization = `Bearer ${rule.webhookSecret}`;
     const res = await fetch(rule.webhookUrl, {
       method: "POST",
-      headers: { "content-type": "application/json" },
+      headers,
       body: JSON.stringify(payload),
       signal: controller.signal,
       redirect: "manual",

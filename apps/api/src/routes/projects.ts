@@ -199,6 +199,7 @@ const CreateAutomationRuleSchema = z
     toNumber: z.string().min(1).optional(),
     toField: z.string().min(1).optional(),
     webhookUrl: z.string().min(1).optional(),
+    webhookSecret: z.string().min(1).optional(),
     messageTemplate: z.string().min(1, "messageTemplate is required"),
   })
   .refine((data) => data.trigger !== "field_equals" || (!!data.fieldName && !!data.fieldValue), {
@@ -246,6 +247,7 @@ const UpdateAutomationRuleSchema = z.object({
   toNumber: z.string().min(1).nullable().optional(),
   toField: z.string().min(1).nullable().optional(),
   webhookUrl: z.string().min(1).nullable().optional(),
+  webhookSecret: z.string().min(1).nullable().optional(),
   messageTemplate: z.string().min(1).optional(),
   enabled: z.boolean().optional(),
 });
@@ -3782,6 +3784,7 @@ export function createProjectsRouter(
             toNumber: data.toNumber ?? null,
             toField: data.toField ?? null,
             webhookUrl: data.webhookUrl ?? null,
+            webhookSecret: data.webhookSecret ?? null,
             messageTemplate: data.messageTemplate,
           });
           return { status: 201, body: { rule } };

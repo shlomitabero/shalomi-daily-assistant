@@ -1268,6 +1268,8 @@ export interface AutomationRuleView {
   toNumber: string | null;
   toField: string | null;
   webhookUrl: string | null;
+  /** Round 974: sent as an `Authorization: Bearer <webhookSecret>` header on every outbound webhook request when set -- see packages/db's AutomationRule.webhookSecret. Null leaves the request with no Authorization header at all, same as before this field existed. */
+  webhookSecret: string | null;
   messageTemplate: string;
   enabled: boolean;
   lastTriggeredAt: string | null;
@@ -1338,6 +1340,7 @@ export function createAutomationRule(
     toNumber?: string;
     toField?: string;
     webhookUrl?: string;
+    webhookSecret?: string;
     messageTemplate: string;
   },
 ): Promise<{ rule: AutomationRuleView }> {
@@ -1364,6 +1367,7 @@ export function updateAutomationRule(
     toNumber: string | null;
     toField: string | null;
     webhookUrl: string | null;
+    webhookSecret: string | null;
     messageTemplate: string;
     enabled: boolean;
   }>,

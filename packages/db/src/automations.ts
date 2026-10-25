@@ -83,6 +83,17 @@ export interface AutomationRule {
   toField: string | null;
   /** Required when actionType is "webhook"; null otherwise. The outbound URL the rule POSTs a JSON payload to -- see apps/api/src/automations.ts's own fireWebhookAction for the exact payload shape and the SSRF-hardening host checks applied before every request. */
   webhookUrl: string | null;
+  /**
+   * Round 974: optional, only meaningful when actionType is "webhook". When
+   * set, apps/api/src/automations.ts's fireWebhookAction sends it as an
+   * `Authorization: Bearer <webhookSecret>` request header -- before this,
+   * the outbound request carried no auth of any kind, so the webhook
+   * action couldn't reach any real destination that requires one (the
+   * overwhelming majority: Slack/Stripe/GitHub-style receivers, or any
+   * plain bearer-token API). Null leaves the request exactly as it always
+   * was, with no Authorization header at all.
+   */
+  webhookSecret: string | null;
   /** May reference the record's own fields as {{fieldName}} placeholders, interpolated at send time. Sent verbatim as the webhook payload's own "message" field for actionType "webhook" too. */
   messageTemplate: string;
   enabled: boolean;
@@ -299,6 +310,10 @@ export function ensureAutomationRulesTable(db: ForgeDatabase): void {
   if (!columns.includes("scheduleTimezone")) {
     db.exec("ALTER TABLE automation_rules ADD COLUMN scheduleTimezone TEXT");
   }
+  // Round 974: see AutomationRule's own doc comment on this column.
+  if (!columns.includes("webhookSecret")) {
+    db.exec("ALTER TABLE automation_rules ADD COLUMN webhookSecret TEXT");
+  }
 }
 
 function rowToRule(row: Record<string, unknown>): AutomationRule {
@@ -317,6 +332,7 @@ function rowToRule(row: Record<string, unknown>): AutomationRule {
     toNumber: (row.toNumber as string | null) ?? null,
     toField: (row.toField as string | null) ?? null,
     webhookUrl: (row.webhookUrl as string | null) ?? null,
+    webhookSecret: (row.webhookSecret as string | null) ?? null,
     messageTemplate: row.messageTemplate as string,
     enabled: Boolean(row.enabled),
     lastTriggeredAt: (row.lastTriggeredAt as string | null) ?? null,
@@ -344,6 +360,7 @@ export function insertAutomationRule(
     toNumber?: string | null;
     toField?: string | null;
     webhookUrl?: string | null;
+    webhookSecret?: string | null;
     messageTemplate: string;
   },
 ): AutomationRule {
@@ -351,8 +368,8 @@ export function insertAutomationRule(
   const now = new Date().toISOString();
   db.prepare(
     `INSERT INTO automation_rules
-       (id, projectId, entityName, trigger, fieldName, fieldValue, scheduleTimeUtc, scheduleDaysOfWeek, scheduleTimezone, actionType, toMode, toNumber, toField, webhookUrl, messageTemplate, enabled, lastTriggeredAt, lastStatus, lastError, createdAt, updatedAt)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, NULL, NULL, NULL, ?, ?)`,
+       (id, projectId, entityName, trigger, fieldName, fieldValue, scheduleTimeUtc, scheduleDaysOfWeek, scheduleTimezone, actionType, toMode, toNumber, toField, webhookUrl, webhookSecret, messageTemplate, enabled, lastTriggeredAt, lastStatus, lastError, createdAt, updatedAt)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, NULL, NULL, NULL, ?, ?)`,
   ).run(
     id,
     rule.projectId,
@@ -368,6 +385,7 @@ export function insertAutomationRule(
     rule.toNumber ?? null,
     rule.toField ?? null,
     rule.webhookUrl ?? null,
+    rule.webhookSecret ?? null,
     rule.messageTemplate,
     now,
     now,
@@ -447,6 +465,7 @@ export function updateAutomationRule(
     toNumber: string | null;
     toField: string | null;
     webhookUrl: string | null;
+    webhookSecret: string | null;
     messageTemplate: string;
     enabled: boolean;
   }>,
@@ -458,7 +477,7 @@ export function updateAutomationRule(
   const next = { ...existing, ...patch };
   db.prepare(
     `UPDATE automation_rules SET
-       entityName = ?, trigger = ?, fieldName = ?, fieldValue = ?, scheduleTimeUtc = ?, scheduleDaysOfWeek = ?, scheduleTimezone = ?, actionType = ?, toMode = ?, toNumber = ?, toField = ?, webhookUrl = ?, messageTemplate = ?, enabled = ?, updatedAt = ?
+       entityName = ?, trigger = ?, fieldName = ?, fieldValue = ?, scheduleTimeUtc = ?, scheduleDaysOfWeek = ?, scheduleTimezone = ?, actionType = ?, toMode = ?, toNumber = ?, toField = ?, webhookUrl = ?, webhookSecret = ?, messageTemplate = ?, enabled = ?, updatedAt = ?
      WHERE projectId = ? AND id = ?`,
   ).run(
     next.entityName,
@@ -473,6 +492,7 @@ export function updateAutomationRule(
     next.toNumber,
     next.toField,
     next.webhookUrl,
+    next.webhookSecret,
     next.messageTemplate,
     next.enabled ? 1 : 0,
     new Date().toISOString(),

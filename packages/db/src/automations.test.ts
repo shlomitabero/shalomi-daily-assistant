@@ -742,6 +742,80 @@ test("updateAutomationRule can switch a rule's actionType and set/clear webhookU
   assert.equal(clearedBack.webhookUrl, null);
 });
 
+/**
+ * Round 974: webhookSecret is optional even for a "webhook" rule (unlike
+ * webhookUrl, which is required) -- apps/api/src/automations.ts's
+ * fireWebhookAction simply omits the Authorization header when it's null.
+ */
+test("insertAutomationRule stores a webhook rule's webhookSecret, and leaves it null when omitted", () => {
+  const db = openDatabase(":memory:");
+  ensureAutomationRulesTable(db);
+  const withSecret = insertAutomationRule(
+    db,
+    baseRule({ actionType: "webhook", webhookUrl: "https://example.com/hook", webhookSecret: "top-secret", toField: null, toNumber: null }),
+  );
+  assert.equal(withSecret.webhookSecret, "top-secret");
+
+  const withoutSecret = insertAutomationRule(
+    db,
+    baseRule({ actionType: "webhook", webhookUrl: "https://example.com/hook2", toField: null, toNumber: null }),
+  );
+  assert.equal(withoutSecret.webhookSecret, null);
+});
+
+test("updateAutomationRule can set and clear a webhook rule's webhookSecret", () => {
+  const db = openDatabase(":memory:");
+  ensureAutomationRulesTable(db);
+  const rule = insertAutomationRule(db, baseRule({ actionType: "webhook", webhookUrl: "https://example.com/hook", toField: null, toNumber: null }));
+  assert.equal(rule.webhookSecret, null);
+
+  const withSecret = updateAutomationRule(db, "proj1", rule.id, { webhookSecret: "new-secret" });
+  assert.equal(withSecret.webhookSecret, "new-secret");
+
+  const cleared = updateAutomationRule(db, "proj1", rule.id, { webhookSecret: null });
+  assert.equal(cleared.webhookSecret, null);
+});
+
+/** Mirrors the identical additive-migration test for webhookUrl above, for the webhookSecret column. */
+test("ensureAutomationRulesTable adds webhookSecret to a pre-existing table from an older app version, leaving existing rows intact, and is idempotent", () => {
+  const db = openDatabase(":memory:");
+  db.exec(`
+    CREATE TABLE automation_rules (
+      id TEXT PRIMARY KEY,
+      projectId TEXT NOT NULL,
+      entityName TEXT NOT NULL,
+      trigger TEXT NOT NULL,
+      fieldName TEXT,
+      fieldValue TEXT,
+      actionType TEXT NOT NULL,
+      toMode TEXT NOT NULL,
+      toNumber TEXT,
+      toField TEXT,
+      webhookUrl TEXT,
+      messageTemplate TEXT NOT NULL,
+      enabled INTEGER NOT NULL DEFAULT 1,
+      lastTriggeredAt TEXT,
+      lastStatus TEXT,
+      lastError TEXT,
+      createdAt TEXT NOT NULL,
+      updatedAt TEXT NOT NULL
+    )
+  `);
+  db.prepare(
+    `INSERT INTO automation_rules (id, projectId, entityName, trigger, fieldName, fieldValue, actionType, toMode, toNumber, toField, webhookUrl, messageTemplate, enabled, createdAt, updatedAt)
+     VALUES ('old-rule', 'proj1', 'Order', 'field_equals', 'status', 'Delivered', 'send_whatsapp', 'field', NULL, 'customerPhone', NULL, 'Hi!', 1, '2026-01-01T00:00:00.000Z', '2026-01-01T00:00:00.000Z')`,
+  ).run();
+
+  ensureAutomationRulesTable(db);
+
+  const oldRule = getAutomationRule(db, "proj1", "old-rule")!;
+  assert.equal(oldRule.webhookSecret, null);
+  assert.equal(oldRule.fieldName, "status", "the migration must not disturb an existing row's other columns");
+
+  assert.doesNotThrow(() => ensureAutomationRulesTable(db));
+  assert.equal(getAutomationRule(db, "proj1", "old-rule")!.fieldName, "status");
+});
+
 /** Mirrors the identical additive-migration test for scheduleTimeUtc/scheduleDaysOfWeek above, for the webhookUrl column. */
 test("ensureAutomationRulesTable adds webhookUrl to a pre-existing table from an older app version, leaving existing rows intact, and is idempotent", () => {
   const db = openDatabase(":memory:");

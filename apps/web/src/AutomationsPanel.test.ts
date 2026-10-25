@@ -1797,6 +1797,70 @@ test("AutomationsPanel's 'webhook' action shows a URL input instead of the Whats
   });
 });
 
+/**
+ * Round 974: webhookSecret is a plain optional input next to the URL --
+ * confirms it's not sent at all when left blank (undefined, not an empty
+ * string -- the server's own zod schema would otherwise reject
+ * `.min(1)`), and is sent when filled in.
+ */
+test("AutomationsPanel's webhook form has an optional secret field that's omitted when blank and sent when filled in", async () => {
+  await withJsdom(async () => {
+    const originalFetch = globalThis.fetch;
+    const createBodies: Record<string, unknown>[] = [];
+    let nextRuleId = "rule12";
+    globalThis.fetch = (async (input: string, init?: RequestInit) => {
+      const method = init?.method ?? "GET";
+      if (method === "GET" && input === "/api/projects/proj5/automations") {
+        return new Response(JSON.stringify({ rules: [] }), { status: 200, headers: { "content-type": "application/json" } });
+      }
+      if (method === "POST" && input === "/api/projects/proj5/entities/Ticket/automations") {
+        const body = JSON.parse(init!.body as string) as Record<string, unknown>;
+        createBodies.push(body);
+        return new Response(JSON.stringify({ rule: makeRule({ id: nextRuleId, ...body }) }), {
+          status: 201,
+          headers: { "content-type": "application/json" },
+        });
+      }
+      throw new Error(`unexpected request ${method} ${input}`);
+    }) as typeof fetch;
+
+    try {
+      renderPanelWith(triggerFieldProject);
+      await waitForCondition(() => document.body.textContent?.includes("No automations yet") ?? false);
+
+      const actionSelect = Array.from(document.querySelectorAll("select")).find((s) =>
+        Array.from(s.options).some((o) => o.value === "webhook"),
+      ) as HTMLSelectElement;
+      fireEvent.change(actionSelect, { target: { value: "webhook" } });
+
+      const urlInput = document.querySelector('input[type="url"]') as HTMLInputElement;
+      fireEvent.change(urlInput, { target: { value: "https://hooks.example.com/forge" } });
+      const messageField = document.querySelector(".automations-create-form textarea") as HTMLTextAreaElement;
+      fireEvent.change(messageField, { target: { value: "New ticket!" } });
+
+      fireEvent.submit(document.querySelector(".automations-create-form")!);
+      await waitForCondition(() => createBodies.length === 1);
+      assert.equal(createBodies[0]!.webhookSecret, undefined, "an empty secret field must not be sent at all");
+
+      const secretInput = document.querySelector('input[placeholder="Secret (optional)"]') as HTMLInputElement;
+      assert.ok(secretInput, "expected a secret input next to the webhook URL input");
+      // Re-fill the URL/message fields explicitly rather than relying on
+      // whatever the first submit's own post-success reset left them at --
+      // the form must accept a second genuine submission with a secret
+      // regardless of that timing.
+      fireEvent.change(urlInput, { target: { value: "https://hooks.example.com/forge" } });
+      fireEvent.change(messageField, { target: { value: "New ticket!" } });
+      fireEvent.change(secretInput, { target: { value: "s3cr3t-token" } });
+      nextRuleId = "rule13";
+      fireEvent.submit(document.querySelector(".automations-create-form")!);
+      await waitForCondition(() => createBodies.length === 2);
+      assert.equal(createBodies[1]!.webhookSecret, "s3cr3t-token");
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+});
+
 test("AutomationsPanel's rule list describes a webhook rule by its URL, not a WhatsApp destination", async () => {
   await withJsdom(async () => {
     const originalFetch = globalThis.fetch;
@@ -2093,6 +2157,7 @@ test("submitting an edited rule calls the real PATCH endpoint and updates the ru
         toField: "customerPhone",
         toNumber: null,
         webhookUrl: null,
+        webhookSecret: null,
         messageTemplate: "Hi {{customerName}}, your order shipped!",
       });
 

@@ -133,6 +133,7 @@ export function AutomationsPanel({
   );
   const [actionType, setActionType] = useState<AutomationActionType>("send_whatsapp");
   const [webhookUrl, setWebhookUrl] = useState("");
+  const [webhookSecret, setWebhookSecret] = useState("");
 
   // A schedule rule has no triggering record at all, so there's nothing a
   // toMode:"field" destination could ever read from (the server rejects
@@ -359,6 +360,7 @@ export function AutomationsPanel({
     setScheduleTimezone(Intl.DateTimeFormat().resolvedOptions().timeZone);
     setActionType("send_whatsapp");
     setWebhookUrl("");
+    setWebhookSecret("");
   }
 
   // Seeds every form field from an existing rule and switches the form
@@ -413,6 +415,7 @@ export function AutomationsPanel({
     setToField(rulePhoneFields.some((f) => f.name === rule.toField) ? rule.toField ?? "" : rulePhoneFields[0]?.name ?? "");
     setToNumber(rule.toNumber ?? "");
     setWebhookUrl(rule.webhookUrl ?? "");
+    setWebhookSecret(rule.webhookSecret ?? "");
     setMessageTemplate(rule.messageTemplate);
   }
 
@@ -468,6 +471,7 @@ export function AutomationsPanel({
           toField: actionType === "send_whatsapp" && toMode === "field" ? toField : null,
           toNumber: actionType === "send_whatsapp" && toMode === "static" ? toNumber.trim() : null,
           webhookUrl: actionType === "webhook" ? webhookUrl.trim() : null,
+          webhookSecret: actionType === "webhook" ? webhookSecret.trim() || null : null,
           messageTemplate: messageTemplate.trim(),
         });
         setRules((prev) => (prev ?? []).map((r) => (r.id === rule.id ? rule : r)));
@@ -485,12 +489,14 @@ export function AutomationsPanel({
           toField: actionType === "send_whatsapp" && toMode === "field" ? toField : undefined,
           toNumber: actionType === "send_whatsapp" && toMode === "static" ? toNumber.trim() : undefined,
           webhookUrl: actionType === "webhook" ? webhookUrl.trim() : undefined,
+          webhookSecret: actionType === "webhook" ? webhookSecret.trim() || undefined : undefined,
           messageTemplate: messageTemplate.trim(),
         });
         setRules((prev) => [...(prev ?? []), rule]);
         setFieldValue("");
         setToNumber("");
         setWebhookUrl("");
+        setWebhookSecret("");
         setMessageTemplate("");
       }
     } catch (err) {
@@ -1097,6 +1103,14 @@ export function AutomationsPanel({
                 onChange={(e) => setWebhookUrl(e.target.value)}
               />
               <p className="muted small">{t("automations.webhookUrl.hint")}</p>
+              <input
+                type="text"
+                placeholder={t("automations.webhookSecret.placeholder")}
+                aria-label={t("automations.webhookSecret.placeholder")}
+                value={webhookSecret}
+                onChange={(e) => setWebhookSecret(e.target.value)}
+              />
+              <p className="muted small">{t("automations.webhookSecret.hint")}</p>
             </>
           ) : (
             <>

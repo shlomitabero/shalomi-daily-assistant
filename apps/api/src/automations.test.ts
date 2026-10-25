@@ -1361,6 +1361,45 @@ test("runAutomationsForRecordChange posts a JSON payload to the webhook URL and 
   assert.deepEqual(payload.record, record);
   assert.equal(payload.project.id, project.id);
   assert.equal(getAutomationRule(db, project.id, rule.id)!.lastStatus, "sent");
+  assert.equal((calls[0]!.init.headers as Record<string, string>).authorization, undefined, "no webhookSecret was configured -- no Authorization header at all");
+});
+
+/**
+ * Round 974: before this round, fireWebhookAction's outbound request carried
+ * no auth of any kind -- every real destination that requires one (bearer
+ * token, HMAC signature header) would simply reject it. Confirms a rule
+ * with `webhookSecret` set actually sends it as a real `Authorization:
+ * Bearer <secret>` header on the real outbound request.
+ */
+test("runAutomationsForRecordChange sends the rule's webhookSecret as an Authorization: Bearer header when configured", async () => {
+  const { db, project } = setupProject();
+  insertAutomationRule(db, {
+    projectId: project.id,
+    entityName: "Order",
+    trigger: "record_created",
+    actionType: "webhook",
+    webhookUrl: "https://hooks.example.com/forge",
+    webhookSecret: "s3cr3t-token",
+    toMode: "static",
+    messageTemplate: "New order from {{customerName}}!",
+  });
+  const record = { id: 1, customerName: "Dana Levi", customerPhone: "972501234567", status: "New" };
+
+  const originalFetch = globalThis.fetch;
+  const calls: { url: string; init: RequestInit }[] = [];
+  globalThis.fetch = (async (url: string, init?: RequestInit) => {
+    calls.push({ url, init: init! });
+    return new Response(null, { status: 200 });
+  }) as typeof fetch;
+  try {
+    await runAutomationsForRecordChange(db, {} as WhatsAppWebManager, project, orderEntity, "created", record, new Set(), UNUSED_UPLOADS_DIR, UNUSED_BASE_URL);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+
+  assert.equal(calls.length, 1);
+  assert.equal((calls[0]!.init.headers as Record<string, string>).authorization, "Bearer s3cr3t-token");
+  assert.equal((calls[0]!.init.headers as Record<string, string>)["content-type"], "application/json", "the existing content-type header must still be sent");
 });
 
 /**
