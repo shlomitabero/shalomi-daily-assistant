@@ -600,11 +600,14 @@ function templateReferencesField(template: string, fieldName: string): boolean {
  * are additive-only, so the physical column survives, but EntityRecord
  * never gets a key for it), and interpolateTemplate's own replacer
  * function returns the literal unresolved "{{fieldName}}" text rather than
- * failing -- so a record_created/schedule rule whose trigger is on a
- * DIFFERENT field, but whose messageTemplate names the removed one, kept
- * firing forever, recording a normal "sent" run while actually sending
- * "Hi Dana, your order {{orderId}} is ready!" to a real WhatsApp contact,
- * with zero warning anywhere.
+ * failing -- so a record_created/field_equals/record_deleted rule whose
+ * trigger is on a DIFFERENT field, but whose messageTemplate names the
+ * removed one, kept firing forever, recording a normal "sent" run while
+ * actually sending "Hi Dana, your order {{orderId}} is ready!" to a real
+ * WhatsApp contact, with zero warning anywhere. (Round 970: NOT a
+ * "schedule" rule -- see this function's own messageTemplate-scan query
+ * below for why that trigger is deliberately excluded from this specific
+ * check.)
  *
  * Scoped by entityName too, the same way disableAutomationRulesForEntity
  * is, since fieldName/toField/a placeholder name are plain strings that
@@ -630,8 +633,27 @@ export function disableAutomationRulesForField(
   // need their messageTemplate inspected in JS -- SQLite has no portable
   // regex support to express "contains this placeholder, allowing internal
   // whitespace" directly in SQL.
+  //
+  // Round 970: excludes trigger = 'schedule' -- unlike every other trigger
+  // type, a schedule rule's messageTemplate is never run through
+  // interpolateTemplate at all (apps/api/src/automations.ts's
+  // fireScheduledRule sends it to WhatsApp completely verbatim, and
+  // fireWebhookAction's own entity/record-is-null branch for a schedule
+  // rule does the identical pass-through for its webhook payload's
+  // "message" field -- see either function's own doc comment). A
+  // schedule rule's message can legally contain literal "{{...}}"-shaped
+  // text (nothing in the UI prevents or warns against it once round 868
+  // stopped advertising interpolation for this trigger) that was ALWAYS
+  // sent as-is and stays exactly as-is regardless of which fields get
+  // removed from the entity -- removing a field this text happens to
+  // name changes nothing about what actually gets sent. Scanning it
+  // anyway would silently disable a perfectly healthy scheduled
+  // automation (a daily/weekly WhatsApp report, say) over an unrelated,
+  // harmless field cleanup, with the UI only ever surfacing a generic "N
+  // automation rule(s) disabled" migration hazard and no way to tell this
+  // disable was spurious.
   const candidates = db
-    .prepare("SELECT id, messageTemplate FROM automation_rules WHERE projectId = ? AND entityName = ? AND enabled = 1")
+    .prepare("SELECT id, messageTemplate FROM automation_rules WHERE projectId = ? AND entityName = ? AND enabled = 1 AND trigger != 'schedule'")
     .all(projectId, entityName) as { id: string; messageTemplate: string }[];
   const templateMatchIds = candidates.filter((r) => templateReferencesField(r.messageTemplate, fieldName)).map((r) => r.id);
   for (const id of templateMatchIds) {

@@ -1580,6 +1580,76 @@ test("diffAndMigrate disables an automation rule whose messageTemplate reference
 });
 
 /**
+ * Round 970 regression test: unlike every OTHER trigger type, a
+ * "schedule" rule's own messageTemplate is never run through
+ * interpolateTemplate at all -- apps/api/src/automations.ts's
+ * fireScheduledRule sends it to WhatsApp completely verbatim, and
+ * fireWebhookAction's own null-record branch for a schedule rule does the
+ * identical pass-through for its webhook payload. The test just above
+ * (round 961) correctly disables a record_created rule whose
+ * messageTemplate references a removed field, since that field's value
+ * really does disappear from every future interpolated send -- but
+ * applying the exact same check to a "schedule" rule is a false positive:
+ * removing the field changes nothing about what a schedule rule actually
+ * sends, since it was always, and stays, raw literal text. Before this
+ * round's fix, a scheduled WhatsApp report whose message happened to
+ * contain "{{status}}"-shaped text (nothing in the UI prevents or warns
+ * against curly braces in a schedule rule's own message) would be
+ * silently disabled the moment ANY field named "status" was removed from
+ * the same entity, even though the report kept sending the exact same
+ * text either way.
+ */
+test("diffAndMigrate does NOT disable a 'schedule' rule whose messageTemplate happens to contain {{fieldName}}-shaped text for a field that gets removed, since a schedule rule's message is never interpolated in the first place", () => {
+  const db = openDatabase(":memory:");
+  ensureAutomationRulesTable(db);
+  applyMigrations(db, "proj1", spec);
+  const scheduleRule = insertAutomationRule(db, {
+    projectId: "proj1",
+    entityName: "Customer",
+    trigger: "schedule",
+    scheduleTimeUtc: "09:00",
+    actionType: "send_whatsapp",
+    toMode: "static",
+    toNumber: "+15551234567",
+    messageTemplate: "Reminder: please review today's {{status}} list.",
+  });
+  // A real record_created rule referencing the same field must still be
+  // disabled as before -- this isn't a blanket exemption for the whole
+  // messageTemplate scan, only for the "schedule" trigger specifically.
+  const createdRule = insertAutomationRule(db, {
+    projectId: "proj1",
+    entityName: "Customer",
+    trigger: "record_created",
+    actionType: "send_whatsapp",
+    toMode: "static",
+    toNumber: "+15551234567",
+    messageTemplate: "Hi {{name}}, your status is {{status}}!",
+  });
+
+  const nextSpec: ProductSpec = {
+    ...spec,
+    entities: [{ ...spec.entities[0], fields: spec.entities[0].fields.filter((f) => f.name !== "status") }, spec.entities[1]],
+  };
+  const changes = diffAndMigrate(db, "proj1", spec, nextSpec);
+
+  assert.equal(
+    getAutomationRule(db, "proj1", scheduleRule.id)!.enabled,
+    true,
+    "a schedule rule's messageTemplate is sent completely verbatim (never interpolated), so removing a field its text happens to name changes nothing about what it actually sends -- it must stay enabled",
+  );
+  assert.equal(
+    getAutomationRule(db, "proj1", createdRule.id)!.enabled,
+    false,
+    "a genuinely-interpolated record_created rule referencing the removed field must still be disabled as before",
+  );
+  assert.deepEqual(
+    changes.filter((c) => c.type === "automation_rule_disabled"),
+    [{ type: "automation_rule_disabled", table: "entity_proj1_Customer", column: "status", disabledCount: 1 }],
+    "only the one genuinely-affected rule counts toward this migration hazard",
+  );
+});
+
+/**
  * Round 620: this same automation-disable sweep's own nextFieldNames
  * lookup is exact-string, the identical mistake rounds 617/618 already
  * fixed for the main per-field diff loop earlier in diffAndMigrate
