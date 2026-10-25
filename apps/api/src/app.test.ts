@@ -8878,6 +8878,72 @@ test("WhatsApp status starts disconnected, connect surfaces a real QR code, and 
   );
 });
 
+/**
+ * Round 976: GET .../whatsapp/status used requireProjectAccess (any
+ * collaborator, viewer included) and returned qrDataUrl verbatim -- a live
+ * WhatsApp-Web linking QR code. Scanning it with any phone links that
+ * phone as a new device on the REAL external WhatsApp account this
+ * project is connecting, entirely outside this app's permission model. A
+ * viewer can never cause a connect themselves (POST .../connect already
+ * requires requireProjectWriteAccess), so unlike an editor, they have no
+ * legitimate need to see it. Confirms it's redacted to null for a viewer
+ * while status/phoneNumber stay visible, and that an editor (and the
+ * owner) still see the real QR code unchanged.
+ */
+test("GET .../whatsapp/status redacts qrDataUrl for a 'viewer' collaborator, but not for an 'editor' collaborator or the owner", async () => {
+  let createdSockets: ReturnType<typeof createFakeWhatsAppSocket>[] = [];
+  await withServer(
+    async (baseUrl) => {
+      const ownerToken = await signup(baseUrl, "whatsapp-qr-rbac-owner@example.com");
+      const viewerToken = await signup(baseUrl, "whatsapp-qr-rbac-viewer@example.com");
+      const editorToken = await signup(baseUrl, "whatsapp-qr-rbac-editor@example.com");
+
+      const createRes = await fetch(`${baseUrl}/api/projects`, {
+        method: "POST",
+        headers: authHeaders(ownerToken),
+        body: JSON.stringify({ description: "A CRM with customers and deals." }),
+      });
+      const { project } = (await createRes.json()) as { project: { id: string } };
+
+      await fetch(`${baseUrl}/api/projects/${project.id}/collaborators`, {
+        method: "POST",
+        headers: authHeaders(ownerToken),
+        body: JSON.stringify({ email: "whatsapp-qr-rbac-viewer@example.com", role: "viewer" }),
+      });
+      await fetch(`${baseUrl}/api/projects/${project.id}/collaborators`, {
+        method: "POST",
+        headers: authHeaders(ownerToken),
+        body: JSON.stringify({ email: "whatsapp-qr-rbac-editor@example.com", role: "editor" }),
+      });
+
+      await fetch(`${baseUrl}/api/projects/${project.id}/integrations/whatsapp/connect`, { method: "POST", headers: authHeaders(ownerToken) });
+      createdSockets[0].emitConnectionUpdate({ qr: "raw-qr-string" });
+      await new Promise((resolve) => setImmediate(resolve));
+
+      const ownerStatusRes = await fetch(`${baseUrl}/api/projects/${project.id}/integrations/whatsapp/status`, { headers: authHeaders(ownerToken) });
+      const ownerStatus = (await ownerStatusRes.json()) as { qrDataUrl: string | null };
+      assert.equal(ownerStatus.qrDataUrl, "data:image/png;base64,FAKE(raw-qr-string)", "the owner must still see the real QR code");
+
+      const editorStatusRes = await fetch(`${baseUrl}/api/projects/${project.id}/integrations/whatsapp/status`, { headers: authHeaders(editorToken) });
+      const editorStatus = (await editorStatusRes.json()) as { qrDataUrl: string | null };
+      assert.equal(editorStatus.qrDataUrl, "data:image/png;base64,FAKE(raw-qr-string)", "an editor must still see the real QR code");
+
+      const viewerStatusRes = await fetch(`${baseUrl}/api/projects/${project.id}/integrations/whatsapp/status`, { headers: authHeaders(viewerToken) });
+      assert.equal(viewerStatusRes.status, 200, "a viewer must still be able to read the status itself");
+      const viewerStatus = (await viewerStatusRes.json()) as { status: string; qrDataUrl: string | null };
+      assert.equal(viewerStatus.qrDataUrl, null, "a viewer must never see the real QR code");
+      assert.equal(viewerStatus.status, "qr", "only qrDataUrl is redacted -- every other field stays visible to a viewer as before");
+    },
+    {
+      whatsapp: (db) => {
+        const created = createTestWhatsAppManager(db);
+        createdSockets = created.createdSockets;
+        return created.manager;
+      },
+    },
+  );
+});
+
 test("WhatsApp send refuses with 409 before connecting", async () => {
   await withServer(
     async (baseUrl) => {

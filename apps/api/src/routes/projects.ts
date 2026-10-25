@@ -2017,11 +2017,28 @@ export function createProjectsRouter(
     }),
   );
 
+  /**
+   * Round 976: requireProjectAccess here lets a "viewer" collaborator
+   * through identically to an editor/owner -- correct for status/
+   * phoneNumber/error, but `qrDataUrl` (whenever status is "qr") is a live
+   * WhatsApp-Web linking QR code, not ordinary project data: scanning it
+   * with any phone links that phone as a new device on the REAL external
+   * WhatsApp account this project is connecting, with full read/send
+   * access to it, entirely outside this app's own permission model. A
+   * viewer can never cause a connect themselves (POST .../connect already
+   * requires requireProjectWriteAccess below) but could otherwise just
+   * read this GET route (or simply have the panel open) while an owner/
+   * editor is mid-connect and hijack the account. Same redaction pattern
+   * as round 975's webhookSecret fix -- only the credential is redacted,
+   * every other field stays visible to a viewer as before.
+   */
   router.get(
     "/projects/:id/integrations/whatsapp/status",
     asyncRoute(async (req, res) => {
       const project = requireProjectAccess(db, req.params.id, req.userId!);
-      res.json(whatsapp.getStatus(project.id));
+      const isViewer = project.ownerId !== req.userId! && getCollaboratorRole(db, project.id, req.userId!) === "viewer";
+      const status = whatsapp.getStatus(project.id);
+      res.json(isViewer ? { ...status, qrDataUrl: null } : status);
     }),
   );
 

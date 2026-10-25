@@ -935,6 +935,11 @@ export function WhatsAppPanel({
                 <img className="whatsapp-qr-image" src={status.qrDataUrl} alt={t("whatsapp.title")} />
               </>
             )}
+            {/* Round 976: the server redacts qrDataUrl to null for a viewer
+                (routes/projects.ts's GET .../whatsapp/status) -- without
+                this, a viewer watching an owner/editor connect would just
+                see an empty box here with no explanation. */}
+            {s === "qr" && !status?.qrDataUrl && readOnly && <p className="muted small">{t("whatsapp.connect.qrHiddenForViewer")}</p>}
             {status?.error && (
               <p className="error" role="status">
                 {status.error}

@@ -932,6 +932,59 @@ test("WhatsAppPanel shows a real error with a Retry button when the initial stat
  * failures can be driven deterministically without a real 7.5-second wait,
  * while leaving the real setTimeout(0) waitForCondition/flush idiom intact.
  */
+/**
+ * Round 976: the server now redacts qrDataUrl to null for a viewer
+ * (routes/projects.ts's GET .../whatsapp/status) -- confirms the panel,
+ * in readOnly mode, shows an explanatory message instead of silently
+ * rendering an empty box where the QR code would be.
+ */
+test("WhatsAppPanel shows a 'waiting for owner/editor' message instead of a QR image when readOnly and the server has redacted qrDataUrl", async () => {
+  await withJsdom(async () => {
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = (async (input: string, init?: RequestInit): Promise<Response> => {
+      const method = init?.method ?? "GET";
+      if (method === "GET" && input === "/api/projects/proj1/integrations/whatsapp/status") {
+        return new Response(JSON.stringify({ status: "qr", qrDataUrl: null, phoneNumber: null, error: null }), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        });
+      }
+      throw new Error(`unexpected request ${method} ${input}`);
+    }) as typeof fetch;
+    try {
+      render(
+        React.createElement(
+          ThemeProvider,
+          null,
+          React.createElement(
+            LanguageProvider,
+            null,
+            React.createElement(WhatsAppPanel, {
+              projectId: "proj1",
+              projectName: "Test Project",
+              onClose: () => {},
+              onJumpToEntity: () => {},
+              onJumpToRecord: () => {},
+              entities: [],
+              onCreateRecordFromMessage: () => {},
+              readOnly: true,
+            }),
+          ),
+        ),
+      );
+      // The box with class "whatsapp-connect-box" also renders for the
+      // default "disconnected" state (before the initial status fetch
+      // resolves) -- wait for the real post-fetch message itself, not
+      // just the box's own presence, so this doesn't pass on that
+      // earlier, unrelated render.
+      await waitForCondition(() => /Waiting for the owner or an editor to scan the code/.test(document.body.textContent ?? ""));
+      assert.equal(document.querySelector(".whatsapp-qr-image"), null, "there is no real QR code to show a viewer");
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+});
+
 test("WhatsAppPanel's QR-pairing poll offers a real Retry button after 5 consecutive failures, instead of leaving the user stuck with a stale QR code", async (t) => {
   await withJsdom(async () => {
     const originalFetch = globalThis.fetch;
