@@ -3911,7 +3911,23 @@ export function createProjectsRouter(
         return;
       }
       const entity = findEntity(project, rule.entityName);
-      const [record] = listRecords(db, project.id, entity);
+      // Round 998: a record-triggered rule can be created before the
+      // project is ever built (rule creation itself has no project.status
+      // guard, same as every other automation route -- an intentional,
+      // already-tested pattern: pre-configuring automations ahead of the
+      // first build), in which case this entity's own real per-project SQL
+      // table (only ever created by diffAndMigrate, from the build/refine
+      // pipeline) genuinely doesn't exist yet. Checked here, not with a
+      // blanket route-level guard, and folded into the exact same "no
+      // records yet" outcome right below -- from this route's own point of
+      // view the two situations are functionally identical (there is
+      // nothing to test against), and every other automation route stays
+      // fully usable on a not-yet-built project exactly as before.
+      // Before this check, calling this route for any trigger other than
+      // "schedule" against such a project threw a raw, uncaught
+      // `SqliteError: no such table`, surfaced as a generic 500 instead of
+      // this same clean, already-documented 400.
+      const record = project.status === "built" ? listRecords(db, project.id, entity)[0] : undefined;
       if (!record) {
         throw new HttpError(
           400,

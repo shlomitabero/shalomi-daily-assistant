@@ -1752,6 +1752,49 @@ test("PATCH .../entities/:entityName/:recordId retried with the same idempotency
  * coerceValue boolean/enum checks exactly (same error message style)
  * instead of letting a permanently-dead rule save successfully.
  */
+/**
+ * Round 998: creating/listing/patching/deleting an automation rule has no
+ * project.status guard at all -- confirmed intentional by several other
+ * pre-existing tests in this very file (e.g. the PATCH/DELETE idempotency-
+ * replay tests and the checkpoint-restore migrationWarning test just
+ * below) that already create and manage a rule against a project that was
+ * never explicitly built, letting a user pre-configure automations ahead
+ * of a project's first build. Round 997's brand-new Test route broke that
+ * pattern for a record-triggered rule specifically: it called
+ * `listRecords()` unconditionally, which throws a raw, uncaught
+ * `SqliteError: no such table` against a project whose entity table
+ * (only ever created by diffAndMigrate, from the build/refine pipeline)
+ * doesn't exist yet -- surfacing as a generic 500 instead of this route's
+ * own already-documented, clean 400 "no records yet" outcome, which is
+ * functionally exactly what a never-built project's entity really has:
+ * zero records. A "schedule" rule needs no record at all, so it's
+ * untouched -- still testable on a draft project, same as creating one.
+ */
+test("POST .../automations/:ruleId/test on a record-triggered rule for a project that hasn't been built yet returns the same clean 'no records' error, instead of crashing with a raw SqliteError", async () => {
+  await withServer(async (baseUrl) => {
+    const token = await signup(baseUrl);
+    const createRes = await fetch(`${baseUrl}/api/projects`, {
+      method: "POST",
+      headers: authHeaders(token),
+      body: JSON.stringify({ description: "A CRM with customers and deals." }),
+    });
+    const { project } = (await createRes.json()) as { project: { id: string; spec: { entities: { name: string }[] } } };
+    const entityName = project.spec.entities[0]!.name;
+
+    const ruleRes = await fetch(`${baseUrl}/api/projects/${project.id}/entities/${entityName}/automations`, {
+      method: "POST",
+      headers: authHeaders(token),
+      body: JSON.stringify({ trigger: "record_created", actionType: "send_whatsapp", toMode: "static", toNumber: "972500000000", messageTemplate: "hi" }),
+    });
+    assert.equal(ruleRes.status, 201, "creating a rule ahead of the first build must still work, unchanged");
+    const { rule } = (await ruleRes.json()) as { rule: { id: string } };
+
+    const testRes = await fetch(`${baseUrl}/api/projects/${project.id}/automations/${rule.id}/test`, { method: "POST", headers: authHeaders(token) });
+    assert.equal(testRes.status, 400, "must be the same clean 'no records yet' rejection every other entity -- not a 500");
+    assert.equal(((await testRes.json()) as { code?: string }).code, "AUTOMATION_TEST_NO_RECORDS");
+  });
+});
+
 test("creating or updating a field_equals automation rule with a fieldValue that can never match the field's real type is rejected with 400, instead of silently saving a permanently-dead rule", async () => {
   await withServer(async (baseUrl) => {
     const token = await signup(baseUrl, "automation-fieldvalue-type@example.com");
