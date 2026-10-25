@@ -1309,9 +1309,23 @@ test("AutomationsPanel's field_equals Value control renders a real picker of the
       assert.equal(valueSelect.value, "1", "must default to the first related record's id, not an empty/unset value");
 
       fireEvent.change(valueSelect, { target: { value: "2" } });
+      // Round 987: without this, the form's own submit handler can race
+      // ahead of this change's React state commit under full-suite CPU
+      // contention -- unlike the earlier valueSelect lookup above (which
+      // explicitly awaits its own condition), nothing here confirmed the
+      // <select>'s backing state had actually taken "2" before the two
+      // fireEvent calls right below fired, so createBody?.fieldValue
+      // intermittently (~25% of isolated runs, confirmed empirically)
+      // still read "1" -- the picker's own stale default -- instead of
+      // the value just chosen.
+      await waitForCondition(() => valueSelect.value === "2");
 
       const messageField = document.querySelector(".automations-create-form textarea") as HTMLTextAreaElement;
       fireEvent.change(messageField, { target: { value: "Courier changed" } });
+      // Same reasoning as valueSelect's own wait just above -- confirms
+      // this change's React state commit too before the immediately
+      // following submit reads it.
+      await waitForCondition(() => messageField.value === "Courier changed");
       fireEvent.submit(document.querySelector(".automations-create-form")!);
 
       await waitForCondition(() => createBody !== undefined);
