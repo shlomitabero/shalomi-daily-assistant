@@ -838,8 +838,19 @@ const MAX_CONSECUTIVE_SCHEDULE_FAILURES_PER_DAY = 5;
  * -- but this function's own lookback still has to be widened to match,
  * or it would just fail to ever SEE those real rows within its own
  * narrower fetch, even though they're still safely in the table.
+ *
+ * Round 959: exported (was module-private) so GET /projects/:id/automations
+ * (routes/projects.ts) can surface this same computed state to the client
+ * as `pausedForToday` -- this cap's mechanics were always documented here,
+ * but nothing ever told the user a rule had actually been paused for the
+ * rest of the day, as opposed to still actively retrying every minute. A
+ * user who noticed one failure, fixed the destination, and checked back
+ * had no way to know their fix wouldn't take effect until tomorrow's UTC
+ * rollover, since fixing the destination doesn't itself clear this cap --
+ * only a new successful run or a new UTC day does, and neither happens
+ * while the scheduler keeps skipping the rule.
  */
-function hasTooManyConsecutiveFailuresToday(db: ForgeDatabase, rule: AutomationRule, now: Date): boolean {
+export function hasTooManyConsecutiveFailuresToday(db: ForgeDatabase, rule: AutomationRule, now: Date): boolean {
   const todayUtc = now.toISOString().slice(0, 10);
   const runs = listAutomationRuns(db, rule.projectId, rule.id, 2 * AUTOMATION_RUNS_RETENTION_LIMIT)
     .filter((run) => run.error !== WHATSAPP_NOT_CONNECTED_ERROR)

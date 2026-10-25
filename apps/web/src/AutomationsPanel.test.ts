@@ -233,6 +233,53 @@ test("AutomationsPanel shows the empty state when no rules exist yet", async () 
   });
 });
 
+/**
+ * Round 959: hasTooManyConsecutiveFailuresToday's own cap (apps/api/src/
+ * automations.ts, rounds 924/934/951) was always computed and acted on
+ * server-side, but never surfaced -- the "Enabled" chip stayed green the
+ * whole time the scheduler had actually stopped retrying a rule for the
+ * rest of today, with nothing distinguishing that from a rule still
+ * actively retrying every minute. Confirms a schedule rule the server
+ * reports as pausedForToday gets a second, distinct chip naming that, and
+ * that an otherwise-identical rule without it gets no such chip.
+ */
+test("AutomationsPanel shows a distinct 'paused for today' chip for a schedule rule the server reports as pausedForToday, but not for one that isn't", async () => {
+  await withJsdom(async () => {
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = (async (input: string) => {
+      if (input === "/api/projects/proj1/automations") {
+        return new Response(
+          JSON.stringify({
+            rules: [
+              makeRule({
+                id: "paused-rule",
+                trigger: "schedule",
+                scheduleTimeUtc: "09:00",
+                scheduleDaysOfWeek: null,
+                pausedForToday: true,
+              }),
+              makeRule({ id: "active-rule", trigger: "schedule", scheduleTimeUtc: "10:00", scheduleDaysOfWeek: null, pausedForToday: false }),
+            ],
+          }),
+          { status: 200, headers: { "content-type": "application/json" } },
+        );
+      }
+      throw new Error(`unexpected request ${input}`);
+    }) as typeof fetch;
+
+    try {
+      renderPanel();
+      await waitForCondition(() => document.querySelectorAll(".automations-rule-row").length === 2);
+      const [pausedRow, activeRow] = Array.from(document.querySelectorAll(".automations-rule-row"));
+      assert.ok(pausedRow.querySelector(".automations-chip-paused"), "the paused rule must show the paused-for-today chip");
+      assert.match(pausedRow.textContent ?? "", /Paused for today/);
+      assert.ok(!activeRow.querySelector(".automations-chip-paused"), "an active, non-paused rule must not show the paused-for-today chip");
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+});
+
 test("AutomationsPanel shows a real error with a Retry button when the initial load fails", async () => {
   await withJsdom(async () => {
     const originalFetch = globalThis.fetch;

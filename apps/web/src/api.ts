@@ -1214,6 +1214,8 @@ export interface AutomationRuleView {
   lastError: string | null;
   /** Round 948: the actionType this rule actually HAD when lastError was last written -- see packages/db's AutomationRule.lastActionType for why the live `actionType` above must never be used to translate a stale lastError. Null if the rule has never fired, or fired before this column existed. */
   lastActionType: AutomationActionType | null;
+  /** Round 959: computed server-side from hasTooManyConsecutiveFailuresToday's own cap (apps/api/src/automations.ts, rounds 924/934/951) -- true means the scheduler has stopped retrying this "schedule"-trigger rule for the rest of today after 5 consecutive real failures, and won't try again until tomorrow's UTC rollover even if the destination is fixed sooner. Always false for a non-"schedule" trigger or a disabled rule, since the scheduler never consults this cap for either. */
+  pausedForToday: boolean;
 }
 
 export function listAutomationRules(projectId: string): Promise<{ rules: AutomationRuleView[] }> {

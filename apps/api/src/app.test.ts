@@ -8,6 +8,7 @@ import type { AgentStepEvent, ProductSpec } from "@forge/shared";
 import {
   diffAndMigrate,
   findUserByEmail,
+  insertAutomationRule,
   insertCheckpoint,
   insertProject,
   insertRecord,
@@ -21,6 +22,7 @@ import {
 } from "@forge/db";
 import { HeuristicSpecProvider, type SpecProvider } from "@forge/spec-engine";
 import { createApp, errorMiddleware } from "./app.js";
+import { runScheduledAutomationsCheck } from "./automations.js";
 import type { EmailSender } from "./email.js";
 import { createStore } from "./store.js";
 import { WhatsAppWebManager, type BaileysConnectionUpdate, type BaileysMessagesUpsert, type WhatsAppSocket } from "./whatsappWeb.js";
@@ -2396,6 +2398,85 @@ test("POST /projects/:id/entities/:entityName/automations retried with the same 
     const listRes = await fetch(`${baseUrl}/api/projects/${project.id}/automations`, { headers: authHeaders(token) });
     const { rules } = (await listRes.json()) as { rules: { id: string }[] };
     assert.equal(rules.length, 1, "exactly one automation rule must exist -- the retry must not have inserted a second row");
+  });
+});
+
+/**
+ * Round 959: hasTooManyConsecutiveFailuresToday's own cap (automations.ts,
+ * rounds 924/934/951) was always computed and acted on server-side, but
+ * GET /projects/:id/automations never surfaced it -- a rule the scheduler
+ * had actually stopped retrying for the rest of today looked identical, in
+ * the API response, to one still actively retrying every minute. Drives 5
+ * real consecutive failures through runScheduledAutomationsCheck directly
+ * (the same mechanism automations.test.ts's own round-924 test uses) to
+ * trip the cap, then confirms the list route reports pausedForToday: true
+ * for that rule -- and false for an otherwise-untouched record_created
+ * rule, since the cap is only ever consulted for a "schedule" trigger.
+ */
+test("GET /projects/:id/automations reports pausedForToday: true for a schedule rule the scheduler has stopped retrying today, and false for an unrelated record_created rule", async () => {
+  await withServer(async (baseUrl, db) => {
+    const token = await signup(baseUrl);
+    const createRes = await fetch(`${baseUrl}/api/projects`, {
+      method: "POST",
+      headers: authHeaders(token),
+      body: JSON.stringify({ description: "A CRM with customers and deals." }),
+    });
+    const { project } = (await createRes.json()) as { project: { id: string } };
+    const buildRes = await fetch(`${baseUrl}/api/projects/${project.id}/build`, { method: "POST", headers: authHeaders(token) });
+    await collectSSE(buildRes);
+
+    // Round 959's own GET /automations handler computes pausedForToday
+    // against the real wall-clock `new Date()`, not an injected one (there's
+    // no route parameter to inject it through) -- unlike automations.test.ts's
+    // own round-924 test, which can freely pick a fixed historical date
+    // since it calls runScheduledAutomationsCheck directly. scheduleTimeUtc
+    // "00:00" keeps the rule due regardless of what time this test happens
+    // to run at; the simulated ticks below use the real current moment too,
+    // so their triggeredAt genuinely falls on today's real UTC date.
+    const scheduleRule = insertAutomationRule(db, {
+      projectId: project.id,
+      entityName: "Customer",
+      trigger: "schedule",
+      scheduleTimeUtc: "00:00",
+      scheduleDaysOfWeek: null,
+      actionType: "send_whatsapp",
+      toMode: "static",
+      toNumber: "972501234567",
+      messageTemplate: "Daily report",
+    });
+    const unrelatedRule = insertAutomationRule(db, {
+      projectId: project.id,
+      entityName: "Customer",
+      trigger: "record_created",
+      actionType: "send_whatsapp",
+      toMode: "static",
+      toNumber: "972501234567",
+      messageTemplate: "Welcome!",
+    });
+
+    const fakeManager = {
+      getStatus() {
+        return { status: "connected" as const, qrDataUrl: null, phoneNumber: "972500000000", error: null };
+      },
+      async sendMessage() {
+        return { ok: false, error: "recipient not found" };
+      },
+    } as unknown as WhatsAppWebManager;
+
+    for (let i = 0; i < 6; i++) {
+      await runScheduledAutomationsCheck(db, fakeManager, new Date());
+    }
+
+    const listRes = await fetch(`${baseUrl}/api/projects/${project.id}/automations`, { headers: authHeaders(token) });
+    const { rules } = (await listRes.json()) as { rules: { id: string; pausedForToday: boolean }[] };
+    const pausedRule = rules.find((r) => r.id === scheduleRule.id)!;
+    const stillActiveRule = rules.find((r) => r.id === unrelatedRule.id)!;
+    assert.equal(pausedRule.pausedForToday, true, "the schedule rule must report paused after 5 consecutive real failures today");
+    assert.equal(
+      stillActiveRule.pausedForToday,
+      false,
+      "an unrelated record_created rule must never report paused -- the scheduler's cap is never consulted for it",
+    );
   });
 });
 

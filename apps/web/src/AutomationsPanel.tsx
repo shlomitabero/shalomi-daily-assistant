@@ -817,6 +817,17 @@ export function AutomationsPanel({
                     <span className={`chip ${rule.enabled ? "automations-chip-enabled" : "automations-chip-disabled"}`}>
                       {rule.enabled ? t("automations.status.enabled") : t("automations.status.disabled")}
                     </span>
+                    {/* Round 959: hasTooManyConsecutiveFailuresToday's own cap (automations.ts,
+                        rounds 924/934/951) was always computed and acted on server-side, but
+                        never shown -- the enabled chip just above stays green the whole time the
+                        scheduler has actually stopped retrying this rule for the rest of today,
+                        with nothing distinguishing "still retrying every minute" from "gave up
+                        until tomorrow's UTC rollover". */}
+                    {rule.pausedForToday && (
+                      <span className="chip automations-chip-paused" title={t("automations.status.pausedForToday.title")}>
+                        {t("automations.status.pausedForToday")}
+                      </span>
+                    )}
                     {!readOnly && (
                       <>
                         {/* Also disabled by createBusy (round 831), not just busyRuleId -- the

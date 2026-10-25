@@ -68,7 +68,7 @@ import { computeBusinessTwin } from "../twin.js";
 import { isPathInsideDir, UPLOADED_FILENAME } from "../uploadPaths.js";
 import type { WhatsAppWebManager } from "../whatsappWeb.js";
 import { findMatchingRecord } from "../whatsapp.js";
-import { isAllowedWebhookUrl, runAutomationsForRecordChange } from "../automations.js";
+import { hasTooManyConsecutiveFailuresToday, isAllowedWebhookUrl, runAutomationsForRecordChange } from "../automations.js";
 
 const CreateProjectSchema = z.object({
   // Round 919: every other free-text schema in this file that accepts a
@@ -3319,7 +3319,18 @@ export function createProjectsRouter(
     "/projects/:id/automations",
     asyncRoute(async (req, res) => {
       const project = requireProjectAccess(db, req.params.id, req.userId!);
-      res.json({ rules: listAutomationRules(db, project.id) });
+      // Round 959: hasTooManyConsecutiveFailuresToday's own cap (rounds
+      // 924/934/951) was always computed and acted on server-side, but
+      // never surfaced -- only a "schedule"-trigger rule is ever checked
+      // against it (runScheduledAutomationsCheck only consults
+      // listEnabledScheduledRules), so computing it for a record_created/
+      // field_equals rule would show a meaningless, never-consulted value.
+      const now = new Date();
+      const rules = listAutomationRules(db, project.id).map((rule) => ({
+        ...rule,
+        pausedForToday: rule.trigger === "schedule" && rule.enabled ? hasTooManyConsecutiveFailuresToday(db, rule, now) : false,
+      }));
+      res.json({ rules });
     }),
   );
 

@@ -194,7 +194,14 @@ export function formatAutomationsReport(
   }
 
   for (const rule of rules) {
-    lines.push(`${describeRule(rule, entities, relatedRecords, lang, t)} (${rule.enabled ? t("automations.status.enabled") : t("automations.status.disabled")})`);
+    // Round 959: mirrors AutomationsPanel.tsx's own "paused for today" chip --
+    // without this, a schedule rule the server has actually stopped retrying
+    // for the rest of today (hasTooManyConsecutiveFailuresToday's cap) would
+    // print as plain "Enabled" in a downloaded report, identical to one still
+    // actively retrying every minute.
+    const status = rule.enabled ? t("automations.status.enabled") : t("automations.status.disabled");
+    const statusSuffix = rule.pausedForToday ? `, ${t("automations.status.pausedForToday")}` : "";
+    lines.push(`${describeRule(rule, entities, relatedRecords, lang, t)} (${status}${statusSuffix})`);
     lines.push(describeDestination(rule, entities, t));
     lines.push(rule.messageTemplate);
     lines.push(describeLastRun(rule, lang, t));

@@ -2869,6 +2869,11 @@ button.sort-header:hover:not(:disabled) {
   color: var(--muted);
 }
 
+.automations-chip-paused {
+  background: var(--danger-soft);
+  color: var(--danger);
+}
+
 .automations-new-heading {
   margin-top: 24px;
 }

@@ -138,6 +138,26 @@ test("formatAutomationsReport still translates a known WhatsApp error code after
   assert.equal(report.includes("missing_country_code"), false, "the bare raw error code must never leak into the report even after the rule was edited");
 });
 
+/**
+ * Round 959: mirrors AutomationsPanel.tsx's own "paused for today" chip --
+ * without this, a schedule rule the server reports as pausedForToday
+ * printed as plain "Enabled" in a downloaded/copied report, identical to
+ * one still actively retrying every minute.
+ */
+test("formatAutomationsReport shows a distinct 'Paused for today' suffix for a rule the server reports as pausedForToday, but not for an otherwise-identical enabled rule", () => {
+  const t = (key: string, params?: Record<string, string | number>) => translate("en", key, params);
+  const pausedRule = makeRule({ id: "paused-rule", trigger: "schedule", scheduleTimeUtc: "09:00", scheduleDaysOfWeek: null, pausedForToday: true });
+  const activeRule = makeRule({ id: "active-rule", trigger: "schedule", scheduleTimeUtc: "10:00", scheduleDaysOfWeek: null, pausedForToday: false });
+
+  const report = formatAutomationsReport([pausedRule, activeRule], [], "Shop", "en", t);
+  const lines = report.split("\n");
+  const pausedLine = lines.find((l) => l.includes("09:00"))!;
+  const activeLine = lines.find((l) => l.includes("10:00"))!;
+
+  assert.match(pausedLine, /\(Enabled, Paused for today\)/, "the paused rule's own line must name both its enabled state and the paused-for-today suffix");
+  assert.match(activeLine, /\(Enabled\)$/, "an active, non-paused rule's line must show only its plain enabled state, with no paused suffix");
+});
+
 test("formatAutomationsReport shows a field's bare label unchanged when no other field on the entity shares it", () => {
   const t = (key: string, params?: Record<string, string | number>) => translate("en", key, params);
   const entity: Entity = {
