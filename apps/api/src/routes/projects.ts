@@ -1759,72 +1759,86 @@ export function createProjectsRouter(
           // Restore itself is the lost-update hazard activePipelines (see its
           // own comment above) exists to prevent -- it reads project.spec, does
           // work, then writes project.spec back, just like /build, /refine, and
-          // /answers do. Unlike those three, restore's own work below never
-          // awaits anything, so it can't itself be interrupted mid-flight; but
-          // without this check, restoring while a slow /build or /refine is
-          // already in flight would still get silently overwritten the moment
-          // that other request finishes and writes its own result back.
+          // /answers do. Round 991: this route's own body below DOES now await
+          // real work before writing back (cleanupFileFieldsRetypedAway, added
+          // round 977, does genuine disk I/O) -- a comment that used to be here
+          // claimed restore "never awaits anything", which was already wrong
+          // the moment that round shipped. Marking this project id busy for the
+          // whole callback (mirroring /build/refine/answers/DELETE's own
+          // identical activePipelines.add/delete pattern), not just checking
+          // it, is what actually closes the gap: without it, an ordinary quick
+          // mutation route (entity/field label rename, roles, ...) that only
+          // *checks* activePipelines could read the still-current spec, write
+          // its own change, and return 200 during that await -- only for
+          // updateProjectSpec below to silently overwrite the whole spec with
+          // the checkpoint's frozen snapshot the instant it resumes, discarding
+          // that change with no error to either caller.
           if (activePipelines.has(project.id)) {
             throw new HttpError(409, "A build or refine is already running for this project", "PIPELINE_IN_PROGRESS");
           }
-          // project.spec must be re-read here, fresh inside the callback,
-          // rather than reusing the `project` fetched above by
-          // requireProjectWriteAccess -- that outer read happens before
-          // this call is known to be a genuine first attempt rather than a
-          // retry, so on a retry it would still be the PRE-restore spec
-          // from the request object, not the actually-current (already
-          // restored) one getProject() returns here. A plain getProject()
-          // is enough (not another requireProjectWriteAccess call) since
-          // access was already established above and can't have changed
-          // in between.
-          const currentSpec = getProject(db, project.id)!.spec;
-          // Restoring never drops columns/tables (migrations are additive-only),
-          // so it's always safe from *losing* data: this just ensures the
-          // restored spec's schema exists (a no-op unless restoring "forward"
-          // to a spec never built) and moves the spec pointer. "Safe from
-          // losing" isn't "safe from misreading" though -- diffAndMigrate can
-          // still report a reused column whose physical SQL type or FK target
-          // no longer matches what the restored spec claims (e.g. a field that
-          // was boolean when this checkpoint was taken, but has since been
-          // retyped to text and wasn't just created fresh here), and /build and
-          // /refine always surface that exact same diagnostic to the user
-          // (pipeline.ts's "Database" agent message) -- silently discarding it
-          // here, right where it's needed just as much, left a restored project
-          // render stale/mismatched values (e.g. a boolean cell reading
-          // Boolean("some real note text") as true) with no warning at all.
-          // Round 929: the checkpoint's own spec is a frozen snapshot from
-          // whenever it was taken -- restoring it straight, unmodified, silently
-          // reverted any entity/field label (and enum-value label) the user
-          // customized AFTER that checkpoint via EntityLabelEditor/
-          // FieldLabelEditor, with zero warning (describeImpactHazards only
-          // ever looks at structural field changes, never labels). This is the
-          // exact same "a previous customization should survive, by name, onto
-          // whatever spec replaces it" problem carryForwardLabels already
-          // solves for /refine (round 915/917) -- previousSpec is the CURRENT,
-          // still-customized spec being replaced; nextSpec is the checkpoint's
-          // own spec about to become the live one, mutated in place so its
-          // labels win for any entity/field that survives under the same name.
-          carryForwardLabels(currentSpec, checkpoint.spec);
-          const changes = diffAndMigrate(db, project.id, currentSpec, checkpoint.spec);
-          // Round 977: a restore can retype a field away from "file" the
-          // exact same way a /refine can -- see cleanupFileFieldsRetypedAway's
-          // own doc comment (pipeline.ts).
-          await cleanupFileFieldsRetypedAway(db, uploadsDir, project.id, changes);
-          const updated = updateProjectSpec(db, project.id, checkpoint.spec);
-          // An older checkpoint being restored to isn't guaranteed to be a
-          // safe, monotonically-looser move the way the data migration above
-          // already is (additive-only) -- it can easily be STRICTER on a field
-          // the user has since relaxed, or simply missing an entity/field the
-          // user has been actively using with real data in it. /build and
-          // /refine already warn about this exact class of change
-          // (pipeline.ts's own "Architect" message); describeImpactHazards
-          // reuses that identical hazard detection here, over the current spec
-          // being replaced (previousSpec) and the checkpoint's own spec taking
-          // its place (nextSpec) -- the same previousSpec/nextSpec shape
-          // computeImpact already expects, restore just supplies an older
-          // spec as "next" instead of a freshly regenerated one.
-          const migrationWarning = (describeMigrationHazards(changes).trim() + describeImpactHazards(currentSpec, checkpoint.spec)).trim();
-          return { status: 200, body: { project: updated, migrationWarning: migrationWarning.length > 0 ? migrationWarning : null } };
+          activePipelines.add(project.id);
+          try {
+            // project.spec must be re-read here, fresh inside the callback,
+            // rather than reusing the `project` fetched above by
+            // requireProjectWriteAccess -- that outer read happens before
+            // this call is known to be a genuine first attempt rather than a
+            // retry, so on a retry it would still be the PRE-restore spec
+            // from the request object, not the actually-current (already
+            // restored) one getProject() returns here. A plain getProject()
+            // is enough (not another requireProjectWriteAccess call) since
+            // access was already established above and can't have changed
+            // in between.
+            const currentSpec = getProject(db, project.id)!.spec;
+            // Restoring never drops columns/tables (migrations are additive-only),
+            // so it's always safe from *losing* data: this just ensures the
+            // restored spec's schema exists (a no-op unless restoring "forward"
+            // to a spec never built) and moves the spec pointer. "Safe from
+            // losing" isn't "safe from misreading" though -- diffAndMigrate can
+            // still report a reused column whose physical SQL type or FK target
+            // no longer matches what the restored spec claims (e.g. a field that
+            // was boolean when this checkpoint was taken, but has since been
+            // retyped to text and wasn't just created fresh here), and /build and
+            // /refine always surface that exact same diagnostic to the user
+            // (pipeline.ts's "Database" agent message) -- silently discarding it
+            // here, right where it's needed just as much, left a restored project
+            // render stale/mismatched values (e.g. a boolean cell reading
+            // Boolean("some real note text") as true) with no warning at all.
+            // Round 929: the checkpoint's own spec is a frozen snapshot from
+            // whenever it was taken -- restoring it straight, unmodified, silently
+            // reverted any entity/field label (and enum-value label) the user
+            // customized AFTER that checkpoint via EntityLabelEditor/
+            // FieldLabelEditor, with zero warning (describeImpactHazards only
+            // ever looks at structural field changes, never labels). This is the
+            // exact same "a previous customization should survive, by name, onto
+            // whatever spec replaces it" problem carryForwardLabels already
+            // solves for /refine (round 915/917) -- previousSpec is the CURRENT,
+            // still-customized spec being replaced; nextSpec is the checkpoint's
+            // own spec about to become the live one, mutated in place so its
+            // labels win for any entity/field that survives under the same name.
+            carryForwardLabels(currentSpec, checkpoint.spec);
+            const changes = diffAndMigrate(db, project.id, currentSpec, checkpoint.spec);
+            // Round 977: a restore can retype a field away from "file" the
+            // exact same way a /refine can -- see cleanupFileFieldsRetypedAway's
+            // own doc comment (pipeline.ts).
+            await cleanupFileFieldsRetypedAway(db, uploadsDir, project.id, changes);
+            const updated = updateProjectSpec(db, project.id, checkpoint.spec);
+            // An older checkpoint being restored to isn't guaranteed to be a
+            // safe, monotonically-looser move the way the data migration above
+            // already is (additive-only) -- it can easily be STRICTER on a field
+            // the user has since relaxed, or simply missing an entity/field the
+            // user has been actively using with real data in it. /build and
+            // /refine already warn about this exact class of change
+            // (pipeline.ts's own "Architect" message); describeImpactHazards
+            // reuses that identical hazard detection here, over the current spec
+            // being replaced (previousSpec) and the checkpoint's own spec taking
+            // its place (nextSpec) -- the same previousSpec/nextSpec shape
+            // computeImpact already expects, restore just supplies an older
+            // spec as "next" instead of a freshly regenerated one.
+            const migrationWarning = (describeMigrationHazards(changes).trim() + describeImpactHazards(currentSpec, checkpoint.spec)).trim();
+            return { status: 200, body: { project: updated, migrationWarning: migrationWarning.length > 0 ? migrationWarning : null } };
+          } finally {
+            activePipelines.delete(project.id);
+          }
         },
       );
       res.status(status).json(body);

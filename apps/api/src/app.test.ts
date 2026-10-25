@@ -11297,6 +11297,143 @@ test("restoring a checkpoint that retypes a field away from 'file' deletes the n
 });
 
 /**
+ * Round 991: unlike /build, /refine, /answers, and DELETE /projects/:id,
+ * the checkpoint-restore route only ever CHECKED activePipelines before
+ * this round -- it never SET it for its own duration. That used to look
+ * safe because restore's own read-project.spec-then-write-it-back body was
+ * believed to have no genuine await in between (so nothing else could ever
+ * run mid-restore), but round 977 (the fixture test just above) added a
+ * real one: `await cleanupFileFieldsRetypedAway(...)`, which does genuine
+ * disk I/O (fs.rm per affected row) for every record whose file field just
+ * got retyped away. During that await, an ordinary "quick" mutation route
+ * (entity/field label rename, roles, ...) that only checks activePipelines
+ * -- never sets it -- could still read project.spec, apply its own change,
+ * and return 200 to its caller, only for restore's own updateProjectSpec
+ * to silently overwrite the whole spec with the checkpoint's frozen
+ * snapshot the instant it resumes, discarding that change with no error to
+ * either side.
+ *
+ * Deterministically forcing a real await to take enough wall-clock time to
+ * race against is awkward here: unlike /refine's AI call or WhatsApp's
+ * socket, there is no existing test seam that gates cleanupFileFieldsRetyped
+ * Away's own timing, and this codebase otherwise never relies on bare
+ * fetch() timing for a race assertion. The approach below still avoids
+ * that: cleanupFileFieldsRetypedAway awaits a real `Promise.all` of one
+ * `fs.rm` per affected row, each of which is dispatched to libuv's
+ * threadpool -- while that's pending, Node's single JS main thread has
+ * nothing else to do and so WILL service any other already-queued work,
+ * including a concurrently-fired HTTP request's own handler. Inserting
+ * enough affected rows (verified empirically: ~800 concurrent fs.rm calls,
+ * even against files that don't exist on disk, reliably take tens of
+ * milliseconds in wall-clock terms) makes that window wide and real rather
+ * than a hoped-for microtask coincidence, so firing the second request
+ * immediately after (not awaited in between, so both are in flight
+ * together) lands inside it deterministically rather than by luck.
+ */
+test("renaming an entity's label while a checkpoint restore is still cleaning up its own retyped-away file fields is rejected with 409, instead of racing restore's own spec write-back", async () => {
+  await withServer(async (baseUrl, db, uploadsDir) => {
+    const email = `restore-cleanup-race-${randomUUID()}@example.com`;
+    const token = await signup(baseUrl, email);
+    const user = findUserByEmail(db, email)!;
+
+    const specWithTextAttachment: ProductSpec = {
+      summary: "test",
+      personas: [],
+      roles: ["Admin"],
+      entities: [
+        {
+          name: "Document",
+          fields: [
+            { name: "title", type: "text", required: true },
+            { name: "attachment", type: "text", required: false },
+          ],
+        },
+      ],
+      screens: [],
+      assumptions: [],
+      openQuestions: [],
+    };
+    const specWithFileAttachment: ProductSpec = {
+      ...specWithTextAttachment,
+      entities: [
+        {
+          name: "Document",
+          fields: [
+            { name: "title", type: "text", required: true },
+            { name: "attachment", type: "file", required: false },
+          ],
+        },
+      ],
+    };
+
+    const projectId = randomUUID();
+    insertProject(db, {
+      id: projectId,
+      ownerId: user.id,
+      name: "Docs",
+      description: "A document tracker.",
+      spec: specWithTextAttachment,
+    });
+    diffAndMigrate(db, projectId, undefined, specWithTextAttachment);
+    const checkpoint = insertCheckpoint(db, {
+      id: randomUUID(),
+      projectId,
+      label: "Initial build",
+      kind: "build",
+      spec: specWithTextAttachment,
+    });
+
+    diffAndMigrate(db, projectId, specWithTextAttachment, specWithFileAttachment);
+    updateProjectSpec(db, projectId, specWithFileAttachment);
+
+    // 800 records each carrying a real-shaped (but never actually written
+    // to disk -- unnecessary for this test, and confirmed above that
+    // fs.rm({force: true}) on a missing file still costs a real syscall)
+    // file descriptor in "attachment", so the restore below has enough
+    // genuinely slow disk I/O to await that a concurrent request reliably
+    // lands inside that window.
+    for (let i = 0; i < 800; i++) {
+      insertRecord(db, projectId, specWithFileAttachment.entities[0], {
+        title: `Contract ${i}`,
+        attachment: JSON.stringify({
+          url: `/api/uploads/${projectId}/Document/${randomUUID()}.pdf`,
+          name: "contract.pdf",
+          size: 19,
+          mimeType: "application/pdf",
+        }),
+      });
+    }
+
+    // Fired together, neither awaited before the other starts, so both are
+    // genuinely in flight on the server at the same time.
+    const restorePromise = fetch(`${baseUrl}/api/projects/${projectId}/checkpoints/${checkpoint.id}/restore`, {
+      method: "POST",
+      headers: authHeaders(token),
+    });
+    const labelPromise = fetch(`${baseUrl}/api/projects/${projectId}/entities/Document/label`, {
+      method: "PATCH",
+      headers: authHeaders(token),
+      body: JSON.stringify({ label: "מסמך VIP" }),
+    });
+
+    const [restoreRes, labelRes] = await Promise.all([restorePromise, labelPromise]);
+    const labelBody = (await labelRes.json()) as { code?: string };
+
+    assert.equal(restoreRes.status, 200, "the restore itself must still succeed");
+    assert.equal(labelRes.status, 409, "the concurrent rename must be rejected while the restore is still in flight");
+    assert.equal(labelBody.code, "PIPELINE_IN_PROGRESS");
+
+    // Once the restore has genuinely finished, renaming the same label must succeed normally.
+    const labelAgainRes = await fetch(`${baseUrl}/api/projects/${projectId}/entities/Document/label`, {
+      method: "PATCH",
+      headers: authHeaders(token),
+      body: JSON.stringify({ label: "מסמך VIP" }),
+    });
+    assert.equal(labelAgainRes.status, 200);
+  });
+});
+
+/**
  * Round 956: unlike deleteCheckpoint (round 944, a plain 204 with nothing
  * to get wrong on replay), POST .../restore's response PAYLOAD itself
  * depends on reading project.spec BEFORE the restore overwrites it. A
