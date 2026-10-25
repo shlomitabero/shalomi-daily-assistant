@@ -8,6 +8,7 @@ import React from "react";
 import { act, cleanup, fireEvent, render } from "@testing-library/react";
 import type { Entity, EntityRecord } from "@forge/shared";
 import { getColumnWidths, setColumnWidth } from "./columnWidths.js";
+import { getHiddenFields } from "./columnVisibility.js";
 import { getGroupByField } from "./groupByPreference.js";
 import { getCollapsedGroups } from "./collapsedGroupsPreference.js";
 import { getCollapsedBoardColumns } from "./collapsedBoardColumnsPreference.js";
@@ -6905,6 +6906,255 @@ test("EntityPanel drops a persisted column width when a live refine REMOVES that
       // exactly as sortKeys' own analogous fix already does.
       assert.equal(document.querySelector(".entity-table-resized"), null, "the table must return to normal automatic sizing, not stay locked into fixed-layout mode for a field that no longer exists");
       assert.equal(document.querySelector(".entity-reset-column-widths"), null, "the 'Reset column widths' button must disappear too, since there is nothing real left to reset");
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+});
+
+/**
+ * Round 985: a fresh Explore survey traced an established bug class this
+ * routine already closed for a field genuinely REMOVED by a live refine
+ * (sortKeys round 509, columnWidths round 897, fieldFilters round 751,
+ * groupFieldName round 780/892) to a sibling hazard none of those fixes
+ * actually covers -- a field whose NAME survives a live refine with only
+ * its letter CASING changed (e.g. "status" -> "Status"), which migrate.ts/
+ * pipeline.ts/checkpointDiff.ts already treat, at the spec-diffing layer,
+ * as the exact same field (SQLite itself resolves a column name
+ * case-insensitively -- see migrate.ts's own doc comments -- so nothing
+ * about the real data changes at all). Every one of those four
+ * revalidation effects used an EXACT name match, which can't tell a
+ * case-only rename apart from the field being a totally different one, so
+ * a resized column snapped back to auto width, a chosen sort order
+ * reverted to none, and an active filter silently vanished (unhiding
+ * whatever it was filtering out) -- even though, from the user's
+ * perspective, nothing about that field actually changed. Seeds the
+ * column width and sort key directly via their own persistence setters
+ * (matching columnWidths' own round-897 test's convention), rather than
+ * simulating a real drag/click, since the DRAG mechanics themselves are
+ * already covered elsewhere and aren't the point of this test. Status
+ * stays visible throughout (a hidden column's own header never renders at
+ * all, so there's nothing to check its width/sort state against) --
+ * hiddenFields' own identical hazard is covered by the dedicated test
+ * just below instead.
+ */
+test("EntityPanel carries a resized column width and a chosen sort order forward under their new spelling when a live refine renames a field's letter casing", async () => {
+  await withJsdom(async () => {
+    const statusFieldV1 = {
+      name: "status",
+      label: "Status",
+      type: "enum" as const,
+      required: true,
+      enumValues: ["new", "won"],
+      enumLabels: { new: "New", won: "Won" },
+    };
+    const entityV1: Entity = {
+      name: "Deal",
+      label: "Deal",
+      fields: [{ name: "name", label: "Name", type: "text", required: true }, statusFieldV1],
+    };
+    const statusFieldV2 = { ...statusFieldV1, name: "Status" };
+    const entityV2: Entity = {
+      name: "Deal",
+      label: "Deal",
+      fields: [{ name: "name", label: "Name", type: "text", required: true }, statusFieldV2],
+    };
+    const store: EntityRecord[] = [
+      { id: 1, createdAt: "x", name: "Acme Corp", status: "new" },
+      { id: 2, createdAt: "x", name: "Globex", status: "won" },
+    ];
+    setColumnWidth("proj1", "Deal", "status", 220);
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = mockRecordsFetch(store) as typeof fetch;
+    try {
+      const view = renderEntityPanel({ entity: entityV1, allEntities: [entityV1] });
+      await waitForCondition(() => document.querySelectorAll("table tbody tr").length === 2);
+      assert.ok(document.querySelector(".entity-table-resized"), "sanity check: the seeded width must already put the table into fixed-layout mode");
+
+      // Sort by "status".
+      const statusColumnHeaderButton = Array.from(document.querySelectorAll("thead th button.sort-header")).find((el) =>
+        /Status/.test(el.textContent ?? ""),
+      ) as HTMLButtonElement;
+      fireEvent.click(statusColumnHeaderButton);
+      assert.deepEqual(getSortKeys("proj1", "Deal").map((k) => k.field), ["status"], "sanity check: sorting must have actually persisted");
+
+      // Simulate a live refine that renames "status" -> "Status" ONLY --
+      // same field, same type, same enum values, same entity.name ("Deal"),
+      // the same no-remount precondition every sibling test above relies
+      // on. sortKeys' own revalidation effect (like its sibling
+      // columnWidths' own just below) only ever updates REACT STATE, never
+      // writes the remap back to persisted storage (matching this file's
+      // own established convention -- see that effect's own doc comment
+      // in EntityPanel.tsx) -- so the DOM's own aria-sort attribute (not
+      // sortKeysPreference.ts's getSortKeys, which would still show the
+      // stale "status" key forever) is the only way to observe whether the
+      // remap actually happened.
+      view.rerender(buildEntityPanelElement({ entity: entityV2, allEntities: [entityV2] }));
+      await waitForCondition(() => document.querySelectorAll("table tbody tr").length === 2);
+
+      assert.ok(document.querySelector(".entity-table-resized"), "the table must stay in fixed-layout mode -- the resized width must not have been dropped as if the field were removed");
+      const statusHeaderCellAfterRename = Array.from(document.querySelectorAll("thead th")).find((th) => /Status/.test(th.textContent ?? ""))!;
+      assert.notEqual(
+        statusHeaderCellAfterRename.getAttribute("aria-sort"),
+        "none",
+        "the Status column must still show as the active sort column under its new spelling, not revert to no sort",
+      );
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+});
+
+/**
+ * Round 985: the same case-only-rename hazard as the two tests above, for
+ * fieldFilters specifically -- checked via the filter's own persisted
+ * value and its <select>'s own displayed value, deliberately NOT via the
+ * table's resulting row count: this isolated-component test never
+ * triggers a fresh GET on a rerender that only changes entity.fields
+ * (same precondition every sibling test above relies on), so the
+ * already-fetched mock records keep their OLD "status" key forever within
+ * this one test run, unlike the real server's own rowToRecord
+ * (packages/db/src/repository.ts), which always serializes a record keyed
+ * by the CURRENT schema's field.name. Checking row counts here would
+ * therefore show 0 matches post-rename regardless of whether the
+ * underlying fix works, which is a limitation of this test's own static
+ * mock data, not a real symptom.
+ */
+test("EntityPanel carries an active field filter forward under its new spelling when a live refine renames a field's letter casing", async () => {
+  await withJsdom(async () => {
+    const statusFieldV1 = {
+      name: "status",
+      label: "Status",
+      type: "enum" as const,
+      required: true,
+      enumValues: ["new", "won"],
+      enumLabels: { new: "New", won: "Won" },
+    };
+    const entityV1: Entity = {
+      name: "Deal",
+      label: "Deal",
+      fields: [{ name: "name", label: "Name", type: "text", required: true }, statusFieldV1],
+    };
+    const statusFieldV2 = { ...statusFieldV1, name: "Status" };
+    const entityV2: Entity = {
+      name: "Deal",
+      label: "Deal",
+      fields: [{ name: "name", label: "Name", type: "text", required: true }, statusFieldV2],
+    };
+    const store: EntityRecord[] = [
+      { id: 1, createdAt: "x", name: "Acme Corp", status: "new" },
+      { id: 2, createdAt: "x", name: "Globex", status: "won" },
+    ];
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = mockRecordsFetch(store) as typeof fetch;
+    try {
+      const view = renderEntityPanel({ entity: entityV1, allEntities: [entityV1] });
+      await waitForCondition(() => document.querySelectorAll("table tbody tr").length === 2);
+
+      const statusFilter = document.querySelector(".entity-status-filter") as HTMLSelectElement;
+      fireEvent.change(statusFilter, { target: { value: "new" } });
+      await waitForCondition(() => document.querySelectorAll("table tbody tr").length === 1);
+      assert.deepEqual(getFieldFilters("proj1", "Deal"), { status: "new" }, "sanity check: the filter must have actually persisted");
+
+      // Simulate a live refine that renames "status" -> "Status" ONLY --
+      // same field, same type, same enum values, same entity.name ("Deal"),
+      // the same no-remount precondition every sibling test above relies
+      // on. fieldFilters' own revalidation effect, like sortKeys'/
+      // columnWidths' own just above, only ever updates REACT STATE, never
+      // writes the remap back to persisted storage -- so the filter
+      // <select>'s own displayed value (not fieldFiltersPreference.ts's
+      // getFieldFilters, which would still show the stale "status" key
+      // forever) is the only way to observe whether the remap happened.
+      view.rerender(buildEntityPanelElement({ entity: entityV2, allEntities: [entityV2] }));
+      await waitForCondition(() => (document.querySelector(".entity-status-filter") as HTMLSelectElement | null)?.value === "new");
+
+      assert.equal(
+        (document.querySelector(".entity-status-filter") as HTMLSelectElement).value,
+        "new",
+        "the filter <select>'s own displayed value must still reflect the active filter under the new spelling, not blank out",
+      );
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+});
+
+/**
+ * Round 985: the same case-only-rename hazard as the test just above, for
+ * hiddenFields and the "Group by" choice specifically -- both need the
+ * field to be HIDDEN/grouped rather than visible, which the test above
+ * deliberately avoids (a hidden column's own header never renders, so it
+ * can't also be checked for a resized width/sort state in the same pass).
+ */
+test("EntityPanel keeps a column hidden and a 'Group by' choice set under their new spelling when a live refine renames a field's letter casing", async () => {
+  await withJsdom(async () => {
+    const statusFieldV1 = {
+      name: "status",
+      label: "Status",
+      type: "enum" as const,
+      required: true,
+      enumValues: ["new", "won"],
+      enumLabels: { new: "New", won: "Won" },
+    };
+    const entityV1: Entity = {
+      name: "Deal",
+      label: "Deal",
+      fields: [{ name: "name", label: "Name", type: "text", required: true }, statusFieldV1],
+    };
+    const statusFieldV2 = { ...statusFieldV1, name: "Status" };
+    const entityV2: Entity = {
+      name: "Deal",
+      label: "Deal",
+      fields: [{ name: "name", label: "Name", type: "text", required: true }, statusFieldV2],
+    };
+    const store: EntityRecord[] = [
+      { id: 1, createdAt: "x", name: "Acme Corp", status: "new" },
+      { id: 2, createdAt: "x", name: "Globex", status: "won" },
+    ];
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = mockRecordsFetch(store) as typeof fetch;
+    try {
+      const view = renderEntityPanel({ entity: entityV1, allEntities: [entityV1] });
+      await waitForCondition(() => document.querySelectorAll("table tbody tr").length === 2);
+
+      // Hide the "status" column.
+      const columnsBtn = document.querySelector(".columns-menu-btn") as HTMLButtonElement;
+      fireEvent.click(columnsBtn);
+      const statusCheckbox = Array.from(document.querySelectorAll(".columns-menu-item")).find((el) =>
+        /Status/.test(el.textContent ?? ""),
+      )!.querySelector("input") as HTMLInputElement;
+      fireEvent.click(statusCheckbox);
+      await waitForCondition(() => document.querySelectorAll("thead th").length === 4);
+      fireEvent.click(columnsBtn);
+      assert.deepEqual(getHiddenFields("proj1", "Deal"), new Set(["status"]), "sanity check: hiding must have actually persisted");
+
+      // Group by "status".
+      const groupBySelect = document.querySelector(".entity-group-by") as HTMLSelectElement;
+      fireEvent.change(groupBySelect, { target: { value: "status" } });
+      await waitForCondition(() => getGroupByField("proj1", "Deal") === "status");
+
+      // Simulate a live refine that renames "status" -> "Status" ONLY --
+      // same field, same type, same enum values, same entity.name ("Deal"),
+      // the same no-remount precondition every sibling test above relies on.
+      view.rerender(buildEntityPanelElement({ entity: entityV2, allEntities: [entityV2] }));
+      await waitForCondition(() => document.querySelector(".entity-group-by") !== null);
+
+      assert.deepEqual(
+        getHiddenFields("proj1", "Deal"),
+        new Set(["Status"]),
+        "the hidden column must stay hidden under its new spelling, not silently reappear",
+      );
+      fireEvent.click(document.querySelector(".columns-menu-btn") as HTMLButtonElement);
+      const columnsMenuItems = Array.from(document.querySelectorAll(".columns-menu-item"));
+      assert.equal(columnsMenuItems.length, 2, "expected one checkbox per real field (Name, Status)");
+      const statusMenuCheckbox = columnsMenuItems.find((el) => /Status/.test(el.textContent ?? ""))!.querySelector("input") as HTMLInputElement;
+      assert.equal(statusMenuCheckbox.checked, false, "the Status column must still show as hidden in the Columns menu under its new spelling");
+      assert.equal(getGroupByField("proj1", "Deal"), "Status", "the 'Group by' choice must carry forward under the new spelling, not be cleared to 'no grouping'");
+      assert.equal(
+        (document.querySelector(".entity-group-by") as HTMLSelectElement).value,
+        "Status",
+        "the 'Group by' <select>'s own displayed value must still reflect the chosen field, not blank out",
+      );
     } finally {
       globalThis.fetch = originalFetch;
     }

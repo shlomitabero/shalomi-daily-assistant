@@ -77,19 +77,31 @@ export function purgeColumnOrderForEntity(projectId: string, entityName: string)
  * or an order saved before it existed -- is appended at the end in the
  * entity's own original order. Every field the entity actually has appears
  * exactly once; nothing is ever dropped or duplicated.
+ *
+ * Round 985: an order entry is matched case-insensitively when no exact name
+ * matches, same reasoning as pipeline.ts's/migrate.ts's own established
+ * prevFieldsByName ?? prevFieldByLowerName convention for a live AI refine
+ * that merely normalizes an existing field's letter casing (e.g. "email" ->
+ * "Email") -- SQLite itself resolves that as the same column/no real
+ * change (see migrate.ts's own doc comments), but the EXACT match here
+ * previously couldn't tell that apart from the field being entirely
+ * replaced, silently dropping a deliberately drag-reordered column back to
+ * its default end-of-list position the instant such a refine completed.
  */
 export function applyColumnOrder<T extends { name: string }>(fields: T[], order: string[]): T[] {
   const byName = new Map(fields.map((f) => [f.name, f]));
+  const byLowerName = new Map(fields.map((f) => [f.name.toLowerCase(), f]));
   const ordered: T[] = [];
+  const used = new Set<T>();
   for (const name of order) {
-    const field = byName.get(name);
-    if (field) {
+    const field = byName.get(name) ?? byLowerName.get(name.toLowerCase());
+    if (field && !used.has(field)) {
       ordered.push(field);
-      byName.delete(name);
+      used.add(field);
     }
   }
   for (const field of fields) {
-    if (byName.has(field.name)) ordered.push(field);
+    if (!used.has(field)) ordered.push(field);
   }
   return ordered;
 }

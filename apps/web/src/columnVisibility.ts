@@ -46,6 +46,23 @@ export function toggleFieldVisibility(projectId: string, entityName: string, fie
   return hidden;
 }
 
+/**
+ * Replaces the entity's full hidden-fields set and returns it, so callers
+ * can update their own state from the return value instead of re-reading
+ * storage -- unlike toggleFieldVisibility above (one field at a time).
+ * Used when remapping stale, case-differently-spelled entries after a live
+ * refine renames a field's letter casing (round 985).
+ */
+export function replaceHiddenFields(projectId: string, entityName: string, fields: Iterable<string>): Set<string> {
+  const store = readStore();
+  const key = keyFor(projectId, entityName);
+  const hidden = new Set(fields);
+  if (hidden.size === 0) delete store[key];
+  else store[key] = [...hidden];
+  writeStore(store);
+  return hidden;
+}
+
 /** Removes every stored hidden-fields set for this project, across all of its entities -- see columnWidths.ts's purgeColumnWidthsForProject for the full rationale. */
 export function purgeHiddenFieldsForProject(projectId: string): void {
   const store = readStore();

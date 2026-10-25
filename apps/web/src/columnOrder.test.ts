@@ -75,6 +75,22 @@ test("applyColumnOrder drops a persisted name the entity no longer has (a remove
   assert.deepEqual(result.map((f) => f.name), ["email", "name"]);
 });
 
+test("applyColumnOrder keeps a field's persisted position across a pure case-only rename, instead of dropping it to the end like a removed field", () => {
+  const fields = [F("name"), F("Email"), F("phone")];
+  const result = applyColumnOrder(fields, ["phone", "email", "name"]);
+  assert.deepEqual(
+    result.map((f) => f.name),
+    ["phone", "Email", "name"],
+    "the persisted 'email' entry must still resolve to the current field 'Email' by its new position, not fall through to the entity's own natural order",
+  );
+});
+
+test("applyColumnOrder never matches the same field twice for two persisted order entries that differ only by case", () => {
+  const fields = [F("name"), F("Email")];
+  const result = applyColumnOrder(fields, ["EMAIL", "email", "name"]);
+  assert.deepEqual(result.map((f) => f.name), ["Email", "name"], "Email must appear exactly once, at its first (case-insensitive) match's position");
+});
+
 test("applyColumnOrder with an empty persisted order falls back to the entity's own natural field order", () => {
   const fields = [F("name"), F("email"), F("phone")];
   assert.deepEqual(applyColumnOrder(fields, []).map((f) => f.name), ["name", "email", "phone"]);

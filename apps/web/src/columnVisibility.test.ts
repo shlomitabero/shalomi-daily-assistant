@@ -2,7 +2,7 @@ import "./jsdomWarmup.js";
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { JSDOM } from "jsdom";
-import { getHiddenFields, toggleFieldVisibility } from "./columnVisibility.js";
+import { getHiddenFields, replaceHiddenFields, toggleFieldVisibility } from "./columnVisibility.js";
 
 /** Same full-jsdom-swap technique used by pinnedProjects.test.ts: real localStorage, not a mock, so these tests prove the actual persistence contract. */
 async function withJsdom(fn: () => void | Promise<void>): Promise<void> {
@@ -55,6 +55,23 @@ test("hidden columns are scoped per project+entity -- hiding a field in one proj
     toggleFieldVisibility("proj1", "Customer", "notes");
     assert.deepEqual(getHiddenFields("proj2", "Customer"), new Set(), "a different project must not see proj1's hidden columns");
     assert.deepEqual(getHiddenFields("proj1", "Order"), new Set(), "a different entity in the same project must not see Customer's hidden columns");
+  });
+});
+
+test("replaceHiddenFields persists a whole new set, and a fresh getHiddenFields call sees it -- a real persistence round trip, not just the return value", async () => {
+  await withJsdom(() => {
+    const after = replaceHiddenFields("proj1", "Customer", ["name", "phone"]);
+    assert.deepEqual(after, new Set(["name", "phone"]));
+    assert.deepEqual(getHiddenFields("proj1", "Customer"), new Set(["name", "phone"]), "must actually be written to storage, not just returned");
+  });
+});
+
+test("replaceHiddenFields with an empty set clears the stored entry entirely, not leave an empty array behind", async () => {
+  await withJsdom(() => {
+    toggleFieldVisibility("proj1", "Customer", "notes");
+    replaceHiddenFields("proj1", "Customer", []);
+    assert.deepEqual(getHiddenFields("proj1", "Customer"), new Set());
+    assert.equal(JSON.parse(localStorage.getItem("forge.hiddenColumns")!)["proj1:Customer"], undefined);
   });
 });
 

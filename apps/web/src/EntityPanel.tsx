@@ -2,7 +2,7 @@ import { Fragment, useEffect, useMemo, useRef, useState } from "react";
 import type { Entity, EntityRecord, Field, Project } from "@forge/shared";
 import { createRecord, deleteRecord, listRecords, safeDownloadName, updateRecord, uploadRecordFile } from "./api.js";
 import { buildCalendarIcs, downloadCalendarIcs } from "./calendarIcs.js";
-import { getHiddenFields, toggleFieldVisibility } from "./columnVisibility.js";
+import { getHiddenFields, replaceHiddenFields, toggleFieldVisibility } from "./columnVisibility.js";
 import {
   clearColumnWidths,
   computeResizedWidth,
@@ -1465,13 +1465,6 @@ export function EntityPanel({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [entity.name]);
 
-  // Kept separate from the reset effect above (which only depends on
-  // entity.name) since hidden columns are scoped per project+entity, not
-  // just per entity.
-  useEffect(() => {
-    setHiddenFields(getHiddenFields(projectId, entity.name));
-  }, [projectId, entity.name]);
-
   // Same reasoning as hiddenFields' own effect just above -- this entity's
   // recent search history is scoped per project+entity too.
   useEffect(() => {
@@ -1500,14 +1493,26 @@ export function EntityPanel({
   // selection grouping real records under a fabricated split the instant
   // the tab reopened. A loaded field with no recorded type yet (a choice
   // persisted before this round shipped) is trusted as-is, same as before.
+  // Round 985: also tolerates a pure case-only field rename reached the
+  // same way (tab closed during the refine, then reopened) -- an exact
+  // name match can't tell that apart from the field being removed outright,
+  // so without this a mere letter-casing normalization (e.g. "status" ->
+  // "Status") silently cleared the user's own "Group by" choice instead of
+  // just carrying it forward under its new spelling.
   useEffect(() => {
     const loaded = getGroupByField(projectId, entity.name);
     if (loaded) {
-      const currentType = entity.fields.find((f) => f.name === loaded)?.type;
+      const exactField = entity.fields.find((f) => f.name === loaded);
+      const renamedField = exactField ? undefined : entity.fields.find((f) => f.name.toLowerCase() === loaded.toLowerCase());
+      const currentType = exactField?.type ?? renamedField?.type;
       const recordedType = getGroupByFieldType(projectId, entity.name);
       if (!currentType || (recordedType && recordedType !== currentType)) {
         setGroupFieldName(setGroupByField(projectId, entity.name, ""));
         setGroupByFieldType(projectId, entity.name, "");
+        return;
+      }
+      if (renamedField) {
+        setGroupFieldName(setGroupByField(projectId, entity.name, renamedField.name));
         return;
       }
     }
@@ -1683,7 +1688,42 @@ export function EntityPanel({
   useEffect(() => {
     const validFieldNames = new Set(fieldNamesKey ? fieldNamesKey.split(",") : []);
     validFieldNames.add("createdAt");
-    setSortKeys(getSortKeysPreference(projectId, entity.name).filter((k) => validFieldNames.has(k.field)));
+    const byLowerName = new Map(entity.fields.map((f) => [f.name.toLowerCase(), f.name]));
+    setSortKeys(
+      getSortKeysPreference(projectId, entity.name)
+        .map((k) => (validFieldNames.has(k.field) ? k : { ...k, field: byLowerName.get(k.field.toLowerCase()) ?? k.field }))
+        .filter((k) => validFieldNames.has(k.field)),
+    );
+  }, [projectId, entity.name, fieldNamesKey]);
+
+  // Round 985: hiddenFields had no revalidation effect of its own at all
+  // before this round -- unlike every sibling preference module's own
+  // fieldNamesKey-keyed effect (sortKeys' own just above, columnWidths' and
+  // fieldFilters' own just below), it only ever loaded once per
+  // project/entity switch (see the combined reset effect above, keyed on
+  // entity.name alone), so EntityPanel staying mounted through a live
+  // refine never re-synced it at all. Also remaps (rather than just drops)
+  // a stale entry that still matches a current field CASE-INSENSITIVELY --
+  // the same "a pure letter-casing rename looks identical to a totally
+  // different field under an exact Set lookup" hazard applyColumnOrder's
+  // own doc comment above now also describes -- so a column the user
+  // explicitly hid before a live refine's case-only rename (e.g. "email"
+  // -> "Email") stays hidden under its new spelling instead of silently
+  // reappearing the instant that refine completes, with nothing in the UI
+  // explaining why.
+  useEffect(() => {
+    const currentNames = new Set(entity.fields.map((f) => f.name));
+    const byLowerName = new Map(entity.fields.map((f) => [f.name.toLowerCase(), f.name]));
+    const remapped = new Set<string>();
+    for (const name of getHiddenFields(projectId, entity.name)) {
+      if (currentNames.has(name)) {
+        remapped.add(name);
+        continue;
+      }
+      const current = byLowerName.get(name.toLowerCase());
+      if (current) remapped.add(current);
+    }
+    setHiddenFields(replaceHiddenFields(projectId, entity.name, remapped));
   }, [projectId, entity.name, fieldNamesKey]);
 
   // Round 897: the identical "drop a persisted key referencing a field this
@@ -1702,9 +1742,13 @@ export function EntityPanel({
   // affects anything rendered.
   useEffect(() => {
     const validFieldNames = new Set(fieldNamesKey ? fieldNamesKey.split(",") : []);
-    setColumnWidths(
-      Object.fromEntries(Object.entries(getColumnWidths(projectId, entity.name)).filter(([field]) => validFieldNames.has(field))),
-    );
+    const byLowerName = new Map(entity.fields.map((f) => [f.name.toLowerCase(), f.name]));
+    const remapped: Record<string, number> = {};
+    for (const [field, width] of Object.entries(getColumnWidths(projectId, entity.name))) {
+      const current = validFieldNames.has(field) ? field : byLowerName.get(field.toLowerCase());
+      if (current) remapped[current] = width;
+    }
+    setColumnWidths(remapped);
   }, [projectId, entity.name, fieldNamesKey]);
 
   // Same reasoning as sortKeys' own effect just above -- the chosen per-field
@@ -1774,19 +1818,26 @@ export function EntityPanel({
   const filterableEnumNames = useMemo(() => new Set(findFilterableEnumFields(entity.fields).map((f) => f.name)), [entity.fields]);
   useEffect(() => {
     const fieldsByName = new Map(entity.fields.map((f) => [f.name, f]));
+    const fieldsByLowerName = new Map(entity.fields.map((f) => [f.name.toLowerCase(), f]));
     const persisted = getFieldFiltersPreference(projectId, entity.name);
     const next: Record<string, string> = {};
     for (const [field, value] of Object.entries(persisted)) {
-      const f = fieldsByName.get(field);
+      // Round 985: falls back to a case-insensitive match when the exact
+      // name misses -- a live refine that merely renames a field's letter
+      // casing (e.g. "status" -> "Status") previously looked identical to
+      // that field being removed outright to this exact Map lookup, so an
+      // active filter on it silently vanished, unhiding whatever it had
+      // been hiding, with nothing in the UI explaining why.
+      const f = fieldsByName.get(field) ?? fieldsByLowerName.get(field.toLowerCase());
       if (!f) continue;
       const stillFilterable =
         f.type === "boolean" ||
-        (f.type === "enum" && filterableEnumNames.has(field)) ||
+        (f.type === "enum" && filterableEnumNames.has(f.name)) ||
         (f.type === "relation" && !!f.relationTo && allEntities.some((e) => e.name === f.relationTo));
       if (!stillFilterable) continue;
       if (f.type === "boolean" && value !== "true" && value !== "false") continue;
       if (f.type === "relation" && (!Number.isInteger(Number(value)) || String(Number(value)) !== value || Number(value) < 0)) continue;
-      next[field] = value;
+      next[f.name] = value;
     }
     setFieldFilters(next);
   }, [projectId, entity.name, fieldNamesKey, fieldTypesKey, fieldEnumCountsKey, filterableEnumNames, allEntities]);
@@ -1830,7 +1881,17 @@ export function EntityPanel({
   }, [groupFieldName]);
   useEffect(() => {
     if (!groupFieldName) return;
-    const currentType = entity.fields.find((f) => f.name === groupFieldName)?.type;
+    const exactField = entity.fields.find((f) => f.name === groupFieldName);
+    // Round 985: a live refine that merely renames the grouped field's
+    // letter casing (e.g. "status" -> "Status") makes the exact-match
+    // lookup above miss just like a genuine removal would, so without this
+    // fallback it fell straight into the clearing path below for a field
+    // that, semantically, never actually changed. Resolved only when the
+    // exact lookup itself already missed, so a real ambiguity (two fields
+    // differing only by case, however unlikely) still prefers the exact
+    // match it already has.
+    const renamedField = exactField ? undefined : entity.fields.find((f) => f.name.toLowerCase() === groupFieldName.toLowerCase());
+    const currentType = exactField?.type ?? renamedField?.type;
     // Round 892: deliberately NOT `currentType &&` -- that guard only ever
     // fires when the field RETYPES while its name survives. A refine that
     // REMOVES the grouped field outright leaves currentType undefined, so
@@ -1842,6 +1903,10 @@ export function EntityPanel({
     // catches both shapes with the same clearing path.
     if (groupedFieldTypeRef.current && currentType !== groupedFieldTypeRef.current) {
       setGroupFieldName(setGroupByField(projectId, entity.name, ""));
+      return;
+    }
+    if (renamedField) {
+      setGroupFieldName(setGroupByField(projectId, entity.name, renamedField.name));
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [fieldTypesKey]);
