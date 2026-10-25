@@ -929,15 +929,25 @@ export function AutomationsPanel({
                           {runsByRuleId[rule.id]!.map((run) => (
                             <li key={run.id} className="muted small">
                               {describeRunStatus(run, rule.actionType)}
-                              {/* Only a failed run with a recordId can ever be
-                                  retried -- a "schedule" rule's own run (no
-                                  recordId at all) already retries automatically
-                                  on its own, and a record_deleted run's record
-                                  is gone forever, so there is nothing a retry
-                                  could resend for either. Hidden entirely in
-                                  readOnly mode, same as this panel's other
-                                  write actions (enable/disable/edit/delete). */}
-                              {!readOnly && run.status === "failed" && run.recordId !== null && (
+                              {/* A failed run can be retried when it carries a
+                                  recordId (a record-triggered rule's own run --
+                                  a record_deleted run's record is gone
+                                  forever, so it's excluded the same way a
+                                  null recordId already is), OR when the rule
+                                  itself is "schedule" -- round 972: a
+                                  schedule rule's run never has a recordId at
+                                  all (there's no triggering record), but once
+                                  hasTooManyConsecutiveFailuresToday has
+                                  tripped, the automatic per-tick retry this
+                                  panel used to rely on stops running for the
+                                  rest of the day with no other way to clear
+                                  it -- the server's own retry route now
+                                  re-fires a schedule rule's failed run
+                                  directly for exactly this case. Hidden
+                                  entirely in readOnly mode, same as this
+                                  panel's other write actions
+                                  (enable/disable/edit/delete). */}
+                              {!readOnly && run.status === "failed" && (run.recordId !== null || rule.trigger === "schedule") && (
                                 <>
                                   {" "}
                                   <button

@@ -2702,7 +2702,7 @@ test("POST .../automations/:ruleId/runs/:runId/retry re-fires a failed record-tr
  * longer be read at all). Both must be rejected with a clear error
  * rather than silently no-op'd or crashing.
  */
-test("POST .../automations/:ruleId/runs/:runId/retry rejects a run with no recordId (a schedule rule's own failure), and one whose record no longer exists", async () => {
+test("POST .../automations/:ruleId/runs/:runId/retry re-fires a schedule rule's own failed run too (round 972), but still rejects a legacy null-recordId run on a non-schedule rule, and one whose record no longer exists", async () => {
   await withServer(async (baseUrl, db) => {
     const email = `retry-rejected-${randomUUID()}@example.com`;
     const token = await signup(baseUrl, email);
@@ -2745,12 +2745,45 @@ test("POST .../automations/:ruleId/runs/:runId/retry rejects a run with no recor
     };
     assert.equal(scheduleRuns[0]!.recordId, null);
 
+    // Round 972: a schedule rule's own null-recordId run is now retried
+    // too, not rejected -- WhatsApp is never connected in this test, so
+    // the re-attempt itself still fails, but the route call must succeed
+    // (200) and record a genuinely NEW run, proving it actually re-ran
+    // fireScheduledRule rather than returning a canned 400.
     const scheduleRetryRes = await fetch(`${baseUrl}/api/projects/${projectId}/automations/${scheduleRule.id}/runs/${scheduleRuns[0]!.id}/retry`, {
       method: "POST",
       headers: authHeaders(token),
     });
-    assert.equal(scheduleRetryRes.status, 400);
-    assert.equal(((await scheduleRetryRes.json()) as { code?: string }).code, "AUTOMATION_RUN_NOT_RETRYABLE");
+    assert.equal(scheduleRetryRes.status, 200, "a schedule rule's own failed run must now be retried, not rejected with 400");
+    const { run: scheduleRetryRun } = (await scheduleRetryRes.json()) as { run: { id: string; status: string } | null };
+    assert.equal(scheduleRetryRun?.status, "failed", "WhatsApp was never connected in this test, so the re-attempt itself still fails");
+    assert.notEqual(scheduleRetryRun?.id, scheduleRuns[0]!.id, "the retry must record a genuinely new run");
+
+    // A legacy run with no recordId on a NON-schedule rule has nothing to
+    // retry at all -- only possible for a run recorded before this
+    // column existed, with no record reference ever captured.
+    const legacyRuleRes = await fetch(`${baseUrl}/api/projects/${projectId}/entities/Reminder/automations`, {
+      method: "POST",
+      headers: authHeaders(token),
+      body: JSON.stringify({
+        trigger: "record_created",
+        actionType: "send_whatsapp",
+        toMode: "static",
+        toNumber: "972500000000",
+        messageTemplate: "New reminder!",
+      }),
+    });
+    const { rule: legacyRule } = (await legacyRuleRes.json()) as { rule: { id: string } };
+    recordAutomationRun(db2, projectId, legacyRule.id, { status: "failed", error: "recipient not found" }, "send_whatsapp");
+    const { runs: legacyRuns } = (await (await fetch(`${baseUrl}/api/projects/${projectId}/automations/${legacyRule.id}/runs`, { headers: authHeaders(token) })).json()) as {
+      runs: { id: string; recordId: number | null }[];
+    };
+    const legacyRetryRes = await fetch(`${baseUrl}/api/projects/${projectId}/automations/${legacyRule.id}/runs/${legacyRuns[0]!.id}/retry`, {
+      method: "POST",
+      headers: authHeaders(token),
+    });
+    assert.equal(legacyRetryRes.status, 400, "a record-triggered rule's own run with no recordId at all (predating this column) still has nothing to retry");
+    assert.equal(((await legacyRetryRes.json()) as { code?: string }).code, "AUTOMATION_RUN_NOT_RETRYABLE");
 
     // A record-triggered rule whose record has since been deleted.
     const createdRuleRes = await fetch(`${baseUrl}/api/projects/${projectId}/entities/Reminder/automations`, {
@@ -3043,6 +3076,113 @@ test("GET /projects/:id/automations reports pausedForToday: true for a schedule 
       "an unrelated record_created rule must never report paused -- the scheduler's cap is never consulted for it",
     );
   });
+});
+
+/**
+ * Round 972: once hasTooManyConsecutiveFailuresToday trips (see the
+ * pausedForToday test just above), runScheduledAutomationsCheck's own
+ * loop stops calling fireScheduledRule for that rule for the rest of the
+ * day -- with no new run ever recorded, nothing could clear the pause
+ * before this round, even after the user fixed the real problem (here,
+ * connecting WhatsApp). Confirms the manual Retry route re-fires a
+ * schedule rule's own failed run directly, bypassing that same-day cap
+ * for this one explicit attempt, and that a successful retry's own new
+ * "sent" run naturally un-pauses the rest of today's automatic ticks too
+ * (hasTooManyConsecutiveFailuresToday looks at the most recent runs --
+ * the newest one no longer being "failed" breaks the streak).
+ */
+test("POST .../automations/:ruleId/runs/:runId/retry re-fires a PAUSED schedule rule's own failed run, and a successful retry un-pauses it", async () => {
+  let createdSockets: ReturnType<typeof createFakeWhatsAppSocket>[] = [];
+  await withServer(
+    async (baseUrl, db) => {
+      const email = `retry-unpause-${randomUUID()}@example.com`;
+      const token = await signup(baseUrl, email);
+      const owner = findUserByEmail(db, email)!;
+
+      const spec: ProductSpec = {
+        summary: "test",
+        personas: [],
+        roles: ["Admin"],
+        entities: [{ name: "Reminder", fields: [{ name: "title", type: "text", required: true }] }],
+        screens: [],
+        assumptions: [],
+        openQuestions: [],
+      };
+      const projectId = randomUUID();
+      insertProject(db, { id: projectId, ownerId: owner.id, name: "Reminders", description: "test", spec });
+      diffAndMigrate(db, projectId, undefined, spec);
+      markProjectBuilt(db, projectId);
+
+      const scheduleRule = insertAutomationRule(db, {
+        projectId,
+        entityName: "Reminder",
+        trigger: "schedule",
+        scheduleTimeUtc: "00:00",
+        scheduleDaysOfWeek: null,
+        actionType: "send_whatsapp",
+        toMode: "static",
+        toNumber: "972501234567",
+        messageTemplate: "Daily reminder report",
+      });
+
+      // Trips the pause via 6 consecutive REAL failures (not "WhatsApp
+      // not connected", which round 934 deliberately excludes from this
+      // count) -- a separate fake manager purely for seeding
+      // automation_runs history, independent of the real (still
+      // disconnected) manager withServer itself constructed the actual
+      // HTTP routes around.
+      const alwaysFailsManager = {
+        getStatus() {
+          return { status: "connected" as const, qrDataUrl: null, phoneNumber: "972500000000", error: null };
+        },
+        async sendMessage() {
+          return { ok: false, error: "recipient not found" };
+        },
+      } as unknown as WhatsAppWebManager;
+      for (let i = 0; i < 6; i++) {
+        await runScheduledAutomationsCheck(db, alwaysFailsManager, new Date());
+      }
+
+      const beforeRes = await fetch(`${baseUrl}/api/projects/${projectId}/automations`, { headers: authHeaders(token) });
+      const { rules: beforeRules } = (await beforeRes.json()) as { rules: { id: string; pausedForToday: boolean }[] };
+      assert.equal(beforeRules.find((r) => r.id === scheduleRule.id)!.pausedForToday, true, "the rule must be paused before the retry");
+
+      const runsRes = await fetch(`${baseUrl}/api/projects/${projectId}/automations/${scheduleRule.id}/runs`, { headers: authHeaders(token) });
+      const { runs } = (await runsRes.json()) as { runs: { id: string; status: string }[] };
+      assert.equal(runs[0]!.status, "failed");
+
+      // The user fixes the real problem -- connects WhatsApp through the
+      // REAL manager the HTTP routes (including the retry route below)
+      // actually use.
+      await fetch(`${baseUrl}/api/projects/${projectId}/integrations/whatsapp/connect`, { method: "POST", headers: authHeaders(token) });
+      createdSockets[0].sock.user = { id: "15550001111:1@s.whatsapp.net" };
+      createdSockets[0].emitConnectionUpdate({ connection: "open" });
+
+      const retryRes = await fetch(`${baseUrl}/api/projects/${projectId}/automations/${scheduleRule.id}/runs/${runs[0]!.id}/retry`, {
+        method: "POST",
+        headers: authHeaders(token),
+      });
+      assert.equal(retryRes.status, 200);
+      const { run: retryRun } = (await retryRes.json()) as { run: { status: string } | null };
+      assert.equal(retryRun?.status, "sent", "WhatsApp is connected now, so the manually-retried send must actually succeed");
+      assert.equal(createdSockets[0].sendCalls.length, 1);
+
+      const afterRes = await fetch(`${baseUrl}/api/projects/${projectId}/automations`, { headers: authHeaders(token) });
+      const { rules: afterRules } = (await afterRes.json()) as { rules: { id: string; pausedForToday: boolean }[] };
+      assert.equal(
+        afterRules.find((r) => r.id === scheduleRule.id)!.pausedForToday,
+        false,
+        "a successful manual retry must un-pause the rule for the rest of today too, not just record one extra successful send",
+      );
+    },
+    {
+      whatsapp: (db) => {
+        const { manager, createdSockets: sockets } = createTestWhatsAppManager(db);
+        createdSockets = sockets;
+        return manager;
+      },
+    },
+  );
 });
 
 /**

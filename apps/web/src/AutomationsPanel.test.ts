@@ -2524,6 +2524,54 @@ test("AutomationsPanel shows a Retry button only for a failed run with a recordI
 });
 
 /**
+ * Round 972: a "schedule" rule's own failed run always has recordId:
+ * null (there's no triggering record at all) -- the round-971 test just
+ * above correctly hides Retry for a null-recordId run on a NON-schedule
+ * rule, but a schedule rule's own null-recordId run is now retryable too
+ * (it's the only way to clear a "paused for today" state before the next
+ * UTC day -- see the server-side route's own round-972 comment), so the
+ * Retry button must show for it specifically.
+ */
+test("AutomationsPanel shows a Retry button for a schedule rule's own failed run too, even though it has no recordId", async () => {
+  await withJsdom(async () => {
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = (async (input: string) => {
+      if (input === "/api/projects/proj1/automations") {
+        return new Response(JSON.stringify({ rules: [makeRule({ trigger: "schedule", fieldName: null, fieldValue: null })] }), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        });
+      }
+      if (input === "/api/projects/proj1/automations/rule1/runs") {
+        return new Response(
+          JSON.stringify({
+            runs: [
+              { id: "run1", ruleId: "rule1", status: "failed", error: "recipient not found", recordId: null, triggeredAt: new Date("2026-03-15T09:00:00Z").toISOString() },
+            ],
+          }),
+          { status: 200, headers: { "content-type": "application/json" } },
+        );
+      }
+      throw new Error(`unexpected request ${input}`);
+    }) as typeof fetch;
+
+    try {
+      renderPanel();
+      await waitForCondition(() => document.querySelectorAll(".automations-rule-row").length === 1);
+
+      const historyButton = Array.from(document.querySelectorAll("button")).find((b) => b.textContent === "History") as HTMLButtonElement;
+      fireEvent.click(historyButton);
+      await waitForCondition(() => document.querySelectorAll(".automations-rule-history-list li").length === 1);
+
+      const retryButton = Array.from(document.querySelectorAll(".automations-rule-history-list li button")).find((b) => b.textContent === "Retry");
+      assert.ok(retryButton, "a schedule rule's own failed run must offer Retry despite having no recordId");
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+});
+
+/**
  * Round 935: apps/api/src/automations.ts stores a failed send_whatsapp
  * run's error as the exact stable snake_case code whatsappWeb.ts's
  * sendMessage returns ("missing_country_code" is the COMMON case for a

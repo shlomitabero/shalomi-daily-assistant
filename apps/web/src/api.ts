@@ -1247,7 +1247,7 @@ export interface AutomationRunView {
   error: string | null;
   /** Round 948: the rule's own actionType AT THE TIME this run fired -- see packages/db's AutomationRun.actionType for why. Null for a run recorded before this column existed. */
   actionType: AutomationActionType | null;
-  /** Round 971: the id of the record (if any) that triggered this run -- null for a "schedule" rule's own run, or a run recorded before this column existed. Lets the UI decide whether a failed run can be retried at all -- see retryAutomationRun below. */
+  /** Round 971: the id of the record (if any) that triggered this run -- null for a "schedule" rule's own run (there's no triggering record at all), or a run recorded before this column existed. Round 972: a null recordId no longer means "not retryable" by itself -- see retryAutomationRun below for the real rule. */
   recordId: number | null;
   triggeredAt: string;
 }
@@ -1259,11 +1259,19 @@ export function listAutomationRuns(projectId: string, ruleId: string): Promise<{
 /**
  * Round 971: re-fires a failed record-triggered run against the record's
  * CURRENT state (no historical snapshot of the record exists to replay
- * verbatim). The server rejects a run with no `recordId` (a "schedule"
- * rule's own run -- it already retries automatically -- or a
- * record_deleted run, whose record is gone forever) with a 400, which the
- * UI avoids ever reaching by only showing the Retry button when
- * run.recordId is non-null in the first place.
+ * verbatim).
+ *
+ * Round 972: a "schedule" rule's own failed run (always `recordId: null`,
+ * since there's no triggering record) is ALSO retryable now -- re-fires
+ * the schedule rule directly instead, bypassing the server's own daily
+ * failure cap for this one manual attempt (that cap only ever governs the
+ * automatic per-tick scheduler loop, which otherwise has no way to recover
+ * before the next UTC day once it trips). The only case the server still
+ * rejects with a 400 is a null-`recordId` run on a NON-schedule rule --
+ * only possible for a run recorded before this column existed at all, with
+ * no record reference ever captured to resend against. AutomationsPanel.tsx
+ * shows the Retry button accordingly: whenever `run.recordId` is non-null,
+ * OR the rule's own trigger is "schedule".
  */
 export function retryAutomationRun(projectId: string, ruleId: string, runId: string): Promise<{ run: AutomationRunView | null }> {
   return request(`/projects/${projectId}/automations/${ruleId}/runs/${runId}/retry`, {
