@@ -13124,6 +13124,27 @@ test("the exported EntityView's number field input is a plain text input with a 
 });
 
 /**
+ * New in round 981: mirrors the live preview's own fix (EntityPanel.tsx,
+ * round 981) -- the exported app's generated FieldInput had the
+ * identical bug: the enum branch's own "no value" placeholder carried
+ * `disabled`, unlike the relation branch's identical placeholder right
+ * above it (never disabled), so a non-required enum field could never be
+ * cleared back to empty once any real value had been chosen. Confirms
+ * the generated enum branch's placeholder is no longer disabled.
+ */
+test("the exported EntityView's enum field placeholder is selectable (not disabled), matching the relation field's own placeholder", () => {
+  const files = generateExportFiles(project);
+  const entityViewJsx = files.find((f) => f.path === "web/src/components/EntityView.jsx")!.content;
+
+  const fieldInputSrc = entityViewJsx.match(/function FieldInput\(\{[\s\S]*?\n\}\n/)?.[0];
+  assert.ok(fieldInputSrc, "expected to find FieldInput in generated output");
+
+  const enumBranch = fieldInputSrc!.match(/field\.type === "enum"[\s\S]{0,1200}/)?.[0];
+  assert.ok(enumBranch, "expected to find the enum branch in generated FieldInput");
+  assert.doesNotMatch(enumBranch!, /<option value="" disabled/, 'the enum field\'s own "no value" placeholder must not be disabled');
+});
+
+/**
  * New in this round: the exported app's FieldInput had the identical gap
  * the live preview's own EntityPanel.tsx did -- none of the form controls
  * ever wired field.required into the real HTML `required` attribute, so

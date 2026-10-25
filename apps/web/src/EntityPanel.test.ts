@@ -12187,6 +12187,82 @@ test("EntityPanel's number field input lets a user type a negative value startin
 });
 
 /**
+ * New in round 981: a real bug in FieldInput's enum branch, found by a
+ * fresh Explore survey. The enum `<select>`'s own "no value" placeholder
+ * (`<option value="">`) carried `disabled`, while the relation branch's
+ * identical "no value" placeholder just above it in the exact same
+ * function never did. For a non-required enum field, the server already
+ * stores `null` fine for an empty value (packages/db/src/repository.ts's
+ * `coerceValue` short-circuits to `null` before the per-type switch, the
+ * same path every other optional field type already reaches) -- but once
+ * any real enum value had ever been chosen for a record, there was no
+ * click sequence anywhere (the add/edit form, the inline cell editor, or
+ * the bulk-edit picker, all three sharing this same branch) that could
+ * select the disabled placeholder to clear it back to empty again. Every
+ * other optional field type already supports this (text/number/date by
+ * clearing the text, relation via its own non-disabled placeholder, file
+ * via an explicit Remove link). Confirms the placeholder is now
+ * selectable and that selecting it actually clears an already-set field.
+ */
+test("EntityPanel's enum field can be cleared back to no value once it has a real value, matching the relation field's own non-disabled placeholder", async () => {
+  await withJsdom(async () => {
+    const ticketEntity: Entity = {
+      name: "Ticket",
+      label: "Ticket",
+      fields: [
+        { name: "title", label: "Title", type: "text", required: true },
+        {
+          name: "priority",
+          label: "Priority",
+          type: "enum",
+          required: false,
+          enumValues: ["Low", "Medium", "High"],
+          enumLabels: { Low: "Low", Medium: "Medium", High: "High" },
+        },
+      ],
+    };
+    const store: EntityRecord[] = [{ id: 1, createdAt: "x", title: "Fix login", priority: "High" }];
+    const patchedBodies: Record<string, unknown>[] = [];
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = (async (input: string, init?: RequestInit): Promise<Response> => {
+      const method = init?.method ?? "GET";
+      if (method === "GET" && input === "/api/projects/proj1/entities/Ticket") {
+        return new Response(JSON.stringify({ records: store }), { status: 200, headers: { "content-type": "application/json" } });
+      }
+      if (method === "PATCH" && input === "/api/projects/proj1/entities/Ticket/1") {
+        const body = JSON.parse(init!.body as string);
+        patchedBodies.push(body);
+        return new Response(JSON.stringify({ record: { ...store[0], ...body } }), { status: 200, headers: { "content-type": "application/json" } });
+      }
+      throw new Error(`unexpected request ${method} ${input}`);
+    }) as typeof fetch;
+    try {
+      renderEntityPanel({ entity: ticketEntity, allEntities: [ticketEntity] });
+      await waitForCondition(() => document.querySelectorAll("table tbody tr").length === 1);
+
+      fireEvent.click(document.querySelector(".row-actions button") as HTMLButtonElement);
+      await waitForCondition(() => (document.querySelector(".record-form select") as HTMLSelectElement)?.value === "High");
+
+      const prioritySelect = document.querySelector(".record-form select") as HTMLSelectElement;
+      const placeholderOption = Array.from(prioritySelect.options).find((o) => o.value === "") as HTMLOptionElement;
+      assert.ok(placeholderOption, "expected a real placeholder <option> for \"no value\"");
+      assert.equal(placeholderOption.disabled, false, "the enum field's own \"no value\" placeholder must be selectable, matching the relation field's placeholder");
+
+      fireEvent.change(prioritySelect, { target: { value: "" } });
+      await waitForCondition(() => prioritySelect.value === "");
+
+      const submitButton = Array.from(document.querySelectorAll("button")).find((b) => b.textContent === "Save") as HTMLButtonElement;
+      fireEvent.click(submitButton);
+      await waitForCondition(() => patchedBodies.length === 1);
+
+      assert.equal(patchedBodies[0]?.priority, "", "clearing the enum field back to no value must actually send the cleared value to the server");
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+});
+
+/**
  * New in this round: the manual add/edit record form's own inputs never
  * carried the native `required` attribute, even for a field the entity
  * itself declares required=true -- found by a fresh Explore survey. The

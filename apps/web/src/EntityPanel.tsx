@@ -1031,9 +1031,16 @@ function FieldInput({
         onBlur={onBlur}
         onKeyDown={onKeyDown}
       >
-        <option value="" disabled>
-          {t("entity.select")}
-        </option>
+        {/* Round 981: this placeholder used to be unconditionally disabled,
+            unlike the relation branch's own identical "no value" placeholder
+            just above (never disabled). Once a non-required enum field had
+            any real value chosen, there was no way to pick this option again
+            and clear it back to empty -- every other optional field type
+            (text, number, date, relation, file) already lets a user reach
+            that state. A required field still can't be left here: the same
+            missingField/commitInlineEdit/handleBulkUpdate checks that
+            already block an empty relation selection block this too. */}
+        <option value="">{t("entity.select")}</option>
         {enumOptionValues.map((v) => (
           <option key={v} value={v}>
             {field.enumLabels?.[v] ?? v}

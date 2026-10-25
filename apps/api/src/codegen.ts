@@ -3531,9 +3531,12 @@ function FieldInput({ entity, field, value, onChange, relatedEntity, relatedEnti
     const enumOptionValues = currentEnumValue && !knownEnumValues.includes(currentEnumValue) ? [currentEnumValue, ...knownEnumValues] : knownEnumValues;
     return (
       <select id={id} required={field.required} value={currentEnumValue} onChange={(e) => onChange(e.target.value)} autoFocus={autoFocus} onBlur={onBlur} onKeyDown={onKeyDown}>
-        <option value="" disabled>
-          …
-        </option>
+        {/* Mirrors the live preview's own fix (EntityPanel.tsx, round 981):
+            this placeholder used to be unconditionally disabled, unlike the
+            relation branch's own identical "no value" placeholder (never
+            disabled), so a non-required enum field could never be cleared
+            back to empty once any real value had been chosen. */}
+        <option value="">…</option>
         {enumOptionValues.map((v) => (
           <option key={v} value={v}>
             {(field.enumLabels && field.enumLabels[v]) || v}
