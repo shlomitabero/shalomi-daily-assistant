@@ -1247,11 +1247,29 @@ export interface AutomationRunView {
   error: string | null;
   /** Round 948: the rule's own actionType AT THE TIME this run fired -- see packages/db's AutomationRun.actionType for why. Null for a run recorded before this column existed. */
   actionType: AutomationActionType | null;
+  /** Round 971: the id of the record (if any) that triggered this run -- null for a "schedule" rule's own run, or a run recorded before this column existed. Lets the UI decide whether a failed run can be retried at all -- see retryAutomationRun below. */
+  recordId: number | null;
   triggeredAt: string;
 }
 
 export function listAutomationRuns(projectId: string, ruleId: string): Promise<{ runs: AutomationRunView[] }> {
   return request(`/projects/${projectId}/automations/${ruleId}/runs`);
+}
+
+/**
+ * Round 971: re-fires a failed record-triggered run against the record's
+ * CURRENT state (no historical snapshot of the record exists to replay
+ * verbatim). The server rejects a run with no `recordId` (a "schedule"
+ * rule's own run -- it already retries automatically -- or a
+ * record_deleted run, whose record is gone forever) with a 400, which the
+ * UI avoids ever reaching by only showing the Retry button when
+ * run.recordId is non-null in the first place.
+ */
+export function retryAutomationRun(projectId: string, ruleId: string, runId: string): Promise<{ run: AutomationRunView | null }> {
+  return request(`/projects/${projectId}/automations/${ruleId}/runs/${runId}/retry`, {
+    method: "POST",
+    headers: { "x-idempotency-key": crypto.randomUUID() },
+  });
 }
 
 export function createAutomationRule(

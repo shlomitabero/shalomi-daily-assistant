@@ -2454,6 +2454,76 @@ test("AutomationsPanel's History button fetches and shows every real run for tha
 });
 
 /**
+ * Round 971: a failed run with a recordId (a record-triggered rule's own
+ * run) gets a Retry button; a failed run with no recordId (a "schedule"
+ * rule's own run, which already retries automatically on its own) and a
+ * run that already succeeded must not. Clicking Retry calls the real
+ * retry endpoint and refreshes the whole run list from the server
+ * (showing the new run the retry itself created), not just flipping the
+ * clicked row's own status in place.
+ */
+test("AutomationsPanel shows a Retry button only for a failed run with a recordId, and clicking it calls the retry endpoint and refreshes the run list", async () => {
+  await withJsdom(async () => {
+    const originalFetch = globalThis.fetch;
+    let retryCalls = 0;
+    let runsFetchCount = 0;
+    globalThis.fetch = (async (input: string, init?: RequestInit) => {
+      const method = init?.method ?? "GET";
+      if (method === "GET" && input === "/api/projects/proj1/automations") {
+        return new Response(JSON.stringify({ rules: [makeRule()] }), { status: 200, headers: { "content-type": "application/json" } });
+      }
+      if (method === "GET" && input === "/api/projects/proj1/automations/rule1/runs") {
+        runsFetchCount += 1;
+        const runs =
+          runsFetchCount === 1
+            ? [
+                { id: "run-schedule", ruleId: "rule1", status: "failed", error: "WhatsApp not connected", recordId: null, triggeredAt: new Date("2026-03-15T09:00:00Z").toISOString() },
+                { id: "run-record", ruleId: "rule1", status: "failed", error: "WhatsApp not connected", recordId: 7, triggeredAt: new Date("2026-03-15T08:00:00Z").toISOString() },
+                { id: "run-sent", ruleId: "rule1", status: "sent", error: null, recordId: 7, triggeredAt: new Date("2026-03-15T07:00:00Z").toISOString() },
+              ]
+            : [
+                { id: "run-retry", ruleId: "rule1", status: "sent", error: null, recordId: 7, triggeredAt: new Date("2026-03-15T10:00:00Z").toISOString() },
+                { id: "run-schedule", ruleId: "rule1", status: "failed", error: "WhatsApp not connected", recordId: null, triggeredAt: new Date("2026-03-15T09:00:00Z").toISOString() },
+                { id: "run-record", ruleId: "rule1", status: "failed", error: "WhatsApp not connected", recordId: 7, triggeredAt: new Date("2026-03-15T08:00:00Z").toISOString() },
+                { id: "run-sent", ruleId: "rule1", status: "sent", error: null, recordId: 7, triggeredAt: new Date("2026-03-15T07:00:00Z").toISOString() },
+              ];
+        return new Response(JSON.stringify({ runs }), { status: 200, headers: { "content-type": "application/json" } });
+      }
+      if (method === "POST" && input === "/api/projects/proj1/automations/rule1/runs/run-record/retry") {
+        retryCalls += 1;
+        return new Response(JSON.stringify({ run: { id: "run-retry", ruleId: "rule1", status: "sent" } }), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        });
+      }
+      throw new Error(`unexpected request ${method} ${input}`);
+    }) as typeof fetch;
+
+    try {
+      renderPanel();
+      await waitForCondition(() => document.querySelectorAll(".automations-rule-row").length === 1);
+
+      const historyButton = Array.from(document.querySelectorAll("button")).find((b) => b.textContent === "History") as HTMLButtonElement;
+      fireEvent.click(historyButton);
+      await waitForCondition(() => document.querySelectorAll(".automations-rule-history-list li").length === 3);
+
+      const items = Array.from(document.querySelectorAll(".automations-rule-history-list li"));
+      const retryButtons = items.map((li) => Array.from(li.querySelectorAll("button")).find((b) => b.textContent === "Retry") ?? null);
+      assert.equal(retryButtons[0], null, "a failed run with NO recordId (a schedule rule's own failure) must not offer Retry");
+      assert.ok(retryButtons[1], "a failed run WITH a recordId must offer Retry");
+      assert.equal(retryButtons[2], null, "an already-sent run must not offer Retry");
+
+      fireEvent.click(retryButtons[1]!);
+      await waitForCondition(() => retryCalls === 1);
+      await waitForCondition(() => document.querySelectorAll(".automations-rule-history-list li").length === 4);
+      assert.equal(runsFetchCount, 2, "a successful retry must re-fetch the run list to show the new run it just created");
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+});
+
+/**
  * Round 935: apps/api/src/automations.ts stores a failed send_whatsapp
  * run's error as the exact stable snake_case code whatsappWeb.ts's
  * sendMessage returns ("missing_country_code" is the COMMON case for a

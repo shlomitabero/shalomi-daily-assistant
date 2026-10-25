@@ -113,6 +113,18 @@ export interface AutomationRun {
    * column this table/automation_rules has ever added).
    */
   actionType: AutomationActionType | null;
+  /**
+   * Round 971: the id of the record (if any) that triggered this run --
+   * null for a "schedule" rule's own run (there's no triggering record at
+   * all) and for any run recorded before this column existed. Lets a
+   * failed record-triggered run be manually retried later (see
+   * apps/api/src/routes/projects.ts's own POST .../runs/:runId/retry) by
+   * re-fetching that SAME record's CURRENT state -- this table stores no
+   * snapshot of the record's values at the time it originally fired, only
+   * a reference to which one it was, so a retry necessarily uses
+   * whatever that record looks like now, not what it looked like then.
+   */
+  recordId: number | null;
   triggeredAt: string;
 }
 
@@ -146,6 +158,10 @@ export function ensureAutomationRunsTable(db: ForgeDatabase): void {
   if (!runColumns.includes("actionType")) {
     db.exec("ALTER TABLE automation_runs ADD COLUMN actionType TEXT");
   }
+  // Round 971: see AutomationRun's own doc comment on this column.
+  if (!runColumns.includes("recordId")) {
+    db.exec("ALTER TABLE automation_runs ADD COLUMN recordId INTEGER");
+  }
 }
 
 function rowToRun(row: Record<string, unknown>): AutomationRun {
@@ -156,6 +172,7 @@ function rowToRun(row: Record<string, unknown>): AutomationRun {
     status: row.status as "sent" | "failed",
     error: (row.error as string | null) ?? null,
     actionType: (row.actionType as AutomationActionType | null) ?? null,
+    recordId: (row.recordId as number | null) ?? null,
     triggeredAt: row.triggeredAt as string,
   };
 }
@@ -198,6 +215,19 @@ export function listAutomationRuns(db: ForgeDatabase, projectId: string, ruleId:
     .prepare("SELECT * FROM automation_runs WHERE projectId = ? AND ruleId = ? ORDER BY triggeredAt DESC, rowid DESC LIMIT ?")
     .all(projectId, ruleId, limit) as Record<string, unknown>[];
   return rows.map(rowToRun);
+}
+
+/**
+ * Round 971: a single run by id, scoped by projectId/ruleId the same way
+ * every other per-rule lookup here is -- used by the manual Retry route
+ * (apps/api/src/routes/projects.ts) to read the specific failed run's own
+ * `recordId` before re-firing against that record's current state.
+ */
+export function getAutomationRun(db: ForgeDatabase, projectId: string, ruleId: string, runId: string): AutomationRun | undefined {
+  const row = db.prepare("SELECT * FROM automation_runs WHERE projectId = ? AND ruleId = ? AND id = ?").get(projectId, ruleId, runId) as
+    | Record<string, unknown>
+    | undefined;
+  return row ? rowToRun(row) : undefined;
 }
 
 /** Part of deleteAutomationRule's own cleanup -- a rule's run history has no reason to survive the rule itself. */
@@ -475,6 +505,11 @@ export function recordAutomationRun(
   // for why this must be snapshotted per-run rather than read live off the
   // rule at render time.
   actionType: AutomationActionType | null = null,
+  // Round 971: see AutomationRun's own doc comment on this column. Optional,
+  // defaulting to null (every "schedule" rule's own call site, and this
+  // module's own pre-round-971 test suite, correctly has no record to
+  // reference at all).
+  recordId: number | null = null,
   at: Date = new Date(),
 ): void {
   const now = at.toISOString();
@@ -486,8 +521,8 @@ export function recordAutomationRun(
   // rather than instead of it so no existing lastTriggeredAt/lastStatus/
   // lastError reader needs to change.
   db.prepare(
-    `INSERT INTO automation_runs (id, projectId, ruleId, status, error, actionType, triggeredAt) VALUES (?, ?, ?, ?, ?, ?, ?)`,
-  ).run(randomUUID(), projectId, id, outcome.status, outcome.error ?? null, actionType, now);
+    `INSERT INTO automation_runs (id, projectId, ruleId, status, error, actionType, recordId, triggeredAt) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+  ).run(randomUUID(), projectId, id, outcome.status, outcome.error ?? null, actionType, recordId, now);
   // Round 951: pruned in two independent buckets -- the newest
   // AUTOMATION_RUNS_RETENTION_LIMIT "WhatsApp is not connected" rows, and
   // the newest AUTOMATION_RUNS_RETENTION_LIMIT rows of everything else --

@@ -546,6 +546,7 @@ async function fireWebhookAction(
         error: "This rule has no valid webhook URL configured",
       },
       rule.actionType,
+      record ? Number(record.id) : null,
       now,
     );
     return;
@@ -603,6 +604,7 @@ async function fireWebhookAction(
         error: res.ok ? null : `Webhook responded with status ${res.status}`,
       },
       rule.actionType,
+      record ? Number(record.id) : null,
       now,
     );
   } catch (err) {
@@ -615,6 +617,7 @@ async function fireWebhookAction(
         error: err instanceof Error ? err.message : "Webhook request failed",
       },
       rule.actionType,
+      record ? Number(record.id) : null,
       now,
     );
   } finally {
@@ -622,7 +625,13 @@ async function fireWebhookAction(
   }
 }
 
-async function fireRule(
+/**
+ * Round 971: exported so routes/projects.ts's manual Retry route (POST
+ * .../runs/:runId/retry) can re-invoke this SAME single-attempt logic
+ * directly, against the record's current state, instead of duplicating
+ * it -- a retry is just firing the rule again, not a different code path.
+ */
+export async function fireRule(
   db: ForgeDatabase,
   whatsapp: WhatsAppWebManager,
   project: Project,
@@ -644,12 +653,13 @@ async function fireRule(
       rule.id,
       { status: "failed", error: "This record has no value in the configured phone-number field" },
       rule.actionType,
+      Number(record.id),
     );
     return;
   }
   const status = whatsapp.getStatus(project.id);
   if (status.status !== "connected") {
-    recordAutomationRun(db, project.id, rule.id, { status: "failed", error: WHATSAPP_NOT_CONNECTED_ERROR }, rule.actionType);
+    recordAutomationRun(db, project.id, rule.id, { status: "failed", error: WHATSAPP_NOT_CONNECTED_ERROR }, rule.actionType, Number(record.id));
     return;
   }
   const templateRecord = resolveRelationFieldsForTemplate(db, project.id, entity, project.spec.entities, record);
@@ -687,6 +697,7 @@ async function fireRule(
     rule.id,
     { status: result.ok ? "sent" : "failed", error: result.ok ? null : (result.error ?? "Send failed") },
     rule.actionType,
+    Number(record.id),
   );
 }
 
@@ -819,13 +830,14 @@ export async function fireScheduledRule(
         error: "This rule has no destination phone number configured",
       },
       rule.actionType,
+      null,
       now,
     );
     return;
   }
   const status = whatsapp.getStatus(project.id);
   if (status.status !== "connected") {
-    recordAutomationRun(db, project.id, rule.id, { status: "failed", error: WHATSAPP_NOT_CONNECTED_ERROR }, rule.actionType, now);
+    recordAutomationRun(db, project.id, rule.id, { status: "failed", error: WHATSAPP_NOT_CONNECTED_ERROR }, rule.actionType, null, now);
     return;
   }
   const result = await whatsapp.sendMessage(project.id, to, rule.messageTemplate);
@@ -852,6 +864,7 @@ export async function fireScheduledRule(
       error: result.ok ? null : (result.error ?? "Send failed"),
     },
     rule.actionType,
+    null,
     now,
   );
 }

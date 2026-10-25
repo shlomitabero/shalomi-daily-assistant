@@ -43,6 +43,7 @@ import {
   countRecords,
   listAutomationRules,
   listAutomationRuns,
+  getAutomationRun,
   getAutomationRule,
   insertAutomationRule,
   updateAutomationRule,
@@ -68,7 +69,7 @@ import { computeBusinessTwin } from "../twin.js";
 import { isPathInsideDir, UPLOADED_FILENAME } from "../uploadPaths.js";
 import type { WhatsAppWebManager } from "../whatsappWeb.js";
 import { findMatchingRecord } from "../whatsapp.js";
-import { hasTooManyConsecutiveFailuresToday, isAllowedWebhookUrl, runAutomationsForRecordChange } from "../automations.js";
+import { fireRule, hasTooManyConsecutiveFailuresToday, isAllowedWebhookUrl, runAutomationsForRecordChange } from "../automations.js";
 
 const CreateProjectSchema = z.object({
   // Round 919: every other free-text schema in this file that accepts a
@@ -3478,6 +3479,77 @@ export function createProjectsRouter(
         throw new HttpError(404, `Automation rule "${req.params.ruleId}" not found`, "AUTOMATION_RULE_NOT_FOUND");
       }
       res.json({ runs: listAutomationRuns(db, project.id, rule.id) });
+    }),
+  );
+
+  /**
+   * Round 971: a record-triggered rule (record_created/field_equals/
+   * record_deleted) gets exactly ONE delivery attempt -- unlike a
+   * "schedule" rule, which isScheduledRuleDue's own doc comment
+   * documents as deliberately retrying on every subsequent tick until a
+   * run actually succeeds. A webhook destination that was briefly down,
+   * or a transient WhatsApp socket hiccup, permanently loses that one
+   * business event's notification with no recourse before this route --
+   * the owner's only way to even notice was reading the failed run's own
+   * `lastError` in the History list after the fact.
+   *
+   * Re-fires the SAME rule against the record's CURRENT state, via the
+   * exact same fireRule this run originally went through -- automation_runs
+   * stores no snapshot of the record's values at the time it originally
+   * fired (only a reference to which record it was, see AutomationRun's
+   * own doc comment), so a retry necessarily uses whatever that record
+   * looks like now, not what it looked like at the original failure. Two
+   * cases have nothing to retry at all, and are rejected with 400 rather
+   * than silently no-op'd: a run with no recordId at all (every
+   * "schedule" rule's own run, which already retries automatically and
+   * was never tied to one record in the first place; also any run
+   * recorded before this column existed), and a record_deleted run,
+   * whose record is gone forever by definition -- there's no "current
+   * state" to resend. Same write-access level and rate limiter as the
+   * manual WhatsApp send route, since this can cause the identical real
+   * send/webhook-POST side effect.
+   */
+  router.post(
+    "/projects/:id/automations/:ruleId/runs/:runId/retry",
+    whatsappRateLimiter,
+    asyncRoute(async (req, res) => {
+      const project = requireProjectWriteAccess(db, req.params.id, req.userId!);
+      const rule = getAutomationRule(db, project.id, req.params.ruleId);
+      if (!rule) {
+        throw new HttpError(404, `Automation rule "${req.params.ruleId}" not found`, "AUTOMATION_RULE_NOT_FOUND");
+      }
+      const run = getAutomationRun(db, project.id, rule.id, req.params.runId);
+      if (!run) {
+        throw new HttpError(404, `Automation run "${req.params.runId}" not found`, "AUTOMATION_RUN_NOT_FOUND");
+      }
+      if (run.status !== "failed") {
+        throw new HttpError(400, "Only a failed run can be retried", "AUTOMATION_RUN_NOT_FAILED");
+      }
+      if (run.recordId === null) {
+        throw new HttpError(
+          400,
+          "This run has no record to retry against -- a 'schedule' rule's own failures already retry automatically, and a deleted record's data no longer exists to resend",
+          "AUTOMATION_RUN_NOT_RETRYABLE",
+        );
+      }
+      const entity = findEntity(project, rule.entityName);
+      const record = getRecord(db, project.id, entity, run.recordId);
+      if (!record) {
+        throw new HttpError(404, "The record this automation would send no longer exists", "AUTOMATION_RUN_RECORD_GONE");
+      }
+      const idempotencyKey = req.header("X-Idempotency-Key") || undefined;
+      const { status, body } = await withIdempotency(
+        db,
+        idempotencyKey,
+        req.userId!,
+        `POST /projects/${project.id}/automations/${rule.id}/runs/${run.id}/retry`,
+        async () => {
+          await fireRule(db, whatsapp, project, entity, rule, record, uploadsDir, `${req.protocol}://${req.get("host")}`);
+          const [latestRun] = listAutomationRuns(db, project.id, rule.id, 1);
+          return { status: 200, body: { run: latestRun ?? null } };
+        },
+      );
+      res.status(status).json(body);
     }),
   );
 

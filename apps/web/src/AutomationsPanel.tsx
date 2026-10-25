@@ -6,6 +6,7 @@ import {
   listAutomationRules,
   listAutomationRuns,
   listRecords,
+  retryAutomationRun,
   updateAutomationRule,
   KNOWN_WHATSAPP_SEND_ERROR_CODES,
   type AutomationActionType,
@@ -87,6 +88,13 @@ export function AutomationsPanel({
   // while B's own fetch was still pending.
   const [historyErrorByRuleId, setHistoryErrorByRuleId] = useState<Record<string, string>>({});
   const [loadingHistoryRuleIds, setLoadingHistoryRuleIds] = useState<Record<string, boolean>>({});
+  // Round 971: which single run (by its own id, unique across every rule)
+  // is currently being retried, and any error from that run's own last
+  // retry attempt -- keyed per run, not per rule, since a rule's History
+  // list can show several failed runs at once and retrying one must never
+  // disable or show a stale error for a sibling run's own Retry button.
+  const [retryingRunId, setRetryingRunId] = useState<string | null>(null);
+  const [retryErrorByRunId, setRetryErrorByRunId] = useState<Record<string, string>>({});
   const dialogRef = useDialogFocusTrap<HTMLDivElement>(onClose);
 
   const [entityName, setEntityName] = useState(entities[0]?.name ?? "");
@@ -748,6 +756,30 @@ export function AutomationsPanel({
       );
   }
 
+  /**
+   * Round 971: re-fires a specific failed run against its record's
+   * current state, then re-fetches the full run list so the newly-
+   * created run (the retry itself is recorded as its own new row, never
+   * overwriting the one being retried) shows up immediately -- the same
+   * "just re-fetch the list" approach handleToggleHistory's own initial
+   * load already uses, rather than trying to splice one new row into
+   * runsByRuleId by hand.
+   */
+  function handleRetryRun(rule: AutomationRuleView, run: AutomationRunView) {
+    setRetryingRunId(run.id);
+    setRetryErrorByRunId((prev) => {
+      if (!(run.id in prev)) return prev;
+      const next = { ...prev };
+      delete next[run.id];
+      return next;
+    });
+    retryAutomationRun(projectId, rule.id, run.id)
+      .then(() => listAutomationRuns(projectId, rule.id))
+      .then(({ runs }) => setRunsByRuleId((prev) => ({ ...prev, [rule.id]: runs })))
+      .catch((err) => setRetryErrorByRunId((prev) => ({ ...prev, [run.id]: (err as Error).message })))
+      .finally(() => setRetryingRunId((current) => (current === run.id ? null : current)));
+  }
+
   function handleDownload() {
     downloadAutomationsReport(formatAutomationsReport(rules ?? [], entities, project.name, lang, t, relatedRecords), project.name);
   }
@@ -897,6 +929,32 @@ export function AutomationsPanel({
                           {runsByRuleId[rule.id]!.map((run) => (
                             <li key={run.id} className="muted small">
                               {describeRunStatus(run, rule.actionType)}
+                              {/* Only a failed run with a recordId can ever be
+                                  retried -- a "schedule" rule's own run (no
+                                  recordId at all) already retries automatically
+                                  on its own, and a record_deleted run's record
+                                  is gone forever, so there is nothing a retry
+                                  could resend for either. Hidden entirely in
+                                  readOnly mode, same as this panel's other
+                                  write actions (enable/disable/edit/delete). */}
+                              {!readOnly && run.status === "failed" && run.recordId !== null && (
+                                <>
+                                  {" "}
+                                  <button
+                                    type="button"
+                                    className="link-button small"
+                                    onClick={() => handleRetryRun(rule, run)}
+                                    disabled={retryingRunId === run.id}
+                                  >
+                                    {retryingRunId === run.id ? t("automations.run.retrying") : t("automations.run.retry")}
+                                  </button>
+                                </>
+                              )}
+                              {retryErrorByRunId[run.id] && (
+                                <p className="error small" role="alert">
+                                  {retryErrorByRunId[run.id]}
+                                </p>
+                              )}
                             </li>
                           ))}
                         </ul>

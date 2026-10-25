@@ -123,6 +123,7 @@ export {
   ensureAutomationRunsTable,
   insertAutomationRule,
   getAutomationRule,
+  getAutomationRun,
   listAutomationRules,
   listAutomationRuns,
   listEnabledAutomationRulesForEntity,

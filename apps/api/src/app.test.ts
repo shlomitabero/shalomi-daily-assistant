@@ -2566,6 +2566,233 @@ test("DELETE .../entities/:entityName/:recordId fires a record_deleted automatio
 });
 
 /**
+ * Round 971: a record-triggered rule (record_created/field_equals/
+ * record_deleted) gets exactly one delivery attempt -- unlike a
+ * "schedule" rule, which retries automatically on every subsequent tick
+ * until it succeeds (isScheduledRuleDue). Confirms the new manual Retry
+ * route re-fires the rule against the record's CURRENT state (fireRule
+ * never re-reads a historical snapshot, since none is stored), creating a
+ * genuinely NEW run rather than mutating the original failed one, and
+ * that retrying an already-succeeded run is rejected.
+ */
+test("POST .../automations/:ruleId/runs/:runId/retry re-fires a failed record-triggered run against the record's current state, recording a new run without touching the original", async () => {
+  let createdSockets: ReturnType<typeof createFakeWhatsAppSocket>[] = [];
+  await withServer(
+    async (baseUrl, db) => {
+      const email = `retry-automation-${randomUUID()}@example.com`;
+      const token = await signup(baseUrl, email);
+      const owner = findUserByEmail(db, email)!;
+
+      const spec: ProductSpec = {
+        summary: "test",
+        personas: [],
+        roles: ["Admin"],
+        entities: [
+          {
+            name: "Customer",
+            fields: [
+              { name: "name", type: "text", required: true },
+              { name: "phone", type: "text", required: true },
+            ],
+          },
+        ],
+        screens: [],
+        assumptions: [],
+        openQuestions: [],
+      };
+      const projectId = randomUUID();
+      insertProject(db, { id: projectId, ownerId: owner.id, name: "Customers", description: "test", spec });
+      diffAndMigrate(db, projectId, undefined, spec);
+      markProjectBuilt(db, projectId);
+
+      const ruleRes = await fetch(`${baseUrl}/api/projects/${projectId}/entities/Customer/automations`, {
+        method: "POST",
+        headers: authHeaders(token),
+        body: JSON.stringify({
+          trigger: "record_created",
+          actionType: "send_whatsapp",
+          toMode: "field",
+          toField: "phone",
+          messageTemplate: "Hi {{name}}, welcome!",
+        }),
+      });
+      assert.equal(ruleRes.status, 201);
+      const { rule } = (await ruleRes.json()) as { rule: { id: string } };
+
+      // WhatsApp is deliberately never connected before this -- the
+      // record_created automation still fires, but fails with "not
+      // connected", exactly the kind of one-shot, no-recourse failure
+      // this round's own Retry route exists to recover from.
+      const createRes = await fetch(`${baseUrl}/api/projects/${projectId}/entities/Customer`, {
+        method: "POST",
+        headers: authHeaders(token),
+        body: JSON.stringify({ name: "Dana Levi", phone: "972501234567" }),
+      });
+      assert.equal(createRes.status, 201);
+
+      let runs: { id: string; status: string; error: string | null; recordId: number | null }[] = [];
+      for (let i = 0; i < 40 && runs.length === 0; i++) {
+        await new Promise((resolve) => setTimeout(resolve, 0));
+        const runsRes = await fetch(`${baseUrl}/api/projects/${projectId}/automations/${rule.id}/runs`, { headers: authHeaders(token) });
+        ({ runs } = (await runsRes.json()) as { runs: typeof runs });
+      }
+      assert.equal(runs.length, 1);
+      assert.equal(runs[0]!.status, "failed");
+      assert.match(runs[0]!.error ?? "", /not connected/i);
+      assert.ok(runs[0]!.recordId !== null, "a record_created run must carry the id of the record that triggered it");
+      const failedRunId = runs[0]!.id;
+
+      // Retrying before WhatsApp is connected must fail the same way the
+      // original attempt did -- confirms the route genuinely re-fires
+      // the real send logic, not a canned success.
+      const tooEarlyRetryRes = await fetch(`${baseUrl}/api/projects/${projectId}/automations/${rule.id}/runs/${failedRunId}/retry`, {
+        method: "POST",
+        headers: authHeaders(token),
+      });
+      assert.equal(tooEarlyRetryRes.status, 200, "the retry route call itself succeeds even when the re-attempt it records fails");
+      const { run: stillFailedRun } = (await tooEarlyRetryRes.json()) as { run: { status: string } | null };
+      assert.equal(stillFailedRun?.status, "failed");
+
+      await fetch(`${baseUrl}/api/projects/${projectId}/integrations/whatsapp/connect`, { method: "POST", headers: authHeaders(token) });
+      createdSockets[0].sock.user = { id: "15550001111:1@s.whatsapp.net" };
+      createdSockets[0].emitConnectionUpdate({ connection: "open" });
+
+      const retryRes = await fetch(`${baseUrl}/api/projects/${projectId}/automations/${rule.id}/runs/${failedRunId}/retry`, {
+        method: "POST",
+        headers: authHeaders(token),
+      });
+      assert.equal(retryRes.status, 200);
+      const { run: newRun } = (await retryRes.json()) as { run: { id: string; status: string } | null };
+      assert.equal(newRun?.status, "sent");
+      assert.notEqual(newRun?.id, failedRunId, "a retry must record a genuinely NEW run, never overwrite the original failed one");
+
+      assert.deepEqual(createdSockets[0].sendCalls, [
+        { jid: "972501234567@s.whatsapp.net", text: "Hi Dana Levi, welcome!", content: { text: "Hi Dana Levi, welcome!" } },
+      ]);
+
+      const finalRunsRes = await fetch(`${baseUrl}/api/projects/${projectId}/automations/${rule.id}/runs`, { headers: authHeaders(token) });
+      const { runs: finalRuns } = (await finalRunsRes.json()) as { runs: { id: string; status: string }[] };
+      assert.equal(finalRuns.length, 3, "the original failed run, the too-early retry's own failed run, and the final successful retry must ALL be preserved as distinct history rows");
+      assert.equal(finalRuns.filter((r) => r.status === "failed").length, 2);
+      assert.equal(finalRuns.filter((r) => r.status === "sent").length, 1);
+
+      // A run that already succeeded has nothing left to retry.
+      const retrySentRes = await fetch(`${baseUrl}/api/projects/${projectId}/automations/${rule.id}/runs/${newRun!.id}/retry`, {
+        method: "POST",
+        headers: authHeaders(token),
+      });
+      assert.equal(retrySentRes.status, 400);
+      assert.equal(((await retrySentRes.json()) as { code?: string }).code, "AUTOMATION_RUN_NOT_FAILED");
+    },
+    {
+      whatsapp: (db) => {
+        const { manager, createdSockets: sockets } = createTestWhatsAppManager(db);
+        createdSockets = sockets;
+        return manager;
+      },
+    },
+  );
+});
+
+/**
+ * Round 971: two cases genuinely have nothing to retry -- a "schedule"
+ * rule's own run (never tied to one record; already retries
+ * automatically on its own via isScheduledRuleDue) and a record-triggered
+ * run whose record has since been deleted (its current state can no
+ * longer be read at all). Both must be rejected with a clear error
+ * rather than silently no-op'd or crashing.
+ */
+test("POST .../automations/:ruleId/runs/:runId/retry rejects a run with no recordId (a schedule rule's own failure), and one whose record no longer exists", async () => {
+  await withServer(async (baseUrl, db) => {
+    const email = `retry-rejected-${randomUUID()}@example.com`;
+    const token = await signup(baseUrl, email);
+    const owner = findUserByEmail(db, email)!;
+
+    const spec: ProductSpec = {
+      summary: "test",
+      personas: [],
+      roles: ["Admin"],
+      entities: [{ name: "Reminder", fields: [{ name: "title", type: "text", required: true }] }],
+      screens: [],
+      assumptions: [],
+      openQuestions: [],
+    };
+    const projectId = randomUUID();
+    insertProject(db, { id: projectId, ownerId: owner.id, name: "Reminders", description: "test", spec });
+    diffAndMigrate(db, projectId, undefined, spec);
+    markProjectBuilt(db, projectId);
+
+    const scheduleRuleRes = await fetch(`${baseUrl}/api/projects/${projectId}/entities/Reminder/automations`, {
+      method: "POST",
+      headers: authHeaders(token),
+      body: JSON.stringify({
+        trigger: "schedule",
+        scheduleTimeUtc: "09:00",
+        actionType: "send_whatsapp",
+        toMode: "static",
+        toNumber: "972500000000",
+        messageTemplate: "Reminder!",
+      }),
+    });
+    const { rule: scheduleRule } = (await scheduleRuleRes.json()) as { rule: { id: string } };
+
+    // Simulated directly (no real scheduler tick in this test) -- a
+    // schedule rule's own run never has a recordId at all.
+    const db2 = db;
+    recordAutomationRun(db2, projectId, scheduleRule.id, { status: "failed", error: "WhatsApp is not connected" }, "send_whatsapp");
+    const { runs: scheduleRuns } = (await (await fetch(`${baseUrl}/api/projects/${projectId}/automations/${scheduleRule.id}/runs`, { headers: authHeaders(token) })).json()) as {
+      runs: { id: string; recordId: number | null }[];
+    };
+    assert.equal(scheduleRuns[0]!.recordId, null);
+
+    const scheduleRetryRes = await fetch(`${baseUrl}/api/projects/${projectId}/automations/${scheduleRule.id}/runs/${scheduleRuns[0]!.id}/retry`, {
+      method: "POST",
+      headers: authHeaders(token),
+    });
+    assert.equal(scheduleRetryRes.status, 400);
+    assert.equal(((await scheduleRetryRes.json()) as { code?: string }).code, "AUTOMATION_RUN_NOT_RETRYABLE");
+
+    // A record-triggered rule whose record has since been deleted.
+    const createdRuleRes = await fetch(`${baseUrl}/api/projects/${projectId}/entities/Reminder/automations`, {
+      method: "POST",
+      headers: authHeaders(token),
+      body: JSON.stringify({
+        trigger: "record_created",
+        actionType: "webhook",
+        webhookUrl: "https://example.invalid/hook",
+        toMode: "static",
+        messageTemplate: "New reminder!",
+      }),
+    });
+    const { rule: createdRule } = (await createdRuleRes.json()) as { rule: { id: string } };
+    const recordRes = await fetch(`${baseUrl}/api/projects/${projectId}/entities/Reminder`, {
+      method: "POST",
+      headers: authHeaders(token),
+      body: JSON.stringify({ title: "Buy milk" }),
+    });
+    const { record } = (await recordRes.json()) as { record: { id: number } };
+
+    let createdRuns: { id: string; recordId: number | null }[] = [];
+    for (let i = 0; i < 40 && createdRuns.length === 0; i++) {
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      const runsRes = await fetch(`${baseUrl}/api/projects/${projectId}/automations/${createdRule.id}/runs`, { headers: authHeaders(token) });
+      ({ runs: createdRuns } = (await runsRes.json()) as { runs: typeof createdRuns });
+    }
+    assert.equal(createdRuns.length, 1);
+    assert.equal(createdRuns[0]!.recordId, record.id);
+
+    await fetch(`${baseUrl}/api/projects/${projectId}/entities/Reminder/${record.id}`, { method: "DELETE", headers: authHeaders(token) });
+
+    const goneRecordRetryRes = await fetch(`${baseUrl}/api/projects/${projectId}/automations/${createdRule.id}/runs/${createdRuns[0]!.id}/retry`, {
+      method: "POST",
+      headers: authHeaders(token),
+    });
+    assert.equal(goneRecordRetryRes.status, 404);
+    assert.equal(((await goneRecordRetryRes.json()) as { code?: string }).code, "AUTOMATION_RUN_RECORD_GONE");
+  });
+});
+
+/**
  * Round 683: CSV import (EntityPanel.tsx's handleImportFile) now PATCHes a
  * row whose own leading "id" column matched an existing record, instead of
  * always POSTing a new one -- the exact same bulk-reimport-of-pre-existing-

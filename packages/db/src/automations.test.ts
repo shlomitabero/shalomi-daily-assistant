@@ -11,6 +11,7 @@ import {
   ensureAutomationRulesTable,
   ensureAutomationRunsTable,
   getAutomationRule,
+  getAutomationRun,
   insertAutomationRule,
   listAutomationRules,
   listAutomationRuns,
@@ -228,6 +229,80 @@ test("recordAutomationRun snapshots the given actionType onto both the rule's ow
   );
   const [stillSameRun] = listAutomationRuns(db, "proj1", rule.id);
   assert.equal(stillSameRun.actionType, "send_whatsapp", "a historical run's own actionType must never retroactively change just because the rule was edited later");
+});
+
+/**
+ * Round 971: recordAutomationRun's new recordId parameter -- lets a
+ * failed record-triggered run be manually retried later (see
+ * apps/api/src/routes/projects.ts's own POST .../runs/:runId/retry) by
+ * referencing which record triggered it. Defaults to null for a
+ * "schedule" rule's own call sites (apps/api/src/automations.ts's
+ * fireScheduledRule), which never have a triggering record at all.
+ */
+test("recordAutomationRun stores the given recordId on the new automation_runs row, defaulting to null when omitted", () => {
+  const db = openDatabase(":memory:");
+  ensureAutomationRulesTable(db);
+  const rule = insertAutomationRule(db, baseRule({ actionType: "send_whatsapp" }));
+
+  recordAutomationRun(db, "proj1", rule.id, { status: "sent" }, "send_whatsapp", 42);
+  const [withRecord] = listAutomationRuns(db, "proj1", rule.id);
+  assert.equal(withRecord.recordId, 42);
+
+  recordAutomationRun(db, "proj1", rule.id, { status: "sent" }, "send_whatsapp");
+  const [noRecordArg] = listAutomationRuns(db, "proj1", rule.id);
+  assert.equal(noRecordArg.recordId, null, "omitting recordId entirely (every schedule-rule call site) must default to null, not throw");
+
+  recordAutomationRun(db, "proj1", rule.id, { status: "sent" }, "send_whatsapp", null);
+  const [explicitNull] = listAutomationRuns(db, "proj1", rule.id);
+  assert.equal(explicitNull.recordId, null);
+});
+
+/**
+ * Round 971: getAutomationRun's own scoped single-row lookup, used by the
+ * manual Retry route to read a specific run's recordId before re-firing.
+ */
+test("getAutomationRun returns a single run by id, scoped to the given project/rule, and undefined when no match", () => {
+  const db = openDatabase(":memory:");
+  ensureAutomationRulesTable(db);
+  const rule = insertAutomationRule(db, baseRule({ actionType: "send_whatsapp" }));
+  const otherRule = insertAutomationRule(db, baseRule({ actionType: "send_whatsapp" }));
+  recordAutomationRun(db, "proj1", rule.id, { status: "failed", error: "oops" }, "send_whatsapp", 7);
+
+  const [run] = listAutomationRuns(db, "proj1", rule.id);
+  assert.equal(getAutomationRun(db, "proj1", rule.id, run!.id)?.recordId, 7);
+  assert.equal(getAutomationRun(db, "proj1", otherRule.id, run!.id), undefined, "a run must not be found under a DIFFERENT rule's id, even with the right project/run id");
+  assert.equal(getAutomationRun(db, "proj1", rule.id, "nonexistent-id"), undefined);
+});
+
+/**
+ * Round 971: the recordId column migration -- same additive-only,
+ * no-backfill discipline as every other column this table has ever
+ * added (actionType, round 948).
+ */
+test("ensureAutomationRulesTable adds recordId to a pre-existing automation_runs table from an older app version, leaving existing rows intact, and is idempotent", () => {
+  const db = openDatabase(":memory:");
+  db.exec(`
+    CREATE TABLE automation_runs (
+      id TEXT PRIMARY KEY,
+      projectId TEXT NOT NULL,
+      ruleId TEXT NOT NULL,
+      status TEXT NOT NULL,
+      error TEXT,
+      triggeredAt TEXT NOT NULL
+    )
+  `);
+  db.prepare(
+    `INSERT INTO automation_runs (id, projectId, ruleId, status, error, triggeredAt) VALUES ('old-run', 'proj1', 'rule1', 'sent', NULL, '2026-01-01T00:00:00.000Z')`,
+  ).run();
+
+  ensureAutomationRunsTable(db);
+
+  const oldRun = getAutomationRun(db, "proj1", "rule1", "old-run")!;
+  assert.equal(oldRun.recordId, null, "the migration must default a pre-existing row's recordId to null, not fail or guess");
+  assert.equal(oldRun.status, "sent", "the migration must not disturb an existing row's other columns");
+
+  assert.doesNotThrow(() => ensureAutomationRunsTable(db));
+  assert.equal(getAutomationRun(db, "proj1", "rule1", "old-run")!.status, "sent");
 });
 
 test("recordAutomationRun called with no actionType argument (every pre-round-948 call site) leaves lastActionType/the run's own actionType null, not throwing or defaulting to the rule's current one", () => {
