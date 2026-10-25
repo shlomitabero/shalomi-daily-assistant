@@ -7,6 +7,7 @@ import {
   listAutomationRuns,
   listRecords,
   retryAutomationRun,
+  testAutomationRule,
   updateAutomationRule,
   KNOWN_WHATSAPP_SEND_ERROR_CODES,
   type AutomationActionType,
@@ -95,6 +96,12 @@ export function AutomationsPanel({
   // disable or show a stale error for a sibling run's own Retry button.
   const [retryingRunId, setRetryingRunId] = useState<string | null>(null);
   const [retryErrorByRunId, setRetryErrorByRunId] = useState<Record<string, string>>({});
+  // Round 997: which rule's "Test" button is currently in flight, and any
+  // error from that rule's own last test attempt -- keyed per rule (unlike
+  // retryingRunId/retryErrorByRunId above, there's no run id yet to key by
+  // until the test itself actually fires one).
+  const [testingRuleId, setTestingRuleId] = useState<string | null>(null);
+  const [testErrorByRuleId, setTestErrorByRuleId] = useState<Record<string, string>>({});
   const dialogRef = useDialogFocusTrap<HTMLDivElement>(onClose);
 
   const [entityName, setEntityName] = useState(entities[0]?.name ?? "");
@@ -807,6 +814,33 @@ export function AutomationsPanel({
       .finally(() => setRetryingRunId((current) => (current === run.id ? null : current)));
   }
 
+  /**
+   * Round 997: fires a rule right now, on demand, so a just-created rule's
+   * destination/credentials/template can be verified immediately instead
+   * of waiting for a real trigger event (or, for a schedule rule, its own
+   * next due time). Mirrors handleRetryRun's exact shape above -- a
+   * successful test still records a new run the same way a retry does, so
+   * if History is already expanded for this rule, re-fetching its run
+   * list surfaces the test the same way a retry's own new run already
+   * does; if History isn't expanded, there's nothing to refresh.
+   */
+  function handleTestRule(rule: AutomationRuleView) {
+    setTestingRuleId(rule.id);
+    setTestErrorByRuleId((prev) => {
+      if (!(rule.id in prev)) return prev;
+      const next = { ...prev };
+      delete next[rule.id];
+      return next;
+    });
+    testAutomationRule(projectId, rule.id)
+      .then(() => {
+        if (expandedHistoryRuleId !== rule.id) return;
+        return listAutomationRuns(projectId, rule.id).then(({ runs }) => setRunsByRuleId((prev) => ({ ...prev, [rule.id]: runs })));
+      })
+      .catch((err) => setTestErrorByRuleId((prev) => ({ ...prev, [rule.id]: (err as Error).message })))
+      .finally(() => setTestingRuleId((current) => (current === rule.id ? null : current)));
+  }
+
   function handleDownload() {
     downloadAutomationsReport(formatAutomationsReport(rules ?? [], entities, project.name, lang, t, relatedRecords), project.name);
   }
@@ -928,6 +962,14 @@ export function AutomationsPanel({
                         <button type="button" className="danger small" onClick={() => handleDelete(rule)} disabled={busyRuleId !== null || createBusy}>
                           {t("automations.delete")}
                         </button>
+                        <button
+                          type="button"
+                          className="secondary small"
+                          onClick={() => handleTestRule(rule)}
+                          disabled={busyRuleId !== null || createBusy || testingRuleId !== null}
+                        >
+                          {testingRuleId === rule.id ? t("automations.test.sending") : t("automations.test")}
+                        </button>
                       </>
                     )}
                     {/* Placed last -- the existing enable/disable/edit/delete
@@ -939,6 +981,11 @@ export function AutomationsPanel({
                       {expandedHistoryRuleId === rule.id ? t("automations.history.hide") : t("automations.history.show")}
                     </button>
                   </div>
+                  {testErrorByRuleId[rule.id] && (
+                    <p className="error small" role="alert">
+                      {testErrorByRuleId[rule.id]}
+                    </p>
+                  )}
                   {expandedHistoryRuleId === rule.id && (
                     <div className="automations-rule-history">
                       {loadingHistoryRuleIds[rule.id] && !runsByRuleId[rule.id] ? (

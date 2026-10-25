@@ -3858,6 +3858,82 @@ export function createProjectsRouter(
     }),
   );
 
+  /**
+   * Round 997: before this route, the ONLY way to ever find out whether a
+   * newly-created rule's destination/credentials/template actually work
+   * was to wait for a real trigger event (create/update/delete a record,
+   * or wait for a schedule rule's own next due time) and then check the
+   * run history after the fact -- a brand-new "send_email" or "webhook"
+   * rule (rounds 974/996) in particular has no WhatsApp-connection
+   * precondition forcing an early sanity check the way send_whatsapp
+   * does, so a typo'd webhook URL or email address could sit silently
+   * broken for however long until its trigger condition first fires for
+   * real. This fires the SAME single-attempt logic the retry route above
+   * and the real triggers both go through (fireRule/fireScheduledRule),
+   * on demand, against real data -- not a separate "dry run" path that
+   * could drift from what actually fires in production.
+   *
+   * A "schedule" rule has no triggering record at all (same as its own
+   * real firing), so it's tested exactly like the retry route's own
+   * null-recordId branch above: fireScheduledRule directly, bypassing
+   * isScheduledRuleDue/hasTooManyConsecutiveFailuresToday entirely, same
+   * precedent round 972's retry route already established for this exact
+   * bypass. Every other trigger needs a real record to interpolate
+   * {{field}} placeholders and resolve a toMode:"field" destination from
+   * -- uses the entity's own most-recently-created record (listRecords is
+   * already ORDER BY id DESC, so `[0]` is cheap, no extra query), and
+   * rejects with a clear, specific error when the entity has no records
+   * at all yet rather than a confusing one further down the call chain.
+   */
+  router.post(
+    "/projects/:id/automations/:ruleId/test",
+    whatsappRateLimiter,
+    asyncRoute(async (req, res) => {
+      const project = requireProjectWriteAccess(db, req.params.id, req.userId!);
+      const rule = getAutomationRule(db, project.id, req.params.ruleId);
+      if (!rule) {
+        throw new HttpError(404, `Automation rule "${req.params.ruleId}" not found`, "AUTOMATION_RULE_NOT_FOUND");
+      }
+      const idempotencyKey = req.header("X-Idempotency-Key") || undefined;
+      if (rule.trigger === "schedule") {
+        const { status, body } = await withIdempotency(
+          db,
+          idempotencyKey,
+          req.userId!,
+          `POST /projects/${project.id}/automations/${rule.id}/test`,
+          async () => {
+            await fireScheduledRule(db, whatsapp, emailSender, project, rule);
+            const [latestRun] = listAutomationRuns(db, project.id, rule.id, 1);
+            return { status: 200, body: { run: latestRun ?? null } };
+          },
+        );
+        res.status(status).json(body);
+        return;
+      }
+      const entity = findEntity(project, rule.entityName);
+      const [record] = listRecords(db, project.id, entity);
+      if (!record) {
+        throw new HttpError(
+          400,
+          `There are no ${entity.label} records yet to test this rule against -- create one first, then try again`,
+          "AUTOMATION_TEST_NO_RECORDS",
+        );
+      }
+      const { status, body } = await withIdempotency(
+        db,
+        idempotencyKey,
+        req.userId!,
+        `POST /projects/${project.id}/automations/${rule.id}/test`,
+        async () => {
+          await fireRule(db, whatsapp, emailSender, project, entity, rule, record, uploadsDir, `${req.protocol}://${req.get("host")}`);
+          const [latestRun] = listAutomationRuns(db, project.id, rule.id, 1);
+          return { status: 200, body: { run: latestRun ?? null } };
+        },
+      );
+      res.status(status).json(body);
+    }),
+  );
+
   router.post(
     "/projects/:id/entities/:entityName/automations",
     asyncRoute(async (req, res) => {

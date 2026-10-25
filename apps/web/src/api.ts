@@ -1347,6 +1347,20 @@ export function retryAutomationRun(projectId: string, ruleId: string, runId: str
   });
 }
 
+/**
+ * Round 997: fires a rule right now, on demand -- a "schedule" rule sends
+ * verbatim (no triggering record exists for it, same as its own real
+ * firing); every other trigger fires against the entity's own most
+ * recently created record. Throws with code "AUTOMATION_TEST_NO_RECORDS"
+ * when a record-triggered rule's entity has no records at all yet.
+ */
+export function testAutomationRule(projectId: string, ruleId: string): Promise<{ run: AutomationRunView | null }> {
+  return request(`/projects/${projectId}/automations/${ruleId}/test`, {
+    method: "POST",
+    headers: { "x-idempotency-key": crypto.randomUUID() },
+  });
+}
+
 export function createAutomationRule(
   projectId: string,
   entityName: string,

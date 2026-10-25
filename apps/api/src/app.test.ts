@@ -3314,6 +3314,134 @@ test("POST .../automations/:ruleId/runs/:runId/retry re-fires a PAUSED schedule 
 });
 
 /**
+ * Round 997: before this route, the ONLY way to find out whether a
+ * newly-created rule's destination/credentials/template actually worked
+ * was to wait for a real trigger event (or, for a schedule rule, its own
+ * next due time) and then check the run history after the fact. This
+ * route fires a rule right now, on demand, through the exact same
+ * fireRule/fireScheduledRule logic the real triggers and the retry route
+ * both already go through.
+ */
+test("POST .../automations/:ruleId/test fires a schedule rule immediately (bypassing its own due time), and a record-triggered rule against the entity's most recent record, rejecting with a clear error when none exist", async () => {
+  let createdSockets: ReturnType<typeof createFakeWhatsAppSocket>[] = [];
+  await withServer(
+    async (baseUrl, db) => {
+      const email = `automation-test-send-${randomUUID()}@example.com`;
+      const token = await signup(baseUrl, email);
+      const owner = findUserByEmail(db, email)!;
+
+      const spec: ProductSpec = {
+        summary: "test",
+        personas: [],
+        roles: ["Admin"],
+        entities: [
+          {
+            name: "Order",
+            fields: [
+              { name: "customerName", type: "text", required: true },
+              { name: "customerPhone", type: "text", required: false },
+            ],
+          },
+        ],
+        screens: [],
+        assumptions: [],
+        openQuestions: [],
+      };
+      const projectId = randomUUID();
+      insertProject(db, { id: projectId, ownerId: owner.id, name: "Orders", description: "test", spec });
+      diffAndMigrate(db, projectId, undefined, spec);
+      markProjectBuilt(db, projectId);
+
+      await fetch(`${baseUrl}/api/projects/${projectId}/integrations/whatsapp/connect`, { method: "POST", headers: authHeaders(token) });
+      createdSockets[0].sock.user = { id: "15550001111:1@s.whatsapp.net" };
+      createdSockets[0].emitConnectionUpdate({ connection: "open" });
+
+      // A schedule rule set far in the future -- isScheduledRuleDue would
+      // say "not due" for hours; the test route must fire it anyway,
+      // proving it calls fireScheduledRule directly rather than going
+      // through the normal due-time gate.
+      const scheduleRes = await fetch(`${baseUrl}/api/projects/${projectId}/entities/Order/automations`, {
+        method: "POST",
+        headers: authHeaders(token),
+        body: JSON.stringify({
+          trigger: "schedule",
+          scheduleTimeUtc: "23:59",
+          actionType: "send_whatsapp",
+          toMode: "static",
+          toNumber: "972500000000",
+          messageTemplate: "Daily report",
+        }),
+      });
+      const { rule: scheduleRule } = (await scheduleRes.json()) as { rule: { id: string } };
+
+      const scheduleTestRes = await fetch(`${baseUrl}/api/projects/${projectId}/automations/${scheduleRule.id}/test`, {
+        method: "POST",
+        headers: authHeaders(token),
+      });
+      assert.equal(scheduleTestRes.status, 200);
+      const { run: scheduleRun } = (await scheduleTestRes.json()) as { run: { status: string } | null };
+      assert.equal(scheduleRun?.status, "sent", "WhatsApp is connected, so the on-demand test fire must actually succeed");
+      assert.equal(createdSockets[0].sendCalls.length, 1);
+
+      // A record-triggered rule on an entity with no records yet at all.
+      const recordRuleRes = await fetch(`${baseUrl}/api/projects/${projectId}/entities/Order/automations`, {
+        method: "POST",
+        headers: authHeaders(token),
+        body: JSON.stringify({
+          trigger: "record_created",
+          actionType: "send_whatsapp",
+          toMode: "field",
+          toField: "customerPhone",
+          messageTemplate: "Hi {{customerName}}!",
+        }),
+      });
+      const { rule: recordRule } = (await recordRuleRes.json()) as { rule: { id: string } };
+
+      const noRecordsRes = await fetch(`${baseUrl}/api/projects/${projectId}/automations/${recordRule.id}/test`, {
+        method: "POST",
+        headers: authHeaders(token),
+      });
+      assert.equal(noRecordsRes.status, 400, "there are no records yet to test a record-triggered rule against");
+      assert.equal(((await noRecordsRes.json()) as { code?: string }).code, "AUTOMATION_TEST_NO_RECORDS");
+      assert.equal(createdSockets[0].sendCalls.length, 1, "the rejected test must never have attempted a send");
+
+      // Two records created -- the test must fire against the most
+      // RECENT one, not the first. x-suppress-automations on both keeps
+      // recordRule's own real record_created firing from polluting
+      // sendCalls, so it stays attributable only to the explicit /test
+      // calls below.
+      await fetch(`${baseUrl}/api/projects/${projectId}/entities/Order`, {
+        method: "POST",
+        headers: { ...authHeaders(token), "x-suppress-automations": "true" },
+        body: JSON.stringify({ customerName: "Older Customer", customerPhone: "972500000001" }),
+      });
+      await fetch(`${baseUrl}/api/projects/${projectId}/entities/Order`, {
+        method: "POST",
+        headers: { ...authHeaders(token), "x-suppress-automations": "true" },
+        body: JSON.stringify({ customerName: "Newest Customer", customerPhone: "972500000002" }),
+      });
+
+      const recordTestRes = await fetch(`${baseUrl}/api/projects/${projectId}/automations/${recordRule.id}/test`, {
+        method: "POST",
+        headers: authHeaders(token),
+      });
+      assert.equal(recordTestRes.status, 200);
+      const { run: recordRun } = (await recordTestRes.json()) as { run: { status: string } | null };
+      assert.equal(recordRun?.status, "sent");
+      assert.equal(createdSockets[0].sendCalls.length, 2);
+      assert.equal(createdSockets[0].sendCalls[1]!.text, "Hi Newest Customer!", "the test must fire against the most recently created record, not the first");
+    },
+    {
+      whatsapp: (db) => {
+        const { manager, createdSockets: sockets } = createTestWhatsAppManager(db);
+        createdSockets = sockets;
+        return manager;
+      },
+    },
+  );
+});
+
+/**
  * Round 953: the sibling POST (create) route above already got
  * withIdempotency protection in round 600; this PATCH route never did.
  * fetchWithWakeRetry retries on ANY thrown fetch() error, so a response

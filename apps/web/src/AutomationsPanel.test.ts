@@ -2609,6 +2609,76 @@ test("AutomationsPanel shows a Retry button only for a failed run with a recordI
 });
 
 /**
+ * Round 997: the "Test" button fires a rule on demand, through the new
+ * .../test route -- a successful test (while History is expanded)
+ * re-fetches the run list the same way a successful Retry already does,
+ * and a failed test (e.g. the entity has no records yet) shows an inline
+ * error right on the rule row instead of silently doing nothing.
+ */
+test("AutomationsPanel's Test button fires the rule on demand, refreshes the run list when History is expanded, and shows an inline error on failure", async () => {
+  await withJsdom(async () => {
+    const originalFetch = globalThis.fetch;
+    let testCalls = 0;
+    let runsFetchCount = 0;
+    globalThis.fetch = (async (input: string, init?: RequestInit) => {
+      const method = init?.method ?? "GET";
+      if (method === "GET" && input === "/api/projects/proj1/automations") {
+        return new Response(JSON.stringify({ rules: [makeRule()] }), { status: 200, headers: { "content-type": "application/json" } });
+      }
+      if (method === "GET" && input === "/api/projects/proj1/automations/rule1/runs") {
+        runsFetchCount += 1;
+        const runs =
+          runsFetchCount === 1
+            ? []
+            : [{ id: "run-test", ruleId: "rule1", status: "sent", error: null, recordId: 7, triggeredAt: new Date("2026-03-15T10:00:00Z").toISOString() }];
+        return new Response(JSON.stringify({ runs }), { status: 200, headers: { "content-type": "application/json" } });
+      }
+      if (method === "POST" && input === "/api/projects/proj1/automations/rule1/test") {
+        testCalls += 1;
+        if (testCalls === 1) {
+          return new Response(JSON.stringify({ error: "There are no Order records yet to test this rule against -- create one first, then try again" }), {
+            status: 400,
+            headers: { "content-type": "application/json" },
+          });
+        }
+        return new Response(JSON.stringify({ run: { id: "run-test", ruleId: "rule1", status: "sent" } }), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        });
+      }
+      throw new Error(`unexpected request ${method} ${input}`);
+    }) as typeof fetch;
+
+    try {
+      renderPanel();
+      await waitForCondition(() => document.querySelectorAll(".automations-rule-row").length === 1);
+
+      const testButton = () => Array.from(document.querySelectorAll(".automations-rule-actions button")).find((b) => b.textContent === "Test" || b.textContent === "Send test") as HTMLButtonElement;
+
+      // First attempt: the server rejects it (no records yet) -- shows
+      // the real error inline, never silently doing nothing.
+      fireEvent.click(testButton());
+      await waitForCondition(() => testCalls === 1);
+      await waitForCondition(() => document.querySelector(".automations-rule-row .error")?.textContent === "There are no Order records yet to test this rule against -- create one first, then try again");
+
+      // Expand History, then try again -- this time the server succeeds,
+      // and the newly-fired run must show up in the refreshed list.
+      const historyButton = Array.from(document.querySelectorAll("button")).find((b) => b.textContent === "History") as HTMLButtonElement;
+      fireEvent.click(historyButton);
+      await waitForCondition(() => runsFetchCount === 1);
+
+      fireEvent.click(testButton());
+      await waitForCondition(() => testCalls === 2);
+      await waitForCondition(() => runsFetchCount === 2);
+      await waitForCondition(() => document.querySelectorAll(".automations-rule-history-list li").length === 1);
+      assert.equal(document.querySelector(".automations-rule-row .error"), null, "a successful test must clear the earlier error");
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+});
+
+/**
  * Round 972: a "schedule" rule's own failed run always has recordId:
  * null (there's no triggering record at all) -- the round-971 test just
  * above correctly hides Retry for a null-recordId run on a NON-schedule
