@@ -12059,23 +12059,25 @@ test("EntityPanel's grand-total tfoot excludes a collapsed group's records, matc
 });
 
 /**
- * New in this round: a real bug in FieldInput's number input, found by a
- * fresh Explore survey. `<input type="number">` with no `step` attribute
- * defaults to the HTML5 spec's `step="1"` -- typing a perfectly normal
- * decimal value into a price/amount field (this is a Hebrew CRM/ops tool;
- * "number" fields are overwhelmingly money) fails native browser
- * constraint validation on submit, silently blocking the form's own
- * `onSubmit` from ever firing, with zero error shown anywhere in the app.
- * jsdom (this test harness) doesn't actually implement stepMismatch
- * validation at all (confirmed empirically -- `validity.stepMismatch` is
- * always `false` here regardless of `step`), so this can only assert the
- * real rendered attribute, not the blocked-submit behavior itself; the
- * true behavioral proof is the live Playwright pass for this round. A
- * relation field's raw fallback number input (no related entity loaded)
- * must NOT get `step="any"` -- a foreign-key id is always an integer, and
- * the default step of 1 there is correct, not a bug.
+ * Updated in round 980: this test used to confirm `<input type="number">`
+ * carried `step="any"` so a decimal price wouldn't fail native HTML5
+ * step-mismatch validation. Round 980's own fix (see EntityPanel.tsx)
+ * replaced that native number input for a real "number" field with a
+ * plain text input (inputMode="decimal") entirely, to fix a *different*,
+ * more serious bug: the HTML spec's number-input value-sanitization
+ * algorithm requires at least one digit before it reports anything
+ * through `.value`, so a lone "-" -- the first character of any negative
+ * number typed from an empty field -- was wiped by the native input
+ * itself before this component's own code ever ran, making it impossible
+ * to type a negative amount from empty. A plain text input has no such
+ * sanitization and no step-mismatch validation to fail in the first
+ * place, so the original step="any" concern no longer applies to a real
+ * "number" field at all. A relation field's raw fallback input (no
+ * related entity loaded) is unaffected by either fix -- a foreign-key id
+ * is always a non-negative integer with no need to type "-", so it keeps
+ * the native number input with its default integer step.
  */
-test("EntityPanel's number field input has step=\"any\" so a decimal value like a price won't fail native browser validation, but a relation field's fallback number input keeps the default integer step", async () => {
+test("EntityPanel's number field input is a plain text input with a decimal keyboard hint (not a native number input), while a relation field's fallback input keeps the native number input with its default integer step", async () => {
   await withJsdom(async () => {
     const invoiceEntity: Entity = {
       name: "Invoice",
@@ -12096,14 +12098,88 @@ test("EntityPanel's number field input has step=\"any\" so a decimal value like 
     try {
       // allEntities intentionally omits "Courier" -- relatedEntity stays
       // undefined, so the relation field falls back to the raw number
-      // input path (the same one the "number" type itself uses).
+      // input path.
       renderEntityPanel({ entity: invoiceEntity, allEntities: [invoiceEntity] });
       await waitForCondition(() => document.querySelectorAll(".record-form input").length > 0);
 
-      const numberInputs = document.querySelectorAll('.record-form input[type="number"]');
-      assert.equal(numberInputs.length, 2, "expected exactly one number input (amount) and one relation-fallback number input (courierId)");
-      assert.equal(numberInputs[0].getAttribute("step"), "any", "the real 'number' field's input must carry step=\"any\" so a decimal like a price doesn't fail native validation");
-      assert.equal(numberInputs[1].getAttribute("step"), null, "a relation field's fallback number input must NOT get step=\"any\" -- a foreign-key id is always an integer");
+      const amountInput = document.querySelector('.record-form input[inputmode="decimal"]') as HTMLInputElement;
+      assert.ok(amountInput, "expected the real 'number' field's input to carry inputMode=\"decimal\"");
+      assert.equal(amountInput.type, "text", "a real 'number' field's input must be a plain text input, not a native number input");
+
+      const relationFallbackInput = document.querySelector('.record-form input[type="number"]') as HTMLInputElement;
+      assert.ok(relationFallbackInput, "expected the relation field's raw fallback input to still be a native number input");
+      assert.equal(
+        relationFallbackInput.getAttribute("step"),
+        null,
+        "a relation field's fallback number input must keep the default integer step -- a foreign-key id is always an integer",
+      );
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+});
+
+/**
+ * New in round 980: a real bug in FieldInput's number input, found by a
+ * fresh Explore survey. A real "number" business field -- price, amount,
+ * rating, a balance delta -- can legitimately be negative, but there was
+ * no way to type one into an empty field: `<input type="number">`'s own
+ * HTML5 value-sanitization algorithm requires at least one digit before
+ * it reports anything through `.value`, so the native input reported
+ * e.target.value as "" the instant a lone "-" was typed, before this
+ * component's own (then-eager Number(value)) coercion even ran --
+ * confirmed directly in jsdom to match real Chrome/Firefox, independent
+ * of this component's own code. The fix (above) switches a real "number"
+ * field to a plain text input, which never performs that sanitization.
+ * Confirms typing "-" alone no longer wipes the field, that continuing to
+ * type the rest of a negative number produces the full string, and that
+ * submitting the form sends the real negative number through to the
+ * server (which already accepted negative numbers fine -- only the UI
+ * control was broken).
+ */
+test("EntityPanel's number field input lets a user type a negative value starting from empty, and submits it correctly", async () => {
+  await withJsdom(async () => {
+    const dealEntity: Entity = {
+      name: "Deal",
+      label: "Deal",
+      fields: [
+        { name: "name", label: "Name", type: "text", required: true },
+        { name: "adjustment", label: "Adjustment", type: "number", required: true },
+      ],
+    };
+    const postedBodies: Record<string, unknown>[] = [];
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = (async (input: string, init?: RequestInit): Promise<Response> => {
+      const method = init?.method ?? "GET";
+      if (method === "GET" && input === "/api/projects/proj1/entities/Deal") {
+        return new Response(JSON.stringify({ records: [] }), { status: 200, headers: { "content-type": "application/json" } });
+      }
+      if (method === "POST" && input === "/api/projects/proj1/entities/Deal") {
+        const body = JSON.parse(init!.body as string);
+        postedBodies.push(body);
+        return new Response(JSON.stringify({ record: { id: 1, ...body } }), { status: 201, headers: { "content-type": "application/json" } });
+      }
+      throw new Error(`unexpected request ${method} ${input}`);
+    }) as typeof fetch;
+    try {
+      renderEntityPanel({ entity: dealEntity, allEntities: [dealEntity] });
+      await waitForCondition(() => document.querySelector(".record-form") !== null);
+
+      const nameInput = document.querySelector('.record-form input[type="text"]') as HTMLInputElement;
+      fireEvent.change(nameInput, { target: { value: "Refund" } });
+
+      const adjustmentInput = document.querySelector('.record-form input[inputmode="decimal"]') as HTMLInputElement;
+      fireEvent.change(adjustmentInput, { target: { value: "-" } });
+      assert.equal(adjustmentInput.value, "-", "typing a lone \"-\" into an empty number field must not wipe it back to empty");
+
+      fireEvent.change(adjustmentInput, { target: { value: "-5" } });
+      assert.equal(adjustmentInput.value, "-5", "continuing to type the rest of a negative number must produce the full string");
+
+      const submitButton = Array.from(document.querySelectorAll("button")).find((b) => b.textContent === "Add") as HTMLButtonElement;
+      fireEvent.click(submitButton);
+      await waitForCondition(() => postedBodies.length === 1);
+
+      assert.equal(Number(postedBodies[0]?.adjustment), -5, "the real negative number must reach the server, not be lost or coerced to NaN/empty");
     } finally {
       globalThis.fetch = originalFetch;
     }
@@ -12172,7 +12248,7 @@ test("EntityPanel's add/edit form wires field.required into the real required at
         "a boolean field must never get the required attribute even when field.required is true -- unchecked is already a complete, real value",
       );
 
-      const numberInput = document.querySelector('.record-form input[type="number"]') as HTMLInputElement;
+      const numberInput = document.querySelector('.record-form input[inputmode="decimal"]') as HTMLInputElement;
       assert.equal(numberInput.required, true, "a required number field's real input must carry the required attribute");
     } finally {
       globalThis.fetch = originalFetch;

@@ -13097,16 +13097,20 @@ test("the exported EntityView's generated inline cell editor refuses to commit a
 });
 
 /**
- * New in this round: the exported app's FieldInput had the identical bug
- * the live preview did -- a "number" field's <input type="number"> carried
- * no `step`, defaulting to the HTML5 spec's step="1" and silently
- * rejecting a normal decimal price/amount on submit, with no error shown
- * anywhere. Confirms the generated FieldInput's number/relation branch
- * conditionally sets step="any" only for a real "number" field, leaving a
- * relation field's raw fallback number input (an always-integer foreign
- * key) at the correct default step of 1.
+ * Updated in round 980: the exported app's FieldInput had the identical
+ * bug round 980 fixed in the live preview -- a "number" field's
+ * <input type="number"> couldn't have a negative value typed into it
+ * from empty (the native number input's own value-sanitization algorithm
+ * requires at least one digit before it reports anything through
+ * .value, so a lone "-" was wiped before this component's own code ever
+ * ran). Mirrors the live preview's fix: a real "number" field now
+ * renders as a plain text input with a decimal-friendly keyboard hint
+ * instead, which also makes the previous step="any" concern moot (a text
+ * input performs no native step validation at all). A relation field's
+ * raw fallback number input (an always-integer, always non-negative
+ * foreign key) is unaffected and keeps the native number input.
  */
-test("the exported EntityView's number field input has step=\"any\" (a real decimal price no longer fails native browser validation), but a relation field's fallback number input keeps the default integer step", () => {
+test("the exported EntityView's number field input is a plain text input with a decimal keyboard hint (not a native number input), while a relation field's fallback input keeps the native number input", () => {
   const files = generateExportFiles(project);
   const entityViewJsx = files.find((f) => f.path === "web/src/components/EntityView.jsx")!.content;
 
@@ -13114,8 +13118,8 @@ test("the exported EntityView's number field input has step=\"any\" (a real deci
   assert.ok(fieldInputSrc, "expected to find FieldInput in generated output");
   assert.match(
     fieldInputSrc!,
-    /field\.type === "number" \|\| field\.type === "relation"[\s\S]{0,400}step=\{field\.type === "number" \? "any" : undefined\}/,
-    'the number/relation input branch must set step="any" only when field.type === "number"',
+    /field\.type === "number" \|\| field\.type === "relation"[\s\S]{0,900}type=\{isPlainNumberField \? "text" : "number"\}[\s\S]{0,50}inputMode=\{isPlainNumberField \? "decimal" : undefined\}/,
+    'the number/relation input branch must render a real "number" field as a plain text input with a decimal keyboard hint, keeping the relation field\'s fallback as a native number input',
   );
 });
 

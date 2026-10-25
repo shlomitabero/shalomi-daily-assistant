@@ -3549,11 +3549,21 @@ function FieldInput({ entity, field, value, onChange, relatedEntity, relatedEnti
     return <input id={id} type="date" required={field.required} value={value ?? ""} onChange={(e) => onChange(e.target.value)} autoFocus={autoFocus} onBlur={onBlur} onKeyDown={onKeyDown} />;
   }
   if (field.type === "number" || field.type === "relation") {
+    // Mirrors the live preview's own fix (EntityPanel.tsx, round 980): a
+    // real "number" field can legitimately be negative, but typing one
+    // into an empty <input type="number"> never worked -- the HTML
+    // spec's own number-input value-sanitization algorithm requires at
+    // least one digit before it reports anything through .value, so a
+    // lone "-" (the first character of any negative number typed from
+    // empty) made the native input itself report e.target.value as "".
+    // A "relation" field's raw value is always a non-negative integer id
+    // with no such need, so it keeps the native number input unchanged.
+    const isPlainNumberField = field.type === "number";
     return (
       <input
         id={id}
-        type="number"
-        step={field.type === "number" ? "any" : undefined}
+        type={isPlainNumberField ? "text" : "number"}
+        inputMode={isPlainNumberField ? "decimal" : undefined}
         required={field.required}
         value={value ?? ""}
         onChange={(e) => onChange(e.target.value)}
