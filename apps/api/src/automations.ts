@@ -1010,8 +1010,36 @@ export function startScheduledAutomationsLoop(
   whatsapp: WhatsAppWebManager,
   intervalMs = 60_000,
 ): () => void {
+  // isScheduledRuleDue's own "already sent today" guard reads
+  // rule.lastTriggeredAt/lastStatus, which recordAutomationRun only
+  // writes once fireScheduledRule's own send/webhook call resolves --
+  // nothing here previously stopped a NEW tick from starting while a
+  // PREVIOUS tick was still mid-flight awaiting one. A webhook rule's
+  // own 10s-per-rule timeout (fireWebhookAction), or several schedule
+  // rules queued through whatsappWeb.ts's own per-project sendQueue
+  // (each with its own ~1200ms post-send spacing delay), can push one
+  // tick's total runtime past this 60s interval with nothing unusual
+  // going on -- not a contrived edge case. Without this guard, the next
+  // tick's own listEnabledScheduledRules read still sees the same
+  // pre-update rule, isScheduledRuleDue returns true again, and
+  // fireScheduledRule runs a second time concurrently with the first --
+  // a real duplicate WhatsApp message to a real recipient, or a
+  // duplicate webhook POST to an external system with no idempotency
+  // key of its own (unlike idempotency.ts, which only covers
+  // user-initiated HTTP requests, not this internal scheduler). Mirrors
+  // the same "skip starting new work while existing work for this key is
+  // still in flight" idiom already used elsewhere in this codebase
+  // (whatsappWeb.ts's pendingConnect/pendingCleanup, routes/projects.ts's
+  // activePipelines) -- scoped to this loop's own closure, not a
+  // module-level flag, so direct test calls to runScheduledAutomationsCheck
+  // itself are never affected by it.
+  let tickInFlight = false;
   const timer = setInterval(() => {
-    void runScheduledAutomationsCheck(db, whatsapp);
+    if (tickInFlight) return;
+    tickInFlight = true;
+    void runScheduledAutomationsCheck(db, whatsapp).finally(() => {
+      tickInFlight = false;
+    });
   }, intervalMs);
   return () => clearInterval(timer);
 }

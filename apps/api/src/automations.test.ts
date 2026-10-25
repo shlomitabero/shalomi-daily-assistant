@@ -29,6 +29,7 @@ import {
   resolveFileFieldsForWebhook,
   runAutomationsForRecordChange,
   runScheduledAutomationsCheck,
+  startScheduledAutomationsLoop,
 } from "./automations.js";
 import type { WhatsAppAttachment, WhatsAppConnectionState, WhatsAppSendResult, WhatsAppWebManager } from "./whatsappWeb.js";
 
@@ -1026,6 +1027,62 @@ test("runScheduledAutomationsCheck fires exactly the rules that are due right no
   assert.equal(getAutomationRule(db, "proj1", due.id)!.lastStatus, "sent");
   assert.equal(getAutomationRule(db, "proj2", notYetDue.id)!.lastStatus, null, "not due yet -- must be untouched");
   assert.equal(getAutomationRule(db, "proj1", disabledDue.id)!.lastStatus, null, "disabled -- must never be considered even though its time has passed");
+});
+
+/**
+ * Round 989: isScheduledRuleDue's own "already sent today" guard
+ * (lastTriggeredAt/lastStatus) only becomes true once recordAutomationRun
+ * writes it, which only happens AFTER fireScheduledRule's own send call
+ * resolves -- nothing previously stopped startScheduledAutomationsLoop's
+ * setInterval from starting a brand new tick while a PREVIOUS tick was
+ * still mid-flight awaiting a slow send. A webhook rule's own 10s-per-rule
+ * timeout, or several schedule rules queued through a WhatsApp
+ * per-project sendQueue, can easily push one tick's real runtime past a
+ * 60s interval -- not a contrived scenario. Without a guard, the next
+ * tick's own listEnabledScheduledRules read still sees the same
+ * pre-update rule, isScheduledRuleDue returns true again, and
+ * fireScheduledRule fires a SECOND time concurrently with the first --
+ * sending the same scheduled WhatsApp message twice to the same real
+ * recipient. Uses a deliberately short real interval (not fake timers --
+ * see this file's own established avoidance of combining those with
+ * polling) and a send call that stays held open until the test releases
+ * it, to let several would-be ticks elapse while the very first is still
+ * in flight.
+ */
+test("startScheduledAutomationsLoop never starts a new tick while the previous tick is still awaiting a slow send, preventing a duplicate WhatsApp send for the same scheduled rule", async () => {
+  const { db } = setupProject();
+  insertAutomationRule(db, scheduleRuleBase({ scheduleTimeUtc: "00:00", toNumber: "972501234567" }));
+
+  const sendCalls: string[] = [];
+  let releaseSend: (() => void) | undefined;
+  const manager = {
+    getStatus(): WhatsAppConnectionState {
+      return { status: "connected", qrDataUrl: null, phoneNumber: "972500000000", error: null };
+    },
+    async sendMessage(_projectId: string, to: string): Promise<WhatsAppSendResult> {
+      sendCalls.push(to);
+      await new Promise<void>((resolve) => {
+        releaseSend = resolve;
+      });
+      return { ok: true };
+    },
+  } as unknown as WhatsAppWebManager;
+
+  const stop = startScheduledAutomationsLoop(db, manager, 20);
+  try {
+    // Several 20ms ticks would fire during this window without the guard --
+    // the very first send is still held open throughout.
+    await new Promise((resolve) => setTimeout(resolve, 150));
+    assert.equal(
+      sendCalls.length,
+      1,
+      "only the first tick's send must ever have started -- every later tick must have been skipped while it was still in flight",
+    );
+    releaseSend?.();
+    await new Promise((resolve) => setTimeout(resolve, 40));
+  } finally {
+    stop();
+  }
 });
 
 /**
