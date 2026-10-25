@@ -117,6 +117,7 @@ test("HistoryPanel shows a real error with a Retry button when the initial load 
             null,
             React.createElement(HistoryPanel, {
               projectId: "proj1",
+              userId: "user1",
               projectName: "Test Project",
               currentSpec: cp1.spec,
               onRestored: () => {},
@@ -214,6 +215,7 @@ test("HistoryPanel disables every restore button while one restore is in flight,
             null,
             React.createElement(HistoryPanel, {
               projectId: "proj1",
+              userId: "user1",
               projectName: "Test Project",
               // Deliberately NOT cp1.spec/cp2.spec -- this test's own
               // concern is the concurrency guard, not the "Current" chip
@@ -329,6 +331,7 @@ test("HistoryPanel shows the server's migrationWarning after a restore, and repl
             null,
             React.createElement(HistoryPanel, {
               projectId: "proj1",
+              userId: "user1",
               projectName: "Test Project",
               currentSpec: { ...cp1.spec, entities: [] },
               onRestored: () => {},
@@ -422,6 +425,7 @@ test("HistoryPanel's restore button asks for confirmation naming the checkpoint,
             null,
             React.createElement(HistoryPanel, {
               projectId: "proj1",
+              userId: "user1",
               projectName: "Test Project",
               // Deliberately NOT cp.spec -- an identical currentSpec would
               // disable this checkpoint's own restore button (it'd be
@@ -509,6 +513,7 @@ test("HistoryPanel's 'What would change?' toggle shows the real entities/fields 
             null,
             React.createElement(HistoryPanel, {
               projectId: "proj1",
+              userId: "user1",
               projectName: "Test Project",
               currentSpec,
               onRestored: () => {},
@@ -580,6 +585,7 @@ test("HistoryPanel marks the checkpoint matching the current spec with a 'Curren
             null,
             React.createElement(HistoryPanel, {
               projectId: "proj1",
+              userId: "user1",
               projectName: "Test Project",
               currentSpec,
               onRestored: () => {},
@@ -652,6 +658,7 @@ test("HistoryPanel's screen-count line reads the checkpoint's real screens array
             null,
             React.createElement(HistoryPanel, {
               projectId: "proj1",
+              userId: "user1",
               projectName: "Test Project",
               currentSpec: checkpoint.spec,
               onRestored: () => {},
@@ -710,6 +717,7 @@ test("HistoryPanel's search box (shown once there are more than 5 checkpoints) n
             null,
             React.createElement(HistoryPanel, {
               projectId: "proj1",
+              userId: "user1",
               projectName: "Test Project",
               currentSpec: checkpoints[0].spec,
               onRestored: () => {},
@@ -793,6 +801,7 @@ test("HistoryPanel's search box has a 'Clear search' button and Escape-to-clear,
             null,
             React.createElement(HistoryPanel, {
               projectId: "proj1",
+              userId: "user1",
               projectName: "Test Project",
               currentSpec: checkpoints[0].spec,
               onRestored: () => {},
@@ -871,6 +880,7 @@ test("HistoryPanel's type filter (shown once there are more than 5 checkpoints) 
             null,
             React.createElement(HistoryPanel, {
               projectId: "proj1",
+              userId: "user1",
               projectName: "Test Project",
               currentSpec: checkpoints[0].spec,
               onRestored: () => {},
@@ -965,6 +975,7 @@ test("HistoryPanel shows a download button only once there are checkpoints, and 
             null,
             React.createElement(HistoryPanel, {
               projectId: "proj1",
+              userId: "user1",
               projectName: "Flower Shop",
               currentSpec: cp1.spec,
               onRestored: () => {},
@@ -1053,6 +1064,7 @@ test("HistoryPanel's 'Compare with' dropdown lets you diff one checkpoint agains
             null,
             React.createElement(HistoryPanel, {
               projectId: "proj1",
+              userId: "user1",
               projectName: "Test Project",
               currentSpec,
               onRestored: () => {},
@@ -1148,6 +1160,7 @@ test("HistoryPanel's 'Compare with' dropdown shows two checkpoints sharing an id
             null,
             React.createElement(HistoryPanel, {
               projectId: "proj1",
+              userId: "user1",
               projectName: "Test Project",
               currentSpec: first.spec,
               onRestored: () => {},
@@ -1230,6 +1243,7 @@ test("HistoryPanel's delete button asks for confirmation naming the checkpoint, 
             null,
             React.createElement(HistoryPanel, {
               projectId: "proj1",
+              userId: "user1",
               projectName: "Test Project",
               currentSpec: { ...cp1.spec, entities: [] },
               onRestored: () => {},
@@ -1293,6 +1307,7 @@ test("HistoryPanel's delete button does nothing when the confirm is declined", a
             null,
             React.createElement(HistoryPanel, {
               projectId: "proj1",
+              userId: "user1",
               projectName: "Test Project",
               currentSpec: { ...cp1.spec, entities: [] },
               onRestored: () => {},
@@ -1362,6 +1377,7 @@ test("HistoryPanel's successful delete clears a stale restore-error banner left 
             null,
             React.createElement(HistoryPanel, {
               projectId: "proj1",
+              userId: "user1",
               projectName: "Test Project",
               currentSpec: { ...cp1.spec, entities: [] },
               onRestored: () => {},
@@ -1435,6 +1451,7 @@ test("HistoryPanel's successful restore clears a stale delete-error banner left 
             null,
             React.createElement(HistoryPanel, {
               projectId: "proj1",
+              userId: "user1",
               projectName: "Test Project",
               currentSpec: { ...cp1.spec, entities: [] },
               onRestored: () => {},
@@ -1514,6 +1531,7 @@ test("HistoryPanel disables every restore button while a delete is in flight, an
             null,
             React.createElement(HistoryPanel, {
               projectId: "proj1",
+              userId: "user1",
               projectName: "Test Project",
               currentSpec: { ...cp1.spec, entities: [] },
               onRestored: () => {},
@@ -1579,6 +1597,7 @@ test("HistoryPanel's checkpoint label is a real click-to-rename control wired in
             null,
             React.createElement(HistoryPanel, {
               projectId: "proj1",
+              userId: "user1",
               projectName: "Test Project",
               currentSpec: cp1.spec,
               onRestored: () => {},
@@ -1656,6 +1675,7 @@ test("HistoryPanel's successful rename clears a stale delete-error banner left o
             null,
             React.createElement(HistoryPanel, {
               projectId: "proj1",
+              userId: "user1",
               projectName: "Test Project",
               currentSpec: { ...cp1.spec, entities: [] },
               onRestored: () => {},
@@ -1735,6 +1755,7 @@ test("HistoryPanel's own Escape-cancels-rename and Escape-clears-search never al
             null,
             React.createElement(HistoryPanel, {
               projectId: "proj1",
+              userId: "user1",
               projectName: "Test Project",
               currentSpec: checkpoints[0].spec,
               onRestored: () => {},
@@ -1829,6 +1850,7 @@ test("HistoryPanel's copy button writes the real formatted timeline to the clipb
             null,
             React.createElement(HistoryPanel, {
               projectId: "proj1",
+              userId: "user1",
               projectName: "Flower Shop",
               currentSpec: cp1.spec,
               onRestored: () => {},
@@ -1908,6 +1930,7 @@ test("HistoryPanel's copy button shows a failure label when navigator.clipboard.
             null,
             React.createElement(HistoryPanel, {
               projectId: "proj1",
+              userId: "user1",
               projectName: "Flower Shop",
               currentSpec: cp1.spec,
               onRestored: () => {},
@@ -1984,6 +2007,7 @@ test("HistoryPanel remembers a committed checkpoint search as a recent-search ch
             null,
             React.createElement(HistoryPanel, {
               projectId: "proj1",
+              userId: "user1",
               projectName: "Test Project",
               currentSpec: checkpoints[0].spec,
               onRestored: () => {},
@@ -2100,6 +2124,7 @@ test("HistoryPanel's diff panel shows a real, rendered message when a checkpoint
             null,
             React.createElement(HistoryPanel, {
               projectId: "proj1",
+              userId: "user1",
               projectName: "Test Project",
               currentSpec,
               onRestored: () => {},
@@ -2194,6 +2219,7 @@ test("HistoryPanel's diff panel shows a real, rendered message when a checkpoint
             null,
             React.createElement(HistoryPanel, {
               projectId: "proj1",
+              userId: "user1",
               projectName: "Test Project",
               currentSpec,
               onRestored: () => {},

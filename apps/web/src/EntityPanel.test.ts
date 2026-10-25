@@ -1485,6 +1485,7 @@ function buildEntityPanelElement(extraProps: Record<string, unknown> = {}) {
       null,
       React.createElement(EntityPanel, {
         projectId: "proj1",
+        userId: "user1",
         entity: DEAL_ENTITY,
         allEntities: [DEAL_ENTITY],
         onEntityRenamed: () => {},
@@ -2202,6 +2203,7 @@ test("EntityPanel renders one filter dropdown per qualifying enum field, not jus
             null,
             React.createElement(EntityPanel, {
               projectId: "proj1",
+              userId: "user1",
               entity: TASK_ENTITY,
               allEntities: [TASK_ENTITY],
               onEntityRenamed: () => {},
@@ -2286,6 +2288,7 @@ test("EntityPanel renders a filter dropdown for a boolean field too, offering Ye
             null,
             React.createElement(EntityPanel, {
               projectId: "proj1",
+              userId: "user1",
               entity: TASK_WITH_BOOLEAN_ENTITY,
               allEntities: [TASK_WITH_BOOLEAN_ENTITY],
               onEntityRenamed: () => {},
@@ -2355,6 +2358,7 @@ test("EntityPanel's boolean table cells carry a real aria-label, not just a bare
             null,
             React.createElement(EntityPanel, {
               projectId: "proj1",
+              userId: "user1",
               entity: TASK_WITH_BOOLEAN_ENTITY,
               allEntities: [TASK_WITH_BOOLEAN_ENTITY],
               onEntityRenamed: () => {},
@@ -2771,6 +2775,7 @@ function renderAppointmentPanel(extraProps: Record<string, unknown> = {}) {
         null,
         React.createElement(EntityPanel, {
           projectId: "proj1",
+          userId: "user1",
           entity: APPOINTMENT_ENTITY,
           allEntities: [APPOINTMENT_ENTITY],
           onEntityRenamed: () => {},
@@ -3629,6 +3634,7 @@ function renderRentalPanel() {
         null,
         React.createElement(EntityPanel, {
           projectId: "proj1",
+          userId: "user1",
           entity: RENTAL_ENTITY,
           allEntities: [RENTAL_ENTITY],
           onEntityRenamed: () => {},
@@ -3817,6 +3823,7 @@ function renderCustomerPanel() {
         null,
         React.createElement(EntityPanel, {
           projectId: "proj1",
+          userId: "user1",
           entity: CUSTOMER_ENTITY,
           allEntities: [CUSTOMER_ENTITY],
           onEntityRenamed: () => {},
@@ -4103,6 +4110,7 @@ test("EntityPanel's CSV import creates a real record from an uploaded file and s
             null,
             React.createElement(EntityPanel, {
               projectId: "proj1",
+              userId: "user1",
               entity: CUSTOMER_IMPORT_ENTITY,
               allEntities: [CUSTOMER_IMPORT_ENTITY],
               onEntityRenamed: () => {},
@@ -4178,6 +4186,7 @@ test("EntityPanel's CSV import sends X-Suppress-Automations on the real POST req
             null,
             React.createElement(EntityPanel, {
               projectId: "proj1",
+              userId: "user1",
               entity: CUSTOMER_IMPORT_ENTITY,
               allEntities: [CUSTOMER_IMPORT_ENTITY],
               onEntityRenamed: () => {},
@@ -4262,6 +4271,7 @@ test("EntityPanel's CSV import updates an existing record by its id column inste
             null,
             React.createElement(EntityPanel, {
               projectId: "proj1",
+              userId: "user1",
               entity: CUSTOMER_IMPORT_ENTITY,
               allEntities: [CUSTOMER_IMPORT_ENTITY],
               onEntityRenamed: () => {},

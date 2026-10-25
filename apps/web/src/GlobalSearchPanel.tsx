@@ -56,6 +56,7 @@ export function GlobalSearchPanel({
   projectId,
   projectName,
   entities,
+  userId,
   onClose,
   onJumpToEntity,
   onJumpToRecord,
@@ -63,6 +64,7 @@ export function GlobalSearchPanel({
   projectId: string;
   projectName: string;
   entities: Entity[];
+  userId: string;
   onClose: () => void;
   onJumpToEntity: (entityName: string) => void;
   onJumpToRecord: (entityName: string, recordId: number) => void;
@@ -80,7 +82,7 @@ export function GlobalSearchPanel({
   // text against results that were matched on the old query.
   const [highlightQuery, setHighlightQuery] = useState("");
   const [selectedIndex, setSelectedIndex] = useState<number | null>(null);
-  const [recentSearches, setRecentSearches] = useState<string[]>(() => getRecentSearches(projectId));
+  const [recentSearches, setRecentSearches] = useState<string[]>(() => getRecentSearches(projectId, userId));
   // A group's "and N more" text used to be a dead end -- the extra matches
   // were real (totalMatches said so) but nothing on screen could reach
   // them short of switching tabs and re-typing the same search. Keyed by
@@ -185,14 +187,14 @@ export function GlobalSearchPanel({
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
     setExpandedSamples({});
-    setRecentSearches(addRecentSearch(projectId, query));
+    setRecentSearches(addRecentSearch(projectId, userId, query));
     await runSearch(query);
   }
 
   async function handleRecentSearchClick(q: string) {
     setQuery(q);
     setExpandedSamples({});
-    setRecentSearches(addRecentSearch(projectId, q));
+    setRecentSearches(addRecentSearch(projectId, userId, q));
     await runSearch(q);
   }
 
@@ -326,12 +328,12 @@ export function GlobalSearchPanel({
   }
 
   function handleClearRecentSearches() {
-    clearRecentSearches(projectId);
+    clearRecentSearches(projectId, userId);
     setRecentSearches([]);
   }
 
   function handleRemoveRecentSearch(q: string) {
-    setRecentSearches(removeRecentSearch(projectId, q));
+    setRecentSearches(removeRecentSearch(projectId, userId, q));
   }
 
   function handleDownload() {

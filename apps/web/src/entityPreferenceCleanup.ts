@@ -7,7 +7,7 @@ import { purgeCollapsedBoardColumnsForEntity } from "./collapsedBoardColumnsPref
 import { purgeCollapsedGroupsForEntity } from "./collapsedGroupsPreference.js";
 import { purgeSortKeysForEntity } from "./sortKeysPreference.js";
 import { purgeViewModeForEntity } from "./viewModePreference.js";
-import { clearEntityRecentSearches } from "./entityRecentSearches.js";
+import { purgeEntityRecentSearchesForEntity } from "./entityRecentSearches.js";
 import { purgeEntityNameFromTabOrder } from "./entityTabOrder.js";
 
 /**
@@ -50,6 +50,6 @@ export function purgeEntityPreferences(projectId: string, entityName: string): v
   purgeCollapsedGroupsForEntity(projectId, entityName);
   purgeSortKeysForEntity(projectId, entityName);
   purgeViewModeForEntity(projectId, entityName);
-  clearEntityRecentSearches(projectId, entityName);
+  purgeEntityRecentSearchesForEntity(projectId, entityName);
   purgeEntityNameFromTabOrder(projectId, entityName);
 }

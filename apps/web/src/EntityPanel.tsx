@@ -1191,6 +1191,7 @@ export function EntityPanel({
   projectId,
   entity,
   allEntities,
+  userId,
   onEntityRenamed,
   highlightRecordId,
   onHighlightHandled,
@@ -1204,6 +1205,7 @@ export function EntityPanel({
   projectId: string;
   entity: Entity;
   allEntities: Entity[];
+  userId: string;
   onEntityRenamed: (project: Project) => void;
   /** True for a "viewer" collaborator -- the server already rejects every write here with 403 VIEWER_READ_ONLY; this just keeps a viewer from clicking a control that can only ever fail. */
   readOnly?: boolean;
@@ -1264,7 +1266,7 @@ export function EntityPanel({
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [search, setSearch] = useState("");
-  const [recentSearches, setRecentSearches] = useState<string[]>(() => getEntityRecentSearches(projectId, entity.name));
+  const [recentSearches, setRecentSearches] = useState<string[]>(() => getEntityRecentSearches(projectId, entity.name, userId));
   const [fieldFilters, setFieldFilters] = useState<Record<string, string>>({});
   const [groupFieldName, setGroupFieldName] = useState("");
   const [collapsedGroups, setCollapsedGroups] = useState<Set<string>>(new Set());
@@ -1468,7 +1470,7 @@ export function EntityPanel({
   // Same reasoning as hiddenFields' own effect just above -- this entity's
   // recent search history is scoped per project+entity too.
   useEffect(() => {
-    setRecentSearches(getEntityRecentSearches(projectId, entity.name));
+    setRecentSearches(getEntityRecentSearches(projectId, entity.name, userId));
   }, [projectId, entity.name]);
 
   // Same reasoning as hiddenFields' own effect just above -- a reordered
@@ -2245,7 +2247,7 @@ export function EntityPanel({
    */
   function handleSearchKeyDown(e: React.KeyboardEvent<HTMLInputElement>) {
     if (e.key === "Enter" && search.trim()) {
-      setRecentSearches(addEntityRecentSearch(projectId, entity.name, search));
+      setRecentSearches(addEntityRecentSearch(projectId, entity.name, userId, search));
     } else if (e.key === "Escape" && search.length > 0) {
       e.preventDefault();
       setSearch("");
@@ -2255,10 +2257,10 @@ export function EntityPanel({
     setSearch(query);
   }
   function handleRemoveRecentSearch(query: string) {
-    setRecentSearches(removeEntityRecentSearch(projectId, entity.name, query));
+    setRecentSearches(removeEntityRecentSearch(projectId, entity.name, userId, query));
   }
   function handleClearRecentSearches() {
-    clearEntityRecentSearches(projectId, entity.name);
+    clearEntityRecentSearches(projectId, entity.name, userId);
     setRecentSearches([]);
   }
 

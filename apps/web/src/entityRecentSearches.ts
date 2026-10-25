@@ -1,8 +1,17 @@
 const STORAGE_KEY = "forge.entityRecentSearches";
 const MAX_RECENT_SEARCHES = 5;
 
-function keyFor(projectId: string, entityName: string): string {
-  return `${projectId}:${entityName}`;
+/**
+ * Round 994: the userId segment was added so two different collaborator
+ * accounts sharing the same project on the same browser no longer see
+ * each other's typed table-search text -- see recentSearches.ts's own
+ * doc comment for the full reasoning. purgeEntityRecentSearchesForProject
+ * below still matches on a plain `${projectId}:` prefix, which keeps
+ * working unchanged regardless of what the key's own remaining segments
+ * (entityName, userId) look like.
+ */
+function keyFor(projectId: string, entityName: string, userId: string): string {
+  return `${projectId}:${entityName}:${userId}`;
 }
 
 function readStore(): Record<string, string[]> {
@@ -39,9 +48,10 @@ function writeStore(store: Record<string, string[]>): void {
  * mirroring columnOrder.ts/columnWidths.ts's own keying, since a recent
  * search on one project's Invoices table is meaningless noise on another
  * project's Invoices table, or on the same project's different entity.
+ * Round 994: also scoped per user -- see keyFor's own doc comment above.
  */
-export function getEntityRecentSearches(projectId: string, entityName: string): string[] {
-  return [...(readStore()[keyFor(projectId, entityName)] ?? [])];
+export function getEntityRecentSearches(projectId: string, entityName: string, userId: string): string[] {
+  return [...(readStore()[keyFor(projectId, entityName, userId)] ?? [])];
 }
 
 /**
@@ -50,10 +60,10 @@ export function getEntityRecentSearches(projectId: string, entityName: string): 
  * keeping a duplicate entry -- and caps the list at MAX_RECENT_SEARCHES,
  * mirroring addRecentSearch's/addRecentProjectSearch's own convention.
  */
-export function addEntityRecentSearch(projectId: string, entityName: string, query: string): string[] {
+export function addEntityRecentSearch(projectId: string, entityName: string, userId: string, query: string): string[] {
   const trimmed = query.trim();
   const store = readStore();
-  const key = keyFor(projectId, entityName);
+  const key = keyFor(projectId, entityName, userId);
   if (!trimmed) return [...(store[key] ?? [])];
   const existing = store[key] ?? [];
   const deduped = existing.filter((q) => q.toLowerCase() !== trimmed.toLowerCase());
@@ -63,18 +73,36 @@ export function addEntityRecentSearch(projectId: string, entityName: string, que
   return next;
 }
 
-export function removeEntityRecentSearch(projectId: string, entityName: string, query: string): string[] {
+export function removeEntityRecentSearch(projectId: string, entityName: string, userId: string, query: string): string[] {
   const store = readStore();
-  const key = keyFor(projectId, entityName);
+  const key = keyFor(projectId, entityName, userId);
   const next = (store[key] ?? []).filter((q) => q.toLowerCase() !== query.toLowerCase());
   store[key] = next;
   writeStore(store);
   return next;
 }
 
-export function clearEntityRecentSearches(projectId: string, entityName: string): void {
+export function clearEntityRecentSearches(projectId: string, entityName: string, userId: string): void {
   const store = readStore();
-  delete store[keyFor(projectId, entityName)];
+  delete store[keyFor(projectId, entityName, userId)];
+  writeStore(store);
+}
+
+/**
+ * Removes EVERY collaborator account's own recent-search list for this
+ * one project+entity, not just the current user's -- used by
+ * entityPreferenceCleanup.ts when the entity itself is dropped from the
+ * spec, where (like purgeEntityRecentSearchesForProject below) there's no
+ * single "current user" to scope a plain clearEntityRecentSearches call
+ * to: any other collaborator could have their own entries for this now-
+ * gone entity sitting in this same store.
+ */
+export function purgeEntityRecentSearchesForEntity(projectId: string, entityName: string): void {
+  const store = readStore();
+  const prefix = `${projectId}:${entityName}:`;
+  for (const key of Object.keys(store)) {
+    if (key.startsWith(prefix)) delete store[key];
+  }
   writeStore(store);
 }
 

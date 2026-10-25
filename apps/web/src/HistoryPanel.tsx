@@ -31,6 +31,7 @@ export function HistoryPanel({
   projectId,
   projectName,
   currentSpec,
+  userId,
   onRestored,
   onClose,
   readOnly = false,
@@ -38,6 +39,7 @@ export function HistoryPanel({
   projectId: string;
   projectName: string;
   currentSpec: ProductSpec;
+  userId: string;
   onRestored: (project: Project) => void;
   onClose: () => void;
   /** True for a "viewer" collaborator -- the server already rejects every write here with 403 VIEWER_READ_ONLY; this just keeps a viewer from clicking a control that can only ever fail. */
@@ -52,7 +54,7 @@ export function HistoryPanel({
   const [expandedId, setExpandedId] = useState<string | null>(null);
   const [compareTargetId, setCompareTargetId] = useState<string | null>(null);
   const [search, setSearch] = useState("");
-  const [recentSearches, setRecentSearches] = useState<string[]>(() => getRecentHistorySearches(projectId));
+  const [recentSearches, setRecentSearches] = useState<string[]>(() => getRecentHistorySearches(projectId, userId));
   const [typeFilter, setTypeFilter] = useState<"all" | CheckpointType>("all");
   const [deletingId, setDeletingId] = useState<string | null>(null);
   const [deleteError, setDeleteError] = useState<string | null>(null);
@@ -188,21 +190,21 @@ export function HistoryPanel({
    */
   function commitRecentSearch() {
     if (!search.trim()) return;
-    setRecentSearches(addRecentHistorySearch(projectId, search));
+    setRecentSearches(addRecentHistorySearch(projectId, userId, search));
   }
 
   function handleRecentSearchClick(q: string) {
     setSearch(q);
-    setRecentSearches(addRecentHistorySearch(projectId, q));
+    setRecentSearches(addRecentHistorySearch(projectId, userId, q));
   }
 
   function handleClearRecentSearches() {
-    clearRecentHistorySearches(projectId);
+    clearRecentHistorySearches(projectId, userId);
     setRecentSearches([]);
   }
 
   function handleRemoveRecentSearch(q: string) {
-    setRecentSearches(removeRecentHistorySearch(projectId, q));
+    setRecentSearches(removeRecentHistorySearch(projectId, userId, q));
   }
 
   return (

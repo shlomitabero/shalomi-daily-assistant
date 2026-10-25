@@ -6,6 +6,7 @@ import {
   addWhatsAppLogRecentSearch,
   clearWhatsAppLogRecentSearches,
   getWhatsAppLogRecentSearches,
+  purgeWhatsAppLogRecentSearchesForProject,
   removeWhatsAppLogRecentSearch,
 } from "./whatsappLogRecentSearches.js";
 
@@ -33,32 +34,32 @@ async function withJsdom(fn: () => void | Promise<void>): Promise<void> {
 
 test("getWhatsAppLogRecentSearches returns an empty list when nothing has ever been searched", async () => {
   await withJsdom(() => {
-    assert.deepEqual(getWhatsAppLogRecentSearches("proj1"), []);
+    assert.deepEqual(getWhatsAppLogRecentSearches("proj1", "userA"), []);
   });
 });
 
 test("addWhatsAppLogRecentSearch adds a query to the front, and a fresh getWhatsAppLogRecentSearches call sees it -- a real persistence round trip, not just the return value", async () => {
   await withJsdom(() => {
-    const after = addWhatsAppLogRecentSearch("proj1", "failed");
+    const after = addWhatsAppLogRecentSearch("proj1", "userA", "failed");
     assert.deepEqual(after, ["failed"]);
-    assert.deepEqual(getWhatsAppLogRecentSearches("proj1"), ["failed"], "must actually be written to storage, not just returned");
+    assert.deepEqual(getWhatsAppLogRecentSearches("proj1", "userA"), ["failed"], "must actually be written to storage, not just returned");
   });
 });
 
 test("addWhatsAppLogRecentSearch puts the newest query first, pushing older ones back", async () => {
   await withJsdom(() => {
-    addWhatsAppLogRecentSearch("proj1", "acme");
-    addWhatsAppLogRecentSearch("proj1", "zeta");
-    const after = addWhatsAppLogRecentSearch("proj1", "mid");
+    addWhatsAppLogRecentSearch("proj1", "userA", "acme");
+    addWhatsAppLogRecentSearch("proj1", "userA", "zeta");
+    const after = addWhatsAppLogRecentSearch("proj1", "userA", "mid");
     assert.deepEqual(after, ["mid", "zeta", "acme"]);
   });
 });
 
 test("addWhatsAppLogRecentSearch moves an already-present query (case-insensitively) to the front instead of duplicating it", async () => {
   await withJsdom(() => {
-    addWhatsAppLogRecentSearch("proj1", "Acme");
-    addWhatsAppLogRecentSearch("proj1", "zeta");
-    const after = addWhatsAppLogRecentSearch("proj1", "acme");
+    addWhatsAppLogRecentSearch("proj1", "userA", "Acme");
+    addWhatsAppLogRecentSearch("proj1", "userA", "zeta");
+    const after = addWhatsAppLogRecentSearch("proj1", "userA", "acme");
     assert.deepEqual(after, ["acme", "zeta"], "the newer casing wins, and there must be only one entry for it");
   });
 });
@@ -66,64 +67,93 @@ test("addWhatsAppLogRecentSearch moves an already-present query (case-insensitiv
 test("addWhatsAppLogRecentSearch caps the list at 5 entries, dropping the oldest", async () => {
   await withJsdom(() => {
     for (const q of ["one", "two", "three", "four", "five", "six"]) {
-      addWhatsAppLogRecentSearch("proj1", q);
+      addWhatsAppLogRecentSearch("proj1", "userA", q);
     }
-    assert.deepEqual(getWhatsAppLogRecentSearches("proj1"), ["six", "five", "four", "three", "two"]);
+    assert.deepEqual(getWhatsAppLogRecentSearches("proj1", "userA"), ["six", "five", "four", "three", "two"]);
   });
 });
 
 test("addWhatsAppLogRecentSearch ignores an empty or whitespace-only query, leaving the list unchanged", async () => {
   await withJsdom(() => {
-    addWhatsAppLogRecentSearch("proj1", "acme");
-    const after = addWhatsAppLogRecentSearch("proj1", "   ");
+    addWhatsAppLogRecentSearch("proj1", "userA", "acme");
+    const after = addWhatsAppLogRecentSearch("proj1", "userA", "   ");
     assert.deepEqual(after, ["acme"]);
   });
 });
 
 test("recent log searches are scoped per project -- searching one project's log never affects a different project's own list", async () => {
   await withJsdom(() => {
-    addWhatsAppLogRecentSearch("proj1", "failed");
-    assert.deepEqual(getWhatsAppLogRecentSearches("proj2"), [], "a different project must not see proj1's recent searches");
+    addWhatsAppLogRecentSearch("proj1", "userA", "failed");
+    assert.deepEqual(getWhatsAppLogRecentSearches("proj2", "userA"), [], "a different project must not see proj1's recent searches");
   });
 });
 
-test("clearWhatsAppLogRecentSearches wipes the whole list", async () => {
+/**
+ * Round 994: the whole point of this round's fix. Before it, the storage
+ * key was projectId alone -- two different collaborator accounts sharing
+ * the SAME project on the SAME browser saw each other's own typed
+ * message-log search text.
+ */
+test("recent log searches are also kept per-user -- two different accounts on the SAME project never see each other's searches", async () => {
   await withJsdom(() => {
-    addWhatsAppLogRecentSearch("proj1", "acme");
-    addWhatsAppLogRecentSearch("proj1", "zeta");
-    clearWhatsAppLogRecentSearches("proj1");
-    assert.deepEqual(getWhatsAppLogRecentSearches("proj1"), []);
+    addWhatsAppLogRecentSearch("proj1", "userA", "refund dispute");
+    addWhatsAppLogRecentSearch("proj1", "userB", "unrelated query");
+    assert.deepEqual(getWhatsAppLogRecentSearches("proj1", "userA"), ["refund dispute"]);
+    assert.deepEqual(getWhatsAppLogRecentSearches("proj1", "userB"), ["unrelated query"], "userB must never see userA's own typed search text");
+  });
+});
+
+test("clearWhatsAppLogRecentSearches wipes this user's own list for this project only, leaving another collaborator's own list for the SAME project untouched", async () => {
+  await withJsdom(() => {
+    addWhatsAppLogRecentSearch("proj1", "userA", "acme");
+    addWhatsAppLogRecentSearch("proj1", "userA", "zeta");
+    addWhatsAppLogRecentSearch("proj1", "userB", "other-user-query");
+    clearWhatsAppLogRecentSearches("proj1", "userA");
+    assert.deepEqual(getWhatsAppLogRecentSearches("proj1", "userA"), []);
+    assert.deepEqual(getWhatsAppLogRecentSearches("proj1", "userB"), ["other-user-query"], "clearing userA's own list must never touch userB's");
   });
 });
 
 test("removeWhatsAppLogRecentSearch drops only the matching query (case-insensitively), leaving the rest -- and a fresh getWhatsAppLogRecentSearches call sees it gone, not just the return value", async () => {
   await withJsdom(() => {
-    addWhatsAppLogRecentSearch("proj1", "acme");
-    addWhatsAppLogRecentSearch("proj1", "zeta");
-    addWhatsAppLogRecentSearch("proj1", "mid");
-    const after = removeWhatsAppLogRecentSearch("proj1", "ZETA");
+    addWhatsAppLogRecentSearch("proj1", "userA", "acme");
+    addWhatsAppLogRecentSearch("proj1", "userA", "zeta");
+    addWhatsAppLogRecentSearch("proj1", "userA", "mid");
+    const after = removeWhatsAppLogRecentSearch("proj1", "userA", "ZETA");
     assert.deepEqual(after, ["mid", "acme"], "must remove case-insensitively and leave the other two, in order");
-    assert.deepEqual(getWhatsAppLogRecentSearches("proj1"), ["mid", "acme"], "must actually be persisted, not just returned");
+    assert.deepEqual(getWhatsAppLogRecentSearches("proj1", "userA"), ["mid", "acme"], "must actually be persisted, not just returned");
   });
 });
 
 test("removeWhatsAppLogRecentSearch is a no-op when the query isn't in the list", async () => {
   await withJsdom(() => {
-    addWhatsAppLogRecentSearch("proj1", "acme");
-    const after = removeWhatsAppLogRecentSearch("proj1", "nonexistent");
+    addWhatsAppLogRecentSearch("proj1", "userA", "acme");
+    const after = removeWhatsAppLogRecentSearch("proj1", "userA", "nonexistent");
     assert.deepEqual(after, ["acme"]);
   });
 });
 
 test("getWhatsAppLogRecentSearches tolerates corrupted/foreign localStorage content instead of throwing", async () => {
   await withJsdom(() => {
-    localStorage.setItem("forge.whatsappLogRecentSearches.proj1", "not valid json{{{");
-    assert.deepEqual(getWhatsAppLogRecentSearches("proj1"), []);
+    localStorage.setItem("forge.whatsappLogRecentSearches.proj1:userA", "not valid json{{{");
+    assert.deepEqual(getWhatsAppLogRecentSearches("proj1", "userA"), []);
 
-    localStorage.setItem("forge.whatsappLogRecentSearches.proj1", JSON.stringify({ not: "an array" }));
-    assert.deepEqual(getWhatsAppLogRecentSearches("proj1"), []);
+    localStorage.setItem("forge.whatsappLogRecentSearches.proj1:userA", JSON.stringify({ not: "an array" }));
+    assert.deepEqual(getWhatsAppLogRecentSearches("proj1", "userA"), []);
 
-    localStorage.setItem("forge.whatsappLogRecentSearches.proj1", JSON.stringify(["acme", 42, null, "zeta"]));
-    assert.deepEqual(getWhatsAppLogRecentSearches("proj1"), ["acme", "zeta"], "non-string entries must be dropped, not crash the whole read");
+    localStorage.setItem("forge.whatsappLogRecentSearches.proj1:userA", JSON.stringify(["acme", 42, null, "zeta"]));
+    assert.deepEqual(getWhatsAppLogRecentSearches("proj1", "userA"), ["acme", "zeta"], "non-string entries must be dropped, not crash the whole read");
+  });
+});
+
+test("purgeWhatsAppLogRecentSearchesForProject removes every collaborator account's own list for that project, and never touches another project's entries", async () => {
+  await withJsdom(() => {
+    addWhatsAppLogRecentSearch("proj1", "userA", "acme");
+    addWhatsAppLogRecentSearch("proj1", "userB", "other-user-query");
+    addWhatsAppLogRecentSearch("proj2", "userA", "zeta");
+    purgeWhatsAppLogRecentSearchesForProject("proj1");
+    assert.deepEqual(getWhatsAppLogRecentSearches("proj1", "userA"), [], "userA's own proj1 list must be gone");
+    assert.deepEqual(getWhatsAppLogRecentSearches("proj1", "userB"), [], "userB's own proj1 list must be gone too, not just userA's");
+    assert.deepEqual(getWhatsAppLogRecentSearches("proj2", "userA"), ["zeta"], "a completely different project's own entries must be untouched");
   });
 });

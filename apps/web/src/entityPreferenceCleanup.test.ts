@@ -64,7 +64,12 @@ test("purgeEntityPreferences removes exactly one project+entity's entries from e
     setCollapsedGroups("abc", "Customer", "status", ["pending"]);
     setSortKeys("abc", "Customer", [{ field: "name", direction: "asc" }]);
     setViewMode("abc", "Customer", "board");
-    addEntityRecentSearch("abc", "Customer", "dana");
+    addEntityRecentSearch("abc", "Customer", "userA", "dana");
+    // A DIFFERENT collaborator's own entry for the SAME project+entity --
+    // purgeEntityPreferences must purge every user's entry, not just one
+    // (round 994's own reasoning: there's no single "current user" at
+    // purge time, since any collaborator could have searched this entity).
+    addEntityRecentSearch("abc", "Customer", "userB", "other-user-query");
     // entityTabOrder is keyed by projectId alone (not projectId+entityName),
     // so it's seeded once per project below, after both of "abc"'s entities
     // are known, rather than per-entity like every other store here.
@@ -81,7 +86,7 @@ test("purgeEntityPreferences removes exactly one project+entity's entries from e
     setCollapsedGroups("abc", "Deal", "stage", ["open"]);
     setSortKeys("abc", "Deal", [{ field: "amount", direction: "desc" }]);
     setViewMode("abc", "Deal", "calendar");
-    addEntityRecentSearch("abc", "Deal", "yossi");
+    addEntityRecentSearch("abc", "Deal", "userA", "yossi");
 
     // "abc"'s own tab order, covering both of its entities.
     setEntityTabOrder("abc", ["Deal", "Customer"]);
@@ -98,7 +103,7 @@ test("purgeEntityPreferences removes exactly one project+entity's entries from e
     setCollapsedGroups("proj2", "Customer", "owner", ["active"]);
     setSortKeys("proj2", "Customer", [{ field: "email", direction: "desc" }]);
     setViewMode("proj2", "Customer", "calendar");
-    addEntityRecentSearch("proj2", "Customer", "noa");
+    addEntityRecentSearch("proj2", "Customer", "userA", "noa");
     // An unrelated project's own tab order, including a "Customer" entry of its own.
     setEntityTabOrder("proj2", ["Customer", "Deal"]);
 
@@ -115,7 +120,8 @@ test("purgeEntityPreferences removes exactly one project+entity's entries from e
     assert.deepEqual(getCollapsedGroups("abc", "Customer", "status"), [], "collapsedGroups must be purged");
     assert.deepEqual(getSortKeys("abc", "Customer"), [], "sortKeys must be purged");
     assert.equal(getViewMode("abc", "Customer"), "table", "viewMode must be purged");
-    assert.deepEqual(getEntityRecentSearches("abc", "Customer"), [], "entityRecentSearches must be purged");
+    assert.deepEqual(getEntityRecentSearches("abc", "Customer", "userA"), [], "entityRecentSearches must be purged");
+    assert.deepEqual(getEntityRecentSearches("abc", "Customer", "userB"), [], "entityRecentSearches must be purged for EVERY collaborator account, not just the one who happened to search most recently");
     assert.deepEqual(getEntityTabOrder("abc"), ["Deal"], "entityTabOrder must have \"Customer\" removed, leaving the sibling entity's own position");
 
     // "abc"/"Deal" -- a sibling entity in the SAME project -- is completely untouched.
@@ -129,7 +135,7 @@ test("purgeEntityPreferences removes exactly one project+entity's entries from e
     assert.deepEqual(getCollapsedGroups("abc", "Deal", "stage"), ["open"], "collapsedGroups must survive for a sibling entity");
     assert.deepEqual(getSortKeys("abc", "Deal"), [{ field: "amount", direction: "desc" }], "sortKeys must survive for a sibling entity");
     assert.equal(getViewMode("abc", "Deal"), "calendar", "viewMode must survive for a sibling entity");
-    assert.deepEqual(getEntityRecentSearches("abc", "Deal"), ["yossi"], "entityRecentSearches must survive for a sibling entity");
+    assert.deepEqual(getEntityRecentSearches("abc", "Deal", "userA"), ["yossi"], "entityRecentSearches must survive for a sibling entity");
 
     // "proj2"/"Customer" -- the same entity name in an unrelated project -- is also completely untouched.
     assert.deepEqual(getColumnWidths("proj2", "Customer"), { name: 300 }, "columnWidths must survive for an unrelated project's same-named entity");
@@ -142,7 +148,7 @@ test("purgeEntityPreferences removes exactly one project+entity's entries from e
     assert.deepEqual(getCollapsedGroups("proj2", "Customer", "owner"), ["active"], "collapsedGroups must survive for an unrelated project's same-named entity");
     assert.deepEqual(getSortKeys("proj2", "Customer"), [{ field: "email", direction: "desc" }], "sortKeys must survive for an unrelated project's same-named entity");
     assert.equal(getViewMode("proj2", "Customer"), "calendar", "viewMode must survive for an unrelated project's same-named entity");
-    assert.deepEqual(getEntityRecentSearches("proj2", "Customer"), ["noa"], "entityRecentSearches must survive for an unrelated project's same-named entity");
+    assert.deepEqual(getEntityRecentSearches("proj2", "Customer", "userA"), ["noa"], "entityRecentSearches must survive for an unrelated project's same-named entity");
     assert.deepEqual(getEntityTabOrder("proj2"), ["Customer", "Deal"], "an unrelated project's own tab order, including its own \"Customer\" entry, must survive fully untouched");
   });
 });

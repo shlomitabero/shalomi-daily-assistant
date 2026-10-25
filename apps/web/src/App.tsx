@@ -2532,6 +2532,7 @@ function AppContent() {
                     projectId={project.id}
                     entity={entity}
                     allEntities={project.spec.entities}
+                    userId={user.id}
                     onEntityRenamed={setProject}
                     highlightRecordId={highlightRecordId}
                     onHighlightHandled={() => setHighlightRecordId(null)}
@@ -2559,6 +2560,7 @@ function AppContent() {
               projectId={project.id}
               projectName={project.name}
               currentSpec={project.spec}
+              userId={user.id}
               onClose={() => setShowHistory(false)}
               onRestored={(restored) => {
                 // Restoring an older checkpoint is, like a refine
@@ -2616,6 +2618,7 @@ function AppContent() {
               projectId={project.id}
               projectName={project.name}
               entities={project.spec.entities}
+              userId={user.id}
               onClose={() => {
                 setShowWhatsApp(false);
                 setWhatsappPrefillTo(null);
@@ -2700,6 +2703,7 @@ function AppContent() {
               projectId={project.id}
               projectName={project.name}
               entities={orderedEntities}
+              userId={user.id}
               onClose={() => setShowSearch(false)}
               onJumpToEntity={(entityName) => {
                 setActiveEntity(entityName);

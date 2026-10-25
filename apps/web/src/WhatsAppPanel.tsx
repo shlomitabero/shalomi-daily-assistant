@@ -119,6 +119,7 @@ export function WhatsAppPanel({
   projectId,
   projectName,
   entities,
+  userId,
   onClose,
   onJumpToEntity,
   onJumpToRecord,
@@ -132,6 +133,7 @@ export function WhatsAppPanel({
   projectName: string;
   /** The project's own spec.entities -- used only to find the single unambiguous phone-field entity+field for the "create new record from this message" button below; see findSinglePhoneFieldTarget's own doc comment. */
   entities: Entity[];
+  userId: string;
   onClose: () => void;
   /** True for a "viewer" collaborator -- the server already rejects every write here with 403 VIEWER_READ_ONLY; this just keeps a viewer from clicking a control that can only ever fail. */
   readOnly?: boolean;
@@ -254,7 +256,7 @@ export function WhatsAppPanel({
   // `{showWhatsApp && <WhatsAppPanel .../>}`), so a fresh mount always
   // re-reads the real persisted list for this project rather than needing
   // a separate load effect.
-  const [logRecentSearches, setLogRecentSearches] = useState<string[]>(() => getWhatsAppLogRecentSearches(projectId));
+  const [logRecentSearches, setLogRecentSearches] = useState<string[]>(() => getWhatsAppLogRecentSearches(projectId, userId));
   // Lazy initializer, same shape as recentNumbers just above -- this panel
   // unmounts entirely on close (see App.tsx's `{showWhatsApp && <WhatsAppPanel .../>}`),
   // so a fresh mount always re-reads the real persisted choice for this
@@ -727,7 +729,7 @@ export function WhatsAppPanel({
    */
   function handleLogSearchKeyDown(e: React.KeyboardEvent<HTMLInputElement>) {
     if (e.key === "Enter" && search.trim()) {
-      setLogRecentSearches(addWhatsAppLogRecentSearch(projectId, search));
+      setLogRecentSearches(addWhatsAppLogRecentSearch(projectId, userId, search));
     } else if (e.key === "Escape" && search.length > 0) {
       e.preventDefault();
       setSearch("");
@@ -737,10 +739,10 @@ export function WhatsAppPanel({
     setSearch(query);
   }
   function handleRemoveRecentLogSearch(query: string) {
-    setLogRecentSearches(removeWhatsAppLogRecentSearch(projectId, query));
+    setLogRecentSearches(removeWhatsAppLogRecentSearch(projectId, userId, query));
   }
   function handleClearRecentLogSearches() {
-    clearWhatsAppLogRecentSearches(projectId);
+    clearWhatsAppLogRecentSearches(projectId, userId);
     setLogRecentSearches([]);
   }
 

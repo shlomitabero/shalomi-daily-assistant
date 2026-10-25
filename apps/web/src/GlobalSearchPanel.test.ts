@@ -616,6 +616,7 @@ function renderGlobalSearchPanel(
         null,
         React.createElement(GlobalSearchPanel, {
           projectId: "proj1",
+          userId: "user1",
           projectName: "Test Project",
           entities: [SEARCH_CUSTOMER_ENTITY, SEARCH_ORDER_ENTITY],
           onClose: () => {},
@@ -1667,6 +1668,7 @@ test("GlobalSearchPanel matches a relation field's resolved display label, not t
             null,
             React.createElement(GlobalSearchPanel, {
               projectId: "proj1",
+              userId: "user1",
               projectName: "Test Project",
               entities: [courierEntity, orderEntity],
               onClose: () => {},
@@ -1753,6 +1755,7 @@ test("GlobalSearchPanel's 'Show all' on one entity refreshes the relation-label 
             null,
             React.createElement(GlobalSearchPanel, {
               projectId: "proj1",
+              userId: "user1",
               projectName: "Test Project",
               entities: [courierEntity, orderEntity],
               onClose: () => {},
@@ -1849,6 +1852,7 @@ test("GlobalSearchPanel's query box has a 'Clear search' button and Escape-to-cl
             null,
             React.createElement(GlobalSearchPanel, {
               projectId: "proj1",
+              userId: "user1",
               projectName: "Test Project",
               entities: [SEARCH_CUSTOMER_ENTITY, SEARCH_ORDER_ENTITY],
               onClose: () => {

@@ -10,11 +10,11 @@ import { purgeCollapsedBoardColumnsForProject } from "./collapsedBoardColumnsPre
 import { purgeCollapsedGroupsForProject } from "./collapsedGroupsPreference.js";
 import { purgeSortKeysForProject } from "./sortKeysPreference.js";
 import { purgeEntityRecentSearchesForProject } from "./entityRecentSearches.js";
-import { clearRecentHistorySearches } from "./historyRecentSearches.js";
+import { purgeRecentHistorySearchesForProject } from "./historyRecentSearches.js";
 import { purgeViewModeForProject } from "./viewModePreference.js";
-import { clearRecentSearches } from "./recentSearches.js";
+import { purgeRecentSearchesForProject } from "./recentSearches.js";
 import { clearRecentWhatsAppNumbers } from "./whatsappRecentNumbers.js";
-import { clearWhatsAppLogRecentSearches } from "./whatsappLogRecentSearches.js";
+import { purgeWhatsAppLogRecentSearchesForProject } from "./whatsappLogRecentSearches.js";
 import { clearWhatsAppLogFilter } from "./whatsappLogFilter.js";
 import { clearWhatsAppLastSeenId } from "./whatsappUnread.js";
 
@@ -62,10 +62,10 @@ export function purgeProjectPreferences(projectId: string): void {
   purgeSortKeysForProject(projectId);
   purgeViewModeForProject(projectId);
   purgeEntityRecentSearchesForProject(projectId);
-  clearRecentHistorySearches(projectId);
-  clearRecentSearches(projectId);
+  purgeRecentHistorySearchesForProject(projectId);
+  purgeRecentSearchesForProject(projectId);
   clearRecentWhatsAppNumbers(projectId);
-  clearWhatsAppLogRecentSearches(projectId);
+  purgeWhatsAppLogRecentSearchesForProject(projectId);
   clearWhatsAppLogFilter(projectId);
   clearWhatsAppLastSeenId(projectId);
 }
