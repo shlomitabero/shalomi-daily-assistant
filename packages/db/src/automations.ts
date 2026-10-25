@@ -134,8 +134,31 @@ export interface AutomationRun {
    * snapshot of the record's values at the time it originally fired, only
    * a reference to which one it was, so a retry necessarily uses
    * whatever that record looks like now, not what it looked like then.
+   *
+   * Round 991: that "re-fetch the current state" design is unreachable for
+   * a "record_deleted"-triggered run specifically -- the triggering event
+   * IS that record's own deletion, so by the time any run recorded against
+   * it could ever be retried, recordId is GUARANTEED to resolve to nothing,
+   * every single time, not just occasionally the way it can for
+   * record_created/field_equals. See recordSnapshot below, which is what
+   * actually makes a "record_deleted" run retryable.
    */
   recordId: number | null;
+  /**
+   * Round 991: a JSON snapshot of the triggering record's own field values
+   * at the moment this run fired -- null for every run except a
+   * "record_deleted"-triggered one (the only trigger where recordId above
+   * can never again resolve to a live row, so a retry has nothing else to
+   * replay against), and still null for any "record_deleted" run recorded
+   * before this column existed (additive-only migration, no backfill, same
+   * convention as every other column here). Deliberately NOT captured for
+   * record_created/field_equals runs -- their own retry re-fetching the
+   * record's CURRENT state is intentional (recordId's own doc comment
+   * above), and snapshotting every record-triggered run regardless of
+   * trigger would store full record JSON for potentially high-volume rules
+   * that never need it.
+   */
+  recordSnapshot: string | null;
   triggeredAt: string;
 }
 
@@ -173,6 +196,10 @@ export function ensureAutomationRunsTable(db: ForgeDatabase): void {
   if (!runColumns.includes("recordId")) {
     db.exec("ALTER TABLE automation_runs ADD COLUMN recordId INTEGER");
   }
+  // Round 991: see AutomationRun's own doc comment on this column.
+  if (!runColumns.includes("recordSnapshot")) {
+    db.exec("ALTER TABLE automation_runs ADD COLUMN recordSnapshot TEXT");
+  }
 }
 
 function rowToRun(row: Record<string, unknown>): AutomationRun {
@@ -184,6 +211,7 @@ function rowToRun(row: Record<string, unknown>): AutomationRun {
     error: (row.error as string | null) ?? null,
     actionType: (row.actionType as AutomationActionType | null) ?? null,
     recordId: (row.recordId as number | null) ?? null,
+    recordSnapshot: (row.recordSnapshot as string | null) ?? null,
     triggeredAt: row.triggeredAt as string,
   };
 }
@@ -530,6 +558,12 @@ export function recordAutomationRun(
   // module's own pre-round-971 test suite, correctly has no record to
   // reference at all).
   recordId: number | null = null,
+  // Round 991: see AutomationRun's own doc comment on this column. Optional,
+  // defaulting to null -- every caller except fireRule/fireWebhookAction's
+  // own "record_deleted" branch has nothing to snapshot (either no record
+  // at all, or a record_created/field_equals run that deliberately wants
+  // its later retry to re-fetch current state instead).
+  recordSnapshot: string | null = null,
   at: Date = new Date(),
 ): void {
   const now = at.toISOString();
@@ -541,8 +575,8 @@ export function recordAutomationRun(
   // rather than instead of it so no existing lastTriggeredAt/lastStatus/
   // lastError reader needs to change.
   db.prepare(
-    `INSERT INTO automation_runs (id, projectId, ruleId, status, error, actionType, recordId, triggeredAt) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-  ).run(randomUUID(), projectId, id, outcome.status, outcome.error ?? null, actionType, recordId, now);
+    `INSERT INTO automation_runs (id, projectId, ruleId, status, error, actionType, recordId, recordSnapshot, triggeredAt) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+  ).run(randomUUID(), projectId, id, outcome.status, outcome.error ?? null, actionType, recordId, recordSnapshot, now);
   // Round 951: pruned in two independent buckets -- the newest
   // AUTOMATION_RUNS_RETENTION_LIMIT "WhatsApp is not connected" rows, and
   // the newest AUTOMATION_RUNS_RETENTION_LIMIT rows of everything else --

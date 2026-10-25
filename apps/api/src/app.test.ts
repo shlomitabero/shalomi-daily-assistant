@@ -2570,10 +2570,15 @@ test("DELETE .../entities/:entityName/:recordId fires a record_deleted automatio
  * record_deleted) gets exactly one delivery attempt -- unlike a
  * "schedule" rule, which retries automatically on every subsequent tick
  * until it succeeds (isScheduledRuleDue). Confirms the new manual Retry
- * route re-fires the rule against the record's CURRENT state (fireRule
- * never re-reads a historical snapshot, since none is stored), creating a
+ * route re-fires the rule against the record's CURRENT state, creating a
  * genuinely NEW run rather than mutating the original failed one, and
  * that retrying an already-succeeded run is rejected.
+ *
+ * Round 991 correction: this is true for record_created/field_equals,
+ * exercised below, but was never actually reachable for record_deleted --
+ * see the dedicated test just below this one, and
+ * AutomationRun.recordSnapshot's own doc comment (packages/db/src/
+ * automations.ts) for why.
  */
 test("POST .../automations/:ruleId/runs/:runId/retry re-fires a failed record-triggered run against the record's current state, recording a new run without touching the original", async () => {
   let createdSockets: ReturnType<typeof createFakeWhatsAppSocket>[] = [];
@@ -2683,6 +2688,129 @@ test("POST .../automations/:ruleId/runs/:runId/retry re-fires a failed record-tr
       });
       assert.equal(retrySentRes.status, 400);
       assert.equal(((await retrySentRes.json()) as { code?: string }).code, "AUTOMATION_RUN_NOT_FAILED");
+    },
+    {
+      whatsapp: (db) => {
+        const { manager, createdSockets: sockets } = createTestWhatsAppManager(db);
+        createdSockets = sockets;
+        return manager;
+      },
+    },
+  );
+});
+
+/**
+ * Round 991: unlike record_created/field_equals (exercised by the retry
+ * test just above), a "record_deleted" rule's own triggering event IS
+ * that record's deletion -- getRecord(db, project.id, entity, run.recordId)
+ * is GUARANTEED to find nothing for a run like this one, every single
+ * time, not an occasional edge case. Before this round, the retry route
+ * always 404'd with AUTOMATION_RUN_RECORD_GONE for a record_deleted run,
+ * no matter when it was retried or what the record's own data was --
+ * there was no sequence of actions that could make it succeed. Confirms
+ * the new recordSnapshot column (captured at fire time, specifically for
+ * this one trigger -- see AutomationRun.recordSnapshot's own doc comment,
+ * packages/db/src/automations.ts) lets this retry actually succeed, using
+ * the deleted record's own last-known field values.
+ */
+test("POST .../automations/:ruleId/runs/:runId/retry succeeds for a record_deleted-triggered run, replaying the deleted record's own last-known data instead of 404ing", async () => {
+  let createdSockets: ReturnType<typeof createFakeWhatsAppSocket>[] = [];
+  await withServer(
+    async (baseUrl, db) => {
+      const email = `retry-record-deleted-${randomUUID()}@example.com`;
+      const token = await signup(baseUrl, email);
+      const owner = findUserByEmail(db, email)!;
+
+      const spec: ProductSpec = {
+        summary: "test",
+        personas: [],
+        roles: ["Admin"],
+        entities: [
+          {
+            name: "Customer",
+            fields: [
+              { name: "name", type: "text", required: true },
+              { name: "phone", type: "text", required: true },
+            ],
+          },
+        ],
+        screens: [],
+        assumptions: [],
+        openQuestions: [],
+      };
+      const projectId = randomUUID();
+      insertProject(db, { id: projectId, ownerId: owner.id, name: "Customers", description: "test", spec });
+      diffAndMigrate(db, projectId, undefined, spec);
+      markProjectBuilt(db, projectId);
+
+      const ruleRes = await fetch(`${baseUrl}/api/projects/${projectId}/entities/Customer/automations`, {
+        method: "POST",
+        headers: authHeaders(token),
+        body: JSON.stringify({
+          trigger: "record_deleted",
+          actionType: "send_whatsapp",
+          toMode: "field",
+          toField: "phone",
+          messageTemplate: "Goodbye {{name}}, your record was removed.",
+        }),
+      });
+      assert.equal(ruleRes.status, 201);
+      const { rule } = (await ruleRes.json()) as { rule: { id: string } };
+
+      const createRes = await fetch(`${baseUrl}/api/projects/${projectId}/entities/Customer`, {
+        method: "POST",
+        headers: authHeaders(token),
+        body: JSON.stringify({ name: "Dana Levi", phone: "972501234567" }),
+      });
+      assert.equal(createRes.status, 201);
+      const { record } = (await createRes.json()) as { record: { id: number } };
+
+      // WhatsApp deliberately never connected before this -- the
+      // record_deleted automation fires but fails with "not connected",
+      // the exact one-shot failure this round's own fix exists to recover
+      // from.
+      const deleteRes = await fetch(`${baseUrl}/api/projects/${projectId}/entities/Customer/${record.id}`, {
+        method: "DELETE",
+        headers: authHeaders(token),
+      });
+      assert.equal(deleteRes.status, 204);
+
+      let runs: { id: string; status: string; error: string | null; recordId: number | null }[] = [];
+      for (let i = 0; i < 40 && runs.length === 0; i++) {
+        await new Promise((resolve) => setTimeout(resolve, 0));
+        const runsRes = await fetch(`${baseUrl}/api/projects/${projectId}/automations/${rule.id}/runs`, { headers: authHeaders(token) });
+        ({ runs } = (await runsRes.json()) as { runs: typeof runs });
+      }
+      assert.equal(runs.length, 1);
+      assert.equal(runs[0]!.status, "failed");
+      assert.match(runs[0]!.error ?? "", /not connected/i);
+      const failedRunId = runs[0]!.id;
+
+      // The record is genuinely, permanently gone -- confirms this test
+      // proves what it claims to (a real retry of a truly-deleted record),
+      // not an accidental still-alive row.
+      const listRes = await fetch(`${baseUrl}/api/projects/${projectId}/entities/Customer`, { headers: authHeaders(token) });
+      const { records } = (await listRes.json()) as { records: unknown[] };
+      assert.equal(records.length, 0);
+
+      await fetch(`${baseUrl}/api/projects/${projectId}/integrations/whatsapp/connect`, { method: "POST", headers: authHeaders(token) });
+      createdSockets[0].sock.user = { id: "15550001111:1@s.whatsapp.net" };
+      createdSockets[0].emitConnectionUpdate({ connection: "open" });
+
+      const retryRes = await fetch(`${baseUrl}/api/projects/${projectId}/automations/${rule.id}/runs/${failedRunId}/retry`, {
+        method: "POST",
+        headers: authHeaders(token),
+      });
+      assert.equal(retryRes.status, 200, "retrying a record_deleted run must succeed now that its data was captured at fire time, not 404");
+      const { run: newRun } = (await retryRes.json()) as { run: { id: string; status: string } | null };
+      assert.equal(newRun?.status, "sent");
+      assert.notEqual(newRun?.id, failedRunId);
+
+      assert.deepEqual(
+        createdSockets[0].sendCalls,
+        [{ jid: "972501234567@s.whatsapp.net", text: "Goodbye Dana Levi, your record was removed.", content: { text: "Goodbye Dana Levi, your record was removed." } }],
+        "the retry must resend using the deleted record's own last-known name/phone, not a blank/missing value",
+      );
     },
     {
       whatsapp: (db) => {

@@ -3786,9 +3786,31 @@ export function createProjectsRouter(
         return;
       }
       const entity = findEntity(project, rule.entityName);
-      const record = getRecord(db, project.id, entity, run.recordId);
-      if (!record) {
-        throw new HttpError(404, "The record this automation would send no longer exists", "AUTOMATION_RUN_RECORD_GONE");
+      // Round 991: unlike record_created/field_equals, a "record_deleted"
+      // rule's own triggering event IS that record's deletion -- getRecord
+      // below is GUARANTEED to find nothing for one of these, every single
+      // time, not just occasionally, so retrying one could never have
+      // worked at all before recordSnapshot existed to replay against
+      // instead. See AutomationRun.recordSnapshot's own doc comment
+      // (packages/db/src/automations.ts) for why this is captured only for
+      // this one trigger -- record_created/field_equals still intentionally
+      // re-fetch the record's CURRENT state below, unchanged.
+      let record: EntityRecord;
+      if (rule.trigger === "record_deleted") {
+        if (!run.recordSnapshot) {
+          throw new HttpError(
+            404,
+            "This run fired before its triggering record's data was saved for retry, so there's nothing left to resend",
+            "AUTOMATION_RUN_RECORD_GONE",
+          );
+        }
+        record = JSON.parse(run.recordSnapshot) as EntityRecord;
+      } else {
+        const current = getRecord(db, project.id, entity, run.recordId);
+        if (!current) {
+          throw new HttpError(404, "The record this automation would send no longer exists", "AUTOMATION_RUN_RECORD_GONE");
+        }
+        record = current;
       }
       const { status, body } = await withIdempotency(
         db,

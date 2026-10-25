@@ -536,6 +536,10 @@ async function fireWebhookAction(
   // than silently drifting to the real wall clock.
   now: Date = new Date(),
 ): Promise<void> {
+  // Round 991: see AutomationRun.recordSnapshot's own doc comment --
+  // "record_deleted" is the one trigger a later retry can never re-fetch
+  // the record for, since the triggering event IS that record's deletion.
+  const recordSnapshot = rule.trigger === "record_deleted" && record ? JSON.stringify(record) : null;
   if (!rule.webhookUrl || !isAllowedWebhookUrl(rule.webhookUrl)) {
     recordAutomationRun(
       db,
@@ -547,6 +551,7 @@ async function fireWebhookAction(
       },
       rule.actionType,
       record ? Number(record.id) : null,
+      recordSnapshot,
       now,
     );
     return;
@@ -611,6 +616,7 @@ async function fireWebhookAction(
       },
       rule.actionType,
       record ? Number(record.id) : null,
+      recordSnapshot,
       now,
     );
   } catch (err) {
@@ -624,6 +630,7 @@ async function fireWebhookAction(
       },
       rule.actionType,
       record ? Number(record.id) : null,
+      recordSnapshot,
       now,
     );
   } finally {
@@ -651,6 +658,10 @@ export async function fireRule(
     await fireWebhookAction(db, project, entity, rule, record, baseUrl);
     return;
   }
+  // Round 991: see AutomationRun.recordSnapshot's own doc comment --
+  // "record_deleted" is the one trigger a later retry can never re-fetch
+  // the record for, since the triggering event IS that record's deletion.
+  const recordSnapshot = rule.trigger === "record_deleted" ? JSON.stringify(record) : null;
   const to = rule.toMode === "static" ? rule.toNumber : rule.toField ? record[rule.toField] : null;
   if (!to || typeof to !== "string" || !to.trim()) {
     recordAutomationRun(
@@ -660,12 +671,13 @@ export async function fireRule(
       { status: "failed", error: "This record has no value in the configured phone-number field" },
       rule.actionType,
       Number(record.id),
+      recordSnapshot,
     );
     return;
   }
   const status = whatsapp.getStatus(project.id);
   if (status.status !== "connected") {
-    recordAutomationRun(db, project.id, rule.id, { status: "failed", error: WHATSAPP_NOT_CONNECTED_ERROR }, rule.actionType, Number(record.id));
+    recordAutomationRun(db, project.id, rule.id, { status: "failed", error: WHATSAPP_NOT_CONNECTED_ERROR }, rule.actionType, Number(record.id), recordSnapshot);
     return;
   }
   const templateRecord = resolveRelationFieldsForTemplate(db, project.id, entity, project.spec.entities, record);
@@ -704,6 +716,7 @@ export async function fireRule(
     { status: result.ok ? "sent" : "failed", error: result.ok ? null : (result.error ?? "Send failed") },
     rule.actionType,
     Number(record.id),
+    recordSnapshot,
   );
 }
 
@@ -837,13 +850,14 @@ export async function fireScheduledRule(
       },
       rule.actionType,
       null,
+      null,
       now,
     );
     return;
   }
   const status = whatsapp.getStatus(project.id);
   if (status.status !== "connected") {
-    recordAutomationRun(db, project.id, rule.id, { status: "failed", error: WHATSAPP_NOT_CONNECTED_ERROR }, rule.actionType, null, now);
+    recordAutomationRun(db, project.id, rule.id, { status: "failed", error: WHATSAPP_NOT_CONNECTED_ERROR }, rule.actionType, null, null, now);
     return;
   }
   const result = await whatsapp.sendMessage(project.id, to, rule.messageTemplate);
@@ -870,6 +884,7 @@ export async function fireScheduledRule(
       error: result.ok ? null : (result.error ?? "Send failed"),
     },
     rule.actionType,
+    null,
     null,
     now,
   );

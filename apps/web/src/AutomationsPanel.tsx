@@ -936,10 +936,13 @@ export function AutomationsPanel({
                             <li key={run.id} className="muted small">
                               {describeRunStatus(run, rule.actionType)}
                               {/* A failed run can be retried when it carries a
-                                  recordId (a record-triggered rule's own run --
-                                  a record_deleted run's record is gone
-                                  forever, so it's excluded the same way a
-                                  null recordId already is), OR when the rule
+                                  recordId (a record-triggered rule's own run,
+                                  record_deleted included -- round 991: the
+                                  server now replays a record_deleted run's
+                                  own saved snapshot instead of re-fetching a
+                                  record that's guaranteed gone, so this
+                                  button isn't a dead end for that trigger
+                                  the way it used to be), OR when the rule
                                   itself is "schedule" -- round 972: a
                                   schedule rule's run never has a recordId at
                                   all (there's no triggering record), but once
