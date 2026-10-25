@@ -7358,6 +7358,67 @@ test("renaming a checkpoint's label persists via a real PATCH round trip", async
 });
 
 /**
+ * Round 962: same withIdempotency gap, and the same fix, as the entity-
+ * label/field-label PATCH routes' own round-960 fix -- this checkpoint
+ * rename route's two immediate siblings on the exact same resource
+ * (restore, round 956; delete, round 944) already got this protection,
+ * but the rename sitting between them was missed. renameCheckpoint
+ * (packages/db/src/checkpoints.ts) is a plain, unconditional UPDATE, so a
+ * response lost in transit after a rename already committed meant a
+ * retry blindly reapplied its own now-stale label a second time,
+ * silently reverting a genuinely newer rename that landed in between.
+ */
+test("PATCH .../checkpoints/:checkpointId retried with the same idempotency key after a newer rename landed in between replays the original response, instead of reverting the newer rename back to the stale label", async () => {
+  await withServer(async (baseUrl) => {
+    const token = await signup(baseUrl, "checkpoint-rename-idem@example.com");
+    const createRes = await fetch(`${baseUrl}/api/projects`, {
+      method: "POST",
+      headers: authHeaders(token),
+      body: JSON.stringify({ description: "A CRM with customers and deals." }),
+    });
+    const { project } = (await createRes.json()) as { project: { id: string } };
+    const buildRes = await fetch(`${baseUrl}/api/projects/${project.id}/build`, { method: "POST", headers: authHeaders(token) });
+    await collectSSE(buildRes);
+
+    const checkpointsRes = await fetch(`${baseUrl}/api/projects/${project.id}/checkpoints`, { headers: authHeaders(token) });
+    const { checkpoints } = (await checkpointsRes.json()) as { checkpoints: { id: string }[] };
+    const checkpointId = checkpoints[0].id;
+
+    const headers = { ...authHeaders(token), "x-idempotency-key": "checkpoint-rename-repro-key" };
+    const firstRes = await fetch(`${baseUrl}/api/projects/${project.id}/checkpoints/${checkpointId}`, {
+      method: "PATCH",
+      headers,
+      body: JSON.stringify({ label: "Stale Label" }),
+    });
+    assert.equal(firstRes.status, 200);
+    const firstBody = await firstRes.json();
+
+    // A genuinely newer rename lands in between -- a different request,
+    // no idempotency key, exactly like a second browser tab or a
+    // different collaborator would send.
+    const newerRes = await fetch(`${baseUrl}/api/projects/${project.id}/checkpoints/${checkpointId}`, {
+      method: "PATCH",
+      headers: authHeaders(token),
+      body: JSON.stringify({ label: "Fresher Label" }),
+    });
+    assert.equal(newerRes.status, 200);
+
+    const retryRes = await fetch(`${baseUrl}/api/projects/${project.id}/checkpoints/${checkpointId}`, {
+      method: "PATCH",
+      headers,
+      body: JSON.stringify({ label: "Stale Label" }),
+    });
+    assert.equal(retryRes.status, 200);
+    assert.deepEqual(await retryRes.json(), firstBody, "a retry with the same idempotency key must replay the original response verbatim, not re-run the mutation");
+
+    const afterRes = await fetch(`${baseUrl}/api/projects/${project.id}/checkpoints`, { headers: authHeaders(token) });
+    const { checkpoints: after } = (await afterRes.json()) as { checkpoints: { id: string; label: string }[] };
+    const current = after.find((c) => c.id === checkpointId)!;
+    assert.equal(current.label, "Fresher Label", "the retry must never revert the genuinely newer rename back to the stale label");
+  });
+});
+
+/**
  * The cross-project security counterpart to the test above, mirroring "a
  * user cannot restore another user's checkpoint" just above it: a user who
  * genuinely owns their own project must not be able to rename a DIFFERENT

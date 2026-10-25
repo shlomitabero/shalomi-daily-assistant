@@ -901,8 +901,13 @@ export function restoreCheckpoint(
   });
 }
 
+/** Round 962: same idempotency-key shape as deleteCheckpoint's own fix (round 944) -- a lost response after this rename already committed must replay that success on retry, not re-apply the same now-stale label a second time and silently revert a genuinely newer rename that landed in between. */
 export function renameCheckpoint(projectId: string, checkpointId: string, label: string): Promise<{ checkpoint: Checkpoint }> {
-  return request(`/projects/${projectId}/checkpoints/${checkpointId}`, { method: "PATCH", body: JSON.stringify({ label }) });
+  return request(`/projects/${projectId}/checkpoints/${checkpointId}`, {
+    method: "PATCH",
+    headers: { "x-idempotency-key": crypto.randomUUID() },
+    body: JSON.stringify({ label }),
+  });
 }
 
 /** Round 944: same idempotency-key shape as deleteRecord's own fix (round 792) -- a lost response after this checkpoint was already deleted must replay that success on retry, not surface a confusing "not found". */

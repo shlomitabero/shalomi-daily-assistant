@@ -1789,6 +1789,19 @@ export function createProjectsRouter(
    * (see checkpoints.ts), so a checkpoint id belonging to a different
    * project can never be renamed even if guessed.
    */
+  /**
+   * Round 962: same withIdempotency() extension, and the same reason, as
+   * the entity-label/field-label PATCH routes' own round-960 fix -- this
+   * route's two immediate siblings on the exact same resource (restore,
+   * round 956; delete, round 944) already got this protection, but the
+   * rename sitting between them was missed. renameCheckpoint
+   * (packages/db/src/checkpoints.ts) is a plain, unconditional UPDATE, not
+   * scoped to the label's own previous value -- a response lost in
+   * transit after a rename already committed means a retry blindly
+   * reapplies its own now-stale label a second time, silently reverting a
+   * genuinely newer rename (a different collaborator, or a second tab)
+   * that landed in between, with no error to either side.
+   */
   router.patch(
     "/projects/:id/checkpoints/:checkpointId",
     asyncRoute(async (req, res) => {
@@ -1797,8 +1810,18 @@ export function createProjectsRouter(
       if (!parsed.success) {
         throw new HttpError(400, formatValidationError(parsed.error), "VALIDATION_ERROR");
       }
-      const checkpoint = renameCheckpoint(db, project.id, req.params.checkpointId, parsed.data.label);
-      res.json({ checkpoint });
+      const idempotencyKey = req.header("X-Idempotency-Key") || undefined;
+      const { status, body } = await withIdempotency(
+        db,
+        idempotencyKey,
+        req.userId!,
+        `PATCH /projects/${project.id}/checkpoints/${req.params.checkpointId}`,
+        async () => {
+          const checkpoint = renameCheckpoint(db, project.id, req.params.checkpointId, parsed.data.label);
+          return { status: 200, body: { checkpoint } };
+        },
+      );
+      res.status(status).json(body);
     }),
   );
 
