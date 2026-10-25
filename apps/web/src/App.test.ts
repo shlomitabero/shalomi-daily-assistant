@@ -1928,6 +1928,87 @@ test("App's handleBuildComplete purges a dropped entity's own localStorage prefe
 });
 
 /**
+ * Round 988: a fresh Explore survey traced the established "a refine can
+ * rename an entity by letter casing alone, a genuine no-op" hazard
+ * (docs/roadmap.md rounds 946/947/949/954 -- pipeline.ts's and
+ * checkpointDiff.ts's own diffing already tolerate this) to a 7th,
+ * previously-unaudited locus: handleBuildComplete's own droppedEntityNames
+ * computation and activeEntity fallback both used an EXACT name match,
+ * which can't tell a case rename apart from the entity being removed
+ * outright. Confirms a pure case rename (e.g. "Customer" -> "customer")
+ * of the currently-active entity neither purges its real localStorage
+ * preferences nor silently jumps the active tab to a different entity --
+ * carrying the active tab forward under its new spelling instead.
+ */
+test("App's handleBuildComplete tolerates a pure letter-casing entity rename as a no-op, not as that entity being dropped", () => {
+  const appSrc = readFileSync(new URL("./App.tsx", import.meta.url), "utf8");
+  const handlerMatch = appSrc.match(/ {2}function handleBuildComplete\(builtProject: Project, warning\?: string\) \{[\s\S]*?\n {2}\}\n/);
+  assert.ok(handlerMatch, "expected to find handleBuildComplete in App.tsx");
+  const { code } = transformSync(handlerMatch![0], { loader: "ts" });
+
+  function runHandleBuildCompleteForRename(initialActiveEntity: string | null, previousProject: Project, builtProject: Project) {
+    let activeEntity: string | null = initialActiveEntity;
+    const purgedEntities: Array<[string, string]> = [];
+    const fn = new Function(
+      "refineRunning",
+      "pendingRefineInstruction",
+      "refineEvents",
+      "t",
+      "summarizeRefineImpact",
+      "setRefineHistory",
+      "setBuildWarning",
+      "setProject",
+      "setActiveEntity",
+      "setRefineText",
+      "setAdditionalRequest",
+      "setRefineRunning",
+      "setView",
+      "project",
+      "purgeEntityPreferences",
+      `${code}\nreturn handleBuildComplete;`,
+    )(
+      false,
+      { current: null },
+      { current: [] },
+      (key: string) => key,
+      summarizeRefineImpact,
+      () => {},
+      () => {},
+      () => {},
+      (updater: string | null | ((prev: string | null) => string | null)) => {
+        activeEntity = typeof updater === "function" ? (updater as (prev: string | null) => string | null)(activeEntity) : updater;
+      },
+      () => {},
+      () => {},
+      () => {},
+      () => {},
+      previousProject,
+      (projectId: string, entityName: string) => {
+        purgedEntities.push([projectId, entityName]);
+      },
+    ) as (builtProject: Project) => void;
+    fn(builtProject);
+    return { activeEntity, purgedEntities };
+  }
+
+  const previousProject = makeProject([makeEntity("Customer"), makeEntity("Deal")]);
+  const renamedProject = makeProject([makeEntity("customer"), makeEntity("Deal")]);
+
+  const { activeEntity, purgedEntities } = runHandleBuildCompleteForRename("Customer", previousProject, renamedProject);
+
+  assert.equal(
+    activeEntity,
+    "customer",
+    "the active tab must carry forward under the entity's new spelling, not silently jump to a different entity",
+  );
+  assert.deepEqual(
+    purgedEntities,
+    [],
+    "a pure case rename must never be treated as that entity being dropped -- purgeEntityPreferences must not be called at all",
+  );
+});
+
+/**
  * New in this round: the spec-review screen (the "Here's what we
  * understood" step between describing an idea and building it) had no way
  * back to the home screen at all -- only forward, via "Build the app".
@@ -2611,6 +2692,49 @@ test("App's HistoryPanel onRestored callback purges a dropped entity's own local
     purgedEntities.some(([, entityName]) => entityName === "Customer"),
     false,
     "purgeEntityPreferences must never be called for an entity the restored checkpoint still has",
+  );
+});
+
+/**
+ * Round 988: the identical case-insensitive-rename fix as
+ * handleBuildComplete's own sibling test above, ported to this callback's
+ * own droppedEntityNames computation -- a checkpoint whose entity differs
+ * from the live spec only by letter casing (e.g. "Customer" -> "customer")
+ * is the same genuine no-op here too, not that entity being dropped.
+ */
+test("App's HistoryPanel onRestored callback tolerates a pure letter-casing entity rename as a no-op, not as that entity being dropped", () => {
+  const appSrc = readFileSync(new URL("./App.tsx", import.meta.url), "utf8");
+  const handlerMatch = appSrc.match(/ {14}onRestored=\{\((restored\) => \{[\s\S]*?\n {14}\})\}\n/);
+  assert.ok(handlerMatch, "expected to find the HistoryPanel onRestored callback in App.tsx");
+  const { code } = transformSync(`(${handlerMatch![1]}`, { loader: "ts" });
+
+  const purgedEntities: Array<[string, string]> = [];
+  const fn = new Function(
+    "setProject",
+    "setActiveEntity",
+    "setBuildWarning",
+    "setShowHistory",
+    "project",
+    "purgeEntityPreferences",
+    `return ${code}`,
+  )(
+    () => {},
+    () => {},
+    () => {},
+    () => {},
+    makeProject([makeEntity("Customer"), makeEntity("Deal")]),
+    (projectId: string, entityName: string) => {
+      purgedEntities.push([projectId, entityName]);
+    },
+  ) as (restored: { id: string; spec: { entities: { name: string }[] } }) => void;
+
+  const restoredWithRenamedCustomer = { id: "proj1", spec: { entities: [{ name: "customer" }, { name: "Deal" }] } };
+  fn(restoredWithRenamedCustomer);
+
+  assert.deepEqual(
+    purgedEntities,
+    [],
+    "a pure case rename must never be treated as that entity being dropped -- purgeEntityPreferences must not be called at all",
   );
 });
 

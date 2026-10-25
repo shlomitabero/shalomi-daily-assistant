@@ -1581,8 +1581,19 @@ function AppContent() {
     // see routes/projects.ts's own comment on /refine). Captured before
     // `setProject` below overwrites `project` with the new spec, so this
     // is still the PRE-refine entity list.
+    // Round 988: falls back to a case-insensitive match when the exact
+    // name misses -- mirrors pipeline.ts's own established
+    // previousEntities ?? previousEntitiesByLowerName convention (rounds
+    // 946/947/949/954) for the identical "a refine can rename an entity
+    // by letter casing alone, a genuine no-op" hazard, which never
+    // reached this client-side computation. Without it, a pure case
+    // rename (e.g. "customer" -> "Customer") looked identical to that
+    // entity being removed outright, below triggering a destructive
+    // purgeEntityPreferences call against an entity that, semantically,
+    // never actually changed.
+    const builtEntityNamesLower = new Set(builtProject.spec.entities.map((be) => be.name.toLowerCase()));
     const droppedEntityNames = (project?.spec.entities ?? [])
-      .filter((e) => !builtProject.spec.entities.some((be) => be.name === e.name))
+      .filter((e) => !builtProject.spec.entities.some((be) => be.name === e.name) && !builtEntityNamesLower.has(e.name.toLowerCase()))
       .map((e) => e.name);
     pendingRefineInstruction.current = null;
     setBuildWarning(warning ?? null);
@@ -1592,10 +1603,18 @@ function AppContent() {
     // activeEntity)`), so the preview pane goes blank with no tab visibly
     // selected until the user manually clicks another one -- the same
     // "stale activeEntity" failure mode handleLogout's own cleanup below
-    // already guards against.
-    setActiveEntity((prev) =>
-      prev && builtProject.spec.entities.some((e) => e.name === prev) ? prev : (builtProject.spec.entities[0]?.name ?? null),
-    );
+    // already guards against. Round 988: the same case-insensitive
+    // fallback as droppedEntityNames just above -- a case-only rename of
+    // the currently-open tab must carry `prev` forward under its new
+    // spelling, not just fail to match and silently jump to a different
+    // entity's tab entirely.
+    setActiveEntity((prev) => {
+      if (!prev) return builtProject.spec.entities[0]?.name ?? null;
+      const exact = builtProject.spec.entities.find((e) => e.name === prev);
+      if (exact) return prev;
+      const renamed = builtProject.spec.entities.find((e) => e.name.toLowerCase() === prev.toLowerCase());
+      return renamed ? renamed.name : (builtProject.spec.entities[0]?.name ?? null);
+    });
     // Round 853: that same dropped entity's own per-entity-keyed
     // localStorage preferences (column widths/order/hidden fields, field
     // filters, group-by, collapsed board columns/groups, sort keys, view
@@ -2528,8 +2547,13 @@ function AppContent() {
                 // expected outcome. Captured before `setProject` below
                 // overwrites `project` with the restored spec, so this is
                 // still the PRE-restore entity list.
+                // Round 988: same case-insensitive fallback as
+                // handleBuildComplete's own identical computation above --
+                // a checkpoint whose entity differs from the live spec only
+                // by letter casing is the same genuine no-op there too.
+                const restoredEntityNamesLower = new Set(restored.spec.entities.map((re) => re.name.toLowerCase()));
                 const droppedEntityNames = (project?.spec.entities ?? [])
-                  .filter((e) => !restored.spec.entities.some((re) => re.name === e.name))
+                  .filter((e) => !restored.spec.entities.some((re) => re.name === e.name) && !restoredEntityNamesLower.has(e.name.toLowerCase()))
                   .map((e) => e.name);
                 setProject(restored);
                 setActiveEntity(restored.spec.entities[0]?.name ?? null);

@@ -1317,18 +1317,22 @@ test("AutomationsPanel's field_equals Value control renders a real picker of the
       // fireEvent calls right below fired, so createBody?.fieldValue
       // intermittently (~25% of isolated runs, confirmed empirically)
       // still read "1" -- the picker's own stale default -- instead of
-      // the value just chosen.
-      await waitForCondition(() => valueSelect.value === "2");
+      // the value just chosen. Round 988: the default 40-tick budget
+      // itself turned out to still be too tight under REAL full-suite
+      // contention (confirmed: this exact wait timed out in a full
+      // apps/web run even after the round-987 fix) -- bumped to 200 here
+      // and on the identical wait just below.
+      await waitForCondition(() => valueSelect.value === "2", 200);
 
       const messageField = document.querySelector(".automations-create-form textarea") as HTMLTextAreaElement;
       fireEvent.change(messageField, { target: { value: "Courier changed" } });
       // Same reasoning as valueSelect's own wait just above -- confirms
       // this change's React state commit too before the immediately
       // following submit reads it.
-      await waitForCondition(() => messageField.value === "Courier changed");
+      await waitForCondition(() => messageField.value === "Courier changed", 200);
       fireEvent.submit(document.querySelector(".automations-create-form")!);
 
-      await waitForCondition(() => createBody !== undefined);
+      await waitForCondition(() => createBody !== undefined, 200);
       assert.equal(createBody?.fieldValue, "2", "must submit the chosen record's raw id, not its display label");
     } finally {
       globalThis.fetch = originalFetch;
