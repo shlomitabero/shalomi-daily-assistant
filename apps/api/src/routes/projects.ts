@@ -2036,12 +2036,38 @@ export function createProjectsRouter(
     }),
   );
 
+  /**
+   * Round 958: same withIdempotency() extension, and the same reason, as
+   * deleteCheckpoint's own fix (round 944) -- deleteWhatsAppMessage
+   * (packages/db/src/whatsapp.ts) throws NotFoundError once the row is
+   * already gone, with no special case for a retry. fetchWithWakeRetry
+   * retries on ANY thrown fetch() error, so a response lost in transit
+   * after the server already deleted the message meant the retry got back
+   * a confusing 404 for a delete that, from the user's own point of view,
+   * already fully succeeded -- and since WhatsAppPanel.tsx's
+   * handleDeleteMessage only removes the row from local state inside its
+   * try block, that 404 left the message still visibly listed right next
+   * to a scary error banner, with no way to resolve the contradiction
+   * short of a page reload. The sibling bulk-clear route just above needs
+   * no such wrapper -- clearing an already-empty table is naturally a
+   * no-op -- but deleting one specific row by id is not.
+   */
   router.delete(
     "/projects/:id/integrations/whatsapp/messages/:messageId",
     asyncRoute(async (req, res) => {
       const project = requireProjectWriteAccess(db, req.params.id, req.userId!);
-      deleteWhatsAppMessage(db, project.id, req.params.messageId);
-      res.status(204).end();
+      const idempotencyKey = req.header("X-Idempotency-Key") || undefined;
+      const { status } = await withIdempotency(
+        db,
+        idempotencyKey,
+        req.userId!,
+        `DELETE /projects/${project.id}/integrations/whatsapp/messages/${req.params.messageId}`,
+        async () => {
+          deleteWhatsAppMessage(db, project.id, req.params.messageId);
+          return { status: 204, body: null };
+        },
+      );
+      res.status(status).end();
     }),
   );
 

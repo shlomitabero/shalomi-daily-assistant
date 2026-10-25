@@ -8309,6 +8309,73 @@ test("WhatsApp: deleting a message id that doesn't exist in this project returns
   });
 });
 
+/**
+ * Round 958: same withIdempotency gap, and the same fix, as
+ * deleteCheckpoint's own fix (round 944) -- deleteWhatsAppMessage
+ * (packages/db/src/whatsapp.ts) throws NotFoundError once the row is
+ * actually gone, with no special case for a retry. fetchWithWakeRetry
+ * retries on ANY thrown fetch() error, so a response lost in transit
+ * after the message was already deleted used to surface a confusing 404
+ * for a delete that, from the user's point of view, already fully
+ * succeeded.
+ */
+test("DELETE .../integrations/whatsapp/messages/:messageId retried with the same idempotency key after the first attempt already succeeded replays the original 204, instead of 404ing on the already-deleted message", async () => {
+  let createdSockets: ReturnType<typeof createFakeWhatsAppSocket>[] = [];
+  await withServer(
+    async (baseUrl) => {
+      const token = await signup(baseUrl);
+      const createRes = await fetch(`${baseUrl}/api/projects`, {
+        method: "POST",
+        headers: authHeaders(token),
+        body: JSON.stringify({ description: "A CRM with customers and deals." }),
+      });
+      const { project } = (await createRes.json()) as { project: { id: string } };
+
+      await fetch(`${baseUrl}/api/projects/${project.id}/integrations/whatsapp/connect`, { method: "POST", headers: authHeaders(token) });
+      createdSockets[0].sock.user = { id: "15550001111:1@s.whatsapp.net" };
+      createdSockets[0].emitConnectionUpdate({ connection: "open" });
+      await fetch(`${baseUrl}/api/projects/${project.id}/integrations/whatsapp/send`, {
+        method: "POST",
+        headers: authHeaders(token),
+        body: JSON.stringify({ to: "972501234567", message: "delete this one" }),
+      });
+
+      const beforeRes = await fetch(`${baseUrl}/api/projects/${project.id}/integrations/whatsapp/messages`, { headers: authHeaders(token) });
+      const { messages: before } = (await beforeRes.json()) as { messages: { id: string; body: string }[] };
+      const target = before.find((m) => m.body === "delete this one")!;
+      assert.ok(target, "expected to find the message to delete");
+
+      const headers = { ...authHeaders(token), "x-idempotency-key": "whatsapp-message-delete-repro-key" };
+      const firstRes = await fetch(`${baseUrl}/api/projects/${project.id}/integrations/whatsapp/messages/${target.id}`, {
+        method: "DELETE",
+        headers,
+      });
+      assert.equal(firstRes.status, 204);
+
+      const afterFirstRes = await fetch(`${baseUrl}/api/projects/${project.id}/integrations/whatsapp/messages`, { headers: authHeaders(token) });
+      const { messages: afterFirst } = (await afterFirstRes.json()) as { messages: { id: string }[] };
+      assert.ok(!afterFirst.some((m) => m.id === target.id), "the message must genuinely be gone after the first call");
+
+      const retryRes = await fetch(`${baseUrl}/api/projects/${project.id}/integrations/whatsapp/messages/${target.id}`, {
+        method: "DELETE",
+        headers,
+      });
+      assert.equal(
+        retryRes.status,
+        204,
+        "a retried deletion with the same idempotency key must replay the original success, not 404 on the already-deleted message",
+      );
+    },
+    {
+      whatsapp: (db) => {
+        const created = createTestWhatsAppManager(db);
+        createdSockets = created.createdSockets;
+        return created.manager;
+      },
+    },
+  );
+});
+
 test("WhatsApp: a real incoming message from the linked socket is logged and matched to the right customer record", async () => {
   let createdSockets: ReturnType<typeof createFakeWhatsAppSocket>[] = [];
   await withServer(

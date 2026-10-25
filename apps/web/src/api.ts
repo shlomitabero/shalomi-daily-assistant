@@ -1173,9 +1173,21 @@ export function clearWhatsAppMessages(projectId: string): Promise<void> {
   return request(`/projects/${projectId}/integrations/whatsapp/messages`, { method: "DELETE" });
 }
 
-/** The complement to clearWhatsAppMessages above -- removes exactly one message from the log, not the whole history. */
+/**
+ * The complement to clearWhatsAppMessages above -- removes exactly one
+ * message from the log, not the whole history.
+ *
+ * Round 958: same idempotency-key shape as deleteCheckpoint's own fix
+ * (round 944) -- a lost response after this message was already deleted
+ * must replay that success on retry, not surface a confusing "not found"
+ * for a delete that, from the user's own point of view, already fully
+ * succeeded.
+ */
 export function deleteWhatsAppMessage(projectId: string, messageId: string): Promise<void> {
-  return request(`/projects/${projectId}/integrations/whatsapp/messages/${messageId}`, { method: "DELETE" });
+  return request(`/projects/${projectId}/integrations/whatsapp/messages/${messageId}`, {
+    method: "DELETE",
+    headers: { "x-idempotency-key": crypto.randomUUID() },
+  });
 }
 
 export type AutomationTrigger = "record_created" | "field_equals" | "schedule";
