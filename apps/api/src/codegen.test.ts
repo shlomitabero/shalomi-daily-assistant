@@ -13749,6 +13749,296 @@ test("the exported app's handleToggleColumn never counts a stale hiddenFields en
 });
 
 /**
+ * Round 986: mirrors the live Forge AI preview's own round-985 fix for the
+ * identical gap in this exported app's own hiddenFields/groupFieldName
+ * initializers. A newer export's page loaded in a browser that still
+ * holds an older export's localStorage for a field whose letter casing a
+ * refine then normalized (e.g. "status" -> "Status") previously looked
+ * identical to that field being genuinely removed to every one of these
+ * stores' own exact-match lookups -- hiddenFields had no way to tell the
+ * two apart at all (so a hidden column reappeared instantly), and
+ * groupFieldName actively cleared the user's own "Group by" choice via
+ * its existing round-838 "field removed" clearing path. Uses the same
+ * two-separate-exports simulation this file's own round-839/840/841 tests
+ * already established for the identical reachability path.
+ */
+test("the exported EntityView carries a hidden column and a 'Group by' choice forward under their new spelling when a newer export renames a field's letter casing", async () => {
+  const customerWithStatusField: Entity = {
+    name: "Customer",
+    label: "Customers",
+    fields: [
+      { name: "name", label: "Name", type: "text", required: true },
+      {
+        name: "status",
+        label: "Status",
+        type: "enum",
+        required: true,
+        enumValues: ["New", "Won"],
+        enumLabels: { New: "New", Won: "Won" },
+      },
+    ],
+  };
+  const customerWithStatusFieldRenamed: Entity = { ...customerWithStatusField, fields: [customerWithStatusField.fields[0], { ...customerWithStatusField.fields[1], name: "Status" }] };
+  const olderExportProject: Project = { ...project, spec: { ...project.spec, entities: [customerWithStatusField] } };
+  const newerExportProject: Project = { ...project, spec: { ...project.spec, entities: [customerWithStatusFieldRenamed] } };
+  const store = [
+    { id: 1, name: "Acme Corp", status: "New" },
+    { id: 2, name: "Globex", status: "Won" },
+  ];
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = (async (input: string) => {
+    if (input === "/api/Customer") {
+      return new Response(JSON.stringify({ records: store }), { status: 200, headers: { "content-type": "application/json" } });
+    }
+    throw new Error(`unexpected request ${input}`);
+  }) as typeof fetch;
+
+  const olderDir = writeGeneratedWebComponent(generateExportFiles(olderExportProject));
+  const newerDir = writeGeneratedWebComponent(generateExportFiles(newerExportProject));
+  try {
+    await withRealLocalStorage(async () => {
+      // Simulates hiding the "status" column and grouping by it in an
+      // OLDER export, while the entity still had that exact casing --
+      // persists both choices via the real generated controls.
+      const { EntityView: OlderEntityView } = await import(path.join(olderDir, "web", "src", "components", "EntityView.jsx"));
+      const olderProps = {
+        entity: customerWithStatusField,
+        highlightRecordId: null,
+        onHighlightHandled: () => {},
+        onJumpToRecord: () => {},
+        onRecordCountChange: () => {},
+      };
+      const older = render(React.createElement(OlderEntityView, olderProps));
+      for (let i = 0; i < 40; i++) {
+        if (older.container.querySelectorAll("tbody tr").length > 0) break;
+        await act(async () => {
+          await new Promise((resolve) => setTimeout(resolve, 0));
+        });
+      }
+      await act(async () => {
+        fireEvent.click(older.container.querySelector(".columns-menu-btn") as HTMLButtonElement);
+      });
+      const statusCheckbox = Array.from(older.container.querySelectorAll(".columns-menu-item")).find((el) =>
+        /Status/.test(el.textContent ?? ""),
+      )!.querySelector("input") as HTMLInputElement;
+      await act(async () => {
+        fireEvent.click(statusCheckbox);
+      });
+      await act(async () => {
+        fireEvent.change(older.container.querySelector(".entity-group-by") as HTMLSelectElement, { target: { value: "status" } });
+      });
+      assert.deepEqual(
+        JSON.parse(localStorage.getItem("forge_hidden_columns") ?? "{}").Customer,
+        ["status"],
+        "sanity check: hiding must have actually persisted",
+      );
+      assert.equal(
+        JSON.parse(localStorage.getItem("forge_group_field") ?? "{}").Customer,
+        "status",
+        "sanity check: grouping must have actually persisted",
+      );
+      cleanup();
+
+      // Simulates reloading a NEWER export of the same project, in the
+      // same browser, after a refine renamed "status" -> "Status" only --
+      // same field, same type, same enum values.
+      const { EntityView: NewerEntityView } = await import(path.join(newerDir, "web", "src", "components", "EntityView.jsx"));
+      const newerProps = {
+        entity: customerWithStatusFieldRenamed,
+        highlightRecordId: null,
+        onHighlightHandled: () => {},
+        onJumpToRecord: () => {},
+        onRecordCountChange: () => {},
+      };
+      const newer = render(React.createElement(NewerEntityView, newerProps));
+      for (let i = 0; i < 40; i++) {
+        if (newer.container.querySelector(".entity-group-by")) break;
+        await act(async () => {
+          await new Promise((resolve) => setTimeout(resolve, 0));
+        });
+      }
+
+      assert.ok(
+        !Array.from(newer.container.querySelectorAll("thead th")).some((th) => /Status/.test(th.textContent ?? "")),
+        "the Status column must still be hidden under its new spelling, not silently reappear",
+      );
+      await act(async () => {
+        fireEvent.click(newer.container.querySelector(".columns-menu-btn") as HTMLButtonElement);
+      });
+      const newerStatusCheckbox = Array.from(newer.container.querySelectorAll(".columns-menu-item")).find((el) =>
+        /Status/.test(el.textContent ?? ""),
+      )!.querySelector("input") as HTMLInputElement;
+      assert.equal(newerStatusCheckbox.checked, false, "the Status column must still show as hidden in the Columns menu under its new spelling");
+      assert.equal(
+        (newer.container.querySelector(".entity-group-by") as HTMLSelectElement).value,
+        "Status",
+        "the 'Group by' choice must carry forward under the new spelling, not be cleared to 'no grouping'",
+      );
+    });
+  } finally {
+    globalThis.fetch = originalFetch;
+    cleanup();
+    rmSync(olderDir, { recursive: true, force: true });
+    rmSync(newerDir, { recursive: true, force: true });
+  }
+});
+
+/**
+ * Round 986: the same case-only-rename hazard as the test just above, for
+ * columnWidths, sortKeys, and fieldFilters specifically -- all three need
+ * the field to stay VISIBLE to check their own DOM-observable effect
+ * (a hidden column's header never renders), unlike the hiddenFields test
+ * above.
+ */
+test("the exported EntityView carries a resized column width, sort order, and active filter forward under their new spelling when a newer export renames a field's letter casing", async () => {
+  const customerWithStatusField: Entity = {
+    name: "Customer",
+    label: "Customers",
+    fields: [
+      { name: "name", label: "Name", type: "text", required: true },
+      {
+        name: "status",
+        label: "Status",
+        type: "enum",
+        required: true,
+        enumValues: ["New", "Won"],
+        enumLabels: { New: "New", Won: "Won" },
+      },
+    ],
+  };
+  const customerWithStatusFieldRenamed: Entity = { ...customerWithStatusField, fields: [customerWithStatusField.fields[0], { ...customerWithStatusField.fields[1], name: "Status" }] };
+  const olderExportProject: Project = { ...project, spec: { ...project.spec, entities: [customerWithStatusField] } };
+  const newerExportProject: Project = { ...project, spec: { ...project.spec, entities: [customerWithStatusFieldRenamed] } };
+  const olderStore = [
+    { id: 1, name: "Acme Corp", status: "New" },
+    { id: 2, name: "Globex", status: "Won" },
+  ];
+  // The newer export's own server would serialize records keyed by the
+  // CURRENT schema's field.name (packages/db/src/repository.ts's
+  // rowToRecord resolves the underlying column case-insensitively via
+  // getRowValue) -- mirrored here since this is a fresh, separate render,
+  // not a live transition of the same mounted page.
+  const newerStore = [
+    { id: 1, name: "Acme Corp", Status: "New" },
+    { id: 2, name: "Globex", Status: "Won" },
+  ];
+  const originalFetch = globalThis.fetch;
+
+  const olderDir = writeGeneratedWebComponent(generateExportFiles(olderExportProject));
+  const newerDir = writeGeneratedWebComponent(generateExportFiles(newerExportProject));
+  try {
+    await withRealLocalStorage(async () => {
+      globalThis.fetch = (async (input: string) => {
+        if (input === "/api/Customer") {
+          return new Response(JSON.stringify({ records: olderStore }), { status: 200, headers: { "content-type": "application/json" } });
+        }
+        throw new Error(`unexpected request ${input}`);
+      }) as typeof fetch;
+
+      // Simulates resizing, sorting, and filtering by "status" in an OLDER
+      // export, while the entity still had that exact casing -- persists
+      // all three via the real generated controls.
+      const { EntityView: OlderEntityView } = await import(path.join(olderDir, "web", "src", "components", "EntityView.jsx"));
+      const olderProps = {
+        entity: customerWithStatusField,
+        highlightRecordId: null,
+        onHighlightHandled: () => {},
+        onJumpToRecord: () => {},
+        onRecordCountChange: () => {},
+      };
+      const older = render(React.createElement(OlderEntityView, olderProps));
+      for (let i = 0; i < 40; i++) {
+        if (older.container.querySelector(".resizable-col")) break;
+        await act(async () => {
+          await new Promise((resolve) => setTimeout(resolve, 0));
+        });
+      }
+      const statusHeader = Array.from(older.container.querySelectorAll("th.resizable-col")).find((th) =>
+        /Status/.test(th.textContent ?? ""),
+      ) as HTMLTableCellElement;
+      const handle = statusHeader.querySelector(".column-resize-handle") as HTMLSpanElement;
+      await act(async () => {
+        fireEvent.mouseDown(handle, { clientX: 100 });
+      });
+      await act(async () => {
+        fireEvent.mouseMove(window, { clientX: 160 });
+        fireEvent.mouseUp(window, { clientX: 160 });
+      });
+      const statusSortButton = statusHeader.querySelector("button.sort-header") as HTMLButtonElement;
+      await act(async () => {
+        fireEvent.click(statusSortButton);
+      });
+      const statusFilter = older.container.querySelector(".entity-status-filter") as HTMLSelectElement;
+      await act(async () => {
+        fireEvent.change(statusFilter, { target: { value: "New" } });
+      });
+      assert.deepEqual(
+        JSON.parse(localStorage.getItem("forge_column_widths") ?? "{}").Customer,
+        { status: 60 },
+        "sanity check: resizing must have actually persisted",
+      );
+      assert.deepEqual(
+        JSON.parse(localStorage.getItem("forge_sort_keys") ?? "{}").Customer?.map((k: { field: string }) => k.field),
+        ["status"],
+        "sanity check: sorting must have actually persisted",
+      );
+      assert.deepEqual(
+        JSON.parse(localStorage.getItem("forge_field_filters") ?? "{}").Customer,
+        { status: "New" },
+        "sanity check: filtering must have actually persisted",
+      );
+      cleanup();
+
+      // Simulates reloading a NEWER export of the same project, in the
+      // same browser, after a refine renamed "status" -> "Status" only --
+      // same field, same type, same enum values.
+      globalThis.fetch = (async (input: string) => {
+        if (input === "/api/Customer") {
+          return new Response(JSON.stringify({ records: newerStore }), { status: 200, headers: { "content-type": "application/json" } });
+        }
+        throw new Error(`unexpected request ${input}`);
+      }) as typeof fetch;
+      const { EntityView: NewerEntityView } = await import(path.join(newerDir, "web", "src", "components", "EntityView.jsx"));
+      const newerProps = {
+        entity: customerWithStatusFieldRenamed,
+        highlightRecordId: null,
+        onHighlightHandled: () => {},
+        onJumpToRecord: () => {},
+        onRecordCountChange: () => {},
+      };
+      const newer = render(React.createElement(NewerEntityView, newerProps));
+      for (let i = 0; i < 40; i++) {
+        if (newer.container.querySelectorAll("tbody tr").length > 0) break;
+        await act(async () => {
+          await new Promise((resolve) => setTimeout(resolve, 0));
+        });
+      }
+
+      assert.ok(
+        newer.container.querySelector(".entity-table-resized"),
+        "the table must stay in fixed-layout mode -- the resized width must not have been dropped as if the field were removed",
+      );
+      const newerStatusHeader = Array.from(newer.container.querySelectorAll("thead th")).find((th) => /Status/.test(th.textContent ?? ""))!;
+      assert.notEqual(
+        newerStatusHeader.getAttribute("aria-sort"),
+        "none",
+        "the Status column must still show as the active sort column under its new spelling, not revert to no sort",
+      );
+      assert.equal(
+        (newer.container.querySelector(".entity-status-filter") as HTMLSelectElement).value,
+        "New",
+        "the filter <select>'s own displayed value must still reflect the active filter under the new spelling, not blank out",
+      );
+    });
+  } finally {
+    globalThis.fetch = originalFetch;
+    cleanup();
+    rmSync(olderDir, { recursive: true, force: true });
+    rmSync(newerDir, { recursive: true, force: true });
+  }
+});
+
+/**
  * New in this round: the exported app's own GlobalSearch.jsx had the
  * identical gap the live preview's own GlobalSearchPanel.tsx did --
  * ArrowDown/ArrowUp moved the highlighted result group's CSS class, but

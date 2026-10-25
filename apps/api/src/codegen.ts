@@ -1127,6 +1127,18 @@ function toggleColumnVisibility(entityName, fieldName) {
   writeHiddenColumnsStore(store);
   return hidden;
 }
+// Replaces the entity's full hidden-columns set, unlike toggleColumnVisibility
+// above (one field at a time). Used to persist a remapped set after a
+// case-only field rename (round 986) -- mirrors the live preview's own
+// replaceHiddenFields (columnVisibility.ts).
+function replaceHiddenColumns(entityName, fields) {
+  const store = readHiddenColumnsStore();
+  const hidden = new Set(fields);
+  if (hidden.size === 0) delete store[entityName];
+  else store[entityName] = [...hidden];
+  writeHiddenColumnsStore(store);
+  return hidden;
+}
 
 // Recent queries typed into an entity's own filter-as-you-type search box,
 // persisted per entity (same single-tenant scoping as the hidden-columns
@@ -1235,6 +1247,16 @@ function clearColumnWidths(entityName) {
   delete store[entityName];
   writeColumnWidthsStore(store);
   return {};
+}
+// Replaces the entity's full column-widths map, unlike setColumnWidth above
+// (one field at a time) or clearColumnWidths (drops everything). Used to
+// persist a remapped map after a case-only field rename (round 986).
+function replaceColumnWidths(entityName, widths) {
+  const store = readColumnWidthsStore();
+  if (Object.keys(widths).length === 0) delete store[entityName];
+  else store[entityName] = widths;
+  writeColumnWidthsStore(store);
+  return widths;
 }
 
 // The actual drag math: how far the mouse has moved since the drag started,
@@ -1523,19 +1545,27 @@ function getPersistedFieldFilters(entityName) {
 // toolbar dropdown's own, separate concern.
 function sanitizeFieldFilters(filters, fields) {
   const fieldsByName = new Map(fields.map((f) => [f.name, f]));
+  const fieldsByLowerName = new Map(fields.map((f) => [f.name.toLowerCase(), f]));
   const filterableEnumNames = new Set(findFilterableEnumFields(fields).map((f) => f.name));
   const cleaned = {};
   for (const [name, value] of Object.entries(filters)) {
-    const f = fieldsByName.get(name);
+    // Round 986: falls back to a case-insensitive match when the exact
+    // name misses -- a newer export's page loaded in a browser still
+    // holding an older export's localStorage for a field whose letter
+    // casing a refine then normalized (e.g. "status" -> "Status")
+    // previously looked identical to that field being removed outright to
+    // this exact Map lookup, silently dropping the filter. Mirrors the
+    // live preview's own round-985 fix.
+    const f = fieldsByName.get(name) ?? fieldsByLowerName.get(name.toLowerCase());
     if (!f) continue;
     const stillFilterable =
       f.type === "boolean" ||
-      (f.type === "enum" && filterableEnumNames.has(name)) ||
+      (f.type === "enum" && filterableEnumNames.has(f.name)) ||
       (f.type === "relation" && f.relationTo && ALL_ENTITIES.some((e) => e.name === f.relationTo));
     if (!stillFilterable) continue;
     if (f.type === "boolean" && value !== "true" && value !== "false") continue;
     if (f.type === "relation" && (!Number.isInteger(Number(value)) || String(Number(value)) !== value || Number(value) < 0)) continue;
-    cleaned[name] = value;
+    cleaned[f.name] = value;
   }
   return cleaned;
 }
@@ -1657,19 +1687,25 @@ function setPersistedCollapsedBoardColumns(entityName, boardFieldName, values) {
 // position, and any field the order doesn't mention (a newly added field,
 // or an order saved before it existed) is appended at the end in the
 // entity's own original order. Mirrors the live preview's own
-// applyColumnOrder (columnOrder.ts) verbatim.
+// applyColumnOrder (columnOrder.ts) verbatim, including its round-985
+// case-insensitive fallback for a pure letter-casing field rename (reached
+// here via a newer export's page loaded in a browser that still holds an
+// older export's localStorage, rather than a live refine while mounted --
+// see round 509's own established cross-export reachability path).
 function applyColumnOrder(fields, order) {
   const byName = new Map(fields.map((f) => [f.name, f]));
+  const byLowerName = new Map(fields.map((f) => [f.name.toLowerCase(), f]));
   const ordered = [];
+  const used = new Set();
   for (const name of order) {
-    const field = byName.get(name);
-    if (field) {
+    const field = byName.get(name) ?? byLowerName.get(name.toLowerCase());
+    if (field && !used.has(field)) {
       ordered.push(field);
-      byName.delete(name);
+      used.add(field);
     }
   }
   for (const field of fields) {
-    if (byName.has(field.name)) ordered.push(field);
+    if (!used.has(field)) ordered.push(field);
   }
   return ordered;
 }
@@ -3817,12 +3853,21 @@ export function EntityView({ entity, highlightRecordId, onHighlightHandled, onJu
   const [groupFieldName, setGroupFieldName] = useState(() => {
     const loaded = getPersistedGroupField(entity.name);
     if (!loaded) return loaded;
-    const currentType = entity.fields.find((f) => f.name === loaded)?.type;
+    const exactField = entity.fields.find((f) => f.name === loaded);
+    // Round 986: a newer export's page loaded in a browser still holding
+    // an older export's "forge_group_field" entry for a field whose
+    // letter casing a refine then normalized (e.g. "status" -> "Status")
+    // makes the exact-match lookup above miss just like a genuine removal
+    // would -- mirrors the live preview's own round-985 fix, carrying the
+    // choice forward under its new spelling instead of clearing it.
+    const renamedField = exactField ? undefined : entity.fields.find((f) => f.name.toLowerCase() === loaded.toLowerCase());
+    const currentType = exactField?.type ?? renamedField?.type;
     const recordedType = getPersistedGroupFieldType(entity.name);
     if (!currentType || (recordedType && recordedType !== currentType)) {
       setPersistedGroupFieldType(entity.name, "");
       return setPersistedGroupField(entity.name, "");
     }
+    if (renamedField) return setPersistedGroupField(entity.name, renamedField.name);
     return loaded;
   });
   // Mirrors the live Forge AI preview's own round-842 fix: a collapsed
@@ -3883,8 +3928,18 @@ export function EntityView({ entity, highlightRecordId, onHighlightHandled, onJu
     const loaded = getPersistedSortKeys(entity.name);
     const validFieldNames = new Set(entity.fields.map((f) => f.name));
     validFieldNames.add("createdAt");
-    const filtered = loaded.filter((k) => validFieldNames.has(k.field));
-    return filtered.length === loaded.length ? loaded : setPersistedSortKeys(entity.name, filtered);
+    // Round 986: remaps a stale entry that still matches a current field
+    // CASE-INSENSITIVELY to that field's current casing, instead of
+    // dropping it like a genuinely-removed field -- mirrors the live
+    // preview's own round-985 fix for a newer export's page loaded in a
+    // browser that still holds an older export's "forge_sort_keys" entry
+    // for a field whose letter casing a refine then normalized (e.g.
+    // "status" -> "Status").
+    const byLowerName = new Map(entity.fields.map((f) => [f.name.toLowerCase(), f.name]));
+    const remapped = loaded
+      .map((k) => (validFieldNames.has(k.field) ? k : { ...k, field: byLowerName.get(k.field.toLowerCase()) ?? k.field }))
+      .filter((k) => validFieldNames.has(k.field));
+    return remapped.length === loaded.length && remapped.every((k, i) => k === loaded[i]) ? loaded : setPersistedSortKeys(entity.name, remapped);
   });
   // Mirrors the live Forge AI preview's own round-this-round fix to
   // getPersistedViewMode's own sibling stores (getPersistedGroupField/Type,
@@ -3937,9 +3992,47 @@ export function EntityView({ entity, highlightRecordId, onHighlightHandled, onJu
   const [importMessage, setImportMessage] = useState(null);
   const [importErrors, setImportErrors] = useState([]);
   const [showImportErrors, setShowImportErrors] = useState(false);
-  const [hiddenFields, setHiddenFields] = useState(() => getHiddenColumns(entity.name));
+  // Round 986: remaps a stale hidden-field entry that still matches a
+  // current field CASE-INSENSITIVELY to that field's current casing,
+  // instead of leaving it un-matchable (and so no longer actually hiding
+  // anything) like a genuinely-removed field -- mirrors the live
+  // preview's own round-985 fix for a newer export's page loaded in a
+  // browser that still holds an older export's "forge_hidden_columns"
+  // entry for a field whose letter casing a refine then normalized (e.g.
+  // "status" -> "Status").
+  const [hiddenFields, setHiddenFields] = useState(() => {
+    const loaded = getHiddenColumns(entity.name);
+    const currentNames = new Set(entity.fields.map((f) => f.name));
+    const byLowerName = new Map(entity.fields.map((f) => [f.name.toLowerCase(), f.name]));
+    const remapped = new Set();
+    let changed = false;
+    for (const name of loaded) {
+      if (currentNames.has(name)) {
+        remapped.add(name);
+        continue;
+      }
+      const current = byLowerName.get(name.toLowerCase());
+      changed = true;
+      if (current) remapped.add(current);
+    }
+    return changed ? replaceHiddenColumns(entity.name, remapped) : loaded;
+  });
   const [columnsMenuOpen, setColumnsMenuOpen] = useState(false);
-  const [columnWidths, setColumnWidths] = useState(() => getColumnWidths(entity.name));
+  // Round 986: same reasoning as hiddenFields' own initializer just above,
+  // for a resized column's width instead of its hidden state.
+  const [columnWidths, setColumnWidths] = useState(() => {
+    const loaded = getColumnWidths(entity.name);
+    const currentNames = new Set(entity.fields.map((f) => f.name));
+    const byLowerName = new Map(entity.fields.map((f) => [f.name.toLowerCase(), f.name]));
+    const remapped = {};
+    let changed = false;
+    for (const [field, width] of Object.entries(loaded)) {
+      const current = currentNames.has(field) ? field : byLowerName.get(field.toLowerCase());
+      if (current) remapped[current] = width;
+      if (current !== field) changed = true;
+    }
+    return changed ? replaceColumnWidths(entity.name, remapped) : loaded;
+  });
   const [resizingField, setResizingField] = useState(null);
   const [columnOrder, setColumnOrderState] = useState(() => getColumnOrder(entity.name));
   const [draggedField, setDraggedField] = useState(null);
