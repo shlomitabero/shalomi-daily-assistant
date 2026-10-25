@@ -10,6 +10,8 @@ import {
   getWhatsAppStatus,
   listWhatsAppMessages,
   sendWhatsAppMessage,
+  uploadWhatsAppAttachment,
+  type WhatsAppAttachmentDescriptor,
   type WhatsAppMessageLogEntry,
   type WhatsAppStatusView,
 } from "./api.js";
@@ -86,6 +88,12 @@ const CONNECTED_POLL_INTERVAL_MS = 10000;
 // showing a "Connected" status the code can no longer actually confirm,
 // with no indication anything is wrong.
 const MAX_CONSECUTIVE_CONNECTED_POLL_FAILURES = 5;
+
+// Round 973: mirrors EntityPanel.tsx's own MAX_FILE_UPLOAD_SIZE_BYTES --
+// the same 10 MB server-side limit (createWhatsAppAttachmentUploadMiddleware
+// in routes/projects.ts) checked client-side first, so a too-large file is
+// rejected instantly instead of only after a full upload round-trip.
+const MAX_ATTACHMENT_SIZE_BYTES = 10 * 1024 * 1024;
 
 /**
  * Folds a freshly-fetched newest-page response into whatever's already
@@ -226,6 +234,9 @@ export function WhatsAppPanel({
   const [disconnecting, setDisconnecting] = useState(false);
   const [testTo, setTestTo] = useState(() => prefillTo ?? "");
   const [testMessage, setTestMessage] = useState("");
+  const [testAttachment, setTestAttachment] = useState<WhatsAppAttachmentDescriptor | null>(null);
+  const [uploadingAttachment, setUploadingAttachment] = useState(false);
+  const [attachmentError, setAttachmentError] = useState<string | null>(null);
   const [recentNumbers, setRecentNumbers] = useState<string[]>(() => getRecentWhatsAppNumbers(projectId));
   const [sending, setSending] = useState(false);
   const [sendResult, setSendResult] = useState<{ ok: boolean; text: string } | null>(null);
@@ -585,18 +596,20 @@ export function WhatsAppPanel({
     setSendResult(null);
     setRecentNumbers(addRecentWhatsAppNumber(projectId, testTo));
     try {
-      const result = await sendWhatsAppMessage(projectId, testTo, testMessage);
+      const result = await sendWhatsAppMessage(projectId, testTo, testMessage, testAttachment ?? undefined);
       setSendResult(
         result.ok ? { ok: true, text: t("whatsapp.send.success") } : { ok: false, text: result.error ?? t("whatsapp.send.genericError") },
       );
       // Mirrors every other write-form in this app (EntityPanel's own
       // record form resets to empty right after a successful create) --
       // only on success, so a failed send still leaves the typed
-      // recipient/message in place to retry, rather than forcing the user
-      // to retype both after e.g. a transient network error.
+      // recipient/message (and chosen attachment) in place to retry,
+      // rather than forcing the user to redo all three after e.g. a
+      // transient network error.
       if (result.ok) {
         setTestTo("");
         setTestMessage("");
+        setTestAttachment(null);
       }
       const versionBeforeFetch = messagesVersionRef.current;
       const { messages: freshPage } = await listWhatsAppMessages(projectId);
@@ -608,6 +621,37 @@ export function WhatsAppPanel({
     } finally {
       setSending(false);
     }
+  }
+
+  /**
+   * Round 973: mirrors EntityPanel.tsx's own file-field upload branch --
+   * uploads immediately on selection (rather than waiting for the Send
+   * click) so a failed/too-large upload is caught and shown before the
+   * user even finishes composing the rest of the message.
+   */
+  async function handleAttachmentChange(e: React.ChangeEvent<HTMLInputElement>) {
+    const chosen = e.target.files?.[0];
+    e.target.value = "";
+    if (!chosen) return;
+    setAttachmentError(null);
+    if (chosen.size > MAX_ATTACHMENT_SIZE_BYTES) {
+      setAttachmentError(t("whatsapp.test.attachment.tooLarge"));
+      return;
+    }
+    setUploadingAttachment(true);
+    try {
+      const uploaded = await uploadWhatsAppAttachment(projectId, chosen);
+      setTestAttachment({ url: uploaded.url, name: uploaded.name, mimeType: uploaded.mimeType });
+    } catch (err) {
+      setAttachmentError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setUploadingAttachment(false);
+    }
+  }
+
+  function handleRemoveAttachment() {
+    setTestAttachment(null);
+    setAttachmentError(null);
   }
 
   function handleRecentNumberClick(n: string) {
@@ -974,8 +1018,22 @@ export function WhatsAppPanel({
                 required
               />
             </label>
+            <div className="whatsapp-attachment-field">
+              {testAttachment ? (
+                <span className="file-field-current">
+                  {testAttachment.name}
+                  <button type="button" className="link-button" onClick={handleRemoveAttachment}>
+                    {t("whatsapp.test.attachment.remove")}
+                  </button>
+                </span>
+              ) : (
+                <input type="file" aria-label={t("whatsapp.test.attachment.choose")} disabled={uploadingAttachment} onChange={handleAttachmentChange} />
+              )}
+              {uploadingAttachment && <p className="muted small">{t("whatsapp.test.attachment.uploading")}</p>}
+              {attachmentError ? <p role="alert">{attachmentError}</p> : !testAttachment && <p className="muted small">{t("entity.file.maxSize")}</p>}
+            </div>
             <div className="form-actions">
-              <button type="submit" disabled={sending}>
+              <button type="submit" disabled={sending || uploadingAttachment}>
                 {sending ? t("whatsapp.test.sending") : t("whatsapp.test.send")}
               </button>
             </div>

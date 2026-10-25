@@ -1129,7 +1129,50 @@ export interface WhatsAppSendResult {
  */
 export const KNOWN_WHATSAPP_SEND_ERROR_CODES = new Set(["not_connected", "invalid_phone_number", "missing_country_code"]);
 
-export async function sendWhatsAppMessage(projectId: string, to: string, message: string): Promise<WhatsAppSendResult> {
+export interface WhatsAppAttachmentDescriptor {
+  url: string;
+  name: string;
+  mimeType: string;
+}
+
+/**
+ * Round 973: the manual-send counterpart of uploadRecordFile above, for a
+ * file attached to a WhatsApp test-send rather than tied to any entity/
+ * field. Returns the same {url, name, size, mimeType} shape; only `url`,
+ * `name` and `mimeType` are ever threaded back into sendWhatsAppMessage
+ * below (the send route's own WhatsAppSendSchema has no use for `size`).
+ */
+export async function uploadWhatsAppAttachment(projectId: string, file: File): Promise<{ url: string; name: string; size: number; mimeType: string }> {
+  const token = getToken();
+  const formData = new FormData();
+  formData.append("file", file);
+  const res = await fetchApi(`/api/projects/${projectId}/integrations/whatsapp/attachments/upload`, {
+    method: "POST",
+    headers: {
+      ...(token ? { authorization: `Bearer ${token}` } : {}),
+      "x-idempotency-key": crypto.randomUUID(),
+    },
+    body: formData,
+  });
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({ error: `Request failed (${res.status})`, code: "REQUEST_FAILED" }));
+    const code = (body as { code?: string }).code;
+    const message = resolveErrorMessage(body as { error?: string; code?: string });
+    if (code === "SESSION_EXPIRED" || code === "AUTH_REQUIRED") notifyAuthExpired();
+    if (code === "PROJECT_NOT_FOUND") notifyProjectGone(projectId, message);
+    if (code === "VIEWER_READ_ONLY") notifyViewerDemoted(projectId);
+    throw new Error(message);
+  }
+  const body = (await res.json()) as { file: { url: string; name: string; size: number; mimeType: string } };
+  return body.file;
+}
+
+export async function sendWhatsAppMessage(
+  projectId: string,
+  to: string,
+  message: string,
+  attachment?: WhatsAppAttachmentDescriptor,
+): Promise<WhatsAppSendResult> {
   const token = getToken();
   const res = await fetchApi(`/api/projects/${projectId}/integrations/whatsapp/send`, {
     method: "POST",
@@ -1138,7 +1181,7 @@ export async function sendWhatsAppMessage(projectId: string, to: string, message
       "x-idempotency-key": crypto.randomUUID(),
       ...(token ? { authorization: `Bearer ${token}` } : {}),
     },
-    body: JSON.stringify({ to, message }),
+    body: JSON.stringify({ to, message, ...(attachment ? { attachment } : {}) }),
   });
   // A failed send (e.g. the socket drops mid-send, or the number is
   // invalid) is still a normal, expected response here -- surface it as

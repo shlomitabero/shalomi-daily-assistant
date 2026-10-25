@@ -1088,6 +1088,80 @@ test("WhatsAppPanel sends the exact typed recipient/message and refreshes the me
 });
 
 /**
+ * Round 973: confirms the new attachment picker actually uploads the
+ * chosen file through the new .../attachments/upload route, shows the
+ * returned descriptor instead of the raw file input once upload succeeds,
+ * and that descriptor (not the browser File itself) is what reaches the
+ * send request's own JSON body.
+ */
+test("WhatsAppPanel uploads a chosen attachment and includes its descriptor in the send request body", async () => {
+  await withJsdom(async () => {
+    const originalFetch = globalThis.fetch;
+    let capturedSendBody: string | undefined;
+    globalThis.fetch = (async (input: string, init?: RequestInit): Promise<Response> => {
+      const method = init?.method ?? "GET";
+      if (method === "GET" && input === "/api/projects/proj1/integrations/whatsapp/status") {
+        return new Response(
+          JSON.stringify({ status: "connected", phoneNumber: "972501234567", qrDataUrl: null, error: null }),
+          { status: 200, headers: { "content-type": "application/json" } },
+        );
+      }
+      if (method === "GET" && input === "/api/projects/proj1/integrations/whatsapp/messages") {
+        return new Response(JSON.stringify({ messages: [] }), { status: 200, headers: { "content-type": "application/json" } });
+      }
+      if (method === "POST" && input === "/api/projects/proj1/integrations/whatsapp/attachments/upload") {
+        return new Response(
+          JSON.stringify({ file: { url: "/api/uploads/proj1/_whatsapp-attachments/fake-uuid.pdf", name: "brochure.pdf", size: 9, mimeType: "application/pdf" } }),
+          { status: 200, headers: { "content-type": "application/json" } },
+        );
+      }
+      if (method === "POST" && input === "/api/projects/proj1/integrations/whatsapp/send") {
+        capturedSendBody = init!.body as string;
+        return new Response(JSON.stringify({ ok: true }), { status: 200, headers: { "content-type": "application/json" } });
+      }
+      throw new Error(`unexpected request ${method} ${input}`);
+    }) as typeof fetch;
+    try {
+      render(
+        React.createElement(
+          ThemeProvider,
+          null,
+          React.createElement(LanguageProvider, null, React.createElement(WhatsAppPanel, { projectId: "proj1", projectName: "Test Project", onClose: () => {}, onJumpToEntity: () => {}, onJumpToRecord: () => {}, entities: [], onCreateRecordFromMessage: () => {} })),
+        ),
+      );
+      await waitForCondition(() => document.querySelector(".whatsapp-test-form") !== null);
+
+      const inputs = document.querySelectorAll('.whatsapp-test-form input[type="text"]');
+      fireEvent.change(inputs[0] as HTMLInputElement, { target: { value: "972521112233" } });
+      fireEvent.change(inputs[1] as HTMLInputElement, { target: { value: "הנה הברושור" } });
+
+      const fileInput = document.querySelector('.whatsapp-attachment-field input[type="file"]') as HTMLInputElement;
+      assert.ok(fileInput, "expected an attachment file input to be rendered");
+      const file = new File(["%PDF-fake-brochure"], "brochure.pdf", { type: "application/pdf" });
+      Object.defineProperty(fileInput, "files", { value: [file] });
+      await act(async () => {
+        fireEvent.change(fileInput);
+      });
+
+      await waitForCondition(() => document.querySelector(".whatsapp-attachment-field .file-field-current") !== null);
+      assert.match(document.querySelector(".whatsapp-attachment-field .file-field-current")!.textContent ?? "", /brochure\.pdf/);
+
+      fireEvent.submit(document.querySelector("form.whatsapp-test-form")!);
+      await waitForCondition(() => typeof capturedSendBody === "string");
+
+      const parsed = JSON.parse(capturedSendBody!);
+      assert.deepEqual(parsed.attachment, {
+        url: "/api/uploads/proj1/_whatsapp-attachments/fake-uuid.pdf",
+        name: "brochure.pdf",
+        mimeType: "application/pdf",
+      });
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+});
+
+/**
  * New in this round: every other write-form in this app resets to empty
  * right after a successful submission (e.g. EntityPanel's own record form
  * clears right after createRecord succeeds) -- but this test-send form

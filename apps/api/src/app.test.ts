@@ -9199,6 +9199,182 @@ test("POST .../integrations/whatsapp/send retried with the same idempotency key 
   );
 });
 
+/**
+ * Round 973: a manual test-send from WhatsAppPanel previously had no way to
+ * attach a file at all -- only the automation path (findTemplateFileAttachment)
+ * could ever pass a WhatsAppAttachment into sendMessage/performSend, even
+ * though both are completely generic. Confirms the new upload route stores
+ * the file under the fixed WHATSAPP_ATTACHMENTS_DIRNAME subdirectory, that
+ * its returned descriptor round-trips through the send route into a real
+ * WhatsAppAttachment, and that the fake Baileys socket actually receives the
+ * `{document: ...}` content shape performSend builds for a non-image/video/
+ * audio mimeType.
+ */
+test("POST .../integrations/whatsapp/send accepts an uploaded attachment and passes it through to the real send", async () => {
+  let createdSockets: ReturnType<typeof createFakeWhatsAppSocket>[] = [];
+  await withServer(
+    async (baseUrl) => {
+      const token = await signup(baseUrl, "whatsapp-attach1@example.com");
+      const createRes = await fetch(`${baseUrl}/api/projects`, {
+        method: "POST",
+        headers: authHeaders(token),
+        body: JSON.stringify({ description: "A CRM with customers and deals." }),
+      });
+      const { project } = (await createRes.json()) as { project: { id: string } };
+
+      await fetch(`${baseUrl}/api/projects/${project.id}/integrations/whatsapp/connect`, { method: "POST", headers: authHeaders(token) });
+      createdSockets[0].sock.user = { id: "15550005555:1@s.whatsapp.net" };
+      createdSockets[0].emitConnectionUpdate({ connection: "open" });
+
+      const fileBody = "%PDF-fake-brochure-contents";
+      const formData = new FormData();
+      formData.append("file", new File([fileBody], "brochure.pdf", { type: "application/pdf" }));
+      const uploadRes = await fetch(`${baseUrl}/api/projects/${project.id}/integrations/whatsapp/attachments/upload`, {
+        method: "POST",
+        headers: { authorization: `Bearer ${token}` },
+        body: formData,
+      });
+      assert.equal(uploadRes.status, 200);
+      const uploadBody = (await uploadRes.json()) as { file: { url: string; name: string; size: number; mimeType: string } };
+      assert.equal(uploadBody.file.name, "brochure.pdf");
+      assert.match(uploadBody.file.url, new RegExp(`^/api/uploads/${project.id}/_whatsapp-attachments/[^/]+\\.pdf$`));
+
+      const sendRes = await fetch(`${baseUrl}/api/projects/${project.id}/integrations/whatsapp/send`, {
+        method: "POST",
+        headers: authHeaders(token),
+        body: JSON.stringify({ to: "972501234567", message: "הנה הברושור", attachment: uploadBody.file }),
+      });
+      assert.equal(sendRes.status, 200);
+      assert.deepEqual(await sendRes.json(), { ok: true });
+
+      assert.equal(createdSockets[0].sendCalls.length, 1);
+      const sent = createdSockets[0].sendCalls[0].content as { document: Buffer; mimetype: string; fileName: string; caption?: string };
+      assert.equal(sent.mimetype, "application/pdf");
+      assert.equal(sent.fileName, "brochure.pdf");
+      assert.equal(sent.caption, "הנה הברושור");
+      assert.equal(sent.document.toString("utf8"), fileBody);
+    },
+    {
+      whatsapp: (db) => {
+        const created = createTestWhatsAppManager(db);
+        createdSockets = created.createdSockets;
+        return created.manager;
+      },
+    },
+  );
+});
+
+/**
+ * Round 973: `attachment.url` is client-supplied -- confirms the send route
+ * never trusts it blindly. A URL pointing at a DIFFERENT project's own
+ * attachments directory (even one that is otherwise perfectly well-formed)
+ * must be rejected rather than resolved, since this project's own uploadsDir
+ * check alone wouldn't catch a path that is still safely inside uploadsDir
+ * overall, just under the wrong project id.
+ */
+test("POST .../integrations/whatsapp/send rejects an attachment url that doesn't belong to this project", async () => {
+  let createdSockets: ReturnType<typeof createFakeWhatsAppSocket>[] = [];
+  await withServer(
+    async (baseUrl) => {
+      const token = await signup(baseUrl, "whatsapp-attach2@example.com");
+      const createRes = await fetch(`${baseUrl}/api/projects`, {
+        method: "POST",
+        headers: authHeaders(token),
+        body: JSON.stringify({ description: "A CRM with customers and deals." }),
+      });
+      const { project } = (await createRes.json()) as { project: { id: string } };
+      const otherCreateRes = await fetch(`${baseUrl}/api/projects`, {
+        method: "POST",
+        headers: authHeaders(token),
+        body: JSON.stringify({ description: "A second, unrelated project." }),
+      });
+      const { project: otherProject } = (await otherCreateRes.json()) as { project: { id: string } };
+
+      await fetch(`${baseUrl}/api/projects/${project.id}/integrations/whatsapp/connect`, { method: "POST", headers: authHeaders(token) });
+      createdSockets[0].sock.user = { id: "15550006666:1@s.whatsapp.net" };
+      createdSockets[0].emitConnectionUpdate({ connection: "open" });
+
+      const formData = new FormData();
+      formData.append("file", new File(["fake-bytes"], "note.txt", { type: "text/plain" }));
+      const uploadRes = await fetch(`${baseUrl}/api/projects/${otherProject.id}/integrations/whatsapp/attachments/upload`, {
+        method: "POST",
+        headers: { authorization: `Bearer ${token}` },
+        body: formData,
+      });
+      const { file } = (await uploadRes.json()) as { file: { url: string; name: string; mimeType: string } };
+
+      const sendRes = await fetch(`${baseUrl}/api/projects/${project.id}/integrations/whatsapp/send`, {
+        method: "POST",
+        headers: authHeaders(token),
+        body: JSON.stringify({ to: "972501234567", message: "test", attachment: file }),
+      });
+      assert.equal(sendRes.status, 400);
+      assert.equal(((await sendRes.json()) as { code?: string }).code, "INVALID_ATTACHMENT");
+      assert.equal(createdSockets[0].sendCalls.length, 0, "must never reach the real send once the attachment reference is rejected");
+    },
+    {
+      whatsapp: (db) => {
+        const created = createTestWhatsAppManager(db);
+        createdSockets = created.createdSockets;
+        return created.manager;
+      },
+    },
+  );
+});
+
+/**
+ * Round 973: an attachment whose descriptor is otherwise well-formed and
+ * whose url does belong to this project, but whose underlying file was
+ * deleted from disk after upload (e.g. a server redeploy wiping the
+ * uploads volume, or a concurrent cleanup) must fail cleanly rather than
+ * crashing or sending whatever garbage happens to be at that path.
+ */
+test("POST .../integrations/whatsapp/send rejects an attachment whose uploaded file no longer exists on disk", async () => {
+  let createdSockets: ReturnType<typeof createFakeWhatsAppSocket>[] = [];
+  await withServer(
+    async (baseUrl, _db, uploadsDir) => {
+      const token = await signup(baseUrl, "whatsapp-attach3@example.com");
+      const createRes = await fetch(`${baseUrl}/api/projects`, {
+        method: "POST",
+        headers: authHeaders(token),
+        body: JSON.stringify({ description: "A CRM with customers and deals." }),
+      });
+      const { project } = (await createRes.json()) as { project: { id: string } };
+
+      await fetch(`${baseUrl}/api/projects/${project.id}/integrations/whatsapp/connect`, { method: "POST", headers: authHeaders(token) });
+      createdSockets[0].sock.user = { id: "15550007777:1@s.whatsapp.net" };
+      createdSockets[0].emitConnectionUpdate({ connection: "open" });
+
+      const formData = new FormData();
+      formData.append("file", new File(["fake-bytes"], "note.txt", { type: "text/plain" }));
+      const uploadRes = await fetch(`${baseUrl}/api/projects/${project.id}/integrations/whatsapp/attachments/upload`, {
+        method: "POST",
+        headers: { authorization: `Bearer ${token}` },
+        body: formData,
+      });
+      const { file } = (await uploadRes.json()) as { file: { url: string; name: string; mimeType: string } };
+      const filename = file.url.split("/").pop()!;
+      rmSync(path.join(uploadsDir, project.id, "_whatsapp-attachments", filename));
+
+      const sendRes = await fetch(`${baseUrl}/api/projects/${project.id}/integrations/whatsapp/send`, {
+        method: "POST",
+        headers: authHeaders(token),
+        body: JSON.stringify({ to: "972501234567", message: "test", attachment: file }),
+      });
+      assert.equal(sendRes.status, 400);
+      assert.equal(((await sendRes.json()) as { code?: string }).code, "ATTACHMENT_FILE_GONE");
+      assert.equal(createdSockets[0].sendCalls.length, 0);
+    },
+    {
+      whatsapp: (db) => {
+        const created = createTestWhatsAppManager(db);
+        createdSockets = created.createdSockets;
+        return created.manager;
+      },
+    },
+  );
+});
+
 test("WhatsApp: clearing the message history wipes this project's log but never touches another project's", async () => {
   let createdSockets: ReturnType<typeof createFakeWhatsAppSocket>[] = [];
   await withServer(

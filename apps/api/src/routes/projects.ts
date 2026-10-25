@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { mkdirSync } from "node:fs";
+import { existsSync, mkdirSync } from "node:fs";
 import { rm } from "node:fs/promises";
 import path from "node:path";
 import { Router, type Request, type Response, type NextFunction } from "express";
@@ -67,7 +67,7 @@ import { generateBackupZipEntries, parseColumnOrdersQueryParam } from "../backup
 import { buildZip } from "../zip.js";
 import { computeBusinessTwin } from "../twin.js";
 import { isPathInsideDir, UPLOADED_FILENAME } from "../uploadPaths.js";
-import type { WhatsAppWebManager } from "../whatsappWeb.js";
+import type { WhatsAppAttachment, WhatsAppWebManager } from "../whatsappWeb.js";
 import { findMatchingRecord } from "../whatsapp.js";
 import { fireRule, fireScheduledRule, hasTooManyConsecutiveFailuresToday, isAllowedWebhookUrl, runAutomationsForRecordChange } from "../automations.js";
 
@@ -131,9 +131,26 @@ const AnswerQuestionsSchema = z.object({
   additionalRequest: z.string().optional(),
 });
 
+/**
+ * Round 973: `attachment` references a file already uploaded via POST
+ * .../integrations/whatsapp/attachments/upload (never a raw file in this
+ * JSON body) -- the same descriptor shape {url, name, mimeType} every
+ * other uploaded-file reference in this app already uses (a `file`-type
+ * field's own stored value, minus `size`, which nothing here needs). The
+ * send route itself re-validates `url` actually points at a real file
+ * this project's own attachment upload created before ever resolving it
+ * to a filesystem path -- see its own comment there.
+ */
 const WhatsAppSendSchema = z.object({
   to: z.string().min(1, "to is required"),
   message: z.string().min(1, "message is required"),
+  attachment: z
+    .object({
+      url: z.string().min(1),
+      name: z.string().min(1),
+      mimeType: z.string().min(1),
+    })
+    .optional(),
 });
 
 /**
@@ -959,6 +976,22 @@ async function deleteReplacedFileFields(
 // reached a third way, via a WhatsApp automation's file attachment (a
 // read+exfiltration primitive, not just a write/delete one).
 
+/**
+ * Round 973: the fixed subdirectory name manual WhatsApp send attachments
+ * are stored under -- `createUploadMiddleware` below stores a record
+ * file-field upload at `uploadsDir/<projectId>/<entityName>/<filename>`,
+ * but a manual send has no entity/field to key off at all. A leading
+ * underscore keeps this visually distinct from a real entity name in a
+ * directory listing, though nothing actually depends on that: `entity.name`
+ * has no character-set restriction (see uploadPaths.ts's own doc comment),
+ * so a project could in principle have a real entity literally named this
+ * -- at worst, that entity's own file-field uploads would land in the same
+ * parent folder as this feature's attachments, which changes nothing about
+ * access control (every stored file is still named with its own random
+ * UUID and path-safety-checked by filename, not by which folder it's in).
+ */
+const WHATSAPP_ATTACHMENTS_DIRNAME = "_whatsapp-attachments";
+
 function createUploadMiddleware(uploadsDir: string) {
   const storage = multer.diskStorage({
     destination: (req, _file, cb) => {
@@ -986,6 +1019,34 @@ function createUploadMiddleware(uploadsDir: string) {
   return multer({ storage, limits: { fileSize: 10 * 1024 * 1024, files: 1 } });
 }
 
+/**
+ * Round 973: the manual-send counterpart of createUploadMiddleware above,
+ * for a WhatsApp attachment that isn't tied to any entity/field at all --
+ * stores under the fixed WHATSAPP_ATTACHMENTS_DIRNAME subdirectory instead
+ * of an entity name read from the URL, so there's no untrusted path
+ * segment here needing createUploadMiddleware's own isPathInsideDir check.
+ * Same 10 MB/one-file limit and random-UUID filename convention as every
+ * other upload in this app.
+ */
+function createWhatsAppAttachmentUploadMiddleware(uploadsDir: string) {
+  const storage = multer.diskStorage({
+    destination: (req, _file, cb) => {
+      const dir = path.join(uploadsDir, req.params.id, WHATSAPP_ATTACHMENTS_DIRNAME);
+      try {
+        mkdirSync(dir, { recursive: true });
+      } catch (err) {
+        cb(err as Error, dir);
+        return;
+      }
+      cb(null, dir);
+    },
+    filename: (_req, file, cb) => {
+      cb(null, `${randomUUID()}${safeFileExtension(file.originalname)}`);
+    },
+  });
+  return multer({ storage, limits: { fileSize: 10 * 1024 * 1024, files: 1 } });
+}
+
 export function createProjectsRouter(
   db: ForgeDatabase,
   provider: SpecProvider | undefined,
@@ -996,6 +1057,7 @@ export function createProjectsRouter(
   const router = Router();
   router.use(requireAuth(db));
   const upload = createUploadMiddleware(uploadsDir);
+  const whatsappAttachmentUpload = createWhatsAppAttachmentUploadMiddleware(uploadsDir);
 
   /**
    * Round 858: unlike routes/auth.ts (signup/login/forgot-password/
@@ -1989,10 +2051,34 @@ export function createProjectsRouter(
       if (!parsed.success) {
         throw new HttpError(400, formatValidationError(parsed.error), "VALIDATION_ERROR");
       }
-      const { to, message } = parsed.data;
+      const { to, message, attachment } = parsed.data;
       const connStatus = whatsapp.getStatus(project.id);
       if (connStatus.status !== "connected") {
         throw new HttpError(409, "Connect WhatsApp before sending a message", "WHATSAPP_NOT_CONNECTED");
+      }
+      // Round 973: `attachment.url` is client-supplied -- re-derive the
+      // expected prefix and re-validate the filename against UPLOADED_FILENAME
+      // ourselves rather than trusting it, exactly like the existing
+      // record-file reference resolution a few hundred lines above this
+      // route does for a record's own file-type field value. A URL that
+      // doesn't match the one and only shape this project's own attachment
+      // upload route ever produces (including one for a DIFFERENT project)
+      // is rejected before it ever reaches path.join, so no attacker-chosen
+      // path segment is used, and only once it matches UPLOADED_FILENAME
+      // exactly is the already-isPathInsideDir-checked uploadsDir/.../filename
+      // combination ever opened.
+      let resolvedAttachment: WhatsAppAttachment | undefined;
+      if (attachment) {
+        const expectedPrefix = `/api/uploads/${project.id}/${WHATSAPP_ATTACHMENTS_DIRNAME}/`;
+        const filename = attachment.url.startsWith(expectedPrefix) ? attachment.url.slice(expectedPrefix.length) : null;
+        if (!filename || !UPLOADED_FILENAME.test(filename)) {
+          throw new HttpError(400, "Invalid attachment reference", "INVALID_ATTACHMENT");
+        }
+        const filePath = path.join(uploadsDir, project.id, WHATSAPP_ATTACHMENTS_DIRNAME, filename);
+        if (!isPathInsideDir(filePath, uploadsDir) || !existsSync(filePath)) {
+          throw new HttpError(400, "Attachment file is no longer available", "ATTACHMENT_FILE_GONE");
+        }
+        resolvedAttachment = { filePath, fileName: attachment.name, mimeType: attachment.mimeType };
       }
       // Unlike every sibling mutating route in this file (/roles,
       // /assumptions, /entities, /entities/:entityName/automations, the
@@ -2010,7 +2096,7 @@ export function createProjectsRouter(
         req.userId!,
         `POST /projects/${project.id}/integrations/whatsapp/send`,
         async () => {
-          const result = await whatsapp.sendMessage(project.id, to, message);
+          const result = await whatsapp.sendMessage(project.id, to, message, resolvedAttachment);
           // whatsapp.sendMessage() above is a genuine await (a real network
           // round-trip to the WhatsApp Web socket) -- the same reverse-direction
           // hazard DELETE /projects/:id's own comment documents for every other
@@ -2358,6 +2444,63 @@ export function createProjectsRouter(
             body: {
               file: {
                 url: `/api/uploads/${req.params.id}/${req.params.entityName}/${file.filename}`,
+                name: decodeMojibakeFilename(file.originalname),
+                size: file.size,
+                mimeType: file.mimetype,
+              },
+            },
+          };
+        },
+      );
+      res.status(status).json(body);
+    }),
+  );
+
+  /**
+   * Round 973: the manual-send counterpart of the entity file-field upload
+   * route above. Mirrors its idempotency/multer/error-handling shape
+   * exactly, minus the entity/field access checks (there is no entity or
+   * field here) and minus the UNSAFE_ENTITY_NAME check (WHATSAPP_ATTACHMENTS_DIRNAME
+   * is a fixed literal, not an untrusted path segment).
+   */
+  router.post(
+    "/projects/:id/integrations/whatsapp/attachments/upload",
+    whatsappRateLimiter,
+    asyncRoute(async (req, res) => {
+      const project = requireProjectWriteAccess(db, req.params.id, req.userId!);
+      const idempotencyKey = req.header("X-Idempotency-Key") || undefined;
+      const { status, body } = await withIdempotency(
+        db,
+        idempotencyKey,
+        req.userId!,
+        `POST /projects/${project.id}/integrations/whatsapp/attachments/upload`,
+        async () => {
+          await new Promise<void>((resolve, reject) => {
+            whatsappAttachmentUpload.single("file")(req, res, (err: unknown) => {
+              if (err instanceof MulterError) {
+                if (err.code === "LIMIT_FILE_SIZE") {
+                  reject(new HttpError(400, "File is too large (max 10 MB)", "FILE_TOO_LARGE"));
+                  return;
+                }
+                reject(new HttpError(400, "File upload failed", "UPLOAD_ERROR"));
+                return;
+              }
+              if (err) {
+                reject(err as Error);
+                return;
+              }
+              resolve();
+            });
+          });
+          const file = req.file;
+          if (!file) {
+            throw new HttpError(400, "No file was uploaded", "NO_FILE_UPLOADED");
+          }
+          return {
+            status: 200,
+            body: {
+              file: {
+                url: `/api/uploads/${req.params.id}/${WHATSAPP_ATTACHMENTS_DIRNAME}/${file.filename}`,
                 name: decodeMojibakeFilename(file.originalname),
                 size: file.size,
                 mimeType: file.mimetype,
