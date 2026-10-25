@@ -3585,11 +3585,28 @@ export function createProjectsRouter(
    * Access level matches the WhatsApp send route (requireProjectAccess,
    * not requireProjectOwner) -- any collaborator who can edit records can
    * already cause the same WhatsApp sends these rules automate.
+   *
+   * Round 975: that reasoning only ever covered an editor collaborator --
+   * a "viewer" categorically can't edit records (requireProjectWriteAccess
+   * blocks every write route, this list's own POST/PATCH/DELETE siblings
+   * included), so they can never cause the same side effect, yet
+   * requireProjectAccess above lets them through to this GET anyway.
+   * `webhookSecret` is a real external credential (sent as `Authorization:
+   * Bearer <webhookSecret>` to a third-party webhook destination -- see
+   * AutomationRule's own doc comment in packages/db/src/automations.ts),
+   * not project data in the ordinary sense -- unlike every other field on
+   * a rule, reading it lets its holder act against that external system
+   * entirely outside this app, well past what "view only, can't make
+   * changes" is supposed to mean. Redacted to null for a viewer; an owner
+   * or editor collaborator (who could just edit the rule to reveal it, or
+   * already cause the identical webhook POST by editing a record) sees it
+   * unchanged, exactly as before this round.
    */
   router.get(
     "/projects/:id/automations",
     asyncRoute(async (req, res) => {
       const project = requireProjectAccess(db, req.params.id, req.userId!);
+      const isViewer = project.ownerId !== req.userId && getCollaboratorRole(db, project.id, req.userId!) === "viewer";
       // Round 959: hasTooManyConsecutiveFailuresToday's own cap (rounds
       // 924/934/951) was always computed and acted on server-side, but
       // never surfaced -- only a "schedule"-trigger rule is ever checked
@@ -3599,6 +3616,7 @@ export function createProjectsRouter(
       const now = new Date();
       const rules = listAutomationRules(db, project.id).map((rule) => ({
         ...rule,
+        webhookSecret: isViewer ? null : rule.webhookSecret,
         pausedForToday: rule.trigger === "schedule" && rule.enabled ? hasTooManyConsecutiveFailuresToday(db, rule, now) : false,
       }));
       res.json({ rules });

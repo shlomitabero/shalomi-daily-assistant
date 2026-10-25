@@ -12623,6 +12623,88 @@ test("a webhook automation rule's webhookSecret is optional, round-trips through
 });
 
 /**
+ * Round 975: GET .../automations uses requireProjectAccess (any
+ * collaborator, viewer included), not requireProjectWriteAccess -- correct
+ * for every other field on a rule (a viewer genuinely can read this
+ * project's configuration), but webhookSecret is a real external
+ * credential (sent as Authorization: Bearer to a third-party webhook
+ * destination), not ordinary project data. A viewer categorically can't
+ * edit records or rules (every write route already rejects them), so
+ * unlike an editor, they could never cause the same webhook POST
+ * themselves -- yet before this round they could read the live secret
+ * straight out of this GET response and use it against that external
+ * system entirely outside the app. Confirms it's redacted to null for a
+ * viewer, while an editor (and the owner) still see the real value
+ * unchanged.
+ */
+test("GET .../automations redacts a webhook rule's webhookSecret for a 'viewer' collaborator, but not for an 'editor' collaborator or the owner", async () => {
+  await withServer(async (baseUrl, db) => {
+    const ownerEmail = `webhook-secret-rbac-owner-${randomUUID()}@example.com`;
+    const ownerToken = await signup(baseUrl, ownerEmail);
+    const owner = findUserByEmail(db, ownerEmail)!;
+    const viewerEmail = `webhook-secret-rbac-viewer-${randomUUID()}@example.com`;
+    const viewerToken = await signup(baseUrl, viewerEmail);
+    const editorEmail = `webhook-secret-rbac-editor-${randomUUID()}@example.com`;
+    const editorToken = await signup(baseUrl, editorEmail);
+
+    const spec: ProductSpec = {
+      summary: "test",
+      personas: [],
+      roles: ["Admin"],
+      entities: [{ name: "Order", fields: [{ name: "status", type: "text", required: true }] }],
+      screens: [],
+      assumptions: [],
+      openQuestions: [],
+    };
+    const projectId = randomUUID();
+    insertProject(db, { id: projectId, ownerId: owner.id, name: "Orders", description: "test", spec });
+    diffAndMigrate(db, projectId, undefined, spec);
+    markProjectBuilt(db, projectId);
+
+    const ruleRes = await fetch(`${baseUrl}/api/projects/${projectId}/entities/Order/automations`, {
+      method: "POST",
+      headers: authHeaders(ownerToken),
+      body: JSON.stringify({
+        trigger: "record_created",
+        actionType: "webhook",
+        toMode: "static",
+        messageTemplate: "New order!",
+        webhookUrl: "https://hooks.example.com/forge",
+        webhookSecret: "s3cr3t-token",
+      }),
+    });
+    assert.equal(ruleRes.status, 201);
+
+    const inviteViewer = await fetch(`${baseUrl}/api/projects/${projectId}/collaborators`, {
+      method: "POST",
+      headers: authHeaders(ownerToken),
+      body: JSON.stringify({ email: viewerEmail, role: "viewer" }),
+    });
+    assert.equal(inviteViewer.status, 201);
+    const inviteEditor = await fetch(`${baseUrl}/api/projects/${projectId}/collaborators`, {
+      method: "POST",
+      headers: authHeaders(ownerToken),
+      body: JSON.stringify({ email: editorEmail, role: "editor" }),
+    });
+    assert.equal(inviteEditor.status, 201);
+
+    const ownerListRes = await fetch(`${baseUrl}/api/projects/${projectId}/automations`, { headers: authHeaders(ownerToken) });
+    const { rules: ownerRules } = (await ownerListRes.json()) as { rules: { webhookSecret: string | null }[] };
+    assert.equal(ownerRules[0]!.webhookSecret, "s3cr3t-token", "the owner must still see the real secret");
+
+    const editorListRes = await fetch(`${baseUrl}/api/projects/${projectId}/automations`, { headers: authHeaders(editorToken) });
+    const { rules: editorRules } = (await editorListRes.json()) as { rules: { webhookSecret: string | null }[] };
+    assert.equal(editorRules[0]!.webhookSecret, "s3cr3t-token", "an editor must still see the real secret -- they could cause the identical webhook POST by editing a record");
+
+    const viewerListRes = await fetch(`${baseUrl}/api/projects/${projectId}/automations`, { headers: authHeaders(viewerToken) });
+    assert.equal(viewerListRes.status, 200, "a viewer must still be able to read the rule list itself");
+    const { rules: viewerRules } = (await viewerListRes.json()) as { rules: { webhookSecret: string | null; webhookUrl: string | null }[] };
+    assert.equal(viewerRules[0]!.webhookSecret, null, "a viewer must never see the real webhook secret");
+    assert.equal(viewerRules[0]!.webhookUrl, "https://hooks.example.com/forge", "only the secret is redacted -- every other field stays visible to a viewer as before");
+  });
+});
+
+/**
  * Real role enforcement (RBAC): until this round, "collaborator" was a
  * single flat grant -- identical full access to the owner, no exceptions
  * (see the "identical full access" tests above this one). This adds a
