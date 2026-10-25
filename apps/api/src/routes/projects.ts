@@ -167,7 +167,7 @@ const ScheduleTimezoneSchema = z
 
 const CreateAutomationRuleSchema = z
   .object({
-    trigger: z.enum(["record_created", "field_equals", "schedule"]),
+    trigger: z.enum(["record_created", "field_equals", "schedule", "record_deleted"]),
     fieldName: z.string().min(1).optional(),
     fieldValue: z.string().min(1).optional(),
     scheduleTimeUtc: z.string().regex(SCHEDULE_TIME_UTC_PATTERN, "scheduleTimeUtc must be \"HH:MM\" in 24-hour UTC").optional(),
@@ -213,7 +213,7 @@ const CreateAutomationRuleSchema = z
   });
 
 const UpdateAutomationRuleSchema = z.object({
-  trigger: z.enum(["record_created", "field_equals", "schedule"]).optional(),
+  trigger: z.enum(["record_created", "field_equals", "schedule", "record_deleted"]).optional(),
   fieldName: z.string().min(1).nullable().optional(),
   fieldValue: z.string().min(1).nullable().optional(),
   scheduleTimeUtc: z.string().regex(SCHEDULE_TIME_UTC_PATTERN, "scheduleTimeUtc must be \"HH:MM\" in 24-hour UTC").nullable().optional(),
@@ -3404,6 +3404,24 @@ export function createProjectsRouter(
           // retry), the same convention the create-record route's own
           // automations call already established.
           if (before) void deleteReplacedFileFields(uploadsDir, project.id, entity, before, null);
+          // Round 969: "record_deleted" rules fire here, off the same
+          // `before` snapshot just used for file cleanup above -- it's the
+          // only state a deleted row has left to interpolate a message or
+          // resolve a toMode:"field" destination from (fireRule never
+          // re-reads the record from the database). Deliberately no
+          // X-Suppress-Automations check here, unlike the create/update
+          // routes' own CSV-import-specific escape hatch -- there's no bulk-
+          // delete-via-backfill-import path at all (EntityPanel.tsx's own
+          // bulk-delete calls this exact single-record route once per row,
+          // the same way its bulk-duplicate already fires one
+          // "record_created" automation per duplicated row with no
+          // suppression), so a deliberate multi-select delete firing one
+          // "record_deleted" automation per record is the same intentional
+          // behavior as every other bulk *user* action already is, not the
+          // backfill-of-pre-existing-data case suppression exists for.
+          if (before) {
+            void runAutomationsForRecordChange(db, whatsapp, project, entity, "deleted", before, new Set(), uploadsDir, `${req.protocol}://${req.get("host")}`);
+          }
           return { status: 204, body: null };
         },
       );

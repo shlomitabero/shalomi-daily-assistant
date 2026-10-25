@@ -647,6 +647,7 @@ export function AutomationsPanel({
 
   function describeRule(rule: AutomationRuleView): string {
     if (rule.trigger === "record_created") return t("automations.rule.when.created", { entity: entityLabel(rule) });
+    if (rule.trigger === "record_deleted") return t("automations.rule.when.deleted", { entity: entityLabel(rule) });
     if (rule.trigger === "schedule") return describeSchedule(rule);
     return t("automations.rule.when.fieldEquals", {
       field: fieldLabel(rule, rule.fieldName),
@@ -930,6 +931,7 @@ export function AutomationsPanel({
               <option value="record_created">{t("automations.trigger.recordCreated")}</option>
               <option value="field_equals">{t("automations.trigger.fieldEquals")}</option>
               <option value="schedule">{t("automations.trigger.schedule")}</option>
+              <option value="record_deleted">{t("automations.trigger.recordDeleted")}</option>
             </select>
           </label>
 

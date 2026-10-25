@@ -2462,6 +2462,110 @@ test("POST .../entities/:entityName with X-Suppress-Automations skips the record
 });
 
 /**
+ * Round 969: the new "record_deleted" automation trigger -- DELETE
+ * /projects/:id/entities/:entityName/:recordId never called
+ * runAutomationsForRecordChange at all before this round, so there was no
+ * way to notify anyone (via WhatsApp or webhook) when a record was
+ * removed. Confirms the route now fires a record_deleted rule using the
+ * record's own last-known data (the "before" snapshot the route already
+ * fetches for file cleanup) -- both to interpolate the message template
+ * and to resolve a toMode:"field" destination, even though the row itself
+ * is already gone from the database by the time this runs.
+ */
+test("DELETE .../entities/:entityName/:recordId fires a record_deleted automation, interpolating and resolving the destination from the record's own data right before it was removed", async () => {
+  let createdSockets: ReturnType<typeof createFakeWhatsAppSocket>[] = [];
+  await withServer(
+    async (baseUrl, db) => {
+      const email = `record-deleted-automation-${randomUUID()}@example.com`;
+      const token = await signup(baseUrl, email);
+      const owner = findUserByEmail(db, email)!;
+
+      const spec: ProductSpec = {
+        summary: "test",
+        personas: [],
+        roles: ["Admin"],
+        entities: [
+          {
+            name: "Customer",
+            fields: [
+              { name: "name", type: "text", required: true },
+              { name: "phone", type: "text", required: true },
+            ],
+          },
+        ],
+        screens: [],
+        assumptions: [],
+        openQuestions: [],
+      };
+      const projectId = randomUUID();
+      insertProject(db, { id: projectId, ownerId: owner.id, name: "Customers", description: "test", spec });
+      diffAndMigrate(db, projectId, undefined, spec);
+      markProjectBuilt(db, projectId);
+
+      await fetch(`${baseUrl}/api/projects/${projectId}/integrations/whatsapp/connect`, { method: "POST", headers: authHeaders(token) });
+      createdSockets[0].sock.user = { id: "15550001111:1@s.whatsapp.net" };
+      createdSockets[0].emitConnectionUpdate({ connection: "open" });
+
+      const ruleRes = await fetch(`${baseUrl}/api/projects/${projectId}/entities/Customer/automations`, {
+        method: "POST",
+        headers: authHeaders(token),
+        body: JSON.stringify({
+          trigger: "record_deleted",
+          actionType: "send_whatsapp",
+          toMode: "field",
+          toField: "phone",
+          messageTemplate: "Goodbye {{name}}, your record was removed.",
+        }),
+      });
+      assert.equal(ruleRes.status, 201, "record_deleted must be accepted as a real trigger value");
+
+      const createRes = await fetch(`${baseUrl}/api/projects/${projectId}/entities/Customer`, {
+        method: "POST",
+        headers: authHeaders(token),
+        body: JSON.stringify({ name: "Dana Levi", phone: "972501234567" }),
+      });
+      assert.equal(createRes.status, 201);
+      const { record } = (await createRes.json()) as { record: { id: number } };
+
+      // record_created automations (there are none configured here) must
+      // not have fired anything yet -- this confirms the send below is
+      // genuinely from the deletion, not a leftover from creation.
+      assert.equal(createdSockets[0].sendCalls.length, 0);
+
+      const deleteRes = await fetch(`${baseUrl}/api/projects/${projectId}/entities/Customer/${record.id}`, {
+        method: "DELETE",
+        headers: authHeaders(token),
+      });
+      assert.equal(deleteRes.status, 204);
+
+      for (let i = 0; i < 40 && createdSockets[0].sendCalls.length === 0; i++) {
+        await new Promise((resolve) => setTimeout(resolve, 0));
+      }
+      assert.deepEqual(createdSockets[0].sendCalls, [
+        {
+          jid: "972501234567@s.whatsapp.net",
+          text: "Goodbye Dana Levi, your record was removed.",
+          content: { text: "Goodbye Dana Levi, your record was removed." },
+        },
+      ]);
+
+      // The record is genuinely gone -- the automation fired off the
+      // "before" snapshot, not a live re-read.
+      const listRes = await fetch(`${baseUrl}/api/projects/${projectId}/entities/Customer`, { headers: authHeaders(token) });
+      const { records } = (await listRes.json()) as { records: unknown[] };
+      assert.equal(records.length, 0);
+    },
+    {
+      whatsapp: (db) => {
+        const { manager, createdSockets: sockets } = createTestWhatsAppManager(db);
+        createdSockets = sockets;
+        return manager;
+      },
+    },
+  );
+});
+
+/**
  * Round 683: CSV import (EntityPanel.tsx's handleImportFile) now PATCHes a
  * row whose own leading "id" column matched an existing record, instead of
  * always POSTing a new one -- the exact same bulk-reimport-of-pre-existing-

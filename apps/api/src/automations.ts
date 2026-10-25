@@ -301,22 +301,38 @@ function resolveRelationFieldsForTemplate(
 
 /**
  * Whether a rule's own trigger matches this particular record create/
- * update. "field_equals" only fires on an update when the matching field
- * was actually part of this update's own payload (changedFields) -- not
- * merely whenever its current value happens to equal the target value --
- * so a rule for status="Delivered" fires once, the moment status is set
- * to "Delivered", not again on every later unrelated edit to that same
- * already-delivered record.
+ * update/delete. "field_equals" only fires on an update when the matching
+ * field was actually part of this update's own payload (changedFields) --
+ * not merely whenever its current value happens to equal the target
+ * value -- so a rule for status="Delivered" fires once, the moment status
+ * is set to "Delivered", not again on every later unrelated edit to that
+ * same already-delivered record.
+ *
+ * Round 969: "deleted" is deliberately excluded from ever matching
+ * "field_equals" (or "schedule", which never matches any record event at
+ * all) -- a rule for status="Delivered" fired on every record UPDATE that
+ * sets status to "Delivered", but a record about to be deleted isn't
+ * "being set to" its own current field values; without this explicit
+ * exclusion, a field_equals rule whose target value happened to match the
+ * record's last stored value would also silently fire on every single
+ * deletion of a record in that state, a behavior nobody configuring a
+ * field_equals rule asked for or would expect. A user who wants an
+ * automation on deletion has an explicit "record_deleted" trigger for
+ * exactly that, below.
  */
 export function matchesTrigger(
   rule: AutomationRule,
-  event: "created" | "updated",
+  event: "created" | "updated" | "deleted",
   record: EntityRecord,
   changedFields: Set<string>,
 ): boolean {
   if (rule.trigger === "record_created") {
     return event === "created";
   }
+  if (rule.trigger === "record_deleted") {
+    return event === "deleted";
+  }
+  if (event === "deleted") return false;
   if (!rule.fieldName) return false;
   if (event === "updated" && !changedFields.has(rule.fieldName)) return false;
   const actual = record[rule.fieldName];
@@ -326,22 +342,32 @@ export function matchesTrigger(
 
 /**
  * Evaluates every enabled automation rule for one entity against a single
- * record create/update, and fires any that match. Deliberately not meant
- * to be awaited inline on the record create/update route's own hot path
- * (see routes/projects.ts's own comment at the call site) -- a WhatsApp
- * send is a real network round-trip, and this side effect must never add
- * latency to, or fail, the record-save response the user is actually
- * waiting on. Every failure mode below (no destination number, not
- * connected, send error, project deleted mid-flight) is caught and
+ * record create/update/delete, and fires any that match. Deliberately not
+ * meant to be awaited inline on the record create/update/delete route's
+ * own hot path (see routes/projects.ts's own comment at the call site) --
+ * a WhatsApp send is a real network round-trip, and this side effect must
+ * never add latency to, or fail, the record-save response the user is
+ * actually waiting on. Every failure mode below (no destination number,
+ * not connected, send error, project deleted mid-flight) is caught and
  * recorded on the rule itself via recordAutomationRun, never thrown --
  * this function itself never rejects.
+ *
+ * Round 969: for a "deleted" event, `record` is the row's own last-known
+ * state immediately before deletion (the DELETE route's own `before`
+ * snapshot, already fetched there for file cleanup) -- fireRule below
+ * never re-reads the record from the database, so interpolating
+ * {{field}} placeholders, resolving a toMode:"field" destination, or
+ * finding a file attachment all still work off that same in-memory
+ * snapshot even though the row itself may already be gone by the time
+ * this actually runs (it's fire-and-forget, scheduled after the response
+ * already went out).
  */
 export async function runAutomationsForRecordChange(
   db: ForgeDatabase,
   whatsapp: WhatsAppWebManager,
   project: Project,
   entity: Entity,
-  event: "created" | "updated",
+  event: "created" | "updated" | "deleted",
   record: EntityRecord,
   changedFields: Set<string>,
   uploadsDir: string,

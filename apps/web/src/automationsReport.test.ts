@@ -62,6 +62,24 @@ test("formatAutomationsReport disambiguates two fields that share the same label
 });
 
 /**
+ * Round 969: this module's own hand-duplicated describeRule sibling
+ * (AutomationsPanel.tsx's own copy was fixed directly) needed the
+ * identical new "record_deleted" branch -- without it, a record_deleted
+ * rule would silently fall through to this function's own field_equals
+ * description instead, showing a nonsensical "becomes '...'" sentence for
+ * a trigger that was never field_equals at all.
+ */
+test("formatAutomationsReport describes a record_deleted rule with its own distinct wording, not the field_equals fallback", () => {
+  const t = (key: string, params?: Record<string, string | number>) => translate("en", key, params);
+  const rule = makeRule({ trigger: "record_deleted", fieldName: null, fieldValue: null });
+
+  const report = formatAutomationsReport([rule], [duplicateLabelOrderEntity], "Shop", "en", t);
+
+  assert.match(report, /deleted/i);
+  assert.equal(report.includes("becomes"), false, "must not fall through to the field_equals description");
+});
+
+/**
  * Round 952 regression test: the entity-level counterpart of the round-772
  * test just above -- the exact same bug class round 864 fixed in
  * AutomationsPanel.tsx's own live rule list (entityLabelOccurrences/

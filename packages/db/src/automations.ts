@@ -12,7 +12,16 @@ import { NotFoundError } from "./repository.js";
  * ("send_whatsapp") rather than hardcoded, so a future action type (e.g.
  * an in-app notification) is an additive change, not a rewrite.
  */
-export type AutomationTrigger = "record_created" | "field_equals" | "schedule";
+/**
+ * Round 969: "record_deleted" fires at the exact same point as
+ * "record_created" would for a brand-new row, but for a row that's about
+ * to be (or was just) removed -- see apps/api/src/automations.ts's own
+ * matchesTrigger/runAutomationsForRecordChange for how the "deleted"
+ * event reuses the pre-delete record's own last-known field values, the
+ * only state a deleted row has left to interpolate a message or resolve
+ * a toMode:"field" destination from.
+ */
+export type AutomationTrigger = "record_created" | "field_equals" | "schedule" | "record_deleted";
 export type AutomationActionType = "send_whatsapp" | "webhook";
 export type AutomationToMode = "static" | "field";
 export type AutomationLastStatus = "sent" | "failed" | null;

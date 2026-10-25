@@ -347,6 +347,52 @@ test("matchesTrigger: field_equals does not match when the record's value differ
   assert.equal(matchesTrigger(rule, "updated", { status: "Cancelled" }, new Set(["status"])), false);
 });
 
+/**
+ * Round 969: the new "record_deleted" trigger -- fires on the "deleted"
+ * event only, mirroring record_created's own "created"-only matching
+ * exactly.
+ */
+test("matchesTrigger: record_deleted only matches the 'deleted' event, never 'created' or 'updated'", () => {
+  const rule = insertAutomationRule(openDbForRuleOnly(), {
+    projectId: "p",
+    entityName: "Order",
+    trigger: "record_deleted",
+    actionType: "send_whatsapp",
+    toMode: "static",
+    toNumber: "972500000000",
+    messageTemplate: "Order {{orderId}} was deleted.",
+  });
+  assert.equal(matchesTrigger(rule, "deleted", { orderId: "A1" }, new Set()), true);
+  assert.equal(matchesTrigger(rule, "created", { orderId: "A1" }, new Set()), false);
+  assert.equal(matchesTrigger(rule, "updated", { orderId: "A1" }, new Set(["orderId"])), false);
+});
+
+/**
+ * Round 969: a "deleted" event must never match a field_equals rule, even
+ * when the record's own value matches that rule's target -- a record
+ * about to be deleted isn't "being set to" its own current field values,
+ * and a user who wants an automation specifically on deletion has the
+ * explicit "record_deleted" trigger (tested above) for exactly that.
+ * Without this exclusion, every field_equals rule whose target value
+ * happened to match a deleted record's last stored value would silently
+ * fire on every deletion too -- an unrelated trigger firing for a reason
+ * nobody configured it for.
+ */
+test("matchesTrigger: a 'deleted' event never matches a field_equals rule, even when the record's stored value matches the rule's target", () => {
+  const rule = insertAutomationRule(openDbForRuleOnly(), {
+    projectId: "p",
+    entityName: "Order",
+    trigger: "field_equals",
+    fieldName: "status",
+    fieldValue: "Delivered",
+    actionType: "send_whatsapp",
+    toMode: "static",
+    toNumber: "972500000000",
+    messageTemplate: "Delivered!",
+  });
+  assert.equal(matchesTrigger(rule, "deleted", { status: "Delivered" }, new Set()), false);
+});
+
 function openDbForRuleOnly() {
   const db = openDatabase(":memory:");
   ensureAutomationRulesTable(db);
