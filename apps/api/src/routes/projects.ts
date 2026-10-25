@@ -2051,13 +2051,11 @@ export function createProjectsRouter(
       // combination ever opened.
       let resolvedAttachment: WhatsAppAttachment | undefined;
       if (attachment) {
-        const expectedPrefix = `/api/uploads/${project.id}/${WHATSAPP_ATTACHMENTS_DIRNAME}/`;
-        const filename = attachment.url.startsWith(expectedPrefix) ? attachment.url.slice(expectedPrefix.length) : null;
-        if (!filename || !UPLOADED_FILENAME.test(filename)) {
+        const filePath = resolveWhatsAppAttachmentPath(project.id, attachment.url);
+        if (!filePath) {
           throw new HttpError(400, "Invalid attachment reference", "INVALID_ATTACHMENT");
         }
-        const filePath = path.join(uploadsDir, project.id, WHATSAPP_ATTACHMENTS_DIRNAME, filename);
-        if (!isPathInsideDir(filePath, uploadsDir) || !existsSync(filePath)) {
+        if (!existsSync(filePath)) {
           throw new HttpError(400, "Attachment file is no longer available", "ATTACHMENT_FILE_GONE");
         }
         resolvedAttachment = { filePath, fileName: attachment.name, mimeType: attachment.mimeType };
@@ -2079,6 +2077,22 @@ export function createProjectsRouter(
         `POST /projects/${project.id}/integrations/whatsapp/send`,
         async () => {
           const result = await whatsapp.sendMessage(project.id, to, message, resolvedAttachment);
+          // Round 979: resolvedAttachment is single-use -- whatsapp.sendMessage
+          // above (performSend, whatsappWeb.ts) already fully read it into
+          // memory before this await resolved, win or lose, and nothing else
+          // in this app ever references this exact uploaded file again (there
+          // is no record/automation tying it to anything, unlike an entity's
+          // own file-field upload). Deleting it now, regardless of whether
+          // the send itself succeeded, is what the record-file-field cleanup
+          // (deleteReplacedFileFields) already does for an entity's own
+          // uploads on every PATCH/DELETE -- without this, every test-send
+          // with an attachment (the feature's own common, intended usage)
+          // permanently grew this project's disk usage, with the only
+          // existing cleanup (deleteProjectUploads) being whole-project
+          // deletion.
+          if (resolvedAttachment) {
+            await rm(resolvedAttachment.filePath, { force: true }).catch(() => {});
+          }
           // whatsapp.sendMessage() above is a genuine await (a real network
           // round-trip to the WhatsApp Web socket) -- the same reverse-direction
           // hazard DELETE /projects/:id's own comment documents for every other
@@ -2439,6 +2453,24 @@ export function createProjectsRouter(
   );
 
   /**
+   * Round 979: resolves and validates a client-supplied WhatsApp attachment
+   * descriptor's `url` back to a real, safe filesystem path under THIS
+   * project's own WHATSAPP_ATTACHMENTS_DIRNAME -- shared by the send route
+   * (round 973) and the explicit delete route below, so both validate the
+   * identical way instead of two independently-maintained copies drifting
+   * apart. Returns null for anything that doesn't match the one shape this
+   * project's own upload route could ever have produced (including a URL
+   * for a DIFFERENT project); never throws.
+   */
+  function resolveWhatsAppAttachmentPath(projectId: string, url: string): string | null {
+    const expectedPrefix = `/api/uploads/${projectId}/${WHATSAPP_ATTACHMENTS_DIRNAME}/`;
+    const filename = url.startsWith(expectedPrefix) ? url.slice(expectedPrefix.length) : null;
+    if (!filename || !UPLOADED_FILENAME.test(filename)) return null;
+    const target = path.join(uploadsDir, projectId, WHATSAPP_ATTACHMENTS_DIRNAME, filename);
+    return isPathInsideDir(target, uploadsDir) ? target : null;
+  }
+
+  /**
    * Round 973: the manual-send counterpart of the entity file-field upload
    * route above. Mirrors its idempotency/multer/error-handling shape
    * exactly, minus the entity/field access checks (there is no entity or
@@ -2492,6 +2524,35 @@ export function createProjectsRouter(
         },
       );
       res.status(status).json(body);
+    }),
+  );
+
+  /**
+   * Round 979: the manual-remove/replace counterpart of the send route's
+   * own after-send cleanup -- a user who removes a chosen attachment (or
+   * picks a different file) before ever sending, or simply closes the
+   * panel, left that upload sitting on disk forever, with nothing short of
+   * deleting the whole project ever touching it (deleteProjectUploads).
+   * Best-effort and silently a no-op for anything that doesn't resolve to a
+   * real path under THIS project's own attachments directory -- a user who
+   * already sent (and so already had it cleaned up above), or whose
+   * reference is stale/invalid for any other reason, has nothing left here
+   * worth erroring over.
+   */
+  router.delete(
+    "/projects/:id/integrations/whatsapp/attachments",
+    whatsappRateLimiter,
+    asyncRoute(async (req, res) => {
+      const project = requireProjectWriteAccess(db, req.params.id, req.userId!);
+      const parsed = z.object({ url: z.string().min(1) }).safeParse(req.body ?? {});
+      if (!parsed.success) {
+        throw new HttpError(400, formatValidationError(parsed.error), "VALIDATION_ERROR");
+      }
+      const filePath = resolveWhatsAppAttachmentPath(project.id, parsed.data.url);
+      if (filePath) {
+        await rm(filePath, { force: true }).catch(() => {});
+      }
+      res.status(204).end();
     }),
   );
 

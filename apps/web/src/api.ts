@@ -1167,6 +1167,24 @@ export async function uploadWhatsAppAttachment(projectId: string, file: File): P
   return body.file;
 }
 
+/**
+ * Round 979: the manual-remove/replace counterpart of uploadWhatsAppAttachment
+ * above -- a chosen attachment the user removes (or replaces with a
+ * different file) before ever sending otherwise sat on disk forever, since
+ * only whole-project deletion ever touched that directory. Deliberately
+ * best-effort from the caller's own point of view too (WhatsAppPanel.tsx's
+ * handleRemoveAttachment/handleAttachmentChange never need to block or show
+ * an error for this -- the local React state change is what the user is
+ * actually waiting on).
+ */
+export function deleteWhatsAppAttachment(projectId: string, url: string): Promise<void> {
+  return request(`/projects/${projectId}/integrations/whatsapp/attachments`, {
+    method: "DELETE",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ url }),
+  });
+}
+
 export async function sendWhatsAppMessage(
   projectId: string,
   to: string,

@@ -5,6 +5,7 @@ import { useDialogFocusTrap } from "./useDialogFocusTrap.js";
 import {
   clearWhatsAppMessages,
   connectWhatsApp,
+  deleteWhatsAppAttachment,
   deleteWhatsAppMessage,
   disconnectWhatsApp,
   getWhatsAppStatus,
@@ -641,6 +642,16 @@ export function WhatsAppPanel({
     setUploadingAttachment(true);
     try {
       const uploaded = await uploadWhatsAppAttachment(projectId, chosen);
+      // Round 979: replacing an already-selected attachment with a
+      // different file otherwise left the first upload sitting on disk
+      // forever (nothing but whole-project deletion ever touched it) --
+      // only delete the OLD one once the new one has actually uploaded
+      // successfully, so a failed re-upload never loses the still-valid
+      // previous selection. Best-effort: nothing here needs to block on or
+      // react to this failing.
+      if (testAttachment) {
+        void deleteWhatsAppAttachment(projectId, testAttachment.url).catch(() => {});
+      }
       setTestAttachment({ url: uploaded.url, name: uploaded.name, mimeType: uploaded.mimeType });
     } catch (err) {
       setAttachmentError(err instanceof Error ? err.message : String(err));
@@ -649,7 +660,16 @@ export function WhatsAppPanel({
     }
   }
 
+  /**
+   * Round 979: the same orphaned-upload gap as handleAttachmentChange's own
+   * replace case just above -- removing a chosen attachment before ever
+   * sending it previously only ever cleared local React state, leaving the
+   * real upload on disk forever.
+   */
   function handleRemoveAttachment() {
+    if (testAttachment) {
+      void deleteWhatsAppAttachment(projectId, testAttachment.url).catch(() => {});
+    }
     setTestAttachment(null);
     setAttachmentError(null);
   }

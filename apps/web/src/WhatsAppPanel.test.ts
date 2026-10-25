@@ -1215,6 +1215,73 @@ test("WhatsAppPanel uploads a chosen attachment and includes its descriptor in t
 });
 
 /**
+ * Round 979: clicking "Remove" on a chosen attachment previously only ever
+ * cleared local React state -- the real upload stayed on disk forever,
+ * since nothing short of deleting the whole project ever touched that
+ * directory. Confirms the real DELETE request actually fires with the
+ * attachment's own url.
+ */
+test("WhatsAppPanel's attachment Remove button deletes the real upload from the server, not just the local state", async () => {
+  await withJsdom(async () => {
+    const originalFetch = globalThis.fetch;
+    let deleteRequest: { url: string } | undefined;
+    globalThis.fetch = (async (input: string, init?: RequestInit): Promise<Response> => {
+      const method = init?.method ?? "GET";
+      if (method === "GET" && input === "/api/projects/proj1/integrations/whatsapp/status") {
+        return new Response(
+          JSON.stringify({ status: "connected", phoneNumber: "972501234567", qrDataUrl: null, error: null }),
+          { status: 200, headers: { "content-type": "application/json" } },
+        );
+      }
+      if (method === "GET" && input === "/api/projects/proj1/integrations/whatsapp/messages") {
+        return new Response(JSON.stringify({ messages: [] }), { status: 200, headers: { "content-type": "application/json" } });
+      }
+      if (method === "POST" && input === "/api/projects/proj1/integrations/whatsapp/attachments/upload") {
+        return new Response(
+          JSON.stringify({ file: { url: "/api/uploads/proj1/_whatsapp-attachments/fake-uuid.pdf", name: "brochure.pdf", size: 9, mimeType: "application/pdf" } }),
+          { status: 200, headers: { "content-type": "application/json" } },
+        );
+      }
+      if (method === "DELETE" && input === "/api/projects/proj1/integrations/whatsapp/attachments") {
+        deleteRequest = JSON.parse(init!.body as string) as { url: string };
+        return new Response(null, { status: 204 });
+      }
+      throw new Error(`unexpected request ${method} ${input}`);
+    }) as typeof fetch;
+    try {
+      render(
+        React.createElement(
+          ThemeProvider,
+          null,
+          React.createElement(LanguageProvider, null, React.createElement(WhatsAppPanel, { projectId: "proj1", projectName: "Test Project", onClose: () => {}, onJumpToEntity: () => {}, onJumpToRecord: () => {}, entities: [], onCreateRecordFromMessage: () => {} })),
+        ),
+      );
+      await waitForCondition(() => document.querySelector(".whatsapp-test-form") !== null);
+
+      const fileInput = document.querySelector('.whatsapp-attachment-field input[type="file"]') as HTMLInputElement;
+      const file = new File(["%PDF-fake-brochure"], "brochure.pdf", { type: "application/pdf" });
+      Object.defineProperty(fileInput, "files", { value: [file] });
+      await act(async () => {
+        fireEvent.change(fileInput);
+      });
+      await waitForCondition(() => document.querySelector(".whatsapp-attachment-field .file-field-current") !== null);
+
+      const removeButton = Array.from(document.querySelectorAll(".whatsapp-attachment-field button")).find(
+        (b) => b.textContent === "Remove attachment",
+      ) as HTMLButtonElement;
+      assert.ok(removeButton, "expected a Remove button for the chosen attachment");
+      fireEvent.click(removeButton);
+
+      await waitForCondition(() => deleteRequest !== undefined);
+      assert.equal(deleteRequest!.url, "/api/uploads/proj1/_whatsapp-attachments/fake-uuid.pdf");
+      assert.equal(document.querySelector(".whatsapp-attachment-field .file-field-current"), null, "the local selection must still clear immediately");
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+});
+
+/**
  * New in this round: every other write-form in this app resets to empty
  * right after a successful submission (e.g. EntityPanel's own record form
  * clears right after createRecord succeeds) -- but this test-send form

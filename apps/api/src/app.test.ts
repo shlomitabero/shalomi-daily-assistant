@@ -9331,6 +9331,187 @@ test("POST .../integrations/whatsapp/send accepts an uploaded attachment and pas
 });
 
 /**
+ * Round 979: a manual test-send attachment was uploaded to disk but never
+ * deleted afterward -- not on a successful send, not on a failed one, and
+ * not when the user removed it or replaced it with a different file before
+ * ever sending. The only existing cleanup for this directory was whole-
+ * project deletion. Confirms the real file on disk is actually gone after
+ * a successful send (performSend has already fully read it into memory by
+ * the time this route's own cleanup runs, so deleting it afterward can
+ * never race the send itself).
+ */
+test("POST .../integrations/whatsapp/send deletes the attachment file from disk after a successful send", async () => {
+  let createdSockets: ReturnType<typeof createFakeWhatsAppSocket>[] = [];
+  await withServer(
+    async (baseUrl, _db, uploadsDir) => {
+      const token = await signup(baseUrl, "whatsapp-attach-cleanup1@example.com");
+      const createRes = await fetch(`${baseUrl}/api/projects`, {
+        method: "POST",
+        headers: authHeaders(token),
+        body: JSON.stringify({ description: "A CRM with customers and deals." }),
+      });
+      const { project } = (await createRes.json()) as { project: { id: string } };
+
+      await fetch(`${baseUrl}/api/projects/${project.id}/integrations/whatsapp/connect`, { method: "POST", headers: authHeaders(token) });
+      createdSockets[0].sock.user = { id: "15550005556:1@s.whatsapp.net" };
+      createdSockets[0].emitConnectionUpdate({ connection: "open" });
+
+      const formData = new FormData();
+      formData.append("file", new File(["%PDF-fake-brochure-contents"], "brochure.pdf", { type: "application/pdf" }));
+      const uploadRes = await fetch(`${baseUrl}/api/projects/${project.id}/integrations/whatsapp/attachments/upload`, {
+        method: "POST",
+        headers: { authorization: `Bearer ${token}` },
+        body: formData,
+      });
+      const uploadBody = (await uploadRes.json()) as { file: { url: string; name: string; mimeType: string } };
+      const filename = uploadBody.file.url.split("/").pop()!;
+      const filePath = path.join(uploadsDir, project.id, "_whatsapp-attachments", filename);
+      assert.ok(existsSync(filePath), "the fixture file must actually exist right after upload, or this test proves nothing");
+
+      const sendRes = await fetch(`${baseUrl}/api/projects/${project.id}/integrations/whatsapp/send`, {
+        method: "POST",
+        headers: authHeaders(token),
+        body: JSON.stringify({ to: "972501234567", message: "הנה הברושור", attachment: uploadBody.file }),
+      });
+      assert.equal(sendRes.status, 200);
+
+      assert.equal(existsSync(filePath), false, "the attachment file must be deleted from disk after a successful send");
+    },
+    {
+      whatsapp: (db) => {
+        const created = createTestWhatsAppManager(db);
+        createdSockets = created.createdSockets;
+        return created.manager;
+      },
+    },
+  );
+});
+
+/**
+ * Round 979: the same cleanup must happen even when the send itself FAILS
+ * -- the attachment was already fully read into memory by performSend
+ * before the failure was even known, so it's just as single-use and
+ * orphaned either way.
+ */
+test("POST .../integrations/whatsapp/send deletes the attachment file from disk even when the send itself fails", async () => {
+  let createdSockets: ReturnType<typeof createFakeWhatsAppSocket>[] = [];
+  await withServer(
+    async (baseUrl, _db, uploadsDir) => {
+      const token = await signup(baseUrl, "whatsapp-attach-cleanup2@example.com");
+      const createRes = await fetch(`${baseUrl}/api/projects`, {
+        method: "POST",
+        headers: authHeaders(token),
+        body: JSON.stringify({ description: "A CRM with customers and deals." }),
+      });
+      const { project } = (await createRes.json()) as { project: { id: string } };
+
+      await fetch(`${baseUrl}/api/projects/${project.id}/integrations/whatsapp/connect`, { method: "POST", headers: authHeaders(token) });
+      createdSockets[0].sock.user = { id: "15550005557:1@s.whatsapp.net" };
+      createdSockets[0].emitConnectionUpdate({ connection: "open" });
+
+      const formData = new FormData();
+      formData.append("file", new File(["%PDF-fake-brochure-contents"], "brochure.pdf", { type: "application/pdf" }));
+      const uploadRes = await fetch(`${baseUrl}/api/projects/${project.id}/integrations/whatsapp/attachments/upload`, {
+        method: "POST",
+        headers: { authorization: `Bearer ${token}` },
+        body: formData,
+      });
+      const uploadBody = (await uploadRes.json()) as { file: { url: string; name: string; mimeType: string } };
+      const filename = uploadBody.file.url.split("/").pop()!;
+      const filePath = path.join(uploadsDir, project.id, "_whatsapp-attachments", filename);
+
+      // Simulate a momentary socket write failure, same convention as this
+      // file's own existing "a failed send stays logged as failed" test.
+      createdSockets[0].sock.sendMessage = async () => {
+        throw new Error("socket write failed");
+      };
+
+      const sendRes = await fetch(`${baseUrl}/api/projects/${project.id}/integrations/whatsapp/send`, {
+        method: "POST",
+        headers: authHeaders(token),
+        body: JSON.stringify({ to: "972501234567", message: "הנה הברושור", attachment: uploadBody.file }),
+      });
+      assert.equal(sendRes.status, 502, "confirms this is really exercising the failure path, not a successful send");
+
+      assert.equal(existsSync(filePath), false, "the attachment file must be deleted from disk even though the send itself failed");
+    },
+    {
+      whatsapp: (db) => {
+        const created = createTestWhatsAppManager(db);
+        createdSockets = created.createdSockets;
+        return created.manager;
+      },
+    },
+  );
+});
+
+/**
+ * Round 979: the explicit, user-initiated remove/replace counterpart of the
+ * after-send cleanup above -- a user who removes a chosen attachment (or
+ * the frontend, when replacing it with a different file) before ever
+ * sending previously had no way to clean it up at all short of deleting
+ * the whole project.
+ */
+test("DELETE .../integrations/whatsapp/attachments removes the real file from disk", async () => {
+  await withServer(async (baseUrl, _db, uploadsDir) => {
+    const token = await signup(baseUrl, "whatsapp-attach-delete1@example.com");
+    const createRes = await fetch(`${baseUrl}/api/projects`, {
+      method: "POST",
+      headers: authHeaders(token),
+      body: JSON.stringify({ description: "A CRM with customers and deals." }),
+    });
+    const { project } = (await createRes.json()) as { project: { id: string } };
+
+    const formData = new FormData();
+    formData.append("file", new File(["%PDF-fake-contents"], "note.pdf", { type: "application/pdf" }));
+    const uploadRes = await fetch(`${baseUrl}/api/projects/${project.id}/integrations/whatsapp/attachments/upload`, {
+      method: "POST",
+      headers: { authorization: `Bearer ${token}` },
+      body: formData,
+    });
+    const uploadBody = (await uploadRes.json()) as { file: { url: string } };
+    const filename = uploadBody.file.url.split("/").pop()!;
+    const filePath = path.join(uploadsDir, project.id, "_whatsapp-attachments", filename);
+    assert.ok(existsSync(filePath), "the fixture file must actually exist right after upload, or this test proves nothing");
+
+    const deleteRes = await fetch(`${baseUrl}/api/projects/${project.id}/integrations/whatsapp/attachments`, {
+      method: "DELETE",
+      headers: authHeaders(token),
+      body: JSON.stringify({ url: uploadBody.file.url }),
+    });
+    assert.equal(deleteRes.status, 204);
+    assert.equal(existsSync(filePath), false, "the file must actually be deleted from disk, not just unreferenced in the response");
+  });
+});
+
+/**
+ * Round 979: the delete route is deliberately best-effort/silent for a
+ * reference that doesn't resolve to a real file (a stale/already-deleted
+ * attachment, or a URL for a different project entirely) -- the caller
+ * (WhatsAppPanel.tsx) never needs to distinguish "already gone" from
+ * "successfully deleted just now", and must never surface an error for
+ * either.
+ */
+test("DELETE .../integrations/whatsapp/attachments is a silent no-op for a reference that doesn't resolve to a real file", async () => {
+  await withServer(async (baseUrl) => {
+    const token = await signup(baseUrl, "whatsapp-attach-delete2@example.com");
+    const createRes = await fetch(`${baseUrl}/api/projects`, {
+      method: "POST",
+      headers: authHeaders(token),
+      body: JSON.stringify({ description: "A CRM with customers and deals." }),
+    });
+    const { project } = (await createRes.json()) as { project: { id: string } };
+
+    const deleteRes = await fetch(`${baseUrl}/api/projects/${project.id}/integrations/whatsapp/attachments`, {
+      method: "DELETE",
+      headers: authHeaders(token),
+      body: JSON.stringify({ url: `/api/uploads/${project.id}/_whatsapp-attachments/not-a-real-upload.pdf` }),
+    });
+    assert.equal(deleteRes.status, 204, "a reference to a file that never existed must still report success, not a 400/404");
+  });
+});
+
+/**
  * Round 973: `attachment.url` is client-supplied -- confirms the send route
  * never trusts it blindly. A URL pointing at a DIFFERENT project's own
  * attachments directory (even one that is otherwise perfectly well-formed)
