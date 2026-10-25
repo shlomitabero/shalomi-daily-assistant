@@ -11,6 +11,7 @@ import {
   listRecords,
   markProjectBuilt,
   orderForSeeding,
+  quoteIdentifier,
   tableNameFor,
   updateProjectSpec,
   ValidationError,
@@ -18,6 +19,7 @@ import {
   type MigrationChange,
 } from "@forge/db";
 import { requestSpecFix } from "@forge/spec-engine";
+import { deleteUploadedFile } from "./uploadPaths.js";
 
 const RESERVED_SQL_WORDS = new Set([
   "SELECT", "INSERT", "UPDATE", "DELETE", "TABLE", "FROM", "WHERE", "ORDER",
@@ -492,6 +494,13 @@ export interface PipelineOptions {
   previousSpec?: ProductSpec;
   nextSpec: ProductSpec;
   changeLabel: string;
+  // Round 977: lets this pipeline's own migration step clean up a file
+  // field's now-orphaned disk uploads when a refine retypes it away from
+  // "file" -- see cleanupFileFieldsRetypedAway's own doc comment below.
+  // /build never passes previousSpec at all, so diffAndMigrate's
+  // type_changed detection (which this depends on) never fires there
+  // regardless; harmless to pass this unconditionally anyway.
+  uploadsDir: string;
   // Only /refine passes this (the generateSpec() call it made just before
   // starting this pipeline); /build has no such call (it builds whatever
   // spec the project already has), so this stays undefined there. Carried
@@ -499,6 +508,46 @@ export interface PipelineOptions {
   // shape, so every existing SSE consumer (which assumes every frame is an
   // AgentStepEvent) keeps working unchanged.
   providerName?: string;
+}
+
+/**
+ * Round 977: diffAndMigrate's own type_changed detection (migrate.ts) is
+ * deliberately additive-only -- it never touches a retyped field's
+ * existing column DATA (see its own doc comment) -- but a field moving
+ * AWAY from "file" leaves every record's old upload permanently
+ * unreachable garbage, not just un-migrated: deleteReplacedFileFields
+ * (routes/projects.ts), the only cleanup mechanism that exists for a
+ * file-field upload, filters on the field's CURRENT type, so no future
+ * PATCH/DELETE on that entity's records will ever clean these up either
+ * once the field stops being "file".
+ *
+ * Reads each affected column's raw stored value directly via SQL, bypassing
+ * the normal listRecords/coerceValue path -- that would try to interpret
+ * the value as whatever NEW type the field became, not the original file
+ * descriptor JSON that's still physically sitting in the column (migrate.ts
+ * never ALTERs it; `sqlTypeFor` maps both "file" and "text" to the same
+ * SQL TEXT, and nothing re-writes existing rows on a type change regardless
+ * of the new type). `deleteUploadedFile`'s own JSON-shape check already
+ * no-ops harmlessly on anything that isn't a real file descriptor (a value
+ * written AFTER the retype, under the field's new type; NULL; etc.), so
+ * this never needs to reason about which rows are "really" still a file
+ * value versus already-reused for something else.
+ */
+export async function cleanupFileFieldsRetypedAway(db: ForgeDatabase, uploadsDir: string, projectId: string, changes: MigrationChange[]): Promise<void> {
+  const columnsByEntity = new Map<string, string[]>();
+  for (const change of changes) {
+    if (change.type === "type_changed" && change.fromType === "file" && change.toType !== "file" && change.entityName && change.column) {
+      if (!columnsByEntity.has(change.entityName)) columnsByEntity.set(change.entityName, []);
+      columnsByEntity.get(change.entityName)!.push(change.column);
+    }
+  }
+  for (const [entityName, columns] of columnsByEntity) {
+    const table = tableNameFor(projectId, entityName);
+    for (const column of columns) {
+      const rows = db.prepare(`SELECT ${quoteIdentifier(column)} AS val FROM ${quoteIdentifier(table)}`).all() as { val: unknown }[];
+      await Promise.all(rows.map((row) => deleteUploadedFile(uploadsDir, projectId, entityName, row.val)));
+    }
+  }
 }
 
 /**
@@ -593,6 +642,11 @@ export async function* runBuildPipeline(
       describeMigrationHazards(changes),
     detail: changes,
   };
+  // Round 977: once this migration has actually committed (the yield just
+  // above), clean up any file-field upload the type_changed entries in
+  // `changes` just made permanently unreachable -- see
+  // cleanupFileFieldsRetypedAway's own doc comment.
+  await cleanupFileFieldsRetypedAway(db, options.uploadsDir, project.id, changes);
   // Round 610 recorded the whole nextSpec into the durable history ledger
   // right here, so a later step (QA) stopping the build/refine before any
   // checkpoint got inserted couldn't orphan a new entity's real table.

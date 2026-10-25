@@ -11009,6 +11009,113 @@ test("restoring a checkpoint surfaces a migrationWarning when a reused column's 
 });
 
 /**
+ * Round 977: diffAndMigrate's own type_changed detection never touches a
+ * retyped field's existing column DATA (by design -- same test file's own
+ * migrationWarning tests just above confirm that), but it also never
+ * cleaned up a now-orphaned disk upload when the field moves AWAY from
+ * "file" -- deleteReplacedFileFields (the only other cleanup mechanism for
+ * a file-field upload) only ever matches the field's CURRENT type, so once
+ * it stops being "file" no future PATCH/DELETE on that entity's records
+ * would ever reach it either. Reproduces the exact real scenario: a field
+ * built as "file", a real record uploads a real file to it, then a
+ * checkpoint restore moves the field back to a non-"file" type from an
+ * earlier checkpoint -- the restore route is the simplest real path to
+ * this (no AI call to mock, unlike /refine), and shares the identical
+ * diffAndMigrate call pipeline.ts's own /refine path goes through.
+ */
+test("restoring a checkpoint that retypes a field away from 'file' deletes the now-orphaned upload from disk", async () => {
+  await withServer(async (baseUrl, db, uploadsDir) => {
+    const email = `restore-file-cleanup-${randomUUID()}@example.com`;
+    const token = await signup(baseUrl, email);
+    const user = findUserByEmail(db, email)!;
+
+    const specWithTextAttachment: ProductSpec = {
+      summary: "test",
+      personas: [],
+      roles: ["Admin"],
+      entities: [
+        {
+          name: "Document",
+          fields: [
+            { name: "title", type: "text", required: true },
+            { name: "attachment", type: "text", required: false },
+          ],
+        },
+      ],
+      screens: [],
+      assumptions: [],
+      openQuestions: [],
+    };
+    const specWithFileAttachment: ProductSpec = {
+      ...specWithTextAttachment,
+      entities: [
+        {
+          name: "Document",
+          fields: [
+            { name: "title", type: "text", required: true },
+            { name: "attachment", type: "file", required: false },
+          ],
+        },
+      ],
+    };
+
+    const projectId = randomUUID();
+    insertProject(db, {
+      id: projectId,
+      ownerId: user.id,
+      name: "Docs",
+      description: "A document tracker.",
+      spec: specWithTextAttachment,
+    });
+    diffAndMigrate(db, projectId, undefined, specWithTextAttachment);
+    const checkpoint = insertCheckpoint(db, {
+      id: randomUUID(),
+      projectId,
+      label: "Initial build",
+      kind: "build",
+      spec: specWithTextAttachment,
+    });
+
+    // Simulates a later refine that retypes "attachment" to a real file
+    // field, under the same name -- the physical column stays TEXT either
+    // way (sqlTypeFor maps both to the same SQL type), so this needs no
+    // ALTER to "work" well enough for a real upload to actually land there.
+    diffAndMigrate(db, projectId, specWithTextAttachment, specWithFileAttachment);
+    updateProjectSpec(db, projectId, specWithFileAttachment);
+
+    // A real uploaded file, on disk, exactly where the real upload route
+    // would have put it -- not a stand-in path.
+    const filename = `${randomUUID()}.pdf`;
+    const fileDir = path.join(uploadsDir, projectId, "Document");
+    mkdirSync(fileDir, { recursive: true });
+    const filePath = path.join(fileDir, filename);
+    writeFileSync(filePath, "%PDF-fake-contents");
+    assert.ok(existsSync(filePath), "the fixture file must actually exist before the restore, or this test would prove nothing");
+
+    insertRecord(db, projectId, specWithFileAttachment.entities[0], {
+      title: "Contract",
+      attachment: JSON.stringify({
+        url: `/api/uploads/${projectId}/Document/${filename}`,
+        name: "contract.pdf",
+        size: 19,
+        mimeType: "application/pdf",
+      }),
+    });
+
+    // Restoring the original checkpoint moves "attachment" back to "text"
+    // -- the exact transition that used to leave the real file above
+    // permanently orphaned on disk forever.
+    const restoreRes = await fetch(`${baseUrl}/api/projects/${projectId}/checkpoints/${checkpoint.id}/restore`, {
+      method: "POST",
+      headers: authHeaders(token),
+    });
+    assert.equal(restoreRes.status, 200);
+
+    assert.equal(existsSync(filePath), false, "the orphaned upload must actually be deleted from disk, not just left unreferenced");
+  });
+});
+
+/**
  * Round 956: unlike deleteCheckpoint (round 944, a plain 204 with nothing
  * to get wrong on replay), POST .../restore's response PAYLOAD itself
  * depends on reading project.spec BEFORE the restore overwrites it. A

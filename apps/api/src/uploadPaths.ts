@@ -1,3 +1,4 @@
+import { rm } from "node:fs/promises";
 import path from "node:path";
 
 /**
@@ -43,3 +44,41 @@ export function isPathInsideDir(candidate: string, dir: string): boolean {
  * build this same path and need this same guard).
  */
 export const UPLOADED_FILENAME = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}(\.[a-z0-9]{1,10})?$/;
+
+/**
+ * Deletes one `file`-type field's currently-stored upload from disk,
+ * best-effort. Moved here in round 977 (originally routes/projects.ts, round
+ * 674/848/849) so pipeline.ts's own migration-cleanup step (round 977) can
+ * reuse it too, without routes/projects.ts and pipeline.ts importing from
+ * each other in both directions.
+ *
+ * A `file` field's stored value is otherwise-unvalidated, client-settable
+ * JSON (coerceValue's "file" case falls through to its plain `String(raw)`
+ * default, same as any other untyped field -- see packages/db/
+ * repository.ts) -- so this can never be handed a value and trusted to
+ * resolve wherever its own embedded URL points. Only the filename's final
+ * path segment is used, and only once it matches UPLOADED_FILENAME exactly
+ * (the one shape this server itself ever generates).
+ *
+ * The project/entity directory segments are NOT inherently safe: entity.name
+ * (`EntitySchema`'s own `name` has no character-set restriction) can be
+ * anything a project's spec claims, including something path-traversal-
+ * shaped -- `isPathInsideDir` below is what actually constrains the
+ * resolved target back inside `uploadsDir`.
+ */
+export async function deleteUploadedFile(uploadsDir: string, projectId: string, entityName: string, rawValue: unknown): Promise<void> {
+  if (typeof rawValue !== "string" || rawValue === "") return;
+  let url: string;
+  try {
+    const parsed = JSON.parse(rawValue) as { url?: unknown };
+    if (typeof parsed.url !== "string") return;
+    url = parsed.url;
+  } catch {
+    return;
+  }
+  const filename = url.slice(url.lastIndexOf("/") + 1);
+  if (!UPLOADED_FILENAME.test(filename)) return;
+  const target = path.join(uploadsDir, projectId, entityName, filename);
+  if (!isPathInsideDir(target, uploadsDir)) return;
+  await rm(target, { force: true }).catch(() => {});
+}

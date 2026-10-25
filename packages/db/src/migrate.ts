@@ -230,6 +230,8 @@ export interface MigrationChange {
   table: string;
   /** For "automation_rule_disabled" at the entity level (the whole entity was removed), left undefined -- same convention as "new_table". */
   column?: string;
+  /** Round 977: only set for "type_changed" -- the spec's own entity name (as opposed to `table`, the sanitized/prefixed SQL table name), so a caller can resolve this back to the entity whose records to act on (pipeline.ts's own cleanupFileFieldsRetypedAway, for a field moved away from "file"). */
+  entityName?: string;
   /** Only set for "type_changed": the field's old and new declared type, for a message that says what actually changed. */
   fromType?: string;
   toType?: string;
@@ -447,6 +449,7 @@ export function diffAndMigrate(
             type: "type_changed",
             table,
             column: assertSafeIdentifier(field.name, "column"),
+            entityName: entity.name,
             fromType: prevField.type,
             toType: field.type,
           });

@@ -1,18 +1,24 @@
 import assert from "node:assert/strict";
+import { existsSync, mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import path from "node:path";
+import { randomUUID } from "node:crypto";
 import { test } from "node:test";
 import type { AgentStepEvent, Project, ProductSpec } from "@forge/shared";
 import {
   applyMigrations,
   countRecords,
   deleteRecord,
+  diffAndMigrate,
   ensureCheckpointsTable,
   ensureProjectsTable,
   insertProject,
+  insertRecord,
   listCheckpoints,
   listRecords,
   openDatabase,
 } from "@forge/db";
-import { carryForwardLabels, describeImpactHazards, runBuildPipeline, runQaChecks, runSecurityScan } from "./pipeline.js";
+import { carryForwardLabels, cleanupFileFieldsRetypedAway, describeImpactHazards, runBuildPipeline, runQaChecks, runSecurityScan } from "./pipeline.js";
 
 const brokenSpec: ProductSpec = {
   summary: "test",
@@ -2012,4 +2018,111 @@ test("a real refine through runBuildPipeline preserves an entity's previously-se
     "Clients",
     "the previously-set label must survive this unrelated refine, not silently revert to unset",
   );
+});
+
+/**
+ * Round 977: diffAndMigrate's own type_changed detection (migrate.ts) is
+ * deliberately additive-only -- it never touches a retyped field's
+ * existing column DATA -- but a field moving AWAY from "file" leaves every
+ * record's old upload permanently unreachable garbage, since
+ * deleteReplacedFileFields (routes/projects.ts, the only other cleanup
+ * mechanism for a file-field upload) only ever matches the field's CURRENT
+ * type. Direct unit coverage of the new cleanup helper itself, separate
+ * from app.test.ts's own end-to-end checkpoint-restore test for the same
+ * fix.
+ */
+test("cleanupFileFieldsRetypedAway deletes real uploads for columns that retyped away from 'file', and leaves everything else alone", async () => {
+  const uploadsDir = mkdtempSync(path.join(tmpdir(), "forge-pipeline-cleanup-test-"));
+  const projectId = "proj1";
+  const spec: ProductSpec = {
+    summary: "test",
+    personas: [],
+    roles: ["Admin"],
+    screens: [],
+    assumptions: [],
+    openQuestions: [],
+    entities: [
+      {
+        name: "Document",
+        fields: [
+          { name: "title", type: "text", required: true },
+          { name: "attachment", type: "file", required: false },
+        ],
+      },
+    ],
+  };
+  const db = openDatabase(":memory:");
+  applyMigrations(db, projectId, spec);
+
+  const fileDir = path.join(uploadsDir, projectId, "Document");
+  mkdirSync(fileDir, { recursive: true });
+
+  const realFilename = `${randomUUID()}.pdf`;
+  const realFilePath = path.join(fileDir, realFilename);
+  writeFileSync(realFilePath, "%PDF-fake-contents");
+  insertRecord(db, projectId, spec.entities[0], {
+    title: "Contract",
+    attachment: JSON.stringify({ url: `/api/uploads/${projectId}/Document/${realFilename}`, name: "contract.pdf", size: 19, mimeType: "application/pdf" }),
+  });
+
+  // A record whose "attachment" was never a real file descriptor at all
+  // (e.g. the field was blank, or a value written AFTER a later retype
+  // under some other new type) -- deleteUploadedFile's own JSON-shape
+  // check must no-op on this rather than throwing.
+  insertRecord(db, projectId, spec.entities[0], { title: "No attachment", attachment: null });
+
+  const nextSpec: ProductSpec = {
+    ...spec,
+    entities: [
+      {
+        name: "Document",
+        fields: [
+          { name: "title", type: "text", required: true },
+          { name: "attachment", type: "text", required: false },
+        ],
+      },
+    ],
+  };
+  const changes = diffAndMigrate(db, projectId, spec, nextSpec);
+  assert.ok(
+    changes.some((c) => c.type === "type_changed" && c.entityName === "Document" && c.fromType === "file" && c.toType === "text"),
+    "expected diffAndMigrate to report the exact type_changed entry this fix depends on",
+  );
+
+  await cleanupFileFieldsRetypedAway(db, uploadsDir, projectId, changes);
+
+  assert.equal(existsSync(realFilePath), false, "the real orphaned upload must actually be deleted from disk");
+});
+
+test("cleanupFileFieldsRetypedAway is a no-op when no field retyped away from 'file'", async () => {
+  const uploadsDir = mkdtempSync(path.join(tmpdir(), "forge-pipeline-cleanup-test-"));
+  const projectId = "proj1";
+  const spec: ProductSpec = {
+    summary: "test",
+    personas: [],
+    roles: ["Admin"],
+    screens: [],
+    assumptions: [],
+    openQuestions: [],
+    entities: [{ name: "Document", fields: [{ name: "title", type: "text", required: true }] }],
+  };
+  const db = openDatabase(":memory:");
+  applyMigrations(db, projectId, spec);
+
+  const fileDir = path.join(uploadsDir, projectId, "Document");
+  mkdirSync(fileDir, { recursive: true });
+  const filename = `${randomUUID()}.pdf`;
+  const filePath = path.join(fileDir, filename);
+  writeFileSync(filePath, "%PDF-fake-contents");
+
+  // No type_changed entries at all -- a plain additive refine.
+  const nextSpec: ProductSpec = {
+    ...spec,
+    entities: [{ name: "Document", fields: [{ name: "title", type: "text", required: true }, { name: "notes", type: "longtext", required: false }] }],
+  };
+  const changes = diffAndMigrate(db, projectId, spec, nextSpec);
+
+  await cleanupFileFieldsRetypedAway(db, uploadsDir, projectId, changes);
+
+  assert.equal(existsSync(filePath), true, "a file with no matching type_changed entry must never be touched");
 });

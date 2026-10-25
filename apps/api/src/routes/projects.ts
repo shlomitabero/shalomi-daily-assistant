@@ -60,13 +60,13 @@ import { enhancePrompt, generateSpec, isHebrewText, TEMPLATES } from "@forge/spe
 import { formatValidationError, HttpError } from "../httpError.js";
 import { requireAuth } from "../auth/middleware.js";
 import { createRateLimiter } from "../auth/rateLimit.js";
-import { carryForwardLabels, describeImpactHazards, runBuildPipeline } from "../pipeline.js";
+import { carryForwardLabels, cleanupFileFieldsRetypedAway, describeImpactHazards, runBuildPipeline } from "../pipeline.js";
 import { withIdempotency } from "../idempotency.js";
 import { generateExportFiles } from "../codegen.js";
 import { generateBackupZipEntries, parseColumnOrdersQueryParam } from "../backup.js";
 import { buildZip } from "../zip.js";
 import { computeBusinessTwin } from "../twin.js";
-import { isPathInsideDir, UPLOADED_FILENAME } from "../uploadPaths.js";
+import { deleteUploadedFile, isPathInsideDir, UPLOADED_FILENAME } from "../uploadPaths.js";
 import type { WhatsAppAttachment, WhatsAppWebManager } from "../whatsappWeb.js";
 import { findMatchingRecord } from "../whatsapp.js";
 import { fireRule, fireScheduledRule, hasTooManyConsecutiveFailuresToday, isAllowedWebhookUrl, runAutomationsForRecordChange } from "../automations.js";
@@ -881,55 +881,12 @@ export async function deleteProjectUploads(uploadsDir: string, projectId: string
   await rm(path.join(uploadsDir, projectId), { recursive: true, force: true }).catch(() => {});
 }
 
-/**
- * Deletes one `file`-type field's currently-stored upload from disk,
- * best-effort -- the per-record sibling of deleteProjectUploads above,
- * for round 674's own deferred follow-up: replacing a file field's value,
- * clearing it, or deleting the record it belongs to each orphans the old
- * upload forever, since deleteProjectUploads only ever runs on whole-
- * project/account deletion, not on an ordinary single-record edit.
- *
- * A `file` field's stored value is otherwise-unvalidated, client-settable
- * JSON (coerceValue's "file" case falls through to its plain `String(raw)`
- * default, same as any other untyped field -- see packages/db/
- * repository.ts) -- so this can never be handed a value and trusted to
- * resolve wherever its own embedded URL points. Only the filename's final
- * path segment is used, and only once it matches UPLOADED_FILENAME exactly
- * (the one shape this server itself ever generates).
- *
- * This comment previously claimed the project/entity directory segments
- * were safe because they "come solely from this route's own already-
- * authorized `project.id`/`entity.name`" -- round 848 proved that
- * assumption false for entity.name specifically (EntitySchema's own
- * `name` has no character-set restriction, and migrate.ts's own
- * tableNameFor sanitizes it for the SQL table only, never rejecting the
- * build or rewriting the spec's own stored value). Round 849 found this
- * exact function still reachable the same way: an entity named e.g.
- * "../../../tmp/evil" plus a crafted file-field value naming any
- * UUID-shaped filename (not necessarily one this server ever actually
- * wrote) lets a PATCH or DELETE on that entity's own record `rm()`
- * whatever that resolves to -- an arbitrary single-file-delete primitive,
- * constrained only to filenames matching UPLOADED_FILENAME's own shape
- * (which happens to be exactly how every legitimate upload is named, so
- * directly usable against another project's real uploads too). Now
- * guarded the same way round 848 guarded the upload-destination side.
- */
-async function deleteUploadedFile(uploadsDir: string, projectId: string, entityName: string, rawValue: unknown): Promise<void> {
-  if (typeof rawValue !== "string" || rawValue === "") return;
-  let url: string;
-  try {
-    const parsed = JSON.parse(rawValue) as { url?: unknown };
-    if (typeof parsed.url !== "string") return;
-    url = parsed.url;
-  } catch {
-    return;
-  }
-  const filename = url.slice(url.lastIndexOf("/") + 1);
-  if (!UPLOADED_FILENAME.test(filename)) return;
-  const target = path.join(uploadsDir, projectId, entityName, filename);
-  if (!isPathInsideDir(target, uploadsDir)) return;
-  await rm(target, { force: true }).catch(() => {});
-}
+// deleteUploadedFile (the per-record file-field cleanup -- replacing a
+// file field's value, clearing it, or deleting the record it belongs to)
+// moved to uploadPaths.ts in round 977, so pipeline.ts's own migration-
+// cleanup step there can reuse it too, without that module and this one
+// importing from each other in both directions. See uploadPaths.ts's own
+// doc comment for its full history (rounds 674/848/849).
 
 /**
  * Cleans up whichever `file`-type fields are about to stop being reachable
@@ -1704,6 +1661,7 @@ export function createProjectsRouter(
         await streamPipeline(res, db, project, {
           nextSpec: project.spec,
           changeLabel: isHebrewText(project.description) ? "בנייה ראשונית" : "Initial build",
+          uploadsDir,
         });
       } finally {
         activePipelines.delete(project.id);
@@ -1751,6 +1709,7 @@ export function createProjectsRouter(
           // entry.
           changeLabel: isHebrewText(project.description) ? `שיפור: ${instruction}` : `Refine: ${instruction}`,
           providerName,
+          uploadsDir,
         });
       } finally {
         activePipelines.delete(project.id);
@@ -1847,6 +1806,10 @@ export function createProjectsRouter(
           // labels win for any entity/field that survives under the same name.
           carryForwardLabels(currentSpec, checkpoint.spec);
           const changes = diffAndMigrate(db, project.id, currentSpec, checkpoint.spec);
+          // Round 977: a restore can retype a field away from "file" the
+          // exact same way a /refine can -- see cleanupFileFieldsRetypedAway's
+          // own doc comment (pipeline.ts).
+          await cleanupFileFieldsRetypedAway(db, uploadsDir, project.id, changes);
           const updated = updateProjectSpec(db, project.id, checkpoint.spec);
           // An older checkpoint being restored to isn't guaranteed to be a
           // safe, monotonically-looser move the way the data migration above

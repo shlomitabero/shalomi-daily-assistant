@@ -219,7 +219,7 @@ test("diffAndMigrate reports a type_changed entry (without altering the column) 
   };
   const changes = diffAndMigrate(db, "proj1", spec, nextSpec);
   assert.deepEqual(changes, [
-    { type: "type_changed", table: "entity_proj1_Customer", column: "status", fromType: "enum", toType: "text" },
+    { type: "type_changed", table: "entity_proj1_Customer", column: "status", entityName: "Customer", fromType: "enum", toType: "text" },
   ]);
 
   // The column's real SQL type in SQLite must be completely untouched --
