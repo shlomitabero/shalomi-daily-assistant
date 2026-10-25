@@ -1399,8 +1399,10 @@ test("the exported EntityView's commitPendingDelete restores the row and surface
  */
 test("the exported EntityView's handleSubmit saves only the field the user actually touched, instead of reviving every other field's stale pre-dialog value", async () => {
   const entityViewJsx = generateExportFiles(project).find((f) => f.path === "web/src/components/EntityView.jsx")!.content;
+  const invalidNumberFieldSrc = entityViewJsx.match(/function invalidNumberField\(field, value\) \{[\s\S]*?\n\}\n/)?.[0];
   const handleSubmitSrc = entityViewJsx.match(/async function handleSubmit\(e\) \{[\s\S]*?\n  \}\n/)?.[0];
   const startEditSrc = entityViewJsx.match(/function startEdit\(record\) \{[\s\S]*?\n  \}\n/)?.[0];
+  assert.ok(invalidNumberFieldSrc, "expected to find invalidNumberField in generated output");
   assert.ok(handleSubmitSrc, "expected to find an async handleSubmit in generated output");
   assert.ok(startEditSrc, "expected to find a startEdit in generated output");
 
@@ -1434,6 +1436,7 @@ test("the exported EntityView's handleSubmit saves only the field the user actua
     // regardless of when within a render it's (re-)computed.
     const requiredFileField = entity.fields.find((f) => f.type === "file" && f.required);
     const recordHasNoRequiredFile = requiredFileField && (form[requiredFileField.name] === "" || form[requiredFileField.name] == null);
+    ${invalidNumberFieldSrc}
     ${startEditSrc}
     ${handleSubmitSrc}
     return { startEdit, handleSubmit, getForm: () => form };
@@ -4694,8 +4697,15 @@ test("the exported EntityView's handleBulkDuplicate and handleBulkUpdate keep on
     assert.equal(refreshCalled, 1, "refresh() must still run to reflect the duplicates that succeeded");
   }
 
-  const handleBulkUpdateSrc = entityViewJsx.match(/async function handleBulkUpdate\(\) \{[\s\S]*?\n  \}\n/)?.[0];
-  assert.ok(handleBulkUpdateSrc, "expected to find handleBulkUpdate in generated output");
+  const handleBulkUpdateFnSrc = entityViewJsx.match(/async function handleBulkUpdate\(\) \{[\s\S]*?\n  \}\n/)?.[0];
+  assert.ok(handleBulkUpdateFnSrc, "expected to find handleBulkUpdate in generated output");
+  // Round 984: handleBulkUpdate now calls invalidNumberField (added in the
+  // same round) -- every downstream `${handleBulkUpdateSrc}` extraction
+  // below must carry its source too, or evaluating it throws a
+  // ReferenceError the instant handleBulkUpdate itself runs.
+  const invalidNumberFieldSrcForBulk = entityViewJsx.match(/function invalidNumberField\(field, value\) \{[\s\S]*?\n\}\n/)?.[0];
+  assert.ok(invalidNumberFieldSrcForBulk, "expected to find invalidNumberField in generated output");
+  const handleBulkUpdateSrc = `${invalidNumberFieldSrcForBulk}\n${handleBulkUpdateFnSrc}`;
   {
     let capturedError: string | undefined;
     let capturedSelectedIds: Set<number> | undefined;
@@ -4975,6 +4985,71 @@ test("the exported EntityView's handleBulkDuplicate and handleBulkUpdate keep on
     } finally {
       if (originalConfirm) (globalThis.window as unknown as { confirm: () => boolean }).confirm = originalConfirm;
     }
+  }
+});
+
+/**
+ * Round 984: a real bug introduced by round 980's own fix (not a
+ * pre-existing gap), found by a fresh Explore survey. Mirrors the live
+ * preview's own identical fix (EntityPanel.tsx). Round 980 switched a
+ * real "number" field's input from a native `<input type="number">`
+ * (whose own browser-level keystroke sanitization made a non-numeric
+ * string physically impossible to produce) to a plain text input with no
+ * such guard. The exported app's own handleBulkUpdate only ever
+ * pre-checked required-ness, never that a "number" field's value is
+ * actually numeric, so ordinary typo text now reached the server as-is,
+ * where request() showed the server's own bare, internal-field-name
+ * message verbatim -- unlabeled and unfriendly, same failure shape the
+ * required-field check right above already exists to avoid.
+ */
+test("the exported EntityView's handleBulkUpdate refuses a non-numeric value for a 'number' field before even asking for confirmation", async () => {
+  const entityViewJsx = generateExportFiles(project).find((f) => f.path === "web/src/components/EntityView.jsx")!.content;
+
+  const invalidNumberFieldSrc = entityViewJsx.match(/function invalidNumberField\(field, value\) \{[\s\S]*?\n\}\n/)?.[0];
+  const handleBulkUpdateSrc = entityViewJsx.match(/async function handleBulkUpdate\(\) \{[\s\S]*?\n  \}\n/)?.[0];
+  assert.ok(invalidNumberFieldSrc && handleBulkUpdateSrc, "expected to find invalidNumberField and handleBulkUpdate in generated output");
+
+  const originalConfirm = globalThis.window?.confirm;
+  let confirmCalled = false;
+  let capturedError: string | undefined;
+  let updateCalled = false;
+  (globalThis.window as unknown as { confirm: () => boolean }).confirm = () => {
+    confirmCalled = true;
+    return true;
+  };
+  try {
+    const fn = new Function(
+      "bulkActionBusy",
+      "entity",
+      "bulkEditField",
+      "bulkEditValue",
+      "selectedIds",
+      "setBulkActionBusy",
+      "setSelectedIds",
+      "setError",
+      "updateRecord",
+      "refresh",
+      `${invalidNumberFieldSrc}\n${handleBulkUpdateSrc}\nreturn handleBulkUpdate;`,
+    )(
+      false,
+      { name: "Order", fields: [{ name: "amount", label: "Amount", type: "number", required: false }] },
+      "amount",
+      "abc",
+      new Set([1, 2, 3]),
+      () => {},
+      () => {},
+      (msg: string) => (capturedError = msg),
+      async () => {
+        updateCalled = true;
+      },
+      async () => {},
+    );
+    await fn();
+    assert.match(capturedError!, /"Amount" must be a number/, "must name the field, not let the bad string reach the server");
+    assert.equal(confirmCalled, false, "must refuse before even asking for confirmation");
+    assert.equal(updateCalled, false, "must not call updateRecord at all when the chosen value isn't actually numeric");
+  } finally {
+    if (originalConfirm) (globalThis.window as unknown as { confirm: () => boolean }).confirm = originalConfirm;
   }
 });
 
@@ -13077,10 +13152,14 @@ test("the exported EntityView supports double-click inline cell editing, ported 
 test("the exported EntityView's generated inline cell editor suppresses a stale post-commit blur instead of sending a second real PATCH for the same value", async () => {
   const entityViewJsx = generateExportFiles(project).find((f) => f.path === "web/src/components/EntityView.jsx")!.content;
 
+  const invalidNumberFieldSrc = entityViewJsx.match(/function invalidNumberField\(field, value\) \{[\s\S]*?\n\}\n/)?.[0];
   const commitSrc = entityViewJsx.match(/async function commitInlineEdit\(\) \{[\s\S]*?\n {2}\}\n/)?.[0];
   const cancelSrc = entityViewJsx.match(/function cancelInlineEdit\(\) \{[\s\S]*?\n {2}\}\n/)?.[0];
   const blurSrc = entityViewJsx.match(/function handleCellBlur\(\) \{[\s\S]*?\n {2}\}\n/)?.[0];
-  assert.ok(commitSrc && cancelSrc && blurSrc, "expected to find commitInlineEdit/cancelInlineEdit/handleCellBlur in generated output");
+  assert.ok(
+    invalidNumberFieldSrc && commitSrc && cancelSrc && blurSrc,
+    "expected to find invalidNumberField/commitInlineEdit/cancelInlineEdit/handleCellBlur in generated output",
+  );
 
   const state: { editingCell: { recordId: number; field: string } | null; cellDraft: unknown } = {
     editingCell: { recordId: 1, field: "name" },
@@ -13101,7 +13180,7 @@ test("the exported EntityView's generated inline cell editor suppresses a stale 
       "refresh",
       "setError",
       "setMoveErrorId",
-      `${commitSrc}\n${cancelSrc}\n${blurSrc}\nreturn { commitInlineEdit, handleCellBlur };`,
+      `${invalidNumberFieldSrc}\n${commitSrc}\n${cancelSrc}\n${blurSrc}\nreturn { commitInlineEdit, handleCellBlur };`,
     )(
       state.editingCell,
       state.cellDraft,
@@ -13175,6 +13254,149 @@ test("the exported EntityView's generated inline cell editor refuses to commit a
 
   assert.match(capturedError!, /"Name" is a required field/, "must name the required field, mirroring handleBulkUpdate's own message");
   assert.equal(updateCalled, false, "must not call updateRecord at all when the edited cell's field is required and blank");
+});
+
+/**
+ * Round 984: a real bug introduced by round 980's own fix (not a
+ * pre-existing gap), found by a fresh Explore survey. Mirrors the live
+ * preview's own identical fix (EntityPanel.tsx) and the exported app's
+ * own handleBulkUpdate fix just above. The exported app's own
+ * commitInlineEdit only ever pre-checked required-ness, never that a
+ * "number" field's value is actually numeric -- see invalidNumberField's
+ * own doc comment.
+ */
+test("the exported EntityView's generated inline cell editor refuses to commit a non-numeric value for a 'number' field, instead of sending a doomed PATCH", async () => {
+  const entityViewJsx = generateExportFiles(project).find((f) => f.path === "web/src/components/EntityView.jsx")!.content;
+
+  const invalidNumberFieldSrc = entityViewJsx.match(/function invalidNumberField\(field, value\) \{[\s\S]*?\n\}\n/)?.[0];
+  const commitSrc = entityViewJsx.match(/async function commitInlineEdit\(\) \{[\s\S]*?\n {2}\}\n/)?.[0];
+  assert.ok(invalidNumberFieldSrc && commitSrc, "expected to find invalidNumberField and commitInlineEdit in generated output");
+
+  let capturedError: string | undefined;
+  let updateCalled = false;
+  const fn = new Function(
+    "editingCell",
+    "cellDraft",
+    "suppressCellBlurCommitRef",
+    "entity",
+    "setEditingCell",
+    "updateRecord",
+    "refresh",
+    "setError",
+    "setMoveErrorId",
+    `${invalidNumberFieldSrc}\n${commitSrc}\nreturn commitInlineEdit;`,
+  )(
+    { recordId: 1, field: "amount" },
+    "abc",
+    { current: false },
+    { name: "Order", fields: [{ name: "amount", label: "Amount", type: "number", required: false }] },
+    () => {},
+    async () => {
+      updateCalled = true;
+    },
+    async () => {},
+    (msg: string) => {
+      capturedError = msg;
+    },
+    () => {},
+  ) as () => Promise<void>;
+
+  await fn();
+
+  assert.match(capturedError!, /"Amount" must be a number/, "must name the field, not let the bad string reach the server");
+  assert.equal(updateCalled, false, "must not call updateRecord at all when the edited cell's value isn't actually numeric");
+});
+
+/**
+ * Round 984: a real bug introduced by round 980's own fix (not a
+ * pre-existing gap), found by a fresh Explore survey. Mirrors the live
+ * preview's own identical fix (EntityPanel.tsx) and the exported app's
+ * own handleBulkUpdate/commitInlineEdit fixes just above, for the main
+ * single-record Add/edit form's own handleSubmit. Drives the real
+ * generated EntityView component (handleSubmit has too many closure
+ * dependencies -- form, editingId, etc. -- to extract cleanly via regex
+ * the way the simpler handlers above do).
+ */
+test("the exported EntityView's Add form refuses a non-numeric value for a 'number' field, instead of sending a doomed POST", async () => {
+  const withOrder: Project = {
+    ...project,
+    spec: {
+      ...project.spec,
+      entities: [
+        ...project.spec.entities,
+        {
+          name: "Order",
+          label: "Order",
+          fields: [
+            { name: "client", label: "Client", type: "text", required: true },
+            { name: "amount", label: "Amount", type: "number", required: false },
+          ],
+        },
+      ],
+    },
+  };
+  const files = generateExportFiles(withOrder);
+  const dir = writeGeneratedWebComponent(files);
+  const originalFetch = globalThis.fetch;
+  let postCalled = false;
+  globalThis.fetch = (async (input: string, init?: RequestInit): Promise<Response> => {
+    const method = init?.method ?? "GET";
+    if (method === "GET" && input === "/api/Order") {
+      return new Response(JSON.stringify({ records: [] }), { status: 200, headers: { "content-type": "application/json" } });
+    }
+    if (method === "POST" && input === "/api/Order") {
+      postCalled = true;
+      return new Response(JSON.stringify({ record: { id: 1 } }), { status: 201 });
+    }
+    throw new Error(`unexpected request ${method} ${input}`);
+  }) as typeof fetch;
+
+  try {
+    await withRealLocalStorage(async () => {
+      const { EntityView } = await import(path.join(dir, "web", "src", "components", "EntityView.jsx"));
+      const orderEntity = withOrder.spec.entities.find((e) => e.name === "Order")!;
+      const props = {
+        entity: orderEntity,
+        highlightRecordId: null,
+        onHighlightHandled: () => {},
+        onJumpToRecord: () => {},
+        onRecordCountChange: () => {},
+      };
+
+      const { container } = render(React.createElement(EntityView, props));
+      for (let i = 0; i < 40; i++) {
+        if (container.querySelector(".record-form")) break;
+        await act(async () => {
+          await new Promise((resolve) => setTimeout(resolve, 0));
+        });
+      }
+      const form = container.querySelector(".record-form") as HTMLFormElement;
+      assert.ok(form, "expected the record form to render");
+
+      const clientInput = form.querySelector('input[type="text"]') as HTMLInputElement;
+      await act(async () => {
+        fireEvent.change(clientInput, { target: { value: "Widget Co" } });
+      });
+      const amountInput = form.querySelector('input[inputmode="decimal"]') as HTMLInputElement;
+      assert.ok(amountInput, "expected the number field's own decimal-keyboard-hint input");
+      await act(async () => {
+        fireEvent.change(amountInput, { target: { value: "not-a-number" } });
+      });
+
+      await act(async () => {
+        fireEvent.submit(form);
+      });
+
+      assert.equal(postCalled, false, "a new Order record must never actually be created with a non-numeric amount");
+      const errorEl = container.querySelector("p.error");
+      assert.ok(errorEl, "expected a specific error message");
+      assert.match(errorEl!.textContent ?? "", /"Amount" must be a number/, "must name the field, not the generic 'is a required field' wording");
+    });
+  } finally {
+    globalThis.fetch = originalFetch;
+    cleanup();
+    rmSync(dir, { recursive: true, force: true });
+  }
 });
 
 /**

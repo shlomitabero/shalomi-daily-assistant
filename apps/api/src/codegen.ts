@@ -3442,6 +3442,24 @@ function BoardCard({ orderedFields, boardField, record, relatedRecords, highligh
   );
 }
 
+// Round 984: mirrors the live preview's own identical helper
+// (EntityPanel.tsx). Switching a real "number" field's input to plain
+// text (round 980, right below) removed the one thing that used to make
+// a non-numeric string physically impossible to get into form/cellDraft/
+// bulkEditValue: the browser's own keystroke-level number-input
+// sanitization. Without this check, ordinary typo text typed into a
+// "number" field now reaches the server as-is, where coerceValue rejects
+// it with its own bare internal-field-name message (this exported app
+// has no translation layer to override it with a generic one the way the
+// live preview's resolveErrorMessage does, but the message is still
+// unlabeled/unfriendly without this check catching it first).
+function invalidNumberField(field, value) {
+  if (field.type !== "number") return false;
+  const trimmed = String(value ?? "").trim();
+  if (trimmed === "") return false;
+  return !Number.isFinite(Number(trimmed));
+}
+
 // autoFocus/onBlur/onKeyDown are only ever set by the entity table's own
 // inline cell editor (see EntityView's editingCell state) -- the plain
 // add/edit form below the table never passes these, so a field there
@@ -4695,6 +4713,13 @@ export function EntityView({ entity, highlightRecordId, onHighlightHandled, onJu
       setError(\`"\${missingField.label || missingField.name}" is a required field\`);
       return;
     }
+    // Round 984: mirrors missingField just above for the "present but not
+    // actually numeric" case -- see invalidNumberField's own doc comment.
+    const invalidField = entity.fields.find((f) => invalidNumberField(f, form[f.name]));
+    if (invalidField) {
+      setError(\`"\${invalidField.label || invalidField.name}" must be a number\`);
+      return;
+    }
     // Nothing disables startEdit/startCreateNew/the in-form Delete button
     // while this submit's own await is still pending -- a slow save
     // resolving after the user has already clicked Edit on a different
@@ -5020,6 +5045,13 @@ export function EntityView({ entity, highlightRecordId, onHighlightHandled, onJu
       setError(\`"\${bulkEditFieldDef.label || bulkEditFieldDef.name}" is a required field\`);
       return;
     }
+    // Round 984: mirrors the required-field check just above for the
+    // "present but not actually numeric" case -- see invalidNumberField's
+    // own doc comment.
+    if (bulkEditFieldDef && invalidNumberField(bulkEditFieldDef, bulkEditValue)) {
+      setError(\`"\${bulkEditFieldDef.label || bulkEditFieldDef.name}" must be a number\`);
+      return;
+    }
     if (!window.confirm(\`Set this field on \${ids.length} records? This cannot be undone.\`)) return;
     setBulkActionBusy(true);
     setError(null);
@@ -5090,6 +5122,14 @@ export function EntityView({ entity, highlightRecordId, onHighlightHandled, onJu
     // identical fix above.
     if (fieldDef?.required && String(value ?? "").trim() === "") {
       setError(\`"\${fieldDef.label || fieldDef.name}" is a required field\`);
+      setMoveErrorId(recordId);
+      return;
+    }
+    // Round 984: mirrors the required-field check just above for the
+    // "present but not actually numeric" case -- see invalidNumberField's
+    // own doc comment.
+    if (fieldDef && invalidNumberField(fieldDef, value)) {
+      setError(\`"\${fieldDef.label || fieldDef.name}" must be a number\`);
       setMoveErrorId(recordId);
       return;
     }

@@ -107,6 +107,32 @@ interface PendingDelete {
   timeoutId: ReturnType<typeof setTimeout>;
 }
 
+/**
+ * Round 980 switched a real "number" field's input from a native
+ * `<input type="number">` to a plain text input (to let a leading "-" be
+ * typed at all -- see that round's own comment on FieldInput below), which
+ * also removed the one thing that used to make a non-numeric string
+ * physically impossible to get into `form`/`cellDraft`/`bulkEditValue` in
+ * the first place: the browser's own keystroke-level number-input
+ * sanitization. Without a client-side check, ordinary text typed into a
+ * "number" field (e.g. a typo like "1o0") now reaches the server as-is,
+ * where `coerceValue` (packages/db/src/repository.ts) rejects it with a
+ * real, field-specific message -- but that message never reaches the
+ * user: `resolveErrorMessage` always overrides a VALIDATION_ERROR response
+ * with the generic, field-agnostic "check the form" banner, the exact
+ * failure shape this file's own `missingField` checks already exist to
+ * avoid for a required-but-empty field. Mirrors that same pattern for a
+ * present-but-non-numeric value instead of an empty one; emptiness itself
+ * is deliberately left to the caller's own trim-based required check, not
+ * reported as a numeric error here.
+ */
+function invalidNumberField(field: Field, value: unknown): boolean {
+  if (field.type !== "number") return false;
+  const trimmed = String(value ?? "").trim();
+  if (trimmed === "") return false;
+  return !Number.isFinite(Number(trimmed));
+}
+
 function emptyForm(entity: Entity): Record<string, unknown> {
   const form: Record<string, unknown> = {};
   for (const field of entity.fields) {
@@ -2655,6 +2681,15 @@ export function EntityPanel({
       setError(t("entity.form.requiredField", { field: missingField.label ?? missingField.name }));
       return;
     }
+    // Round 984: mirrors missingField just above for the "present but not
+    // actually numeric" case, the exact same generic-banner regression
+    // round 980 reopened for "number" fields -- see invalidNumberField's
+    // own doc comment.
+    const invalidField = entity.fields.find((f) => invalidNumberField(f, form[f.name]));
+    if (invalidField) {
+      setError(t("entity.form.invalidNumber", { field: invalidField.label ?? invalidField.name }));
+      return;
+    }
     // Nothing disables startEdit/startCreateNew/the in-form Delete button
     // while this submit's own await is still pending -- a slow save for
     // record A resolving after the user has already clicked Edit on a
@@ -3068,6 +3103,13 @@ export function EntityPanel({
       setError(t("entity.form.requiredField", { field: bulkEditFieldDef.label ?? bulkEditFieldDef.name }));
       return;
     }
+    // Round 984: mirrors the required-field check just above for the
+    // "present but not actually numeric" case -- see invalidNumberField's
+    // own doc comment.
+    if (bulkEditFieldDef && invalidNumberField(bulkEditFieldDef, bulkEditValue)) {
+      setError(t("entity.form.invalidNumber", { field: bulkEditFieldDef.label ?? bulkEditFieldDef.name }));
+      return;
+    }
     if (!window.confirm(t("entity.bulk.confirmUpdate", { count: ids.length }))) return;
     setBulkActionBusy(true);
     setError(null);
@@ -3397,6 +3439,14 @@ export function EntityPanel({
     // past this friendly check into the generic server-side rejection.
     if (fieldDef?.required && String(value ?? "").trim() === "") {
       setError(t("entity.form.requiredField", { field: fieldDef.label ?? fieldDef.name }));
+      setMoveErrorId(recordId);
+      return;
+    }
+    // Round 984: mirrors the required-field check just above for the
+    // "present but not actually numeric" case -- see invalidNumberField's
+    // own doc comment.
+    if (fieldDef && invalidNumberField(fieldDef, value)) {
+      setError(t("entity.form.invalidNumber", { field: fieldDef.label ?? fieldDef.name }));
       setMoveErrorId(recordId);
       return;
     }

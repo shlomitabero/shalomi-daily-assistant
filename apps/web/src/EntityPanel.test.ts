@@ -830,9 +830,10 @@ test("EntityPanel's 'Clear selection' button empties the current selection witho
  * loop from even attempting the remaining ids.
  */
 test("EntityPanel's handleBulkUpdate refreshes and keeps only the ids that actually failed selected, instead of one rejection hiding the updates that succeeded", async () => {
+  const helperMatch = entityPanelSrc.match(/function invalidNumberField\(field: Field, value: unknown\): boolean \{[\s\S]*?\n\}\n/);
   const handlerMatch = entityPanelSrc.match(/ {2}async function handleBulkUpdate\(\) \{[\s\S]*?\n {2}\}\n/);
-  assert.ok(handlerMatch, "expected to find handleBulkUpdate in EntityPanel.tsx");
-  const { code } = transformSync(handlerMatch![0], { loader: "ts" });
+  assert.ok(helperMatch && handlerMatch, "expected to find invalidNumberField and handleBulkUpdate in EntityPanel.tsx");
+  const { code } = transformSync(`${helperMatch![0]}\n${handlerMatch![0]}`, { loader: "ts" });
 
   let capturedError: string | undefined;
   let capturedSelectedIds: Set<number> | undefined;
@@ -924,9 +925,10 @@ test("EntityPanel's handleBulkUpdate refreshes and keeps only the ids that actua
  * own window.confirm guard, which already protects the sibling action.
  */
 test("EntityPanel's handleBulkUpdate asks for confirmation before applying, and does nothing at all if the user cancels", async () => {
+  const helperMatch = entityPanelSrc.match(/function invalidNumberField\(field: Field, value: unknown\): boolean \{[\s\S]*?\n\}\n/);
   const handlerMatch = entityPanelSrc.match(/ {2}async function handleBulkUpdate\(\) \{[\s\S]*?\n {2}\}\n/);
-  assert.ok(handlerMatch, "expected to find handleBulkUpdate in EntityPanel.tsx");
-  const { code } = transformSync(handlerMatch![0], { loader: "ts" });
+  assert.ok(helperMatch && handlerMatch, "expected to find invalidNumberField and handleBulkUpdate in EntityPanel.tsx");
+  const { code } = transformSync(`${helperMatch![0]}\n${handlerMatch![0]}`, { loader: "ts" });
 
   const originalConfirm = globalThis.window.confirm;
   let confirmMessage: string | undefined;
@@ -1113,8 +1115,9 @@ test("EntityPanel's handleBulkUpdate refuses a blank value for a required field 
  * regardless of its chosen value.
  */
 test("EntityPanel's handleBulkUpdate still proceeds when a required field is given a real value", async () => {
+  const helperMatch = entityPanelSrc.match(/function invalidNumberField\(field: Field, value: unknown\): boolean \{[\s\S]*?\n\}\n/);
   const handlerMatch = entityPanelSrc.match(/ {2}async function handleBulkUpdate\(\) \{[\s\S]*?\n {2}\}\n/);
-  const { code } = transformSync(handlerMatch![0], { loader: "ts" });
+  const { code } = transformSync(`${helperMatch![0]}\n${handlerMatch![0]}`, { loader: "ts" });
 
   let capturedError: string | undefined;
   let updateCalled = false;
@@ -1158,6 +1161,85 @@ test("EntityPanel's handleBulkUpdate still proceeds when a required field is giv
 
     assert.equal(capturedError, undefined, "must not report any error when a real value was chosen for the required field");
     assert.equal(updateCalled, true, "must still call updateRecord when the required field has a real value");
+  } finally {
+    globalThis.window.confirm = originalConfirm;
+  }
+});
+
+/**
+ * Round 984: a real bug introduced by round 980's own fix (not a
+ * pre-existing gap), found by a fresh Explore survey. Round 980 switched
+ * a real "number" field's input from a native `<input type="number">`
+ * (whose own browser-level keystroke sanitization made a non-numeric
+ * string physically impossible to produce) to a plain text input with no
+ * such guard. handleBulkUpdate only ever pre-checked required-ness, never
+ * that a "number" field's value is actually numeric, so ordinary typo
+ * text (e.g. "abc") now reaches the server as-is, where it's rejected
+ * with the server's own bare, unlabeled message -- surfaced to the user
+ * only as the generic VALIDATION_ERROR banner (resolveErrorMessage always
+ * overrides a real server message for that error code), the exact
+ * failure shape this file's own required-field checks already exist to
+ * avoid. Confirms the bulk path now refuses before even asking for
+ * confirmation, naming the field, mirroring the required-field guard
+ * immediately above.
+ */
+test("EntityPanel's handleBulkUpdate refuses a non-numeric value for a 'number' field before even asking for confirmation", async () => {
+  const helperMatch = entityPanelSrc.match(/function invalidNumberField\(field: Field, value: unknown\): boolean \{[\s\S]*?\n\}\n/);
+  const handlerMatch = entityPanelSrc.match(/ {2}async function handleBulkUpdate\(\) \{[\s\S]*?\n {2}\}\n/);
+  assert.ok(helperMatch && handlerMatch, "expected to find invalidNumberField and handleBulkUpdate in EntityPanel.tsx");
+  const { code } = transformSync(`${helperMatch![0]}\n${handlerMatch![0]}`, { loader: "ts" });
+
+  let capturedError: string | undefined;
+  let confirmCalled = false;
+  let updateCalled = false;
+  const originalConfirm = globalThis.window.confirm;
+  globalThis.window.confirm = (() => {
+    confirmCalled = true;
+    return true;
+  }) as typeof window.confirm;
+  try {
+    const fn = new Function(
+      "bulkActionBusy",
+      "setBulkActionBusy",
+      "t",
+      "projectId",
+      "entity",
+      "selectedIds",
+      "bulkEditField",
+      "bulkEditValue",
+      "setError",
+      "updateRecord",
+      "setSelectedIds",
+      "refresh",
+      `${code}\nreturn handleBulkUpdate;`,
+    )(
+      false,
+      () => {},
+      (key: string, params?: Record<string, unknown>) => (params ? `${key}:${JSON.stringify(params)}` : key),
+      "proj1",
+      { name: "Order", fields: [{ name: "amount", label: "Amount", type: "number", required: false }] },
+      new Set([1, 2, 3]),
+      "amount",
+      "abc",
+      (msg: string | null) => {
+        capturedError = msg ?? undefined;
+      },
+      async () => {
+        updateCalled = true;
+      },
+      () => {},
+      async () => {},
+    ) as () => Promise<void>;
+
+    await fn();
+
+    assert.match(
+      capturedError!,
+      /entity\.form\.invalidNumber/,
+      "must surface a translated, field-named 'must be a number' message, not let the bad string reach the server",
+    );
+    assert.equal(confirmCalled, false, "must refuse before even asking for confirmation");
+    assert.equal(updateCalled, false, "must not call updateRecord at all when the chosen value isn't actually numeric");
   } finally {
     globalThis.window.confirm = originalConfirm;
   }
@@ -9718,11 +9800,15 @@ test("EntityPanel's inline cell editor commits a real PATCH on Enter and updates
  * second updateRecord call.
  */
 test("EntityPanel's inline cell editor suppresses a stale post-commit blur instead of sending a second real PATCH for the same value", async () => {
+  const helperMatch = entityPanelSrc.match(/function invalidNumberField\(field: Field, value: unknown\): boolean \{[\s\S]*?\n\}\n/);
   const commitSrc = entityPanelSrc.match(/ {2}async function commitInlineEdit\(\) \{[\s\S]*?\n {2}\}\n/)?.[0];
   const cancelSrc = entityPanelSrc.match(/ {2}function cancelInlineEdit\(\) \{[\s\S]*?\n {2}\}\n/)?.[0];
   const blurSrc = entityPanelSrc.match(/ {2}function handleCellBlur\(\) \{[\s\S]*?\n {2}\}\n/)?.[0];
-  assert.ok(commitSrc && cancelSrc && blurSrc, "expected to find commitInlineEdit/cancelInlineEdit/handleCellBlur in EntityPanel.tsx");
-  const { code } = transformSync(`${commitSrc}\n${cancelSrc}\n${blurSrc}`, { loader: "ts" });
+  assert.ok(
+    helperMatch && commitSrc && cancelSrc && blurSrc,
+    "expected to find invalidNumberField/commitInlineEdit/cancelInlineEdit/handleCellBlur in EntityPanel.tsx",
+  );
+  const { code } = transformSync(`${helperMatch![0]}\n${commitSrc}\n${cancelSrc}\n${blurSrc}`, { loader: "ts" });
 
   const state = {
     editingCell: { recordId: 1, field: "name" } as { recordId: number; field: string } | null,
@@ -9866,6 +9952,73 @@ test("EntityPanel's inline cell editor refuses to commit a required field left b
       );
       assert.ok(
         nameCell.querySelector("input") !== null,
+        "the cell must stay open for editing (not silently closed) so the user can fix the value without double-clicking again",
+      );
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+});
+
+/**
+ * Round 984: a real bug introduced by round 980's own fix (not a
+ * pre-existing gap), found by a fresh Explore survey. Round 980 switched
+ * a real "number" field's input from a native `<input type="number">`
+ * (whose own browser-level keystroke sanitization made a non-numeric
+ * string physically impossible to produce) to a plain text input with no
+ * such guard. commitInlineEdit only ever pre-checked required-ness, never
+ * that a "number" field's value is actually numeric, so ordinary typo
+ * text (e.g. "abc") typed into a number cell and committed with Enter
+ * used to reach the server as-is -- rejected there, surfaced only as the
+ * generic VALIDATION_ERROR banner. Mirrors the required-field test just
+ * above, for a present-but-non-numeric value instead of an empty one.
+ */
+test("EntityPanel's inline cell editor refuses to commit a non-numeric value for a 'number' field, instead of sending a doomed PATCH", async () => {
+  await withJsdom(async () => {
+    const invoiceEntity: Entity = {
+      name: "Invoice",
+      label: "Invoice",
+      fields: [
+        { name: "client", label: "Client", type: "text", required: true },
+        { name: "amount", label: "Amount", type: "number", required: false },
+      ],
+    };
+    const store: EntityRecord[] = [{ id: 1, createdAt: "x", client: "Acme Corp", amount: 500 }];
+    const originalFetch = globalThis.fetch;
+    let patchCount = 0;
+    globalThis.fetch = (async (input: string, init?: RequestInit): Promise<Response> => {
+      const method = init?.method ?? "GET";
+      if (method === "GET" && input === "/api/projects/proj1/entities/Invoice") {
+        return new Response(JSON.stringify({ records: store }), { status: 200, headers: { "content-type": "application/json" } });
+      }
+      if (method === "PATCH" && input === "/api/projects/proj1/entities/Invoice/1") {
+        patchCount += 1;
+        Object.assign(store[0], JSON.parse(init!.body as string));
+        return new Response(JSON.stringify({ record: store[0] }), { status: 200, headers: { "content-type": "application/json" } });
+      }
+      throw new Error(`unexpected request ${method} ${input}`);
+    }) as typeof fetch;
+    try {
+      renderEntityPanel({ entity: invoiceEntity, allEntities: [invoiceEntity] });
+      await waitForCondition(() => document.querySelectorAll("table tbody tr").length === 1);
+
+      const amountCell = document.querySelectorAll("table tbody td")[2] as HTMLTableCellElement;
+      fireEvent.doubleClick(amountCell);
+      const input = amountCell.querySelector('input[inputmode="decimal"]') as HTMLInputElement;
+      assert.ok(input, "expected the number field's own decimal-keyboard-hint input to be editable inline");
+      fireEvent.change(input, { target: { value: "abc" } });
+      fireEvent.keyDown(input, { key: "Enter" });
+      await new Promise((resolve) => setTimeout(resolve, 0));
+
+      assert.equal(patchCount, 0, "must never send a PATCH for a non-numeric 'number' field value");
+      assert.equal(store[0].amount, 500, "the mock server's own record must be untouched");
+      assert.match(
+        document.querySelector("p.error")?.textContent ?? "",
+        /Amount.*must be a number|must be a number.*Amount/,
+        "must show a real, specific 'must be a number' message naming the field, not a generic one",
+      );
+      assert.ok(
+        amountCell.querySelector("input") !== null,
         "the cell must stay open for editing (not silently closed) so the user can fix the value without double-clicking again",
       );
     } finally {
@@ -12180,6 +12333,69 @@ test("EntityPanel's number field input lets a user type a negative value startin
       await waitForCondition(() => postedBodies.length === 1);
 
       assert.equal(Number(postedBodies[0]?.adjustment), -5, "the real negative number must reach the server, not be lost or coerced to NaN/empty");
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+});
+
+/**
+ * Round 984: a real bug introduced by round 980's own fix just above (not
+ * a pre-existing gap), found by a fresh Explore survey. Switching a real
+ * "number" field's input to a plain text input removed the one thing
+ * that used to make a non-numeric string physically impossible to type
+ * into it: the native number input's own keystroke sanitization. Without
+ * a client-side check, ordinary typo text (e.g. "not-a-number") now
+ * reached the server as-is -- rejected there, but surfaced to the user
+ * only as the generic, field-agnostic VALIDATION_ERROR banner
+ * (resolveErrorMessage always overrides a real server message for that
+ * error code), the exact failure shape missingField already exists to
+ * avoid for a required-but-empty field. Confirms the add/edit form now
+ * refuses before even sending the request, naming the field.
+ */
+test("EntityPanel's add/edit form refuses a non-numeric value for a 'number' field, instead of sending a doomed POST", async () => {
+  await withJsdom(async () => {
+    const dealEntity: Entity = {
+      name: "Deal",
+      label: "Deal",
+      fields: [
+        { name: "name", label: "Name", type: "text", required: true },
+        { name: "amount", label: "Amount", type: "number", required: false },
+      ],
+    };
+    let postCalled = false;
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = (async (input: string, init?: RequestInit): Promise<Response> => {
+      const method = init?.method ?? "GET";
+      if (method === "GET" && input === "/api/projects/proj1/entities/Deal") {
+        return new Response(JSON.stringify({ records: [] }), { status: 200, headers: { "content-type": "application/json" } });
+      }
+      if (method === "POST" && input === "/api/projects/proj1/entities/Deal") {
+        postCalled = true;
+        return new Response(JSON.stringify({ record: { id: 1 } }), { status: 201, headers: { "content-type": "application/json" } });
+      }
+      throw new Error(`unexpected request ${method} ${input}`);
+    }) as typeof fetch;
+    try {
+      renderEntityPanel({ entity: dealEntity, allEntities: [dealEntity] });
+      await waitForCondition(() => document.querySelector(".record-form") !== null);
+
+      const nameInput = document.querySelector('.record-form input[type="text"]') as HTMLInputElement;
+      fireEvent.change(nameInput, { target: { value: "Widget" } });
+
+      const amountInput = document.querySelector('.record-form input[inputmode="decimal"]') as HTMLInputElement;
+      fireEvent.change(amountInput, { target: { value: "not-a-number" } });
+
+      const submitButton = Array.from(document.querySelectorAll("button")).find((b) => b.textContent === "Add") as HTMLButtonElement;
+      fireEvent.click(submitButton);
+      await new Promise((resolve) => setTimeout(resolve, 0));
+
+      assert.equal(postCalled, false, "must never send a POST with a non-numeric 'number' field value");
+      assert.match(
+        document.querySelector("p.error")?.textContent ?? "",
+        /Amount.*must be a number|must be a number.*Amount/,
+        "must show a real, specific 'must be a number' message naming the field, not a generic one",
+      );
     } finally {
       globalThis.fetch = originalFetch;
     }
