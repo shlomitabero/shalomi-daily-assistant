@@ -1952,7 +1952,12 @@ function splitHighlightSegments(text, query) {
   return segments.length > 0 ? segments : [{ text, matched: false }];
 }
 
-function Highlighted({ text, query }) {
+// Round 963: exported so GlobalSearch.jsx (a separate generated module) can
+// import it too, the same way it already imports matchesSearch/
+// recordDisplayLabel/entityDisplayLabel etc. from this file just below --
+// GlobalSearch's own result rows rendered a plain, unhighlighted label with
+// no access to this component at all before this export existed.
+export function Highlighted({ text, query }) {
   if (!query || !query.trim()) return <>{text}</>;
   return (
     <>
@@ -6052,6 +6057,7 @@ import {
   scrollIntoViewRespectingMotion,
   entityLabelOccurrences,
   entityDisplayLabel,
+  Highlighted,
 } from "./EntityView.jsx";
 
 // Fetches every entity's own records once, then searches all of them using
@@ -6566,7 +6572,10 @@ export function GlobalSearch({ entities, onClose, onJumpToEntity, onJumpToRecord
                           className="link-button global-search-hit-button"
                           onClick={() => onJumpToRecord(result.entityName, record.id)}
                         >
-                          {recordDisplayLabel(entities.find((e) => e.name === result.entityName), record)}
+                          <Highlighted
+                            text={recordDisplayLabel(entities.find((e) => e.name === result.entityName), record)}
+                            query={highlightQuery}
+                          />
                         </button>
                       </li>
                     ))}

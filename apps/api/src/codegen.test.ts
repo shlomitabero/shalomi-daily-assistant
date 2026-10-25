@@ -7714,6 +7714,73 @@ test("the exported GlobalSearch does not jump to a stale arrow-selected result o
 });
 
 /**
+ * Round 963's finding: the exported app's own GlobalSearch.jsx rendered
+ * each matched record's display label as plain, unhighlighted text --
+ * Highlighted (defined in EntityView.jsx, used there for table-cell
+ * matches) was never exported, so GlobalSearch.jsx had no access to it at
+ * all, unlike the live preview's own GlobalSearchPanel.tsx which wraps
+ * every result in <Highlighted text={...} query={highlightQuery} />.
+ * Renders the real generated GlobalSearch.jsx end to end and confirms a
+ * real <mark className="search-match"> actually appears around the
+ * matched substring, not just that the record is listed.
+ */
+test("the exported GlobalSearch highlights the matched substring inside each result, the same way its own per-tab search already does", async () => {
+  const files = generateExportFiles(project);
+  const dir = writeGeneratedWebComponent(files);
+  const customerRecords = [{ id: 1, name: "Dana Levi" }];
+  const serviceRecords: unknown[] = [];
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = (async (input: string): Promise<Response> => {
+    if (input === "/api/Customer") {
+      return new Response(JSON.stringify({ records: customerRecords }), { status: 200, headers: { "content-type": "application/json" } });
+    }
+    if (input === "/api/Service") {
+      return new Response(JSON.stringify({ records: serviceRecords }), { status: 200, headers: { "content-type": "application/json" } });
+    }
+    throw new Error(`unexpected request ${input}`);
+  }) as typeof fetch;
+
+  try {
+    await withRealLocalStorage(async () => {
+      const { GlobalSearch } = await import(path.join(dir, "web", "src", "components", "GlobalSearch.jsx"));
+      const { container } = render(
+        React.createElement(GlobalSearch, {
+          entities: project.spec.entities,
+          onClose: () => {},
+          onJumpToEntity: () => {},
+          onJumpToRecord: () => {},
+        }),
+      );
+
+      const input = container.querySelector(".global-search-input") as HTMLInputElement;
+      const form = container.querySelector("form.global-search-form") as HTMLFormElement;
+      await act(async () => {
+        fireEvent.change(input, { target: { value: "Dana" } });
+        fireEvent.submit(form);
+      });
+      for (let i = 0; i < 40; i++) {
+        if (container.querySelector(".global-search-hit-button mark.search-match")) break;
+        await act(async () => {
+          await new Promise((resolve) => setTimeout(resolve, 0));
+        });
+      }
+      const mark = container.querySelector(".global-search-hit-button mark.search-match");
+      assert.ok(mark, "expected a real <mark> highlight inside the result button, not just the matching record listed");
+      assert.equal(mark!.textContent, "Dana", "the highlighted span must be exactly the matched substring");
+      assert.equal(
+        container.querySelector(".global-search-hit-button")!.textContent,
+        "Dana Levi",
+        "highlighting must not alter the record's own displayed text",
+      );
+    });
+  } finally {
+    globalThis.fetch = originalFetch;
+    cleanup();
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+/**
  * Round 494's finding: the exported app's GlobalSearch never got the live
  * preview's own round-290 "Escape clears the query first" behavior
  * (GlobalSearchPanel.tsx's own handleInputKeyDown + its
@@ -10123,9 +10190,21 @@ test("the exported app includes a real cross-entity global search, ported from t
   // markDialogClosed/DIALOG_FOCUSABLE_SELECTOR/hideDialogBackgroundFromAssistiveTech
   // were generalized in round 650 (no longer search-specific names) once
   // ShortcutsPanel.jsx became a second dialog sharing the same guard.
+  // entityLabelOccurrences/entityDisplayLabel were added later for entity-
+  // label disambiguation in result group headers, and Highlighted in round
+  // 963 (see its own test below) -- this regex had drifted stale after both
+  // additions, silently never matching anything since (confirmed via a
+  // scoped git-stash check against the pre-round-963 file), without
+  // surfacing as a visible failure: codegen.test.ts's own well-documented
+  // whole-file exit flake marks the entire file "not ok" at the TAP level
+  // regardless of which individual subtests pass, so a single broken
+  // assertion buried among hundreds of real passes went unnoticed by the
+  // file-level pass/fail counts this routine's own rounds have been
+  // tracking. Corrected here since this round's own fix touches this exact
+  // import list anyway.
   assert.match(
     globalSearchJsx,
-    /import \{\s*matchesSearch,\s*recordDisplayLabel,\s*markDialogOpen,\s*markDialogClosed,\s*DIALOG_FOCUSABLE_SELECTOR,\s*hideDialogBackgroundFromAssistiveTech,\s*scrollIntoViewRespectingMotion,\s*\} from ".\/EntityView\.jsx";/,
+    /import \{\s*matchesSearch,\s*recordDisplayLabel,\s*markDialogOpen,\s*markDialogClosed,\s*DIALOG_FOCUSABLE_SELECTOR,\s*hideDialogBackgroundFromAssistiveTech,\s*scrollIntoViewRespectingMotion,\s*entityLabelOccurrences,\s*entityDisplayLabel,\s*Highlighted,\s*\} from ".\/EntityView\.jsx";/,
   );
   assert.match(globalSearchJsx, /export function GlobalSearch/);
   assert.match(globalSearchJsx, /global-search-group-selected/);
