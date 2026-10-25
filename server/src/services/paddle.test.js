@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { isPaddleConfigured, paddleClientConfig } from './paddle.js';
+import { isPaddleConfigured, paddleClientConfig, createOneTimePrice } from './paddle.js';
 
 function withEnv(vars, fn) {
   const originals = {};
@@ -47,4 +47,24 @@ test('paddleClientConfig reports sandbox mode honestly', () => {
   withEnv({ PADDLE_CLIENT_TOKEN: 'tok', PADDLE_ENV: 'sandbox' }, () => {
     assert.deepEqual(paddleClientConfig(), { clientToken: 'tok', sandbox: true });
   });
+});
+
+test('createOneTimePrice times out instead of hanging forever when Paddle never responds', async () => {
+  // Without an explicit timeout, a hung connection to Paddle would leave
+  // the owner's "פרסם מוצר" click pending indefinitely — worse than a
+  // clear error, since this is the one path that moves toward real money.
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async (url, { signal } = {}) => new Promise((resolve, reject) => {
+    signal?.addEventListener('abort', () => reject(Object.assign(new Error('aborted'), { name: 'AbortError' })));
+  });
+  try {
+    await withEnv({ PADDLE_API_KEY: 'key', PADDLE_ENV: 'sandbox' }, () =>
+      assert.rejects(
+        () => createOneTimePrice({ name: 'test', amountCents: 900, timeoutMs: 5 }),
+        /timed out/
+      )
+    );
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
 });
