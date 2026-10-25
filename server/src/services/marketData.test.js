@@ -69,6 +69,25 @@ test('fetchQuote throws with the HTTP status when the provider request itself fa
   }
 });
 
+test('fetchQuote times out instead of hanging forever when the provider never responds', async () => {
+  // Without an explicit timeout, a hung connection to the provider would
+  // leave this (and the watchlist's "refresh all", which awaits each
+  // symbol in turn) pending indefinitely with no feedback to the owner.
+  const original = process.env.MARKET_DATA_API_KEY;
+  process.env.MARKET_DATA_API_KEY = 'test-key';
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async (url, { signal } = {}) => new Promise((resolve, reject) => {
+    signal?.addEventListener('abort', () => reject(Object.assign(new Error('aborted'), { name: 'AbortError' })));
+  });
+  try {
+    await assert.rejects(() => fetchQuote('AAPL', { timeoutMs: 5 }), /timed out/);
+  } finally {
+    globalThis.fetch = originalFetch;
+    if (original !== undefined) process.env.MARKET_DATA_API_KEY = original;
+    else delete process.env.MARKET_DATA_API_KEY;
+  }
+});
+
 test('fetchQuote propagates a malformed-price error instead of returning a NaN quote', async () => {
   const original = process.env.MARKET_DATA_API_KEY;
   process.env.MARKET_DATA_API_KEY = 'test-key';
