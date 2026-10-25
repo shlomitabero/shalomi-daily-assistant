@@ -500,6 +500,127 @@ test("seeding an entity with a required 'file' field skips it with one clear mes
 });
 
 /**
+ * Round 978: for a required SELF-relation (e.g. Employee.managerId ->
+ * Employee, required -- a very plausible spec for any org-chart/hierarchy
+ * domain), seedValueFor's static "row 1" guess (seed.ts) is never
+ * overwritten by this loop's own per-record correction, since there's no
+ * real row of THIS entity yet when the first record is generated.
+ * orderForSeeding deliberately excludes a self-relation from its
+ * topological sort for exactly this reason (its own doc comment: "a
+ * same-entity (self) relation... is left exactly as unaddressed").
+ *
+ * On a completely fresh table this doesn't actually crash -- SQLite
+ * assigns the new row its own id as part of the same INSERT the FK check
+ * runs against, so a first record guessing "1" ends up self-referencing
+ * itself (succeeds, but the seeded sample record nonsensically "manages
+ * itself", exactly the unrealistic-looking seed data this generator exists
+ * to avoid everywhere else). On a table that's been emptied and reseeded
+ * before (round 467's own documented case just below the per-record loop,
+ * "lands on ids 3, 4, ..."), the same guess genuinely dangles and does
+ * throw a raw, unhelpful "FOREIGN KEY constraint failed". Skipping this
+ * structurally-unrealistic-to-seed case upfront, with one clear message,
+ * is correct either way -- the same choice already made for the required
+ * "file" field case just above.
+ */
+test("seeding an entity with a required SELF-relation field skips it with one clear message instead of nonsensically self-referencing or dangling", async () => {
+  const spec: ProductSpec = {
+    summary: "test",
+    personas: [],
+    roles: ["Admin"],
+    screens: [],
+    assumptions: [],
+    openQuestions: [],
+    entities: [
+      {
+        name: "Employee",
+        fields: [
+          { name: "name", type: "text", required: true },
+          { name: "manager", label: "Manager", type: "relation", relationTo: "Employee", required: true },
+        ],
+      },
+    ],
+  };
+  const db = openDatabase(":memory:");
+  ensureProjectsTable(db);
+  ensureCheckpointsTable(db);
+  const project = insertProject(db, { id: "proj1", ownerId: "user1", name: "test", description: "test", spec });
+  const [employee] = spec.entities;
+
+  const events = await collect(runBuildPipeline(db, project, { nextSpec: spec, changeLabel: "Initial build" }));
+  const forgeEvent = events.find((e) => e.agent === "Forge");
+  assert.ok(forgeEvent && forgeEvent.status === "success", "the build must still succeed overall -- an unseedable entity is not a build failure");
+
+  const seedEvent = events.find((e) => e.agent === "Seed Data" && e.status !== "running");
+  assert.equal(seedEvent!.status, "failed", "an entirely unseedable entity is still a real Seed Data failure, just an honest, upfront one");
+  assert.deepEqual(
+    seedEvent!.detail,
+    [
+      'Employee: skipped seeding -- required relation field "Manager" has no real row to point at yet (likely a self-referencing or circular required relation); add its first record(s) by hand once the app is live.',
+    ],
+    "exactly one clear, structural message -- not one raw FOREIGN KEY constraint error repeated per generated record",
+  );
+
+  assert.equal(countRecords(db, project.id, employee), 0, "Employee correctly has zero seeded rows, not partial/garbage data");
+});
+
+/**
+ * Round 978: the mirror-image structural shape of the self-relation case
+ * above -- a genuine CYCLE between two entities' own required relations
+ * (A requires B, B requires A), which orderForSeeding's own topological
+ * sort can never resolve either way (its own doc comment: "a cycle...
+ * append what's left in its original relative order rather than looping
+ * forever"). Neither entity can ever be seeded first, so both must be
+ * skipped with a clear message rather than either one attempting (and
+ * failing) doomed inserts against the other's still-empty table.
+ */
+test("seeding two entities with a genuine required-relation cycle between them skips both with clear messages", async () => {
+  const spec: ProductSpec = {
+    summary: "test",
+    personas: [],
+    roles: ["Admin"],
+    screens: [],
+    assumptions: [],
+    openQuestions: [],
+    entities: [
+      {
+        name: "Husband",
+        fields: [
+          { name: "name", type: "text", required: true },
+          { name: "spouse", label: "Spouse", type: "relation", relationTo: "Wife", required: true },
+        ],
+      },
+      {
+        name: "Wife",
+        fields: [
+          { name: "name", type: "text", required: true },
+          { name: "spouse", label: "Spouse", type: "relation", relationTo: "Husband", required: true },
+        ],
+      },
+    ],
+  };
+  const db = openDatabase(":memory:");
+  ensureProjectsTable(db);
+  ensureCheckpointsTable(db);
+  const project = insertProject(db, { id: "proj1", ownerId: "user1", name: "test", description: "test", spec });
+  const [husband, wife] = spec.entities;
+
+  const events = await collect(runBuildPipeline(db, project, { nextSpec: spec, changeLabel: "Initial build" }));
+  const forgeEvent = events.find((e) => e.agent === "Forge");
+  assert.ok(forgeEvent && forgeEvent.status === "success", "the build must still succeed overall -- an unseedable entity is not a build failure");
+
+  const seedEvent = events.find((e) => e.agent === "Seed Data" && e.status !== "running");
+  assert.equal(seedEvent!.status, "failed");
+  const detail = seedEvent!.detail as string[];
+  assert.equal(detail.length, 2, "both entities in the cycle must be skipped with their own clear message, not just one of them");
+  assert.ok(detail.every((m) => /no real row to point at yet/.test(m)), "neither message may be a raw FOREIGN KEY constraint error");
+  assert.ok(detail.some((m) => m.startsWith("Husband:")));
+  assert.ok(detail.some((m) => m.startsWith("Wife:")));
+
+  assert.equal(countRecords(db, project.id, husband), 0);
+  assert.equal(countRecords(db, project.id, wife), 0);
+});
+
+/**
  * Regression test: the old Seed Data eligibility filter only seeded an
  * entity if it was BOTH brand-new (per this diff's new_table changes) AND
  * currently empty. An existing entity the user had emptied out (e.g. she

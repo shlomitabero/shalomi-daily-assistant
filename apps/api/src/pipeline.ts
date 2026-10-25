@@ -726,6 +726,43 @@ export async function* runBuildPipeline(
       );
       continue;
     }
+    // Round 978: same structural-impossibility shape as unseedableFileField
+    // just above, for a required relation field instead -- seedValueFor's
+    // own required-relation guess (seed.ts) is a static "row 1", which this
+    // loop's own per-record overwrite just below only corrects once the
+    // target genuinely HAS a row to point at. orderForSeeding (seed.ts)
+    // deliberately excludes a self-relation from its topological sort (its
+    // own doc comment: "a same-entity (self) relation... is left exactly as
+    // unaddressed"), and falls back to an unresolved append order for a
+    // genuine cycle between two required relations -- in either case, this
+    // entity can be reached here with its own required relation TARGET
+    // still genuinely empty (checked live, right now, not just "was empty
+    // when this whole seeding step started" -- an entity seeded earlier in
+    // this very loop already has real rows by the time a later, correctly-
+    // ordered dependent reaches this check). For a genuine cross-entity
+    // cycle, that guess genuinely dangles -- every generated record fails
+    // insertRecord's own FK constraint with zero explanation, piling up one
+    // cryptic "FOREIGN KEY constraint failed" per record. For a
+    // self-relation specifically, the guess can accidentally self-satisfy
+    // on a completely fresh table (the new row's own just-assigned id
+    // happens to be the same "1" being guessed) -- so it doesn't always
+    // crash, but it does produce exactly the kind of unrealistic-looking
+    // seed data ("this employee manages itself") this generator exists to
+    // avoid everywhere else. Either way, skipping upfront with one clear,
+    // actionable message is the same choice already made for the
+    // identical "can't seed this yet" situation the file-field case above
+    // handles.
+    const unseedableRelationField = entity.fields.find((f) => {
+      if (f.type !== "relation" || !f.required || !f.relationTo) return false;
+      const target = entityByName.get(f.relationTo);
+      return !!target && countRecords(db, project.id, target) === 0;
+    });
+    if (unseedableRelationField) {
+      seedErrors.push(
+        `${entity.name}: skipped seeding -- required relation field "${unseedableRelationField.label ?? unseedableRelationField.name}" has no real row to point at yet (likely a self-referencing or circular required relation); add its first record(s) by hand once the app is live.`,
+      );
+      continue;
+    }
     for (const record of generateSeedRecords(entity)) {
       // generateSeedRecords's required-relation guess is a static "row 1",
       // which orderForSeeding above only gets right by assuming the target
