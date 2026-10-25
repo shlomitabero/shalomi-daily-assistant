@@ -340,6 +340,28 @@ function uniqueWhatsAppLogPath(existingPaths: string[]): string {
   return `${base} ${suffix}.csv`;
 }
 
+/**
+ * Round 964 investigated, and rejected, giving the entity-CSV entries
+ * below the same existingPaths-based numeric-suffix dedup
+ * uniqueWhatsAppLogPath already applies for the one hardcoded WhatsApp
+ * entry -- reasoning that two entity names differing only by characters
+ * sanitizeZipEntryName treats as equivalent (e.g. "A/B" and "A:B", both
+ * -> "A_B.csv") could reach this function and silently collide. They
+ * cannot: ProductSpecSchema's own findSanitizedIdentifierCollisions
+ * refine (packages/shared/src/index.ts) already rejects any two entity
+ * names that collapse to the same key under `name.replace(/[^A-Za-z0-9]/g,
+ * "_").toLowerCase()` -- a STRICTLY BROADER transformation than
+ * sanitizeZipEntryName's own narrower `[\\/:*?"<>|\u0000-\u001f]` set (every
+ * character sanitizeZipEntryName touches is also non-alphanumeric, so
+ * findSanitizedIdentifierCollisions's net is a strict superset: any pair
+ * that collides under sanitizeZipEntryName necessarily also collides
+ * under this broader, case-insensitive key, and is therefore already
+ * rejected before such a spec can ever be stored). rowToProject
+ * (packages/db/src/projects.ts) re-validates every project's spec
+ * through this same ProductSpecSchema.parse on every single read, with
+ * no path that hands this function a project whose spec skipped it --
+ * so entity.name here can never actually produce two colliding paths.
+ */
 export function generateBackupZipEntries(
   db: ForgeDatabase,
   project: Project,
