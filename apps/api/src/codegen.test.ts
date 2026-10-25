@@ -3356,6 +3356,53 @@ test("the exported EntityView's recordDisplayLabel resolves a boolean display fi
 });
 
 /**
+ * Round 968: the exact same bug class as the enum (761) and boolean (771)
+ * fixes above, never done for "relation" -- when pickDisplayField's own
+ * last-resort step lands on a relation field (a pure join entity with no
+ * name/title/text/enum/boolean field at all, only relations), the
+ * exported app's recordDisplayLabel used to String() the raw *target*
+ * foreign-key id as this record's own label. That's the related PARENT's
+ * id, not this record's own -- two different Membership rows for the
+ * same user (different groups) share the exact same userId, so both
+ * rendered the identical, genuinely ambiguous label "4" in the exported
+ * app's own relation pickers, CSV export, and search.
+ */
+test("the exported EntityView's recordDisplayLabel falls back to this record's own #<id>, not the relation field's raw target id, when the display field is itself a relation", () => {
+  const files = generateExportFiles(project);
+  const entityViewJsx = files.find((f) => f.path === "web/src/components/EntityView.jsx")!.content;
+
+  const displayFieldHintsSrc = entityViewJsx.match(/const DISPLAY_FIELD_NAME_HINTS = .*;\n/)?.[0];
+  const pickDisplayFieldSrc = entityViewJsx.match(/export function pickDisplayField\([\s\S]*?\n\}\n/)?.[0]?.replace("export ", "");
+  const recordDisplayLabelSrc = entityViewJsx.match(/export function recordDisplayLabel\(entity, record\) \{[\s\S]*?\n\}\n/)?.[0]?.replace("export ", "");
+  assert.ok(
+    displayFieldHintsSrc && pickDisplayFieldSrc && recordDisplayLabelSrc,
+    "expected to find DISPLAY_FIELD_NAME_HINTS/pickDisplayField/recordDisplayLabel in generated output",
+  );
+
+  const recordDisplayLabel = new Function(
+    `${displayFieldHintsSrc}\n${pickDisplayFieldSrc}\n${recordDisplayLabelSrc}\nreturn recordDisplayLabel;`,
+  )() as (entity: unknown, record: unknown) => string;
+
+  const entity = {
+    name: "Membership",
+    fields: [
+      { name: "userId", type: "relation", relationTo: "User" },
+      { name: "groupId", type: "relation", relationTo: "Group" },
+    ],
+  };
+  assert.equal(
+    recordDisplayLabel(entity, { id: 1, userId: 4, groupId: 10 }),
+    "#1",
+    "must fall back to this record's own id, not the bare raw target id \"4\" shared by every other membership for the same user",
+  );
+  assert.equal(
+    recordDisplayLabel(entity, { id: 2, userId: 4, groupId: 20 }),
+    "#2",
+    "a second, genuinely different record sharing the exact same relation value (userId: 4) must get its own distinct label",
+  );
+});
+
+/**
  * Round 762: mirrors the live preview's own fix -- pickDisplayField's
  * "first text field" step only ever checked "text", never "longtext",
  * even though the two are the same free-text kind everywhere else in
@@ -11197,6 +11244,54 @@ test("the exported server.js's own backupRecordDisplayLabel resolves an enum or 
     backupFieldDisplayValue(consentField, 5, { Consent: new Map([[5, { id: 5, studentId: 1, signed: true }]]) }),
     "TRUE",
     "the boolean display field's own uniform TRUE/FALSE convention must be shown, not the raw stored value \"true\"",
+  );
+});
+
+/**
+ * Round 968: the same gap round 968 fixed in every OTHER copy of this
+ * logic (apps/api/src/displayField.ts, apps/web/src/entityFormatting.ts,
+ * and this file's own main recordDisplayLabel above) missed this fourth,
+ * separately-named copy too -- when backupPickDisplayField's own last-
+ * resort step lands on a relation field (a pure join entity with no
+ * name/title/text/enum/boolean field at all), backupRecordDisplayLabel
+ * used to String() the raw *target* foreign-key id as this record's own
+ * label, leaking the related PARENT's id -- identical across every other
+ * row pointing at the same parent -- into the exported app's own backup
+ * CSV instead of this record's own, always-unique id.
+ */
+test("the exported server.js's own backupRecordDisplayLabel falls back to this record's own #<id>, not the relation field's raw target id, when the display field is itself a relation", () => {
+  const serverJs = generateExportFiles(project).find((f) => f.path === "server.js")!.content;
+  const backupRecordDisplayLabelSrc = serverJs.match(/function backupRecordDisplayLabel\(entity, record\) \{[\s\S]*?\n\}\n/)?.[0];
+  const backupPickDisplayFieldSrc = serverJs.match(/const BACKUP_DISPLAY_FIELD_HINTS[\s\S]*?\nfunction backupPickDisplayField\(entity\) \{[\s\S]*?\n\}\n/)?.[0];
+  const backupFieldDisplayValueSrc = serverJs.match(/function backupFieldDisplayValue\(field, value, recordIndexByEntity\) \{[\s\S]*?\n\}\n/)?.[0];
+  assert.ok(
+    backupRecordDisplayLabelSrc && backupPickDisplayFieldSrc && backupFieldDisplayValueSrc,
+    "expected to find backupRecordDisplayLabel/backupPickDisplayField/backupFieldDisplayValue in generated server.js",
+  );
+
+  const membershipEntity = {
+    name: "Membership",
+    fields: [
+      { name: "userId", type: "relation", relationTo: "User" },
+      { name: "groupId", type: "relation", relationTo: "Group" },
+    ],
+  };
+  const consentEntity = { name: "Consent", fields: [{ name: "studentId", type: "relation", relationTo: "Student" }] };
+  const backupFieldDisplayValue = new Function(
+    "ENTITIES",
+    `${backupPickDisplayFieldSrc}\n${backupRecordDisplayLabelSrc}\n${backupFieldDisplayValueSrc}\nreturn backupFieldDisplayValue;`,
+  )([membershipEntity, consentEntity]);
+
+  const membershipField = { name: "membership", type: "relation", relationTo: "Membership" };
+  assert.equal(
+    backupFieldDisplayValue(membershipField, 1, { Membership: new Map([[1, { id: 1, userId: 4, groupId: 10 }]]) }),
+    "#1",
+    "must fall back to this record's own id, not the bare raw target id \"4\" shared by every other membership for the same user",
+  );
+  assert.equal(
+    backupFieldDisplayValue(membershipField, 2, { Membership: new Map([[2, { id: 2, userId: 4, groupId: 20 }]]) }),
+    "#2",
+    "a second, genuinely different record sharing the exact same relation value (userId: 4) must get its own distinct label",
   );
 });
 

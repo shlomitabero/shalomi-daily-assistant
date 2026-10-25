@@ -761,12 +761,23 @@ function backupPickDisplayField(entity) {
   return firstDisplayable || entity.fields[0] || null;
 }
 
+// Round 968: fixed the same gap in every OTHER copy of this logic
+// (apps/api/src/displayField.ts, apps/web/src/entityFormatting.ts, and
+// this file's own recordDisplayLabel above) but missed this fourth,
+// separately-named copy too -- when backupPickDisplayField's own last-
+// resort step lands on a relation field (a pure join entity with no
+// name/title/text/enum/boolean field at all), the raw target foreign-key
+// id was leaked into the backup CSV as this record's own label, shared
+// identically by every other row pointing at the same related parent
+// (e.g. every Membership row for the same user, regardless of which
+// group). #\${record.id} -- this record's OWN id -- is always unique.
 function backupRecordDisplayLabel(entity, record) {
   const field = backupPickDisplayField(entity);
   const value = field ? record[field.name] : undefined;
   if (value === null || value === undefined || value === "") return \`#\${record.id}\`;
   if (field && field.type === "boolean") return value ? "TRUE" : "FALSE";
   if (field && field.type === "enum") return (field.enumLabels && field.enumLabels[String(value)]) || String(value);
+  if (field && field.type === "relation") return \`#\${record.id}\`;
   return String(value);
 }
 
@@ -1723,12 +1734,24 @@ export function pickDisplayField(entity) {
   return firstDisplayable || entity.fields[0];
 }
 
+// Round 968: when pickDisplayField's own last-resort step lands on a
+// "relation" field (a pure join entity with no name/title/text/enum field
+// at all, only relations), falling through to String(value) below would
+// render that field's raw *target* foreign-key id as if it uniquely
+// identified this record -- but it doesn't: every other row sharing that
+// same related parent (e.g. the same user across several memberships)
+// would render the exact same bare digits, indistinguishable in a
+// relation picker, CSV export, or search. #\${record.id} -- this record's
+// OWN id, not the relation field's target id -- is always unique, exactly
+// matching the "#<id>" fallback this function already uses for an empty
+// value.
 export function recordDisplayLabel(entity, record) {
   const field = pickDisplayField(entity);
   const value = field ? record[field.name] : undefined;
   if (value === null || value === undefined || value === "") return \`#\${record.id}\`;
   if (field?.type === "boolean") return value ? "TRUE" : "FALSE";
   if (field?.type === "enum") return field.enumLabels?.[String(value)] ?? String(value);
+  if (field?.type === "relation") return \`#\${record.id}\`;
   return String(value);
 }
 

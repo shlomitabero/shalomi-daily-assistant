@@ -72,6 +72,23 @@ export function pickDisplayField(entity: Entity): Field | null {
  * Rule's WhatsApp message, Business Twin's narrative sentences) would
  * show the field's raw stored value (e.g. the English enum key "in")
  * instead of its translated display text (e.g. "כניסה").
+ *
+ * Round 968: the SAME last-resort fallback can also land on a `relation`
+ * field -- a pure join/many-to-many entity like `Membership { userId:
+ * relation->User, groupId: relation->Group }` has no name/title/text/enum
+ * field at all, only relations, so pickDisplayField's own final step picks
+ * one regardless ("there's nothing else left to show" -- see its own doc
+ * comment). Falling through to `String(value)` here would render that
+ * field's raw *target* foreign-key id as if it uniquely identified THIS
+ * record -- but it doesn't: every other Membership row for the same user
+ * (a different group) shares that exact same userId, so two genuinely
+ * different records would render the exact same bare digits (e.g. "4"),
+ * indistinguishable in a relation picker's own <option> list, CSV export's
+ * relation-cell matching, or a WhatsApp template. Falling back to
+ * `#${record.id}` instead -- this record's OWN id, not the relation
+ * field's target id -- is always unique per record, exactly matching the
+ * same "#<id>" convention this function already uses one line above for
+ * a genuinely empty value.
  */
 export function recordDisplayLabel(entity: Entity, record: EntityRecord): string {
   const field = pickDisplayField(entity);
@@ -79,5 +96,6 @@ export function recordDisplayLabel(entity: Entity, record: EntityRecord): string
   if (value === null || value === undefined || value === "") return `#${record.id}`;
   if (field?.type === "boolean") return value ? "TRUE" : "FALSE";
   if (field?.type === "enum") return field.enumLabels?.[String(value)] ?? String(value);
+  if (field?.type === "relation") return `#${record.id}`;
   return String(value);
 }

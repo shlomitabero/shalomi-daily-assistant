@@ -280,3 +280,43 @@ test("recordDisplayLabel resolves a boolean display field to TRUE/FALSE, not its
     "a false boolean display field must render FALSE, not fall through the empty-value check and then String() to \"false\"",
   );
 });
+
+/**
+ * Round 968 regression test: the exact same bug class as the enum (761)
+ * and boolean (771) fixes above, never done for "relation" -- when
+ * pickDisplayField's own last-resort step (its "falls back to the first
+ * relation field only when literally every field is itself a relation"
+ * case, tested above) lands on a relation field, recordDisplayLabel used
+ * to String() the raw *target* foreign-key id as this record's own
+ * label. That id is the related PARENT's id, not this record's own --
+ * two different Membership rows for the same user (different groups)
+ * share the exact same userId, so both rendered the identical, genuinely
+ * ambiguous label "4" with no way to tell them apart in a relation
+ * picker, CSV export, or WhatsApp template.
+ */
+test("recordDisplayLabel falls back to this record's own #<id>, not the relation field's raw target id, when the display field is itself a relation", () => {
+  const entity: Entity = {
+    name: "Membership",
+    fields: [
+      { name: "userId", type: "relation", relationTo: "User", required: true },
+      { name: "groupId", type: "relation", relationTo: "Group", required: true },
+    ],
+  };
+  const membership1 = { id: 1, createdAt: "", userId: 4, groupId: 10 };
+  const membership2 = { id: 2, createdAt: "", userId: 4, groupId: 20 };
+  assert.equal(
+    recordDisplayLabel(entity, membership1),
+    "#1",
+    "must fall back to this record's own id, not the bare raw target id \"4\" shared by every other membership for the same user",
+  );
+  assert.equal(
+    recordDisplayLabel(entity, membership2),
+    "#2",
+    "a second, genuinely different record sharing the exact same relation value (userId: 4) must get its own distinct label",
+  );
+  assert.notEqual(
+    recordDisplayLabel(entity, membership1),
+    recordDisplayLabel(entity, membership2),
+    "two different records must never render as the exact same, indistinguishable label",
+  );
+});
