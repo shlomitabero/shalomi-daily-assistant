@@ -2966,6 +2966,13 @@ function buildImportRecords(fields, rows, relatedRecords) {
 
   const records = [];
   const errors = [];
+  // Round 1042: mirrors the live preview's own entityFormatting.ts fix --
+  // two rows sharing the same trusted id each fire their own independent
+  // updateRecord() call below (handleImportFile's own Promise.allSettled),
+  // with no optimistic-locking/version check on the server's plain
+  // last-write-wins PATCH route, so the later request silently clobbers
+  // the earlier one with both still reported as successful "updated" rows.
+  const seenIds = new Set();
 
   dataRows.forEach((row, rowIndex) => {
     const isBlank = row.every((cell) => cell.trim() === "");
@@ -2980,7 +2987,10 @@ function buildImportRecords(fields, rows, relatedRecords) {
         const parsedId = Number(rawId);
         if (!Number.isInteger(parsedId) || parsedId <= 0) {
           rowError = \`Row \${rowIndex + 1}: "\${rawId}" isn't a valid record id.\`;
+        } else if (seenIds.has(parsedId)) {
+          rowError = \`Row \${rowIndex + 1}: id \${parsedId} was already used by an earlier row in this file -- only one row per id is supported.\`;
         } else {
+          seenIds.add(parsedId);
           record.id = parsedId;
         }
       }

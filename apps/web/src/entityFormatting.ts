@@ -1666,6 +1666,18 @@ export function buildImportRecords(
 
   const records: Record<string, unknown>[] = [];
   const errors: string[] = [];
+  // Round 1042: two rows sharing the same trusted id (a duplicated row,
+  // copy/pasted as a template for a new one and never blanked out) each
+  // become their own independent updateRecord() call (EntityPanel.tsx's
+  // handleImportFile), fired concurrently via Promise.allSettled with no
+  // optimistic-locking/version check on the server (routes/projects.ts's
+  // PATCH route is plain last-write-wins) -- so whichever request lands
+  // last silently wins, discarding the other row's edit with both still
+  // reported as successful "updated" rows. Caught the same way every
+  // other ambiguous-input case in this function already is: as a row
+  // error, excluding the later occurrence from `records` instead of
+  // letting it fire a second silent-clobber request.
+  const seenIds = new Set<number>();
 
   dataRows.forEach((row, rowIndex) => {
     const isBlank = row.every((cell) => cell.trim() === "");
@@ -1680,7 +1692,10 @@ export function buildImportRecords(
         const parsedId = Number(rawId);
         if (!Number.isInteger(parsedId) || parsedId <= 0) {
           rowError = `Row ${rowIndex + 1}: "${rawId}" isn't a valid record id.`;
+        } else if (seenIds.has(parsedId)) {
+          rowError = `Row ${rowIndex + 1}: id ${parsedId} was already used by an earlier row in this file -- only one row per id is supported.`;
         } else {
+          seenIds.add(parsedId);
           record.id = parsedId;
         }
       }

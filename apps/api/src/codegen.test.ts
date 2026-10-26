@@ -10839,6 +10839,48 @@ test("the exported EntityView's CSV import still trusts the \"id\" column once t
 });
 
 /**
+ * Round 1042: mirrors the live preview's own entityFormatting.ts fix for
+ * the identical gap in this exported, standalone app's own independent
+ * copy of buildImportRecords -- a duplicated row (its id cell never
+ * blanked out) used to parse into two records sharing the same id, each
+ * firing its own independent updateRecord() call (handleImportFile's own
+ * Promise.allSettled), silently racing the same record with no
+ * optimistic-locking/version check on the server's plain last-write-wins
+ * PATCH route.
+ */
+test("the exported EntityView's CSV import rejects every row after the first that reuses an already-seen id, instead of letting two rows silently race the same record", () => {
+  const files = generateExportFiles(project);
+  const entityViewJsx = files.find((f) => f.path === "web/src/components/EntityView.jsx")!.content;
+
+  const fieldLabelOccurrencesSrc = entityViewJsx.match(/function fieldLabelOccurrences\(fields\) \{[\s\S]*?\n\}\n/)?.[0];
+  const fieldDisplayLabelSrc = entityViewJsx.match(/function fieldDisplayLabel\(field, occurrences\) \{[\s\S]*?\n\}\n/)?.[0];
+  const headerSrc = entityViewJsx.match(/function matchesImportHeader\(header, field, labelOccurrences\) \{[\s\S]*?\n\}\n/)?.[0];
+  const importSrc = entityViewJsx.match(/function buildImportRecords\(fields, rows, relatedRecords\) \{[\s\S]*?\n\}\n/)?.[0];
+  assert.ok(
+    fieldLabelOccurrencesSrc && fieldDisplayLabelSrc && headerSrc && importSrc,
+    "expected to find fieldLabelOccurrences/fieldDisplayLabel/matchesImportHeader/buildImportRecords in generated output",
+  );
+
+  const buildImportRecords = new Function(
+    `${fieldLabelOccurrencesSrc}\n${fieldDisplayLabelSrc}\n${headerSrc}\n${importSrc}\nreturn buildImportRecords;`,
+  )();
+
+  const fields = [{ name: "name", label: "Name", type: "text", required: true }];
+  const rows = [
+    ["id", "Name"],
+    ["7", "Dana"],
+    ["7", "Noa"],
+    ["12", "Amit"],
+  ];
+  const { records, errors } = buildImportRecords(fields, rows);
+
+  assert.deepEqual(records, [{ id: 7, name: "Dana" }, { id: 12, name: "Amit" }], "only the first row for id 7 must be imported");
+  assert.equal(errors.length, 1);
+  assert.match(errors[0], /Row 2/);
+  assert.match(errors[0], /7/);
+});
+
+/**
  * Round 712: the live preview's own buildImportRecords (apps/web/src/
  * entityFormatting.ts) gained real relation-cell resolution this round --
  * before it, a relation column was always ignored, even though

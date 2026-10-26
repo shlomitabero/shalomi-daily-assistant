@@ -2415,6 +2415,31 @@ test("buildImportRecords rejects a non-numeric \"id\" cell with a clear row-numb
   assert.match(result.errors[0], /not-a-number/);
 });
 
+/**
+ * Round 1042: a duplicated row (copy/pasted as a template for a new one,
+ * its id cell never blanked out) used to parse into two separate records
+ * carrying the exact same id -- EntityPanel.tsx's handleImportFile fires
+ * one independent updateRecord() per parsed record, concurrently via
+ * Promise.allSettled, with no optimistic-locking/version check on the
+ * server's plain last-write-wins PATCH route, so whichever request landed
+ * last silently won and the other row's own distinct edit vanished with
+ * zero error -- while both still counted as successful "updated" rows.
+ */
+test("buildImportRecords rejects every row after the first that reuses an already-seen id, instead of letting two rows silently race the same record", () => {
+  const fields: Field[] = [{ name: "name", label: "Name", type: "text", required: true }];
+  const rows = [
+    ["id", "Name"],
+    ["7", "Dana"],
+    ["7", "Noa"],
+    ["12", "Amit"],
+  ];
+  const result = buildImportRecords(fields, rows);
+  assert.deepEqual(result.records, [{ id: 7, name: "Dana" }, { id: 12, name: "Amit" }], "only the first row for id 7 must be imported -- the second must be rejected, not silently raced against it");
+  assert.equal(result.errors.length, 1);
+  assert.match(result.errors[0], /Row 2/);
+  assert.match(result.errors[0], /7/);
+});
+
 test("a real record's own CSV export round-trips through parseCsv -> buildImportRecords back to its own id, exercising the exact export/import pair handleExportCsv and handleImportFile actually use", () => {
   const fields: Field[] = [{ name: "name", label: "Name", type: "text", required: true }];
   const csv = recordsToCsv(fields, [{ id: 42, name: "Globex" }], "en", [], {}, true);
