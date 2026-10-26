@@ -192,7 +192,20 @@ export function buildCalendarIcs(
         : labelField.type === "enum"
           ? labelField.enumLabels?.[String(rawLabelValue)] ?? rawLabelValue
           : rawLabelValue;
-    const summary = String(labelRaw ?? entity.label ?? entity.name);
+    // Round 1022: `??` only falls through on null/undefined, never on a
+    // genuinely blank string -- a text/longtext display field (pickDisplayField
+    // never requires one to be `required: true`) left empty on one record
+    // produced a literally blank SUMMARY line here, while the live
+    // subscription feed's own identical computation (calendarFeed.ts) used
+    // `||` and fell back to entity.label/entity.name for the exact same
+    // blank case -- two calendar-export surfaces disagreeing on what title
+    // the same record gets. Falls back to `#<id>` instead, the one
+    // established "no usable label" convention recordDisplayLabel already
+    // uses everywhere else in this app (Global Search, relation pickers,
+    // CSV export) -- always unique per record, unlike entity.label/name,
+    // which every unnamed record sharing this entity would otherwise show
+    // identically, making them indistinguishable on the calendar.
+    const summary = labelRaw === null || labelRaw === undefined || labelRaw === "" ? `#${record.id}` : String(labelRaw);
     // Same label-collision gap twin.ts's Business Twin observations had
     // (round 635 fixed it there): only field.name is unique, never .label,
     // so two description fields here can legally share a label (e.g. two

@@ -1044,7 +1044,13 @@ function buildCalendarFeedIcs(entity, records) {
         }
       }
     }
-    const summary = feedChipLabelValue(labelField, record) || entity.label || entity.name;
+    // Round 1022: mirrors the live apps/api/src/calendarFeed.ts's own
+    // identical fix -- falls back to \`#<id>\` (the one established "no
+    // usable label" convention this app uses everywhere else) instead of
+    // entity.label/entity.name, which every unnamed record sharing this
+    // entity would otherwise show identically on the calendar.
+    const feedChipLabel = feedChipLabelValue(labelField, record);
+    const summary = feedChipLabel === "" ? \`#\${record.id}\` : feedChipLabel;
     lines.push("BEGIN:VEVENT");
     lines.push(foldFeedIcsLine(\`UID:\${feedIcsEscapeText(entity.name)}-\${record.id}@${project.id}.forge-ai\`));
     lines.push(\`DTSTAMP:\${dtstamp}\`);
@@ -3297,7 +3303,14 @@ function buildCalendarIcs(entity, dateField, labelField, records, relatedRecords
         : labelField.type === "enum"
           ? (labelField.enumLabels && labelField.enumLabels[rawLabelValue]) || rawLabelValue
           : rawLabelValue;
-    const summary = String(labelRaw ?? entity.label ?? entity.name);
+    // Round 1022: mirrors the live apps/web/src/calendarIcs.ts's own
+    // identical fix -- \`??\` only falls through on null/undefined, never
+    // on a genuinely blank string, so a blank text display field used to
+    // produce a literally blank SUMMARY line here while the live
+    // subscription feed above fell back to entity.label/entity.name for
+    // the exact same case. Falls back to \`#<id>\` instead, this app's own
+    // established "no usable label" convention.
+    const summary = labelRaw === null || labelRaw === undefined || labelRaw === "" ? \`#\${record.id}\` : String(labelRaw);
     // Same label-collision gap the exported app's Business Twin-equivalent
     // text builders were fixed for -- only field.name is unique, never
     // .label, so two description fields here can legally share a label.

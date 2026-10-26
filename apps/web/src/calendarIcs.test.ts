@@ -358,6 +358,28 @@ test("buildCalendarIcs resolves a boolean label field to uppercase TRUE/FALSE in
   assert.doesNotMatch(ics, /SUMMARY:false/, "must never leak the raw lowercase boolean value");
 });
 
+/**
+ * Round 1022: `??` only falls through on null/undefined, never on a
+ * genuinely blank string -- a text display field left empty on one
+ * record (pickDisplayField never requires one to be `required: true`)
+ * used to produce a literally blank SUMMARY line, while the live
+ * subscription feed's own identical computation (calendarFeed.ts) used
+ * `||` and fell back to entity.label/entity.name for the exact same
+ * case -- two calendar-export surfaces disagreeing on what title the
+ * same record gets. Confirms this now falls back to `#<id>` instead,
+ * the one established "no usable label" convention recordDisplayLabel
+ * already uses everywhere else (and that a genuinely non-empty label
+ * is completely unaffected).
+ */
+test("buildCalendarIcs falls back to #<id> in SUMMARY when the label field's own value is a blank string, not to the entity's name", () => {
+  const records: EntityRecord[] = [
+    { id: 42, appointmentDate: "2026-03-15", customerName: "", notes: null, courierId: null },
+  ];
+  const ics = buildCalendarIcs(entity, dateField, nameField, records, [], {});
+  assert.match(ics, /SUMMARY:#42/, "a blank label must fall back to #<id>, the app's own established convention, not entity.label/entity.name");
+  assert.doesNotMatch(ics, /SUMMARY:תור/, "must never fall back to the entity's own label for a genuinely blank field value");
+});
+
 test("buildCalendarIcs folds a long DESCRIPTION line at 75 UTF-8 octets with a CRLF + single leading space continuation", () => {
   const longNote = "x".repeat(120);
   const records: EntityRecord[] = [

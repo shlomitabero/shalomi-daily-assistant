@@ -149,7 +149,17 @@ export function buildCalendarFeedIcs(entity: Entity, records: EntityRecord[], pr
         }
       }
     }
-    const summary = calendarChipLabelValue(labelField, record) || entity.label || entity.name;
+    // Round 1022: calendarIcs.ts's own identical summary computation
+    // (the one-shot "Export ICS" button, for the exact same blank-label
+    // case) used to fall back to entity.label/entity.name here too -- two
+    // calendar-export surfaces disagreeing on what title the same record
+    // gets. Falls back to `#<id>` instead, matching the one established
+    // "no usable label" convention recordDisplayLabel/displayField.ts
+    // already use everywhere else in this app -- always unique per
+    // record, unlike entity.label/name, which every unnamed record
+    // sharing this entity would otherwise show identically.
+    const chipLabel = calendarChipLabelValue(labelField, record);
+    const summary = chipLabel === "" ? `#${record.id}` : chipLabel;
     lines.push("BEGIN:VEVENT");
     lines.push(foldIcsLine(`UID:${icsEscapeText(entity.name)}-${record.id}@${projectId}.forge-ai`));
     lines.push(`DTSTAMP:${dtstamp}`);

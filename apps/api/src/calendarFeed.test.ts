@@ -45,6 +45,26 @@ test("buildCalendarFeedIcs wraps output in a real VCALENDAR with VERSION/PRODID/
   assert.match(events[0], /SUMMARY:Dana Levi/, "SUMMARY must use the auto-detected display field's value");
 });
 
+/**
+ * Round 1022: the live preview's own identical computation (calendarIcs.ts,
+ * the one-shot "Export ICS" button) used `??`, which only falls through on
+ * null/undefined, never a genuinely blank string -- so a blank display
+ * field produced a literally blank SUMMARY there, while this feed's own
+ * `||` fell back to entity.label/entity.name for the exact same case: two
+ * calendar-export surfaces disagreeing on what title the same record
+ * gets. Confirms this now falls back to `#<id>` instead, the one
+ * established "no usable label" convention this app uses everywhere else
+ * (recordDisplayLabel/displayField.ts), matching calendarIcs.ts's own
+ * identical fix.
+ */
+test("buildCalendarFeedIcs falls back to #<id> in SUMMARY when the display field's own value is a blank string, not to the entity's name", () => {
+  const records: EntityRecord[] = [{ id: 42, appointmentDate: "2026-03-15", customerName: "", confirmed: true }];
+  const ics = buildCalendarFeedIcs(entity, records, "proj1");
+  assert.ok(ics);
+  assert.match(ics!, /SUMMARY:#42/, "a blank label must fall back to #<id>, the app's own established convention, not entity.label/entity.name");
+  assert.doesNotMatch(ics!, /SUMMARY:תור/, "must never fall back to the entity's own label for a genuinely blank field value");
+});
+
 test("buildCalendarFeedIcs includes EVERY record with a valid date, not just one month -- the whole point of a live feed vs. the one-shot export", () => {
   const records: EntityRecord[] = [
     { id: 1, appointmentDate: "2024-01-01", customerName: "Old One", confirmed: false },
