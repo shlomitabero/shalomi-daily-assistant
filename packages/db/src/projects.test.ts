@@ -28,6 +28,7 @@ import {
   updateProjectSpec,
   getOrCreateCalendarFeedToken,
   getCalendarFeedToken,
+  regenerateCalendarFeedToken,
 } from "./projects.js";
 
 const validSpec: ProductSpec = {
@@ -788,4 +789,30 @@ test("getOrCreateCalendarFeedToken and getCalendarFeedToken both return undefine
   ensureProjectsTable(db);
   assert.equal(getOrCreateCalendarFeedToken(db, "does-not-exist"), undefined);
   assert.equal(getCalendarFeedToken(db, "does-not-exist"), undefined);
+});
+
+/**
+ * Round 1012: before this function existed, no token could ever be
+ * invalidated once handed out -- a removed collaborator (or anyone
+ * they'd forwarded the subscribe URL to) kept live read access to the
+ * feed forever. Confirms this actually overwrites an already-set token
+ * with a genuinely different one, that the new value is what
+ * getCalendarFeedToken then returns, and that it's a no-op for a project
+ * that doesn't exist (mirroring getOrCreateCalendarFeedToken's own
+ * nonexistent-project handling).
+ */
+test("regenerateCalendarFeedToken overwrites an already-set token with a real, different one, and returns undefined for a project that doesn't exist", () => {
+  const db = openDatabase(":memory:");
+  ensureProjectsTable(db);
+  insertProject(db, { id: "proj1", ownerId: "owner1", name: "P1", description: "", spec: validSpec });
+
+  const original = getOrCreateCalendarFeedToken(db, "proj1");
+  assert.ok(original);
+
+  const regenerated = regenerateCalendarFeedToken(db, "proj1");
+  assert.ok(regenerated && regenerated.length >= 32, "expected a real, long random token");
+  assert.notEqual(regenerated, original, "regenerating must actually produce a different token, not return the existing one");
+  assert.equal(getCalendarFeedToken(db, "proj1"), regenerated, "the new token must actually be persisted, not just returned");
+
+  assert.equal(regenerateCalendarFeedToken(db, "does-not-exist"), undefined);
 });

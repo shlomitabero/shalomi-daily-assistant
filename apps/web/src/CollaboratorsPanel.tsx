@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import type { CollaboratorRole, ProjectCollaborator } from "@forge/shared";
-import { addCollaborator, listCollaborators, removeCollaborator, updateCollaboratorRole, type ProjectOwnerInfo } from "./api.js";
+import { addCollaborator, listCollaborators, regenerateCalendarFeedToken, removeCollaborator, updateCollaboratorRole, type ProjectOwnerInfo } from "./api.js";
 import { formatCollaboratorCount } from "./collaboratorCount.js";
 import { useTranslation } from "./i18n/LanguageContext.js";
 import { useDialogFocusTrap } from "./useDialogFocusTrap.js";
@@ -48,6 +48,8 @@ export function CollaboratorsPanel({
   const [inviteInfo, setInviteInfo] = useState<string | null>(null);
   const [removingUserId, setRemovingUserId] = useState<string | null>(null);
   const [updatingRoleUserId, setUpdatingRoleUserId] = useState<string | null>(null);
+  const [regeneratingFeedToken, setRegeneratingFeedToken] = useState(false);
+  const [regenerateFeedTokenInfo, setRegenerateFeedTokenInfo] = useState<string | null>(null);
   const dialogRef = useDialogFocusTrap<HTMLDivElement>(onClose);
 
   function loadCollaborators() {
@@ -165,6 +167,31 @@ export function CollaboratorsPanel({
     } catch (err) {
       setError((err as Error).message);
       setRemovingUserId(null);
+    }
+  }
+
+  /**
+   * Round 1012: before this route existed, a calendar subscribe URL
+   * (EntityPanel.tsx's own "Subscribe" button, round 1006) could never be
+   * invalidated once handed out -- a removed/demoted collaborator (or
+   * anyone they'd forwarded the URL to) kept live, unauthenticated feed
+   * access forever. Owner-only, mirroring handleRemove's/handleLeave's
+   * own confirm-dialog convention, since this also breaks every OTHER
+   * collaborator's (and the owner's own) already-configured subscription
+   * with no other warning.
+   */
+  async function handleRegenerateCalendarFeedToken() {
+    if (!window.confirm(t("collab.calendarFeed.regenerate.confirm"))) return;
+    setRegeneratingFeedToken(true);
+    setError(null);
+    setRegenerateFeedTokenInfo(null);
+    try {
+      await regenerateCalendarFeedToken(projectId);
+      setRegenerateFeedTokenInfo(t("collab.calendarFeed.regenerate.success"));
+    } catch (err) {
+      setError((err as Error).message);
+    } finally {
+      setRegeneratingFeedToken(false);
     }
   }
 
@@ -332,6 +359,21 @@ export function CollaboratorsPanel({
             </ul>
             {collaborators !== null && collaborators.length === 0 && <p className="muted small">{t("collab.empty")}</p>}
           </>
+        )}
+
+        {isOwner && (
+          <div className="collab-calendar-feed-section">
+            <h3>{t("collab.calendarFeed.heading")}</h3>
+            <p className="muted small">{t("collab.calendarFeed.description")}</p>
+            <button type="button" className="secondary" onClick={handleRegenerateCalendarFeedToken} disabled={regeneratingFeedToken}>
+              {regeneratingFeedToken ? t("collab.calendarFeed.regenerate.busy") : t("collab.calendarFeed.regenerate")}
+            </button>
+            {regenerateFeedTokenInfo && (
+              <p className="muted small" role="status">
+                {regenerateFeedTokenInfo}
+              </p>
+            )}
+          </div>
         )}
       </div>
     </div>

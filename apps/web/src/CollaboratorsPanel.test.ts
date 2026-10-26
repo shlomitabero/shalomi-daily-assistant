@@ -1065,3 +1065,119 @@ test("CollaboratorsPanel cross-gates the invite form against any role update or 
     }
   });
 });
+
+/**
+ * Round 1012: before the real route/button existed, a calendar subscribe
+ * URL (EntityPanel.tsx's own "Subscribe" button, round 1006) could never
+ * be invalidated once handed out -- a removed/demoted collaborator kept
+ * live feed access forever, with no owner-facing way to stop it.
+ * Confirms the new "Invalidate existing subscription links" affordance
+ * only ever renders for the owner -- a plain collaborator, who can't take
+ * this action server-side either (requireProjectOwner), must never be
+ * shown a button that would just 404 if clicked.
+ */
+test("CollaboratorsPanel's calendar-feed regenerate button only renders for the owner", async () => {
+  await withJsdom(async () => {
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = (async (input: string, init?: RequestInit) => {
+      const method = init?.method ?? "GET";
+      if (method === "GET" && input === "/api/projects/proj1/collaborators") {
+        return new Response(JSON.stringify({ collaborators: [] }), { status: 200, headers: { "content-type": "application/json" } });
+      }
+      throw new Error(`unexpected request ${method} ${input}`);
+    }) as typeof fetch;
+
+    try {
+      renderPanel(true);
+      await waitForCondition(() => document.querySelector(".collab-calendar-feed-section") !== null);
+      cleanup();
+
+      renderPanel(false);
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      assert.equal(
+        document.querySelector(".collab-calendar-feed-section"),
+        null,
+        "a plain collaborator (not the owner) must never see the regenerate affordance at all",
+      );
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+});
+
+/**
+ * Round 1012: mirrors the remove-button's own confirm-dialog test above --
+ * this action is just as consequential (it breaks every existing
+ * subscription, including the owner's own), so it needs the same
+ * confirm-before-acting gate, and declining must never call the real API.
+ */
+test("CollaboratorsPanel's calendar-feed regenerate button asks for confirmation, and declining never calls the real endpoint", async () => {
+  await withJsdom(async () => {
+    const originalFetch = globalThis.fetch;
+    const originalConfirm = globalThis.window.confirm;
+    let regenerateCalls = 0;
+
+    globalThis.fetch = (async (input: string, init?: RequestInit) => {
+      const method = init?.method ?? "GET";
+      if (method === "GET" && input === "/api/projects/proj1/collaborators") {
+        return new Response(JSON.stringify({ collaborators: [] }), { status: 200, headers: { "content-type": "application/json" } });
+      }
+      if (method === "POST" && input === "/api/projects/proj1/calendar-feed-token/regenerate") {
+        regenerateCalls += 1;
+        return new Response(JSON.stringify({ token: "brand-new-token" }), { status: 200, headers: { "content-type": "application/json" } });
+      }
+      throw new Error(`unexpected request ${method} ${input}`);
+    }) as typeof fetch;
+    globalThis.window.confirm = (() => false) as typeof window.confirm;
+
+    try {
+      renderPanel(true);
+      await waitForCondition(() => document.querySelector(".collab-calendar-feed-section") !== null);
+
+      fireEvent.click(document.querySelector(".collab-calendar-feed-section button") as HTMLButtonElement);
+      await new Promise((resolve) => setTimeout(resolve, 0));
+
+      assert.equal(regenerateCalls, 0, "declining the confirm must never call the real regenerate endpoint");
+    } finally {
+      globalThis.fetch = originalFetch;
+      globalThis.window.confirm = originalConfirm;
+    }
+  });
+});
+
+test("CollaboratorsPanel's calendar-feed regenerate button calls the real endpoint and shows a success message once confirmed", async () => {
+  await withJsdom(async () => {
+    const originalFetch = globalThis.fetch;
+    const originalConfirm = globalThis.window.confirm;
+    let regenerateCalls = 0;
+
+    globalThis.fetch = (async (input: string, init?: RequestInit) => {
+      const method = init?.method ?? "GET";
+      if (method === "GET" && input === "/api/projects/proj1/collaborators") {
+        return new Response(JSON.stringify({ collaborators: [] }), { status: 200, headers: { "content-type": "application/json" } });
+      }
+      if (method === "POST" && input === "/api/projects/proj1/calendar-feed-token/regenerate") {
+        regenerateCalls += 1;
+        return new Response(JSON.stringify({ token: "brand-new-token" }), { status: 200, headers: { "content-type": "application/json" } });
+      }
+      throw new Error(`unexpected request ${method} ${input}`);
+    }) as typeof fetch;
+    globalThis.window.confirm = (() => true) as typeof window.confirm;
+
+    try {
+      renderPanel(true);
+      await waitForCondition(() => document.querySelector(".collab-calendar-feed-section") !== null);
+
+      const button = document.querySelector(".collab-calendar-feed-section button") as HTMLButtonElement;
+      fireEvent.click(button);
+      await waitForCondition(() => regenerateCalls === 1);
+      await waitForCondition(() => document.querySelector(".collab-calendar-feed-section [role='status']") !== null);
+
+      assert.equal(regenerateCalls, 1, "confirming must call the real regenerate endpoint exactly once");
+      assert.equal(button.disabled, false, "the button must re-enable itself once the request settles");
+    } finally {
+      globalThis.fetch = originalFetch;
+      globalThis.window.confirm = originalConfirm;
+    }
+  });
+});

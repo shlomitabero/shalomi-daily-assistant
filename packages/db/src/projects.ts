@@ -301,6 +301,26 @@ export function getOrCreateCalendarFeedToken(db: ForgeDatabase, projectId: strin
 }
 
 /**
+ * Round 1012: once a collaborator has fetched the feed token and
+ * subscribed in their own calendar app, there was no way to invalidate it
+ * -- not even the project owner could, since no function anywhere ever
+ * overwrote an already-set calendarFeedToken. A removed or demoted
+ * collaborator (or anyone they'd forwarded the URL to) kept live,
+ * unauthenticated read access to every record the feed exposes forever,
+ * with the only "fix" being to delete the whole project. Mirrors
+ * getOrCreateCalendarFeedToken's own token-generation shape exactly, but
+ * unconditionally overwrites rather than returning an existing value --
+ * the whole point is to make the old one stop matching.
+ */
+export function regenerateCalendarFeedToken(db: ForgeDatabase, projectId: string): string | undefined {
+  const project = db.prepare("SELECT id FROM projects WHERE id = ?").get(projectId) as { id: string } | undefined;
+  if (!project) return undefined;
+  const token = randomBytes(32).toString("hex");
+  db.prepare("UPDATE projects SET calendarFeedToken = ? WHERE id = ?").run(token, projectId);
+  return token;
+}
+
+/**
  * The public feed route's own lookup direction: given a project id and the
  * token a calendar app presented, finds which project (if any) it actually
  * belongs to. Returns undefined for a project with no token generated yet

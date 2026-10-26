@@ -31,6 +31,7 @@ export {
   deleteProject,
   getOrCreateCalendarFeedToken,
   getCalendarFeedToken,
+  regenerateCalendarFeedToken,
 } from "./projects.js";
 export {
   ensureProjectCollaboratorsTable,

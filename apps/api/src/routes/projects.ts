@@ -49,6 +49,7 @@ import {
   updateAutomationRule,
   deleteAutomationRule,
   getOrCreateCalendarFeedToken,
+  regenerateCalendarFeedToken,
   isValidDateString,
   NotFoundError,
   type ForgeDatabase,
@@ -1331,6 +1332,28 @@ export function createProjectsRouter(
     asyncRoute(async (req, res) => {
       requireProjectAccess(db, req.params.id, req.userId!);
       res.json({ token: getOrCreateCalendarFeedToken(db, req.params.id) });
+    }),
+  );
+
+  /**
+   * Round 1012: once any collaborator has fetched the token above and
+   * subscribed in their own calendar app, there was no way to invalidate
+   * it -- not even the owner could, since nothing anywhere ever
+   * overwrote an already-set calendarFeedToken. A removed or demoted
+   * collaborator (or anyone they'd forwarded the URL to) kept live,
+   * unauthenticated read access to this feed forever, with no fix short
+   * of deleting the whole project. requireProjectOwner, not
+   * requireProjectAccess (unlike the GET route above): rotating the
+   * token also breaks every OTHER collaborator's already-configured
+   * subscription with no warning to them, so only the owner -- who
+   * already decides who has access to the project at all -- can trigger
+   * that tradeoff.
+   */
+  router.post(
+    "/projects/:id/calendar-feed-token/regenerate",
+    asyncRoute(async (req, res) => {
+      requireProjectOwner(db, req.params.id, req.userId!);
+      res.json({ token: regenerateCalendarFeedToken(db, req.params.id) });
     }),
   );
 

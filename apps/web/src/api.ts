@@ -898,6 +898,17 @@ export function getCalendarFeedToken(projectId: string): Promise<{ token: string
   return request(`/projects/${projectId}/calendar-feed-token`);
 }
 
+/**
+ * Round 1012: rotates the feed token so any previously-copied subscribe
+ * URL (a removed/demoted collaborator's own, or anyone they'd forwarded
+ * it to) stops working -- owner-only, since it also breaks every OTHER
+ * collaborator's already-configured subscription with no warning to
+ * them. See routes/projects.ts's own doc comment on this route.
+ */
+export function regenerateCalendarFeedToken(projectId: string): Promise<{ token: string }> {
+  return request(`/projects/${projectId}/calendar-feed-token/regenerate`, { method: "POST" });
+}
+
 export function listCheckpoints(projectId: string): Promise<{ checkpoints: Checkpoint[] }> {
   return request(`/projects/${projectId}/checkpoints`);
 }

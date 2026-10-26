@@ -14190,3 +14190,102 @@ test("GET /public/calendar/:projectId/:entityName.ics serves an empty-but-valid 
     assert.equal(noDateFieldRes.status, 404, "an entity with no date field at all has nothing a calendar app could ever subscribe to");
   });
 });
+
+/**
+ * Round 1012: before this round, once a token was handed out via the GET
+ * route above, nothing could ever invalidate it -- a removed or demoted
+ * collaborator (or anyone who'd been forwarded the URL) kept live,
+ * unauthenticated read access to the feed forever. Confirms the new
+ * owner-only regenerate route actually makes the OLD token stop working
+ * against the real public feed route (not just that it returns a
+ * different value), while a fresh subscribe URL built from the new token
+ * keeps working.
+ */
+test("POST /projects/:id/calendar-feed-token/regenerate invalidates the old token so the public feed route stops accepting it, while the new one keeps working", async () => {
+  await withServer(async (baseUrl, db) => {
+    const email = `calendar-feed-regen-${randomUUID()}@example.com`;
+    const authToken = await signup(baseUrl, email);
+    const user = findUserByEmail(db, email)!;
+    const spec: ProductSpec = {
+      summary: "test",
+      personas: [],
+      roles: ["Admin"],
+      entities: [{ name: "Appointment", fields: [{ name: "name", type: "text", required: true }, { name: "date", type: "date", required: true }] }],
+      screens: [],
+      assumptions: [],
+      openQuestions: [],
+    };
+    const projectId = randomUUID();
+    insertProject(db, { id: projectId, ownerId: user.id, name: "CRM", description: "test", spec });
+    diffAndMigrate(db, projectId, undefined, spec);
+    markProjectBuilt(db, projectId);
+    insertRecord(db, projectId, spec.entities[0], { name: "Checkup", date: "2026-05-01" });
+
+    const tokenRes = await fetch(`${baseUrl}/api/projects/${projectId}/calendar-feed-token`, { headers: authHeaders(authToken) });
+    const { token: oldToken } = (await tokenRes.json()) as { token: string };
+
+    const oldFeedRes = await fetch(`${baseUrl}/api/public/calendar/${projectId}/Appointment.ics?token=${oldToken}`);
+    assert.equal(oldFeedRes.status, 200, "sanity check: the original token must actually work before regenerating");
+
+    const regenRes = await fetch(`${baseUrl}/api/projects/${projectId}/calendar-feed-token/regenerate`, {
+      method: "POST",
+      headers: authHeaders(authToken),
+    });
+    assert.equal(regenRes.status, 200);
+    const { token: newToken } = (await regenRes.json()) as { token: string };
+    assert.ok(newToken && newToken.length >= 32, "expected a real, long random token");
+    assert.notEqual(newToken, oldToken, "regenerating must actually produce a different token, not return the same one");
+
+    const oldFeedAfterRegenRes = await fetch(`${baseUrl}/api/public/calendar/${projectId}/Appointment.ics?token=${oldToken}`);
+    assert.equal(oldFeedAfterRegenRes.status, 404, "the OLD token must stop working -- this is the whole point of regenerating");
+
+    const newFeedRes = await fetch(`${baseUrl}/api/public/calendar/${projectId}/Appointment.ics?token=${newToken}`);
+    assert.equal(newFeedRes.status, 200, "the NEW token must work against the real feed route");
+    const ics = await newFeedRes.text();
+    assert.match(ics, /SUMMARY:Checkup/);
+
+    // Repeated GETs of the plain (non-regenerating) token route must now
+    // return the NEW token, not silently keep handing out the old one.
+    const tokenResAfter = await fetch(`${baseUrl}/api/projects/${projectId}/calendar-feed-token`, { headers: authHeaders(authToken) });
+    assert.equal((await tokenResAfter.json() as { token: string }).token, newToken);
+  });
+});
+
+test("POST /projects/:id/calendar-feed-token/regenerate is owner-only, with the same existence-hiding 404 every other owner-only action uses", async () => {
+  await withServer(async (baseUrl, db) => {
+    const ownerEmail = `calendar-feed-regen-owner-${randomUUID()}@example.com`;
+    const ownerToken = await signup(baseUrl, ownerEmail);
+    const collabEmail = `calendar-feed-regen-collab-${randomUUID()}@example.com`;
+    const collabToken = await signup(baseUrl, collabEmail);
+    const owner = findUserByEmail(db, ownerEmail)!;
+    const spec: ProductSpec = {
+      summary: "test",
+      personas: [],
+      roles: ["Admin"],
+      entities: [{ name: "Appointment", fields: [{ name: "name", type: "text", required: true }, { name: "date", type: "date", required: true }] }],
+      screens: [],
+      assumptions: [],
+      openQuestions: [],
+    };
+    const projectId = randomUUID();
+    insertProject(db, { id: projectId, ownerId: owner.id, name: "CRM", description: "test", spec });
+
+    await fetch(`${baseUrl}/api/projects/${projectId}/collaborators`, {
+      method: "POST",
+      headers: authHeaders(ownerToken),
+      body: JSON.stringify({ email: collabEmail }),
+    });
+
+    const asCollaborator = await fetch(`${baseUrl}/api/projects/${projectId}/calendar-feed-token/regenerate`, {
+      method: "POST",
+      headers: authHeaders(collabToken),
+    });
+    assert.equal(asCollaborator.status, 404, "a non-owner collaborator must never be able to rotate the token out from under everyone else's subscription");
+
+    const asOwner = await fetch(`${baseUrl}/api/projects/${projectId}/calendar-feed-token/regenerate`, {
+      method: "POST",
+      headers: authHeaders(ownerToken),
+    });
+    assert.equal(asOwner.status, 200, "the real owner must still be able to regenerate it");
+  });
+});
