@@ -14483,6 +14483,58 @@ test("GET /public/calendar/:projectId/:entityName.ics serves an empty-but-valid 
 });
 
 /**
+ * Round 1034: DESCRIPTION parity with the one-shot "Export ICS" button
+ * (calendarIcs.ts's own buildCalendarIcs) -- before this round the live
+ * feed's own VEVENTs carried only SUMMARY/DTSTART/DTEND, with no
+ * per-field DESCRIPTION dump at all, and a relation field had no way to
+ * be resolved through the real route (no relatedRecords were ever
+ * fetched). Confirms the real route -- not just buildCalendarFeedIcs in
+ * isolation -- actually fetches the related Customer entity's records
+ * and resolves the Appointment's own relation field to that customer's
+ * real name in DESCRIPTION.
+ */
+test("GET /public/calendar/:projectId/:entityName.ics's DESCRIPTION resolves a relation field to its related record's real display label", async () => {
+  await withServer(async (baseUrl, db) => {
+    const email = `calendar-feed-relation-${randomUUID()}@example.com`;
+    const authToken = await signup(baseUrl, email);
+    const user = findUserByEmail(db, email)!;
+    const spec: ProductSpec = {
+      summary: "test",
+      personas: [],
+      roles: ["Admin"],
+      entities: [
+        { name: "Customer", fields: [{ name: "fullName", type: "text", required: true }] },
+        {
+          name: "Appointment",
+          fields: [
+            { name: "name", type: "text", required: true },
+            { name: "date", type: "date", required: true },
+            { name: "customer", type: "relation", relationTo: "Customer", required: false },
+          ],
+        },
+      ],
+      screens: [],
+      assumptions: [],
+      openQuestions: [],
+    };
+    const projectId = randomUUID();
+    insertProject(db, { id: projectId, ownerId: user.id, name: "CRM", description: "test", spec });
+    diffAndMigrate(db, projectId, undefined, spec);
+    markProjectBuilt(db, projectId);
+    const customer = insertRecord(db, projectId, spec.entities[0], { fullName: "Yossi Cohen" });
+    insertRecord(db, projectId, spec.entities[1], { name: "Checkup", date: "2026-05-01", customer: customer.id });
+
+    const tokenRes = await fetch(`${baseUrl}/api/projects/${projectId}/calendar-feed-token`, { headers: authHeaders(authToken) });
+    const { token: feedToken } = (await tokenRes.json()) as { token: string };
+
+    const feedRes = await fetch(`${baseUrl}/api/public/calendar/${projectId}/Appointment.ics?token=${feedToken}`);
+    assert.equal(feedRes.status, 200);
+    const ics = await feedRes.text();
+    assert.match(ics, /DESCRIPTION:.*customer: Yossi Cohen/, "the relation field must resolve to the related Customer's own real name, not a raw foreign-key id");
+  });
+});
+
+/**
  * Round 1012: before this round, once a token was handed out via the GET
  * route above, nothing could ever invalidate it -- a removed or demoted
  * collaborator (or anyone who'd been forwarded the URL) kept live,

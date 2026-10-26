@@ -1005,6 +1005,71 @@ function foldFeedIcsLine(line) {
   return parts.join("\\r\\n ");
 }
 
+// Round 1034: DESCRIPTION parity with this exported app's own one-shot
+// "Export ICS" button (buildCalendarIcs above) -- this feed's own VEVENTs
+// used to carry only SUMMARY/DTSTART/DTEND. Self-contained "feed"-prefixed
+// duplicates (mirroring this file's own established convention of never
+// sharing a function between the server.js template and the client
+// bundle template), not a reuse of backupFieldDisplayValue (the /api/backup
+// route's own CSV-field resolver just above): that function's boolean
+// branch returns "" for a null/unset value (the right call for a CSV
+// cell), while buildCalendarIcs's own boolean branch always renders
+// TRUE/FALSE, never skipping -- the same established convention this
+// DESCRIPTION dump must match, not CSV's.
+function feedRecordDisplayLabel(entity, record) {
+  const field = pickFeedDisplayField(entity);
+  const value = field ? record[field.name] : undefined;
+  if (value === null || value === undefined || value === "") return \`#\${record.id}\`;
+  if (field && field.type === "boolean") return value ? "TRUE" : "FALSE";
+  if (field && field.type === "enum") return (field.enumLabels && field.enumLabels[String(value)]) || String(value);
+  if (field && field.type === "relation") return \`#\${record.id}\`;
+  if (field && field.type === "file") return \`#\${record.id}\`;
+  return String(value);
+}
+
+function feedRelationDisplayLabel(field, value, recordIndexByEntity) {
+  if (value === null || value === undefined || value === "") return "";
+  const targetEntity = field.relationTo ? ENTITIES.find((e) => e.name === field.relationTo) : null;
+  const index = field.relationTo ? recordIndexByEntity[field.relationTo] : null;
+  if (!targetEntity || !index) return \`#\${value}\`;
+  const match = index.get(Number(value));
+  return match ? feedRecordDisplayLabel(targetEntity, match) : \`#\${value}\`;
+}
+
+function feedParseFileFieldValue(value) {
+  if (typeof value !== "string" || value === "") return null;
+  try {
+    const parsed = JSON.parse(value);
+    if (typeof parsed?.url === "string" && /^\\/api\\/uploads\\/[^/]+\\/[^/]+\\/[^/]+$/.test(parsed.url) && typeof parsed?.name === "string") {
+      return { name: parsed.name };
+    }
+  } catch {
+    // not a file descriptor -- treated as no file, same as an empty value
+  }
+  return null;
+}
+
+function feedParseFieldDate(raw) {
+  const match = DATE_FORMAT.exec(raw);
+  if (match) return new Date(Number(match[1]), Number(match[2]) - 1, Number(match[3]));
+  return new Date(raw);
+}
+
+// Mirrors this file's own EntityView table cells (bare toLocaleDateString()/
+// toLocaleString(), no explicit locale -- this exported app has no
+// language-switching mechanism of its own), the same convention
+// buildCalendarIcs's own formatIcsDescriptionDate/Number above already
+// follow for the identical reason.
+function feedFormatIcsDescriptionDate(value) {
+  if (typeof value !== "string") return value;
+  const date = feedParseFieldDate(value);
+  return Number.isNaN(date.getTime()) ? value : date.toLocaleDateString();
+}
+
+function feedFormatIcsDescriptionNumber(value) {
+  return typeof value === "number" ? value.toLocaleString() : value;
+}
+
 // Builds a real RFC 5545 .ics calendar for EVERY record of \`entity\` that
 // has a valid value in its auto-detected date field -- not just the
 // records a client happened to pass in for one visible month, the way
@@ -1012,11 +1077,22 @@ function foldFeedIcsLine(line) {
 // the entity has no date field at all (nothing for a calendar app to ever
 // subscribe to), so the caller can 404 instead of serving an
 // always-empty feed that looks broken to the subscriber.
-function buildCalendarFeedIcs(entity, records) {
+function buildCalendarFeedIcs(entity, records, recordIndexByEntity) {
   const dateField = findFeedDateField(entity.fields);
   if (!dateField) return null;
   const endField = findFeedEndDateField(entity.fields, dateField);
   const labelField = feedChipLabelField(entity, dateField);
+  // Mirrors buildCalendarIcs's own descriptionFields exactly, minus its
+  // orderedFields parameter -- this route has no per-collaborator column-
+  // order preference to read (that's browser-side state in the live
+  // Forge AI preview this exported app has no runtime dependency on), so
+  // this always uses the entity's own declared field order.
+  const descriptionFields = entity.fields.filter((f) => f.name !== dateField.name && f.name !== labelField.name && f.name !== (endField && endField.name));
+  const descriptionLabelOccurrences = {};
+  for (const f of descriptionFields) {
+    const label = f.label || f.name;
+    descriptionLabelOccurrences[label] = (descriptionLabelOccurrences[label] || 0) + 1;
+  }
   const dtstamp = formatFeedIcsTimestamp(new Date());
   const lines = [
     "BEGIN:VCALENDAR",
@@ -1051,12 +1127,33 @@ function buildCalendarFeedIcs(entity, records) {
     // entity would otherwise show identically on the calendar.
     const feedChipLabel = feedChipLabelValue(labelField, record);
     const summary = feedChipLabel === "" ? \`#\${record.id}\` : feedChipLabel;
+    // Mirrors buildCalendarIcs's own descriptionLines computation exactly,
+    // including the field-label-collision disambiguation.
+    const descriptionLines = descriptionFields
+      .map((f) => {
+        const value =
+          f.type === "relation" ? feedRelationDisplayLabel(f, record[f.name], recordIndexByEntity)
+          : f.type === "enum" ? ((f.enumLabels && f.enumLabels[record[f.name]]) || record[f.name])
+          : f.type === "file" ? (feedParseFileFieldValue(record[f.name])?.name || null)
+          : f.type === "boolean" ? (record[f.name] ? "TRUE" : "FALSE")
+          : f.type === "date" ? feedFormatIcsDescriptionDate(record[f.name])
+          : f.type === "number" ? feedFormatIcsDescriptionNumber(record[f.name])
+          : record[f.name];
+        if (value === null || value === undefined || value === "") return null;
+        const fieldLabel = f.label || f.name;
+        const ambiguous = (descriptionLabelOccurrences[fieldLabel] || 0) > 1;
+        return fieldLabel + (ambiguous ? " (" + f.name + ")" : "") + ": " + value;
+      })
+      .filter((line) => line !== null);
     lines.push("BEGIN:VEVENT");
     lines.push(foldFeedIcsLine(\`UID:\${feedIcsEscapeText(entity.name)}-\${record.id}@${project.id}.forge-ai\`));
     lines.push(\`DTSTAMP:\${dtstamp}\`);
     lines.push(\`DTSTART;VALUE=DATE:\${formatFeedIcsDate(start)}\`);
     lines.push(\`DTEND;VALUE=DATE:\${formatFeedIcsDate(end)}\`);
     lines.push(foldFeedIcsLine(\`SUMMARY:\${feedIcsEscapeText(summary)}\`));
+    if (descriptionLines.length > 0) {
+      lines.push(foldFeedIcsLine(\`DESCRIPTION:\${feedIcsEscapeText(descriptionLines.join("\\n"))}\`));
+    }
     lines.push("END:VEVENT");
   }
   lines.push("END:VCALENDAR");
@@ -1071,7 +1168,22 @@ app.get("/api/calendar/:entityName.ics", (req, res) => {
   }
   const rows = db.prepare(\`SELECT * FROM \${q(entity.name)} ORDER BY id DESC\`).all();
   const records = rows.map((r) => rowToRecord(entity, r));
-  const ics = buildCalendarFeedIcs(entity, records);
+  // Round 1034: fetches only the OTHER entities a relation field on this
+  // one entity actually points at (not every entity in the project, the
+  // way /api/backup above does for its own, very different "dump
+  // everything once" use case) -- this route can be polled by a real
+  // calendar app on its own schedule forever, so it stays scoped to
+  // exactly the data DESCRIPTION might need to resolve.
+  const recordIndexByEntity = {};
+  for (const field of entity.fields) {
+    if (field.type !== "relation" || !field.relationTo || recordIndexByEntity[field.relationTo]) continue;
+    const targetEntity = ENTITIES.find((e) => e.name === field.relationTo);
+    if (!targetEntity) continue;
+    const targetRows = db.prepare(\`SELECT * FROM \${q(targetEntity.name)} ORDER BY id DESC\`).all();
+    const targetRecords = targetRows.map((r) => rowToRecord(targetEntity, r));
+    recordIndexByEntity[field.relationTo] = new Map(targetRecords.map((r) => [Number(r.id), r]));
+  }
+  const ics = buildCalendarFeedIcs(entity, records, recordIndexByEntity);
   if (ics === null) {
     res.status(404).json({ error: "Calendar feed not found" });
     return;

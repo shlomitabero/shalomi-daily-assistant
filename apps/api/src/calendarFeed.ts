@@ -13,19 +13,35 @@ import type { Entity, EntityRecord, Field } from "@forge/shared";
  * field-picking/ICS-formatting helpers calendarIcs.ts and entityFormatting.ts
  * already have on the client side -- the same apps/api-never-imports-
  * apps/web/src convention codegen.ts already follows for the exact same
- * reason (these are two genuinely separate runtimes/packages). Scoped down
- * from the client-side export in one deliberate way: this feed's own
- * VEVENTs carry only SUMMARY/DTSTART/DTEND, not the full per-field
- * DESCRIPTION dump buildCalendarIcs produces (which needs relation/enum/
- * file-field resolution against the whole project's related records) --
- * a real, useful subscription feed (see every record's date/title live,
- * auto-updating) without that extra duplicated surface. A future round
- * can add DESCRIPTION parity if it's ever actually wanted.
+ * reason (these are two genuinely separate runtimes/packages).
+ *
+ * Round 1034: DESCRIPTION parity with the one-shot export. allEntities/
+ * relatedRecords are optional (default to `[]`/`{}`) so a caller that
+ * hasn't fetched relation data (or an existing test) still gets every
+ * non-relation DESCRIPTION line, with a relation field degrading to its
+ * raw `#<id>` the same way relationDisplayLabel itself degrades when its
+ * target entity/records aren't available. `lang` has no per-request
+ * session to read (this route has no cookie/auth beyond the feed token
+ * itself) -- callers derive it the same way automations.ts/twin.ts/
+ * backup.ts already do for their own no-session server-side text,
+ * `isHebrewText(project.description)`, rather than this module guessing.
  */
+
+type Lang = "he" | "en";
+const LOCALE: Record<Lang, string> = { he: "he-IL", en: "en-US" };
+
+/** Mirrors apps/web/src/entityFormatting.ts's own RelatedRecordsByEntity exactly. */
+export type RelatedRecordsByEntity = Record<string, EntityRecord[]>;
 
 const DATE_FIELD_NAME_HINTS = ["date", "appointmentdate", "scheduleddate", "eventdate", "duedate", "startdate"];
 const END_DATE_FIELD_NAME_HINTS = ["enddate", "returndate", "checkoutdate", "untildate", "todate"];
 const DISPLAY_FIELD_NAME_HINTS = ["name", "title"];
+const DATE_FORMAT = /^(\d{4})-(\d{2})-(\d{2})$/;
+// Mirrors entityFormatting.ts's own SAFE_FILE_URL exactly -- see its doc
+// comment for why a file field's `url` is checked against this shape
+// before ever being trusted (defense-in-depth against a pre-round-908
+// record storing something other than this server's own upload route).
+const SAFE_FILE_URL = /^\/api\/uploads\/[^/]+\/[^/]+\/[^/]+$/;
 
 export function findDateField(fields: Field[]): Field | null {
   const dateFields = fields.filter((f) => f.type === "date");
@@ -64,6 +80,89 @@ function calendarChipLabelValue(labelField: Field, record: EntityRecord): string
   if (labelField.type === "boolean") return value ? "TRUE" : "FALSE";
   if (labelField.type === "enum") return (labelField.enumLabels && labelField.enumLabels[String(value)]) || String(value);
   return String(value);
+}
+
+/** Mirrors entityFormatting.ts's own parseFieldDate exactly -- see its doc comment for the local-vs-UTC-midnight rationale. */
+function parseFieldDate(raw: string): Date {
+  const match = DATE_FORMAT.exec(raw);
+  if (match) {
+    const [, yearStr, monthStr, dayStr] = match;
+    return new Date(Number(yearStr), Number(monthStr) - 1, Number(dayStr));
+  }
+  return new Date(raw);
+}
+
+/** Mirrors entityFormatting.ts's own parseFileFieldValue exactly. */
+function parseFileFieldValue(value: unknown): { name: string } | null {
+  if (typeof value !== "string" || value === "") return null;
+  try {
+    const parsed = JSON.parse(value) as { url?: unknown; name?: unknown };
+    if (typeof parsed.url === "string" && SAFE_FILE_URL.test(parsed.url) && typeof parsed.name === "string") {
+      return { name: parsed.name };
+    }
+  } catch {
+    // not a file descriptor -- treated as no file, same as an empty value
+  }
+  return null;
+}
+
+/** Mirrors calendarIcs.ts's own formatIcsDescriptionDate exactly. */
+function formatIcsDescriptionDate(value: unknown, lang: Lang): unknown {
+  if (typeof value !== "string") return value;
+  const date = parseFieldDate(value);
+  return Number.isNaN(date.getTime()) ? value : date.toLocaleDateString(LOCALE[lang]);
+}
+
+/** Mirrors calendarIcs.ts's own formatIcsDescriptionNumber exactly. */
+function formatIcsDescriptionNumber(value: unknown, lang: Lang): unknown {
+  return typeof value === "number" ? value.toLocaleString(LOCALE[lang]) : value;
+}
+
+/**
+ * Mirrors entityFormatting.ts's own recordDisplayLabel exactly (the subset
+ * relationDisplayLabel below actually needs -- a relation target record's
+ * own label, not a full record's display-everywhere label).
+ */
+function recordDisplayLabelForRelation(entity: Entity, record: EntityRecord): string {
+  const field = pickDisplayField(entity);
+  const value = field ? record[field.name] : undefined;
+  if (value === null || value === undefined || value === "") return `#${record.id}`;
+  if (field?.type === "boolean") return value ? "TRUE" : "FALSE";
+  if (field?.type === "enum") return field.enumLabels?.[String(value)] ?? String(value);
+  if (field?.type === "relation") return `#${record.id}`;
+  if (field?.type === "file") return `#${record.id}`;
+  return String(value);
+}
+
+/**
+ * Mirrors entityFormatting.ts's own relationDisplayLabel exactly, except
+ * the id->record index isn't cached in a module-level WeakMap (that exists
+ * there to amortize cost across the many independent call sites sharing
+ * one render cycle's `relatedRecords` -- table/board/calendar cells, CSV
+ * export, search, sorting; this module has exactly one call site per feed
+ * request). `indexCache` is passed in instead, built once per
+ * buildCalendarFeedIcs call and reused across every record in that same
+ * call's loop, which is enough to keep the whole feed O(N+M) rather than
+ * O(N*M) without needing a WeakMap's cross-call lifetime at all.
+ */
+function relationDisplayLabelLocal(
+  field: Field,
+  value: unknown,
+  allEntities: Entity[],
+  relatedRecords: RelatedRecordsByEntity,
+  indexCache: Map<EntityRecord[], Map<number, EntityRecord>>,
+): string {
+  if (value === null || value === undefined || value === "") return "";
+  const targetEntity = field.relationTo ? allEntities.find((e) => e.name === field.relationTo) : undefined;
+  const records = field.relationTo ? relatedRecords[field.relationTo] : undefined;
+  if (!targetEntity || !records) return `#${value}`;
+  let index = indexCache.get(records);
+  if (!index) {
+    index = new Map(records.map((r) => [Number(r.id), r]));
+    indexCache.set(records, index);
+  }
+  const match = index.get(Number(value));
+  return match ? recordDisplayLabelForRelation(targetEntity, match) : `#${value}`;
 }
 
 function pad2(n: number): string {
@@ -115,11 +214,31 @@ function foldIcsLine(line: string): string {
  * subscribe to), so the caller can 404 instead of serving an always-empty
  * feed that looks broken to the subscriber.
  */
-export function buildCalendarFeedIcs(entity: Entity, records: EntityRecord[], projectId: string, now: Date = new Date()): string | null {
+export function buildCalendarFeedIcs(
+  entity: Entity,
+  records: EntityRecord[],
+  projectId: string,
+  now: Date = new Date(),
+  allEntities: Entity[] = [],
+  relatedRecords: RelatedRecordsByEntity = {},
+  lang: Lang = "en",
+): string | null {
   const dateField = findDateField(entity.fields);
   if (!dateField) return null;
   const endField = findEndDateField(entity.fields, dateField);
   const labelField = calendarChipLabelField(entity, dateField);
+  // Mirrors calendarIcs.ts's own descriptionFields exactly, minus its
+  // orderedFields parameter -- there's no per-user column-order
+  // preference to read here (that state lives client-side, keyed by a
+  // logged-in collaborator, and this route has no such session), so this
+  // always uses the entity's own declared field order.
+  const descriptionFields = entity.fields.filter((f) => f.name !== dateField.name && f.name !== labelField.name && f.name !== endField?.name);
+  const descriptionLabelOccurrences = new Map<string, number>();
+  for (const f of descriptionFields) {
+    const label = f.label ?? f.name;
+    descriptionLabelOccurrences.set(label, (descriptionLabelOccurrences.get(label) ?? 0) + 1);
+  }
+  const relationIndexCache = new Map<EntityRecord[], Map<number, EntityRecord>>();
   const dtstamp = formatIcsTimestamp(now);
   const lines: string[] = [
     "BEGIN:VCALENDAR",
@@ -160,12 +279,40 @@ export function buildCalendarFeedIcs(entity: Entity, records: EntityRecord[], pr
     // sharing this entity would otherwise show identically.
     const chipLabel = calendarChipLabelValue(labelField, record);
     const summary = chipLabel === "" ? `#${record.id}` : chipLabel;
+    // Mirrors calendarIcs.ts's own descriptionLines computation exactly,
+    // including the field-label-collision disambiguation (round 635's
+    // fix, applied here the same way calendarIcs.ts already applies it).
+    const descriptionLines = descriptionFields
+      .map((f) => {
+        const value =
+          f.type === "relation"
+            ? relationDisplayLabelLocal(f, record[f.name], allEntities, relatedRecords, relationIndexCache)
+            : f.type === "enum"
+              ? (f.enumLabels?.[String(record[f.name])] ?? record[f.name])
+              : f.type === "file"
+                ? parseFileFieldValue(record[f.name])?.name ?? null
+                : f.type === "boolean"
+                  ? (record[f.name] ? "TRUE" : "FALSE")
+                  : f.type === "date"
+                    ? formatIcsDescriptionDate(record[f.name], lang)
+                    : f.type === "number"
+                      ? formatIcsDescriptionNumber(record[f.name], lang)
+                      : record[f.name];
+        if (value === null || value === undefined || value === "") return null;
+        const fieldLabel = f.label ?? f.name;
+        const ambiguous = (descriptionLabelOccurrences.get(fieldLabel) ?? 0) > 1;
+        return `${fieldLabel}${ambiguous ? ` (${f.name})` : ""}: ${value}`;
+      })
+      .filter((line): line is string => line !== null);
     lines.push("BEGIN:VEVENT");
     lines.push(foldIcsLine(`UID:${icsEscapeText(entity.name)}-${record.id}@${projectId}.forge-ai`));
     lines.push(`DTSTAMP:${dtstamp}`);
     lines.push(`DTSTART;VALUE=DATE:${formatIcsDate(start)}`);
     lines.push(`DTEND;VALUE=DATE:${formatIcsDate(end)}`);
     lines.push(foldIcsLine(`SUMMARY:${icsEscapeText(summary)}`));
+    if (descriptionLines.length > 0) {
+      lines.push(foldIcsLine(`DESCRIPTION:${icsEscapeText(descriptionLines.join("\n"))}`));
+    }
     lines.push("END:VEVENT");
   }
   lines.push("END:VCALENDAR");

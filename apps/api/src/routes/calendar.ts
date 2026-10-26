@@ -2,8 +2,9 @@ import { timingSafeEqual } from "node:crypto";
 import { Router, type Request, type Response } from "express";
 import type { ForgeDatabase } from "@forge/db";
 import { getCalendarFeedToken, listRecords } from "@forge/db";
-import { ProductSpecSchema } from "@forge/shared";
-import { buildCalendarFeedIcs } from "../calendarFeed.js";
+import { ProductSpecSchema, type Entity, type EntityRecord } from "@forge/shared";
+import { isHebrewText } from "@forge/spec-engine";
+import { buildCalendarFeedIcs, type RelatedRecordsByEntity } from "../calendarFeed.js";
 
 function tokenMatches(provided: string, stored: string): boolean {
   const providedBuf = Buffer.from(provided, "utf8");
@@ -50,8 +51,8 @@ export function createCalendarFeedRouter(db: ForgeDatabase): Router {
         res.status(404).json({ error: "Calendar feed not found", code: "CALENDAR_FEED_NOT_FOUND" });
         return;
       }
-      const project = db.prepare("SELECT spec_json, status FROM projects WHERE id = ?").get(projectId) as
-        | { spec_json: string; status: string }
+      const project = db.prepare("SELECT spec_json, status, description FROM projects WHERE id = ?").get(projectId) as
+        | { spec_json: string; status: string; description: string }
         | undefined;
       if (!project) {
         res.status(404).json({ error: "Calendar feed not found", code: "CALENDAR_FEED_NOT_FOUND" });
@@ -72,8 +73,27 @@ export function createCalendarFeedRouter(db: ForgeDatabase): Router {
       // query (listRecords would throw) -- an empty-but-valid feed lets a
       // user set up the subscription URL ahead of building, rather than
       // erroring until they do.
+      const allEntities: Entity[] = parsed.success ? parsed.data.entities : [];
       const records = project.status === "built" ? listRecords(db, projectId, entity) : [];
-      const ics = buildCalendarFeedIcs(entity, records, projectId);
+      // Round 1034: fetches every OTHER entity a relation field on this
+      // entity actually points at, so buildCalendarFeedIcs's DESCRIPTION
+      // can resolve a relation to its target record's real display label
+      // instead of the raw foreign-key id -- the same data the client-side
+      // one-shot export (EntityPanel.tsx's own relatedRecords state) already
+      // has in memory before it ever calls buildCalendarIcs. Only built
+      // once per request, and only for entities this one entity's fields
+      // actually reference, not the whole project.
+      const relatedRecords: RelatedRecordsByEntity = {};
+      if (project.status === "built") {
+        for (const field of entity.fields) {
+          if (field.type !== "relation" || !field.relationTo || relatedRecords[field.relationTo]) continue;
+          const targetEntity = allEntities.find((e) => e.name === field.relationTo);
+          if (!targetEntity) continue;
+          relatedRecords[field.relationTo] = listRecords(db, projectId, targetEntity) as EntityRecord[];
+        }
+      }
+      const lang = isHebrewText(project.description) ? "he" : "en";
+      const ics = buildCalendarFeedIcs(entity, records, projectId, new Date(), allEntities, relatedRecords, lang);
       if (ics === null) {
         res.status(404).json({ error: "Calendar feed not found", code: "CALENDAR_FEED_NOT_FOUND" });
         return;

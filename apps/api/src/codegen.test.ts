@@ -293,6 +293,95 @@ test("generated server.js serves a real, working calendar subscription feed for 
 });
 
 /**
+ * Round 1034: DESCRIPTION parity with this exported app's own one-shot
+ * "Export ICS" button (buildCalendarIcs) -- before this round the feed's
+ * own VEVENTs carried only SUMMARY/DTSTART/DTEND. Spawns a real server.js
+ * (same pattern as the round-1010 test above), creates a real Customer
+ * record and a Deal record that points at it via a relation field, and
+ * confirms the real feed route actually resolves that relation to the
+ * Customer's own name in DESCRIPTION -- not a raw foreign-key id -- along
+ * with an enum field's translated label.
+ */
+test("generated server.js's calendar feed DESCRIPTION resolves a relation field to its related record's real display label", async () => {
+  const customerEntity: Entity = {
+    name: "Customer",
+    label: "Customers",
+    fields: [{ name: "fullName", label: "Full Name", type: "text", required: true }],
+  };
+  const dealEntity: Entity = {
+    name: "Deal",
+    label: "Deals",
+    fields: [
+      { name: "title", label: "Title", type: "text", required: true },
+      { name: "eventDate", label: "Event Date", type: "date", required: true },
+      { name: "stage", label: "Stage", type: "enum", required: true, enumValues: ["Open", "Won"], enumLabels: { Open: "פתוח", Won: "הצליח" } },
+      { name: "customer", label: "Customer", type: "relation", relationTo: "Customer", required: false },
+    ],
+  };
+  const feedProject: Project = { ...project, spec: { ...project.spec, entities: [customerEntity, dealEntity] } };
+  const files = generateExportFiles(feedProject);
+  const serverJs = files.find((f) => f.path === "server.js")!.content;
+
+  const dir = mkdtempSync(path.join(tmpdir(), "codegen-feed-description-test-"));
+  const repoRoot = path.resolve(import.meta.dirname, "../../..");
+  symlinkSync(path.join(repoRoot, "node_modules"), path.join(dir, "node_modules"));
+  writeFileSync(path.join(dir, "server.js"), serverJs);
+
+  const port = 34000 + Math.floor(Math.random() * 5000);
+  const child = spawn(process.execPath, ["--experimental-sqlite", "server.js"], {
+    cwd: dir,
+    env: { ...process.env, PORT: String(port) },
+    stdio: ["ignore", "pipe", "pipe"],
+  });
+  let stderr = "";
+  child.stderr.on("data", (chunk) => {
+    stderr += chunk.toString();
+  });
+
+  try {
+    const deadline = Date.now() + 5000;
+    let lastErr: unknown;
+    while (Date.now() < deadline) {
+      if (child.exitCode !== null) {
+        throw new Error(`server.js exited early (code ${child.exitCode}):\n${stderr}`);
+      }
+      try {
+        const customerRes = await fetch(`http://localhost:${port}/api/Customer`, {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ fullName: "Yossi Cohen" }),
+        });
+        assert.equal(customerRes.status, 201);
+        const { record: customer } = (await customerRes.json()) as { record: { id: number } };
+
+        const dealRes = await fetch(`http://localhost:${port}/api/Deal`, {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ title: "Trip to Eilat", eventDate: "2026-11-05", stage: "Won", customer: customer.id }),
+        });
+        assert.equal(dealRes.status, 201);
+
+        const feedRes = await fetch(`http://localhost:${port}/api/calendar/Deal.ics`);
+        assert.equal(feedRes.status, 200);
+        const ics = await feedRes.text();
+        assert.match(ics, /DESCRIPTION:/, "a record with non-empty description fields must get a DESCRIPTION line");
+        const unfolded = ics.replace(/\r\n /g, "");
+        assert.match(unfolded, /Customer: Yossi Cohen/, "the relation field must resolve to the related Customer's own real name, not a raw foreign-key id");
+        assert.match(unfolded, /Stage: הצליח/, "the enum field must render its translated enumLabel, not the raw stored key");
+        return;
+      } catch (err) {
+        lastErr = err;
+        await new Promise((r) => setTimeout(r, 100));
+      }
+    }
+    throw lastErr instanceof Error ? lastErr : new Error(String(lastErr));
+  } finally {
+    child.kill();
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+/**
  * Round 1010: the client-side half of the same gap -- confirms the
  * generated EntityView.jsx actually wires up the "Subscribe" button
  * (next to the existing one-shot Export ICS button) to copy the real
