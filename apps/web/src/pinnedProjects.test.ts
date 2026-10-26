@@ -2,7 +2,7 @@ import "./jsdomWarmup.js";
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { JSDOM } from "jsdom";
-import { getPinnedIds, sortByPinned, togglePinned } from "./pinnedProjects.js";
+import { getPinnedIds, purgePinnedProjectForProject, removePinnedProject, sortByPinned, togglePinned } from "./pinnedProjects.js";
 
 /**
  * Same full-jsdom-swap technique used by ProjectNameEditor.test.ts and
@@ -33,38 +33,89 @@ async function withJsdom(fn: () => void | Promise<void>): Promise<void> {
 
 test("getPinnedIds returns an empty set when nothing has ever been pinned", async () => {
   await withJsdom(() => {
-    assert.deepEqual(getPinnedIds(), new Set());
+    assert.deepEqual(getPinnedIds("userA"), new Set());
   });
 });
 
 test("togglePinned pins an unpinned project, and a fresh getPinnedIds call sees it -- a real persistence round trip, not just the return value", async () => {
   await withJsdom(() => {
-    const after = togglePinned("proj1");
+    const after = togglePinned("userA", "proj1");
     assert.deepEqual(after, new Set(["proj1"]));
-    assert.deepEqual(getPinnedIds(), new Set(["proj1"]), "must actually be written to storage, not just returned");
+    assert.deepEqual(getPinnedIds("userA"), new Set(["proj1"]), "must actually be written to storage, not just returned");
   });
 });
 
 test("togglePinned unpins an already-pinned project", async () => {
   await withJsdom(() => {
-    togglePinned("proj1");
-    togglePinned("proj2");
-    const after = togglePinned("proj1");
+    togglePinned("userA", "proj1");
+    togglePinned("userA", "proj2");
+    const after = togglePinned("userA", "proj1");
     assert.deepEqual(after, new Set(["proj2"]));
-    assert.deepEqual(getPinnedIds(), new Set(["proj2"]));
+    assert.deepEqual(getPinnedIds("userA"), new Set(["proj2"]));
+  });
+});
+
+/**
+ * Round 1003: the whole point of this round's fix. Before it, the storage
+ * key was a single flat global key -- two different collaborator accounts
+ * on the SAME browser (a shared project, or just two accounts on one
+ * device) shared one pinned-projects array: whichever one pinned a
+ * project first made it appear pinned for the other too, and since
+ * togglePinned flips the shared state, the second account "pinning it for
+ * themselves" actually unpinned the first account's own real choice.
+ */
+test("pins are kept per-user -- one account pinning a project never affects a different account's own pinned set, and toggling never silently flips the OTHER account's pin", async () => {
+  await withJsdom(() => {
+    togglePinned("userA", "proj1");
+    assert.deepEqual(getPinnedIds("userA"), new Set(["proj1"]), "userA's own pin must be recorded");
+    assert.deepEqual(getPinnedIds("userB"), new Set(), "userB, a different account on the same browser, must not see proj1 as pinned just because userA pinned it");
+
+    togglePinned("userB", "proj1");
+    assert.deepEqual(getPinnedIds("userB"), new Set(["proj1"]), "userB pinning proj1 for themselves must record their own pin");
+    assert.deepEqual(getPinnedIds("userA"), new Set(["proj1"]), "userB pinning it for themselves must never unpin userA's own already-existing pin");
+  });
+});
+
+test("removePinnedProject removes one project for this one user, while leaving every other project's entry AND another user's own entry for the SAME project untouched", async () => {
+  await withJsdom(() => {
+    togglePinned("userA", "proj1");
+    togglePinned("userA", "proj2");
+    togglePinned("userB", "proj1");
+    const after = removePinnedProject("userA", "proj1");
+    assert.deepEqual(after, new Set(["proj2"]));
+    assert.deepEqual(getPinnedIds("userA"), new Set(["proj2"]));
+    assert.deepEqual(getPinnedIds("userB"), new Set(["proj1"]), "removing userA's own proj1 pin must never touch userB's own proj1 pin");
   });
 });
 
 test("getPinnedIds tolerates corrupted/foreign localStorage content instead of throwing", async () => {
   await withJsdom(() => {
-    localStorage.setItem("forge.pinnedProjects", "not valid json{{{");
-    assert.deepEqual(getPinnedIds(), new Set());
+    localStorage.setItem("forge.pinnedProjects.userA", "not valid json{{{");
+    assert.deepEqual(getPinnedIds("userA"), new Set());
 
-    localStorage.setItem("forge.pinnedProjects", JSON.stringify({ not: "an array" }));
-    assert.deepEqual(getPinnedIds(), new Set());
+    localStorage.setItem("forge.pinnedProjects.userA", JSON.stringify({ not: "an array" }));
+    assert.deepEqual(getPinnedIds("userA"), new Set());
 
-    localStorage.setItem("forge.pinnedProjects", JSON.stringify(["proj1", 42, null, "proj2"]));
-    assert.deepEqual(getPinnedIds(), new Set(["proj1", "proj2"]), "non-string entries must be dropped, not crash the whole read");
+    localStorage.setItem("forge.pinnedProjects.userA", JSON.stringify(["proj1", 42, null, "proj2"]));
+    assert.deepEqual(getPinnedIds("userA"), new Set(["proj1", "proj2"]), "non-string entries must be dropped, not crash the whole read");
+  });
+});
+
+/**
+ * Used by projectPreferenceCleanup.ts when a whole project is deleted --
+ * there's no single "current user" to scope a plain removePinnedProject
+ * call to at that point, since any number of other collaborator accounts
+ * could have pinned this now-gone project in this same browser's
+ * localStorage, each under their own per-user key.
+ */
+test("purgePinnedProjectForProject removes every collaborator account's own pin for that project, and never touches another project's pins", async () => {
+  await withJsdom(() => {
+    togglePinned("userA", "proj1");
+    togglePinned("userB", "proj1");
+    togglePinned("userA", "proj2");
+    purgePinnedProjectForProject("proj1");
+    assert.deepEqual(getPinnedIds("userA"), new Set(["proj2"]), "userA's own proj1 pin must be gone, but proj2's own pin must survive");
+    assert.deepEqual(getPinnedIds("userB"), new Set(), "userB's own proj1 pin must be gone too, not just userA's");
   });
 });
 

@@ -566,7 +566,15 @@ function AppContent() {
   const [myProjects, setMyProjects] = useState<Project[]>([]);
   const [templates, setTemplates] = useState<TemplateSummary[]>([]);
   const [templateBusy, setTemplateBusy] = useState<string | null>(null);
-  const [pinnedIds, setPinnedIds] = useState<Set<string>>(() => getPinnedIds());
+  // Round 1003: this used to lazy-init via getPinnedIds() with no userId at
+  // all -- `user` is still null at this exact first-render moment (the
+  // async session-check effect just below hasn't resolved yet), so there
+  // was never a real user id available here anyway. Starts empty and gets
+  // properly populated, scoped to the real signed-in user's own id, inside
+  // that same session-check effect the moment `user` becomes known -- see
+  // its own updated comment there, mirroring seenShared's own identical
+  // round-995 fix just below.
+  const [pinnedIds, setPinnedIds] = useState<Set<string>>(new Set());
   // Round 995: this used to lazy-init via getSeenSharedTimestamps() with no
   // userId at all -- `user` is still null at this exact first-render
   // moment (the async session-check effect just below hasn't resolved
@@ -947,6 +955,12 @@ function AppContent() {
     me()
       .then(({ user }) => {
         setUser(user);
+        // Round 1003: pinnedIds's own lazy init (above) couldn't know this
+        // user's own id yet either -- this is the first point it's
+        // actually known, so this is where its real, per-user content
+        // gets loaded, mirroring seenShared's own identical round-995 fix
+        // just below.
+        setPinnedIds(getPinnedIds(user.id));
         // Round 995: seenShared's own lazy init (above) couldn't know this
         // user's own id yet -- this is the first point it's actually
         // known, so this is where its real, per-user content gets loaded.
@@ -1932,7 +1946,7 @@ function AppContent() {
                         className={pinnedIds.has(p.id) ? "my-project-pin my-project-pin-active" : "my-project-pin"}
                         aria-label={pinnedIds.has(p.id) ? t("home.myProjects.unpin") : t("home.myProjects.pin")}
                         title={pinnedIds.has(p.id) ? t("home.myProjects.unpin") : t("home.myProjects.pin")}
-                        onClick={() => setPinnedIds(togglePinned(p.id))}
+                        onClick={() => setPinnedIds(togglePinned(user.id, p.id))}
                       >
                         {pinnedIds.has(p.id) ? "⭐" : "☆"}
                       </button>

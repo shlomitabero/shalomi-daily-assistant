@@ -1,4 +1,4 @@
-import { removePinnedProject } from "./pinnedProjects.js";
+import { purgePinnedProjectForProject } from "./pinnedProjects.js";
 import { purgeSeenSharedProjectsForProject } from "./sharedProjectSeen.js";
 import { purgeEntityTabOrderForProject } from "./entityTabOrder.js";
 import { purgeColumnWidthsForProject } from "./columnWidths.js";
@@ -49,7 +49,7 @@ import { clearWhatsAppLastSeenId } from "./whatsappUnread.js";
  * completely untouched.
  */
 export function purgeProjectPreferences(projectId: string): void {
-  removePinnedProject(projectId);
+  purgePinnedProjectForProject(projectId);
   purgeSeenSharedProjectsForProject(projectId);
   purgeEntityTabOrderForProject(projectId);
   purgeColumnWidthsForProject(projectId);
