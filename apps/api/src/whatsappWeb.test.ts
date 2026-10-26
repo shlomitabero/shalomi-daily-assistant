@@ -613,10 +613,52 @@ test("an incoming photo, video, voice note, document, and sticker are each logge
 });
 
 /**
- * Round 785: an unrecognized message shape (a shared contact card, a
- * location pin, a poll, etc.) is deliberately NOT guessed at -- it's
- * still skipped exactly as before this fix, the same as a message with no
- * body at all.
+ * Round 1035: a shared location pin and a shared contact card -- both
+ * previously dropped with zero trace (round 785's own doc comment left
+ * them unverified) -- are now logged with a descriptive placeholder, the
+ * same convention round 785 already established for photo/video/voice
+ * note/document/sticker. A location's own `name`/`address` (when the
+ * sender attached one) is shown; a bare pin with neither still gets a
+ * plain "[Location]" rather than printing raw, meaningless lat/long
+ * numbers. A contact's `displayName` is shown when present, with a plain
+ * "[Contact]" fallback for a vcard with no display name set.
+ */
+test("an incoming location pin (with and without a name/address) and a shared contact card are each logged with a descriptive placeholder instead of being silently dropped", async () => {
+  const { manager, createdSockets, db } = setupManager();
+  insertProject(db, project);
+  applyMigrations(db, project.id, project.spec);
+  markProjectBuilt(db, project.id);
+
+  await manager.connect(project.id);
+  createdSockets[0].emitConnectionUpdate({ connection: "open" });
+
+  createdSockets[0].emitMessagesUpsert({
+    type: "notify",
+    messages: [
+      { key: { remoteJid: "972501234567@s.whatsapp.net", fromMe: false }, message: { locationMessage: { name: "חנות ראשית", address: "דיזנגוף 1, תל אביב" } } },
+      { key: { remoteJid: "972501234567@s.whatsapp.net", fromMe: false }, message: { locationMessage: { address: "דיזנגוף 1, תל אביב" } } },
+      { key: { remoteJid: "972501234567@s.whatsapp.net", fromMe: false }, message: { locationMessage: { degreesLatitude: 32.08, degreesLongitude: 34.78 } } },
+      { key: { remoteJid: "972501234567@s.whatsapp.net", fromMe: false }, message: { contactMessage: { displayName: "דנה לוי" } } },
+      { key: { remoteJid: "972501234567@s.whatsapp.net", fromMe: false }, message: { contactMessage: { vcard: "BEGIN:VCARD..." } } },
+    ],
+  });
+
+  // listWhatsAppMessages orders newest-first (see its own doc comment), the
+  // reverse of the emission order above.
+  const { messages } = listWhatsAppMessages(db, project.id);
+  assert.equal(messages.length, 5);
+  assert.equal(messages[0].body, "[Contact]", "a vcard with no displayName must fall back to a plain placeholder, not print nothing or throw");
+  assert.equal(messages[1].body, "[Contact: דנה לוי]");
+  assert.equal(messages[2].body, "[Location]", "a bare pin with neither name nor address must fall back to a plain placeholder, never raw lat/long numbers");
+  assert.equal(messages[3].body, "[Location] דיזנגוף 1, תל אביב", "address must be used when name is absent");
+  assert.equal(messages[4].body, "[Location] חנות ראשית", "name must be preferred over address when both are present");
+  for (const m of messages) assert.equal(m.direction, "in", "every placeholder row must still be a real, matched-against incoming message, not metadata");
+});
+
+/**
+ * Round 785 (narrowed by round 1035): an unrecognized message shape (a
+ * poll, etc.) is deliberately NOT guessed at -- it's still skipped exactly
+ * as before this fix, the same as a message with no body at all.
  */
 test("an incoming message of a completely unrecognized shape is still skipped, not guessed at", async () => {
   const { manager, createdSockets, db } = setupManager();

@@ -105,6 +105,8 @@ export interface BaileysIncomingMessage {
     documentMessage?: { caption?: string; fileName?: string };
     audioMessage?: { ptt?: boolean };
     stickerMessage?: Record<string, never>;
+    locationMessage?: { name?: string; address?: string };
+    contactMessage?: { displayName?: string };
   };
 }
 
@@ -146,9 +148,22 @@ const CONNECTION_LOST_MESSAGE = "The WhatsApp connection was lost. Click Connect
  * client can translate) at minimum tells the owner something arrived and
  * what kind, even though the actual photo/voice note/document content
  * itself still isn't retrievable from here. Deliberately scoped to just
- * these five common kinds -- an unrecognized message shape (a shared
- * contact card, a location pin, a poll, etc.) still returns null and is
- * skipped exactly as before, rather than guessing at an unverified shape.
+ * these five common kinds at the time -- an unrecognized message shape (a
+ * shared contact card, a location pin, a poll, etc.) still returns null
+ * and is skipped exactly as before, rather than guessing at an unverified
+ * shape.
+ *
+ * Round 1035: location pins and contact cards are no longer unverified --
+ * confirmed directly against Baileys' own shipped protobuf type
+ * definitions (node_modules/@whiskeysockets/baileys/WAProto/index.d.ts,
+ * proto.Message.ILocationMessage/IContactMessage) to be exactly as stable
+ * a shape as the five already trusted above. A real-estate/courier/
+ * logistics lead sharing a pickup/delivery location, or a contact card for
+ * a referral, is an everyday one-tap WhatsApp action, not an edge case --
+ * and was previously dropped with zero trace: no log row, no notification,
+ * no automation trigger, nothing telling the business owner anything had
+ * even arrived. A poll (and any other still-unrecognized shape) remains
+ * genuinely out of scope -- still returns null, same as before.
  */
 function describeIncomingMessage(message: BaileysIncomingMessage["message"]): string | null {
   if (!message) return null;
@@ -163,6 +178,14 @@ function describeIncomingMessage(message: BaileysIncomingMessage["message"]): st
   }
   if (message.audioMessage) return message.audioMessage.ptt ? "[Voice note]" : "[Audio]";
   if (message.stickerMessage) return "[Sticker]";
+  if (message.locationMessage) {
+    const detail = message.locationMessage.name || message.locationMessage.address;
+    return detail ? `[Location] ${detail}` : "[Location]";
+  }
+  if (message.contactMessage) {
+    const name = message.contactMessage.displayName;
+    return name ? `[Contact: ${name}]` : "[Contact]";
+  }
   return null;
 }
 
