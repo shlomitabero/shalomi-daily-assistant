@@ -710,7 +710,17 @@ async function fireEmailAction(
     subject = interpolateTemplate(subjectTemplate, entity, templateRecord, lang);
     body = interpolateTemplate(bodyTemplate, entity, templateRecord, lang);
     if (uploadsDir) {
-      const attachment = findTemplateFileAttachment(uploadsDir, project.id, entity, bodyTemplate, record);
+      // Round 1014: round 1013's own fix only ever scanned bodyTemplate,
+      // missing a file field referenced ONLY in emailSubject -- which
+      // interpolates its own {{field}} placeholders completely
+      // independently of the body (round 1000's own fix, confirmed by
+      // CreateAutomationRuleSchema/AutomationsPanel.tsx placing no
+      // restriction on which field types can appear in either template).
+      // Scanning body-then-subject as one combined string preserves round
+      // 1013's own already-tested precedence (a body reference still wins
+      // when both templates happen to reference a file field) while now
+      // also catching a subject-only reference.
+      const attachment = findTemplateFileAttachment(uploadsDir, project.id, entity, `${bodyTemplate}\n${subjectTemplate}`, record);
       // Same disk-error degradation fireRule's own WhatsApp branch already
       // documents: the referenced upload may have been deleted/replaced
       // since this rule last ran, or the uploads directory may not be

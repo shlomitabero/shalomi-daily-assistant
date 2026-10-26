@@ -658,6 +658,81 @@ test("runAutomationsForRecordChange sends a send_email rule with no attachment (
   }
 });
 
+/**
+ * Round 1014: round 1013's own fix only ever scanned messageTemplate
+ * (the body) for a file-field reference -- but emailSubject interpolates
+ * its own {{field}} placeholders completely independently of the body
+ * (round 1000), with no restriction anywhere on which field types can
+ * appear in it. A rule whose subject (not body) names a file field got
+ * a subject line implying an attached file with nothing actually
+ * attached. Confirms a file field referenced ONLY in emailSubject is now
+ * found and attached too.
+ */
+test("runAutomationsForRecordChange attaches a real uploaded file to a send_email rule when the file field is referenced only in emailSubject, not the body", async () => {
+  const entityWithInvoice: Entity = {
+    ...orderEntity,
+    fields: [...orderEntity.fields, { name: "invoice", type: "file", required: false }],
+  };
+  const db = openDatabase(":memory:");
+  ensureProjectsTable(db);
+  ensureAutomationRulesTable(db);
+  ensureWhatsAppConnectionsTable(db);
+  ensureWhatsAppMessagesTable(db);
+  const project = {
+    ...insertProject(db, {
+      id: "proj1",
+      ownerId: "owner1",
+      name: "Orders",
+      description: "An order-tracking app",
+      spec: { ...projectSpec, entities: [entityWithInvoice] },
+    }),
+    status: "built" as const,
+  };
+  applyMigrations(db, project.id, project.spec);
+  markProjectBuilt(db, project.id);
+
+  insertAutomationRule(db, {
+    projectId: project.id,
+    entityName: "Order",
+    trigger: "field_equals",
+    fieldName: "status",
+    fieldValue: "Delivered",
+    actionType: "send_email",
+    toMode: "field",
+    toField: "customerEmail",
+    emailSubject: "Invoice attached: {{invoice}}",
+    // Deliberately never references {{invoice}} -- only the subject does.
+    messageTemplate: "Thanks for your order, {{customerName}}!",
+  });
+  const emailSender = createFakeEmailSender();
+  const manager = {} as WhatsAppWebManager;
+
+  const uploadsDir = await mkdtemp(path.join(tmpdir(), "forge-automations-email-subject-attachment-test-"));
+  try {
+    const storedFilename = "a1b2c3d4-e5f6-7890-abcd-ef1234567890.pdf";
+    await mkdir(path.join(uploadsDir, project.id, "Order"), { recursive: true });
+    await writeFile(path.join(uploadsDir, project.id, "Order", storedFilename), "%PDF-fake-invoice-contents");
+
+    const record = {
+      id: 1,
+      customerName: "Dana",
+      customerEmail: "dana@example.com",
+      status: "Delivered",
+      invoice: JSON.stringify({ url: `/api/uploads/${project.id}/Order/${storedFilename}`, name: "invoice-203.pdf", size: 27, mimeType: "application/pdf" }),
+    };
+
+    await runAutomationsForRecordChange(db, manager, emailSender, project, entityWithInvoice, "updated", record, new Set(["status"]), uploadsDir, UNUSED_BASE_URL);
+
+    assert.equal(emailSender.sentTo.length, 1);
+    assert.equal(emailSender.sentTo[0]!.subject, "Invoice attached: invoice-203.pdf");
+    assert.equal(emailSender.sentTo[0]!.text, "Thanks for your order, Dana!");
+    assert.equal(emailSender.sentTo[0]!.attachments?.length, 1, "a file field referenced only in the subject must still produce a real attachment");
+    assert.equal(emailSender.sentTo[0]!.attachments![0]!.filename, "invoice-203.pdf");
+  } finally {
+    await rm(uploadsDir, { recursive: true, force: true });
+  }
+});
+
 test("findTemplateFileAttachment resolves the first file-type field referenced in the template to its real path on disk", () => {
   const entityWithInvoice: Entity = {
     ...orderEntity,
