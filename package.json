@@ -4,6 +4,9 @@
   "version": "0.1.0",
   "description": "PROFIT AI — an honest, auditable engine for finding, evaluating, and (with your permission) acting on real revenue opportunities.",
   "type": "module",
+  "engines": {
+    "node": ">=18.0.0"
+  },
   "workspaces": ["server", "client"],
   "scripts": {
     "dev:server": "npm run dev --workspace=server",
