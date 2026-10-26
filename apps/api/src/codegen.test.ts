@@ -1732,6 +1732,117 @@ test("the exported EntityView's record-form survives a different record's in-pro
 });
 
 /**
+ * Round 1021 regression, ported from the live Forge AI preview's own
+ * EntityPanel.tsx fix (round 1017): handleDelete is a single shared
+ * function also called by the table row's own Delete button, the
+ * Delete/Backspace keyboard shortcut, and board-card delete -- none of
+ * which ever ran the in-form Delete button's own close-on-success
+ * handling (round 1016), unlike codegen.ts's identical gap round 1017's
+ * own apps/web fix closed in the live preview but was never ported here.
+ * Deleting the record currently open in the edit form via the table
+ * row's own Delete button (not the in-form one) used to leave the form
+ * fully open and editable on a row that had just vanished -- a later
+ * Save would either PATCH a record already gone server-side once the
+ * undo window elapses, or succeed invisibly during the still-open undo
+ * window only to be silently discarded once it elapses. Confirms the
+ * table row's own Delete button (handleDelete, the exact same function
+ * the keyboard shortcut and board-card delete also call) now closes the
+ * edit form the instant it deletes the record currently open in it.
+ */
+test("the exported EntityView closes the edit form when the record it has open is deleted via the table row's own delete button (not the in-form one)", async (t) => {
+  const files = generateExportFiles(project);
+  const dir = writeGeneratedWebComponent(files);
+  const store = [
+    { id: 1, name: "Acme Corp", status: "New" },
+    { id: 2, name: "Globex", status: "New" },
+  ];
+  const originalFetch = globalThis.fetch;
+  const originalConfirm = globalThis.window.confirm;
+  globalThis.fetch = (async (input: string, init?: RequestInit): Promise<Response> => {
+    const method = init?.method ?? "GET";
+    if (method === "GET" && input === "/api/Customer") {
+      return new Response(JSON.stringify({ records: store }), { status: 200, headers: { "content-type": "application/json" } });
+    }
+    if (method === "DELETE" && input === "/api/Customer/1") {
+      return new Response(null, { status: 204 });
+    }
+    throw new Error(`unexpected request ${method} ${input}`);
+  }) as typeof fetch;
+  (globalThis.window as unknown as { confirm: () => boolean }).confirm = () => true;
+
+  try {
+    await withRealLocalStorage(async () => {
+      const { EntityView } = await import(path.join(dir, "web", "src", "components", "EntityView.jsx"));
+      const customerEntity = project.spec.entities.find((e) => e.name === "Customer")!;
+      const props = {
+        entity: customerEntity,
+        highlightRecordId: null,
+        onHighlightHandled: () => {},
+        onJumpToRecord: () => {},
+        onRecordCountChange: () => {},
+      };
+
+      const { container } = render(React.createElement(EntityView, props));
+      for (let i = 0; i < 40; i++) {
+        if (container.querySelectorAll("tbody tr").length === 2) break;
+        await act(async () => {
+          await new Promise((resolve) => setTimeout(resolve, 0));
+        });
+      }
+      assert.equal(container.querySelectorAll("tbody tr").length, 2, "expected both records to have loaded");
+
+      const findRowButton = (rowId: string, label: RegExp) => {
+        const row = container.querySelector(`tr[data-record-id="${rowId}"]`) as HTMLElement;
+        return Array.from(row.querySelectorAll(".row-actions button")).find((b) => label.test(b.textContent ?? "")) as HTMLButtonElement;
+      };
+
+      await act(async () => {
+        fireEvent.click(findRowButton("1", /^edit$/i));
+      });
+      const nameInput = () => container.querySelector(".record-form input[type=text]") as HTMLInputElement;
+      for (let i = 0; i < 40 && nameInput()?.value !== "Acme Corp"; i++) {
+        await act(async () => {
+          await new Promise((resolve) => setTimeout(resolve, 0));
+        });
+      }
+      assert.equal(nameInput().value, "Acme Corp");
+      assert.match(
+        container.querySelector(".record-form button[type=submit]")!.textContent ?? "",
+        /save/i,
+        "sanity check: the form must actually be in edit mode for record 1 before deleting it",
+      );
+
+      // record-delete's own undo window (5s) has nothing to do with this
+      // test's own assertion -- the form reset fires synchronously inside
+      // handleDelete's own call, before any timer -- but enabling the mock
+      // timer only now, after the initial render/fetch has already
+      // settled, keeps a real 5-second timer from ever being scheduled
+      // against this test's own teardown (same lesson as apps/web/src/
+      // EntityPanel.test.ts's own delete-undo tests).
+      t.mock.timers.enable({ apis: ["setTimeout"] });
+
+      await act(async () => {
+        fireEvent.click(findRowButton("1", /^delete$/i));
+      });
+
+      assert.equal(container.querySelectorAll("tbody tr").length, 1, "the deleted row must disappear immediately");
+      assert.match(
+        container.querySelector(".record-form button[type=submit]")!.textContent ?? "",
+        /add/i,
+        "deleting the record this form has open must close the form (editingId reset), not leave it open on a vanished row",
+      );
+      assert.equal(nameInput().value, "", "the form must also reset to blank, not keep showing the deleted record's stale values");
+    });
+  } finally {
+    t.mock.timers.reset();
+    globalThis.fetch = originalFetch;
+    globalThis.window.confirm = originalConfirm;
+    cleanup();
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+/**
  * Round 833 regression, same gap as the corresponding apps/web fix: round
  * 832's formInstanceKeyRef/bumpFormInstanceKey fix only converted
  * startEdit/startCreateForColumn/startCreateForDate/startCreateNew/the

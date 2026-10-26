@@ -5186,6 +5186,23 @@ export function EntityView({ entity, highlightRecordId, onHighlightHandled, onJu
       commitPendingDelete(pendingDeleteRef.current);
     }
 
+    // Round 1021: this id may be the record the edit form currently has
+    // open (deleted via the table row/board-card/keyboard-shortcut path,
+    // none of which go through the in-form Delete button's own close-on-
+    // success handling below) -- leaving that form open on a row that
+    // just vanished let a later Save either PATCH a record that's
+    // actually already gone once the undo window elapses, or succeed
+    // invisibly during the still-open undo window (refresh() filters out
+    // a pending-delete id) only to be silently discarded the moment the
+    // window elapses or Undo is clicked. Mirrors the live preview's own
+    // identical fix (EntityPanel.tsx, round 1017).
+    if (id === editingId) {
+      setForm(emptyForm(entity));
+      setEditingId(null);
+      editingOriginalRef.current = null;
+      bumpFormInstanceKey();
+    }
+
     setError(null);
     setRecords((prev) => prev.filter((r) => r.id !== id));
     setSelectedIds((prev) => {
@@ -5282,6 +5299,16 @@ export function EntityView({ entity, highlightRecordId, onHighlightHandled, onJu
     if (pendingDeleteRef.current) {
       clearTimeout(pendingDeleteRef.current.timeoutId);
       commitPendingDelete(pendingDeleteRef.current);
+    }
+
+    // Round 1021: mirrors handleDelete's own identical check just above --
+    // a bulk selection can just as easily include the record the edit
+    // form currently has open as a single delete can.
+    if (editingId != null && ids.includes(editingId)) {
+      setForm(emptyForm(entity));
+      setEditingId(null);
+      editingOriginalRef.current = null;
+      bumpFormInstanceKey();
     }
 
     setError(null);
