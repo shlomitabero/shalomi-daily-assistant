@@ -7,6 +7,7 @@ import { ValidationError, NotFoundError, type ForgeDatabase } from "@forge/db";
 import type { SpecProvider } from "@forge/spec-engine";
 import { createProjectsRouter } from "./routes/projects.js";
 import { createAuthRouter } from "./routes/auth.js";
+import { createCalendarFeedRouter } from "./routes/calendar.js";
 import { WhatsAppWebManager } from "./whatsappWeb.js";
 import { HttpError } from "./httpError.js";
 import { ResendEmailSender, type EmailSender } from "./email.js";
@@ -106,6 +107,11 @@ export function createApp(
       },
     }),
   );
+  // Round 1006: registered before the two auth-gated routers below, same
+  // placement/reasoning as the /api/uploads static route just above --
+  // see createCalendarFeedRouter's own doc comment for why this route can
+  // never go through requireAuth.
+  app.use("/api", createCalendarFeedRouter(db));
   app.use("/api", createAuthRouter(db, whatsappManager, resolvedEmailSender, activePipelines, uploadsDir));
   app.use("/api", createProjectsRouter(db, provider, whatsappManager, resolvedEmailSender, activePipelines, uploadsDir));
 

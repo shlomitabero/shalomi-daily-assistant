@@ -886,6 +886,18 @@ export function getEntityCounts(projectId: string): Promise<{ counts: Record<str
   return request(`/projects/${projectId}/entity-counts`);
 }
 
+/**
+ * Round 1006: backs the calendar view's "Subscribe" affordance
+ * (EntityPanel.tsx) -- the token used to build a live subscription URL a
+ * calendar app re-fetches on its own schedule, unlike the existing one-shot
+ * "Export ICS" download. See apps/api/src/routes/projects.ts's own doc
+ * comment on this route, and getOrCreateCalendarFeedToken (packages/db)
+ * for why this is a real persisted secret, not derived client-side.
+ */
+export function getCalendarFeedToken(projectId: string): Promise<{ token: string }> {
+  return request(`/projects/${projectId}/calendar-feed-token`);
+}
+
 export function listCheckpoints(projectId: string): Promise<{ checkpoints: Checkpoint[] }> {
   return request(`/projects/${projectId}/checkpoints`);
 }

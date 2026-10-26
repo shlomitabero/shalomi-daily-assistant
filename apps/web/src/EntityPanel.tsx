@@ -1,6 +1,6 @@
 import { Fragment, useEffect, useMemo, useRef, useState } from "react";
 import type { Entity, EntityRecord, Field, Project } from "@forge/shared";
-import { createRecord, deleteRecord, deleteUploadedRecordFile, listRecords, safeDownloadName, updateRecord, uploadRecordFile } from "./api.js";
+import { createRecord, deleteRecord, deleteUploadedRecordFile, getCalendarFeedToken, listRecords, safeDownloadName, updateRecord, uploadRecordFile } from "./api.js";
 import { buildCalendarIcs, downloadCalendarIcs } from "./calendarIcs.js";
 import { getHiddenFields, replaceHiddenFields, toggleFieldVisibility } from "./columnVisibility.js";
 import {
@@ -1320,6 +1320,9 @@ export function EntityPanel({
   // twice instead of once (round 544).
   const [bulkActionBusy, setBulkActionBusy] = useState(false);
   const [copyStatus, setCopyStatus] = useState<"idle" | "copied" | "failed">("idle");
+  // Round 1006: the calendar view's "Subscribe" button's own status,
+  // mirroring copyStatus's exact idle/copied/failed shape just above.
+  const [subscribeStatus, setSubscribeStatus] = useState<"idle" | "copied" | "failed">("idle");
   const [relatedRecords, setRelatedRecords] = useState<RelatedRecordsByEntity>({});
   const [importBusy, setImportBusy] = useState(false);
   const [importMessage, setImportMessage] = useState<string | null>(null);
@@ -3349,6 +3352,35 @@ export function EntityPanel({
   }
 
   /**
+   * Round 1006: the live counterpart of handleExportIcs just above -- that
+   * button downloads a one-shot snapshot of whichever month is currently
+   * open; this one copies a subscription URL a real calendar app (Google/
+   * Apple Calendar, a phone) re-fetches on its own schedule forever, so
+   * every appointment/booking added or rescheduled after today shows up
+   * there too, with no manual re-export ever needed again. Fetches the
+   * project's own feed token fresh each click (cheap -- getOrCreateCalendarFeedToken
+   * is a single indexed row read once the token already exists) rather
+   * than caching it, since this button is clicked rarely and a stale
+   * cached value would be wrong forever if the token were ever rotated.
+   */
+  async function handleSubscribeCalendar() {
+    try {
+      const { token } = await getCalendarFeedToken(projectId);
+      const url = `${window.location.origin}/api/public/calendar/${projectId}/${encodeURIComponent(entity.name)}.ics?token=${token}`;
+      await navigator.clipboard.writeText(url);
+      setSubscribeStatus("copied");
+    } catch {
+      setSubscribeStatus("failed");
+    }
+  }
+
+  useEffect(() => {
+    if (subscribeStatus === "idle") return;
+    const timer = setTimeout(() => setSubscribeStatus("idle"), 2000);
+    return () => clearTimeout(timer);
+  }, [subscribeStatus]);
+
+  /**
    * The complement to CSV export: parses an uploaded file with parseCsv,
    * converts it to record payloads with buildImportRecords (which already
    * validates types/required fields client-side), then writes each valid
@@ -4086,6 +4118,11 @@ export function EntityPanel({
                 {t("entity.exportIcs.month", {
                   month: calendarMonth.toLocaleDateString(LOCALE[lang], { month: "long", year: "numeric" }),
                 })}
+              </button>
+            )}
+            {viewMode === "calendar" && dateField && (
+              <button type="button" className="secondary ics-subscribe-btn" onClick={handleSubscribeCalendar} aria-live="polite" aria-atomic="true">
+                {subscribeStatus === "copied" ? t("entity.subscribeIcs.copied") : subscribeStatus === "failed" ? t("entity.subscribeIcs.failed") : t("entity.subscribeIcs.button")}
               </button>
             )}
             <button

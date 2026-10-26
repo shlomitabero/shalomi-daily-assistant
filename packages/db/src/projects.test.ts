@@ -26,6 +26,8 @@ import {
   updateProjectName,
   updateProjectDescription,
   updateProjectSpec,
+  getOrCreateCalendarFeedToken,
+  getCalendarFeedToken,
 } from "./projects.js";
 
 const validSpec: ProductSpec = {
@@ -754,4 +756,36 @@ test("deleteProject still drops the real data table, checkpoints, collaborators,
   assert.deepEqual(listCheckpoints(db, "proj-stale-own"), [], "checkpoints should be gone too");
   assert.equal(isCollaborator(db, "proj-stale-own", "collaborator1"), false, "collaborator grant should be gone too");
   assert.equal(getWhatsAppConnection(db, "proj-stale-own"), undefined, "WhatsApp connection row should be gone too");
+});
+
+/**
+ * Round 1006: backs the live calendar subscription feed. Confirms a token
+ * is actually generated and persisted (a fresh call returns the SAME
+ * token, not a new random one each time), and that two different projects
+ * never collide on the same value.
+ */
+test("getOrCreateCalendarFeedToken generates a real token once, persists it, and returns the same one on every later call", () => {
+  const db = openDatabase(":memory:");
+  ensureProjectsTable(db);
+  insertProject(db, { id: "proj1", ownerId: "owner1", name: "P1", description: "", spec: validSpec });
+  insertProject(db, { id: "proj2", ownerId: "owner1", name: "P2", description: "", spec: validSpec });
+
+  assert.equal(getCalendarFeedToken(db, "proj1"), undefined, "no token exists until the feed is actually requested");
+
+  const first = getOrCreateCalendarFeedToken(db, "proj1");
+  assert.ok(first && first.length >= 32, "expected a real, long random token, not a short/empty placeholder");
+  assert.equal(getCalendarFeedToken(db, "proj1"), first, "the generated token must actually be persisted, not just returned");
+
+  const second = getOrCreateCalendarFeedToken(db, "proj1");
+  assert.equal(second, first, "calling it again must return the SAME token, not generate a new one each time");
+
+  const otherProjectToken = getOrCreateCalendarFeedToken(db, "proj2");
+  assert.notEqual(otherProjectToken, first, "two different projects must never share the same token");
+});
+
+test("getOrCreateCalendarFeedToken and getCalendarFeedToken both return undefined for a project that doesn't exist", () => {
+  const db = openDatabase(":memory:");
+  ensureProjectsTable(db);
+  assert.equal(getOrCreateCalendarFeedToken(db, "does-not-exist"), undefined);
+  assert.equal(getCalendarFeedToken(db, "does-not-exist"), undefined);
 });

@@ -29,6 +29,8 @@ export {
   updateProjectName,
   updateProjectDescription,
   deleteProject,
+  getOrCreateCalendarFeedToken,
+  getCalendarFeedToken,
 } from "./projects.js";
 export {
   ensureProjectCollaboratorsTable,

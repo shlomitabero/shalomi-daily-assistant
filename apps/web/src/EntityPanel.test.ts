@@ -3555,6 +3555,77 @@ test("EntityPanel's ICS export button only appears in calendar view, and is disa
 });
 
 /**
+ * Round 1006: the live counterpart of the one-shot ICS export above -- a
+ * "Subscribe" button that copies a feed URL a real calendar app re-fetches
+ * on its own schedule forever, instead of a static month-scoped download.
+ * Confirms it only renders in calendar view, fetches the real token from
+ * the server (not a client-invented value), builds the URL with the real
+ * project id/entity name/token, and copies it to the clipboard with a
+ * "Copied!" confirmation that reverts after a delay -- mirroring the
+ * existing Copy button's own round-tripped test shape exactly.
+ */
+test("EntityPanel's calendar Subscribe button only appears in calendar view, fetches the real feed token, and copies the real subscription URL to the clipboard", async (t) => {
+  await withJsdom(async () => {
+    const today = isoDateToday();
+    const store: EntityRecord[] = [{ id: 1, title: "Dana's appointment", date: today }];
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = (async (input: string, init?: RequestInit): Promise<Response> => {
+      const method = init?.method ?? "GET";
+      if (method === "GET" && input === "/api/projects/proj1/entities/Appointment") {
+        return new Response(JSON.stringify({ records: store }), { status: 200, headers: { "content-type": "application/json" } });
+      }
+      if (method === "GET" && input === "/api/projects/proj1/calendar-feed-token") {
+        return new Response(JSON.stringify({ token: "real-feed-token-abc" }), { status: 200, headers: { "content-type": "application/json" } });
+      }
+      throw new Error(`unexpected request ${method} ${input}`);
+    }) as typeof fetch;
+
+    let writtenText: string | undefined;
+    Object.defineProperty(navigator, "clipboard", {
+      value: { writeText: async (text: string) => void (writtenText = text) },
+      configurable: true,
+    });
+
+    try {
+      renderAppointmentPanel();
+      await waitForCondition(() => document.querySelector(".entity-toolbar") !== null);
+
+      assert.equal(document.querySelector(".ics-subscribe-btn"), null, "the Subscribe button must not render in table view");
+
+      const calendarToggle = document.querySelectorAll(".view-toggle-btn")[1] as HTMLButtonElement;
+      fireEvent.click(calendarToggle);
+      await waitForCondition(() => document.querySelector(".calendar-month-label") !== null);
+
+      t.mock.timers.enable({ apis: ["setTimeout"] });
+
+      const subscribeBtn = document.querySelector(".ics-subscribe-btn") as HTMLButtonElement;
+      assert.ok(subscribeBtn, "expected a real Subscribe button once in calendar view");
+      assert.equal(subscribeBtn.textContent, "🔗 Subscribe to live calendar");
+
+      await act(async () => {
+        fireEvent.click(subscribeBtn);
+        await Promise.resolve();
+        await Promise.resolve();
+        await Promise.resolve();
+      });
+
+      assert.equal(typeof writtenText, "string", "clicking Subscribe must actually call navigator.clipboard.writeText");
+      assert.match(writtenText!, /\/api\/public\/calendar\/proj1\/Appointment\.ics\?token=real-feed-token-abc/, "the copied URL must carry the real project id, entity name, and the real token the server returned");
+      assert.equal(subscribeBtn.textContent, "✅ Subscription link copied!");
+
+      act(() => {
+        t.mock.timers.tick(2000);
+      });
+      assert.equal(subscribeBtn.textContent, "🔗 Subscribe to live calendar", "must revert to the normal label once the delay elapses");
+    } finally {
+      t.mock.timers.reset();
+      globalThis.fetch = originalFetch;
+      delete (navigator as { clipboard?: unknown }).clipboard;
+    }
+  });
+});
+
+/**
  * Round 937: this button's own text used to be a flat "Export to
  * Calendar (ICS)" with zero indication that it only ever exports the
  * calendar grid's CURRENTLY-SHOWN month -- unlike its sibling Export CSV

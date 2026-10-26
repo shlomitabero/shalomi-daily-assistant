@@ -8,6 +8,7 @@ import type { AgentStepEvent, ProductSpec } from "@forge/shared";
 import {
   diffAndMigrate,
   findUserByEmail,
+  getCalendarFeedToken,
   insertAutomationRule,
   insertCheckpoint,
   insertProject,
@@ -14060,5 +14061,132 @@ test("PATCH /auth/password is rate-limited per authenticated account: the 31st w
       body: JSON.stringify({ currentPassword: "original-password", newPassword: "brand-new-password" }),
     });
     assert.equal(otherRes.status, 204, "a different account must not be collaterally blocked by another account's own rate limit");
+  });
+});
+
+/**
+ * Round 1006: the live calendar subscription feed -- a "Subscribe" URL a
+ * user pastes once into a real calendar app, which that app then
+ * re-fetches on its own schedule forever. GET /projects/:id/calendar-feed-token
+ * is the authenticated side a signed-in collaborator uses to get the
+ * token; the public GET /public/calendar/:projectId/:entityName.ics route
+ * (routes/calendar.ts) is what the calendar app itself actually fetches,
+ * with no session of its own -- the token in the query string is its
+ * whole authentication.
+ */
+test("GET /projects/:id/calendar-feed-token returns a real, persisted token that the public feed route then accepts", async () => {
+  await withServer(async (baseUrl, db) => {
+    const email = `calendar-feed-${randomUUID()}@example.com`;
+    const token = await signup(baseUrl, email);
+    const user = findUserByEmail(db, email)!;
+
+    const spec: ProductSpec = {
+      summary: "test",
+      personas: [],
+      roles: ["Admin"],
+      entities: [{ name: "Appointment", fields: [{ name: "name", type: "text", required: true }, { name: "date", type: "date", required: true }] }],
+      screens: [],
+      assumptions: [],
+      openQuestions: [],
+    };
+    const projectId = randomUUID();
+    insertProject(db, { id: projectId, ownerId: user.id, name: "CRM", description: "test", spec });
+    diffAndMigrate(db, projectId, undefined, spec);
+    markProjectBuilt(db, projectId);
+    insertRecord(db, projectId, spec.entities[0], { name: "Checkup", date: "2026-05-01" });
+
+    const tokenRes = await fetch(`${baseUrl}/api/projects/${projectId}/calendar-feed-token`, { headers: authHeaders(token) });
+    assert.equal(tokenRes.status, 200);
+    const { token: feedToken } = (await tokenRes.json()) as { token: string };
+    assert.ok(feedToken && feedToken.length >= 32, "expected a real, long random token");
+    assert.equal(getCalendarFeedToken(db, projectId), feedToken, "the token the route returned must be the one actually persisted");
+
+    // Repeated calls return the SAME token, not a fresh one each time --
+    // a subscription URL that silently rotated would break on every
+    // re-fetch for every calendar app that already subscribed.
+    const tokenRes2 = await fetch(`${baseUrl}/api/projects/${projectId}/calendar-feed-token`, { headers: authHeaders(token) });
+    assert.equal((await tokenRes2.json() as { token: string }).token, feedToken);
+
+    const feedRes = await fetch(`${baseUrl}/api/public/calendar/${projectId}/Appointment.ics?token=${feedToken}`);
+    assert.equal(feedRes.status, 200);
+    assert.match(feedRes.headers.get("content-type") ?? "", /text\/calendar/);
+    const ics = await feedRes.text();
+    assert.match(ics, /BEGIN:VCALENDAR/);
+    assert.match(ics, /SUMMARY:Checkup/);
+  });
+});
+
+test("GET /public/calendar/:projectId/:entityName.ics 404s for a missing, wrong, or never-requested token -- the token itself is the only authentication", async () => {
+  await withServer(async (baseUrl, db) => {
+    const email = `calendar-feed-bad-${randomUUID()}@example.com`;
+    const authToken = await signup(baseUrl, email);
+    const user = findUserByEmail(db, email)!;
+    const spec: ProductSpec = {
+      summary: "test",
+      personas: [],
+      roles: ["Admin"],
+      entities: [{ name: "Appointment", fields: [{ name: "name", type: "text", required: true }, { name: "date", type: "date", required: true }] }],
+      screens: [],
+      assumptions: [],
+      openQuestions: [],
+    };
+    const projectId = randomUUID();
+    insertProject(db, { id: projectId, ownerId: user.id, name: "CRM", description: "test", spec });
+    diffAndMigrate(db, projectId, undefined, spec);
+    markProjectBuilt(db, projectId);
+
+    // Never requested a token for this project at all yet.
+    const noTokenRes = await fetch(`${baseUrl}/api/public/calendar/${projectId}/Appointment.ics?token=anything`);
+    assert.equal(noTokenRes.status, 404);
+
+    const tokenRes = await fetch(`${baseUrl}/api/projects/${projectId}/calendar-feed-token`, { headers: authHeaders(authToken) });
+    const { token: realToken } = (await tokenRes.json()) as { token: string };
+
+    const wrongTokenRes = await fetch(`${baseUrl}/api/public/calendar/${projectId}/Appointment.ics?token=${realToken}wrong`);
+    assert.equal(wrongTokenRes.status, 404);
+
+    const missingTokenRes = await fetch(`${baseUrl}/api/public/calendar/${projectId}/Appointment.ics`);
+    assert.equal(missingTokenRes.status, 404);
+
+    const wrongEntityRes = await fetch(`${baseUrl}/api/public/calendar/${projectId}/NoSuchEntity.ics?token=${realToken}`);
+    assert.equal(wrongEntityRes.status, 404);
+
+    const wrongProjectRes = await fetch(`${baseUrl}/api/public/calendar/${randomUUID()}/Appointment.ics?token=${realToken}`);
+    assert.equal(wrongProjectRes.status, 404);
+  });
+});
+
+test("GET /public/calendar/:projectId/:entityName.ics serves an empty-but-valid feed for a project that hasn't been built yet, and 404s for an entity with no date field", async () => {
+  await withServer(async (baseUrl, db) => {
+    const email = `calendar-feed-unbuilt-${randomUUID()}@example.com`;
+    const authToken = await signup(baseUrl, email);
+    const user = findUserByEmail(db, email)!;
+    const spec: ProductSpec = {
+      summary: "test",
+      personas: [],
+      roles: ["Admin"],
+      entities: [
+        { name: "Appointment", fields: [{ name: "name", type: "text", required: true }, { name: "date", type: "date", required: true }] },
+        { name: "Note", fields: [{ name: "text", type: "longtext", required: false }] },
+      ],
+      screens: [],
+      assumptions: [],
+      openQuestions: [],
+    };
+    const projectId = randomUUID();
+    insertProject(db, { id: projectId, ownerId: user.id, name: "CRM", description: "test", spec });
+    // Deliberately never built -- no diffAndMigrate/markProjectBuilt.
+
+    const tokenRes = await fetch(`${baseUrl}/api/projects/${projectId}/calendar-feed-token`, { headers: authHeaders(authToken) });
+    const { token: feedToken } = (await tokenRes.json()) as { token: string };
+
+    const unbuiltRes = await fetch(`${baseUrl}/api/public/calendar/${projectId}/Appointment.ics?token=${feedToken}`);
+    assert.equal(unbuiltRes.status, 200, "an unbuilt project's feed URL must already work, not error, so it can be set up ahead of building");
+    const ics = await unbuiltRes.text();
+    assert.match(ics, /BEGIN:VCALENDAR/);
+    assert.doesNotMatch(ics, /BEGIN:VEVENT/, "an unbuilt project has no real records table to query, so the feed must be empty, not crash");
+
+    const noDateFieldRes = await fetch(`${baseUrl}/api/public/calendar/${projectId}/Note.ics?token=${feedToken}`);
+    assert.equal(noDateFieldRes.status, 404, "an entity with no date field at all has nothing a calendar app could ever subscribe to");
   });
 });

@@ -48,6 +48,7 @@ import {
   insertAutomationRule,
   updateAutomationRule,
   deleteAutomationRule,
+  getOrCreateCalendarFeedToken,
   isValidDateString,
   NotFoundError,
   type ForgeDatabase,
@@ -1313,6 +1314,23 @@ export function createProjectsRouter(
     "/projects/:id",
     asyncRoute(async (req, res) => {
       res.json({ project: requireProjectAccess(db, req.params.id, req.userId!) });
+    }),
+  );
+
+  /**
+   * Round 1006: hands the client the token it needs to build a live
+   * calendar subscription ("Subscribe") URL -- see getOrCreateCalendarFeedToken's
+   * own doc comment, and the public, unauthenticated feed route itself
+   * (routes/calendar.ts). requireProjectAccess, not requireProjectWriteAccess:
+   * a read-only viewer can already see every record this feed would ever
+   * expose through the live app itself, so handing them the subscribe URL
+   * too is no new exposure.
+   */
+  router.get(
+    "/projects/:id/calendar-feed-token",
+    asyncRoute(async (req, res) => {
+      requireProjectAccess(db, req.params.id, req.userId!);
+      res.json({ token: getOrCreateCalendarFeedToken(db, req.params.id) });
     }),
   );
 

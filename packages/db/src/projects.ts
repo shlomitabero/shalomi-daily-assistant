@@ -1,3 +1,4 @@
+import { randomBytes } from "node:crypto";
 import type { Project, ProductSpec } from "@forge/shared";
 import { ProductSpecSchema } from "@forge/shared";
 import type { ForgeDatabase } from "./connection.js";
@@ -19,6 +20,14 @@ export function ensureProjectsTable(db: ForgeDatabase): void {
       createdAt TEXT NOT NULL
     )
   `);
+  // Round 1006: see getOrCreateCalendarFeedToken's own doc comment. Additive-
+  // only, same discipline as automation_rules' own webhookSecret/scheduleTimezone
+  // columns -- a project created by an older version of this app simply has
+  // no token yet (null) until the feed is first requested.
+  const columns = (db.prepare("PRAGMA table_info(projects)").all() as { name: string }[]).map((c) => c.name);
+  if (!columns.includes("calendarFeedToken")) {
+    db.exec("ALTER TABLE projects ADD COLUMN calendarFeedToken TEXT");
+  }
 }
 
 function rowToProject(row: Record<string, unknown>): Project {
@@ -254,4 +263,54 @@ export function deleteProject(db: ForgeDatabase, projectId: string): void {
 export function listOwnedProjectIds(db: ForgeDatabase, ownerId: string): string[] {
   const rows = db.prepare("SELECT id FROM projects WHERE ownerId = ?").all(ownerId) as { id: string }[];
   return rows.map((r) => r.id);
+}
+
+/**
+ * Round 1006: backs the live calendar subscription feed
+ * (apps/api/src/routes/calendar.ts's public .../feed.ics route) -- a
+ * "Subscribe" URL a user pastes once into Google/Apple Calendar or their
+ * phone, which that calendar app then re-fetches on its own schedule
+ * forever, unlike the existing one-shot "Export ICS" button (EntityPanel.tsx)
+ * that only ever snapshots the records visible in the currently-open
+ * calendar month at the moment it's clicked.
+ *
+ * Mirrors this app's own established session-token convention (see
+ * users.ts's own comment: a real 256-bit random value, stored and compared
+ * directly, never a stateless HMAC derivation) rather than inventing a
+ * different security model just for this one feature -- the feed URL is
+ * long-lived and re-fetched by a calendar app with no session/cookie of
+ * its own, so the token itself IS the whole authentication, the same way
+ * automation_rules' own webhookSecret authenticates an inbound webhook
+ * call with no other identity behind it.
+ *
+ * Lazily generated on first request (not at project creation) so a
+ * project that never once uses this feature leaves its token column null
+ * forever -- matching webhookSecret's own "only set once actually
+ * configured" shape, and meaning an older project (predating this round)
+ * gets one the first time anyone asks for it, no backfill needed.
+ */
+export function getOrCreateCalendarFeedToken(db: ForgeDatabase, projectId: string): string | undefined {
+  const row = db.prepare("SELECT calendarFeedToken FROM projects WHERE id = ?").get(projectId) as
+    | { calendarFeedToken: string | null }
+    | undefined;
+  if (!row) return undefined;
+  if (row.calendarFeedToken) return row.calendarFeedToken;
+  const token = randomBytes(32).toString("hex");
+  db.prepare("UPDATE projects SET calendarFeedToken = ? WHERE id = ?").run(token, projectId);
+  return token;
+}
+
+/**
+ * The public feed route's own lookup direction: given a project id and the
+ * token a calendar app presented, finds which project (if any) it actually
+ * belongs to. Returns undefined for a project with no token generated yet
+ * (nothing to compare against) or a project that doesn't exist at all --
+ * the caller (the public route) treats both identically, a plain 404, so
+ * this never needs to distinguish them itself.
+ */
+export function getCalendarFeedToken(db: ForgeDatabase, projectId: string): string | undefined {
+  const row = db.prepare("SELECT calendarFeedToken FROM projects WHERE id = ?").get(projectId) as
+    | { calendarFeedToken: string | null }
+    | undefined;
+  return row?.calendarFeedToken ?? undefined;
 }
