@@ -31,7 +31,7 @@ import {
   runScheduledAutomationsCheck,
   startScheduledAutomationsLoop,
 } from "./automations.js";
-import type { EmailSender } from "./email.js";
+import type { EmailAttachment, EmailSender } from "./email.js";
 import type { WhatsAppAttachment, WhatsAppConnectionState, WhatsAppSendResult, WhatsAppWebManager } from "./whatsappWeb.js";
 
 /**
@@ -515,6 +515,144 @@ test("runAutomationsForRecordChange attaches a real uploaded file when the messa
       fileName: "invoice-203.pdf",
       mimeType: "application/pdf",
     });
+  } finally {
+    await rm(uploadsDir, { recursive: true, force: true });
+  }
+});
+
+/**
+ * Round 1013: the identical gap round 786 fixed for send_whatsapp above,
+ * just never ported to the send_email action added ten rounds later
+ * (round 996) -- fireEmailAction had no uploadsDir parameter at all, so a
+ * message/subject template referencing a `file` field only ever sent the
+ * bare filename as plain text, the same silent degradation round 786
+ * closed for WhatsApp. Confirms the real file on disk is base64-encoded
+ * and handed to EmailSender.send() as a real attachment.
+ */
+test("runAutomationsForRecordChange attaches a real uploaded file to a send_email rule when its message template references a 'file' field", async () => {
+  const entityWithInvoice: Entity = {
+    ...orderEntity,
+    fields: [...orderEntity.fields, { name: "invoice", type: "file", required: false }],
+  };
+  const db = openDatabase(":memory:");
+  ensureProjectsTable(db);
+  ensureAutomationRulesTable(db);
+  ensureWhatsAppConnectionsTable(db);
+  ensureWhatsAppMessagesTable(db);
+  const project = {
+    ...insertProject(db, {
+      id: "proj1",
+      ownerId: "owner1",
+      name: "Orders",
+      description: "An order-tracking app",
+      spec: { ...projectSpec, entities: [entityWithInvoice] },
+    }),
+    status: "built" as const,
+  };
+  applyMigrations(db, project.id, project.spec);
+  markProjectBuilt(db, project.id);
+
+  insertAutomationRule(db, {
+    projectId: project.id,
+    entityName: "Order",
+    trigger: "field_equals",
+    fieldName: "status",
+    fieldValue: "Delivered",
+    actionType: "send_email",
+    toMode: "field",
+    toField: "customerEmail",
+    emailSubject: "Your order is on its way",
+    messageTemplate: "Hi {{customerName}}, here's your invoice: {{invoice}}",
+  });
+  const emailSender = createFakeEmailSender();
+  const manager = {} as WhatsAppWebManager;
+
+  const uploadsDir = await mkdtemp(path.join(tmpdir(), "forge-automations-email-attachment-test-"));
+  try {
+    const storedFilename = "a1b2c3d4-e5f6-7890-abcd-ef1234567890.pdf";
+    await mkdir(path.join(uploadsDir, project.id, "Order"), { recursive: true });
+    await writeFile(path.join(uploadsDir, project.id, "Order", storedFilename), "%PDF-fake-invoice-contents");
+
+    const record = {
+      id: 1,
+      customerName: "Dana",
+      customerEmail: "dana@example.com",
+      status: "Delivered",
+      invoice: JSON.stringify({ url: `/api/uploads/${project.id}/Order/${storedFilename}`, name: "invoice-203.pdf", size: 27, mimeType: "application/pdf" }),
+    };
+
+    await runAutomationsForRecordChange(db, manager, emailSender, project, entityWithInvoice, "updated", record, new Set(["status"]), uploadsDir, UNUSED_BASE_URL);
+
+    assert.equal(emailSender.sentTo.length, 1);
+    assert.equal(emailSender.sentTo[0]!.text, "Hi Dana, here's your invoice: invoice-203.pdf", "the plain text itself still only names the file, same as before this round");
+    assert.equal(emailSender.sentTo[0]!.attachments?.length, 1, "expected exactly one real attachment");
+    assert.equal(emailSender.sentTo[0]!.attachments![0]!.filename, "invoice-203.pdf");
+    assert.equal(
+      emailSender.sentTo[0]!.attachments![0]!.content,
+      Buffer.from("%PDF-fake-invoice-contents").toString("base64"),
+      "expected the real file's own bytes, base64-encoded, not a placeholder",
+    );
+  } finally {
+    await rm(uploadsDir, { recursive: true, force: true });
+  }
+});
+
+test("runAutomationsForRecordChange sends a send_email rule with no attachment (not a failure) when the referenced upload is missing from disk", async () => {
+  const entityWithInvoice: Entity = {
+    ...orderEntity,
+    fields: [...orderEntity.fields, { name: "invoice", type: "file", required: false }],
+  };
+  const db = openDatabase(":memory:");
+  ensureProjectsTable(db);
+  ensureAutomationRulesTable(db);
+  ensureWhatsAppConnectionsTable(db);
+  ensureWhatsAppMessagesTable(db);
+  const project = {
+    ...insertProject(db, {
+      id: "proj1",
+      ownerId: "owner1",
+      name: "Orders",
+      description: "An order-tracking app",
+      spec: { ...projectSpec, entities: [entityWithInvoice] },
+    }),
+    status: "built" as const,
+  };
+  applyMigrations(db, project.id, project.spec);
+  markProjectBuilt(db, project.id);
+
+  const rule = insertAutomationRule(db, {
+    projectId: project.id,
+    entityName: "Order",
+    trigger: "field_equals",
+    fieldName: "status",
+    fieldValue: "Delivered",
+    actionType: "send_email",
+    toMode: "field",
+    toField: "customerEmail",
+    emailSubject: "Your order is on its way",
+    messageTemplate: "Hi {{customerName}}, here's your invoice: {{invoice}}",
+  });
+  const emailSender = createFakeEmailSender();
+  const manager = {} as WhatsAppWebManager;
+
+  // Deliberately a real, existing-but-empty directory -- the referenced
+  // upload itself was never written into it, mirroring an upload that was
+  // deleted/replaced since this rule last ran.
+  const uploadsDir = await mkdtemp(path.join(tmpdir(), "forge-automations-email-missing-attachment-test-"));
+  try {
+    const record = {
+      id: 1,
+      customerName: "Dana",
+      customerEmail: "dana@example.com",
+      status: "Delivered",
+      invoice: JSON.stringify({ url: `/api/uploads/${project.id}/Order/missing.pdf`, name: "invoice-203.pdf", size: 27, mimeType: "application/pdf" }),
+    };
+
+    await runAutomationsForRecordChange(db, manager, emailSender, project, entityWithInvoice, "updated", record, new Set(["status"]), uploadsDir, UNUSED_BASE_URL);
+
+    assert.equal(emailSender.sentTo.length, 1, "a missing attachment must degrade to a plain send, never block the email entirely");
+    assert.equal(emailSender.sentTo[0]!.attachments, undefined, "no attachment must be sent when the real file can't be read from disk");
+    assert.equal(getAutomationRule(db, project.id, rule.id)!.lastStatus, "sent", "a missing attachment must never be reported as a failed run");
   } finally {
     await rm(uploadsDir, { recursive: true, force: true });
   }
@@ -1824,15 +1962,15 @@ test("fireScheduledRule's webhook action sends messageTemplate verbatim with a n
  * else here needs it.
  */
 function createFakeEmailSender(opts?: { configured?: boolean; failWith?: Error }): EmailSender & {
-  sentTo: { to: string; subject: string; text: string }[];
+  sentTo: { to: string; subject: string; text: string; attachments?: EmailAttachment[] }[];
 } {
-  const sentTo: { to: string; subject: string; text: string }[] = [];
+  const sentTo: { to: string; subject: string; text: string; attachments?: EmailAttachment[] }[] = [];
   return {
     configured: opts?.configured ?? true,
     sentTo,
-    async send(to, subject, text) {
+    async send(to, subject, text, attachments) {
       if (opts?.failWith) throw opts.failWith;
-      sentTo.push({ to, subject, text });
+      sentTo.push({ to, subject, text, attachments });
     },
   };
 }

@@ -1,3 +1,4 @@
+import { readFile } from "node:fs/promises";
 import { isIP } from "node:net";
 import path from "node:path";
 import type { Entity, EntityRecord, Project } from "@forge/shared";
@@ -16,7 +17,7 @@ import {
 } from "@forge/db";
 import { isHebrewText } from "@forge/spec-engine";
 import { recordDisplayLabel } from "./displayField.js";
-import type { EmailSender } from "./email.js";
+import type { EmailAttachment, EmailSender } from "./email.js";
 import { isPathInsideDir, UPLOADED_FILENAME } from "./uploadPaths.js";
 import { findMatchingRecord } from "./whatsapp.js";
 import type { WhatsAppAttachment, WhatsAppWebManager } from "./whatsappWeb.js";
@@ -659,6 +660,7 @@ async function fireEmailAction(
   entity: Entity | null,
   rule: AutomationRule,
   record: EntityRecord | null,
+  uploadsDir: string | null = null,
   now: Date = new Date(),
 ): Promise<void> {
   // Round 991: see AutomationRun.recordSnapshot's own doc comment --
@@ -697,13 +699,31 @@ async function fireEmailAction(
   const bodyTemplate = rule.messageTemplate;
   let subject = subjectTemplate;
   let body = bodyTemplate;
+  // Round 1013: resolved from `record` (the raw, pre-interpolation value),
+  // not templateRecord -- same reasoning as fireRule's own WhatsApp
+  // attachment lookup just below: resolveRelationFieldsForTemplate only
+  // ever rewrites relation fields, so both carry the identical raw
+  // {url,...} descriptor for any file field.
+  let attachments: EmailAttachment[] | undefined;
   if (entity && record) {
     const templateRecord = resolveRelationFieldsForTemplate(db, project.id, entity, project.spec.entities, record);
     subject = interpolateTemplate(subjectTemplate, entity, templateRecord, lang);
     body = interpolateTemplate(bodyTemplate, entity, templateRecord, lang);
+    if (uploadsDir) {
+      const attachment = findTemplateFileAttachment(uploadsDir, project.id, entity, bodyTemplate, record);
+      // Same disk-error degradation fireRule's own WhatsApp branch already
+      // documents: the referenced upload may have been deleted/replaced
+      // since this rule last ran, or the uploads directory may not be
+      // readable for some other reason -- that degrades to a plain-text
+      // send with the file simply missing, never a reported send FAILURE.
+      const fileBuffer = attachment ? await readFile(attachment.filePath).catch(() => null) : null;
+      if (attachment && fileBuffer) {
+        attachments = [{ filename: attachment.fileName, content: fileBuffer.toString("base64") }];
+      }
+    }
   }
   try {
-    await emailSender.send(to, subject, body);
+    await emailSender.send(to, subject, body, attachments);
     recordAutomationRun(db, project.id, rule.id, { status: "sent", error: null }, rule.actionType, record ? Number(record.id) : null, recordSnapshot, now);
   } catch (err) {
     recordAutomationRun(
@@ -741,7 +761,7 @@ export async function fireRule(
     return;
   }
   if (rule.actionType === "send_email") {
-    await fireEmailAction(db, emailSender, project, entity, rule, record);
+    await fireEmailAction(db, emailSender, project, entity, rule, record, uploadsDir);
     return;
   }
   // Round 991: see AutomationRun.recordSnapshot's own doc comment --
@@ -926,7 +946,7 @@ export async function fireScheduledRule(
     return;
   }
   if (rule.actionType === "send_email") {
-    await fireEmailAction(db, emailSender, project, null, rule, null, now);
+    await fireEmailAction(db, emailSender, project, null, rule, null, null, now);
     return;
   }
   const to = rule.toNumber;

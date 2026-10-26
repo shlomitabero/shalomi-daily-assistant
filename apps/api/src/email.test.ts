@@ -53,6 +53,37 @@ test("ResendEmailSender.send posts to Resend's API with the right auth header an
   });
 });
 
+/**
+ * Round 1013: backs automations.ts's own fireEmailAction attaching a real
+ * uploaded file to an outgoing send_email automation -- confirms the
+ * attachment actually reaches Resend's real request body in the shape its
+ * API expects, and that omitting it (the existing, pre-round behavior)
+ * never adds an empty/undefined `attachments` key that wasn't there
+ * before.
+ */
+test("ResendEmailSender.send includes a real attachments array in the request body when given one, and omits the key entirely when not", async () => {
+  let capturedBody: string | undefined;
+  const sender = new ResendEmailSender({
+    apiKey: "re_test_key",
+    fromEmail: "Forge AI <onboarding@resend.dev>",
+    fetchImpl: async (_input, init) => {
+      capturedBody = init!.body as string;
+      return new Response(JSON.stringify({ id: "email-id" }), { status: 200 });
+    },
+  });
+
+  await sender.send("dana@example.com", "Your invoice", "Attached is your invoice.", [
+    { filename: "invoice-203.pdf", content: "JVBERi1mYWtl" },
+  ]);
+  assert.deepEqual(JSON.parse(capturedBody!).attachments, [{ filename: "invoice-203.pdf", content: "JVBERi1mYWtl" }]);
+
+  await sender.send("dana@example.com", "No attachment here", "Just text.");
+  assert.equal("attachments" in JSON.parse(capturedBody!), false, "omitting attachments must never send an empty/undefined attachments key");
+
+  await sender.send("dana@example.com", "Empty array too", "Just text.", []);
+  assert.equal("attachments" in JSON.parse(capturedBody!), false, "an empty attachments array must also be omitted, not sent as []");
+});
+
 test("ResendEmailSender.send rejects with the response status/body when Resend's API returns a non-2xx response", async () => {
   const sender = new ResendEmailSender({
     apiKey: "re_test_key",
