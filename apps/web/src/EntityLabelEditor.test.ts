@@ -74,7 +74,7 @@ function renderEditor(onRenamed: (p: Project) => void) {
     React.createElement(
       ThemeProvider,
       null,
-      React.createElement(LanguageProvider, null, React.createElement(EntityLabelEditor, { entity, projectId: "proj1", onRenamed })),
+      React.createElement(LanguageProvider, null, React.createElement(EntityLabelEditor, { entity, allEntities: [entity], projectId: "proj1", onRenamed })),
     ),
   );
 }
@@ -117,6 +117,37 @@ test("clicking the entity label enters edit mode, and saving a real change calls
     } finally {
       globalThis.fetch = originalFetch;
     }
+  });
+});
+
+/**
+ * Round 1040: EntitySchema only enforces uniqueness on an entity's
+ * `name`, never its `label` -- this heading is the only confirmation of
+ * which entity's panel is actually on screen, so two entities sharing a
+ * label rendered byte-identical, indistinguishable headings here.
+ */
+test("the entity label heading is disambiguated by its own entity name when another entity shares the same label, but the rename draft is pre-filled with the plain label", async () => {
+  await withJsdom(async () => {
+    const otherEntity: Entity = { name: "Lead", label: "Original Label", fields: [{ name: "name", type: "text", required: true }] };
+    render(
+      React.createElement(
+        ThemeProvider,
+        null,
+        React.createElement(
+          LanguageProvider,
+          null,
+          React.createElement(EntityLabelEditor, { entity, allEntities: [entity, otherEntity], projectId: "proj1", onRenamed: () => {} }),
+        ),
+      ),
+    );
+
+    const heading = document.querySelector(".entity-label") as HTMLElement;
+    assert.ok(heading.textContent?.startsWith("Original Label (Customer)"), "the heading must be disambiguated by this entity's own name");
+
+    fireEvent.click(heading);
+    await waitForCondition(() => document.querySelector(".entity-label-edit input") !== null);
+    const input = document.querySelector(".entity-label-edit input") as HTMLInputElement;
+    assert.equal(input.value, "Original Label", "the rename draft must be pre-filled with the plain label, not the disambiguated display text");
   });
 });
 

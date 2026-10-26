@@ -56,6 +56,7 @@ import {
   RoleChip,
 } from "./SpecListItemRemover.js";
 import { applyColumnOrder, getColumnOrder, reorderColumns } from "./columnOrder.js";
+import { entityDisplayLabel, entityLabelOccurrences } from "./entityFormatting.js";
 import { getEntityTabOrder, setEntityTabOrder } from "./entityTabOrder.js";
 import { getPinnedIds, sortByPinned, togglePinned } from "./pinnedProjects.js";
 import { getSeenSharedTimestamps, markSharedProjectSeen, isNewShare } from "./sharedProjectSeen.js";
@@ -631,6 +632,14 @@ function AppContent() {
     () => (project ? applyColumnOrder(project.spec.entities, entityTabOrder) : []),
     [project, entityTabOrder],
   );
+  // Round 1040: EntitySchema only enforces uniqueness on an entity's
+  // `name`, never its `label` -- two entities renamed to an identical
+  // label (trivially reachable via EntityLabelEditor's own click-to-
+  // rename, which has the identical gap fixed alongside this one)
+  // rendered two byte-identical tabs in this bar, the single primary way
+  // to switch between entities in the whole app, with no way to tell
+  // which tab leads to which entity's data.
+  const entityTabLabelOccurrences = useMemo(() => entityLabelOccurrences(orderedEntities), [orderedEntities]);
 
   /**
    * Dragging an entity tab to just before another one's -- the live
@@ -2555,7 +2564,7 @@ function AppContent() {
                       }}
                       onClick={() => setActiveEntity(entity.name)}
                     >
-                      {entity.label ?? entity.name}
+                      {entityDisplayLabel(entity, entityTabLabelOccurrences)}
                       {entityCounts[entity.name] != null && (
                         <span className="tab-count" aria-label={t("entity.tab.recordCount", { count: String(entityCounts[entity.name]) })}>
                           {entityCounts[entity.name]}
@@ -2568,7 +2577,7 @@ function AppContent() {
                         className="tab-move-btn"
                         onClick={() => handleMoveEntityTab(entity.name, "earlier")}
                         disabled={entityTabIndex === 0}
-                        aria-label={t("entity.tab.moveEarlier", { entity: entity.label ?? entity.name })}
+                        aria-label={t("entity.tab.moveEarlier", { entity: entityDisplayLabel(entity, entityTabLabelOccurrences) })}
                       >
                         ‹
                       </button>
@@ -2577,7 +2586,7 @@ function AppContent() {
                         className="tab-move-btn"
                         onClick={() => handleMoveEntityTab(entity.name, "later")}
                         disabled={entityTabIndex === orderedEntities.length - 1}
-                        aria-label={t("entity.tab.moveLater", { entity: entity.label ?? entity.name })}
+                        aria-label={t("entity.tab.moveLater", { entity: entityDisplayLabel(entity, entityTabLabelOccurrences) })}
                       >
                         ›
                       </button>

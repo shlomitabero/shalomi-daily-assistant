@@ -34,6 +34,8 @@ import {
   calendarChipLabelField,
   calendarChipLabelValue,
   computeNextFocusedRowId,
+  entityDisplayLabel,
+  entityLabelOccurrences,
   findBoardField,
   findDateField,
   findEndDateField,
@@ -350,7 +352,7 @@ function RecordPrintSheet({
   const labelOccurrences = fieldLabelOccurrences(fields);
   return (
     <div className="print-record-sheet">
-      <h1>{entity.label ?? entity.name}</h1>
+      <h1>{entityDisplayLabel(entity, entityLabelOccurrences(allEntities))}</h1>
       <dl>
         {fields.map((f) => (
           <div key={f.name} className="print-field">
@@ -446,7 +448,7 @@ function RecordListPrintSheet({
   }
   return (
     <div className="print-list-sheet">
-      <h1>{entity.label ?? entity.name}</h1>
+      <h1>{entityDisplayLabel(entity, entityLabelOccurrences(allEntities))}</h1>
       <table>
         <thead>
           <tr>
@@ -3905,7 +3907,7 @@ export function EntityPanel({
 
   return (
     <div className="entity-panel">
-      <EntityLabelEditor entity={entity} projectId={projectId} onRenamed={onEntityRenamed} readOnly={readOnly} />
+      <EntityLabelEditor entity={entity} allEntities={allEntities} projectId={projectId} onRenamed={onEntityRenamed} readOnly={readOnly} />
       {entity.description && <p className="muted">{entity.description}</p>}
 
       {!readOnly && (

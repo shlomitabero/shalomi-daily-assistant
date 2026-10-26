@@ -15560,6 +15560,44 @@ test("the exported App's entity tabs have keyboard-operable 'move earlier'/'move
 });
 
 /**
+ * Round 1040: ports the live Forge AI preview's own App.tsx entity-tab-bar
+ * disambiguation fix (EntitySchema only enforces uniqueness on an entity's
+ * `name`, never its `label`) to the exported app's generated App.jsx --
+ * before this fix, its tab text and moveEarlier/moveLater aria-labels
+ * rendered a bare `e.label` with no fallback to disambiguate two entities
+ * sharing a label, mirroring the exact same source-regex technique the
+ * "move earlier/later" test just above (and App.test.ts's own
+ * GlobalSearchPanel/AutomationsPanel orderedEntities tests) already use for
+ * this file's generated tab-bar source.
+ */
+test("the exported App.jsx's entity-tab bar disambiguates its own tab text and moveEarlier/moveLater aria-labels when two entities share a label", () => {
+  const files = generateExportFiles(project);
+  const appJsx = files.find((f) => f.path === "web/src/App.jsx")!.content;
+
+  assert.match(
+    appJsx,
+    /const entityTabLabelOccurrences = useMemo\(\(\) => entityLabelOccurrences\(orderedEntities\), \[orderedEntities\]\);/,
+    "expected entityTabLabelOccurrences to be computed from the real entityLabelOccurrences(orderedEntities)",
+  );
+  assert.match(
+    appJsx,
+    /import \{ isAnyDialogOpen, entityLabelOccurrences, entityDisplayLabel \} from "\.\/components\/EntityView\.jsx";/,
+    "expected entityLabelOccurrences/entityDisplayLabel to be imported from the generated EntityView.jsx",
+  );
+
+  const tabButtonMatch = appJsx.match(/onClick=\{\(\) => setActive\(e\.name\)\}\s*>\s*\{([^}]+)\}/);
+  assert.ok(tabButtonMatch, "expected to find the entity-tab button's own label expression in generated App.jsx");
+  assert.equal(
+    tabButtonMatch![1].trim(),
+    "entityDisplayLabel(e, entityTabLabelOccurrences)",
+    "the tab button's own text must be disambiguated, not a bare e.label",
+  );
+
+  assert.match(appJsx, /aria-label=\{`Move \$\{entityDisplayLabel\(e, entityTabLabelOccurrences\)\} tab earlier`\}/);
+  assert.match(appJsx, /aria-label=\{`Move \$\{entityDisplayLabel\(e, entityTabLabelOccurrences\)\} tab later`\}/);
+});
+
+/**
  * Writes every real generated web/src/** file (components and api.js alike)
  * to a temp directory shaped exactly like the real export (e.g.
  * web/src/components/GlobalSearch.jsx importing "../api.js" and
@@ -21550,6 +21588,123 @@ test("the exported EntityView's print-row sheet, print-list sheet, and board car
       assert.ok(
         boardLabels.includes("Amount (shipping)"),
         `expected the shipping field disambiguated on the board card, got: ${JSON.stringify(boardLabels)}`,
+      );
+    });
+  } finally {
+    globalThis.fetch = originalFetch;
+    window.print = originalPrint;
+    cleanup();
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+/**
+ * Round 1040: the same entity-label-collision gap just fixed in the live
+ * Forge AI preview (EntityLabelEditor.tsx's click-to-rename heading,
+ * App.tsx's entity-tab bar, and EntityPanel.tsx's print sheets) also
+ * reached the exported app's own EntityView.jsx -- its panel heading and
+ * both print sheets rendered a bare `entity.label` with no disambiguation.
+ * EntitySchema only enforces uniqueness on an entity's `name`, never its
+ * `label`, so two entities sharing a label (here, "Order" renamed on both
+ * to share a label with a second "Lead" entity) produced byte-identical
+ * headings with no way to tell which entity's data was actually on
+ * screen. Renders the real generated EntityView via writeGeneratedWebComponent
+ * + dynamic import, with a second same-labeled entity baked into
+ * ALL_ENTITIES via the project passed to generateExportFiles, exactly
+ * the same technique round 638's sibling test above uses for field labels.
+ */
+test("the exported EntityView's own panel heading, print-row sheet, and print-list sheet all disambiguate the entity heading when another entity shares its label", async () => {
+  const orderProject: Project = {
+    ...project,
+    spec: {
+      ...project.spec,
+      entities: [
+        {
+          name: "Order",
+          label: "Order",
+          fields: [{ name: "name", label: "Name", type: "text", required: true }],
+        },
+        {
+          name: "Lead",
+          label: "Order",
+          fields: [{ name: "name", label: "Name", type: "text", required: true }],
+        },
+      ],
+    },
+  };
+  const files = generateExportFiles(orderProject);
+  const dir = writeGeneratedWebComponent(files);
+  const originalFetch = globalThis.fetch;
+  const store = [{ id: 1, name: "Acme Corp" }];
+  globalThis.fetch = (async (input: string, init?: RequestInit): Promise<Response> => {
+    const method = init?.method ?? "GET";
+    if (method === "GET" && input === "/api/Order") {
+      return new Response(JSON.stringify({ records: store }), { status: 200, headers: { "content-type": "application/json" } });
+    }
+    throw new Error(`unexpected request ${method} ${input}`);
+  }) as typeof fetch;
+  const originalPrint = window.print;
+  let printCalls = 0;
+  window.print = () => {
+    printCalls += 1;
+  };
+
+  try {
+    await withRealLocalStorage(async () => {
+      const { EntityView } = await import(path.join(dir, "web", "src", "components", "EntityView.jsx"));
+      const orderEntity = orderProject.spec.entities[0];
+      const props = {
+        entity: orderEntity,
+        highlightRecordId: null,
+        onHighlightHandled: () => {},
+        onJumpToRecord: () => {},
+        onRecordCountChange: () => {},
+      };
+
+      const { container } = render(React.createElement(EntityView, props));
+      for (let i = 0; i < 40; i++) {
+        if (container.querySelectorAll("tbody tr").length === 1) break;
+        await act(async () => {
+          await new Promise((resolve) => setTimeout(resolve, 0));
+        });
+      }
+
+      const panelHeading = container.querySelector(".panel h3");
+      assert.ok(
+        panelHeading?.textContent?.includes("(Order)"),
+        `expected the panel heading disambiguated by entity name, got: ${panelHeading?.textContent}`,
+      );
+
+      const printButton = Array.from(container.querySelectorAll("tbody button")).find((b) => b.textContent === "Print")!;
+      await act(async () => {
+        fireEvent.click(printButton);
+      });
+      for (let i = 0; i < 40; i++) {
+        if (printCalls === 1) break;
+        await act(async () => {
+          await new Promise((resolve) => setTimeout(resolve, 0));
+        });
+      }
+      const recordSheetHeading = container.querySelector(".print-record-sheet h1");
+      assert.ok(
+        recordSheetHeading?.textContent?.includes("(Order)"),
+        `expected the per-row print sheet heading disambiguated by entity name, got: ${recordSheetHeading?.textContent}`,
+      );
+
+      const printListButton = Array.from(container.querySelectorAll("button")).find((b) => b.textContent?.includes("Print list"))!;
+      await act(async () => {
+        fireEvent.click(printListButton);
+      });
+      for (let i = 0; i < 40; i++) {
+        if (printCalls === 2) break;
+        await act(async () => {
+          await new Promise((resolve) => setTimeout(resolve, 0));
+        });
+      }
+      const listSheetHeading = container.querySelector(".print-list-sheet h1");
+      assert.ok(
+        listSheetHeading?.textContent?.includes("(Order)"),
+        `expected the print-list sheet heading disambiguated by entity name, got: ${listSheetHeading?.textContent}`,
       );
     });
   } finally {

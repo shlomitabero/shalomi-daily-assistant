@@ -4903,6 +4903,56 @@ test("EntityPanel's print-row sheet, print-list sheet, and board cards all disam
 });
 
 /**
+ * Round 1040: the same entity-label-collision gap just fixed in
+ * EntityLabelEditor.tsx's own click-to-rename heading (EntitySchema only
+ * enforces uniqueness on an entity's `name`, never its `label`) also
+ * reached both of this file's print-sheet `<h1>` headers -- RecordPrintSheet
+ * (per-row Print) and its list-sheet sibling (Print list). Both already
+ * receive `allEntities` as a prop, so before this fix they rendered a bare
+ * `entity.label ?? entity.name`; two entities sharing a label produced a
+ * byte-identical printed header with no way to tell which entity's data was
+ * actually on the page.
+ */
+test("EntityPanel's print-row sheet and print-list sheet both disambiguate the entity heading when another entity shares its label", async () => {
+  const otherEntity: Entity = { name: "Lead", label: DEAL_ENTITY.label ?? DEAL_ENTITY.name, fields: [{ name: "name", type: "text", required: true }] };
+  await withJsdom(async () => {
+    const store: EntityRecord[] = [{ id: 1, name: "Acme Corp", status: "new" }];
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = mockRecordsFetch(store) as typeof fetch;
+    const originalPrint = window.print;
+    let printCalls = 0;
+    window.print = () => {
+      printCalls += 1;
+    };
+    try {
+      renderEntityPanel({ allEntities: [DEAL_ENTITY, otherEntity] });
+      await waitForCondition(() => document.querySelectorAll("table tbody tr").length === 1);
+
+      const printBtn = Array.from(document.querySelectorAll("table tbody button")).find((b) => b.textContent?.includes("Print"))!;
+      fireEvent.click(printBtn);
+      await waitForCondition(() => printCalls === 1);
+      const recordSheetHeading = document.querySelector(".print-record-sheet h1");
+      assert.ok(
+        recordSheetHeading?.textContent?.includes(`(${DEAL_ENTITY.name})`),
+        `expected the per-row print sheet heading disambiguated by entity name, got: ${recordSheetHeading?.textContent}`,
+      );
+
+      const printListBtn = Array.from(document.querySelectorAll("button")).find((b) => b.textContent?.includes("Print list"))!;
+      fireEvent.click(printListBtn);
+      await waitForCondition(() => printCalls === 2);
+      const listSheetHeading = document.querySelector(".print-list-sheet h1");
+      assert.ok(
+        listSheetHeading?.textContent?.includes(`(${DEAL_ENTITY.name})`),
+        `expected the print-list sheet heading disambiguated by entity name, got: ${listSheetHeading?.textContent}`,
+      );
+    } finally {
+      globalThis.fetch = originalFetch;
+      window.print = originalPrint;
+    }
+  });
+});
+
+/**
  * Regression test for a real bug found by round 649's Explore survey: the
  * same label-collision gap round 638 fixed for print sheets and board
  * cards (and rounds 635-637 fixed for Business Twin, calendar export, and

@@ -1,6 +1,7 @@
-import { useRef, useState } from "react";
+import { useMemo, useRef, useState } from "react";
 import type { Entity, Project } from "@forge/shared";
 import { renameEntityLabel } from "./api.js";
+import { entityDisplayLabel, entityLabelOccurrences } from "./entityFormatting.js";
 import { useTranslation } from "./i18n/LanguageContext.js";
 
 /**
@@ -17,11 +18,29 @@ import { useTranslation } from "./i18n/LanguageContext.js";
  */
 export function EntityLabelEditor({
   entity,
+  allEntities,
   projectId,
   onRenamed,
   readOnly = false,
 }: {
   entity: Entity;
+  /**
+   * Round 1040: EntitySchema only enforces uniqueness on an entity's
+   * `name`, never its `label` -- confirmed via entityLabelOccurrences'
+   * own doc comment, and `PATCH .../entities/:entityName/label`
+   * (routes/projects.ts) has zero uniqueness check. Without this, two
+   * entities renamed to an identical label (trivially reachable: open
+   * this exact editor on each and retype the same text) rendered
+   * byte-identical `<h3>` headers here -- and, since this heading is the
+   * only confirmation of which entity's panel you're actually looking at
+   * after clicking its tab in App.tsx's own entity-tab bar (same gap,
+   * fixed alongside this one), there was no way to tell which entity's
+   * data was on screen. Mirrors the already-established
+   * entityLabelOccurrences/entityDisplayLabel fix pattern this codebase
+   * already applies in AutomationsPanel.tsx, WhatsAppPanel.tsx,
+   * checkpointDiff.ts, and (as of round 1039) SpecListItemRemover.tsx.
+   */
+  allEntities: Entity[];
   projectId: string;
   onRenamed: (project: Project) => void;
   /** True for a "viewer" collaborator -- the server already rejects this rename with 403 VIEWER_READ_ONLY; this just renders the label as plain, non-editable text instead of a click target that can only ever fail. */
@@ -35,6 +54,13 @@ export function EntityLabelEditor({
   const cancelling = useRef(false);
 
   const currentLabel = entity.label ?? entity.name;
+  // Disambiguated DISPLAY text only -- the rename draft below is
+  // deliberately seeded from the plain `currentLabel`, not this, the same
+  // round-642 convention every other fix in this family already follows,
+  // so saving a no-op rename never silently renames the entity to the
+  // literal text "Customer (Lead)".
+  const occurrences = useMemo(() => entityLabelOccurrences(allEntities), [allEntities]);
+  const displayLabel = entityDisplayLabel(entity, occurrences);
 
   function startEditing() {
     setDraft(currentLabel);
@@ -71,7 +97,7 @@ export function EntityLabelEditor({
   }
 
   if (readOnly) {
-    return <h3 className="entity-label">{currentLabel}</h3>;
+    return <h3 className="entity-label">{displayLabel}</h3>;
   }
 
   if (!editing) {
@@ -88,7 +114,7 @@ export function EntityLabelEditor({
           startEditing();
         }}
       >
-        {currentLabel}
+        {displayLabel}
         <span className="entity-label-edit-icon" aria-hidden="true">
           ✏️
         </span>

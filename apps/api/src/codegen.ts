@@ -1330,10 +1330,15 @@ function renderEntityViewJsx(project: Project): string {
   // resolve a relation field's target: which entity it points to, and
   // which of that entity's fields is the best human-readable label) --
   // baked in as real data, same principle as each entity's own field list
-  // in entities/<Name>.jsx, not fetched from a schema at runtime.
+  // in entities/<Name>.jsx, not fetched from a schema at runtime. `label`
+  // is included too (round 1040) so entityLabelOccurrences/entityDisplayLabel
+  // can actually detect two entities sharing a label here, the same way the
+  // live preview's own allEntities prop always carries each entity's real
+  // label.
   const allEntitiesJson = JSON.stringify(
     project.spec.entities.map((e) => ({
       name: e.name,
+      label: e.label,
       fields: e.fields.map((f) => ({ name: f.name, type: f.type })),
     })),
     null,
@@ -3714,7 +3719,7 @@ function RecordPrintSheet({ entity, fields, record, relatedRecords }) {
   const labelOccurrences = fieldLabelOccurrences(fields);
   return (
     <div className="print-record-sheet">
-      <h1>{entity.label}</h1>
+      <h1>{entityDisplayLabel(entity, entityLabelOccurrences(ALL_ENTITIES))}</h1>
       <dl>
         {fields.map((f) => (
           <div key={f.name} className="print-field">
@@ -3770,7 +3775,7 @@ function RecordListPrintSheet({ entity, fields, records, groups, relatedRecords,
   }
   return (
     <div className="print-list-sheet">
-      <h1>{entity.label}</h1>
+      <h1>{entityDisplayLabel(entity, entityLabelOccurrences(ALL_ENTITIES))}</h1>
       <table>
         <thead>
           <tr>
@@ -4481,6 +4486,7 @@ export function EntityView({ entity, highlightRecordId, onHighlightHandled, onJu
   const refreshRequestId = useRef(0);
   const boardField = useMemo(() => findBoardField(entity.fields), [entity.fields]);
   const entityFieldLabelOccurrences = useMemo(() => fieldLabelOccurrences(entity.fields), [entity.fields]);
+  const allEntityLabelOccurrences = useMemo(() => entityLabelOccurrences(ALL_ENTITIES), []);
   const dateField = useMemo(() => findDateField(entity.fields), [entity.fields]);
   const endDateField = useMemo(() => (dateField ? findEndDateField(entity.fields, dateField) : null), [entity.fields, dateField]);
   const relationTargets = useMemo(() => {
@@ -6039,7 +6045,7 @@ export function EntityView({ entity, highlightRecordId, onHighlightHandled, onJu
 
   return (
     <div className="panel">
-      <h3>{entity.label}</h3>
+      <h3>{entityDisplayLabel(entity, allEntityLabelOccurrences)}</h3>
       <form
         className="record-form"
         onSubmit={handleSubmit}
@@ -7548,7 +7554,7 @@ function renderAppJsx(project: Project): string {
 import { listEntityCounts } from "./api.js";
 import { GlobalSearch } from "./components/GlobalSearch.jsx";
 import { ShortcutsPanel } from "./components/ShortcutsPanel.jsx";
-import { isAnyDialogOpen } from "./components/EntityView.jsx";
+import { isAnyDialogOpen, entityLabelOccurrences, entityDisplayLabel } from "./components/EntityView.jsx";
 import { THEME_STORAGE_KEY, detectInitialTheme } from "./theme.js";
 ${imports}
 
@@ -7703,6 +7709,7 @@ export default function App() {
   const [dragOverEntityTab, setDragOverEntityTab] = useState(null);
   const activeEntity = ENTITIES.find((e) => e.name === active);
   const orderedEntities = useMemo(() => applyEntityTabOrder(ENTITIES, entityTabOrder), [entityTabOrder]);
+  const entityTabLabelOccurrences = useMemo(() => entityLabelOccurrences(orderedEntities), [orderedEntities]);
 
   // Dragging a tab to just before another one's -- without this, the
   // exported app's nav always mirrored spec.entities' fixed generation
@@ -7879,7 +7886,7 @@ export default function App() {
               }}
               onClick={() => setActive(e.name)}
             >
-              {e.label}
+              {entityDisplayLabel(e, entityTabLabelOccurrences)}
               {entityCounts[e.name] != null && <span className="tab-count">{entityCounts[e.name]}</span>}
             </button>
             <span className="tab-move-buttons">
@@ -7888,7 +7895,7 @@ export default function App() {
                 className="tab-move-btn"
                 onClick={() => handleMoveEntityTab(e.name, "earlier")}
                 disabled={entityTabIndex === 0}
-                aria-label={\`Move \${e.label} tab earlier\`}
+                aria-label={\`Move \${entityDisplayLabel(e, entityTabLabelOccurrences)} tab earlier\`}
               >
                 ‹
               </button>
@@ -7897,7 +7904,7 @@ export default function App() {
                 className="tab-move-btn"
                 onClick={() => handleMoveEntityTab(e.name, "later")}
                 disabled={entityTabIndex === orderedEntities.length - 1}
-                aria-label={\`Move \${e.label} tab later\`}
+                aria-label={\`Move \${entityDisplayLabel(e, entityTabLabelOccurrences)} tab later\`}
               >
                 ›
               </button>

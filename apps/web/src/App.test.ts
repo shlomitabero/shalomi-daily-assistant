@@ -3384,6 +3384,44 @@ test("App's handleMoveEntityTab moves an entity tab earlier/later and persists v
 });
 
 /**
+ * Round 1040: EntitySchema only enforces uniqueness on an entity's `name`,
+ * never its `label` -- the entity-tab bar rendered a bare
+ * `entity.label ?? entity.name` for both its own tab text and the
+ * moveEarlier/moveLater aria-labels, so two entities sharing a label
+ * produced indistinguishable tabs with no way to tell which one a click
+ * would actually open. Confirms App.tsx computes entityTabLabelOccurrences
+ * from the real entityLabelOccurrences(orderedEntities) and wires it
+ * through entityDisplayLabel at all 3 call sites, the same source-regex
+ * technique the GlobalSearchPanel/AutomationsPanel orderedEntities tests
+ * above already use for this file's own tab-bar JSX.
+ */
+test("App.tsx's entity-tab bar disambiguates its own tab text and moveEarlier/moveLater aria-labels when two entities share a label", () => {
+  const appSrc = readFileSync(new URL("./App.tsx", import.meta.url), "utf8");
+
+  assert.match(
+    appSrc,
+    /const entityTabLabelOccurrences = useMemo\(\(\) => entityLabelOccurrences\(orderedEntities\), \[orderedEntities\]\);/,
+    "expected entityTabLabelOccurrences to be computed from the real entityLabelOccurrences(orderedEntities)",
+  );
+
+  const tabButtonMatch = appSrc.match(/onClick=\{\(\) => setActiveEntity\(entity\.name\)\}\s*>\s*\{([^}]+)\}/);
+  assert.ok(tabButtonMatch, "expected to find the entity-tab button's own label expression in App.tsx");
+  assert.equal(
+    tabButtonMatch![1].trim(),
+    "entityDisplayLabel(entity, entityTabLabelOccurrences)",
+    "the tab button's own text must be disambiguated, not a bare entity.label ?? entity.name",
+  );
+
+  const moveEarlierMatch = appSrc.match(/aria-label=\{t\("entity\.tab\.moveEarlier", \{ entity: ([^}]+) \}\)\}/);
+  assert.ok(moveEarlierMatch, "expected to find the moveEarlier button's own aria-label in App.tsx");
+  assert.equal(moveEarlierMatch![1].trim(), "entityDisplayLabel(entity, entityTabLabelOccurrences)");
+
+  const moveLaterMatch = appSrc.match(/aria-label=\{t\("entity\.tab\.moveLater", \{ entity: ([^}]+) \}\)\}/);
+  assert.ok(moveLaterMatch, "expected to find the moveLater button's own aria-label in App.tsx");
+  assert.equal(moveLaterMatch![1].trim(), "entityDisplayLabel(entity, entityTabLabelOccurrences)");
+});
+
+/**
  * New in this round: a 401 SESSION_EXPIRED/AUTH_REQUIRED (the session
  * expired, or was revoked from another tab/device via "sign out
  * everywhere" or a password change) previously only ever surfaced as
