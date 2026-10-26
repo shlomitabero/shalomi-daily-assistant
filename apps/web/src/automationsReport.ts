@@ -136,6 +136,20 @@ function describeDestination(
   if (rule.actionType === "webhook") {
     return t("automations.rule.callsWebhook", { url: rule.webhookUrl ?? "" });
   }
+  // Round 1000: mirrors AutomationsPanel.tsx's own identical "send_email"
+  // branch -- this report is deliberately self-contained (see this
+  // file's own top comment), so it never got the matching branch round
+  // 996 added there, and fell into the `else` below instead: that reads
+  // `rule.toNumber` (always null for a send_email rule) instead of the
+  // actual `rule.toEmail` column, printing an empty destination for
+  // every send_email rule's downloaded report.
+  if (rule.actionType === "send_email") {
+    const emailDestination =
+      rule.toMode === "field"
+        ? t("automations.rule.sendsField", { field: fieldLabel(rule, rule.toField, entities) })
+        : t("automations.rule.sendsStatic", { number: rule.toEmail ?? "" });
+    return t("automations.rule.sendsEmail", { destination: emailDestination });
+  }
   const destination =
     rule.toMode === "field"
       ? t("automations.rule.sendsField", { field: fieldLabel(rule, rule.toField, entities) })
@@ -204,6 +218,15 @@ export function formatAutomationsReport(
     const statusSuffix = rule.pausedForToday ? `, ${t("automations.status.pausedForToday")}` : "";
     lines.push(`${describeRule(rule, entities, relatedRecords, lang, t)} (${status}${statusSuffix})`);
     lines.push(describeDestination(rule, entities, t));
+    // Round 1000: a "send_email" rule's own subject line (round 996,
+    // emailSubject) is interpolated and sent completely independently of
+    // messageTemplate (the email body) -- required server-side for every
+    // send_email rule, yet never appeared anywhere in this report at all
+    // before this, silently dropping it from the one artifact meant to
+    // be shared/saved for debugging a rule.
+    if (rule.actionType === "send_email") {
+      lines.push(t("automations.rule.subject", { subject: rule.emailSubject ?? "" }));
+    }
     lines.push(rule.messageTemplate);
     lines.push(describeLastRun(rule, lang, t));
     lines.push("");

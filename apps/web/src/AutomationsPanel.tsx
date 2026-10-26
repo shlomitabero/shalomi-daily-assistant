@@ -924,6 +924,15 @@ export function AutomationsPanel({
                   <div className="automations-rule-info">
                     <div className="automations-rule-condition">{describeRule(rule)}</div>
                     <div className="muted small">{describeDestination(rule)}</div>
+                    {/* Round 1000: a "send_email" rule's own subject line
+                        (round 996, emailSubject) is interpolated and sent
+                        completely independently of messageTemplate (the
+                        email body) -- required server-side for every
+                        send_email rule, yet never appeared anywhere in
+                        this list at all before this. */}
+                    {rule.actionType === "send_email" && (
+                      <div className="muted small">{t("automations.rule.subject", { subject: rule.emailSubject ?? "" })}</div>
+                    )}
                     <div className="muted small">{rule.messageTemplate}</div>
                     <div className="muted small">{describeLastRun(rule)}</div>
                   </div>

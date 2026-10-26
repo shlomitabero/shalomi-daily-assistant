@@ -145,6 +145,49 @@ test("AutomationsPanel lists existing rules once loaded, describing the trigger 
 });
 
 /**
+ * Round 1000: a "send_email" rule's own subject line (round 996,
+ * emailSubject) is interpolated and sent completely independently of
+ * messageTemplate (the email body) -- never shown anywhere in the rule
+ * list at all before this, the one place meant to let a user see exactly
+ * what a rule is actually configured to send.
+ */
+test("AutomationsPanel shows a send_email rule's own subject line in the rule list, not just its message body", async () => {
+  await withJsdom(async () => {
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = (async (input: string) => {
+      if (input === "/api/projects/proj1/automations") {
+        return new Response(
+          JSON.stringify({
+            rules: [
+              makeRule({
+                actionType: "send_email",
+                toMode: "static",
+                toNumber: null,
+                toField: null,
+                toEmail: "owner@example.com",
+                emailSubject: "New order from {{customerName}}",
+              }),
+            ],
+          }),
+          { status: 200, headers: { "content-type": "application/json" } },
+        );
+      }
+      throw new Error(`unexpected request ${input}`);
+    }) as typeof fetch;
+
+    try {
+      renderPanel();
+      await waitForCondition(() => document.querySelectorAll(".automations-rule-row").length === 1);
+      const row = document.querySelector(".automations-rule-row")!;
+      assert.match(row.textContent ?? "", /owner@example\.com/, "the real toEmail destination must be shown, not an empty one");
+      assert.match(row.textContent ?? "", /Subject: New order from \{\{customerName\}\}/, "the subject line must be shown, not silently dropped");
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+});
+
+/**
  * Round 969: the new "record_deleted" trigger -- confirms the rule list
  * describes it with its own distinct wording (not falling through to the
  * field_equals description the way an unhandled trigger value silently

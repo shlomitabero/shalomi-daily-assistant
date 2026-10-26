@@ -62,6 +62,36 @@ test("formatAutomationsReport disambiguates two fields that share the same label
 });
 
 /**
+ * Round 1000: this module's own hand-duplicated describeDestination
+ * sibling (AutomationsPanel.tsx's own copy got the matching branch in
+ * round 996) never handled actionType "send_email" at all -- a static-
+ * destination send_email rule fell into the generic `else` branch, which
+ * reads `toNumber` (always null for this action type) instead of the
+ * real `toEmail` column, printing an empty destination. The email's own
+ * subject line (emailSubject, interpolated independently of
+ * messageTemplate) was also never printed anywhere in the report.
+ */
+test("formatAutomationsReport shows a send_email rule's real toEmail destination and its own subject line, not an empty destination and a dropped subject", () => {
+  const t = (key: string, params?: Record<string, string | number>) => translate("en", key, params);
+  const rule = makeRule({
+    actionType: "send_email",
+    toMode: "static",
+    toNumber: null,
+    toField: null,
+    toEmail: "owner@example.com",
+    emailSubject: "New order from {{customerName}}",
+    messageTemplate: "Your order has shipped!",
+  });
+
+  const report = formatAutomationsReport([rule], [], "Shop", "en", t);
+
+  assert.match(report, /emails owner@example\.com/, "must use the real toEmail destination, with the dedicated send_email wording");
+  assert.doesNotMatch(report, /sends to\b/, "must not fall into the generic send_whatsapp/webhook destination wording");
+  assert.match(report, /Subject: New order from \{\{customerName\}\}/, "the subject line must be included, not silently dropped");
+  assert.match(report, /Your order has shipped!/, "the body (messageTemplate) must still be included too");
+});
+
+/**
  * Round 969: this module's own hand-duplicated describeRule sibling
  * (AutomationsPanel.tsx's own copy was fixed directly) needed the
  * identical new "record_deleted" branch -- without it, a record_deleted
