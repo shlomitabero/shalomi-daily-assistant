@@ -1295,6 +1295,7 @@ function AppContent() {
    * the home screen wondering whether anything happened.
    */
   async function handleDuplicateProject(p: Project) {
+    if (cloningId !== null || deletingId !== null || bulkDeleteBusy) return;
     setCloningId(p.id);
     setError(null);
     try {
@@ -1320,7 +1321,7 @@ function AppContent() {
    * not after every mutation.
    */
   async function handleDeleteProject(p: Project) {
-    if (deletingId !== null || bulkDeleteBusy) return;
+    if (deletingId !== null || bulkDeleteBusy || cloningId !== null) return;
     if (!window.confirm(t("home.myProjects.confirmDelete", { name: p.name }))) return;
     setDeletingId(p.id);
     setError(null);
@@ -1348,7 +1349,7 @@ function AppContent() {
   // a single rejected delete (a dropped connection, a project someone else
   // already removed) must not hide the ones that *did* succeed.
   async function handleBulkDeleteProjects() {
-    if (bulkDeleteBusy || deletingId !== null) return;
+    if (bulkDeleteBusy || deletingId !== null || cloningId !== null) return;
     const ids = [...visibleSelectedProjectIds];
     if (ids.length === 0) return;
     if (!window.confirm(t("home.myProjects.bulk.confirmDelete", { count: ids.length }))) return;
@@ -1977,7 +1978,7 @@ function AppContent() {
               {visibleSelectedProjectIds.size > 0 && (
                 <div className="bulk-actions-bar">
                   <span>{t("home.myProjects.bulk.selectedCount", { count: visibleSelectedProjectIds.size })}</span>
-                  <button type="button" className="danger" disabled={bulkDeleteBusy || deletingId !== null} onClick={handleBulkDeleteProjects}>
+                  <button type="button" className="danger" disabled={bulkDeleteBusy || deletingId !== null || cloningId !== null} onClick={handleBulkDeleteProjects}>
                     {bulkDeleteBusy ? t("home.myProjects.bulk.deleteSelected.busy") : t("home.myProjects.bulk.deleteSelected")}
                   </button>
                 </div>
@@ -2018,7 +2019,7 @@ function AppContent() {
                       <button
                         type="button"
                         className="secondary my-project-duplicate"
-                        disabled={cloningId !== null}
+                        disabled={cloningId !== null || deletingId !== null || bulkDeleteBusy}
                         onClick={() => handleDuplicateProject(p)}
                       >
                         {cloningId === p.id ? t("home.myProjects.duplicate.busy") : t("home.myProjects.duplicate")}
@@ -2027,7 +2028,7 @@ function AppContent() {
                         <button
                           type="button"
                           className="secondary danger my-project-delete"
-                          disabled={deletingId !== null || bulkDeleteBusy}
+                          disabled={deletingId !== null || bulkDeleteBusy || cloningId !== null}
                           onClick={() => handleDeleteProject(p)}
                         >
                           {deletingId === p.id ? t("home.myProjects.delete.busy") : t("home.myProjects.delete")}

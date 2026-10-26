@@ -1325,6 +1325,7 @@ test("App's handleDeleteProject only calls the API and updates myProjects after 
     const fn = new Function(
       "deletingId",
       "bulkDeleteBusy",
+      "cloningId",
       "window",
       "t",
       "deleteProject",
@@ -1336,6 +1337,7 @@ test("App's handleDeleteProject only calls the API and updates myProjects after 
     )(
       null,
       false,
+      null,
       { confirm: (message: string) => (confirmCalls.push(message), opts.confirmReturns) },
       (key: string) => key,
       opts.deleteProjectFn,
@@ -1422,6 +1424,7 @@ test("App's handleBulkDeleteProjects removes only the projects that actually suc
     const fn = new Function(
       "bulkDeleteBusy",
       "deletingId",
+      "cloningId",
       "window",
       "t",
       "deleteProject",
@@ -1434,6 +1437,7 @@ test("App's handleBulkDeleteProjects removes only the projects that actually suc
       `${code}\nreturn handleBulkDeleteProjects;`,
     )(
       false,
+      null,
       null,
       { confirm: (message: string) => (confirmCalls.push(message), opts.confirmReturns) },
       (key: string, params?: Record<string, unknown>) => (params ? `${key}:${JSON.stringify(params)}` : key),
@@ -1523,6 +1527,7 @@ test("App's handleBulkDeleteProjects only ever deletes visible+selected projects
   const fn = new Function(
     "bulkDeleteBusy",
     "deletingId",
+    "cloningId",
     "window",
     "t",
     "deleteProject",
@@ -1535,6 +1540,7 @@ test("App's handleBulkDeleteProjects only ever deletes visible+selected projects
     `${code}\nreturn handleBulkDeleteProjects;`,
   )(
     false,
+    null,
     null,
     { confirm: () => true },
     (key: string, params?: Record<string, unknown>) => (params ? `${key}:${JSON.stringify(params)}` : key),
@@ -1598,6 +1604,7 @@ test("App's handleBulkDeleteProjects refuses to start a second batch while a pre
     return new Function(
       "bulkDeleteBusy",
       "deletingId",
+      "cloningId",
       "window",
       "t",
       "deleteProject",
@@ -1610,6 +1617,7 @@ test("App's handleBulkDeleteProjects refuses to start a second batch while a pre
       `${code}\nreturn handleBulkDeleteProjects;`,
     )(
       state.bulkDeleteBusy,
+      null,
       null,
       {
         confirm: () => {
@@ -1686,6 +1694,7 @@ test("App's handleDeleteProject and handleBulkDeleteProjects are cross-gated aga
     const fn = new Function(
       "deletingId",
       "bulkDeleteBusy",
+      "cloningId",
       "window",
       "t",
       "deleteProject",
@@ -1697,6 +1706,7 @@ test("App's handleDeleteProject and handleBulkDeleteProjects are cross-gated aga
     )(
       null,
       true,
+      null,
       { confirm: () => (confirmCalls += 1, true) },
       (key: string) => key,
       async () => {
@@ -1720,6 +1730,7 @@ test("App's handleDeleteProject and handleBulkDeleteProjects are cross-gated aga
     const fn = new Function(
       "bulkDeleteBusy",
       "deletingId",
+      "cloningId",
       "window",
       "t",
       "deleteProject",
@@ -1733,6 +1744,7 @@ test("App's handleDeleteProject and handleBulkDeleteProjects are cross-gated aga
     )(
       false,
       "a",
+      null,
       { confirm: () => (confirmCalls += 1, true) },
       (key: string, params?: Record<string, unknown>) => (params ? `${key}:${JSON.stringify(params)}` : key),
       async () => {
@@ -1748,6 +1760,137 @@ test("App's handleDeleteProject and handleBulkDeleteProjects are cross-gated aga
     await fn();
     assert.equal(confirmCalls, 0, "a bulk delete while a single-row delete is in flight must never even prompt for confirmation");
     assert.equal(deleteApiCalls, 0, "a bulk delete while a single-row delete is in flight must never call the delete API");
+  }
+});
+
+/**
+ * Round 1043: the same cross-gating gap the test just above closed for
+ * delete vs bulk-delete also applied to "Duplicate" -- it was never
+ * cross-gated against EITHER delete action, and neither delete action was
+ * cross-gated against it. Clicking a project's own row-level "Duplicate"
+ * while a delete (or bulk delete) of that exact project was still in
+ * flight raced POST .../clone against DELETE .../:id for the same id,
+ * and the reverse (clicking Delete/Delete Selected while a duplicate of
+ * the same project was in flight) raced the other way.
+ */
+test("App's handleDuplicateProject is cross-gated against handleDeleteProject/handleBulkDeleteProjects, and vice versa", async () => {
+  const appSrc = readFileSync(new URL("./App.tsx", import.meta.url), "utf8");
+  const duplicateHandlerMatch = appSrc.match(/ {2}async function handleDuplicateProject\(p: Project\) \{[\s\S]*?\n {2}\}\n/);
+  assert.ok(duplicateHandlerMatch, "expected to find handleDuplicateProject in App.tsx");
+  const { code: duplicateCode } = transformSync(duplicateHandlerMatch![0], { loader: "ts" });
+  const deleteHandlerMatch = appSrc.match(/ {2}async function handleDeleteProject\(p: Project\) \{[\s\S]*?\n {2}\}\n/);
+  assert.ok(deleteHandlerMatch, "expected to find handleDeleteProject in App.tsx");
+  const { code: deleteCode } = transformSync(deleteHandlerMatch![0], { loader: "ts" });
+  const bulkHandlerMatch = appSrc.match(/ {2}async function handleBulkDeleteProjects\(\) \{[\s\S]*?\n {2}\}\n/);
+  assert.ok(bulkHandlerMatch, "expected to find handleBulkDeleteProjects in App.tsx");
+  const { code: bulkCode } = transformSync(bulkHandlerMatch![0], { loader: "ts" });
+
+  const target = makeProject([makeEntity("Customer")]);
+  target.id = "a";
+
+  // Duplicate must be a silent no-op while a delete (or bulk delete) of
+  // the same project is in flight.
+  for (const [deletingId, bulkDeleteBusy] of [
+    ["a", false],
+    [null, true],
+  ] as const) {
+    let cloneApiCalls = 0;
+    const fn = new Function(
+      "cloningId",
+      "deletingId",
+      "bulkDeleteBusy",
+      "setCloningId",
+      "setError",
+      "cloneProject",
+      "openExistingProject",
+      `${duplicateCode}\nreturn handleDuplicateProject;`,
+    )(
+      null,
+      deletingId,
+      bulkDeleteBusy,
+      () => {},
+      () => {},
+      async () => {
+        cloneApiCalls += 1;
+        return { project: target };
+      },
+      () => {},
+    ) as (p: Project) => Promise<void>;
+    await fn(target);
+    assert.equal(cloneApiCalls, 0, `a duplicate while deletingId=${deletingId}/bulkDeleteBusy=${bulkDeleteBusy} must never call the clone API`);
+  }
+
+  // Delete (and bulk delete) must each be a silent no-op while a
+  // duplicate of the same project is in flight (cloningId set).
+  {
+    let confirmCalls = 0;
+    let deleteApiCalls = 0;
+    const fn = new Function(
+      "deletingId",
+      "bulkDeleteBusy",
+      "cloningId",
+      "window",
+      "t",
+      "deleteProject",
+      "setDeletingId",
+      "setError",
+      "setMyProjects",
+      "purgeProjectPreferences",
+      `${deleteCode}\nreturn handleDeleteProject;`,
+    )(
+      null,
+      false,
+      "a",
+      { confirm: () => (confirmCalls += 1, true) },
+      (key: string) => key,
+      async () => {
+        deleteApiCalls += 1;
+      },
+      () => {},
+      () => {},
+      () => {},
+      () => {},
+    ) as (p: Project) => Promise<void>;
+    await fn(target);
+    assert.equal(confirmCalls, 0, "a single-row delete while a duplicate is in flight must never even prompt for confirmation");
+    assert.equal(deleteApiCalls, 0, "a single-row delete while a duplicate is in flight must never call the delete API");
+  }
+  {
+    let confirmCalls = 0;
+    let deleteApiCalls = 0;
+    const fn = new Function(
+      "bulkDeleteBusy",
+      "deletingId",
+      "cloningId",
+      "window",
+      "t",
+      "deleteProject",
+      "visibleSelectedProjectIds",
+      "setBulkDeleteBusy",
+      "setError",
+      "setMyProjects",
+      "setSelectedProjectIds",
+      "purgeProjectPreferences",
+      `${bulkCode}\nreturn handleBulkDeleteProjects;`,
+    )(
+      false,
+      null,
+      "a",
+      { confirm: () => (confirmCalls += 1, true) },
+      (key: string, params?: Record<string, unknown>) => (params ? `${key}:${JSON.stringify(params)}` : key),
+      async () => {
+        deleteApiCalls += 1;
+      },
+      new Set(["a"]),
+      () => {},
+      () => {},
+      () => {},
+      () => {},
+      () => {},
+    ) as () => Promise<void>;
+    await fn();
+    assert.equal(confirmCalls, 0, "a bulk delete while a duplicate is in flight must never even prompt for confirmation");
+    assert.equal(deleteApiCalls, 0, "a bulk delete while a duplicate is in flight must never call the delete API");
   }
 });
 
