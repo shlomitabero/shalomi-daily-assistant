@@ -60,7 +60,7 @@ import { getEntityTabOrder, setEntityTabOrder } from "./entityTabOrder.js";
 import { getPinnedIds, sortByPinned, togglePinned } from "./pinnedProjects.js";
 import { getSeenSharedTimestamps, markSharedProjectSeen, isNewShare } from "./sharedProjectSeen.js";
 import { purgeProjectPreferences } from "./projectPreferenceCleanup.js";
-import { purgeEntityPreferences } from "./entityPreferenceCleanup.js";
+import { purgeEntityPreferences, migrateEntityPreferencesForCaseRename } from "./entityPreferenceCleanup.js";
 import {
   addRecentProjectSearch,
   clearRecentProjectSearches,
@@ -1677,6 +1677,21 @@ function AppContent() {
     for (const entityName of droppedEntityNames) {
       purgeEntityPreferences(builtProject.id, entityName);
     }
+    // Round 1029: the other half of this effect's own round-988 fix
+    // above -- a case-only rename correctly skips purgeEntityPreferences
+    // (it's the same entity, not a drop), but every one of those 9
+    // stores is keyed by this entity's CURRENT name, which no longer
+    // matches the real data's own old-cased key. Without this, the
+    // user's actual column widths/order/hidden fields/filters/grouping/
+    // sort/view-mode/recent-searches for that entity still silently
+    // disappear from the UI -- just not from localStorage -- the moment
+    // this refine completes. See entityPreferenceCleanup.ts's own
+    // migrateEntityPreferencesForCaseRename doc comment.
+    for (const e of project?.spec.entities ?? []) {
+      if (builtProject.spec.entities.some((be) => be.name === e.name)) continue;
+      const renamed = builtProject.spec.entities.find((be) => be.name.toLowerCase() === e.name.toLowerCase());
+      if (renamed) migrateEntityPreferencesForCaseRename(builtProject.id, e.name, renamed.name);
+    }
     setRefineText("");
     setAdditionalRequest("");
     setRefineRunning(false);
@@ -2636,6 +2651,16 @@ function AppContent() {
                 // routinely.
                 for (const entityName of droppedEntityNames) {
                   purgeEntityPreferences(restored.id, entityName);
+                }
+                // Round 1029: mirrors handleBuildComplete's own identical
+                // fix above -- see entityPreferenceCleanup.ts's own
+                // migrateEntityPreferencesForCaseRename doc comment for
+                // the full "case-only rename leaves real preference data
+                // unreachable under its old key" mechanism.
+                for (const e of project?.spec.entities ?? []) {
+                  if (restored.spec.entities.some((re) => re.name === e.name)) continue;
+                  const renamed = restored.spec.entities.find((re) => re.name.toLowerCase() === e.name.toLowerCase());
+                  if (renamed) migrateEntityPreferencesForCaseRename(restored.id, e.name, renamed.name);
                 }
               }}
               readOnly={myRole === "viewer"}

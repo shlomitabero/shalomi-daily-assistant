@@ -106,6 +106,34 @@ export function purgeEntityRecentSearchesForEntity(projectId: string, entityName
   writeStore(store);
 }
 
+/**
+ * Round 1029: mirrors columnWidths.ts's own migrateColumnWidthsForEntityRename
+ * -- see its doc comment for the full "case-only entity rename leaves this
+ * store's real data unreachable under the old key" mechanism. Rewrites
+ * EVERY collaborator's own entry for this entity (the key's third segment
+ * is userId, not something this function can know in advance -- the same
+ * reason purgeEntityRecentSearchesForEntity above sweeps by prefix rather
+ * than a single exact key).
+ */
+export function migrateEntityRecentSearchesForEntityRename(projectId: string, oldName: string, newName: string): void {
+  if (oldName === newName) return;
+  const store = readStore();
+  const oldPrefix = `${projectId}:${oldName}:`;
+  let changed = false;
+  for (const key of Object.keys(store)) {
+    if (!key.startsWith(oldPrefix)) continue;
+    const userId = key.slice(oldPrefix.length);
+    const newKey = keyFor(projectId, newName, userId);
+    if (store[newKey] === undefined) {
+      store[newKey] = store[key];
+      changed = true;
+    }
+    delete store[key];
+    changed = true;
+  }
+  if (changed) writeStore(store);
+}
+
 /** Removes every stored recent-search list for this project, across all of its entities -- see columnWidths.ts's purgeColumnWidthsForProject for the full rationale. */
 export function purgeEntityRecentSearchesForProject(projectId: string): void {
   const store = readStore();

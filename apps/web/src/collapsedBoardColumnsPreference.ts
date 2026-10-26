@@ -148,3 +148,25 @@ export function purgeCollapsedBoardColumnsForEntity(projectId: string, entityNam
   }
   writeStore(store);
 }
+
+/**
+ * Round 1029: mirrors collapsedGroupsPreference.ts's own identical
+ * migrateCollapsedGroupsForEntityRename -- see its doc comment for the
+ * full mechanism. Independent of migrateCollapsedBoardColumnsFieldCase
+ * above (which only ever remaps the THIRD segment, boardFieldName, never
+ * the second, entityName).
+ */
+export function migrateCollapsedBoardColumnsForEntityRename(projectId: string, oldName: string, newName: string): void {
+  if (oldName === newName) return;
+  const store = readStore();
+  let changed = false;
+  for (const key of Object.keys(store)) {
+    const parsed = parseKey(key);
+    if (!parsed || parsed[0] !== projectId || parsed[1] !== oldName) continue;
+    const newKey = keyFor(projectId, newName, parsed[2]);
+    if (store[newKey] === undefined) store[newKey] = store[key];
+    delete store[key];
+    changed = true;
+  }
+  if (changed) writeStore(store);
+}

@@ -1757,6 +1757,7 @@ test("App's handleBuildComplete falls back to the first entity when the previous
       "setView",
       "project",
       "purgeEntityPreferences",
+      "migrateEntityPreferencesForCaseRename",
       `${code}\nreturn handleBuildComplete;`,
     )(
       false, // refineRunning: false keeps this focused on the activeEntity logic itself, which runs unconditionally either way
@@ -1779,6 +1780,7 @@ test("App's handleBuildComplete falls back to the first entity when the previous
       // scoped to the activeEntity fallback logic -- null keeps droppedEntityNames
       // empty so purgeEntityPreferences is never actually invoked here.
       null,
+      () => {},
       () => {},
     ) as (builtProject: Project) => void;
     fn(builtProject);
@@ -1831,6 +1833,7 @@ test("App's handleBuildComplete records the refine's own providerName (via extra
     "setView",
     "project",
     "purgeEntityPreferences",
+    "migrateEntityPreferencesForCaseRename",
     `${code}\nreturn handleBuildComplete;`,
   )(
     true,
@@ -1853,6 +1856,7 @@ test("App's handleBuildComplete records the refine's own providerName (via extra
     // not round 853's dropped-entity-preference purge -- see the sibling
     // test above for why null is safe here too.
     null,
+    () => {},
     () => {},
   ) as (builtProject: Project) => void;
 
@@ -1899,6 +1903,7 @@ test("App's handleBuildComplete purges a dropped entity's own localStorage prefe
     "setView",
     "project",
     "purgeEntityPreferences",
+    "migrateEntityPreferencesForCaseRename",
     `${code}\nreturn handleBuildComplete;`,
   )(
     false,
@@ -1918,6 +1923,7 @@ test("App's handleBuildComplete purges a dropped entity's own localStorage prefe
     (projectId: string, entityName: string) => {
       purgedEntities.push([projectId, entityName]);
     },
+    () => {},
   ) as (builtProject: Project) => void;
 
   const rebuiltDroppingDealAndInvoice = makeProject([makeEntity("Customer")]);
@@ -1960,6 +1966,7 @@ test("App's handleBuildComplete tolerates a pure letter-casing entity rename as 
   function runHandleBuildCompleteForRename(initialActiveEntity: string | null, previousProject: Project, builtProject: Project) {
     let activeEntity: string | null = initialActiveEntity;
     const purgedEntities: Array<[string, string]> = [];
+    const migratedEntities: Array<[string, string, string]> = [];
     const fn = new Function(
       "refineRunning",
       "pendingRefineInstruction",
@@ -1976,6 +1983,7 @@ test("App's handleBuildComplete tolerates a pure letter-casing entity rename as 
       "setView",
       "project",
       "purgeEntityPreferences",
+      "migrateEntityPreferencesForCaseRename",
       `${code}\nreturn handleBuildComplete;`,
     )(
       false,
@@ -1997,15 +2005,18 @@ test("App's handleBuildComplete tolerates a pure letter-casing entity rename as 
       (projectId: string, entityName: string) => {
         purgedEntities.push([projectId, entityName]);
       },
+      (projectId: string, oldName: string, newName: string) => {
+        migratedEntities.push([projectId, oldName, newName]);
+      },
     ) as (builtProject: Project) => void;
     fn(builtProject);
-    return { activeEntity, purgedEntities };
+    return { activeEntity, purgedEntities, migratedEntities };
   }
 
   const previousProject = makeProject([makeEntity("Customer"), makeEntity("Deal")]);
   const renamedProject = makeProject([makeEntity("customer"), makeEntity("Deal")]);
 
-  const { activeEntity, purgedEntities } = runHandleBuildCompleteForRename("Customer", previousProject, renamedProject);
+  const { activeEntity, purgedEntities, migratedEntities } = runHandleBuildCompleteForRename("Customer", previousProject, renamedProject);
 
   assert.equal(
     activeEntity,
@@ -2016,6 +2027,16 @@ test("App's handleBuildComplete tolerates a pure letter-casing entity rename as 
     purgedEntities,
     [],
     "a pure case rename must never be treated as that entity being dropped -- purgeEntityPreferences must not be called at all",
+  );
+  // Round 1029: the other half of this exact scenario -- round 988 only
+  // ever stopped the wrongful purge; it never filled the resulting gap of
+  // the real per-entity preferences becoming unreachable under their own
+  // old key. Confirms migrateEntityPreferencesForCaseRename is called
+  // with the built project's own id and the exact old/new name pair.
+  assert.deepEqual(
+    migratedEntities,
+    [[renamedProject.id, "Customer", "customer"]],
+    "migrateEntityPreferencesForCaseRename must be called once for the renamed entity, with its old and new spelling",
   );
 });
 
@@ -2637,6 +2658,7 @@ test("App's HistoryPanel onRestored callback clears a stale build-warning banner
     "setShowHistory",
     "project",
     "purgeEntityPreferences",
+    "migrateEntityPreferencesForCaseRename",
     `return ${code}`,
   )(
     (p: unknown) => (state.project = p),
@@ -2644,6 +2666,7 @@ test("App's HistoryPanel onRestored callback clears a stale build-warning banner
     (w: string | null) => (state.buildWarning = w),
     (v: boolean) => (state.showHistory = v),
     makeProject([makeEntity("Customer")]),
+    () => {},
     () => {},
   ) as (restored: { id: string; spec: { entities: { name: string }[] } }) => void;
 
@@ -2684,6 +2707,7 @@ test("App's HistoryPanel onRestored callback purges a dropped entity's own local
     "setShowHistory",
     "project",
     "purgeEntityPreferences",
+    "migrateEntityPreferencesForCaseRename",
     `return ${code}`,
   )(
     () => {},
@@ -2694,6 +2718,7 @@ test("App's HistoryPanel onRestored callback purges a dropped entity's own local
     (projectId: string, entityName: string) => {
       purgedEntities.push([projectId, entityName]);
     },
+    () => {},
   ) as (restored: { id: string; spec: { entities: { name: string }[] } }) => void;
 
   const restoredDroppingDealAndInvoice = { id: "proj1", spec: { entities: [{ name: "Customer" }] } };
@@ -2728,6 +2753,7 @@ test("App's HistoryPanel onRestored callback tolerates a pure letter-casing enti
   const { code } = transformSync(`(${handlerMatch![1]}`, { loader: "ts" });
 
   const purgedEntities: Array<[string, string]> = [];
+  const migratedEntities: Array<[string, string, string]> = [];
   const fn = new Function(
     "setProject",
     "setActiveEntity",
@@ -2735,6 +2761,7 @@ test("App's HistoryPanel onRestored callback tolerates a pure letter-casing enti
     "setShowHistory",
     "project",
     "purgeEntityPreferences",
+    "migrateEntityPreferencesForCaseRename",
     `return ${code}`,
   )(
     () => {},
@@ -2745,6 +2772,9 @@ test("App's HistoryPanel onRestored callback tolerates a pure letter-casing enti
     (projectId: string, entityName: string) => {
       purgedEntities.push([projectId, entityName]);
     },
+    (projectId: string, oldName: string, newName: string) => {
+      migratedEntities.push([projectId, oldName, newName]);
+    },
   ) as (restored: { id: string; spec: { entities: { name: string }[] } }) => void;
 
   const restoredWithRenamedCustomer = { id: "proj1", spec: { entities: [{ name: "customer" }, { name: "Deal" }] } };
@@ -2754,6 +2784,15 @@ test("App's HistoryPanel onRestored callback tolerates a pure letter-casing enti
     purgedEntities,
     [],
     "a pure case rename must never be treated as that entity being dropped -- purgeEntityPreferences must not be called at all",
+  );
+  // Round 1029: mirrors handleBuildComplete's own identical fix -- see
+  // entityPreferenceCleanup.ts's own migrateEntityPreferencesForCaseRename
+  // doc comment for the full "case-only rename leaves real preference
+  // data unreachable under its old key" mechanism.
+  assert.deepEqual(
+    migratedEntities,
+    [[restoredWithRenamedCustomer.id, "Customer", "customer"]],
+    "migrateEntityPreferencesForCaseRename must be called once for the renamed entity, with its old and new spelling",
   );
 });
 

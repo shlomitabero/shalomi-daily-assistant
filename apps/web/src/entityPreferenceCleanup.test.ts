@@ -13,7 +13,7 @@ import { getSortKeys, setSortKeys } from "./sortKeysPreference.js";
 import { getViewMode, setViewMode } from "./viewModePreference.js";
 import { addEntityRecentSearch, getEntityRecentSearches } from "./entityRecentSearches.js";
 import { getEntityTabOrder, setEntityTabOrder } from "./entityTabOrder.js";
-import { purgeEntityPreferences } from "./entityPreferenceCleanup.js";
+import { purgeEntityPreferences, migrateEntityPreferencesForCaseRename } from "./entityPreferenceCleanup.js";
 
 /** Same full-jsdom-swap technique used by projectPreferenceCleanup.test.ts/columnWidths.test.ts: real localStorage, not a mock. */
 async function withJsdom(fn: () => void | Promise<void>): Promise<void> {
@@ -183,5 +183,102 @@ test("purgeEntityPreferences for an entity named \"Foo\" does not also wipe a si
     assert.deepEqual(getCollapsedGroups("proj1", "Foo", "stage"), [], "\"Foo\"'s own collapsedGroups must be purged");
     assert.deepEqual(getCollapsedBoardColumns("proj1", "Foo:Bar", "stage"), ["archived"], "\"Foo:Bar\" must survive purging \"Foo\" -- its name merely starts with \"Foo:\", it is not a boardFieldName segment of \"Foo\"'s key");
     assert.deepEqual(getCollapsedGroups("proj1", "Foo:Bar", "stage"), ["archived"], "\"Foo:Bar\" must survive purging \"Foo\" -- its name merely starts with \"Foo:\", it is not a groupFieldName segment of \"Foo\"'s key");
+  });
+});
+
+/**
+ * Round 1029: a refine/restore can rename an entity by letter casing
+ * alone (e.g. "customer" -> "Customer") -- round 988 (App.tsx) already
+ * made sure purgeEntityPreferences above is never wrongly called against
+ * this case, but nothing filled the resulting gap: every one of these 9
+ * stores is keyed by the entity's CURRENT name, so the real data sat
+ * unreachable under the old casing forever, indistinguishable from having
+ * been silently reset. Mirrors this file's own established purge test's
+ * seeding shape -- a sibling entity and an unrelated project's same-named
+ * entity must both stay completely untouched by the rename.
+ */
+test("migrateEntityPreferencesForCaseRename moves exactly one project+entity's entries to its new casing in every per-entity preference store, leaving a sibling entity and an unrelated project's same-named entity fully intact", async () => {
+  await withJsdom(() => {
+    // Seed "abc"/"customer" (old casing) -- the entity a refine renamed to "Customer".
+    setColumnWidth("abc", "customer", "name", 220);
+    setColumnOrder("abc", "customer", ["name", "email"]);
+    toggleFieldVisibility("abc", "customer", "email");
+    setFieldFilters("abc", "customer", { status: "active" });
+    setGroupByField("abc", "customer", "status");
+    setGroupByFieldType("abc", "customer", "enum");
+    setCollapsedBoardColumns("abc", "customer", "status", ["done"]);
+    setCollapsedGroups("abc", "customer", "status", ["pending"]);
+    setSortKeys("abc", "customer", [{ field: "name", direction: "asc" }]);
+    setViewMode("abc", "customer", "board");
+    addEntityRecentSearch("abc", "customer", "userA", "dana");
+    addEntityRecentSearch("abc", "customer", "userB", "other-user-query");
+
+    // Seed "abc"/"Deal" -- a sibling entity in the SAME project that must survive untouched.
+    setColumnWidth("abc", "Deal", "amount", 150);
+    setGroupByField("abc", "Deal", "stage");
+    addEntityRecentSearch("abc", "Deal", "userA", "yossi");
+
+    // Seed "proj2"/"customer" -- the SAME old-cased name in an unrelated project, which must survive untouched.
+    setColumnWidth("proj2", "customer", "name", 300);
+    setGroupByField("proj2", "customer", "owner");
+    addEntityRecentSearch("proj2", "customer", "userA", "noa");
+
+    migrateEntityPreferencesForCaseRename("abc", "customer", "Customer");
+
+    // Every store now resolves under the NEW casing.
+    assert.deepEqual(getColumnWidths("abc", "Customer"), { name: 220 }, "columnWidths must resolve under the new casing");
+    assert.deepEqual(getColumnOrder("abc", "Customer"), ["name", "email"], "columnOrder must resolve under the new casing");
+    assert.deepEqual(getHiddenFields("abc", "Customer"), new Set(["email"]), "columnVisibility must resolve under the new casing");
+    assert.deepEqual(getFieldFilters("abc", "Customer"), { status: "active" }, "fieldFilters must resolve under the new casing");
+    assert.equal(getGroupByField("abc", "Customer"), "status", "groupBy field must resolve under the new casing");
+    assert.equal(getGroupByFieldType("abc", "Customer"), "enum", "groupBy field type must resolve under the new casing, alongside its paired choice");
+    assert.deepEqual(getCollapsedBoardColumns("abc", "Customer", "status"), ["done"], "collapsedBoardColumns must resolve under the new casing");
+    assert.deepEqual(getCollapsedGroups("abc", "Customer", "status"), ["pending"], "collapsedGroups must resolve under the new casing");
+    assert.deepEqual(getSortKeys("abc", "Customer"), [{ field: "name", direction: "asc" }], "sortKeys must resolve under the new casing");
+    assert.equal(getViewMode("abc", "Customer"), "board", "viewMode must resolve under the new casing");
+    assert.deepEqual(getEntityRecentSearches("abc", "Customer", "userA"), ["dana"], "entityRecentSearches must resolve under the new casing");
+    assert.deepEqual(
+      getEntityRecentSearches("abc", "Customer", "userB"),
+      ["other-user-query"],
+      "entityRecentSearches must resolve under the new casing for EVERY collaborator account, not just one",
+    );
+
+    // Nothing is left reachable under the OLD casing.
+    assert.deepEqual(getColumnWidths("abc", "customer"), {}, "nothing must remain reachable under the old casing");
+    assert.equal(getGroupByField("abc", "customer"), "", "nothing must remain reachable under the old casing");
+    assert.deepEqual(getEntityRecentSearches("abc", "customer", "userA"), [], "nothing must remain reachable under the old casing");
+
+    // "abc"/"Deal" -- a sibling entity in the SAME project -- is completely untouched.
+    assert.deepEqual(getColumnWidths("abc", "Deal"), { amount: 150 }, "a sibling entity's own data must survive the rename untouched");
+    assert.equal(getGroupByField("abc", "Deal"), "stage", "a sibling entity's own data must survive the rename untouched");
+    assert.deepEqual(getEntityRecentSearches("abc", "Deal", "userA"), ["yossi"], "a sibling entity's own data must survive the rename untouched");
+
+    // "proj2"/"customer" -- the same old-cased name in an unrelated project -- is also completely untouched.
+    assert.deepEqual(getColumnWidths("proj2", "customer"), { name: 300 }, "an unrelated project's same-named entity must survive the rename untouched");
+    assert.equal(getGroupByField("proj2", "customer"), "owner", "an unrelated project's same-named entity must survive the rename untouched");
+    assert.deepEqual(getEntityRecentSearches("proj2", "customer", "userA"), ["noa"], "an unrelated project's same-named entity must survive the rename untouched");
+  });
+});
+
+/**
+ * Round 1029: calling the migration with the SAME name on both sides (no
+ * actual rename happened) must be a true no-op -- and, more importantly,
+ * must never let an already-correct NEW-cased entry get overwritten by a
+ * stale OLD-cased one if this were ever called twice (e.g. a duplicate
+ * refine/restore event). Confirms the "never overwrite the new key if it
+ * already has its own data" guard every migrate* function shares.
+ */
+test("migrateEntityPreferencesForCaseRename never overwrites an entity's existing data under the new name with stale data from the old name", async () => {
+  await withJsdom(() => {
+    setColumnWidth("abc", "customer", "name", 100);
+    setColumnWidth("abc", "Customer", "name", 999);
+
+    migrateEntityPreferencesForCaseRename("abc", "customer", "Customer");
+
+    assert.deepEqual(
+      getColumnWidths("abc", "Customer"),
+      { name: 999 },
+      "an already-populated new-cased entry must never be clobbered by a stale old-cased one",
+    );
   });
 });

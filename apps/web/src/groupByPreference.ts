@@ -147,3 +147,28 @@ export function purgeGroupByFieldForEntity(projectId: string, entityName: string
   delete typeStore[keyFor(projectId, entityName)];
   writeTypeStore(typeStore);
 }
+
+/**
+ * Round 1029: mirrors columnWidths.ts's own migrateColumnWidthsForEntityRename
+ * -- see its doc comment for the full "case-only entity rename leaves this
+ * store's real data unreachable under the old key" mechanism. Migrates
+ * both the group-by choice and its paired type entry, the same pair
+ * purgeGroupByFieldForEntity above already keeps in sync.
+ */
+export function migrateGroupByFieldForEntityRename(projectId: string, oldName: string, newName: string): void {
+  if (oldName === newName) return;
+  const oldKey = keyFor(projectId, oldName);
+  const newKey = keyFor(projectId, newName);
+  const store = readStore();
+  if (store[oldKey] !== undefined && store[newKey] === undefined) {
+    store[newKey] = store[oldKey];
+    delete store[oldKey];
+    writeStore(store);
+  }
+  const typeStore = readTypeStore();
+  if (typeStore[oldKey] !== undefined && typeStore[newKey] === undefined) {
+    typeStore[newKey] = typeStore[oldKey];
+    delete typeStore[oldKey];
+    writeTypeStore(typeStore);
+  }
+}

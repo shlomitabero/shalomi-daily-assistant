@@ -71,6 +71,22 @@ export function purgeColumnOrderForEntity(projectId: string, entityName: string)
 }
 
 /**
+ * Round 1029: mirrors columnWidths.ts's own migrateColumnWidthsForEntityRename
+ * -- see its doc comment for the full "case-only entity rename leaves this
+ * store's real data unreachable under the old key" mechanism.
+ */
+export function migrateColumnOrderForEntityRename(projectId: string, oldName: string, newName: string): void {
+  if (oldName === newName) return;
+  const store = readStore();
+  const oldKey = keyFor(projectId, oldName);
+  const newKey = keyFor(projectId, newName);
+  if (store[oldKey] === undefined || store[newKey] !== undefined) return;
+  store[newKey] = store[oldKey];
+  delete store[oldKey];
+  writeStore(store);
+}
+
+/**
  * Applies a persisted (possibly stale) column order to the entity's current
  * real field list: a field the order mentions keeps its persisted relative
  * position, and any field the order doesn't mention -- a newly added field,

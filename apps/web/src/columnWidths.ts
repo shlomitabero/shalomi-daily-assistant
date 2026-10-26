@@ -75,12 +75,32 @@ export function clearColumnWidths(projectId: string, entityName: string): Record
 }
 
 /**
- * Removes every stored width for this project, across all of its
- * entities, regardless of entity name -- unlike clearColumnWidths above,
- * which needs one specific entity. Used when the whole project is deleted
- * (projectPreferenceCleanup.ts): nothing else ever clears this store, so
- * without this a deleted project's entries sit here forever.
+ * Round 1029: a refine/restore can rename an entity by letter casing
+ * alone (e.g. "customer" -> "Customer", round 988's own established
+ * "genuine no-op" case) -- round 988 correctly stopped treating this as
+ * a drop (so purgeColumnWidthsForProject/clearColumnWidths never ran
+ * against it), but nothing filled the resulting gap: every getter above
+ * is keyed by the entity's CURRENT name, which no longer matches this
+ * store's own key, so the real widths sat unreachable under the old
+ * casing forever. Renames the key in place (persists under the new
+ * casing, removes the old one) rather than just reading through, the
+ * same way the field-level case-rename fixes (EntityPanel.tsx round
+ * 985) persist their remap rather than re-discovering it on every load.
+ * A no-op when there's nothing to migrate, or the new key already has
+ * its own data (never overwrites a genuinely-distinct entry).
  */
+export function migrateColumnWidthsForEntityRename(projectId: string, oldName: string, newName: string): void {
+  if (oldName === newName) return;
+  const store = readStore();
+  const oldKey = keyFor(projectId, oldName);
+  const newKey = keyFor(projectId, newName);
+  if (store[oldKey] === undefined || store[newKey] !== undefined) return;
+  store[newKey] = store[oldKey];
+  delete store[oldKey];
+  writeStore(store);
+}
+
+/** Removes every stored width for this project, across all of its entities, regardless of entity name -- unlike clearColumnWidths above, which needs one specific entity. Used when the whole project is deleted (projectPreferenceCleanup.ts): nothing else ever clears this store, so without this a deleted project's entries sit here forever. */
 export function purgeColumnWidthsForProject(projectId: string): void {
   const store = readStore();
   const prefix = `${projectId}:`;

@@ -154,3 +154,29 @@ export function purgeCollapsedGroupsForEntity(projectId: string, entityName: str
   }
   writeStore(store);
 }
+
+/**
+ * Round 1029: mirrors columnWidths.ts's own migrateColumnWidthsForEntityRename
+ * -- see its doc comment for the full "case-only entity rename leaves this
+ * store's real data unreachable under the old key" mechanism. Rewrites
+ * EVERY groupFieldName this entity has ever used (the key's third segment,
+ * which this function can't know in advance -- the same reason
+ * purgeCollapsedGroupsForEntity above sweeps by parsed key rather than a
+ * single exact one), independent of migrateCollapsedGroupsFieldCase above
+ * (which only ever remaps the THIRD segment, groupFieldName, never the
+ * second, entityName).
+ */
+export function migrateCollapsedGroupsForEntityRename(projectId: string, oldName: string, newName: string): void {
+  if (oldName === newName) return;
+  const store = readStore();
+  let changed = false;
+  for (const key of Object.keys(store)) {
+    const parsed = parseKey(key);
+    if (!parsed || parsed[0] !== projectId || parsed[1] !== oldName) continue;
+    const newKey = keyFor(projectId, newName, parsed[2]);
+    if (store[newKey] === undefined) store[newKey] = store[key];
+    delete store[key];
+    changed = true;
+  }
+  if (changed) writeStore(store);
+}
