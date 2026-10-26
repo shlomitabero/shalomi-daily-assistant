@@ -2497,6 +2497,37 @@ export function createProjectsRouter(
   );
 
   /**
+   * Round 1002: the create-form counterpart of deleteReplacedFileFields
+   * (round 685, called from the PATCH/DELETE record routes below). That
+   * sweep only ever diffs a record write against its own already-persisted
+   * DB row, so it can never reach a file uploaded via the POST route above
+   * while a record is still being composed client-side and hasn't been
+   * created yet -- replacing the chosen file, or removing it, before ever
+   * submitting the create form left that upload sitting on disk forever,
+   * with nothing short of deleting the whole project (deleteProjectUploads)
+   * ever touching it. Mirrors the WhatsApp attachment delete route below:
+   * best-effort and a silent no-op for anything that doesn't resolve to a
+   * real upload this project's own upload route could have produced.
+   */
+  router.delete(
+    "/projects/:id/entities/:entityName/fields/:fieldName/upload",
+    asyncRoute(async (req, res) => {
+      const project = requireProjectWriteAccess(db, req.params.id, req.userId!);
+      const entity = findEntity(project, req.params.entityName);
+      const field = findField(entity, req.params.fieldName);
+      if (field.type !== "file") {
+        throw new HttpError(400, `Field "${field.name}" is not a file field`, "NOT_A_FILE_FIELD");
+      }
+      const parsed = z.object({ url: z.string().min(1) }).safeParse(req.body ?? {});
+      if (!parsed.success) {
+        throw new HttpError(400, formatValidationError(parsed.error), "VALIDATION_ERROR");
+      }
+      await deleteUploadedFile(uploadsDir, project.id, entity.name, JSON.stringify({ url: parsed.data.url }));
+      res.status(204).end();
+    }),
+  );
+
+  /**
    * Round 979: resolves and validates a client-supplied WhatsApp attachment
    * descriptor's `url` back to a real, safe filesystem path under THIS
    * project's own WHATSAPP_ATTACHMENTS_DIRNAME -- shared by the send route

@@ -1185,6 +1185,24 @@ export function deleteWhatsAppAttachment(projectId: string, url: string): Promis
   });
 }
 
+/**
+ * Round 1002: the create-form counterpart of uploadRecordFile above -- a
+ * file the user chose then replaced or removed before ever submitting the
+ * create form (EntityPanel.tsx's FieldInput "file" branch) otherwise sat on
+ * disk forever, since deleteReplacedFileFields (round 685) only ever diffs
+ * against an already-persisted DB row and never runs for a record that was
+ * never created. Deliberately best-effort from the caller's own point of
+ * view, same as deleteWhatsAppAttachment -- the local React state change is
+ * what the user is actually waiting on.
+ */
+export function deleteUploadedRecordFile(projectId: string, entityName: string, fieldName: string, url: string): Promise<void> {
+  return request(`/projects/${projectId}/entities/${encodeURIComponent(entityName)}/fields/${encodeURIComponent(fieldName)}/upload`, {
+    method: "DELETE",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ url }),
+  });
+}
+
 export async function sendWhatsAppMessage(
   projectId: string,
   to: string,

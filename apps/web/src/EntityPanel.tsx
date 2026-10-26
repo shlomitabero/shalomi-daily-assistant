@@ -1,6 +1,6 @@
 import { Fragment, useEffect, useMemo, useRef, useState } from "react";
 import type { Entity, EntityRecord, Field, Project } from "@forge/shared";
-import { createRecord, deleteRecord, listRecords, safeDownloadName, updateRecord, uploadRecordFile } from "./api.js";
+import { createRecord, deleteRecord, deleteUploadedRecordFile, listRecords, safeDownloadName, updateRecord, uploadRecordFile } from "./api.js";
 import { buildCalendarIcs, downloadCalendarIcs } from "./calendarIcs.js";
 import { getHiddenFields, replaceHiddenFields, toggleFieldVisibility } from "./columnVisibility.js";
 import {
@@ -922,6 +922,7 @@ function FieldInput({
   onKeyDown,
   projectId,
   entityName,
+  editingId,
 }: {
   field: Field;
   value: unknown;
@@ -942,6 +943,18 @@ function FieldInput({
    * pass these. */
   projectId?: string;
   entityName?: string;
+  /** Round 1002: null while the plain add/edit form is in "create" mode
+   * (see EntityPanel's own editingId state), a real record id once it's
+   * editing an existing record. The "file" branch below only deletes a
+   * just-superseded upload from disk when this is null -- a non-null
+   * editingId means `value`'s own previous file is the record's real
+   * persisted value (startEdit seeds the form with `{ ...record }`), which
+   * deleteReplacedFileFields (round 685) already owns cleaning up once the
+   * edit is actually saved; deleting it here, before the user has even
+   * submitted the edit, would destroy the still-live record's own file the
+   * moment they just replace the picker's selection, with no save and no
+   * way back. */
+  editingId?: number | null;
 }) {
   const { t } = useTranslation();
   const [fileUploadError, setFileUploadError] = useState<string | null>(null);
@@ -1142,7 +1155,19 @@ function FieldInput({
             <a href={currentFile.url} target="_blank" rel="noopener noreferrer">
               {currentFile.name}
             </a>
-            <button type="button" className="link-button" onClick={() => onChange("")}>
+            <button
+              type="button"
+              className="link-button"
+              onClick={() => {
+                // Round 1002: see this component's own editingId doc
+                // comment -- only a create-form upload (never-persisted)
+                // is safe to delete from disk the instant it's removed.
+                if (editingId === null && projectId && entityName) {
+                  deleteUploadedRecordFile(projectId, entityName, field.name, currentFile.url).catch(() => {});
+                }
+                onChange("");
+              }}
+            >
               {t("entity.file.remove")}
             </button>
           </span>
@@ -1164,6 +1189,13 @@ function FieldInput({
             }
             try {
               const uploaded = await uploadRecordFile(projectId, entityName, field.name, chosen);
+              // Round 1002: see this component's own editingId doc comment
+              // -- the file this upload just replaced is only safe to
+              // delete from disk when it was never a persisted value to
+              // begin with (create-form mode).
+              if (editingId === null && currentFile) {
+                deleteUploadedRecordFile(projectId, entityName, field.name, currentFile.url).catch(() => {});
+              }
               onChange(JSON.stringify(uploaded));
             } catch (err) {
               setFileUploadError(err instanceof Error ? err.message : String(err));
@@ -3732,6 +3764,7 @@ export function EntityPanel({
               relatedEntityRecords={field.relationTo ? relatedRecords[field.relationTo] : undefined}
               projectId={projectId}
               entityName={entity.name}
+              editingId={editingId}
             />
           </label>
         ))}

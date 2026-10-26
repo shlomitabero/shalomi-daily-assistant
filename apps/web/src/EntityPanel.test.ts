@@ -13392,6 +13392,139 @@ test("EntityPanel's add form uploads a chosen file for a 'file' field and submit
 });
 
 /**
+ * Round 1002: a real bug found by the survey -- deleteReplacedFileFields
+ * (round 685) only ever diffs a record write against its own already-
+ * persisted DB row, so it can never reach a file uploaded through the
+ * create form's own FieldInput before the record is ever saved. Replacing
+ * the chosen file (upload #2 superseding upload #1), or removing it
+ * outright, left upload #1 sitting on disk forever. Confirms both paths
+ * now fire a real DELETE against the superseded file's own URL, and that a
+ * genuinely new (not-yet-replaced) upload never does.
+ */
+test("EntityPanel's create form deletes a superseded file upload from disk when replaced or removed, but not on the very first upload", async () => {
+  await withJsdom(async () => {
+    const store: EntityRecord[] = [];
+    const deleteCalls: Array<{ url: string }> = [];
+    let uploadCalls = 0;
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = (async (input: string, init?: RequestInit): Promise<Response> => {
+      const method = init?.method ?? "GET";
+      if (method === "GET" && input === "/api/projects/proj1/entities/Applicant") {
+        return new Response(JSON.stringify({ records: store }), { status: 200, headers: { "content-type": "application/json" } });
+      }
+      if (method === "POST" && input === "/api/projects/proj1/entities/Applicant/fields/resume/upload") {
+        uploadCalls += 1;
+        const descriptor =
+          uploadCalls === 1
+            ? { url: "/api/uploads/proj1/Applicant/first.pdf", name: "first.pdf", size: 9, mimeType: "application/pdf" }
+            : { url: "/api/uploads/proj1/Applicant/second.pdf", name: "second.pdf", size: 9, mimeType: "application/pdf" };
+        return new Response(JSON.stringify({ file: descriptor }), { status: 200, headers: { "content-type": "application/json" } });
+      }
+      if (method === "DELETE" && input === "/api/projects/proj1/entities/Applicant/fields/resume/upload") {
+        deleteCalls.push({ url: (JSON.parse(init!.body as string) as { url: string }).url });
+        return new Response(null, { status: 204 });
+      }
+      throw new Error(`unexpected request ${method} ${input}`);
+    }) as typeof fetch;
+
+    try {
+      renderEntityPanel({ entity: APPLICANT_ENTITY, allEntities: [APPLICANT_ENTITY] });
+      await waitForCondition(() => document.querySelectorAll("table tbody tr").length === 0);
+
+      const form = document.querySelector("form") as HTMLFormElement;
+      const fileInput = form.querySelector('input[type="file"]') as HTMLInputElement;
+
+      const firstFile = new File(["one"], "first.pdf", { type: "application/pdf" });
+      await act(async () => {
+        Object.defineProperty(fileInput, "files", { value: [firstFile], configurable: true });
+        fireEvent.change(fileInput);
+        await new Promise((resolve) => setTimeout(resolve, 0));
+      });
+      await waitForCondition(() => form.querySelector(".file-field-current a")?.textContent === "first.pdf");
+      assert.equal(deleteCalls.length, 0, "the very first upload must never trigger a delete -- there is nothing to supersede yet");
+
+      const secondFile = new File(["two"], "second.pdf", { type: "application/pdf" });
+      await act(async () => {
+        Object.defineProperty(fileInput, "files", { value: [secondFile], configurable: true });
+        fireEvent.change(fileInput);
+        await new Promise((resolve) => setTimeout(resolve, 0));
+      });
+      await waitForCondition(() => form.querySelector(".file-field-current a")?.textContent === "second.pdf");
+      await waitForCondition(() => deleteCalls.length === 1);
+      assert.equal(deleteCalls[0]!.url, "/api/uploads/proj1/Applicant/first.pdf", "replacing a chosen file must delete the one it superseded");
+
+      fireEvent.click(form.querySelector(".file-field-current .link-button") as HTMLButtonElement);
+      await waitForCondition(() => deleteCalls.length === 2);
+      assert.equal(deleteCalls[1]!.url, "/api/uploads/proj1/Applicant/second.pdf", "removing the chosen file must also delete it from disk");
+      assert.equal(form.querySelector(".file-field-current"), null, "the Remove button must still clear the field's own value as before");
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+});
+
+/**
+ * Round 1002: the fix is deliberately scoped to the create form only --
+ * once a record is persisted, its file field's value is the record's REAL
+ * data, already owned by deleteReplacedFieldFields (round 685) once the
+ * edit is actually saved. Confirms replacing or removing a file mid-edit,
+ * before ever submitting, does NOT eagerly delete the record's still-live
+ * file out from under it.
+ */
+test("EntityPanel's edit form never deletes a file upload from disk just from replacing or removing the picker's selection, before the edit is even saved", async () => {
+  await withJsdom(async () => {
+    const existingDescriptor = { url: "/api/uploads/proj1/Applicant/original.pdf", name: "original.pdf", size: 9, mimeType: "application/pdf" };
+    const store: EntityRecord[] = [{ id: 1, name: "Dana", resume: JSON.stringify(existingDescriptor) }];
+    let deleteCalls = 0;
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = (async (input: string, init?: RequestInit): Promise<Response> => {
+      const method = init?.method ?? "GET";
+      if (method === "GET" && input === "/api/projects/proj1/entities/Applicant") {
+        return new Response(JSON.stringify({ records: store }), { status: 200, headers: { "content-type": "application/json" } });
+      }
+      if (method === "POST" && input === "/api/projects/proj1/entities/Applicant/fields/resume/upload") {
+        return new Response(
+          JSON.stringify({ file: { url: "/api/uploads/proj1/Applicant/replacement.pdf", name: "replacement.pdf", size: 9, mimeType: "application/pdf" } }),
+          { status: 200, headers: { "content-type": "application/json" } },
+        );
+      }
+      if (method === "DELETE" && input === "/api/projects/proj1/entities/Applicant/fields/resume/upload") {
+        deleteCalls += 1;
+        return new Response(null, { status: 204 });
+      }
+      throw new Error(`unexpected request ${method} ${input}`);
+    }) as typeof fetch;
+
+    try {
+      renderEntityPanel({ entity: APPLICANT_ENTITY, allEntities: [APPLICANT_ENTITY] });
+      await waitForCondition(() => document.querySelectorAll("table tbody tr").length === 1);
+
+      fireEvent.click(document.querySelector(".row-actions button") as HTMLButtonElement);
+      await waitForCondition(() => (document.querySelector(".record-form input[type=\"text\"]") as HTMLInputElement)?.value === "Dana");
+
+      const form = document.querySelector(".record-form") as HTMLFormElement;
+      await waitForCondition(() => form.querySelector(".file-field-current a")?.textContent === "original.pdf");
+
+      const replacementFile = new File(["two"], "replacement.pdf", { type: "application/pdf" });
+      const fileInput = form.querySelector('input[type="file"]') as HTMLInputElement;
+      await act(async () => {
+        Object.defineProperty(fileInput, "files", { value: [replacementFile], configurable: true });
+        fireEvent.change(fileInput);
+        await new Promise((resolve) => setTimeout(resolve, 0));
+      });
+      await waitForCondition(() => form.querySelector(".file-field-current a")?.textContent === "replacement.pdf");
+
+      fireEvent.click(form.querySelector(".file-field-current .link-button") as HTMLButtonElement);
+      await waitForCondition(() => form.querySelector(".file-field-current") === null);
+
+      assert.equal(deleteCalls, 0, "an edit-form replace/remove, before the edit is ever saved, must never delete a file from disk");
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+});
+
+/**
  * Round 688: a real bug found by the survey -- every other field type's
  * own FieldInput control validates before ever reaching the network
  * (required, a number's own native constraint), but "file" always fired
