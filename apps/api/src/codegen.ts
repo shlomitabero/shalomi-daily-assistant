@@ -1262,6 +1262,28 @@ function emptyForm(entity) {
   return form;
 }
 
+// Round 1030: resolves a per-entity store's own top-level key case-
+// insensitively, migrating a stale-cased entry to the entity's current
+// casing in place rather than just reading through it -- the same
+// cross-export reachability path rounds 509/570/833/834/838-841/882/986/
+// 1008 already established for this file's sibling per-FIELD stores
+// (a newer export's page loaded in a browser still holding an older
+// export's localStorage for an entity whose letter casing a refine then
+// normalized, e.g. "customer" -> "Customer"), one level up: entity names,
+// not field names. Every per-entity store below reads through its own
+// dedicated getter, so resolving this once here -- rather than
+// duplicating the fallback at each one -- covers every reader.
+function migrateEntityStoreKeyCase(store, entityName, writeStore) {
+  if (Object.prototype.hasOwnProperty.call(store, entityName)) return store;
+  const oldKey = Object.keys(store).find((k) => k.toLowerCase() === entityName.toLowerCase());
+  if (oldKey === undefined) return store;
+  const migrated = { ...store };
+  migrated[entityName] = migrated[oldKey];
+  delete migrated[oldKey];
+  writeStore(migrated);
+  return migrated;
+}
+
 // Which of an entity's own columns the "Columns" menu has hidden from its
 // table view, persisted per entity (this single-tenant exported app has no
 // project id to scope by, unlike the live-preview app's own
@@ -1286,7 +1308,7 @@ function writeHiddenColumnsStore(store) {
   }
 }
 function getHiddenColumns(entityName) {
-  const store = readHiddenColumnsStore();
+  const store = migrateEntityStoreKeyCase(readHiddenColumnsStore(), entityName, writeHiddenColumnsStore);
   return new Set(Array.isArray(store[entityName]) ? store[entityName] : []);
 }
 function toggleColumnVisibility(entityName, fieldName) {
@@ -1348,7 +1370,7 @@ function writeEntityRecentSearchesStore(store) {
   }
 }
 function getEntityRecentSearches(entityName) {
-  const store = readEntityRecentSearchesStore();
+  const store = migrateEntityStoreKeyCase(readEntityRecentSearchesStore(), entityName, writeEntityRecentSearchesStore);
   return Array.isArray(store[entityName]) ? store[entityName] : [];
 }
 function addEntityRecentSearch(entityName, query) {
@@ -1403,7 +1425,7 @@ function writeColumnWidthsStore(store) {
   }
 }
 function getColumnWidths(entityName) {
-  const store = readColumnWidthsStore();
+  const store = migrateEntityStoreKeyCase(readColumnWidthsStore(), entityName, writeColumnWidthsStore);
   return { ...(store[entityName] ?? {}) };
 }
 function setColumnWidth(entityName, fieldName, width) {
@@ -1462,7 +1484,7 @@ function writeColumnOrderStore(store) {
   }
 }
 function getColumnOrder(entityName) {
-  const store = readColumnOrderStore();
+  const store = migrateEntityStoreKeyCase(readColumnOrderStore(), entityName, writeColumnOrderStore);
   return Array.isArray(store[entityName]) ? store[entityName] : [];
 }
 function setColumnOrder(entityName, order) {
@@ -1501,7 +1523,7 @@ function writeGroupFieldStore(store) {
   }
 }
 function getPersistedGroupField(entityName) {
-  const store = readGroupFieldStore();
+  const store = migrateEntityStoreKeyCase(readGroupFieldStore(), entityName, writeGroupFieldStore);
   return typeof store[entityName] === "string" ? store[entityName] : "";
 }
 function setPersistedGroupField(entityName, fieldName) {
@@ -1548,7 +1570,7 @@ function writeGroupFieldTypeStore(store) {
   }
 }
 function getPersistedGroupFieldType(entityName) {
-  const store = readGroupFieldTypeStore();
+  const store = migrateEntityStoreKeyCase(readGroupFieldTypeStore(), entityName, writeGroupFieldTypeStore);
   return typeof store[entityName] === "string" ? store[entityName] : "";
 }
 function setPersistedGroupFieldType(entityName, type) {
@@ -1578,7 +1600,7 @@ function writeViewModeStore(store) {
   }
 }
 function getPersistedViewMode(entityName) {
-  const store = readViewModeStore();
+  const store = migrateEntityStoreKeyCase(readViewModeStore(), entityName, writeViewModeStore);
   const mode = store[entityName];
   return mode === "table" || mode === "board" || mode === "calendar" ? mode : "table";
 }
@@ -1629,7 +1651,7 @@ function writeSortKeysStore(store) {
   }
 }
 function getPersistedSortKeys(entityName) {
-  const store = readSortKeysStore();
+  const store = migrateEntityStoreKeyCase(readSortKeysStore(), entityName, writeSortKeysStore);
   return Array.isArray(store[entityName]) ? store[entityName] : [];
 }
 function setPersistedSortKeys(entityName, keys) {
@@ -1665,7 +1687,7 @@ function writeFieldFiltersStore(store) {
   }
 }
 function getPersistedFieldFilters(entityName) {
-  const store = readFieldFiltersStore();
+  const store = migrateEntityStoreKeyCase(readFieldFiltersStore(), entityName, writeFieldFiltersStore);
   const filters = store[entityName];
   return filters && typeof filters === "object" && !Array.isArray(filters) ? filters : {};
 }
@@ -1816,6 +1838,7 @@ function migrateCollapsedGroupsFieldCase(entityName, groupFieldName) {
   const exact = getPersistedCollapsedGroups(entityName, groupFieldName);
   if (exact.length > 0) return exact;
   const store = readCollapsedGroupsStore();
+  const lowerEntityName = entityName.toLowerCase();
   const lowerFieldName = groupFieldName.toLowerCase();
   for (const key of Object.keys(store)) {
     let parsed;
@@ -1824,8 +1847,23 @@ function migrateCollapsedGroupsFieldCase(entityName, groupFieldName) {
     } catch {
       continue;
     }
-    if (!Array.isArray(parsed) || parsed.length !== 2 || parsed[0] !== entityName) continue;
-    if (typeof parsed[1] !== "string" || parsed[1] === groupFieldName || parsed[1].toLowerCase() !== lowerFieldName) continue;
+    // Round 1030: parsed[0] (the entity) now also falls back to a
+    // case-insensitive match, the same reachability path this function's
+    // own doc comment already established for parsed[1] (the field) --
+    // one level up.
+    if (!Array.isArray(parsed) || parsed.length !== 2 || typeof parsed[0] !== "string" || parsed[0].toLowerCase() !== lowerEntityName) continue;
+    if (typeof parsed[1] !== "string" || parsed[1].toLowerCase() !== lowerFieldName) continue;
+    // Skip only the literal target key itself (both parts already exact) --
+    // that one is guaranteed empty by the exact.length check above, so
+    // matching it again here would just be a harmless no-op. The old
+    // parsed[1] === groupFieldName skip (dropped above) was only ever
+    // correct back when parsed[0] had to match entityName exactly too: once
+    // the entity side also falls back case-insensitively (just above), an
+    // unchanged, exactly-matching field name stops implying "this is the
+    // same key already known empty" -- it can just as easily be the real
+    // match for an entity-only rename, which that guard was wrongly
+    // excluding.
+    if (parsed[0] === entityName && parsed[1] === groupFieldName) continue;
     const migrated = Array.isArray(store[key]) ? store[key].filter((k) => typeof k === "string") : [];
     delete store[key];
     const newKey = JSON.stringify([entityName, groupFieldName]);
@@ -1900,6 +1938,7 @@ function migrateCollapsedBoardColumnsFieldCase(entityName, boardFieldName) {
   const exact = getPersistedCollapsedBoardColumns(entityName, boardFieldName);
   if (exact.length > 0) return exact;
   const store = readCollapsedBoardColumnsStore();
+  const lowerEntityName = entityName.toLowerCase();
   const lowerFieldName = boardFieldName.toLowerCase();
   for (const key of Object.keys(store)) {
     let parsed;
@@ -1908,8 +1947,16 @@ function migrateCollapsedBoardColumnsFieldCase(entityName, boardFieldName) {
     } catch {
       continue;
     }
-    if (!Array.isArray(parsed) || parsed.length !== 2 || parsed[0] !== entityName) continue;
-    if (typeof parsed[1] !== "string" || parsed[1] === boardFieldName || parsed[1].toLowerCase() !== lowerFieldName) continue;
+    // Round 1030: parsed[0] (the entity) now also falls back to a
+    // case-insensitive match, mirroring migrateCollapsedGroupsFieldCase's
+    // own identical fix just above -- one level up from this function's
+    // existing parsed[1] (field) fallback.
+    if (!Array.isArray(parsed) || parsed.length !== 2 || typeof parsed[0] !== "string" || parsed[0].toLowerCase() !== lowerEntityName) continue;
+    if (typeof parsed[1] !== "string" || parsed[1].toLowerCase() !== lowerFieldName) continue;
+    // See migrateCollapsedGroupsFieldCase's own identical comment just
+    // above for why this only excludes the literal target key (both parts
+    // exact), not merely an exact field-name match on its own.
+    if (parsed[0] === entityName && parsed[1] === boardFieldName) continue;
     const migrated = Array.isArray(store[key]) ? store[key].filter((v) => typeof v === "string") : [];
     delete store[key];
     const newKey = JSON.stringify([entityName, boardFieldName]);

@@ -4758,7 +4758,14 @@ test("the exported EntityView renders a 'Columns' menu to hide/show individual t
 // file's other persistence-backed tests use.
 test("the exported EntityView's getHiddenColumns/toggleColumnVisibility persist per entity via a real localStorage round trip", () => {
   const entityViewJsx = generateExportFiles(project).find((f) => f.path === "web/src/components/EntityView.jsx")!.content;
-  const storageKeySrc = entityViewJsx.match(/const HIDDEN_COLUMNS_STORAGE_KEY[\s\S]*?\nfunction toggleColumnVisibility\(entityName, fieldName\) \{[\s\S]*?\n\}\n/)?.[0];
+  // Round 1030: also captures migrateEntityStoreKeyCase, the shared helper
+  // getHiddenColumns now calls -- without it, the extracted source throws
+  // "migrateEntityStoreKeyCase is not defined" the instant getHiddenColumns
+  // runs in this sandboxed new Function, since that helper is defined
+  // outside the previously-captured range.
+  const storageKeySrc = entityViewJsx.match(
+    /function migrateEntityStoreKeyCase\(store, entityName, writeStore\) \{[\s\S]*?\nfunction toggleColumnVisibility\(entityName, fieldName\) \{[\s\S]*?\n\}\n/,
+  )?.[0];
   assert.ok(storageKeySrc, "expected to find the hidden-columns persistence helpers in generated output");
 
   const store: Record<string, string> = {};
@@ -12679,7 +12686,16 @@ test("the exported EntityView's table headers are drag-resizable, persisting per
   const files = generateExportFiles(project);
   const entityViewJsx = files.find((f) => f.path === "web/src/components/EntityView.jsx")!.content;
 
-  assert.match(entityViewJsx, /const \[columnWidths, setColumnWidths\] = useState\(\(\) => getColumnWidths\(entity\.name\)\);/);
+  // Pre-existing staleness found while verifying round 1030: round 986
+  // rewrote this into a multi-line initializer (to remap a stale
+  // field-case entry on read), so the plain one-liner this regex expected
+  // has never matched since -- never caught before because every full
+  // suite run hits this file's own known mid-run SIGKILL well before
+  // reaching this test (see docs/roadmap.md's standing note on
+  // codegen.test.ts). Checks the same essential fact (the initializer
+  // still sources its value from getColumnWidths(entity.name)) against
+  // the real current shape instead.
+  assert.match(entityViewJsx, /const \[columnWidths, setColumnWidths\] = useState\(\(\) => \{\s*const loaded = getColumnWidths\(entity\.name\);/);
   assert.match(entityViewJsx, /const \[resizingField, setResizingField\] = useState\(null\);/);
   // The drag must only ever attach real mousemove/mouseup listeners while a
   // drag is actually in progress, and must persist to localStorage only on
@@ -12702,7 +12718,11 @@ test("the exported EntityView's table headers are drag-resizable, persisting per
   // fake localStorage, the same "run the real generated code" standard this
   // file's other persistence-backed tests use (see getHiddenColumns/
   // toggleColumnVisibility below).
-  const storeSrc = entityViewJsx.match(/const MIN_COLUMN_WIDTH[\s\S]*?\nfunction setColumnWidth\(entityName, fieldName, width\) \{[\s\S]*?\n\}\n/)?.[0];
+  // Round 1030: also captures migrateEntityStoreKeyCase -- see the
+  // identical note on the hiddenColumns test below for why.
+  const storeSrc = entityViewJsx.match(
+    /function migrateEntityStoreKeyCase\(store, entityName, writeStore\) \{[\s\S]*?\nfunction setColumnWidth\(entityName, fieldName, width\) \{[\s\S]*?\n\}\n/,
+  )?.[0];
   assert.ok(storeSrc, "expected to find the column-widths store functions in generated output");
 
   const fakeStorage: Record<string, string> = {};
@@ -12779,12 +12799,19 @@ test("the exported EntityView's table columns are drag-and-drop reorderable, per
   const unchanged = ["name", "status"];
   assert.equal(reorderColumns(unchanged, "status", "status"), unchanged, "dropping a column back onto itself must be a real no-op");
 
+  // Round 1030: also captures migrateEntityStoreKeyCase, prepended
+  // separately rather than widening storeSrc's own span to reach back to
+  // it -- that span crosses the exported `computeResizedWidth` between
+  // the column-widths and column-order sections, and `export` is not
+  // valid inside a plain Function body ("Unexpected token 'export'").
+  const migrateHelperSrc = entityViewJsx.match(/function migrateEntityStoreKeyCase\(store, entityName, writeStore\) \{[\s\S]*?\n\}\n/)?.[0];
+  assert.ok(migrateHelperSrc, "expected to find migrateEntityStoreKeyCase in generated output");
   const storeSrc = entityViewJsx.match(/const COLUMN_ORDER_STORAGE_KEY[\s\S]*?\nfunction setColumnOrder\(entityName, order\) \{[\s\S]*?\n\}\n/)?.[0];
   assert.ok(storeSrc, "expected to find the column-order store functions in generated output");
   const fakeStorage: Record<string, string> = {};
   const { getColumnOrder, setColumnOrder } = new Function(
     "localStorage",
-    `${storeSrc}\nreturn { getColumnOrder, setColumnOrder };`,
+    `${migrateHelperSrc}\n${storeSrc}\nreturn { getColumnOrder, setColumnOrder };`,
   )({
     getItem: (k: string) => fakeStorage[k] ?? null,
     setItem: (k: string, v: string) => {
@@ -14652,6 +14679,364 @@ test("the exported EntityView keeps a collapsed table group and board column col
 });
 
 /**
+ * Round 1030: the identical case-only-rename hazard rounds 985/986 fixed
+ * for a FIELD's own letter casing, one level up -- the ENTITY's own name.
+ * Every one of this file's ten per-entity stores (hiddenColumns,
+ * columnWidths, columnOrder, groupField+Type, viewMode, sortKeys,
+ * fieldFilters, entityRecentSearches, collapsedGroups,
+ * collapsedBoardColumns) is keyed by entity.name with no case-insensitive
+ * fallback, confirmed independently by reading every one of their getters.
+ * A newer export's page loaded in a browser that still holds an older
+ * export's localStorage for an entity whose letter casing a refine then
+ * normalized (e.g. "customer" -> "Customer") previously looked identical
+ * to that entity being genuinely absent to every one of these exact-match
+ * lookups -- the live Forge AI preview's own round-988/1029 fix closed the
+ * identical gap for EntityPanel.tsx's sibling per-entity preference
+ * stores; this exported app hand-duplicates the same stores with no
+ * project id to scope by (so the cross-export reachability path rounds
+ * 509/570/833/834/838-841/882/986/1008 already established for this
+ * file's per-FIELD stores applies identically here, one level up), never
+ * covered by round 986/1009's own fixes since those only ever remapped a
+ * stale FIELD name within an already-exact-matched ENTITY key -- the
+ * entity key itself was never the thing those rounds fixed.
+ */
+test("the exported EntityView carries a hidden column and a 'Group by' choice forward under their new spelling when a newer export renames the ENTITY's letter casing", async () => {
+  const customerLower: Entity = {
+    name: "customer",
+    label: "Customers",
+    fields: [
+      { name: "name", label: "Name", type: "text", required: true },
+      {
+        name: "status",
+        label: "Status",
+        type: "enum",
+        required: true,
+        enumValues: ["New", "Won"],
+        enumLabels: { New: "New", Won: "Won" },
+      },
+    ],
+  };
+  const customerUpper: Entity = { ...customerLower, name: "Customer" };
+  const olderExportProject: Project = { ...project, spec: { ...project.spec, entities: [customerLower] } };
+  const newerExportProject: Project = { ...project, spec: { ...project.spec, entities: [customerUpper] } };
+  const store = [
+    { id: 1, name: "Acme Corp", status: "New" },
+    { id: 2, name: "Globex", status: "Won" },
+  ];
+  const originalFetch = globalThis.fetch;
+
+  const olderDir = writeGeneratedWebComponent(generateExportFiles(olderExportProject));
+  const newerDir = writeGeneratedWebComponent(generateExportFiles(newerExportProject));
+  try {
+    await withRealLocalStorage(async () => {
+      // Simulates hiding the "status" column and grouping by it in an
+      // OLDER export, while the entity still had its original casing --
+      // persists both choices via the real generated controls.
+      globalThis.fetch = (async (input: string) => {
+        if (input === "/api/customer") {
+          return new Response(JSON.stringify({ records: store }), { status: 200, headers: { "content-type": "application/json" } });
+        }
+        throw new Error(`unexpected request ${input}`);
+      }) as typeof fetch;
+      const { EntityView: OlderEntityView } = await import(path.join(olderDir, "web", "src", "components", "EntityView.jsx"));
+      const olderProps = {
+        entity: customerLower,
+        highlightRecordId: null,
+        onHighlightHandled: () => {},
+        onJumpToRecord: () => {},
+        onRecordCountChange: () => {},
+      };
+      const older = render(React.createElement(OlderEntityView, olderProps));
+      for (let i = 0; i < 40; i++) {
+        if (older.container.querySelectorAll("tbody tr").length > 0) break;
+        await act(async () => {
+          await new Promise((resolve) => setTimeout(resolve, 0));
+        });
+      }
+      await act(async () => {
+        fireEvent.click(older.container.querySelector(".columns-menu-btn") as HTMLButtonElement);
+      });
+      const statusCheckbox = Array.from(older.container.querySelectorAll(".columns-menu-item")).find((el) =>
+        /Status/.test(el.textContent ?? ""),
+      )!.querySelector("input") as HTMLInputElement;
+      await act(async () => {
+        fireEvent.click(statusCheckbox);
+      });
+      await act(async () => {
+        fireEvent.change(older.container.querySelector(".entity-group-by") as HTMLSelectElement, { target: { value: "status" } });
+      });
+      assert.deepEqual(
+        JSON.parse(localStorage.getItem("forge_hidden_columns") ?? "{}").customer,
+        ["status"],
+        "sanity check: hiding must have actually persisted under the entity's original casing",
+      );
+      assert.equal(
+        JSON.parse(localStorage.getItem("forge_group_field") ?? "{}").customer,
+        "status",
+        "sanity check: grouping must have actually persisted under the entity's original casing",
+      );
+      cleanup();
+
+      // Simulates reloading a NEWER export of the same project, in the
+      // same browser, after a refine renamed the entity "customer" ->
+      // "Customer" only -- same fields, same data, same physical table.
+      globalThis.fetch = (async (input: string) => {
+        if (input === "/api/Customer") {
+          return new Response(JSON.stringify({ records: store }), { status: 200, headers: { "content-type": "application/json" } });
+        }
+        throw new Error(`unexpected request ${input}`);
+      }) as typeof fetch;
+      const { EntityView: NewerEntityView } = await import(path.join(newerDir, "web", "src", "components", "EntityView.jsx"));
+      const newerProps = {
+        entity: customerUpper,
+        highlightRecordId: null,
+        onHighlightHandled: () => {},
+        onJumpToRecord: () => {},
+        onRecordCountChange: () => {},
+      };
+      const newer = render(React.createElement(NewerEntityView, newerProps));
+      for (let i = 0; i < 40; i++) {
+        if (newer.container.querySelector(".entity-group-by")) break;
+        await act(async () => {
+          await new Promise((resolve) => setTimeout(resolve, 0));
+        });
+      }
+
+      assert.ok(
+        !Array.from(newer.container.querySelectorAll("thead th")).some((th) => /Status/.test(th.textContent ?? "")),
+        "the Status column must still be hidden under the entity's new spelling, not silently reappear",
+      );
+      await act(async () => {
+        fireEvent.click(newer.container.querySelector(".columns-menu-btn") as HTMLButtonElement);
+      });
+      const newerStatusCheckbox = Array.from(newer.container.querySelectorAll(".columns-menu-item")).find((el) =>
+        /Status/.test(el.textContent ?? ""),
+      )!.querySelector("input") as HTMLInputElement;
+      assert.equal(
+        newerStatusCheckbox.checked,
+        false,
+        "the Status column must still show as hidden in the Columns menu under the entity's new spelling",
+      );
+      assert.equal(
+        (newer.container.querySelector(".entity-group-by") as HTMLSelectElement).value,
+        "status",
+        "the 'Group by' choice must carry forward under the entity's new spelling, not be cleared to 'no grouping'",
+      );
+      assert.deepEqual(
+        JSON.parse(localStorage.getItem("forge_hidden_columns") ?? "{}").Customer,
+        ["status"],
+        "the migrated entry must be persisted under the entity's new casing, not just read through on this one load",
+      );
+      assert.equal(
+        JSON.parse(localStorage.getItem("forge_hidden_columns") ?? "{}").customer,
+        undefined,
+        "the old-cased key must be removed once migrated, not left duplicated alongside the new one",
+      );
+    });
+  } finally {
+    globalThis.fetch = originalFetch;
+    cleanup();
+    rmSync(olderDir, { recursive: true, force: true });
+    rmSync(newerDir, { recursive: true, force: true });
+  }
+});
+
+/**
+ * Round 1030: the same entity-level case-rename hazard as the test just
+ * above, for the two composite-key stores (collapsedGroups/
+ * collapsedBoardColumns) -- these key by JSON.stringify([entityName,
+ * fieldName]), so the entity-level fix lives in migrateCollapsedGroupsFieldCase/
+ * migrateCollapsedBoardColumnsFieldCase's own parsed[0] check, not the
+ * shared migrateEntityStoreKeyCase helper the other eight stores use.
+ */
+test("the exported EntityView keeps a collapsed table group and board column collapsed under their new spelling when a newer export renames the ENTITY's letter casing", async () => {
+  const customerLower: Entity = {
+    name: "customer",
+    label: "Customers",
+    fields: [
+      { name: "name", label: "Name", type: "text", required: true },
+      {
+        name: "status",
+        label: "Status",
+        type: "enum",
+        required: true,
+        enumValues: ["New", "Won"],
+        enumLabels: { New: "New", Won: "Won" },
+      },
+    ],
+  };
+  const customerUpper: Entity = { ...customerLower, name: "Customer" };
+  const olderExportProject: Project = { ...project, spec: { ...project.spec, entities: [customerLower] } };
+  const newerExportProject: Project = { ...project, spec: { ...project.spec, entities: [customerUpper] } };
+  const store = [
+    { id: 1, name: "Acme Corp", status: "New" },
+    { id: 2, name: "Globex", status: "Won" },
+  ];
+  const originalFetch = globalThis.fetch;
+
+  const olderDir = writeGeneratedWebComponent(generateExportFiles(olderExportProject));
+  const newerDir = writeGeneratedWebComponent(generateExportFiles(newerExportProject));
+  try {
+    await withRealLocalStorage(async () => {
+      globalThis.fetch = (async (input: string) => {
+        if (input === "/api/customer") {
+          return new Response(JSON.stringify({ records: store }), { status: 200, headers: { "content-type": "application/json" } });
+        }
+        throw new Error(`unexpected request ${input}`);
+      }) as typeof fetch;
+
+      // Simulates grouping by "status" and collapsing the "New" group, then
+      // separately switching to Board view and collapsing the "New"
+      // column, in an OLDER export, while the entity still had its
+      // original casing -- persists both via the real generated controls.
+      const { EntityView: OlderEntityView } = await import(path.join(olderDir, "web", "src", "components", "EntityView.jsx"));
+      const olderProps = {
+        entity: customerLower,
+        highlightRecordId: null,
+        onHighlightHandled: () => {},
+        onJumpToRecord: () => {},
+        onRecordCountChange: () => {},
+      };
+      const older = render(React.createElement(OlderEntityView, olderProps));
+      for (let i = 0; i < 40; i++) {
+        if (older.container.querySelectorAll("tbody tr").length > 0) break;
+        await act(async () => {
+          await new Promise((resolve) => setTimeout(resolve, 0));
+        });
+      }
+      await act(async () => {
+        fireEvent.change(older.container.querySelector(".entity-group-by") as HTMLSelectElement, { target: { value: "status" } });
+      });
+      await act(async () => {
+        await new Promise((resolve) => setTimeout(resolve, 0));
+      });
+      const olderGroupToggle = Array.from(older.container.querySelectorAll(".entity-group-header-row")).find((row) =>
+        /New/.test(row.textContent ?? ""),
+      )!.querySelector(".entity-group-toggle") as HTMLButtonElement;
+      await act(async () => {
+        fireEvent.click(olderGroupToggle);
+      });
+
+      await act(async () => {
+        fireEvent.click(older.container.querySelectorAll(".view-toggle-btn")[1] as HTMLButtonElement);
+      });
+      for (let i = 0; i < 40; i++) {
+        if (older.container.querySelectorAll(".board-column").length > 0) break;
+        await act(async () => {
+          await new Promise((resolve) => setTimeout(resolve, 0));
+        });
+      }
+      const olderBoardColumnToggle = Array.from(older.container.querySelectorAll(".board-column")).find((col) =>
+        /New/.test(col.querySelector(".board-column-header-info")?.textContent ?? ""),
+      )!.querySelector(".board-column-toggle") as HTMLButtonElement;
+      await act(async () => {
+        fireEvent.click(olderBoardColumnToggle);
+      });
+
+      assert.deepEqual(
+        JSON.parse(localStorage.getItem("forge_collapsed_groups") ?? "{}")[JSON.stringify(["customer", "status"])],
+        ["New"],
+        "sanity check: collapsing the 'New' group must have actually persisted under the entity's original casing",
+      );
+      assert.deepEqual(
+        JSON.parse(localStorage.getItem("forge_collapsed_board_columns") ?? "{}")[JSON.stringify(["customer", "status"])],
+        ["New"],
+        "sanity check: collapsing the 'New' board column must have actually persisted under the entity's original casing",
+      );
+      cleanup();
+
+      // Simulates reloading a NEWER export of the same project, in the
+      // same browser, after a refine renamed the entity "customer" ->
+      // "Customer" only -- same fields, same data, same physical table.
+      globalThis.fetch = (async (input: string) => {
+        if (input === "/api/Customer") {
+          return new Response(JSON.stringify({ records: store }), { status: 200, headers: { "content-type": "application/json" } });
+        }
+        throw new Error(`unexpected request ${input}`);
+      }) as typeof fetch;
+      const { EntityView: NewerEntityView } = await import(path.join(newerDir, "web", "src", "components", "EntityView.jsx"));
+      const newerProps = {
+        entity: customerUpper,
+        highlightRecordId: null,
+        onHighlightHandled: () => {},
+        onJumpToRecord: () => {},
+        onRecordCountChange: () => {},
+      };
+      const newer = render(React.createElement(NewerEntityView, newerProps));
+      // viewMode itself (forge_view_mode, keyed only by entity name, which
+      // the shared migrateEntityStoreKeyCase helper already covers) was
+      // left on "board" by the older render's own last interaction above,
+      // and that persisted choice carries over to this fresh mount too --
+      // so the newer render starts in Board view, not Table.
+      for (let i = 0; i < 40; i++) {
+        if (newer.container.querySelectorAll(".board-column").length > 0) break;
+        await act(async () => {
+          await new Promise((resolve) => setTimeout(resolve, 0));
+        });
+      }
+
+      assert.deepEqual(
+        JSON.parse(localStorage.getItem("forge_collapsed_board_columns") ?? "{}")[JSON.stringify(["Customer", "status"])],
+        ["New"],
+        "the collapsed board column's real stored set must migrate to the entity's new casing",
+      );
+      assert.equal(
+        JSON.parse(localStorage.getItem("forge_collapsed_board_columns") ?? "{}")[JSON.stringify(["customer", "status"])],
+        undefined,
+        "the old entity-name casing's key must be cleaned up, not left orphaned alongside the migrated one",
+      );
+      const newerNewColumn = Array.from(newer.container.querySelectorAll(".board-column")).find((col) =>
+        /New/.test(col.querySelector(".board-column-header-info")?.textContent ?? ""),
+      )!;
+      const newerWonColumn = Array.from(newer.container.querySelectorAll(".board-column")).find((col) =>
+        /Won/.test(col.querySelector(".board-column-header-info")?.textContent ?? ""),
+      )!;
+      assert.equal(
+        newerNewColumn.querySelectorAll(".board-card").length,
+        0,
+        "the 'New' board column must stay collapsed under the entity's new spelling, not silently re-expand",
+      );
+      assert.equal(newerWonColumn.querySelectorAll(".board-card").length, 1, "the unrelated 'Won' board column must be completely unaffected");
+
+      // Switch back to Table view to check the group-collapse migration.
+      await act(async () => {
+        fireEvent.click(newer.container.querySelectorAll(".view-toggle-btn")[0] as HTMLButtonElement);
+      });
+      for (let i = 0; i < 40; i++) {
+        if (newer.container.querySelectorAll("tbody tr[data-record-id]").length > 0) break;
+        await act(async () => {
+          await new Promise((resolve) => setTimeout(resolve, 0));
+        });
+      }
+
+      assert.deepEqual(
+        JSON.parse(localStorage.getItem("forge_collapsed_groups") ?? "{}")[JSON.stringify(["Customer", "status"])],
+        ["New"],
+        "the collapsed group's real stored set must migrate to the entity's new casing",
+      );
+      assert.equal(
+        JSON.parse(localStorage.getItem("forge_collapsed_groups") ?? "{}")[JSON.stringify(["customer", "status"])],
+        undefined,
+        "the old entity-name casing's key must be cleaned up, not left orphaned alongside the migrated one",
+      );
+      assert.ok(
+        !Array.from(newer.container.querySelectorAll("tbody tr[data-record-id]")).some((tr) => /Acme Corp/.test(tr.textContent ?? "")),
+        "the 'New' group (Acme Corp) must stay collapsed under the entity's new spelling, not silently re-expand",
+      );
+      assert.ok(
+        Array.from(newer.container.querySelectorAll("tbody tr[data-record-id]")).some((tr) => /Globex/.test(tr.textContent ?? "")),
+        "the unrelated 'Won' group (Globex) must be completely unaffected",
+      );
+    });
+  } finally {
+    globalThis.fetch = originalFetch;
+    cleanup();
+    rmSync(olderDir, { recursive: true, force: true });
+    rmSync(newerDir, { recursive: true, force: true });
+  }
+});
+
+/**
  * New in this round: the exported app's own GlobalSearch.jsx had the
  * identical gap the live preview's own GlobalSearchPanel.tsx did --
  * ArrowDown/ArrowUp moved the highlighted result group's CSS class, but
@@ -15553,9 +15938,14 @@ test("the exported EntityView's group-by/view-mode/sort-key choices are each per
   const files = generateExportFiles(project);
   const entityViewJsx = files.find((f) => f.path === "web/src/components/EntityView.jsx")!.content;
 
-  const storeSrc = entityViewJsx.match(
-    /const GROUP_FIELD_STORAGE_KEY[\s\S]*?\nfunction setPersistedFieldFilters\(entityName, filters\) \{[\s\S]*?\n\}\n/,
-  )?.[0];
+  // Round 1030: also captures migrateEntityStoreKeyCase, prepended
+  // separately rather than widening storeSrc's own span to reach back to
+  // it -- that span crosses the exported `computeResizedWidth` between
+  // the column-widths and column-order sections, and `export` is not
+  // valid inside a plain Function body ("Unexpected token 'export'").
+  const migrateHelperSrc = entityViewJsx.match(/function migrateEntityStoreKeyCase\(store, entityName, writeStore\) \{[\s\S]*?\n\}\n/)?.[0];
+  assert.ok(migrateHelperSrc, "expected to find migrateEntityStoreKeyCase in generated output");
+  const storeSrc = entityViewJsx.match(/const GROUP_FIELD_STORAGE_KEY[\s\S]*?\nfunction setPersistedFieldFilters\(entityName, filters\) \{[\s\S]*?\n\}\n/)?.[0];
   assert.ok(storeSrc, "expected to find the group-field/view-mode/sort-keys/field-filters store functions in generated output");
 
   const fakeStorage: Record<string, string> = {};
@@ -15570,7 +15960,7 @@ test("the exported EntityView's group-by/view-mode/sort-key choices are each per
     setPersistedFieldFilters,
   } = new Function(
     "localStorage",
-    `${storeSrc}\nreturn { getPersistedGroupField, setPersistedGroupField, getPersistedViewMode, setPersistedViewMode, getPersistedSortKeys, setPersistedSortKeys, getPersistedFieldFilters, setPersistedFieldFilters };`,
+    `${migrateHelperSrc}\n${storeSrc}\nreturn { getPersistedGroupField, setPersistedGroupField, getPersistedViewMode, setPersistedViewMode, getPersistedSortKeys, setPersistedSortKeys, getPersistedFieldFilters, setPersistedFieldFilters };`,
   )({
     getItem: (k: string) => fakeStorage[k] ?? null,
     setItem: (k: string, v: string) => {
@@ -16535,9 +16925,14 @@ test("the exported EntityView's sort-keys store ignores a malformed entry instea
   const files = generateExportFiles(project);
   const entityViewJsx = files.find((f) => f.path === "web/src/components/EntityView.jsx")!.content;
 
-  const storeSrc = entityViewJsx.match(
-    /const GROUP_FIELD_STORAGE_KEY[\s\S]*?\nfunction setPersistedFieldFilters\(entityName, filters\) \{[\s\S]*?\n\}\n/,
-  )?.[0];
+  // Round 1030: also captures migrateEntityStoreKeyCase, prepended
+  // separately rather than widening storeSrc's own span to reach back to
+  // it -- that span crosses the exported `computeResizedWidth` between
+  // the column-widths and column-order sections, and `export` is not
+  // valid inside a plain Function body ("Unexpected token 'export'").
+  const migrateHelperSrc = entityViewJsx.match(/function migrateEntityStoreKeyCase\(store, entityName, writeStore\) \{[\s\S]*?\n\}\n/)?.[0];
+  assert.ok(migrateHelperSrc, "expected to find migrateEntityStoreKeyCase in generated output");
+  const storeSrc = entityViewJsx.match(/const GROUP_FIELD_STORAGE_KEY[\s\S]*?\nfunction setPersistedFieldFilters\(entityName, filters\) \{[\s\S]*?\n\}\n/)?.[0];
   assert.ok(storeSrc, "expected to find the group-field/view-mode/sort-keys/field-filters store functions in generated output");
   const compareSrc = entityViewJsx.match(/function compareValues\(a, b\) \{[\s\S]*?\n\}\n/)?.[0];
   const resolveSortValueSrc = entityViewJsx.match(/function resolveSortValue\([\s\S]*?\n\}\n/)?.[0];
@@ -16551,7 +16946,7 @@ test("the exported EntityView's sort-keys store ignores a malformed entry instea
   };
   const { getPersistedSortKeys, sortRecordsMulti } = new Function(
     "localStorage",
-    `${storeSrc}\n${compareSrc}\n${resolveSortValueSrc}\n${sortSrc}\nreturn { getPersistedSortKeys, sortRecordsMulti };`,
+    `${migrateHelperSrc}\n${storeSrc}\n${compareSrc}\n${resolveSortValueSrc}\n${sortSrc}\nreturn { getPersistedSortKeys, sortRecordsMulti };`,
   )({
     getItem: (k: string) => fakeStorage[k] ?? null,
     setItem: () => {},
@@ -18746,8 +19141,11 @@ test("the exported EntityView's recent-searches store caps at 5, dedupes case-in
   const files = generateExportFiles(project);
   const entityViewJsx = files.find((f) => f.path === "web/src/components/EntityView.jsx")!.content;
 
+  // Round 1030: also captures migrateEntityStoreKeyCase -- see the
+  // identical note on the hiddenColumns test (above, in this same file)
+  // for why.
   const storeSrc = entityViewJsx.match(
-    /const ENTITY_RECENT_SEARCHES_STORAGE_KEY[\s\S]*?\nfunction clearEntityRecentSearches\(entityName\) \{[\s\S]*?\n\}\n/,
+    /function migrateEntityStoreKeyCase\(store, entityName, writeStore\) \{[\s\S]*?\nfunction clearEntityRecentSearches\(entityName\) \{[\s\S]*?\n\}\n/,
   )?.[0];
   assert.ok(storeSrc, "expected to find the entity recent-searches store functions in generated output");
 
@@ -18809,8 +19207,11 @@ test("the exported EntityView's recent-searches store filters out a non-string e
   const files = generateExportFiles(project);
   const entityViewJsx = files.find((f) => f.path === "web/src/components/EntityView.jsx")!.content;
 
+  // Round 1030: also captures migrateEntityStoreKeyCase -- see the
+  // identical note on the hiddenColumns test (above, in this same file)
+  // for why.
   const storeSrc = entityViewJsx.match(
-    /const ENTITY_RECENT_SEARCHES_STORAGE_KEY[\s\S]*?\nfunction clearEntityRecentSearches\(entityName\) \{[\s\S]*?\n\}\n/,
+    /function migrateEntityStoreKeyCase\(store, entityName, writeStore\) \{[\s\S]*?\nfunction clearEntityRecentSearches\(entityName\) \{[\s\S]*?\n\}\n/,
   )?.[0];
   assert.ok(storeSrc, "expected to find the entity recent-searches store functions in generated output");
 
