@@ -303,11 +303,39 @@ export function GlobalSearchPanel({
         // larger one) until the next brand-new search happens to fix it
         // by chance. Re-sorting with the identical comparator keeps this
         // self-consistent the instant the count itself changes.
-        setResults((prev) =>
-          prev
-            .map((r) => (r.entityName === entityName ? { ...r, totalMatches: full.sample.length } : r))
-            .sort((a, b) => b.totalMatches - a.totalMatches),
-        );
+        // Round 1033: selectedIndex is a plain array SLOT number into
+        // `results`, set by arrow-key navigation and consumed by both
+        // Enter (results[selectedIndex].entityName) and the "selected"
+        // highlight/scroll-into-view effect just below (keyed on the
+        // index value itself). The re-sort above never adjusts it, so a
+        // keyboard-highlighted group can land at a different slot after
+        // reordering while selectedIndex still points at its OLD slot --
+        // the exact same "index now names the wrong thing" hazard round
+        // 983's own selectedIndex reset (right above this branch) already
+        // guards against for a removal, just never extended to a resort.
+        // Resolves the SAME entity to its new slot instead of leaving a
+        // stale number, so Enter still jumps to whatever the user actually
+        // highlighted, not whatever reordering happened to leave behind.
+        // React doesn't guarantee a setState updater function runs
+        // synchronously at the point it's passed to the setter (confirmed
+        // empirically, against the real exported app's equivalent in
+        // codegen.ts: a value written inside a setResults updater was
+        // still unset on the very next line) -- so the new index can't be
+        // threaded through a side-effect variable written by that updater.
+        // Computes the sorted array directly from the current `results`
+        // closure instead (the same closure-read tolerance `entityName`/
+        // `full.sample.length` just above already rely on), so the
+        // resolved index is known synchronously, before either setState
+        // call.
+        const selectedEntityName = selectedIndex !== null ? results[selectedIndex]?.entityName ?? null : null;
+        const nextResults = results
+          .map((r) => (r.entityName === entityName ? { ...r, totalMatches: full.sample.length } : r))
+          .sort((a, b) => b.totalMatches - a.totalMatches);
+        setResults(nextResults);
+        if (selectedEntityName !== null) {
+          const newIndex = nextResults.findIndex((r) => r.entityName === selectedEntityName);
+          setSelectedIndex(newIndex === -1 ? null : newIndex);
+        }
       }
       // Round 904: a failed "Show all" (just below) surfaces through this
       // same shared `error` banner -- succeeding on a later retry must

@@ -6977,11 +6977,31 @@ export function GlobalSearch({ entities, onClose, onJumpToEntity, onJumpToRecord
         // group that grew past another one's count (data changed while the
         // panel stayed open) can't keep rendering below it, contradicting
         // this panel's own documented descending-order contract.
-        setResults((prev) =>
-          prev
-            .map((r) => (r.entityName === entityName ? { ...r, totalMatches: full.length } : r))
-            .sort((a, b) => b.totalMatches - a.totalMatches),
-        );
+        // Round 1033: mirrors the live preview's own fix (GlobalSearchPanel.tsx)
+        // -- the resort above never adjusted selectedIndex, a plain array
+        // slot number that Enter and the "selected" highlight both read by
+        // position, so a keyboard-highlighted group could land at a
+        // different slot after reordering while selectedIndex still named
+        // its OLD slot. Resolves the same entity to its new slot instead.
+        // React doesn't guarantee a setState updater function runs
+        // synchronously at the point it's passed to the setter (confirmed
+        // empirically: a resolvedSelectedIndex written inside a setResults
+        // updater was still its initial value on the very next line) -- so
+        // the new index can't be threaded through a side-effect variable
+        // written by that updater. Computes the sorted array directly from
+        // the current results closure instead (the same closure-read
+        // tolerance entityName/full.length just above already rely on), so
+        // the resolved index is known synchronously, before either
+        // setState call.
+        const selectedEntityName = selectedIndex !== null ? results[selectedIndex]?.entityName ?? null : null;
+        const nextResults = results
+          .map((r) => (r.entityName === entityName ? { ...r, totalMatches: full.length } : r))
+          .sort((a, b) => b.totalMatches - a.totalMatches);
+        setResults(nextResults);
+        if (selectedEntityName !== null) {
+          const newIndex = nextResults.findIndex((r) => r.entityName === selectedEntityName);
+          setSelectedIndex(newIndex === -1 ? null : newIndex);
+        }
       }
       // Round 904: a failed "Show all" (just below) surfaces through this
       // same shared error banner -- succeeding on a later retry must clear

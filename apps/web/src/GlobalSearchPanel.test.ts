@@ -515,6 +515,8 @@ test("GlobalSearchPanel's handleShowAll re-sorts results after a group's totalMa
     "setError",
     "errorFromShowAllRef",
     "setResults",
+    "results",
+    "selectedIndex",
     "setSelectedIndex",
     `${code}\nreturn handleShowAll;`,
   )(
@@ -530,9 +532,22 @@ test("GlobalSearchPanel's handleShowAll re-sorts results after a group's totalMa
     "en",
     () => {},
     { current: false },
-    (updater: (prev: typeof results) => typeof results) => {
-      results = updater(results);
+    // Round 1033: the success branch below now calls setResults with a
+    // plain array value (not an updater function) -- see its own doc
+    // comment on why -- while the sibling zero-matches branch still uses
+    // the updater form, so this fake setter supports both.
+    (next: typeof results | ((prev: typeof results) => typeof results)) => {
+      results = typeof next === "function" ? (next as (prev: typeof results) => typeof results)(results) : next;
     },
+    // Round 1033: the success branch now reads `results` directly (a new
+    // free variable, since it no longer derives the sorted array from the
+    // setResults updater's own `prev`) -- see its own doc comment on why.
+    results,
+    // Round 1033: this test doesn't exercise keyboard selection -- a
+    // harmless no-op, same as every other newly-required parameter this
+    // routine's own "signature-migration causes expected test breakage"
+    // pattern adds to an existing extraction test.
+    null,
     () => {},
   ) as (entityName: string) => Promise<void>;
 
@@ -544,6 +559,104 @@ test("GlobalSearchPanel's handleShowAll re-sorts results after a group's totalMa
     "Customer now genuinely has more matches (36) than Order (20) and must sort back above it, not stay stuck below just because of its original array position",
   );
   assert.equal(results[0].totalMatches, 36);
+});
+
+/**
+ * Round 1033: selectedIndex is a plain array SLOT number, not an entity
+ * identity -- the round-1020 resort above moves entities between slots
+ * without ever touching it, so a keyboard-highlighted entity could be
+ * left identified by whatever ends up at its OLD slot instead of
+ * following it to its new one. Starts with three groups (Order:20,
+ * Customer:6, Deal:3) with "Customer" keyboard-highlighted at index 1,
+ * then "Show all" on Deal discovers 10 real matches -- enough to move
+ * Deal above Customer (new order: Order, Deal, Customer) but still below
+ * Order. selectedIndex must end up at Customer's NEW slot (2), not stay
+ * at 1, which the resort has since handed to Deal -- Enter would
+ * otherwise jump to the wrong entity, and the highlight/scroll-into-view
+ * effect would sit on whatever landed there instead.
+ */
+test("GlobalSearchPanel's handleShowAll keeps a keyboard-highlighted group identified by its entity, not its old array slot, after a resort", async () => {
+  const handlerMatch = globalSearchPanelSrc.match(/ {2}async function handleShowAll\(entityName: string\) \{[\s\S]*?\n {2}\}\n/);
+  assert.ok(handlerMatch, "expected to find handleShowAll in GlobalSearchPanel.tsx");
+  const { code } = transformSync(handlerMatch![0], { loader: "ts" });
+
+  const entityOrder = { name: "Order", label: "Order", fields: [] };
+  const entityCustomer = { name: "Customer", label: "Customer", fields: [] };
+  const entityDeal = { name: "Deal", label: "Deal", fields: [] };
+
+  function fakeSearchEntityRecords(entity: { name: string; label: string }, records: unknown[]) {
+    return { entityName: entity.name, entityLabel: entity.label, totalMatches: records.length, sample: records };
+  }
+
+  let results: { entityName: string; entityLabel: string; totalMatches: number; sample: unknown[] }[] = [
+    { entityName: "Order", entityLabel: "Order", totalMatches: 20, sample: [] },
+    { entityName: "Customer", entityLabel: "Customer", totalMatches: 6, sample: [] },
+    { entityName: "Deal", entityLabel: "Deal", totalMatches: 3, sample: [] },
+  ];
+  // "Customer" is keyboard-highlighted at its current slot, index 1.
+  let selectedIndex: number | null = 1;
+  const searchRequestId = { current: 0 };
+
+  const fn = new Function(
+    "entities",
+    "projectId",
+    "listRecords",
+    "searchEntityRecords",
+    "highlightQuery",
+    "lastRecordsByEntityRef",
+    "setShowAllLoading",
+    "setExpandedSamples",
+    "searchRequestId",
+    "lang",
+    "setError",
+    "errorFromShowAllRef",
+    "setResults",
+    "results",
+    "selectedIndex",
+    "setSelectedIndex",
+    `${code}\nreturn handleShowAll;`,
+  )(
+    [entityOrder, entityCustomer, entityDeal],
+    "proj1",
+    async () => ({ records: new Array(10).fill(0).map((_, i) => ({ id: i, name: `deal-${i}` })) }),
+    fakeSearchEntityRecords,
+    "smith",
+    { current: {} },
+    () => {},
+    () => {},
+    searchRequestId,
+    "en",
+    () => {},
+    { current: false },
+    // Round 1033: the success branch below now calls setResults with a
+    // plain array value (not an updater function) -- see its own doc
+    // comment on why -- while the sibling zero-matches branch still uses
+    // the updater form, so this fake setter supports both.
+    (next: typeof results | ((prev: typeof results) => typeof results)) => {
+      results = typeof next === "function" ? (next as (prev: typeof results) => typeof results)(results) : next;
+    },
+    // Round 1033: the success branch now reads `results` directly (a new
+    // free variable, since it no longer derives the sorted array from the
+    // setResults updater's own `prev`) -- see its own doc comment on why.
+    results,
+    selectedIndex,
+    (next: number | null) => {
+      selectedIndex = next;
+    },
+  ) as (entityName: string) => Promise<void>;
+
+  await fn("Deal");
+
+  assert.deepEqual(
+    results.map((r) => r.entityName),
+    ["Order", "Deal", "Customer"],
+    "sanity check: Deal's fresh count (10) must move it above Customer (6) but still below Order (20)",
+  );
+  assert.equal(
+    selectedIndex,
+    2,
+    "the highlight must follow Customer to its new slot (2), not stay at its old slot (1), which the resort has since handed to Deal",
+  );
 });
 
 /**
@@ -1187,6 +1300,89 @@ test("GlobalSearchPanel's 'Show all' button reveals every match beyond the defau
         null,
         "the 'Show all' button must disappear once every match is already shown",
       );
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+});
+
+/**
+ * Round 1033: a real, full-render regression test for the exact bug the
+ * lightweight extraction test above (and its own fake, synchronously-
+ * applied setResults) could not actually catch -- confirmed empirically
+ * while building this fix: React does not guarantee a setState updater
+ * function runs synchronously at the point it's passed to the setter, so
+ * a value written inside one setResults updater and read on the very
+ * next line was still unset. Only a real render against the genuine
+ * useState setter exercises that timing. Arrow-key-highlights Order
+ * (ranked first, more matches) then Customer (the second group), then
+ * triggers "Show all" on Customer with a fresh count large enough to move
+ * it above Order -- the keyboard highlight must follow Customer to its
+ * new (now-first) slot, and Enter afterward must still jump to Customer.
+ */
+test("GlobalSearchPanel's real (non-mocked) setResults correctly carries a keyboard-highlighted group's selection through a 'Show all' resort", async () => {
+  await withJsdom(async () => {
+    let customerFetchCount = 0;
+    const orderRecords: EntityRecord[] = Array.from({ length: 20 }, (_, i) => ({ id: i + 1, note: `widget order ${i + 1}` }));
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = (async (input: string): Promise<Response> => {
+      if (input === "/api/projects/proj1/entities/Order") {
+        return new Response(JSON.stringify({ records: orderRecords }), { status: 200, headers: { "content-type": "application/json" } });
+      }
+      if (input === "/api/projects/proj1/entities/Customer") {
+        customerFetchCount += 1;
+        // The original search sees only 6 matches (more than the 5-item
+        // sample cap, so a real "Show all" button renders, but still
+        // fewer than Order's 20); "Show all" (the second fetch) discovers
+        // 36 -- enough to move Customer above Order.
+        const count = customerFetchCount === 1 ? 6 : 36;
+        const records: EntityRecord[] = Array.from({ length: count }, (_, i) => ({ id: i + 1, name: `widget customer ${i + 1}` }));
+        return new Response(JSON.stringify({ records }), { status: 200, headers: { "content-type": "application/json" } });
+      }
+      throw new Error(`unexpected request ${input}`);
+    }) as typeof fetch;
+
+    let jumpedTo: string | null = null;
+    try {
+      renderGlobalSearchPanel((entityName) => {
+        jumpedTo = entityName;
+      });
+
+      const input = document.querySelector(".global-search-input") as HTMLInputElement;
+      fireEvent.change(input, { target: { value: "widget" } });
+      fireEvent.submit(document.querySelector("form.global-search-form")!);
+      await waitForCondition(() => document.querySelectorAll(".global-search-group").length === 2);
+
+      const labelsBefore = Array.from(document.querySelectorAll(".global-search-entity-label")).map((el) => el.textContent);
+      assert.deepEqual(labelsBefore, ["Order", "Customer"], "sanity check: Order (20 matches) must rank above Customer (6) at the original search");
+
+      // Arrow down twice to keyboard-highlight Customer, the second (index 1) group.
+      fireEvent.keyDown(input, { key: "ArrowDown" });
+      fireEvent.keyDown(input, { key: "ArrowDown" });
+      assert.equal(
+        document.querySelector(".global-search-group-selected .global-search-entity-label")?.textContent,
+        "Customer",
+        "sanity check: Customer must be keyboard-highlighted before 'Show all' triggers a resort",
+      );
+
+      const customerGroup = Array.from(document.querySelectorAll(".global-search-group")).find(
+        (g) => g.querySelector(".global-search-entity-label")?.textContent === "Customer",
+      ) as HTMLElement;
+      const showAllButton = customerGroup.querySelector(".global-search-show-all") as HTMLButtonElement;
+      fireEvent.click(showAllButton);
+      await waitForCondition(() => {
+        const labels = Array.from(document.querySelectorAll(".global-search-entity-label")).map((el) => el.textContent);
+        return labels[0] === "Customer";
+      });
+
+      assert.equal(
+        document.querySelector(".global-search-group-selected .global-search-entity-label")?.textContent,
+        "Customer",
+        "the keyboard highlight must still follow Customer to its new (now-first) slot, not whatever landed at its old slot",
+      );
+
+      fireEvent.keyDown(input, { key: "Enter" });
+      assert.equal(jumpedTo, "Customer", "Enter must still jump to Customer, the entity the user actually highlighted, not whatever ended up at its old slot");
     } finally {
       globalThis.fetch = originalFetch;
     }

@@ -8348,6 +8348,112 @@ test("the exported GlobalSearch re-sorts result groups after 'Show all' discover
 });
 
 /**
+ * Round 1033: mirrors the live Forge AI preview's own round-1033 fix
+ * (GlobalSearchPanel.tsx) -- the round-1020 resort just above never
+ * adjusted selectedIndex, a plain array SLOT number both Enter and the
+ * "selected" highlight (.global-search-group-selected) read by position.
+ * Keyboard-highlights Customer (the second group) before "Show all"
+ * triggers the exact same resort the test above exercises, and confirms
+ * the highlight follows Customer to its new slot instead of staying
+ * identified by whatever landed at its old one.
+ */
+test("the exported GlobalSearch keeps a keyboard-highlighted result group identified by its entity, not its old array slot, after 'Show all' triggers a resort", async () => {
+  const files = generateExportFiles(project);
+  const dir = writeGeneratedWebComponent(files);
+  let customerFetchCount = 0;
+  const serviceRecords = new Array(20).fill(0).map((_, i) => ({ id: i, title: `smith service ${i}` }));
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = (async (input: string): Promise<Response> => {
+    if (input === "/api/Customer") {
+      customerFetchCount += 1;
+      const count = customerFetchCount === 1 ? 8 : 36;
+      const records = new Array(count).fill(0).map((_, i) => ({ id: i, name: `smith customer ${i}`, status: "New" }));
+      return new Response(JSON.stringify({ records }), { status: 200, headers: { "content-type": "application/json" } });
+    }
+    if (input === "/api/Service") {
+      return new Response(JSON.stringify({ records: serviceRecords }), { status: 200, headers: { "content-type": "application/json" } });
+    }
+    throw new Error(`unexpected request ${input}`);
+  }) as typeof fetch;
+
+  let jumpedTo: string | null = null;
+  try {
+    await withRealLocalStorage(async () => {
+      const { GlobalSearch } = await import(path.join(dir, "web", "src", "components", "GlobalSearch.jsx"));
+      const { container } = render(
+        React.createElement(GlobalSearch, {
+          entities: project.spec.entities,
+          onClose: () => {},
+          onJumpToEntity: (name: string) => {
+            jumpedTo = name;
+          },
+          onJumpToRecord: () => {},
+        }),
+      );
+
+      const input = container.querySelector(".global-search-input") as HTMLInputElement;
+      const form = container.querySelector("form.global-search-form") as HTMLFormElement;
+      await act(async () => {
+        fireEvent.change(input, { target: { value: "smith" } });
+        fireEvent.submit(form);
+      });
+      for (let i = 0; i < 40 && container.querySelectorAll(".global-search-group").length < 2; i++) {
+        await act(async () => {
+          await new Promise((resolve) => setTimeout(resolve, 0));
+        });
+      }
+      const labelsBefore = Array.from(container.querySelectorAll(".global-search-entity-label")).map((el) => el.textContent);
+      assert.deepEqual(labelsBefore, ["שירותים", "לקוחות"], "sanity check: Service (20 matches) must rank above Customer (3) at the original search");
+
+      // Arrow down twice to keyboard-highlight Customer, the second (index 1) group.
+      await act(async () => {
+        fireEvent.keyDown(input, { key: "ArrowDown" });
+      });
+      await act(async () => {
+        fireEvent.keyDown(input, { key: "ArrowDown" });
+      });
+      assert.equal(
+        (container.querySelector(".global-search-group-selected") as HTMLElement)?.querySelector(".global-search-entity-label")
+          ?.textContent,
+        "לקוחות",
+        "sanity check: Customer must be keyboard-highlighted before 'Show all' triggers a resort",
+      );
+
+      const customerGroup = Array.from(container.querySelectorAll(".global-search-group")).find(
+        (g) => g.querySelector(".global-search-entity-label")?.textContent === "לקוחות",
+      ) as HTMLElement;
+      const showAllButton = customerGroup.querySelector(".global-search-show-all") as HTMLButtonElement;
+      await act(async () => {
+        fireEvent.click(showAllButton);
+      });
+      for (let i = 0; i < 40; i++) {
+        const labels = Array.from(container.querySelectorAll(".global-search-entity-label")).map((el) => el.textContent);
+        if (labels[0] === "לקוחות") break;
+        await act(async () => {
+          await new Promise((resolve) => setTimeout(resolve, 0));
+        });
+      }
+
+      assert.equal(
+        (container.querySelector(".global-search-group-selected") as HTMLElement)?.querySelector(".global-search-entity-label")
+          ?.textContent,
+        "לקוחות",
+        "the keyboard highlight must still follow Customer to its new (now-first) slot, not whatever landed at its old slot",
+      );
+
+      await act(async () => {
+        fireEvent.keyDown(input, { key: "Enter" });
+      });
+      assert.equal(jumpedTo, "Customer", "Enter must still jump to Customer, the entity the user actually highlighted, not whatever ended up at its old slot");
+    });
+  } finally {
+    globalThis.fetch = originalFetch;
+    cleanup();
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+/**
  * Round 494's finding: the exported app's GlobalSearch never got the live
  * preview's own round-290 "Escape clears the query first" behavior
  * (GlobalSearchPanel.tsx's own handleInputKeyDown + its
