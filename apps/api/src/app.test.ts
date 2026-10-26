@@ -2610,6 +2610,130 @@ test("DELETE .../entities/:entityName/:recordId fires a record_deleted automatio
 });
 
 /**
+ * Round 1015: the DELETE route fires a "record_deleted" automation and
+ * cleans up that same record's own uploaded files off the identical
+ * `before` snapshot. Before this round, both were two independent
+ * fire-and-forget calls -- deleteUploadedFile's own `await rm` racing
+ * findTemplateFileAttachment's real file read (reached here through
+ * whatsappWeb.ts's sendMessage, which does its own `await readFile` before
+ * calling the socket) against the exact same path, with nothing
+ * sequencing them. Confirms the fix: `whatsapp.sendMessage`'s own promise
+ * is held open here (the same opts.sendMessage gate round 536 already
+ * established), and while it's still pending, the uploaded file must
+ * still exist on disk -- proving the file cleanup hasn't even started,
+ * not just that it happened to lose a race this one time -- and the real
+ * attachment content (not a degraded plain-text send) must already be in
+ * the queued WhatsApp content. Only once the gate is released does the
+ * file actually get cleaned up.
+ */
+test("DELETE .../entities/:entityName/:recordId no longer races a record_deleted automation's own file read against this same delete's upload cleanup", async () => {
+  let createdSockets: ReturnType<typeof createFakeWhatsAppSocket>[] = [];
+  let resolveSendGate: () => void = () => {};
+  const sendGate = new Promise<void>((resolve) => {
+    resolveSendGate = resolve;
+  });
+  await withServer(
+    async (baseUrl, db, uploadsDir) => {
+      const email = `delete-cleanup-race-${randomUUID()}@example.com`;
+      const token = await signup(baseUrl, email);
+      const owner = findUserByEmail(db, email)!;
+
+      const spec: ProductSpec = {
+        summary: "test",
+        personas: [],
+        roles: ["Admin"],
+        entities: [
+          {
+            name: "Customer",
+            fields: [
+              { name: "name", type: "text", required: true },
+              { name: "receipt", type: "file", required: false },
+            ],
+          },
+        ],
+        screens: [],
+        assumptions: [],
+        openQuestions: [],
+      };
+      const projectId = randomUUID();
+      insertProject(db, { id: projectId, ownerId: owner.id, name: "Customers", description: "test", spec });
+      diffAndMigrate(db, projectId, undefined, spec);
+      markProjectBuilt(db, projectId);
+
+      insertAutomationRule(db, {
+        projectId,
+        entityName: "Customer",
+        trigger: "record_deleted",
+        actionType: "send_whatsapp",
+        toMode: "static",
+        toNumber: "972501234567",
+        messageTemplate: "Goodbye {{name}}, here is your final receipt: {{receipt}}",
+      });
+
+      await fetch(`${baseUrl}/api/projects/${projectId}/integrations/whatsapp/connect`, { method: "POST", headers: authHeaders(token) });
+      createdSockets[0].sock.user = { id: "15550001111:1@s.whatsapp.net" };
+      createdSockets[0].emitConnectionUpdate({ connection: "open" });
+
+      const formData = new FormData();
+      formData.append("file", new File(["%PDF-fake-receipt-bytes"], "receipt.pdf", { type: "application/pdf" }));
+      const uploadRes = await fetch(`${baseUrl}/api/projects/${projectId}/entities/Customer/fields/receipt/upload`, {
+        method: "POST",
+        headers: { authorization: `Bearer ${token}` },
+        body: formData,
+      });
+      assert.equal(uploadRes.status, 200);
+      const upload = (await uploadRes.json()) as { file: { url: string; name: string; mimeType: string } };
+      const storedFilename = upload.file.url.slice(upload.file.url.lastIndexOf("/") + 1);
+      const onDiskPath = path.join(uploadsDir, projectId, "Customer", storedFilename);
+      assert.ok(existsSync(onDiskPath), "the uploaded receipt must be a real file on disk before anything else runs");
+
+      const createRes = await fetch(`${baseUrl}/api/projects/${projectId}/entities/Customer`, {
+        method: "POST",
+        headers: authHeaders(token),
+        body: JSON.stringify({ name: "Dana Levi", receipt: JSON.stringify(upload.file) }),
+      });
+      assert.equal(createRes.status, 201);
+      const { record } = (await createRes.json()) as { record: { id: number } };
+
+      const deleteRes = await fetch(`${baseUrl}/api/projects/${projectId}/entities/Customer/${record.id}`, {
+        method: "DELETE",
+        headers: authHeaders(token),
+      });
+      assert.equal(deleteRes.status, 204);
+
+      // Give the automation every chance to reach (and park inside) the
+      // gated sendMessage call -- it must get there (and read the real
+      // file into `content`) before this delete's own cleanup is even
+      // allowed to start.
+      for (let i = 0; i < 40 && createdSockets[0].sendCalls.length === 0; i++) {
+        await new Promise((resolve) => setTimeout(resolve, 0));
+      }
+      assert.equal(createdSockets[0].sendCalls.length, 1, "the automation must have reached the gated send");
+      const sentContent = createdSockets[0].sendCalls[0]!.content as { document?: Buffer; caption?: string };
+      assert.ok(sentContent.document, "the real file must have already been read into the outgoing WhatsApp content");
+      assert.equal(
+        existsSync(onDiskPath),
+        true,
+        "the uploaded file must still exist on disk while the automation's own send is still in flight -- cleanup must not start before it",
+      );
+
+      resolveSendGate();
+      for (let i = 0; i < 40 && existsSync(onDiskPath); i++) {
+        await new Promise((resolve) => setTimeout(resolve, 0));
+      }
+      assert.equal(existsSync(onDiskPath), false, "once the automation settles, the file cleanup must still actually run");
+    },
+    {
+      whatsapp: (db) => {
+        const { manager, createdSockets: sockets } = createTestWhatsAppManager(db, { sendMessage: () => sendGate });
+        createdSockets = sockets;
+        return manager;
+      },
+    },
+  );
+});
+
+/**
  * Round 971: a record-triggered rule (record_created/field_equals/
  * record_deleted) gets exactly one delivery attempt -- unlike a
  * "schedule" rule, which retries automatically on every subsequent tick

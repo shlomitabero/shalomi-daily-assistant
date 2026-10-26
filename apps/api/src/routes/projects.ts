@@ -3702,14 +3702,8 @@ export function createProjectsRouter(
             }
             throw err;
           }
-          // Fire-and-forget, same reasoning as the PATCH route's own call --
-          // a filesystem delete must never add latency to this response.
-          // Fired inside this callback (never reached on a replayed/cached
-          // retry), the same convention the create-record route's own
-          // automations call already established.
-          if (before) void deleteReplacedFileFields(uploadsDir, project.id, entity, before, null);
           // Round 969: "record_deleted" rules fire here, off the same
-          // `before` snapshot just used for file cleanup above -- it's the
+          // `before` snapshot just used for file cleanup below -- it's the
           // only state a deleted row has left to interpolate a message or
           // resolve a toMode:"field" destination from (fireRule never
           // re-reads the record from the database). Deliberately no
@@ -3723,9 +3717,42 @@ export function createProjectsRouter(
           // "record_deleted" automation per record is the same intentional
           // behavior as every other bulk *user* action already is, not the
           // backfill-of-pre-existing-data case suppression exists for.
-          if (before) {
-            void runAutomationsForRecordChange(db, whatsapp, emailSender, project, entity, "deleted", before, new Set(), uploadsDir, `${req.protocol}://${req.get("host")}`);
-          }
+          //
+          // Round 1015: this used to fire alongside deleteReplacedFileFields
+          // below as two independent, unsequenced fire-and-forget calls off
+          // the identical `before` snapshot -- but a "record_deleted" rule
+          // referencing a file field can genuinely read that file back off
+          // disk (fireEmailAction's own `await readFile`, and the WhatsApp
+          // branch's identical `await readFile` inside whatsappWeb.ts's
+          // sendMessage), and deleteReplacedFileFields's own
+          // deleteUploadedFile does a genuine `await rm` against that exact
+          // same path (newRecord is null here, so EVERY file field on
+          // `before` gets unlinked, not just a changed one the way the
+          // PATCH route's own call further below only ever deletes a file
+          // that differs from -- and so never collides with -- whatever the
+          // post-update record's automations might read). Firing both
+          // unsequenced raced the unlink against the read at the libuv
+          // threadpool level: whichever completed first decided, with no
+          // relation to the data, whether a "record_deleted" email/WhatsApp
+          // automation shipped with its file attached or silently degraded
+          // to plain text (the same already-accepted degradation
+          // findTemplateFileAttachment's own doc comment describes for a
+          // genuinely stale reference, just reached nondeterministically
+          // here instead). Chaining the cleanup after the automations run
+          // via `.finally` -- so a rejected/failed automations run still
+          // lets cleanup proceed -- guarantees every automation's own file
+          // read happens before the unlink, without this route ever
+          // awaiting either call itself: the response below still returns
+          // before any of this settles.
+          const automationsRun = before
+            ? runAutomationsForRecordChange(db, whatsapp, emailSender, project, entity, "deleted", before, new Set(), uploadsDir, `${req.protocol}://${req.get("host")}`)
+            : Promise.resolve();
+          // Fire-and-forget, same reasoning as the PATCH route's own call --
+          // a filesystem delete must never add latency to this response.
+          // Fired inside this callback (never reached on a replayed/cached
+          // retry), the same convention the create-record route's own
+          // automations call already established.
+          if (before) void automationsRun.finally(() => deleteReplacedFileFields(uploadsDir, project.id, entity, before, null));
           return { status: 204, body: null };
         },
       );
