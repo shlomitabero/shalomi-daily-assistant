@@ -247,7 +247,7 @@ export function WhatsAppPanel({
   testAttachmentRef.current = testAttachment;
   const [uploadingAttachment, setUploadingAttachment] = useState(false);
   const [attachmentError, setAttachmentError] = useState<string | null>(null);
-  const [recentNumbers, setRecentNumbers] = useState<string[]>(() => getRecentWhatsAppNumbers(projectId));
+  const [recentNumbers, setRecentNumbers] = useState<string[]>(() => getRecentWhatsAppNumbers(projectId, userId));
   const [sending, setSending] = useState(false);
   const [sendResult, setSendResult] = useState<{ ok: boolean; text: string } | null>(null);
   const [messages, setMessages] = useState<WhatsAppMessageLogEntry[]>([]);
@@ -624,7 +624,7 @@ export function WhatsAppPanel({
     e.preventDefault();
     setSending(true);
     setSendResult(null);
-    setRecentNumbers(addRecentWhatsAppNumber(projectId, testTo));
+    setRecentNumbers(addRecentWhatsAppNumber(projectId, userId, testTo));
     try {
       const result = await sendWhatsAppMessage(projectId, testTo, testMessage, testAttachment ?? undefined);
       setSendResult(
@@ -739,11 +739,11 @@ export function WhatsAppPanel({
   }
 
   function handleRemoveRecentNumber(n: string) {
-    setRecentNumbers(removeRecentWhatsAppNumber(projectId, n));
+    setRecentNumbers(removeRecentWhatsAppNumber(projectId, userId, n));
   }
 
   function handleClearRecentNumbers() {
-    clearRecentWhatsAppNumbers(projectId);
+    clearRecentWhatsAppNumbers(projectId, userId);
     setRecentNumbers([]);
   }
 

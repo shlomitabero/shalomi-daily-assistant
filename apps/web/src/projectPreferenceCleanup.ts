@@ -13,7 +13,7 @@ import { purgeEntityRecentSearchesForProject } from "./entityRecentSearches.js";
 import { purgeRecentHistorySearchesForProject } from "./historyRecentSearches.js";
 import { purgeViewModeForProject } from "./viewModePreference.js";
 import { purgeRecentSearchesForProject } from "./recentSearches.js";
-import { clearRecentWhatsAppNumbers } from "./whatsappRecentNumbers.js";
+import { purgeRecentWhatsAppNumbersForProject } from "./whatsappRecentNumbers.js";
 import { purgeWhatsAppLogRecentSearchesForProject } from "./whatsappLogRecentSearches.js";
 import { clearWhatsAppLogFilter } from "./whatsappLogFilter.js";
 import { clearWhatsAppLastSeenId } from "./whatsappUnread.js";
@@ -64,7 +64,7 @@ export function purgeProjectPreferences(projectId: string): void {
   purgeEntityRecentSearchesForProject(projectId);
   purgeRecentHistorySearchesForProject(projectId);
   purgeRecentSearchesForProject(projectId);
-  clearRecentWhatsAppNumbers(projectId);
+  purgeRecentWhatsAppNumbersForProject(projectId);
   purgeWhatsAppLogRecentSearchesForProject(projectId);
   clearWhatsAppLogFilter(projectId);
   clearWhatsAppLastSeenId(projectId);

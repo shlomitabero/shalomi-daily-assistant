@@ -73,7 +73,12 @@ test("purgeProjectPreferences removes exactly one project's entries from every p
     addEntityRecentSearch("abc", entity, "userA", "dana");
     addRecentHistorySearch("abc", "userA", "pricing overhaul");
     addRecentSearch("abc", "userA", "global query abc");
-    addRecentWhatsAppNumber("abc", "972500000001");
+    addRecentWhatsAppNumber("abc", "userA", "972500000001");
+    // A second collaborator account's own recent-number list for the SAME
+    // project -- round 1011's own fix: any past collaborator could have
+    // tested a WhatsApp number under their own per-user key, so the purge
+    // must remove it for every account, not just the first one seeded.
+    addRecentWhatsAppNumber("abc", "userB", "972500000099");
     addWhatsAppLogRecentSearch("abc", "userA", "log query abc");
     setWhatsAppLogFilter("abc", "failed");
     setWhatsAppLastSeen("abc", { id: "msg-abc", createdAt: "2024-01-01T00:00:00.000Z" });
@@ -98,7 +103,7 @@ test("purgeProjectPreferences removes exactly one project's entries from every p
     addEntityRecentSearch("proj2", entity, "userA", "yossi");
     addRecentHistorySearch("proj2", "userA", "launch checklist");
     addRecentSearch("proj2", "userA", "global query proj2");
-    addRecentWhatsAppNumber("proj2", "972500000002");
+    addRecentWhatsAppNumber("proj2", "userA", "972500000002");
     addWhatsAppLogRecentSearch("proj2", "userA", "log query proj2");
     setWhatsAppLogFilter("proj2", "in");
     setWhatsAppLastSeen("proj2", { id: "msg-proj2", createdAt: "2024-01-01T00:00:00.000Z" });
@@ -120,7 +125,7 @@ test("purgeProjectPreferences removes exactly one project's entries from every p
     addEntityRecentSearch("abc-other", entity, "userA", "other search");
     addRecentHistorySearch("abc-other", "userA", "other checkpoint");
     addRecentSearch("abc-other", "userA", "global query abc-other");
-    addRecentWhatsAppNumber("abc-other", "972500000003");
+    addRecentWhatsAppNumber("abc-other", "userA", "972500000003");
     addWhatsAppLogRecentSearch("abc-other", "userA", "log query abc-other");
     setWhatsAppLogFilter("abc-other", "out");
     setWhatsAppLastSeen("abc-other", { id: "msg-abc-other", createdAt: "2024-01-01T00:00:00.000Z" });
@@ -142,7 +147,8 @@ test("purgeProjectPreferences removes exactly one project's entries from every p
     assert.deepEqual(getEntityRecentSearches("abc", entity, "userA"), [], "entityRecentSearches must be purged");
     assert.deepEqual(getRecentHistorySearches("abc", "userA"), [], "historyRecentSearches must be purged");
     assert.deepEqual(getRecentSearches("abc", "userA"), [], "recentSearches (global search) must be purged");
-    assert.deepEqual(getRecentWhatsAppNumbers("abc"), [], "whatsappRecentNumbers must be purged");
+    assert.deepEqual(getRecentWhatsAppNumbers("abc", "userA"), [], "whatsappRecentNumbers must be purged for userA");
+    assert.deepEqual(getRecentWhatsAppNumbers("abc", "userB"), [], "whatsappRecentNumbers must be purged for userB too -- any past collaborator could have tested a number under their own per-user key");
     assert.deepEqual(getWhatsAppLogRecentSearches("abc", "userA"), [], "whatsappLogRecentSearches must be purged");
     assert.equal(getWhatsAppLogFilter("abc"), "all", "whatsappLogFilter must be purged");
     assert.equal(getWhatsAppLastSeen("abc"), null, "whatsappLastSeenId must be purged");
@@ -163,7 +169,7 @@ test("purgeProjectPreferences removes exactly one project's entries from every p
     assert.deepEqual(getEntityRecentSearches("proj2", entity, "userA"), ["yossi"], "entityRecentSearches must survive");
     assert.deepEqual(getRecentHistorySearches("proj2", "userA"), ["launch checklist"], "historyRecentSearches must survive");
     assert.deepEqual(getRecentSearches("proj2", "userA"), ["global query proj2"], "recentSearches (global search) must survive");
-    assert.deepEqual(getRecentWhatsAppNumbers("proj2"), ["972500000002"], "whatsappRecentNumbers must survive");
+    assert.deepEqual(getRecentWhatsAppNumbers("proj2", "userA"), ["972500000002"], "whatsappRecentNumbers must survive");
     assert.deepEqual(getWhatsAppLogRecentSearches("proj2", "userA"), ["log query proj2"], "whatsappLogRecentSearches must survive");
     assert.equal(getWhatsAppLogFilter("proj2"), "in", "whatsappLogFilter must survive");
     assert.deepEqual(getWhatsAppLastSeen("proj2"), { id: "msg-proj2", createdAt: "2024-01-01T00:00:00.000Z" }, "whatsappLastSeenId must survive");
@@ -186,7 +192,7 @@ test("purgeProjectPreferences removes exactly one project's entries from every p
     assert.deepEqual(getEntityRecentSearches("abc-other", entity, "userA"), ["other search"], "entityRecentSearches must survive for a prefix-sharing project id");
     assert.deepEqual(getRecentHistorySearches("abc-other", "userA"), ["other checkpoint"], "historyRecentSearches must survive for a prefix-sharing project id");
     assert.deepEqual(getRecentSearches("abc-other", "userA"), ["global query abc-other"], "recentSearches (global search) must survive for a prefix-sharing project id");
-    assert.deepEqual(getRecentWhatsAppNumbers("abc-other"), ["972500000003"], "whatsappRecentNumbers must survive for a prefix-sharing project id");
+    assert.deepEqual(getRecentWhatsAppNumbers("abc-other", "userA"), ["972500000003"], "whatsappRecentNumbers must survive for a prefix-sharing project id");
     assert.deepEqual(getWhatsAppLogRecentSearches("abc-other", "userA"), ["log query abc-other"], "whatsappLogRecentSearches must survive for a prefix-sharing project id");
     assert.equal(getWhatsAppLogFilter("abc-other"), "out", "whatsappLogFilter must survive for a prefix-sharing project id");
     assert.deepEqual(
