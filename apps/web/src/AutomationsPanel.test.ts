@@ -2002,6 +2002,127 @@ test("AutomationsPanel's Edit button seeds the create-form from the chosen rule 
 });
 
 /**
+ * Round 1047: automation rules were the one remaining per-row entity in
+ * this app with Edit/Delete but no Duplicate -- record Duplicate
+ * (EntityPanel.tsx) and project Duplicate (My Projects home screen,
+ * rounds 1041/1043) already serve the identical need elsewhere. Confirms
+ * the new Duplicate button seeds the create-form exactly like Edit does,
+ * but -- unlike Edit -- leaves the form in CREATE mode (no "Edit rule"
+ * heading, no Cancel button, Create-labelled submit), so submitting
+ * fires a POST that creates a brand-new rule rather than a PATCH that
+ * overwrites the source rule, and the original rule survives untouched
+ * alongside the new one.
+ */
+test("AutomationsPanel's Duplicate button seeds the create-form from an existing rule but leaves it in create mode, so Submit creates a second rule instead of overwriting the first", async () => {
+  await withJsdom(async () => {
+    const originalFetch = globalThis.fetch;
+    let createBody: Record<string, unknown> | undefined;
+    let patchCalled = false;
+    globalThis.fetch = (async (input: string, init?: RequestInit) => {
+      const method = init?.method ?? "GET";
+      if (method === "GET" && input === "/api/projects/proj1/automations") {
+        return new Response(JSON.stringify({ rules: [makeRule()] }), { status: 200, headers: { "content-type": "application/json" } });
+      }
+      if (method === "PATCH") {
+        patchCalled = true;
+        throw new Error("Duplicate must never PATCH the source rule");
+      }
+      if (method === "POST" && input === "/api/projects/proj1/entities/Order/automations") {
+        createBody = JSON.parse(init!.body as string);
+        return new Response(JSON.stringify({ rule: makeRule({ id: "rule2", ...createBody }) }), {
+          status: 201,
+          headers: { "content-type": "application/json" },
+        });
+      }
+      throw new Error(`unexpected request ${method} ${input}`);
+    }) as typeof fetch;
+
+    try {
+      renderPanel();
+      await waitForCondition(() => document.querySelectorAll(".automations-rule-row").length === 1);
+
+      const duplicateButton = Array.from(document.querySelectorAll(".automations-rule-actions button")).find(
+        (b) => b.textContent === "Duplicate",
+      ) as HTMLButtonElement;
+      assert.ok(duplicateButton, "expected a Duplicate button on the rule row");
+      fireEvent.click(duplicateButton);
+
+      // Seeded from the source rule, just like Edit would -- but the form
+      // itself must stay in create mode.
+      const messageField = document.querySelector(".automations-create-form textarea") as HTMLTextAreaElement;
+      assert.equal(messageField.value, "Hi {{customerName}}, delivered!", "the message template must be seeded from the rule");
+
+      assert.match(document.querySelector(".automations-new-heading")!.textContent ?? "", /New rule/, "Duplicate must never switch the form into edit mode");
+
+      const entitySelect = document.querySelector(".automations-create-form select") as HTMLSelectElement;
+      assert.equal(entitySelect.value, "Order", "the entity must still be seeded from the rule");
+      assert.equal(entitySelect.disabled, false, "the entity select must stay editable -- unlike Edit, this is a fresh create, not a PATCH that can never change it");
+
+      const submitButton = document.querySelector('.automations-create-form button[type="submit"]') as HTMLButtonElement;
+      assert.equal(submitButton.textContent, "Create rule", "the submit button must still read as a create action, not 'Save changes'");
+
+      assert.equal(
+        Array.from(document.querySelectorAll(".automations-create-form button")).some((b) => b.textContent === "Cancel"),
+        false,
+        "no Cancel button should appear -- there is no in-progress edit to cancel",
+      );
+
+      fireEvent.submit(document.querySelector(".automations-create-form")!);
+      await waitForCondition(() => document.querySelectorAll(".automations-rule-row").length === 2);
+
+      assert.equal(patchCalled, false, "submitting after Duplicate must never PATCH the source rule");
+      assert.equal(createBody?.entityName ?? "Order", "Order");
+      assert.equal(createBody?.actionType, "send_whatsapp");
+      assert.equal(createBody?.toField, "customerPhone");
+      assert.equal(createBody?.messageTemplate, "Hi {{customerName}}, delivered!", "the duplicate must carry over the source rule's own message template");
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+});
+
+/**
+ * Sibling of the test above: Duplicate must never leak across rows --
+ * clicking it on rule1 while rule2's own in-progress EDIT is still open
+ * must discard that edit (return to create mode) rather than silently
+ * merging rule1's own values into rule2's half-finished PATCH. Covers
+ * the one call-site difference from handleStartEdit (an explicit
+ * setEditingRuleId(null)) that a naive refactor could easily drop.
+ */
+test("AutomationsPanel's Duplicate button discards another rule's in-progress edit instead of merging into it", async () => {
+  await withJsdom(async () => {
+    const originalFetch = globalThis.fetch;
+    const rule1 = makeRule({ id: "rule1", messageTemplate: "Hi {{customerName}}, rule1!" });
+    const rule2 = makeRule({ id: "rule2", messageTemplate: "Hi {{customerName}}, rule2!" });
+    globalThis.fetch = (async (input: string) => {
+      if (input === "/api/projects/proj1/automations") {
+        return new Response(JSON.stringify({ rules: [rule1, rule2] }), { status: 200, headers: { "content-type": "application/json" } });
+      }
+      throw new Error(`unexpected request ${input}`);
+    }) as typeof fetch;
+
+    try {
+      renderPanel();
+      await waitForCondition(() => document.querySelectorAll(".automations-rule-row").length === 2);
+
+      const rows = Array.from(document.querySelectorAll(".automations-rule-row"));
+      const editRule2 = Array.from(rows[1].querySelectorAll("button")).find((b) => b.textContent === "Edit") as HTMLButtonElement;
+      fireEvent.click(editRule2);
+      assert.match(document.querySelector(".automations-new-heading")!.textContent ?? "", /Edit rule/, "expected to actually be editing rule2 before duplicating rule1");
+
+      const duplicateRule1 = Array.from(rows[0].querySelectorAll("button")).find((b) => b.textContent === "Duplicate") as HTMLButtonElement;
+      fireEvent.click(duplicateRule1);
+
+      assert.match(document.querySelector(".automations-new-heading")!.textContent ?? "", /New rule/, "duplicating rule1 must discard rule2's in-progress edit, not merge into its PATCH");
+      const messageField = document.querySelector(".automations-create-form textarea") as HTMLTextAreaElement;
+      assert.equal(messageField.value, "Hi {{customerName}}, rule1!", "the form must be seeded from rule1 (the one just duplicated), not a mix with rule2's edit");
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+});
+
+/**
  * Round 967: editing an existing "schedule" rule must show (and, if saved
  * unchanged, keep) that rule's own stored scheduleTimezone -- never
  * silently re-default it to whatever zone the editing browser happens to

@@ -400,9 +400,12 @@ export function AutomationsPanel({
   // entity was selected before this call) -- the same fallback-to-first
   // field behavior as that effect, rather than a blank fallback, so a
   // stale value never gets to render as if it were still a valid pick.
-  function handleStartEdit(rule: AutomationRuleView) {
-    setError(null);
-    setEditingRuleId(rule.id);
+  // Seeds every create-form field from an existing rule, shared by
+  // handleStartEdit (which also locks the form into edit mode) and
+  // handleDuplicateRule (round 1047 -- which deliberately leaves the form
+  // in create mode instead, so Submit POSTs a brand-new rule rather than
+  // PATCHing the source one).
+  function applyRuleToForm(rule: AutomationRuleView) {
     setEntityName(rule.entityName);
     setTrigger(rule.trigger);
     const ruleEntityFields = entities.find((e) => e.name === rule.entityName)?.fields ?? [];
@@ -430,6 +433,30 @@ export function AutomationsPanel({
     setToEmail(rule.toEmail ?? "");
     setEmailSubject(rule.emailSubject ?? "");
     setMessageTemplate(rule.messageTemplate);
+  }
+
+  function handleStartEdit(rule: AutomationRuleView) {
+    setError(null);
+    setEditingRuleId(rule.id);
+    applyRuleToForm(rule);
+  }
+
+  /**
+   * Round 1047: automation rules were the one remaining per-row entity in
+   * this app with Edit/Delete but no Duplicate -- record Duplicate (the
+   * "d" shortcut, EntityPanel.tsx) and project Duplicate (My Projects home
+   * screen, rounds 1041/1043) already serve the identical "iterate on a
+   * similar thing without retyping everything from scratch" need
+   * elsewhere. Reuses applyRuleToForm's own seeding, but deliberately
+   * skips setEditingRuleId(rule.id) -- and explicitly clears it, in case
+   * a different rule's own in-progress edit was still open -- so the form
+   * stays in create mode and Submit POSTs a brand-new rule instead of
+   * PATCHing the source one.
+   */
+  function handleDuplicateRule(rule: AutomationRuleView) {
+    setError(null);
+    setEditingRuleId(null);
+    applyRuleToForm(rule);
   }
 
   /**
@@ -978,6 +1005,9 @@ export function AutomationsPanel({
                           disabled={busyRuleId !== null || createBusy || testingRuleId !== null}
                         >
                           {testingRuleId === rule.id ? t("automations.test.sending") : t("automations.test")}
+                        </button>
+                        <button type="button" className="secondary small" onClick={() => handleDuplicateRule(rule)} disabled={busyRuleId !== null || createBusy}>
+                          {t("automations.duplicate")}
                         </button>
                       </>
                     )}
