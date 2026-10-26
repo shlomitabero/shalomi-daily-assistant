@@ -606,7 +606,12 @@ function AppContent() {
   const [seenShared, setSeenShared] = useState<Map<string, string>>(new Map());
   const [projectSortMode, setProjectSortModeState] = useState<ProjectSortMode>(() => getProjectSortMode());
   const [projectSearch, setProjectSearch] = useState("");
-  const [recentProjectSearches, setRecentProjectSearches] = useState<string[]>(() => getRecentProjectSearches());
+  // Round 1045: this used to lazy-init via getRecentProjectSearches() with
+  // no user id at all (the exact gap this round's own fix to
+  // recentProjectSearches.ts closes) -- loaded in the [user?.id] effect
+  // below instead, the same "wait for the real signed-in user" fix as
+  // pinnedIds/seenShared/description (round 1018/1044) just above it.
+  const [recentProjectSearches, setRecentProjectSearches] = useState<string[]>([]);
   const [projectStatusFilter, setProjectStatusFilterState] = useState<ProjectStatusFilter>(() => getProjectStatusFilter());
   const [cloningId, setCloningId] = useState<string | null>(null);
   const [deletingId, setDeletingId] = useState<string | null>(null);
@@ -739,18 +744,20 @@ function AppContent() {
     persistProjectStatusFilter(filter);
   }
   function handleProjectSearchKeyDown(e: React.KeyboardEvent<HTMLInputElement>) {
-    if (e.key === "Enter" && projectSearch.trim()) {
-      setRecentProjectSearches(addRecentProjectSearch(projectSearch));
+    if (e.key === "Enter" && projectSearch.trim() && user) {
+      setRecentProjectSearches(addRecentProjectSearch(user.id, projectSearch));
     }
   }
   function handleRecentProjectSearchClick(query: string) {
     setProjectSearch(query);
   }
   function handleRemoveRecentProjectSearch(query: string) {
-    setRecentProjectSearches(removeRecentProjectSearch(query));
+    if (!user) return;
+    setRecentProjectSearches(removeRecentProjectSearch(user.id, query));
   }
   function handleClearRecentProjectSearches() {
-    clearRecentProjectSearches();
+    if (!user) return;
+    clearRecentProjectSearches(user.id);
     setRecentProjectSearches([]);
   }
   const visibleRefineHistory = useMemo(
@@ -1030,6 +1037,10 @@ function AppContent() {
     // seenShared just above, for the exact same reason (ideaDraft.ts is
     // now keyed per user too).
     setDescription(getIdeaDraft(user.id));
+    // Round 1045: same fix, same reason, for recentProjectSearches.ts's own
+    // identical sibling gap (round 993's own comment on this screen's
+    // clear-on-logout already names it "ideaDraft's own direct sibling").
+    setRecentProjectSearches(getRecentProjectSearches(user.id));
   }, [user?.id]);
 
   /**
@@ -1084,7 +1095,7 @@ function AppContent() {
       // signs a user out reactively (an expired/revoked session), so it
       // needs the same reset handleLogout/handleAccountDeleted apply on
       // their own button-driven paths.
-      clearRecentProjectSearches();
+      if (userIdRef.current) clearRecentProjectSearches(userIdRef.current);
       setRecentProjectSearches([]);
       closeAllPanels();
     });
@@ -1770,15 +1781,11 @@ function AppContent() {
     setRefineHistory([]);
     setRefineHistorySearch("");
     // Round 993: recentProjectSearches is ideaDraft's own direct sibling --
-    // a single flat, global, unscoped localStorage key holding freeform
-    // user-typed text on this same home screen -- but was never added here
-    // when ideaDraft's own clear was. Without this, a different user
-    // logging into the same shared-machine tab (the exact scenario this
-    // function's own comment above already describes) sees the PREVIOUS
-    // account's typed search terms in the Recent Searches dropdown, and
-    // (unlike the in-memory-only state above) that leak survives even a
-    // full page reload since it's backed by localStorage.
-    clearRecentProjectSearches();
+    // was never added here when ideaDraft's own clear was. Round 1045:
+    // ideaDraft's own fix (round 1044) applies identically here -- this
+    // store's own clear-on-logout was never enough on its own (it does
+    // nothing for a closed tab), so it's keyed per user now too.
+    clearRecentProjectSearches(userId);
     setRecentProjectSearches([]);
   }
 
@@ -1830,7 +1837,7 @@ function AppContent() {
     setRefineHistorySearch("");
     // Round 993: see handleLogout's own identical reset, just above, for
     // why this must be cleared here too.
-    clearRecentProjectSearches();
+    clearRecentProjectSearches(userId);
     setRecentProjectSearches([]);
   }
 

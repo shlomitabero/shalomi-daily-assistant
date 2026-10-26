@@ -1,4 +1,4 @@
-const STORAGE_KEY = "forge.recentProjectSearches";
+const STORAGE_KEY_PREFIX = "forge.recentProjectSearches.";
 const MAX_RECENT_SEARCHES = 5;
 
 /**
@@ -9,13 +9,31 @@ const MAX_RECENT_SEARCHES = 5;
  * person re-searching a recurring term (a client name, a recurring project
  * prefix) had to retype it from scratch every time they came back to the
  * home screen. Unlike those three siblings, this one is NOT keyed per
- * project -- it IS the project list itself, the same single flat scope
- * projectSortMode.ts/projectStatusFilter.ts already use for their own
+ * project -- it IS the project list itself, the same single flat-per-user
+ * scope projectSortMode.ts/projectStatusFilter.ts already use for their own
  * home-screen preferences, since there's no enclosing project to scope by.
+ *
+ * Round 1045: this store used ONE SINGLE FLAT KEY SHARED BY EVERY ACCOUNT on
+ * the same browser, the exact same gap round 1044 just fixed in ideaDraft.ts
+ * (this file's own explicitly-named "direct sibling" in App.tsx's own round-
+ * 993 comment). App.tsx clears it at logout/account-deletion/session-expiry,
+ * but that only protects a continuously-running tab where one user
+ * explicitly transitions out before another logs in -- closing the tab
+ * without logging out (an ordinary, arguably more common way to leave a
+ * shared/public computer) runs none of that cleanup, so the next account to
+ * open a fresh tab on that machine inherited the previous account's own
+ * typed search terms in their own Recent Searches dropdown. Keyed per user
+ * now, the same round-1003/994/995/1044 fix already applied to
+ * pinnedProjects.ts/sharedProjectSeen.ts/ideaDraft.ts/the four
+ * *RecentSearches.ts stores.
  */
-export function getRecentProjectSearches(): string[] {
+function storageKey(userId: string): string {
+  return `${STORAGE_KEY_PREFIX}${userId}`;
+}
+
+export function getRecentProjectSearches(userId: string): string[] {
   try {
-    const raw = localStorage.getItem(STORAGE_KEY);
+    const raw = localStorage.getItem(storageKey(userId));
     if (!raw) return [];
     const parsed = JSON.parse(raw);
     return Array.isArray(parsed) ? parsed.filter((v): v is string => typeof v === "string") : [];
@@ -30,33 +48,33 @@ export function getRecentProjectSearches(): string[] {
  * duplicate entry -- and caps the list at MAX_RECENT_SEARCHES, mirroring
  * addRecentSearch's own convention exactly.
  */
-export function addRecentProjectSearch(query: string): string[] {
+export function addRecentProjectSearch(userId: string, query: string): string[] {
   const trimmed = query.trim();
-  if (!trimmed) return getRecentProjectSearches();
-  const existing = getRecentProjectSearches();
+  if (!trimmed) return getRecentProjectSearches(userId);
+  const existing = getRecentProjectSearches(userId);
   const deduped = existing.filter((q) => q.toLowerCase() !== trimmed.toLowerCase());
   const next = [trimmed, ...deduped].slice(0, MAX_RECENT_SEARCHES);
   try {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(next));
+    localStorage.setItem(storageKey(userId), JSON.stringify(next));
   } catch {
     // localStorage can be unavailable (private mode) -- the history just won't survive a reload.
   }
   return next;
 }
 
-export function removeRecentProjectSearch(query: string): string[] {
-  const next = getRecentProjectSearches().filter((q) => q.toLowerCase() !== query.toLowerCase());
+export function removeRecentProjectSearch(userId: string, query: string): string[] {
+  const next = getRecentProjectSearches(userId).filter((q) => q.toLowerCase() !== query.toLowerCase());
   try {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(next));
+    localStorage.setItem(storageKey(userId), JSON.stringify(next));
   } catch {
     // localStorage can be unavailable (private mode) -- nothing to persist.
   }
   return next;
 }
 
-export function clearRecentProjectSearches(): void {
+export function clearRecentProjectSearches(userId: string): void {
   try {
-    localStorage.removeItem(STORAGE_KEY);
+    localStorage.removeItem(storageKey(userId));
   } catch {
     // localStorage can be unavailable (private mode) -- nothing to clear.
   }

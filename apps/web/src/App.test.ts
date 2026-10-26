@@ -3469,18 +3469,21 @@ test("App's handleProjectSearchKeyDown adds the current search to recent-searche
     const added: string[] = [];
     const fn = new Function(
       "projectSearch",
+      "user",
       "setRecentProjectSearches",
       "addRecentProjectSearch",
       `${code}\nreturn handleProjectSearchKeyDown;`,
     ) as (
       projectSearch: string,
+      user: { id: string },
       setRecentProjectSearches: (v: string[]) => void,
-      addRecentProjectSearch: (q: string) => string[],
+      addRecentProjectSearch: (userId: string, q: string) => string[],
     ) => (e: { key: string }) => void;
     const handler = fn(
       projectSearch,
+      { id: "user1" },
       () => {},
-      (q: string) => {
+      (_userId: string, q: string) => {
         added.push(q);
         return [q];
       },
@@ -3915,6 +3918,7 @@ test("App's pinnedIds/seenShared-loading effect re-populates every time the sign
   let pinnedIdsSet: unknown = "untouched";
   let seenSharedSet: unknown = "untouched";
   let descriptionSet: unknown = "untouched";
+  let recentProjectSearchesSet: unknown = "untouched";
   const fn = new Function(
     "useEffect",
     "user",
@@ -3924,6 +3928,8 @@ test("App's pinnedIds/seenShared-loading effect re-populates every time the sign
     "setSeenShared",
     "getIdeaDraft",
     "setDescription",
+    "getRecentProjectSearches",
+    "setRecentProjectSearches",
     `${code}`,
   ) as (
     useEffect: (effect: () => void, deps: unknown[]) => void,
@@ -3934,6 +3940,8 @@ test("App's pinnedIds/seenShared-loading effect re-populates every time the sign
     setSeenShared: (v: unknown) => void,
     getIdeaDraft: (userId: string) => unknown,
     setDescription: (v: unknown) => void,
+    getRecentProjectSearches: (userId: string) => unknown,
+    setRecentProjectSearches: (v: unknown) => void,
   ) => void;
 
   // user === null (nobody signed in yet) -- must be a genuine no-op, not
@@ -3956,11 +3964,16 @@ test("App's pinnedIds/seenShared-loading effect re-populates every time the sign
       throw new Error("getIdeaDraft must never be called while user is null");
     },
     (v) => (descriptionSet = v),
+    () => {
+      throw new Error("getRecentProjectSearches must never be called while user is null");
+    },
+    (v) => (recentProjectSearchesSet = v),
   );
   assert.deepEqual(capturedDeps, [undefined], "must be keyed on user?.id, not a mount-only [] -- this is what makes it re-run on every real login, not just the first one");
   assert.equal(pinnedIdsSet, "untouched");
   assert.equal(seenSharedSet, "untouched");
   assert.equal(descriptionSet, "untouched");
+  assert.equal(recentProjectSearchesSet, "untouched");
 
   // A real signed-in user -- must load both pieces of per-user content.
   fn(
@@ -3972,6 +3985,8 @@ test("App's pinnedIds/seenShared-loading effect re-populates every time the sign
     (v) => (seenSharedSet = v),
     (userId) => `draft-for-${userId}`,
     (v) => (descriptionSet = v),
+    (userId) => `searches-for-${userId}`,
+    (v) => (recentProjectSearchesSet = v),
   );
   assert.equal(pinnedIdsSet, "pinned-for-user-42", "must call getPinnedIds with the real signed-in user's own id and store its result");
   assert.equal(seenSharedSet, "seen-for-user-42", "must call getSeenSharedTimestamps with the real signed-in user's own id and store its result");
@@ -3979,6 +3994,11 @@ test("App's pinnedIds/seenShared-loading effect re-populates every time the sign
     descriptionSet,
     "draft-for-user-42",
     "must call getIdeaDraft with the real signed-in user's own id too (round 1044 -- ideaDraft.ts is now keyed per user, so description must be loaded the same way pinnedIds/seenShared already are)",
+  );
+  assert.equal(
+    recentProjectSearchesSet,
+    "searches-for-user-42",
+    "must call getRecentProjectSearches with the real signed-in user's own id too (round 1045 -- recentProjectSearches.ts is now keyed per user, so it must be loaded the same way pinnedIds/seenShared/description already are)",
   );
 });
 
