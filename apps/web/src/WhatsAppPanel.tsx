@@ -16,7 +16,7 @@ import {
   type WhatsAppMessageLogEntry,
   type WhatsAppStatusView,
 } from "./api.js";
-import { findSinglePhoneFieldTarget, splitHighlightSegments } from "./entityFormatting.js";
+import { findSinglePhoneFieldTarget, splitHighlightSegments, splitLinkSegments } from "./entityFormatting.js";
 import {
   downloadWhatsAppLog,
   filterWhatsAppMessages,
@@ -59,6 +59,37 @@ function Highlighted({ text, query }: { text: string; query: string }) {
           </mark>
         ) : (
           <span key={i}>{seg.text}</span>
+        ),
+      )}
+    </>
+  );
+}
+
+/**
+ * Round 1049: mirrors EntityPanel.tsx's own Linkified (round 274's
+ * splitLinkSegments) -- a WhatsApp message's own body is, if anything, a
+ * MORE link-heavy piece of text than a Customer/Vendor "Notes" field
+ * (splitLinkSegments' own doc comment literally names "a WhatsApp-sourced
+ * message" as a motivating case for linkifying free text), but this log
+ * never adopted it: a real customer message containing a product link, a
+ * Google Maps pin, a payment URL, or an email address rendered as
+ * completely inert text the business owner had to manually select and
+ * retype elsewhere, while the identical string typed into a plain
+ * text/longtext field already renders as a real clickable link everywhere
+ * that field is shown (table, print sheet). Composes with this file's own
+ * Highlighted exactly the way EntityPanel.tsx's Linkified already does,
+ * so search-match highlighting and linkification keep working together.
+ */
+function LinkifiedBody({ text, query }: { text: string; query: string }) {
+  return (
+    <>
+      {splitLinkSegments(text).map((seg, i) =>
+        seg.href ? (
+          <a key={i} href={seg.href} target="_blank" rel="noopener noreferrer" className="cell-link">
+            {seg.text}
+          </a>
+        ) : (
+          <Highlighted key={i} text={seg.text} query={query} />
         ),
       )}
     </>
@@ -1264,7 +1295,7 @@ export function WhatsAppPanel({
                     </span>
                   )}
                   <span className="whatsapp-log-body">
-                    <Highlighted text={m.body} query={search} />
+                    <LinkifiedBody text={m.body} query={search} />
                   </span>
                   <span className="whatsapp-log-time muted small">{new Date(m.createdAt).toLocaleString(LOCALE[lang])}</span>
                   {m.status === "failed" && (

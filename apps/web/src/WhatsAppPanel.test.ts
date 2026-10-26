@@ -3308,6 +3308,95 @@ test("WhatsAppPanel's search box highlights the matched text within both a messa
 });
 
 /**
+ * Round 1049: a WhatsApp message's own body is, if anything, a MORE
+ * link-heavy piece of text than a Customer/Vendor "Notes" field --
+ * splitLinkSegments' own doc comment (entityFormatting.ts) literally
+ * names "a WhatsApp-sourced message" as a motivating case -- but this log
+ * never adopted it: a real customer message containing a product URL or
+ * an email address rendered as completely inert text, while the
+ * identical string typed into a plain text/longtext field already
+ * renders as a real clickable link everywhere that field is shown
+ * (EntityPanel.tsx's table/print sheet). Confirms the message body now
+ * renders a real `<a href>`/`mailto:` link, and that it still composes
+ * with search highlighting on the plain (non-link) part of the same
+ * message, the same way EntityPanel.tsx's own Linkified already does.
+ */
+test("WhatsAppPanel renders a URL or email embedded in a message's own body as a real clickable link, not inert text", async () => {
+  await withJsdom(async () => {
+    const originalFetch = globalThis.fetch;
+    const makeMessage = (id: string, body: string): WhatsAppMessageLogEntry => ({
+      id,
+      direction: "in",
+      fromNumber: "972521112233",
+      toNumber: "972501234567",
+      body,
+      matchedLabel: null,
+      matchedEntityName: null,
+      matchedRecordId: null,
+      status: "received",
+      createdAt: new Date().toISOString(),
+    });
+    const messages = [
+      makeMessage("m1", "ראיתם את זה? https://example.com/product/123 אשמח לקבל הצעת מחיר"),
+      makeMessage("m2", "אפשר לשלוח גם למייל: dana@example.com"),
+      makeMessage("m3", "תודה רבה"),
+      makeMessage("m4", "האם יש משלוחים?"),
+      makeMessage("m5", "מה המחיר?"),
+      makeMessage("m6", "בסדר, מגיע עוד מעט"),
+    ];
+    globalThis.fetch = (async (input: string, init?: RequestInit): Promise<Response> => {
+      const method = init?.method ?? "GET";
+      if (method === "GET" && input === "/api/projects/proj1/integrations/whatsapp/status") {
+        return new Response(
+          JSON.stringify({ status: "connected", phoneNumber: "972501234567", qrDataUrl: null, error: null }),
+          { status: 200, headers: { "content-type": "application/json" } },
+        );
+      }
+      if (method === "GET" && input === "/api/projects/proj1/integrations/whatsapp/messages") {
+        return new Response(JSON.stringify({ messages }), { status: 200, headers: { "content-type": "application/json" } });
+      }
+      throw new Error(`unexpected request ${method} ${input}`);
+    }) as typeof fetch;
+
+    try {
+      render(
+        React.createElement(
+          ThemeProvider,
+          null,
+          React.createElement(LanguageProvider, null, React.createElement(WhatsAppPanel, { projectId: "proj1", userId: "user1", projectName: "Flower Shop", onClose: () => {}, onJumpToEntity: () => {}, onJumpToRecord: () => {}, entities: [], onCreateRecordFromMessage: () => {} })),
+        ),
+      );
+      await waitForCondition(() => document.querySelectorAll(".whatsapp-log-list li").length === 6);
+
+      const bodies = Array.from(document.querySelectorAll(".whatsapp-log-body"));
+      const urlLink = bodies[0].querySelector("a.cell-link") as HTMLAnchorElement;
+      assert.ok(urlLink, "expected a real <a> link for the URL embedded in the message body");
+      assert.equal(urlLink.getAttribute("href"), "https://example.com/product/123");
+      assert.equal(urlLink.target, "_blank");
+      assert.equal(urlLink.textContent, "https://example.com/product/123");
+      assert.match(bodies[0].textContent ?? "", /^ראיתם את זה\? https:\/\/example\.com\/product\/123 אשמח לקבל הצעת מחיר$/, "the rest of the body's own text must still render around the link");
+
+      const emailLink = bodies[1].querySelector("a.cell-link") as HTMLAnchorElement;
+      assert.ok(emailLink, "expected a real <a> link for the email address embedded in the message body");
+      assert.equal(emailLink.getAttribute("href"), "mailto:dana@example.com");
+
+      // Linkification must compose with search highlighting on the plain
+      // (non-link) part of the same message, not silently disable it.
+      const searchBox = document.querySelector(".whatsapp-log-search") as HTMLInputElement;
+      fireEvent.change(searchBox, { target: { value: "הצעת מחיר" } });
+      await waitForCondition(() => document.querySelectorAll(".whatsapp-log-list li").length === 1);
+      const stillHasLink = document.querySelector(".whatsapp-log-body a.cell-link");
+      assert.ok(stillHasLink, "the link must still render once a search narrows the list to this message");
+      const mark = document.querySelector(".whatsapp-log-body mark.search-match");
+      assert.ok(mark, "the matched plain-text substring must still be highlighted alongside the link");
+      assert.equal(mark!.textContent, "הצעת מחיר");
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+});
+
+/**
  * New in this round: the message log had a text search but no way to
  * isolate "just what I sent" / "just what came in" / "just what failed
  * to send" -- exactly the gap a long, never-capped, never-deleted
