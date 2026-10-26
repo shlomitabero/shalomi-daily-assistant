@@ -201,6 +201,126 @@ test("generated server.js works end-to-end for an entity named after a reserved 
 });
 
 /**
+ * Round 1010: round 1006's own closing paragraph explicitly deferred
+ * porting the live Forge AI preview's calendar subscription feed
+ * (EntityPanel.tsx's "Subscribe" button, routes/calendar.ts,
+ * calendarFeed.ts) to this exported standalone app -- confirmed still
+ * missing as of round 1009 (`grep -n "feed\|Feed\|Subscribe"` across this
+ * file and its own tests returned nothing calendar-related). Unlike the
+ * live preview's own feed, this export needs no token: the whole exported
+ * app has no authentication of any kind (every other /api/* route here is
+ * already public), so the route only needs the entity name. Spawns a
+ * real server.js (same pattern as the reserved-SQL-keyword test above),
+ * creates a real record with a real date, and confirms the feed actually
+ * serves a valid ICS calendar for it -- not just that the generated
+ * source text looks right.
+ */
+test("generated server.js serves a real, working calendar subscription feed for an entity with a date field", async () => {
+  const dealEntity: Entity = {
+    name: "Deal",
+    label: "Deals",
+    fields: [
+      { name: "title", label: "Title", type: "text", required: true },
+      { name: "eventDate", label: "Event Date", type: "date", required: true },
+    ],
+  };
+  const noDateEntity: Entity = {
+    name: "Note",
+    label: "Notes",
+    fields: [{ name: "text", label: "Text", type: "text", required: true }],
+  };
+  const feedProject: Project = { ...project, spec: { ...project.spec, entities: [dealEntity, noDateEntity] } };
+  const files = generateExportFiles(feedProject);
+  const serverJs = files.find((f) => f.path === "server.js")!.content;
+
+  const dir = mkdtempSync(path.join(tmpdir(), "codegen-feed-test-"));
+  const repoRoot = path.resolve(import.meta.dirname, "../../..");
+  symlinkSync(path.join(repoRoot, "node_modules"), path.join(dir, "node_modules"));
+  writeFileSync(path.join(dir, "server.js"), serverJs);
+
+  const port = 34000 + Math.floor(Math.random() * 5000);
+  const child = spawn(process.execPath, ["--experimental-sqlite", "server.js"], {
+    cwd: dir,
+    env: { ...process.env, PORT: String(port) },
+    stdio: ["ignore", "pipe", "pipe"],
+  });
+  let stderr = "";
+  child.stderr.on("data", (chunk) => {
+    stderr += chunk.toString();
+  });
+
+  try {
+    const deadline = Date.now() + 5000;
+    let lastErr: unknown;
+    while (Date.now() < deadline) {
+      if (child.exitCode !== null) {
+        throw new Error(`server.js exited early (code ${child.exitCode}):\n${stderr}`);
+      }
+      try {
+        const createRes = await fetch(`http://localhost:${port}/api/Deal`, {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ title: "Trip to Eilat", eventDate: "2026-11-05" }),
+        });
+        assert.equal(createRes.status, 201);
+
+        const feedRes = await fetch(`http://localhost:${port}/api/calendar/Deal.ics`);
+        assert.equal(feedRes.status, 200, "a real date-bearing record must get a real feed, not a 404");
+        assert.equal(feedRes.headers.get("content-type"), "text/calendar; charset=utf-8");
+        const ics = await feedRes.text();
+        assert.match(ics, /BEGIN:VCALENDAR/);
+        assert.match(ics, /BEGIN:VEVENT/);
+        assert.match(ics, /DTSTART;VALUE=DATE:20261105/);
+        assert.match(ics, /SUMMARY:Trip to Eilat/);
+        assert.match(ics, /END:VCALENDAR/);
+
+        const noDateFeedRes = await fetch(`http://localhost:${port}/api/calendar/Note.ics`);
+        assert.equal(noDateFeedRes.status, 404, "an entity with no date field at all must 404, not serve an always-empty feed");
+
+        const missingEntityFeedRes = await fetch(`http://localhost:${port}/api/calendar/NoSuchEntity.ics`);
+        assert.equal(missingEntityFeedRes.status, 404, "a nonexistent entity name must 404 too");
+        return;
+      } catch (err) {
+        lastErr = err;
+        await new Promise((r) => setTimeout(r, 100));
+      }
+    }
+    throw lastErr instanceof Error ? lastErr : new Error(String(lastErr));
+  } finally {
+    child.kill();
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+/**
+ * Round 1010: the client-side half of the same gap -- confirms the
+ * generated EntityView.jsx actually wires up the "Subscribe" button
+ * (next to the existing one-shot Export ICS button) to copy the real
+ * feed URL, with no token-fetch step (unlike the live preview's own
+ * handleSubscribeCalendar), matching this export's own no-auth design.
+ */
+test("the exported EntityView wires up a calendar 'Subscribe' button next to the existing one-shot Export ICS button", () => {
+  const files = generateExportFiles(project);
+  const entityViewJsx = files.find((f) => f.path === "web/src/components/EntityView.jsx")!.content;
+
+  assert.match(
+    entityViewJsx,
+    /async function handleSubscribeCalendar\(\)[\s\S]{0,300}navigator\.clipboard\.writeText\(url\)/,
+    "expected handleSubscribeCalendar to copy a URL to the clipboard",
+  );
+  assert.match(
+    entityViewJsx,
+    /\/api\/calendar\/\$\{encodeURIComponent\(entity\.name\)\}\.ics/,
+    "expected the copied URL to point at the new public feed route, with no token in it",
+  );
+  assert.match(
+    entityViewJsx,
+    /className="ics-subscribe-btn" onClick=\{handleSubscribeCalendar\}/,
+    "expected a real Subscribe button wired to the real handler",
+  );
+});
+
+/**
  * Round 802: the generated server.js's own README ("Extending it") tells
  * the user to add a field to ENTITIES and restart, promising "existing
  * columns are kept, and SQLite migrates new ones automatically (ALTER

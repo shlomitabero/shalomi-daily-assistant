@@ -909,6 +909,171 @@ app.get("/api/backup", (req, res) => {
   res.send(zip);
 });
 
+// Round 1010: backs this exported app's own live calendar subscription
+// feed (/api/calendar/:entityName.ics) -- a "Subscribe" URL a user pastes
+// once into Google/Apple Calendar or their phone, re-fetched by that
+// calendar app on its own schedule forever, unlike the "Export ICS"
+// button in EntityView.jsx above, which only ever snapshots whichever
+// calendar month happens to be open when clicked. Mirrors the live Forge
+// AI preview's own calendarFeed.ts -- deliberately the same minimal
+// VEVENT shape (SUMMARY/DTSTART/DTEND only, no full per-field DESCRIPTION
+// dump the one-shot client-side buildCalendarIcs produces), not imported
+// from it since that file belongs to a different package this exported
+// app has zero runtime dependency on. Unlike the live preview's own
+// public feed route, there is no token to generate or check here: this
+// export has no authentication of any kind (see this file's own README's
+// "Extending it" section), so this route is public by the exact same
+// convention every other /api/* route in this file already follows.
+const FEED_DATE_FIELD_NAME_HINTS = ["date", "appointmentdate", "scheduleddate", "eventdate", "duedate", "startdate"];
+const FEED_END_DATE_FIELD_NAME_HINTS = ["enddate", "returndate", "checkoutdate", "untildate", "todate"];
+const FEED_DISPLAY_FIELD_NAME_HINTS = ["name", "title"];
+
+function findFeedDateField(fields) {
+  const dateFields = fields.filter((f) => f.type === "date");
+  if (dateFields.length === 0) return null;
+  const named = dateFields.find((f) => FEED_DATE_FIELD_NAME_HINTS.includes(f.name.toLowerCase()));
+  return named ?? dateFields[0];
+}
+
+function findFeedEndDateField(fields, startField) {
+  const otherDateFields = fields.filter((f) => f.type === "date" && f.name !== startField.name);
+  return otherDateFields.find((f) => FEED_END_DATE_FIELD_NAME_HINTS.includes(f.name.toLowerCase())) ?? null;
+}
+
+function pickFeedDisplayField(entity) {
+  const named = entity.fields.find(
+    (f) => FEED_DISPLAY_FIELD_NAME_HINTS.includes(f.name.toLowerCase()) && f.type !== "relation" && f.type !== "file",
+  );
+  if (named) return named;
+  const firstText = entity.fields.find((f) => f.type === "text") ?? entity.fields.find((f) => f.type === "longtext");
+  if (firstText) return firstText;
+  const firstDisplayable = entity.fields.find((f) => f.type !== "relation" && f.type !== "file");
+  return firstDisplayable ?? entity.fields[0] ?? null;
+}
+
+function feedChipLabelField(entity, dateField) {
+  const preferred = pickFeedDisplayField(entity);
+  if (preferred && preferred.name !== dateField.name) return preferred;
+  return entity.fields.find((f) => f.name !== dateField.name && f.type !== "relation" && f.type !== "file") ?? dateField;
+}
+
+function feedChipLabelValue(labelField, record) {
+  const value = record[labelField.name];
+  if (value === null || value === undefined) return "";
+  if (labelField.type === "boolean") return value ? "TRUE" : "FALSE";
+  if (labelField.type === "enum") return (labelField.enumLabels && labelField.enumLabels[String(value)]) || String(value);
+  return String(value);
+}
+
+function feedPad2(n) {
+  return String(n).padStart(2, "0");
+}
+
+function formatFeedIcsDate(date) {
+  return \`\${date.getFullYear()}\${feedPad2(date.getMonth() + 1)}\${feedPad2(date.getDate())}\`;
+}
+
+function formatFeedIcsTimestamp(date) {
+  return \`\${date.getUTCFullYear()}\${feedPad2(date.getUTCMonth() + 1)}\${feedPad2(date.getUTCDate())}T\${feedPad2(date.getUTCHours())}\${feedPad2(date.getUTCMinutes())}\${feedPad2(date.getUTCSeconds())}Z\`;
+}
+
+function feedIcsEscapeText(value) {
+  return value.replace(/\\\\/g, "\\\\\\\\").replace(/;/g, "\\\\;").replace(/,/g, "\\\\,").replace(/\\r\\n|\\r|\\n/g, "\\\\n");
+}
+
+function feedUtf8ByteLength(s) {
+  return new TextEncoder().encode(s).length;
+}
+
+function foldFeedIcsLine(line) {
+  if (feedUtf8ByteLength(line) <= 75) return line;
+  const chars = Array.from(line);
+  const parts = [];
+  let current = "";
+  let limit = 75;
+  for (const ch of chars) {
+    const candidate = current + ch;
+    if (current !== "" && feedUtf8ByteLength(candidate) > limit) {
+      parts.push(current);
+      current = ch;
+      limit = 74;
+    } else {
+      current = candidate;
+    }
+  }
+  if (current !== "") parts.push(current);
+  return parts.join("\\r\\n ");
+}
+
+// Builds a real RFC 5545 .ics calendar for EVERY record of \`entity\` that
+// has a valid value in its auto-detected date field -- not just the
+// records a client happened to pass in for one visible month, the way
+// buildCalendarIcs's one-shot export above scopes it. Returns null when
+// the entity has no date field at all (nothing for a calendar app to ever
+// subscribe to), so the caller can 404 instead of serving an
+// always-empty feed that looks broken to the subscriber.
+function buildCalendarFeedIcs(entity, records) {
+  const dateField = findFeedDateField(entity.fields);
+  if (!dateField) return null;
+  const endField = findFeedEndDateField(entity.fields, dateField);
+  const labelField = feedChipLabelField(entity, dateField);
+  const dtstamp = formatFeedIcsTimestamp(new Date());
+  const lines = [
+    "BEGIN:VCALENDAR",
+    "VERSION:2.0",
+    foldFeedIcsLine(\`PRODID:-//Forge AI//\${feedIcsEscapeText(entity.label ?? entity.name)}//EN\`),
+    "CALSCALE:GREGORIAN",
+  ];
+  for (const record of records) {
+    const raw = record[dateField.name];
+    if (raw === null || raw === undefined || raw === "") continue;
+    const match = /^(\\d{4})-(\\d{2})-(\\d{2})/.exec(String(raw));
+    if (!match) continue;
+    const start = new Date(Number(match[1]), Number(match[2]) - 1, Number(match[3]));
+    if (Number.isNaN(start.getTime())) continue;
+    const end = new Date(start);
+    end.setDate(end.getDate() + 1);
+    if (endField) {
+      const rawEnd = record[endField.name];
+      const endMatch = rawEnd === null || rawEnd === undefined || rawEnd === "" ? null : /^(\\d{4})-(\\d{2})-(\\d{2})/.exec(String(rawEnd));
+      if (endMatch) {
+        const explicitEnd = new Date(Number(endMatch[1]), Number(endMatch[2]) - 1, Number(endMatch[3]));
+        if (!Number.isNaN(explicitEnd.getTime()) && explicitEnd.getTime() >= start.getTime()) {
+          end.setTime(explicitEnd.getTime());
+          end.setDate(end.getDate() + 1);
+        }
+      }
+    }
+    const summary = feedChipLabelValue(labelField, record) || entity.label || entity.name;
+    lines.push("BEGIN:VEVENT");
+    lines.push(foldFeedIcsLine(\`UID:\${feedIcsEscapeText(entity.name)}-\${record.id}@${project.id}.forge-ai\`));
+    lines.push(\`DTSTAMP:\${dtstamp}\`);
+    lines.push(\`DTSTART;VALUE=DATE:\${formatFeedIcsDate(start)}\`);
+    lines.push(\`DTEND;VALUE=DATE:\${formatFeedIcsDate(end)}\`);
+    lines.push(foldFeedIcsLine(\`SUMMARY:\${feedIcsEscapeText(summary)}\`));
+    lines.push("END:VEVENT");
+  }
+  lines.push("END:VCALENDAR");
+  return lines.join("\\r\\n");
+}
+
+app.get("/api/calendar/:entityName.ics", (req, res) => {
+  const entity = ENTITIES.find((e) => e.name === req.params.entityName);
+  if (!entity) {
+    res.status(404).json({ error: "Calendar feed not found" });
+    return;
+  }
+  const rows = db.prepare(\`SELECT * FROM \${q(entity.name)} ORDER BY id DESC\`).all();
+  const records = rows.map((r) => rowToRecord(entity, r));
+  const ics = buildCalendarFeedIcs(entity, records);
+  if (ics === null) {
+    res.status(404).json({ error: "Calendar feed not found" });
+    return;
+  }
+  res.setHeader("content-type", "text/calendar; charset=utf-8");
+  res.send(ics);
+});
+
 const port = process.env.PORT || 3000;
 app.listen(port, () => console.log(\`\${${JSON.stringify(project.name)}} running at http://localhost:\${port}\`));
 `;
@@ -4050,6 +4215,11 @@ export function EntityView({ entity, highlightRecordId, onHighlightHandled, onJu
   // duplicating every selected record twice instead of once (round 544).
   const [bulkActionBusy, setBulkActionBusy] = useState(false);
   const [copyStatus, setCopyStatus] = useState("idle");
+  // Round 1010: mirrors the live Forge AI preview's own EntityPanel.tsx
+  // subscribeStatus -- "copied"/"failed" feedback for the calendar view's
+  // own "Subscribe" button just below, auto-resetting to "idle" the same
+  // way copyStatus above already does.
+  const [subscribeStatus, setSubscribeStatus] = useState("idle");
   const [pendingDelete, setPendingDelete] = useState(null);
   // Mirrors pendingDelete so the unmount-flush effect and a second delete
   // arriving mid-undo-window can read the latest pending delete without
@@ -5455,6 +5625,29 @@ export function EntityView({ entity, highlightRecordId, onHighlightHandled, onJu
     return () => clearTimeout(timer);
   }, [copyStatus]);
 
+  // Round 1010: the calendar view's own "stays live" companion to
+  // handleExportIcs's one-shot download just below -- copies a URL a
+  // calendar app (Google/Apple Calendar, a phone) re-fetches on its own
+  // schedule forever, instead of a single point-in-time snapshot. No
+  // token to fetch first, unlike the live Forge AI preview's own
+  // handleSubscribeCalendar: this exported app has no authentication of
+  // any kind, so the URL needs nothing beyond the entity name itself.
+  async function handleSubscribeCalendar() {
+    try {
+      const url = \`\${window.location.origin}/api/calendar/\${encodeURIComponent(entity.name)}.ics\`;
+      await navigator.clipboard.writeText(url);
+      setSubscribeStatus("copied");
+    } catch {
+      setSubscribeStatus("failed");
+    }
+  }
+
+  useEffect(() => {
+    if (subscribeStatus === "idle") return;
+    const timer = setTimeout(() => setSubscribeStatus("idle"), 2000);
+    return () => clearTimeout(timer);
+  }, [subscribeStatus]);
+
   // The calendar view's own "take it with you" action -- exports exactly
   // the records the calendar grid's current month is showing as a real
   // RFC 5545 .ics calendar.
@@ -5888,6 +6081,11 @@ export function EntityView({ entity, highlightRecordId, onHighlightHandled, onJu
             {viewMode === "calendar" && dateField && (
               <button type="button" className="ics-export-btn" onClick={handleExportIcs} disabled={icsMonthRecords.length === 0}>
                 {\`📅 Export \${calendarMonth.toLocaleDateString(undefined, { month: "long", year: "numeric" })} to Calendar (ICS)\`}
+              </button>
+            )}
+            {viewMode === "calendar" && dateField && (
+              <button type="button" className="ics-subscribe-btn" onClick={handleSubscribeCalendar} aria-live="polite" aria-atomic="true">
+                {subscribeStatus === "copied" ? "✅ Link copied!" : subscribeStatus === "failed" ? "❌ Copy failed" : "📅 Subscribe (live calendar feed)"}
               </button>
             )}
             <button
@@ -7681,9 +7879,9 @@ nav button.active .tab-count { background: rgba(255, 255, 255, 0.25); color: inh
 .calendar-record-chip-move-error { background: var(--danger-soft); border-color: var(--danger); }
 .calendar-record-more { font-size: 11px; color: var(--muted); padding: 2px 5px; background: none; border: none; text-align: start; cursor: pointer; font: inherit; }
 .calendar-record-more:hover { color: var(--text); text-decoration: underline; }
-.csv-export-btn, .ics-export-btn, .copy-records-btn, .print-list-btn { flex-shrink: 0; padding: 8px 14px; font-size: 13px; border-radius: 8px; border: 1px solid var(--border); background: var(--surface); color: var(--text); cursor: pointer; font: inherit; }
-.csv-export-btn:hover:not(:disabled), .ics-export-btn:hover:not(:disabled), .copy-records-btn:hover:not(:disabled), .print-list-btn:hover:not(:disabled) { background: var(--bg); }
-.csv-export-btn:disabled, .ics-export-btn:disabled, .copy-records-btn:disabled, .print-list-btn:disabled { opacity: 0.55; cursor: default; }
+.csv-export-btn, .ics-export-btn, .ics-subscribe-btn, .copy-records-btn, .print-list-btn { flex-shrink: 0; padding: 8px 14px; font-size: 13px; border-radius: 8px; border: 1px solid var(--border); background: var(--surface); color: var(--text); cursor: pointer; font: inherit; }
+.csv-export-btn:hover:not(:disabled), .ics-export-btn:hover:not(:disabled), .ics-subscribe-btn:hover:not(:disabled), .copy-records-btn:hover:not(:disabled), .print-list-btn:hover:not(:disabled) { background: var(--bg); }
+.csv-export-btn:disabled, .ics-export-btn:disabled, .ics-subscribe-btn:disabled, .copy-records-btn:disabled, .print-list-btn:disabled { opacity: 0.55; cursor: default; }
 .columns-menu-wrapper { position: relative; flex-shrink: 0; }
 .columns-menu-btn { padding: 8px 14px; font-size: 13px; border-radius: 8px; border: 1px solid var(--border); background: var(--surface); color: var(--text); cursor: pointer; font: inherit; }
 .columns-menu-btn:hover { background: var(--bg); }
