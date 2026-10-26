@@ -114,6 +114,7 @@ export default function Financial() {
           <input value={symbol} onChange={(e) => setSymbol(e.target.value)} placeholder="AAPL" />
           <button className="btn btn-ghost" type="submit">הוסף</button>
         </form>
+        {error && <p className="form-error">{error}</p>}
         {watchlist.map((w) => (
           <div key={w.id} className="source-row">
             <span className={`dot ${w.connected ? 'dot-on' : 'dot-off'}`} />

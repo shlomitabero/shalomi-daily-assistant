@@ -21,11 +21,21 @@ export async function addToWatchlist(req, res) {
   if (!symbol || typeof symbol !== 'string' || !symbol.trim()) {
     return res.status(400).json({ error: 'symbol is required and must be a non-empty string' });
   }
+  const normalizedSymbol = symbol.trim().toUpperCase();
+
+  // The client already uppercases before sending, but the server must not
+  // rely on that — without this check, "AAPL" and "aapl" (or a second
+  // click of "add") would silently create two separate watchlist rows for
+  // the same real symbol, each refreshed independently by "refresh all".
+  const alreadyTracked = db.financial_watchlist.where((w) => w.symbol === normalizedSymbol).length > 0;
+  if (alreadyTracked) {
+    return res.status(409).json({ error: `${normalizedSymbol} is already on the watchlist` });
+  }
 
   let quote = null;
   if (isMarketDataConnected()) {
     try {
-      quote = await fetchQuote(symbol);
+      quote = await fetchQuote(normalizedSymbol);
     } catch (err) {
       return res.status(502).json({ error: `could not fetch a quote: ${err.message}` });
     }
@@ -33,7 +43,7 @@ export async function addToWatchlist(req, res) {
 
   const entry = db.financial_watchlist.insert({
     id: makeId('wl'),
-    symbol,
+    symbol: normalizedSymbol,
     dataSource: isMarketDataConnected() ? 'twelvedata' : null,
     lastPrice: quote?.price ?? null,
     lastUpdatedAt: quote?.fetchedAt ?? null,

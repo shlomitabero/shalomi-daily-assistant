@@ -89,6 +89,41 @@ test('addToWatchlist surfaces a 502 instead of storing a broken entry when the q
   });
 });
 
+test('addToWatchlist normalizes casing and whitespace so the symbol is stored consistently', async () => {
+  __resetForTests();
+  const original = process.env.MARKET_DATA_API_KEY;
+  delete process.env.MARKET_DATA_API_KEY;
+  try {
+    const res = makeRes();
+    await addToWatchlist({ body: { symbol: '  aapl  ' } }, res);
+    assert.equal(res.statusCode, 201);
+    assert.equal(res.body.entry.symbol, 'AAPL');
+  } finally {
+    if (original !== undefined) process.env.MARKET_DATA_API_KEY = original;
+  }
+});
+
+test('addToWatchlist rejects a symbol already on the watchlist instead of creating a duplicate row', async () => {
+  // Without this, "AAPL" and "aapl" (or a double-click of "add") would
+  // create two separate rows for the same real symbol, each refreshed
+  // independently by the "refresh all" button.
+  __resetForTests();
+  const original = process.env.MARKET_DATA_API_KEY;
+  delete process.env.MARKET_DATA_API_KEY;
+  try {
+    const res1 = makeRes();
+    await addToWatchlist({ body: { symbol: 'AAPL' } }, res1);
+    assert.equal(res1.statusCode, 201);
+
+    const res2 = makeRes();
+    await addToWatchlist({ body: { symbol: 'aapl' } }, res2);
+    assert.equal(res2.statusCode, 409);
+    assert.equal(db.financial_watchlist.all().length, 1);
+  } finally {
+    if (original !== undefined) process.env.MARKET_DATA_API_KEY = original;
+  }
+});
+
 test('refreshWatchlistEntry returns 404 for an entry that does not exist', async () => {
   __resetForTests();
   const res = makeRes();
