@@ -1716,6 +1716,63 @@ test("a field chip's stale required-toggle error is cleared once a rename is sta
   });
 });
 
+/**
+ * Round 1026: a field chip's remove/required-toggle/type-change actions
+ * each independently PATCH/DELETE and each eventually call the same
+ * onChanged(project) -- a full project-state replace. Before this round,
+ * each action only disabled its OWN control while in flight (requiredBusy
+ * only disabled the checkbox, typeBusy only the type select, busy only the
+ * remove button), so starting a second action before the first's response
+ * lands sends two concurrent requests for the same field -- whichever
+ * response is *received* last silently overwrites the other's result in
+ * React state, with no error shown. Mirrors CollaboratorsPanel's own
+ * role-change/remove/invite cross-gate (rounds 680/930): every one of
+ * this chip's three controls must be disabled while ANY of the three
+ * actions is in flight, not just its own.
+ */
+test("a field chip's type select and remove button are also disabled while the required-toggle's own request is still in flight, not just the checkbox itself", async () => {
+  await withJsdom(async () => {
+    const originalFetch = globalThis.fetch;
+    let resolveRequiredPatch: (() => void) | undefined;
+    const requiredGate = new Promise<void>((resolve) => {
+      resolveRequiredPatch = resolve;
+    });
+    globalThis.fetch = (async (input: string, init?: RequestInit) => {
+      const method = init?.method ?? "GET";
+      if (method === "PATCH" && input === "/api/projects/proj1/entities/Customer/fields/email/required") {
+        await requiredGate;
+        return new Response(JSON.stringify({ project: baseProject }), { status: 200, headers: { "content-type": "application/json" } });
+      }
+      throw new Error(`unexpected request ${method} ${input}`);
+    }) as typeof fetch;
+
+    try {
+      renderFieldChip(() => {}, true, { name: "email", type: "text", required: true });
+
+      fireEvent.click(document.querySelector(".chip-field-required input") as HTMLInputElement);
+      await waitForCondition(() => (document.querySelector(".chip-field-required input") as HTMLInputElement).disabled);
+
+      assert.equal(
+        (document.querySelector(".chip-field-type") as HTMLSelectElement).disabled,
+        true,
+        "the type select must also be disabled while the required-toggle's own request is still in flight, not just the checkbox itself",
+      );
+      assert.equal(
+        (document.querySelector(".chip-remove") as HTMLButtonElement).disabled,
+        true,
+        "the remove button must also be disabled while the required-toggle's own request is still in flight, not just the checkbox itself",
+      );
+    } finally {
+      // Always resolves the gate, even if an assertion above threw -- a
+      // real, no-longer-awaited fetch left permanently pending (round
+      // 1026's own first fail-before run hung on exactly this before the
+      // gate was moved into `finally`) must never be able to hang the test.
+      resolveRequiredPatch!();
+      globalThis.fetch = originalFetch;
+    }
+  });
+});
+
 test("clicking a field chip's text opens an inline edit, and saving it calls the real PATCH label endpoint by entity+field name", async () => {
   await withJsdom(async () => {
     const originalFetch = globalThis.fetch;

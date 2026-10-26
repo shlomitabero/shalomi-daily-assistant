@@ -676,6 +676,24 @@ export function FieldChip({
   const [typeBusy, setTypeBusy] = useState(false);
   const [typeError, setTypeError] = useState<string | null>(null);
 
+  // Round 1026: this chip's own three actions (remove, required-toggle,
+  // type-change) each PATCH/DELETE independently and each eventually call
+  // the same onChanged(project) -- a full project-state replace, the same
+  // shape CollaboratorsPanel's own role-change/remove/invite already
+  // cross-gate against each other (rounds 680/930) for exactly this
+  // reason. Starting a second action here before the first's response
+  // lands means whichever response is *received* last silently overwrites
+  // the other's result in React state with no error shown -- the server
+  // itself processes both correctly (better-sqlite3 is fully synchronous,
+  // no real await inside either route), but network delivery order isn't
+  // guaranteed to match request order. Round 931 already cross-cleared
+  // these three actions' error banners for the identical reason but never
+  // cross-disabled their busy states, leaving the actual race (not just
+  // the cosmetic stale-banner issue) open -- this closes it the same way
+  // CollaboratorsPanel's own controls already reference every sibling
+  // action's busy flag, not just their own.
+  const fieldChipBusy = busy || requiredBusy || typeBusy;
+
   async function commitTypeChange(type: Field["type"], opts?: { enumValues?: string; relationTo?: string }) {
     setTypeBusy(true);
     setTypeError(null);
@@ -793,7 +811,7 @@ export function FieldChip({
       <select
         className="chip-field-type"
         value={draftType ?? field.type}
-        disabled={typeBusy}
+        disabled={fieldChipBusy}
         onChange={(e) => handleTypeSelectChange(e.target.value as Field["type"])}
         aria-label={t("spec.fields.type")}
       >
@@ -819,7 +837,7 @@ export function FieldChip({
           type="button"
           className="chip-field-edit-values"
           onClick={() => openDraftFor(field.type as "enum" | "relation")}
-          disabled={typeBusy}
+          disabled={fieldChipBusy}
           title={field.type === "enum" ? t("spec.fields.enumValues.edit") : t("spec.fields.relationTo.edit")}
           aria-label={field.type === "enum" ? t("spec.fields.enumValues.edit") : t("spec.fields.relationTo.edit")}
         >
@@ -834,7 +852,7 @@ export function FieldChip({
             onChange={(e) => setDraftEnumValues(e.target.value)}
             placeholder={t("spec.fields.enumValues.placeholder")}
             aria-label={t("spec.fields.enumValues.placeholder")}
-            disabled={typeBusy}
+            disabled={fieldChipBusy}
             autoFocus
             // Every structurally-identical sibling editor in this file
             // (RoleChip, AssumptionItem, PersonaItem, EntitySummaryItem's
@@ -848,10 +866,10 @@ export function FieldChip({
               if (e.key === "Escape") setDraftType(null);
             }}
           />
-          <button type="submit" className="secondary small" disabled={typeBusy || !draftEnumValues.trim()}>
+          <button type="submit" className="secondary small" disabled={fieldChipBusy || !draftEnumValues.trim()}>
             {t("spec.fields.type.confirm")}
           </button>
-          <button type="button" className="link-button small" disabled={typeBusy} onClick={() => setDraftType(null)}>
+          <button type="button" className="link-button small" disabled={fieldChipBusy} onClick={() => setDraftType(null)}>
             {t("spec.fields.type.cancel")}
           </button>
         </form>
@@ -861,7 +879,7 @@ export function FieldChip({
           <select
             value={draftRelationTo}
             onChange={(e) => setDraftRelationTo(e.target.value)}
-            disabled={typeBusy}
+            disabled={fieldChipBusy}
             aria-label={t("spec.fields.relationTo")}
             onKeyDown={(e) => {
               if (e.key === "Escape") setDraftType(null);
@@ -873,10 +891,10 @@ export function FieldChip({
               </option>
             ))}
           </select>
-          <button type="submit" className="secondary small" disabled={typeBusy || !draftRelationTo}>
+          <button type="submit" className="secondary small" disabled={fieldChipBusy || !draftRelationTo}>
             {t("spec.fields.type.confirm")}
           </button>
-          <button type="button" className="link-button small" disabled={typeBusy} onClick={() => setDraftType(null)}>
+          <button type="button" className="link-button small" disabled={fieldChipBusy} onClick={() => setDraftType(null)}>
             {t("spec.fields.type.cancel")}
           </button>
         </form>
@@ -885,7 +903,7 @@ export function FieldChip({
         <input
           type="checkbox"
           checked={field.required}
-          disabled={requiredBusy}
+          disabled={fieldChipBusy}
           onChange={handleToggleRequired}
           aria-label={t("spec.fields.required")}
         />
@@ -895,7 +913,7 @@ export function FieldChip({
         type="button"
         className="chip-remove"
         onClick={handleRemoveField}
-        disabled={busy || !canRemove}
+        disabled={fieldChipBusy || !canRemove}
         aria-label={t("spec.fields.remove")}
         title={canRemove ? t("spec.fields.remove") : t("spec.fields.lastOneHint")}
       >
