@@ -452,7 +452,12 @@ function AppContent() {
   const [checkingSession, setCheckingSession] = useState(true);
   const [waking, setWaking] = useState(false);
   const [view, setView] = useState<View>("home");
-  const [description, setDescription] = useState(getIdeaDraft);
+  // Round 1044: this used to lazy-init via getIdeaDraft() with no user id
+  // at all (the exact gap this round's own fix to ideaDraft.ts closes) --
+  // see the [user?.id] effect below (mirroring pinnedIds/seenShared's own
+  // round-1018 fix) for why it must instead populate once the real
+  // signed-in user is known, not at this very first, pre-auth render.
+  const [description, setDescription] = useState("");
   const [project, setProject] = useState<Project | null>(null);
   // The signed-in user's own standing on the currently open project: the
   // owner is always "owner" (never a row in project_collaborators at all --
@@ -522,6 +527,19 @@ function AppContent() {
   useEffect(() => {
     tRef.current = t;
   }, [t]);
+  // Round 1044: same stale-closure idiom as showWhatsAppRef/tRef above --
+  // subscribeAuthExpired's own effect below only ever subscribes once
+  // (deps: []), so its callback's ordinary closure over `user` is frozen at
+  // whatever `user` was at MOUNT time (always null), never the real
+  // signed-in user it needs to clear that one user's own idea draft for
+  // when an expired/revoked session forces them back out. Only ever set
+  // while `user` is non-null (never reset to null itself), since the one
+  // reader -- that same callback -- always runs at the moment `user` is
+  // about to be nulled, when the ref still correctly holds the real id.
+  const userIdRef = useRef<string | null>(null);
+  useEffect(() => {
+    if (user) userIdRef.current = user.id;
+  }, [user?.id]);
   // Set alongside openPanel("whatsapp") by EntityPanel's "Send WhatsApp" row
   // action, so the panel opens with that record's number already in the
   // test-send box instead of the user having to copy/paste it themselves.
@@ -1006,6 +1024,12 @@ function AppContent() {
     if (!user) return;
     setPinnedIds(getPinnedIds(user.id));
     setSeenShared(getSeenSharedTimestamps(user.id));
+    // Round 1044: description's own lazy init above no longer has a user
+    // id to key by at that first, pre-auth render -- loaded here instead,
+    // the same "wait for the real signed-in user" fix as pinnedIds/
+    // seenShared just above, for the exact same reason (ideaDraft.ts is
+    // now keyed per user too).
+    setDescription(getIdeaDraft(user.id));
   }, [user?.id]);
 
   /**
@@ -1047,7 +1071,7 @@ function AppContent() {
       setProject(null);
       setView("home");
       setDescription("");
-      clearIdeaDraft();
+      if (userIdRef.current) clearIdeaDraft(userIdRef.current);
       setError(null);
       setActiveEntity(null);
       setSelectedAnswers({});
@@ -1453,13 +1477,13 @@ function AppContent() {
    * builds itself from it.
    */
   async function handleEnhanceAndBuild() {
-    if (!description.trim()) return;
+    if (!description.trim() || !user) return;
     setEnhanceBusy(true);
     setError(null);
     try {
       const { enhanced, providerName: enhanceProviderName } = await enhanceIdea(description);
       setDescription(enhanced);
-      saveIdeaDraft(enhanced);
+      saveIdeaDraft(user.id, enhanced);
       setEnhanceProvider(enhanceProviderName);
       const { project, providerName } = await createProject(enhanced);
       setProject(project);
@@ -1722,6 +1746,8 @@ function AppContent() {
   }
 
   async function handleLogout() {
+    if (!user) return;
+    const userId = user.id;
     await logout();
     setUser(null);
     setProject(null);
@@ -1735,7 +1761,7 @@ function AppContent() {
     // (rendering a blank preview pane until manually re-clicked), the old
     // project's refine-history chat entries, and half-filled form state.
     setDescription("");
-    clearIdeaDraft();
+    clearIdeaDraft(userId);
     setError(null);
     setActiveEntity(null);
     setSelectedAnswers({});
@@ -1770,6 +1796,8 @@ function AppContent() {
    * never covered), then resets local UI state straight back to the auth screen.
    */
   function handleAccountDeleted(ownedProjectIds: string[], sharedProjectIds: string[]) {
+    if (!user) return;
+    const userId = user.id;
     // DELETE /auth/account deletes every one of these server-side via the
     // exact same cascade handleDeleteProject/handleBulkDeleteProjects use
     // for a single/several projects -- but unlike those two, this path
@@ -1792,7 +1820,7 @@ function AppContent() {
     setProject(null);
     setView("home");
     setDescription("");
-    clearIdeaDraft();
+    clearIdeaDraft(userId);
     setError(null);
     setActiveEntity(null);
     setSelectedAnswers({});
@@ -2060,7 +2088,7 @@ function AppContent() {
               value={description}
               onChange={(e) => {
                 setDescription(e.target.value);
-                saveIdeaDraft(e.target.value);
+                saveIdeaDraft(user.id, e.target.value);
               }}
             />
             <button type="submit" disabled={busy || enhanceBusy}>
@@ -2088,7 +2116,7 @@ function AppContent() {
                   disabled={busy || enhanceBusy}
                   onClick={() => {
                     setDescription(t(example.textKey));
-                    saveIdeaDraft(t(example.textKey));
+                    saveIdeaDraft(user.id, t(example.textKey));
                   }}
                 >
                   <span className="idea-example-icon" aria-hidden="true">{example.icon}</span>

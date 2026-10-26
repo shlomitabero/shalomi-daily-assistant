@@ -500,6 +500,7 @@ test("App's handleEnhanceAndBuild captures enhanceIdea's own providerName into e
     };
     const fn = new Function(
       "description",
+      "user",
       "setEnhanceBusy",
       "setError",
       "enhanceIdea",
@@ -514,11 +515,12 @@ test("App's handleEnhanceAndBuild captures enhanceIdea's own providerName into e
       `${code}\nreturn handleEnhanceAndBuild;`,
     )(
       state.description,
+      { id: "user1" },
       (v: boolean) => (state.enhanceBusy = v),
       (v: string | null) => (state.error = v),
       opts.enhanceIdeaFn,
       (v: string) => (state.description = v),
-      (_v: string) => {},
+      (_userId: string, _v: string) => {},
       (v: string | null) => (state.enhanceProvider = v),
       opts.createProjectFn,
       (p: Project) => (state.project = p),
@@ -2643,6 +2645,7 @@ test("App's handleAccountDeleted purges client-side preferences for every owned 
   };
   const noop = () => {};
   const fn = new Function(
+    "user",
     "purgeProjectPreferences",
     "clearToken",
     "setShowDeleteAccount",
@@ -2662,6 +2665,7 @@ test("App's handleAccountDeleted purges client-side preferences for every owned 
     "setRefineHistorySearch",
     `${code}\nreturn handleAccountDeleted;`,
   )(
+    { id: "user1" },
     (id: string) => state.purgeCalls.push(id),
     () => (state.tokenCleared = true),
     (v: boolean) => (state.showDeleteAccount = v),
@@ -2696,6 +2700,7 @@ test("App's handleAccountDeleted purges client-side preferences for every owned 
 
   const noneOwned = { purgeCalls: [] as string[] };
   const fnNoneOwned = new Function(
+    "user",
     "purgeProjectPreferences",
     "clearToken",
     "setShowDeleteAccount",
@@ -2715,6 +2720,7 @@ test("App's handleAccountDeleted purges client-side preferences for every owned 
     "setRefineHistorySearch",
     `${code}\nreturn handleAccountDeleted;`,
   )(
+    { id: "user1" },
     (id: string) => noneOwned.purgeCalls.push(id),
     noop,
     noop,
@@ -3720,6 +3726,7 @@ test("App's subscribeAuthExpired effect clears the token and resets user/project
   let viewSet: unknown = "untouched";
   let descriptionSet: unknown = "untouched";
   let ideaDraftCleared = false;
+  let ideaDraftClearedForUserId: unknown = "untouched";
   let recentProjectSearchesCleared = false;
   let recentProjectSearchesSet: unknown = "untouched";
   let errorSet: unknown = "untouched";
@@ -3736,6 +3743,7 @@ test("App's subscribeAuthExpired effect clears the token and resets user/project
 
   const fn = new Function(
     "useEffect",
+    "userIdRef",
     "subscribeAuthExpired",
     "clearToken",
     "setUser",
@@ -3765,13 +3773,14 @@ test("App's subscribeAuthExpired effect clears the token and resets user/project
     `${code}`,
   ) as (
     useEffect: (effect: () => void, deps: unknown[]) => void,
+    userIdRef: { current: string | null },
     subscribeAuthExpired: (listener: () => void) => () => void,
     clearToken: () => void,
     setUser: (v: unknown) => void,
     setProject: (v: unknown) => void,
     setView: (v: unknown) => void,
     setDescription: (v: unknown) => void,
-    clearIdeaDraft: () => void,
+    clearIdeaDraft: (userId: string) => void,
     clearRecentProjectSearches: () => void,
     setRecentProjectSearches: (v: unknown) => void,
     setError: (v: unknown) => void,
@@ -3795,6 +3804,7 @@ test("App's subscribeAuthExpired effect clears the token and resets user/project
 
   fn(
     (effect) => effect(),
+    { current: "user1" },
     (listener) => {
       subscribedListener = listener;
       return () => undefined;
@@ -3806,8 +3816,9 @@ test("App's subscribeAuthExpired effect clears the token and resets user/project
     (v) => (projectSet = v),
     (v) => (viewSet = v),
     (v) => (descriptionSet = v),
-    () => {
+    (userId) => {
       ideaDraftCleared = true;
+      ideaDraftClearedForUserId = userId;
     },
     () => {
       recentProjectSearchesCleared = true;
@@ -3842,6 +3853,11 @@ test("App's subscribeAuthExpired effect clears the token and resets user/project
   assert.equal(viewSet, "home", "must reset view to home so a later re-login lands on the home screen, not a dead view");
   assert.equal(descriptionSet, "", "must clear the idea description, same as handleAccountDeleted");
   assert.equal(ideaDraftCleared, true, "must clear the persisted idea draft, same as handleAccountDeleted");
+  assert.equal(
+    ideaDraftClearedForUserId,
+    "user1",
+    "must clear the REAL signed-in user's own idea draft (read from userIdRef, since this effect's own closure over `user` is frozen at mount), not call clearIdeaDraft with no id at all",
+  );
   assert.equal(
     recentProjectSearchesCleared,
     true,
@@ -3890,7 +3906,7 @@ test("App's subscribeAuthExpired effect clears the token and resets user/project
 test("App's pinnedIds/seenShared-loading effect re-populates every time the signed-in user changes, not just once on mount", () => {
   const appSrc = readFileSync(new URL("./App.tsx", import.meta.url), "utf8");
   const effectMatch = appSrc.match(
-    / {2}useEffect\(\(\) => \{\n {4}if \(!user\) return;\n {4}setPinnedIds\(getPinnedIds\(user\.id\)\);\n {4}setSeenShared\(getSeenSharedTimestamps\(user\.id\)\);\n {2}\}, \[user\?\.id\]\);\n/,
+    / {2}useEffect\(\(\) => \{\n {4}if \(!user\) return;\n {4}setPinnedIds\(getPinnedIds\(user\.id\)\);\n {4}setSeenShared\(getSeenSharedTimestamps\(user\.id\)\);\n[\s\S]*?\n {2}\}, \[user\?\.id\]\);\n/,
   );
   assert.ok(effectMatch, "expected to find the pinnedIds/seenShared-loading effect, keyed on user?.id, in App.tsx");
   const { code } = transformSync(effectMatch![0], { loader: "ts" });
@@ -3898,6 +3914,7 @@ test("App's pinnedIds/seenShared-loading effect re-populates every time the sign
   let capturedDeps: unknown[] | undefined;
   let pinnedIdsSet: unknown = "untouched";
   let seenSharedSet: unknown = "untouched";
+  let descriptionSet: unknown = "untouched";
   const fn = new Function(
     "useEffect",
     "user",
@@ -3905,6 +3922,8 @@ test("App's pinnedIds/seenShared-loading effect re-populates every time the sign
     "getSeenSharedTimestamps",
     "setPinnedIds",
     "setSeenShared",
+    "getIdeaDraft",
+    "setDescription",
     `${code}`,
   ) as (
     useEffect: (effect: () => void, deps: unknown[]) => void,
@@ -3913,6 +3932,8 @@ test("App's pinnedIds/seenShared-loading effect re-populates every time the sign
     getSeenSharedTimestamps: (userId: string) => unknown,
     setPinnedIds: (v: unknown) => void,
     setSeenShared: (v: unknown) => void,
+    getIdeaDraft: (userId: string) => unknown,
+    setDescription: (v: unknown) => void,
   ) => void;
 
   // user === null (nobody signed in yet) -- must be a genuine no-op, not
@@ -3931,10 +3952,15 @@ test("App's pinnedIds/seenShared-loading effect re-populates every time the sign
     },
     (v) => (pinnedIdsSet = v),
     (v) => (seenSharedSet = v),
+    () => {
+      throw new Error("getIdeaDraft must never be called while user is null");
+    },
+    (v) => (descriptionSet = v),
   );
   assert.deepEqual(capturedDeps, [undefined], "must be keyed on user?.id, not a mount-only [] -- this is what makes it re-run on every real login, not just the first one");
   assert.equal(pinnedIdsSet, "untouched");
   assert.equal(seenSharedSet, "untouched");
+  assert.equal(descriptionSet, "untouched");
 
   // A real signed-in user -- must load both pieces of per-user content.
   fn(
@@ -3944,9 +3970,16 @@ test("App's pinnedIds/seenShared-loading effect re-populates every time the sign
     (userId) => `seen-for-${userId}`,
     (v) => (pinnedIdsSet = v),
     (v) => (seenSharedSet = v),
+    (userId) => `draft-for-${userId}`,
+    (v) => (descriptionSet = v),
   );
   assert.equal(pinnedIdsSet, "pinned-for-user-42", "must call getPinnedIds with the real signed-in user's own id and store its result");
   assert.equal(seenSharedSet, "seen-for-user-42", "must call getSeenSharedTimestamps with the real signed-in user's own id and store its result");
+  assert.equal(
+    descriptionSet,
+    "draft-for-user-42",
+    "must call getIdeaDraft with the real signed-in user's own id too (round 1044 -- ideaDraft.ts is now keyed per user, so description must be loaded the same way pinnedIds/seenShared already are)",
+  );
 });
 
 /**
