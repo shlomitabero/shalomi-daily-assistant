@@ -36,6 +36,19 @@ export type AutomationLastStatus = "sent" | "failed" | null;
  */
 export const WHATSAPP_NOT_CONNECTED_ERROR = "WhatsApp is not connected";
 
+/**
+ * Round 1032: the same deployment-level (not per-rule) infrastructure gap
+ * as WHATSAPP_NOT_CONNECTED_ERROR above, for the "send_email" action
+ * type's own equivalent -- no RESEND_API_KEY configured for this
+ * deployment (apps/api/src/automations.ts's fireEmailAction). Exported
+ * for the same reason: apps/api/src/automations.ts's
+ * hasTooManyConsecutiveFailuresToday and this module's own
+ * recordAutomationRun pruning both need to single it out, and a shared
+ * constant is the only thing that keeps them from silently drifting
+ * apart the way two independently-typed copies of the literal could.
+ */
+export const EMAIL_NOT_CONFIGURED_ERROR = "Email sending is not configured for this deployment";
+
 export interface AutomationRule {
   id: string;
   projectId: string;
@@ -629,11 +642,34 @@ export function recordAutomationRun(
       SELECT id FROM automation_runs WHERE projectId = ? AND ruleId = ? AND error = ? ORDER BY triggeredAt DESC, rowid DESC LIMIT ?
     )`,
   ).run(projectId, id, WHATSAPP_NOT_CONNECTED_ERROR, projectId, id, WHATSAPP_NOT_CONNECTED_ERROR, AUTOMATION_RUNS_RETENTION_LIMIT);
+  // Round 1032: mirrors the WhatsApp bucket just above, for
+  // EMAIL_NOT_CONFIGURED_ERROR's own identical flood risk -- a send_email
+  // schedule rule on a deployment with no RESEND_API_KEY set produces one
+  // of these rows per tick, same as a WhatsApp disconnect, for however
+  // long the misconfiguration lasts. Without its own bucket, that volume
+  // fell into the catch-all "everything else" prune just below and could
+  // evict a genuine failure the same way the pre-round-951 single bucket
+  // once let a WhatsApp outage do.
   db.prepare(
-    `DELETE FROM automation_runs WHERE projectId = ? AND ruleId = ? AND (error IS NULL OR error != ?) AND id NOT IN (
-      SELECT id FROM automation_runs WHERE projectId = ? AND ruleId = ? AND (error IS NULL OR error != ?) ORDER BY triggeredAt DESC, rowid DESC LIMIT ?
+    `DELETE FROM automation_runs WHERE projectId = ? AND ruleId = ? AND error = ? AND id NOT IN (
+      SELECT id FROM automation_runs WHERE projectId = ? AND ruleId = ? AND error = ? ORDER BY triggeredAt DESC, rowid DESC LIMIT ?
     )`,
-  ).run(projectId, id, WHATSAPP_NOT_CONNECTED_ERROR, projectId, id, WHATSAPP_NOT_CONNECTED_ERROR, AUTOMATION_RUNS_RETENTION_LIMIT);
+  ).run(projectId, id, EMAIL_NOT_CONFIGURED_ERROR, projectId, id, EMAIL_NOT_CONFIGURED_ERROR, AUTOMATION_RUNS_RETENTION_LIMIT);
+  db.prepare(
+    `DELETE FROM automation_runs WHERE projectId = ? AND ruleId = ? AND (error IS NULL OR (error != ? AND error != ?)) AND id NOT IN (
+      SELECT id FROM automation_runs WHERE projectId = ? AND ruleId = ? AND (error IS NULL OR (error != ? AND error != ?)) ORDER BY triggeredAt DESC, rowid DESC LIMIT ?
+    )`,
+  ).run(
+    projectId,
+    id,
+    WHATSAPP_NOT_CONNECTED_ERROR,
+    EMAIL_NOT_CONFIGURED_ERROR,
+    projectId,
+    id,
+    WHATSAPP_NOT_CONNECTED_ERROR,
+    EMAIL_NOT_CONFIGURED_ERROR,
+    AUTOMATION_RUNS_RETENTION_LIMIT,
+  );
 }
 
 export function deleteAutomationRule(db: ForgeDatabase, projectId: string, id: string): void {

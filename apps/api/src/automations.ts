@@ -12,6 +12,7 @@ import {
   listEnabledScheduledRules,
   recordAutomationRun,
   WHATSAPP_NOT_CONNECTED_ERROR,
+  EMAIL_NOT_CONFIGURED_ERROR,
   type AutomationRule,
   type ForgeDatabase,
 } from "@forge/db";
@@ -686,7 +687,7 @@ async function fireEmailAction(
       db,
       project.id,
       rule.id,
-      { status: "failed", error: "Email sending is not configured for this deployment" },
+      { status: "failed", error: EMAIL_NOT_CONFIGURED_ERROR },
       rule.actionType,
       record ? Number(record.id) : null,
       recordSnapshot,
@@ -1090,11 +1091,21 @@ const MAX_CONSECUTIVE_SCHEDULE_FAILURES_PER_DAY = 5;
  * hours off from the rule's own local midnight has no real-world
  * consequence (the cap still resets once per real day, just not exactly
  * at this rule's own local midnight). Not an oversight to "fix" later.
+ *
+ * Round 1032: EMAIL_NOT_CONFIGURED_ERROR (a send_email rule's own
+ * deployment-level "no RESEND_API_KEY" gap) is the exact same shape of
+ * transient, not-the-rule's-fault fault as a WhatsApp disconnect, and now
+ * gets its own independent retention bucket to match (recordAutomationRun,
+ * packages/db/src/automations.ts) -- excluded here for the identical
+ * reason, and the lookback widened from 2x to 3x AUTOMATION_RUNS_RETENTION_LIMIT
+ * since there are now three independently-retained buckets (WhatsApp,
+ * email, everything else) that can each contribute up to that many rows
+ * ahead of a real failure in triggeredAt order.
  */
 export function hasTooManyConsecutiveFailuresToday(db: ForgeDatabase, rule: AutomationRule, now: Date): boolean {
   const todayUtc = now.toISOString().slice(0, 10);
-  const runs = listAutomationRuns(db, rule.projectId, rule.id, 2 * AUTOMATION_RUNS_RETENTION_LIMIT)
-    .filter((run) => run.error !== WHATSAPP_NOT_CONNECTED_ERROR)
+  const runs = listAutomationRuns(db, rule.projectId, rule.id, 3 * AUTOMATION_RUNS_RETENTION_LIMIT)
+    .filter((run) => run.error !== WHATSAPP_NOT_CONNECTED_ERROR && run.error !== EMAIL_NOT_CONFIGURED_ERROR)
     .slice(0, MAX_CONSECUTIVE_SCHEDULE_FAILURES_PER_DAY);
   if (runs.length < MAX_CONSECUTIVE_SCHEDULE_FAILURES_PER_DAY) return false;
   return runs.every((run) => run.status === "failed" && run.triggeredAt.slice(0, 10) === todayUtc);

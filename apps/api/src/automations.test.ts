@@ -10,10 +10,12 @@ import {
   ensureProjectsTable,
   ensureWhatsAppConnectionsTable,
   ensureWhatsAppMessagesTable,
+  EMAIL_NOT_CONFIGURED_ERROR,
   getAutomationRule,
   insertAutomationRule,
   insertProject,
   insertRecord,
+  listAutomationRuns,
   listWhatsAppMessages,
   markProjectBuilt,
   openDatabase,
@@ -1451,6 +1453,78 @@ test("runScheduledAutomationsCheck's 5-per-day failure cap survives a long Whats
     sendCalls.length,
     5,
     "a long disconnect burst interleaved between genuine failures must never let more than 5 real send attempts through in one day",
+  );
+});
+
+/**
+ * Round 1032: EMAIL_NOT_CONFIGURED_ERROR (no RESEND_API_KEY set for this
+ * deployment, fireEmailAction's own check) is the exact send_email
+ * sibling of WHATSAPP_NOT_CONNECTED_ERROR -- a deployment-level, not
+ * per-rule, fault. Mirrors the WhatsApp reconnect test above exactly: 5
+ * consecutive ticks while no EmailSender is configured must never trip
+ * hasTooManyConsecutiveFailuresToday's cap, or the rule would stay stuck
+ * for the rest of the day even once an admin adds the key minutes later.
+ */
+test("runScheduledAutomationsCheck still fires a scheduled send_email rule the same day once an EmailSender becomes configured, even after 5 consecutive not-configured failures", async () => {
+  const { db } = setupProject();
+  const rule = insertAutomationRule(
+    db,
+    scheduleRuleBase({ actionType: "send_email", toMode: "static", toEmail: "owner@example.com", emailSubject: "Daily report" }),
+  );
+  const manager = {} as WhatsAppWebManager;
+
+  for (const minute of ["09:00", "09:01", "09:02", "09:03", "09:04"]) {
+    await runScheduledAutomationsCheck(db, manager, createFakeEmailSender({ configured: false }), new Date(`2026-03-15T${minute}:00.000Z`));
+  }
+  assert.equal(getAutomationRule(db, "proj1", rule.id)!.lastStatus, "failed");
+  assert.equal(getAutomationRule(db, "proj1", rule.id)!.lastError, EMAIL_NOT_CONFIGURED_ERROR);
+
+  // RESEND_API_KEY gets configured, and the next tick arrives -- still the same day.
+  const emailSender = createFakeEmailSender({ configured: true });
+  await runScheduledAutomationsCheck(db, manager, emailSender, new Date("2026-03-15T09:05:00.000Z"));
+
+  assert.equal(emailSender.sentTo.length, 1, "must actually attempt the send now that an EmailSender is configured, not stay suppressed for the rest of the day");
+  assert.equal(getAutomationRule(db, "proj1", rule.id)!.lastStatus, "sent");
+});
+
+/**
+ * Round 1032: mirrors the WhatsApp-outage retention test above exactly,
+ * for EMAIL_NOT_CONFIGURED_ERROR's own identical flood risk -- without
+ * its own retention bucket (recordAutomationRun, packages/db/src/
+ * automations.ts), a long stretch of "not configured" rows could evict a
+ * genuine failure (e.g. a bad toEmail on a different firing) from the
+ * same catch-all bucket before hasTooManyConsecutiveFailuresToday's own
+ * lookback ever saw it, silently defeating the round-924 cap.
+ */
+test("runScheduledAutomationsCheck's 5-per-day failure cap survives a long EmailSender-not-configured stretch interleaved between genuine failures, not just a brief one", async () => {
+  const { db } = setupProject();
+  const rule = insertAutomationRule(
+    db,
+    scheduleRuleBase({ actionType: "send_email", toMode: "static", toEmail: "owner@example.com", emailSubject: "Daily report" }),
+  );
+  const manager = {} as WhatsAppWebManager;
+  const failingConfiguredSender = createFakeEmailSender({ failWith: new Error("Resend API request failed (500): internal error") });
+  const notConfiguredSender = createFakeEmailSender({ configured: false });
+
+  const startedAt = new Date("2026-03-15T09:00:00.000Z").getTime();
+  let minute = 0;
+  const tickAt = () => new Date(startedAt + minute * 60_000);
+
+  for (let rep = 0; rep < 7; rep++) {
+    await runScheduledAutomationsCheck(db, manager, failingConfiguredSender, tickAt());
+    minute += 1;
+    for (let i = 0; i < 25; i++) {
+      await runScheduledAutomationsCheck(db, manager, notConfiguredSender, tickAt());
+      minute += 1;
+    }
+  }
+
+  const runs = listAutomationRuns(db, "proj1", rule.id, 1000);
+  const genuineFailures = runs.filter((r) => r.error !== EMAIL_NOT_CONFIGURED_ERROR);
+  assert.equal(
+    genuineFailures.length,
+    5,
+    "a long not-configured stretch interleaved between genuine failures must never let more than 5 genuine attempts through in one day",
   );
 });
 
