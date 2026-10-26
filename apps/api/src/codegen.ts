@@ -6858,7 +6858,16 @@ export function GlobalSearch({ entities, onClose, onJumpToEntity, onJumpToRecord
         setSelectedIndex(null);
       } else {
         setExpandedSamples((prev) => ({ ...prev, [entityName]: full }));
-        setResults((prev) => prev.map((r) => (r.entityName === entityName ? { ...r, totalMatches: full.length } : r)));
+        // Round 1020: mirrors the live preview's own fix (GlobalSearchPanel.tsx)
+        // -- re-sorts after patching this one group's own totalMatches, so a
+        // group that grew past another one's count (data changed while the
+        // panel stayed open) can't keep rendering below it, contradicting
+        // this panel's own documented descending-order contract.
+        setResults((prev) =>
+          prev
+            .map((r) => (r.entityName === entityName ? { ...r, totalMatches: full.length } : r))
+            .sort((a, b) => b.totalMatches - a.totalMatches),
+        );
       }
       // Round 904: a failed "Show all" (just below) surfaces through this
       // same shared error banner -- succeeding on a later retry must clear

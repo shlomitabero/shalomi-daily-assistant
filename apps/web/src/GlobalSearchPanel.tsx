@@ -290,8 +290,23 @@ export function GlobalSearchPanel({
         setSelectedIndex(null);
       } else {
         setExpandedSamples((prev) => ({ ...prev, [entityName]: full.sample }));
+        // Round 1020: runSearch's own sort just above establishes the
+        // panel's documented "descending totalMatches order" once, at the
+        // original search -- but this patches one group's own count to a
+        // fresh, possibly much larger number (the exact "data changed
+        // while the panel stayed open" case round 983's own comment right
+        // above already names: a collaborator's edit, an automation
+        // write, another tab) without ever re-sorting. A group that was
+        // genuinely smaller at search time can now hold more real matches
+        // than one still sitting above it, visibly contradicting this
+        // panel's own ordering contract (a smaller count rendered above a
+        // larger one) until the next brand-new search happens to fix it
+        // by chance. Re-sorting with the identical comparator keeps this
+        // self-consistent the instant the count itself changes.
         setResults((prev) =>
-          prev.map((r) => (r.entityName === entityName ? { ...r, totalMatches: full.sample.length } : r)),
+          prev
+            .map((r) => (r.entityName === entityName ? { ...r, totalMatches: full.sample.length } : r))
+            .sort((a, b) => b.totalMatches - a.totalMatches),
         );
       }
       // Round 904: a failed "Show all" (just below) surfaces through this

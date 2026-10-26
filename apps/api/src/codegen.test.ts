@@ -8065,6 +8065,103 @@ test("the exported GlobalSearch highlights the matched substring inside each res
 });
 
 /**
+ * Round 1020: mirrors the live preview's own identical fix
+ * (GlobalSearchPanel.tsx) in the exported GlobalSearch.jsx -- runSearch's
+ * own sort establishes the panel's documented descending-totalMatches
+ * order once, at the original search, but handleShowAll patched one
+ * group's own totalMatches to a fresh, possibly much larger count (data
+ * genuinely changed while the panel stayed open -- round 983's own
+ * comment names exactly this) without ever re-sorting. Renders the real
+ * generated GlobalSearch.jsx end to end: Service starts with more
+ * matches (20) than Customer (3), so Service's group renders first; "Show
+ * all" on Customer discovers 36 real matches (the exact same /api/Customer
+ * endpoint returning more records than the original search saw), and
+ * Customer's group must then render ABOVE Service's, not stay stuck below
+ * it.
+ */
+test("the exported GlobalSearch re-sorts result groups after 'Show all' discovers a group now has more matches than one still ranked above it", async () => {
+  const files = generateExportFiles(project);
+  const dir = writeGeneratedWebComponent(files);
+  let customerFetchCount = 0;
+  const serviceRecords = new Array(20).fill(0).map((_, i) => ({ id: i, title: `smith service ${i}` }));
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = (async (input: string): Promise<Response> => {
+    if (input === "/api/Customer") {
+      customerFetchCount += 1;
+      // The original search sees only 8 matches (more than the 5-item
+      // sample cap, so a real "Show all" button renders, but still fewer
+      // than Service's 20); "Show all" (the second fetch) discovers 36 --
+      // data genuinely changed while the panel stayed open, the exact
+      // scenario round 983's own comment names.
+      const count = customerFetchCount === 1 ? 8 : 36;
+      const records = new Array(count).fill(0).map((_, i) => ({ id: i, name: `smith customer ${i}`, status: "New" }));
+      return new Response(JSON.stringify({ records }), { status: 200, headers: { "content-type": "application/json" } });
+    }
+    if (input === "/api/Service") {
+      return new Response(JSON.stringify({ records: serviceRecords }), { status: 200, headers: { "content-type": "application/json" } });
+    }
+    throw new Error(`unexpected request ${input}`);
+  }) as typeof fetch;
+
+  try {
+    await withRealLocalStorage(async () => {
+      const { GlobalSearch } = await import(path.join(dir, "web", "src", "components", "GlobalSearch.jsx"));
+      const { container } = render(
+        React.createElement(GlobalSearch, {
+          entities: project.spec.entities,
+          onClose: () => {},
+          onJumpToEntity: () => {},
+          onJumpToRecord: () => {},
+        }),
+      );
+
+      const input = container.querySelector(".global-search-input") as HTMLInputElement;
+      const form = container.querySelector("form.global-search-form") as HTMLFormElement;
+      await act(async () => {
+        fireEvent.change(input, { target: { value: "smith" } });
+        fireEvent.submit(form);
+      });
+      for (let i = 0; i < 40 && container.querySelectorAll(".global-search-group").length < 2; i++) {
+        await act(async () => {
+          await new Promise((resolve) => setTimeout(resolve, 0));
+        });
+      }
+      const labelsBefore = Array.from(container.querySelectorAll(".global-search-entity-label")).map((el) => el.textContent);
+      assert.deepEqual(labelsBefore, ["שירותים", "לקוחות"], "sanity check: Service (20 matches) must rank above Customer (3) at the original search");
+
+      // Both groups have more than 5 matches, so BOTH render their own
+      // "Show all" button -- must click Customer's own, specifically,
+      // not just the first one found in DOM order (Service's, since it
+      // currently ranks first).
+      const customerGroup = Array.from(container.querySelectorAll(".global-search-group")).find((g) =>
+        g.querySelector(".global-search-entity-label")?.textContent === "לקוחות",
+      ) as HTMLElement;
+      const showAllButton = customerGroup.querySelector(".global-search-show-all") as HTMLButtonElement;
+      await act(async () => {
+        fireEvent.click(showAllButton);
+      });
+      for (let i = 0; i < 40; i++) {
+        const labels = Array.from(container.querySelectorAll(".global-search-entity-label")).map((el) => el.textContent);
+        if (labels[0] === "לקוחות") break;
+        await act(async () => {
+          await new Promise((resolve) => setTimeout(resolve, 0));
+        });
+      }
+      const labelsAfter = Array.from(container.querySelectorAll(".global-search-entity-label")).map((el) => el.textContent);
+      assert.deepEqual(
+        labelsAfter,
+        ["לקוחות", "שירותים"],
+        "Customer now genuinely has more matches (36) than Service (20) and must re-sort above it, not stay stuck below just because of its original position",
+      );
+    });
+  } finally {
+    globalThis.fetch = originalFetch;
+    cleanup();
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+/**
  * Round 494's finding: the exported app's GlobalSearch never got the live
  * preview's own round-290 "Escape clears the query first" behavior
  * (GlobalSearchPanel.tsx's own handleInputKeyDown + its

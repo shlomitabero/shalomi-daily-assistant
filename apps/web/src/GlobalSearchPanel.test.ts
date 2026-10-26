@@ -469,6 +469,84 @@ test("GlobalSearchPanel's handleShowAll never surfaces a stale, still-in-flight 
 });
 
 /**
+ * Round 1020: runSearch's own sort (tested above) establishes the panel's
+ * documented "descending totalMatches order" once, at the original
+ * search -- but handleShowAll patches one group's own totalMatches to a
+ * fresh count (round 983's own comment right above its success branch
+ * already names why this count can change: a collaborator's edit, an
+ * automation write, another tab, all while the panel stayed open) without
+ * ever re-sorting. Starts with two groups already in the panel's
+ * documented order (Order:20 above Customer:6), then "Show all" on
+ * Customer discovers 36 real matches -- Customer must now sort back above
+ * Order, not stay stuck below it just because its OWN position in the
+ * array was set at the original, smaller count.
+ */
+test("GlobalSearchPanel's handleShowAll re-sorts results after a group's totalMatches changes, so it can't end up rendered below a group it now outnumbers", async () => {
+  const handlerMatch = globalSearchPanelSrc.match(/ {2}async function handleShowAll\(entityName: string\) \{[\s\S]*?\n {2}\}\n/);
+  assert.ok(handlerMatch, "expected to find handleShowAll in GlobalSearchPanel.tsx");
+  const { code } = transformSync(handlerMatch![0], { loader: "ts" });
+
+  const entityOrder = { name: "Order", label: "Order", fields: [] };
+  const entityCustomer = { name: "Customer", label: "Customer", fields: [] };
+
+  function fakeSearchEntityRecords(entity: { name: string; label: string }, records: unknown[]) {
+    return { entityName: entity.name, entityLabel: entity.label, totalMatches: records.length, sample: records };
+  }
+
+  // The panel's own documented order at the original search: Order (20)
+  // above Customer (6).
+  let results: { entityName: string; entityLabel: string; totalMatches: number; sample: unknown[] }[] = [
+    { entityName: "Order", entityLabel: "Order", totalMatches: 20, sample: [] },
+    { entityName: "Customer", entityLabel: "Customer", totalMatches: 6, sample: [] },
+  ];
+  const searchRequestId = { current: 0 };
+
+  const fn = new Function(
+    "entities",
+    "projectId",
+    "listRecords",
+    "searchEntityRecords",
+    "highlightQuery",
+    "lastRecordsByEntityRef",
+    "setShowAllLoading",
+    "setExpandedSamples",
+    "searchRequestId",
+    "lang",
+    "setError",
+    "errorFromShowAllRef",
+    "setResults",
+    "setSelectedIndex",
+    `${code}\nreturn handleShowAll;`,
+  )(
+    [entityOrder, entityCustomer],
+    "proj1",
+    async () => ({ records: new Array(36).fill(0).map((_, i) => ({ id: i, name: `customer-${i}` })) }),
+    fakeSearchEntityRecords,
+    "smith",
+    { current: {} },
+    () => {},
+    () => {},
+    searchRequestId,
+    "en",
+    () => {},
+    { current: false },
+    (updater: (prev: typeof results) => typeof results) => {
+      results = updater(results);
+    },
+    () => {},
+  ) as (entityName: string) => Promise<void>;
+
+  await fn("Customer");
+
+  assert.deepEqual(
+    results.map((r) => r.entityName),
+    ["Customer", "Order"],
+    "Customer now genuinely has more matches (36) than Order (20) and must sort back above it, not stay stuck below just because of its original array position",
+  );
+  assert.equal(results[0].totalMatches, 36);
+});
+
+/**
  * Regression test for round 663: handleShowAll had no catch clause at all,
  * unlike runSearch's own identical listRecords call above it in this same
  * file -- a rejected fetch (a timeout, a cold-starting backend, an entity
