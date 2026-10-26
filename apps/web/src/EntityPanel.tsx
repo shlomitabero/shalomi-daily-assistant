@@ -3894,6 +3894,17 @@ export function EntityPanel({
                 // false) must leave the in-progress edit exactly as it was,
                 // not silently discard it.
                 if (deleted) {
+                  // Round 1016: this form reset is otherwise identical to
+                  // Cancel's/Escape's own (see their own calls just above),
+                  // which is exactly the shape discardAbandonedFileUploads's
+                  // own doc comment lists as abandoning an in-progress edit
+                  // -- but handleDelete's own server-side cleanup
+                  // (deleteReplacedFileFields) only ever knows the record's
+                  // last PERSISTED file value, never a replacement file this
+                  // edit session uploaded but never saved. Missing this call
+                  // left that file orphaned on disk forever, for a record
+                  // that no longer even exists.
+                  discardAbandonedFileUploads();
                   setForm(emptyForm(entity));
                   setEditingId(null);
                   editingOriginalRef.current = null;

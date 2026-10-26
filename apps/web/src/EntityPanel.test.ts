@@ -13905,6 +13905,91 @@ test("EntityPanel's edit form deletes an abandoned file replacement from disk wh
 });
 
 /**
+ * Round 1016: the in-form Delete button resets the exact same state as
+ * Cancel/Escape above (setForm(emptyForm), setEditingId(null),
+ * editingOriginalRef.current = null) through an almost identical onClick --
+ * but, unlike those two, never called discardAbandonedFileUploads() first.
+ * Deleting the record outright is just as much an abandonment of this
+ * edit's own unsaved replacement upload as Cancel/Escape are: the server's
+ * DELETE route only ever cleans up files off the record's last PERSISTED
+ * snapshot (deleteReplacedFileFields in routes/projects.ts), with no idea
+ * a newer file was uploaded but never saved. Confirms clicking Delete also
+ * cleans up the abandoned replacement, on top of the record itself being
+ * removed.
+ */
+test("EntityPanel's edit form deletes an abandoned file replacement from disk when the record itself is deleted mid-edit via the form's own Delete button", async (t) => {
+  await withJsdom(async () => {
+    const existingDescriptor = { url: "/api/uploads/proj1/Applicant/original.pdf", name: "original.pdf", size: 9, mimeType: "application/pdf" };
+    const store: EntityRecord[] = [{ id: 1, name: "Dana", resume: JSON.stringify(existingDescriptor) }];
+    const deleteCalls: string[] = [];
+    const originalFetch = globalThis.fetch;
+    const originalConfirm = globalThis.window.confirm;
+    globalThis.fetch = (async (input: string, init?: RequestInit): Promise<Response> => {
+      const method = init?.method ?? "GET";
+      if (method === "GET" && input === "/api/projects/proj1/entities/Applicant") {
+        return new Response(JSON.stringify({ records: store }), { status: 200, headers: { "content-type": "application/json" } });
+      }
+      if (method === "POST" && input === "/api/projects/proj1/entities/Applicant/fields/resume/upload") {
+        return new Response(
+          JSON.stringify({ file: { url: "/api/uploads/proj1/Applicant/replacement.pdf", name: "replacement.pdf", size: 9, mimeType: "application/pdf" } }),
+          { status: 200, headers: { "content-type": "application/json" } },
+        );
+      }
+      if (method === "DELETE" && input === "/api/projects/proj1/entities/Applicant/fields/resume/upload") {
+        deleteCalls.push((JSON.parse(init!.body as string) as { url: string }).url);
+        return new Response(null, { status: 204 });
+      }
+      if (method === "DELETE" && input === "/api/projects/proj1/entities/Applicant/1") {
+        return new Response(null, { status: 204 });
+      }
+      throw new Error(`unexpected request ${method} ${input}`);
+    }) as typeof fetch;
+    globalThis.window.confirm = (() => true) as typeof window.confirm;
+
+    try {
+      renderEntityPanel({ entity: APPLICANT_ENTITY, allEntities: [APPLICANT_ENTITY] });
+      await waitForCondition(() => document.querySelectorAll("table tbody tr").length === 1);
+
+      fireEvent.click(document.querySelector(".row-actions button") as HTMLButtonElement);
+      await waitForCondition(() => (document.querySelector(".record-form input[type=\"text\"]") as HTMLInputElement)?.value === "Dana");
+
+      const form = document.querySelector(".record-form") as HTMLFormElement;
+      await waitForCondition(() => form.querySelector(".file-field-current a")?.textContent === "original.pdf");
+
+      const replacementFile = new File(["two"], "replacement.pdf", { type: "application/pdf" });
+      const fileInput = form.querySelector('input[type="file"]') as HTMLInputElement;
+      await act(async () => {
+        Object.defineProperty(fileInput, "files", { value: [replacementFile], configurable: true });
+        fireEvent.change(fileInput);
+        await new Promise((resolve) => setTimeout(resolve, 0));
+      });
+      await waitForCondition(() => form.querySelector(".file-field-current a")?.textContent === "replacement.pdf");
+      assert.equal(deleteCalls.length, 0, "picking the replacement must not delete anything yet -- the edit is still in progress");
+
+      // The record-delete's own undo window (5s of real time) has nothing
+      // to do with this test's own assertion -- discardAbandonedFileUploads
+      // fires synchronously inside the button's onClick, before any timer
+      // -- but faking it, only now (never before a `waitForCondition` that
+      // still needs real timers to resolve, per this file's own established
+      // convention), keeps a real 5-second timer from ever being scheduled
+      // against this test's own jsdom teardown.
+      t.mock.timers.enable({ apis: ["setTimeout"] });
+
+      const deleteButton = Array.from(form.querySelectorAll("button[type=button]")).find((b) => /^delete$/i.test(b.textContent ?? "")) as HTMLButtonElement;
+      fireEvent.click(deleteButton);
+
+      assert.equal(deleteCalls.length, 1, "deleting the record itself must also delete its own abandoned, never-saved replacement upload");
+      assert.equal(deleteCalls[0], "/api/uploads/proj1/Applicant/replacement.pdf");
+      assert.ok(!deleteCalls.includes("/api/uploads/proj1/Applicant/original.pdf"), "deleting must never try to clean up the record's own real original file on the client side -- that's the server's own job");
+    } finally {
+      t.mock.timers.reset();
+      globalThis.fetch = originalFetch;
+      globalThis.window.confirm = originalConfirm;
+    }
+  });
+});
+
+/**
  * Round 1004: the "jump straight to a different record without saving or
  * cancelling first" abandonment path -- startEdit's own new cleanup call,
  * distinct from both the explicit Cancel button and Escape.
