@@ -1215,6 +1215,84 @@ test("WhatsAppPanel uploads a chosen attachment and includes its descriptor in t
 });
 
 /**
+ * Round 1001: the send route (routes/projects.ts, round 979) deletes the
+ * resolved attachment file from disk unconditionally once
+ * whatsapp.sendMessage resolves -- win or lose -- since it's single-use.
+ * Before this round, a FAILED send with an attachment left `testAttachment`
+ * populated exactly as round 973's own comment describes for a text-only
+ * retry, but retrying with that same (now server-side-deleted) attachment
+ * reference was a guaranteed dead end: every subsequent attempt 400s with
+ * "Attachment file is no longer available," with no indication the user
+ * needs to pick the file again. Confirms the attachment selector is
+ * cleared after a failed send, not left pointing at a file that's
+ * already gone.
+ */
+test("WhatsAppPanel clears the chosen attachment after a failed send, instead of leaving it selected for a guaranteed-to-fail retry", async () => {
+  await withJsdom(async () => {
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = (async (input: string, init?: RequestInit): Promise<Response> => {
+      const method = init?.method ?? "GET";
+      if (method === "GET" && input === "/api/projects/proj1/integrations/whatsapp/status") {
+        return new Response(
+          JSON.stringify({ status: "connected", phoneNumber: "972501234567", qrDataUrl: null, error: null }),
+          { status: 200, headers: { "content-type": "application/json" } },
+        );
+      }
+      if (method === "GET" && input === "/api/projects/proj1/integrations/whatsapp/messages") {
+        return new Response(JSON.stringify({ messages: [] }), { status: 200, headers: { "content-type": "application/json" } });
+      }
+      if (method === "POST" && input === "/api/projects/proj1/integrations/whatsapp/attachments/upload") {
+        return new Response(
+          JSON.stringify({ file: { url: "/api/uploads/proj1/_whatsapp-attachments/fake-uuid.pdf", name: "brochure.pdf", size: 9, mimeType: "application/pdf" } }),
+          { status: 200, headers: { "content-type": "application/json" } },
+        );
+      }
+      if (method === "POST" && input === "/api/projects/proj1/integrations/whatsapp/send") {
+        // The server already deleted the attachment from disk inside this
+        // very request (round 979), even though the send itself failed --
+        // this response is exactly what a real "recipient not found"-style
+        // failure looks like.
+        return new Response(JSON.stringify({ ok: false, error: "recipient not found" }), { status: 200, headers: { "content-type": "application/json" } });
+      }
+      throw new Error(`unexpected request ${method} ${input}`);
+    }) as typeof fetch;
+    try {
+      render(
+        React.createElement(
+          ThemeProvider,
+          null,
+          React.createElement(LanguageProvider, null, React.createElement(WhatsAppPanel, { projectId: "proj1", userId: "user1", projectName: "Test Project", onClose: () => {}, onJumpToEntity: () => {}, onJumpToRecord: () => {}, entities: [], onCreateRecordFromMessage: () => {} })),
+        ),
+      );
+      await waitForCondition(() => document.querySelector(".whatsapp-test-form") !== null);
+
+      const inputs = document.querySelectorAll('.whatsapp-test-form input[type="text"]');
+      fireEvent.change(inputs[0] as HTMLInputElement, { target: { value: "972521112233" } });
+      fireEvent.change(inputs[1] as HTMLInputElement, { target: { value: "הנה הברושור" } });
+
+      const fileInput = document.querySelector('.whatsapp-attachment-field input[type="file"]') as HTMLInputElement;
+      const file = new File(["%PDF-fake-brochure"], "brochure.pdf", { type: "application/pdf" });
+      Object.defineProperty(fileInput, "files", { value: [file] });
+      await act(async () => {
+        fireEvent.change(fileInput);
+      });
+      await waitForCondition(() => document.querySelector(".whatsapp-attachment-field .file-field-current") !== null);
+
+      fireEvent.submit(document.querySelector("form.whatsapp-test-form")!);
+      await waitForCondition(() => document.querySelector("form.whatsapp-test-form p.error")?.textContent === "recipient not found");
+
+      assert.equal(
+        document.querySelector(".whatsapp-attachment-field .file-field-current"),
+        null,
+        "the attachment must be cleared after the failed send -- the server already deleted the underlying file, so leaving it selected would guarantee a 400 on the very next retry",
+      );
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+});
+
+/**
  * Round 979: clicking "Remove" on a chosen attachment previously only ever
  * cleared local React state -- the real upload stayed on disk forever,
  * since nothing short of deleting the whole project ever touched that

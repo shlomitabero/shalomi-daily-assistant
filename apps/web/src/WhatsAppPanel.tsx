@@ -603,16 +603,26 @@ export function WhatsAppPanel({
       setSendResult(
         result.ok ? { ok: true, text: t("whatsapp.send.success") } : { ok: false, text: result.error ?? t("whatsapp.send.genericError") },
       );
+      // Round 1001: cleared here regardless of result.ok -- the server
+      // (routes/projects.ts's POST .../whatsapp/send, round 979) already
+      // deletes the resolved attachment file from disk unconditionally
+      // the moment whatsapp.sendMessage above resolves, win or lose,
+      // since it's single-use and nothing else in this app ever
+      // references that exact uploaded file again. The comment just
+      // below predates that cleanup; retrying a failed send WITH the
+      // SAME testAttachment reference now guarantees a 400
+      // ATTACHMENT_FILE_GONE on every subsequent attempt, since the one
+      // file it names is already gone -- a confusing dead end with no
+      // indication the user needs to pick the file again.
+      setTestAttachment(null);
       // Mirrors every other write-form in this app (EntityPanel's own
       // record form resets to empty right after a successful create) --
       // only on success, so a failed send still leaves the typed
-      // recipient/message (and chosen attachment) in place to retry,
-      // rather than forcing the user to redo all three after e.g. a
-      // transient network error.
+      // recipient/message in place to retry, rather than forcing the
+      // user to redo both after e.g. a transient network error.
       if (result.ok) {
         setTestTo("");
         setTestMessage("");
-        setTestAttachment(null);
       }
       const versionBeforeFetch = messagesVersionRef.current;
       const { messages: freshPage } = await listWhatsAppMessages(projectId);
