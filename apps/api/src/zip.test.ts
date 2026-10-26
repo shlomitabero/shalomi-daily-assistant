@@ -100,3 +100,52 @@ test("buildZip throws a clear, actionable error instead of a raw RangeError when
   const atLimit = "y".repeat(0xffff);
   assert.doesNotThrow(() => buildZip([{ path: atLimit, content: "data" }]));
 });
+
+/**
+ * Round 1038: the entries.length/nameBuf.length guards above cover this
+ * writer's two 16-bit fields, but it also has several 32-bit fields with
+ * the identical "no Zip64 support" ~4GB ceiling (each entry's own
+ * compressed/uncompressed size, its local-header offset in the central
+ * directory, and the end record's own central-directory size/offset) --
+ * none of which had an equivalent guard. Without one, a single entry
+ * whose own content exceeds ~4GB fails deep inside Buffer#writeUInt32LE
+ * with the same generic, unhelpful RangeError the other two guards exist
+ * to avoid (confirmed via a direct repro:
+ * Buffer.alloc(46).writeUInt32LE(0x100000000, 42) throws exactly that).
+ * `backup.ts`'s own doc comments already describe "tens of thousands of
+ * linked records" as a plausible real dataset, so a single entity's CSV
+ * (or the whole backup's cumulative size) reaching this scale isn't
+ * purely theoretical.
+ */
+test("buildZip throws a clear, actionable error instead of a raw RangeError when a single entry's own data exceeds the non-Zip64 32-bit size limit", () => {
+  const oversized = Buffer.alloc(0xffffffff + 1);
+  // Matching on "Zip64" (not the Buffer RangeError's own generic message,
+  // which also happens to contain large numbers) is what distinguishes
+  // the intended, descriptive error from the pre-fix accidental one. The
+  // guard runs before crc32 ever touches this buffer, so this throws
+  // immediately rather than first paying the cost of hashing ~4GB.
+  assert.throws(() => buildZip([{ path: "huge.csv", content: oversized }]), /Zip64/i);
+});
+
+/**
+ * Round 1038: the sibling 32-bit field to the one just above -- each
+ * entry's own local-header OFFSET in the central directory, the running
+ * total of every entry's header+name+data processed so far. A single
+ * entry under the per-entry size limit from the test above can still
+ * push this running total past ~4GB for whichever entry comes after it.
+ * Needs one real ~4GB entry (so its own crc32 genuinely runs, unlike the
+ * test above) to exercise this specific field, not just the per-entry one.
+ */
+test("buildZip throws a clear, actionable error instead of a raw RangeError when the running total offset across multiple entries exceeds the non-Zip64 32-bit limit", () => {
+  // Comfortably under the single-entry limit (so the guard tested above
+  // never fires for THIS entry), but close enough to it that adding this
+  // entry's own local header (30 bytes) and file name ("big.csv", 7
+  // bytes) tips the running total over the 32-bit limit by the time the
+  // second, tiny entry is processed.
+  const almostMax = Buffer.alloc(0xffffffff - 10);
+  assert.throws(
+    () => buildZip([{ path: "big.csv", content: almostMax }, { path: "small.csv", content: "x" }]),
+    /Zip64/i,
+    "the second entry's own local-header offset must be rejected once the running total from the first entry alone already exceeds the 32-bit limit",
+  );
+});
