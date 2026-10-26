@@ -2520,6 +2520,27 @@ export function createProjectsRouter(
           if (!file) {
             throw new HttpError(400, "No file was uploaded", "NO_FILE_UPLOADED");
           }
+          // Round 1025: the access/existence check above runs before
+          // multer's own disk write -- a genuine, potentially long I/O
+          // operation (a slow connection, a large file) -- with nothing in
+          // between. A concurrent DELETE /projects/:id on this same
+          // project (another tab/device, or another collaborator) can run
+          // to completion -- including its own deleteProjectUploads sweep
+          // -- entirely within that window: multer's destination callback
+          // (createUploadMiddleware above) unconditionally recreates this
+          // project's upload directory via mkdirSync with no existence
+          // check of its own, so the write still lands on disk, resurrecting
+          // a just-deleted project's upload directory, permanently orphaned
+          // (nothing will ever call deleteProjectUploads for this project
+          // again). Re-checks existence now, after that genuine await, the
+          // same "check after the real I/O, not just before it" pattern
+          // rounds 539/1024 already established for auth.ts's own password
+          // routes -- cleaning up the just-written file rather than leaving
+          // it orphaned if the project is gone.
+          if (!getProject(db, req.params.id)) {
+            await rm(file.path, { force: true }).catch(() => {});
+            throw new HttpError(404, `Project "${req.params.id}" not found`, "PROJECT_NOT_FOUND");
+          }
           return {
             status: 200,
             body: {
@@ -2625,6 +2646,13 @@ export function createProjectsRouter(
           const file = req.file;
           if (!file) {
             throw new HttpError(400, "No file was uploaded", "NO_FILE_UPLOADED");
+          }
+          // Round 1025: mirrors the entity file-field upload route's own
+          // identical fix just above -- see its own comment for the full
+          // "resurrected upload directory" race this re-check closes.
+          if (!getProject(db, req.params.id)) {
+            await rm(file.path, { force: true }).catch(() => {});
+            throw new HttpError(404, `Project "${req.params.id}" not found`, "PROJECT_NOT_FOUND");
           }
           return {
             status: 200,

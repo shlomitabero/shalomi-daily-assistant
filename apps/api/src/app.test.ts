@@ -12486,6 +12486,102 @@ test("uploading with the same idempotency key after the first attempt already fi
 });
 
 /**
+ * Regression test for a real bug (round 1025): the access/existence check
+ * this upload route runs happens before multer's own disk write -- a
+ * genuine, potentially long I/O operation on a slow connection or with a
+ * large file -- with nothing re-checking existence afterward. A concurrent
+ * DELETE /projects/:id on this same project could run to completion
+ * (including its own deleteProjectUploads sweep) entirely within that
+ * window: multer's destination callback (createUploadMiddleware)
+ * unconditionally recreates the project's upload directory via mkdirSync
+ * with no existence check of its own, so the write still landed on disk,
+ * resurrecting a just-deleted project's upload directory -- permanently
+ * orphaned, since nothing ever calls deleteProjectUploads for that project
+ * again. Simulates "a slow connection" honestly, with no production-code
+ * test hooks: the multipart body is hand-built and streamed to the real
+ * server in several chunks with a real delay between each, giving the
+ * concurrent DELETE request a genuine, reliable window to land and finish
+ * while the upload is still in flight.
+ */
+test("uploading a file to a project that gets deleted while the (slow) upload is still in flight must not resurrect its deleted upload directory", async () => {
+  await withServer(async (baseUrl, db, uploadsDir) => {
+    const email = `upload-vs-delete-${randomUUID()}@example.com`;
+    const token = await signup(baseUrl, email);
+    const user = findUserByEmail(db, email)!;
+
+    const spec: ProductSpec = {
+      summary: "test",
+      personas: [],
+      roles: ["Admin"],
+      entities: [
+        {
+          name: "Customer",
+          fields: [
+            { name: "name", type: "text", required: true },
+            { name: "receipt", type: "file", required: false },
+          ],
+        },
+      ],
+      screens: [],
+      assumptions: [],
+      openQuestions: [],
+    };
+    const projectId = randomUUID();
+    insertProject(db, { id: projectId, ownerId: user.id, name: "Customers", description: "test", spec });
+    diffAndMigrate(db, projectId, undefined, spec);
+    markProjectBuilt(db, projectId);
+
+    const boundary = `----forgeTestBoundary${randomUUID()}`;
+    const head = new TextEncoder().encode(
+      `--${boundary}\r\nContent-Disposition: form-data; name="file"; filename="receipt.pdf"\r\nContent-Type: application/pdf\r\n\r\n`,
+    );
+    const tail = new TextEncoder().encode(`\r\n--${boundary}--\r\n`);
+    const contentPieces = Array.from({ length: 5 }, (_, i) => new TextEncoder().encode(`fake-receipt-bytes-piece-${i}-`));
+
+    const slowBody = new ReadableStream<Uint8Array>({
+      async start(controller) {
+        controller.enqueue(head);
+        for (const piece of contentPieces) {
+          // A real delay between chunks -- the same honest "slow
+          // connection" simulation this bug's own repro scenario describes,
+          // with no instrumentation added to production code at all.
+          await new Promise((resolve) => setTimeout(resolve, 15));
+          controller.enqueue(piece);
+        }
+        controller.enqueue(tail);
+        controller.close();
+      },
+    });
+
+    const uploadPromise = fetch(`${baseUrl}/api/projects/${projectId}/entities/Customer/fields/receipt/upload`, {
+      method: "POST",
+      headers: { authorization: `Bearer ${token}`, "content-type": `multipart/form-data; boundary=${boundary}` },
+      body: slowBody,
+      duplex: "half",
+    } as RequestInit);
+
+    // A short head start so the upload request has genuinely begun (and
+    // this route's own first access check has already passed, with the
+    // project still present) before the concurrent delete fires -- mirrors
+    // the same short-head-start convention the round-539/1024 race tests
+    // already use for their own, differently-shaped await windows.
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    const deleteRes = await fetch(`${baseUrl}/api/projects/${projectId}`, { method: "DELETE", headers: authHeaders(token) });
+    assert.equal(deleteRes.status, 204);
+
+    const uploadRes = await uploadPromise;
+    assert.notEqual(uploadRes.status, 200, "must not report success once the project it targets no longer exists");
+    assert.equal(uploadRes.status, 404);
+    assert.equal(((await uploadRes.json()) as { code?: string }).code, "PROJECT_NOT_FOUND");
+
+    assert.ok(
+      !existsSync(path.join(uploadsDir, projectId)),
+      "the just-deleted project's upload directory must not be resurrected by the in-flight upload",
+    );
+  });
+});
+
+/**
  * Round 782: multer (via busboy) decodes a multipart part's
  * `Content-Disposition: filename="..."` header as raw Latin-1 bytes
  * unless `defParamCharset` is explicitly configured, which
