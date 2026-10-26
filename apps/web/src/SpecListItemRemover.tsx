@@ -473,8 +473,27 @@ export function EntitySummaryItem({
     onRenamed,
   );
 
-  /** Round 932: see RoleChip's own handleStartRename -- same gap, same fix. */
+  /**
+   * Round 932: see RoleChip's own handleStartRename -- same gap, same fix.
+   * Round 1027: unlike RoleChip/AssumptionItem/PersonaItem (whose server
+   * routes re-validate against an `expect` index and reject a stale
+   * request with an error, never a stale success -- see those routes'
+   * own assertIndexStillMatches calls), this entity's own remove/rename
+   * routes are both plain, unguarded read-modify-writes keyed by stable
+   * entity name, with no staleness check at all. Clicking remove, then --
+   * before that DELETE's response lands -- clicking this label to rename
+   * and submitting, fires a concurrent PATCH .../label; whichever
+   * response the browser *receives* last (not necessarily the one the
+   * server processed last) silently overwrites the other's result via
+   * the shared onRemoved/onRenamed -> setProject full-state replace, up
+   * to and including resurrecting a just-deleted entity in the UI with
+   * its new label. Guarding this entry point against `busy` (remove's
+   * own in-flight flag) closes it -- the remove button is unreachable
+   * once rename.editing is true (see that branch above), so this is the
+   * only direction that needs a guard.
+   */
   function handleStartRename() {
+    if (busy) return;
     clearError();
     rename.startEditing();
   }
@@ -714,7 +733,21 @@ export function FieldChip({
 
   // Round 932: see RoleChip's own handleStartRename for the general shape
   // -- this chip just has three siblings to cross-clear instead of one.
+  // Round 1027: fieldChipBusy's own cross-gate (round 1026) disables the
+  // type select/required checkbox/remove button while any of the three is
+  // in flight, but nothing stopped a rename from STARTING during that
+  // window -- the field label here has no disabled attribute at all (it's
+  // a clickable span, not a form control), and starting one fires a PATCH
+  // .../label concurrently with whichever of the other three is still
+  // pending. Both routes read-modify-write the same field with no
+  // staleness guard, so whichever response the browser *receives* last
+  // (not necessarily the one the server processed last) silently
+  // overwrites the other's result via the shared onChanged(project) full-
+  // state replace. Once rename.editing is true the other three controls
+  // are unrendered entirely (see the editing branch below), so guarding
+  // just this entry point closes the whole gap.
   function handleStartRename() {
+    if (fieldChipBusy) return;
     clearError();
     setRequiredError(null);
     setTypeError(null);

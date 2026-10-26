@@ -859,6 +859,74 @@ test("clicking an entity summary's label opens an inline edit, and saving it cal
   });
 });
 
+/**
+ * Round 1027: an entity's remove and rename are two independent actions
+ * both feeding the same onRemoved/onRenamed -> setProject full-state
+ * replace, with no server-side staleness guard at all (unlike RoleChip/
+ * AssumptionItem/PersonaItem's own stale-index-protected routes). Before
+ * this round, clicking remove then immediately clicking the label (before
+ * the DELETE's response landed) opened the rename input and let a second,
+ * concurrent PATCH .../label go out -- whichever response the browser
+ * received last silently overwrote the other's result, up to resurrecting
+ * the just-deleted entity with its new label. Confirms the label is now
+ * inert while a removal is in flight.
+ */
+test("an entity summary's label does not open for rename while this same entity's own removal is still in flight", async () => {
+  await withJsdom(async () => {
+    const originalFetch = globalThis.fetch;
+    let resolveDelete: (() => void) | undefined;
+    const deleteGate = new Promise<void>((resolve) => {
+      resolveDelete = resolve;
+    });
+    globalThis.fetch = (async (input: string, init?: RequestInit) => {
+      if (init?.method === "DELETE" && input === "/api/projects/proj1/entities/Customer") {
+        await deleteGate;
+        const remaining = {
+          ...baseProject,
+          spec: { ...baseProject.spec, entities: [{ name: "Deal", fields: [{ name: "amount", type: "number", required: false }] }] },
+        };
+        return new Response(JSON.stringify({ project: remaining }), { status: 200, headers: { "content-type": "application/json" } });
+      }
+      throw new Error(`unexpected request ${init?.method ?? "GET"} ${input}`);
+    }) as typeof fetch;
+
+    try {
+      const removedProjects: Project[] = [];
+      const renamedProjects: Project[] = [];
+      renderEntitySummaryItem(
+        (p) => removedProjects.push(p),
+        true,
+        (p) => renamedProjects.push(p),
+      );
+
+      try {
+        fireEvent.click(document.querySelector(".entity-summary-remove") as HTMLButtonElement);
+        // No real await to poll for here -- the removal is deliberately
+        // held open by the gate, so this click's own synchronous busy-
+        // state update is already committed by the time the next line runs.
+        fireEvent.click(document.querySelector(".entity-summary-label") as HTMLElement);
+
+        // Compared as a boolean, never the raw node -- round 666's own
+        // documented lesson about assert.equal hanging on a real DOM node.
+        assert.equal(
+          document.querySelector(".entity-summary-rename-edit") === null,
+          true,
+          "clicking the label while the removal is still in flight must not open the rename input",
+        );
+        assert.equal(renamedProjects.length, 0, "renameEntityLabel must never be called while a removal on this same entity is in flight");
+      } finally {
+        // Always resolves the gate, even if an assertion above threw --
+        // mirrors round 1026's own lesson about a dangling, no-longer-
+        // awaited fetch being able to hang the test.
+        resolveDelete!();
+      }
+      await waitForCondition(() => removedProjects.length === 1);
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+});
+
 /** Mirrors ProjectNameEditor.test.ts's own keyboard-focus test for the identical gap round 483 fixed in a sibling family of click-to-rename components. */
 test("an entity summary's label is keyboard-focusable and Enter opens edit mode", async () => {
   await withJsdom(async () => {
@@ -1653,6 +1721,53 @@ test("clicking Cancel while editing an existing relation field's target closes t
       // boolean rather than assert.equal(element, null, ...) directly.
       assert.equal(document.querySelector(".chip-field-type-confirm") === null, true, "the draft confirm step must close");
       assert.ok(document.querySelector(".chip-field-edit-values"), "the edit-target button must reappear so the draft can be reopened");
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+});
+
+/**
+ * Round 1027: round 1026's own fieldChipBusy cross-gate disables the type
+ * select/required checkbox/remove button while any of the three is in
+ * flight, but left the field label itself ungated -- clicking it still
+ * opened the rename input and let a concurrent PATCH .../label go out.
+ * Mirrors the identical fix just added to EntitySummaryItem above.
+ */
+test("a field chip's label does not open for rename while this same field's own required-toggle is still in flight", async () => {
+  await withJsdom(async () => {
+    const originalFetch = globalThis.fetch;
+    let resolveRequiredPatch: (() => void) | undefined;
+    const requiredGate = new Promise<void>((resolve) => {
+      resolveRequiredPatch = resolve;
+    });
+    globalThis.fetch = (async (input: string, init?: RequestInit) => {
+      const method = init?.method ?? "GET";
+      if (method === "PATCH" && input === "/api/projects/proj1/entities/Customer/fields/email/required") {
+        await requiredGate;
+        return new Response(JSON.stringify({ project: baseProject }), { status: 200, headers: { "content-type": "application/json" } });
+      }
+      throw new Error(`unexpected request ${method} ${input}`);
+    }) as typeof fetch;
+
+    try {
+      renderFieldChip(() => {}, true, { name: "email", type: "text", required: true });
+
+      try {
+        fireEvent.click(document.querySelector(".chip-field-required input") as HTMLInputElement);
+        fireEvent.click(document.querySelector(".chip-text") as HTMLElement);
+
+        // Compared as a boolean, never the raw node -- round 666's own
+        // documented lesson about assert.equal hanging on a real DOM node.
+        assert.equal(
+          document.querySelector(".chip-rename-edit") === null,
+          true,
+          "clicking the label while the required-toggle is still in flight must not open the rename input",
+        );
+      } finally {
+        resolveRequiredPatch!();
+      }
+      await waitForCondition(() => !(document.querySelector(".chip-field-required input") as HTMLInputElement).disabled);
     } finally {
       globalThis.fetch = originalFetch;
     }
