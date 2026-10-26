@@ -145,8 +145,39 @@ export class AnthropicSpecProvider implements SpecProvider {
     if (!result.success) {
       throw new Error(`Anthropic API response did not match ProductSpec schema: ${result.error.message}`);
     }
-    return result.data;
+    // Round 1031: the model is free to emit whatever "screens" shape it
+    // wants per the system prompt above, and real LLM output doesn't
+    // reliably follow the Dashboard-plus-List+Form-pair-per-entity
+    // convention heuristic.ts's buildScreens and templates.ts's screensFor
+    // both already enforce deterministically (round 1028 fixed templates.ts
+    // to match heuristic.ts for exactly this reason). Since `screens` has
+    // zero effect on what's actually built (grep apps/api/src/pipeline.ts
+    // apps/api/src/codegen.ts for "screens" -- no matches; it's purely
+    // Time Machine/History display metadata read by HistoryPanel.tsx/
+    // checkpointDiff.ts), overriding the model's own guess with the same
+    // deterministic shape the other two generators already produce is
+    // free -- nothing downstream depends on its content, only this
+    // count/shape being consistent across every generator so "N screens"
+    // means the same thing regardless of which one built the project.
+    return { ...result.data, screens: screensFor(result.data.entities) };
   }
+}
+
+/**
+ * Mirrors heuristic.ts's own buildScreens and templates.ts's own
+ * screensFor exactly (Dashboard, then a List+Form pair per entity) --
+ * the per-module small-duplication convention this codebase already
+ * uses for this exact helper (and plenty of others, e.g. keyFor,
+ * recordDisplayLabel), rather than introducing a new shared module for
+ * a three-line function.
+ */
+function screensFor(entities: ProductSpec["entities"]): ProductSpec["screens"] {
+  const screens: ProductSpec["screens"] = [{ name: "Dashboard", type: "dashboard" }];
+  for (const entity of entities) {
+    screens.push({ name: `${entity.name} List`, type: "list", entity: entity.name });
+    screens.push({ name: `${entity.name} Form`, type: "form", entity: entity.name });
+  }
+  return screens;
 }
 
 /**

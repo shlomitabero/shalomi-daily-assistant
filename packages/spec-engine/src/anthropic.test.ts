@@ -191,3 +191,47 @@ test("generate() times out instead of hanging forever when the network call stal
   const provider = new AnthropicSpecProvider({ apiKey: "test-key", fetchImpl: stalledFetch, timeoutMs: 10 });
   await assert.rejects(() => provider.generate("x"), /timed out/);
 });
+
+/**
+ * Round 1031: the system prompt above asks the model to freely emit its
+ * own "screens" array, with no code-level validation of its shape or
+ * count -- unlike heuristic.ts's buildScreens and templates.ts's
+ * screensFor (round 1028), which both deterministically produce
+ * Dashboard + a List+Form pair per entity. Since `screens` has zero
+ * effect on what's actually built (it's pure Time Machine/History
+ * display metadata), a real LLM response that returns a differently-
+ * shaped screens array -- fewer entries, missing Form screens, an extra
+ * one, whatever that specific prompt happened to produce -- silently
+ * made "N screens" mean something different depending on which generator
+ * built a given project. Confirms generate() discards the model's own
+ * screens guess entirely and replaces it with the same deterministic
+ * shape the other two generators already produce.
+ */
+test("generate() normalizes screens to the Dashboard-plus-List+Form-pair-per-entity convention, discarding whatever arbitrary shape the model itself returned", async () => {
+  const specWithWrongScreens = {
+    ...VALID_SPEC,
+    entities: [
+      { name: "Customer", fields: [{ name: "name", type: "text", required: true }] },
+      { name: "Order", fields: [{ name: "total", type: "number", required: true }] },
+    ],
+    // Deliberately wrong shape: only one screen total, no Form screens,
+    // and no screen at all for "Order" -- a plausible real model response
+    // that still passes ProductSpecSchema (ScreenSchema imposes no
+    // count/shape constraint).
+    screens: [{ name: "Everything", type: "dashboard" }],
+  };
+  const fakeFetch = (async () =>
+    new Response(JSON.stringify({ content: [{ type: "text", text: JSON.stringify(specWithWrongScreens) }] }), {
+      status: 200,
+    })) as unknown as typeof fetch;
+
+  const provider = new AnthropicSpecProvider({ apiKey: "test-key", fetchImpl: fakeFetch });
+  const spec = await provider.generate("a CRM with orders");
+
+  assert.equal(spec.screens.length, 2 * spec.entities.length + 1, "must match heuristic.ts/templates.ts's own Dashboard-plus-List+Form-pair convention, not the model's own 1-screen guess");
+  assert.equal(spec.screens[0]!.type, "dashboard");
+  for (const entity of spec.entities) {
+    assert.ok(spec.screens.some((s) => s.type === "list" && s.entity === entity.name), `expected a list screen for ${entity.name}`);
+    assert.ok(spec.screens.some((s) => s.type === "form" && s.entity === entity.name), `expected a form screen for ${entity.name}`);
+  }
+});

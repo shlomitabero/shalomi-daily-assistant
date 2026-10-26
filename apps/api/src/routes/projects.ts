@@ -570,8 +570,12 @@ export function deriveFieldName(label: string, existingNames: string[]): string 
  * shape) this particular project uses, this mirrors whichever existing
  * entity's own screens come last in `entities` -- the most likely to
  * reflect the project's current real convention, including after a
- * refine. Falls back to a single plain List screen (templates.ts's own
- * minimal shape) when no entity has any tagged screens at all.
+ * refine. Falls back to a Dashboard-plus-List+Form-pair entity's own
+ * List+Form pair (round 1031: every real generator -- heuristic.ts,
+ * templates.ts, and now anthropic.ts -- normalizes to this exact shape,
+ * so a List-only fallback here was the one place left still assuming
+ * templates.ts's own now-fixed, pre-round-1028 minimal shape) when no
+ * entity has any tagged screens at all.
  */
 export function deriveScreensForNewEntity(newEntityName: string, existingEntities: Entity[], screens: Screen[]): Screen[] {
   for (let i = existingEntities.length - 1; i >= 0; i -= 1) {
@@ -584,7 +588,10 @@ export function deriveScreensForNewEntity(newEntityName: string, existingEntitie
       entity: newEntityName,
     }));
   }
-  return [{ name: newEntityName, type: "list", entity: newEntityName }];
+  return [
+    { name: `${newEntityName} List`, type: "list", entity: newEntityName },
+    { name: `${newEntityName} Form`, type: "form", entity: newEntityName },
+  ];
 }
 
 /**

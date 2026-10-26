@@ -121,10 +121,21 @@ test("deriveScreensForNewEntity mirrors a List-only shape (templates.ts's shape)
   assert.deepEqual(deriveScreensForNewEntity("Invoice", entities, screens), [{ name: "Invoice", type: "list", entity: "Invoice" }]);
 });
 
-test("deriveScreensForNewEntity falls back to a single plain List screen when no existing entity has any tagged screens", () => {
+/**
+ * Round 1031: this fallback used to emit a single plain List screen --
+ * templates.ts's own pre-round-1028 minimal shape. Now that every real
+ * generator (heuristic.ts, templates.ts, and anthropic.ts as of this same
+ * round) deterministically produces a List+Form pair per entity, a
+ * List-only fallback here was the one place left assuming the old,
+ * now-abandoned convention.
+ */
+test("deriveScreensForNewEntity falls back to a List+Form pair when no existing entity has any tagged screens", () => {
   const entities = [{ name: "Customer", label: "Customer", fields: [] }];
   const screens = [{ name: "Dashboard", type: "dashboard" as const }];
-  assert.deepEqual(deriveScreensForNewEntity("Invoice", entities, screens), [{ name: "Invoice", type: "list", entity: "Invoice" }]);
+  assert.deepEqual(deriveScreensForNewEntity("Invoice", entities, screens), [
+    { name: "Invoice List", type: "list", entity: "Invoice" },
+    { name: "Invoice Form", type: "form", entity: "Invoice" },
+  ]);
 });
 
 /**
