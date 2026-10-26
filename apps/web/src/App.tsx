@@ -953,22 +953,39 @@ function AppContent() {
       return;
     }
     me()
-      .then(({ user }) => {
-        setUser(user);
-        // Round 1003: pinnedIds's own lazy init (above) couldn't know this
-        // user's own id yet either -- this is the first point it's
-        // actually known, so this is where its real, per-user content
-        // gets loaded, mirroring seenShared's own identical round-995 fix
-        // just below.
-        setPinnedIds(getPinnedIds(user.id));
-        // Round 995: seenShared's own lazy init (above) couldn't know this
-        // user's own id yet -- this is the first point it's actually
-        // known, so this is where its real, per-user content gets loaded.
-        setSeenShared(getSeenSharedTimestamps(user.id));
-      })
+      .then(({ user }) => setUser(user))
       .catch(() => clearToken())
       .finally(() => setCheckingSession(false));
   }, []);
+
+  /**
+   * Round 1018: pinnedIds/seenShared's own lazy init (above) couldn't know
+   * the real signed-in user's own id yet -- this used to load their real,
+   * per-user content inline inside the mount-only session-restore effect
+   * just above, the moment `me()` resolved. But `user` can ALSO become
+   * non-null a second way that effect never covers: AuthScreen's own
+   * onAuthenticated prop (wired below to a bare `setUser`) for a fresh
+   * login/signup, or a re-login right after subscribeAuthExpired reacted
+   * to an expired/revoked session by forcing `user` back to null -- both
+   * genuinely ordinary flows, not edge cases, and neither reloads the page
+   * or re-invokes this effect (it only ever runs once, on mount). Without
+   * this, pinnedIds/seenShared stayed stuck at their initial empty values
+   * through a same-tab re-login: a previously-pinned project's star
+   * rendered unfilled, and clicking it to "re-pin" what the user sees as
+   * unpinned actually called togglePinned against the REAL stored ids
+   * (not this stale state) and silently UNPINNED it instead -- genuine,
+   * silent loss of a real saved preference, not just a cosmetic stale
+   * render. Keyed on user?.id (not the mount-only effect's own one-shot
+   * `[]`) so it re-populates every time the signed-in user actually
+   * changes, covering both paths uniformly -- including the original
+   * mount-time restore, which also goes through this the moment the
+   * effect above calls setUser.
+   */
+  useEffect(() => {
+    if (!user) return;
+    setPinnedIds(getPinnedIds(user.id));
+    setSeenShared(getSeenSharedTimestamps(user.id));
+  }, [user?.id]);
 
   /**
    * Forces a sign-out (back to the login screen) the moment ANY request

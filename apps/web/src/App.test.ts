@@ -3530,6 +3530,86 @@ test("App's subscribeAuthExpired effect clears the token and resets user/project
 });
 
 /**
+ * Round 1018: pinnedIds/seenShared used to be populated ONLY inline inside
+ * the mount-only session-restore effect above (the `me()` round trip for
+ * an already-stored token) -- but `user` can also become non-null via
+ * AuthScreen's own onAuthenticated prop (a bare setUser, see App.tsx's own
+ * `<AuthScreen onAuthenticated={setUser} />`), reached by a fresh login or
+ * a re-login right after the subscribeAuthExpired effect tested just above
+ * forced `user` back to null. Neither of those ever re-ran the mount-only
+ * effect, so pinnedIds/seenShared stayed stuck empty through a same-tab
+ * re-login -- a previously-pinned project's star rendered unfilled, and
+ * clicking it to "pin" what looked unpinned actually called togglePinned
+ * (pinnedProjects.ts) against the REAL stored ids and silently un-pinned
+ * it, a genuine, silent loss of a real saved preference. Confirms the new
+ * effect is keyed on `user?.id` (not a mount-only `[]`), so it re-runs
+ * every time the signed-in user actually changes, and that it loads the
+ * real per-user content once a user exists while staying a no-op while
+ * `user` is still null.
+ */
+test("App's pinnedIds/seenShared-loading effect re-populates every time the signed-in user changes, not just once on mount", () => {
+  const appSrc = readFileSync(new URL("./App.tsx", import.meta.url), "utf8");
+  const effectMatch = appSrc.match(
+    / {2}useEffect\(\(\) => \{\n {4}if \(!user\) return;\n {4}setPinnedIds\(getPinnedIds\(user\.id\)\);\n {4}setSeenShared\(getSeenSharedTimestamps\(user\.id\)\);\n {2}\}, \[user\?\.id\]\);\n/,
+  );
+  assert.ok(effectMatch, "expected to find the pinnedIds/seenShared-loading effect, keyed on user?.id, in App.tsx");
+  const { code } = transformSync(effectMatch![0], { loader: "ts" });
+
+  let capturedDeps: unknown[] | undefined;
+  let pinnedIdsSet: unknown = "untouched";
+  let seenSharedSet: unknown = "untouched";
+  const fn = new Function(
+    "useEffect",
+    "user",
+    "getPinnedIds",
+    "getSeenSharedTimestamps",
+    "setPinnedIds",
+    "setSeenShared",
+    `${code}`,
+  ) as (
+    useEffect: (effect: () => void, deps: unknown[]) => void,
+    user: { id: string } | null,
+    getPinnedIds: (userId: string) => unknown,
+    getSeenSharedTimestamps: (userId: string) => unknown,
+    setPinnedIds: (v: unknown) => void,
+    setSeenShared: (v: unknown) => void,
+  ) => void;
+
+  // user === null (nobody signed in yet) -- must be a genuine no-op, not
+  // call either loader or setter with a null id.
+  fn(
+    (effect, deps) => {
+      capturedDeps = deps;
+      effect();
+    },
+    null,
+    () => {
+      throw new Error("getPinnedIds must never be called while user is null");
+    },
+    () => {
+      throw new Error("getSeenSharedTimestamps must never be called while user is null");
+    },
+    (v) => (pinnedIdsSet = v),
+    (v) => (seenSharedSet = v),
+  );
+  assert.deepEqual(capturedDeps, [undefined], "must be keyed on user?.id, not a mount-only [] -- this is what makes it re-run on every real login, not just the first one");
+  assert.equal(pinnedIdsSet, "untouched");
+  assert.equal(seenSharedSet, "untouched");
+
+  // A real signed-in user -- must load both pieces of per-user content.
+  fn(
+    (effect) => effect(),
+    { id: "user-42" },
+    (userId) => `pinned-for-${userId}`,
+    (userId) => `seen-for-${userId}`,
+    (v) => (pinnedIdsSet = v),
+    (v) => (seenSharedSet = v),
+  );
+  assert.equal(pinnedIdsSet, "pinned-for-user-42", "must call getPinnedIds with the real signed-in user's own id and store its result");
+  assert.equal(seenSharedSet, "seen-for-user-42", "must call getSeenSharedTimestamps with the real signed-in user's own id and store its result");
+});
+
+/**
  * Mirrors the subscribeAuthExpired effect test above, for the narrower
  * subscribeProjectGone case (api.ts): requireProjectAccess/
  * requireProjectOwner throw PROJECT_NOT_FOUND whenever the project was
