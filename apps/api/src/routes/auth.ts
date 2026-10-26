@@ -490,12 +490,22 @@ export function createAuthRouter(
         return;
       }
       deletePasswordResetToken(db, pending.id);
+      const newHash = await hashPassword(newPassword);
+      // Round 1024: mirrors PATCH /auth/password's own round-539 fix --
+      // hashPassword above is a genuine await (offloaded to libuv's
+      // threadpool, see auth/password.ts's own comment), long enough for a
+      // concurrent DELETE /auth/account using this same account's still-
+      // valid session token to delete the user row entirely before this
+      // resolves. The existence check must happen AFTER that await, right
+      // before the writes -- checking before it (as this handler used to)
+      // leaves a stale result: updatePasswordHash/deleteAllSessionsForUser
+      // below would both silently affect zero rows, yet still report 204
+      // as if the reset had succeeded on an account that no longer exists.
       const user = findUserById(db, pending.userId);
       if (!user) {
         next(new HttpError(401, "This account no longer exists", "USER_NOT_FOUND"));
         return;
       }
-      const newHash = await hashPassword(newPassword);
       updatePasswordHash(db, user.id, newHash);
       deleteAllSessionsForUser(db, user.id);
       res.status(204).end();

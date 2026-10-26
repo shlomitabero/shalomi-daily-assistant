@@ -1035,6 +1035,77 @@ test("forgot-password emails a real reset link, and following it with a new pass
   );
 });
 
+/**
+ * Regression test for a real bug (round 1024): POST /auth/reset-password's
+ * own existence check (findUserById) ran BEFORE its one genuine scrypt
+ * await (hashPassword -- offloaded to libuv's threadpool, see
+ * auth/password.ts's own comment), the exact inverted ordering round 539
+ * already fixed for the sibling route PATCH /auth/password (see that
+ * route's own race test above). A concurrent DELETE /auth/account using
+ * the same still-valid session token could delete the user row entirely
+ * while reset-password was parked on that await -- both writes below it
+ * would then silently affect zero rows, yet the handler still responded
+ * 204 as if the reset had succeeded on an account that no longer existed.
+ */
+test("resetting your password via the forgot-password link while the same account is concurrently deleted must not report success on a change that was never written", async () => {
+  const emailSender = createFakeEmailSender();
+  await withServer(
+    async (baseUrl) => {
+      const email = `reset-pw-vs-delete-${Date.now()}@example.com`;
+      const token = await signup(baseUrl, email);
+      // A couple of throwaway requests first, matching the PATCH-vs-DELETE
+      // race test's own convention above -- settles the HTTP client's
+      // connection machinery before the timed race below.
+      await fetch(`${baseUrl}/api/auth/me`, { headers: authHeaders(token) });
+      await fetch(`${baseUrl}/api/auth/me`, { headers: authHeaders(token) });
+
+      const forgotRes = await fetch(`${baseUrl}/api/auth/forgot-password`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ email, lang: "en" }),
+      });
+      assert.equal(forgotRes.status, 200);
+      const resetEmail = emailSender.sentTo.find((e) => /https?:\/\//.test(e.text));
+      assert.ok(resetEmail, "expected one of the sent emails to contain a real reset link");
+      const resetUrl = resetEmail!.text.match(/https?:\/\/\S+/)?.[0];
+      const resetToken = new URL(resetUrl!).searchParams.get("resetToken");
+      assert.ok(resetToken, "the reset link must carry a resetToken query param");
+
+      const resetPromise = fetch(`${baseUrl}/api/auth/reset-password`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ token: resetToken, newPassword: "brand-new-password" }),
+      });
+      // DELETE has no genuine await of its own in this scenario (no
+      // projects, no live WhatsApp connection), so it needs a short head
+      // start for its synchronous session-revocation to land genuinely
+      // inside reset-password's own scrypt await, not before reset-
+      // password's handler has even begun -- mirrors the PATCH-vs-DELETE
+      // race test's own identical convention above.
+      await new Promise((resolve) => setTimeout(resolve, 20));
+      const deleteRes = await fetch(`${baseUrl}/api/auth/account`, { method: "DELETE", headers: authHeaders(token) });
+      assert.equal(deleteRes.status, 204);
+
+      const resetRes = await resetPromise;
+      assert.notEqual(resetRes.status, 204, "must not report success once the account it targets no longer exists");
+      assert.equal(resetRes.status, 401);
+      assert.equal(((await resetRes.json()) as { code?: string }).code, "USER_NOT_FOUND");
+
+      const reSignupRes = await fetch(`${baseUrl}/api/auth/signup`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ email, password: "whatever-password" }),
+      });
+      assert.equal(
+        reSignupRes.status,
+        201,
+        "the email must be free to re-register -- the account was genuinely deleted, not left in some half-updated state",
+      );
+    },
+    { emailSender },
+  );
+});
+
 test("forgot-password for an email with no account still returns the exact same generic success response, and sends no email at all", async () => {
   const emailSender = createFakeEmailSender();
   await withServer(
