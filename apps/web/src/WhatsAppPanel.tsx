@@ -534,10 +534,17 @@ export function WhatsAppPanel({
    * see countUnreadWhatsAppMessages' own doc comment for how that lets
    * the unread count stay correct even once this marker's tracked id no
    * longer exists.
+   *
+   * Round 1046: also keyed per-user now (see whatsappUnread.ts), the same
+   * gap round 1011 already fixed for this exact feature's own sibling
+   * store, whatsappRecentNumbers.ts (missed here at the time) -- without
+   * it, one collaborator reading the log on their own browser silently
+   * zeroed every OTHER collaborator's own unread badge too, for messages
+   * that other person never actually saw.
    */
   useEffect(() => {
-    if (messages.length > 0) setWhatsAppLastSeen(projectId, { id: messages[0].id, createdAt: messages[0].createdAt });
-  }, [projectId, messages]);
+    if (messages.length > 0) setWhatsAppLastSeen(projectId, userId, { id: messages[0].id, createdAt: messages[0].createdAt });
+  }, [projectId, userId, messages]);
 
   /**
    * startPolling's own 5-consecutive-failures giveup (above) sets loadError

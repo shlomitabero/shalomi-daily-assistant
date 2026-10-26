@@ -2203,7 +2203,7 @@ test("WhatsAppPanel marks the newest loaded message as 'seen' in localStorage on
       throw new Error(`unexpected request ${method} ${input}`);
     }) as typeof fetch;
     try {
-      assert.equal(getWhatsAppLastSeen("proj1"), null, "nothing should be marked seen before the panel has ever loaded anything");
+      assert.equal(getWhatsAppLastSeen("proj1", "user1"), null, "nothing should be marked seen before the panel has ever loaded anything");
 
       render(
         React.createElement(
@@ -2219,10 +2219,10 @@ test("WhatsAppPanel marks the newest loaded message as 'seen' in localStorage on
       // passive effects on separate scheduler ticks, so poll the actual
       // thing under test (the storage write) rather than assuming it's
       // already landed the instant the DOM looks right.
-      await waitForCondition(() => getWhatsAppLastSeen("proj1") !== null);
+      await waitForCondition(() => getWhatsAppLastSeen("proj1", "user1") !== null);
 
       assert.deepEqual(
-        getWhatsAppLastSeen("proj1"),
+        getWhatsAppLastSeen("proj1", "user1"),
         { id: "m2", createdAt: messages[0].createdAt },
         "the newest loaded message's id (and its own createdAt) must be marked seen, not the older one and not left empty",
       );

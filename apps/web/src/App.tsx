@@ -874,7 +874,9 @@ function AppContent() {
         const { messages } = await listWhatsAppMessages(projectId);
         if (cancelled) return;
         setWhatsappUnreadCount(
-          showWhatsAppRef.current ? 0 : countUnreadWhatsAppMessages(messages, getWhatsAppLastSeen(projectId)),
+          showWhatsAppRef.current || !userIdRef.current
+            ? 0
+            : countUnreadWhatsAppMessages(messages, getWhatsAppLastSeen(projectId, userIdRef.current)),
         );
         maybeNotifyNewWhatsAppMessages(messages, lastNotifiedWhatsAppIdRef, document.hidden, tRef.current);
       } catch {

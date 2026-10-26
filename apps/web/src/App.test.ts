@@ -4231,6 +4231,7 @@ test("App's WhatsApp unread-badge poll suppresses a stale nonzero count while th
       "document",
       "t",
       "showWhatsAppRef",
+      "userIdRef",
       `${code}\nreturn checkUnread;`,
     )(
       "project-1",
@@ -4248,6 +4249,7 @@ test("App's WhatsApp unread-badge poll suppresses a stale nonzero count while th
       { hidden: false },
       (key: string) => key,
       showWhatsAppRef,
+      { current: "user1" },
     ) as () => Promise<void>;
     return { fn, state };
   }
@@ -4263,6 +4265,77 @@ test("App's WhatsApp unread-badge poll suppresses a stale nonzero count while th
   const { fn: fnClosed, state: stateClosed } = run(false);
   await fnClosed();
   assert.equal(stateClosed.count, 1, "badge must still show the real unread count while the panel is closed");
+});
+
+/**
+ * Round 1046: checkUnread reads getWhatsAppLastSeen(projectId) with no
+ * user dimension at all -- the same cross-account leak round 1044/1045
+ * already fixed for ideaDraft.ts/recentProjectSearches.ts, just for the
+ * WhatsApp unread badge instead. Confirms checkUnread now passes
+ * userIdRef.current (the same ref subscribeAuthExpired already reads for
+ * this exact "effect doesn't re-run on user change" reason) through as
+ * the marker's own second key, and suppresses the badge to 0 -- rather
+ * than reading some other account's own marker -- on the one tick where
+ * userIdRef.current could still be null (before the login-syncing effect
+ * has ever run).
+ */
+test("App's checkUnread reads the last-seen marker scoped to the current user (userIdRef.current), not just the project, and suppresses the badge instead of guessing when no user is known yet", async () => {
+  const appSrc = readFileSync(new URL("./App.tsx", import.meta.url), "utf8");
+  const handlerMatch = appSrc.match(/ {4}async function checkUnread\(\) \{[\s\S]*?\n {4}\}\n/);
+  assert.ok(handlerMatch, "expected to find checkUnread in App.tsx");
+  const { code } = transformSync(handlerMatch![0], { loader: "ts" });
+
+  function run(userIdCurrent: string | null) {
+    const state = { count: -1 };
+    const capturedArgs: unknown[][] = [];
+    const fn = new Function(
+      "projectId",
+      "cancelled",
+      "getWhatsAppStatus",
+      "listWhatsAppMessages",
+      "countUnreadWhatsAppMessages",
+      "getWhatsAppLastSeen",
+      "setWhatsappUnreadCount",
+      "maybeNotifyNewWhatsAppMessages",
+      "lastNotifiedWhatsAppIdRef",
+      "document",
+      "t",
+      "showWhatsAppRef",
+      "userIdRef",
+      `${code}\nreturn checkUnread;`,
+    )(
+      "project-1",
+      false,
+      async () => ({ status: "connected" }),
+      async () => ({ messages: [{ id: "msg-2" }], hasMore: false }),
+      (...args: unknown[]) => {
+        capturedArgs.push(args);
+        return 1;
+      },
+      (...args: unknown[]) => {
+        capturedArgs.push(args);
+        return "msg-1";
+      },
+      (v: number) => (state.count = v),
+      () => {},
+      { current: null },
+      { hidden: false },
+      (key: string) => key,
+      { current: false },
+      { current: userIdCurrent },
+    ) as () => Promise<void>;
+    return { fn, state, capturedArgs };
+  }
+
+  const { fn: fnKnown, state: stateKnown, capturedArgs } = run("user1");
+  await fnKnown();
+  assert.equal(stateKnown.count, 1, "badge must show the real unread count once a user is known");
+  const lastSeenCall = capturedArgs.find((args) => args.length === 2 && args[0] === "project-1");
+  assert.deepEqual(lastSeenCall, ["project-1", "user1"], "getWhatsAppLastSeen must be called with both the projectId and the current user's own id");
+
+  const { fn: fnUnknown, state: stateUnknown } = run(null);
+  await fnUnknown();
+  assert.equal(stateUnknown.count, 0, "badge must suppress to 0, not read a markerless/wrong-user marker, while userIdRef.current is still null");
 });
 
 /**
@@ -4405,6 +4478,7 @@ test("App's checkUnread reads tRef.current fresh on every tick instead of closin
     "document",
     "tRef",
     "showWhatsAppRef",
+    "userIdRef",
     `${code}\nreturn checkUnread;`,
   )(
     "project-1",
@@ -4419,6 +4493,7 @@ test("App's checkUnread reads tRef.current fresh on every tick instead of closin
     { hidden: true },
     tRef,
     { current: false },
+    { current: "user1" },
   ) as () => Promise<void>;
 
   await fn();

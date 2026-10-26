@@ -2,8 +2,8 @@ import type { WhatsAppMessageLogEntry } from "./api.js";
 
 const STORAGE_KEY_PREFIX = "forge.whatsappLastSeenId.";
 
-function storageKey(projectId: string): string {
-  return `${STORAGE_KEY_PREFIX}${projectId}`;
+function storageKey(projectId: string, userId: string): string {
+  return `${STORAGE_KEY_PREFIX}${projectId}:${userId}`;
 }
 
 /**
@@ -15,15 +15,29 @@ function storageKey(projectId: string): string {
  * no history shouldn't flash a spurious badge). Same per-project
  * localStorage shape as whatsappLogFilter.ts, just a small JSON object
  * instead of a bare string.
+ *
+ * Round 1046: also keyed per-user now, the same gap round 1011 already
+ * fixed for this exact feature's own sibling store, whatsappRecentNumbers.ts
+ * (missed here at the time): a project is routinely shared between real
+ * collaborator accounts (project_collaborators/roles), and this marker
+ * drives a real, visible signal -- the topbar's unread badge and the
+ * documentTitle.ts "(N)" prefix. Keyed by projectId alone, one
+ * collaborator opening the WhatsApp panel and reading the log silently
+ * zeroed the OTHER collaborator's own unread badge too, on their own
+ * separate browser/session, for messages that collaborator never actually
+ * saw -- the opposite of round 940's own documented per-project-not-per-
+ * user rationale just above this comment, which is about a tracked
+ * message id vanishing from the page (deletion), not about who the
+ * marker belongs to.
  */
 export interface WhatsAppLastSeen {
   id: string;
   createdAt: string;
 }
 
-export function getWhatsAppLastSeen(projectId: string): WhatsAppLastSeen | null {
+export function getWhatsAppLastSeen(projectId: string, userId: string): WhatsAppLastSeen | null {
   try {
-    const raw = localStorage.getItem(storageKey(projectId));
+    const raw = localStorage.getItem(storageKey(projectId, userId));
     if (!raw) return null;
     const parsed = JSON.parse(raw) as Partial<WhatsAppLastSeen>;
     if (typeof parsed.id !== "string" || typeof parsed.createdAt !== "string") return null;
@@ -38,18 +52,37 @@ export function getWhatsAppLastSeen(projectId: string): WhatsAppLastSeen | null 
   }
 }
 
-export function setWhatsAppLastSeen(projectId: string, message: WhatsAppLastSeen): void {
+export function setWhatsAppLastSeen(projectId: string, userId: string, message: WhatsAppLastSeen): void {
   try {
-    localStorage.setItem(storageKey(projectId), JSON.stringify({ id: message.id, createdAt: message.createdAt }));
+    localStorage.setItem(storageKey(projectId, userId), JSON.stringify({ id: message.id, createdAt: message.createdAt }));
   } catch {
     // localStorage can be unavailable (private mode) -- the marker just won't survive a reload.
   }
 }
 
 /** Same purge-on-project-delete pattern as whatsappLogFilter.ts's clearWhatsAppLogFilter -- see projectPreferenceCleanup.ts for why this exists. */
-export function clearWhatsAppLastSeenId(projectId: string): void {
+export function clearWhatsAppLastSeenId(projectId: string, userId: string): void {
   try {
-    localStorage.removeItem(storageKey(projectId));
+    localStorage.removeItem(storageKey(projectId, userId));
+  } catch {
+    // localStorage can be unavailable (private mode) -- nothing to clear.
+  }
+}
+
+/**
+ * Removes EVERY collaborator account's own last-seen marker for this
+ * project -- see whatsappRecentNumbers.ts's own purgeRecentWhatsAppNumbersForProject
+ * for the full reasoning. Used by projectPreferenceCleanup.ts when the
+ * project itself is deleted, replacing the old single-user
+ * clearWhatsAppLastSeenId call that only ever reached the current user's
+ * own entry, not any past collaborator's.
+ */
+export function purgeWhatsAppLastSeenForProject(projectId: string): void {
+  const prefix = `${STORAGE_KEY_PREFIX}${projectId}:`;
+  try {
+    for (const key of Object.keys(localStorage)) {
+      if (key.startsWith(prefix)) localStorage.removeItem(key);
+    }
   } catch {
     // localStorage can be unavailable (private mode) -- nothing to clear.
   }

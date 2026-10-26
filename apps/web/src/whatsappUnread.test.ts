@@ -3,7 +3,14 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import { JSDOM } from "jsdom";
 import type { WhatsAppMessageLogEntry } from "./api.js";
-import { countUnreadWhatsAppMessages, getWhatsAppLastSeen, setWhatsAppLastSeen, type WhatsAppLastSeen } from "./whatsappUnread.js";
+import {
+  clearWhatsAppLastSeenId,
+  countUnreadWhatsAppMessages,
+  getWhatsAppLastSeen,
+  purgeWhatsAppLastSeenForProject,
+  setWhatsAppLastSeen,
+  type WhatsAppLastSeen,
+} from "./whatsappUnread.js";
 
 /** Same full-jsdom-swap technique used by whatsappLogFilter.test.ts: real localStorage, not a mock. */
 async function withJsdom(fn: () => void | Promise<void>): Promise<void> {
@@ -54,23 +61,62 @@ function seen(id: string, createdAt: string = timeFor(id)): WhatsAppLastSeen {
 
 test("getWhatsAppLastSeen returns null when nothing has ever been marked seen", async () => {
   await withJsdom(() => {
-    assert.equal(getWhatsAppLastSeen("proj1"), null);
+    assert.equal(getWhatsAppLastSeen("proj1", "userA"), null);
   });
 });
 
 test("setWhatsAppLastSeen persists a real choice, and a fresh getWhatsAppLastSeen call sees it -- a real round trip, not just the return value", async () => {
   await withJsdom(() => {
-    setWhatsAppLastSeen("proj1", seen("m5"));
-    assert.deepEqual(getWhatsAppLastSeen("proj1"), seen("m5"), "must actually be written to storage");
+    setWhatsAppLastSeen("proj1", "userA", seen("m5"));
+    assert.deepEqual(getWhatsAppLastSeen("proj1", "userA"), seen("m5"), "must actually be written to storage");
   });
 });
 
 test("setWhatsAppLastSeen is scoped per project -- one project's marker never leaks into another's", async () => {
   await withJsdom(() => {
-    setWhatsAppLastSeen("proj1", seen("m5"));
-    setWhatsAppLastSeen("proj2", seen("m9"));
-    assert.deepEqual(getWhatsAppLastSeen("proj1"), seen("m5"));
-    assert.deepEqual(getWhatsAppLastSeen("proj2"), seen("m9"));
+    setWhatsAppLastSeen("proj1", "userA", seen("m5"));
+    setWhatsAppLastSeen("proj2", "userA", seen("m9"));
+    assert.deepEqual(getWhatsAppLastSeen("proj1", "userA"), seen("m5"));
+    assert.deepEqual(getWhatsAppLastSeen("proj2", "userA"), seen("m9"));
+  });
+});
+
+/**
+ * Round 1046: this store used to be keyed by projectId alone, with no user
+ * dimension -- the exact gap round 1011 already fixed for this feature's
+ * own sibling store, whatsappRecentNumbers.ts (missed here at the time). A
+ * project is routinely shared between real collaborator accounts
+ * (project_collaborators/roles), and this marker drives the topbar's own
+ * unread badge and documentTitle.ts "(N)" prefix: one collaborator opening
+ * the WhatsApp panel and reading the log on their own browser used to
+ * silently zero the OTHER collaborator's own unread badge too, for
+ * messages that other person never actually saw. Keyed per user now,
+ * mirroring whatsappRecentNumbers.test.ts's own identical isolation test.
+ */
+test("getWhatsAppLastSeen/setWhatsAppLastSeen/clearWhatsAppLastSeenId are scoped per user, so one collaborator reading the log never marks another collaborator's own messages as seen", async () => {
+  await withJsdom(() => {
+    setWhatsAppLastSeen("proj1", "userA", seen("m5"));
+    assert.equal(getWhatsAppLastSeen("proj1", "userB"), null, "userB, a different collaborator on the same project, must not see userA's marker just because userA read the log");
+
+    setWhatsAppLastSeen("proj1", "userB", seen("m2"));
+    assert.deepEqual(getWhatsAppLastSeen("proj1", "userA"), seen("m5"), "userB reading their own messages must never touch userA's own already-saved marker");
+    assert.deepEqual(getWhatsAppLastSeen("proj1", "userB"), seen("m2"));
+
+    clearWhatsAppLastSeenId("proj1", "userB");
+    assert.equal(getWhatsAppLastSeen("proj1", "userB"), null, "clearing userB's own marker must actually clear it");
+    assert.deepEqual(getWhatsAppLastSeen("proj1", "userA"), seen("m5"), "clearing userB's own marker must never touch userA's own marker");
+  });
+});
+
+test("purgeWhatsAppLastSeenForProject removes every collaborator account's own marker for that project, and never touches another project's entries", async () => {
+  await withJsdom(() => {
+    setWhatsAppLastSeen("proj1", "userA", seen("m5"));
+    setWhatsAppLastSeen("proj1", "userB", seen("m2"));
+    setWhatsAppLastSeen("proj2", "userA", seen("m9"));
+    purgeWhatsAppLastSeenForProject("proj1");
+    assert.equal(getWhatsAppLastSeen("proj1", "userA"), null, "userA's own proj1 marker must be gone");
+    assert.equal(getWhatsAppLastSeen("proj1", "userB"), null, "userB's own proj1 marker must be gone too, not just userA's");
+    assert.deepEqual(getWhatsAppLastSeen("proj2", "userA"), seen("m9"), "a completely different project's own entries must be untouched");
   });
 });
 
@@ -84,8 +130,8 @@ test("setWhatsAppLastSeen is scoped per project -- one project's marker never le
  */
 test("getWhatsAppLastSeen returns null (not a crash) for a pre-round-940 marker still stored as a bare id string", async () => {
   await withJsdom(() => {
-    localStorage.setItem("forge.whatsappLastSeenId.proj1", "m5");
-    assert.equal(getWhatsAppLastSeen("proj1"), null);
+    localStorage.setItem("forge.whatsappLastSeenId.proj1:userA", "m5");
+    assert.equal(getWhatsAppLastSeen("proj1", "userA"), null);
   });
 });
 

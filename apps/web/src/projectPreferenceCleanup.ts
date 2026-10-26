@@ -16,7 +16,7 @@ import { purgeRecentSearchesForProject } from "./recentSearches.js";
 import { purgeRecentWhatsAppNumbersForProject } from "./whatsappRecentNumbers.js";
 import { purgeWhatsAppLogRecentSearchesForProject } from "./whatsappLogRecentSearches.js";
 import { clearWhatsAppLogFilter } from "./whatsappLogFilter.js";
-import { clearWhatsAppLastSeenId } from "./whatsappUnread.js";
+import { purgeWhatsAppLastSeenForProject } from "./whatsappUnread.js";
 
 /**
  * Deleting a project server-side (App.tsx's handleDeleteProject/
@@ -67,5 +67,5 @@ export function purgeProjectPreferences(projectId: string): void {
   purgeRecentWhatsAppNumbersForProject(projectId);
   purgeWhatsAppLogRecentSearchesForProject(projectId);
   clearWhatsAppLogFilter(projectId);
-  clearWhatsAppLastSeenId(projectId);
+  purgeWhatsAppLastSeenForProject(projectId);
 }
