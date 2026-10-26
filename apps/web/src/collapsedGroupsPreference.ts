@@ -72,6 +72,50 @@ export function getCollapsedGroups(projectId: string, entityName: string, groupF
   return [...(store[keyFor(projectId, entityName, groupFieldName)] ?? [])];
 }
 
+/**
+ * Round 1008: the load effect's own counterpart to EntityPanel.tsx's
+ * round-985 fix for groupFieldName itself -- that fix correctly remaps the
+ * React *selection* from an old field-name casing to a new one when a live
+ * refine renames the grouped field's letters only (e.g. "status" ->
+ * "Status"), but this store's own key includes groupFieldName as its
+ * third segment (unlike hiddenFields/columnOrder/sortKeys, all fixed by
+ * that same round, none of which are keyed by a dynamic field name this
+ * way) -- so the moment groupFieldName's OWN state updates to the new
+ * casing, a plain exact-match `getCollapsedGroups` lookup under the new
+ * key finds nothing, and the group the user had deliberately collapsed
+ * under the old key silently reappears fully expanded, with the real
+ * collapsed set now orphaned in storage forever under a key nothing will
+ * ever look up again.
+ *
+ * Falls back to a case-insensitive match under the SAME project+entity
+ * only when the exact lookup is empty, and migrates it (persists under
+ * the new key, removes the old one) rather than just reading through --
+ * so the rename is resolved once, the same way hiddenFields' own round-985
+ * fix persists its remap rather than re-discovering it on every load.
+ * Prefers the exact match whenever it has anything at all, so a
+ * genuinely-collapsed-to-empty set (a user who re-expanded everything)
+ * can never be overridden by a stale old-cased entry.
+ */
+export function migrateCollapsedGroupsFieldCase(projectId: string, entityName: string, groupFieldName: string): string[] {
+  const exact = getCollapsedGroups(projectId, entityName, groupFieldName);
+  if (exact.length > 0) return exact;
+  const store = readStore();
+  const lowerFieldName = groupFieldName.toLowerCase();
+  for (const key of Object.keys(store)) {
+    const parsed = parseKey(key);
+    if (!parsed || parsed[0] !== projectId || parsed[1] !== entityName) continue;
+    if (parsed[2] === groupFieldName || parsed[2].toLowerCase() !== lowerFieldName) continue;
+    const migrated = [...store[key]];
+    delete store[key];
+    const newKey = keyFor(projectId, entityName, groupFieldName);
+    if (migrated.length > 0) store[newKey] = migrated;
+    else delete store[newKey];
+    writeStore(store);
+    return migrated;
+  }
+  return [];
+}
+
 /** Persists the entity's full updated set of collapsed group keys and returns it, so callers can update their own state from the return value instead of re-reading storage. */
 export function setCollapsedGroups(projectId: string, entityName: string, groupFieldName: string, keys: string[]): string[] {
   const store = readStore();

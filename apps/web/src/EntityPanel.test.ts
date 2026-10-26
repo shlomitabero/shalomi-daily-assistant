@@ -7243,6 +7243,193 @@ test("EntityPanel keeps a column hidden and a 'Group by' choice set under their 
 });
 
 /**
+ * Round 1008: a fresh Explore survey found that round 985's own fix above
+ * never actually exercised the one hazard that matters most for a
+ * collapsed state -- collapsedGroupsPreference.ts and
+ * collapsedBoardColumnsPreference.ts are each keyed by groupFieldName/
+ * boardFieldName directly (unlike hiddenFields/columnOrder/sortKeys, none
+ * of which are keyed by a dynamic field name), so groupFieldName's own
+ * round-985 remap-to-the-new-casing effect updating that state is exactly
+ * what makes the load effect's OWN exact-match lookup miss under the new
+ * key -- a hazard round 985's own test (just above) never triggered, since
+ * it only set "Group by" without ever actually collapsing a group.
+ * Confirms a group collapsed under the field's OLD casing stays collapsed
+ * (not silently re-expanded) once a live refine renames the field's
+ * letters only, and that the real stored set migrates to the new key
+ * rather than being orphaned under the old one.
+ */
+test("EntityPanel keeps a collapsed table group collapsed under its new spelling when a live refine renames the grouped field's letter casing", async () => {
+  await withJsdom(async () => {
+    const statusFieldV1 = {
+      name: "status",
+      label: "Status",
+      type: "enum" as const,
+      required: true,
+      enumValues: ["new", "won"],
+      enumLabels: { new: "New", won: "Won" },
+    };
+    const entityV1: Entity = {
+      name: "Deal",
+      label: "Deal",
+      fields: [{ name: "name", label: "Name", type: "text", required: true }, statusFieldV1],
+    };
+    const statusFieldV2 = { ...statusFieldV1, name: "Status" };
+    const entityV2: Entity = {
+      name: "Deal",
+      label: "Deal",
+      fields: [{ name: "name", label: "Name", type: "text", required: true }, statusFieldV2],
+    };
+    const store: EntityRecord[] = [
+      { id: 1, createdAt: "x", name: "Acme Corp", status: "new" },
+      { id: 2, createdAt: "x", name: "Globex", status: "won" },
+    ];
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = mockRecordsFetch(store) as typeof fetch;
+    try {
+      const view = renderEntityPanel({ entity: entityV1, allEntities: [entityV1] });
+      await waitForCondition(() => document.querySelectorAll("table tbody tr").length === 2);
+
+      const groupBySelect = document.querySelector(".entity-group-by") as HTMLSelectElement;
+      fireEvent.change(groupBySelect, { target: { value: "status" } });
+      await waitForCondition(() => document.querySelectorAll(".entity-group-header-row").length === 2);
+
+      function findGroupToggle(label: string) {
+        const row = Array.from(document.querySelectorAll(".entity-group-header-row")).find((el) =>
+          el.textContent?.includes(label),
+        )!;
+        return row.querySelector(".entity-group-toggle") as HTMLButtonElement;
+      }
+
+      fireEvent.click(findGroupToggle("New"));
+      await waitForCondition(() => document.querySelectorAll("table tbody tr[data-record-id]").length === 1);
+      assert.deepEqual(
+        getCollapsedGroups("proj1", "Deal", "status"),
+        ["new"],
+        "sanity check: collapsing the 'New' group must have actually persisted under the field's current casing",
+      );
+
+      // Simulate a live refine that renames "status" -> "Status" ONLY --
+      // same field, same type, same enum values, same entity.name ("Deal"),
+      // with NO unmount (view.rerender, not a fresh renderEntityPanel) --
+      // the bug only reproduces on a live refine, same as round 985's test.
+      view.rerender(buildEntityPanelElement({ entity: entityV2, allEntities: [entityV2] }));
+      await waitForCondition(() => document.querySelector(".entity-group-by") !== null);
+
+      assert.deepEqual(
+        getCollapsedGroups("proj1", "Deal", "Status"),
+        ["new"],
+        "the collapsed group's real stored set must migrate to the new field-name casing",
+      );
+      // Not checked here: the post-rename table's own row count. Like
+      // fieldFilters' own sibling test above, this isolated-component test
+      // never triggers a fresh GET on a rerender that only changes
+      // entity.fields, so the already-fetched mock records keep their OLD
+      // "status" key forever within this one test run -- grouping by the
+      // NEW "Status" key would find no match on either mock record and
+      // collapse them into one degenerate group, unlike the real server's
+      // own rowToRecord (packages/db/src/repository.ts), which always
+      // serializes a record keyed by the CURRENT schema's field.name.
+      // getCollapsedGroups's own migration above is therefore the real
+      // proof here, exactly as it is for fieldFilters.
+      assert.deepEqual(
+        getCollapsedGroups("proj1", "Deal", "status"),
+        [],
+        "the old field-name casing's key must be cleaned up, not left orphaned alongside the migrated one",
+      );
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+});
+
+/**
+ * Round 1008: the identical hazard as the test just above, for
+ * collapsedBoardColumnsPreference.ts's own boardFieldName dimension --
+ * boardFieldName isn't React state (findBoardField recomputes it fresh
+ * from entity.fields every render), but it still resolves to the new
+ * casing the instant a case-only rename completes, so the load effect's
+ * own exact-match lookup is just as exposed as collapsedGroups' above.
+ */
+test("EntityPanel keeps a collapsed board column collapsed under its new spelling when a live refine renames the board field's letter casing", async () => {
+  await withJsdom(async () => {
+    const statusFieldV1 = {
+      name: "status",
+      label: "Status",
+      type: "enum" as const,
+      required: true,
+      enumValues: ["new", "won"],
+      enumLabels: { new: "New", won: "Won" },
+    };
+    const entityV1: Entity = {
+      name: "Deal",
+      label: "Deal",
+      fields: [{ name: "name", label: "Name", type: "text", required: true }, statusFieldV1],
+    };
+    const statusFieldV2 = { ...statusFieldV1, name: "Status" };
+    const entityV2: Entity = {
+      name: "Deal",
+      label: "Deal",
+      fields: [{ name: "name", label: "Name", type: "text", required: true }, statusFieldV2],
+    };
+    const store: EntityRecord[] = [
+      { id: 1, name: "Acme Corp", status: "new" },
+      { id: 2, name: "Globex", status: "won" },
+    ];
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = mockRecordsFetch(store) as typeof fetch;
+    try {
+      const view = renderEntityPanel({ entity: entityV1, allEntities: [entityV1] });
+      await waitForCondition(() => document.querySelector(".entity-toolbar") !== null);
+
+      const boardToggle = document.querySelectorAll(".view-toggle-btn")[1] as HTMLButtonElement;
+      fireEvent.click(boardToggle);
+      await waitForCondition(() => document.querySelectorAll(".board-column").length === 2);
+
+      function findColumn(label: string) {
+        return Array.from(document.querySelectorAll(".board-column")).find((col) =>
+          col.querySelector(".board-column-header-info")?.textContent?.includes(label),
+        ) as HTMLDivElement;
+      }
+
+      fireEvent.click(findColumn("New").querySelector(".board-column-toggle") as HTMLButtonElement);
+      await waitForCondition(() => findColumn("New").querySelectorAll(".board-card").length === 0);
+      assert.deepEqual(
+        getCollapsedBoardColumns("proj1", "Deal", "status"),
+        ["new"],
+        "sanity check: collapsing the 'New' column must have actually persisted under the field's current casing",
+      );
+
+      // Simulate a live refine that renames "status" -> "Status" ONLY, with
+      // NO unmount (view.rerender, not a fresh renderEntityPanel).
+      view.rerender(buildEntityPanelElement({ entity: entityV2, allEntities: [entityV2] }));
+      await waitForCondition(() => document.querySelector(".board-column-toggle") !== null);
+
+      // Not checked here: the post-rename board's own column/card layout.
+      // Same mock-data limitation as collapsedGroups' own sibling test
+      // above -- this isolated-component test never triggers a fresh GET
+      // on a rerender that only changes entity.fields, so the already-
+      // fetched mock records keep their OLD "status" key forever within
+      // this one test run, unlike the real server's own rowToRecord, which
+      // always serializes a record keyed by the CURRENT schema's
+      // field.name. getCollapsedBoardColumns's own migration below is
+      // therefore the real proof here.
+      assert.deepEqual(
+        getCollapsedBoardColumns("proj1", "Deal", "Status"),
+        ["new"],
+        "the collapsed column's real stored set must migrate to the new field-name casing",
+      );
+      assert.deepEqual(
+        getCollapsedBoardColumns("proj1", "Deal", "status"),
+        [],
+        "the old field-name casing's key must be cleaned up, not left orphaned alongside the migrated one",
+      );
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+});
+
+/**
  * New in this round: the board view's card <select> (still there, and
  * still the accessible/keyboard-reachable way to move a card) was the only
  * way to move a card between columns -- a real Kanban board is expected to

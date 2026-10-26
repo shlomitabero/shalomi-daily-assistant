@@ -22,8 +22,8 @@ import { getGroupByField, getGroupByFieldType, setGroupByField, setGroupByFieldT
 import { getViewMode as getViewModePreference, setViewMode as setViewModePreference } from "./viewModePreference.js";
 import { getSortKeys as getSortKeysPreference, setSortKeys as setSortKeysPreference } from "./sortKeysPreference.js";
 import { getFieldFilters as getFieldFiltersPreference, setFieldFilters as setFieldFiltersPreference } from "./fieldFiltersPreference.js";
-import { getCollapsedGroups, setCollapsedGroups as setCollapsedGroupsPreference } from "./collapsedGroupsPreference.js";
-import { getCollapsedBoardColumns, setCollapsedBoardColumns as setCollapsedBoardColumnsPreference } from "./collapsedBoardColumnsPreference.js";
+import { migrateCollapsedGroupsFieldCase, setCollapsedGroups as setCollapsedGroupsPreference } from "./collapsedGroupsPreference.js";
+import { migrateCollapsedBoardColumnsFieldCase, setCollapsedBoardColumns as setCollapsedBoardColumnsPreference } from "./collapsedBoardColumnsPreference.js";
 import { EntityLabelEditor } from "./EntityLabelEditor.js";
 import { FieldLabelEditor } from "./FieldLabelEditor.js";
 import { isAnyDialogOpen } from "./useDialogFocusTrap.js";
@@ -1583,8 +1583,14 @@ export function EntityPanel({
     const field = entity.fields.find((f) => f.name === groupFieldName);
     return field?.type === "enum" ? (field.enumValues ?? []).join(",") : "";
   }, [entity.fields, groupFieldName]);
+  // Round 1008: migrateCollapsedGroupsFieldCase (not a plain getCollapsedGroups)
+  // -- groupFieldName's own case-only-rename remap (its effect above) updates
+  // this state to the new spelling, which then re-fires THIS effect looking
+  // up a key nothing was ever written under, silently re-expanding a group
+  // the user had deliberately collapsed under the field's old casing. See
+  // that function's own doc comment for the full mechanism.
   useEffect(() => {
-    const loaded = getCollapsedGroups(projectId, entity.name, groupFieldName);
+    const loaded = migrateCollapsedGroupsFieldCase(projectId, entity.name, groupFieldName);
     const field = entity.fields.find((f) => f.name === groupFieldName);
     if (field?.type !== "enum") {
       setCollapsedGroups(new Set(loaded));
@@ -1627,8 +1633,15 @@ export function EntityPanel({
   // records move to the board's own "(other)" column instead, silently
   // re-expanding a column the user had deliberately collapsed.
   const boardFieldEnumValuesKey = useMemo(() => (boardField?.enumValues ?? []).join(","), [boardField]);
+  // Round 1008: migrateCollapsedBoardColumnsFieldCase (not a plain
+  // getCollapsedBoardColumns) -- boardFieldName is recomputed fresh from
+  // entity.fields every render, so a live refine that renames the
+  // board-driving field's letters only resolves to a new string the
+  // instant the refine completes, and a plain exact-match lookup would
+  // silently re-expand a column the user had deliberately collapsed. See
+  // that function's own doc comment for the full mechanism.
   useEffect(() => {
-    const loaded = getCollapsedBoardColumns(projectId, entity.name, boardFieldName);
+    const loaded = migrateCollapsedBoardColumnsFieldCase(projectId, entity.name, boardFieldName);
     if (!boardField) {
       setCollapsedBoardColumns(new Set(loaded));
       return;

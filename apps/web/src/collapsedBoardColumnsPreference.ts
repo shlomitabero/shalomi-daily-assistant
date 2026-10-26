@@ -76,6 +76,40 @@ export function getCollapsedBoardColumns(projectId: string, entityName: string, 
   return [...(store[keyFor(projectId, entityName, boardFieldName)] ?? [])];
 }
 
+/**
+ * Round 1008: the identical gap collapsedGroupsPreference.ts's own
+ * migrateCollapsedGroupsFieldCase just fixed, for this store's own
+ * boardFieldName dimension -- see that function's doc comment for the
+ * full mechanism. boardFieldName isn't React state the way groupFieldName
+ * is (findBoardField recomputes it fresh from entity.fields every render,
+ * with no separate remap effect of its own), but a live refine that
+ * renames the board-driving field's letters only (e.g. "status" ->
+ * "Status") still makes it resolve to a new string the instant that
+ * refine completes -- the load effect's own exact-match lookup under that
+ * new key then finds nothing, and a board column the user had
+ * deliberately collapsed silently reappears, with the real set orphaned
+ * under the old key forever.
+ */
+export function migrateCollapsedBoardColumnsFieldCase(projectId: string, entityName: string, boardFieldName: string): string[] {
+  const exact = getCollapsedBoardColumns(projectId, entityName, boardFieldName);
+  if (exact.length > 0) return exact;
+  const store = readStore();
+  const lowerFieldName = boardFieldName.toLowerCase();
+  for (const key of Object.keys(store)) {
+    const parsed = parseKey(key);
+    if (!parsed || parsed[0] !== projectId || parsed[1] !== entityName) continue;
+    if (parsed[2] === boardFieldName || parsed[2].toLowerCase() !== lowerFieldName) continue;
+    const migrated = [...store[key]];
+    delete store[key];
+    const newKey = keyFor(projectId, entityName, boardFieldName);
+    if (migrated.length > 0) store[newKey] = migrated;
+    else delete store[newKey];
+    writeStore(store);
+    return migrated;
+  }
+  return [];
+}
+
 /** Persists the entity's full updated set of collapsed board-column values and returns it, so callers can update their own state from the return value instead of re-reading storage. */
 export function setCollapsedBoardColumns(projectId: string, entityName: string, boardFieldName: string, values: string[]): string[] {
   const store = readStore();
