@@ -200,6 +200,7 @@ function renderFieldChip(
           canRemove,
           onChanged,
           allEntities,
+          labelOccurrences: new Map(),
           readOnly,
         }),
       ),
@@ -1724,6 +1725,130 @@ test("clicking Cancel while editing an existing relation field's target closes t
     } finally {
       globalThis.fetch = originalFetch;
     }
+  });
+});
+
+/**
+ * Round 1039: renameFieldLabel has no server-side uniqueness check (the
+ * same already-fixed gap in ~12 other surfaces -- GlobalSearchPanel,
+ * searchReport.ts, print sheets, board cards, CSV/.ics export, etc.), so
+ * two sibling fields on this exact screen can be renamed to the identical
+ * label in two clicks each. Without disambiguation, their two chips would
+ * render byte-identical text, with nothing distinguishing which chip's
+ * bare, confirmation-free "x" remove button belongs to which field.
+ */
+test("a field chip's displayed label is disambiguated by its own field name when a sibling field shares the same label", async () => {
+  await withJsdom(async () => {
+    const siblingFields: Field[] = [
+      { name: "subtotal", label: "Amount", type: "number", required: false },
+      { name: "shipping", label: "Amount", type: "number", required: false },
+    ];
+    const entityWithCollidingFields: Entity = { name: "Order", label: "Order", fields: siblingFields };
+    render(
+      React.createElement(
+        ThemeProvider,
+        null,
+        React.createElement(
+          LanguageProvider,
+          null,
+          React.createElement(EntitySummaryItem, {
+            entity: entityWithCollidingFields,
+            allEntities: [entityWithCollidingFields],
+            fieldsSummary: "Amount, Amount",
+            projectId: "proj1",
+            canRemove: true,
+            onRenamed: () => {},
+            onRemoved: () => {},
+          }),
+        ),
+      ),
+    );
+
+    const chipTexts = Array.from(document.querySelectorAll(".chip-text")).map((el) => el.textContent?.trim());
+    assert.ok(chipTexts.some((t) => t?.startsWith("Amount (subtotal)")), "the subtotal field's chip must be disambiguated by its own field name");
+    assert.ok(chipTexts.some((t) => t?.startsWith("Amount (shipping)")), "the shipping field's chip must be disambiguated by its own field name");
+
+    // The rename draft's own initial value must stay the plain,
+    // non-disambiguated label -- otherwise saving it right back unchanged
+    // would silently rename the field to the literal text "Amount (subtotal)".
+    fireEvent.click(document.querySelectorAll(".chip-text")[0]);
+    const renameInput = document.querySelector(".chip-rename-edit input") as HTMLInputElement;
+    assert.equal(renameInput.value, "Amount", "the rename input must be pre-filled with the plain label, not the disambiguated display text");
+  });
+});
+
+/**
+ * Round 1039: renameEntityLabel has the identical gap -- two entities
+ * sharing a label render two identical-looking entity-summary headers,
+ * each with its own bare, confirmation-free remove button.
+ */
+test("an entity summary's displayed label is disambiguated by its own entity name when another entity shares the same label", async () => {
+  await withJsdom(async () => {
+    const collidingEntities: Entity[] = [
+      { name: "Lead", label: "Customer", fields: [{ name: "name", type: "text", required: true }] },
+      { name: "Account", label: "Customer", fields: [{ name: "name", type: "text", required: true }] },
+    ];
+    render(
+      React.createElement(
+        ThemeProvider,
+        null,
+        React.createElement(
+          LanguageProvider,
+          null,
+          React.createElement(EntitySummaryItem, {
+            entity: collidingEntities[0],
+            allEntities: collidingEntities,
+            fieldsSummary: "name *",
+            projectId: "proj1",
+            canRemove: true,
+            onRenamed: () => {},
+            onRemoved: () => {},
+          }),
+        ),
+      ),
+    );
+
+    const label = document.querySelector(".entity-summary-label");
+    assert.equal(label?.textContent, "Customer (Lead)", "the Lead entity's own header must be disambiguated by its own entity name");
+
+    // Same "plain label in the rename draft" contract as the field-chip
+    // test above.
+    fireEvent.click(label as Element);
+    const renameInput = document.querySelector(".entity-summary-rename-edit input") as HTMLInputElement;
+    assert.equal(renameInput.value, "Customer", "the rename input must be pre-filled with the plain label, not the disambiguated display text");
+  });
+});
+
+/**
+ * Round 1039: the relation-target dropdown (both FieldChip's own
+ * edit-target draft and AddFieldForm's "add a relation field" picker)
+ * offers every other entity by its label, with the identical unresolved
+ * collision risk -- confirmed here through FieldChip's own existing
+ * relation-edit draft step.
+ */
+test("a relation field chip's edit-target dropdown disambiguates two candidate entities that share the same label", async () => {
+  await withJsdom(async () => {
+    const relatedEntities: Entity[] = [
+      ...baseProject.spec.entities,
+      { name: "Supplier", label: "Vendor", fields: [{ name: "name", type: "text", required: true }] },
+      { name: "Distributor", label: "Vendor", fields: [{ name: "name", type: "text", required: true }] },
+    ];
+
+    renderFieldChip(
+      () => {},
+      true,
+      { name: "supplierId", type: "relation", required: false, relationTo: "Supplier" },
+      relatedEntities,
+    );
+
+    const editButton = document.querySelector(".chip-field-edit-values") as HTMLButtonElement;
+    fireEvent.click(editButton);
+    const confirmForm = document.querySelector(".chip-field-type-confirm") as HTMLFormElement;
+    const relationSelect = confirmForm.querySelector("select") as HTMLSelectElement;
+    const optionLabels = Array.from(relationSelect.options).map((o) => o.textContent);
+
+    assert.ok(optionLabels.includes("Vendor (Supplier)"), "the Supplier option must be disambiguated by its own entity name");
+    assert.ok(optionLabels.includes("Vendor (Distributor)"), "the Distributor option must be disambiguated by its own entity name");
   });
 });
 

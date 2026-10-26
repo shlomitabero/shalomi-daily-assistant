@@ -1,4 +1,4 @@
-import { useRef, useState } from "react";
+import { useMemo, useRef, useState } from "react";
 import type { Entity, Field, Project } from "@forge/shared";
 import { FIELD_TYPES } from "@forge/shared";
 import {
@@ -20,6 +20,7 @@ import {
   setFieldRequired,
   setFieldType,
 } from "./api.js";
+import { entityDisplayLabel, entityLabelOccurrences, fieldDisplayLabel, fieldLabelOccurrences } from "./entityFormatting.js";
 import { useTranslation } from "./i18n/LanguageContext.js";
 
 /**
@@ -472,6 +473,21 @@ export function EntitySummaryItem({
     (value) => renameEntityLabel(projectId, entity.name, value),
     onRenamed,
   );
+  // Round 1039: renameEntityLabel/renameFieldLabel (both used right on this
+  // screen, via click-to-rename) have no server-side uniqueness check --
+  // the same gap already fixed for this exact ambiguity in ~12 other
+  // surfaces (GlobalSearchPanel, searchReport.ts, automationsReport.ts,
+  // print sheets, board cards, CSV/.ics export, impact warnings, rounds
+  // 635-642/952 among others). Without this, two sibling fields (or two
+  // entities) renamed to the identical label render two identical-looking
+  // chips with nothing in the DOM to tell them apart -- including each
+  // chip's own bare, confirmation-free "x" remove button. The rename
+  // draft's own initial value below is deliberately left as the plain,
+  // non-disambiguated label (round 642's own established distinction),
+  // so saving it right back unchanged never silently renames the field to
+  // "Amount (subtotal)".
+  const entityOccurrences = useMemo(() => entityLabelOccurrences(allEntities), [allEntities]);
+  const fieldOccurrences = useMemo(() => fieldLabelOccurrences(entity.fields), [entity.fields]);
 
   /**
    * Round 932: see RoleChip's own handleStartRename -- same gap, same fix.
@@ -502,7 +518,7 @@ export function EntitySummaryItem({
     return (
       <div className="entity-summary">
         <div className="entity-summary-header">
-          <strong className="entity-summary-label">{entity.label ?? entity.name}</strong>
+          <strong className="entity-summary-label">{entityDisplayLabel(entity, entityOccurrences)}</strong>
         </div>
         <div className="entity-summary-fields chips" aria-label={fieldsSummary}>
           {entity.fields.map((field) => (
@@ -514,6 +530,7 @@ export function EntitySummaryItem({
               canRemove={entity.fields.length > 1}
               onChanged={onRenamed}
               allEntities={allEntities}
+              labelOccurrences={fieldOccurrences}
               readOnly
             />
           ))}
@@ -564,7 +581,7 @@ export function EntitySummaryItem({
             handleStartRename();
           }}
         >
-          {entity.label ?? entity.name}
+          {entityDisplayLabel(entity, entityOccurrences)}
         </strong>
         <button
           type="button"
@@ -592,6 +609,7 @@ export function EntitySummaryItem({
             canRemove={entity.fields.length > 1}
             onChanged={onRenamed}
             allEntities={allEntities}
+            labelOccurrences={fieldOccurrences}
           />
         ))}
       </div>
@@ -618,6 +636,7 @@ export function FieldChip({
   allEntities,
   canRemove,
   onChanged,
+  labelOccurrences,
   readOnly = false,
 }: {
   field: Field;
@@ -628,6 +647,8 @@ export function FieldChip({
   /** False once this is the only remaining field on the entity -- the API rejects removing it (EntitySchema requires fields.min(1)), so the button is disabled instead of letting the user hit that error. */
   canRemove: boolean;
   onChanged: (project: Project) => void;
+  /** Round 1039: see EntitySummaryItem's own comment -- computed once there (from this field's own sibling fields) via fieldLabelOccurrences, so a chip whose label collides with a sibling's renders disambiguated by its own unique field name, matching the same convention EntityPanel.tsx already applies everywhere a field label is shown. */
+  labelOccurrences: Map<string, number>;
   /** See RoleChip's own comment -- same gap, same fix. */
   readOnly?: boolean;
 }) {
@@ -641,6 +662,11 @@ export function FieldChip({
     (value) => renameFieldLabel(projectId, entityName, field.name, value),
     onChanged,
   );
+  // Round 1039: see EntitySummaryItem's own identical comment -- this
+  // chip's own relation-target dropdown (below) offers every OTHER
+  // entity by its label, with the same unresolved collision risk if two
+  // entities share one.
+  const relationEntityOccurrences = useMemo(() => entityLabelOccurrences(allEntities), [allEntities]);
 
   // A field's `required` flag was otherwise set once at spec generation
   // and rendered as plain, non-interactive " *" text -- the one property
@@ -791,7 +817,7 @@ export function FieldChip({
   if (readOnly) {
     return (
       <span className="chip">
-        {field.label ?? field.name}
+        {fieldDisplayLabel(field, labelOccurrences)}
         {field.required ? " *" : ""}
       </span>
     );
@@ -838,7 +864,7 @@ export function FieldChip({
           handleStartRename();
         }}
       >
-        {field.label ?? field.name}
+        {fieldDisplayLabel(field, labelOccurrences)}
         {field.required ? " *" : ""}
       </span>
       <select
@@ -920,7 +946,7 @@ export function FieldChip({
           >
             {allEntities.map((e) => (
               <option key={e.name} value={e.name}>
-                {e.label ?? e.name}
+                {entityDisplayLabel(e, relationEntityOccurrences)}
               </option>
             ))}
           </select>
@@ -1123,6 +1149,11 @@ export function AddFieldForm({
   const [relationTo, setRelationTo] = useState(allEntities[0]?.name ?? "");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // Round 1039: see EntitySummaryItem's own identical comment -- this
+  // form's own relation-target dropdown (below) has the same unresolved
+  // collision risk as FieldChip's identical dropdown if two entities
+  // share a label.
+  const entityOccurrences = useMemo(() => entityLabelOccurrences(allEntities), [allEntities]);
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
@@ -1182,7 +1213,7 @@ export function AddFieldForm({
         <select value={relationTo} onChange={(e) => setRelationTo(e.target.value)} disabled={busy} aria-label={t("spec.fields.relationTo")}>
           {allEntities.map((e) => (
             <option key={e.name} value={e.name}>
-              {e.label ?? e.name}
+              {entityDisplayLabel(e, entityOccurrences)}
             </option>
           ))}
         </select>
