@@ -60,6 +60,20 @@ const PAYMENT_KEYWORDS: (string | RegExp)[] = [
   // that they don't fire for an internal inventory-tracking description.
   "online store", "storefront", "shopping cart", "add to cart", "e-commerce", "ecommerce",
   "חנות מקוונת", "חנות אונליין", "עגלת קניות",
+  // Round 1007: a tutoring/course-booking description ("parents pay a
+  // monthly fee for their kids' swimming courses") matches only the Course
+  // entity, which is deliberately NOT in BILLING_ENTITY_NAMES below -- a
+  // course can genuinely be free (a volunteer training, a community
+  // class), so adding Course there would wrongly flip every free-course
+  // description to "Stripe" too (the exact "too broad a signal" problem
+  // this file's own BILLING_ENTITY_NAMES comment already documents
+  // rejecting for Service). The right fix is the same shape as round 893's
+  // e-commerce phrases: specific, low-ambiguity fee-charging wording that
+  // doesn't fire for an ordinary free-course description. Hebrew already
+  // handles this correctly -- natural fee phrasing ("גובה תשלום חודשי")
+  // already contains the literal "תשלום" substring -- so this is an
+  // English-only gap.
+  "monthly fee", "tuition", "charges parents", "charges customers",
 ];
 
 /**

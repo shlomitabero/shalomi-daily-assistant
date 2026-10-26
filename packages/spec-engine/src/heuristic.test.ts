@@ -321,6 +321,42 @@ test("asks about payments (recommending Stripe) for an online-store description,
   );
 });
 
+/**
+ * Round 1007: a tutoring/course-booking description matches only the
+ * Course entity -- deliberately NOT in BILLING_ENTITY_NAMES, since a
+ * course can genuinely be free (a volunteer training, a community class),
+ * the same over-broad-signal problem this file's own BILLING_ENTITY_NAMES
+ * comment already documents rejecting for Service. Fixed with specific,
+ * low-ambiguity fee-charging phrases ("monthly fee", "tuition", "charges
+ * parents"/"charges customers"), the same shape as round 893's e-commerce
+ * phrases -- narrow enough that an ordinary free-course description stays
+ * untouched.
+ */
+test("asks about payments (recommending Stripe) for a paid-course description, even though it names none of the original PAYMENT_KEYWORDS or BILLING_ENTITY_NAMES", async () => {
+  const provider = new HeuristicSpecProvider();
+  const spec = await provider.generate(
+    "An app for a swim school where parents pay a monthly fee for their kids' swimming courses, tracking enrollments and instructors.",
+  );
+  assert.deepEqual(spec.entities.map((e) => e.name), ["Course"]);
+  const paymentQuestion = spec.openQuestions.find((q) => q.question.toLowerCase().includes("payment"));
+  assert.ok(paymentQuestion);
+  assert.equal(paymentQuestion!.recommendation, "Stripe");
+
+  // A plain free-course description must still get "No payments" -- the
+  // new keywords are deliberately narrow fee-charging phrases, not a
+  // broad "course"/"tuition"-adjacent word, so an ordinary volunteer/
+  // community class is untouched by this fix.
+  const freeCourse = await provider.generate("A community center app to manage free weekly yoga courses and track who signed up.");
+  assert.deepEqual(freeCourse.entities.map((e) => e.name), ["Course"]);
+  const freeCourseQuestion = freeCourse.openQuestions.find((q) => q.question.toLowerCase().includes("payment"));
+  assert.ok(freeCourseQuestion);
+  assert.equal(
+    freeCourseQuestion!.recommendation,
+    "No payments",
+    "a plain free-course description must not be swept up by the new, narrower fee-charging phrases",
+  );
+});
+
 test("does not ask about payments for a clothing-store description mentioning 'striped' shirts, but still asks when 'stripe' itself is used", async () => {
   // Regression test for a real bug found by a round 460 Explore survey:
   // PAYMENT_KEYWORDS's bare "stripe" hint matched via plain .includes(),
