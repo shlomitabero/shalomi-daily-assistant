@@ -865,7 +865,7 @@ function CalendarView({
                     onEdit(record);
                   }}
                 >
-                  {calendarChipLabelValue(labelField, record)}
+                  {calendarChipLabelValue(labelField, record, lang)}
                 </button>
               ))}
               {day.records.length > 3 && (

@@ -1593,8 +1593,8 @@ test("calendarChipLabelField's last-resort fallback skips a file field too, fall
 
 test("calendarChipLabelValue resolves a boolean display field to uppercase TRUE/FALSE, matching this codebase's own uniform convention", () => {
   const field: Field = { name: "confirmed", type: "boolean", required: false };
-  assert.equal(calendarChipLabelValue(field, { id: 1, confirmed: true }), "TRUE");
-  assert.equal(calendarChipLabelValue(field, { id: 1, confirmed: false }), "FALSE");
+  assert.equal(calendarChipLabelValue(field, { id: 1, confirmed: true }, "en"), "TRUE");
+  assert.equal(calendarChipLabelValue(field, { id: 1, confirmed: false }, "en"), "FALSE");
 });
 
 test("calendarChipLabelValue resolves an enum display field through its own enumLabels, not the raw stored key", () => {
@@ -1605,13 +1605,30 @@ test("calendarChipLabelValue resolves an enum display field through its own enum
     enumValues: ["in", "out"],
     enumLabels: { in: "כניסה", out: "יציאה" },
   };
-  assert.equal(calendarChipLabelValue(field, { id: 1, stage: "in" }), "כניסה");
+  assert.equal(calendarChipLabelValue(field, { id: 1, stage: "in" }, "en"), "כניסה");
 });
 
 test("calendarChipLabelValue returns a blank string for a null/undefined/missing value, instead of the literal word 'null'", () => {
   const field: Field = { name: "notes", type: "text", required: false };
-  assert.equal(calendarChipLabelValue(field, { id: 1, notes: null }), "");
-  assert.equal(calendarChipLabelValue(field, { id: 1 }), "");
+  assert.equal(calendarChipLabelValue(field, { id: 1, notes: null }, "en"), "");
+  assert.equal(calendarChipLabelValue(field, { id: 1 }, "en"), "");
+});
+
+/**
+ * Round 1048: calendarChipLabelField's own last-resort fallback lands on a
+ * `date` label field exactly as readily as it does on a boolean/enum one
+ * (an entity with two+ date fields and no name/title/text/longtext field,
+ * e.g. Flight{ departureDate, returnDate, confirmed: boolean }) -- before
+ * this round, calendarChipLabelValue had no `date` branch at all, so it
+ * fell through to the raw unformatted "YYYY-MM-DD" string instead of a
+ * real formatted date, the same gap the boolean/enum branches above this
+ * one already closed. Reuses formatDateValue, this file's own established
+ * date-display convention for showing a date field to a person.
+ */
+test("calendarChipLabelValue resolves a date display field to a formatted date, not the raw 'YYYY-MM-DD' string", () => {
+  const field: Field = { name: "returnDate", type: "date", required: false };
+  assert.equal(calendarChipLabelValue(field, { id: 1, returnDate: "2026-04-02" }, "en"), "4/2/2026");
+  assert.equal(calendarChipLabelValue(field, { id: 1, returnDate: "2026-04-02" }, "he"), "2.4.2026");
 });
 
 test("recordDisplayLabel shows the display field's value, falling back to #id when it's empty or missing", () => {

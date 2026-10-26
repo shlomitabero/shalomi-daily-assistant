@@ -4210,6 +4210,73 @@ test("the exported EntityView's real generated buildCalendarIcs renders a boolea
 });
 
 /**
+ * Round 1048: mirrors the live preview's own calendarIcs.ts fix -- a
+ * `date` label field (reachable the same way the boolean fix just above
+ * is: an entity with two+ date fields and no name/title/text field, e.g.
+ * a `Flight { departureDate: date, returnDate: date }`) previously
+ * rendered the raw unformatted "YYYY-MM-DD" string in SUMMARY instead of
+ * a real formatted date.
+ */
+test("the exported EntityView's real generated buildCalendarIcs renders a date label field as a formatted date in SUMMARY, not the raw 'YYYY-MM-DD' string", () => {
+  const withDate: Project = {
+    ...project,
+    spec: {
+      ...project.spec,
+      entities: [
+        ...project.spec.entities,
+        {
+          name: "Flight",
+          fields: [
+            { name: "departureDate", type: "date", required: true },
+            { name: "returnDate", type: "date", required: false },
+          ],
+        },
+      ],
+    },
+  };
+  const entityViewJsx = generateExportFiles(withDate).find((f) => f.path === "web/src/components/EntityView.jsx")!.content;
+
+  const pickDisplaySrc = entityViewJsx.match(/export function pickDisplayField\(entity\) \{[\s\S]*?\n\}\n/)?.[0]?.replace(/^export /, "");
+  const labelFieldSrc = entityViewJsx.match(/function calendarLabelField\(entity, dateField\) \{[\s\S]*?\n\}\n/)?.[0];
+  const pad2Src = entityViewJsx.match(/function icsPad2\(n\) \{[\s\S]*?\n\}\n/)?.[0];
+  const dateSrc = entityViewJsx.match(/function formatIcsDate\(date\) \{[\s\S]*?\n\}\n/)?.[0];
+  const tsSrc = entityViewJsx.match(/function formatIcsTimestamp\(date\) \{[\s\S]*?\n\}\n/)?.[0];
+  const escSrc = entityViewJsx.match(/function icsEscapeText\(value\) \{[\s\S]*?\n\}\n/)?.[0];
+  const utf8LenSrc = entityViewJsx.match(/function utf8ByteLength\(s\) \{[\s\S]*?\n\}\n/)?.[0];
+  const foldSrc = entityViewJsx.match(/function foldIcsLine\(line\) \{[\s\S]*?\n\}\n/)?.[0];
+  const descDateSrc = entityViewJsx.match(/function formatIcsDescriptionDate\(value\) \{[\s\S]*?\n\}\n/)?.[0];
+  const buildSrc = entityViewJsx.match(
+    /function buildCalendarIcs\(entity, dateField, labelField, records, relatedRecords, now, endField, orderedFields = entity\.fields\) \{[\s\S]*?\n\}\n/,
+  )?.[0];
+  assert.ok(
+    pickDisplaySrc && labelFieldSrc && pad2Src && dateSrc && tsSrc && escSrc && utf8LenSrc && foldSrc && descDateSrc && buildSrc,
+    "expected to find every ICS helper function (including formatIcsDescriptionDate) in the real generated output",
+  );
+
+  const relationStub = "function relationDisplayLabel() { return ''; }\n";
+  const parseFieldDateStub = "function parseFieldDate(raw) { const m = /^(\\d{4})-(\\d{2})-(\\d{2})$/.exec(raw); return m ? new Date(Number(m[1]), Number(m[2]) - 1, Number(m[3])) : new Date(raw); }\n";
+  const buildCalendarIcs = new Function(
+    `${pickDisplaySrc}\n${labelFieldSrc}\n${pad2Src}\n${dateSrc}\n${tsSrc}\n${escSrc}\n${utf8LenSrc}\n${foldSrc}\n${relationStub}\n${parseFieldDateStub}\n${descDateSrc}\n${buildSrc}\nreturn buildCalendarIcs;`,
+  )() as (entity: unknown, dateField: unknown, labelField: unknown, records: unknown[], relatedRecords: unknown, now: Date) => string;
+
+  const entity = {
+    name: "Flight",
+    fields: [
+      { name: "departureDate", type: "date" },
+      { name: "returnDate", type: "date" },
+    ],
+  };
+  const dateField = entity.fields[0];
+  const labelField = entity.fields[1];
+  const records = [{ id: 1, departureDate: "2026-03-15", returnDate: "2026-04-02" }];
+
+  const ics = buildCalendarIcs(entity, dateField, labelField, records, {}, new Date("2026-01-01T00:00:00Z"));
+
+  assert.match(ics, /SUMMARY:4\/2\/2026/, "a date label field must render as a formatted date, not the raw ISO string");
+  assert.doesNotMatch(ics, /SUMMARY:2026-04-02/, "must never leak the raw unformatted 'YYYY-MM-DD' string");
+});
+
+/**
  * Round 742: mirrors the live preview's own fix (calendarIcs.ts, round
  * 694) -- a "file" field's stored value is a JSON-encoded descriptor
  * ({url, name, size, mimeType}), not a plain string, so without a "file"

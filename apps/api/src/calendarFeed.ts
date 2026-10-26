@@ -74,11 +74,18 @@ function calendarChipLabelField(entity: Entity, dateField: Field): Field {
   );
 }
 
-function calendarChipLabelValue(labelField: Field, record: EntityRecord): string {
+// Round 1048: mirrors entityFormatting.ts's own identical date-branch fix
+// -- a `date` label field (reachable the same way the boolean/enum
+// branches above it already are: an entity with two+ date fields and no
+// name/title/text/longtext field) rendered the raw unformatted
+// "YYYY-MM-DD" string in the subscription feed's own SUMMARY line instead
+// of a real formatted date.
+function calendarChipLabelValue(labelField: Field, record: EntityRecord, lang: Lang): string {
   const value = record[labelField.name];
   if (value === null || value === undefined) return "";
   if (labelField.type === "boolean") return value ? "TRUE" : "FALSE";
   if (labelField.type === "enum") return (labelField.enumLabels && labelField.enumLabels[String(value)]) || String(value);
+  if (labelField.type === "date" && typeof value === "string") return String(formatIcsDescriptionDate(value, lang));
   return String(value);
 }
 
@@ -277,7 +284,7 @@ export function buildCalendarFeedIcs(
     // already use everywhere else in this app -- always unique per
     // record, unlike entity.label/name, which every unnamed record
     // sharing this entity would otherwise show identically.
-    const chipLabel = calendarChipLabelValue(labelField, record);
+    const chipLabel = calendarChipLabelValue(labelField, record, lang);
     const summary = chipLabel === "" ? `#${record.id}` : chipLabel;
     // Mirrors calendarIcs.ts's own descriptionLines computation exactly,
     // including the field-label-collision disambiguation (round 635's

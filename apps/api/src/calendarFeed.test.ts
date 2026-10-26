@@ -70,6 +70,25 @@ test("buildCalendarFeedIcs falls back to #<id> in SUMMARY when the display field
   assert.doesNotMatch(ics!, /SUMMARY:תור/, "must never fall back to the entity's own label for a genuinely blank field value");
 });
 
+/**
+ * Round 1048: calendarChipLabelField's own last-resort fallback lands on a
+ * `date` label field exactly as readily as it does on a boolean/enum one
+ * -- an entity with two+ date fields and no name/title/text/longtext
+ * field, e.g. this Flight{ appointmentDate, returnDate } fixture. Before
+ * this round, calendarChipLabelValue had no `date` branch at all, so the
+ * raw unformatted "YYYY-MM-DD" string leaked straight into SUMMARY,
+ * mirroring calendarIcs.ts's own identical fix for the one-shot export.
+ */
+test("buildCalendarFeedIcs resolves a date label field to a formatted date in SUMMARY, not the raw 'YYYY-MM-DD' string", () => {
+  const returnDateField: Field = { name: "returnDate", label: "תאריך חזרה", type: "date", required: false };
+  const flightEntity: Entity = { name: "Flight", label: "טיסה", fields: [dateField, returnDateField] };
+  const records: EntityRecord[] = [{ id: 1, appointmentDate: "2026-03-15", returnDate: "2026-04-02" }];
+  const ics = buildCalendarFeedIcs(flightEntity, records, "proj1", new Date(), [], {}, "en");
+  assert.ok(ics);
+  assert.match(ics!, /SUMMARY:4\/2\/2026/, "a date label field must render as a formatted date (en locale), not the raw ISO string");
+  assert.doesNotMatch(ics!, /SUMMARY:2026-04-02/, "must never leak the raw unformatted 'YYYY-MM-DD' string");
+});
+
 test("buildCalendarFeedIcs includes EVERY record with a valid date, not just one month -- the whole point of a live feed vs. the one-shot export", () => {
   const records: EntityRecord[] = [
     { id: 1, appointmentDate: "2024-01-01", customerName: "Old One", confirmed: false },

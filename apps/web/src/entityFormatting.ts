@@ -976,12 +976,24 @@ export function calendarChipLabelField(entity: Entity, dateField: Field): Field 
  * fixed for recordDisplayLabel) showed lowercase "true"/"false" instead of
  * this codebase's own uniform "TRUE"/"FALSE" convention; an `enum` display
  * field showed its raw stored key instead of its translated enumLabel.
+ *
+ * Round 1048: a `date` display field (calendarChipLabelField's own
+ * last-resort fallback excludes only `relation`/`file`, same as
+ * `pickDisplayField` -- an entity with two+ date fields and no name/
+ * title/text/longtext field, e.g. `Flight { departureDate: date,
+ * returnDate: date, confirmed: boolean }`, lands here with `returnDate`
+ * as the label field for `departureDate`'s own calendar placement)
+ * rendered the raw unformatted "YYYY-MM-DD" string instead of a real
+ * formatted date -- reuses formatDateValue, this file's own established
+ * date-display convention everywhere else a date field is shown to a
+ * person (the record form/table), rather than inventing a new one.
  */
-export function calendarChipLabelValue(labelField: Field, record: EntityRecord): string {
+export function calendarChipLabelValue(labelField: Field, record: EntityRecord, lang: Lang): string {
   const value = record[labelField.name];
   if (value === null || value === undefined) return "";
   if (labelField.type === "boolean") return value ? "TRUE" : "FALSE";
   if (labelField.type === "enum") return (labelField.enumLabels && labelField.enumLabels[String(value)]) || String(value);
+  if (labelField.type === "date" && typeof value === "string") return formatDateValue(value, lang);
   return String(value);
 }
 

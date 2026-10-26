@@ -3375,11 +3375,19 @@ function calendarLabelField(entity, dateField) {
 // string the live calendar day-chip should display -- the chip used to
 // render the raw stored value with zero type awareness (not even enum).
 // Mirrors entityFormatting.ts's own calendarChipLabelValue.
+// Round 1048: added a \`date\` branch mirroring entityFormatting.ts's own
+// identical fix -- a \`date\` label field (reachable the same way the
+// boolean/enum branches above it already are) rendered the raw
+// unformatted "YYYY-MM-DD" string instead of a real formatted date. Uses
+// this file's own bare formatIcsDescriptionDate (no lang arg -- this
+// exported app has no language-switching mechanism of its own, same as
+// every other date display in this file).
 function calendarLabelValue(labelField, record) {
   const value = record[labelField.name];
   if (value === null || value === undefined) return "";
   if (labelField.type === "boolean") return value ? "TRUE" : "FALSE";
   if (labelField.type === "enum") return (labelField.enumLabels && labelField.enumLabels[value]) || String(value);
+  if (labelField.type === "date" && typeof value === "string") return String(formatIcsDescriptionDate(value));
   return String(value);
 }
 
@@ -3476,7 +3484,13 @@ function buildCalendarIcs(entity, dateField, labelField, records, relatedRecords
         ? rawLabelValue ? "TRUE" : "FALSE"
         : labelField.type === "enum"
           ? (labelField.enumLabels && labelField.enumLabels[rawLabelValue]) || rawLabelValue
-          : rawLabelValue;
+          // Round 1048: mirrors the live preview's own calendarIcs.ts fix --
+          // a \`date\` label field (reachable the same way the boolean/enum
+          // branches above it already are) rendered the raw unformatted
+          // "YYYY-MM-DD" string instead of a real formatted date.
+          : labelField.type === "date"
+            ? formatIcsDescriptionDate(rawLabelValue)
+            : rawLabelValue;
     // Round 1022: mirrors the live apps/web/src/calendarIcs.ts's own
     // identical fix -- \`??\` only falls through on null/undefined, never
     // on a genuinely blank string, so a blank text display field used to

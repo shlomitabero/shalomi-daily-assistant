@@ -191,7 +191,15 @@ export function buildCalendarIcs(
           : "FALSE"
         : labelField.type === "enum"
           ? labelField.enumLabels?.[String(rawLabelValue)] ?? rawLabelValue
-          : rawLabelValue;
+          // Round 1048: a `date` label field (reachable the same way the
+          // boolean/enum branches above are -- an entity with two+ date
+          // fields and no name/title/text/longtext field) rendered the raw
+          // unformatted "YYYY-MM-DD" string instead of a real formatted
+          // date. Reuses this file's own formatIcsDescriptionDate, already
+          // relied on for DESCRIPTION lines just below.
+          : labelField.type === "date"
+            ? formatIcsDescriptionDate(rawLabelValue, lang)
+            : rawLabelValue;
     // Round 1022: `??` only falls through on null/undefined, never on a
     // genuinely blank string -- a text/longtext display field (pickDisplayField
     // never requires one to be `required: true`) left empty on one record

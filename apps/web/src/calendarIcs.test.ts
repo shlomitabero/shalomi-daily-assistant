@@ -359,6 +359,23 @@ test("buildCalendarIcs resolves a boolean label field to uppercase TRUE/FALSE in
 });
 
 /**
+ * Round 1048: same gap as the boolean/enum fixes above, for the one type
+ * calendarChipLabelField's own last-resort fallback can equally land on --
+ * a second `date` field (reachable the same way: an entity with two+ date
+ * fields and no name/title/text/longtext field, e.g. Flight{ departureDate,
+ * returnDate, confirmed: boolean }). Before this round, the raw stored
+ * "YYYY-MM-DD" string leaked straight into SUMMARY unformatted.
+ */
+test("buildCalendarIcs resolves a date label field to a formatted date in SUMMARY, not the raw 'YYYY-MM-DD' string", () => {
+  const returnDateField: Field = { name: "returnDate", label: "תאריך חזרה", type: "date", required: false };
+  const flightEntity: Entity = { name: "Flight", label: "טיסה", fields: [dateField, returnDateField] };
+  const records: EntityRecord[] = [{ id: 1, appointmentDate: "2026-03-15", returnDate: "2026-04-02" }];
+  const ics = buildCalendarIcs(flightEntity, dateField, returnDateField, records, [], {}, new Date(), null, undefined, "en");
+  assert.match(ics, /SUMMARY:4\/2\/2026/, "a date label field must render as a formatted date (en locale), not the raw ISO string");
+  assert.doesNotMatch(ics, /SUMMARY:2026-04-02/, "must never leak the raw unformatted 'YYYY-MM-DD' string");
+});
+
+/**
  * Round 1022: `??` only falls through on null/undefined, never on a
  * genuinely blank string -- a text display field left empty on one
  * record (pickDisplayField never requires one to be `required: true`)
