@@ -13990,6 +13990,106 @@ test("EntityPanel's edit form deletes an abandoned file replacement from disk wh
 });
 
 /**
+ * Round 1017: round 1016's own fix (just above) only closed the edit form
+ * when the record is deleted through the form's OWN "Delete" button --
+ * handleDelete is a single shared function also called by the table row's
+ * own Delete button, the Delete/Backspace keyboard shortcut, and board-card
+ * delete, none of which the in-form button's own close-on-success handling
+ * ever runs for. Before this round, deleting the record currently open in
+ * the edit form via any of THOSE entry points left the form fully open and
+ * editable on a row that had just visually vanished from the table -- a
+ * later Save would PATCH a record that's either already gone server-side
+ * (once the undo window elapses) or, worse, would succeed invisibly during
+ * the still-open undo window (refresh() filters out a pending-delete id)
+ * only to be silently discarded the moment the undo window elapses or the
+ * user clicks the delete toast's own Undo (which splices back the PRE-
+ * delete snapshot, not the save). Confirms the keyboard-shortcut delete
+ * path (handleDelete, the exact same function the table row's own button
+ * calls) now closes the edit form the instant it deletes the record
+ * currently open in it -- the submit button reverts from "Save" back to
+ * "Add", proving editingId was reset, not just that the row disappeared.
+ */
+test("EntityPanel closes the edit form when the record it has open is deleted via the table row's own delete path (not the in-form button). ", async () => {
+  await withJsdom(async () => {
+    const store: EntityRecord[] = [
+      { id: 1, name: "Acme Corp", status: "new" },
+      { id: 2, name: "Globex", status: "won" },
+    ];
+    const originalFetch = globalThis.fetch;
+    const originalConfirm = globalThis.window.confirm;
+    globalThis.fetch = mockRecordsFetch(store) as typeof fetch;
+    globalThis.window.confirm = (() => true) as typeof window.confirm;
+    try {
+      renderEntityPanel();
+      await waitForCondition(() => document.querySelectorAll("table tbody tr").length === 2);
+
+      fireEvent.click(document.querySelector(".row-actions button") as HTMLButtonElement);
+      await waitForCondition(() => (document.querySelector(".record-form input[type=\"text\"]") as HTMLInputElement)?.value === "Acme Corp");
+      const submitButton = document.querySelector(".record-form button[type=submit]") as HTMLButtonElement;
+      assert.equal(submitButton.textContent, "Save", "sanity check: the form must actually be in edit mode for record 1 before deleting it");
+
+      // Focus the SAME row (id 1) the form is editing, then delete it via
+      // the keyboard shortcut -- handleDelete, not the in-form button.
+      for (let attempt = 0; document.querySelectorAll(".record-row-focused").length === 0 && attempt < 40; attempt++) {
+        fireEvent.keyDown(window, { key: "j" });
+        await new Promise((resolve) => setTimeout(resolve, 0));
+      }
+      assert.equal((document.querySelector(".record-row-focused") as HTMLElement).getAttribute("data-record-id"), "1");
+      fireEvent.keyDown(window, { key: "Delete" });
+
+      await waitForCondition(() => document.querySelectorAll("table tbody tr").length === 1);
+      assert.equal(
+        (document.querySelector(".record-form button[type=submit]") as HTMLButtonElement).textContent,
+        "Add",
+        "deleting the record this form has open must close the form (editingId reset), not leave it open on a vanished row",
+      );
+      assert.equal((document.querySelector(".record-form input[type=\"text\"]") as HTMLInputElement).value, "", "the form must also reset to blank, not keep showing the deleted record's stale values");
+    } finally {
+      globalThis.fetch = originalFetch;
+      globalThis.window.confirm = originalConfirm;
+    }
+  });
+});
+
+/** Round 1017: the handleBulkDelete counterpart of the test just above -- a bulk selection can just as easily include the record the edit form currently has open as a single delete can. */
+test("EntityPanel closes the edit form when the record it has open is included in a bulk delete", async () => {
+  await withJsdom(async () => {
+    const store: EntityRecord[] = [
+      { id: 1, name: "Acme Corp", status: "new" },
+      { id: 2, name: "Globex", status: "won" },
+    ];
+    const originalFetch = globalThis.fetch;
+    const originalConfirm = globalThis.window.confirm;
+    globalThis.fetch = mockRecordsFetch(store) as typeof fetch;
+    globalThis.window.confirm = (() => true) as typeof window.confirm;
+    try {
+      renderEntityPanel();
+      await waitForCondition(() => document.querySelectorAll("table tbody tr").length === 2);
+
+      fireEvent.click(document.querySelector(".row-actions button") as HTMLButtonElement);
+      await waitForCondition(() => (document.querySelector(".record-form input[type=\"text\"]") as HTMLInputElement)?.value === "Acme Corp");
+
+      for (const checkbox of document.querySelectorAll('td.select-col input[type="checkbox"]')) {
+        fireEvent.click(checkbox);
+      }
+      await waitForCondition(() => document.querySelector(".bulk-actions-bar") !== null);
+      fireEvent.click(document.querySelector(".bulk-actions-bar .danger") as HTMLButtonElement);
+
+      await waitForCondition(() => document.querySelectorAll("table tbody tr").length === 0);
+      assert.equal(
+        (document.querySelector(".record-form button[type=submit]") as HTMLButtonElement).textContent,
+        "Add",
+        "bulk-deleting a selection that includes the record this form has open must close the form",
+      );
+      assert.equal((document.querySelector(".record-form input[type=\"text\"]") as HTMLInputElement).value, "", "the form must also reset to blank");
+    } finally {
+      globalThis.fetch = originalFetch;
+      globalThis.window.confirm = originalConfirm;
+    }
+  });
+});
+
+/**
  * Round 1004: the "jump straight to a different record without saving or
  * cancelling first" abandonment path -- startEdit's own new cleanup call,
  * distinct from both the explicit Cancel button and Escape.

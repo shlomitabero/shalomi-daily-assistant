@@ -3038,6 +3038,28 @@ export function EntityPanel({
       void commitPendingDelete(pendingDeleteRef.current);
     }
 
+    // Round 1017: this id may be the record the edit form currently has
+    // open (deleted via the table row/board-card/keyboard-shortcut path,
+    // none of which go through the in-form Delete button's own close-on-
+    // success handling) -- leaving that form open on a row that just
+    // vanished let a later Save either PATCH a record that's actually
+    // already gone once the undo window elapses, or -- worse, and with no
+    // error at all -- succeed while the record is still alive during the
+    // undo window, only for the save to be invisible (refresh() filters
+    // out a pending-delete id) and then silently discarded the moment
+    // either the window elapses or the user clicks the delete toast's own
+    // Undo (which splices back pending.entries' PRE-delete snapshot, not
+    // whatever was just saved). Closing the form the same way Cancel/
+    // Escape/the in-form Delete button already do removes the window for
+    // either outcome entirely.
+    if (id === editingId) {
+      discardAbandonedFileUploads();
+      setForm(emptyForm(entity));
+      setEditingId(null);
+      editingOriginalRef.current = null;
+      bumpFormInstanceKey();
+    }
+
     setError(null);
     setRecords((prev) => prev.filter((r) => (r.id as number) !== id));
     setSelectedIds((prev) => {
@@ -3205,6 +3227,17 @@ export function EntityPanel({
     if (pendingDeleteRef.current) {
       clearTimeout(pendingDeleteRef.current.timeoutId);
       void commitPendingDelete(pendingDeleteRef.current);
+    }
+
+    // Round 1017: see handleDelete's own identical check just above -- a
+    // bulk selection can just as easily include the record the edit form
+    // currently has open as a single delete can.
+    if (editingId != null && ids.includes(editingId)) {
+      discardAbandonedFileUploads();
+      setForm(emptyForm(entity));
+      setEditingId(null);
+      editingOriginalRef.current = null;
+      bumpFormInstanceKey();
     }
 
     setError(null);
