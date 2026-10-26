@@ -923,12 +923,30 @@ function FieldInput({
   projectId,
   entityName,
   editingId,
+  excludeRecordIds,
 }: {
   field: Field;
   value: unknown;
   onChange: (value: unknown) => void;
   relatedEntity?: Entity;
   relatedEntityRecords?: EntityRecord[];
+  /**
+   * Round 1037: the record id(s) a self-referencing relation field
+   * (field.relationTo === this entity's own name -- e.g. Employee.managerId
+   * -> Employee) must never be allowed to point at, because the caller
+   * already knows those are exactly the record(s) this edit is about.
+   * Without this, nothing anywhere in the stack (this picker,
+   * coerceValue/updateRecord, the SQL FOREIGN KEY itself) stopped a record
+   * from being set as its own manager/parent -- not a crash (confirmed: no
+   * recursive tree-walking feature exists to infinite-loop on it, and a
+   * self-referencing row deletes cleanly), just silently nonsensical stored
+   * data with no warning anywhere. A record that already has itself as its
+   * own value (legacy data, or a direct API write) still shows and keeps
+   * that value -- this only blocks *choosing* it going forward, the same
+   * "never blank a controlled select for a value that's already there"
+   * convention `hasCurrentRelationOption` just below already follows.
+   */
+  excludeRecordIds?: number[];
   /** Only set by the entity table's inline cell editor (see EntityPanel's
    * editingCell state) -- the plain add/edit form below the table never
    * passes these, so a field there behaves exactly as before. */
@@ -992,7 +1010,17 @@ function FieldInput({
     // the same "stale value has no <option>" bug class the enum branch
     // below already guards against (round 508).
     const currentRelationId = value === "" || value === null || value === undefined ? null : Number(value);
-    const hasCurrentRelationOption = currentRelationId === null || relatedEntityRecords.some((r) => Number(r.id) === currentRelationId);
+    // Round 1037: a record that's already set as its own relation value
+    // (legacy data, or a direct API write) stays selectable and visible --
+    // this only blocks *picking* a now-excluded id going forward, mirroring
+    // hasCurrentRelationOption's own "never blank a controlled select for a
+    // value that's already there" rule just below.
+    const excludedIds = excludeRecordIds?.length ? new Set(excludeRecordIds) : null;
+    const selectableRecords =
+      excludedIds && excludedIds.size > 0
+        ? relatedEntityRecords.filter((r) => !excludedIds.has(Number(r.id)) || Number(r.id) === currentRelationId)
+        : relatedEntityRecords;
+    const hasCurrentRelationOption = currentRelationId === null || selectableRecords.some((r) => Number(r.id) === currentRelationId);
     const trimmedFilter = relationFilter.trim().toLowerCase();
     // The current value's own option (including the "#id" fallback above)
     // must always stay visible regardless of the filter text -- otherwise
@@ -1003,8 +1031,8 @@ function FieldInput({
     // against for a different cause.
     const filteredRecords =
       trimmedFilter === ""
-        ? relatedEntityRecords
-        : relatedEntityRecords.filter(
+        ? selectableRecords
+        : selectableRecords.filter(
             (r) => Number(r.id) === currentRelationId || recordDisplayLabel(relatedEntity, r).toLowerCase().includes(trimmedFilter),
           );
     return (
@@ -3810,6 +3838,7 @@ export function EntityPanel({
                   onChange={setCellDraft}
                   relatedEntity={f.relationTo ? allEntities.find((e) => e.name === f.relationTo) : undefined}
                   relatedEntityRecords={f.relationTo ? relatedRecords[f.relationTo] : undefined}
+                  excludeRecordIds={f.relationTo === entity.name ? [record.id as number] : undefined}
                   autoFocus
                   onBlur={handleCellBlur}
                   onKeyDown={(e) => {
@@ -3940,6 +3969,7 @@ export function EntityPanel({
               onChange={(v) => setForm((prev) => ({ ...prev, [field.name]: v }))}
               relatedEntity={field.relationTo ? allEntities.find((e) => e.name === field.relationTo) : undefined}
               relatedEntityRecords={field.relationTo ? relatedRecords[field.relationTo] : undefined}
+              excludeRecordIds={field.relationTo === entity.name && editingId != null ? [editingId] : undefined}
               projectId={projectId}
               entityName={entity.name}
               editingId={editingId}
@@ -4478,6 +4508,7 @@ export function EntityPanel({
                       onChange={setBulkEditValue}
                       relatedEntity={bulkEditFieldDef.relationTo ? allEntities.find((e) => e.name === bulkEditFieldDef.relationTo) : undefined}
                       relatedEntityRecords={bulkEditFieldDef.relationTo ? relatedRecords[bulkEditFieldDef.relationTo] : undefined}
+                      excludeRecordIds={bulkEditFieldDef.relationTo === entity.name ? Array.from(selectedIds) : undefined}
                     />
                   )}
                   {bulkEditField && (

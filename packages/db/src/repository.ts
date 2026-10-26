@@ -251,9 +251,27 @@ export function updateRecord(
   // any pre-existing row whose stored value for that field no longer
   // satisfies the new definition, even an update (inline cell edit, bulk
   // field update, a Kanban drag) that never touches that field at all.
-  const values = entity.fields.map((field) =>
-    Object.prototype.hasOwnProperty.call(data, field.name) ? coerceValue(field, data[field.name]) : getRowValue(existingRow, field.name),
-  );
+  const values = entity.fields.map((field) => {
+    if (!Object.prototype.hasOwnProperty.call(data, field.name)) return getRowValue(existingRow, field.name);
+    const coerced = coerceValue(field, data[field.name]);
+    // Round 1037: a self-referencing relation field (field.relationTo ===
+    // this entity's own name -- e.g. Employee.managerId -> Employee) has
+    // no guard anywhere else in the write path: the SQL FOREIGN KEY
+    // constraint itself allows a row to reference its own id (confirmed
+    // directly -- a self-referencing row even DELETEs cleanly), and
+    // coerceValue above only checks that the raw value is a finite
+    // number. Only rejected when the CALLER is actually setting this
+    // field to the record's own id right now -- an update to some other,
+    // unrelated field must still succeed even if legacy data already has
+    // a pre-existing self-reference, the same "don't retroactively break
+    // an unrelated write" principle every other per-field validation in
+    // this function already follows (see this function's own comment on
+    // only re-coercing fields the caller actually supplied).
+    if (field.type === "relation" && field.relationTo === entity.name && coerced === id) {
+      throw new ValidationError(`Field "${field.name}" can't reference the record's own id`);
+    }
+    return coerced;
+  });
 
   const setClause = columns.map((c) => `${quoteIdentifier(c)} = ?`).join(", ");
   db.prepare(`UPDATE ${quoteIdentifier(table)} SET ${setClause} WHERE id = ?`).run(...values, id);

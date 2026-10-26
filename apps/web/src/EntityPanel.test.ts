@@ -10933,6 +10933,61 @@ test("EntityPanel's relation field keeps the record's real stored value selectab
 });
 
 /**
+ * Round 1037: a self-referencing relation field (field.relationTo pointing
+ * back at this same entity -- e.g. Employee.managerId -> Employee, a
+ * completely ordinary, schema-legal pattern) had no guard anywhere: the
+ * record currently being edited appeared in its own relation field's
+ * option list, letting a user pick a record as its own manager/parent with
+ * no warning. Confirms the record being edited is excluded from its own
+ * relation field's options, while every other record (and the field's own
+ * "choose one" placeholder) stays selectable as normal.
+ */
+test("EntityPanel excludes the record currently being edited from its own self-referencing relation field's options", async () => {
+  await withJsdom(async () => {
+    const employeeEntity: Entity = {
+      name: "Employee",
+      label: "Employee",
+      fields: [
+        { name: "name", label: "Name", type: "text", required: true },
+        { name: "managerId", label: "Manager", type: "relation", relationTo: "Employee", required: false },
+      ],
+    };
+    const store: EntityRecord[] = [
+      { id: 1, createdAt: "x", name: "Dana", managerId: null },
+      { id: 2, createdAt: "x", name: "Yossi", managerId: null },
+    ];
+    const originalFetch = globalThis.fetch;
+    // A self-referencing relation field's own loadRelated fetch hits this
+    // SAME entity's own GET endpoint (relatedEntity === this entity) --
+    // unlike mockRecordsFetch's own fixed "Deal"-only route, this test's
+    // entity needs that one URL to serve both the main record list and
+    // the relation field's own related-records fetch.
+    globalThis.fetch = (async (input: string) => {
+      if (input === "/api/projects/proj1/entities/Employee") {
+        return new Response(JSON.stringify({ records: store }), { status: 200, headers: { "content-type": "application/json" } });
+      }
+      throw new Error(`unexpected request ${input}`);
+    }) as typeof fetch;
+    try {
+      renderEntityPanel({ entity: employeeEntity, allEntities: [employeeEntity] });
+      await waitForCondition(() => document.querySelectorAll("table tbody tr").length === 2);
+
+      const editButtons = document.querySelectorAll(".row-actions button");
+      fireEvent.click(editButtons[0] as HTMLButtonElement);
+      await waitForCondition(() => (document.querySelector(".record-form input[type=\"text\"]") as HTMLInputElement)?.value === "Dana");
+
+      const managerSelect = document.querySelector(".record-form select") as HTMLSelectElement;
+      await waitForCondition(() => !managerSelect.disabled);
+      const optionLabels = Array.from(managerSelect.options).map((o) => o.textContent);
+      assert.ok(optionLabels.includes("Yossi"), "a genuinely different record must still be selectable as this record's manager");
+      assert.ok(!optionLabels.includes("Dana"), "the record currently being edited must never appear as an option in its own self-referencing relation field");
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+});
+
+/**
  * Round 698: a relation field's plain <select> had no way to narrow a
  * long list of related records -- a browser's own type-ahead inside an
  * open <select> only jumps to an option whose label *starts with* what's

@@ -503,3 +503,88 @@ test("a field renamed only by letter case across a refine stays readable, writab
   const created = insertRecord(db, "proj1", renamed, { Name: "Bob", status: "New" });
   assert.equal(created.Name, "Bob", "a brand-new record inserted under the post-rename entity must read back correctly too");
 });
+
+/**
+ * Round 1037: a self-referencing relation field (field.relationTo ===
+ * this entity's own name -- e.g. Employee.managerId -> Employee, a
+ * completely ordinary, schema-legal pattern) had no guard anywhere in the
+ * write path: the SQL FOREIGN KEY constraint itself allows a row to
+ * reference its own id, and coerceValue only ever checked that the raw
+ * value is a finite number. updateRecord now rejects setting a relation
+ * field to the record's own id, with a clean ValidationError -- the same
+ * kind of input-rejection every other invalid value already gets, rather
+ * than silently storing nonsensical data (an employee who is their own
+ * manager) with no warning anywhere.
+ */
+test("updateRecord rejects a self-referencing relation field (field.relationTo pointing at this record's own entity, set to its own id)", () => {
+  const employee: Entity = {
+    name: "Employee",
+    fields: [
+      { name: "name", type: "text", required: true },
+      { name: "managerId", type: "relation", required: false, relationTo: "Employee" },
+    ],
+  };
+  const db = openDatabase(":memory:");
+  applyMigrations(db, "proj1", { ...spec, entities: [employee] });
+  const created = insertRecord(db, "proj1", employee, { name: "Dana" });
+
+  assert.throws(
+    () => updateRecord(db, "proj1", employee, created.id as number, { managerId: created.id }),
+    ValidationError,
+    "setting a record's own self-referencing relation field to its own id must be rejected",
+  );
+});
+
+/**
+ * The guard must only fire when the CALLER is actually setting the
+ * self-reference right now -- an update to some other, unrelated field on
+ * a record that already carries a pre-existing self-reference (seeded
+ * directly, bypassing this guard, the same way legacy data could predate
+ * this round) must still succeed, the same "only re-validate what the
+ * caller actually touched" principle this function's own pre-existing
+ * tests above already establish for a since-narrowed field definition.
+ */
+test("updateRecord updating an unrelated field doesn't re-reject a pre-existing self-reference it never touched", () => {
+  const employee: Entity = {
+    name: "Employee",
+    fields: [
+      { name: "name", type: "text", required: true },
+      { name: "managerId", type: "relation", required: false, relationTo: "Employee" },
+    ],
+  };
+  const db = openDatabase(":memory:");
+  applyMigrations(db, "proj1", { ...spec, entities: [employee] });
+  const created = insertRecord(db, "proj1", employee, { name: "Dana" });
+  // Seeds the pre-existing self-reference directly via a raw UPDATE,
+  // bypassing updateRecord's own guard -- the same way data from before
+  // this round, or a direct write outside this app, could already exist.
+  db.prepare(`UPDATE "entity_proj1_Employee" SET "managerId" = ? WHERE id = ?`).run(created.id, created.id);
+
+  const updated = updateRecord(db, "proj1", employee, created.id as number, { name: "Dana Cohen" });
+  assert.equal(updated.name, "Dana Cohen", "updating only the name must succeed, not throw, even though this record already has a pre-existing self-reference");
+  assert.equal(updated.managerId, created.id, "the untouched self-reference must survive exactly as it was");
+});
+
+/**
+ * The guard must be scoped to a relation field that targets THIS entity --
+ * a relation field pointing at a genuinely different entity whose id
+ * happens to numerically equal this record's own id is an entirely
+ * ordinary, unrelated reference and must never be rejected.
+ */
+test("updateRecord's self-reference guard never rejects a relation field pointing at a DIFFERENT entity, even if the ids numerically collide", () => {
+  const department: Entity = { name: "Department", fields: [{ name: "title", type: "text", required: true }] };
+  const employee: Entity = {
+    name: "Employee",
+    fields: [
+      { name: "name", type: "text", required: true },
+      { name: "departmentId", type: "relation", required: false, relationTo: "Department" },
+    ],
+  };
+  const db = openDatabase(":memory:");
+  applyMigrations(db, "proj1", { ...spec, entities: [department, employee] });
+  const dept = insertRecord(db, "proj1", department, { title: "Engineering" });
+  const emp = insertRecord(db, "proj1", employee, { name: "Dana" });
+
+  const updated = updateRecord(db, "proj1", employee, emp.id as number, { departmentId: dept.id });
+  assert.equal(updated.departmentId, dept.id, "a relation to a different entity must never be rejected by the self-reference guard, regardless of numeric id overlap");
+});

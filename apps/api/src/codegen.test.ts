@@ -2607,6 +2607,84 @@ test("the exported EntityView's 'Group by' dropdown also covers a relation field
 });
 
 /**
+ * Round 1037: mirrors the live preview's own identical fix (EntityPanel.tsx)
+ * for the exported app's FieldInput -- a self-referencing relation field
+ * (field.relationTo pointing back at this same entity, e.g.
+ * Employee.managerId -> Employee, a completely ordinary, schema-legal
+ * pattern) let the record currently being edited appear in its own
+ * relation field's option list, so a user could pick a record as its own
+ * manager/parent with no warning anywhere. Confirms the real exported
+ * EntityView excludes the record being edited from its own self-relation
+ * field's options, while a genuinely different record stays selectable.
+ */
+test("the exported EntityView excludes the record currently being edited from its own self-referencing relation field's options", async () => {
+  const employeeEntity: Entity = {
+    name: "Employee",
+    label: "Employee",
+    fields: [
+      { name: "name", label: "Name", type: "text", required: true },
+      { name: "managerId", label: "Manager", type: "relation", relationTo: "Employee", required: false },
+    ],
+  };
+  const selfRelationProject: Project = { ...project, spec: { ...project.spec, entities: [employeeEntity] } };
+  const files = generateExportFiles(selfRelationProject);
+  const dir = writeGeneratedWebComponent(files);
+  const store: EntityRecord[] = [
+    { id: 1, name: "Dana", managerId: null },
+    { id: 2, name: "Yossi", managerId: null },
+  ];
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = (async (input: string) => {
+    if (input === "/api/Employee") {
+      return new Response(JSON.stringify({ records: store }), { status: 200, headers: { "content-type": "application/json" } });
+    }
+    throw new Error(`unexpected request ${input}`);
+  }) as typeof fetch;
+
+  try {
+    await withRealLocalStorage(async () => {
+      const { EntityView } = await import(path.join(dir, "web", "src", "components", "EntityView.jsx"));
+      const props = {
+        entity: employeeEntity,
+        highlightRecordId: null,
+        onHighlightHandled: () => {},
+        onJumpToRecord: () => {},
+        onRecordCountChange: () => {},
+      };
+
+      const { container } = render(React.createElement(EntityView, props));
+      for (let i = 0; i < 40; i++) {
+        if (container.querySelectorAll("tbody tr").length === 2) break;
+        await act(async () => {
+          await new Promise((resolve) => setTimeout(resolve, 0));
+        });
+      }
+
+      await act(async () => {
+        fireEvent.click(container.querySelectorAll(".row-actions button")[0] as HTMLButtonElement);
+      });
+
+      let managerSelect: HTMLSelectElement | null = null;
+      for (let i = 0; i < 40; i++) {
+        managerSelect = container.querySelector(".record-form select") as HTMLSelectElement | null;
+        if (managerSelect && !managerSelect.disabled) break;
+        await act(async () => {
+          await new Promise((resolve) => setTimeout(resolve, 0));
+        });
+      }
+      assert.ok(managerSelect, "expected a real Manager relation select");
+      const optionLabels = Array.from(managerSelect!.options).map((o) => o.textContent);
+      assert.ok(optionLabels.includes("Yossi"), "a genuinely different record must still be selectable as this record's manager");
+      assert.ok(!optionLabels.includes("Dana"), "the record currently being edited must never appear as an option in its own self-referencing relation field");
+    });
+  } finally {
+    globalThis.fetch = originalFetch;
+    cleanup();
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+/**
  * New in this round: round 305's entity-tab record-count badges (GET
  * /projects/:id/entity-counts in the live Forge AI API, the .tab-count
  * badge in App.tsx) existed only in the live preview -- confirmed absent
@@ -4933,7 +5011,8 @@ test("the exported EntityView's bulk-actions bar also supports duplicating and b
   );
   assert.match(
     entityViewJsx,
-    /<FieldInput\s+entity=\{entity\}\s+field=\{bulkEditFieldDef\}\s+value=\{bulkEditValue\}\s+onChange=\{setBulkEditValue\}\s+relatedEntity=\{bulkEditFieldDef\.relationTo \? ALL_ENTITIES\.find\(\(e\) => e\.name === bulkEditFieldDef\.relationTo\) : undefined\}\s+relatedEntityRecords=\{bulkEditFieldDef\.relationTo \? relatedRecords\[bulkEditFieldDef\.relationTo\] : undefined\}\s*\/>/,
+    /<FieldInput\s+entity=\{entity\}\s+field=\{bulkEditFieldDef\}\s+value=\{bulkEditValue\}\s+onChange=\{setBulkEditValue\}\s+relatedEntity=\{bulkEditFieldDef\.relationTo \? ALL_ENTITIES\.find\(\(e\) => e\.name === bulkEditFieldDef\.relationTo\) : undefined\}\s+relatedEntityRecords=\{bulkEditFieldDef\.relationTo \? relatedRecords\[bulkEditFieldDef\.relationTo\] : undefined\}\s+excludeRecordIds=\{bulkEditFieldDef\.relationTo === entity\.name \? Array\.from\(selectedIds\) : undefined\}\s*\/>/,
+    "round 1037: bulk edit must also exclude every selected record's own id from a self-referencing relation field's options",
   );
   assert.match(entityViewJsx, /onClick=\{handleBulkUpdate\}/);
   assert.match(entityViewJsx, /onClick=\{handleBulkDuplicate\}/);

@@ -3906,7 +3906,7 @@ function invalidNumberField(field, value) {
 // add/edit form below the table never passes these, so a field there
 // behaves exactly as before. Mirrors the live preview's own FieldInput
 // (EntityPanel.tsx, round 206).
-function FieldInput({ entity, field, value, onChange, relatedEntity, relatedEntityRecords, autoFocus, onBlur, onKeyDown }) {
+function FieldInput({ entity, field, value, onChange, relatedEntity, relatedEntityRecords, autoFocus, onBlur, onKeyDown, excludeRecordIds }) {
   const id = \`f_\${entity.name}_\${field.name}\`;
   // Mirrors the live preview's own fix (EntityPanel.tsx, round 698): a
   // relation field with more than a handful of related records had no way
@@ -3937,7 +3937,22 @@ function FieldInput({ entity, field, value, onChange, relatedEntity, relatedEnti
     // blank the controlled select, the same bug class the enum branch
     // below already guards against.
     const currentRelationId = value === "" || value === null || value === undefined ? null : Number(value);
-    const hasCurrentRelationOption = currentRelationId === null || relatedEntityRecords.some((r) => Number(r.id) === currentRelationId);
+    // Round 1037: for a self-referencing relation field (field.relationTo
+    // === this entity's own name -- e.g. Employee.managerId -> Employee),
+    // excludeRecordIds names the record(s) this edit is about, so nothing
+    // here lets a record be picked as its own relation target. A record
+    // that already has itself as its own value (legacy data, or a direct
+    // API write) stays selectable and visible -- this only blocks
+    // *choosing* it going forward, mirroring hasCurrentRelationOption's own
+    // "never blank a controlled select for a value that's already there"
+    // rule just below. Mirrors the live preview's own identical fix
+    // (EntityPanel.tsx).
+    const excludedIds = excludeRecordIds && excludeRecordIds.length > 0 ? new Set(excludeRecordIds) : null;
+    const selectableRecords =
+      excludedIds && excludedIds.size > 0
+        ? relatedEntityRecords.filter((r) => !excludedIds.has(Number(r.id)) || Number(r.id) === currentRelationId)
+        : relatedEntityRecords;
+    const hasCurrentRelationOption = currentRelationId === null || selectableRecords.some((r) => Number(r.id) === currentRelationId);
     const trimmedFilter = relationFilter.trim().toLowerCase();
     // The current value's own option must always stay visible regardless
     // of the filter text -- otherwise typing a filter that doesn't match
@@ -3945,8 +3960,8 @@ function FieldInput({ entity, field, value, onChange, relatedEntity, relatedEnti
     // instant its matching option disappears.
     const filteredRecords =
       trimmedFilter === ""
-        ? relatedEntityRecords
-        : relatedEntityRecords.filter(
+        ? selectableRecords
+        : selectableRecords.filter(
             (r) => Number(r.id) === currentRelationId || recordDisplayLabel(relatedEntity, r).toLowerCase().includes(trimmedFilter),
           );
     return (
@@ -5982,6 +5997,7 @@ export function EntityView({ entity, highlightRecordId, onHighlightHandled, onJu
                 onChange={setCellDraft}
                 relatedEntity={f.relationTo ? ALL_ENTITIES.find((e) => e.name === f.relationTo) : undefined}
                 relatedEntityRecords={f.relationTo ? relatedRecords[f.relationTo] : undefined}
+                excludeRecordIds={f.relationTo === entity.name ? [r.id] : undefined}
                 autoFocus
                 onBlur={handleCellBlur}
                 onKeyDown={(e) => {
@@ -6063,6 +6079,7 @@ export function EntityView({ entity, highlightRecordId, onHighlightHandled, onJu
               onChange={(v) => setForm((prev) => ({ ...prev, [f.name]: v }))}
               relatedEntity={f.relationTo ? ALL_ENTITIES.find((e) => e.name === f.relationTo) : undefined}
               relatedEntityRecords={f.relationTo ? relatedRecords[f.relationTo] : undefined}
+              excludeRecordIds={f.relationTo === entity.name && editingId != null ? [editingId] : undefined}
             />
           </label>
         ))}
@@ -6524,6 +6541,7 @@ export function EntityView({ entity, highlightRecordId, onHighlightHandled, onJu
                       onChange={setBulkEditValue}
                       relatedEntity={bulkEditFieldDef.relationTo ? ALL_ENTITIES.find((e) => e.name === bulkEditFieldDef.relationTo) : undefined}
                       relatedEntityRecords={bulkEditFieldDef.relationTo ? relatedRecords[bulkEditFieldDef.relationTo] : undefined}
+                      excludeRecordIds={bulkEditFieldDef.relationTo === entity.name ? Array.from(selectedIds) : undefined}
                     />
                   )}
                   {bulkEditField && (
