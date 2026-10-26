@@ -14119,6 +14119,70 @@ test("EntityPanel's edit form deletes an abandoned file replacement from disk wh
 });
 
 /**
+ * Round 1036: switching to a different entity tab, or navigating Home,
+ * fully unmounts EntityPanel (App.tsx keys it by entity.name -- the same
+ * fact the round-1004 pendingDelete-flush unmount effect already relies
+ * on). Cancel/Escape/starting a different edit/the in-form Delete button
+ * all already call discardAbandonedFileUploads() before this round, but
+ * none of them fire on a plain unmount -- so picking a replacement file
+ * mid-edit and then simply navigating away (the single most ordinary way
+ * to abandon an edit) left it orphaned on disk forever. Confirms unmount
+ * now cleans it up too.
+ */
+test("EntityPanel deletes an abandoned file replacement from disk when the component unmounts mid-edit (switching entity tabs or navigating Home)", async () => {
+  await withJsdom(async () => {
+    const existingDescriptor = { url: "/api/uploads/proj1/Applicant/original.pdf", name: "original.pdf", size: 9, mimeType: "application/pdf" };
+    const store: EntityRecord[] = [{ id: 1, name: "Dana", resume: JSON.stringify(existingDescriptor) }];
+    const deleteCalls: string[] = [];
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = (async (input: string, init?: RequestInit): Promise<Response> => {
+      const method = init?.method ?? "GET";
+      if (method === "GET" && input === "/api/projects/proj1/entities/Applicant") {
+        return new Response(JSON.stringify({ records: store }), { status: 200, headers: { "content-type": "application/json" } });
+      }
+      if (method === "POST" && input === "/api/projects/proj1/entities/Applicant/fields/resume/upload") {
+        return new Response(
+          JSON.stringify({ file: { url: "/api/uploads/proj1/Applicant/replacement.pdf", name: "replacement.pdf", size: 9, mimeType: "application/pdf" } }),
+          { status: 200, headers: { "content-type": "application/json" } },
+        );
+      }
+      if (method === "DELETE" && input === "/api/projects/proj1/entities/Applicant/fields/resume/upload") {
+        deleteCalls.push((JSON.parse(init!.body as string) as { url: string }).url);
+        return new Response(null, { status: 204 });
+      }
+      throw new Error(`unexpected request ${method} ${input}`);
+    }) as typeof fetch;
+
+    try {
+      const view = renderEntityPanel({ entity: APPLICANT_ENTITY, allEntities: [APPLICANT_ENTITY] });
+      await waitForCondition(() => document.querySelectorAll("table tbody tr").length === 1);
+
+      fireEvent.click(document.querySelector(".row-actions button") as HTMLButtonElement);
+      await waitForCondition(() => (document.querySelector(".record-form input[type=\"text\"]") as HTMLInputElement)?.value === "Dana");
+
+      const form = document.querySelector(".record-form") as HTMLFormElement;
+      await waitForCondition(() => form.querySelector(".file-field-current a")?.textContent === "original.pdf");
+
+      const replacementFile = new File(["two"], "replacement.pdf", { type: "application/pdf" });
+      const fileInput = form.querySelector('input[type="file"]') as HTMLInputElement;
+      await act(async () => {
+        Object.defineProperty(fileInput, "files", { value: [replacementFile], configurable: true });
+        fireEvent.change(fileInput);
+        await new Promise((resolve) => setTimeout(resolve, 0));
+      });
+      await waitForCondition(() => form.querySelector(".file-field-current a")?.textContent === "replacement.pdf");
+      assert.equal(deleteCalls.length, 0, "picking the replacement must not delete anything yet -- the edit is still in progress");
+
+      view.unmount();
+
+      assert.deepEqual(deleteCalls, ["/api/uploads/proj1/Applicant/replacement.pdf"], "unmounting mid-edit must delete the abandoned, never-saved replacement, the same as Cancel/Escape/Delete already do");
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+});
+
+/**
  * Round 1017: round 1016's own fix (just above) only closed the edit form
  * when the record is deleted through the form's OWN "Delete" button --
  * handleDelete is a single shared function also called by the table row's

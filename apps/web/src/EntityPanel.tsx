@@ -1261,6 +1261,15 @@ export function EntityPanel({
   const [pendingDelete, setPendingDelete] = useState<PendingDelete | null>(null);
   const pendingDeleteRef = useRef<PendingDelete | null>(null);
   const [form, setForm] = useState<Record<string, unknown>>(() => emptyForm(entity));
+  // Round 1036: mirrors `form` for the unmount-cleanup effect below --
+  // that effect's own cleanup closure only ever sees whatever `form` was
+  // at the moment the effect last ran (near-empty deps, so effectively
+  // once per mount), never a later value a real edit set after that. Same
+  // pattern as WhatsAppPanel.tsx's own round-1005 `testAttachmentRef`. Not
+  // named `formRef` -- that name is already taken below by the actual
+  // <form> DOM element ref.
+  const formValueRef = useRef(form);
+  formValueRef.current = form;
   // The record startEdit snapshotted `form` from, kept separately from
   // `form` itself (which the user's own keystrokes mutate field-by-field)
   // so handleSubmit can tell which fields the user actually touched. See
@@ -2878,12 +2887,12 @@ export function EntityPanel({
    * -- not currently mid-edit of a real record -- so this is always safe
    * to call unconditionally at every point an edit can be abandoned.
    */
-  function discardAbandonedFileUploads() {
+  function discardAbandonedFileUploads(formSnapshot: Record<string, unknown> = form) {
     const original = editingOriginalRef.current;
     if (!original || !projectId) return;
     for (const f of entity.fields) {
       if (f.type !== "file") continue;
-      const current = form[f.name];
+      const current = formSnapshot[f.name];
       if (current === original[f.name]) continue;
       const parsed = parseFileFieldValue(current);
       if (!parsed) continue;
@@ -3001,6 +3010,24 @@ export function EntityPanel({
         clearTimeout(pending.timeoutId);
         void commitPendingDelete(pending);
       }
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  /**
+   * Round 1036: the same "switching entity tabs/navigating Home fully
+   * unmounts this component" fact the pendingDelete-flush effect just
+   * above already relies on also abandons any file the user had just
+   * picked mid-edit, exactly the gap discardAbandonedFileUploads exists
+   * to close for every OTHER way of abandoning an edit (Cancel, Escape,
+   * starting a different edit/create, deleting the record -- see that
+   * function's own call sites). None of those fire on a plain unmount.
+   * Mirrors WhatsAppPanel.tsx's own round-1005 fix for its structurally
+   * identical test-send-attachment leak.
+   */
+  useEffect(() => {
+    return () => {
+      discardAbandonedFileUploads(formValueRef.current);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
