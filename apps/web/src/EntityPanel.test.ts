@@ -13525,6 +13525,200 @@ test("EntityPanel's edit form never deletes a file upload from disk just from re
 });
 
 /**
+ * Round 1004: the follow-on round 1002's own closing entry explicitly
+ * left open -- "the riskier edit-form replacement case ... is left for a
+ * future round." Replacing a file mid-edit (confirmed a no-op above,
+ * correctly, while the edit is still in progress) but then ABANDONING the
+ * edit instead of saving it -- via Cancel, Escape, or jumping straight to
+ * a different record/create -- left the replacement upload sitting on
+ * disk forever: deleteReplacedFileFields (server side) only ever runs on
+ * an actual save, and an abandoned edit never sends one. Confirms Cancel
+ * deletes the abandoned replacement, while the record's own ORIGINAL file
+ * (never touched by this edit) is never deleted.
+ */
+test("EntityPanel's edit form deletes an abandoned file replacement from disk when the edit is cancelled, without ever touching the record's own original file", async () => {
+  await withJsdom(async () => {
+    const existingDescriptor = { url: "/api/uploads/proj1/Applicant/original.pdf", name: "original.pdf", size: 9, mimeType: "application/pdf" };
+    const store: EntityRecord[] = [{ id: 1, name: "Dana", resume: JSON.stringify(existingDescriptor) }];
+    const deleteCalls: string[] = [];
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = (async (input: string, init?: RequestInit): Promise<Response> => {
+      const method = init?.method ?? "GET";
+      if (method === "GET" && input === "/api/projects/proj1/entities/Applicant") {
+        return new Response(JSON.stringify({ records: store }), { status: 200, headers: { "content-type": "application/json" } });
+      }
+      if (method === "POST" && input === "/api/projects/proj1/entities/Applicant/fields/resume/upload") {
+        return new Response(
+          JSON.stringify({ file: { url: "/api/uploads/proj1/Applicant/replacement.pdf", name: "replacement.pdf", size: 9, mimeType: "application/pdf" } }),
+          { status: 200, headers: { "content-type": "application/json" } },
+        );
+      }
+      if (method === "DELETE" && input === "/api/projects/proj1/entities/Applicant/fields/resume/upload") {
+        deleteCalls.push((JSON.parse(init!.body as string) as { url: string }).url);
+        return new Response(null, { status: 204 });
+      }
+      throw new Error(`unexpected request ${method} ${input}`);
+    }) as typeof fetch;
+
+    try {
+      renderEntityPanel({ entity: APPLICANT_ENTITY, allEntities: [APPLICANT_ENTITY] });
+      await waitForCondition(() => document.querySelectorAll("table tbody tr").length === 1);
+
+      fireEvent.click(document.querySelector(".row-actions button") as HTMLButtonElement);
+      await waitForCondition(() => (document.querySelector(".record-form input[type=\"text\"]") as HTMLInputElement)?.value === "Dana");
+
+      const form = document.querySelector(".record-form") as HTMLFormElement;
+      await waitForCondition(() => form.querySelector(".file-field-current a")?.textContent === "original.pdf");
+
+      const replacementFile = new File(["two"], "replacement.pdf", { type: "application/pdf" });
+      const fileInput = form.querySelector('input[type="file"]') as HTMLInputElement;
+      await act(async () => {
+        Object.defineProperty(fileInput, "files", { value: [replacementFile], configurable: true });
+        fireEvent.change(fileInput);
+        await new Promise((resolve) => setTimeout(resolve, 0));
+      });
+      await waitForCondition(() => form.querySelector(".file-field-current a")?.textContent === "replacement.pdf");
+      assert.equal(deleteCalls.length, 0, "picking the replacement must not delete anything yet -- the edit is still in progress");
+
+      const cancelButton = Array.from(form.querySelectorAll("button[type=button]")).find((b) => /cancel/i.test(b.textContent ?? "")) as HTMLButtonElement;
+      fireEvent.click(cancelButton);
+
+      await waitForCondition(() => deleteCalls.length === 1);
+      assert.equal(deleteCalls[0], "/api/uploads/proj1/Applicant/replacement.pdf", "cancelling must delete the abandoned, never-saved replacement");
+      assert.ok(!deleteCalls.includes("/api/uploads/proj1/Applicant/original.pdf"), "cancelling must never delete the record's own real, still-live original file");
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+});
+
+/** Round 1004: the Escape-key counterpart of the Cancel test just above -- EntityPanel's own Escape handler explicitly mirrors the Cancel button's own reset logic. */
+test("EntityPanel's edit form deletes an abandoned file replacement from disk when the edit is discarded via Escape", async () => {
+  await withJsdom(async () => {
+    const existingDescriptor = { url: "/api/uploads/proj1/Applicant/original.pdf", name: "original.pdf", size: 9, mimeType: "application/pdf" };
+    const store: EntityRecord[] = [{ id: 1, name: "Dana", resume: JSON.stringify(existingDescriptor) }];
+    const deleteCalls: string[] = [];
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = (async (input: string, init?: RequestInit): Promise<Response> => {
+      const method = init?.method ?? "GET";
+      if (method === "GET" && input === "/api/projects/proj1/entities/Applicant") {
+        return new Response(JSON.stringify({ records: store }), { status: 200, headers: { "content-type": "application/json" } });
+      }
+      if (method === "POST" && input === "/api/projects/proj1/entities/Applicant/fields/resume/upload") {
+        return new Response(
+          JSON.stringify({ file: { url: "/api/uploads/proj1/Applicant/replacement.pdf", name: "replacement.pdf", size: 9, mimeType: "application/pdf" } }),
+          { status: 200, headers: { "content-type": "application/json" } },
+        );
+      }
+      if (method === "DELETE" && input === "/api/projects/proj1/entities/Applicant/fields/resume/upload") {
+        deleteCalls.push((JSON.parse(init!.body as string) as { url: string }).url);
+        return new Response(null, { status: 204 });
+      }
+      throw new Error(`unexpected request ${method} ${input}`);
+    }) as typeof fetch;
+
+    try {
+      renderEntityPanel({ entity: APPLICANT_ENTITY, allEntities: [APPLICANT_ENTITY] });
+      await waitForCondition(() => document.querySelectorAll("table tbody tr").length === 1);
+
+      fireEvent.click(document.querySelector(".row-actions button") as HTMLButtonElement);
+      await waitForCondition(() => (document.querySelector(".record-form input[type=\"text\"]") as HTMLInputElement)?.value === "Dana");
+
+      const form = document.querySelector(".record-form") as HTMLFormElement;
+      await waitForCondition(() => form.querySelector(".file-field-current a")?.textContent === "original.pdf");
+
+      const replacementFile = new File(["two"], "replacement.pdf", { type: "application/pdf" });
+      const fileInput = form.querySelector('input[type="file"]') as HTMLInputElement;
+      await act(async () => {
+        Object.defineProperty(fileInput, "files", { value: [replacementFile], configurable: true });
+        fireEvent.change(fileInput);
+        await new Promise((resolve) => setTimeout(resolve, 0));
+      });
+      await waitForCondition(() => form.querySelector(".file-field-current a")?.textContent === "replacement.pdf");
+
+      fireEvent.keyDown(form, { key: "Escape" });
+
+      await waitForCondition(() => deleteCalls.length === 1);
+      assert.equal(deleteCalls[0], "/api/uploads/proj1/Applicant/replacement.pdf", "Escape must delete the abandoned, never-saved replacement");
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+});
+
+/**
+ * Round 1004: the "jump straight to a different record without saving or
+ * cancelling first" abandonment path -- startEdit's own new cleanup call,
+ * distinct from both the explicit Cancel button and Escape.
+ */
+test("EntityPanel's edit form deletes an abandoned file replacement from disk when the user clicks Edit on a DIFFERENT record instead of saving or cancelling", async () => {
+  await withJsdom(async () => {
+    const dana = { url: "/api/uploads/proj1/Applicant/original.pdf", name: "original.pdf", size: 9, mimeType: "application/pdf" };
+    const store: EntityRecord[] = [
+      { id: 1, name: "Dana", resume: JSON.stringify(dana) },
+      { id: 2, name: "Yossi", resume: null },
+    ];
+    const deleteCalls: string[] = [];
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = (async (input: string, init?: RequestInit): Promise<Response> => {
+      const method = init?.method ?? "GET";
+      if (method === "GET" && input === "/api/projects/proj1/entities/Applicant") {
+        return new Response(JSON.stringify({ records: store }), { status: 200, headers: { "content-type": "application/json" } });
+      }
+      if (method === "POST" && input === "/api/projects/proj1/entities/Applicant/fields/resume/upload") {
+        return new Response(
+          JSON.stringify({ file: { url: "/api/uploads/proj1/Applicant/replacement.pdf", name: "replacement.pdf", size: 9, mimeType: "application/pdf" } }),
+          { status: 200, headers: { "content-type": "application/json" } },
+        );
+      }
+      if (method === "DELETE" && input === "/api/projects/proj1/entities/Applicant/fields/resume/upload") {
+        deleteCalls.push((JSON.parse(init!.body as string) as { url: string }).url);
+        return new Response(null, { status: 204 });
+      }
+      throw new Error(`unexpected request ${method} ${input}`);
+    }) as typeof fetch;
+
+    try {
+      renderEntityPanel({ entity: APPLICANT_ENTITY, allEntities: [APPLICANT_ENTITY] });
+      await waitForCondition(() => document.querySelectorAll("table tbody tr").length === 2);
+
+      // .row-actions holds several buttons per row (Edit, Duplicate,
+      // Print, Delete) -- find each row's own "Edit" button by text,
+      // rather than assuming one button per row.
+      function editButtonForRow(rowIndex: number): HTMLButtonElement {
+        const row = document.querySelectorAll("table tbody tr")[rowIndex] as HTMLElement;
+        return Array.from(row.querySelectorAll(".row-actions button")).find((b) => /^edit$/i.test(b.textContent ?? "")) as HTMLButtonElement;
+      }
+
+      fireEvent.click(editButtonForRow(0));
+      await waitForCondition(() => (document.querySelector(".record-form input[type=\"text\"]") as HTMLInputElement)?.value === "Dana");
+
+      const form = document.querySelector(".record-form") as HTMLFormElement;
+      await waitForCondition(() => form.querySelector(".file-field-current a")?.textContent === "original.pdf");
+
+      const replacementFile = new File(["two"], "replacement.pdf", { type: "application/pdf" });
+      const fileInput = form.querySelector('input[type="file"]') as HTMLInputElement;
+      await act(async () => {
+        Object.defineProperty(fileInput, "files", { value: [replacementFile], configurable: true });
+        fireEvent.change(fileInput);
+        await new Promise((resolve) => setTimeout(resolve, 0));
+      });
+      await waitForCondition(() => form.querySelector(".file-field-current a")?.textContent === "replacement.pdf");
+
+      // Click Edit on Yossi (the SECOND row) instead of saving or
+      // cancelling Dana's own in-progress edit.
+      fireEvent.click(editButtonForRow(1));
+      await waitForCondition(() => (document.querySelector(".record-form input[type=\"text\"]") as HTMLInputElement)?.value === "Yossi");
+
+      await waitForCondition(() => deleteCalls.length === 1);
+      assert.equal(deleteCalls[0], "/api/uploads/proj1/Applicant/replacement.pdf", "switching to a different record must delete the abandoned replacement from the one left behind");
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+});
+
+/**
  * Round 688: a real bug found by the survey -- every other field type's
  * own FieldInput control validates before ever reaching the network
  * (required, a number's own native constraint), but "file" always fired

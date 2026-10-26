@@ -2840,7 +2840,43 @@ export function EntityPanel({
     }
   }
 
+  /**
+   * Round 1004: the edit-form counterpart of round 1002's own create-form
+   * fix (deleteUploadedRecordFile, wired into FieldInput's Remove button
+   * and file-input onChange) -- but those two handlers only ever fire on
+   * an explicit replace/remove click. Abandoning an in-progress edit
+   * instead -- Cancel, Escape, or switching straight to a different
+   * record/create without ever submitting -- left any file uploaded
+   * during that edit (a replacement the user picked, or simply one picked
+   * for a previously-empty field) sitting on disk forever: PATCH's own
+   * deleteReplacedFileFields (routes/projects.ts) only ever runs on an
+   * actual save, and never knows about an intermediate pick that was
+   * never submitted at all.
+   *
+   * editingOriginalRef.current holds the record's own real persisted
+   * snapshot (see its own doc comment) -- by construction, any `form`
+   * value for a `file`-type field that differs from it can only be an
+   * unsaved upload made during THIS edit session, never real persisted
+   * data (which deleteReplacedFileFields already owns once an edit is
+   * actually saved). A no-op whenever editingOriginalRef.current is null
+   * -- not currently mid-edit of a real record -- so this is always safe
+   * to call unconditionally at every point an edit can be abandoned.
+   */
+  function discardAbandonedFileUploads() {
+    const original = editingOriginalRef.current;
+    if (!original || !projectId) return;
+    for (const f of entity.fields) {
+      if (f.type !== "file") continue;
+      const current = form[f.name];
+      if (current === original[f.name]) continue;
+      const parsed = parseFileFieldValue(current);
+      if (!parsed) continue;
+      deleteUploadedRecordFile(projectId, entity.name, f.name, parsed.url).catch(() => {});
+    }
+  }
+
   function startEdit(record: EntityRecord) {
+    discardAbandonedFileUploads();
     setEditingId(record.id as number);
     setForm({ ...record });
     editingOriginalRef.current = record;
@@ -2853,8 +2889,10 @@ export function EntityPanel({
    * from anywhere in the panel to typing a new record's first field.
    */
   function startCreateNew() {
+    discardAbandonedFileUploads();
     setEditingId(null);
     setForm(emptyForm(entity));
+    editingOriginalRef.current = null;
     bumpFormInstanceKey();
     scrollIntoViewRespectingMotion(formRef.current, { behavior: "smooth", block: "start" });
     // formRef.current itself never remounts, but the fields inside it now
@@ -2879,8 +2917,10 @@ export function EntityPanel({
    * bookings) get the "click a day to add one" a real calendar app has.
    */
   function startCreateForDate(date: Date, dateField: Field) {
+    discardAbandonedFileUploads();
     setEditingId(null);
     setForm({ ...emptyForm(entity), [dateField.name]: formatDateForInput(date) });
+    editingOriginalRef.current = null;
     bumpFormInstanceKey();
     scrollIntoViewRespectingMotion(formRef.current, { behavior: "smooth", block: "start" });
   }
@@ -2892,8 +2932,10 @@ export function EntityPanel({
    * unlike the calendar view's own "click an empty day" convenience.
    */
   function startCreateForColumn(value: string, field: Field) {
+    discardAbandonedFileUploads();
     setEditingId(null);
     setForm({ ...emptyForm(entity), [field.name]: value });
+    editingOriginalRef.current = null;
     bumpFormInstanceKey();
     scrollIntoViewRespectingMotion(formRef.current, { behavior: "smooth", block: "start" });
   }
@@ -3718,8 +3760,10 @@ export function EntityPanel({
           // new-record draft.
           if (e.key === "Escape" && editingId != null) {
             e.preventDefault();
+            discardAbandonedFileUploads();
             setEditingId(null);
             setForm(emptyForm(entity));
+            editingOriginalRef.current = null;
             // Without this, a save still in flight for the record just
             // abandoned here would -- once it resolves -- see its own
             // captured formInstanceKeyRef snapshot still match, and wipe
@@ -3775,8 +3819,10 @@ export function EntityPanel({
               type="button"
               className="secondary"
               onClick={() => {
+                discardAbandonedFileUploads();
                 setEditingId(null);
                 setForm(emptyForm(entity));
+                editingOriginalRef.current = null;
                 // Same reasoning as the Escape handler above: a save still
                 // in flight for the record just abandoned here must not be
                 // able to wipe out a fresh draft typed after this Cancel.
