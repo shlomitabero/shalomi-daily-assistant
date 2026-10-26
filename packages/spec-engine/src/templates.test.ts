@@ -192,3 +192,39 @@ test("every template's Hebrew spec.roles are genuinely Hebrew, not reused Englis
     );
   }
 });
+
+/**
+ * Round 1028's finding: screensFor() used to emit Dashboard plus one
+ * "list" screen per entity (screens.length === entities.length + 1), but
+ * heuristic.ts's own buildScreens() emits Dashboard plus a List+Form PAIR
+ * per entity (screens.length === 2*entities.length + 1) for the exact
+ * same real app shape -- `spec.screens` has no effect on what's actually
+ * built (apps/api/src/pipeline.ts and codegen.ts never read it at all),
+ * it's purely Time Machine/History display metadata, and both
+ * HistoryPanel.tsx and checkpointDiff.ts display/export that count under
+ * the explicit assumption that every generator follows the List+Form-pair
+ * convention. A project built from a template showed roughly half the "N
+ * screens" figure of an otherwise-identical heuristic-built project with
+ * the same entities.
+ */
+test("every template's screen count matches heuristic.ts's own Dashboard-plus-List+Form-pair-per-entity convention", () => {
+  for (const template of TEMPLATES) {
+    const expected = 2 * template.spec.entities.length + 1;
+    assert.equal(
+      template.spec.screens.length,
+      expected,
+      `template "${template.id}": expected ${expected} screens (Dashboard + a List/Form pair per entity), got ${template.spec.screens.length}`,
+    );
+    assert.equal(template.spec.screens[0].type, "dashboard", `template "${template.id}": the first screen must be the Dashboard`);
+    for (const entity of template.spec.entities) {
+      assert.ok(
+        template.spec.screens.some((s) => s.type === "list" && s.entity === entity.name),
+        `template "${template.id}": expected a "list" screen for entity "${entity.name}"`,
+      );
+      assert.ok(
+        template.spec.screens.some((s) => s.type === "form" && s.entity === entity.name),
+        `template "${template.id}": expected a "form" screen for entity "${entity.name}"`,
+      );
+    }
+  }
+});

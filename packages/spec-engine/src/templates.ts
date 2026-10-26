@@ -34,11 +34,27 @@ export interface AppTemplate {
 
 type EntitySpec = ProductSpec["entities"][number];
 
+// Round 1028: used to emit Dashboard + one "list" screen per entity
+// (screens.length === entities.length + 1) -- heuristic.ts's own
+// buildScreens emits Dashboard + a List+Form PAIR per entity
+// (screens.length === 2*entities.length + 1) for the exact same real app
+// shape (every generated app, template or heuristic, gets the identical
+// List+Form UI per entity -- `grep -n "screens" apps/api/src/pipeline.ts
+// apps/api/src/codegen.ts` returns zero matches, confirming `screens` is
+// purely Time Machine/History display metadata with no effect on what's
+// actually built). HistoryPanel.tsx/checkpointDiff.ts both display this
+// count under the explicit, now-templates-violated assumption that every
+// generator emits "Dashboard plus a List/Form pair per entity" -- a
+// project built from a template showed roughly half the "N screens" count
+// of an otherwise-identical heuristic-built project. Mirrors
+// buildScreens's own List+Form-pair convention exactly.
 function screensFor(entityNames: string[]): ProductSpec["screens"] {
-  return [
-    { name: "Dashboard", type: "dashboard" },
-    ...entityNames.map((name) => ({ name, type: "list" as const, entity: name })),
-  ];
+  const screens: ProductSpec["screens"] = [{ name: "Dashboard", type: "dashboard" }];
+  for (const name of entityNames) {
+    screens.push({ name: `${name} List`, type: "list", entity: name });
+    screens.push({ name: `${name} Form`, type: "form", entity: name });
+  }
+  return screens;
 }
 
 function spec(input: {
