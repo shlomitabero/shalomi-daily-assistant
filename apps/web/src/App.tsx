@@ -602,6 +602,18 @@ function AppContent() {
   // Promise.allSettled sees every one of them rejected and reports the
   // bulk delete as having failed -- even though every project was, in
   // fact, already deleted by the winning first batch (round 543).
+  //
+  // Round 1041: round 543 only closed the SELF-reentrancy case (a second
+  // "Delete Selected" click racing the first). deletingId and
+  // bulkDeleteBusy were never cross-gated against EACH OTHER, so a
+  // single-row Delete click while a bulk delete of that same project was
+  // still in flight hit the identical 404/409 race from a different
+  // direction -- handleDeleteProject's own deleteProject() call mints a
+  // fresh idempotency key (api.ts), so it is never recognized as a retry
+  // of the bulk call's own request for the same id; whichever one loses
+  // the race surfaces a confusing failure for a delete that, from the
+  // user's point of view, fully succeeded. Both handlers and both
+  // "disabled" render sites below now check the other's flag too.
   const [bulkDeleteBusy, setBulkDeleteBusy] = useState(false);
   const [selectedProjectIds, setSelectedProjectIds] = useState<Set<string>>(new Set());
   const [refineHistory, setRefineHistory] = useState<RefineHistoryEntry[]>([]);
@@ -1308,6 +1320,7 @@ function AppContent() {
    * not after every mutation.
    */
   async function handleDeleteProject(p: Project) {
+    if (deletingId !== null || bulkDeleteBusy) return;
     if (!window.confirm(t("home.myProjects.confirmDelete", { name: p.name }))) return;
     setDeletingId(p.id);
     setError(null);
@@ -1335,7 +1348,7 @@ function AppContent() {
   // a single rejected delete (a dropped connection, a project someone else
   // already removed) must not hide the ones that *did* succeed.
   async function handleBulkDeleteProjects() {
-    if (bulkDeleteBusy) return;
+    if (bulkDeleteBusy || deletingId !== null) return;
     const ids = [...visibleSelectedProjectIds];
     if (ids.length === 0) return;
     if (!window.confirm(t("home.myProjects.bulk.confirmDelete", { count: ids.length }))) return;
@@ -1964,7 +1977,7 @@ function AppContent() {
               {visibleSelectedProjectIds.size > 0 && (
                 <div className="bulk-actions-bar">
                   <span>{t("home.myProjects.bulk.selectedCount", { count: visibleSelectedProjectIds.size })}</span>
-                  <button type="button" className="danger" disabled={bulkDeleteBusy} onClick={handleBulkDeleteProjects}>
+                  <button type="button" className="danger" disabled={bulkDeleteBusy || deletingId !== null} onClick={handleBulkDeleteProjects}>
                     {bulkDeleteBusy ? t("home.myProjects.bulk.deleteSelected.busy") : t("home.myProjects.bulk.deleteSelected")}
                   </button>
                 </div>
@@ -2014,7 +2027,7 @@ function AppContent() {
                         <button
                           type="button"
                           className="secondary danger my-project-delete"
-                          disabled={deletingId !== null}
+                          disabled={deletingId !== null || bulkDeleteBusy}
                           onClick={() => handleDeleteProject(p)}
                         >
                           {deletingId === p.id ? t("home.myProjects.delete.busy") : t("home.myProjects.delete")}

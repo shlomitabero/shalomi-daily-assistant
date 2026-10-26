@@ -1323,6 +1323,8 @@ test("App's handleDeleteProject only calls the API and updates myProjects after 
     const confirmCalls: string[] = [];
     const purgeCalls: string[] = [];
     const fn = new Function(
+      "deletingId",
+      "bulkDeleteBusy",
       "window",
       "t",
       "deleteProject",
@@ -1332,6 +1334,8 @@ test("App's handleDeleteProject only calls the API and updates myProjects after 
       "purgeProjectPreferences",
       `${code}\nreturn handleDeleteProject;`,
     )(
+      null,
+      false,
       { confirm: (message: string) => (confirmCalls.push(message), opts.confirmReturns) },
       (key: string) => key,
       opts.deleteProjectFn,
@@ -1417,6 +1421,7 @@ test("App's handleBulkDeleteProjects removes only the projects that actually suc
     // i.e. no active search/filter narrowing the visible list.
     const fn = new Function(
       "bulkDeleteBusy",
+      "deletingId",
       "window",
       "t",
       "deleteProject",
@@ -1429,6 +1434,7 @@ test("App's handleBulkDeleteProjects removes only the projects that actually suc
       `${code}\nreturn handleBulkDeleteProjects;`,
     )(
       false,
+      null,
       { confirm: (message: string) => (confirmCalls.push(message), opts.confirmReturns) },
       (key: string, params?: Record<string, unknown>) => (params ? `${key}:${JSON.stringify(params)}` : key),
       opts.deleteProjectFn,
@@ -1516,6 +1522,7 @@ test("App's handleBulkDeleteProjects only ever deletes visible+selected projects
   const state = { myProjects: [a, b] as Project[], selectedProjectIds: null as Set<string> | null };
   const fn = new Function(
     "bulkDeleteBusy",
+    "deletingId",
     "window",
     "t",
     "deleteProject",
@@ -1528,6 +1535,7 @@ test("App's handleBulkDeleteProjects only ever deletes visible+selected projects
     `${code}\nreturn handleBulkDeleteProjects;`,
   )(
     false,
+    null,
     { confirm: () => true },
     (key: string, params?: Record<string, unknown>) => (params ? `${key}:${JSON.stringify(params)}` : key),
     async (id: string) => {
@@ -1589,6 +1597,7 @@ test("App's handleBulkDeleteProjects refuses to start a second batch while a pre
   function makeHandler() {
     return new Function(
       "bulkDeleteBusy",
+      "deletingId",
       "window",
       "t",
       "deleteProject",
@@ -1601,6 +1610,7 @@ test("App's handleBulkDeleteProjects refuses to start a second batch while a pre
       `${code}\nreturn handleBulkDeleteProjects;`,
     )(
       state.bulkDeleteBusy,
+      null,
       {
         confirm: () => {
           confirmCalls.push(1);
@@ -1640,6 +1650,105 @@ test("App's handleBulkDeleteProjects refuses to start a second batch while a pre
   assert.equal(state.bulkDeleteBusy, false, "the busy flag must be cleared once the first (real) batch finishes");
   assert.deepEqual(state.myProjects, [], "both projects must be removed once the first batch's own deletes actually succeeded");
   assert.equal(state.error, null, "a bulk delete that genuinely succeeded must never report an error");
+});
+
+/**
+ * Round 1041: round 543 (the test just above) only closed the
+ * SELF-reentrancy case -- a second "Delete Selected" click racing the
+ * first. deletingId and bulkDeleteBusy were never cross-gated against
+ * EACH OTHER: clicking a single project's own "Delete" button while a
+ * bulk delete of a DIFFERENT selection was still in flight (or vice versa)
+ * started a second, fully independent DELETE request. deleteProject
+ * (api.ts) mints a fresh idempotency key on every call, so the loser of
+ * that race is never recognized as a retry and hits a genuine 404/409
+ * server-side -- a confusing failure for a delete that, from the user's
+ * own point of view, fully succeeded.
+ */
+test("App's handleDeleteProject and handleBulkDeleteProjects are cross-gated against each other, not just against themselves", async () => {
+  const appSrc = readFileSync(new URL("./App.tsx", import.meta.url), "utf8");
+  const deleteHandlerMatch = appSrc.match(/ {2}async function handleDeleteProject\(p: Project\) \{[\s\S]*?\n {2}\}\n/);
+  assert.ok(deleteHandlerMatch, "expected to find handleDeleteProject in App.tsx");
+  const { code: deleteCode } = transformSync(deleteHandlerMatch![0], { loader: "ts" });
+  const bulkHandlerMatch = appSrc.match(/ {2}async function handleBulkDeleteProjects\(\) \{[\s\S]*?\n {2}\}\n/);
+  assert.ok(bulkHandlerMatch, "expected to find handleBulkDeleteProjects in App.tsx");
+  const { code: bulkCode } = transformSync(bulkHandlerMatch![0], { loader: "ts" });
+
+  const target = makeProject([makeEntity("Customer")]);
+  target.id = "a";
+
+  // A single-row delete click must be a silent no-op while a bulk delete
+  // is already in flight (bulkDeleteBusy: true) -- it must never even
+  // reach window.confirm, exactly like handleBulkDeleteProjects' own
+  // self-reentrancy guard never reaches confirm for a second click.
+  {
+    let confirmCalls = 0;
+    let deleteApiCalls = 0;
+    const fn = new Function(
+      "deletingId",
+      "bulkDeleteBusy",
+      "window",
+      "t",
+      "deleteProject",
+      "setDeletingId",
+      "setError",
+      "setMyProjects",
+      "purgeProjectPreferences",
+      `${deleteCode}\nreturn handleDeleteProject;`,
+    )(
+      null,
+      true,
+      { confirm: () => (confirmCalls += 1, true) },
+      (key: string) => key,
+      async () => {
+        deleteApiCalls += 1;
+      },
+      () => {},
+      () => {},
+      () => {},
+      () => {},
+    ) as (p: Project) => Promise<void>;
+    await fn(target);
+    assert.equal(confirmCalls, 0, "a single-row delete while a bulk delete is in flight must never even prompt for confirmation");
+    assert.equal(deleteApiCalls, 0, "a single-row delete while a bulk delete is in flight must never call the delete API");
+  }
+
+  // A bulk delete click must be a silent no-op while a single-row delete
+  // is already in flight (deletingId set).
+  {
+    let confirmCalls = 0;
+    let deleteApiCalls = 0;
+    const fn = new Function(
+      "bulkDeleteBusy",
+      "deletingId",
+      "window",
+      "t",
+      "deleteProject",
+      "visibleSelectedProjectIds",
+      "setBulkDeleteBusy",
+      "setError",
+      "setMyProjects",
+      "setSelectedProjectIds",
+      "purgeProjectPreferences",
+      `${bulkCode}\nreturn handleBulkDeleteProjects;`,
+    )(
+      false,
+      "a",
+      { confirm: () => (confirmCalls += 1, true) },
+      (key: string, params?: Record<string, unknown>) => (params ? `${key}:${JSON.stringify(params)}` : key),
+      async () => {
+        deleteApiCalls += 1;
+      },
+      new Set(["a"]),
+      () => {},
+      () => {},
+      () => {},
+      () => {},
+      () => {},
+    ) as () => Promise<void>;
+    await fn();
+    assert.equal(confirmCalls, 0, "a bulk delete while a single-row delete is in flight must never even prompt for confirmation");
+    assert.equal(deleteApiCalls, 0, "a bulk delete while a single-row delete is in flight must never call the delete API");
+  }
 });
 
 /**
