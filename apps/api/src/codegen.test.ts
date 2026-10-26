@@ -4936,7 +4936,12 @@ test("the exported EntityView's handleBulkDuplicate and handleBulkUpdate keep on
   // ReferenceError the instant handleBulkUpdate itself runs.
   const invalidNumberFieldSrcForBulk = entityViewJsx.match(/function invalidNumberField\(field, value\) \{[\s\S]*?\n\}\n/)?.[0];
   assert.ok(invalidNumberFieldSrcForBulk, "expected to find invalidNumberField in generated output");
-  const handleBulkUpdateSrc = `${invalidNumberFieldSrcForBulk}\n${handleBulkUpdateFnSrc}`;
+  // Round 1023: handleBulkUpdate now calls bulkEditValueDisplay (added in
+  // the same round) for a non-blank value -- mirrors the comment just
+  // above for invalidNumberField.
+  const bulkEditValueDisplaySrcForBulk = entityViewJsx.match(/function bulkEditValueDisplay\(field, value\) \{[\s\S]*?\n {2}\}\n/)?.[0];
+  assert.ok(bulkEditValueDisplaySrcForBulk, "expected to find bulkEditValueDisplay in generated output");
+  const handleBulkUpdateSrc = `${invalidNumberFieldSrcForBulk}\n${bulkEditValueDisplaySrcForBulk}\n${handleBulkUpdateFnSrc}`;
   {
     let capturedError: string | undefined;
     let capturedSelectedIds: Set<number> | undefined;
@@ -5029,7 +5034,11 @@ test("the exported EntityView's handleBulkDuplicate and handleBulkUpdate keep on
         },
       );
       await fn();
-      assert.match(confirmMessage!, /Set this field on 3 records/, "must ask for confirmation naming the record count before touching any record");
+      assert.match(
+        confirmMessage!,
+        /Set "status" to "Shipped" on 3 records/,
+        "must name the field and value about to be applied before touching any record (round 1023)",
+      );
       assert.equal(updateCalled, false, "must not call updateRecord at all when the user cancels the confirmation");
       assert.equal(refreshCalled, false, "must not refresh when nothing was updated");
     } finally {
@@ -5216,6 +5225,65 @@ test("the exported EntityView's handleBulkDuplicate and handleBulkUpdate keep on
     } finally {
       if (originalConfirm) (globalThis.window as unknown as { confirm: () => boolean }).confirm = originalConfirm;
     }
+  }
+});
+
+/**
+ * Round 1023: ports the live preview's identical fix (EntityPanel.tsx) to
+ * the exported app -- before this, the confirm dialog named neither the
+ * field nor the value about to be applied, so an accidental Apply click
+ * right after picking a field (bulkEditValue still at its default "")
+ * silently blanked that field across every selected record, with no undo.
+ * Confirms the blank-value case now asks a distinct "Clear ... ?" message
+ * naming the field, while a real value still asks "Set ... to ... ?".
+ */
+test("the exported EntityView's handleBulkUpdate asks a distinct 'Clear' confirm message naming the field when the value is blank", async () => {
+  const entityViewJsx = generateExportFiles(project).find((f) => f.path === "web/src/components/EntityView.jsx")!.content;
+
+  const invalidNumberFieldSrc = entityViewJsx.match(/function invalidNumberField\(field, value\) \{[\s\S]*?\n\}\n/)?.[0];
+  const bulkEditValueDisplaySrc = entityViewJsx.match(/function bulkEditValueDisplay\(field, value\) \{[\s\S]*?\n {2}\}\n/)?.[0];
+  const handleBulkUpdateFnSrc = entityViewJsx.match(/async function handleBulkUpdate\(\) \{[\s\S]*?\n  \}\n/)?.[0];
+  assert.ok(
+    invalidNumberFieldSrc && bulkEditValueDisplaySrc && handleBulkUpdateFnSrc,
+    "expected to find invalidNumberField, bulkEditValueDisplay and handleBulkUpdate in generated output",
+  );
+  const handleBulkUpdateSrc = `${invalidNumberFieldSrc}\n${bulkEditValueDisplaySrc}\n${handleBulkUpdateFnSrc}`;
+
+  const originalConfirm = globalThis.window?.confirm;
+  let confirmMessage: string | undefined;
+  (globalThis.window as unknown as { confirm: (msg: string) => boolean }).confirm = (msg: string) => {
+    confirmMessage = msg;
+    return false;
+  };
+  try {
+    const fn = new Function(
+      "bulkActionBusy",
+      "entity",
+      "bulkEditField",
+      "bulkEditValue",
+      "selectedIds",
+      "setBulkActionBusy",
+      "setSelectedIds",
+      "setError",
+      "updateRecord",
+      "refresh",
+      `${handleBulkUpdateSrc}\nreturn handleBulkUpdate;`,
+    )(
+      false,
+      { name: "Customer", fields: [{ name: "title", label: "Title", required: false }] },
+      "title",
+      "",
+      new Set([1, 2]),
+      () => {},
+      () => {},
+      () => {},
+      async () => {},
+      async () => {},
+    );
+    await fn();
+    assert.match(confirmMessage!, /Clear "Title" on 2 records/, "a blank value must name the field in a distinct 'Clear' message, not the generic 'Set this field' one");
+  } finally {
+    if (originalConfirm) (globalThis.window as unknown as { confirm: () => boolean }).confirm = originalConfirm;
   }
 });
 

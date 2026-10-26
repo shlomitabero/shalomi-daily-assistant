@@ -3300,7 +3300,22 @@ export function EntityPanel({
       setError(t("entity.form.invalidNumber", { field: bulkEditFieldDef.label ?? bulkEditFieldDef.name }));
       return;
     }
-    if (!window.confirm(t("entity.bulk.confirmUpdate", { count: ids.length }))) return;
+    // Round 1023: before this, the confirm dialog named neither the field
+    // nor the value about to be applied -- clicking Apply right after
+    // picking a field in the dropdown, before ever touching the value
+    // picker, silently blanked that field across every selected record
+    // (bulkEditValue defaults to ""/false and no earlier guard catches a
+    // non-required field left blank). Unlike bulk-delete, there's no undo.
+    // Names the field always, and uses a distinct "clear" wording for the
+    // blank-value case specifically, so an accidental mass-blank is now
+    // impossible to miss before confirming -- without blocking a genuinely
+    // intentional bulk-clear.
+    const fieldLabel = bulkEditFieldDef?.label ?? bulkEditFieldDef?.name ?? bulkEditField;
+    const isBlankClear = bulkEditFieldDef?.type !== "boolean" && String(bulkEditValue ?? "") === "";
+    const confirmMessage = isBlankClear
+      ? t("entity.bulk.confirmClearField", { field: fieldLabel, count: ids.length })
+      : t("entity.bulk.confirmUpdate", { field: fieldLabel, value: bulkEditValueDisplay(bulkEditFieldDef, bulkEditValue), count: ids.length });
+    if (!window.confirm(confirmMessage)) return;
     setBulkActionBusy(true);
     setError(null);
     try {
@@ -3330,6 +3345,20 @@ export function EntityPanel({
     setBulkEditField(fieldName);
     const field = entity.fields.find((f) => f.name === fieldName);
     setBulkEditValue(field?.type === "boolean" ? false : "");
+  }
+
+  /** Resolves a bulk-edit field's raw picker value to the human-readable
+   * string the confirm dialog should show -- an enum's translated label,
+   * a relation's target record's own display label (matching
+   * relationDisplayLabel's use elsewhere in this file), or the
+   * calendarChipLabelValue-style "TRUE"/"FALSE" convention for booleans,
+   * rather than a raw stored key/id the user never typed. */
+  function bulkEditValueDisplay(field: Field | undefined, value: unknown): string {
+    if (!field) return String(value);
+    if (field.type === "boolean") return value ? "TRUE" : "FALSE";
+    if (field.type === "enum") return (field.enumLabels && field.enumLabels[String(value)]) || String(value);
+    if (field.type === "relation") return relationDisplayLabel(field, value, allEntities, relatedRecords);
+    return String(value);
   }
 
   function handleExportCsv() {

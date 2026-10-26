@@ -5423,7 +5423,20 @@ export function EntityView({ entity, highlightRecordId, onHighlightHandled, onJu
       setError(\`"\${bulkEditFieldDef.label || bulkEditFieldDef.name}" must be a number\`);
       return;
     }
-    if (!window.confirm(\`Set this field on \${ids.length} records? This cannot be undone.\`)) return;
+    // Round 1023: before this, the confirm dialog named neither the field
+    // nor the value about to be applied -- clicking Apply right after
+    // picking a field, before touching the value picker, silently blanked
+    // that field across every selected record (bulkEditValue defaults to
+    // ""/false and no earlier guard catches a non-required field left
+    // blank). Unlike bulk-delete, there's no undo. Names the field always,
+    // and uses distinct wording for the blank-value case specifically, so
+    // an accidental mass-blank can't be missed before confirming.
+    const fieldLabel = bulkEditFieldDef ? bulkEditFieldDef.label || bulkEditFieldDef.name : bulkEditField;
+    const isBlankClear = (!bulkEditFieldDef || bulkEditFieldDef.type !== "boolean") && String(bulkEditValue ?? "") === "";
+    const confirmMessage = isBlankClear
+      ? \`Clear "\${fieldLabel}" on \${ids.length} records? This cannot be undone.\`
+      : \`Set "\${fieldLabel}" to "\${bulkEditValueDisplay(bulkEditFieldDef, bulkEditValue)}" on \${ids.length} records? This cannot be undone.\`;
+    if (!window.confirm(confirmMessage)) return;
     setBulkActionBusy(true);
     setError(null);
     try {
@@ -5451,6 +5464,20 @@ export function EntityView({ entity, highlightRecordId, onHighlightHandled, onJu
     setBulkEditField(fieldName);
     const field = entity.fields.find((f) => f.name === fieldName);
     setBulkEditValue(field && field.type === "boolean" ? false : "");
+  }
+
+  // Resolves a bulk-edit field's raw picker value to the human-readable
+  // string the confirm dialog should show -- an enum's translated label,
+  // a relation's target record's own display label (matching
+  // relationDisplayLabel's use elsewhere in this file), or the
+  // "TRUE"/"FALSE" convention this file already uses for booleans,
+  // rather than a raw stored key/id the user never typed.
+  function bulkEditValueDisplay(field, value) {
+    if (!field) return String(value);
+    if (field.type === "boolean") return value ? "TRUE" : "FALSE";
+    if (field.type === "enum") return (field.enumLabels && field.enumLabels[String(value)]) || String(value);
+    if (field.type === "relation") return relationDisplayLabel(field, value, relatedRecords);
+    return String(value);
   }
 
   async function handleMoveFields(id, fields) {

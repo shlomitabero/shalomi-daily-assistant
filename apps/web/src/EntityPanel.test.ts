@@ -832,9 +832,10 @@ test("EntityPanel's 'Clear selection' button empties the current selection witho
  */
 test("EntityPanel's handleBulkUpdate refreshes and keeps only the ids that actually failed selected, instead of one rejection hiding the updates that succeeded", async () => {
   const helperMatch = entityPanelSrc.match(/function invalidNumberField\(field: Field, value: unknown\): boolean \{[\s\S]*?\n\}\n/);
+  const displayMatch = entityPanelSrc.match(/ {2}function bulkEditValueDisplay\(field: Field \| undefined, value: unknown\): string \{[\s\S]*?\n {2}\}\n/);
   const handlerMatch = entityPanelSrc.match(/ {2}async function handleBulkUpdate\(\) \{[\s\S]*?\n {2}\}\n/);
-  assert.ok(helperMatch && handlerMatch, "expected to find invalidNumberField and handleBulkUpdate in EntityPanel.tsx");
-  const { code } = transformSync(`${helperMatch![0]}\n${handlerMatch![0]}`, { loader: "ts" });
+  assert.ok(helperMatch && displayMatch && handlerMatch, "expected to find invalidNumberField, bulkEditValueDisplay and handleBulkUpdate in EntityPanel.tsx");
+  const { code } = transformSync(`${helperMatch![0]}\n${displayMatch![0]}\n${handlerMatch![0]}`, { loader: "ts" });
 
   let capturedError: string | undefined;
   let capturedSelectedIds: Set<number> | undefined;
@@ -924,6 +925,11 @@ test("EntityPanel's handleBulkUpdate refreshes and keeps only the ids that actua
  * blank value to every selected record's field, which coerceValue silently
  * accepts (stores null) for any non-required field. Mirrors handleBulkDelete's
  * own window.confirm guard, which already protects the sibling action.
+ *
+ * Round 1023: this exact scenario (bulkEditValue left at its default "")
+ * is precisely the dangerous, easy-to-miss case -- so the confirm dialog
+ * now uses the dedicated entity.bulk.confirmClearField key instead of the
+ * generic confirmUpdate one, naming the field being blanked.
  */
 test("EntityPanel's handleBulkUpdate asks for confirmation before applying, and does nothing at all if the user cancels", async () => {
   const helperMatch = entityPanelSrc.match(/function invalidNumberField\(field: Field, value: unknown\): boolean \{[\s\S]*?\n\}\n/);
@@ -977,9 +983,10 @@ test("EntityPanel's handleBulkUpdate asks for confirmation before applying, and 
 
     assert.match(
       confirmMessage!,
-      /entity\.bulk\.confirmUpdate/,
-      "must ask for confirmation naming the translated confirm-update key before touching any record",
+      /entity\.bulk\.confirmClearField/,
+      "a blank value must ask for confirmation naming the dedicated clear-field key, not the generic confirm-update key, before touching any record",
     );
+    assert.match(confirmMessage!, /"status"/, "must name the specific field being cleared");
     assert.equal(updateCalled, false, "must not call updateRecord at all when the user cancels the confirmation");
     assert.equal(refreshCalled, false, "must not refresh when nothing was updated");
   } finally {
@@ -1117,8 +1124,9 @@ test("EntityPanel's handleBulkUpdate refuses a blank value for a required field 
  */
 test("EntityPanel's handleBulkUpdate still proceeds when a required field is given a real value", async () => {
   const helperMatch = entityPanelSrc.match(/function invalidNumberField\(field: Field, value: unknown\): boolean \{[\s\S]*?\n\}\n/);
+  const displayMatch = entityPanelSrc.match(/ {2}function bulkEditValueDisplay\(field: Field \| undefined, value: unknown\): string \{[\s\S]*?\n {2}\}\n/);
   const handlerMatch = entityPanelSrc.match(/ {2}async function handleBulkUpdate\(\) \{[\s\S]*?\n {2}\}\n/);
-  const { code } = transformSync(`${helperMatch![0]}\n${handlerMatch![0]}`, { loader: "ts" });
+  const { code } = transformSync(`${helperMatch![0]}\n${displayMatch![0]}\n${handlerMatch![0]}`, { loader: "ts" });
 
   let capturedError: string | undefined;
   let updateCalled = false;
@@ -1162,6 +1170,127 @@ test("EntityPanel's handleBulkUpdate still proceeds when a required field is giv
 
     assert.equal(capturedError, undefined, "must not report any error when a real value was chosen for the required field");
     assert.equal(updateCalled, true, "must still call updateRecord when the required field has a real value");
+  } finally {
+    globalThis.window.confirm = originalConfirm;
+  }
+});
+
+/**
+ * Round 1023: before this, entity.bulk.confirmUpdate's own message named
+ * neither the field nor the value about to be applied -- just "Set this
+ * field on {count} records?" -- so confirming after accidentally picking
+ * the wrong value (or the right field but wrong row's value) was
+ * indistinguishable from confirming the intended update. Confirms a
+ * non-blank bulk edit now names both the field's label and a
+ * human-readable form of the chosen value in the confirm message, and
+ * still uses the generic confirmUpdate key (not the dedicated
+ * clear-field one, which is reserved for the blank-value case).
+ */
+test("EntityPanel's handleBulkUpdate names the field and value in the confirm message for a real, non-blank value", async () => {
+  const helperMatch = entityPanelSrc.match(/function invalidNumberField\(field: Field, value: unknown\): boolean \{[\s\S]*?\n\}\n/);
+  const displayMatch = entityPanelSrc.match(/ {2}function bulkEditValueDisplay\(field: Field \| undefined, value: unknown\): string \{[\s\S]*?\n {2}\}\n/);
+  const handlerMatch = entityPanelSrc.match(/ {2}async function handleBulkUpdate\(\) \{[\s\S]*?\n {2}\}\n/);
+  assert.ok(helperMatch && displayMatch && handlerMatch, "expected to find invalidNumberField, bulkEditValueDisplay and handleBulkUpdate in EntityPanel.tsx");
+  const { code } = transformSync(`${helperMatch![0]}\n${displayMatch![0]}\n${handlerMatch![0]}`, { loader: "ts" });
+
+  const originalConfirm = globalThis.window.confirm;
+  let confirmMessage: string | undefined;
+  globalThis.window.confirm = ((msg: string) => {
+    confirmMessage = msg;
+    return false;
+  }) as typeof window.confirm;
+  try {
+    const fn = new Function(
+      "bulkActionBusy",
+      "setBulkActionBusy",
+      "t",
+      "projectId",
+      "entity",
+      "selectedIds",
+      "bulkEditField",
+      "bulkEditValue",
+      "setError",
+      "updateRecord",
+      "setSelectedIds",
+      "refresh",
+      `${code}\nreturn handleBulkUpdate;`,
+    )(
+      false,
+      () => {},
+      (key: string, params?: Record<string, unknown>) => (params ? `${key}:${JSON.stringify(params)}` : key),
+      "proj1",
+      { name: "Order", fields: [{ name: "status", label: "Status", required: false }] },
+      new Set([1, 2, 3]),
+      "status",
+      "Shipped",
+      () => {},
+      async () => {},
+      () => {},
+      async () => {},
+    ) as () => Promise<void>;
+
+    await fn();
+
+    assert.match(confirmMessage!, /entity\.bulk\.confirmUpdate/, "a real value must use the generic confirmUpdate key, not confirmClearField");
+    assert.match(confirmMessage!, /"field":"Status"/, "must name the field's own label");
+    assert.match(confirmMessage!, /"value":"Shipped"/, "must show the actual value about to be applied");
+  } finally {
+    globalThis.window.confirm = originalConfirm;
+  }
+});
+
+/**
+ * Round 1023: a boolean field's "false" is a deliberate, meaningful value
+ * (unlike every other field type's default "" placeholder before the
+ * value picker is ever touched) -- so it must never be treated as the
+ * dangerous "forgot to pick a value" case, even though it's falsy.
+ */
+test("EntityPanel's handleBulkUpdate treats a boolean field's false as a real chosen value, not as an accidental blank-clear", async () => {
+  const helperMatch = entityPanelSrc.match(/function invalidNumberField\(field: Field, value: unknown\): boolean \{[\s\S]*?\n\}\n/);
+  const displayMatch = entityPanelSrc.match(/ {2}function bulkEditValueDisplay\(field: Field \| undefined, value: unknown\): string \{[\s\S]*?\n {2}\}\n/);
+  const handlerMatch = entityPanelSrc.match(/ {2}async function handleBulkUpdate\(\) \{[\s\S]*?\n {2}\}\n/);
+  const { code } = transformSync(`${helperMatch![0]}\n${displayMatch![0]}\n${handlerMatch![0]}`, { loader: "ts" });
+
+  const originalConfirm = globalThis.window.confirm;
+  let confirmMessage: string | undefined;
+  globalThis.window.confirm = ((msg: string) => {
+    confirmMessage = msg;
+    return false;
+  }) as typeof window.confirm;
+  try {
+    const fn = new Function(
+      "bulkActionBusy",
+      "setBulkActionBusy",
+      "t",
+      "projectId",
+      "entity",
+      "selectedIds",
+      "bulkEditField",
+      "bulkEditValue",
+      "setError",
+      "updateRecord",
+      "setSelectedIds",
+      "refresh",
+      `${code}\nreturn handleBulkUpdate;`,
+    )(
+      false,
+      () => {},
+      (key: string, params?: Record<string, unknown>) => (params ? `${key}:${JSON.stringify(params)}` : key),
+      "proj1",
+      { name: "Order", fields: [{ name: "confirmed", label: "Confirmed", type: "boolean", required: false }] },
+      new Set([1]),
+      "confirmed",
+      false,
+      () => {},
+      async () => {},
+      () => {},
+      async () => {},
+    ) as () => Promise<void>;
+
+    await fn();
+
+    assert.match(confirmMessage!, /entity\.bulk\.confirmUpdate/, "a deliberately chosen boolean false must use the generic confirmUpdate key, not confirmClearField");
+    assert.match(confirmMessage!, /"value":"FALSE"/, "must show the boolean value using this app's own TRUE\\/FALSE display convention");
   } finally {
     globalThis.window.confirm = originalConfirm;
   }
