@@ -1360,6 +1360,113 @@ test("WhatsAppPanel's attachment Remove button deletes the real upload from the 
 });
 
 /**
+ * Round 1005: the panel fully unmounts the moment it's closed (App.tsx's
+ * `{showWhatsApp && <WhatsAppPanel .../>}`) -- the Remove button and the
+ * replace-with-a-different-file case just above (round 979) both clean up
+ * a superseded/removed attachment, but only while the panel stays open.
+ * Picking an attachment and then simply closing the panel instead of
+ * clicking Send or Remove left that upload sitting on disk forever, the
+ * same orphaned-upload shape round 979 fixed for every OTHER way of
+ * abandoning a chosen attachment, just not this one.
+ */
+test("WhatsAppPanel deletes a chosen but never-sent/never-removed attachment from the server when the panel is closed", async () => {
+  await withJsdom(async () => {
+    const originalFetch = globalThis.fetch;
+    let deleteRequest: { url: string } | undefined;
+    globalThis.fetch = (async (input: string, init?: RequestInit): Promise<Response> => {
+      const method = init?.method ?? "GET";
+      if (method === "GET" && input === "/api/projects/proj1/integrations/whatsapp/status") {
+        return new Response(
+          JSON.stringify({ status: "connected", phoneNumber: "972501234567", qrDataUrl: null, error: null }),
+          { status: 200, headers: { "content-type": "application/json" } },
+        );
+      }
+      if (method === "GET" && input === "/api/projects/proj1/integrations/whatsapp/messages") {
+        return new Response(JSON.stringify({ messages: [] }), { status: 200, headers: { "content-type": "application/json" } });
+      }
+      if (method === "POST" && input === "/api/projects/proj1/integrations/whatsapp/attachments/upload") {
+        return new Response(
+          JSON.stringify({ file: { url: "/api/uploads/proj1/_whatsapp-attachments/fake-uuid.pdf", name: "brochure.pdf", size: 9, mimeType: "application/pdf" } }),
+          { status: 200, headers: { "content-type": "application/json" } },
+        );
+      }
+      if (method === "DELETE" && input === "/api/projects/proj1/integrations/whatsapp/attachments") {
+        deleteRequest = JSON.parse(init!.body as string) as { url: string };
+        return new Response(null, { status: 204 });
+      }
+      throw new Error(`unexpected request ${method} ${input}`);
+    }) as typeof fetch;
+    try {
+      const view = render(
+        React.createElement(
+          ThemeProvider,
+          null,
+          React.createElement(LanguageProvider, null, React.createElement(WhatsAppPanel, { projectId: "proj1", userId: "user1", projectName: "Test Project", onClose: () => {}, onJumpToEntity: () => {}, onJumpToRecord: () => {}, entities: [], onCreateRecordFromMessage: () => {} })),
+        ),
+      );
+      await waitForCondition(() => document.querySelector(".whatsapp-test-form") !== null);
+
+      const fileInput = document.querySelector('.whatsapp-attachment-field input[type="file"]') as HTMLInputElement;
+      const file = new File(["%PDF-fake-brochure"], "brochure.pdf", { type: "application/pdf" });
+      Object.defineProperty(fileInput, "files", { value: [file] });
+      await act(async () => {
+        fireEvent.change(fileInput);
+      });
+      await waitForCondition(() => document.querySelector(".whatsapp-attachment-field .file-field-current") !== null);
+      assert.equal(deleteRequest, undefined, "picking the attachment itself must never delete anything -- nothing has been abandoned yet");
+
+      // Close the panel (unmount) without ever clicking Send or Remove.
+      view.unmount();
+
+      await waitForCondition(() => deleteRequest !== undefined);
+      assert.equal(deleteRequest!.url, "/api/uploads/proj1/_whatsapp-attachments/fake-uuid.pdf", "closing the panel must delete the still-selected, never-sent attachment");
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+});
+
+/** Round 1005: the counterpart of the test just above -- confirms closing the panel does NOT fire a delete when there's no attachment selected at all, i.e. the cleanup is correctly conditional, not unconditional. */
+test("WhatsAppPanel never fires a delete on close when no attachment was ever chosen", async () => {
+  await withJsdom(async () => {
+    const originalFetch = globalThis.fetch;
+    let deleteCalled = false;
+    globalThis.fetch = (async (input: string, init?: RequestInit): Promise<Response> => {
+      const method = init?.method ?? "GET";
+      if (method === "GET" && input === "/api/projects/proj1/integrations/whatsapp/status") {
+        return new Response(
+          JSON.stringify({ status: "connected", phoneNumber: "972501234567", qrDataUrl: null, error: null }),
+          { status: 200, headers: { "content-type": "application/json" } },
+        );
+      }
+      if (method === "GET" && input === "/api/projects/proj1/integrations/whatsapp/messages") {
+        return new Response(JSON.stringify({ messages: [] }), { status: 200, headers: { "content-type": "application/json" } });
+      }
+      if (method === "DELETE" && input === "/api/projects/proj1/integrations/whatsapp/attachments") {
+        deleteCalled = true;
+        return new Response(null, { status: 204 });
+      }
+      throw new Error(`unexpected request ${method} ${input}`);
+    }) as typeof fetch;
+    try {
+      const view = render(
+        React.createElement(
+          ThemeProvider,
+          null,
+          React.createElement(LanguageProvider, null, React.createElement(WhatsAppPanel, { projectId: "proj1", userId: "user1", projectName: "Test Project", onClose: () => {}, onJumpToEntity: () => {}, onJumpToRecord: () => {}, entities: [], onCreateRecordFromMessage: () => {} })),
+        ),
+      );
+      await waitForCondition(() => document.querySelector(".whatsapp-test-form") !== null);
+      view.unmount();
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      assert.equal(deleteCalled, false, "closing the panel with no attachment ever chosen must never fire a delete request");
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+});
+
+/**
  * New in this round: every other write-form in this app resets to empty
  * right after a successful submission (e.g. EntityPanel's own record form
  * clears right after createRecord succeeds) -- but this test-send form

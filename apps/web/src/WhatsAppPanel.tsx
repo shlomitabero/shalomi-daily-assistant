@@ -238,6 +238,13 @@ export function WhatsAppPanel({
   const [testTo, setTestTo] = useState(() => prefillTo ?? "");
   const [testMessage, setTestMessage] = useState("");
   const [testAttachment, setTestAttachment] = useState<WhatsAppAttachmentDescriptor | null>(null);
+  // Round 1005: mirrors testAttachment for the unmount-cleanup effect
+  // below -- that effect's own cleanup closure only ever sees whatever
+  // testAttachment was at the moment the effect last ran (empty deps,
+  // so once, at mount), never a later value a real picker interaction
+  // set after that.
+  const testAttachmentRef = useRef<WhatsAppAttachmentDescriptor | null>(null);
+  testAttachmentRef.current = testAttachment;
   const [uploadingAttachment, setUploadingAttachment] = useState(false);
   const [attachmentError, setAttachmentError] = useState<string | null>(null);
   const [recentNumbers, setRecentNumbers] = useState<string[]>(() => getRecentWhatsAppNumbers(projectId));
@@ -484,6 +491,26 @@ export function WhatsAppPanel({
     return () => {
       stopPolling();
       stopConnectedPolling();
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [projectId]);
+
+  /**
+   * Round 1005: this panel fully unmounts the moment it's closed (App.tsx's
+   * `{showWhatsApp && <WhatsAppPanel .../>}`) -- handleAttachmentChange's
+   * own replace case and handleRemoveAttachment (round 979) only ever
+   * clean up a superseded/removed attachment while the panel stays open,
+   * and handleSendTest only clears it after an actual send attempt. Picking
+   * an attachment and then simply closing the panel -- without ever
+   * clicking Send or Remove -- left that upload sitting on disk forever,
+   * the same orphaned-upload shape round 979 already fixed for every OTHER
+   * way of abandoning a chosen attachment, just not this one.
+   */
+  useEffect(() => {
+    return () => {
+      if (testAttachmentRef.current) {
+        void deleteWhatsAppAttachment(projectId, testAttachmentRef.current.url).catch(() => {});
+      }
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [projectId]);
