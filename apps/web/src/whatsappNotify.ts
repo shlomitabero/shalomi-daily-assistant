@@ -16,34 +16,56 @@ export interface NewWhatsAppMessages {
   snippet: string;
 }
 
+/** The newest inbound message a desktop notification has already been shown for -- both its id AND its own createdAt timestamp, the same shape whatsappUnread.ts's own WhatsAppLastSeen uses, for the identical reason (see this function's own doc comment below). */
+export interface LastNotifiedWhatsAppMessage {
+  id: string;
+  createdAt: string;
+}
+
 /**
  * Messages arrive DESC-ordered (newest first -- same assumption
  * countUnreadWhatsAppMessages makes, see whatsappUnread.ts). Walks from the
  * newest message and collects every inbound one up to (not including)
- * lastNotifiedId, the id of the newest inbound message a desktop
- * notification has already been shown for.
+ * lastNotified, the newest inbound message a desktop notification has
+ * already been shown for.
  *
- * Returns null when lastNotifiedId is null: the very first check after a
+ * Returns null when lastNotified is null: the very first check after a
  * project loads/reconnects has no baseline yet, and treating every message
  * already in the log as "new" would fire a desktop notification for a
  * customer's entire message history the instant the tab loads. Mirrors
  * countUnreadWhatsAppMessages' own `lastSeenId === null -> 0` convention --
  * the caller is expected to silently seed its own baseline (the current
- * newest message id) on that first check instead of notifying.
+ * newest message) on that first check instead of notifying.
  *
- * If lastNotifiedId isn't found at all in this page (more new messages
- * arrived between two checks than one page holds), the count is capped at
- * what's visible here, matching this codebase's established "N+"
- * pagination convention rather than guessing a larger exact number.
+ * If lastNotified's own id isn't found at all in this page (more new
+ * messages arrived between two checks than one page holds), the count is
+ * capped at what's visible here, matching this codebase's established
+ * "N+" pagination convention rather than guessing a larger exact number
+ * -- UNLESS this page's own oldest message is already at or older than
+ * lastNotified's own timestamp, which means the id is genuinely missing
+ * because that exact message was deleted (by this tab's own
+ * WhatsAppPanel, a different tab/device on the same account, or any
+ * collaborator -- these messages are project-scoped, not per-user),
+ * rather than simply paged out. The old id-only walk treated both cases
+ * as "collect the whole page", which silently re-announced every already
+ * -read message past the deleted one as brand new the next time the tab
+ * was backgrounded -- a real, surprising desktop notification showing
+ * stale content, not just internal state every reader already handled
+ * gracefully. Mirrors countUnreadWhatsAppMessages' own identical
+ * round-940 fix, falling back to createdAt the moment a message's own
+ * timestamp is at or before lastNotified's, not just on an exact id
+ * match.
  */
 export function findNewInboundMessages(
   messages: WhatsAppMessageLogEntry[],
-  lastNotifiedId: string | null,
+  lastNotified: LastNotifiedWhatsAppMessage | null,
 ): NewWhatsAppMessages | null {
-  if (lastNotifiedId === null) return null;
+  if (lastNotified === null) return null;
+  const lastNotifiedTime = new Date(lastNotified.createdAt).getTime();
   const newInbound: WhatsAppMessageLogEntry[] = [];
   for (const m of messages) {
-    if (m.id === lastNotifiedId) break;
+    if (m.id === lastNotified.id) break;
+    if (!Number.isNaN(lastNotifiedTime) && new Date(m.createdAt).getTime() <= lastNotifiedTime) break;
     if (m.direction === "in") newInbound.push(m);
   }
   if (newInbound.length === 0) return null;

@@ -77,7 +77,7 @@ import {
 import { clearIdeaDraft, getIdeaDraft, saveIdeaDraft } from "./ideaDraft.js";
 import { formatDocumentTitle } from "./documentTitle.js";
 import { countUnreadWhatsAppMessages, getWhatsAppLastSeen } from "./whatsappUnread.js";
-import { findNewInboundMessages } from "./whatsappNotify.js";
+import { findNewInboundMessages, type LastNotifiedWhatsAppMessage } from "./whatsappNotify.js";
 import { LanguageProvider, useTranslation } from "./i18n/LanguageContext.js";
 import { LanguageSwitcher } from "./i18n/LanguageSwitcher.js";
 import type { Lang } from "./i18n/language.js";
@@ -420,12 +420,12 @@ export function canNavigateHome(view: "home" | "spec" | "building" | "preview", 
  */
 export function maybeNotifyNewWhatsAppMessages(
   messages: WhatsAppMessageLogEntry[],
-  lastNotifiedIdRef: { current: string | null },
+  lastNotifiedIdRef: { current: LastNotifiedWhatsAppMessage | null },
   isTabHidden: boolean,
   t: (key: string, params?: Record<string, string>) => string,
 ): void {
   const newMessages = findNewInboundMessages(messages, lastNotifiedIdRef.current);
-  lastNotifiedIdRef.current = messages[0]?.id ?? lastNotifiedIdRef.current;
+  lastNotifiedIdRef.current = messages[0] ? { id: messages[0].id, createdAt: messages[0].createdAt } : lastNotifiedIdRef.current;
   if (!newMessages || !isTabHidden) return;
   if (typeof Notification === "undefined" || Notification.permission !== "granted") return;
   const title =
@@ -545,7 +545,7 @@ function AppContent() {
   // seen" marker (whatsappUnread.ts), which only moves when the panel is
   // actually opened and can stay stale for a long time. See the unread-poll
   // effect below for why this needs its own tracking.
-  const lastNotifiedWhatsAppIdRef = useRef<string | null>(null);
+  const lastNotifiedWhatsAppIdRef = useRef<LastNotifiedWhatsAppMessage | null>(null);
   // Every existing purgeProjectPreferences call site (handleDeleteProject,
   // handleBulkDeleteProjects, handleAccountDeleted, CollaboratorsPanel's
   // onLeft) is an action THIS browser just performed, so it can purge
@@ -2688,7 +2688,7 @@ function AppContent() {
               }}
               prefillTo={whatsappPrefillTo}
               onMessageDeleted={(id) => {
-                if (lastNotifiedWhatsAppIdRef.current === id) lastNotifiedWhatsAppIdRef.current = null;
+                if (lastNotifiedWhatsAppIdRef.current?.id === id) lastNotifiedWhatsAppIdRef.current = null;
               }}
               onHistoryCleared={() => {
                 lastNotifiedWhatsAppIdRef.current = null;

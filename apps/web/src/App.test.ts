@@ -899,6 +899,12 @@ test("App's onSendWhatsApp (EntityPanel's per-record row action) opens the Whats
   assert.deepEqual(calls, { setWhatsappPrefillTo: ["0501234567"], openPanel: ["whatsapp"] });
 });
 
+/** Derives a distinct, strictly-increasing timestamp from the numeric suffix of `id` (m1 < m2 < m3 < ...), mirroring whatsappUnread.test.ts/whatsappNotify.test.ts's own identical convention -- round 1019's own createdAt-fallback logic (maybeNotifyNewWhatsAppMessages' own ref, see below) needs genuine chronological ordering between these messages, not the identical "now" timestamp every call to `new Date()` in quick succession would otherwise produce. */
+function timeFor(id: string): string {
+  const minute = Number(id.replace(/\D/g, "")) || 0;
+  return new Date(2024, 0, 1, 0, minute).toISOString();
+}
+
 function whatsAppMsg(overrides: Partial<WhatsAppMessageLogEntry> & { id: string }): WhatsAppMessageLogEntry {
   return {
     direction: "in",
@@ -909,9 +915,14 @@ function whatsAppMsg(overrides: Partial<WhatsAppMessageLogEntry> & { id: string 
     matchedEntityName: null,
     matchedRecordId: null,
     status: "received",
-    createdAt: new Date().toISOString(),
+    createdAt: timeFor(overrides.id),
     ...overrides,
   };
+}
+
+/** Builds a maybeNotifyNewWhatsAppMessages ref baseline -- both the tracked message's id AND its own createdAt, the shape round 1019 moved to (mirroring whatsappUnread.ts's own WhatsAppLastSeen). */
+function notifiedRef(id: string, createdAt: string = timeFor(id)): { current: { id: string; createdAt: string } | null } {
+  return { current: { id, createdAt } };
 }
 
 const notifyT = (key: string, params?: Record<string, string>) =>
@@ -941,10 +952,10 @@ test("maybeNotifyNewWhatsAppMessages fires a real Notification with the correct 
   (globalThis as { Notification: unknown }).Notification = FakeNotification;
   try {
     const messages = [whatsAppMsg({ id: "m2", fromNumber: "972529998888", body: "Are you open tomorrow?" }), whatsAppMsg({ id: "m1" })];
-    const ref = { current: "m1" };
+    const ref = notifiedRef("m1");
     maybeNotifyNewWhatsAppMessages(messages, ref, true, notifyT);
     assert.deepEqual(calls, [{ title: 'whatsapp.notification.title.one:{"from":"972529998888"}', body: "Are you open tomorrow?" }]);
-    assert.equal(ref.current, "m2", "the ref must advance to the newest message id");
+    assert.deepEqual(ref.current, { id: "m2", createdAt: timeFor("m2") }, "the ref must advance to the newest message's own id and createdAt");
   } finally {
     (globalThis as { Notification?: unknown }).Notification = originalNotification;
   }
@@ -973,7 +984,7 @@ test("maybeNotifyNewWhatsAppMessages shows the matched record's own label in the
       whatsAppMsg({ id: "m2", fromNumber: "972529998888", matchedLabel: "Sarah Cohen", body: "Are you open tomorrow?" }),
       whatsAppMsg({ id: "m1" }),
     ];
-    const ref = { current: "m1" };
+    const ref = notifiedRef("m1");
     maybeNotifyNewWhatsAppMessages(messages, ref, true, notifyT);
     assert.deepEqual(calls, [{ title: 'whatsapp.notification.title.one:{"from":"Sarah Cohen"}', body: "Are you open tomorrow?" }]);
   } finally {
@@ -993,10 +1004,10 @@ test("maybeNotifyNewWhatsAppMessages never calls Notification when the tab is NO
   (globalThis as { Notification: unknown }).Notification = FakeNotification;
   try {
     const messages = [whatsAppMsg({ id: "m2" }), whatsAppMsg({ id: "m1" })];
-    const ref = { current: "m1" };
+    const ref = notifiedRef("m1");
     maybeNotifyNewWhatsAppMessages(messages, ref, false, notifyT);
     assert.equal(constructed, 0, "must never construct a Notification while the tab is focused");
-    assert.equal(ref.current, "m2", "the ref must still advance even though no notification fired");
+    assert.deepEqual(ref.current, { id: "m2", createdAt: timeFor("m2") }, "the ref must still advance even though no notification fired");
   } finally {
     (globalThis as { Notification?: unknown }).Notification = originalNotification;
   }
@@ -1014,7 +1025,7 @@ test("maybeNotifyNewWhatsAppMessages never calls Notification when permission is
   (globalThis as { Notification: unknown }).Notification = FakeNotification;
   try {
     const messages = [whatsAppMsg({ id: "m2" }), whatsAppMsg({ id: "m1" })];
-    const ref = { current: "m1" };
+    const ref = notifiedRef("m1");
     maybeNotifyNewWhatsAppMessages(messages, ref, true, notifyT);
     assert.equal(constructed, 0, "must never construct a Notification while permission is merely 'default' (not yet granted)");
   } finally {
@@ -1034,7 +1045,7 @@ test("maybeNotifyNewWhatsAppMessages shows the 'many' title with a real count wh
   (globalThis as { Notification: unknown }).Notification = FakeNotification;
   try {
     const messages = [whatsAppMsg({ id: "m3", body: "newest" }), whatsAppMsg({ id: "m2", body: "middle" }), whatsAppMsg({ id: "m1" })];
-    const ref = { current: "m1" };
+    const ref = notifiedRef("m1");
     maybeNotifyNewWhatsAppMessages(messages, ref, true, notifyT);
     assert.deepEqual(calls, [{ title: 'whatsapp.notification.title.many:{"count":"2"}', body: "newest" }]);
   } finally {
@@ -1054,10 +1065,10 @@ test("maybeNotifyNewWhatsAppMessages does nothing at all on the first-ever check
   (globalThis as { Notification: unknown }).Notification = FakeNotification;
   try {
     const messages = [whatsAppMsg({ id: "m2" }), whatsAppMsg({ id: "m1" })];
-    const ref = { current: null as string | null };
+    const ref = { current: null as { id: string; createdAt: string } | null };
     maybeNotifyNewWhatsAppMessages(messages, ref, true, notifyT);
     assert.equal(constructed, 0, "the very first check must only seed the baseline, never notify for pre-existing history");
-    assert.equal(ref.current, "m2", "the baseline must still be seeded to the newest message id");
+    assert.deepEqual(ref.current, { id: "m2", createdAt: timeFor("m2") }, "the baseline must still be seeded to the newest message's own id and createdAt");
   } finally {
     (globalThis as { Notification?: unknown }).Notification = originalNotification;
   }
