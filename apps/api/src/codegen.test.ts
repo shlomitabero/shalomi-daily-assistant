@@ -14039,6 +14039,223 @@ test("the exported EntityView carries a resized column width, sort order, and ac
 });
 
 /**
+ * Round 1009: the identical case-only-rename hazard round 986 ported to
+ * this file's hiddenFields/groupFieldName/columnWidths/sortKeys/
+ * fieldFilters initializers above, for two stores round 986 itself never
+ * touched -- collapsedGroups/collapsedBoardColumns. The live Forge AI
+ * preview's own round-1008 fix found and closed the identical gap in
+ * EntityPanel.tsx's sibling collapsedGroupsPreference.ts/
+ * collapsedBoardColumnsPreference.ts; this exported app hand-duplicates
+ * the same two stores (COLLAPSED_GROUPS_STORAGE_KEY/
+ * COLLAPSED_BOARD_COLUMNS_STORAGE_KEY) with the identical exact-match-only
+ * `collapsedGroups`/`collapsedBoardColumns` useState initializers, never
+ * covered by round 986 since round 985's own live-preview fix never
+ * touched these two stores either. Unlike round 985/986's own hazard
+ * (groupFieldName itself cleared, or a hidden/sorted/filtered column
+ * reverting), round 1008/this round's hazard is a group/column
+ * silently RE-EXPANDING -- the real collapsed set survives in storage,
+ * just orphaned under the field's old-cased key.
+ */
+test("the exported EntityView keeps a collapsed table group and board column collapsed under their new spelling when a newer export renames a field's letter casing", async () => {
+  const customerWithStatusField: Entity = {
+    name: "Customer",
+    label: "Customers",
+    fields: [
+      { name: "name", label: "Name", type: "text", required: true },
+      {
+        name: "status",
+        label: "Status",
+        type: "enum",
+        required: true,
+        enumValues: ["New", "Won"],
+        enumLabels: { New: "New", Won: "Won" },
+      },
+    ],
+  };
+  const customerWithStatusFieldRenamed: Entity = { ...customerWithStatusField, fields: [customerWithStatusField.fields[0], { ...customerWithStatusField.fields[1], name: "Status" }] };
+  const olderExportProject: Project = { ...project, spec: { ...project.spec, entities: [customerWithStatusField] } };
+  const newerExportProject: Project = { ...project, spec: { ...project.spec, entities: [customerWithStatusFieldRenamed] } };
+  const olderStore = [
+    { id: 1, name: "Acme Corp", status: "New" },
+    { id: 2, name: "Globex", status: "Won" },
+  ];
+  // Mirrors round 986's own newerStore convention: a real server would
+  // serialize the newer export's records keyed by the CURRENT schema's
+  // field.name, since this is a fresh, separate render, not a live
+  // transition of the same mounted page.
+  const newerStore = [
+    { id: 1, name: "Acme Corp", Status: "New" },
+    { id: 2, name: "Globex", Status: "Won" },
+  ];
+  const originalFetch = globalThis.fetch;
+
+  const olderDir = writeGeneratedWebComponent(generateExportFiles(olderExportProject));
+  const newerDir = writeGeneratedWebComponent(generateExportFiles(newerExportProject));
+  try {
+    await withRealLocalStorage(async () => {
+      globalThis.fetch = (async (input: string) => {
+        if (input === "/api/Customer") {
+          return new Response(JSON.stringify({ records: olderStore }), { status: 200, headers: { "content-type": "application/json" } });
+        }
+        throw new Error(`unexpected request ${input}`);
+      }) as typeof fetch;
+
+      // Simulates grouping by "status" and collapsing the "New" group, then
+      // separately switching to Board view and collapsing the "New"
+      // column, in an OLDER export, while the entity still had that exact
+      // casing -- persists both via the real generated controls.
+      const { EntityView: OlderEntityView } = await import(path.join(olderDir, "web", "src", "components", "EntityView.jsx"));
+      const olderProps = {
+        entity: customerWithStatusField,
+        highlightRecordId: null,
+        onHighlightHandled: () => {},
+        onJumpToRecord: () => {},
+        onRecordCountChange: () => {},
+      };
+      const older = render(React.createElement(OlderEntityView, olderProps));
+      for (let i = 0; i < 40; i++) {
+        if (older.container.querySelectorAll("tbody tr").length > 0) break;
+        await act(async () => {
+          await new Promise((resolve) => setTimeout(resolve, 0));
+        });
+      }
+      await act(async () => {
+        fireEvent.change(older.container.querySelector(".entity-group-by") as HTMLSelectElement, { target: { value: "status" } });
+      });
+      await act(async () => {
+        await new Promise((resolve) => setTimeout(resolve, 0));
+      });
+      const olderGroupToggle = Array.from(older.container.querySelectorAll(".entity-group-header-row")).find((row) =>
+        /New/.test(row.textContent ?? ""),
+      )!.querySelector(".entity-group-toggle") as HTMLButtonElement;
+      await act(async () => {
+        fireEvent.click(olderGroupToggle);
+      });
+
+      await act(async () => {
+        fireEvent.click(older.container.querySelectorAll(".view-toggle-btn")[1] as HTMLButtonElement);
+      });
+      for (let i = 0; i < 40; i++) {
+        if (older.container.querySelectorAll(".board-column").length > 0) break;
+        await act(async () => {
+          await new Promise((resolve) => setTimeout(resolve, 0));
+        });
+      }
+      const olderBoardColumnToggle = Array.from(older.container.querySelectorAll(".board-column")).find((col) =>
+        /New/.test(col.querySelector(".board-column-header-info")?.textContent ?? ""),
+      )!.querySelector(".board-column-toggle") as HTMLButtonElement;
+      await act(async () => {
+        fireEvent.click(olderBoardColumnToggle);
+      });
+
+      assert.deepEqual(
+        JSON.parse(localStorage.getItem("forge_collapsed_groups") ?? "{}")[JSON.stringify(["Customer", "status"])],
+        ["New"],
+        "sanity check: collapsing the 'New' group must have actually persisted under the field's current casing",
+      );
+      assert.deepEqual(
+        JSON.parse(localStorage.getItem("forge_collapsed_board_columns") ?? "{}")[JSON.stringify(["Customer", "status"])],
+        ["New"],
+        "sanity check: collapsing the 'New' board column must have actually persisted under the field's current casing",
+      );
+      cleanup();
+
+      // Simulates reloading a NEWER export of the same project, in the
+      // same browser, after a refine renamed "status" -> "Status" only --
+      // same field, same type, same enum values.
+      globalThis.fetch = (async (input: string) => {
+        if (input === "/api/Customer") {
+          return new Response(JSON.stringify({ records: newerStore }), { status: 200, headers: { "content-type": "application/json" } });
+        }
+        throw new Error(`unexpected request ${input}`);
+      }) as typeof fetch;
+      const { EntityView: NewerEntityView } = await import(path.join(newerDir, "web", "src", "components", "EntityView.jsx"));
+      const newerProps = {
+        entity: customerWithStatusFieldRenamed,
+        highlightRecordId: null,
+        onHighlightHandled: () => {},
+        onJumpToRecord: () => {},
+        onRecordCountChange: () => {},
+      };
+      const newer = render(React.createElement(NewerEntityView, newerProps));
+      // viewMode itself (forge_view_mode, keyed only by entity name -- no
+      // field-name dimension, so no rename hazard of its own) was left on
+      // "board" by the older render's own last interaction above, and
+      // that persisted choice carries over to this fresh mount too -- so
+      // the newer render starts in Board view, not Table.
+      for (let i = 0; i < 40; i++) {
+        if (newer.container.querySelectorAll(".board-column").length > 0) break;
+        await act(async () => {
+          await new Promise((resolve) => setTimeout(resolve, 0));
+        });
+      }
+
+      assert.deepEqual(
+        JSON.parse(localStorage.getItem("forge_collapsed_board_columns") ?? "{}")[JSON.stringify(["Customer", "Status"])],
+        ["New"],
+        "the collapsed board column's real stored set must migrate to the new field-name casing",
+      );
+      assert.equal(
+        JSON.parse(localStorage.getItem("forge_collapsed_board_columns") ?? "{}")[JSON.stringify(["Customer", "status"])],
+        undefined,
+        "the old field-name casing's key must be cleaned up, not left orphaned alongside the migrated one",
+      );
+      const newerNewColumn = Array.from(newer.container.querySelectorAll(".board-column")).find((col) =>
+        /New/.test(col.querySelector(".board-column-header-info")?.textContent ?? ""),
+      )!;
+      const newerWonColumn = Array.from(newer.container.querySelectorAll(".board-column")).find((col) =>
+        /Won/.test(col.querySelector(".board-column-header-info")?.textContent ?? ""),
+      )!;
+      assert.equal(
+        newerNewColumn.querySelectorAll(".board-card").length,
+        0,
+        "the 'New' board column must stay collapsed under the new spelling, not silently re-expand",
+      );
+      assert.equal(
+        newerWonColumn.querySelectorAll(".board-card").length,
+        1,
+        "the unrelated 'Won' board column must be completely unaffected",
+      );
+
+      // Switch back to Table view to check the group-collapse migration.
+      await act(async () => {
+        fireEvent.click(newer.container.querySelectorAll(".view-toggle-btn")[0] as HTMLButtonElement);
+      });
+      for (let i = 0; i < 40; i++) {
+        if (newer.container.querySelectorAll("tbody tr[data-record-id]").length > 0) break;
+        await act(async () => {
+          await new Promise((resolve) => setTimeout(resolve, 0));
+        });
+      }
+
+      assert.deepEqual(
+        JSON.parse(localStorage.getItem("forge_collapsed_groups") ?? "{}")[JSON.stringify(["Customer", "Status"])],
+        ["New"],
+        "the collapsed group's real stored set must migrate to the new field-name casing",
+      );
+      assert.equal(
+        JSON.parse(localStorage.getItem("forge_collapsed_groups") ?? "{}")[JSON.stringify(["Customer", "status"])],
+        undefined,
+        "the old field-name casing's key must be cleaned up, not left orphaned alongside the migrated one",
+      );
+      assert.ok(
+        !Array.from(newer.container.querySelectorAll("tbody tr[data-record-id]")).some((tr) => /Acme Corp/.test(tr.textContent ?? "")),
+        "the 'New' group (Acme Corp) must stay collapsed under the new spelling, not silently re-expand",
+      );
+      assert.ok(
+        Array.from(newer.container.querySelectorAll("tbody tr[data-record-id]")).some((tr) => /Globex/.test(tr.textContent ?? "")),
+        "the unrelated 'Won' group (Globex) must be completely unaffected",
+      );
+    });
+  } finally {
+    globalThis.fetch = originalFetch;
+    cleanup();
+    rmSync(olderDir, { recursive: true, force: true });
+    rmSync(newerDir, { recursive: true, force: true });
+  }
+});
+
+/**
  * New in this round: the exported app's own GlobalSearch.jsx had the
  * identical gap the live preview's own GlobalSearchPanel.tsx did --
  * ArrowDown/ArrowUp moved the highlighted result group's CSS class, but

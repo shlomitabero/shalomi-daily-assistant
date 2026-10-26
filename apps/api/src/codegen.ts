@@ -1631,6 +1631,41 @@ function setPersistedCollapsedGroups(entityName, groupFieldName, keys) {
   return deduped;
 }
 
+// Mirrors the live preview's own collapsedGroupsPreference.ts
+// migrateCollapsedGroupsFieldCase -- a newer export's page opened in a
+// browser that still holds an OLDER export's localStorage (this store is
+// keyed only by entity+field name, with no export-version dimension) after
+// a refine between the two export generations renamed groupFieldName's
+// letters only (e.g. "status" -> "Status") hits the exact same exact-match
+// miss round 986 already fixed for this file's other five per-field
+// stores, just never for this one -- falls back to a case-insensitive scan
+// (scoped to this entity) only when the exact lookup is empty, and migrates
+// the real set to the new key rather than just reading through.
+function migrateCollapsedGroupsFieldCase(entityName, groupFieldName) {
+  const exact = getPersistedCollapsedGroups(entityName, groupFieldName);
+  if (exact.length > 0) return exact;
+  const store = readCollapsedGroupsStore();
+  const lowerFieldName = groupFieldName.toLowerCase();
+  for (const key of Object.keys(store)) {
+    let parsed;
+    try {
+      parsed = JSON.parse(key);
+    } catch {
+      continue;
+    }
+    if (!Array.isArray(parsed) || parsed.length !== 2 || parsed[0] !== entityName) continue;
+    if (typeof parsed[1] !== "string" || parsed[1] === groupFieldName || parsed[1].toLowerCase() !== lowerFieldName) continue;
+    const migrated = Array.isArray(store[key]) ? store[key].filter((k) => typeof k === "string") : [];
+    delete store[key];
+    const newKey = JSON.stringify([entityName, groupFieldName]);
+    if (migrated.length > 0) store[newKey] = migrated;
+    else delete store[newKey];
+    writeCollapsedGroupsStore(store);
+    return migrated;
+  }
+  return [];
+}
+
 // Which board-view column values are collapsed, per entity+boardField.
 // Mirrors the live preview's own collapsedBoardColumnsPreference.ts --
 // deliberately a SEPARATE store from the one just above (table groups and
@@ -1680,6 +1715,39 @@ function setPersistedCollapsedBoardColumns(entityName, boardFieldName, values) {
   else store[mapKey] = deduped;
   writeCollapsedBoardColumnsStore(store);
   return deduped;
+}
+
+// Mirrors migrateCollapsedGroupsFieldCase just above, for this store's own
+// boardFieldName dimension -- see that function's own doc comment for the
+// full mechanism. boardFieldName isn't persisted React state the way
+// groupFieldName is (findBoardField recomputes it fresh from entity.fields
+// every render), but it still resolves to the new casing the instant a
+// case-only rename between two export generations is reflected in the
+// newer export's own entity.fields, so the plain exact-match lookup is just
+// as exposed as collapsedGroups' own.
+function migrateCollapsedBoardColumnsFieldCase(entityName, boardFieldName) {
+  const exact = getPersistedCollapsedBoardColumns(entityName, boardFieldName);
+  if (exact.length > 0) return exact;
+  const store = readCollapsedBoardColumnsStore();
+  const lowerFieldName = boardFieldName.toLowerCase();
+  for (const key of Object.keys(store)) {
+    let parsed;
+    try {
+      parsed = JSON.parse(key);
+    } catch {
+      continue;
+    }
+    if (!Array.isArray(parsed) || parsed.length !== 2 || parsed[0] !== entityName) continue;
+    if (typeof parsed[1] !== "string" || parsed[1] === boardFieldName || parsed[1].toLowerCase() !== lowerFieldName) continue;
+    const migrated = Array.isArray(store[key]) ? store[key].filter((v) => typeof v === "string") : [];
+    delete store[key];
+    const newKey = JSON.stringify([entityName, boardFieldName]);
+    if (migrated.length > 0) store[newKey] = migrated;
+    else delete store[newKey];
+    writeCollapsedBoardColumnsStore(store);
+    return migrated;
+  }
+  return [];
 }
 
 // Applies a persisted (possibly stale) column order to the entity's current
@@ -3885,7 +3953,7 @@ export function EntityView({ entity, highlightRecordId, onHighlightHandled, onJu
   // have a fixed, never-stale two-value space ("true"/"false" always), so
   // only the enum case needs filtering.
   const [collapsedGroups, setCollapsedGroups] = useState(() => {
-    const loaded = getPersistedCollapsedGroups(entity.name, groupFieldName);
+    const loaded = migrateCollapsedGroupsFieldCase(entity.name, groupFieldName);
     const groupField = entity.fields.find((f) => f.name === groupFieldName);
     if (groupField?.type !== "enum") return new Set(loaded);
     const validValues = new Set(groupField.enumValues ?? []);
@@ -3900,7 +3968,7 @@ export function EntityView({ entity, highlightRecordId, onHighlightHandled, onJu
   const [collapsedBoardColumns, setCollapsedBoardColumns] = useState(() => {
     const boardFieldForInit = findBoardField(entity.fields);
     const boardFieldNameForInit = boardFieldForInit ? boardFieldForInit.name : "";
-    const loaded = getPersistedCollapsedBoardColumns(entity.name, boardFieldNameForInit);
+    const loaded = migrateCollapsedBoardColumnsFieldCase(entity.name, boardFieldNameForInit);
     if (!boardFieldForInit) return new Set(loaded);
     const validValues = new Set(boardFieldForInit.enumValues ?? []);
     const filtered = loaded.filter((v) => validValues.has(v));
