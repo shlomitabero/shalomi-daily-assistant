@@ -1184,6 +1184,80 @@ test("GlobalSearchPanel highlights the matched text within each result row's own
 });
 
 /**
+ * Round 1050: closes round 1049's own deferred sibling gap -- a record's
+ * display label (recordPreview) can fall back to a `text`/`longtext`
+ * field (pickDisplayField, entityFormatting.ts) when the entity has no
+ * name/title field, e.g. a `Lead` entity whose only usable display field
+ * is `website`. Before this round, a URL or email embedded there rendered
+ * as inert text here, the same gap round 1049 already fixed for the
+ * WhatsApp message log -- blocked there by each row being a native
+ * `<button>` (nesting a real `<a>` inside a `<button>` is invalid HTML).
+ * This round restructures the row to a role="button" div specifically to
+ * remove that blocker. Confirms the link renders as a real `<a>` AND that
+ * clicking it does NOT also fire onJumpToRecord (the link's own onClick
+ * stops propagation), while clicking anywhere else on the row still does.
+ */
+test("GlobalSearchPanel renders a URL or email embedded in a record's own display-label field as a real clickable link, without also triggering onJumpToRecord", async () => {
+  await withJsdom(async () => {
+    const originalFetch = globalThis.fetch;
+    const leadEntity: Entity = {
+      name: "Lead",
+      label: "Lead",
+      fields: [{ name: "website", label: "Website", type: "text", required: false }],
+    };
+    const leadRecords: EntityRecord[] = [{ id: 1, website: "https://example.com/widget-page" }];
+    globalThis.fetch = (async (input: string): Promise<Response> => {
+      if (input === "/api/projects/proj1/entities/Lead") {
+        return new Response(JSON.stringify({ records: leadRecords }), { status: 200, headers: { "content-type": "application/json" } });
+      }
+      throw new Error(`unexpected request ${input}`);
+    }) as typeof fetch;
+    const recordJumps: [string, number][] = [];
+    try {
+      render(
+        React.createElement(
+          ThemeProvider,
+          null,
+          React.createElement(
+            LanguageProvider,
+            null,
+            React.createElement(GlobalSearchPanel, {
+              projectId: "proj1",
+              userId: "user1",
+              projectName: "Test Project",
+              entities: [leadEntity],
+              onClose: () => {},
+              onJumpToEntity: () => {},
+              onJumpToRecord: (entityName: string, recordId: number) => recordJumps.push([entityName, recordId]),
+            }),
+          ),
+        ),
+      );
+
+      const input = document.querySelector(".global-search-input") as HTMLInputElement;
+      fireEvent.change(input, { target: { value: "widget" } });
+      const form = document.querySelector("form.global-search-form")!;
+      fireEvent.submit(form);
+      await waitForCondition(() => document.querySelectorAll(".global-search-hit-button").length === 1);
+
+      const row = document.querySelector(".global-search-hit-button")!;
+      const link = row.querySelector("a.cell-link") as HTMLAnchorElement;
+      assert.ok(link, "expected a real <a> link for the URL embedded in the record's own display-label field");
+      assert.equal(link.getAttribute("href"), "https://example.com/widget-page");
+      assert.equal(link.target, "_blank");
+
+      fireEvent.click(link);
+      assert.deepEqual(recordJumps, [], "clicking the link itself must open it, not also fire onJumpToRecord");
+
+      fireEvent.click(row);
+      assert.deepEqual(recordJumps, [["Lead", 1]], "clicking the row (not the link) must still fire onJumpToRecord, unchanged");
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+});
+
+/**
  * New in this round: a submitted search now survives closing and
  * reopening the panel, via recentSearches.ts's real localStorage
  * persistence (the same convention pinnedProjects.ts/ideaDraft.ts already

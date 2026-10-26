@@ -3186,6 +3186,11 @@ button.sort-header:hover:not(:disabled) {
   width: 100%;
   text-align: start;
   white-space: normal;
+  /* Round 1050: this row became a role="button" div (not a native
+     <button>, which lets LinkifiedHighlighted render a real <a> inside
+     it) -- a div gets no pointer cursor by default the way a real button
+     does. */
+  cursor: pointer;
 }
 
 .whatsapp-panel {

@@ -6,6 +6,7 @@ import {
   scrollIntoViewRespectingMotion,
   searchEntityRecords,
   splitHighlightSegments,
+  splitLinkSegments,
   type EntitySearchResult,
   type RelatedRecordsByEntity,
 } from "./entityFormatting.js";
@@ -31,6 +32,46 @@ function Highlighted({ text, query }: { text: string; query: string }) {
           </mark>
         ) : (
           <span key={i}>{seg.text}</span>
+        ),
+      )}
+    </>
+  );
+}
+
+/**
+ * Round 1050: closes round 1049's own deferred sibling gap -- a record's
+ * display label (recordPreview below) can fall back to a `text`/`longtext`
+ * field (pickDisplayField, entityFormatting.ts) when the entity has no
+ * name/title field, so a URL or email embedded in that field (e.g. a
+ * `Lead` entity whose only usable display field is `website`) rendered as
+ * inert text here, the same gap round 1049 already fixed for the WhatsApp
+ * message log. Round 1049 deliberately did NOT extend that fix to this
+ * file, since each row used to be a single native `<button>` -- nesting a
+ * real `<a>` inside a `<button>` is invalid HTML with broken click-target
+ * behavior. This round's own row restructure (role="button" div instead
+ * of a native button -- see the result-row JSX below) removes that
+ * blocker, so this composes splitLinkSegments with Highlighted exactly
+ * the way WhatsAppPanel.tsx's LinkifiedBody already does, with each link's
+ * own onClick stopping propagation so clicking it opens the link instead
+ * of also triggering the row's own onJumpToRecord.
+ */
+function LinkifiedHighlighted({ text, query }: { text: string; query: string }) {
+  return (
+    <>
+      {splitLinkSegments(text).map((seg, i) =>
+        seg.href ? (
+          <a
+            key={i}
+            href={seg.href}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="cell-link"
+            onClick={(e) => e.stopPropagation()}
+          >
+            {seg.text}
+          </a>
+        ) : (
+          <Highlighted key={i} text={seg.text} query={query} />
         ),
       )}
     </>
@@ -611,16 +652,30 @@ export function GlobalSearchPanel({
                   <ul className="global-search-hits">
                     {displayed.map((record) => (
                       <li key={String(record.id)}>
-                        <button
-                          type="button"
+                        {/* Round 1050: a role="button" div, not a native <button> --
+                            LinkifiedHighlighted below can render a real <a> for an
+                            embedded URL/email, and nesting <a> inside <button> is
+                            invalid HTML with broken click-target behavior. Mirrors
+                            EntityPanel.tsx's own calendar day-cell pattern (a
+                            clickable div containing its own nested interactive
+                            controls, each stopping propagation on its own click). */}
+                        <div
+                          role="button"
+                          tabIndex={0}
                           className="link-button global-search-hit-button"
                           onClick={() => onJumpToRecord(result.entityName, record.id as number)}
+                          onKeyDown={(e) => {
+                            if (e.target !== e.currentTarget) return;
+                            if (e.key !== "Enter" && e.key !== " ") return;
+                            e.preventDefault();
+                            onJumpToRecord(result.entityName, record.id as number);
+                          }}
                         >
-                          <Highlighted
+                          <LinkifiedHighlighted
                             text={recordPreview(entities.find((e) => e.name === result.entityName)!, record)}
                             query={highlightQuery}
                           />
-                        </button>
+                        </div>
                       </li>
                     ))}
                   </ul>

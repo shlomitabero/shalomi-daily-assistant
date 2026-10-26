@@ -2372,7 +2372,7 @@ export function isInlineEditableField(field) {
 // punctuation (".", ",", ...) off of a matched URL/email into its own
 // plain segment, and not double-matching an "@" inside a URL's own path as
 // a second, overlapping email match.
-function splitLinkSegments(text) {
+export function splitLinkSegments(text) {
   const URL_RE = /https?:\\/\\/[^\\s<>"')]+/g;
   const EMAIL_RE = /[\\w.+-]+@[\\w-]+(?:\\.[\\w-]+)+/g;
   const TRAILING_PUNCTUATION_RE = /[.,;:!?]+$/;
@@ -6784,7 +6784,30 @@ import {
   entityLabelOccurrences,
   entityDisplayLabel,
   Highlighted,
+  splitLinkSegments,
 } from "./EntityView.jsx";
+
+// Round 1050: mirrors the live preview's own GlobalSearchPanel.tsx fix --
+// a separate component from EntityView.jsx's own LinkifiedText (not a
+// reuse), since this one's own <a> must stop its click from propagating
+// up to the clickable result row it's nested inside (GlobalSearch below),
+// unlike LinkifiedText's own callers (plain table cells with no parent
+// onClick to guard against).
+function LinkifiedHighlighted({ text, query }) {
+  return (
+    <>
+      {splitLinkSegments(text).map((seg, i) =>
+        seg.href ? (
+          <a key={i} href={seg.href} target="_blank" rel="noopener noreferrer" className="cell-link" onClick={(e) => e.stopPropagation()}>
+            {seg.text}
+          </a>
+        ) : (
+          <Highlighted key={i} text={seg.text} query={query} />
+        ),
+      )}
+    </>
+  );
+}
 
 // Fetches every entity's own records once, then searches all of them using
 // that same result set as matchesSearch's relatedRecords -- so a relation
@@ -7334,16 +7357,28 @@ export function GlobalSearch({ entities, onClose, onJumpToEntity, onJumpToRecord
                   <ul className="global-search-hits">
                     {displayed.map((record) => (
                       <li key={record.id}>
-                        <button
-                          type="button"
+                        {/* Round 1050: mirrors the live preview's own GlobalSearchPanel.tsx fix --
+                            a role="button" div, not a native <button>, since LinkifiedHighlighted
+                            below can render a real <a> for a URL/email embedded in the record's
+                            own display-label field, and nesting <a> inside <button> is invalid
+                            HTML with broken click-target behavior. */}
+                        <div
+                          role="button"
+                          tabIndex={0}
                           className="link-button global-search-hit-button"
                           onClick={() => onJumpToRecord(result.entityName, record.id)}
+                          onKeyDown={(e) => {
+                            if (e.target !== e.currentTarget) return;
+                            if (e.key !== "Enter" && e.key !== " ") return;
+                            e.preventDefault();
+                            onJumpToRecord(result.entityName, record.id);
+                          }}
                         >
-                          <Highlighted
+                          <LinkifiedHighlighted
                             text={recordDisplayLabel(entities.find((e) => e.name === result.entityName), record)}
                             query={highlightQuery}
                           />
-                        </button>
+                        </div>
                       </li>
                     ))}
                   </ul>
@@ -8234,7 +8269,7 @@ nav button.active .tab-count { background: rgba(255, 255, 255, 0.25); color: inh
 .global-search-group-header button.small { margin-inline-start: auto; padding: 4px 10px; font-size: 13px; }
 .global-search-hits { margin: 10px 0 0; padding-inline-start: 20px; display: flex; flex-direction: column; gap: 6px; font-size: 14.5px; }
 .global-search-show-all { margin-top: 6px; font-size: 13px; }
-.global-search-hit-button { display: block; width: 100%; text-align: start; white-space: normal; }
+.global-search-hit-button { display: block; width: 100%; text-align: start; white-space: normal; cursor: pointer; }
 .record-row-highlighted, .record-row-highlighted:hover { background: var(--accent-soft); transition: background 1.5s ease; }
 .record-row-focused { outline: 2px solid var(--accent); outline-offset: -2px; }
 .record-row-move-error, .record-row-move-error:hover { background: var(--danger-soft); transition: background 2s ease; }

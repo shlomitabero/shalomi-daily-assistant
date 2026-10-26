@@ -11261,6 +11261,95 @@ test("the exported app's Global Search can jump to an individual matched record,
   assert.match(stylesCss, /\.record-row-highlighted, \.record-row-highlighted:hover \{ background: var\(--accent-soft\)/);
 });
 
+/**
+ * Round 1050: mirrors the live preview's own GlobalSearchPanel.tsx fix --
+ * a record's display label (recordDisplayLabel) can fall back to a
+ * `text`/`longtext` field when the entity has no name/title field, e.g. a
+ * `Lead` entity whose only usable display field is `website`. The
+ * exported app's own GlobalSearch.jsx had the identical gap the live
+ * preview just closed: each result row rendered through plain Highlighted
+ * only, with zero linkification, and was a native `<button>` -- the exact
+ * structural blocker (nesting `<a>` inside `<button>` is invalid HTML)
+ * that made round 1049 defer fixing this for the live preview too, until
+ * this round's own row restructure (role="button" div) removed it there.
+ * Renders the real generated GlobalSearch.jsx end to end and confirms a
+ * URL embedded in a record's own fallback display field renders as a
+ * real, clickable `<a>`, and that clicking it does not also fire
+ * onJumpToRecord.
+ */
+test("the exported GlobalSearch renders a URL embedded in a record's own fallback display-label field as a real clickable link, without also triggering onJumpToRecord", async () => {
+  const withLead: Project = {
+    ...project,
+    spec: {
+      ...project.spec,
+      entities: [
+        ...project.spec.entities,
+        {
+          name: "Lead",
+          fields: [{ name: "website", type: "text", required: false }],
+        },
+      ],
+    },
+  };
+  const files = generateExportFiles(withLead);
+  const dir = writeGeneratedWebComponent(files);
+  const leadRecords = [{ id: 1, website: "https://example.com/widget-page" }];
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = (async (input: string): Promise<Response> => {
+    if (input === "/api/Lead") {
+      return new Response(JSON.stringify({ records: leadRecords }), { status: 200, headers: { "content-type": "application/json" } });
+    }
+    if (input.startsWith("/api/")) {
+      return new Response(JSON.stringify({ records: [] }), { status: 200, headers: { "content-type": "application/json" } });
+    }
+    throw new Error(`unexpected request ${input}`);
+  }) as typeof fetch;
+
+  try {
+    await withRealLocalStorage(async () => {
+      const { GlobalSearch } = await import(path.join(dir, "web", "src", "components", "GlobalSearch.jsx"));
+      const recordJumps: [string, number][] = [];
+      const { container } = render(
+        React.createElement(GlobalSearch, {
+          entities: withLead.spec.entities,
+          onClose: () => {},
+          onJumpToEntity: () => {},
+          onJumpToRecord: (entityName: string, recordId: number) => recordJumps.push([entityName, recordId]),
+        }),
+      );
+
+      const input = container.querySelector(".global-search-input") as HTMLInputElement;
+      const form = container.querySelector("form.global-search-form") as HTMLFormElement;
+      await act(async () => {
+        fireEvent.change(input, { target: { value: "widget" } });
+        fireEvent.submit(form);
+      });
+      for (let i = 0; i < 40; i++) {
+        if (container.querySelector(".global-search-hit-button a")) break;
+        await act(async () => {
+          await new Promise((resolve) => setTimeout(resolve, 0));
+        });
+      }
+      const row = container.querySelector(".global-search-hit-button") as HTMLElement;
+      assert.ok(row, "expected a result row for the Lead record");
+      const link = row.querySelector("a") as HTMLAnchorElement;
+      assert.ok(link, "expected a real <a> link for the URL embedded in the record's own display-label field");
+      assert.equal(link.getAttribute("href"), "https://example.com/widget-page");
+      assert.equal(link.target, "_blank");
+
+      fireEvent.click(link);
+      assert.deepEqual(recordJumps, [], "clicking the link itself must open it, not also fire onJumpToRecord");
+
+      fireEvent.click(row);
+      assert.deepEqual(recordJumps, [["Lead", 1]], "clicking the row (not the link) must still fire onJumpToRecord, unchanged");
+    });
+  } finally {
+    globalThis.fetch = originalFetch;
+    cleanup();
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
 // Regression test: runSearch used to await a bare
 // Promise.all(entities.map(searchEntity)) -- one entity whose records
 // failed to load (a transient network blip, a cold-starting backend)
