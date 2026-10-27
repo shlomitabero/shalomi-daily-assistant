@@ -28,67 +28,84 @@ async function withJsdom(fn: () => void | Promise<void>): Promise<void> {
 
 test("getHiddenFields returns an empty set when nothing has ever been hidden", async () => {
   await withJsdom(() => {
-    assert.deepEqual(getHiddenFields("proj1", "Customer"), new Set());
+    assert.deepEqual(getHiddenFields("proj1", "Customer", "userA"), new Set());
   });
 });
 
 test("toggleFieldVisibility hides a shown field, and a fresh getHiddenFields call sees it -- a real persistence round trip, not just the return value", async () => {
   await withJsdom(() => {
-    const after = toggleFieldVisibility("proj1", "Customer", "notes");
+    const after = toggleFieldVisibility("proj1", "Customer", "userA", "notes");
     assert.deepEqual(after, new Set(["notes"]));
-    assert.deepEqual(getHiddenFields("proj1", "Customer"), new Set(["notes"]), "must actually be written to storage, not just returned");
+    assert.deepEqual(getHiddenFields("proj1", "Customer", "userA"), new Set(["notes"]), "must actually be written to storage, not just returned");
   });
 });
 
 test("toggleFieldVisibility re-shows an already-hidden field", async () => {
   await withJsdom(() => {
-    toggleFieldVisibility("proj1", "Customer", "notes");
-    toggleFieldVisibility("proj1", "Customer", "phone");
-    const after = toggleFieldVisibility("proj1", "Customer", "notes");
+    toggleFieldVisibility("proj1", "Customer", "userA", "notes");
+    toggleFieldVisibility("proj1", "Customer", "userA", "phone");
+    const after = toggleFieldVisibility("proj1", "Customer", "userA", "notes");
     assert.deepEqual(after, new Set(["phone"]));
-    assert.deepEqual(getHiddenFields("proj1", "Customer"), new Set(["phone"]));
+    assert.deepEqual(getHiddenFields("proj1", "Customer", "userA"), new Set(["phone"]));
   });
 });
 
 test("hidden columns are scoped per project+entity -- hiding a field in one project's entity never hides a same-named field in a different project's same-named entity", async () => {
   await withJsdom(() => {
-    toggleFieldVisibility("proj1", "Customer", "notes");
-    assert.deepEqual(getHiddenFields("proj2", "Customer"), new Set(), "a different project must not see proj1's hidden columns");
-    assert.deepEqual(getHiddenFields("proj1", "Order"), new Set(), "a different entity in the same project must not see Customer's hidden columns");
+    toggleFieldVisibility("proj1", "Customer", "userA", "notes");
+    assert.deepEqual(getHiddenFields("proj2", "Customer", "userA"), new Set(), "a different project must not see proj1's hidden columns");
+    assert.deepEqual(getHiddenFields("proj1", "Order", "userA"), new Set(), "a different entity in the same project must not see Customer's hidden columns");
+  });
+});
+
+/**
+ * Round 1055: the whole point of this round's fix. Before it, the storage
+ * key was projectId+entityName alone -- two different collaborator
+ * accounts sharing the SAME project+entity on the SAME browser silently
+ * saw each other's own hidden columns, with no indication a field had
+ * even been hidden -- worse than a leaked filter or search string, since
+ * there's nothing in the table itself hinting a column is missing.
+ */
+test("hidden columns are also kept per-user -- two different accounts on the SAME project+entity never see each other's own hidden-column choice", async () => {
+  await withJsdom(() => {
+    toggleFieldVisibility("proj1", "Customer", "userA", "notes");
+    toggleFieldVisibility("proj1", "Customer", "userB", "phone");
+    assert.deepEqual(getHiddenFields("proj1", "Customer", "userA"), new Set(["notes"]));
+    assert.deepEqual(getHiddenFields("proj1", "Customer", "userB"), new Set(["phone"]), "userB must never see userA's own hidden-column choice");
   });
 });
 
 test("replaceHiddenFields persists a whole new set, and a fresh getHiddenFields call sees it -- a real persistence round trip, not just the return value", async () => {
   await withJsdom(() => {
-    const after = replaceHiddenFields("proj1", "Customer", ["name", "phone"]);
+    const after = replaceHiddenFields("proj1", "Customer", "userA", ["name", "phone"]);
     assert.deepEqual(after, new Set(["name", "phone"]));
-    assert.deepEqual(getHiddenFields("proj1", "Customer"), new Set(["name", "phone"]), "must actually be written to storage, not just returned");
+    assert.deepEqual(getHiddenFields("proj1", "Customer", "userA"), new Set(["name", "phone"]), "must actually be written to storage, not just returned");
   });
 });
 
 test("replaceHiddenFields with an empty set clears the stored entry entirely, not leave an empty array behind", async () => {
   await withJsdom(() => {
-    toggleFieldVisibility("proj1", "Customer", "notes");
-    replaceHiddenFields("proj1", "Customer", []);
-    assert.deepEqual(getHiddenFields("proj1", "Customer"), new Set());
-    assert.equal(JSON.parse(localStorage.getItem("forge.hiddenColumns")!)["proj1:Customer"], undefined);
+    toggleFieldVisibility("proj1", "Customer", "userA", "notes");
+    replaceHiddenFields("proj1", "Customer", "userA", []);
+    assert.deepEqual(getHiddenFields("proj1", "Customer", "userA"), new Set());
+    assert.equal(JSON.parse(localStorage.getItem("forge.hiddenColumns")!)["proj1:Customer:userA"], undefined);
   });
 });
 
 test("getHiddenFields tolerates corrupted/foreign localStorage content instead of throwing", async () => {
   await withJsdom(() => {
     localStorage.setItem("forge.hiddenColumns", "not valid json{{{");
-    assert.deepEqual(getHiddenFields("proj1", "Customer"), new Set());
+    assert.deepEqual(getHiddenFields("proj1", "Customer", "userA"), new Set());
 
     localStorage.setItem("forge.hiddenColumns", JSON.stringify(["an", "array", "not", "an", "object"]));
-    assert.deepEqual(getHiddenFields("proj1", "Customer"), new Set());
+    assert.deepEqual(getHiddenFields("proj1", "Customer", "userA"), new Set());
 
     localStorage.setItem(
       "forge.hiddenColumns",
-      JSON.stringify({ "proj1:Customer": ["notes", 42, null, "phone"] }),
+      JSON.stringify({ "proj1:Customer:userA": ["notes", 42, null, "phone"] }),
     );
     assert.deepEqual(
-      getHiddenFields("proj1", "Customer"),
+      getHiddenFields("proj1", "Customer", "userA"),
       new Set(["notes", "phone"]),
       "non-string entries must be dropped, not crash the whole read",
     );

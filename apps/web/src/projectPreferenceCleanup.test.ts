@@ -63,7 +63,12 @@ test("purgeProjectPreferences removes exactly one project's entries from every p
     // Seed "abc" -- the project being deleted.
     setColumnWidth("abc", entity, "name", 220);
     setColumnOrder("abc", entity, ["name", "email"]);
-    toggleFieldVisibility("abc", entity, "email");
+    toggleFieldVisibility("abc", entity, "userA", "email");
+    // A second collaborator account's own hidden-column choice for the
+    // SAME project -- round 1055's own fix: any past collaborator could
+    // have hidden a column under their own per-user key, so the purge
+    // must remove it for every account, not just the first one seeded above.
+    toggleFieldVisibility("abc", entity, "userB", "phone");
     setFieldFilters("abc", entity, "userA", { status: "active" });
     // A second collaborator account's own filter for the SAME project --
     // round 1054's own fix: any past collaborator could have filtered this
@@ -103,7 +108,7 @@ test("purgeProjectPreferences removes exactly one project's entries from every p
     // Seed "proj2" -- an unrelated project that must survive untouched.
     setColumnWidth("proj2", entity, "name", 300);
     setColumnOrder("proj2", entity, ["email", "name"]);
-    toggleFieldVisibility("proj2", entity, "name");
+    toggleFieldVisibility("proj2", entity, "userA", "name");
     setFieldFilters("proj2", entity, "userA", { status: "closed" });
     setGroupByField("proj2", entity, "owner");
     setCollapsedBoardColumns("proj2", entity, "owner", ["archived"]);
@@ -125,7 +130,7 @@ test("purgeProjectPreferences removes exactly one project's entries from every p
     // wrongly treat it as "abc"'s own data.
     setColumnWidth("abc-other", entity, "name", 400);
     setColumnOrder("abc-other", entity, ["name"]);
-    toggleFieldVisibility("abc-other", entity, "name");
+    toggleFieldVisibility("abc-other", entity, "userA", "name");
     setFieldFilters("abc-other", entity, "userA", { status: "other" });
     setGroupByField("abc-other", entity, "priority");
     setCollapsedBoardColumns("abc-other", entity, "priority", ["other"]);
@@ -147,7 +152,8 @@ test("purgeProjectPreferences removes exactly one project's entries from every p
     // "abc" is gone from every single store.
     assert.deepEqual(getColumnWidths("abc", entity), {}, "columnWidths must be purged");
     assert.deepEqual(getColumnOrder("abc", entity), [], "columnOrder must be purged");
-    assert.deepEqual(getHiddenFields("abc", entity), new Set(), "columnVisibility must be purged");
+    assert.deepEqual(getHiddenFields("abc", entity, "userA"), new Set(), "columnVisibility must be purged for userA");
+    assert.deepEqual(getHiddenFields("abc", entity, "userB"), new Set(), "columnVisibility must be purged for userB too -- any past collaborator could have hidden a column under their own per-user key");
     assert.deepEqual(getFieldFilters("abc", entity, "userA"), {}, "fieldFilters must be purged for userA");
     assert.deepEqual(getFieldFilters("abc", entity, "userB"), {}, "fieldFilters must be purged for userB too -- any past collaborator could have filtered under their own per-user key");
     assert.equal(getGroupByField("abc", entity), "", "groupBy must be purged");
@@ -171,7 +177,7 @@ test("purgeProjectPreferences removes exactly one project's entries from every p
     // "proj2" -- a wholly unrelated project -- is completely untouched.
     assert.deepEqual(getColumnWidths("proj2", entity), { name: 300 }, "columnWidths must survive for an unrelated project");
     assert.deepEqual(getColumnOrder("proj2", entity), ["email", "name"], "columnOrder must survive");
-    assert.deepEqual(getHiddenFields("proj2", entity), new Set(["name"]), "columnVisibility must survive");
+    assert.deepEqual(getHiddenFields("proj2", entity, "userA"), new Set(["name"]), "columnVisibility must survive");
     assert.deepEqual(getFieldFilters("proj2", entity, "userA"), { status: "closed" }, "fieldFilters must survive");
     assert.equal(getGroupByField("proj2", entity), "owner", "groupBy must survive");
     assert.deepEqual(getCollapsedBoardColumns("proj2", entity, "owner"), ["archived"], "collapsedBoardColumns must survive");
@@ -194,7 +200,7 @@ test("purgeProjectPreferences removes exactly one project's entries from every p
     // exactly the case that would silently lose data.
     assert.deepEqual(getColumnWidths("abc-other", entity), { name: 400 }, "columnWidths must survive for a prefix-sharing project id");
     assert.deepEqual(getColumnOrder("abc-other", entity), ["name"], "columnOrder must survive for a prefix-sharing project id");
-    assert.deepEqual(getHiddenFields("abc-other", entity), new Set(["name"]), "columnVisibility must survive for a prefix-sharing project id");
+    assert.deepEqual(getHiddenFields("abc-other", entity, "userA"), new Set(["name"]), "columnVisibility must survive for a prefix-sharing project id");
     assert.deepEqual(getFieldFilters("abc-other", entity, "userA"), { status: "other" }, "fieldFilters must survive for a prefix-sharing project id");
     assert.equal(getGroupByField("abc-other", entity), "priority", "groupBy must survive for a prefix-sharing project id");
     assert.deepEqual(getCollapsedBoardColumns("abc-other", entity, "priority"), ["other"], "collapsedBoardColumns must survive for a prefix-sharing project id");

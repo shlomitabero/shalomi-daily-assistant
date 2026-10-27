@@ -56,7 +56,12 @@ test("purgeEntityPreferences removes exactly one project+entity's entries from e
     // Seed "abc"/"Customer" -- the entity being dropped by a refine.
     setColumnWidth("abc", "Customer", "name", 220);
     setColumnOrder("abc", "Customer", ["name", "email"]);
-    toggleFieldVisibility("abc", "Customer", "email");
+    toggleFieldVisibility("abc", "Customer", "userA", "email");
+    // A DIFFERENT collaborator's own hidden-column choice for the SAME
+    // project+entity -- purgeEntityPreferences must purge every user's
+    // entry, the same round-1055 reasoning the fieldFilters userB seed
+    // above tests.
+    toggleFieldVisibility("abc", "Customer", "userB", "phone");
     setFieldFilters("abc", "Customer", "userA", { status: "active" });
     // A DIFFERENT collaborator's own filter for the SAME project+entity --
     // purgeEntityPreferences must purge every user's entry, the same
@@ -82,7 +87,7 @@ test("purgeEntityPreferences removes exactly one project+entity's entries from e
     // survive, since only "Customer" was dropped.
     setColumnWidth("abc", "Deal", "amount", 150);
     setColumnOrder("abc", "Deal", ["amount", "stage"]);
-    toggleFieldVisibility("abc", "Deal", "stage");
+    toggleFieldVisibility("abc", "Deal", "userA", "stage");
     setFieldFilters("abc", "Deal", "userA", { stage: "won" });
     setGroupByField("abc", "Deal", "stage");
     setGroupByFieldType("abc", "Deal", "enum");
@@ -99,7 +104,7 @@ test("purgeEntityPreferences removes exactly one project+entity's entries from e
     // unrelated project, which must survive untouched.
     setColumnWidth("proj2", "Customer", "name", 300);
     setColumnOrder("proj2", "Customer", ["email", "name"]);
-    toggleFieldVisibility("proj2", "Customer", "name");
+    toggleFieldVisibility("proj2", "Customer", "userA", "name");
     setFieldFilters("proj2", "Customer", "userA", { status: "closed" });
     setGroupByField("proj2", "Customer", "owner");
     setGroupByFieldType("proj2", "Customer", "text");
@@ -116,7 +121,8 @@ test("purgeEntityPreferences removes exactly one project+entity's entries from e
     // "abc"/"Customer" is gone from every single store.
     assert.deepEqual(getColumnWidths("abc", "Customer"), {}, "columnWidths must be purged");
     assert.deepEqual(getColumnOrder("abc", "Customer"), [], "columnOrder must be purged");
-    assert.deepEqual(getHiddenFields("abc", "Customer"), new Set(), "columnVisibility must be purged");
+    assert.deepEqual(getHiddenFields("abc", "Customer", "userA"), new Set(), "columnVisibility must be purged");
+    assert.deepEqual(getHiddenFields("abc", "Customer", "userB"), new Set(), "columnVisibility must be purged for EVERY collaborator account, not just one");
     assert.deepEqual(getFieldFilters("abc", "Customer", "userA"), {}, "fieldFilters must be purged");
     assert.deepEqual(getFieldFilters("abc", "Customer", "userB"), {}, "fieldFilters must be purged for EVERY collaborator account, not just one");
     assert.equal(getGroupByField("abc", "Customer"), "", "groupBy field must be purged");
@@ -132,7 +138,7 @@ test("purgeEntityPreferences removes exactly one project+entity's entries from e
     // "abc"/"Deal" -- a sibling entity in the SAME project -- is completely untouched.
     assert.deepEqual(getColumnWidths("abc", "Deal"), { amount: 150 }, "columnWidths must survive for a sibling entity");
     assert.deepEqual(getColumnOrder("abc", "Deal"), ["amount", "stage"], "columnOrder must survive for a sibling entity");
-    assert.deepEqual(getHiddenFields("abc", "Deal"), new Set(["stage"]), "columnVisibility must survive for a sibling entity");
+    assert.deepEqual(getHiddenFields("abc", "Deal", "userA"), new Set(["stage"]), "columnVisibility must survive for a sibling entity");
     assert.deepEqual(getFieldFilters("abc", "Deal", "userA"), { stage: "won" }, "fieldFilters must survive for a sibling entity");
     assert.equal(getGroupByField("abc", "Deal"), "stage", "groupBy field must survive for a sibling entity");
     assert.equal(getGroupByFieldType("abc", "Deal"), "enum", "groupBy field type must survive for a sibling entity");
@@ -145,7 +151,7 @@ test("purgeEntityPreferences removes exactly one project+entity's entries from e
     // "proj2"/"Customer" -- the same entity name in an unrelated project -- is also completely untouched.
     assert.deepEqual(getColumnWidths("proj2", "Customer"), { name: 300 }, "columnWidths must survive for an unrelated project's same-named entity");
     assert.deepEqual(getColumnOrder("proj2", "Customer"), ["email", "name"], "columnOrder must survive for an unrelated project's same-named entity");
-    assert.deepEqual(getHiddenFields("proj2", "Customer"), new Set(["name"]), "columnVisibility must survive for an unrelated project's same-named entity");
+    assert.deepEqual(getHiddenFields("proj2", "Customer", "userA"), new Set(["name"]), "columnVisibility must survive for an unrelated project's same-named entity");
     assert.deepEqual(getFieldFilters("proj2", "Customer", "userA"), { status: "closed" }, "fieldFilters must survive for an unrelated project's same-named entity");
     assert.equal(getGroupByField("proj2", "Customer"), "owner", "groupBy field must survive for an unrelated project's same-named entity");
     assert.equal(getGroupByFieldType("proj2", "Customer"), "text", "groupBy field type must survive for an unrelated project's same-named entity");
@@ -207,7 +213,7 @@ test("migrateEntityPreferencesForCaseRename moves exactly one project+entity's e
     // Seed "abc"/"customer" (old casing) -- the entity a refine renamed to "Customer".
     setColumnWidth("abc", "customer", "name", 220);
     setColumnOrder("abc", "customer", ["name", "email"]);
-    toggleFieldVisibility("abc", "customer", "email");
+    toggleFieldVisibility("abc", "customer", "userA", "email");
     setFieldFilters("abc", "customer", "userA", { status: "active" });
     setFieldFilters("abc", "customer", "userB", { status: "pending" });
     setGroupByField("abc", "customer", "status");
@@ -234,7 +240,7 @@ test("migrateEntityPreferencesForCaseRename moves exactly one project+entity's e
     // Every store now resolves under the NEW casing.
     assert.deepEqual(getColumnWidths("abc", "Customer"), { name: 220 }, "columnWidths must resolve under the new casing");
     assert.deepEqual(getColumnOrder("abc", "Customer"), ["name", "email"], "columnOrder must resolve under the new casing");
-    assert.deepEqual(getHiddenFields("abc", "Customer"), new Set(["email"]), "columnVisibility must resolve under the new casing");
+    assert.deepEqual(getHiddenFields("abc", "Customer", "userA"), new Set(["email"]), "columnVisibility must resolve under the new casing");
     assert.deepEqual(getFieldFilters("abc", "Customer", "userA"), { status: "active" }, "fieldFilters must resolve under the new casing");
     assert.deepEqual(
       getFieldFilters("abc", "Customer", "userB"),

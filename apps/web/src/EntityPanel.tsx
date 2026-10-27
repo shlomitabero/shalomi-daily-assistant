@@ -1804,7 +1804,7 @@ export function EntityPanel({
     const currentNames = new Set(entity.fields.map((f) => f.name));
     const byLowerName = new Map(entity.fields.map((f) => [f.name.toLowerCase(), f.name]));
     const remapped = new Set<string>();
-    for (const name of getHiddenFields(projectId, entity.name)) {
+    for (const name of getHiddenFields(projectId, entity.name, userId)) {
       if (currentNames.has(name)) {
         remapped.add(name);
         continue;
@@ -1812,7 +1812,7 @@ export function EntityPanel({
       const current = byLowerName.get(name.toLowerCase());
       if (current) remapped.add(current);
     }
-    setHiddenFields(replaceHiddenFields(projectId, entity.name, remapped));
+    setHiddenFields(replaceHiddenFields(projectId, entity.name, userId, remapped));
   }, [projectId, entity.name, fieldNamesKey]);
 
   // Round 897: the identical "drop a persisted key referencing a field this
@@ -2438,7 +2438,7 @@ export function EntityPanel({
     const hiddenCount = entity.fields.filter((f) => hiddenFields.has(f.name)).length;
     const visibleCount = entity.fields.length - hiddenCount;
     if (!hiddenFields.has(fieldName) && visibleCount <= 1) return; // keep at least one column visible
-    setHiddenFields(toggleFieldVisibility(projectId, entity.name, fieldName));
+    setHiddenFields(toggleFieldVisibility(projectId, entity.name, userId, fieldName));
   }
 
   // Dragging a column header to just before another one's -- reorders the

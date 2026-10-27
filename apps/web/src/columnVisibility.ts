@@ -1,7 +1,21 @@
 const STORAGE_KEY = "forge.hiddenColumns";
 
-function keyFor(projectId: string, entityName: string): string {
-  return `${projectId}:${entityName}`;
+/**
+ * Round 1055: the userId segment was added so two different collaborator
+ * accounts sharing the same project on the same browser no longer see
+ * each other's own chosen hidden columns -- see fieldFiltersPreference.ts's
+ * own keyFor doc comment (round 1054) and entityRecentSearches.ts's (round
+ * 994) for the full reasoning. This store fails more silently than either
+ * of those: a leaked filter value or search string is at least visible in
+ * its own input, but a hidden column is simply absent, with nothing in the
+ * UI telling a collaborator a field even exists -- they just see fewer
+ * columns than their teammate set up, with no cue anything is missing.
+ * purgeHiddenFieldsForProject/purgeHiddenFieldsForEntity below still match
+ * by prefix, which keeps working unchanged regardless of what the key's
+ * own remaining segments (entityName, userId) look like.
+ */
+function keyFor(projectId: string, entityName: string, userId: string): string {
+  return `${projectId}:${entityName}:${userId}`;
 }
 
 function readStore(): Record<string, string[]> {
@@ -28,16 +42,21 @@ function writeStore(store: Record<string, string[]>): void {
   }
 }
 
-/** Which of an entity's own fields are currently hidden from its table view, scoped per project+entity so hiding a wide entity's columns in one project never affects another project's same-named entity. */
-export function getHiddenFields(projectId: string, entityName: string): Set<string> {
+/**
+ * Which of an entity's own fields are currently hidden from its table view,
+ * scoped per project+entity so hiding a wide entity's columns in one
+ * project never affects another project's same-named entity. Round 1055:
+ * also scoped per user -- see keyFor's own doc comment above.
+ */
+export function getHiddenFields(projectId: string, entityName: string, userId: string): Set<string> {
   const store = readStore();
-  return new Set(store[keyFor(projectId, entityName)] ?? []);
+  return new Set(store[keyFor(projectId, entityName, userId)] ?? []);
 }
 
 /** Toggles one field's hidden state and returns the new full set, so callers can update their own state from the return value instead of re-reading storage. */
-export function toggleFieldVisibility(projectId: string, entityName: string, fieldName: string): Set<string> {
+export function toggleFieldVisibility(projectId: string, entityName: string, userId: string, fieldName: string): Set<string> {
   const store = readStore();
-  const key = keyFor(projectId, entityName);
+  const key = keyFor(projectId, entityName, userId);
   const hidden = new Set(store[key] ?? []);
   if (hidden.has(fieldName)) hidden.delete(fieldName);
   else hidden.add(fieldName);
@@ -53,9 +72,9 @@ export function toggleFieldVisibility(projectId: string, entityName: string, fie
  * Used when remapping stale, case-differently-spelled entries after a live
  * refine renames a field's letter casing (round 985).
  */
-export function replaceHiddenFields(projectId: string, entityName: string, fields: Iterable<string>): Set<string> {
+export function replaceHiddenFields(projectId: string, entityName: string, userId: string, fields: Iterable<string>): Set<string> {
   const store = readStore();
-  const key = keyFor(projectId, entityName);
+  const key = keyFor(projectId, entityName, userId);
   const hidden = new Set(fields);
   if (hidden.size === 0) delete store[key];
   else store[key] = [...hidden];
@@ -63,7 +82,7 @@ export function replaceHiddenFields(projectId: string, entityName: string, field
   return hidden;
 }
 
-/** Removes every stored hidden-fields set for this project, across all of its entities -- see columnWidths.ts's purgeColumnWidthsForProject for the full rationale. */
+/** Removes every stored hidden-fields set for this project, across all of its entities and every collaborator -- see columnWidths.ts's purgeColumnWidthsForProject for the full rationale. */
 export function purgeHiddenFieldsForProject(projectId: string): void {
   const store = readStore();
   const prefix = `${projectId}:`;
@@ -74,7 +93,11 @@ export function purgeHiddenFieldsForProject(projectId: string): void {
 }
 
 /**
- * Removes just one entity's stored hidden-fields set, unlike
+ * Removes just one entity's stored hidden-fields set, across every
+ * collaborator account (the key's third segment is userId, not something
+ * this function can know in advance -- the same reason
+ * entityRecentSearches.ts's own purgeEntityRecentSearchesForEntity sweeps
+ * by prefix rather than a single exact key), unlike
  * purgeHiddenFieldsForProject above (the whole project). Used when a
  * single entity is dropped from an otherwise-surviving project's spec --
  * see entityPreferenceCleanup.ts for why this exists alongside the
@@ -82,22 +105,33 @@ export function purgeHiddenFieldsForProject(projectId: string): void {
  */
 export function purgeHiddenFieldsForEntity(projectId: string, entityName: string): void {
   const store = readStore();
-  delete store[keyFor(projectId, entityName)];
+  const prefix = `${projectId}:${entityName}:`;
+  for (const key of Object.keys(store)) {
+    if (key.startsWith(prefix)) delete store[key];
+  }
   writeStore(store);
 }
 
 /**
  * Round 1029: mirrors columnWidths.ts's own migrateColumnWidthsForEntityRename
  * -- see its doc comment for the full "case-only entity rename leaves this
- * store's real data unreachable under the old key" mechanism.
+ * store's real data unreachable under the old key" mechanism. Round 1055:
+ * rewrites EVERY collaborator's own entry for this entity, the same way
+ * entityRecentSearches.ts's own migrateEntityRecentSearchesForEntityRename
+ * does, since the key's own userId segment isn't known in advance.
  */
 export function migrateHiddenFieldsForEntityRename(projectId: string, oldName: string, newName: string): void {
   if (oldName === newName) return;
   const store = readStore();
-  const oldKey = keyFor(projectId, oldName);
-  const newKey = keyFor(projectId, newName);
-  if (store[oldKey] === undefined || store[newKey] !== undefined) return;
-  store[newKey] = store[oldKey];
-  delete store[oldKey];
-  writeStore(store);
+  const oldPrefix = `${projectId}:${oldName}:`;
+  let changed = false;
+  for (const key of Object.keys(store)) {
+    if (!key.startsWith(oldPrefix)) continue;
+    const userId = key.slice(oldPrefix.length);
+    const newKey = keyFor(projectId, newName, userId);
+    if (store[newKey] === undefined) store[newKey] = store[key];
+    delete store[key];
+    changed = true;
+  }
+  if (changed) writeStore(store);
 }

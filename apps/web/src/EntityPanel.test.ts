@@ -7386,7 +7386,7 @@ test("EntityPanel keeps a column hidden and a 'Group by' choice set under their 
       fireEvent.click(statusCheckbox);
       await waitForCondition(() => document.querySelectorAll("thead th").length === 4);
       fireEvent.click(columnsBtn);
-      assert.deepEqual(getHiddenFields("proj1", "Deal"), new Set(["status"]), "sanity check: hiding must have actually persisted");
+      assert.deepEqual(getHiddenFields("proj1", "Deal", "user1"), new Set(["status"]), "sanity check: hiding must have actually persisted");
 
       // Group by "status".
       const groupBySelect = document.querySelector(".entity-group-by") as HTMLSelectElement;
@@ -7400,7 +7400,7 @@ test("EntityPanel keeps a column hidden and a 'Group by' choice set under their 
       await waitForCondition(() => document.querySelector(".entity-group-by") !== null);
 
       assert.deepEqual(
-        getHiddenFields("proj1", "Deal"),
+        getHiddenFields("proj1", "Deal", "user1"),
         new Set(["Status"]),
         "the hidden column must stay hidden under its new spelling, not silently reappear",
       );
