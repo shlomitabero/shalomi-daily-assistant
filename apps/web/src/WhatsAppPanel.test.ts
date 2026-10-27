@@ -2735,6 +2735,102 @@ test("WhatsAppPanel's log search box has a 'Clear search' button and Escape-to-c
 });
 
 /**
+ * Regression test for a real bug a round 1103 survey found: the
+ * Escape-to-clear fix above only ever put data-escape-handled-locally
+ * (and the actual clearing logic) on the search <input> itself -- its own
+ * sibling controls inside the same .whatsapp-log-filters div, the "✕
+ * clear search" button and the direction-filter <select>, carried
+ * neither. Tab from the input to either sibling, then press Escape, and
+ * the event's own target no longer has the marker as an ancestor --
+ * useDialogFocusTrap.ts's own closest() check finds nothing, so its
+ * default branch fires and closes the WHOLE dialog, discarding the
+ * search, exactly like clicking "Close". Moving the marker (and the
+ * clearing logic) to the wrapping div -- an ancestor of every control
+ * inside it -- fixes this regardless of which one currently has focus.
+ * Mirrors round 1085's identical fix/test for GlobalSearchPanel.tsx's own
+ * query box.
+ */
+test("WhatsAppPanel's log search Escape-to-clear still works when focus has moved from the search input to the 'Clear search' button or the direction filter, instead of closing the whole dialog", async () => {
+  await withJsdom(async () => {
+    const originalFetch = globalThis.fetch;
+    const messages: WhatsAppMessageLogEntry[] = Array.from({ length: 6 }, (_, i) => ({
+      id: `m${i}`,
+      direction: "in",
+      fromNumber: "972521112233",
+      toNumber: "972501234567",
+      body: `Message number ${i}`,
+      matchedLabel: null,
+      matchedEntityName: null,
+      matchedRecordId: null,
+      status: "received",
+      createdAt: new Date().toISOString(),
+    }));
+    globalThis.fetch = (async (input: string, init?: RequestInit): Promise<Response> => {
+      const method = init?.method ?? "GET";
+      if (method === "GET" && input === "/api/projects/proj1/integrations/whatsapp/status") {
+        return new Response(
+          JSON.stringify({ status: "connected", phoneNumber: "972501234567", qrDataUrl: null, error: null }),
+          { status: 200, headers: { "content-type": "application/json" } },
+        );
+      }
+      if (method === "GET" && input === "/api/projects/proj1/integrations/whatsapp/messages") {
+        return new Response(JSON.stringify({ messages }), { status: 200, headers: { "content-type": "application/json" } });
+      }
+      throw new Error(`unexpected request ${method} ${input}`);
+    }) as typeof fetch;
+
+    let closeCalls = 0;
+    try {
+      render(
+        React.createElement(
+          ThemeProvider,
+          null,
+          React.createElement(
+            LanguageProvider,
+            null,
+            React.createElement(WhatsAppPanel, {
+              entities: [],
+              onCreateRecordFromMessage: () => {},
+              projectId: "proj1", userId: "user1",
+              projectName: "Test Project",
+              onClose: () => {
+                closeCalls += 1;
+              },
+              onJumpToEntity: () => {},
+              onJumpToRecord: () => {},
+            }),
+          ),
+        ),
+      );
+      await waitForCondition(() => document.querySelector(".whatsapp-log-search") !== null);
+
+      const searchInput = document.querySelector(".whatsapp-log-search") as HTMLInputElement;
+
+      // Escape fired from the "Clear search" button (Tab moves focus there
+      // the instant it appears) -- the exact two-keystroke repro the survey
+      // found.
+      fireEvent.change(searchInput, { target: { value: "number 3" } });
+      await waitForCondition(() => document.querySelectorAll(".whatsapp-log-list li").length === 1);
+      const clearButton = document.querySelector(".whatsapp-log-clear-search") as HTMLButtonElement;
+      fireEvent.keyDown(clearButton, { key: "Escape" });
+      assert.equal(searchInput.value, "", "Escape fired from the Clear button must still clear the search");
+      assert.equal(closeCalls, 0, "clearing the search via Escape from the Clear button must never also close the whole dialog");
+      await waitForCondition(() => document.querySelectorAll(".whatsapp-log-list li").length === 6);
+
+      // Escape fired from the direction-filter select.
+      fireEvent.change(searchInput, { target: { value: "number 5" } });
+      await waitForCondition(() => document.querySelectorAll(".whatsapp-log-list li").length === 1);
+      const directionFilter = document.querySelector(".whatsapp-log-direction-filter") as HTMLSelectElement;
+      fireEvent.keyDown(directionFilter, { key: "Escape" });
+      assert.equal(searchInput.value, "", "Escape fired from the direction filter must still clear the search");
+      assert.equal(closeCalls, 0, "clearing the search via Escape from the direction filter must never also close the whole dialog");
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+});
+
+/**
  * Round 1061: the mirror of the test just above, for this dialog's OTHER
  * real-draft form -- the "Send test" recipient/message/attachment fields.
  * Those had neither a data-escape-handled-locally marker nor an Escape

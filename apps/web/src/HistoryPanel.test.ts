@@ -839,6 +839,87 @@ test("HistoryPanel's search box has a 'Clear search' button and Escape-to-clear,
 });
 
 /**
+ * Regression test for a real bug a round 1103 survey found: the
+ * Escape-to-clear fix above only ever put data-escape-handled-locally
+ * (and the actual clearing logic) on the search <input> itself -- its own
+ * sibling controls inside the same .history-filters div, the "✕ clear
+ * search" button and the type-filter <select>, carried neither. Tab from
+ * the input to either sibling, then press Escape, and the event's own
+ * target no longer has the marker as an ancestor -- useDialogFocusTrap.ts's
+ * own closest() check finds nothing, so its default branch fires and
+ * closes the WHOLE panel, discarding the search, exactly like clicking
+ * "Close". Moving the marker (and the clearing logic) to the wrapping div
+ * -- an ancestor of every control inside it -- fixes this regardless of
+ * which one currently has focus. Mirrors round 1085's identical fix/test
+ * for GlobalSearchPanel.tsx's own query box.
+ */
+test("HistoryPanel's Escape-to-clear still works when focus has moved from the search input to the 'Clear search' button or the type filter, instead of closing the whole dialog", async () => {
+  await withJsdom(async () => {
+    const originalFetch = globalThis.fetch;
+    const checkpoints = [
+      makeCheckpoint("cp1", "Initial build"),
+      makeCheckpoint("cp2", "Refine: add invoice tracking"),
+      makeCheckpoint("cp3", "Refine: add customer notes"),
+      makeCheckpoint("cp4", "Refine: fix invoice totals"),
+      makeCheckpoint("cp5", "Refine: add reminders"),
+      makeCheckpoint("cp6", "Refine: add tags"),
+    ];
+    globalThis.fetch = (async (input: string, init?: RequestInit) => {
+      const method = init?.method ?? "GET";
+      if (method === "GET" && input === "/api/projects/proj1/checkpoints") {
+        return new Response(JSON.stringify({ checkpoints }), { status: 200, headers: { "content-type": "application/json" } });
+      }
+      throw new Error(`unexpected request ${method} ${input}`);
+    }) as typeof fetch;
+    let closeCalls = 0;
+    try {
+      render(
+        React.createElement(
+          ThemeProvider,
+          null,
+          React.createElement(
+            LanguageProvider,
+            null,
+            React.createElement(HistoryPanel, {
+              projectId: "proj1",
+              userId: "user1",
+              projectName: "Test Project",
+              currentSpec: checkpoints[0].spec,
+              onRestored: () => {},
+              onClose: () => {
+                closeCalls += 1;
+              },
+            }),
+          ),
+        ),
+      );
+      await waitForCondition(() => document.querySelectorAll(".checkpoint-list li").length === 6);
+
+      const searchBox = document.querySelector(".history-search") as HTMLInputElement;
+
+      // Escape fired from the "Clear search" button (Tab moves focus there
+      // the instant it appears) -- the exact two-keystroke repro the survey
+      // found.
+      fireEvent.change(searchBox, { target: { value: "invoice" } });
+      const clearButton = document.querySelector(".history-clear-search") as HTMLButtonElement;
+      fireEvent.keyDown(clearButton, { key: "Escape" });
+      assert.equal(searchBox.value, "", "Escape fired from the Clear button must still clear the search");
+      assert.equal(closeCalls, 0, "clearing the search via Escape from the Clear button must never also close the whole dialog");
+      await waitForCondition(() => document.querySelectorAll(".checkpoint-list li").length === 6);
+
+      // Escape fired from the type-filter select.
+      fireEvent.change(searchBox, { target: { value: "invoice" } });
+      const typeFilter = document.querySelector(".history-type-filter") as HTMLSelectElement;
+      fireEvent.keyDown(typeFilter, { key: "Escape" });
+      assert.equal(searchBox.value, "", "Escape fired from the type filter must still clear the search");
+      assert.equal(closeCalls, 0, "clearing the search via Escape from the type filter must never also close the whole dialog");
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+});
+
+/**
  * New in this round: every checkpoint's own label already says whether it
  * came from the initial build or a later refine (see
  * apps/api/src/routes/projects.ts's changeLabel), but with no cap and no

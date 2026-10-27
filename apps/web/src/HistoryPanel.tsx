@@ -267,22 +267,43 @@ export function HistoryPanel({
           </div>
         )}
         {checkpoints.length > 5 && (
-          <div className="history-filters">
+          <div
+            className="history-filters"
+            data-escape-handled-locally={search.length > 0 ? "" : undefined}
+            onKeyDown={(e) => {
+              // Round 1103: this marker used to sit on the <input> alone,
+              // so useDialogFocusTrap.ts's own closest()-based Escape check
+              // only protected a search while the input itself had focus.
+              // Tab to the "✕ clear search" button or the type-filter
+              // <select> right next to it (both plain siblings of the
+              // input inside this same div, covered by neither the marker
+              // nor a key handler of their own), then press Escape, and
+              // the event's own target no longer has the marker as an
+              // ancestor -- the dialog's own default Escape branch fired
+              // instead, silently closing the WHOLE panel and discarding
+              // the search, exactly like clicking "Close". Moving the
+              // marker to this div (an ancestor of every control inside
+              // it) and handling the actual clear here too means Escape
+              // clears the search and keeps the panel open no matter which
+              // of the three controls currently has focus -- mirrors round
+              // 1085's identical fix for GlobalSearchPanel.tsx's own
+              // query box.
+              if (e.key === "Escape" && search.length > 0) {
+                e.preventDefault();
+                setSearch("");
+              }
+            }}
+          >
             <input
               type="text"
               className="history-search"
               placeholder={t("history.search.placeholder")}
               aria-label={t("history.search.placeholder")}
               value={search}
-              data-escape-handled-locally={search.length > 0 ? "" : undefined}
               onChange={(e) => setSearch(e.target.value)}
               onBlur={commitRecentSearch}
               onKeyDown={(e) => {
                 if (e.key === "Enter") commitRecentSearch();
-                else if (e.key === "Escape" && search.length > 0) {
-                  e.preventDefault();
-                  setSearch("");
-                }
               }}
             />
             {search.length > 0 && (

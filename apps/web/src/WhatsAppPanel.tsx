@@ -849,11 +849,12 @@ export function WhatsAppPanel({
    * control in it.
    */
   function handleLogSearchKeyDown(e: React.KeyboardEvent<HTMLInputElement>) {
+    // Round 1103: the Escape-to-clear branch that used to live here moved
+    // up to the wrapping .whatsapp-log-filters div's own onKeyDown, so it
+    // also covers Escape fired from the "✕ clear" button or the
+    // direction-filter select, not just this input.
     if (e.key === "Enter" && search.trim()) {
       setLogRecentSearches(addWhatsAppLogRecentSearch(projectId, userId, search));
-    } else if (e.key === "Escape" && search.length > 0) {
-      e.preventDefault();
-      setSearch("");
     }
   }
   function handleRecentLogSearchClick(query: string) {
@@ -1263,14 +1264,39 @@ export function WhatsAppPanel({
             </p>
           )}
           {messages.length > SEARCH_THRESHOLD && (
-            <div className="whatsapp-log-filters">
+            <div
+              className="whatsapp-log-filters"
+              data-escape-handled-locally={search.length > 0 ? "" : undefined}
+              onKeyDown={(e) => {
+                // Round 1103: this marker used to sit on the <input> alone,
+                // so useDialogFocusTrap.ts's own closest()-based Escape
+                // check only protected a search while the input itself had
+                // focus. Tab to the "✕ clear search" button or the
+                // direction-filter <select> right next to it (both plain
+                // siblings of the input inside this same div, covered by
+                // neither the marker nor a key handler of their own), then
+                // press Escape, and the event's own target no longer has
+                // the marker as an ancestor -- the dialog's own default
+                // Escape branch fired instead, silently closing the WHOLE
+                // panel, exactly like clicking "Close". Moving the marker
+                // to this div (an ancestor of every control inside it) and
+                // handling the actual clear here too means Escape clears
+                // the search and keeps the panel open no matter which of
+                // the three controls currently has focus -- mirrors round
+                // 1085's identical fix for GlobalSearchPanel.tsx's own
+                // query box.
+                if (e.key === "Escape" && search.length > 0) {
+                  e.preventDefault();
+                  setSearch("");
+                }
+              }}
+            >
               <input
                 type="text"
                 className="whatsapp-log-search"
                 placeholder={t("whatsapp.log.search.placeholder")}
                 aria-label={t("whatsapp.log.search.placeholder")}
                 value={search}
-                data-escape-handled-locally={search.length > 0 ? "" : undefined}
                 onChange={(e) => setSearch(e.target.value)}
                 onKeyDown={handleLogSearchKeyDown}
               />
