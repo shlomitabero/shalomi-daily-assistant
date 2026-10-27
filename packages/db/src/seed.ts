@@ -34,6 +34,8 @@ const WORK_ORDER_TITLES_HE = ["תיקון ברז דולף", "בדיקת מזגן
 const WORK_ORDER_TITLES_EN = ["Fix leaking faucet", "HVAC inspection", "Replace broken window", "Annual maintenance check"];
 const CASE_TITLES_HE = ["מחלוקת חוזית", "סכסוך גבולות מקרקעין", "תביעת פיטורים", "תביעת נזקי גוף"];
 const CASE_TITLES_EN = ["Contract dispute", "Property boundary dispute", "Employment termination claim", "Personal injury claim"];
+const CASE_TYPES_HE = ["דיני חוזים", "דיני מקרקעין", "דיני עבודה", "נזיקין"];
+const CASE_TYPES_EN = ["Contract Law", "Real Estate Law", "Employment Law", "Personal Injury"];
 const TASK_TITLES_HE = ["כתיבת דוח רבעוני", "תיקון באג בהתחברות", "פולו-אפ עם לקוח", "עדכון תיעוד הפרויקט"];
 const TASK_TITLES_EN = ["Write quarterly report", "Fix login bug", "Follow up with client", "Update project documentation"];
 // Pools for the domain entities added later (MenuItem, Property, Course,
@@ -195,6 +197,15 @@ function textSeedValueFor(fieldName: string, entityName: string, isHebrew: boole
       if (entityName === "Case") return pick(isHebrew ? CASE_TITLES_HE : CASE_TITLES_EN, index);
       if (entityName === "Task") return pick(isHebrew ? TASK_TITLES_HE : TASK_TITLES_EN, index);
       return pick(isHebrew ? DEAL_TITLES_HE : DEAL_TITLES_EN, index);
+    case "caseType":
+      // Case's own optional "practice area" field -- distinct from its
+      // "title" case just above (a specific matter, e.g. "Contract
+      // dispute"), this is the broader legal category it falls under
+      // (e.g. "Contract Law"). Added in the same commit as "title"'s own
+      // Case branch but missed there, so this fell through to the
+      // generic default placeholder ("Case caseType 1") with zero
+      // entity-aware handling at all.
+      return pick(isHebrew ? CASE_TYPES_HE : CASE_TYPES_EN, index);
     case "customerName":
     case "owner":
     case "assignee":

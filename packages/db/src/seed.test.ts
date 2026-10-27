@@ -313,6 +313,22 @@ test("WorkOrder, Case, and Task each get their own field-appropriate 'title' see
 });
 
 /**
+ * Round 1105's finding: Case's own optional "caseType" field (the domain
+ * entity's "practice area" field, added in the same commit as "title"'s
+ * own Case branch just above) had no case in textSeedValueFor at all --
+ * unlike "title", it was simply missed by both this fix and round 828's
+ * sibling fix, so it fell through to the generic default placeholder
+ * ("Case caseType 1" / "Case - caseType 1"), exactly the "obviously a
+ * placeholder" formula this whole generator exists to avoid.
+ */
+test("Case's 'caseType' seed values are a plausible legal practice area, not the generic placeholder formula", () => {
+  const legalCase: Entity = { name: "Case", fields: [{ name: "caseType", type: "text", required: false }] };
+
+  const caseTypes = generateSeedRecords(legalCase, 4).map((r) => r.caseType as string);
+  for (const caseType of caseTypes) assert.doesNotMatch(caseType, /Case caseType/, `"${caseType}" must not be the generic entity/field-name placeholder`);
+});
+
+/**
  * Round 828's finding: the exact same shape as round 827's "title" fix,
  * one case below it. textSeedValueFor's "service"/"itemName" case had no
  * entity-aware dispatch either -- ITEM_NAMES_HE/EN was written for
