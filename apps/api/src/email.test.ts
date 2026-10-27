@@ -198,3 +198,40 @@ test("a failed send still rejects its own caller, but does not block the next qu
   assert.equal(first.status, "rejected");
   assert.equal(second.status, "fulfilled");
 });
+
+/**
+ * Round 1096: the queue-advancing chain used to be
+ * `queuedSend.then(() => delay(...)).catch(() => {})` -- when queuedSend
+ * rejected (a failed send, the exact scenario above), the `.then`
+ * fulfillment handler never ran at all, so the delay was silently
+ * skipped and the next queued send fired with ~0ms gap right after the
+ * failure most likely to be a Resend 429 -- defeating the spacing fix
+ * during exactly the burst it exists to prevent. This combines both
+ * prior tests' setups (a real non-zero spacing AND a failing first
+ * send) to catch that gap directly.
+ */
+test("send still waits the full sendSpacingMs before the next queued send, even when the previous send failed", async () => {
+  let call = 0;
+  const sendTimestamps: number[] = [];
+  const sender = new ResendEmailSender({
+    apiKey: "re_test_key",
+    sendSpacingMs: 50,
+    fetchImpl: async () => {
+      call++;
+      sendTimestamps.push(Date.now());
+      if (call === 1) return new Response("rate limited", { status: 429 });
+      return new Response(JSON.stringify({ id: "email-id" }), { status: 200 });
+    },
+  });
+
+  await Promise.allSettled([
+    sender.send("dana@example.com", "one", "text"),
+    sender.send("dana@example.com", "two", "text"),
+  ]);
+
+  assert.equal(sendTimestamps.length, 2);
+  assert.ok(
+    sendTimestamps[1] - sendTimestamps[0] >= 45,
+    `expected at least ~50ms between queued sends even after a failure, got ${sendTimestamps[1] - sendTimestamps[0]}ms`,
+  );
+});

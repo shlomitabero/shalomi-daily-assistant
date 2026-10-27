@@ -2264,6 +2264,61 @@ test("a failed webhook send to a URL still records failed for its own rule, but 
   assert.equal(getAutomationRule(db, project.id, ruleB.id)!.lastStatus, "sent", "the second rule's own send to the same URL must still go through, not be jammed by the first one's failure");
 });
 
+/**
+ * Round 1096: the test above covers a destination returning a non-2xx
+ * Response (fetch itself still resolves, so queuedFetch's own `.then`
+ * fulfillment handler -- and its spacing delay -- always ran). This
+ * covers the distinct case the old queue-advancing chain
+ * (`queuedFetch.then(() => delay(...)).catch(() => {})`) got wrong: a
+ * REJECTING fetch (a real network failure, or fireWebhookAction's own
+ * 10s AbortController timeout for a hanging destination) skipped the
+ * `.then`'s fulfillment handler entirely, so WEBHOOK_SEND_SPACING_MS was
+ * silently never applied right after exactly the kind of failure most
+ * likely to recur on an immediate retry.
+ */
+test("a webhook send that REJECTS (network failure, not just a non-2xx response) still waits the full spacing delay before the next queued send to the same URL", async () => {
+  const { db, project } = setupProject();
+  const makeRule = (messageTemplate: string) =>
+    insertAutomationRule(db, {
+      projectId: project.id,
+      entityName: "Order",
+      trigger: "schedule",
+      scheduleTimeUtc: "09:00",
+      actionType: "webhook",
+      webhookUrl: "https://hooks.example.com/forge-reject",
+      toMode: "static",
+      messageTemplate,
+    });
+  const ruleA = makeRule("one");
+  const ruleB = makeRule("two");
+
+  const callTimestamps: number[] = [];
+  let call = 0;
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = (async () => {
+    callTimestamps.push(Date.now());
+    call++;
+    if (call === 1) throw new Error("network error");
+    return new Response(null, { status: 200 });
+  }) as typeof fetch;
+  try {
+    await Promise.allSettled([
+      fireScheduledRule(db, {} as WhatsAppWebManager, UNUSED_EMAIL_SENDER, project, ruleA),
+      fireScheduledRule(db, {} as WhatsAppWebManager, UNUSED_EMAIL_SENDER, project, ruleB),
+    ]);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+
+  assert.equal(callTimestamps.length, 2);
+  assert.ok(
+    callTimestamps[1] - callTimestamps[0] >= 550,
+    `expected the full ~600ms spacing delay even after a rejecting fetch, got ${callTimestamps[1] - callTimestamps[0]}ms`,
+  );
+  assert.equal(getAutomationRule(db, project.id, ruleA.id)!.lastStatus, "failed");
+  assert.equal(getAutomationRule(db, project.id, ruleB.id)!.lastStatus, "sent");
+});
+
 test("fireScheduledRule's webhook action sends messageTemplate verbatim with a null record/entity in the payload (there's no triggering record)", async () => {
   const { db, project } = setupProject();
   const rule = insertAutomationRule(db, {

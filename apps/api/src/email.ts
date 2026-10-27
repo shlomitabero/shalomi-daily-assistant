@@ -82,7 +82,21 @@ export class ResendEmailSender implements EmailSender {
     // deployment-wide sequence instead of each racing Resend's API at once.
     const previousInQueue = this.sendQueue;
     const queuedSend = previousInQueue.then(() => this.performSend(to, subject, text, attachments));
-    this.sendQueue = queuedSend.then(() => this.delay(this.sendSpacingMs)).catch(() => {});
+    // Round 1096: unlike whatsappWeb.ts's own performSend (which always
+    // resolves to {ok, error?} and never rejects), this performSend throws
+    // on a failed Resend call -- so queuedSend.then(() => delay(...))'s
+    // fulfillment handler never ran when the previous send failed, and the
+    // trailing .catch(() => {}) silently swallowed that rejection with zero
+    // delay. The next queued send then fired back-to-back with the
+    // failure, which is exactly the Resend 429 case this pacing exists to
+    // prevent cascading. Running the SAME delay on both the fulfilled and
+    // rejected paths (rather than relying on one shared .then handler)
+    // makes this mirror whatsappWeb.ts's actual effective behavior instead
+    // of just its surface shape.
+    this.sendQueue = queuedSend.then(
+      () => this.delay(this.sendSpacingMs),
+      () => this.delay(this.sendSpacingMs),
+    );
     return queuedSend;
   }
 

@@ -561,13 +561,28 @@ function delay(ms: number): Promise<void> {
  * next queued one doesn't go out back-to-back with it. A failed send
  * still rejects for its own caller (fireWebhookAction's own try/catch
  * below records the failure exactly as before) without jamming the queue
- * for the next send, via the `.catch(() => {})` on the queue-advancing
- * chain -- the same shape ResendEmailSender.send's own queue uses.
+ * for the next send -- the same shape ResendEmailSender.send's own queue
+ * uses.
+ *
+ * Round 1096: fixes the identical gap found and fixed in that same
+ * ResendEmailSender queue -- `fetch` itself rejects (not just resolves
+ * with a non-ok Response) on a real network failure or on
+ * fireWebhookAction's own 10s AbortController timeout for a hanging
+ * destination, so `queuedFetch` can reject here too. The old
+ * `queuedFetch.then(() => delay(...)).catch(() => {})` shape only ran its
+ * delay on the fulfilled path -- a rejection skipped straight to the
+ * `.catch`, resolving immediately with zero spacing right after the
+ * failure (an unreachable or timed-out destination) most likely to
+ * recur on an immediate retry. Running the delay on both the fulfilled
+ * and rejected paths closes that the same way.
  */
 function queuedWebhookFetch(url: string, init: RequestInit): Promise<Response> {
   const previousInQueue = webhookSendQueue.get(url) ?? Promise.resolve();
   const queuedFetch = previousInQueue.then(() => fetch(url, init));
-  const nextInQueue = queuedFetch.then(() => delay(WEBHOOK_SEND_SPACING_MS)).catch(() => {});
+  const nextInQueue = queuedFetch.then(
+    () => delay(WEBHOOK_SEND_SPACING_MS),
+    () => delay(WEBHOOK_SEND_SPACING_MS),
+  );
   webhookSendQueue.set(url, nextInQueue);
   void nextInQueue.finally(() => {
     if (webhookSendQueue.get(url) === nextInQueue) webhookSendQueue.delete(url);
