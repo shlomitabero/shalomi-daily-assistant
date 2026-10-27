@@ -1136,6 +1136,32 @@ export function createProjectsRouter(
   });
 
   /**
+   * Round 1052: POST .../collaborators had no volumetric throttle at all,
+   * unlike every other route in this codebase that can reveal whether an
+   * email belongs to a real account. routes/auth.ts's own forgot-password/
+   * login/verify-code/reset-password rate limiters (rounds 847-894) exist
+   * specifically to stop cheap, fast probing of exactly that question --
+   * this route answers it even more directly: a distinct 404
+   * ("COLLABORATOR_USER_NOT_FOUND") naming the probed email back verbatim
+   * when no account exists, versus 201 success when one does. Any
+   * signed-up user who owns one free project (signup and project creation
+   * are both free; this route only requires requireProjectOwner, not any
+   * paid/built state) could otherwise script thousands of email probes per
+   * minute from a single account with zero server-side cap -- the
+   * cheapest account-enumeration oracle in the app. Keyed by the inviting
+   * user's own id, the same rationale changePasswordRateLimiter above
+   * uses: the caller is already authenticated here (requireProjectOwner
+   * ran first), so the realistic abuser is one account iterating emails,
+   * not a shared IP that must not collaterally throttle unrelated users.
+   */
+  const inviteCollaboratorRateLimiter = createRateLimiter({
+    windowMs: 15 * 60 * 1000,
+    max: 30,
+    keyGenerator: (req) => req.userId ?? "unknown",
+    message: "Too many collaborator invite attempts. Please try again later.",
+  });
+
+  /**
    * /build, /refine, and /answers each read `project.spec` once at the
    * start of the request, then spend real time (an AI/heuristic
    * spec-generation call, and for /build and /refine also a migration)
@@ -1567,6 +1593,7 @@ export function createProjectsRouter(
 
   router.post(
     "/projects/:id/collaborators",
+    inviteCollaboratorRateLimiter,
     asyncRoute(async (req, res) => {
       const project = requireProjectOwner(db, req.params.id, req.userId!);
       const parsed = AddCollaboratorSchema.safeParse(req.body);

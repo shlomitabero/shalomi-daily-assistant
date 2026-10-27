@@ -10512,6 +10512,64 @@ test("POST /ideas/enhance and POST /projects share one per-user AI-generation ra
   });
 });
 
+/**
+ * Round 1052: POST .../collaborators had no volumetric throttle at all,
+ * unlike every sibling route that can reveal whether an email belongs to a
+ * real account (auth.ts's forgot-password/login/verify-code/reset-password
+ * limiters, rounds 847-894). This route answers that exact question even
+ * more directly -- a distinct 404 naming the probed email back verbatim
+ * when no account exists, versus 201 success when one does -- and was
+ * reachable by any signed-up user who owns one free project, with zero
+ * server-side cap on how many emails they could probe per minute.
+ */
+test("POST .../collaborators is rate-limited per authenticated account: the 31st invite attempt is rejected with 429, while a different account is unaffected", async () => {
+  await withServer(async (baseUrl) => {
+    const ownerToken = await signup(baseUrl, "rate-limit-invite-owner@example.com");
+    const createRes = await fetch(`${baseUrl}/api/projects`, {
+      method: "POST",
+      headers: authHeaders(ownerToken),
+      body: JSON.stringify({ description: "A CRM with customers and deals." }),
+    });
+    const { project } = (await createRes.json()) as { project: { id: string } };
+
+    for (let i = 0; i < 30; i++) {
+      const res = await fetch(`${baseUrl}/api/projects/${project.id}/collaborators`, {
+        method: "POST",
+        headers: authHeaders(ownerToken),
+        body: JSON.stringify({ email: `no-such-account-${i}@example.com` }),
+      });
+      assert.notEqual(res.status, 429, `invite attempt ${i + 1} of 30 (within the limit) must not be rate-limited yet`);
+      assert.equal(res.status, 404, "probing a nonexistent email must still get the normal COLLABORATOR_USER_NOT_FOUND response, not a 429");
+    }
+
+    const blocked = await fetch(`${baseUrl}/api/projects/${project.id}/collaborators`, {
+      method: "POST",
+      headers: authHeaders(ownerToken),
+      body: JSON.stringify({ email: "no-such-account-30@example.com" }),
+    });
+    assert.equal(blocked.status, 429);
+    assert.equal(((await blocked.json()) as { code?: string }).code, "RATE_LIMITED");
+
+    // A completely different account (owning its own separate project) must
+    // get its own fresh allowance -- keyed by user id, not IP, so one
+    // account exhausting its own budget must never collaterally block an
+    // unrelated account's own legitimate invites.
+    const otherOwnerToken = await signup(baseUrl, "rate-limit-invite-other-owner@example.com");
+    const otherCreateRes = await fetch(`${baseUrl}/api/projects`, {
+      method: "POST",
+      headers: authHeaders(otherOwnerToken),
+      body: JSON.stringify({ description: "A separate, unrelated project." }),
+    });
+    const { project: otherProject } = (await otherCreateRes.json()) as { project: { id: string } };
+    const otherRes = await fetch(`${baseUrl}/api/projects/${otherProject.id}/collaborators`, {
+      method: "POST",
+      headers: authHeaders(otherOwnerToken),
+      body: JSON.stringify({ email: "no-such-account-other@example.com" }),
+    });
+    assert.equal(otherRes.status, 404, "a different account must not be collaterally blocked by another account's own rate limit");
+  });
+});
+
 test("a validation failure on project routes returns readable text, not Zod's raw JSON issue dump", async () => {
   await withServer(async (baseUrl) => {
     const token = await signup(baseUrl);
