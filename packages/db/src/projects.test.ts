@@ -23,6 +23,7 @@ import {
   listOwnedProjectIds,
   listProjectsForOwner,
   listProjectsForUser,
+  markProjectBuilt,
   updateProjectName,
   updateProjectDescription,
   updateProjectSpec,
@@ -228,6 +229,57 @@ test("updateProjectDescription changes only the description, leaving every other
   assert.equal(updated.ownerId, project.ownerId);
   assert.equal(updated.status, project.status);
   assert.deepEqual(updated.spec, project.spec);
+});
+
+/**
+ * Round 1094: markProjectBuilt/updateProjectName/updateProjectDescription
+ * used to re-fetch through getProject (the strict rowToProject above) just
+ * to build their return value -- so for a project whose spec_json no longer
+ * matches today's schema (same real, expected case as the tests above), the
+ * UPDATE would already have committed before that re-fetch threw, silently
+ * succeeding while the caller saw a crash. None of these three ever touch
+ * spec_json at all, so none of them has a real need for that validation.
+ */
+test("updateProjectName still updates and returns the name for a project whose stored spec no longer matches the current schema", () => {
+  const db = openDatabase(":memory:");
+  ensureProjectsTable(db);
+  db.prepare(
+    "INSERT INTO projects (id, ownerId, name, description, spec_json, status, createdAt) VALUES (?, ?, ?, ?, ?, ?, ?)",
+  ).run("stale", "owner1", "Old Name", "test", JSON.stringify({ summary: "old spec, missing fields" }), "built", new Date().toISOString());
+
+  const renamed = updateProjectName(db, "stale", "New Name");
+
+  assert.equal(renamed.name, "New Name", "updateProjectName must not throw just because the unrelated spec_json is stale");
+  const row = db.prepare("SELECT name FROM projects WHERE id = ?").get("stale") as { name: string };
+  assert.equal(row.name, "New Name", "the real stored row must reflect the new name regardless of the return path");
+});
+
+test("updateProjectDescription still updates and returns the description for a project whose stored spec no longer matches the current schema", () => {
+  const db = openDatabase(":memory:");
+  ensureProjectsTable(db);
+  db.prepare(
+    "INSERT INTO projects (id, ownerId, name, description, spec_json, status, createdAt) VALUES (?, ?, ?, ?, ?, ?, ?)",
+  ).run("stale", "owner1", "name", "Old description", JSON.stringify({ summary: "old spec, missing fields" }), "built", new Date().toISOString());
+
+  const updated = updateProjectDescription(db, "stale", "New description");
+
+  assert.equal(updated.description, "New description", "updateProjectDescription must not throw just because the unrelated spec_json is stale");
+  const row = db.prepare("SELECT description FROM projects WHERE id = ?").get("stale") as { description: string };
+  assert.equal(row.description, "New description", "the real stored row must reflect the new description regardless of the return path");
+});
+
+test("markProjectBuilt still updates and returns status 'built' for a project whose stored spec no longer matches the current schema", () => {
+  const db = openDatabase(":memory:");
+  ensureProjectsTable(db);
+  db.prepare(
+    "INSERT INTO projects (id, ownerId, name, description, spec_json, status, createdAt) VALUES (?, ?, ?, ?, ?, ?, ?)",
+  ).run("stale", "owner1", "name", "test", JSON.stringify({ summary: "old spec, missing fields" }), "draft", new Date().toISOString());
+
+  const built = markProjectBuilt(db, "stale");
+
+  assert.equal(built.status, "built", "markProjectBuilt must not throw just because the unrelated spec_json is stale");
+  const row = db.prepare("SELECT status FROM projects WHERE id = ?").get("stale") as { status: string };
+  assert.equal(row.status, "built", "the real stored row must reflect the new status regardless of the return path");
 });
 
 test("deleteProject removes the project row, its real generated data table, checkpoints, collaborators, WhatsApp history, and automation rules -- not just some of them", () => {

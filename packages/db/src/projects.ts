@@ -70,6 +70,38 @@ function tryRowToProject(row: Record<string, unknown>): Project | undefined {
   }
 }
 
+/**
+ * Round 1094: same reasoning as checkpoints.ts's round-1093 fix to
+ * renameCheckpoint. markProjectBuilt/updateProjectName/updateProjectDescription
+ * below each write a column that has nothing to do with spec_json, then only
+ * need *some* Project back to return to their own caller. Getting that via
+ * getProject's strict rowToProject (ProductSpecSchema.parse) would throw for
+ * a project whose stored spec predates a later schema tightening -- a real,
+ * documented case (see tryRowToProject's own doc comment above) -- *after*
+ * the UPDATE already committed, even though none of these three ever touch
+ * spec_json at all. This mirrors rowToProject's own field mapping but with a
+ * plain JSON.parse instead of a schema check these callers have no use for.
+ */
+function rowToProjectLenient(row: Record<string, unknown>): Project {
+  return {
+    id: row.id as string,
+    ownerId: row.ownerId as string,
+    name: row.name as string,
+    description: row.description as string,
+    spec: JSON.parse(row.spec_json as string) as ProductSpec,
+    status: row.status as Project["status"],
+    createdAt: row.createdAt as string,
+    sharedAt: (row.sharedAt as string | null | undefined) ?? undefined,
+  };
+}
+
+function getProjectLenient(db: ForgeDatabase, id: string): Project | undefined {
+  const row = db.prepare("SELECT * FROM projects WHERE id = ?").get(id) as
+    | Record<string, unknown>
+    | undefined;
+  return row ? rowToProjectLenient(row) : undefined;
+}
+
 export function insertProject(
   db: ForgeDatabase,
   project: { id: string; ownerId: string; name: string; description: string; spec: ProductSpec },
@@ -133,7 +165,7 @@ export function listProjectsForUser(db: ForgeDatabase, userId: string): Project[
 
 export function markProjectBuilt(db: ForgeDatabase, id: string): Project {
   db.prepare("UPDATE projects SET status = ? WHERE id = ?").run("built", id);
-  const project = getProject(db, id);
+  const project = getProjectLenient(db, id);
   if (!project) throw new Error(`Project ${id} not found`);
   return project;
 }
@@ -155,7 +187,7 @@ export function updateProjectSpec(db: ForgeDatabase, id: string, spec: ProductSp
  */
 export function updateProjectName(db: ForgeDatabase, id: string, name: string): Project {
   db.prepare("UPDATE projects SET name = ? WHERE id = ?").run(name, id);
-  const project = getProject(db, id);
+  const project = getProjectLenient(db, id);
   if (!project) throw new Error(`Project ${id} not found`);
   return project;
 }
@@ -174,7 +206,7 @@ export function updateProjectName(db: ForgeDatabase, id: string, name: string): 
  */
 export function updateProjectDescription(db: ForgeDatabase, id: string, description: string): Project {
   db.prepare("UPDATE projects SET description = ? WHERE id = ?").run(description, id);
-  const project = getProject(db, id);
+  const project = getProjectLenient(db, id);
   if (!project) throw new Error(`Project ${id} not found`);
   return project;
 }
