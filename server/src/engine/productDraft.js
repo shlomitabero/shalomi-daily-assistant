@@ -6,6 +6,14 @@ import Anthropic from '@anthropic-ai/sdk';
 
 const MODEL = 'claude-sonnet-5-5';
 
+// The SDK's own default is 10 minutes, retried up to 2 more times on a
+// timeout — so a hung connection to the API could otherwise leave this
+// pending for roughly half an hour with zero feedback, whether it's the
+// owner's manual "new digital product" click or the autonomous scan's
+// background job. 30s is generous for an actual generation call while
+// still failing with a clear error instead of hanging indefinitely.
+const API_TIMEOUT_MS = 30_000;
+
 export function buildProductPrompt({ topic, audience }) {
   return `Write a short, genuinely useful digital guide (600-900 words) on: ${topic}, aimed at: ${audience}. ` +
     `Then write a short sales page for it (headline + 3 bullet benefits + 1 paragraph). ` +
@@ -42,11 +50,11 @@ export function isValidDraftShape(parsed) {
   );
 }
 
-export async function draftProduct({ topic, audience }) {
+export async function draftProduct({ topic, audience, timeoutMs = API_TIMEOUT_MS }) {
   const apiKey = process.env.ANTHROPIC_API_KEY;
   if (!apiKey) return demoDraft({ topic, audience });
 
-  const client = new Anthropic({ apiKey });
+  const client = new Anthropic({ apiKey, timeout: timeoutMs });
   const prompt = buildProductPrompt({ topic, audience });
   const msg = await client.messages.create({
     model: MODEL,

@@ -70,3 +70,23 @@ test('extractJson strips markdown code fences around the JSON', () => {
 test('extractJson returns the raw text unchanged when there is no JSON object to find', () => {
   assert.equal(extractJson('not json at all'), 'not json at all');
 });
+
+test('draftProduct times out instead of hanging for the SDK default of ~10 minutes (retried) when the API never responds', async () => {
+  // Without an explicit timeout, a hung connection would leave this pending
+  // for roughly half an hour (10min default, retried twice) with zero
+  // feedback — whether it's the owner's manual click or the autonomous
+  // scan's background job.
+  const original = process.env.ANTHROPIC_API_KEY;
+  process.env.ANTHROPIC_API_KEY = 'test-key';
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async (url, { signal } = {}) => new Promise((resolve, reject) => {
+    signal?.addEventListener('abort', () => reject(Object.assign(new Error('aborted'), { name: 'AbortError' })));
+  });
+  try {
+    await assert.rejects(() => draftProduct({ topic: 'x', audience: 'y', timeoutMs: 5 }));
+  } finally {
+    globalThis.fetch = originalFetch;
+    if (original !== undefined) process.env.ANTHROPIC_API_KEY = original;
+    else delete process.env.ANTHROPIC_API_KEY;
+  }
+});
