@@ -157,3 +157,33 @@ test("LanguageProvider persists a real setLang choice immediately", async () => 
     assert.equal(localStorage.getItem(STORAGE_KEY), "he", "an explicit setLang call must persist immediately");
   }, "en-US");
 });
+
+/**
+ * Round 1111: the test directly above only ever clicks the button for a
+ * DIFFERENT language than the current one ("he" while auto-detected "en"
+ * is active) -- the one path that triggers a React re-render and therefore
+ * re-runs the [lang]-keyed effect that used to be the only place this
+ * persisted. LanguageSwitcher.tsx has no disabled guard on either button,
+ * so clicking the button for the language that's ALREADY active is just
+ * as reachable, and setLangState(next) with next === the current value is
+ * a no-op state update: React bails out, no re-render, and the old
+ * effect-based persistence never ran at all -- an explicit, deliberate
+ * click silently never reached storage, even though hasExplicitChoiceRef
+ * was already set to true in memory for the rest of this session.
+ */
+test("LanguageProvider persists an explicit setLang choice even when it matches the already-active language", async () => {
+  await withJsdom(async () => {
+    render(React.createElement(LanguageProvider, null, React.createElement(TestConsumer)));
+    assert.equal(document.querySelector('[data-testid="lang-value"]')!.textContent, "en", "starts en: no stored choice, browser locale is en-US");
+    assert.equal(localStorage.getItem(STORAGE_KEY), null, "sanity check: nothing persisted yet from the auto-detected mount");
+
+    // The second button is "en" -- the language already active.
+    fireEvent.click(document.querySelectorAll("button")[1]);
+    assert.equal(document.querySelector('[data-testid="lang-value"]')!.textContent, "en", "the displayed language must stay en, unchanged");
+    assert.equal(
+      localStorage.getItem(STORAGE_KEY),
+      "en",
+      "clicking the already-active language's own button must still persist it as an explicit choice",
+    );
+  }, "en-US");
+});

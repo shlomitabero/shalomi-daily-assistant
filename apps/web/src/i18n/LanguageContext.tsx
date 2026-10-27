@@ -34,12 +34,6 @@ export function LanguageProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     document.documentElement.lang = lang;
     document.documentElement.dir = dirFor(lang);
-    if (!hasExplicitChoiceRef.current) return;
-    try {
-      localStorage.setItem(STORAGE_KEY, lang);
-    } catch {
-      // localStorage can be unavailable (private mode) -- the choice just won't survive a reload.
-    }
   }, [lang]);
 
   // Mirrors ThemeContext.tsx's own live system-preference listener -- this
@@ -66,7 +60,25 @@ export function LanguageProvider({ children }: { children: ReactNode }) {
     dir: dirFor(lang),
     t: (key: string, params?: Record<string, string | number>) => translate(lang, key, params),
     setLang: (next: Lang) => {
+      // Persisted here directly, not in a [lang]-keyed effect (see
+      // ThemeContext.tsx's own toggleTheme, which does the same): clicking
+      // the button for the language that's ALREADY active (e.g. the
+      // auto-detected one, reachable since LanguageSwitcher.tsx has no
+      // disabled guard on either button) passes setLangState a value equal
+      // to the current state. React bails out of that update since a
+      // primitive value hasn't changed, so an effect keyed on [lang] would
+      // never re-run and the choice would silently never reach storage --
+      // leaving hasExplicitChoiceRef true in memory for this session only,
+      // reverting to auto-detection on the next load/reload. toggleTheme
+      // never hits this case since it's a binary flip that always changes
+      // value; setLang takes an explicit target, so it can collide with
+      // the current one.
       hasExplicitChoiceRef.current = true;
+      try {
+        localStorage.setItem(STORAGE_KEY, next);
+      } catch {
+        // localStorage can be unavailable (private mode) -- the choice just won't survive a reload.
+      }
       setLangState(next);
     },
   };
