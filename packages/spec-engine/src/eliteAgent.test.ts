@@ -93,6 +93,29 @@ test("parsePatchHunks returns an empty array for a patch body with no real hunks
   assert.deepEqual(parsePatchHunks("no markers here at all"), []);
 });
 
+/**
+ * Round 1095: an empty search/replace block is a legitimate hunk shape --
+ * "insert this, no surrounding context needed" -- but the old
+ * implementation's single regex required a full extra newline between
+ * each marker line and its neighboring capture, which structurally
+ * cannot exist when that capture is empty. The hunk was silently
+ * dropped (parsePatchHunks returned []) with no error, no signal.
+ */
+test("parsePatchHunks still extracts a hunk whose search text is genuinely empty", () => {
+  const body = ["<<<<<<< SEARCH", "=======", "new content here", ">>>>>>> REPLACE"].join("\n");
+  assert.deepEqual(parsePatchHunks(body), [{ search: "", replace: "new content here" }]);
+});
+
+test("parsePatchHunks still extracts a hunk whose replace text is genuinely empty", () => {
+  const body = ["<<<<<<< SEARCH", "delete this line", "=======", ">>>>>>> REPLACE"].join("\n");
+  assert.deepEqual(parsePatchHunks(body), [{ search: "delete this line", replace: "" }]);
+});
+
+test("parsePatchHunks returns no hunks for a SEARCH block with no closing markers at all, rather than guessing", () => {
+  const body = ["<<<<<<< SEARCH", "foo", "bar"].join("\n");
+  assert.deepEqual(parsePatchHunks(body), []);
+});
+
 test("applyPatch replaces a single hunk's search text with its replace text", () => {
   const result = applyPatch("const x = 1;\nconst y = 2;", [{ search: "const x = 1;", replace: "const x = 100;" }]);
   assert.equal(result.content, "const x = 100;\nconst y = 2;");
@@ -139,6 +162,22 @@ test("applyPatch refuses an ambiguous hunk whose search text appears more than o
   assert.equal(result.content, "return 1;\nreturn 1;\n", "content must be left completely untouched when a hunk is ambiguous");
   assert.equal(result.failedHunkIndex, 0);
   assert.equal(result.failedHunkReason, "ambiguous");
+});
+
+/**
+ * Round 1095: before this fix, String.prototype.indexOf("") === 0 made an
+ * empty search text look like it was "found at index 0" of any content,
+ * and every later indexOf("", 1) call also "finds" it again -- so this
+ * used to be misreported as "ambiguous" rather than refused for what it
+ * actually is: a contextless insertion this format has no line number or
+ * anchor to place correctly.
+ */
+test("applyPatch refuses a hunk whose search text is empty, rather than guessing where to insert", () => {
+  const result = applyPatch("hello world", [{ search: "", replace: "inserted" }]);
+  assert.equal(result.appliedCount, 0);
+  assert.equal(result.content, "hello world", "content must be left completely untouched");
+  assert.equal(result.failedHunkIndex, 0);
+  assert.equal(result.failedHunkReason, "empty_search");
 });
 
 test("applyPatch with zero hunks returns the original content unchanged", () => {

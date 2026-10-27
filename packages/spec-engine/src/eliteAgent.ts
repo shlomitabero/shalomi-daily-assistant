@@ -67,23 +67,55 @@ export interface PatchHunk {
   replace: string;
 }
 
-// Matches one <<<<<<< SEARCH / ======= / >>>>>>> REPLACE hunk. The markers
-// must each sit alone on their own line (the format the system prompt
-// above instructs), which is also what keeps this from misfiring on a
-// file's own content that merely happens to mention the word "SEARCH" or
-// "REPLACE" elsewhere.
-const HUNK_PATTERN = /^<{7} SEARCH\r?\n([\s\S]*?)\r?\n^={7}\r?\n([\s\S]*?)\r?\n^>{7} REPLACE$/gm;
+const SEARCH_MARKER = "<<<<<<< SEARCH";
+const DIVIDER_MARKER = "=======";
+const REPLACE_MARKER = ">>>>>>> REPLACE";
 
 /**
  * Parses the <patch>...</patch> body above into its individual
  * search/replace hunks. A patch block most commonly holds exactly one
  * hunk, but the system prompt allows several edits to the same file in
  * one <patch> block, so this always returns an array.
+ *
+ * Round 1095: this used to be one combined multiline regex
+ * (`^<{7} SEARCH\r?\n([\s\S]*?)\r?\n^={7}\r?\n...`), which required a
+ * full extra newline between each marker line and its neighboring
+ * capture -- structurally impossible to satisfy when a hunk's own
+ * `search` or `replace` text is genuinely empty (a legitimate shape:
+ * "insert this with no surrounding context needed"), since there's then
+ * no blank line to anchor that required `\n`. The regex simply never
+ * matched such a hunk, and parsePatchHunks silently returned `[]` for it
+ * -- no error, no signal, the model's intended edit just vanished.
+ * Parsing line-by-line instead (each marker checked by exact line
+ * equality, same "must sit alone on its own line" discipline the old
+ * regex's own comment described) has no such requirement: an empty
+ * search/replace block is just zero lines collected between its markers.
  */
 export function parsePatchHunks(patchBody: string): PatchHunk[] {
   const hunks: PatchHunk[] = [];
-  for (const match of patchBody.matchAll(HUNK_PATTERN)) {
-    hunks.push({ search: match[1], replace: match[2] });
+  const lines = patchBody.split(/\r?\n/);
+  let i = 0;
+  while (i < lines.length) {
+    if (lines[i] !== SEARCH_MARKER) {
+      i++;
+      continue;
+    }
+    i++;
+    const searchLines: string[] = [];
+    while (i < lines.length && lines[i] !== DIVIDER_MARKER) {
+      searchLines.push(lines[i]);
+      i++;
+    }
+    if (i >= lines.length) break; // no closing "=======" -- malformed/truncated, stop rather than guess
+    i++; // skip "======="
+    const replaceLines: string[] = [];
+    while (i < lines.length && lines[i] !== REPLACE_MARKER) {
+      replaceLines.push(lines[i]);
+      i++;
+    }
+    if (i >= lines.length) break; // no closing ">>>>>>> REPLACE" -- malformed/truncated, stop rather than guess
+    i++; // skip ">>>>>>> REPLACE"
+    hunks.push({ search: searchLines.join("\n"), replace: replaceLines.join("\n") });
   }
   return hunks;
 }
@@ -136,15 +168,17 @@ export interface ApplyPatchResult {
    * The first hunk index (0-based) that could not be applied, or null if
    * every hunk succeeded. A hunk fails when its `search` text doesn't
    * appear in the file's CURRENT content (stale: the model's patch was
-   * written against an earlier version of the file) or appears more than
-   * once (ambiguous: applying it could silently edit the wrong spot) --
-   * the same "must match exactly once" discipline this codebase's own
+   * written against an earlier version of the file), appears more than
+   * once (ambiguous: applying it could silently edit the wrong spot), or
+   * is itself empty (empty_search: a contextless insertion with no line
+   * number or anchor to say where it belongs) -- the same "must match
+   * exactly once, never guess" discipline this codebase's own
    * Artifact-edit tooling already requires, for the identical reason:
-   * guessing which occurrence was meant is how a patch silently corrupts
-   * the wrong part of a file.
+   * guessing which occurrence -- or which position -- was meant is how a
+   * patch silently corrupts the wrong part of a file.
    */
   failedHunkIndex: number | null;
-  failedHunkReason: "not_found" | "ambiguous" | null;
+  failedHunkReason: "not_found" | "ambiguous" | "empty_search" | null;
 }
 
 /**
@@ -161,6 +195,19 @@ export function applyPatch(originalContent: string, hunks: PatchHunk[]): ApplyPa
   let content = originalContent;
   for (let i = 0; i < hunks.length; i++) {
     const { search, replace } = hunks[i];
+    // Round 1095: an empty `search` isn't "found at index 0" the way
+    // String.prototype.indexOf treats it (indexOf("") === 0 for any
+    // string) -- this format has no line numbers or anchor to say WHERE
+    // a contextless insertion belongs, so guessing a position (start of
+    // file? end?) would be exactly the kind of silent guess this
+    // function's own doc comment already refuses to make for an
+    // ambiguous search. Reject it with its own clear reason instead of
+    // falling through to indexOf, which would otherwise also misreport
+    // this as "ambiguous" (every non-empty content "contains" "" more
+    // than once).
+    if (search === "") {
+      return { content, appliedCount: i, failedHunkIndex: i, failedHunkReason: "empty_search" };
+    }
     const firstIndex = content.indexOf(search);
     if (firstIndex === -1) {
       return { content, appliedCount: i, failedHunkIndex: i, failedHunkReason: "not_found" };
