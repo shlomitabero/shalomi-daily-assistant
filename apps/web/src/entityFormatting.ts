@@ -1179,12 +1179,24 @@ export function pickDisplayField(entity: Entity): Field | null {
  * same "#<id>" convention this function already uses one line above for
  * a genuinely empty value.
  */
-export function recordDisplayLabel(entity: Entity, record: EntityRecord): string {
+export function recordDisplayLabel(entity: Entity, record: EntityRecord, lang: Lang = "en"): string {
   const field = pickDisplayField(entity);
   const value = field ? record[field.name] : undefined;
   if (value === null || value === undefined || value === "") return `#${record.id}`;
   if (field?.type === "boolean") return value ? "TRUE" : "FALSE";
   if (field?.type === "enum") return field.enumLabels?.[String(value)] ?? String(value);
+  // Round 1072: the SAME last-resort fallback can also land on a `date`
+  // field -- an entity with no name/title/text/longtext field, e.g.
+  // `DailyLog { loggedAt: date, temperature: number }`, has pickDisplayField
+  // fall through to its own final step and pick the date field regardless.
+  // Falling through to `String(value)` here would render the raw
+  // unformatted "YYYY-MM-DD" string as this record's own label everywhere
+  // a record is shown by name (a relation picker/cell, Global Search,
+  // Business Twin's narrative sentences, a WhatsApp/email/webhook
+  // automation's own message interpolation) -- the exact bug rounds
+  // 1048-1071 already fixed for the calendar view's own chip-label
+  // functions, never audited for this far more pervasive sibling.
+  if (field?.type === "date" && typeof value === "string") return formatDateValue(value, lang);
   if (field?.type === "relation") return `#${record.id}`;
   // Round 982: the SAME last-resort fallback can also land on a `file`
   // field -- an attachment/join entity like `Enrollment { certificate:
@@ -1255,13 +1267,14 @@ export function relationDisplayLabel(
   value: unknown,
   allEntities: Entity[],
   relatedRecords: RelatedRecordsByEntity,
+  lang: Lang = "en",
 ): string {
   if (value === null || value === undefined || value === "") return "";
   const targetEntity = field.relationTo ? allEntities.find((e) => e.name === field.relationTo) : undefined;
   const records = field.relationTo ? relatedRecords[field.relationTo] : undefined;
   if (!targetEntity || !records) return `#${value}`;
   const match = relationIndexFor(records).get(Number(value));
-  return match ? recordDisplayLabel(targetEntity, match) : `#${value}`;
+  return match ? recordDisplayLabel(targetEntity, match, lang) : `#${value}`;
 }
 
 /**
@@ -1608,6 +1621,7 @@ export function buildImportRecords(
   rows: string[][],
   allEntities: Entity[] = [],
   relatedRecords: RelatedRecordsByEntity = {},
+  lang: Lang = "en",
 ): ImportResult {
   if (rows.length === 0) return { records: [], errors: [] };
 
@@ -1737,7 +1751,7 @@ export function buildImportRecords(
         // that as a genuine, resolved label rather than its "no label" fallback --
         // treating it as an id reference instead would silently point the import at
         // the wrong record.
-        const matches = targetRecords.filter((r) => recordDisplayLabel(targetEntity, r).toLowerCase() === raw.toLowerCase());
+        const matches = targetRecords.filter((r) => recordDisplayLabel(targetEntity, r, lang).toLowerCase() === raw.toLowerCase());
         if (matches.length === 1) {
           record[field.name] = Number(matches[0].id);
           continue;
@@ -2029,6 +2043,7 @@ export function groupRecordsByField(
   t: (key: string, params?: Record<string, string | number>) => string,
   allEntities?: Entity[],
   relatedRecords?: RelatedRecordsByEntity,
+  lang: Lang = "en",
 ): RecordGroup[] {
   if (field.type === "boolean") {
     const groups: RecordGroup[] = [];
@@ -2047,7 +2062,7 @@ export function groupRecordsByField(
     const knownIds = new Set(relatedList.map((r) => r.id));
     for (const related of relatedList) {
       const matched = records.filter((r) => Number(r[field.name]) === related.id);
-      if (matched.length > 0) groups.push({ key: String(related.id), label: recordDisplayLabel(targetEntity, related), records: matched });
+      if (matched.length > 0) groups.push({ key: String(related.id), label: recordDisplayLabel(targetEntity, related, lang), records: matched });
     }
     const other = records.filter((r) => {
       const v = r[field.name];

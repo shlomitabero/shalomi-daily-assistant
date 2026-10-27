@@ -351,3 +351,35 @@ test("recordDisplayLabel falls back to this record's own #<id>, not the file fie
     "must fall back to this record's own id, not String() the file's raw JSON upload descriptor as the label",
   );
 });
+
+/**
+ * Round 1072 regression test: the exact same bug class as the enum (761),
+ * boolean (771), relation (968), and file (982) fixes above, never done
+ * for "date" -- an entity with no name/title/text/longtext field but a
+ * genuine date field (e.g. DailyLog { loggedAt: date, temperature: number
+ * }) has pickDisplayField's own last-resort step land on the date field
+ * regardless, and recordDisplayLabel used to String() the raw unformatted
+ * "YYYY-MM-DD" string as the record's own label -- everywhere one is shown
+ * by name from this file's own real callers (automations.ts's template
+ * interpolation, twin.ts's narrative sentences, backup.ts's CSV relation
+ * columns, whatsapp.ts's phone-number match label).
+ */
+test("recordDisplayLabel renders a date display field as a real formatted date, not the raw 'YYYY-MM-DD' string, honoring the given lang", () => {
+  const entity: Entity = {
+    name: "DailyLog",
+    fields: [
+      { name: "loggedAt", type: "date", required: true },
+      { name: "temperature", type: "number", required: true },
+    ],
+  };
+  assert.equal(
+    recordDisplayLabel(entity, { id: 5, createdAt: "", loggedAt: "2026-04-02", temperature: 21 }),
+    "4/2/2026",
+    "must render the date field as a real formatted date (default lang \"en\"), not the raw ISO string",
+  );
+  assert.equal(
+    recordDisplayLabel(entity, { id: 5, createdAt: "", loggedAt: "2026-04-02", temperature: 21 }, "he"),
+    "2.4.2026",
+    "must honor the given lang, matching this file's own LOCALE convention (he-IL)",
+  );
+});

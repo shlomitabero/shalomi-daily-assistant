@@ -84,7 +84,7 @@ function fieldValueLabel(rule: AutomationRuleView, entities: Entity[], relatedRe
     const targetEntity = entities.find((e) => e.name === field.relationTo);
     const records = relatedRecords[field.relationTo];
     const match = targetEntity && records ? records.find((r) => String(r.id) === rule.fieldValue) : undefined;
-    return match && targetEntity ? recordDisplayLabel(targetEntity, match) : rule.fieldValue;
+    return match && targetEntity ? recordDisplayLabel(targetEntity, match, lang) : rule.fieldValue;
   }
   if (field?.type === "date") {
     const date = parseFieldDate(rule.fieldValue);

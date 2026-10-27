@@ -1,5 +1,6 @@
 import type { Project } from "@forge/shared";
 import { listRecords, type ForgeDatabase } from "@forge/db";
+import { isHebrewText } from "@forge/spec-engine";
 import { recordDisplayLabel } from "./displayField.js";
 
 /**
@@ -121,7 +122,7 @@ export function findMatchingRecord(db: ForgeDatabase, project: Project, fromNumb
             entityName: entity.name,
             entityLabel: entity.label ?? entity.name,
             recordId: record.id as number,
-            label: recordDisplayLabel(entity, record),
+            label: recordDisplayLabel(entity, record, isHebrewText(project.description) ? "he" : "en"),
           };
         }
       }

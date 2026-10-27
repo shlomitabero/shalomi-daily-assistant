@@ -262,7 +262,7 @@ function computeRelationHubObservation(
       return ambiguous ? `${b.count} in "${b.sourceLabel}" (via ${b.fieldLabel})` : `${b.count} in "${b.sourceLabel}"`;
     })
     .join(", ");
-  const label = recordDisplayLabel(targetEntity, targetRecord);
+  const label = recordDisplayLabel(targetEntity, targetRecord, hebrew ? "he" : "en");
   const entityLabel = entityDisplayLabel(targetEntity, entityLabels);
 
   return {
@@ -319,7 +319,7 @@ function computeDuplicateObservations(
 
     const groupsByNormalizedLabel = new Map<string, { count: number; displayLabel: string }>();
     for (const record of records) {
-      const label = recordDisplayLabel(entity, record);
+      const label = recordDisplayLabel(entity, record, hebrew ? "he" : "en");
       const key = label.trim().toLowerCase();
       const existing = groupsByNormalizedLabel.get(key);
       if (existing) {

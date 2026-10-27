@@ -771,12 +771,34 @@ function backupPickDisplayField(entity) {
 // identically by every other row pointing at the same related parent
 // (e.g. every Membership row for the same user, regardless of which
 // group). #\${record.id} -- this record's OWN id -- is always unique.
+// Mirrors parseFieldDate's own local-midnight construction used throughout
+// this template's date handling (see isValidDate's own DATE_FORMAT above)
+// -- the Date constructor would parse "YYYY-MM-DD" as UTC midnight, which
+// toLocaleDateString (rendered in the server process's own local time)
+// would then print one calendar day early for a server behind UTC.
+function backupParseFieldDate(raw) {
+  const match = DATE_FORMAT.exec(raw);
+  if (match) return new Date(Number(match[1]), Number(match[2]) - 1, Number(match[3]));
+  return new Date(raw);
+}
+
+// Round 1072: mirrors this file's own recordDisplayLabel/feedRecordDisplayLabel
+// fix (and the live apps/api/src/displayField.ts's identical fix) -- the
+// SAME last-resort fallback backupPickDisplayField's own doc comment
+// above already calls out for relation/file fields can also land on a
+// "date" field, which without this branch leaked the raw unformatted
+// "YYYY-MM-DD" string into the backup CSV as a relation column's own
+// display label.
 function backupRecordDisplayLabel(entity, record) {
   const field = backupPickDisplayField(entity);
   const value = field ? record[field.name] : undefined;
   if (value === null || value === undefined || value === "") return \`#\${record.id}\`;
   if (field && field.type === "boolean") return value ? "TRUE" : "FALSE";
   if (field && field.type === "enum") return (field.enumLabels && field.enumLabels[String(value)]) || String(value);
+  if (field && field.type === "date" && typeof value === "string") {
+    const date = backupParseFieldDate(value);
+    return Number.isNaN(date.getTime()) ? value : date.toLocaleDateString();
+  }
   if (field && field.type === "relation") return \`#\${record.id}\`;
   // Round 982: fixed the same gap in every OTHER copy of this logic
   // (apps/api/src/displayField.ts, apps/web/src/entityFormatting.ts, and
@@ -1033,6 +1055,12 @@ function feedRecordDisplayLabel(entity, record) {
   if (value === null || value === undefined || value === "") return \`#\${record.id}\`;
   if (field && field.type === "boolean") return value ? "TRUE" : "FALSE";
   if (field && field.type === "enum") return (field.enumLabels && field.enumLabels[String(value)]) || String(value);
+  // Round 1072: mirrors this file's own EntityView.jsx recordDisplayLabel
+  // fix (and the live apps/api/src/displayField.ts's identical fix) -- a
+  // join entity with no name/title/text/enum field that happens to have a
+  // date field would otherwise render the raw unformatted "YYYY-MM-DD"
+  // string as the related record's own label in this feed's DESCRIPTION.
+  if (field && field.type === "date" && typeof value === "string") return String(feedFormatIcsDescriptionDate(value));
   if (field && field.type === "relation") return \`#\${record.id}\`;
   if (field && field.type === "file") return \`#\${record.id}\`;
   return String(value);
@@ -2209,6 +2237,18 @@ export function recordDisplayLabel(entity, record) {
   if (value === null || value === undefined || value === "") return \`#\${record.id}\`;
   if (field?.type === "boolean") return value ? "TRUE" : "FALSE";
   if (field?.type === "enum") return field.enumLabels?.[String(value)] ?? String(value);
+  // Round 1072: the same last-resort fallback can also land on a "date"
+  // field -- see this file's own Cell renderer's identical date branch
+  // above for the full "UTC-vs-local mismatch" reasoning behind using
+  // parseFieldDate instead of the Date constructor directly. Without this,
+  // a join/line-item entity with no name/title/text/enum field that
+  // happens to have a date field (e.g. Enrollment { enrolledOn: date,
+  // studentId: relation }) would render the raw unformatted "YYYY-MM-DD"
+  // string as this record's own label everywhere one is shown by name.
+  if (field?.type === "date" && typeof value === "string") {
+    const date = parseFieldDate(value);
+    return Number.isNaN(date.getTime()) ? value : date.toLocaleDateString();
+  }
   if (field?.type === "relation") return \`#\${record.id}\`;
   // Round 982: the same last-resort fallback can also land on a "file"
   // field -- an attachment/join entity like Enrollment { certificate:

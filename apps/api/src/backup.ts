@@ -3,6 +3,8 @@ import { listRecords, listWhatsAppMessages, type ForgeDatabase, type WhatsAppMes
 import { isHebrewText } from "@forge/spec-engine";
 import { recordDisplayLabel } from "./displayField.js";
 
+type Lang = "he" | "en";
+
 /**
  * "Backup all data": one ZIP containing one CSV per entity, so a real
  * business owner can get their whole project's data out at once instead
@@ -118,6 +120,7 @@ function fieldDisplayValue(
   value: unknown,
   allEntities: Entity[],
   recordIndexByEntity: Record<string, Map<number, EntityRecord>>,
+  lang: Lang = "en",
 ): string {
   if (value === null || value === undefined || value === "") return "";
   if (field.type === "relation") {
@@ -125,7 +128,7 @@ function fieldDisplayValue(
     const index = field.relationTo ? recordIndexByEntity[field.relationTo] : undefined;
     if (!targetEntity || !index) return `#${value}`;
     const match = index.get(Number(value));
-    return match ? recordDisplayLabel(targetEntity, match) : `#${value}`;
+    return match ? recordDisplayLabel(targetEntity, match, lang) : `#${value}`;
   }
   if (field.type === "boolean") return value ? "TRUE" : "FALSE";
   if (field.type === "enum") return field.enumLabels?.[String(value)] ?? String(value);
@@ -229,11 +232,12 @@ function entityToCsv(
   allEntities: Entity[],
   recordIndexByEntity: Record<string, Map<number, EntityRecord>>,
   orderedFields: Field[],
+  lang: Lang = "en",
 ): string {
   const labelOccurrences = fieldLabelOccurrences(orderedFields);
   const header = orderedFields.map((f) => csvEscape(fieldDisplayLabel(f, labelOccurrences))).join(",");
   const rows = records.map((record) =>
-    orderedFields.map((f) => csvEscape(fieldDisplayValue(f, record[f.name], allEntities, recordIndexByEntity))).join(","),
+    orderedFields.map((f) => csvEscape(fieldDisplayValue(f, record[f.name], allEntities, recordIndexByEntity, lang))).join(","),
   );
   return [header, ...rows].join("\r\n");
 }
@@ -380,7 +384,14 @@ export function generateBackupZipEntries(
     path: `${sanitizeZipEntryName(entity.name)}.csv`,
     content:
       "﻿" +
-      entityToCsv(entity, recordsByEntity[entity.name], allEntities, recordIndexByEntity, orderedFieldsFor(entity, columnOrders)),
+      entityToCsv(
+        entity,
+        recordsByEntity[entity.name],
+        allEntities,
+        recordIndexByEntity,
+        orderedFieldsFor(entity, columnOrders),
+        isHebrewText(project.description) ? "he" : "en",
+      ),
   }));
 
   const whatsappMessages = collectAllWhatsAppMessages(db, project.id);

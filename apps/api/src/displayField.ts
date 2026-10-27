@@ -1,5 +1,19 @@
 import type { Entity, EntityRecord, Field } from "@forge/shared";
 
+type Lang = "he" | "en";
+const LOCALE: Record<Lang, string> = { he: "he-IL", en: "en-US" };
+const DATE_FORMAT = /^(\d{4})-(\d{2})-(\d{2})$/;
+
+/** Mirrors calendarFeed.ts's own parseFieldDate exactly -- see its doc comment for the local-vs-UTC-midnight rationale. */
+function parseFieldDate(raw: string): Date {
+  const match = DATE_FORMAT.exec(raw);
+  if (match) {
+    const [, yearStr, monthStr, dayStr] = match;
+    return new Date(Number(yearStr), Number(monthStr) - 1, Number(dayStr));
+  }
+  return new Date(raw);
+}
+
 const DISPLAY_FIELD_NAME_HINTS = ["name", "title"];
 
 /**
@@ -90,12 +104,20 @@ export function pickDisplayField(entity: Entity): Field | null {
  * same "#<id>" convention this function already uses one line above for
  * a genuinely empty value.
  */
-export function recordDisplayLabel(entity: Entity, record: EntityRecord): string {
+export function recordDisplayLabel(entity: Entity, record: EntityRecord, lang: Lang = "en"): string {
   const field = pickDisplayField(entity);
   const value = field ? record[field.name] : undefined;
   if (value === null || value === undefined || value === "") return `#${record.id}`;
   if (field?.type === "boolean") return value ? "TRUE" : "FALSE";
   if (field?.type === "enum") return field.enumLabels?.[String(value)] ?? String(value);
+  // Round 1072: the SAME last-resort fallback can also land on a `date`
+  // field -- see entityFormatting.ts's own identical fix for the full
+  // "no name/title/text/longtext field" reasoning. Mirrors calendarFeed.ts's
+  // own date-formatting convention exactly.
+  if (field?.type === "date" && typeof value === "string") {
+    const date = parseFieldDate(value);
+    return Number.isNaN(date.getTime()) ? value : date.toLocaleDateString(LOCALE[lang]);
+  }
   if (field?.type === "relation") return `#${record.id}`;
   // Round 982: the SAME last-resort fallback can also land on a `file`
   // field -- an attachment/join entity like `Enrollment { certificate:

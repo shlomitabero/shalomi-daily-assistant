@@ -130,12 +130,17 @@ function formatIcsDescriptionNumber(value: unknown, lang: Lang): unknown {
  * relationDisplayLabel below actually needs -- a relation target record's
  * own label, not a full record's display-everywhere label).
  */
-function recordDisplayLabelForRelation(entity: Entity, record: EntityRecord): string {
+function recordDisplayLabelForRelation(entity: Entity, record: EntityRecord, lang: Lang = "en"): string {
   const field = pickDisplayField(entity);
   const value = field ? record[field.name] : undefined;
   if (value === null || value === undefined || value === "") return `#${record.id}`;
   if (field?.type === "boolean") return value ? "TRUE" : "FALSE";
   if (field?.type === "enum") return field.enumLabels?.[String(value)] ?? String(value);
+  // Round 1072: mirrors entityFormatting.ts's own recordDisplayLabel fix
+  // (and this file's own calendarChipLabelValue round-1048 fix just
+  // above) -- see their doc comments for the full "no name/title/text/
+  // longtext field" reasoning.
+  if (field?.type === "date" && typeof value === "string") return String(formatIcsDescriptionDate(value, lang));
   if (field?.type === "relation") return `#${record.id}`;
   if (field?.type === "file") return `#${record.id}`;
   return String(value);
@@ -158,6 +163,7 @@ function relationDisplayLabelLocal(
   allEntities: Entity[],
   relatedRecords: RelatedRecordsByEntity,
   indexCache: Map<EntityRecord[], Map<number, EntityRecord>>,
+  lang: Lang = "en",
 ): string {
   if (value === null || value === undefined || value === "") return "";
   const targetEntity = field.relationTo ? allEntities.find((e) => e.name === field.relationTo) : undefined;
@@ -169,7 +175,7 @@ function relationDisplayLabelLocal(
     indexCache.set(records, index);
   }
   const match = index.get(Number(value));
-  return match ? recordDisplayLabelForRelation(targetEntity, match) : `#${value}`;
+  return match ? recordDisplayLabelForRelation(targetEntity, match, lang) : `#${value}`;
 }
 
 function pad2(n: number): string {
@@ -293,7 +299,7 @@ export function buildCalendarFeedIcs(
       .map((f) => {
         const value =
           f.type === "relation"
-            ? relationDisplayLabelLocal(f, record[f.name], allEntities, relatedRecords, relationIndexCache)
+            ? relationDisplayLabelLocal(f, record[f.name], allEntities, relatedRecords, relationIndexCache, lang)
             : f.type === "enum"
               ? (f.enumLabels?.[String(record[f.name])] ?? record[f.name])
               : f.type === "file"

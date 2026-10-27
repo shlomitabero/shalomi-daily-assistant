@@ -455,6 +455,58 @@ test("generated server.js's calendar feed renders a date label field as a format
 });
 
 /**
+ * Round 1072: a separate, previously-unaudited sibling of the SUMMARY fix
+ * just above -- this feed's own DESCRIPTION resolves a RELATION field's
+ * own target record to a display label via feedRecordDisplayLabel/
+ * feedRelationDisplayLabel, not feedChipLabelValue. A join entity with no
+ * name/title/text/enum field at all, only a date and a relation (e.g.
+ * DailyLog { loggedAt: date, studentId: relation }), has
+ * pickFeedDisplayField's own last-resort step land on the date field
+ * regardless, and feedRecordDisplayLabel used to String() the raw
+ * unformatted "YYYY-MM-DD" string as the related record's own label in
+ * this feed's DESCRIPTION line.
+ */
+test("the generated server.js's own feedRecordDisplayLabel renders a date display field as a real formatted date, not the raw 'YYYY-MM-DD' string", () => {
+  const serverJs = generateExportFiles(project).find((f) => f.path === "server.js")!.content;
+  const feedDisplayFieldHintsSrc = serverJs.match(/const FEED_DISPLAY_FIELD_NAME_HINTS = .*;\n/)?.[0];
+  const pickFeedDisplayFieldSrc = serverJs.match(/function pickFeedDisplayField\(entity\) \{[\s\S]*?\n\}\n/)?.[0];
+  const feedRecordDisplayLabelSrc = serverJs.match(/function feedRecordDisplayLabel\(entity, record\) \{[\s\S]*?\n\}\n/)?.[0];
+  const feedRelationDisplayLabelSrc = serverJs.match(/function feedRelationDisplayLabel\(field, value, recordIndexByEntity\) \{[\s\S]*?\n\}\n/)?.[0];
+  const feedParseFieldDateSrc = serverJs.match(/function feedParseFieldDate\(raw\) \{[\s\S]*?\n\}\n/)?.[0];
+  const feedFormatIcsDescriptionDateSrc = serverJs.match(/function feedFormatIcsDescriptionDate\(value\) \{[\s\S]*?\n\}\n/)?.[0];
+  const dateFormatSrc = serverJs.match(/const DATE_FORMAT = .*;\n/)?.[0];
+  assert.ok(
+    feedDisplayFieldHintsSrc &&
+      pickFeedDisplayFieldSrc &&
+      feedRecordDisplayLabelSrc &&
+      feedRelationDisplayLabelSrc &&
+      feedParseFieldDateSrc &&
+      feedFormatIcsDescriptionDateSrc &&
+      dateFormatSrc,
+    "expected to find FEED_DISPLAY_FIELD_NAME_HINTS/pickFeedDisplayField/feedRecordDisplayLabel/feedRelationDisplayLabel/feedParseFieldDate/feedFormatIcsDescriptionDate/DATE_FORMAT in generated server.js",
+  );
+
+  const dailyLogEntity = {
+    name: "DailyLog",
+    fields: [
+      { name: "loggedAt", type: "date" },
+      { name: "studentId", type: "relation", relationTo: "Student" },
+    ],
+  };
+  const feedRelationDisplayLabel = new Function(
+    "ENTITIES",
+    `${dateFormatSrc}\n${feedParseFieldDateSrc}\n${feedFormatIcsDescriptionDateSrc}\n${feedDisplayFieldHintsSrc}\n${pickFeedDisplayFieldSrc}\n${feedRecordDisplayLabelSrc}\n${feedRelationDisplayLabelSrc}\nreturn feedRelationDisplayLabel;`,
+  )([dailyLogEntity]);
+
+  const logField = { name: "log", type: "relation", relationTo: "DailyLog" };
+  assert.equal(
+    feedRelationDisplayLabel(logField, 5, { DailyLog: new Map([[5, { id: 5, loggedAt: "2026-04-02", studentId: 2 }]]) }),
+    "4/2/2026",
+    "must render the date field as a real formatted date in the feed's own DESCRIPTION, not the raw ISO string",
+  );
+});
+
+/**
  * Round 1010: the client-side half of the same gap -- confirms the
  * generated EntityView.jsx actually wires up the "Subscribe" button
  * (next to the existing one-shot Export ICS button) to copy the real
@@ -3915,6 +3967,49 @@ test("the exported EntityView's recordDisplayLabel falls back to this record's o
     recordDisplayLabel(entity, { id: 5, certificate: fileDescriptor, studentId: 2 }),
     "#5",
     "must fall back to this record's own id, not String() the file's raw JSON upload descriptor as the label",
+  );
+});
+
+/**
+ * Round 1072: the exact same bug class as the enum (761), boolean (771),
+ * relation (968), and file (982) fixes above, never done for "date" in
+ * the exported app's own recordDisplayLabel -- a join/line-item entity
+ * with no name/title/text/longtext field but a genuine date field (e.g.
+ * DailyLog { loggedAt: date, temperature: number }) has pickDisplayField's
+ * own last-resort step land on the date field regardless, and this
+ * function used to String() the raw unformatted "YYYY-MM-DD" string as
+ * the record's own label in every relation picker/cell, CSV export, and
+ * search result this exported app's own recordDisplayLabel feeds.
+ */
+test("the exported EntityView's recordDisplayLabel renders a date display field as a real formatted date, not the raw 'YYYY-MM-DD' string", () => {
+  const files = generateExportFiles(project);
+  const entityViewJsx = files.find((f) => f.path === "web/src/components/EntityView.jsx")!.content;
+
+  const displayFieldHintsSrc = entityViewJsx.match(/const DISPLAY_FIELD_NAME_HINTS = .*;\n/)?.[0];
+  const pickDisplayFieldSrc = entityViewJsx.match(/export function pickDisplayField\([\s\S]*?\n\}\n/)?.[0]?.replace("export ", "");
+  const recordDisplayLabelSrc = entityViewJsx.match(/export function recordDisplayLabel\(entity, record\) \{[\s\S]*?\n\}\n/)?.[0]?.replace("export ", "");
+  const dateFormatSrc = entityViewJsx.match(/const CALENDAR_DATE_FORMAT = .*;\n/)?.[0];
+  const parseFieldDateSrc = entityViewJsx.match(/function parseFieldDate\(raw\) \{[\s\S]*?\n\}\n/)?.[0];
+  assert.ok(
+    displayFieldHintsSrc && pickDisplayFieldSrc && recordDisplayLabelSrc && dateFormatSrc && parseFieldDateSrc,
+    "expected to find DISPLAY_FIELD_NAME_HINTS/pickDisplayField/recordDisplayLabel/CALENDAR_DATE_FORMAT/parseFieldDate in generated output",
+  );
+
+  const recordDisplayLabel = new Function(
+    `${displayFieldHintsSrc}\n${dateFormatSrc}\n${parseFieldDateSrc}\n${pickDisplayFieldSrc}\n${recordDisplayLabelSrc}\nreturn recordDisplayLabel;`,
+  )() as (entity: unknown, record: unknown) => string;
+
+  const entity = {
+    name: "DailyLog",
+    fields: [
+      { name: "loggedAt", type: "date" },
+      { name: "temperature", type: "number" },
+    ],
+  };
+  assert.equal(
+    recordDisplayLabel(entity, { id: 5, loggedAt: "2026-04-02", temperature: 21 }),
+    "4/2/2026",
+    "must render the date field as a real formatted date, not the raw ISO string",
   );
 });
 
@@ -12396,6 +12491,47 @@ test("the exported server.js's own backupRecordDisplayLabel falls back to this r
     backupFieldDisplayValue(enrollmentField, 5, { Enrollment: new Map([[5, { id: 5, certificate: fileDescriptor, studentId: 2 }]]) }),
     "#5",
     "must fall back to this record's own id, not String() the file's raw JSON upload descriptor into the backup CSV",
+  );
+});
+
+/**
+ * Round 1072: the exact same bug class as the enum/boolean, relation, and
+ * file fixes above, never done for "date" in this fourth, separately-
+ * named copy either -- when backupPickDisplayField's own last-resort step
+ * lands on a date field (a join entity with no name/title/text/enum field
+ * at all, only a date and a relation), backupRecordDisplayLabel used to
+ * String() the raw unformatted "YYYY-MM-DD" string into the downloaded
+ * backup CSV's relation column as the related record's own label.
+ */
+test("the exported server.js's own backupRecordDisplayLabel renders a date display field as a real formatted date, not the raw 'YYYY-MM-DD' string", () => {
+  const serverJs = generateExportFiles(project).find((f) => f.path === "server.js")!.content;
+  const backupRecordDisplayLabelSrc = serverJs.match(/function backupRecordDisplayLabel\(entity, record\) \{[\s\S]*?\n\}\n/)?.[0];
+  const backupPickDisplayFieldSrc = serverJs.match(/const BACKUP_DISPLAY_FIELD_HINTS[\s\S]*?\nfunction backupPickDisplayField\(entity\) \{[\s\S]*?\n\}\n/)?.[0];
+  const backupFieldDisplayValueSrc = serverJs.match(/function backupFieldDisplayValue\(field, value, recordIndexByEntity\) \{[\s\S]*?\n\}\n/)?.[0];
+  const backupParseFieldDateSrc = serverJs.match(/function backupParseFieldDate\(raw\) \{[\s\S]*?\n\}\n/)?.[0];
+  const dateFormatSrc = serverJs.match(/const DATE_FORMAT = .*;\n/)?.[0];
+  assert.ok(
+    backupRecordDisplayLabelSrc && backupPickDisplayFieldSrc && backupFieldDisplayValueSrc && backupParseFieldDateSrc && dateFormatSrc,
+    "expected to find backupRecordDisplayLabel/backupPickDisplayField/backupFieldDisplayValue/backupParseFieldDate/DATE_FORMAT in generated server.js",
+  );
+
+  const dailyLogEntity = {
+    name: "DailyLog",
+    fields: [
+      { name: "loggedAt", type: "date" },
+      { name: "studentId", type: "relation", relationTo: "Student" },
+    ],
+  };
+  const backupFieldDisplayValue = new Function(
+    "ENTITIES",
+    `${dateFormatSrc}\n${backupParseFieldDateSrc}\n${backupPickDisplayFieldSrc}\n${backupRecordDisplayLabelSrc}\n${backupFieldDisplayValueSrc}\nreturn backupFieldDisplayValue;`,
+  )([dailyLogEntity]);
+
+  const logField = { name: "log", type: "relation", relationTo: "DailyLog" };
+  assert.equal(
+    backupFieldDisplayValue(logField, 5, { DailyLog: new Map([[5, { id: 5, loggedAt: "2026-04-02", studentId: 2 }]]) }),
+    "4/2/2026",
+    "must render the date field as a real formatted date into the backup CSV, not the raw ISO string",
   );
 });
 

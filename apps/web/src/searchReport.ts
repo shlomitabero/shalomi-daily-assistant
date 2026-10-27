@@ -41,7 +41,7 @@ export function formatSearchResults(
     const displayed = expandedSamples[result.entityName] ?? result.sample;
     lines.push(`${result.entityLabel} — ${t("search.resultCount", { count: result.totalMatches })}`);
     for (const record of displayed) {
-      lines.push(`- ${entity ? recordDisplayLabel(entity, record) : `#${record.id}`}`);
+      lines.push(`- ${entity ? recordDisplayLabel(entity, record, lang) : `#${record.id}`}`);
     }
     const remaining = result.totalMatches - displayed.length;
     if (remaining > 0) {

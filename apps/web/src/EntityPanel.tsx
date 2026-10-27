@@ -364,7 +364,7 @@ function RecordPrintSheet({
                 lang={lang}
                 t={t}
                 relationLabel={
-                  f.type === "relation" ? relationDisplayLabel(f, record[f.name], allEntities, relatedRecords) : undefined
+                  f.type === "relation" ? relationDisplayLabel(f, record[f.name], allEntities, relatedRecords, lang) : undefined
                 }
               />
             </dd>
@@ -439,7 +439,7 @@ function RecordListPrintSheet({
               value={record[f.name]}
               lang={lang}
               t={t}
-              relationLabel={f.type === "relation" ? relationDisplayLabel(f, record[f.name], allEntities, relatedRecords) : undefined}
+              relationLabel={f.type === "relation" ? relationDisplayLabel(f, record[f.name], allEntities, relatedRecords, lang) : undefined}
             />
           </td>
         ))}
@@ -596,7 +596,7 @@ function BoardCard({
             lang={lang}
             t={t}
             relationLabel={
-              f.type === "relation" ? relationDisplayLabel(f, record[f.name], allEntities, relatedRecords) : undefined
+              f.type === "relation" ? relationDisplayLabel(f, record[f.name], allEntities, relatedRecords, lang) : undefined
             }
             highlightQuery={highlightQuery}
             onJumpToRecord={onJumpToRecord}
@@ -976,7 +976,7 @@ function FieldInput({
    * way back. */
   editingId?: number | null;
 }) {
-  const { t } = useTranslation();
+  const { t, lang } = useTranslation();
   const [fileUploadError, setFileUploadError] = useState<string | null>(null);
   // A relation field with more than a handful of related records (e.g. a
   // CRM's Deal.customer pointing at 150 Customer rows) had no way to
@@ -1035,7 +1035,7 @@ function FieldInput({
       trimmedFilter === ""
         ? selectableRecords
         : selectableRecords.filter(
-            (r) => Number(r.id) === currentRelationId || recordDisplayLabel(relatedEntity, r).toLowerCase().includes(trimmedFilter),
+            (r) => Number(r.id) === currentRelationId || recordDisplayLabel(relatedEntity, r, lang).toLowerCase().includes(trimmedFilter),
           );
     return (
       <div className="relation-field-input">
@@ -1061,7 +1061,7 @@ function FieldInput({
           {!hasCurrentRelationOption && <option value={currentRelationId as number}>{`#${currentRelationId}`}</option>}
           {filteredRecords.map((r) => (
             <option key={r.id as number} value={r.id as number}>
-              {recordDisplayLabel(relatedEntity, r)}
+              {recordDisplayLabel(relatedEntity, r, lang)}
             </option>
           ))}
         </select>
@@ -2524,8 +2524,8 @@ export function EntityPanel({
   const groupableFieldLabelOccurrences = useMemo(() => fieldLabelOccurrences(groupableFields), [groupableFields]);
   const groupField = groupableFields.find((f) => f.name === groupFieldName) ?? null;
   const recordGroups = useMemo(
-    () => (groupField ? groupRecordsByField(visibleRecords, groupField, t, allEntities, relatedRecords) : null),
-    [groupField, visibleRecords, t, allEntities, relatedRecords],
+    () => (groupField ? groupRecordsByField(visibleRecords, groupField, t, allEntities, relatedRecords, lang) : null),
+    [groupField, visibleRecords, t, allEntities, relatedRecords, lang],
   );
 
   // The records actually rendered in the table body right now -- unlike
@@ -3087,7 +3087,7 @@ export function EntityPanel({
     const index = records.findIndex((r) => (r.id as number) === id);
     if (index === -1) return false;
     const record = records[index];
-    const label = recordDisplayLabel(entity, record);
+    const label = recordDisplayLabel(entity, record, lang);
     if (!window.confirm(t("entity.confirmDelete", { label }))) return false;
 
     if (pendingDeleteRef.current) {
@@ -3414,7 +3414,7 @@ export function EntityPanel({
     if (!field) return String(value);
     if (field.type === "boolean") return value ? "TRUE" : "FALSE";
     if (field.type === "enum") return (field.enumLabels && field.enumLabels[String(value)]) || String(value);
-    if (field.type === "relation") return relationDisplayLabel(field, value, allEntities, relatedRecords);
+    if (field.type === "relation") return relationDisplayLabel(field, value, allEntities, relatedRecords, lang);
     return String(value);
   }
 
@@ -3552,7 +3552,7 @@ export function EntityPanel({
     try {
       const text = await file.text();
       const rows = parseCsv(text);
-      const { records: parsedRecords, errors: parseErrors } = buildImportRecords(entity.fields, rows, allEntities, relatedRecords);
+      const { records: parsedRecords, errors: parseErrors } = buildImportRecords(entity.fields, rows, allEntities, relatedRecords, lang);
 
       if (parsedRecords.length === 0) {
         setImportErrors(parseErrors);
@@ -3866,7 +3866,7 @@ export function EntityPanel({
                   lang={lang}
                   t={t}
                   relationLabel={
-                    f.type === "relation" ? relationDisplayLabel(f, record[f.name], allEntities, relatedRecords) : undefined
+                    f.type === "relation" ? relationDisplayLabel(f, record[f.name], allEntities, relatedRecords, lang) : undefined
                   }
                   highlightQuery={search}
                   onJumpToRecord={onJumpToRecord}
@@ -4174,7 +4174,7 @@ export function EntityPanel({
                       {!hasCurrentRelationOption && <option value={currentFilterValue}>{`#${currentFilterValue}`}</option>}
                       {knownRelationRecords.map((r) => (
                         <option key={r.id as number} value={String(r.id)}>
-                          {recordDisplayLabel(allEntities.find((e) => e.name === f.relationTo)!, r)}
+                          {recordDisplayLabel(allEntities.find((e) => e.name === f.relationTo)!, r, lang)}
                         </option>
                       ))}
                     </>

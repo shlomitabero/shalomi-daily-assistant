@@ -453,7 +453,7 @@ export function GlobalSearchPanel({
   }, [copyStatus]);
 
   function recordPreview(entity: Entity, record: EntityRecord): string {
-    return recordDisplayLabel(entity, record);
+    return recordDisplayLabel(entity, record, lang);
   }
 
   // Mirrors EntityPanel.tsx's own focusedRowId scroll effect (round 260):

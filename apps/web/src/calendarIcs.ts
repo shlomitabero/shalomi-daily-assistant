@@ -265,7 +265,7 @@ export function buildCalendarIcs(
         // "50,000" (formatNumberValue) or WhatsApp-message formatting.
         const value =
           f.type === "relation"
-            ? relationDisplayLabel(f, record[f.name], allEntities, relatedRecords)
+            ? relationDisplayLabel(f, record[f.name], allEntities, relatedRecords, lang)
             : f.type === "enum"
               ? (f.enumLabels?.[String(record[f.name])] ?? record[f.name])
               : f.type === "file"

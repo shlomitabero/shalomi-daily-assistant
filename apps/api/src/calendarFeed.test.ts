@@ -212,6 +212,32 @@ test("buildCalendarFeedIcs's relation field degrades to #<id> when allEntities/r
   assert.match(events[0], /לקוח: #9/, "with no relation data on hand, a relation field must degrade to its raw #<id>, not throw or disappear");
 });
 
+/**
+ * Round 1072: mirrors entityFormatting.ts's own recordDisplayLabel fix,
+ * never ported to this feed's own `recordDisplayLabelForRelation`/
+ * `relationDisplayLabelLocal` -- a related entity with no name/title/
+ * text/longtext field but a genuine date field (e.g. a Customer whose
+ * only other field is a signup date) has pickDisplayField's own
+ * last-resort step land on the date field regardless, and this feed's
+ * DESCRIPTION used to render the raw unformatted "YYYY-MM-DD" string as
+ * the related record's own label instead of a real formatted date.
+ */
+test("buildCalendarFeedIcs's DESCRIPTION resolves a relation field to a formatted date, not the raw 'YYYY-MM-DD' string, when the related entity's own display field is a date", () => {
+  const records: EntityRecord[] = [
+    { id: 1, appointmentDate: "2026-03-15", customerName: "Dana Levi", confirmed: null, customerId: 9 },
+  ];
+  const signupDateCustomerEntity: Entity = {
+    name: "Customer",
+    label: "לקוח",
+    fields: [{ name: "signupDate", label: "תאריך הרשמה", type: "date", required: true }],
+  };
+  const customerRecords: EntityRecord[] = [{ id: 9, signupDate: "2026-01-20" }];
+  const ics = buildCalendarFeedIcs(richEntity, records, "proj1", new Date(), [richEntity, signupDateCustomerEntity], { Customer: customerRecords });
+  const events = parseEvents(ics!);
+  assert.doesNotMatch(events[0], /לקוח: 2026-01-20/, "the related record's own date display field must never render as the raw unformatted ISO string");
+  assert.match(events[0], /לקוח: 1\/20\/2026/, "the related record's own date display field must render as a real formatted date");
+});
+
 test("buildCalendarFeedIcs's DESCRIPTION disambiguates two description fields that share the same label with each field's own unique name, mirroring calendarIcs.ts's round-635 fix", () => {
   const amount2Field: Field = { name: "amount2", label: "סכום", type: "number", required: false };
   const collisionEntity: Entity = { name: "Appointment", label: "תור", fields: [dateField, nameField, amountField, amount2Field] };

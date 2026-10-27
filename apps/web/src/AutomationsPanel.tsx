@@ -708,7 +708,7 @@ export function AutomationsPanel({
       const targetEntity = entities.find((e) => e.name === field.relationTo);
       const records = relatedRecords[field.relationTo];
       const match = targetEntity && records ? records.find((r) => String(r.id) === rule.fieldValue) : undefined;
-      return match && targetEntity ? recordDisplayLabel(targetEntity, match) : rule.fieldValue;
+      return match && targetEntity ? recordDisplayLabel(targetEntity, match, lang) : rule.fieldValue;
     }
     if (field?.type === "date") {
       const date = parseFieldDate(rule.fieldValue);
@@ -1243,7 +1243,7 @@ export function AutomationsPanel({
                   <select value={fieldValue} onChange={(e) => setFieldValue(e.target.value)} aria-label={t("automations.fieldValue.placeholder")}>
                     {relationTargetRecords.map((r) => (
                       <option key={r.id as number} value={String(r.id)}>
-                        {recordDisplayLabel(relationTargetEntity, r)}
+                        {recordDisplayLabel(relationTargetEntity, r, lang)}
                       </option>
                     ))}
                   </select>

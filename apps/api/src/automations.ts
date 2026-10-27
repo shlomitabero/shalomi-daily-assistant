@@ -289,6 +289,7 @@ function resolveRelationFieldsForTemplate(
   entity: Entity,
   allEntities: Entity[],
   record: EntityRecord,
+  lang: Lang = "en",
 ): EntityRecord {
   const resolved: EntityRecord = { ...record };
   for (const field of entity.fields) {
@@ -297,7 +298,7 @@ function resolveRelationFieldsForTemplate(
     if (value === null || value === undefined) continue;
     const targetEntity = field.relationTo ? allEntities.find((e) => e.name === field.relationTo) : undefined;
     const targetRecord = targetEntity ? getRecord(db, projectId, targetEntity, Number(value)) : undefined;
-    resolved[field.name] = targetRecord ? recordDisplayLabel(targetEntity!, targetRecord) : `#${value}`;
+    resolved[field.name] = targetRecord ? recordDisplayLabel(targetEntity!, targetRecord, lang) : `#${value}`;
   }
   return resolved;
 }
@@ -565,7 +566,7 @@ async function fireWebhookAction(
       ? interpolateTemplate(
           rule.messageTemplate,
           entity,
-          resolveRelationFieldsForTemplate(db, project.id, entity, project.spec.entities, record),
+          resolveRelationFieldsForTemplate(db, project.id, entity, project.spec.entities, record, isHebrewText(project.description) ? "he" : "en"),
           isHebrewText(project.description) ? "he" : "en",
         )
       : rule.messageTemplate;
@@ -707,7 +708,7 @@ async function fireEmailAction(
   // {url,...} descriptor for any file field.
   let attachments: EmailAttachment[] | undefined;
   if (entity && record) {
-    const templateRecord = resolveRelationFieldsForTemplate(db, project.id, entity, project.spec.entities, record);
+    const templateRecord = resolveRelationFieldsForTemplate(db, project.id, entity, project.spec.entities, record, lang);
     subject = interpolateTemplate(subjectTemplate, entity, templateRecord, lang);
     body = interpolateTemplate(bodyTemplate, entity, templateRecord, lang);
     if (uploadsDir) {
@@ -797,8 +798,8 @@ export async function fireRule(
     recordAutomationRun(db, project.id, rule.id, { status: "failed", error: WHATSAPP_NOT_CONNECTED_ERROR }, rule.actionType, Number(record.id), recordSnapshot);
     return;
   }
-  const templateRecord = resolveRelationFieldsForTemplate(db, project.id, entity, project.spec.entities, record);
   const lang: Lang = isHebrewText(project.description) ? "he" : "en";
+  const templateRecord = resolveRelationFieldsForTemplate(db, project.id, entity, project.spec.entities, record, lang);
   const message = interpolateTemplate(rule.messageTemplate, entity, templateRecord, lang);
   // `record`, not templateRecord -- a file field's own stored value is
   // never touched by resolveRelationFieldsForTemplate (that only rewrites
