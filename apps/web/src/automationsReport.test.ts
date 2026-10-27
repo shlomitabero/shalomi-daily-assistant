@@ -273,3 +273,46 @@ test("formatAutomationsReport shows a field's bare label unchanged when no other
   assert.match(report, /field "Customer Phone"/);
   assert.ok(!report.includes("(status)"), "a uniquely-labeled field must not gain a disambiguating suffix");
 });
+
+/**
+ * Round 1116's finding: the report (Copy/Download, round 679) only ever
+ * showed a rule's single latest outcome via describeLastRun -- round 682
+ * added a whole separate run-history feature (GET .../runs) three rounds
+ * later, but nobody ever extended this report to include it, unlike
+ * searchReport.ts's own expandedSamples param for the identical situation.
+ * Confirms a passed-in runsByRuleId entry appends every one of that rule's
+ * runs (oldest AND newest failures, not just the latest), each translated
+ * using its OWN actionType snapshot -- not the rule's current one, the
+ * same round-948 "actionType can be edited after the fact" rule
+ * describeLastRun already respects, just now proven per-run too.
+ */
+test("formatAutomationsReport includes a rule's full run history when runsByRuleId is passed, each run translated using its own actionType snapshot", () => {
+  const t = (key: string, params?: Record<string, string | number>) => translate("en", key, params);
+  const rule = makeRule({
+    actionType: "webhook",
+    webhookUrl: "https://example.com/hook",
+    lastTriggeredAt: "2026-03-15T09:00:00Z",
+    lastStatus: "sent",
+  });
+  const runs = [
+    { id: "run3", ruleId: "rule1", status: "sent" as const, error: null, actionType: "webhook" as const, recordId: 1, triggeredAt: "2026-03-15T09:00:00Z" },
+    {
+      id: "run2",
+      ruleId: "rule1",
+      status: "failed" as const,
+      error: "missing_country_code",
+      actionType: "send_whatsapp" as const,
+      recordId: 1,
+      triggeredAt: "2026-03-14T09:00:00Z",
+    },
+    { id: "run1", ruleId: "rule1", status: "sent" as const, error: null, actionType: "send_whatsapp" as const, recordId: 1, triggeredAt: "2026-03-13T09:00:00Z" },
+  ];
+
+  const withoutHistory = formatAutomationsReport([rule], [], "Shop", "en", t);
+  assert.equal(withoutHistory.includes("missing a country code"), false, "without runsByRuleId, the report must stay exactly as before -- only the single latest outcome");
+
+  const withHistory = formatAutomationsReport([rule], [], "Shop", "en", t, {}, { rule1: runs });
+  assert.match(withHistory, /Run history:/);
+  assert.match(withHistory, /missing a country code/, "an older failed run's error must be translated using ITS OWN actionType (send_whatsapp), not the rule's current webhook actionType");
+  assert.equal(withHistory.includes("missing_country_code"), false, "the bare raw error code must never leak into the report");
+});

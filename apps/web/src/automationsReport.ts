@@ -1,5 +1,12 @@
 import type { Entity } from "@forge/shared";
-import { KNOWN_EMAIL_SEND_ERROR_CODES, KNOWN_WHATSAPP_SEND_ERROR_CODES, safeDownloadName, type AutomationRuleView } from "./api.js";
+import {
+  KNOWN_EMAIL_SEND_ERROR_CODES,
+  KNOWN_WHATSAPP_SEND_ERROR_CODES,
+  safeDownloadName,
+  type AutomationActionType,
+  type AutomationRuleView,
+  type AutomationRunView,
+} from "./api.js";
 import { fieldDisplayLabel, fieldLabelOccurrences, parseFieldDate, recordDisplayLabel, type RelatedRecordsByEntity } from "./entityFormatting.js";
 import { resolveErrorMessage, type Lang } from "./i18n/language.js";
 
@@ -184,8 +191,11 @@ function describeDestination(
 // actually recorded. lastActionType is that snapshot; falls back to the
 // current actionType only for a legacy row recorded before that column
 // existed.
-function translateAutomationError(rule: AutomationRuleView, error: string, lang: Lang): string {
-  const actionType = rule.lastActionType ?? rule.actionType;
+// Round 1116: now takes the already-resolved actionType directly instead
+// of a whole rule, so this same function also serves describeRunStatus
+// below (a past run's own actionType snapshot, not necessarily the
+// rule's lastActionType) without a second near-duplicate copy.
+function translateAutomationError(actionType: AutomationActionType | null, error: string, lang: Lang): string {
   if (actionType === "send_whatsapp" && KNOWN_WHATSAPP_SEND_ERROR_CODES.has(error)) {
     return resolveErrorMessage(lang, { code: `WHATSAPP_SEND_${error.toUpperCase()}`, error });
   }
@@ -206,7 +216,28 @@ function describeLastRun(
   const time = new Date(rule.lastTriggeredAt).toLocaleString(LOCALE[lang]);
   return rule.lastStatus === "sent"
     ? t("automations.lastRun.sent", { time })
-    : t("automations.lastRun.failed", { time, error: translateAutomationError(rule, rule.lastError ?? "", lang) });
+    : t("automations.lastRun.failed", {
+        time,
+        error: translateAutomationError(rule.lastActionType ?? rule.actionType, rule.lastError ?? "", lang),
+      });
+}
+
+/**
+ * Round 1116: mirrors AutomationsPanel.tsx's own describeRunStatus exactly
+ * (see its comment on why a run's own actionType, not the rule's current
+ * one, must drive error translation) -- the per-run twin of describeLastRun
+ * above, which only ever covers the single most recent outcome.
+ */
+function describeRunStatus(
+  run: AutomationRunView,
+  ruleActionType: AutomationActionType,
+  lang: Lang,
+  t: (key: string, params?: Record<string, string | number>) => string,
+): string {
+  const time = new Date(run.triggeredAt).toLocaleString(LOCALE[lang]);
+  return run.status === "sent"
+    ? t("automations.lastRun.sent", { time })
+    : t("automations.lastRun.failed", { time, error: translateAutomationError(run.actionType ?? ruleActionType, run.error ?? "", lang) });
 }
 
 export function formatAutomationsReport(
@@ -216,6 +247,15 @@ export function formatAutomationsReport(
   lang: Lang,
   t: (key: string, params?: Record<string, string | number>) => string,
   relatedRecords: RelatedRecordsByEntity = {},
+  // Round 1116: mirrors searchReport.ts's own expandedSamples param --
+  // AutomationsPanel.tsx was the one panel left whose Copy/Download report
+  // (round 679, three rounds BEFORE round 682 added the whole run-history
+  // feature) only ever showed a rule's single latest outcome
+  // (describeLastRun above), never the fuller history a user may have
+  // already expanded in the live panel -- data already sitting in React
+  // state, zero extra fetch needed to include it here too. Keyed by rule
+  // id, exactly like AutomationsPanel.tsx's own runsByRuleId state.
+  runsByRuleId: Record<string, AutomationRunView[]> = {},
 ): string {
   const lines: string[] = [];
   lines.push(`${t("automations.title")} — ${projectName}`);
@@ -248,6 +288,13 @@ export function formatAutomationsReport(
     }
     lines.push(rule.messageTemplate);
     lines.push(describeLastRun(rule, lang, t));
+    const runs = runsByRuleId[rule.id];
+    if (runs && runs.length > 0) {
+      lines.push(t("automations.history.heading"));
+      for (const run of runs) {
+        lines.push(`- ${describeRunStatus(run, rule.actionType, lang, t)}`);
+      }
+    }
     lines.push("");
   }
 

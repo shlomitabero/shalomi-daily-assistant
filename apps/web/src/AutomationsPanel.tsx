@@ -905,7 +905,10 @@ export function AutomationsPanel({
   }
 
   function handleDownload() {
-    downloadAutomationsReport(formatAutomationsReport(rules ?? [], entities, project.name, lang, t, relatedRecords), project.name);
+    downloadAutomationsReport(
+      formatAutomationsReport(rules ?? [], entities, project.name, lang, t, relatedRecords, runsByRuleId),
+      project.name,
+    );
   }
 
   /**
@@ -913,11 +916,17 @@ export function AutomationsPanel({
    * panel in this app already has for its own Download button (Business
    * Twin, WhatsApp log, Time Machine, Global Search) -- Automations was
    * the one panel left with no way to take its rule list and last-run
-   * outcomes anywhere at all.
+   * outcomes anywhere at all. Round 1116: passes runsByRuleId (already in
+   * this component's own state, from whichever rules the user has already
+   * expanded "History" on) through to the report too -- previously the
+   * report only ever showed a rule's single latest outcome, never the
+   * fuller run history already visible on screen.
    */
   async function handleCopy() {
     try {
-      await navigator.clipboard.writeText(formatAutomationsReport(rules ?? [], entities, project.name, lang, t, relatedRecords));
+      await navigator.clipboard.writeText(
+        formatAutomationsReport(rules ?? [], entities, project.name, lang, t, relatedRecords, runsByRuleId),
+      );
       setCopyStatus("copied");
     } catch {
       setCopyStatus("failed");
