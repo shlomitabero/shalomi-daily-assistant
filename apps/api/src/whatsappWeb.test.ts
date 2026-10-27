@@ -696,6 +696,40 @@ test("an incoming WhatsApp poll (across client-version field variants, and with 
 });
 
 /**
+ * Round 1088: an incoming WhatsApp emoji reaction (long-press a message,
+ * tap an emoji) -- previously dropped with zero trace, the same gap round
+ * 1051's own doc comment left open for "every other still-unrecognized
+ * message kind" -- is now logged with a descriptive placeholder showing
+ * the reacted emoji, the same convention established for location/
+ * contact/polls. Covers both a real reaction and a removed one (Baileys
+ * sends an empty `text` when a reaction is taken back).
+ */
+test("an incoming WhatsApp emoji reaction (and its removal) is logged with the reacted emoji instead of being silently dropped", async () => {
+  const { manager, createdSockets, db } = setupManager();
+  insertProject(db, project);
+  applyMigrations(db, project.id, project.spec);
+  markProjectBuilt(db, project.id);
+
+  await manager.connect(project.id);
+  createdSockets[0].emitConnectionUpdate({ connection: "open" });
+
+  createdSockets[0].emitMessagesUpsert({
+    type: "notify",
+    messages: [
+      { key: { remoteJid: "972501234567@s.whatsapp.net", fromMe: false }, message: { reactionMessage: { text: "👍" } } },
+      { key: { remoteJid: "972501234567@s.whatsapp.net", fromMe: false }, message: { reactionMessage: { text: "" } } },
+    ],
+  });
+
+  // listWhatsAppMessages orders newest-first, the reverse of emission order.
+  const { messages } = listWhatsAppMessages(db, project.id);
+  assert.equal(messages.length, 2);
+  assert.equal(messages[0].body, "[Reaction removed]", "an empty text (a taken-back reaction) must fall back to a plain placeholder, not print nothing or throw");
+  assert.equal(messages[1].body, "[Reaction] 👍");
+  for (const m of messages) assert.equal(m.direction, "in", "every placeholder row must still be a real, matched-against incoming message, not metadata");
+});
+
+/**
  * Round 785 (narrowed by rounds 1035 and 1051): a genuinely unrecognized
  * message shape is deliberately NOT guessed at -- it's still skipped
  * exactly as before this fix, the same as a message with no body at all.

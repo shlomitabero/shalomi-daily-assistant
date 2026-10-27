@@ -111,6 +111,7 @@ export interface BaileysIncomingMessage {
     pollCreationMessageV2?: { name?: string };
     pollCreationMessageV3?: { name?: string };
     pollCreationMessageV5?: { name?: string };
+    reactionMessage?: { text?: string };
   };
 }
 
@@ -180,6 +181,17 @@ const CONNECTION_LOST_MESSAGE = "The WhatsApp connection was lost. Click Connect
  * -- Mon/Tue/Wed?" via WhatsApp's own one-tap poll UI instead of typing it
  * is ordinary usage, not an edge case, and was previously silently dropped
  * exactly like an unfixed location pin.
+ *
+ * Round 1088: an emoji reaction (long-press a message, tap an emoji) joins
+ * the same list. Confirmed against proto.Message.IReactionMessage: `text`
+ * (the reacted emoji, or an empty string when a reaction is removed) is
+ * plaintext in this protobuf, same as every message type already handled
+ * above -- the separate, genuinely-encrypted `encReactionMessage`
+ * (IEncReactionMessage) is a different field this file still doesn't
+ * populate or touch. A business sending "reply 👍 to confirm your order"
+ * and the customer just reacting instead of typing is an everyday
+ * one-tap WhatsApp action, not an edge case, and was previously silently
+ * dropped exactly like an unfixed poll.
  */
 function describeIncomingMessage(message: BaileysIncomingMessage["message"]): string | null {
   if (!message) return null;
@@ -205,6 +217,7 @@ function describeIncomingMessage(message: BaileysIncomingMessage["message"]): st
   const poll =
     message.pollCreationMessage ?? message.pollCreationMessageV2 ?? message.pollCreationMessageV3 ?? message.pollCreationMessageV5;
   if (poll) return poll.name ? `[Poll] ${poll.name}` : "[Poll]";
+  if (message.reactionMessage) return message.reactionMessage.text ? `[Reaction] ${message.reactionMessage.text}` : "[Reaction removed]";
   return null;
 }
 
