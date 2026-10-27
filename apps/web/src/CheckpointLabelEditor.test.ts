@@ -171,6 +171,61 @@ test("pressing Escape while editing a checkpoint label cancels without saving, a
 });
 
 /**
+ * Regression test for a real bug found by round 1087's Explore survey: the
+ * `cancelling` ref's design assumes the spurious post-cancel blur really
+ * does re-invoke save() once, letting it reset the flag back to false
+ * there. A direct Playwright probe against real Chromium found this
+ * assumption wrong -- that blur never reaches an already-unmounted
+ * fiber's onBlur -- so the flag set by cancelEditing() stays `true`
+ * forever and silently swallows the very next real save, with no error.
+ * Fixed by resetting the flag in startEditing() too.
+ */
+test("renaming a checkpoint label, cancelling with Escape, then renaming it again for real must not be silently swallowed", async () => {
+  await withJsdom(async () => {
+    const originalFetch = globalThis.fetch;
+    let renameCalls = 0;
+    globalThis.fetch = (async (input: string, init?: RequestInit) => {
+      if (init?.method === "PATCH" && input === "/api/projects/proj1/checkpoints/cp1") {
+        renameCalls += 1;
+        const body = JSON.parse(init.body as string) as { label: string };
+        return new Response(
+          JSON.stringify({ checkpoint: { ...checkpoint, label: body.label } }),
+          { status: 200, headers: { "content-type": "application/json" } },
+        );
+      }
+      throw new Error(`unexpected request ${init?.method ?? "GET"} ${input}`);
+    }) as typeof fetch;
+
+    try {
+      const renamed: Checkpoint[] = [];
+      renderEditor((c) => renamed.push(c));
+
+      // First session: start, change the draft, then cancel with Escape.
+      fireEvent.click(document.querySelector(".checkpoint-label") as HTMLElement);
+      await waitForCondition(() => document.querySelector(".checkpoint-label-edit input") !== null);
+      let input = document.querySelector(".checkpoint-label-edit input") as HTMLInputElement;
+      fireEvent.change(input, { target: { value: "Accidentally typed text" } });
+      fireEvent.keyDown(input, { key: "Escape" });
+      await waitForCondition(() => document.querySelector(".checkpoint-label-edit") === null);
+      assert.equal(renameCalls, 0, "Escape must not itself trigger a rename");
+
+      // Second session on the SAME instance: a real rename, saved via blur.
+      fireEvent.click(document.querySelector(".checkpoint-label") as HTMLElement);
+      await waitForCondition(() => document.querySelector(".checkpoint-label-edit input") !== null);
+      input = document.querySelector(".checkpoint-label-edit input") as HTMLInputElement;
+      fireEvent.change(input, { target: { value: "before the pricing overhaul" } });
+      fireEvent.blur(input);
+
+      await waitForCondition(() => renamed.length === 1);
+      assert.equal(renameCalls, 1, "the real rename after a prior cancel must not be swallowed");
+      assert.equal(renamed[0].label, "before the pricing overhaul");
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+});
+
+/**
  * Mirrors ProjectNameEditor's/EntityLabelEditor's own "no-op save" contract:
  * clicking away without actually changing the text (a common way to just
  * glance at the current label) must not send a request at all, and must

@@ -65,7 +65,12 @@ function useRemovableSpecItem(remove: () => Promise<{ project: Project }>, onRem
  * Click-to-rename for a role/assumption's own text, mirroring
  * EntityLabelEditor/CheckpointLabelEditor's own click-to-edit/Enter-or-
  * blur-saves/Escape-cancels pattern exactly, including the same spurious-
- * save-on-unmount guard. Remove-then-re-add was previously the only way to
+ * save-on-unmount guard (see ProjectNameEditor.tsx's own doc comment for
+ * the round-1087 finding that the guard's flag never actually gets reset
+ * by the spurious call it was built for -- real-browser blur doesn't
+ * redeliver to an already-unmounted fiber's onBlur at all -- so it must
+ * also be reset explicitly in startEditing() below, or it swallows the
+ * very next real save). Remove-then-re-add was previously the only way to
  * fix a typo or wording in an existing role/assumption -- correct in the
  * end, but it silently moved the item to the end of its own list (a new
  * POST always appends) and briefly violated roles' own .min(1) floor if it
@@ -83,6 +88,7 @@ function useRenamableSpecItem(
   const cancelling = useRef(false);
 
   function startEditing() {
+    cancelling.current = false;
     setDraft(currentValue);
     setError(null);
     setEditing(true);

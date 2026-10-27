@@ -176,6 +176,67 @@ test("pressing Escape while editing cancels without saving, and returns to the r
   });
 });
 
+/**
+ * Regression test for a real bug found by round 1087's Explore survey: the
+ * `cancelling` ref's design assumes the spurious post-cancel blur really
+ * does re-invoke save() once, letting it reset the flag back to false
+ * there. A direct Playwright probe against real Chromium found this
+ * assumption wrong -- that blur never reaches an already-unmounted
+ * fiber's onBlur -- so the flag set by cancelEditing() stays `true`
+ * forever and silently swallows the very next real save, with no error.
+ * Fixed by resetting the flag in startEditing() too.
+ */
+test("renaming a field label, cancelling with Escape, then renaming it again for real must not be silently swallowed", async () => {
+  await withJsdom(async () => {
+    const originalFetch = globalThis.fetch;
+    let renameCalls = 0;
+    globalThis.fetch = (async (input: string, init?: RequestInit) => {
+      if (init?.method === "PATCH" && input === "/api/projects/proj1/entities/Customer/fields/phone/label") {
+        renameCalls += 1;
+        const body = JSON.parse(init.body as string) as { label: string };
+        const renamedField = { ...field, label: body.label };
+        return new Response(
+          JSON.stringify({
+            project: {
+              ...project,
+              spec: { ...project.spec, entities: [{ ...project.spec.entities[0], fields: [renamedField] }] },
+            },
+          }),
+          { status: 200, headers: { "content-type": "application/json" } },
+        );
+      }
+      throw new Error(`unexpected request ${init?.method ?? "GET"} ${input}`);
+    }) as typeof fetch;
+
+    try {
+      const renamedProjects: Project[] = [];
+      renderEditor((p) => renamedProjects.push(p));
+
+      // First session: start, change the draft, then cancel with Escape.
+      fireEvent.click(document.querySelector(".field-label-edit-btn") as HTMLElement);
+      await waitForCondition(() => document.querySelector(".field-label-edit input") !== null);
+      let input = document.querySelector(".field-label-edit input") as HTMLInputElement;
+      fireEvent.change(input, { target: { value: "Accidentally typed text" } });
+      fireEvent.keyDown(input, { key: "Escape" });
+      await waitForCondition(() => document.querySelector(".field-label-edit") === null);
+      assert.equal(renameCalls, 0, "Escape must not itself trigger a rename");
+
+      // Second session on the SAME instance: a real rename, saved via blur.
+      fireEvent.click(document.querySelector(".field-label-edit-btn") as HTMLElement);
+      await waitForCondition(() => document.querySelector(".field-label-edit input") !== null);
+      input = document.querySelector(".field-label-edit input") as HTMLInputElement;
+      fireEvent.change(input, { target: { value: "A Much Better Field Label" } });
+      fireEvent.blur(input);
+
+      await waitForCondition(() => renamedProjects.length === 1);
+      assert.equal(renameCalls, 1, "the real rename after a prior cancel must not be swallowed");
+      assert.equal(renamedProjects[0].spec.entities[0].fields[0].label, "A Much Better Field Label");
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+});
+
 test("the edit button click does not bubble into the surrounding <label>'s default click-forwarding behavior", async () => {
   await withJsdom(async () => {
     try {

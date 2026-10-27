@@ -41,6 +41,11 @@ export function ProjectDescriptionEditor({
   const cancelling = useRef(false);
 
   function startEditing() {
+    // Round 1087: see ProjectNameEditor.tsx's own doc comment -- the
+    // cancelling flag's spurious post-cancel save() call never actually
+    // arrives in a real browser, so it must be reset here too or it
+    // silently swallows the very next real save.
+    cancelling.current = false;
     setDraft(project.description);
     setError(null);
     setEditing(true);

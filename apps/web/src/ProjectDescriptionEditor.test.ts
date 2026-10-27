@@ -166,6 +166,61 @@ test("pressing Escape while editing cancels without saving, and returns to the r
   });
 });
 
+/**
+ * Regression test for a real bug found by round 1087's Explore survey: the
+ * `cancelling` ref's design assumes the spurious post-cancel blur really
+ * does re-invoke save() once, letting it reset the flag back to false
+ * there. A direct Playwright probe against real Chromium found this
+ * assumption wrong -- that blur never reaches an already-unmounted
+ * fiber's onBlur -- so the flag set by cancelEditing() stays `true`
+ * forever and silently swallows the very next real save, with no error.
+ * Fixed by resetting the flag in startEditing() too.
+ */
+test("editing the description, cancelling with Escape, then editing it again for real must not be silently swallowed", async () => {
+  await withJsdom(async () => {
+    const originalFetch = globalThis.fetch;
+    let editCalls = 0;
+    globalThis.fetch = (async (input: string, init?: RequestInit) => {
+      if (init?.method === "PATCH" && input === "/api/projects/proj1/description") {
+        editCalls += 1;
+        const body = JSON.parse(init.body as string) as { description: string };
+        return new Response(JSON.stringify({ project: { ...project, description: body.description } }), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        });
+      }
+      throw new Error(`unexpected request ${init?.method ?? "GET"} ${input}`);
+    }) as typeof fetch;
+
+    try {
+      const changedProjects: Project[] = [];
+      renderEditor((p) => changedProjects.push(p));
+
+      // First session: start, change the draft, then cancel with Escape.
+      fireEvent.click(document.querySelector(".project-description") as HTMLElement);
+      await waitForCondition(() => document.querySelector(".project-description-edit textarea") !== null);
+      let textarea = document.querySelector(".project-description-edit textarea") as HTMLTextAreaElement;
+      fireEvent.change(textarea, { target: { value: "Accidentally typed text" } });
+      fireEvent.keyDown(textarea, { key: "Escape" });
+      await waitForCondition(() => document.querySelector(".project-description-edit") === null);
+      assert.equal(editCalls, 0, "Escape must not itself trigger an edit request");
+
+      // Second session on the SAME instance: a real edit, saved via blur.
+      fireEvent.click(document.querySelector(".project-description") as HTMLElement);
+      await waitForCondition(() => document.querySelector(".project-description-edit textarea") !== null);
+      textarea = document.querySelector(".project-description-edit textarea") as HTMLTextAreaElement;
+      fireEvent.change(textarea, { target: { value: "A CRM with customers and deals, with payments." } });
+      fireEvent.blur(textarea);
+
+      await waitForCondition(() => changedProjects.length === 1);
+      assert.equal(editCalls, 1, "the real edit after a prior cancel must not be swallowed");
+      assert.equal(changedProjects[0].description, "A CRM with customers and deals, with payments.");
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+});
+
 test("saving an empty or whitespace-only draft cancels back to the read-only view instead of sending a request", async () => {
   await withJsdom(async () => {
     const originalFetch = globalThis.fetch;

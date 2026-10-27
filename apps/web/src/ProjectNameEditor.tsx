@@ -27,20 +27,31 @@ export function ProjectNameEditor({
   const [error, setError] = useState<string | null>(null);
 
   /**
-   * Escape sets editing false directly, unmounting the input -- which
-   * fires a real blur event on it as a side effect of losing focus
+   * Escape sets editing false directly, unmounting the input. The native
+   * DOM does dispatch a real "blur" on it as a side effect of losing focus
    * (confirmed with a direct Playwright probe against real Chromium:
-   * removing a focused element does dispatch "blur", even though jsdom
-   * -- used by this file's own test -- does NOT reproduce that behavior,
-   * so this exact race can't be caught by a jsdom-rendered test; see
-   * ProjectNameEditor.test.ts's own comment). That blur would otherwise
-   * also trigger save() (bound to onBlur) and rename the project right
-   * after the user explicitly cancelled. This ref lets save() recognize
-   * and skip exactly that one spurious call.
+   * removing a focused element does dispatch "blur", even though jsdom --
+   * used by this file's own test -- does NOT reproduce that behavior, so
+   * this exact race can't be caught by a jsdom-rendered test; see
+   * ProjectNameEditor.test.ts's own comment). This ref was built to let
+   * save() recognize and skip exactly one such spurious post-cancel call.
+   *
+   * Round 1087's own further Playwright probe found that blur never
+   * actually redelivers to React's onBlur once the fiber it belonged to
+   * has already been unmounted in the same commit -- so that spurious
+   * save() call this ref was built to catch never arrives, and the flag
+   * it sets just stays true forever. Left alone, that silently swallows
+   * the very NEXT real save on this same instance (type something, Enter
+   * or blur to save -- the keystrokes go in, but nothing is sent and the
+   * edit box doesn't even close), with no error and no visible sign
+   * anything went wrong. Resetting the flag at the start of every fresh
+   * edit session, in startEditing() below, fixes this regardless of
+   * whether that spurious call ever shows up.
    */
   const cancelling = useRef(false);
 
   function startEditing() {
+    cancelling.current = false;
     setDraft(project.name);
     setError(null);
     setEditing(true);

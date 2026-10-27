@@ -480,6 +480,59 @@ test("pressing Escape while editing a role chip cancels without saving", async (
   });
 });
 
+/**
+ * Regression test for a real bug found by round 1087's Explore survey: the
+ * `cancelling` ref in useRenamableSpecItem (shared by RoleChip and every
+ * other click-to-rename spec item) assumes the spurious post-cancel blur
+ * really does re-invoke save() once, letting it reset the flag back to
+ * false there. A direct Playwright probe against real Chromium found this
+ * assumption wrong -- that blur never reaches an already-unmounted
+ * fiber's onBlur -- so the flag set by cancelEditing() stays `true`
+ * forever and silently swallows the very next real save on this same
+ * chip, with no error. Fixed by resetting the flag in startEditing() too.
+ */
+test("renaming a role chip, cancelling with Escape, then renaming it again for real must not be silently swallowed", async () => {
+  await withJsdom(async () => {
+    const originalFetch = globalThis.fetch;
+    let renameCalls = 0;
+    globalThis.fetch = (async (input: string, init?: RequestInit) => {
+      if (init?.method === "PATCH" && input === "/api/projects/proj1/roles/1") {
+        renameCalls += 1;
+        const body = JSON.parse(init.body as string) as { role: string };
+        const renamed = { ...baseProject, spec: { ...baseProject.spec, roles: ["Admin", body.role] } };
+        return new Response(JSON.stringify({ project: renamed }), { status: 200, headers: { "content-type": "application/json" } });
+      }
+      throw new Error(`unexpected request ${init?.method ?? "GET"} ${input}`);
+    }) as typeof fetch;
+
+    try {
+      const renamedProjects: Project[] = [];
+      renderRoleChip(() => {}, true, (p) => renamedProjects.push(p));
+
+      // First session: start, change the draft, then cancel with Escape.
+      fireEvent.click(document.querySelector(".chip-text") as HTMLElement);
+      let input = document.querySelector(".chip-rename-edit input") as HTMLInputElement;
+      fireEvent.change(input, { target: { value: "Accidentally typed text" } });
+      fireEvent.keyDown(input, { key: "Escape" });
+      fireEvent.blur(input);
+      await waitForCondition(() => document.querySelector(".chip-rename-edit") === null);
+      assert.equal(renameCalls, 0, "Escape must not itself trigger a rename");
+
+      // Second session on the SAME chip: a real rename, saved via blur.
+      fireEvent.click(document.querySelector(".chip-text") as HTMLElement);
+      input = document.querySelector(".chip-rename-edit input") as HTMLInputElement;
+      fireEvent.change(input, { target: { value: "Warehouse Manager" } });
+      fireEvent.blur(input);
+
+      await waitForCondition(() => renamedProjects.length === 1);
+      assert.equal(renameCalls, 1, "the real rename after a prior cancel must not be swallowed");
+      assert.deepEqual(renamedProjects[0].spec.roles, ["Admin", "Warehouse Manager"]);
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+});
+
 test("a role chip's rename surfaces a real error instead of silently doing nothing", async () => {
   await withJsdom(async () => {
     const originalFetch = globalThis.fetch;

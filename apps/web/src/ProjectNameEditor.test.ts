@@ -185,3 +185,64 @@ test("pressing Escape while editing cancels without saving, and returns to the r
     }
   });
 });
+
+/**
+ * Regression test for a real bug found by round 1087's Explore survey: the
+ * `cancelling` ref's whole design assumes the spurious post-cancel blur
+ * really does re-invoke save() once, so it can reset the flag back to
+ * false there. A direct Playwright probe against real Chromium (not
+ * jsdom, which can't dispatch blur-on-unmount at all) found that this
+ * assumption is wrong -- React never redelivers that blur to an
+ * already-unmounted fiber's onBlur -- so the flag set by cancelEditing()
+ * stays `true` forever and silently swallows the very next real save on
+ * this same instance, with no error and no visible sign anything is
+ * wrong. This doesn't depend on the browser-only blur-on-unmount
+ * mechanism to reproduce: once cancelEditing() has set the flag, ANY
+ * subsequent save() call (fired here directly via blur, exactly as a real
+ * second edit session would) is wrongly swallowed, regardless of how the
+ * flag got stuck. Fixed by resetting it in startEditing() too.
+ */
+test("renaming, cancelling with Escape, then renaming again for real must not be silently swallowed", async () => {
+  await withJsdom(async () => {
+    const originalFetch = globalThis.fetch;
+    let renameCalls = 0;
+    globalThis.fetch = (async (input: string, init?: RequestInit) => {
+      if (init?.method === "PATCH" && input === "/api/projects/proj1/name") {
+        renameCalls += 1;
+        const body = JSON.parse(init.body as string) as { name: string };
+        return new Response(JSON.stringify({ project: { ...project, name: body.name } }), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        });
+      }
+      throw new Error(`unexpected request ${init?.method ?? "GET"} ${input}`);
+    }) as typeof fetch;
+
+    try {
+      const renamedProjects: Project[] = [];
+      renderEditor((p) => renamedProjects.push(p));
+
+      // First session: start, change the draft, then cancel with Escape.
+      fireEvent.click(document.querySelector(".project-name") as HTMLElement);
+      await waitForCondition(() => document.querySelector(".project-name-edit input") !== null);
+      let input = document.querySelector(".project-name-edit input") as HTMLInputElement;
+      fireEvent.change(input, { target: { value: "Accidentally typed text" } });
+      fireEvent.keyDown(input, { key: "Escape" });
+      await waitForCondition(() => document.querySelector(".project-name-edit") === null);
+      assert.equal(renameCalls, 0, "Escape must not itself trigger a rename");
+
+      // Second session on the SAME instance: a real rename, saved via blur.
+      fireEvent.click(document.querySelector(".project-name") as HTMLElement);
+      await waitForCondition(() => document.querySelector(".project-name-edit input") !== null);
+      input = document.querySelector(".project-name-edit input") as HTMLInputElement;
+      fireEvent.change(input, { target: { value: "A Much Better Name" } });
+      fireEvent.blur(input);
+
+      await waitForCondition(() => renamedProjects.length === 1);
+      assert.equal(renameCalls, 1, "the real rename after a prior cancel must not be swallowed");
+      assert.equal(renamedProjects[0].name, "A Much Better Name");
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+});
