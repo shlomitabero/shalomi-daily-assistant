@@ -309,9 +309,16 @@ export function computeImpact(previousSpec: ProductSpec | undefined, nextSpec: P
       // could still collide with a field that didn't change at all this
       // refine (the exact "Amount" subtotal/shipping scenario above) without
       // ever being counted as ambiguous.
+      // Round 1066: keyed by LOWERCASE name (not exact name), the field-
+      // level twin of this function's own round-1065 entity-level fix
+      // just above (allEntitiesByName) -- a case-only field rename with a
+      // carried-forward custom label (carryForwardLabels) shares its own
+      // label across prev's and next's differently-cased map entries,
+      // which exact-keying counted as two separate fields and wrongly
+      // suffixed with a false "(Email)" disambiguation.
       const allFieldsByName = new Map<string, Field>();
-      for (const f of prev.fields) allFieldsByName.set(f.name, f);
-      for (const f of entity.fields) allFieldsByName.set(f.name, f);
+      for (const f of prev.fields) allFieldsByName.set(f.name.toLowerCase(), f);
+      for (const f of entity.fields) allFieldsByName.set(f.name.toLowerCase(), f);
       const labelOccurrences = fieldLabelOccurrences(Array.from(allFieldsByName.values()));
       changedEntities.push({
         name: entity.name,

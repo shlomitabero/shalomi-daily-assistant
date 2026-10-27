@@ -1958,6 +1958,60 @@ test("computeImpact never appends a false disambiguation suffix to an entity's l
 });
 
 /**
+ * Round 1066: the field-level twin of round 1065's own entity-level fix
+ * just above, inside this exact same function -- computeImpact's own
+ * allFieldsByName map (built inside the per-entity loop, feeding
+ * fieldLabelOccurrences/fieldDisplayLabel) was still keyed by exact field
+ * name. A field renamed only by letter case (e.g. "email" -> "Email")
+ * with a carried-forward custom label ends up sharing that label across
+ * prev's and next's differently-cased map entries the same way an entity
+ * does one level up -- exact-keying counted it twice and appended a false
+ * "(Email)" disambiguation suffix to the tightenedFieldNames/newFieldNames/
+ * removedFieldNames entry, the identical user-visible mechanism round
+ * 1065 just fixed for entities.
+ */
+test("computeImpact never appends a false disambiguation suffix to a field's label when it was only renamed by letter case, even though carryForwardLabels made the old and new field share the exact same label string", () => {
+  const previousSpec: ProductSpec = {
+    summary: "test",
+    personas: [],
+    roles: ["Admin"],
+    screens: [],
+    assumptions: [],
+    openQuestions: [],
+    entities: [
+      {
+        name: "Customer",
+        fields: [{ name: "email", type: "text", required: false, label: "Email Address" }],
+      },
+    ],
+  };
+  const nextSpec: ProductSpec = {
+    ...previousSpec,
+    // Simulates a fresh regeneration that re-cases the field's own name
+    // AND genuinely tightens it (now required) in the same refine --
+    // carryForwardLabels below is what actually gives it back
+    // previousSpec's own "Email Address" label.
+    entities: [
+      {
+        name: "Customer",
+        fields: [{ name: "Email", type: "text", required: true }],
+      },
+    ],
+  };
+
+  carryForwardLabels(previousSpec, nextSpec);
+  assert.equal(nextSpec.entities[0].fields[0].label, "Email Address", "sanity check: carryForwardLabels must have carried the label forward across the case rename");
+
+  const impact = computeImpact(previousSpec, nextSpec);
+  assert.equal(impact.changedEntities.length, 1, "the entity must be reported as changed (its field was genuinely tightened)");
+  assert.deepEqual(
+    impact.changedEntities[0].tightenedFieldNames,
+    ["Email Address"],
+    "a case-only renamed field sharing its own carried-forward label with its own prior self must never get a '(Email)' disambiguation suffix appended",
+  );
+});
+
+/**
  * Round 915's finding: SpecProvider.generate (both HeuristicSpecProvider
  * and AnthropicSpecProvider) has no previousSpec parameter at all, so a
  * freshly regenerated nextSpec never carries a user's post-build

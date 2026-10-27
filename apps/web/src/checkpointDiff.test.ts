@@ -236,6 +236,31 @@ test("computeCheckpointDiff still reports a case-only-renamed field as changedFi
 });
 
 /**
+ * Round 1066: the field-level twin of round 954's own entity-level fix
+ * below (allEntitiesByName) -- this function's own allFieldsByName map
+ * (feeding fieldLabelOccurrences/fieldDisplayLabel) was still keyed by
+ * exact field name. A field renamed only by letter case (e.g. "email" ->
+ * "Email") that also shares an identical custom label on both sides (the
+ * same shape a real carried-forward label produces) ends up stored as two
+ * separate map entries despite being the same physical column -- exact-
+ * keying wrongly counted that one shared label twice and appended a false
+ * "(Email)" disambiguation suffix to changedFieldNames.
+ */
+test("computeCheckpointDiff never appends a false disambiguation suffix to a changed field's label when it was only renamed by letter case but shares its own prior label with its renamed self", () => {
+  const current = makeSpec([
+    { name: "Customer", label: "Customers", fields: [{ name: "Email", type: "text", required: true, label: "Email Address" }] },
+  ]);
+  const checkpoint = makeSpec([
+    { name: "Customer", label: "Customers", fields: [{ name: "email", type: "text", required: false, label: "Email Address" }] },
+  ]);
+
+  const diff = computeCheckpointDiff(current, checkpoint);
+  assert.deepEqual(diff.changedEntities, [
+    { name: "Customer", label: "Customers", removedFieldNames: [], addedFieldNames: [], changedFieldNames: ["Email Address"], descriptionChanged: false },
+  ]);
+});
+
+/**
  * Round 954: the entity-level counterpart of round 946's own field-level
  * fix just above -- an entity renamed ONLY by letter case (e.g. "customer"
  * -> "Customer" via refine) is, same as a field, a true no-op per

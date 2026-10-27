@@ -242,9 +242,16 @@ export function computeCheckpointDiff(currentSpec: ProductSpec, checkpointSpec: 
     // the current spec's definition winning for a field present on both),
     // not just whichever of removed/added/changed list a field lands in --
     // see this function's own doc comment above for why.
+    // Round 1066: keyed by LOWERCASE name (not exact name), the field-
+    // level twin of this function's own round-954 entity-level fix above
+    // (allEntitiesByName) -- a case-only field rename with a carried-
+    // forward custom label shares its own label across the checkpoint's
+    // and current spec's differently-cased map entries, which exact-
+    // keying counted as two separate fields and wrongly suffixed with a
+    // false "(Email)" disambiguation.
     const allFieldsByName = new Map<string, Field>();
-    for (const f of inCheckpoint.fields) allFieldsByName.set(f.name, f);
-    for (const f of entity.fields) allFieldsByName.set(f.name, f);
+    for (const f of inCheckpoint.fields) allFieldsByName.set(f.name.toLowerCase(), f);
+    for (const f of entity.fields) allFieldsByName.set(f.name.toLowerCase(), f);
     const labelOccurrences = fieldLabelOccurrences(Array.from(allFieldsByName.values()));
     const removedFieldNames = entity.fields
       .filter((f) => !checkpointFieldsByName.has(f.name) && !checkpointFieldsByLowerName.has(f.name.toLowerCase()))
