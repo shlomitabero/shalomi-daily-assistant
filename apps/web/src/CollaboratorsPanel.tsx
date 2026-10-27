@@ -120,6 +120,29 @@ export function CollaboratorsPanel({
     }
   }
 
+  /**
+   * Round 1062: this whole panel is a real dialog (useDialogFocusTrap
+   * above), whose own Escape handler closes it entirely unless the event's
+   * target sits under data-escape-handled-locally -- every other form on
+   * this exact screen with real draft content already opts out this way
+   * now (AutomationsPanel.tsx's round-1056 create/edit form, WhatsAppPanel
+   * .tsx's round-1061 test-send form), but this invite form never did.
+   * Pressing Escape after starting to type a teammate's email for any
+   * ordinary reason -- dismissing a browser autofill suggestion, a
+   * reflexive tap -- silently closed the whole panel: the entire component
+   * unmounts on close (App.tsx renders it conditionally), so the typed
+   * email is destroyed, not just visually cleared. `hasUnsavedInviteDraft`
+   * mirrors the same shape as those two prior fixes: true only while
+   * there's something a user would actually lose, so an Escape on a
+   * pristine (empty) email field still closes the dialog normally.
+   */
+  const hasUnsavedInviteDraft = email.trim() !== "";
+
+  function handleResetInviteForm() {
+    setEmail("");
+    setInviteInfo(null);
+  }
+
   async function handleRoleChange(userId: string, role: CollaboratorRole) {
     setUpdatingRoleUserId(userId);
     setError(null);
@@ -228,7 +251,14 @@ export function CollaboratorsPanel({
         )}
 
         {isOwner && (
-          <form className="collab-invite-form" onSubmit={handleInvite}>
+          <form
+            className="collab-invite-form"
+            onSubmit={handleInvite}
+            data-escape-handled-locally={hasUnsavedInviteDraft ? "" : undefined}
+            onKeyDown={(e) => {
+              if (e.key === "Escape" && hasUnsavedInviteDraft) handleResetInviteForm();
+            }}
+          >
             <input
               type="email"
               placeholder={t("collab.email.placeholder")}

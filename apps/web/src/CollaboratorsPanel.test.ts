@@ -1181,3 +1181,68 @@ test("CollaboratorsPanel's calendar-feed regenerate button calls the real endpoi
     }
   });
 });
+
+/**
+ * Round 1062: this panel is a real dialog (useDialogFocusTrap), whose own
+ * Escape handler closes the whole thing unless the event's target sits
+ * under data-escape-handled-locally -- the invite email input never had
+ * that marker. The whole component unmounts on close (App.tsx renders it
+ * conditionally), so the typed email isn't just visually cleared, it's
+ * destroyed. Passes a REAL onClose spy (not the no-op renderPanel's own
+ * default uses) specifically to prove Escape here only clears the invite
+ * draft and never also closes the panel, mirroring the identical test
+ * already added for AutomationsPanel (round 1056) and WhatsAppPanel
+ * (round 1061).
+ */
+test("CollaboratorsPanel's invite form has Escape-to-clear for an in-progress draft, and a second Escape on the now-pristine form closes the dialog normally", async () => {
+  await withJsdom(async () => {
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = (async (input: string) => {
+      if (input === "/api/projects/proj1/collaborators") {
+        return new Response(JSON.stringify({ collaborators: [] }), { status: 200, headers: { "content-type": "application/json" } });
+      }
+      throw new Error(`unexpected request ${input}`);
+    }) as typeof fetch;
+
+    let closeCalls = 0;
+    try {
+      render(
+        React.createElement(
+          ThemeProvider,
+          null,
+          React.createElement(
+            LanguageProvider,
+            null,
+            React.createElement(CollaboratorsPanel, {
+              projectId: "proj1",
+              isOwner: true,
+              currentUserId: undefined,
+              onClose: () => {
+                closeCalls += 1;
+              },
+              onLeft: () => {},
+            }),
+          ),
+        ),
+      );
+      await waitForCondition(() => document.querySelector(".collab-invite-form") !== null);
+      assert.ok(document.querySelector('[role="dialog"]'), "sanity check: a real dialog wired to the real onClose must be open");
+
+      const emailInput = document.querySelector(".collab-invite-form input[type='email']") as HTMLInputElement;
+      fireEvent.change(emailInput, { target: { value: "teammate@example.com" } });
+
+      fireEvent.keyDown(emailInput, { key: "Escape" });
+      assert.equal(emailInput.value, "", "Escape must clear the drafted email");
+      assert.equal(closeCalls, 0, "Escape clearing an in-progress invite draft must never also close the whole dialog");
+      assert.ok(document.querySelector('[role="dialog"]'), "the dialog itself must still be in the DOM after that Escape");
+
+      // Mirrors the identical round-362/1056/1061 regression: once the
+      // form is genuinely pristine (nothing left to clear), Escape must
+      // close the dialog normally, not get silently swallowed.
+      fireEvent.keyDown(emailInput, { key: "Escape" });
+      assert.equal(closeCalls, 1, "Escape on an already-pristine invite form must close the dialog normally");
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+});
