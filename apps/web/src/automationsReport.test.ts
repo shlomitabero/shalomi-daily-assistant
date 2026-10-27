@@ -159,6 +159,30 @@ test("formatAutomationsReport translates a send_whatsapp rule's known raw error 
 });
 
 /**
+ * Round 1080: the send_email counterpart to the round-935 test above --
+ * apps/api/src/automations.ts's fireEmailAction now records this exact
+ * stable snake_case code when a toMode:"field" rule's resolved destination
+ * value isn't a valid email address (see KNOWN_EMAIL_SEND_ERROR_CODES's
+ * own doc comment in api.ts).
+ */
+test("formatAutomationsReport translates a send_email rule's known raw error code (invalid_email_address) instead of showing the bare code", () => {
+  const t = (key: string, params?: Record<string, string | number>) => translate("en", key, params);
+  const rule = makeRule({
+    actionType: "send_email",
+    toField: "customerPhone",
+    emailSubject: "Order update",
+    lastTriggeredAt: "2026-03-15T09:00:00Z",
+    lastStatus: "failed",
+    lastError: "invalid_email_address",
+  });
+
+  const report = formatAutomationsReport([rule], [], "Shop", "en", t);
+
+  assert.match(report, /valid email address/, "the report must show the translated message");
+  assert.equal(report.includes("invalid_email_address"), false, "the bare raw error code must never leak into the report");
+});
+
+/**
  * Round 948: same fix as AutomationsPanel.tsx's own identical regression
  * (see its own comment) -- editing a rule's actionType never
  * retroactively clears/updates its own already-stored lastError

@@ -9,6 +9,7 @@ import {
   retryAutomationRun,
   testAutomationRule,
   updateAutomationRule,
+  KNOWN_EMAIL_SEND_ERROR_CODES,
   KNOWN_WHATSAPP_SEND_ERROR_CODES,
   type AutomationActionType,
   type AutomationRuleView,
@@ -781,6 +782,11 @@ export function AutomationsPanel({
   function translateAutomationError(actionType: AutomationActionType, error: string): string {
     if (actionType === "send_whatsapp" && KNOWN_WHATSAPP_SEND_ERROR_CODES.has(error)) {
       return resolveErrorMessage(lang, { code: `WHATSAPP_SEND_${error.toUpperCase()}`, error });
+    }
+    // Round 1080: the send_email counterpart to the send_whatsapp branch
+    // above -- see KNOWN_EMAIL_SEND_ERROR_CODES's own doc comment.
+    if (actionType === "send_email" && KNOWN_EMAIL_SEND_ERROR_CODES.has(error)) {
+      return resolveErrorMessage(lang, { code: `EMAIL_SEND_${error.toUpperCase()}`, error });
     }
     return error;
   }

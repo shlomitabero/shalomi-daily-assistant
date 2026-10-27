@@ -1152,6 +1152,15 @@ export interface WhatsAppSendResult {
  */
 export const KNOWN_WHATSAPP_SEND_ERROR_CODES = new Set(["not_connected", "invalid_phone_number", "missing_country_code"]);
 
+/**
+ * Round 1080: the send_email counterpart to KNOWN_WHATSAPP_SEND_ERROR_CODES
+ * above -- apps/api/src/automations.ts's own fireEmailAction now records
+ * this exact stable snake_case code (never translated server-side, same
+ * "that's a client concern" design) when a toMode:"field" rule's resolved
+ * destination value isn't a valid email address.
+ */
+export const KNOWN_EMAIL_SEND_ERROR_CODES = new Set(["invalid_email_address"]);
+
 export interface WhatsAppAttachmentDescriptor {
   url: string;
   name: string;

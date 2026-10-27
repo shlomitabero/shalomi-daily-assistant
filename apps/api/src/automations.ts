@@ -1,6 +1,7 @@
 import { readFile } from "node:fs/promises";
 import { isIP } from "node:net";
 import path from "node:path";
+import { z } from "zod";
 import type { Entity, EntityRecord, Project } from "@forge/shared";
 import {
   AUTOMATION_RUNS_RETENTION_LIMIT,
@@ -718,6 +719,32 @@ async function fireEmailAction(
       project.id,
       rule.id,
       { status: "failed", error: "This rule has no destination email address configured" },
+      rule.actionType,
+      record ? Number(record.id) : null,
+      recordSnapshot,
+      now,
+    );
+    return;
+  }
+  // Round 1080: unlike a toMode:"static" destination (validated at rule-
+  // creation time by CreateAutomationRuleSchema's own z.string().email()),
+  // a toMode:"field" destination's value is only known per-record at send
+  // time, so it never passes through that schema at all -- the WhatsApp
+  // sibling action already guards the identical gap (whatsappWeb.ts's own
+  // sendMessage normalizePhone/leading-zero checks, see its doc comment)
+  // before ever touching the real network call, but fireEmailAction here
+  // only ever checked non-empty. A field picked off a record (e.g. an
+  // AutomationsPanel.tsx toField dropdown entry that isn't actually an
+  // email field) would otherwise be POSTed straight to Resend's API as-is.
+  // Reuses the exact same z.string().email() validator the static path
+  // already enforces, so both destination modes agree on what counts as
+  // valid rather than each having its own independently-drifting notion.
+  if (!z.string().email().safeParse(to).success) {
+    recordAutomationRun(
+      db,
+      project.id,
+      rule.id,
+      { status: "failed", error: "invalid_email_address" },
       rule.actionType,
       record ? Number(record.id) : null,
       recordSnapshot,

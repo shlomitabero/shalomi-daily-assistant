@@ -2335,6 +2335,47 @@ test("runAutomationsForRecordChange sends a 'send_email' rule's email to a toFie
   assert.equal(emailSender.sentTo[0]!.text, "Hi Dana Levi!");
 });
 
+/**
+ * Regression test for a real bug found by round 1080's Explore survey: a
+ * toMode:"static" destination is validated at rule-creation time by
+ * CreateAutomationRuleSchema's own z.string().email() (routes/projects.ts),
+ * but a toMode:"field" destination's value is only known per-record at
+ * send time, so it never passes through that schema at all -- unlike the
+ * WhatsApp sibling action (whatsappWeb.ts's own sendMessage normalizePhone/
+ * leading-zero checks, see its doc comment), fireEmailAction only ever
+ * checked that the resolved value was a non-empty string, so a field
+ * picked off a record that doesn't actually hold an email address (an easy
+ * mis-pick: AutomationsPanel.tsx's toField dropdown for both WhatsApp and
+ * email shares the exact same type-only-filtered field list, with nothing
+ * distinguishing "looks like an email" from "looks like a phone number")
+ * was POSTed straight to Resend's API as-is.
+ */
+test("runAutomationsForRecordChange records a failed outcome, never calls send, when a 'send_email' rule's toField-resolved value isn't a valid email address", async () => {
+  const { db, project } = setupProject();
+  const rule = insertAutomationRule(db, {
+    projectId: project.id,
+    entityName: "Order",
+    trigger: "record_created",
+    actionType: "send_email",
+    toMode: "field",
+    toField: "customerPhone",
+    emailSubject: "Order update",
+    messageTemplate: "Hi {{customerName}}!",
+  });
+  // customerPhone holds an ordinary phone number here, not an email address
+  // -- exactly the mis-pick scenario the WhatsApp/email toField dropdowns'
+  // shared, unfiltered field list makes easy to reach.
+  const record = { id: 1, customerName: "Dana Levi", customerPhone: "972501234567", status: "New" };
+  const emailSender = createFakeEmailSender();
+
+  await runAutomationsForRecordChange(db, {} as WhatsAppWebManager, emailSender, project, orderEntity, "created", record, new Set(), UNUSED_UPLOADS_DIR, UNUSED_BASE_URL);
+
+  assert.equal(emailSender.sentTo.length, 0, "Resend's API must never be called with a non-email destination");
+  const updated = getAutomationRule(db, project.id, rule.id)!;
+  assert.equal(updated.lastStatus, "failed");
+  assert.equal(updated.lastError, "invalid_email_address");
+});
+
 test("runAutomationsForRecordChange records a failed outcome, never calls send, when a 'send_email' rule has no destination email configured", async () => {
   const { db, project } = setupProject();
   const rule = insertAutomationRule(db, {

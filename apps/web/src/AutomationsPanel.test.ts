@@ -3055,6 +3055,68 @@ test("AutomationsPanel translates a send_whatsapp rule's known raw error code (e
 });
 
 /**
+ * Round 1080: the send_email counterpart to the round-935 test above --
+ * apps/api/src/automations.ts's fireEmailAction now records this exact
+ * stable snake_case code when a toMode:"field" rule's resolved destination
+ * value isn't a valid email address (see KNOWN_EMAIL_SEND_ERROR_CODES's
+ * own doc comment in api.ts). Without translateAutomationError's new
+ * send_email branch, this bare code would leak into the UI exactly the
+ * way missing_country_code once did for send_whatsapp before round 935.
+ */
+test("AutomationsPanel translates a send_email rule's known raw error code (invalid_email_address) in both its rule-row summary and its run-history list, instead of showing the bare code", async () => {
+  await withJsdom(async () => {
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = (async (input: string) => {
+      if (input === "/api/projects/proj1/automations") {
+        return new Response(
+          JSON.stringify({
+            rules: [
+              makeRule({
+                actionType: "send_email",
+                toField: "customerPhone",
+                emailSubject: "Order update",
+                lastTriggeredAt: new Date("2026-03-15T09:00:00Z").toISOString(),
+                lastStatus: "failed",
+                lastError: "invalid_email_address",
+              }),
+            ],
+          }),
+          { status: 200, headers: { "content-type": "application/json" } },
+        );
+      }
+      if (input === "/api/projects/proj1/automations/rule1/runs") {
+        return new Response(
+          JSON.stringify({
+            runs: [{ id: "run1", ruleId: "rule1", status: "failed", error: "invalid_email_address", triggeredAt: new Date("2026-03-15T09:00:00Z").toISOString() }],
+          }),
+          { status: 200, headers: { "content-type": "application/json" } },
+        );
+      }
+      throw new Error(`unexpected request ${input}`);
+    }) as typeof fetch;
+
+    try {
+      renderPanel();
+      await waitForCondition(() => document.querySelectorAll(".automations-rule-row").length === 1);
+
+      const row = document.querySelector(".automations-rule-row") as HTMLElement;
+      assert.match(row.textContent ?? "", /valid email address/, "the rule row's own last-run summary must show the translated message");
+      assert.equal(row.textContent?.includes("invalid_email_address") ?? true, false, "the bare raw error code must never leak into the rule row");
+
+      const historyButton = Array.from(document.querySelectorAll("button")).find((b) => b.textContent === "History") as HTMLButtonElement;
+      fireEvent.click(historyButton);
+      await waitForCondition(() => document.querySelectorAll(".automations-rule-history-list li").length === 1);
+
+      const historyText = document.querySelector(".automations-rule-history-list")?.textContent ?? "";
+      assert.match(historyText, /valid email address/, "the run-history list must also show the translated message");
+      assert.equal(historyText.includes("invalid_email_address"), false, "the bare raw error code must never leak into the run-history list either");
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+});
+
+/**
  * Round 948: editing a rule's actionType (switching it between
  * send_whatsapp and webhook) never clears/retroactively updates its own
  * already-stored lastError/run history -- a rule's CURRENT actionType is
