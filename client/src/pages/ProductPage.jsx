@@ -28,11 +28,19 @@ export default function ProductPage() {
   const [error, setError] = useState('');
   const [paddleReady, setPaddleReady] = useState(false);
   const [paddleFailed, setPaddleFailed] = useState(false);
+  const [paddleNotConfigured, setPaddleNotConfigured] = useState(false);
 
   useEffect(() => {
     api.getProduct(slug).then(async (r) => {
       setData(r);
-      if (!r.clientToken) return;
+      // Without this, a real customer on a product page published before
+      // Paddle was configured (or if it's ever unset again) would see a
+      // "קנה עכשיו" button that's just silently disabled forever — no
+      // error, no explanation, indistinguishable from a slow network.
+      if (!r.clientToken) {
+        setPaddleNotConfigured(true);
+        return;
+      }
       const paddle = await waitForPaddle();
       if (!paddle) {
         setPaddleFailed(true);
@@ -71,6 +79,9 @@ export default function ProductPage() {
         <p className="form-error">
           לא ניתן לטעון את מערכת התשלום כרגע (ייתכן שחוסם פרסומות/פרטיות חוסם אותה). נסה לרענן את העמוד, או נטרל חוסם פרסומות ונסה שוב.
         </p>
+      )}
+      {paddleNotConfigured && (
+        <p className="form-error">מערכת התשלומים עדיין לא מוגדרת למוצר זה — לא ניתן לרכוש כרגע.</p>
       )}
     </div>
   );
