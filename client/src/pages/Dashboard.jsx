@@ -48,7 +48,10 @@ export default function Dashboard() {
   // Which source actually produced verified revenue vs. which only cost money with nothing to show.
   const revenueBySource = {};
   for (const e of entries) {
-    if (e.type !== 'revenue' || !e.verified || !e.opportunityId) continue;
+    // Number.isFinite, not a bare add — a single corrupted entry's amount
+    // would otherwise turn that source's whole total into NaN, showing
+    // "₪NaN נכנס" to the owner instead of just excluding the bad entry.
+    if (e.type !== 'revenue' || !e.verified || !e.opportunityId || !Number.isFinite(e.amount)) continue;
     const opp = opportunities.find((o) => o.id === e.opportunityId);
     const key = opp?.source ?? 'unknown';
     revenueBySource[key] = (revenueBySource[key] ?? 0) + e.amount;
