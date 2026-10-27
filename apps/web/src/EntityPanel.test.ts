@@ -6241,7 +6241,7 @@ test("EntityPanel's 'jump to record' clears the persisted field-filter/view-mode
       fireEvent.click(boardToggle);
       await waitForCondition(() => document.querySelectorAll(".board-column").length === 3);
       assert.deepEqual(getFieldFilters("proj1", "Deal", "user1"), { status: "new" }, "sanity check: the filter must actually be persisted before the jump");
-      assert.equal(getViewMode("proj1", "Deal"), "board", "sanity check: the view mode must actually be persisted before the jump");
+      assert.equal(getViewMode("proj1", "Deal", "user1"), "board", "sanity check: the view mode must actually be persisted before the jump");
 
       // Jump to Initech (id 3, status "lost") -- hidden by both the "new"
       // filter and (as a status column collapsed out of view) irrelevant in
@@ -6251,7 +6251,7 @@ test("EntityPanel's 'jump to record' clears the persisted field-filter/view-mode
       await waitForCondition(() => document.querySelectorAll("table tbody tr").length === 3);
 
       assert.deepEqual(getFieldFilters("proj1", "Deal", "user1"), {}, "the persisted filter storage must be cleared too, not just the in-memory state");
-      assert.equal(getViewMode("proj1", "Deal"), "table", "the persisted view-mode storage must be cleared too, not just the in-memory state");
+      assert.equal(getViewMode("proj1", "Deal", "user1"), "table", "the persisted view-mode storage must be cleared too, not just the in-memory state");
 
       // Simulate the real-world trigger: switching to another tab and back
       // remounts EntityPanel (key={entity.name} in App.tsx) -- confirm the
@@ -12210,7 +12210,7 @@ test("EntityPanel's Table/Board/Calendar view choice survives an unmount+remount
       const boardToggle = document.querySelectorAll(".view-toggle-btn")[1] as HTMLButtonElement;
       fireEvent.click(boardToggle);
       await waitForCondition(() => document.querySelectorAll(".board-column").length === 3);
-      assert.equal(getViewMode("proj1", "Deal"), "board", "must actually be persisted, not just held in memory");
+      assert.equal(getViewMode("proj1", "Deal", "user1"), "board", "must actually be persisted, not just held in memory");
 
       firstView.unmount();
       renderEntityPanel();
@@ -12244,7 +12244,7 @@ test("EntityPanel's Table/Board/Calendar view choice survives an unmount+remount
         null,
         "a different entity with no board/date field must never inherit Deal's persisted 'board' view -- it must fall back to plain Table with no view toggle at all",
       );
-      assert.equal(getViewMode("proj1", "Note"), "table", "and must never have written anything to Note's own storage slot either");
+      assert.equal(getViewMode("proj1", "Note", "user1"), "table", "and must never have written anything to Note's own storage slot either");
     } finally {
       globalThis.fetch = originalFetch;
     }

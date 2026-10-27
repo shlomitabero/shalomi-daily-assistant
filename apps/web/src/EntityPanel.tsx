@@ -1717,7 +1717,7 @@ export function EntityPanel({
   // "table") and no view-toggle button showed as active.
   const dateFieldName = dateField?.name ?? "";
   useEffect(() => {
-    const stored = getViewModePreference(projectId, entity.name);
+    const stored = getViewModePreference(projectId, entity.name, userId);
     const stillValid = stored === "table" || (stored === "board" && boardFieldName) || (stored === "calendar" && dateFieldName);
     setViewMode(stillValid ? stored : "table");
   }, [projectId, entity.name, boardFieldName, dateFieldName]);
@@ -2276,7 +2276,7 @@ export function EntityPanel({
       setFieldFiltersPreference(projectId, entity.name, userId, {});
       return {};
     });
-    setViewMode(setViewModePreference(projectId, entity.name, "table"));
+    setViewMode(setViewModePreference(projectId, entity.name, userId, "table"));
     setGroupFieldName(setGroupByField(projectId, entity.name, ""));
     setHighlightedRecordId(highlightRecordId);
     onHighlightHandled?.();
@@ -4222,7 +4222,7 @@ export function EntityPanel({
                 <button
                   type="button"
                   className={viewMode === "table" ? "view-toggle-btn view-toggle-btn-active" : "view-toggle-btn"}
-                  onClick={() => setViewMode(setViewModePreference(projectId, entity.name, "table"))}
+                  onClick={() => setViewMode(setViewModePreference(projectId, entity.name, userId, "table"))}
                 >
                   {t("entity.view.table")}
                 </button>
@@ -4230,7 +4230,7 @@ export function EntityPanel({
                   <button
                     type="button"
                     className={viewMode === "board" ? "view-toggle-btn view-toggle-btn-active" : "view-toggle-btn"}
-                    onClick={() => setViewMode(setViewModePreference(projectId, entity.name, "board"))}
+                    onClick={() => setViewMode(setViewModePreference(projectId, entity.name, userId, "board"))}
                   >
                     {t("entity.view.board")}
                   </button>
@@ -4239,7 +4239,7 @@ export function EntityPanel({
                   <button
                     type="button"
                     className={viewMode === "calendar" ? "view-toggle-btn view-toggle-btn-active" : "view-toggle-btn"}
-                    onClick={() => setViewMode(setViewModePreference(projectId, entity.name, "calendar"))}
+                    onClick={() => setViewMode(setViewModePreference(projectId, entity.name, userId, "calendar"))}
                   >
                     {t("entity.view.calendar")}
                   </button>

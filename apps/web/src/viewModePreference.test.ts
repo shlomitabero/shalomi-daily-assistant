@@ -28,30 +28,30 @@ async function withJsdom(fn: () => void | Promise<void>): Promise<void> {
 
 test("getViewMode returns 'table' when no view choice has ever been made", async () => {
   await withJsdom(() => {
-    assert.equal(getViewMode("proj1", "Deal"), "table");
+    assert.equal(getViewMode("proj1", "Deal", "userA"), "table");
   });
 });
 
 test("setViewMode persists a real choice, and a fresh getViewMode call sees it -- a real round trip, not just the return value", async () => {
   await withJsdom(() => {
-    const after = setViewMode("proj1", "Deal", "board");
+    const after = setViewMode("proj1", "Deal", "userA", "board");
     assert.equal(after, "board");
-    assert.equal(getViewMode("proj1", "Deal"), "board", "must actually be written to storage, not just returned");
+    assert.equal(getViewMode("proj1", "Deal", "userA"), "board", "must actually be written to storage, not just returned");
   });
 });
 
 test("setViewMode('calendar') also round trips", async () => {
   await withJsdom(() => {
-    setViewMode("proj1", "Event", "calendar");
-    assert.equal(getViewMode("proj1", "Event"), "calendar");
+    setViewMode("proj1", "Event", "userA", "calendar");
+    assert.equal(getViewMode("proj1", "Event", "userA"), "calendar");
   });
 });
 
 test("setViewMode back to 'table' clears the persisted entry instead of storing it", async () => {
   await withJsdom(() => {
-    setViewMode("proj1", "Deal", "board");
-    setViewMode("proj1", "Deal", "table");
-    assert.equal(getViewMode("proj1", "Deal"), "table");
+    setViewMode("proj1", "Deal", "userA", "board");
+    setViewMode("proj1", "Deal", "userA", "table");
+    assert.equal(getViewMode("proj1", "Deal", "userA"), "table");
     const raw = localStorage.getItem("forge.viewMode");
     assert.equal(raw, "{}", "the default 'table' choice should not bloat storage with an explicit entry");
   });
@@ -59,22 +59,37 @@ test("setViewMode back to 'table' clears the persisted entry instead of storing 
 
 test("view mode is scoped per project+entity -- setting one project's entity never affects a same-named entity in a different project or a different entity in the same project", async () => {
   await withJsdom(() => {
-    setViewMode("proj1", "Deal", "board");
-    assert.equal(getViewMode("proj2", "Deal"), "table", "a different project must not see proj1's view choice");
-    assert.equal(getViewMode("proj1", "Customer"), "table", "a different entity in the same project must not see Deal's view choice");
+    setViewMode("proj1", "Deal", "userA", "board");
+    assert.equal(getViewMode("proj2", "Deal", "userA"), "table", "a different project must not see proj1's view choice");
+    assert.equal(getViewMode("proj1", "Customer", "userA"), "table", "a different entity in the same project must not see Deal's view choice");
+  });
+});
+
+/**
+ * Round 1064: the whole point of this round's fix. Before it, the storage
+ * key was projectId:entityName alone -- two different collaborator
+ * accounts sharing the SAME project on the SAME browser silently saw each
+ * other's own chosen Table/Board/Calendar view.
+ */
+test("view mode is also kept per-user -- two different accounts on the SAME project+entity never see each other's own chosen view", async () => {
+  await withJsdom(() => {
+    setViewMode("proj1", "Deal", "userA", "board");
+    setViewMode("proj1", "Deal", "userB", "calendar");
+    assert.equal(getViewMode("proj1", "Deal", "userA"), "board");
+    assert.equal(getViewMode("proj1", "Deal", "userB"), "calendar", "userB must never see userA's own chosen view");
   });
 });
 
 test("getViewMode falls back to 'table' for corrupted/foreign localStorage content, instead of throwing", async () => {
   await withJsdom(() => {
     localStorage.setItem("forge.viewMode", "not real json{{{");
-    assert.equal(getViewMode("proj1", "Deal"), "table");
+    assert.equal(getViewMode("proj1", "Deal", "userA"), "table");
   });
 });
 
 test("getViewMode ignores a value that isn't a real view mode (foreign data written by something else) instead of returning it", async () => {
   await withJsdom(() => {
-    localStorage.setItem("forge.viewMode", JSON.stringify({ "proj1:Deal": "kanban" }));
-    assert.equal(getViewMode("proj1", "Deal"), "table");
+    localStorage.setItem("forge.viewMode", JSON.stringify({ "proj1:Deal:userA": "kanban" }));
+    assert.equal(getViewMode("proj1", "Deal", "userA"), "table");
   });
 });
