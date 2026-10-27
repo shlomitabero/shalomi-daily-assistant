@@ -1576,24 +1576,24 @@ export function EntityPanel({
   // "Status") silently cleared the user's own "Group by" choice instead of
   // just carrying it forward under its new spelling.
   useEffect(() => {
-    const loaded = getGroupByField(projectId, entity.name);
+    const loaded = getGroupByField(projectId, entity.name, userId);
     if (loaded) {
       const exactField = entity.fields.find((f) => f.name === loaded);
       const renamedField = exactField ? undefined : entity.fields.find((f) => f.name.toLowerCase() === loaded.toLowerCase());
       const currentType = exactField?.type ?? renamedField?.type;
-      const recordedType = getGroupByFieldType(projectId, entity.name);
+      const recordedType = getGroupByFieldType(projectId, entity.name, userId);
       if (!currentType || (recordedType && recordedType !== currentType)) {
-        setGroupFieldName(setGroupByField(projectId, entity.name, ""));
-        setGroupByFieldType(projectId, entity.name, "");
+        setGroupFieldName(setGroupByField(projectId, entity.name, userId, ""));
+        setGroupByFieldType(projectId, entity.name, userId, "");
         return;
       }
       if (renamedField) {
-        setGroupFieldName(setGroupByField(projectId, entity.name, renamedField.name));
+        setGroupFieldName(setGroupByField(projectId, entity.name, userId, renamedField.name));
         return;
       }
     }
     setGroupFieldName(loaded);
-  }, [projectId, entity.name]);
+  }, [projectId, entity.name, userId]);
 
   // Same reasoning as groupFieldName's own effect just above -- which
   // groups are collapsed is scoped per project+entity+groupFieldName
@@ -1965,7 +1965,7 @@ export function EntityPanel({
     // (a user's own pick, the load effect above, or either clearing
     // path below), so it's the one place that keeps getGroupByFieldType
     // in sync with getGroupByField without touching every call site.
-    setGroupByFieldType(projectId, entity.name, type ?? "");
+    setGroupByFieldType(projectId, entity.name, userId, type ?? "");
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [groupFieldName]);
   useEffect(() => {
@@ -1991,11 +1991,11 @@ export function EntityPanel({
     // against undefined directly (currentType !== groupedFieldTypeRef.current)
     // catches both shapes with the same clearing path.
     if (groupedFieldTypeRef.current && currentType !== groupedFieldTypeRef.current) {
-      setGroupFieldName(setGroupByField(projectId, entity.name, ""));
+      setGroupFieldName(setGroupByField(projectId, entity.name, userId, ""));
       return;
     }
     if (renamedField) {
-      setGroupFieldName(setGroupByField(projectId, entity.name, renamedField.name));
+      setGroupFieldName(setGroupByField(projectId, entity.name, userId, renamedField.name));
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [fieldTypesKey]);
@@ -2277,7 +2277,7 @@ export function EntityPanel({
       return {};
     });
     setViewMode(setViewModePreference(projectId, entity.name, userId, "table"));
-    setGroupFieldName(setGroupByField(projectId, entity.name, ""));
+    setGroupFieldName(setGroupByField(projectId, entity.name, userId, ""));
     setHighlightedRecordId(highlightRecordId);
     onHighlightHandled?.();
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -4207,7 +4207,7 @@ export function EntityPanel({
                 className="entity-group-by"
                 aria-label={t("entity.groupBy.label")}
                 value={groupFieldName}
-                onChange={(e) => setGroupFieldName(setGroupByField(projectId, entity.name, e.target.value))}
+                onChange={(e) => setGroupFieldName(setGroupByField(projectId, entity.name, userId, e.target.value))}
               >
                 <option value="">{t("entity.groupBy.none")}</option>
                 {groupableFields.map((f) => (

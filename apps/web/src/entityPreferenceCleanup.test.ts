@@ -77,8 +77,14 @@ test("purgeEntityPreferences removes exactly one project+entity's entries from e
     // purgeEntityPreferences must purge every user's entry, the same
     // round-994 reasoning entityRecentSearches' own userB seed above tests.
     setFieldFilters("abc", "Customer", "userB", { status: "pending" });
-    setGroupByField("abc", "Customer", "status");
-    setGroupByFieldType("abc", "Customer", "enum");
+    setGroupByField("abc", "Customer", "userA", "status");
+    setGroupByFieldType("abc", "Customer", "userA", "enum");
+    // A DIFFERENT collaborator's own group-by choice for the SAME
+    // project+entity -- purgeEntityPreferences must purge every user's
+    // entry, the same round-1055 reasoning the fieldFilters userB seed
+    // above tests.
+    setGroupByField("abc", "Customer", "userB", "owner");
+    setGroupByFieldType("abc", "Customer", "userB", "text");
     setCollapsedBoardColumns("abc", "Customer", "status", ["done"]);
     setCollapsedGroups("abc", "Customer", "status", ["pending"]);
     setSortKeys("abc", "Customer", "userA", [{ field: "name", direction: "asc" }]);
@@ -108,8 +114,8 @@ test("purgeEntityPreferences removes exactly one project+entity's entries from e
     setColumnOrder("abc", "Deal", "userA", ["amount", "stage"]);
     toggleFieldVisibility("abc", "Deal", "userA", "stage");
     setFieldFilters("abc", "Deal", "userA", { stage: "won" });
-    setGroupByField("abc", "Deal", "stage");
-    setGroupByFieldType("abc", "Deal", "enum");
+    setGroupByField("abc", "Deal", "userA", "stage");
+    setGroupByFieldType("abc", "Deal", "userA", "enum");
     setCollapsedBoardColumns("abc", "Deal", "stage", ["lost"]);
     setCollapsedGroups("abc", "Deal", "stage", ["open"]);
     setSortKeys("abc", "Deal", "userA", [{ field: "amount", direction: "desc" }]);
@@ -125,8 +131,8 @@ test("purgeEntityPreferences removes exactly one project+entity's entries from e
     setColumnOrder("proj2", "Customer", "userA", ["email", "name"]);
     toggleFieldVisibility("proj2", "Customer", "userA", "name");
     setFieldFilters("proj2", "Customer", "userA", { status: "closed" });
-    setGroupByField("proj2", "Customer", "owner");
-    setGroupByFieldType("proj2", "Customer", "text");
+    setGroupByField("proj2", "Customer", "userA", "owner");
+    setGroupByFieldType("proj2", "Customer", "userA", "text");
     setCollapsedBoardColumns("proj2", "Customer", "owner", ["archived"]);
     setCollapsedGroups("proj2", "Customer", "owner", ["active"]);
     setSortKeys("proj2", "Customer", "userA", [{ field: "email", direction: "desc" }]);
@@ -146,8 +152,10 @@ test("purgeEntityPreferences removes exactly one project+entity's entries from e
     assert.deepEqual(getHiddenFields("abc", "Customer", "userB"), new Set(), "columnVisibility must be purged for EVERY collaborator account, not just one");
     assert.deepEqual(getFieldFilters("abc", "Customer", "userA"), {}, "fieldFilters must be purged");
     assert.deepEqual(getFieldFilters("abc", "Customer", "userB"), {}, "fieldFilters must be purged for EVERY collaborator account, not just one");
-    assert.equal(getGroupByField("abc", "Customer"), "", "groupBy field must be purged");
-    assert.equal(getGroupByFieldType("abc", "Customer"), "", "groupBy field type must be purged alongside it");
+    assert.equal(getGroupByField("abc", "Customer", "userA"), "", "groupBy field must be purged");
+    assert.equal(getGroupByField("abc", "Customer", "userB"), "", "groupBy field must be purged for EVERY collaborator account, not just one");
+    assert.equal(getGroupByFieldType("abc", "Customer", "userA"), "", "groupBy field type must be purged alongside it");
+    assert.equal(getGroupByFieldType("abc", "Customer", "userB"), "", "groupBy field type must be purged for EVERY collaborator account, not just one");
     assert.deepEqual(getCollapsedBoardColumns("abc", "Customer", "status"), [], "collapsedBoardColumns must be purged");
     assert.deepEqual(getCollapsedGroups("abc", "Customer", "status"), [], "collapsedGroups must be purged");
     assert.deepEqual(getSortKeys("abc", "Customer", "userA"), [], "sortKeys must be purged");
@@ -163,8 +171,8 @@ test("purgeEntityPreferences removes exactly one project+entity's entries from e
     assert.deepEqual(getColumnOrder("abc", "Deal", "userA"), ["amount", "stage"], "columnOrder must survive for a sibling entity");
     assert.deepEqual(getHiddenFields("abc", "Deal", "userA"), new Set(["stage"]), "columnVisibility must survive for a sibling entity");
     assert.deepEqual(getFieldFilters("abc", "Deal", "userA"), { stage: "won" }, "fieldFilters must survive for a sibling entity");
-    assert.equal(getGroupByField("abc", "Deal"), "stage", "groupBy field must survive for a sibling entity");
-    assert.equal(getGroupByFieldType("abc", "Deal"), "enum", "groupBy field type must survive for a sibling entity");
+    assert.equal(getGroupByField("abc", "Deal", "userA"), "stage", "groupBy field must survive for a sibling entity");
+    assert.equal(getGroupByFieldType("abc", "Deal", "userA"), "enum", "groupBy field type must survive for a sibling entity");
     assert.deepEqual(getCollapsedBoardColumns("abc", "Deal", "stage"), ["lost"], "collapsedBoardColumns must survive for a sibling entity");
     assert.deepEqual(getCollapsedGroups("abc", "Deal", "stage"), ["open"], "collapsedGroups must survive for a sibling entity");
     assert.deepEqual(getSortKeys("abc", "Deal", "userA"), [{ field: "amount", direction: "desc" }], "sortKeys must survive for a sibling entity");
@@ -176,8 +184,8 @@ test("purgeEntityPreferences removes exactly one project+entity's entries from e
     assert.deepEqual(getColumnOrder("proj2", "Customer", "userA"), ["email", "name"], "columnOrder must survive for an unrelated project's same-named entity");
     assert.deepEqual(getHiddenFields("proj2", "Customer", "userA"), new Set(["name"]), "columnVisibility must survive for an unrelated project's same-named entity");
     assert.deepEqual(getFieldFilters("proj2", "Customer", "userA"), { status: "closed" }, "fieldFilters must survive for an unrelated project's same-named entity");
-    assert.equal(getGroupByField("proj2", "Customer"), "owner", "groupBy field must survive for an unrelated project's same-named entity");
-    assert.equal(getGroupByFieldType("proj2", "Customer"), "text", "groupBy field type must survive for an unrelated project's same-named entity");
+    assert.equal(getGroupByField("proj2", "Customer", "userA"), "owner", "groupBy field must survive for an unrelated project's same-named entity");
+    assert.equal(getGroupByFieldType("proj2", "Customer", "userA"), "text", "groupBy field type must survive for an unrelated project's same-named entity");
     assert.deepEqual(getCollapsedBoardColumns("proj2", "Customer", "owner"), ["archived"], "collapsedBoardColumns must survive for an unrelated project's same-named entity");
     assert.deepEqual(getCollapsedGroups("proj2", "Customer", "owner"), ["active"], "collapsedGroups must survive for an unrelated project's same-named entity");
     assert.deepEqual(getSortKeys("proj2", "Customer", "userA"), [{ field: "email", direction: "desc" }], "sortKeys must survive for an unrelated project's same-named entity");
@@ -241,8 +249,10 @@ test("migrateEntityPreferencesForCaseRename moves exactly one project+entity's e
     toggleFieldVisibility("abc", "customer", "userA", "email");
     setFieldFilters("abc", "customer", "userA", { status: "active" });
     setFieldFilters("abc", "customer", "userB", { status: "pending" });
-    setGroupByField("abc", "customer", "status");
-    setGroupByFieldType("abc", "customer", "enum");
+    setGroupByField("abc", "customer", "userA", "status");
+    setGroupByFieldType("abc", "customer", "userA", "enum");
+    setGroupByField("abc", "customer", "userB", "owner");
+    setGroupByFieldType("abc", "customer", "userB", "text");
     setCollapsedBoardColumns("abc", "customer", "status", ["done"]);
     setCollapsedGroups("abc", "customer", "status", ["pending"]);
     setSortKeys("abc", "customer", "userA", [{ field: "name", direction: "asc" }]);
@@ -253,12 +263,12 @@ test("migrateEntityPreferencesForCaseRename moves exactly one project+entity's e
 
     // Seed "abc"/"Deal" -- a sibling entity in the SAME project that must survive untouched.
     setColumnWidth("abc", "Deal", "userA", "amount", 150);
-    setGroupByField("abc", "Deal", "stage");
+    setGroupByField("abc", "Deal", "userA", "stage");
     addEntityRecentSearch("abc", "Deal", "userA", "yossi");
 
     // Seed "proj2"/"customer" -- the SAME old-cased name in an unrelated project, which must survive untouched.
     setColumnWidth("proj2", "customer", "userA", "name", 300);
-    setGroupByField("proj2", "customer", "owner");
+    setGroupByField("proj2", "customer", "userA", "owner");
     addEntityRecentSearch("proj2", "customer", "userA", "noa");
 
     migrateEntityPreferencesForCaseRename("abc", "customer", "Customer");
@@ -283,8 +293,18 @@ test("migrateEntityPreferencesForCaseRename moves exactly one project+entity's e
       { status: "pending" },
       "fieldFilters must resolve under the new casing for EVERY collaborator account, not just one",
     );
-    assert.equal(getGroupByField("abc", "Customer"), "status", "groupBy field must resolve under the new casing");
-    assert.equal(getGroupByFieldType("abc", "Customer"), "enum", "groupBy field type must resolve under the new casing, alongside its paired choice");
+    assert.equal(getGroupByField("abc", "Customer", "userA"), "status", "groupBy field must resolve under the new casing");
+    assert.equal(
+      getGroupByField("abc", "Customer", "userB"),
+      "owner",
+      "groupBy field must resolve under the new casing for EVERY collaborator account, not just one",
+    );
+    assert.equal(getGroupByFieldType("abc", "Customer", "userA"), "enum", "groupBy field type must resolve under the new casing, alongside its paired choice");
+    assert.equal(
+      getGroupByFieldType("abc", "Customer", "userB"),
+      "text",
+      "groupBy field type must resolve under the new casing for EVERY collaborator account, not just one",
+    );
     assert.deepEqual(getCollapsedBoardColumns("abc", "Customer", "status"), ["done"], "collapsedBoardColumns must resolve under the new casing");
     assert.deepEqual(getCollapsedGroups("abc", "Customer", "status"), ["pending"], "collapsedGroups must resolve under the new casing");
     assert.deepEqual(getSortKeys("abc", "Customer", "userA"), [{ field: "name", direction: "asc" }], "sortKeys must resolve under the new casing");
@@ -304,17 +324,17 @@ test("migrateEntityPreferencesForCaseRename moves exactly one project+entity's e
     // Nothing is left reachable under the OLD casing.
     assert.deepEqual(getColumnWidths("abc", "customer", "userA"), {}, "nothing must remain reachable under the old casing");
     assert.deepEqual(getFieldFilters("abc", "customer", "userA"), {}, "nothing must remain reachable under the old casing");
-    assert.equal(getGroupByField("abc", "customer"), "", "nothing must remain reachable under the old casing");
+    assert.equal(getGroupByField("abc", "customer", "userA"), "", "nothing must remain reachable under the old casing");
     assert.deepEqual(getEntityRecentSearches("abc", "customer", "userA"), [], "nothing must remain reachable under the old casing");
 
     // "abc"/"Deal" -- a sibling entity in the SAME project -- is completely untouched.
     assert.deepEqual(getColumnWidths("abc", "Deal", "userA"), { amount: 150 }, "a sibling entity's own data must survive the rename untouched");
-    assert.equal(getGroupByField("abc", "Deal"), "stage", "a sibling entity's own data must survive the rename untouched");
+    assert.equal(getGroupByField("abc", "Deal", "userA"), "stage", "a sibling entity's own data must survive the rename untouched");
     assert.deepEqual(getEntityRecentSearches("abc", "Deal", "userA"), ["yossi"], "a sibling entity's own data must survive the rename untouched");
 
     // "proj2"/"customer" -- the same old-cased name in an unrelated project -- is also completely untouched.
     assert.deepEqual(getColumnWidths("proj2", "customer", "userA"), { name: 300 }, "an unrelated project's same-named entity must survive the rename untouched");
-    assert.equal(getGroupByField("proj2", "customer"), "owner", "an unrelated project's same-named entity must survive the rename untouched");
+    assert.equal(getGroupByField("proj2", "customer", "userA"), "owner", "an unrelated project's same-named entity must survive the rename untouched");
     assert.deepEqual(getEntityRecentSearches("proj2", "customer", "userA"), ["noa"], "an unrelated project's same-named entity must survive the rename untouched");
   });
 });

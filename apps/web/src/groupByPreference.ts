@@ -1,7 +1,21 @@
 const STORAGE_KEY = "forge.groupByField";
 
-function keyFor(projectId: string, entityName: string): string {
-  return `${projectId}:${entityName}`;
+/**
+ * Round 1075: the userId segment was added so two different collaborator
+ * accounts sharing the same project+entity on the same browser no longer
+ * see each other's own "Group by" choice (and its paired field-type entry
+ * below) -- the same cross-account leak class already closed for every
+ * other sibling store on this exact screen (sortKeysPreference.ts round
+ * 1074, columnOrder.ts round 1069, columnWidths.ts round 1068,
+ * columnVisibility.ts round 1055, fieldFiltersPreference.ts round 1054),
+ * never ported here. See fieldFiltersPreference.ts's own keyFor doc
+ * comment for the full reasoning. purgeGroupByFieldForProject/
+ * purgeGroupByFieldForEntity below still match by prefix, which keeps
+ * working unchanged regardless of what the key's own remaining segments
+ * (entityName, userId) look like.
+ */
+function keyFor(projectId: string, entityName: string, userId: string): string {
+  return `${projectId}:${entityName}:${userId}`;
 }
 
 function readStore(): Record<string, string> {
@@ -38,16 +52,16 @@ function writeStore(store: Record<string, string>): void {
  * "" (matching the "no grouping" option's own empty value) when nothing has
  * ever been chosen for this project+entity.
  */
-export function getGroupByField(projectId: string, entityName: string): string {
+export function getGroupByField(projectId: string, entityName: string, userId: string): string {
   const store = readStore();
-  return store[keyFor(projectId, entityName)] ?? "";
+  return store[keyFor(projectId, entityName, userId)] ?? "";
 }
 
 /** Persists a group-by field choice (or "" to clear it) and returns it, so callers can update their own state from the return value instead of re-reading storage. */
-export function setGroupByField(projectId: string, entityName: string, fieldName: string): string {
+export function setGroupByField(projectId: string, entityName: string, userId: string, fieldName: string): string {
   const store = readStore();
-  if (fieldName) store[keyFor(projectId, entityName)] = fieldName;
-  else delete store[keyFor(projectId, entityName)];
+  if (fieldName) store[keyFor(projectId, entityName, userId)] = fieldName;
+  else delete store[keyFor(projectId, entityName, userId)];
   writeStore(store);
   return fieldName;
 }
@@ -109,16 +123,16 @@ function writeTypeStore(store: Record<string, string>): void {
  * recorded, so a pre-existing persisted choice from before this round
  * shipped is treated as "no type on record yet" rather than a mismatch.
  */
-export function getGroupByFieldType(projectId: string, entityName: string): string {
+export function getGroupByFieldType(projectId: string, entityName: string, userId: string): string {
   const store = readTypeStore();
-  return store[keyFor(projectId, entityName)] ?? "";
+  return store[keyFor(projectId, entityName, userId)] ?? "";
 }
 
 /** Persists the field type alongside a group-by choice (call together with setGroupByField), or clears it when type is "". */
-export function setGroupByFieldType(projectId: string, entityName: string, type: string): void {
+export function setGroupByFieldType(projectId: string, entityName: string, userId: string, type: string): void {
   const store = readTypeStore();
-  if (type) store[keyFor(projectId, entityName)] = type;
-  else delete store[keyFor(projectId, entityName)];
+  if (type) store[keyFor(projectId, entityName, userId)] = type;
+  else delete store[keyFor(projectId, entityName, userId)];
   writeTypeStore(store);
 }
 
@@ -134,17 +148,25 @@ export function purgeGroupByFieldTypeForProject(projectId: string): void {
 
 /**
  * Removes just one entity's stored group-by field choice (and its paired
- * TYPE entry), unlike purgeGroupByFieldForProject above (the whole
- * project). Used when a single entity is dropped from an otherwise-
- * surviving project's spec -- see entityPreferenceCleanup.ts for why this
- * exists alongside the project-wide purge.
+ * TYPE entry), across every collaborator account (the key's third segment
+ * is userId, not something this function can know in advance -- the same
+ * reason columnOrder.ts's own purgeColumnOrderForEntity sweeps by prefix
+ * rather than a single exact key), unlike purgeGroupByFieldForProject
+ * above (the whole project). Used when a single entity is dropped from an
+ * otherwise-surviving project's spec -- see entityPreferenceCleanup.ts for
+ * why this exists alongside the project-wide purge.
  */
 export function purgeGroupByFieldForEntity(projectId: string, entityName: string): void {
+  const prefix = `${projectId}:${entityName}:`;
   const store = readStore();
-  delete store[keyFor(projectId, entityName)];
+  for (const key of Object.keys(store)) {
+    if (key.startsWith(prefix)) delete store[key];
+  }
   writeStore(store);
   const typeStore = readTypeStore();
-  delete typeStore[keyFor(projectId, entityName)];
+  for (const key of Object.keys(typeStore)) {
+    if (key.startsWith(prefix)) delete typeStore[key];
+  }
   writeTypeStore(typeStore);
 }
 
@@ -153,22 +175,34 @@ export function purgeGroupByFieldForEntity(projectId: string, entityName: string
  * -- see its doc comment for the full "case-only entity rename leaves this
  * store's real data unreachable under the old key" mechanism. Migrates
  * both the group-by choice and its paired type entry, the same pair
- * purgeGroupByFieldForEntity above already keeps in sync.
+ * purgeGroupByFieldForEntity above already keeps in sync. Round 1075:
+ * rewrites EVERY collaborator's own entry for this entity, the same way
+ * columnOrder.ts's own migrateColumnOrderForEntityRename does, since the
+ * key's own userId segment isn't known in advance.
  */
 export function migrateGroupByFieldForEntityRename(projectId: string, oldName: string, newName: string): void {
   if (oldName === newName) return;
-  const oldKey = keyFor(projectId, oldName);
-  const newKey = keyFor(projectId, newName);
+  const oldPrefix = `${projectId}:${oldName}:`;
   const store = readStore();
-  if (store[oldKey] !== undefined && store[newKey] === undefined) {
-    store[newKey] = store[oldKey];
-    delete store[oldKey];
-    writeStore(store);
+  let storeChanged = false;
+  for (const key of Object.keys(store)) {
+    if (!key.startsWith(oldPrefix)) continue;
+    const userId = key.slice(oldPrefix.length);
+    const newKey = keyFor(projectId, newName, userId);
+    if (store[newKey] === undefined) store[newKey] = store[key];
+    delete store[key];
+    storeChanged = true;
   }
+  if (storeChanged) writeStore(store);
   const typeStore = readTypeStore();
-  if (typeStore[oldKey] !== undefined && typeStore[newKey] === undefined) {
-    typeStore[newKey] = typeStore[oldKey];
-    delete typeStore[oldKey];
-    writeTypeStore(typeStore);
+  let typeStoreChanged = false;
+  for (const key of Object.keys(typeStore)) {
+    if (!key.startsWith(oldPrefix)) continue;
+    const userId = key.slice(oldPrefix.length);
+    const newKey = keyFor(projectId, newName, userId);
+    if (typeStore[newKey] === undefined) typeStore[newKey] = typeStore[key];
+    delete typeStore[key];
+    typeStoreChanged = true;
   }
+  if (typeStoreChanged) writeTypeStore(typeStore);
 }

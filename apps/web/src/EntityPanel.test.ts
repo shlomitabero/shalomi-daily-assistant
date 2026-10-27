@@ -6309,13 +6309,13 @@ test("EntityPanel's 'jump to record' clears grouping too, so a record hidden ins
       fireEvent.click(lostToggle);
       await waitForCondition(() => document.querySelectorAll("table tbody tr").length === 5); // 3 headers + 2 visible records (New's Acme, Won's Globex) -- Lost's own row is now hidden
       assert.equal(document.querySelector('tr[data-record-id="3"]'), null, "sanity check: Initech's row must genuinely be absent from the DOM while its group is collapsed");
-      assert.equal(getGroupByField("proj1", "Deal"), "status", "sanity check: grouping must actually be persisted before the jump");
+      assert.equal(getGroupByField("proj1", "Deal", "user1"), "status", "sanity check: grouping must actually be persisted before the jump");
 
       // Jump to Initech (id 3) while its group is still collapsed.
       firstView.rerender(buildEntityPanelElement({ highlightRecordId: 3, onHighlightHandled }));
       await waitForCondition(() => handledCount === 1);
 
-      assert.equal(getGroupByField("proj1", "Deal"), "", "the persisted group-by storage must be cleared too, not just the in-memory state");
+      assert.equal(getGroupByField("proj1", "Deal", "user1"), "", "the persisted group-by storage must be cleared too, not just the in-memory state");
       await waitForCondition(() => document.querySelector('tr[data-record-id="3"]') !== null);
       assert.equal(document.querySelectorAll(".entity-group-header-row").length, 0, "grouping must actually be turned off, not just re-expand the one group");
       assert.ok(
@@ -7391,7 +7391,7 @@ test("EntityPanel keeps a column hidden and a 'Group by' choice set under their 
       // Group by "status".
       const groupBySelect = document.querySelector(".entity-group-by") as HTMLSelectElement;
       fireEvent.change(groupBySelect, { target: { value: "status" } });
-      await waitForCondition(() => getGroupByField("proj1", "Deal") === "status");
+      await waitForCondition(() => getGroupByField("proj1", "Deal", "user1") === "status");
 
       // Simulate a live refine that renames "status" -> "Status" ONLY --
       // same field, same type, same enum values, same entity.name ("Deal"),
@@ -7409,7 +7409,7 @@ test("EntityPanel keeps a column hidden and a 'Group by' choice set under their 
       assert.equal(columnsMenuItems.length, 2, "expected one checkbox per real field (Name, Status)");
       const statusMenuCheckbox = columnsMenuItems.find((el) => /Status/.test(el.textContent ?? ""))!.querySelector("input") as HTMLInputElement;
       assert.equal(statusMenuCheckbox.checked, false, "the Status column must still show as hidden in the Columns menu under its new spelling");
-      assert.equal(getGroupByField("proj1", "Deal"), "Status", "the 'Group by' choice must carry forward under the new spelling, not be cleared to 'no grouping'");
+      assert.equal(getGroupByField("proj1", "Deal", "user1"), "Status", "the 'Group by' choice must carry forward under the new spelling, not be cleared to 'no grouping'");
       assert.equal(
         (document.querySelector(".entity-group-by") as HTMLSelectElement).value,
         "Status",
@@ -8821,13 +8821,13 @@ test("EntityPanel drops the 'Group by' selection when a live refine REMOVES that
       const groupBySelect = document.querySelector(".entity-group-by") as HTMLSelectElement;
       fireEvent.change(groupBySelect, { target: { value: "status" } });
       await waitForCondition(() => document.querySelectorAll(".entity-group-header-row").length === 2);
-      assert.equal(getGroupByField("proj1", "Deal"), "status", "sanity check: grouping must actually be persisted before the removal");
+      assert.equal(getGroupByField("proj1", "Deal", "user1"), "status", "sanity check: grouping must actually be persisted before the removal");
 
       // Simulate a refine that REMOVES "status" entirely -- not a retype,
       // a genuine deletion -- while staying on the exact same
       // entity.name ("Deal"), with "Group by: status" still selected.
       view.rerender(buildEntityPanelElement({ entity: entityWithoutStatus, allEntities: [entityWithoutStatus] }));
-      await waitForCondition(() => getGroupByField("proj1", "Deal") === "");
+      await waitForCondition(() => getGroupByField("proj1", "Deal", "user1") === "");
 
       // Asserts on the PERSISTED storage, not the <select> element's own
       // .value -- an HTML select whose controlled value matches no
@@ -8841,7 +8841,7 @@ test("EntityPanel drops the 'Group by' selection when a live refine REMOVES that
       // whether groupFieldName/storage itself actually got reset, which
       // only a check independent of the select's own display can catch.
       assert.equal(
-        getGroupByField("proj1", "Deal"),
+        getGroupByField("proj1", "Deal", "user1"),
         "",
         "the persisted 'Group by' selection must be cleared, not keep pointing at a field name that no longer exists",
       );
@@ -11994,7 +11994,7 @@ test("EntityPanel's 'Group by' choice survives an unmount+remount of the same en
       const groupBySelect = document.querySelector(".entity-group-by") as HTMLSelectElement;
       fireEvent.change(groupBySelect, { target: { value: "status" } });
       await waitForCondition(() => document.querySelectorAll(".entity-group-header-row").length === 2);
-      assert.equal(getGroupByField("proj1", "Deal"), "status", "must actually be persisted, not just held in memory");
+      assert.equal(getGroupByField("proj1", "Deal", "user1"), "status", "must actually be persisted, not just held in memory");
 
       firstView.unmount();
       renderEntityPanel();
@@ -12036,7 +12036,7 @@ test("EntityPanel's 'Group by' choice survives an unmount+remount of the same en
         "",
         "a different entity in the same project must never inherit Deal's persisted 'status' group-by choice",
       );
-      assert.equal(getGroupByField("proj1", "Customer"), "", "and must never have written anything to Customer's own storage slot either");
+      assert.equal(getGroupByField("proj1", "Customer", "user1"), "", "and must never have written anything to Customer's own storage slot either");
     } finally {
       globalThis.fetch = originalFetch;
     }
