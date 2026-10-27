@@ -378,8 +378,23 @@ for (const entity of ENTITIES) {
   // field is already present), so this only ever does real work on a
   // table that already existed before this run.
   const existingColumns = new Set(db.prepare(\`PRAGMA table_info(\${q(entity.name)})\`).all().map((c) => c.name));
+  // Round 1092: existingColumns.has(field.name) above was an exact,
+  // case-sensitive lookup -- but PRAGMA table_info reports a column under
+  // whatever casing it was ORIGINALLY created with, and a field renamed
+  // only by letter case in the live preview (e.g. "email" -> "Email", a
+  // legitimate no-op everywhere else in this codebase -- see migrate.ts's
+  // own round-617/618 fix for the identical scenario in the live backend)
+  // still resolves to that same physical column once re-exported. Without
+  // a case-insensitive fallback, this fell through to the ALTER TABLE ADD
+  // COLUMN below, and SQLite's own duplicate-column check IS
+  // case-insensitive -- so it threw "duplicate column name", an uncaught
+  // exception that crashed the whole exported server process on startup
+  // (not just one failed request), exactly the scenario this file's own
+  // generated README documents as a supported workflow ("edit the preview,
+  // re-export, drop the new server.js next to your existing data.sqlite").
+  const existingColumnsLower = new Set(Array.from(existingColumns, (c) => c.toLowerCase()));
   for (const field of entity.fields) {
-    if (existingColumns.has(field.name)) continue;
+    if (existingColumnsLower.has(field.name.toLowerCase())) continue;
     const references = field.type === "relation" && field.relationTo && ENTITY_NAMES.has(field.relationTo) ? \` REFERENCES \${q(field.relationTo)}(id)\` : "";
     db.exec(\`ALTER TABLE \${q(entity.name)} ADD COLUMN \${q(field.name)} \${sqlType(field.type)}\${references}\`);
   }
@@ -469,10 +484,27 @@ function coerce(field, value) {
   return String(value);
 }
 
+// Round 1092: mirrors repository.ts's own getRowValue exactly. A row
+// object returned by better-sqlite3 is keyed by the column's REAL,
+// physical casing (whatever it was originally CREATEd under), not
+// whatever casing field.name currently declares -- so once a field is
+// renamed only by letter case in the live preview and re-exported (the
+// ADD COLUMN skip above now correctly recognizes the existing physical
+// column instead of crashing), a plain row[field.name] here would
+// silently return undefined for a field whose data is still sitting
+// right there on disk, under the stored row's own original key.
+function getRowValue(row, fieldName) {
+  if (Object.prototype.hasOwnProperty.call(row, fieldName)) return row[fieldName];
+  const lowerFieldName = fieldName.toLowerCase();
+  const matchingKey = Object.keys(row).find((key) => key.toLowerCase() === lowerFieldName);
+  return matchingKey === undefined ? undefined : row[matchingKey];
+}
+
 function rowToRecord(entity, row) {
   const record = { id: row.id, createdAt: row.createdAt };
   for (const field of entity.fields) {
-    record[field.name] = field.type === "boolean" ? Boolean(row[field.name]) : row[field.name];
+    const value = getRowValue(row, field.name);
+    record[field.name] = field.type === "boolean" ? Boolean(value) : value;
   }
   return record;
 }
@@ -536,7 +568,7 @@ for (const entity of ENTITIES) {
       // an untouched field keeps its already-stored raw value as-is, the
       // same fix as the live Forge AI backend's own repository.ts.
       const values = entity.fields.map((f) => {
-        if (!req.body || !Object.prototype.hasOwnProperty.call(req.body, f.name)) return existing[f.name];
+        if (!req.body || !Object.prototype.hasOwnProperty.call(req.body, f.name)) return getRowValue(existing, f.name);
         const coerced = coerce(f, req.body[f.name]);
         // Round 1091: mirrors repository.ts's own round-1037 guard, which
         // this generated server's PATCH route never got. The exported

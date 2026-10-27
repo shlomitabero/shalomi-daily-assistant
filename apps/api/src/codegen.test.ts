@@ -654,6 +654,109 @@ test("generated server.js migrates a field added to ENTITIES after the first run
   }
 });
 
+/**
+ * Round 1092: the ADD COLUMN migration loop round 802 just confirmed above
+ * uses existingColumns.has(field.name) -- an exact, case-sensitive Set
+ * lookup. PRAGMA table_info reports a column under whatever casing it was
+ * ORIGINALLY created with, and a field renamed only by letter case in the
+ * live preview (e.g. "email" -> "Email", a legitimate no-op everywhere
+ * else in this codebase -- see migrate.ts's own round-617/618 fix for the
+ * identical scenario in the live backend) still resolves to that same
+ * physical column once re-exported. Without a case-insensitive fallback,
+ * this fell through to ALTER TABLE ADD COLUMN "Email" -- and SQLite's own
+ * duplicate-column check IS case-insensitive, so it threw an uncaught
+ * "duplicate column name" exception that crashed the WHOLE exported
+ * server process on startup (not just one failed request), reproduced
+ * here against two real spawned server.js processes sharing the same
+ * on-disk data.sqlite across a restart, the same standard as the test
+ * immediately above.
+ */
+test("generated server.js survives a restart after a field is renamed only by letter case, instead of crashing on startup with SQLite's own duplicate-column error", async () => {
+  const customerV1: Entity = {
+    name: "Customer",
+    label: "Customers",
+    fields: [{ name: "email", label: "Email", type: "text", required: false }],
+  };
+  const customerV2: Entity = {
+    name: "Customer",
+    label: "Customers",
+    fields: [{ name: "Email", label: "Email", type: "text", required: false }],
+  };
+  const projectV1: Project = { ...project, spec: { ...project.spec, entities: [customerV1] } };
+  const projectV2: Project = { ...project, spec: { ...project.spec, entities: [customerV2] } };
+
+  const dir = mkdtempSync(path.join(tmpdir(), "codegen-caserename-test-"));
+  const repoRoot = path.resolve(import.meta.dirname, "../../..");
+  symlinkSync(path.join(repoRoot, "node_modules"), path.join(dir, "node_modules"));
+
+  const port = 34000 + Math.floor(Math.random() * 5000);
+
+  async function runServer(project: Project, fn: (port: number) => Promise<void>): Promise<void> {
+    const serverJs = generateExportFiles(project).find((f) => f.path === "server.js")!.content;
+    writeFileSync(path.join(dir, "server.js"), serverJs);
+    const child = spawn(process.execPath, ["--experimental-sqlite", "server.js"], {
+      cwd: dir,
+      env: { ...process.env, PORT: String(port) },
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+    let stderr = "";
+    child.stderr.on("data", (chunk) => {
+      stderr += chunk.toString();
+    });
+    try {
+      const deadline = Date.now() + 5000;
+      let lastErr: unknown;
+      while (Date.now() < deadline) {
+        if (child.exitCode !== null) {
+          throw new Error(`server.js exited early (code ${child.exitCode}):\n${stderr}`);
+        }
+        try {
+          const res = await fetch(`http://localhost:${port}/api/Customer`);
+          assert.equal(res.status, 200);
+          await fn(port);
+          return;
+        } catch (err) {
+          lastErr = err;
+          await new Promise((r) => setTimeout(r, 100));
+        }
+      }
+      throw lastErr instanceof Error ? lastErr : new Error(String(lastErr));
+    } finally {
+      await new Promise<void>((resolve) => {
+        child.once("exit", () => resolve());
+        child.kill();
+      });
+    }
+  }
+
+  try {
+    await runServer(projectV1, async (port) => {
+      const createRes = await fetch(`http://localhost:${port}/api/Customer`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ email: "dana@example.com" }),
+      });
+      assert.equal(createRes.status, 201, "the first run's own write must succeed before the rename");
+    });
+
+    await runServer(projectV2, async (port) => {
+      const listRes = await fetch(`http://localhost:${port}/api/Customer`);
+      const { records } = (await listRes.json()) as { records: { Email: string }[] };
+      assert.equal(records.length, 1, "the pre-existing row must have survived the restart after a case-only rename");
+      assert.equal(records[0]!.Email, "dana@example.com", "the renamed field must resolve to the same physical column, not a fresh null one");
+
+      const createRes = await fetch(`http://localhost:${port}/api/Customer`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ Email: "yossi@example.com" }),
+      });
+      assert.equal(createRes.status, 201, "writing via the renamed field's new casing must succeed after the restart");
+    });
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
 // Regression test: the exported standalone app's own coerce() function
 // (a separate copy of packages/db/src/repository.ts's coerceValue, since
 // this app has no dependency on Forge AI at runtime) validated every
