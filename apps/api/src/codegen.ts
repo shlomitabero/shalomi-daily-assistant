@@ -3750,7 +3750,7 @@ function buildCalendarIcs(entity, dateField, labelField, records, relatedRecords
 // shape every entity gets. Each day cell shows a chip per record landing on
 // that date (click to edit), with a "+N more" overflow instead of an
 // ever-growing cell.
-function CalendarView({ entity, dateField, endDateField, records, month, onPrevMonth, onNextMonth, onToday, onJumpToMonth, onEdit, onDayClick, onReschedule, moveErrorId }) {
+function CalendarView({ entity, dateField, endDateField, records, month, onPrevMonth, onNextMonth, onToday, onJumpToMonth, onEdit, onDayClick, onReschedule, moveErrorId, bulkActionBusy }) {
   const year = month.getFullYear();
   const monthIndex = month.getMonth();
   const days = useMemo(() => buildCalendarMonth(records, dateField, year, monthIndex, endDateField), [records, dateField, endDateField, year, monthIndex]);
@@ -3870,8 +3870,9 @@ function CalendarView({ entity, dateField, endDateField, records, month, onPrevM
                   type="button"
                   key={record.id}
                   className={record.id === moveErrorId ? "calendar-record-chip calendar-record-chip-move-error" : "calendar-record-chip"}
-                  draggable
+                  draggable={!bulkActionBusy}
                   onDragStart={(e) => {
+                    if (bulkActionBusy) return;
                     e.stopPropagation();
                     e.dataTransfer.setData("text/plain", \`\${record.id}|\${dayKey}\`);
                     e.dataTransfer.effectAllowed = "move";
@@ -4027,7 +4028,7 @@ function RecordListPrintSheet({ entity, fields, records, groups, relatedRecords,
 // field itself, since that's implied by which column the card is in), a
 // select to move it directly to another column, and the same Edit/Delete
 // actions the table row has.
-function BoardCard({ orderedFields, boardField, record, relatedRecords, highlightQuery, hasMoveError, onMove, onEdit, onDuplicate, onDelete, onPrint, onJumpToRecord }) {
+function BoardCard({ orderedFields, boardField, record, relatedRecords, highlightQuery, hasMoveError, onMove, onEdit, onDuplicate, onDelete, onPrint, onJumpToRecord, bulkActionBusy }) {
   // orderedFields (not the entity's raw declared order) -- mirrors round
   // 615's fix for Export CSV/Copy/per-record Print/Print list, so a board
   // card's field order follows the user's drag-reordered columns the same
@@ -4055,7 +4056,14 @@ function BoardCard({ orderedFields, boardField, record, relatedRecords, highligh
   const hasEmptyBoardOption = currentBoardValue === "";
   const labelOccurrences = fieldLabelOccurrences(otherFields);
   return (
-    <div className={hasMoveError ? "board-card board-card-move-error" : "board-card"} draggable onDragStart={(e) => e.dataTransfer.setData("text/plain", String(record.id))}>
+    <div
+      className={hasMoveError ? "board-card board-card-move-error" : "board-card"}
+      draggable={!bulkActionBusy}
+      onDragStart={(e) => {
+        if (bulkActionBusy) return;
+        e.dataTransfer.setData("text/plain", String(record.id));
+      }}
+    >
       {otherFields.map((f) => (
         <div key={f.name} className="board-card-field">
           <span className="muted small">{fieldDisplayLabel(f, labelOccurrences)}</span>
@@ -4068,7 +4076,7 @@ function BoardCard({ orderedFields, boardField, record, relatedRecords, highligh
           />
         </div>
       ))}
-      <select className="board-card-move" value={currentBoardValue} onChange={(e) => onMove(e.target.value)}>
+      <select className="board-card-move" value={currentBoardValue} onChange={(e) => onMove(e.target.value)} disabled={bulkActionBusy}>
         {hasEmptyBoardOption && (
           <option value="" disabled>
             …
@@ -4082,9 +4090,9 @@ function BoardCard({ orderedFields, boardField, record, relatedRecords, highligh
       </select>
       <div className="row-actions">
         <button onClick={onEdit}>Edit</button>
-        <button onClick={onDuplicate}>Duplicate</button>
+        <button disabled={bulkActionBusy} onClick={onDuplicate}>Duplicate</button>
         <button onClick={onPrint}>Print</button>
-        <button onClick={onDelete}>Delete</button>
+        <button disabled={bulkActionBusy} onClick={onDelete}>Delete</button>
       </div>
     </div>
   );
@@ -5570,6 +5578,11 @@ export function EntityView({ entity, highlightRecordId, onHighlightHandled, onJu
   // itself -- a caller that just fires-and-forgets (the table row/board
   // card's own Delete button) can ignore the return value entirely.
   function handleDelete(id) {
+    // Round 1118: see handleBulkDelete's own identical guard -- a single-
+    // record delete can race a bulk update/duplicate/delete batch still
+    // in flight on the same record just as easily as the bulk-action
+    // bar's own buttons could race each other.
+    if (bulkActionBusy) return false;
     const index = records.findIndex((r) => r.id === id);
     if (index === -1) return false;
     const record = records[index];
@@ -5631,6 +5644,8 @@ export function EntityView({ entity, highlightRecordId, onHighlightHandled, onJu
   // confirmation, unlike delete, since duplicating creates rather than
   // destroys data.
   async function handleDuplicate(id) {
+    // Round 1118: see handleDelete's own identical guard just above.
+    if (bulkActionBusy) return;
     const record = records.find((r) => r.id === id);
     if (!record) return;
     setError(null);
@@ -5866,6 +5881,10 @@ export function EntityView({ entity, highlightRecordId, onHighlightHandled, onJu
   }
 
   async function handleMoveFields(id, fields) {
+    // Round 1118: covers handleMove (board dropdown) and both board/
+    // calendar drag-and-drop handlers, which all funnel through here --
+    // see handleDelete's own identical guard above.
+    if (bulkActionBusy) return;
     setError(null);
     try {
       await updateRecord(entity.name, id, fields);
@@ -6241,9 +6260,9 @@ export function EntityView({ entity, highlightRecordId, onHighlightHandled, onJu
       <td className="muted small created-at-cell">{formatRecordCreatedAt(r.createdAt)}</td>
       <td className="row-actions">
         <button onClick={() => startEdit(r)}>Edit</button>
-        <button onClick={() => handleDuplicate(r.id)}>Duplicate</button>
+        <button disabled={bulkActionBusy} onClick={() => handleDuplicate(r.id)}>Duplicate</button>
         <button onClick={() => setRecordToPrint(r)}>Print</button>
-        <button onClick={() => handleDelete(r.id)}>Delete</button>
+        <button disabled={bulkActionBusy} onClick={() => handleDelete(r.id)}>Delete</button>
       </td>
     </tr>
   );
@@ -6324,13 +6343,14 @@ export function EntityView({ entity, highlightRecordId, onHighlightHandled, onJu
             </button>
           )}
           {editingId != null && (
-            <button type="button" onClick={() => handleDuplicate(editingId)}>
+            <button type="button" disabled={bulkActionBusy} onClick={() => handleDuplicate(editingId)}>
               Duplicate
             </button>
           )}
           {editingId != null && (
             <button
               type="button"
+              disabled={bulkActionBusy}
               onClick={() => {
                 const id = editingId;
                 const deleted = handleDelete(id);
@@ -6706,6 +6726,7 @@ export function EntityView({ entity, highlightRecordId, onHighlightHandled, onJu
                       onDelete={() => handleDelete(r.id)}
                       onPrint={() => setRecordToPrint(r)}
                       onJumpToRecord={onJumpToRecord}
+                      bulkActionBusy={bulkActionBusy}
                     />
                   ))}
                 </div>
@@ -6727,6 +6748,7 @@ export function EntityView({ entity, highlightRecordId, onHighlightHandled, onJu
               onDayClick={(date) => startCreateForDate(date, dateField)}
               onReschedule={(record, date, originDay) => handleCalendarDrop(record, dateField.name, date, originDay)}
               moveErrorId={moveErrorId}
+              bulkActionBusy={bulkActionBusy}
             />
           ) : (
             <div className="table-scroll">

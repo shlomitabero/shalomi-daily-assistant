@@ -67,6 +67,7 @@ test("EntityPanel's handleDuplicate never copies a 'file' field's value -- dupli
   let refreshCalled = 0;
 
   const fn = new Function(
+    "bulkActionBusy",
     "records",
     "setError",
     "entity",
@@ -75,6 +76,7 @@ test("EntityPanel's handleDuplicate never copies a 'file' field's value -- dupli
     "refresh",
     `${code}\nreturn handleDuplicate;`,
   )(
+    false,
     records,
     () => {},
     entity,
@@ -268,6 +270,7 @@ test("EntityPanel's handleDuplicate refuses upfront for an entity with a require
   let createRecordCalled = 0;
 
   const fn = new Function(
+    "bulkActionBusy",
     "records",
     "setError",
     "entity",
@@ -277,6 +280,7 @@ test("EntityPanel's handleDuplicate refuses upfront for an entity with a require
     "t",
     `${code}\nreturn handleDuplicate;`,
   )(
+    false,
     records,
     (msg: string | null) => {
       capturedError = msg ?? undefined;
@@ -734,6 +738,107 @@ test("EntityPanel's handleBulkDelete is a no-op while bulkActionBusy is true, an
     assert.equal(selectedIdsTouched, 0, "must never clear the selection");
     assert.equal(pendingDeleteSet, 0, "must never schedule a real delete for later");
   });
+});
+
+/**
+ * Round 1118: round 1117 only cross-gated the bulk-action bar's own three
+ * buttons against each other -- every OTHER way to mutate a single record
+ * (the table row's own Duplicate/Delete, the in-form Duplicate/Delete, a
+ * board-card drag/Duplicate/Delete, a calendar-chip drag, the board's move
+ * dropdown) could still race a bulk update/duplicate/delete batch still in
+ * flight on that exact record. handleDelete/handleDuplicate/handleMoveFields
+ * (the last of which handleMove, handleCardDrop, and handleCalendarDrop all
+ * funnel through) now each refuse to even start while bulkActionBusy is
+ * true -- extracted and called with ONLY bulkActionBusy declared, so if the
+ * guard were ever removed, the very next line each function would reach
+ * (records.findIndex / records.find / setError) throws a ReferenceError
+ * instead of silently doing nothing, proving the guard is what's actually
+ * stopping execution, not an accidental early return elsewhere.
+ */
+test("EntityPanel's handleDelete, handleDuplicate, and handleMoveFields are each a no-op while bulkActionBusy is true", async () => {
+  for (const [name, signature] of [
+    ["handleDelete", /function handleDelete\(id: number\): boolean \{[\s\S]*?\n {2}\}\n/],
+    ["handleDuplicate", /async function handleDuplicate\(id: number\) \{[\s\S]*?\n {2}\}\n/],
+    ["handleMoveFields", /async function handleMoveFields\(id: number, fields: Record<string, string>\) \{[\s\S]*?\n {2}\}\n/],
+  ] as const) {
+    const handlerMatch = entityPanelSrc.match(signature);
+    assert.ok(handlerMatch, `expected to find ${name} in EntityPanel.tsx`);
+    const { code } = transformSync(handlerMatch![0], { loader: "ts" });
+    const fn = new Function("bulkActionBusy", `${code}\nreturn ${name};`)(true) as (...args: unknown[]) => unknown;
+    const result = await fn(1, {});
+    if (name === "handleDelete") assert.equal(result, false, "handleDelete must return false (nothing deleted) while bulkActionBusy is true");
+  }
+});
+
+/**
+ * Round 1118: the JSX side of the same fix -- every per-record affordance
+ * that writes to a record (not just the bulk-action bar's own three
+ * buttons) must visually disable itself while bulkActionBusy is true, the
+ * same way the live preview already disables the bulk bar's own buttons.
+ * BoardCard/CalendarView's drag-to-move affordances have no `disabled`
+ * attribute to check (native HTML5 drag has none), so these assert
+ * `draggable={!readOnly && !bulkActionBusy}` instead -- the same way their
+ * own readOnly gating is already asserted via draggable, not disabled.
+ */
+test("EntityPanel disables every single-record write affordance (table row, in-form, BoardCard, CalendarView) while bulkActionBusy is true", () => {
+  assert.match(
+    entityPanelSrc,
+    /<button type="button" disabled=\{bulkActionBusy\} onClick=\{\(\) => handleDuplicate\(record\.id as number\)\}>/,
+    "the table row's own Duplicate button must be disabled while bulkActionBusy is true",
+  );
+  assert.match(
+    entityPanelSrc,
+    /<button type="button" className="danger" disabled=\{bulkActionBusy\} onClick=\{\(\) => handleDelete\(record\.id as number\)\}>/,
+    "the table row's own Delete button must be disabled while bulkActionBusy is true",
+  );
+  assert.match(
+    entityPanelSrc,
+    /<button type="button" disabled=\{bulkActionBusy\} onClick=\{\(\) => handleDuplicate\(editingId\)\}>/,
+    "the in-form Duplicate button must be disabled while bulkActionBusy is true",
+  );
+  assert.match(
+    entityPanelSrc,
+    /className="danger"\s*\n\s*disabled=\{bulkActionBusy\}\s*\n\s*onClick=\{\(\) => \{\s*\n\s*const id = editingId;\s*\n\s*const deleted = handleDelete\(id\);/,
+    "the in-form Delete button must be disabled while bulkActionBusy is true",
+  );
+  assert.match(
+    entityPanelSrc,
+    /draggable=\{!readOnly && !bulkActionBusy\}\s*\n\s*onDragStart=\{\(e\) => \{\s*\n\s*if \(readOnly \|\| bulkActionBusy\) return;/,
+    "BoardCard's own draggable attribute and onDragStart guard must both check bulkActionBusy, matching readOnly's own convention",
+  );
+  assert.match(
+    entityPanelSrc,
+    /disabled=\{bulkActionBusy\} onClick=\{onDuplicate\}>/,
+    "BoardCard's own Duplicate button must be disabled while bulkActionBusy is true",
+  );
+  assert.match(
+    entityPanelSrc,
+    /className="danger" disabled=\{bulkActionBusy\} onClick=\{onDelete\}>/,
+    "BoardCard's own Delete button must be disabled while bulkActionBusy is true",
+  );
+  assert.match(
+    entityPanelSrc,
+    /onChange=\{\(e\) => onMove\(e\.target\.value\)\}\s*\n\s*disabled=\{readOnly \|\| bulkActionBusy\}/,
+    "BoardCard's own move <select> must be disabled while bulkActionBusy is true",
+  );
+  assert.match(
+    entityPanelSrc,
+    /draggable=\{!readOnly && !bulkActionBusy\}\s*\n\s*disabled=\{readOnly\}\s*\n\s*onDragStart=\{\(e\) => \{\s*\n\s*if \(readOnly \|\| bulkActionBusy\) return;/,
+    "the calendar chip's own draggable attribute and onDragStart guard must both check bulkActionBusy, matching readOnly's own convention",
+  );
+  // The call sites: confirms EntityPanel actually threads its own
+  // bulkActionBusy state through to both child components, not just
+  // declaring the prop on them.
+  assert.match(
+    entityPanelSrc,
+    /onJumpToRecord=\{onJumpToRecord\}\s*\n\s*readOnly=\{readOnly\}\s*\n\s*bulkActionBusy=\{bulkActionBusy\}\s*\n\s*\/>\s*\n\s*\)\)\}/,
+    "the <BoardCard> call site must pass its own bulkActionBusy state through",
+  );
+  assert.match(
+    entityPanelSrc,
+    /moveErrorId=\{moveErrorId\}\s*\n\s*readOnly=\{readOnly\}\s*\n\s*bulkActionBusy=\{bulkActionBusy\}\s*\n\s*\/>/,
+    "the <CalendarView> call site must pass its own bulkActionBusy state through",
+  );
 });
 
 /**

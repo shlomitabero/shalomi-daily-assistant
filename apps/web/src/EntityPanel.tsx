@@ -529,6 +529,7 @@ function BoardCard({
   onSendWhatsApp,
   onJumpToRecord,
   readOnly = false,
+  bulkActionBusy = false,
 }: {
   orderedFields: Field[];
   boardField: Field;
@@ -548,6 +549,13 @@ function BoardCard({
   onSendWhatsApp?: (phoneNumber: string) => void;
   onJumpToRecord?: (targetEntity: string, recordId: number) => void;
   readOnly?: boolean;
+  /** Round 1118: mirrors readOnly's own gating, but only for the affordances
+   * that actually write to this record (drag-to-move, Duplicate, Delete) --
+   * a bulk update/duplicate/delete batch still in flight must block each of
+   * those, since any would otherwise race a real write against the same
+   * record. Edit/Print are untouched: opening the form or printing doesn't
+   * itself write anything. */
+  bulkActionBusy?: boolean;
 }) {
   // orderedFields (not the entity's raw declared order) -- mirrors round
   // 615's fix for Export CSV/Copy/per-record Print/Print list, so a board
@@ -581,9 +589,9 @@ function BoardCard({
     <div
       className={hasMoveError ? "board-card board-card-move-error" : "board-card"}
       data-record-id={record.id as number}
-      draggable={!readOnly}
+      draggable={!readOnly && !bulkActionBusy}
       onDragStart={(e) => {
-        if (readOnly) return;
+        if (readOnly || bulkActionBusy) return;
         e.dataTransfer.setData("text/plain", String(record.id));
       }}
     >
@@ -607,7 +615,7 @@ function BoardCard({
         className="board-card-move"
         value={currentBoardValue}
         onChange={(e) => onMove(e.target.value)}
-        disabled={readOnly}
+        disabled={readOnly || bulkActionBusy}
       >
         {hasEmptyBoardOption && (
           <option value="" disabled>
@@ -627,7 +635,7 @@ function BoardCard({
           </button>
         )}
         {!readOnly && (
-          <button type="button" onClick={onDuplicate}>
+          <button type="button" disabled={bulkActionBusy} onClick={onDuplicate}>
             {t("entity.duplicate")}
           </button>
         )}
@@ -640,7 +648,7 @@ function BoardCard({
           {t("entity.print")}
         </button>
         {!readOnly && (
-          <button type="button" className="danger" onClick={onDelete}>
+          <button type="button" className="danger" disabled={bulkActionBusy} onClick={onDelete}>
             {t("entity.delete")}
           </button>
         )}
@@ -673,6 +681,7 @@ function CalendarView({
   onReschedule,
   moveErrorId,
   readOnly = false,
+  bulkActionBusy = false,
 }: {
   entity: Entity;
   dateField: Field;
@@ -691,6 +700,11 @@ function CalendarView({
   moveErrorId?: number | null;
   /** Mirrors BoardCard's own readOnly convention for the identical hazard: the caller already no-ops onEdit/onDayClick/onReschedule for a read-only viewer, but every affordance in here (day-cell click/keyboard/drag-drop, chip drag/click) stayed fully "live" regardless -- a viewer saw a clickable/draggable calendar that silently did nothing. */
   readOnly?: boolean;
+  /** Round 1118: mirrors BoardCard's own identical addition -- a bulk batch
+   * still in flight must block the chip's own drag-to-reschedule, since
+   * dropping it fires the exact same real write a bulk batch's own PATCHes
+   * could still be racing. */
+  bulkActionBusy?: boolean;
 }) {
   const year = month.getFullYear();
   const monthIndex = month.getMonth();
@@ -835,10 +849,10 @@ function CalendarView({
                       ? "calendar-record-chip calendar-record-chip-move-error"
                       : "calendar-record-chip"
                   }
-                  draggable={!readOnly}
+                  draggable={!readOnly && !bulkActionBusy}
                   disabled={readOnly}
                   onDragStart={(e) => {
-                    if (readOnly) return;
+                    if (readOnly || bulkActionBusy) return;
                     // A drag that starts on the record chip must never also
                     // bubble into the day cell's own onClick (Escape/no-drop
                     // still fires a click on release in some browsers) --
@@ -3084,6 +3098,13 @@ export function EntityPanel({
    * continuation outside any act() scope.
    */
   function handleDelete(id: number): boolean {
+    // Round 1118: a single-record delete (table row, board card, calendar
+    // chip, keyboard shortcut, or the in-form Delete button) raced a bulk
+    // update/duplicate/delete batch still in flight on the exact same
+    // record -- round 1117 only cross-gated the bulk-action bar's own
+    // three buttons against each other, never against every OTHER way to
+    // mutate a record. See handleBulkDelete's own identical guard.
+    if (bulkActionBusy) return false;
     const index = records.findIndex((r) => (r.id as number) === id);
     if (index === -1) return false;
     const record = records[index];
@@ -3153,6 +3174,11 @@ export function EntityPanel({
   // nothing is asked for confirmation since duplicating, unlike deleting,
   // creates rather than destroys data.
   async function handleDuplicate(id: number) {
+    // Round 1118: see handleDelete's own identical guard just above -- a
+    // single-record duplicate (table row, board card, in-form button, or
+    // keyboard shortcut) can race a bulk batch on the same record just as
+    // easily as the bulk-action bar's own buttons could race each other.
+    if (bulkActionBusy) return;
     const record = records.find((r) => (r.id as number) === id);
     if (!record) return;
     setError(null);
@@ -3608,6 +3634,12 @@ export function EntityPanel({
   }
 
   async function handleMoveFields(id: number, fields: Record<string, string>) {
+    // Round 1118: covers handleMove (the board dropdown) and both
+    // handleCardDrop/handleCalendarDrop (board + calendar drag-and-drop),
+    // all of which funnel through here -- see handleDelete's own identical
+    // guard above for why a single-record write must never race a bulk
+    // batch still in flight on the same record.
+    if (bulkActionBusy) return;
     setError(null);
     try {
       await updateRecord(projectId, entity.name, id, fields);
@@ -3889,7 +3921,7 @@ export function EntityPanel({
             </button>
           )}
           {!readOnly && (
-            <button type="button" onClick={() => handleDuplicate(record.id as number)}>
+            <button type="button" disabled={bulkActionBusy} onClick={() => handleDuplicate(record.id as number)}>
               {t("entity.duplicate")}
             </button>
           )}
@@ -3902,7 +3934,7 @@ export function EntityPanel({
             {t("entity.print")}
           </button>
           {!readOnly && (
-            <button type="button" className="danger" onClick={() => handleDelete(record.id as number)}>
+            <button type="button" className="danger" disabled={bulkActionBusy} onClick={() => handleDelete(record.id as number)}>
               {t("entity.delete")}
             </button>
           )}
@@ -4005,7 +4037,7 @@ export function EntityPanel({
             </button>
           )}
           {editingId != null && (
-            <button type="button" onClick={() => handleDuplicate(editingId)}>
+            <button type="button" disabled={bulkActionBusy} onClick={() => handleDuplicate(editingId)}>
               {t("entity.duplicate")}
             </button>
           )}
@@ -4013,6 +4045,7 @@ export function EntityPanel({
             <button
               type="button"
               className="danger"
+              disabled={bulkActionBusy}
               onClick={() => {
                 const id = editingId;
                 const deleted = handleDelete(id);
@@ -4467,6 +4500,7 @@ export function EntityPanel({
                       onSendWhatsApp={onSendWhatsApp}
                       onJumpToRecord={onJumpToRecord}
                       readOnly={readOnly}
+                      bulkActionBusy={bulkActionBusy}
                     />
                   ))}
                 </div>
@@ -4491,6 +4525,7 @@ export function EntityPanel({
               onReschedule={readOnly ? () => {} : (record, date, originDay) => handleCalendarDrop(record, dateField.name, date, originDay)}
               moveErrorId={moveErrorId}
               readOnly={readOnly}
+              bulkActionBusy={bulkActionBusy}
             />
           ) : (
             <div className="table-scroll" ref={tableScrollRef}>

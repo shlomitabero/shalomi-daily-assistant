@@ -3487,7 +3487,7 @@ test("the exported EntityView's calendar record chips are drag-and-drop-able ont
   // The record chip itself must be a real drag source, not just visually styled.
   assert.match(
     entityViewJsx,
-    /className=\{record\.id === moveErrorId \? "calendar-record-chip calendar-record-chip-move-error" : "calendar-record-chip"\}\s*draggable\s*onDragStart=\{\(e\) => \{/,
+    /className=\{record\.id === moveErrorId \? "calendar-record-chip calendar-record-chip-move-error" : "calendar-record-chip"\}\s*draggable=\{!bulkActionBusy\}\s*onDragStart=\{\(e\) => \{/,
   );
   assert.match(entityViewJsx, /e\.dataTransfer\.setData\("text\/plain", `\$\{record\.id\}\|\$\{dayKey\}`\);\s*e\.dataTransfer\.effectAllowed = "move";/);
   // The day cell itself must be a real drop target, highlighted only while actually dragged over.
@@ -6210,13 +6210,14 @@ test("the exported EntityView's handleDuplicate/handleBulkDuplicate null out a '
   {
     let capturedCopy: Record<string, unknown> | undefined;
     const fn = new Function(
+      "bulkActionBusy",
       "entity",
       "records",
       "setError",
       "createRecord",
       "refresh",
       `const requiredFileField = undefined;\n${handleDuplicateSrc}\nreturn handleDuplicate;`,
-    )(entityWithFile, [record], () => {}, async (_entityName: string, copy: Record<string, unknown>) => {
+    )(false, entityWithFile, [record], () => {}, async (_entityName: string, copy: Record<string, unknown>) => {
       capturedCopy = copy;
     }, async () => {});
     await fn(1);
@@ -6269,6 +6270,7 @@ test("the exported EntityView's handleDuplicate/handleBulkDuplicate refuse outri
     let createCalled = false;
     let capturedError: string | undefined;
     const fn = new Function(
+      "bulkActionBusy",
       "requiredFileField",
       "entity",
       "records",
@@ -6276,7 +6278,7 @@ test("the exported EntityView's handleDuplicate/handleBulkDuplicate refuse outri
       "createRecord",
       "refresh",
       `${handleDuplicateSrc}\nreturn handleDuplicate;`,
-    )(requiredFileField, entityWithRequiredFile, [record], (msg: string) => (capturedError = msg), async () => {
+    )(false, requiredFileField, entityWithRequiredFile, [record], (msg: string) => (capturedError = msg), async () => {
       createCalled = true;
     }, async () => {});
     await fn(1);
@@ -6332,7 +6334,7 @@ test("the exported EntityView renders a real Duplicate action (table and board v
   // Wired into both the table row actions and the Kanban board card.
   assert.match(entityViewJsx, /onClick=\{\(\) => handleDuplicate\(r\.id\)\}>Duplicate<\/button>/);
   assert.match(entityViewJsx, /onDuplicate=\{\(\) => handleDuplicate\(r\.id\)\}/);
-  assert.match(entityViewJsx, /<button onClick=\{onDuplicate\}>Duplicate<\/button>/);
+  assert.match(entityViewJsx, /<button disabled=\{bulkActionBusy\} onClick=\{onDuplicate\}>Duplicate<\/button>/);
 });
 
 // Regression test: handleDuplicate/handleMove each awaited a real network
@@ -6374,6 +6376,7 @@ test("the exported EntityView's handleDuplicate/handleMove surface a failed requ
   async function runHandler(handlerSrc: string, invoke: (fn: (...args: unknown[]) => Promise<void>) => Promise<void>) {
     let capturedError: string | undefined;
     const fn = new Function(
+      "bulkActionBusy",
       "window",
       "requiredFileField",
       "entity",
@@ -6388,6 +6391,7 @@ test("the exported EntityView's handleDuplicate/handleMove surface a failed requ
       "refresh",
       `${displayFieldHintsSrc}\n${pickDisplayFieldSrc}\n${recordDisplayLabelSrc}\n${handleMoveFieldsSrc}\n${handlerSrc}\nreturn ${handlerSrc.match(/^async function (\w+)/)![1]};`,
     )(
+      false,
       { confirm: () => true },
       undefined,
       entity,
@@ -9790,7 +9794,10 @@ test("the exported EntityView's relation cells jump to the related record via th
   // Threaded through every layer that can render a relation cell: the
   // table, the Kanban board (via BoardCard), the per-entity View wrapper,
   // and App's own activeEntity.View call -- not just the leaf component.
-  assert.match(entityViewJsx, /function BoardCard\(\{ orderedFields, boardField, record, relatedRecords, highlightQuery, hasMoveError, onMove, onEdit, onDuplicate, onDelete, onPrint, onJumpToRecord \}\)/);
+  assert.match(
+    entityViewJsx,
+    /function BoardCard\(\{ orderedFields, boardField, record, relatedRecords, highlightQuery, hasMoveError, onMove, onEdit, onDuplicate, onDelete, onPrint, onJumpToRecord, bulkActionBusy \}\)/,
+  );
   assert.match(entityViewJsx, /<Cell\s+field=\{f\}\s+value=\{record\[f\.name\]\}\s+relationLabel=\{[^}]+\}\s+highlightQuery=\{highlightQuery\}\s+onJumpToRecord=\{onJumpToRecord\}/);
   assert.match(entityViewJsx, /export function EntityView\(\{ entity, highlightRecordId, onHighlightHandled, onJumpToRecord, onRecordCountChange \}\)/);
 
@@ -10482,7 +10489,7 @@ test("the exported EntityView's Print list sheet mirrors the on-screen table's o
 test("the exported EntityView asks for confirmation before deleting a single record, naming it by its own display label, not just count", () => {
   const files = generateExportFiles(project);
   const entityViewJsx = files.find((f) => f.path === "web/src/components/EntityView.jsx")!.content;
-  assert.match(entityViewJsx, /function handleDelete\(id\) \{\s*const index = records\.findIndex/);
+  assert.match(entityViewJsx, /function handleDelete\(id\) \{[\s\S]*?const index = records\.findIndex/);
   assert.match(entityViewJsx, /window\.confirm\(`Delete "\$\{label\}"\? You can undo this for a few seconds after deleting\.`\)/);
 });
 
