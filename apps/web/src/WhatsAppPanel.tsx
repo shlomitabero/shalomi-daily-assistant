@@ -757,6 +757,13 @@ export function WhatsAppPanel({
    * real upload on disk forever.
    */
   function handleRemoveAttachment() {
+    // Round 1119: handleSendTest reads testAttachment synchronously the
+    // moment Send is clicked and sends that exact file's url to the
+    // server; deleting the file here while that request is still in
+    // flight raced the server's own existsSync check (routes/projects.ts),
+    // turning what looked like a normal in-progress send into a real,
+    // user-visible ATTACHMENT_FILE_GONE failure.
+    if (sending) return;
     if (testAttachment) {
       void deleteWhatsAppAttachment(projectId, testAttachment.url).catch(() => {});
     }
@@ -788,6 +795,10 @@ export function WhatsAppPanel({
   const hasUnsavedTestDraft = testTo.trim() !== "" || testMessage.trim() !== "" || testAttachment !== null;
 
   function handleResetTestForm() {
+    // Round 1119: see handleRemoveAttachment's own identical guard just
+    // above -- Escape-to-clear deletes the attachment the same way, and
+    // must not race an in-flight send either.
+    if (sending) return;
     if (testAttachment) {
       void deleteWhatsAppAttachment(projectId, testAttachment.url).catch(() => {});
     }
@@ -830,6 +841,10 @@ export function WhatsAppPanel({
    * explicit "Remove" button and Escape-to-clear.
    */
   function handleReplyToMessage(m: WhatsAppMessageLogEntry) {
+    // Round 1119: see handleRemoveAttachment's own identical guard above --
+    // switching recipients mid-send deletes the attachment the in-flight
+    // send is still using, for the same reason.
+    if (sending) return;
     setTestTo(m.fromNumber);
     setTestMessage("");
     if (testAttachment) {
@@ -1205,12 +1220,17 @@ export function WhatsAppPanel({
               {testAttachment ? (
                 <span className="file-field-current">
                   {testAttachment.name}
-                  <button type="button" className="link-button" onClick={handleRemoveAttachment}>
+                  <button type="button" className="link-button" disabled={sending} onClick={handleRemoveAttachment}>
                     {t("whatsapp.test.attachment.remove")}
                   </button>
                 </span>
               ) : (
-                <input type="file" aria-label={t("whatsapp.test.attachment.choose")} disabled={uploadingAttachment} onChange={handleAttachmentChange} />
+                <input
+                  type="file"
+                  aria-label={t("whatsapp.test.attachment.choose")}
+                  disabled={uploadingAttachment || sending}
+                  onChange={handleAttachmentChange}
+                />
               )}
               {uploadingAttachment && <p className="muted small">{t("whatsapp.test.attachment.uploading")}</p>}
               {attachmentError ? <p role="alert">{attachmentError}</p> : !testAttachment && <p className="muted small">{t("entity.file.maxSize")}</p>}
@@ -1434,7 +1454,7 @@ export function WhatsAppPanel({
                     </>
                   )}
                   {m.direction === "in" && s === "connected" && !readOnly && (
-                    <button type="button" className="secondary small" onClick={() => handleReplyToMessage(m)}>
+                    <button type="button" className="secondary small" disabled={sending} onClick={() => handleReplyToMessage(m)}>
                       {t("whatsapp.log.reply")}
                     </button>
                   )}

@@ -1751,6 +1751,61 @@ test("WhatsAppPanel's Reply button also clears and deletes any already-chosen at
 });
 
 /**
+ * Round 1119: handleSendTest reads testTo/testMessage/testAttachment
+ * synchronously the moment Send is clicked and sends that exact
+ * attachment's url to the server (routes/projects.ts's send route then
+ * re-resolves the file and throws ATTACHMENT_FILE_GONE if it's missing).
+ * handleRemoveAttachment, handleResetTestForm (Escape), and
+ * handleReplyToMessage each delete the real uploaded file from disk --
+ * none of them checked `sending` first, so clicking any of them while a
+ * send was still in flight raced a real in-progress request's own file
+ * read against the delete, a genuine user-visible failure, not a cosmetic
+ * one. Extracts each real handler (not reimplemented) and calls it with
+ * ONLY `sending` declared -- no other identifier in scope -- so that if
+ * the guard were ever removed, the very next line each function reaches
+ * (`testAttachment`) throws a ReferenceError instead of silently doing
+ * nothing, proving the guard itself is what's stopping execution.
+ */
+test("WhatsAppPanel's handleRemoveAttachment, handleResetTestForm, and handleReplyToMessage are each a no-op while sending is true", () => {
+  for (const [name, signature] of [
+    ["handleRemoveAttachment", / {2}function handleRemoveAttachment\(\) \{[\s\S]*?\n {2}\}\n/],
+    ["handleResetTestForm", / {2}function handleResetTestForm\(\) \{[\s\S]*?\n {2}\}\n/],
+    ["handleReplyToMessage", / {2}function handleReplyToMessage\(m: WhatsAppMessageLogEntry\) \{[\s\S]*?\n {2}\}\n/],
+  ] as const) {
+    const handlerMatch = whatsAppPanelSrc.match(signature);
+    assert.ok(handlerMatch, `expected to find ${name} in WhatsAppPanel.tsx`);
+    const { code } = transformSync(handlerMatch![0], { loader: "ts" });
+    const fn = new Function("sending", `${code}\nreturn ${name};`)(true) as (...args: unknown[]) => unknown;
+    fn(undefined);
+  }
+});
+
+/**
+ * Round 1119: the JSX side of the same fix -- the Remove button, the
+ * attachment file input (replacing it mid-send triggers the same
+ * delete-the-old-one-first logic), and the Reply button must all disable
+ * themselves while `sending` is true, the same way the Send button
+ * itself already does.
+ */
+test("WhatsAppPanel disables the attachment Remove button, the attachment file input, and the Reply button while a send is in flight", () => {
+  assert.match(
+    whatsAppPanelSrc,
+    /<button type="button" className="link-button" disabled=\{sending\} onClick=\{handleRemoveAttachment\}>/,
+    "the attachment 'Remove' button must be disabled while sending is true",
+  );
+  assert.match(
+    whatsAppPanelSrc,
+    /disabled=\{uploadingAttachment \|\| sending\}\s*\n\s*onChange=\{handleAttachmentChange\}/,
+    "the attachment file input must be disabled while sending is true, not just while uploadingAttachment",
+  );
+  assert.match(
+    whatsAppPanelSrc,
+    /<button type="button" className="secondary small" disabled=\{sending\} onClick=\{\(\) => handleReplyToMessage\(m\)\}>/,
+    "the Reply button must be disabled while sending is true",
+  );
+});
+
+/**
  * Round 630's finding: retryingId is a single panel-wide `string | null`
  * slot, so the Retry button's own disabled check (`retryingId === m.id`,
  * pre-fix) only ever protected the ONE row remembered there. Clicking a
