@@ -3277,6 +3277,12 @@ export function EntityPanel({
    * deletes that DID succeed.
    */
   async function handleBulkDelete() {
+    // Round 1117: unlike handleBulkUpdate/handleBulkDuplicate, this had no
+    // bulkActionBusy guard at all -- clicking this while one of those two
+    // was still awaiting its own Promise.allSettled raced a real PATCH/
+    // POST against this handler's own optimistic removal + delayed DELETE
+    // for the same ids, in unpredictable order.
+    if (bulkActionBusy) return;
     const ids = [...selectedIds];
     if (ids.length === 0) return;
     if (!window.confirm(t("entity.bulk.confirmDelete", { count: ids.length }))) return;
@@ -4521,7 +4527,7 @@ export function EntityPanel({
                   <button type="button" className="secondary" disabled={bulkActionBusy} onClick={handleBulkDuplicate}>
                     {bulkActionBusy ? t("entity.bulk.duplicateSelected.busy") : t("entity.bulk.duplicateSelected")}
                   </button>
-                  <button type="button" className="danger" onClick={handleBulkDelete}>
+                  <button type="button" className="danger" disabled={bulkActionBusy} onClick={handleBulkDelete}>
                     {t("entity.bulk.deleteSelected")}
                   </button>
                   <button type="button" className="secondary" onClick={() => setSelectedIds(new Set())}>

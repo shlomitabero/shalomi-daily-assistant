@@ -645,6 +645,98 @@ test("EntityPanel's bulk delete removes every selected row immediately and shows
 });
 
 /**
+ * Round 1117: "Delete selected" was the one bulk-action-bar button never
+ * gated by bulkActionBusy -- "Apply to N" and "Duplicate selected" both
+ * disable themselves (and refuse to re-enter) while their own
+ * Promise.allSettled batch is in flight, but clicking "Delete selected" on
+ * the exact same selection while that batch was still awaiting its PATCH
+ * calls fired handleBulkDelete's own optimistic-removal + delayed-DELETE
+ * path concurrently, racing a real PATCH against a real DELETE for the
+ * same ids in unpredictable order. Mirrors App.test.ts's own round-1041/
+ * 1043 cross-gate tests for the My Projects home screen's delete/duplicate
+ * actions, applied here to EntityPanel's record-level bulk-action bar --
+ * and, like those, extracts the real handler rather than rendering the
+ * full DOM, so a regression fails fast instead of needing a held-open
+ * fetch gate (which, on a genuine regression, never gets released since
+ * the code path that releases it is exactly what's missing).
+ */
+test("EntityPanel's handleBulkDelete is a no-op while bulkActionBusy is true, and the Delete button's own disabled attribute matches its two siblings", () => {
+  // The button itself: confirms disabled={bulkActionBusy} is wired onto
+  // "Delete selected", the same way it already is on "Apply to N" and
+  // "Duplicate selected" right above it.
+  const barMatch = entityPanelSrc.match(/<button type="button" className="danger" disabled=\{bulkActionBusy\} onClick=\{handleBulkDelete\}>/);
+  assert.ok(barMatch, "expected the 'Delete selected' button to carry disabled={bulkActionBusy}, matching its sibling bulk-action buttons");
+
+  // The handler itself: confirms handleBulkDelete refuses to even start
+  // while a concurrent handleBulkUpdate/handleBulkDuplicate batch is still
+  // in flight, exactly like those two already refuse re-entrancy against
+  // themselves.
+  const handlerMatch = entityPanelSrc.match(/ {2}async function handleBulkDelete\(\) \{[\s\S]*?\n {2}\}\n/);
+  assert.ok(handlerMatch, "expected to find handleBulkDelete in EntityPanel.tsx");
+  const { code } = transformSync(handlerMatch![0], { loader: "ts" });
+
+  let confirmCalls = 0;
+  let pendingDeleteCommitted = 0;
+  let recordsTouched = 0;
+  let selectedIdsTouched = 0;
+  let pendingDeleteSet = 0;
+
+  const fn = new Function(
+    "bulkActionBusy",
+    "selectedIds",
+    "window",
+    "t",
+    "pendingDeleteRef",
+    "commitPendingDelete",
+    "editingId",
+    "discardAbandonedFileUploads",
+    "setForm",
+    "entity",
+    "setEditingId",
+    "editingOriginalRef",
+    "bumpFormInstanceKey",
+    "setError",
+    "records",
+    "setRecords",
+    "setSelectedIds",
+    "setPendingDelete",
+    "UNDO_WINDOW_MS",
+    `${code}\nreturn handleBulkDelete;`,
+  )(
+    true, // bulkActionBusy: a bulk update/duplicate is still in flight
+    new Set([1, 2]),
+    { confirm: () => (confirmCalls += 1, true) },
+    (key: string) => key,
+    { current: null },
+    () => (pendingDeleteCommitted += 1),
+    null,
+    () => {},
+    () => {},
+    { name: "Deal", fields: [] },
+    () => {},
+    { current: null },
+    () => {},
+    () => {},
+    [
+      { id: 1, createdAt: "x", name: "Acme Corp" },
+      { id: 2, createdAt: "x", name: "Globex" },
+    ],
+    () => (recordsTouched += 1),
+    () => (selectedIdsTouched += 1),
+    () => (pendingDeleteSet += 1),
+    5000,
+  ) as () => Promise<void>;
+
+  return fn().then(() => {
+    assert.equal(confirmCalls, 0, "while bulkActionBusy is true, handleBulkDelete must never even reach window.confirm");
+    assert.equal(pendingDeleteCommitted, 0, "must never touch any still-pending delete from a previous batch");
+    assert.equal(recordsTouched, 0, "must never optimistically remove any row from view");
+    assert.equal(selectedIdsTouched, 0, "must never clear the selection");
+    assert.equal(pendingDeleteSet, 0, "must never schedule a real delete for later");
+  });
+});
+
+/**
  * The other half: NOT clicking Undo must commit every real delete in the
  * batch once the undo window actually elapses, mirroring single-delete's
  * own equivalent test -- the whole point is a temporary reprieve for the

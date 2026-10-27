@@ -5687,6 +5687,9 @@ export function EntityView({ entity, highlightRecordId, onHighlightHandled, onJu
   }
 
   async function handleBulkDelete() {
+    // Round 1117: unlike handleBulkUpdate/handleBulkDuplicate, this had no
+    // bulkActionBusy guard at all -- see EntityPanel.tsx's own identical fix.
+    if (bulkActionBusy) return;
     const ids = [...selectedIds];
     if (ids.length === 0) return;
     if (!window.confirm(\`Delete \${ids.length} records? You can undo this for a few seconds after deleting.\`)) return;
@@ -6760,7 +6763,7 @@ export function EntityView({ entity, highlightRecordId, onHighlightHandled, onJu
                   <button type="button" disabled={bulkActionBusy} onClick={handleBulkDuplicate}>
                     {bulkActionBusy ? "Duplicating…" : "📋 Duplicate selected"}
                   </button>
-                  <button type="button" onClick={handleBulkDelete}>
+                  <button type="button" disabled={bulkActionBusy} onClick={handleBulkDelete}>
                     🗑️ Delete selected
                   </button>
                   <button type="button" onClick={() => setSelectedIds(new Set())}>
