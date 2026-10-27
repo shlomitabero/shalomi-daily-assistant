@@ -1154,8 +1154,21 @@ function feedFormatIcsDescriptionDate(value) {
   return Number.isNaN(date.getTime()) ? value : date.toLocaleDateString();
 }
 
+// Round 1097: V8/ICU's Number.prototype.toLocaleString silently prepends an
+// invisible U+200E (LEFT-TO-RIGHT MARK) before a negative number's minus
+// sign, under a Hebrew locale -- real ICU behavior for on-screen bidi
+// rendering, but wrong here, since this feed's DESCRIPTION text becomes
+// literal outbound plain text the moment it leaves this app (a calendar
+// client's own text view, copy/paste, search). Mirrors the identical
+// round-1089/1090 fix already applied to the live Forge AI backend's own
+// calendarFeed.ts/calendarIcs.ts/automations.ts/twin.ts/automationsReport.ts
+// -- never ported to this exported app's own copy until now.
+function stripBidiMarks(s) {
+  return s.replace(/[‎‏]/g, "");
+}
+
 function feedFormatIcsDescriptionNumber(value) {
-  return typeof value === "number" ? value.toLocaleString() : value;
+  return typeof value === "number" ? stripBidiMarks(value.toLocaleString()) : value;
 }
 
 // Builds a real RFC 5545 .ics calendar for EVERY record of \`entity\` that
@@ -3564,8 +3577,20 @@ function formatIcsDescriptionDate(value) {
   return Number.isNaN(date.getTime()) ? value : date.toLocaleDateString();
 }
 
+// Round 1097: see this file's own renderServerJs section's identical fix
+// (feedFormatIcsDescriptionNumber) for the full rationale -- V8/ICU's
+// Number.prototype.toLocaleString silently prepends an invisible U+200E
+// before a negative number's minus sign under a Hebrew locale, which is
+// wrong once this button's downloaded .ics file's DESCRIPTION text leaves
+// this app (a calendar client's own text view, copy/paste, search) -- the
+// same bug the live preview's own calendarIcs.ts was already fixed for in
+// round 1090, never ported to this exported app's own copy until now.
+function stripBidiMarks(s) {
+  return s.replace(/[‎‏]/g, "");
+}
+
 function formatIcsDescriptionNumber(value) {
-  return typeof value === "number" ? value.toLocaleString() : value;
+  return typeof value === "number" ? stripBidiMarks(value.toLocaleString()) : value;
 }
 
 // Builds a real RFC 5545 .ics calendar, one all-day VEVENT per record --

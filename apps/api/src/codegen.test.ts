@@ -507,6 +507,49 @@ test("the generated server.js's own feedRecordDisplayLabel renders a date displa
 });
 
 /**
+ * Round 1097: the live Forge AI backend's own calendarFeed.ts/calendarIcs.ts
+ * (and automations.ts/twin.ts/automationsReport.ts) were fixed in rounds
+ * 1089/1090 to strip V8/ICU's invisible U+200E LEFT-TO-RIGHT MARK that
+ * Number.prototype.toLocaleString silently prepends before a negative
+ * number's minus sign under a Hebrew locale -- but this exported app's own
+ * copy of the identical feedFormatIcsDescriptionNumber function was never
+ * ported, confirmed by grep (no "stripBidi" anywhere in codegen.ts before
+ * this round). Unlike calendarFeed.ts's own interpolateTemplate-adjacent
+ * fix, this exported app's generated functions take no locale argument at
+ * all (bare .toLocaleString(), deliberately -- see this file's own doc
+ * comment: "this exported app has no language-switching mechanism of its
+ * own"), so there is no way to force the Hebrew-locale code path through
+ * the real function call in an environment whose own default locale is
+ * "en-US" (confirmed directly: (-1500).toLocaleString() here already
+ * returns "-1,500" with no mark to strip, locale-dependent and not
+ * reproducible in CI). This instead verifies the two things that ARE
+ * locale-independent: stripBidiMarks itself genuinely removes a real
+ * U+200E/U+200F character wherever it appears, and the generated source
+ * actually wires it around every toLocaleString() call rather than just
+ * defining it unused.
+ */
+test("the generated server.js's own stripBidiMarks removes the invisible bidi mark, and feedFormatIcsDescriptionNumber actually calls it", () => {
+  const serverJs = generateExportFiles(project).find((f) => f.path === "server.js")!.content;
+  const stripBidiMarksSrc = serverJs.match(/function stripBidiMarks\(s\) \{[\s\S]*?\n\}\n/)?.[0];
+  const feedFormatIcsDescriptionNumberSrc = serverJs.match(/function feedFormatIcsDescriptionNumber\(value\) \{[\s\S]*?\n\}\n/)?.[0];
+  assert.ok(
+    stripBidiMarksSrc && feedFormatIcsDescriptionNumberSrc,
+    "expected to find stripBidiMarks/feedFormatIcsDescriptionNumber in generated server.js",
+  );
+
+  const stripBidiMarks = new Function(`${stripBidiMarksSrc}\nreturn stripBidiMarks;`)() as (s: string) => string;
+  assert.equal(stripBidiMarks("‎-1,500"), "-1,500", "a leading LRM before a negative number's minus sign must be removed");
+  assert.equal(stripBidiMarks("‏1,500"), "1,500", "an RLM must be removed too");
+  assert.equal(stripBidiMarks("1,500"), "1,500", "a string with no mark at all must be returned unchanged");
+
+  assert.match(
+    feedFormatIcsDescriptionNumberSrc!,
+    /return typeof value === "number" \? stripBidiMarks\(value\.toLocaleString\(\)\) : value;/,
+    "feedFormatIcsDescriptionNumber's own generated source must actually wrap its toLocaleString() result in stripBidiMarks, not just define it unused",
+  );
+});
+
+/**
  * Round 1010: the client-side half of the same gap -- confirms the
  * generated EntityView.jsx actually wires up the "Subscribe" button
  * (next to the existing one-shot Export ICS button) to copy the real
@@ -4765,6 +4808,7 @@ test("the exported EntityView's real generated buildCalendarIcs disambiguates tw
   const parseFieldDateSrc = entityViewJsx.match(/function parseFieldDate\(raw\) \{[\s\S]*?\n\}\n/)?.[0];
   const descDateSrc = entityViewJsx.match(/function formatIcsDescriptionDate\(value\) \{[\s\S]*?\n\}\n/)?.[0];
   const descNumberSrc = entityViewJsx.match(/function formatIcsDescriptionNumber\(value\) \{[\s\S]*?\n\}\n/)?.[0];
+  const stripBidiMarksSrc = entityViewJsx.match(/function stripBidiMarks\(s\) \{[\s\S]*?\n\}\n/)?.[0];
   const buildSrc = entityViewJsx.match(
     /function buildCalendarIcs\(entity, dateField, labelField, records, relatedRecords, now, endField, orderedFields = entity\.fields\) \{[\s\S]*?\n\}\n/,
   )?.[0];
@@ -4781,13 +4825,14 @@ test("the exported EntityView's real generated buildCalendarIcs disambiguates tw
       parseFieldDateSrc &&
       descDateSrc &&
       descNumberSrc &&
+      stripBidiMarksSrc &&
       buildSrc,
     "expected to find every ICS helper function (including the date/number formatters) in the real generated output",
   );
 
   const relationStub = "function relationDisplayLabel() { return ''; }\n";
   const buildCalendarIcs = new Function(
-    `${pickDisplaySrc}\n${labelFieldSrc}\n${pad2Src}\n${dateSrc}\n${tsSrc}\n${escSrc}\n${utf8LenSrc}\n${foldSrc}\n${calendarDateFormatSrc}\n${parseFieldDateSrc}\n${descDateSrc}\n${descNumberSrc}\n${relationStub}\n${buildSrc}\nreturn buildCalendarIcs;`,
+    `${pickDisplaySrc}\n${labelFieldSrc}\n${pad2Src}\n${dateSrc}\n${tsSrc}\n${escSrc}\n${utf8LenSrc}\n${foldSrc}\n${calendarDateFormatSrc}\n${parseFieldDateSrc}\n${descDateSrc}\n${stripBidiMarksSrc}\n${descNumberSrc}\n${relationStub}\n${buildSrc}\nreturn buildCalendarIcs;`,
   )() as (entity: unknown, dateField: unknown, labelField: unknown, records: unknown[], relatedRecords: unknown, now: Date) => string;
 
   const entity = {
@@ -4808,6 +4853,34 @@ test("the exported EntityView's real generated buildCalendarIcs disambiguates tw
 
   assert.match(ics, /Amount \(subtotal\): 800/, "the subtotal field must be disambiguated by its own name");
   assert.match(ics, /Amount \(shipping\): 30/, "the shipping field must be disambiguated by its own name");
+});
+
+/**
+ * Round 1097: the client-side counterpart to this file's own server.js
+ * stripBidiMarks test above -- the "Export ICS" button's generated
+ * formatIcsDescriptionNumber (EntityView.jsx) got the identical port.
+ * Same locale-independence reasoning: bare toLocaleString() with no
+ * explicit locale argument never produces the mark in this test
+ * environment's own "en-US" default, so this verifies the two
+ * locale-independent facts instead -- stripBidiMarks genuinely strips a
+ * real mark, and formatIcsDescriptionNumber's own generated source
+ * actually calls it.
+ */
+test("the exported EntityView's own stripBidiMarks removes the invisible bidi mark, and formatIcsDescriptionNumber actually calls it", () => {
+  const entityViewJsx = generateExportFiles(project).find((f) => f.path === "web/src/components/EntityView.jsx")!.content;
+  const stripBidiMarksSrc = entityViewJsx.match(/function stripBidiMarks\(s\) \{[\s\S]*?\n\}\n/)?.[0];
+  const descNumberSrc = entityViewJsx.match(/function formatIcsDescriptionNumber\(value\) \{[\s\S]*?\n\}\n/)?.[0];
+  assert.ok(stripBidiMarksSrc && descNumberSrc, "expected to find stripBidiMarks/formatIcsDescriptionNumber in the real generated EntityView.jsx");
+
+  const stripBidiMarks = new Function(`${stripBidiMarksSrc}\nreturn stripBidiMarks;`)() as (s: string) => string;
+  assert.equal(stripBidiMarks("‎-1,500"), "-1,500", "a leading LRM before a negative number's minus sign must be removed");
+  assert.equal(stripBidiMarks("1,500"), "1,500", "a string with no mark at all must be returned unchanged");
+
+  assert.match(
+    descNumberSrc!,
+    /return typeof value === "number" \? stripBidiMarks\(value\.toLocaleString\(\)\) : value;/,
+    "formatIcsDescriptionNumber's own generated source must actually wrap its toLocaleString() result in stripBidiMarks, not just define it unused",
+  );
 });
 
 /**
@@ -5202,6 +5275,7 @@ test("the exported EntityView's real generated buildCalendarIcs locale-formats a
   const parseFieldDateSrc = entityViewJsx.match(/function parseFieldDate\(raw\) \{[\s\S]*?\n\}\n/)?.[0];
   const descDateSrc = entityViewJsx.match(/function formatIcsDescriptionDate\(value\) \{[\s\S]*?\n\}\n/)?.[0];
   const descNumberSrc = entityViewJsx.match(/function formatIcsDescriptionNumber\(value\) \{[\s\S]*?\n\}\n/)?.[0];
+  const stripBidiMarksSrc = entityViewJsx.match(/function stripBidiMarks\(s\) \{[\s\S]*?\n\}\n/)?.[0];
   const buildSrc = entityViewJsx.match(
     /function buildCalendarIcs\(entity, dateField, labelField, records, relatedRecords, now, endField, orderedFields = entity\.fields\) \{[\s\S]*?\n\}\n/,
   )?.[0];
@@ -5218,13 +5292,14 @@ test("the exported EntityView's real generated buildCalendarIcs locale-formats a
       parseFieldDateSrc &&
       descDateSrc &&
       descNumberSrc &&
+      stripBidiMarksSrc &&
       buildSrc,
     "expected to find every ICS helper function (including the new date/number formatters) in the real generated output",
   );
 
   const relationStub = "function relationDisplayLabel() { return ''; }\n";
   const buildCalendarIcs = new Function(
-    `${pickDisplaySrc}\n${labelFieldSrc}\n${pad2Src}\n${dateSrc}\n${tsSrc}\n${escSrc}\n${utf8LenSrc}\n${foldSrc}\n${calendarDateFormatSrc}\n${parseFieldDateSrc}\n${descDateSrc}\n${descNumberSrc}\n${relationStub}\n${buildSrc}\nreturn buildCalendarIcs;`,
+    `${pickDisplaySrc}\n${labelFieldSrc}\n${pad2Src}\n${dateSrc}\n${tsSrc}\n${escSrc}\n${utf8LenSrc}\n${foldSrc}\n${calendarDateFormatSrc}\n${parseFieldDateSrc}\n${descDateSrc}\n${stripBidiMarksSrc}\n${descNumberSrc}\n${relationStub}\n${buildSrc}\nreturn buildCalendarIcs;`,
   )() as (entity: unknown, dateField: unknown, labelField: unknown, records: unknown[], relatedRecords: unknown, now: Date) => string;
 
   const entity = withProject.spec.entities.find((e) => e.name === "Project")!;
