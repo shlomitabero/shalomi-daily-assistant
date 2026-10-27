@@ -114,7 +114,13 @@ test("purgeProjectPreferences removes exactly one project's entries from every p
     // project under their own per-user key, so the purge must remove it
     // for every account, not just the first one seeded above.
     togglePinned("userB", "abc");
-    setEntityTabOrder("abc", ["Deal", "Customer"]);
+    setEntityTabOrder("abc", "userA", ["Deal", "Customer"]);
+    // A second collaborator account's own reordered tabs for the SAME
+    // project -- round 1067's own fix: any past collaborator could have
+    // dragged this project's tabs under their own per-user key, so the
+    // purge must remove it for every account, not just the first one
+    // seeded above.
+    setEntityTabOrder("abc", "userB", ["Customer", "Deal"]);
 
     // Seed "proj2" -- an unrelated project that must survive untouched.
     setColumnWidth("proj2", entity, "name", 300);
@@ -134,7 +140,7 @@ test("purgeProjectPreferences removes exactly one project's entries from every p
     setWhatsAppLogFilter("proj2", "userA", "in");
     setWhatsAppLastSeen("proj2", "userA", { id: "msg-proj2", createdAt: "2024-01-01T00:00:00.000Z" });
     togglePinned("userA", "proj2");
-    setEntityTabOrder("proj2", ["Customer", "Deal"]);
+    setEntityTabOrder("proj2", "userA", ["Customer", "Deal"]);
 
     // Seed "abc-other" -- a DIFFERENT project whose id starts with "abc",
     // the one case where naive prefix matching (without the colon) could
@@ -156,7 +162,7 @@ test("purgeProjectPreferences removes exactly one project's entries from every p
     setWhatsAppLogFilter("abc-other", "userA", "out");
     setWhatsAppLastSeen("abc-other", "userA", { id: "msg-abc-other", createdAt: "2024-01-01T00:00:00.000Z" });
     togglePinned("userA", "abc-other");
-    setEntityTabOrder("abc-other", ["Task", "Deal"]);
+    setEntityTabOrder("abc-other", "userA", ["Task", "Deal"]);
 
     purgeProjectPreferences("abc");
 
@@ -185,7 +191,8 @@ test("purgeProjectPreferences removes exactly one project's entries from every p
     assert.equal(getWhatsAppLastSeen("abc", "userB"), null, "whatsappLastSeenId must be purged for userB too -- any past collaborator could have read the log under their own per-user key");
     assert.equal(getPinnedIds("userA").has("abc"), false, "pinnedProjects must be purged for userA");
     assert.equal(getPinnedIds("userB").has("abc"), false, "pinnedProjects must be purged for userB too -- any past collaborator could have pinned it under their own per-user key");
-    assert.deepEqual(getEntityTabOrder("abc"), [], "entityTabOrder must be purged");
+    assert.deepEqual(getEntityTabOrder("abc", "userA"), [], "entityTabOrder must be purged for userA");
+    assert.deepEqual(getEntityTabOrder("abc", "userB"), [], "entityTabOrder must be purged for userB too -- any past collaborator could have reordered tabs under their own per-user key");
 
     // "proj2" -- a wholly unrelated project -- is completely untouched.
     assert.deepEqual(getColumnWidths("proj2", entity), { name: 300 }, "columnWidths must survive for an unrelated project");
@@ -205,7 +212,7 @@ test("purgeProjectPreferences removes exactly one project's entries from every p
     assert.equal(getWhatsAppLogFilter("proj2", "userA"), "in", "whatsappLogFilter must survive");
     assert.deepEqual(getWhatsAppLastSeen("proj2", "userA"), { id: "msg-proj2", createdAt: "2024-01-01T00:00:00.000Z" }, "whatsappLastSeenId must survive");
     assert.equal(getPinnedIds("userA").has("proj2"), true, "pinnedProjects must survive");
-    assert.deepEqual(getEntityTabOrder("proj2"), ["Customer", "Deal"], "entityTabOrder must survive for an unrelated project");
+    assert.deepEqual(getEntityTabOrder("proj2", "userA"), ["Customer", "Deal"], "entityTabOrder must survive for an unrelated project");
 
     // "abc-other" -- a DIFFERENT project that merely shares "abc" as a
     // prefix of its id -- must ALSO survive completely untouched. If the
@@ -232,6 +239,6 @@ test("purgeProjectPreferences removes exactly one project's entries from every p
       "whatsappLastSeenId must survive for a prefix-sharing project id",
     );
     assert.equal(getPinnedIds("userA").has("abc-other"), true, "pinnedProjects must survive for a prefix-sharing project id");
-    assert.deepEqual(getEntityTabOrder("abc-other"), ["Task", "Deal"], "entityTabOrder must survive for a prefix-sharing project id");
+    assert.deepEqual(getEntityTabOrder("abc-other", "userA"), ["Task", "Deal"], "entityTabOrder must survive for a prefix-sharing project id");
   });
 });

@@ -3526,13 +3526,15 @@ test("App's handleReorderEntityTab reorders entity tabs on drop and persists via
 
   const orderedEntities = [{ name: "Deal" }, { name: "Contact" }, { name: "Task" }];
 
-  function run(project: { id: string } | null, draggedEntityTab: string | null) {
+  function run(project: { id: string } | null, draggedEntityTab: string | null, user: { id: string } | null = { id: "user1" }) {
     let dragOverCleared = false;
     let draggedCleared = false;
     let persistedProjectId: string | null = null;
+    let persistedUserId: string | null = null;
     let persistedOrder: string[] | null = null;
     const fn = new Function(
       "project",
+      "user",
       "draggedEntityTab",
       "orderedEntities",
       "setDragOverEntityTab",
@@ -3543,35 +3545,39 @@ test("App's handleReorderEntityTab reorders entity tabs on drop and persists via
       `${code}\nreturn handleReorderEntityTab;`,
     ) as (
       project: { id: string } | null,
+      user: { id: string } | null,
       draggedEntityTab: string | null,
       orderedEntities: { name: string }[],
       setDragOverEntityTab: (v: string | null) => void,
       setEntityTabOrderState: (v: string[]) => void,
-      setEntityTabOrder: (projectId: string, order: string[]) => string[],
+      setEntityTabOrder: (projectId: string, userId: string, order: string[]) => string[],
       reorderColumns: (order: string[], source: string, target: string) => string[],
       setDraggedEntityTab: (v: string | null) => void,
     ) => (targetName: string) => void;
 
     const handler = fn(
       project,
+      user,
       draggedEntityTab,
       orderedEntities,
       () => (dragOverCleared = true),
       (v: string[]) => (persistedOrder = v),
-      (projectId: string, order: string[]) => {
+      (projectId: string, userId: string, order: string[]) => {
         persistedProjectId = projectId;
+        persistedUserId = userId;
         return order;
       },
       reorderColumns,
       () => (draggedCleared = true),
     );
     handler("Deal");
-    return { dragOverCleared, draggedCleared, persistedProjectId, persistedOrder };
+    return { dragOverCleared, draggedCleared, persistedProjectId, persistedUserId, persistedOrder };
   }
 
   const moved = run({ id: "proj1" }, "Task");
   assert.equal(moved.dragOverCleared, true, "must always clear the drag-over highlight, even on a real move");
   assert.equal(moved.persistedProjectId, "proj1", "must persist under the currently-open project's own id");
+  assert.equal(moved.persistedUserId, "user1", "must persist under the currently signed-in user's own id");
   assert.deepEqual(moved.persistedOrder, ["Task", "Deal", "Contact"], "dropping Task onto Deal must move Task to just before Deal");
   assert.equal(moved.draggedCleared, true);
 
@@ -3584,6 +3590,10 @@ test("App's handleReorderEntityTab reorders entity tabs on drop and persists via
   const noProject = run(null, "Task");
   assert.equal(noProject.persistedOrder, null, "must be a no-op with no project open at all, not throw on project.id");
   assert.equal(noProject.dragOverCleared, true, "the drag-over highlight must still clear even when there's no project");
+
+  const noUser = run({ id: "proj1" }, "Task", null);
+  assert.equal(noUser.persistedOrder, null, "must be a no-op with no signed-in user, not throw on user.id");
+  assert.equal(noUser.dragOverCleared, true, "the drag-over highlight must still clear even when there's no user");
 });
 
 /**
@@ -3603,11 +3613,18 @@ test("App's handleMoveEntityTab moves an entity tab earlier/later and persists v
 
   const orderedEntities = [{ name: "Deal" }, { name: "Contact" }, { name: "Task" }];
 
-  function run(project: { id: string } | null, entityName: string, direction: "earlier" | "later") {
+  function run(
+    project: { id: string } | null,
+    entityName: string,
+    direction: "earlier" | "later",
+    user: { id: string } | null = { id: "user1" },
+  ) {
     let persistedProjectId: string | null = null;
+    let persistedUserId: string | null = null;
     let persistedOrder: string[] | null = null;
     const fn = new Function(
       "project",
+      "user",
       "orderedEntities",
       "setEntityTabOrderState",
       "setEntityTabOrder",
@@ -3615,28 +3632,32 @@ test("App's handleMoveEntityTab moves an entity tab earlier/later and persists v
       `${code}\nreturn handleMoveEntityTab;`,
     ) as (
       project: { id: string } | null,
+      user: { id: string } | null,
       orderedEntities: { name: string }[],
       setEntityTabOrderState: (v: string[]) => void,
-      setEntityTabOrder: (projectId: string, order: string[]) => string[],
+      setEntityTabOrder: (projectId: string, userId: string, order: string[]) => string[],
       reorderColumns: (order: string[], source: string, target: string) => string[],
     ) => (entityName: string, direction: "earlier" | "later") => void;
 
     const handler = fn(
       project,
+      user,
       orderedEntities,
       (v: string[]) => (persistedOrder = v),
-      (projectId: string, order: string[]) => {
+      (projectId: string, userId: string, order: string[]) => {
         persistedProjectId = projectId;
+        persistedUserId = userId;
         return order;
       },
       reorderColumns,
     );
     handler(entityName, direction);
-    return { persistedProjectId, persistedOrder };
+    return { persistedProjectId, persistedUserId, persistedOrder };
   }
 
   const movedLater = run({ id: "proj1" }, "Deal", "later");
   assert.equal(movedLater.persistedProjectId, "proj1", "must persist under the currently-open project's own id");
+  assert.equal(movedLater.persistedUserId, "user1", "must persist under the currently signed-in user's own id");
   assert.deepEqual(movedLater.persistedOrder, ["Contact", "Deal", "Task"], "'later' on Deal must swap it past Contact, the same result dragging it there would give");
 
   const movedEarlier = run({ id: "proj1" }, "Task", "earlier");
@@ -3653,6 +3674,9 @@ test("App's handleMoveEntityTab moves an entity tab earlier/later and persists v
 
   const noProject = run(null, "Deal", "later");
   assert.equal(noProject.persistedOrder, null, "must be a no-op with no project open at all, not throw on project.id");
+
+  const noUser = run({ id: "proj1" }, "Deal", "later", null);
+  assert.equal(noUser.persistedOrder, null, "must be a no-op with no signed-in user, not throw on user.id");
 });
 
 /**

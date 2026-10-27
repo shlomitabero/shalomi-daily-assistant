@@ -697,8 +697,8 @@ function AppContent() {
   // otherwise a project with entities in an unrelated order would briefly
   // render with the *previous* project's own dragged-into-place order.
   useEffect(() => {
-    setEntityTabOrderState(project ? getEntityTabOrder(project.id) : []);
-  }, [project?.id]);
+    setEntityTabOrderState(project && user ? getEntityTabOrder(project.id, user.id) : []);
+  }, [project?.id, user?.id]);
 
   const orderedEntities = useMemo(
     () => (project ? applyColumnOrder(project.spec.entities, entityTabOrder) : []),
@@ -726,9 +726,9 @@ function AppContent() {
    */
   function handleReorderEntityTab(targetName: string) {
     setDragOverEntityTab(null);
-    if (!project || !draggedEntityTab || draggedEntityTab === targetName) return;
+    if (!project || !user || !draggedEntityTab || draggedEntityTab === targetName) return;
     const fullOrder = orderedEntities.map((e) => e.name);
-    setEntityTabOrderState(setEntityTabOrder(project.id, reorderColumns(fullOrder, draggedEntityTab, targetName)));
+    setEntityTabOrderState(setEntityTabOrder(project.id, user.id, reorderColumns(fullOrder, draggedEntityTab, targetName)));
     setDraggedEntityTab(null);
   }
 
@@ -742,7 +742,7 @@ function AppContent() {
    * access a mouse-drag user already has.
    */
   function handleMoveEntityTab(entityName: string, direction: "earlier" | "later") {
-    if (!project) return;
+    if (!project || !user) return;
     const index = orderedEntities.findIndex((e) => e.name === entityName);
     if (index === -1) return;
     const neighborIndex = direction === "earlier" ? index - 1 : index + 1;
@@ -751,7 +751,7 @@ function AppContent() {
     const fullOrder = orderedEntities.map((e) => e.name);
     const next =
       direction === "earlier" ? reorderColumns(fullOrder, entityName, neighborName) : reorderColumns(fullOrder, neighborName, entityName);
-    setEntityTabOrderState(setEntityTabOrder(project.id, next));
+    setEntityTabOrderState(setEntityTabOrder(project.id, user.id, next));
   }
 
   const visibleMyProjects = useMemo(

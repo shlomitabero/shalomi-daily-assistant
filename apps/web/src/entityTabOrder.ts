@@ -1,8 +1,33 @@
-const STORAGE_KEY = "forge.entityTabOrder";
+const STORAGE_KEY_PREFIX = "forge.entityTabOrder.";
 
-function readStore(): Record<string, string[]> {
+/**
+ * Round 1067: moved from one single flat key to one key per signed-in
+ * user, mirroring pinnedProjects.ts's own identical round-1003 fix --
+ * this store's own shape (a single `Record<projectId, string[]>` blob,
+ * not a `${projectId}:${entityName}` compound key) matches pinnedProjects
+ * exactly, not the "add a userId segment to a compound key" shape most of
+ * this store's siblings used. A project is routinely shared between real
+ * collaborator accounts (project_collaborators/roles) on the same
+ * browser, and this one array was the single remaining per-entity-
+ * preference-screen store entityPreferenceCleanup.ts's own comments never
+ * revisited for this dimension -- every other sibling sharing that screen
+ * (columnWidths/columnOrder/columnVisibility/fieldFilters/groupBy/
+ * sortKeys/collapsedGroups/collapsedBoardColumns/viewMode) either already
+ * has it or is separately tracked as still open; this one had none at
+ * all. A project reordered before this round has no per-user
+ * entry yet (the old flat key is simply abandoned, the same additive-
+ * only convention every other localStorage migration in this app already
+ * uses): every user's own tab order from before this round is silently
+ * lost once, the same one-time, harmless reset round 1003's own
+ * migration already accepted for its own shape change.
+ */
+function storageKey(userId: string): string {
+  return `${STORAGE_KEY_PREFIX}${userId}`;
+}
+
+function readStore(userId: string): Record<string, string[]> {
   try {
-    const raw = localStorage.getItem(STORAGE_KEY);
+    const raw = localStorage.getItem(storageKey(userId));
     if (!raw) return {};
     const parsed = JSON.parse(raw);
     if (parsed === null || typeof parsed !== "object" || Array.isArray(parsed)) return {};
@@ -16,9 +41,9 @@ function readStore(): Record<string, string[]> {
   }
 }
 
-function writeStore(store: Record<string, string[]>): void {
+function writeStore(userId: string, store: Record<string, string[]>): void {
   try {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(store));
+    localStorage.setItem(storageKey(userId), JSON.stringify(store));
   } catch {
     // localStorage can be unavailable (private mode) -- the choice just won't survive a reload.
   }
@@ -37,29 +62,50 @@ function writeStore(store: Record<string, string[]>): void {
  * `applyColumnOrder`/`reorderColumns` (columnOrder.ts) are already generic
  * over any `{ name: string }[]`, and `Entity` has a `name` field just like
  * a table's fields do, so this file only owns the storage half.
+ *
+ * Round 1067: also scoped per user -- see storageKey's own doc comment.
  */
-export function getEntityTabOrder(projectId: string): string[] {
-  const store = readStore();
+export function getEntityTabOrder(projectId: string, userId: string): string[] {
+  const store = readStore(userId);
   return [...(store[projectId] ?? [])];
 }
 
 /** Persists a full entity-name order and returns it, so callers can update their own state from the return value instead of re-reading storage. */
-export function setEntityTabOrder(projectId: string, order: string[]): string[] {
-  const store = readStore();
+export function setEntityTabOrder(projectId: string, userId: string, order: string[]): string[] {
+  const store = readStore(userId);
   store[projectId] = order;
-  writeStore(store);
+  writeStore(userId, store);
   return order;
 }
 
-/** Unconditionally removes one project's entry. Used when the project itself is deleted (projectPreferenceCleanup.ts), mirroring removePinnedProject's shape (pinnedProjects.ts) since this store is also keyed directly by projectId, not `${projectId}:${entityName}`. */
+/**
+ * Removes every collaborator account's own tab order for one project --
+ * used by projectPreferenceCleanup.ts when the project itself is deleted,
+ * mirroring pinnedProjects.ts's own purgePinnedProjectForProject: there's
+ * no single "current user" to scope a plain per-user delete to, since any
+ * number of other collaborators could have reordered this now-gone
+ * project's tabs in this same browser's localStorage, each under their
+ * own per-user key.
+ */
 export function purgeEntityTabOrderForProject(projectId: string): void {
-  const store = readStore();
-  delete store[projectId];
-  writeStore(store);
+  try {
+    for (const key of Object.keys(localStorage)) {
+      if (!key.startsWith(STORAGE_KEY_PREFIX)) continue;
+      const userId = key.slice(STORAGE_KEY_PREFIX.length);
+      const store = readStore(userId);
+      if (!(projectId in store)) continue;
+      delete store[projectId];
+      writeStore(userId, store);
+    }
+  } catch {
+    // localStorage can be unavailable (private mode) -- nothing to clear.
+  }
 }
 
 /**
- * Removes one entity name from a project's persisted tab order, called by
+ * Removes one entity name from a project's persisted tab order, across
+ * every collaborator account (same "no single current user at purge
+ * time" reasoning as purgeEntityTabOrderForProject above), called by
  * entityPreferenceCleanup.ts's purgeEntityPreferences when a refine drops
  * that entity. Unlike every sibling store there (keyed per `${projectId}:${entityName}`,
  * so a whole-entry delete suffices), this store is keyed by projectId alone
@@ -69,13 +115,21 @@ export function purgeEntityTabOrderForProject(projectId: string): void {
  * silently snap back into whatever position the old, unrelated entity
  * occupied, instead of landing at the natural end like a genuinely new
  * entity does via applyColumnOrder's own "ignore unknown names" fallback.
- * A no-op (not an error) when the project was never reordered, or the name
- * isn't present.
+ * A no-op (not an error) when a given user never reordered the project, or
+ * the name isn't present in their own order.
  */
 export function purgeEntityNameFromTabOrder(projectId: string, entityName: string): void {
-  const store = readStore();
-  const order = store[projectId];
-  if (!order) return;
-  store[projectId] = order.filter((name) => name !== entityName);
-  writeStore(store);
+  try {
+    for (const key of Object.keys(localStorage)) {
+      if (!key.startsWith(STORAGE_KEY_PREFIX)) continue;
+      const userId = key.slice(STORAGE_KEY_PREFIX.length);
+      const store = readStore(userId);
+      const order = store[projectId];
+      if (!order) continue;
+      store[projectId] = order.filter((name) => name !== entityName);
+      writeStore(userId, store);
+    }
+  } catch {
+    // localStorage can be unavailable (private mode) -- nothing to clear.
+  }
 }
