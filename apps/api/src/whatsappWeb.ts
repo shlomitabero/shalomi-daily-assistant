@@ -107,6 +107,7 @@ export interface BaileysIncomingMessage {
     stickerMessage?: Record<string, never>;
     locationMessage?: { name?: string; address?: string };
     contactMessage?: { displayName?: string };
+    contactsArrayMessage?: { displayName?: string; contacts?: { displayName?: string }[] };
     pollCreationMessage?: { name?: string };
     pollCreationMessageV2?: { name?: string };
     pollCreationMessageV3?: { name?: string };
@@ -192,6 +193,16 @@ const CONNECTION_LOST_MESSAGE = "The WhatsApp connection was lost. Click Connect
  * and the customer just reacting instead of typing is an everyday
  * one-tap WhatsApp action, not an edge case, and was previously silently
  * dropped exactly like an unfixed poll.
+ *
+ * Round 1106: sharing TWO OR MORE contacts in one tap (WhatsApp's own
+ * "select multiple -> Send" flow) populates a distinct field,
+ * contactsArrayMessage, never contactMessage -- round 1035 only ever
+ * checked the latter, so this sibling was missed entirely and fell
+ * through to the same silent drop as every other still-unrecognized
+ * shape. Confirmed against proto.Message.IContactsArrayMessage: its
+ * `displayName`/`contacts` are plaintext in the protobuf, the same
+ * stable shape round 1035 already verified for the singular
+ * contactMessage case.
  */
 function describeIncomingMessage(message: BaileysIncomingMessage["message"]): string | null {
   if (!message) return null;
@@ -213,6 +224,10 @@ function describeIncomingMessage(message: BaileysIncomingMessage["message"]): st
   if (message.contactMessage) {
     const name = message.contactMessage.displayName;
     return name ? `[Contact: ${name}]` : "[Contact]";
+  }
+  if (message.contactsArrayMessage) {
+    const count = message.contactsArrayMessage.contacts?.length ?? 0;
+    return count > 0 ? `[${count} Contacts]` : "[Contacts]";
   }
   const poll =
     message.pollCreationMessage ?? message.pollCreationMessageV2 ?? message.pollCreationMessageV3 ?? message.pollCreationMessageV5;

@@ -656,6 +656,41 @@ test("an incoming location pin (with and without a name/address) and a shared co
 });
 
 /**
+ * Round 1106: sharing TWO OR MORE contacts in one tap (WhatsApp's own
+ * "select multiple -> Send" flow) -- previously dropped with zero trace,
+ * the one sibling round 1035's own singular-contact fix missed, since
+ * WhatsApp populates a distinct field (contactsArrayMessage) for this
+ * case, never contactMessage. Confirms the real contact count is shown
+ * when present, with a plain "[Contacts]" fallback when it isn't.
+ */
+test("sharing multiple contacts at once is logged with a descriptive placeholder instead of being silently dropped", async () => {
+  const { manager, createdSockets, db } = setupManager();
+  insertProject(db, project);
+  applyMigrations(db, project.id, project.spec);
+  markProjectBuilt(db, project.id);
+
+  await manager.connect(project.id);
+  createdSockets[0].emitConnectionUpdate({ connection: "open" });
+
+  createdSockets[0].emitMessagesUpsert({
+    type: "notify",
+    messages: [
+      {
+        key: { remoteJid: "972501234567@s.whatsapp.net", fromMe: false },
+        message: { contactsArrayMessage: { contacts: [{ displayName: "דנה לוי" }, { displayName: "יוסי כהן" }, { displayName: "מיכל אברהם" }] } },
+      },
+      { key: { remoteJid: "972501234567@s.whatsapp.net", fromMe: false }, message: { contactsArrayMessage: {} } },
+    ],
+  });
+
+  const { messages } = listWhatsAppMessages(db, project.id);
+  assert.equal(messages.length, 2);
+  assert.equal(messages[0].body, "[Contacts]", "an empty/malformed contacts array must fall back to a plain placeholder, not print nothing or throw");
+  assert.equal(messages[1].body, "[3 Contacts]", "the real contact count must be shown when present");
+  for (const m of messages) assert.equal(m.direction, "in", "every placeholder row must still be a real, matched-against incoming message, not metadata");
+});
+
+/**
  * Round 1051: an incoming WhatsApp poll -- previously dropped with zero
  * trace, the exact gap round 1035's own doc comment explicitly left open
  * -- is now logged with a descriptive placeholder showing the poll's own
