@@ -514,6 +514,48 @@ export function isAllowedWebhookUrl(raw: string): boolean {
 }
 
 /**
+ * Round 1076: mirrors whatsappWeb.ts's own per-project sendQueue (round
+ * 794) and email.ts's own ResendEmailSender.sendQueue (round 1073), for the
+ * structurally identical hazard -- EntityPanel.tsx's bulk-update "Apply to
+ * N" fires N concurrent PATCH requests, each independently triggering a
+ * matching webhook automation rule (deliberately left un-suppressed for
+ * bulk-update, same reasoning as the other two action types' own doc
+ * comments), with zero spacing between any of the resulting POSTs. Unlike
+ * Resend's single shared API key, each webhook rule can point at a wholly
+ * different destination -- keyed per webhookUrl (a `Map`, like WhatsApp's
+ * own per-project map), so only sends to the SAME destination are
+ * serialized against each other; two rules posting to different URLs stay
+ * fully independent, same as WhatsApp's own per-project independence.
+ */
+const webhookSendQueue = new Map<string, Promise<void>>();
+const WEBHOOK_SEND_SPACING_MS = 600;
+
+function delay(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+/**
+ * The actual webhook fetch, run one at a time per destination URL through
+ * webhookSendQueue above -- chained off whatever is already queued for
+ * this URL, with the fixed delay appended AFTER each actual send so the
+ * next queued one doesn't go out back-to-back with it. A failed send
+ * still rejects for its own caller (fireWebhookAction's own try/catch
+ * below records the failure exactly as before) without jamming the queue
+ * for the next send, via the `.catch(() => {})` on the queue-advancing
+ * chain -- the same shape ResendEmailSender.send's own queue uses.
+ */
+function queuedWebhookFetch(url: string, init: RequestInit): Promise<Response> {
+  const previousInQueue = webhookSendQueue.get(url) ?? Promise.resolve();
+  const queuedFetch = previousInQueue.then(() => fetch(url, init));
+  const nextInQueue = queuedFetch.then(() => delay(WEBHOOK_SEND_SPACING_MS)).catch(() => {});
+  webhookSendQueue.set(url, nextInQueue);
+  void nextInQueue.finally(() => {
+    if (webhookSendQueue.get(url) === nextInQueue) webhookSendQueue.delete(url);
+  });
+  return queuedFetch;
+}
+
+/**
  * The webhook counterpart to the WhatsApp send in fireRule/fireScheduledRule
  * below -- posts a small JSON payload describing the event instead of
  * sending a message. `entity`/`record` are null for a schedule rule (there's
@@ -604,7 +646,7 @@ async function fireWebhookAction(
     // sent.
     const headers: Record<string, string> = { "content-type": "application/json" };
     if (rule.webhookSecret) headers.authorization = `Bearer ${rule.webhookSecret}`;
-    const res = await fetch(rule.webhookUrl, {
+    const res = await queuedWebhookFetch(rule.webhookUrl, {
       method: "POST",
       headers,
       body: JSON.stringify(payload),

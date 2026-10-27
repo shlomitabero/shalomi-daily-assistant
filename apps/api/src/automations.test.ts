@@ -2070,6 +2070,168 @@ test("runAutomationsForRecordChange rejects (records failed, never calls fetch) 
   assert.equal(after.lastStatus, "failed");
 });
 
+/**
+ * Round 1076: mirrors whatsappWeb.test.ts's own round-794 test for
+ * sendMessage's sendQueue (and this round's own identical fix ported to
+ * email.ts in round 1073) -- EntityPanel.tsx's bulk-update "Apply to N"
+ * can fire many concurrent PATCH requests, each independently triggering
+ * a matching webhook automation rule pointed at the SAME destination URL
+ * (e.g. the same Slack/Zapier endpoint), all calling fetch at once.
+ * Before this round, nothing serialized them -- they all raced the
+ * destination's own API in the same instant, a real burst pattern that
+ * routinely exceeds a webhook destination's own rate limit (Slack's
+ * Incoming Webhooks allow roughly one message per second per channel) and
+ * comes back 429/5xx, silently dropping the notification (a record-
+ * triggered rule gets exactly one delivery attempt, per round 971's own
+ * doc comment). Uses fireScheduledRule directly (rather than
+ * runAutomationsForRecordChange, whose own rule loop already awaits each
+ * rule sequentially) to fire multiple INDEPENDENT rules concurrently,
+ * mirroring the real concurrency shape -- N separate requests, each
+ * firing its own automation check. The fake fetch here holds its own
+ * response open for a few milliseconds (unlike every other webhook test
+ * in this file, which resolves instantly and so could never actually
+ * observe an overlap) so a real concurrency violation would be caught
+ * instead of coincidentally passing.
+ */
+test("fireScheduledRule's webhook action serializes concurrent sends to the SAME destination URL so it never sees two requests in flight at once", async () => {
+  const { db, project } = setupProject();
+  const makeRule = (messageTemplate: string) =>
+    insertAutomationRule(db, {
+      projectId: project.id,
+      entityName: "Order",
+      trigger: "schedule",
+      scheduleTimeUtc: "09:00",
+      actionType: "webhook",
+      webhookUrl: "https://hooks.example.com/forge",
+      toMode: "static",
+      messageTemplate,
+    });
+  const ruleA = makeRule("one");
+  const ruleB = makeRule("two");
+  const ruleC = makeRule("three");
+
+  let active = 0;
+  let maxActive = 0;
+  const order: string[] = [];
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = (async (_url: string, init?: RequestInit) => {
+    active++;
+    maxActive = Math.max(maxActive, active);
+    await new Promise((resolve) => setTimeout(resolve, 5));
+    order.push(JSON.parse(init!.body as string).message);
+    active--;
+    return new Response(null, { status: 200 });
+  }) as typeof fetch;
+  try {
+    await Promise.all([
+      fireScheduledRule(db, {} as WhatsAppWebManager, UNUSED_EMAIL_SENDER, project, ruleA),
+      fireScheduledRule(db, {} as WhatsAppWebManager, UNUSED_EMAIL_SENDER, project, ruleB),
+      fireScheduledRule(db, {} as WhatsAppWebManager, UNUSED_EMAIL_SENDER, project, ruleC),
+    ]);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+
+  assert.equal(maxActive, 1, "the destination URL must never see two webhook requests in flight at the same time");
+  assert.deepEqual(order, ["one", "two", "three"], "sends must go out in call order, one at a time, not interleaved");
+});
+
+/**
+ * Same mechanism, the other half: serializing sends for ONE destination
+ * URL must never block a completely unrelated destination's own sends
+ * behind it -- webhookSendQueue is keyed by webhookUrl precisely so two
+ * rules pointed at different destinations stay fully independent, the
+ * same reasoning whatsappWeb.test.ts's own per-project independence test
+ * already covers for WhatsApp.
+ */
+test("fireScheduledRule's webhook action for one destination URL does not wait behind a slow in-flight send for a different destination URL", async () => {
+  const { db, project } = setupProject();
+  const slowRule = insertAutomationRule(db, {
+    projectId: project.id,
+    entityName: "Order",
+    trigger: "schedule",
+    scheduleTimeUtc: "09:00",
+    actionType: "webhook",
+    webhookUrl: "https://hooks.example.com/slow",
+    toMode: "static",
+    messageTemplate: "slow",
+  });
+  const fastRule = insertAutomationRule(db, {
+    projectId: project.id,
+    entityName: "Order",
+    trigger: "schedule",
+    scheduleTimeUtc: "09:00",
+    actionType: "webhook",
+    webhookUrl: "https://hooks.example.com/fast",
+    toMode: "static",
+    messageTemplate: "fast",
+  });
+
+  const order: string[] = [];
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = (async (url: string) => {
+    if (url === "https://hooks.example.com/slow") {
+      await new Promise((resolve) => setTimeout(resolve, 50));
+    }
+    order.push(url);
+    return new Response(null, { status: 200 });
+  }) as typeof fetch;
+  try {
+    await Promise.all([
+      fireScheduledRule(db, {} as WhatsAppWebManager, UNUSED_EMAIL_SENDER, project, slowRule),
+      fireScheduledRule(db, {} as WhatsAppWebManager, UNUSED_EMAIL_SENDER, project, fastRule),
+    ]);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+
+  assert.deepEqual(order, ["https://hooks.example.com/fast", "https://hooks.example.com/slow"], "the fast destination must complete first, never waiting behind the slow one");
+});
+
+/**
+ * A failed send (the destination returning a non-2xx) must not jam the
+ * queue for that URL -- the next queued send to the SAME URL still goes
+ * out, mirroring whatsappWeb.ts's own identical "a failed send doesn't
+ * block the queue" guarantee (the `.catch(() => {})` on the queue-
+ * advancing chain, distinct from the rejection/failed-run recording the
+ * failed call's own caller still sees).
+ */
+test("a failed webhook send to a URL still records failed for its own rule, but does not block the next queued send to the SAME URL", async () => {
+  const { db, project } = setupProject();
+  const makeRule = (messageTemplate: string) =>
+    insertAutomationRule(db, {
+      projectId: project.id,
+      entityName: "Order",
+      trigger: "schedule",
+      scheduleTimeUtc: "09:00",
+      actionType: "webhook",
+      webhookUrl: "https://hooks.example.com/forge",
+      toMode: "static",
+      messageTemplate,
+    });
+  const ruleA = makeRule("one");
+  const ruleB = makeRule("two");
+
+  let call = 0;
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = (async () => {
+    call++;
+    if (call === 1) return new Response(null, { status: 500 });
+    return new Response(null, { status: 200 });
+  }) as typeof fetch;
+  try {
+    await Promise.all([
+      fireScheduledRule(db, {} as WhatsAppWebManager, UNUSED_EMAIL_SENDER, project, ruleA),
+      fireScheduledRule(db, {} as WhatsAppWebManager, UNUSED_EMAIL_SENDER, project, ruleB),
+    ]);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+
+  assert.equal(getAutomationRule(db, project.id, ruleA.id)!.lastStatus, "failed");
+  assert.equal(getAutomationRule(db, project.id, ruleB.id)!.lastStatus, "sent", "the second rule's own send to the same URL must still go through, not be jammed by the first one's failure");
+});
+
 test("fireScheduledRule's webhook action sends messageTemplate verbatim with a null record/entity in the payload (there's no triggering record)", async () => {
   const { db, project } = setupProject();
   const rule = insertAutomationRule(db, {
