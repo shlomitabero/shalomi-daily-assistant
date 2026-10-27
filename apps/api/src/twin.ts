@@ -592,7 +592,111 @@ function computeEnumDistributionObservations(
   return observations;
 }
 
-export function computeBusinessTwin(db: ForgeDatabase, project: Project): BusinessTwin {
+const DATE_FORMAT = /^(\d{4})-(\d{2})-(\d{2})$/;
+
+/** Mirrors entityFormatting.ts's own parseFieldDate -- local-midnight construction so a date string parses the same regardless of which timezone this server process happens to run in. */
+function parseFieldDate(raw: string): Date {
+  const match = DATE_FORMAT.exec(raw);
+  if (match) {
+    const [, yearStr, monthStr, dayStr] = match;
+    return new Date(Number(yearStr), Number(monthStr) - 1, Number(dayStr));
+  }
+  return new Date(raw);
+}
+
+/**
+ * Mirrors entityFormatting.ts's own isDeadlineFieldName -- a date field only
+ * reads as a deadline a record can be "overdue" against if its own name
+ * says so (a past dateOfBirth/joinedDate/shipDate is normal, not overdue).
+ * Duplicated here (rather than imported across the apps/web <-> apps/api
+ * boundary) the same way calendarFeed.ts already duplicates calendarIcs.ts's
+ * own pure helpers, and displayField.ts/codegen.ts each keep their own copy
+ * of parseFieldDate -- an established convention in this codebase for a
+ * small, pure, cross-package-reused heuristic.
+ */
+function isDeadlineFieldName(fieldName: string): boolean {
+  const lower = fieldName.toLowerCase();
+  return lower.includes("due") || lower.includes("deadline");
+}
+
+/**
+ * The `date` counterpart to computeNumericAggregateObservations/
+ * computeEnumDistributionObservations above -- the same invisible-field-
+ * type gap, for deadline fields instead of money or status. Every other
+ * observation builder in this file reads number/enum/boolean/relation/the
+ * display field/createdAt, but never a user-declared `date` field (e.g.
+ * Invoice.dueDate, Task.deadline, Claim.deadline -- all seeded in
+ * domainEntities.ts), even though entityFormatting.ts's own
+ * isDeadlineFieldName/getDateUrgency already exist and are already used
+ * to flag an overdue date red in the table/board view -- this is the one
+ * place in the app that classification was never surfaced as a genuine,
+ * data-derived fact. Only a field whose NAME says it's a deadline counts
+ * (a past "shipDate"/"joinedDate" isn't overdue, it's just history) --
+ * same restriction isDeadlineFieldName's own doc comment explains.
+ * Skipped entirely when no record has a real overdue value for the field,
+ * the same "nothing to report yet" guard every sibling observation above
+ * already uses.
+ */
+function computeOverdueObservations(
+  recordsByEntity: Map<string, EntityRecord[]>,
+  project: Project,
+  hebrew: boolean,
+  entityLabels: Map<string, number>,
+  today: Date = new Date(),
+): { text: string; entityName: string; entityLabel: string; fieldName: string; fieldLabel: string; overdueCount: number; recordCount: number }[] {
+  const observations: ReturnType<typeof computeOverdueObservations> = [];
+  const startOfToday = new Date(today.getFullYear(), today.getMonth(), today.getDate());
+  for (const entity of project.spec.entities) {
+    const deadlineFields = entity.fields.filter((f) => f.type === "date" && isDeadlineFieldName(f.name));
+    if (deadlineFields.length === 0) continue;
+    const records = recordsByEntity.get(entity.name) ?? [];
+    if (records.length === 0) continue;
+
+    const entityLabel = entityDisplayLabel(entity, entityLabels);
+    // Same label-collision gap as computeNumericAggregateObservations/
+    // computeEnumDistributionObservations above -- two deadline fields on
+    // the same entity (e.g. "dueDate" and "renewalDeadline" both renamed
+    // to "Deadline") would otherwise produce two identical-looking lines
+    // with no way to tell which real field either one is about.
+    const labelOccurrences = new Map<string, number>();
+    for (const field of deadlineFields) {
+      const label = field.label ?? field.name;
+      labelOccurrences.set(label, (labelOccurrences.get(label) ?? 0) + 1);
+    }
+
+    for (const field of deadlineFields) {
+      let recordCount = 0;
+      let overdueCount = 0;
+      for (const record of records) {
+        const raw = record[field.name];
+        if (typeof raw !== "string" || raw === "") continue;
+        const date = parseFieldDate(raw);
+        if (Number.isNaN(date.getTime())) continue;
+        recordCount++;
+        if (date.getTime() < startOfToday.getTime()) overdueCount++;
+      }
+      if (overdueCount === 0) continue;
+
+      const fieldLabel = field.label ?? field.name;
+      const ambiguous = (labelOccurrences.get(fieldLabel) ?? 0) > 1;
+      const fieldSuffix = ambiguous ? ` (${field.name})` : "";
+      observations.push({
+        text: hebrew
+          ? `${overdueCount} מ-${recordCount} רשומות ב"${entityLabel}" עברו את התאריך ב"${fieldLabel}"${fieldSuffix}.`
+          : `${overdueCount} of ${recordCount} records in "${entityLabel}" have an overdue "${fieldLabel}"${fieldSuffix}.`,
+        entityName: entity.name,
+        entityLabel,
+        fieldName: field.name,
+        fieldLabel,
+        overdueCount,
+        recordCount,
+      });
+    }
+  }
+  return observations;
+}
+
+export function computeBusinessTwin(db: ForgeDatabase, project: Project, today: Date = new Date()): BusinessTwin {
   const hebrew = isHebrewText(project.description);
 
   // Every observation below (relation coverage, the relation hub, duplicate
@@ -673,7 +777,7 @@ export function computeBusinessTwin(db: ForgeDatabase, project: Project): Busine
     jumpableObservations.push(...computeDuplicateObservations(recordsByEntity, project, hebrew, entityLabels));
     numericStats.push(...computeNumericAggregateObservations(recordsByEntity, project, hebrew, entityLabels));
     distributions.push(...computeEnumDistributionObservations(recordsByEntity, project, hebrew, entityLabels));
-    jumpableObservations.push(...numericStats, ...distributions);
+    jumpableObservations.push(...numericStats, ...distributions, ...computeOverdueObservations(recordsByEntity, project, hebrew, entityLabels, today));
     const activity = computeActivityObservations(recordsByEntity, project, hebrew, entityLabels);
     observations.push(...activity.observations);
     jumpableObservations.push(...activity.jumpableObservations);

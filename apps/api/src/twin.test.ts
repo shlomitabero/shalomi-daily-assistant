@@ -1491,3 +1491,174 @@ test("computeBusinessTwin produces fully correct observations across every categ
   assert.ok(twin.mostActive);
   assert.equal(twin.mostActive!.count, RECORD_COUNT);
 });
+
+/**
+ * Regression test for a real bug found by round 1078's Explore survey: the
+ * same "invisible field type" gap this file's own doc comment already
+ * narrates closing for number (computeNumericAggregateObservations) and
+ * enum/boolean (computeEnumDistributionObservations), but for `date`
+ * fields -- despite entityFormatting.ts's own isDeadlineFieldName/
+ * getDateUrgency already existing and already driving real overdue/
+ * due-soon cell styling in EntityPanel.tsx's table/board view, nothing in
+ * this file ever surfaced an overdue deadline as a genuine, data-derived
+ * observation. A fixed `today` is passed to computeBusinessTwin's new
+ * optional 3rd parameter throughout, mirroring entityFormatting.test.ts's
+ * own "classifies a date relative to a fixed reference day, not real
+ * wall-clock time" convention for getDateUrgency -- these tests must never
+ * depend on which real day they happen to run on.
+ */
+test("computeBusinessTwin reports an overdue deadline-named date field", () => {
+  const orderProject: Project = {
+    ...project,
+    description: "An online store with orders",
+    spec: {
+      ...project.spec,
+      entities: [
+        {
+          name: "Order",
+          label: "Orders",
+          fields: [
+            { name: "customer", type: "text", required: true },
+            { name: "dueDate", label: "Due date", type: "date", required: false },
+          ],
+        },
+      ],
+    },
+  };
+  const db = openDatabase(":memory:");
+  applyMigrations(db, orderProject.id, orderProject.spec);
+  const order = orderProject.spec.entities[0];
+  const today = new Date(2026, 0, 15);
+  insertRecord(db, orderProject.id, order, { customer: "Dana", dueDate: "2026-01-01" }); // overdue
+  insertRecord(db, orderProject.id, order, { customer: "Yossi", dueDate: "2026-01-10" }); // overdue
+  insertRecord(db, orderProject.id, order, { customer: "Noa", dueDate: "2026-02-01" }); // not yet due
+
+  const twin = computeBusinessTwin(db, orderProject, today);
+  const overdue = twin.jumpableObservations.find((o) => o.text.includes("Due date"));
+  assert.ok(overdue, `expected an overdue-deadline observation, got: ${JSON.stringify(twin.jumpableObservations)}`);
+  assert.equal(overdue!.entityName, "Order");
+  assert.match(overdue!.text, /2 of 3/);
+});
+
+test("computeBusinessTwin does not flag a past date field whose name isn't deadline-shaped", () => {
+  const orderProject: Project = {
+    ...project,
+    description: "An online store with orders",
+    spec: {
+      ...project.spec,
+      entities: [
+        {
+          name: "Order",
+          label: "Orders",
+          fields: [
+            { name: "customer", type: "text", required: true },
+            { name: "shipDate", label: "Ship date", type: "date", required: false },
+          ],
+        },
+      ],
+    },
+  };
+  const db = openDatabase(":memory:");
+  applyMigrations(db, orderProject.id, orderProject.spec);
+  const order = orderProject.spec.entities[0];
+  const today = new Date(2026, 0, 15);
+  // Every shipDate is in the past relative to today, but shipDate isn't a deadline -- a past ship date is normal history, not overdue.
+  insertRecord(db, orderProject.id, order, { customer: "Dana", shipDate: "2026-01-01" });
+  insertRecord(db, orderProject.id, order, { customer: "Yossi", shipDate: "2026-01-05" });
+
+  const twin = computeBusinessTwin(db, orderProject, today);
+  assert.ok(!twin.jumpableObservations.some((o) => o.text.includes("Ship date")));
+});
+
+test("computeBusinessTwin stays silent about a deadline field when nothing is actually overdue yet", () => {
+  const orderProject: Project = {
+    ...project,
+    description: "An online store with orders",
+    spec: {
+      ...project.spec,
+      entities: [
+        {
+          name: "Order",
+          label: "Orders",
+          fields: [
+            { name: "customer", type: "text", required: true },
+            { name: "deadline", label: "Deadline", type: "date", required: false },
+          ],
+        },
+      ],
+    },
+  };
+  const db = openDatabase(":memory:");
+  applyMigrations(db, orderProject.id, orderProject.spec);
+  const order = orderProject.spec.entities[0];
+  const today = new Date(2026, 0, 15);
+  insertRecord(db, orderProject.id, order, { customer: "Dana", deadline: "2026-02-01" });
+  insertRecord(db, orderProject.id, order, { customer: "Yossi", deadline: "2026-03-01" });
+
+  const twin = computeBusinessTwin(db, orderProject, today);
+  assert.ok(!twin.jumpableObservations.some((o) => o.text.includes("Deadline")));
+});
+
+/**
+ * Regression test for the same label-collision gap already closed above for
+ * number/enum fields, now for two deadline fields sharing a label.
+ */
+test("computeBusinessTwin's overdue-deadline observations disambiguate two deadline fields on the same entity that share a label", () => {
+  const orderProject: Project = {
+    ...project,
+    description: "An online store with orders",
+    spec: {
+      ...project.spec,
+      entities: [
+        {
+          name: "Order",
+          label: "Orders",
+          fields: [
+            { name: "customer", type: "text", required: true },
+            { name: "dueDate", label: "Deadline", type: "date", required: false },
+            { name: "renewalDeadline", label: "Deadline", type: "date", required: false },
+          ],
+        },
+      ],
+    },
+  };
+  const db = openDatabase(":memory:");
+  applyMigrations(db, orderProject.id, orderProject.spec);
+  const order = orderProject.spec.entities[0];
+  const today = new Date(2026, 0, 15);
+  insertRecord(db, orderProject.id, order, { customer: "Dana", dueDate: "2026-01-01", renewalDeadline: "2026-01-02" });
+
+  const twin = computeBusinessTwin(db, orderProject, today);
+  const deadlineObservations = twin.jumpableObservations.filter((o) => o.text.includes("Deadline"));
+  assert.equal(deadlineObservations.length, 2, `expected one observation per ambiguous deadline field, got: ${JSON.stringify(deadlineObservations)}`);
+  assert.ok(deadlineObservations.some((o) => o.text.includes('"Deadline" (dueDate)')));
+  assert.ok(deadlineObservations.some((o) => o.text.includes('"Deadline" (renewalDeadline)')));
+});
+
+test("computeBusinessTwin phrases the overdue-deadline observation in Hebrew for a Hebrew description", () => {
+  const orderProject: Project = {
+    ...project,
+    description: "חנות מקוונת עם הזמנות",
+    spec: {
+      ...project.spec,
+      entities: [
+        {
+          name: "Order",
+          label: "הזמנות",
+          fields: [
+            { name: "customer", type: "text", required: true },
+            { name: "dueDate", label: "תאריך יעד", type: "date", required: false },
+          ],
+        },
+      ],
+    },
+  };
+  const db = openDatabase(":memory:");
+  applyMigrations(db, orderProject.id, orderProject.spec);
+  const order = orderProject.spec.entities[0];
+  const today = new Date(2026, 0, 15);
+  insertRecord(db, orderProject.id, order, { customer: "דנה", dueDate: "2026-01-01" });
+
+  const twin = computeBusinessTwin(db, orderProject, today);
+  assert.ok(twin.jumpableObservations.some((o) => o.text.includes("תאריך יעד") && o.text.includes("עברו את התאריך")));
+});
