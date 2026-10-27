@@ -18,7 +18,15 @@ import {
   listRecords,
   openDatabase,
 } from "@forge/db";
-import { carryForwardLabels, cleanupFileFieldsRetypedAway, describeImpactHazards, runBuildPipeline, runQaChecks, runSecurityScan } from "./pipeline.js";
+import {
+  carryForwardLabels,
+  cleanupFileFieldsRetypedAway,
+  computeImpact,
+  describeImpactHazards,
+  runBuildPipeline,
+  runQaChecks,
+  runSecurityScan,
+} from "./pipeline.js";
 
 const brokenSpec: ProductSpec = {
   summary: "test",
@@ -1895,6 +1903,58 @@ test("carryForwardLabels keeps a surviving entity's/field's own prior label acro
   const customer = nextSpec.entities[0];
   assert.equal(customer.label, "Clients", "a case-only renamed entity must still keep its own prior label");
   assert.equal(customer.fields[0].label, "Email Address", "a case-only renamed field must still keep its own prior label");
+});
+
+/**
+ * Round 1065: mirrors checkpointDiff.ts's own round-954 fix for this exact
+ * mechanism one screen over -- computeImpact's own allEntitiesByName map
+ * (used to feed entityLabelOccurrences/entityDisplayLabel) was still keyed
+ * by exact entity name, never given the lowercased-fallback fix round 947
+ * already gave this same function's OTHER two maps on this line
+ * (previousEntitiesByLowerName) and three lines down (nextEntityNamesLower).
+ * carryForwardLabels (called first in the real pipeline, same as here)
+ * copies the old entity's own label onto a case-renamed survivor verbatim,
+ * so previousSpec's "customer" and nextSpec's "Customer" end up sharing
+ * the identical label string -- exact-keying then counted that one shared
+ * label TWICE (two separate map entries) and appended a false "(Customer)"
+ * disambiguation suffix to an entity that was never actually ambiguous
+ * with anything, streamed straight into the live build/refine progress UI
+ * via architectEvent's own "X existing entities gaining fields" message.
+ */
+test("computeImpact never appends a false disambiguation suffix to an entity's label when it was only renamed by letter case, even though carryForwardLabels made the old and new entity share the exact same label string", () => {
+  const previousSpec: ProductSpec = {
+    summary: "test",
+    personas: [],
+    roles: ["Admin"],
+    screens: [],
+    assumptions: [],
+    openQuestions: [],
+    entities: [
+      { name: "customer", label: "Clients", fields: [{ name: "name", type: "text", required: true }] },
+    ],
+  };
+  const nextSpec: ProductSpec = {
+    ...previousSpec,
+    // Simulates a fresh regeneration that also happens to re-case the
+    // entity's own name -- carryForwardLabels below is what actually
+    // gives it back previousSpec's own "Clients" label, the same as the
+    // real pipeline (runBuildPipeline calls carryForwardLabels before
+    // computeImpact on every refine).
+    entities: [
+      { name: "Customer", fields: [{ name: "name", type: "text", required: true }, { name: "notes", type: "longtext", required: false }] },
+    ],
+  };
+
+  carryForwardLabels(previousSpec, nextSpec);
+  assert.equal(nextSpec.entities[0].label, "Clients", "sanity check: carryForwardLabels must have carried the label forward across the case rename");
+
+  const impact = computeImpact(previousSpec, nextSpec);
+  assert.equal(impact.changedEntities.length, 1, "the entity must be reported as changed (it gained a genuinely new field)");
+  assert.equal(
+    impact.changedEntities[0].label,
+    "Clients",
+    "a case-only renamed entity sharing its own carried-forward label with its own prior self must never get a '(Customer)' disambiguation suffix appended",
+  );
 });
 
 /**

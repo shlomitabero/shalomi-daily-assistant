@@ -244,9 +244,22 @@ export function computeImpact(previousSpec: ProductSpec | undefined, nextSpec: P
   // above), so a removed entity's label is checked against a surviving
   // same-labeled entity too, not just whichever of new/changed/removed
   // list it lands in.
+  // Round 1065: keyed by LOWERCASE name (not exact name), mirroring
+  // checkpointDiff.ts's own round-954 fix for this exact mechanism one
+  // screen over. A case-only entity rename (e.g. "customer" ->
+  // "Customer") is, per migrate.ts's own hardening, a true no-op -- and
+  // carryForwardLabels (just above in this same pipeline, called before
+  // this function) copies the old entity's label onto the renamed one
+  // verbatim, so previousSpec's "customer" and nextSpec's "Customer" end
+  // up sharing the identical label string. Keyed by exact name, both
+  // survived as two separate map entries, so entityLabelOccurrences
+  // wrongly counted the shared label twice and appended a false
+  // "(Customer)" disambiguation suffix -- streamed straight into the
+  // live build/refine progress UI -- to an entity that was never
+  // actually ambiguous with anything.
   const allEntitiesByName = new Map<string, Entity>();
-  for (const e of previousSpec?.entities ?? []) allEntitiesByName.set(e.name, e);
-  for (const e of nextSpec.entities) allEntitiesByName.set(e.name, e);
+  for (const e of previousSpec?.entities ?? []) allEntitiesByName.set(e.name.toLowerCase(), e);
+  for (const e of nextSpec.entities) allEntitiesByName.set(e.name.toLowerCase(), e);
   const entityLabels = entityLabelOccurrences(Array.from(allEntitiesByName.values()));
   const newEntities: { name: string; label: string }[] = [];
   const changedEntities: {
