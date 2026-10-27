@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { AgentStepEvent, Field, OpenQuestion, Project, User } from "@forge/shared";
 import {
   answerQuestions,
@@ -471,6 +471,36 @@ function AppContent() {
   // for the project already open, since nothing in this session can change
   // the signed-in user's own role on it.
   const [myRole, setMyRole] = useState<"owner" | CollaboratorRole>("owner");
+  /**
+   * Round 1063: the other half of round 1059's own deliberately-deferred
+   * gap. Round 1059 cross-gated AddFieldForm against its own entity's
+   * sibling FieldChips (one entity's whole edit surface), but explicitly
+   * left this one level up: AddEntityForm vs. every EntitySummaryItem's
+   * own remove/rename, since closing it meant lifting busy state up
+   * through this very component. `entityBusyMap` collects every mounted
+   * EntitySummaryItem's own anyChildOrSelfBusy state (reported up via its
+   * new onBusyChange prop below) and `addEntityBusy` tracks
+   * AddEntityForm's; folded together into one `anyEntityOrAddBusy` flag
+   * fed back as `siblingActionBusy` into every EntitySummaryItem and as
+   * `disabled` into AddEntityForm -- mirroring EntitySummaryItem's own
+   * fieldBusyMap/addFieldBusy pattern exactly, one level up. Closes the
+   * same response-ordering resurrection race rounds 1027/1059 already
+   * closed for fields: removing entity A while adding a brand-new entity B
+   * no longer races a concurrent full-project-replace.
+   */
+  const [entityBusyMap, setEntityBusyMap] = useState<Record<string, boolean>>({});
+  const handleEntityBusyChange = useCallback((entityName: string, isEntityBusy: boolean) => {
+    setEntityBusyMap((prev) => {
+      if (Boolean(prev[entityName]) === isEntityBusy) return prev;
+      if (!isEntityBusy) {
+        const { [entityName]: _removed, ...rest } = prev;
+        return rest;
+      }
+      return { ...prev, [entityName]: true };
+    });
+  }, []);
+  const [addEntityBusy, setAddEntityBusy] = useState(false);
+  const anyEntityOrAddBusy = addEntityBusy || Object.keys(entityBusyMap).length > 0;
   // Which spec provider actually built the CURRENT draft's spec -- null for
   // a re-opened existing project (createProject's own response is the only
   // source of this, and it isn't stored on the project itself, so there's
@@ -2251,12 +2281,20 @@ function AppContent() {
                 onRenamed={setProject}
                 onRemoved={setProject}
                 readOnly={myRole === "viewer"}
+                siblingActionBusy={anyEntityOrAddBusy}
+                onBusyChange={handleEntityBusyChange}
               />
             ))}
             {project.spec.entities.some((e) => e.fields.some((f) => f.required)) && (
               <p className="muted small">{t("spec.entities.requiredHint")}</p>
             )}
-            <AddEntityForm projectId={project.id} onAdded={setProject} readOnly={myRole === "viewer"} />
+            <AddEntityForm
+              projectId={project.id}
+              onAdded={setProject}
+              readOnly={myRole === "viewer"}
+              disabled={anyEntityOrAddBusy}
+              onBusyChange={setAddEntityBusy}
+            />
           </section>
 
           <section>

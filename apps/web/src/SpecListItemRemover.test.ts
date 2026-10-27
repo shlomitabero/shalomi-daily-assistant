@@ -2426,6 +2426,177 @@ test("a sibling field chip's own controls are disabled while the add-field form'
 });
 
 /**
+ * Round 1063: the entity-level counterpart to the two tests just above --
+ * round 1059 deliberately deferred cross-gating AddEntityForm against
+ * EntitySummaryItem (a bigger lift, crossing into App.tsx), closed this
+ * round. App.tsx itself is too large to practically render whole in this
+ * test file, so these tests confirm the new plumbing each component now
+ * exposes (siblingActionBusy/onBusyChange on EntitySummaryItem,
+ * disabled/onBusyChange on AddEntityForm) -- the same props App.tsx's own
+ * new entityBusyMap/addEntityBusy aggregation (a direct structural copy
+ * of EntitySummaryItem's own already-tested fieldBusyMap/addFieldBusy
+ * pattern) wires together.
+ */
+test("EntitySummaryItem's own remove button and rename are disabled while siblingActionBusy is true, and re-enable once it clears", async () => {
+  await withJsdom(async () => {
+    const entity = baseProject.spec.entities[0];
+    const renderWithSiblingBusy = (siblingActionBusy: boolean) =>
+      render(
+        React.createElement(
+          ThemeProvider,
+          null,
+          React.createElement(
+            LanguageProvider,
+            null,
+            React.createElement(EntitySummaryItem, {
+              entity,
+              allEntities: baseProject.spec.entities,
+              fieldsSummary: "name *",
+              projectId: "proj1",
+              canRemove: true,
+              onRenamed: () => {},
+              onRemoved: () => {},
+              siblingActionBusy,
+            }),
+          ),
+        ),
+      );
+
+    renderWithSiblingBusy(true);
+    assert.equal(
+      (document.querySelector(".entity-summary-remove") as HTMLButtonElement).disabled,
+      true,
+      "the remove button must be disabled while a sibling entity's own action (or AddEntityForm) is in flight",
+    );
+    fireEvent.click(document.querySelector(".entity-summary-label") as HTMLElement);
+    assert.equal(
+      document.querySelector(".entity-summary-rename-edit") === null,
+      true,
+      "clicking the label must not open the rename editor while siblingActionBusy is true",
+    );
+    cleanup();
+
+    renderWithSiblingBusy(false);
+    assert.equal(
+      (document.querySelector(".entity-summary-remove") as HTMLButtonElement).disabled,
+      false,
+      "the remove button must re-enable once siblingActionBusy clears",
+    );
+  });
+});
+
+test("EntitySummaryItem reports its own busy state up via onBusyChange while its remove is in flight, and clears its entry on unmount", async () => {
+  await withJsdom(async () => {
+    const originalFetch = globalThis.fetch;
+    let resolveRemove!: (value: Response) => void;
+    const removeHeld = new Promise<Response>((resolve) => {
+      resolveRemove = resolve;
+    });
+    globalThis.fetch = (async (input: string, init?: RequestInit) => {
+      const method = init?.method ?? "GET";
+      if (method === "DELETE" && input === "/api/projects/proj1/entities/Customer") return removeHeld;
+      throw new Error(`unexpected request ${method} ${input}`);
+    }) as typeof fetch;
+
+    const busyCalls: Array<[string, boolean]> = [];
+    try {
+      const { unmount } = render(
+        React.createElement(
+          ThemeProvider,
+          null,
+          React.createElement(
+            LanguageProvider,
+            null,
+            React.createElement(EntitySummaryItem, {
+              entity: baseProject.spec.entities[0],
+              allEntities: baseProject.spec.entities,
+              fieldsSummary: "name *",
+              projectId: "proj1",
+              canRemove: true,
+              onRenamed: () => {},
+              onRemoved: () => {},
+              onBusyChange: (entityName: string, busy: boolean) => busyCalls.push([entityName, busy]),
+            }),
+          ),
+        ),
+      );
+
+      fireEvent.click(document.querySelector(".entity-summary-remove") as HTMLButtonElement);
+      await waitForCondition(() => busyCalls.some(([name, busy]) => name === "Customer" && busy === true));
+
+      resolveRemove(new Response(JSON.stringify({ project: baseProject }), { status: 200, headers: { "content-type": "application/json" } }));
+      await waitForCondition(() => busyCalls.some(([name, busy]) => name === "Customer" && busy === false));
+
+      busyCalls.length = 0;
+      unmount();
+      assert.deepEqual(busyCalls, [["Customer", false]], "unmounting must report this entity's own entry as no longer busy, so a removed entity never lingers in the parent's aggregate");
+    } finally {
+      resolveRemove!(new Response(JSON.stringify({ project: baseProject }), { status: 200, headers: { "content-type": "application/json" } }));
+      globalThis.fetch = originalFetch;
+    }
+  });
+});
+
+test("AddEntityForm's own input and submit button are disabled while its disabled prop is true, regardless of its own local busy state", async () => {
+  await withJsdom(async () => {
+    render(
+      React.createElement(
+        ThemeProvider,
+        null,
+        React.createElement(
+          LanguageProvider,
+          null,
+          React.createElement(AddEntityForm, { projectId: "proj1", onAdded: () => {}, disabled: true }),
+        ),
+      ),
+    );
+    fireEvent.change(document.querySelector(".spec-add-item-form input") as HTMLInputElement, { target: { value: "Order" } });
+    assert.equal((document.querySelector(".spec-add-item-form input") as HTMLInputElement).disabled, true, "the input must be disabled while the disabled prop is true");
+    assert.equal((document.querySelector(".spec-add-item-form button") as HTMLButtonElement).disabled, true, "the submit button must be disabled while the disabled prop is true");
+  });
+});
+
+test("AddEntityForm reports its own busy state up via onBusyChange while its own add request is in flight", async () => {
+  await withJsdom(async () => {
+    const originalFetch = globalThis.fetch;
+    let resolveAdd!: (value: Response) => void;
+    const addHeld = new Promise<Response>((resolve) => {
+      resolveAdd = resolve;
+    });
+    globalThis.fetch = (async (input: string, init?: RequestInit) => {
+      const method = init?.method ?? "GET";
+      if (method === "POST" && input === "/api/projects/proj1/entities") return addHeld;
+      throw new Error(`unexpected request ${method} ${input}`);
+    }) as typeof fetch;
+
+    const busyCalls: boolean[] = [];
+    try {
+      render(
+        React.createElement(
+          ThemeProvider,
+          null,
+          React.createElement(
+            LanguageProvider,
+            null,
+            React.createElement(AddEntityForm, { projectId: "proj1", onAdded: () => {}, onBusyChange: (busy: boolean) => busyCalls.push(busy) }),
+          ),
+        ),
+      );
+
+      fireEvent.change(document.querySelector(".spec-add-item-form input") as HTMLInputElement, { target: { value: "Order" } });
+      fireEvent.click(document.querySelector(".spec-add-item-form button") as HTMLButtonElement);
+
+      await waitForCondition(() => busyCalls.includes(true));
+      resolveAdd(new Response(JSON.stringify({ project: baseProject }), { status: 200, headers: { "content-type": "application/json" } }));
+      await waitForCondition(() => busyCalls.length >= 2 && busyCalls[busyCalls.length - 1] === false);
+    } finally {
+      resolveAdd!(new Response(JSON.stringify({ project: baseProject }), { status: 200, headers: { "content-type": "application/json" } }));
+      globalThis.fetch = originalFetch;
+    }
+  });
+});
+
+/**
  * Round 696: a viewer collaborator can genuinely land on this exact spec
  * review screen (App.tsx routes any unbuilt project straight to "spec"
  * regardless of role, and a collaborator can be invited before build), and

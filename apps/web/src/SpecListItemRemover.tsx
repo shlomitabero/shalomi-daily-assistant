@@ -453,6 +453,8 @@ export function EntitySummaryItem({
   onRenamed,
   onRemoved,
   readOnly = false,
+  siblingActionBusy = false,
+  onBusyChange,
 }: {
   entity: Entity;
   /** The project's full entity list -- threaded through to AddFieldForm below so a newly-added "relation" field can offer a real dropdown of valid targets (including this same entity, for a legitimate self-relation like "reports to"), rather than a free-text name with no way to tell a deliberate reference from a typo. */
@@ -465,6 +467,19 @@ export function EntitySummaryItem({
   onRemoved: (project: Project) => void;
   /** See RoleChip's own comment -- same gap, same fix. Threaded through to each FieldChip below and AddFieldForm is omitted entirely, the same way EntityPanel's own record form is hidden (not just disabled) for a read-only viewer. */
   readOnly?: boolean;
+  /** Round 1063: see this entity's own anyChildOrSelfBusy comment below --
+   * true while a SIBLING entity's own remove/rename (or AddEntityForm) is
+   * in flight, the other half of round 1059's own deliberately-deferred
+   * gap. Folded into anyChildOrSelfBusy so this entity's whole edit
+   * surface (itself, its fields, its add-field form) also waits on an
+   * unrelated entity's own in-flight action, the same way a field's own
+   * action already waits on a sibling field's. */
+  siblingActionBusy?: boolean;
+  /** Reports this entity's own anyChildOrSelfBusy state up to App.tsx,
+   * which folds every mounted EntitySummaryItem's own state into the same
+   * aggregate it feeds back via siblingActionBusy above and AddEntityForm's
+   * own disabled prop -- the other half of the same cross-gate. */
+  onBusyChange?: (entityName: string, busy: boolean) => void;
 }) {
   const { t } = useTranslation();
   const { busy, error, handleRemove, clearError } = useRemovableSpecItem(() => removeEntity(projectId, entity.name), onRemoved);
@@ -523,7 +538,27 @@ export function EntitySummaryItem({
     });
   }, []);
   const [addFieldBusy, setAddFieldBusy] = useState(false);
-  const anyChildOrSelfBusy = busy || rename.busy || addFieldBusy || Object.keys(fieldBusyMap).length > 0;
+  // Round 1063: now also ORs in siblingActionBusy -- see that prop's own
+  // comment above for why a DIFFERENT entity's action (or AddEntityForm)
+  // needs to disable this entity's whole edit surface too, not just this
+  // entity's own children against each other.
+  const anyChildOrSelfBusy = busy || rename.busy || addFieldBusy || Object.keys(fieldBusyMap).length > 0 || siblingActionBusy;
+
+  // Round 1063: reports this entity's own anyChildOrSelfBusy state (which
+  // already includes every one of its own children -- fields and
+  // AddFieldForm -- via the aggregation above) up to App.tsx on every
+  // change, keyed by this entity's own stable `name` (never changed by a
+  // label-only rename, same guarantee FieldChip's own identical reporting
+  // below relies on). A second effect, mount/unmount-only, clears this
+  // entity's own entry when it unmounts (the entity was removed) so a
+  // stale "busy" entry doesn't linger in App.tsx's aggregate forever.
+  useEffect(() => {
+    onBusyChange?.(entity.name, anyChildOrSelfBusy);
+  }, [entity.name, anyChildOrSelfBusy, onBusyChange]);
+  useEffect(() => {
+    return () => onBusyChange?.(entity.name, false);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [entity.name, onBusyChange]);
 
   /**
    * Round 932: see RoleChip's own handleStartRename -- same gap, same fix.
@@ -1149,17 +1184,40 @@ export function AddEntityForm({
   projectId,
   onAdded,
   readOnly = false,
+  disabled = false,
+  onBusyChange,
 }: {
   projectId: string;
   onAdded: (project: Project) => void;
   /** See AddRoleForm's own comment -- same gap, same fix. */
   readOnly?: boolean;
+  /** Round 1063: the other half of round 1059's own deliberately-deferred
+   * gap -- that round cross-gated AddFieldForm against its own entity's
+   * sibling FieldChips, but explicitly left this entity-level pairing
+   * (AddEntityForm vs. every EntitySummaryItem's own remove/rename) open
+   * since closing it means lifting busy state up through App.tsx. True
+   * while any entity's own remove/rename -- or a sibling field action
+   * underneath one -- is in flight; folded into this form's own local
+   * `busy` below so adding a new entity no longer races a concurrent
+   * entity removal/rename the same way round 1059 already closed one
+   * level down for fields. */
+  disabled?: boolean;
+  /** Reports this form's own busy state up to App.tsx, which folds it into
+   * the same aggregate it feeds back via each EntitySummaryItem's own
+   * siblingActionBusy prop -- the other half of the same cross-gate. */
+  onBusyChange?: (busy: boolean) => void;
 }) {
   const { t } = useTranslation();
   const { value, setValue, busy, error, handleSubmit } = useAddableSpecItem(
     (label) => addEntity(projectId, label),
     onAdded,
   );
+  const formDisabled = busy || disabled;
+
+  useEffect(() => {
+    onBusyChange?.(busy);
+  }, [busy, onBusyChange]);
+
   if (readOnly) return null;
   return (
     <form className="spec-add-item-form" onSubmit={handleSubmit}>
@@ -1169,9 +1227,9 @@ export function AddEntityForm({
         onChange={(e) => setValue(e.target.value)}
         placeholder={t("spec.entities.addPlaceholder")}
         aria-label={t("spec.entities.addPlaceholder")}
-        disabled={busy}
+        disabled={formDisabled}
       />
-      <button type="submit" className="secondary" disabled={busy || !value.trim()}>
+      <button type="submit" className="secondary" disabled={formDisabled || !value.trim()}>
         {t("spec.entities.add")}
       </button>
       {error && (
