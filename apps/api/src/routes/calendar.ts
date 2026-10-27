@@ -5,6 +5,7 @@ import { getCalendarFeedToken, listRecords } from "@forge/db";
 import { ProductSpecSchema, type Entity, type EntityRecord } from "@forge/shared";
 import { isHebrewText } from "@forge/spec-engine";
 import { buildCalendarFeedIcs, type RelatedRecordsByEntity } from "../calendarFeed.js";
+import { createRateLimiter } from "../auth/rateLimit.js";
 
 function tokenMatches(provided: string, stored: string): boolean {
   const providedBuf = Buffer.from(provided, "utf8");
@@ -41,8 +42,40 @@ function asyncRoute(fn: (req: Request, res: Response) => Promise<void> | void) {
 export function createCalendarFeedRouter(db: ForgeDatabase): Router {
   const router = Router();
 
+  /**
+   * Round 1070: this route does comparably heavy, fully-synchronous work
+   * per request to the /export, /backup, /twin routes that
+   * routes/projects.ts's own expensiveReadRateLimiter was added for in
+   * round 1053 (a
+   * JSON.parse+schema validation of the whole spec, a synchronous
+   * listRecords SELECT for the main entity plus every entity any relation
+   * field points at, then a full per-record ICS-formatting/escaping/
+   * line-folding pass) -- but round 1053's survey never looked at this
+   * file, a structurally separate router, so it was left with no
+   * volumetric throttle at all. Worse than the routes that fix covered:
+   * this one has no req.userId to key by in the first place (see this
+   * router's own top-level doc comment: it can never go through
+   * requireAuth), so anyone who was ever handed this project's
+   * calendar-subscribe URL can script a tight loop directly against it --
+   * no login, no account, and no requirement to still be a collaborator --
+   * stalling this app's one shared Node event loop for every other
+   * user/project too. Keyed by project+token together (the actual
+   * resource being hit), not just the project id alone, so a wrong guess
+   * against one project's feed can't exhaust a real subscriber's own
+   * budget for that same project. A real calendar app re-fetches this on
+   * its own schedule, typically every 15 minutes to a few hours, so this
+   * cap leaves generous headroom above any legitimate refresh cadence.
+   */
+  const calendarFeedRateLimiter = createRateLimiter({
+    windowMs: 15 * 60 * 1000,
+    max: 30,
+    keyGenerator: (req) => `${req.params.projectId}:${typeof req.query.token === "string" ? req.query.token : ""}`,
+    message: "Too many calendar feed requests. Please try again later.",
+  });
+
   router.get(
     "/public/calendar/:projectId/:entityName.ics",
+    calendarFeedRateLimiter,
     asyncRoute((req, res) => {
       const { projectId, entityName } = req.params;
       const provided = typeof req.query.token === "string" ? req.query.token : "";

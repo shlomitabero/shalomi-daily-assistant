@@ -14741,3 +14741,59 @@ test("POST /projects/:id/calendar-feed-token/regenerate is owner-only, with the 
     assert.equal(asOwner.status, 200, "the real owner must still be able to regenerate it");
   });
 });
+
+/**
+ * Round 1070: unlike every route expensiveReadRateLimiter covers (round
+ * 1053), this public feed route has no req.userId to throttle against at
+ * all -- anyone who was ever handed the subscribe URL can hit it directly,
+ * no login required. Confirms the 31st call against the SAME project+token
+ * within the window is rejected with 429, while a different project's own
+ * feed (a different key) is unaffected -- proves this is keyed per
+ * project+token, not a single global counter that would collaterally
+ * throttle every other subscriber's feed too.
+ */
+test("GET /public/calendar/:projectId/:entityName.ics is rate-limited per project+token: the 31st call is rejected with 429, while a different project's own feed is unaffected", async () => {
+  await withServer(async (baseUrl, db) => {
+    const email = `calendar-feed-rate-limit-${randomUUID()}@example.com`;
+    const token = await signup(baseUrl, email);
+    const user = findUserByEmail(db, email)!;
+    const spec: ProductSpec = {
+      summary: "test",
+      personas: [],
+      roles: ["Admin"],
+      entities: [{ name: "Appointment", fields: [{ name: "name", type: "text", required: true }, { name: "date", type: "date", required: true }] }],
+      screens: [],
+      assumptions: [],
+      openQuestions: [],
+    };
+    const projectId = randomUUID();
+    insertProject(db, { id: projectId, ownerId: user.id, name: "CRM", description: "test", spec });
+    diffAndMigrate(db, projectId, undefined, spec);
+    markProjectBuilt(db, projectId);
+
+    const tokenRes = await fetch(`${baseUrl}/api/projects/${projectId}/calendar-feed-token`, { headers: authHeaders(token) });
+    const { token: feedToken } = (await tokenRes.json()) as { token: string };
+
+    for (let i = 0; i < 30; i++) {
+      const res = await fetch(`${baseUrl}/api/public/calendar/${projectId}/Appointment.ics?token=${feedToken}`);
+      assert.notEqual(res.status, 429, `call ${i + 1} of 30 (within the limit) must not be rate-limited yet`);
+    }
+
+    const blocked = await fetch(`${baseUrl}/api/public/calendar/${projectId}/Appointment.ics?token=${feedToken}`);
+    assert.equal(blocked.status, 429);
+    assert.equal(((await blocked.json()) as { code?: string }).code, "RATE_LIMITED");
+
+    // A different project's own feed must get its own fresh allowance --
+    // keyed by project+token, not a single shared counter, so one
+    // exhausted subscription can never collaterally block an unrelated
+    // project's own subscribers.
+    const otherProjectId = randomUUID();
+    insertProject(db, { id: otherProjectId, ownerId: user.id, name: "CRM 2", description: "test", spec });
+    diffAndMigrate(db, otherProjectId, undefined, spec);
+    markProjectBuilt(db, otherProjectId);
+    const otherTokenRes = await fetch(`${baseUrl}/api/projects/${otherProjectId}/calendar-feed-token`, { headers: authHeaders(token) });
+    const { token: otherFeedToken } = (await otherTokenRes.json()) as { token: string };
+    const otherRes = await fetch(`${baseUrl}/api/public/calendar/${otherProjectId}/Appointment.ics?token=${otherFeedToken}`);
+    assert.equal(otherRes.status, 200, "a different project's own feed must not be collaterally blocked by another project's exhausted rate limit");
+  });
+});
