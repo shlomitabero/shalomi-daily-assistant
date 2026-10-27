@@ -107,6 +107,10 @@ export interface BaileysIncomingMessage {
     stickerMessage?: Record<string, never>;
     locationMessage?: { name?: string; address?: string };
     contactMessage?: { displayName?: string };
+    pollCreationMessage?: { name?: string };
+    pollCreationMessageV2?: { name?: string };
+    pollCreationMessageV3?: { name?: string };
+    pollCreationMessageV5?: { name?: string };
   };
 }
 
@@ -162,8 +166,20 @@ const CONNECTION_LOST_MESSAGE = "The WhatsApp connection was lost. Click Connect
  * a referral, is an everyday one-tap WhatsApp action, not an edge case --
  * and was previously dropped with zero trace: no log row, no notification,
  * no automation trigger, nothing telling the business owner anything had
- * even arrived. A poll (and any other still-unrecognized shape) remains
- * genuinely out of scope -- still returns null, same as before.
+ * even arrived.
+ *
+ * Round 1051: polls join the same list, for the same reason. Confirmed
+ * against proto.Message.IPollCreationMessage: the poll's own question
+ * (`name`) and answer options are plaintext in the protobuf -- only a
+ * *vote* (pollUpdateMessage.vote.encPayload) is encrypted, so this needs no
+ * decryption any more than location/contact did. WhatsApp populates one of
+ * four near-identical fields depending on client version
+ * (pollCreationMessage/V2/V3/V5); V4 is a genuinely different shape
+ * (IFutureProofMessage) and stays out of scope, same spirit as every other
+ * still-unrecognized message kind below. A customer asking "which day works
+ * -- Mon/Tue/Wed?" via WhatsApp's own one-tap poll UI instead of typing it
+ * is ordinary usage, not an edge case, and was previously silently dropped
+ * exactly like an unfixed location pin.
  */
 function describeIncomingMessage(message: BaileysIncomingMessage["message"]): string | null {
   if (!message) return null;
@@ -186,6 +202,9 @@ function describeIncomingMessage(message: BaileysIncomingMessage["message"]): st
     const name = message.contactMessage.displayName;
     return name ? `[Contact: ${name}]` : "[Contact]";
   }
+  const poll =
+    message.pollCreationMessage ?? message.pollCreationMessageV2 ?? message.pollCreationMessageV3 ?? message.pollCreationMessageV5;
+  if (poll) return poll.name ? `[Poll] ${poll.name}` : "[Poll]";
   return null;
 }
 

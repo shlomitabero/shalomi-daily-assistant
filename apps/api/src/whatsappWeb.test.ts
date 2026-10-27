@@ -656,9 +656,49 @@ test("an incoming location pin (with and without a name/address) and a shared co
 });
 
 /**
- * Round 785 (narrowed by round 1035): an unrecognized message shape (a
- * poll, etc.) is deliberately NOT guessed at -- it's still skipped exactly
- * as before this fix, the same as a message with no body at all.
+ * Round 1051: an incoming WhatsApp poll -- previously dropped with zero
+ * trace, the exact gap round 1035's own doc comment explicitly left open
+ * -- is now logged with a descriptive placeholder showing the poll's own
+ * question text, the same convention established for location/contact.
+ * Covers all three client-version fields Baileys may populate
+ * (pollCreationMessage/V2/V3), plus a poll with no name at all (shouldn't
+ * happen in practice, but mirrors the file's other placeholder fallbacks).
+ */
+test("an incoming WhatsApp poll (across client-version field variants, and with no name at all) is logged with its question text instead of being silently dropped", async () => {
+  const { manager, createdSockets, db } = setupManager();
+  insertProject(db, project);
+  applyMigrations(db, project.id, project.spec);
+  markProjectBuilt(db, project.id);
+
+  await manager.connect(project.id);
+  createdSockets[0].emitConnectionUpdate({ connection: "open" });
+
+  createdSockets[0].emitMessagesUpsert({
+    type: "notify",
+    messages: [
+      { key: { remoteJid: "972501234567@s.whatsapp.net", fromMe: false }, message: { pollCreationMessage: { name: "איזה יום מתאים?" } } },
+      { key: { remoteJid: "972501234567@s.whatsapp.net", fromMe: false }, message: { pollCreationMessageV2: { name: "Which day works?" } } },
+      { key: { remoteJid: "972501234567@s.whatsapp.net", fromMe: false }, message: { pollCreationMessageV3: { name: "Pick a slot" } } },
+      { key: { remoteJid: "972501234567@s.whatsapp.net", fromMe: false }, message: { pollCreationMessageV5: { name: "V5 poll" } } },
+      { key: { remoteJid: "972501234567@s.whatsapp.net", fromMe: false }, message: { pollCreationMessage: {} } },
+    ],
+  });
+
+  // listWhatsAppMessages orders newest-first, the reverse of emission order.
+  const { messages } = listWhatsAppMessages(db, project.id);
+  assert.equal(messages.length, 5);
+  assert.equal(messages[0].body, "[Poll]", "a poll with no name at all must fall back to a plain placeholder, not print nothing or throw");
+  assert.equal(messages[1].body, "[Poll] V5 poll");
+  assert.equal(messages[2].body, "[Poll] Pick a slot");
+  assert.equal(messages[3].body, "[Poll] Which day works?");
+  assert.equal(messages[4].body, "[Poll] איזה יום מתאים?");
+  for (const m of messages) assert.equal(m.direction, "in", "every placeholder row must still be a real, matched-against incoming message, not metadata");
+});
+
+/**
+ * Round 785 (narrowed by rounds 1035 and 1051): a genuinely unrecognized
+ * message shape is deliberately NOT guessed at -- it's still skipped
+ * exactly as before this fix, the same as a message with no body at all.
  */
 test("an incoming message of a completely unrecognized shape is still skipped, not guessed at", async () => {
   const { manager, createdSockets, db } = setupManager();
