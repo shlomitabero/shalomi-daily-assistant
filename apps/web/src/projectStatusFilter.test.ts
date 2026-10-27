@@ -28,35 +28,52 @@ async function withJsdom(fn: () => void | Promise<void>): Promise<void> {
 
 test("getProjectStatusFilter defaults to 'all' when nothing has ever been set", async () => {
   await withJsdom(() => {
-    assert.equal(getProjectStatusFilter(), "all");
+    assert.equal(getProjectStatusFilter("userA"), "all");
   });
 });
 
 test("setProjectStatusFilter persists 'built', and a fresh getProjectStatusFilter call sees it -- a real round trip, not just the in-memory value", async () => {
   await withJsdom(() => {
-    setProjectStatusFilter("built");
-    assert.equal(getProjectStatusFilter(), "built");
+    setProjectStatusFilter("userA", "built");
+    assert.equal(getProjectStatusFilter("userA"), "built");
   });
 });
 
 test("setProjectStatusFilter persists 'draft' too", async () => {
   await withJsdom(() => {
-    setProjectStatusFilter("draft");
-    assert.equal(getProjectStatusFilter(), "draft");
+    setProjectStatusFilter("userA", "draft");
+    assert.equal(getProjectStatusFilter("userA"), "draft");
   });
 });
 
 test("setProjectStatusFilter('all') persists back to 'all' after having been 'built'", async () => {
   await withJsdom(() => {
-    setProjectStatusFilter("built");
-    setProjectStatusFilter("all");
-    assert.equal(getProjectStatusFilter(), "all");
+    setProjectStatusFilter("userA", "built");
+    setProjectStatusFilter("userA", "all");
+    assert.equal(getProjectStatusFilter("userA"), "all");
+  });
+});
+
+/**
+ * Round 1057: the whole point of this round's fix, and the more severe of
+ * the pair -- before it, the storage key was one flat key shared by every
+ * account on the browser, so a shared/public computer could leave one
+ * account's own "Built"/"Draft" filter silently applied to the next
+ * account's own "Your projects" list, with no visible indicator a filter
+ * (not a real absence of projects) is the reason the list looks empty.
+ */
+test("status filter is kept per-user -- two different accounts on the SAME browser never see each other's own chosen filter", async () => {
+  await withJsdom(() => {
+    setProjectStatusFilter("userA", "built");
+    setProjectStatusFilter("userB", "draft");
+    assert.equal(getProjectStatusFilter("userA"), "built");
+    assert.equal(getProjectStatusFilter("userB"), "draft", "userB must never see userA's own chosen filter");
   });
 });
 
 test("getProjectStatusFilter falls back to 'all' for corrupted/foreign localStorage content, instead of throwing", async () => {
   await withJsdom(() => {
-    localStorage.setItem("forge.projectStatusFilter", "not-a-real-status");
-    assert.equal(getProjectStatusFilter(), "all");
+    localStorage.setItem("forge.projectStatusFilter.userA", "not-a-real-status");
+    assert.equal(getProjectStatusFilter("userA"), "all");
   });
 });

@@ -1,4 +1,4 @@
-const STORAGE_KEY = "forge.projectSortMode";
+const STORAGE_KEY_PREFIX = "forge.projectSortMode.";
 
 export type ProjectSortMode = "recent" | "alphabetical";
 
@@ -11,18 +11,30 @@ export type ProjectSortMode = "recent" | "alphabetical";
  * they made it. Persisted the same way pinnedProjects.ts/ideaDraft.ts/
  * recentSearches.ts already persist their own per-viewer preferences, so
  * the choice survives a reload instead of silently reverting every time.
+ *
+ * Round 1057: despite recentProjectSearches.ts's own doc comment claiming
+ * this store already used "the same single flat-per-user scope" its
+ * sibling preferences use, it genuinely used one flat key shared by every
+ * account on the browser -- the same gap round 1044/1045 fixed for
+ * ideaDraft.ts/recentProjectSearches.ts (this store's own direct siblings
+ * on the exact same home screen), just never applied here. Keyed per user
+ * now, same pattern.
  */
-export function getProjectSortMode(): ProjectSortMode {
+function storageKey(userId: string): string {
+  return `${STORAGE_KEY_PREFIX}${userId}`;
+}
+
+export function getProjectSortMode(userId: string): ProjectSortMode {
   try {
-    return localStorage.getItem(STORAGE_KEY) === "alphabetical" ? "alphabetical" : "recent";
+    return localStorage.getItem(storageKey(userId)) === "alphabetical" ? "alphabetical" : "recent";
   } catch {
     return "recent";
   }
 }
 
-export function setProjectSortMode(mode: ProjectSortMode): void {
+export function setProjectSortMode(userId: string, mode: ProjectSortMode): void {
   try {
-    localStorage.setItem(STORAGE_KEY, mode);
+    localStorage.setItem(storageKey(userId), mode);
   } catch {
     // localStorage can be unavailable (private mode) -- the preference just won't survive a reload.
   }

@@ -604,7 +604,12 @@ function AppContent() {
   // screen that actually reads this (isNewShare, below) never renders
   // before that resolves, gated by `checkingSession`.
   const [seenShared, setSeenShared] = useState<Map<string, string>>(new Map());
-  const [projectSortMode, setProjectSortModeState] = useState<ProjectSortMode>(() => getProjectSortMode());
+  // Round 1057: this used to lazy-init via getProjectSortMode() with no
+  // user id at all (the exact gap this round's own fix to
+  // projectSortMode.ts closes) -- loaded in the [user?.id] effect below
+  // instead, the same "wait for the real signed-in user" fix as
+  // recentProjectSearches (round 1045) just below it.
+  const [projectSortMode, setProjectSortModeState] = useState<ProjectSortMode>("recent");
   const [projectSearch, setProjectSearch] = useState("");
   // Round 1045: this used to lazy-init via getRecentProjectSearches() with
   // no user id at all (the exact gap this round's own fix to
@@ -612,7 +617,9 @@ function AppContent() {
   // below instead, the same "wait for the real signed-in user" fix as
   // pinnedIds/seenShared/description (round 1018/1044) just above it.
   const [recentProjectSearches, setRecentProjectSearches] = useState<string[]>([]);
-  const [projectStatusFilter, setProjectStatusFilterState] = useState<ProjectStatusFilter>(() => getProjectStatusFilter());
+  // Round 1057: same fix, same reason, for projectStatusFilter.ts's own
+  // identical sibling gap -- see its own doc comment.
+  const [projectStatusFilter, setProjectStatusFilterState] = useState<ProjectStatusFilter>("all");
   const [cloningId, setCloningId] = useState<string | null>(null);
   const [deletingId, setDeletingId] = useState<string | null>(null);
   // Mirrors cloningId/deletingId's own busy-guard idiom for the single-row
@@ -737,11 +744,11 @@ function AppContent() {
 
   function handleSetProjectSortMode(mode: ProjectSortMode) {
     setProjectSortModeState(mode);
-    setProjectSortMode(mode);
+    if (user) setProjectSortMode(user.id, mode);
   }
   function handleSetProjectStatusFilter(filter: ProjectStatusFilter) {
     setProjectStatusFilterState(filter);
-    persistProjectStatusFilter(filter);
+    if (user) persistProjectStatusFilter(user.id, filter);
   }
   function handleProjectSearchKeyDown(e: React.KeyboardEvent<HTMLInputElement>) {
     if (e.key === "Enter" && projectSearch.trim() && user) {
@@ -1043,6 +1050,11 @@ function AppContent() {
     // identical sibling gap (round 993's own comment on this screen's
     // clear-on-logout already names it "ideaDraft's own direct sibling").
     setRecentProjectSearches(getRecentProjectSearches(user.id));
+    // Round 1057: same fix, same reason, for projectSortMode.ts's and
+    // projectStatusFilter.ts's own identical sibling gap on this exact
+    // screen -- see their own doc comments.
+    setProjectSortModeState(getProjectSortMode(user.id));
+    setProjectStatusFilterState(getProjectStatusFilter(user.id));
   }, [user?.id]);
 
   /**

@@ -28,28 +28,44 @@ async function withJsdom(fn: () => void | Promise<void>): Promise<void> {
 
 test("getProjectSortMode defaults to 'recent' when nothing has ever been set", async () => {
   await withJsdom(() => {
-    assert.equal(getProjectSortMode(), "recent");
+    assert.equal(getProjectSortMode("userA"), "recent");
   });
 });
 
 test("setProjectSortMode persists 'alphabetical', and a fresh getProjectSortMode call sees it -- a real round trip, not just the in-memory value", async () => {
   await withJsdom(() => {
-    setProjectSortMode("alphabetical");
-    assert.equal(getProjectSortMode(), "alphabetical");
+    setProjectSortMode("userA", "alphabetical");
+    assert.equal(getProjectSortMode("userA"), "alphabetical");
   });
 });
 
 test("setProjectSortMode('recent') persists back to 'recent' after having been 'alphabetical'", async () => {
   await withJsdom(() => {
-    setProjectSortMode("alphabetical");
-    setProjectSortMode("recent");
-    assert.equal(getProjectSortMode(), "recent");
+    setProjectSortMode("userA", "alphabetical");
+    setProjectSortMode("userA", "recent");
+    assert.equal(getProjectSortMode("userA"), "recent");
+  });
+});
+
+/**
+ * Round 1057: the whole point of this round's fix. Before it, the storage
+ * key was one flat key shared by every account on the browser -- two
+ * different collaborator accounts sharing a browser (an office computer,
+ * a shared/public machine) would silently see each other's own chosen
+ * sort order on the "Your projects" home screen.
+ */
+test("sort mode is kept per-user -- two different accounts on the SAME browser never see each other's own chosen sort order", async () => {
+  await withJsdom(() => {
+    setProjectSortMode("userA", "alphabetical");
+    setProjectSortMode("userB", "recent");
+    assert.equal(getProjectSortMode("userA"), "alphabetical");
+    assert.equal(getProjectSortMode("userB"), "recent", "userB must never see userA's own chosen sort order");
   });
 });
 
 test("getProjectSortMode falls back to 'recent' for corrupted/foreign localStorage content, instead of throwing", async () => {
   await withJsdom(() => {
-    localStorage.setItem("forge.projectSortMode", "not-a-real-mode");
-    assert.equal(getProjectSortMode(), "recent");
+    localStorage.setItem("forge.projectSortMode.userA", "not-a-real-mode");
+    assert.equal(getProjectSortMode("userA"), "recent");
   });
 });

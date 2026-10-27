@@ -3432,20 +3432,31 @@ test("App's handleSetProjectStatusFilter updates both the in-memory state and th
 
   for (const filter of ["all", "built", "draft"] as const) {
     let stateValue: string | null = null;
+    let persistedUserId: string | null = null;
     let persistedValue: string | null = null;
     const fn = new Function(
+      "user",
       "setProjectStatusFilterState",
       "persistProjectStatusFilter",
       `${code}\nreturn handleSetProjectStatusFilter;`,
-    ) as (setProjectStatusFilterState: (v: string) => void, persistProjectStatusFilter: (v: string) => void) => (filter: string) => void;
+    ) as (
+      user: { id: string },
+      setProjectStatusFilterState: (v: string) => void,
+      persistProjectStatusFilter: (userId: string, v: string) => void,
+    ) => (filter: string) => void;
 
     const handler = fn(
+      { id: "user1" },
       (v) => (stateValue = v),
-      (v) => (persistedValue = v),
+      (userId, v) => {
+        persistedUserId = userId;
+        persistedValue = v;
+      },
     );
     handler(filter);
     assert.equal(stateValue, filter, `must update the in-memory state to '${filter}'`);
     assert.equal(persistedValue, filter, `must also persist '${filter}', not just hold it in memory`);
+    assert.equal(persistedUserId, "user1", "round 1057: must persist under the real signed-in user's own id, not a flat shared key");
   }
 });
 
@@ -3911,6 +3922,13 @@ test("App's pinnedIds/seenShared-loading effect re-populates every time the sign
   const effectMatch = appSrc.match(
     / {2}useEffect\(\(\) => \{\n {4}if \(!user\) return;\n {4}setPinnedIds\(getPinnedIds\(user\.id\)\);\n {4}setSeenShared\(getSeenSharedTimestamps\(user\.id\)\);\n[\s\S]*?\n {2}\}, \[user\?\.id\]\);\n/,
   );
+  // Regex-extraction convention: the body above must genuinely contain the
+  // round-1057 calls too, not just match the fixed opening lines -- a
+  // stale match here would silently stop exercising the real source.
+  assert.ok(
+    effectMatch && /getProjectSortMode\(user\.id\)/.test(effectMatch[0]) && /getProjectStatusFilter\(user\.id\)/.test(effectMatch[0]),
+    "expected the extracted effect to also call getProjectSortMode/getProjectStatusFilter with user.id (round 1057)",
+  );
   assert.ok(effectMatch, "expected to find the pinnedIds/seenShared-loading effect, keyed on user?.id, in App.tsx");
   const { code } = transformSync(effectMatch![0], { loader: "ts" });
 
@@ -3919,6 +3937,8 @@ test("App's pinnedIds/seenShared-loading effect re-populates every time the sign
   let seenSharedSet: unknown = "untouched";
   let descriptionSet: unknown = "untouched";
   let recentProjectSearchesSet: unknown = "untouched";
+  let projectSortModeSet: unknown = "untouched";
+  let projectStatusFilterSet: unknown = "untouched";
   const fn = new Function(
     "useEffect",
     "user",
@@ -3930,6 +3950,10 @@ test("App's pinnedIds/seenShared-loading effect re-populates every time the sign
     "setDescription",
     "getRecentProjectSearches",
     "setRecentProjectSearches",
+    "getProjectSortMode",
+    "setProjectSortModeState",
+    "getProjectStatusFilter",
+    "setProjectStatusFilterState",
     `${code}`,
   ) as (
     useEffect: (effect: () => void, deps: unknown[]) => void,
@@ -3942,6 +3966,10 @@ test("App's pinnedIds/seenShared-loading effect re-populates every time the sign
     setDescription: (v: unknown) => void,
     getRecentProjectSearches: (userId: string) => unknown,
     setRecentProjectSearches: (v: unknown) => void,
+    getProjectSortMode: (userId: string) => unknown,
+    setProjectSortModeState: (v: unknown) => void,
+    getProjectStatusFilter: (userId: string) => unknown,
+    setProjectStatusFilterState: (v: unknown) => void,
   ) => void;
 
   // user === null (nobody signed in yet) -- must be a genuine no-op, not
@@ -3968,12 +3996,22 @@ test("App's pinnedIds/seenShared-loading effect re-populates every time the sign
       throw new Error("getRecentProjectSearches must never be called while user is null");
     },
     (v) => (recentProjectSearchesSet = v),
+    () => {
+      throw new Error("getProjectSortMode must never be called while user is null");
+    },
+    (v) => (projectSortModeSet = v),
+    () => {
+      throw new Error("getProjectStatusFilter must never be called while user is null");
+    },
+    (v) => (projectStatusFilterSet = v),
   );
   assert.deepEqual(capturedDeps, [undefined], "must be keyed on user?.id, not a mount-only [] -- this is what makes it re-run on every real login, not just the first one");
   assert.equal(pinnedIdsSet, "untouched");
   assert.equal(seenSharedSet, "untouched");
   assert.equal(descriptionSet, "untouched");
   assert.equal(recentProjectSearchesSet, "untouched");
+  assert.equal(projectSortModeSet, "untouched");
+  assert.equal(projectStatusFilterSet, "untouched");
 
   // A real signed-in user -- must load both pieces of per-user content.
   fn(
@@ -3987,6 +4025,10 @@ test("App's pinnedIds/seenShared-loading effect re-populates every time the sign
     (v) => (descriptionSet = v),
     (userId) => `searches-for-${userId}`,
     (v) => (recentProjectSearchesSet = v),
+    (userId) => `sort-mode-for-${userId}`,
+    (v) => (projectSortModeSet = v),
+    (userId) => `status-filter-for-${userId}`,
+    (v) => (projectStatusFilterSet = v),
   );
   assert.equal(pinnedIdsSet, "pinned-for-user-42", "must call getPinnedIds with the real signed-in user's own id and store its result");
   assert.equal(seenSharedSet, "seen-for-user-42", "must call getSeenSharedTimestamps with the real signed-in user's own id and store its result");
@@ -3999,6 +4041,16 @@ test("App's pinnedIds/seenShared-loading effect re-populates every time the sign
     recentProjectSearchesSet,
     "searches-for-user-42",
     "must call getRecentProjectSearches with the real signed-in user's own id too (round 1045 -- recentProjectSearches.ts is now keyed per user, so it must be loaded the same way pinnedIds/seenShared/description already are)",
+  );
+  assert.equal(
+    projectSortModeSet,
+    "sort-mode-for-user-42",
+    "must call getProjectSortMode with the real signed-in user's own id too (round 1057 -- projectSortMode.ts is now keyed per user, so it must be loaded the same way pinnedIds/seenShared/description/recentProjectSearches already are)",
+  );
+  assert.equal(
+    projectStatusFilterSet,
+    "status-filter-for-user-42",
+    "must call getProjectStatusFilter with the real signed-in user's own id too (round 1057 -- projectStatusFilter.ts is now keyed per user, so it must be loaded the same way pinnedIds/seenShared/description/recentProjectSearches already are)",
   );
 });
 

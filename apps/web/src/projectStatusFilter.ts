@@ -1,4 +1,4 @@
-const STORAGE_KEY = "forge.projectStatusFilter";
+const STORAGE_KEY_PREFIX = "forge.projectStatusFilter.";
 
 export type ProjectStatusFilter = "all" | "built" | "draft";
 
@@ -10,19 +10,31 @@ export type ProjectStatusFilter = "all" | "built" | "draft";
  * way, so someone who filters down to just their drafts (to keep working on
  * unfinished projects) doesn't have to re-pick that filter every time they
  * come back to the home screen.
+ *
+ * Round 1057: the exact same fix projectSortMode.ts just got, for the exact
+ * same reason -- see its own doc comment. This one is the more severe of
+ * the pair: on a shared/public computer, if account A leaves this filter on
+ * "built" and logs out without a reload, account B logging into the same
+ * tab could see their own "Your projects" list render completely empty --
+ * every one of B's own projects still a "draft" -- with nothing in the UI
+ * hinting a stale filter, not B's own missing projects, is the reason.
  */
-export function getProjectStatusFilter(): ProjectStatusFilter {
+function storageKey(userId: string): string {
+  return `${STORAGE_KEY_PREFIX}${userId}`;
+}
+
+export function getProjectStatusFilter(userId: string): ProjectStatusFilter {
   try {
-    const raw = localStorage.getItem(STORAGE_KEY);
+    const raw = localStorage.getItem(storageKey(userId));
     return raw === "built" || raw === "draft" ? raw : "all";
   } catch {
     return "all";
   }
 }
 
-export function setProjectStatusFilter(filter: ProjectStatusFilter): void {
+export function setProjectStatusFilter(userId: string, filter: ProjectStatusFilter): void {
   try {
-    localStorage.setItem(STORAGE_KEY, filter);
+    localStorage.setItem(storageKey(userId), filter);
   } catch {
     // localStorage can be unavailable (private mode) -- the preference just won't survive a reload.
   }
