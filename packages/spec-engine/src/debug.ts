@@ -127,5 +127,31 @@ export async function requestSpecFix(
   if (!result.success) {
     throw new Error(`Anthropic API response did not match ProductSpec schema: ${result.error.message}`);
   }
-  return result.data;
+  // Round 1113: same override anthropic.ts's AnthropicSpecProvider.generate
+  // already applies (round 1031) -- the Debug Agent is a fresh model call
+  // with the identical "screens" freedom the system prompt above never
+  // constrains (ScreenSchema only requires a name/type/optional entity, no
+  // count/shape), and pipeline.ts's own comment on this function says
+  // outright that it "is free to rename/add/remove entities and fields
+  // while resolving the error." Without this, a repaired spec's screens
+  // can be stale or mismatched against whatever entities the repair
+  // actually produced -- the exact "count/shape means something different
+  // depending on which generator happened to build a given project"
+  // problem round 1031 fixed for the other three generators, just never
+  // extended to this fourth one.
+  return { ...result.data, screens: screensFor(result.data.entities) };
+}
+
+/**
+ * Mirrors anthropic.ts's own screensFor (and heuristic.ts's buildScreens,
+ * templates.ts's screensFor) exactly -- the per-module small-duplication
+ * convention this codebase already uses for this exact helper.
+ */
+function screensFor(entities: ProductSpec["entities"]): ProductSpec["screens"] {
+  const screens: ProductSpec["screens"] = [{ name: "Dashboard", type: "dashboard" }];
+  for (const entity of entities) {
+    screens.push({ name: `${entity.name} List`, type: "list", entity: entity.name });
+    screens.push({ name: `${entity.name} Form`, type: "form", entity: entity.name });
+  }
+  return screens;
 }

@@ -136,3 +136,47 @@ test("requestSpecFix times out instead of hanging forever when the network call 
     /timed out/,
   );
 });
+
+/**
+ * Round 1113: the system prompt above asks the model to return "the exact
+ * same shape as spec", but places no code-level validation on "screens"
+ * specifically (ScreenSchema imposes no count/shape constraint), the
+ * identical gap round 1031 already fixed in anthropic.ts's own generate().
+ * pipeline.ts's own comment on requestSpecFix says it "is free to rename/
+ * add/remove entities and fields while resolving the error" -- so a real
+ * repair response's own screens guess can easily end up stale or mismatched
+ * against whatever entities the repair actually produced. Confirms
+ * requestSpecFix discards the model's own screens guess entirely and
+ * replaces it with the same deterministic Dashboard-plus-List+Form-pair
+ * shape anthropic.ts's own round-1031 test confirms for its sibling.
+ */
+test("requestSpecFix normalizes screens to the Dashboard-plus-List+Form-pair-per-entity convention, discarding whatever arbitrary shape the model itself returned", async () => {
+  const fixedSpecWithWrongScreens = {
+    ...brokenSpec,
+    entities: [
+      { name: "Customer", fields: [{ name: "fullName", type: "text", required: true }] },
+      { name: "Order", fields: [{ name: "total", type: "number", required: true }] },
+    ],
+    // Deliberately wrong shape: only one screen total, no Form screens,
+    // and no screen at all for "Order" -- a plausible real repair
+    // response that still passes ProductSpecSchema.
+    screens: [{ name: "Everything", type: "dashboard" }],
+  };
+  const fakeFetch = (async () =>
+    new Response(JSON.stringify({ content: [{ type: "text", text: JSON.stringify(fixedSpecWithWrongScreens) }] }), {
+      status: 200,
+    })) as unknown as typeof fetch;
+
+  const result = await requestSpecFix(brokenSpec, "duplicate column name: name", { apiKey: "test-key", fetchImpl: fakeFetch });
+
+  assert.equal(
+    result.screens.length,
+    2 * result.entities.length + 1,
+    "must match anthropic.ts/heuristic.ts/templates.ts's own Dashboard-plus-List+Form-pair convention, not the model's own 1-screen guess",
+  );
+  assert.equal(result.screens[0]!.type, "dashboard");
+  for (const entity of result.entities) {
+    assert.ok(result.screens.some((s) => s.type === "list" && s.entity === entity.name), `expected a list screen for ${entity.name}`);
+    assert.ok(result.screens.some((s) => s.type === "form" && s.entity === entity.name), `expected a form screen for ${entity.name}`);
+  }
+});
