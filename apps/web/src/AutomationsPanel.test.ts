@@ -90,7 +90,7 @@ function renderPanel(onClose: () => void = () => {}) {
       React.createElement(
         LanguageProvider,
         null,
-        React.createElement(AutomationsPanel, { projectId: "proj1", project, onClose }),
+        React.createElement(AutomationsPanel, { projectId: "proj1", project, userId: "user1", onClose }),
       ),
     ),
   );
@@ -784,7 +784,7 @@ function renderPanelWith(project: Project, onClose: () => void = () => {}, entit
       React.createElement(
         LanguageProvider,
         null,
-        React.createElement(AutomationsPanel, { projectId: project.id, project, entities, onClose }),
+        React.createElement(AutomationsPanel, { projectId: project.id, project, userId: "user1", entities, onClose }),
       ),
     ),
   );
@@ -876,7 +876,7 @@ test("AutomationsPanel shows a message instead of an invalid dropdown when the e
  */
 test("AutomationsPanel's Field and toField dropdowns follow the user's own drag-reordered column order, not the entity's raw declared field order", async () => {
   await withJsdom(async () => {
-    setColumnOrder("proj2", "Shipment", ["isUrgent", "notes", "contactPhone", "priority"]);
+    setColumnOrder("proj2", "Shipment", "user1", ["isUrgent", "notes", "contactPhone", "priority"]);
     const originalFetch = globalThis.fetch;
     globalThis.fetch = (async (input: string) => {
       if (input === "/api/projects/proj2/automations") {
@@ -3339,6 +3339,7 @@ test("AutomationsPanel resets a stale field_equals value when a live refine chan
             React.createElement(AutomationsPanel, {
               projectId: retypeProject.id,
               project: { ...retypeProject, spec: { ...retypeProject.spec, entities: [entityWithBooleanPriority] } },
+              userId: "user1",
               entities: [entityWithBooleanPriority],
               onClose: () => {},
             }),
@@ -3468,6 +3469,7 @@ test("AutomationsPanel resets a stale field_equals value when a live refine narr
             React.createElement(AutomationsPanel, {
               projectId: narrowProject.id,
               project: { ...narrowProject, spec: { ...narrowProject.spec, entities: [entityWithStatusNarrowed] } },
+              userId: "user1",
               entities: [entityWithStatusNarrowed],
               onClose: () => {},
             }),

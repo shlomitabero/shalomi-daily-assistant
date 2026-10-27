@@ -38,6 +38,7 @@ const LOCALE: Record<string, string> = { he: "he-IL", en: "en-US" };
 export function AutomationsPanel({
   projectId,
   project,
+  userId,
   // Defaults to project.spec.entities' own declared/build order for
   // backward compatibility with every existing caller/test that doesn't
   // pass this -- App.tsx's real call site passes its own orderedEntities
@@ -56,6 +57,7 @@ export function AutomationsPanel({
 }: {
   projectId: string;
   project: Project;
+  userId: string;
   entities?: Entity[];
   onClose: () => void;
   /** True for a "viewer" collaborator -- the server already rejects every write here with 403 VIEWER_READ_ONLY; this just keeps a viewer from clicking a control that can only ever fail. */
@@ -191,8 +193,8 @@ export function AutomationsPanel({
   // this, every dropdown below would silently fall back to the entity's
   // raw declared/build order instead.
   const orderedSelectedEntityFields = useMemo(
-    () => (selectedEntity ? applyColumnOrder(selectedEntity.fields, getColumnOrder(projectId, selectedEntity.name)) : []),
-    [selectedEntity, projectId],
+    () => (selectedEntity ? applyColumnOrder(selectedEntity.fields, getColumnOrder(projectId, selectedEntity.name, userId)) : []),
+    [selectedEntity, projectId, userId],
   );
 
   // Two fields on the same entity can legally share a label (the Field

@@ -1638,7 +1638,7 @@ function AppContent() {
   }
 
   async function handleBackup() {
-    if (!project) return;
+    if (!project || !user) return;
     setBackupBusy(true);
     setError(null);
     try {
@@ -1650,7 +1650,7 @@ function AppContent() {
       // localStorage preference on its own.
       const columnOrders: Record<string, string[]> = {};
       for (const entity of project.spec.entities) {
-        const order = getColumnOrder(project.id, entity.name);
+        const order = getColumnOrder(project.id, entity.name, user.id);
         if (order.length > 0) columnOrders[entity.name] = order;
       }
       await backupProject(project.id, project.name, columnOrders);
@@ -2843,6 +2843,7 @@ function AppContent() {
             <AutomationsPanel
               projectId={project.id}
               project={project}
+              userId={user?.id ?? ""}
               entities={orderedEntities}
               onClose={() => setShowAutomations(false)}
               readOnly={myRole === "viewer"}

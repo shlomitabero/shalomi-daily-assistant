@@ -2,7 +2,14 @@ import "./jsdomWarmup.js";
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { JSDOM } from "jsdom";
-import { applyColumnOrder, getColumnOrder, reorderColumns, setColumnOrder } from "./columnOrder.js";
+import {
+  applyColumnOrder,
+  getColumnOrder,
+  migrateColumnOrderForEntityRename,
+  purgeColumnOrderForEntity,
+  reorderColumns,
+  setColumnOrder,
+} from "./columnOrder.js";
 
 /** Same full-jsdom-swap technique used by columnWidths.test.ts/columnVisibility.test.ts: real localStorage, not a mock. */
 async function withJsdom(fn: () => void | Promise<void>): Promise<void> {
@@ -28,30 +35,83 @@ async function withJsdom(fn: () => void | Promise<void>): Promise<void> {
 
 test("getColumnOrder returns an empty array when columns have never been reordered", async () => {
   await withJsdom(() => {
-    assert.deepEqual(getColumnOrder("proj1", "Customer"), []);
+    assert.deepEqual(getColumnOrder("proj1", "Customer", "userA"), []);
   });
 });
 
 test("setColumnOrder persists a real order, and a fresh getColumnOrder call sees it -- a real round trip, not just the return value", async () => {
   await withJsdom(() => {
-    const after = setColumnOrder("proj1", "Customer", ["email", "name", "phone"]);
+    const after = setColumnOrder("proj1", "Customer", "userA", ["email", "name", "phone"]);
     assert.deepEqual(after, ["email", "name", "phone"]);
-    assert.deepEqual(getColumnOrder("proj1", "Customer"), ["email", "name", "phone"], "must actually be written to storage, not just returned");
+    assert.deepEqual(getColumnOrder("proj1", "Customer", "userA"), ["email", "name", "phone"], "must actually be written to storage, not just returned");
   });
 });
 
 test("column order is scoped per project+entity -- reordering one project's entity never affects a same-named entity in a different project", async () => {
   await withJsdom(() => {
-    setColumnOrder("proj1", "Customer", ["email", "name"]);
-    assert.deepEqual(getColumnOrder("proj2", "Customer"), [], "a different project must not see proj1's reordered columns");
-    assert.deepEqual(getColumnOrder("proj1", "Order"), [], "a different entity in the same project must not see Customer's reordered columns");
+    setColumnOrder("proj1", "Customer", "userA", ["email", "name"]);
+    assert.deepEqual(getColumnOrder("proj2", "Customer", "userA"), [], "a different project must not see proj1's reordered columns");
+    assert.deepEqual(getColumnOrder("proj1", "Order", "userA"), [], "a different entity in the same project must not see Customer's reordered columns");
+  });
+});
+
+/**
+ * Round 1069: the whole point of this round's fix. Before it, the storage
+ * key was projectId+entityName alone -- two different collaborator
+ * accounts sharing the SAME project+entity on the SAME browser silently
+ * saw, and could overwrite, each other's own drag-reordered column order.
+ */
+test("column order is also kept per-user -- two different accounts on the SAME project+entity never see each other's own reordered columns", async () => {
+  await withJsdom(() => {
+    setColumnOrder("proj1", "Customer", "userA", ["email", "name"]);
+    setColumnOrder("proj1", "Customer", "userB", ["name", "email"]);
+    assert.deepEqual(getColumnOrder("proj1", "Customer", "userA"), ["email", "name"]);
+    assert.deepEqual(getColumnOrder("proj1", "Customer", "userB"), ["name", "email"], "userB must never see userA's own reordered columns");
   });
 });
 
 test("getColumnOrder falls back to an empty array for corrupted/foreign localStorage content, instead of throwing", async () => {
   await withJsdom(() => {
     localStorage.setItem("forge.columnOrder", "not real json{{{");
-    assert.deepEqual(getColumnOrder("proj1", "Customer"), []);
+    assert.deepEqual(getColumnOrder("proj1", "Customer", "userA"), []);
+  });
+});
+
+/**
+ * Round 1069: purgeColumnOrderForEntity is what entityPreferenceCleanup.ts
+ * now calls on an entity drop -- there's no single "current user" at drop
+ * time, so it must sweep every collaborator's own entry, not just one.
+ */
+test("purgeColumnOrderForEntity removes the entity's own order for EVERY collaborator account, leaving a sibling entity's own order untouched", async () => {
+  await withJsdom(() => {
+    setColumnOrder("proj1", "Customer", "userA", ["email", "name"]);
+    setColumnOrder("proj1", "Customer", "userB", ["name", "email"]);
+    setColumnOrder("proj1", "Order", "userA", ["total", "status"]);
+
+    purgeColumnOrderForEntity("proj1", "Customer");
+
+    assert.deepEqual(getColumnOrder("proj1", "Customer", "userA"), [], "userA's own order must be gone");
+    assert.deepEqual(getColumnOrder("proj1", "Customer", "userB"), [], "userB's own order must be gone too, not just userA's");
+    assert.deepEqual(getColumnOrder("proj1", "Order", "userA"), ["total", "status"], "a sibling entity's own order must survive untouched");
+  });
+});
+
+/**
+ * Round 1069: migrateColumnOrderForEntityRename must remap EVERY
+ * collaborator's own entry on a case-only rename, not just one.
+ */
+test("migrateColumnOrderForEntityRename remaps every collaborator's own order to the new casing, leaving a sibling entity's own order untouched", async () => {
+  await withJsdom(() => {
+    setColumnOrder("proj1", "customer", "userA", ["email", "name"]);
+    setColumnOrder("proj1", "customer", "userB", ["name", "email"]);
+    setColumnOrder("proj1", "Order", "userA", ["total", "status"]);
+
+    migrateColumnOrderForEntityRename("proj1", "customer", "Customer");
+
+    assert.deepEqual(getColumnOrder("proj1", "Customer", "userA"), ["email", "name"], "userA's order must resolve under the new casing");
+    assert.deepEqual(getColumnOrder("proj1", "Customer", "userB"), ["name", "email"], "userB's order must resolve under the new casing too");
+    assert.deepEqual(getColumnOrder("proj1", "customer", "userA"), [], "nothing must remain reachable under the old casing");
+    assert.deepEqual(getColumnOrder("proj1", "Order", "userA"), ["total", "status"], "a sibling entity's own order must survive the rename untouched");
   });
 });
 

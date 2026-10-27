@@ -1550,8 +1550,8 @@ export function EntityPanel({
   // Same reasoning as hiddenFields' own effect just above -- a reordered
   // column layout is scoped per project+entity too.
   useEffect(() => {
-    setColumnOrderState(getColumnOrder(projectId, entity.name));
-  }, [projectId, entity.name]);
+    setColumnOrderState(getColumnOrder(projectId, entity.name, userId));
+  }, [projectId, entity.name, userId]);
 
   // Same reasoning as hiddenFields' own effect just above -- a chosen "Group
   // by" field is scoped per project+entity too. Previously groupFieldName
@@ -2449,7 +2449,7 @@ export function EntityPanel({
     setDragOverField(null);
     if (!draggedField || draggedField === targetName) return;
     const fullOrder = orderedFields.map((f) => f.name);
-    setColumnOrderState(setColumnOrder(projectId, entity.name, reorderColumns(fullOrder, draggedField, targetName)));
+    setColumnOrderState(setColumnOrder(projectId, entity.name, userId, reorderColumns(fullOrder, draggedField, targetName)));
     setDraggedField(null);
   }
 
@@ -2474,7 +2474,7 @@ export function EntityPanel({
     const fullOrder = orderedFields.map((f) => f.name);
     const next =
       direction === "earlier" ? reorderColumns(fullOrder, fieldName, neighborName) : reorderColumns(fullOrder, neighborName, fieldName);
-    setColumnOrderState(setColumnOrder(projectId, entity.name, next));
+    setColumnOrderState(setColumnOrder(projectId, entity.name, userId, next));
   }
 
   const visibleRecords = useMemo(() => {

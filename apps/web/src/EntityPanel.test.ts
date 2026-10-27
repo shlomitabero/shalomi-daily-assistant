@@ -5829,7 +5829,7 @@ test("EntityPanel's Print list action includes a column the user has hidden from
  */
 test("EntityPanel's Export CSV, Copy, and per-record Print all honor the user's drag-reordered column order, not just the on-screen table and Print list", async () => {
   await withJsdom(async () => {
-    localStorage.setItem("forge.columnOrder", JSON.stringify({ "proj1:Deal": ["status", "name"] }));
+    localStorage.setItem("forge.columnOrder", JSON.stringify({ "proj1:Deal:user1": ["status", "name"] }));
     const store: EntityRecord[] = [{ id: 1, name: "Globex", status: "won" }];
     const originalFetch = globalThis.fetch;
     globalThis.fetch = mockRecordsFetch(store) as typeof fetch;
@@ -5928,7 +5928,7 @@ test("EntityPanel's board cards list their fields in the user's drag-reordered c
         },
       ],
     };
-    localStorage.setItem("forge.columnOrder", JSON.stringify({ "proj1:Deal": ["phone", "name", "status"] }));
+    localStorage.setItem("forge.columnOrder", JSON.stringify({ "proj1:Deal:user1": ["phone", "name", "status"] }));
     const store: EntityRecord[] = [{ id: 1, name: "Globex", phone: "555-1234", status: "new" }];
     const originalFetch = globalThis.fetch;
     globalThis.fetch = mockRecordsFetch(store) as typeof fetch;
@@ -5986,7 +5986,7 @@ test("EntityPanel's add/edit record form lists fields in the user's drag-reorder
         },
       ],
     };
-    localStorage.setItem("forge.columnOrder", JSON.stringify({ "proj1:Deal": ["phone", "name", "status"] }));
+    localStorage.setItem("forge.columnOrder", JSON.stringify({ "proj1:Deal:user1": ["phone", "name", "status"] }));
     const store: EntityRecord[] = [{ id: 1, name: "Globex", phone: "555-1234", status: "new" }];
     const originalFetch = globalThis.fetch;
     globalThis.fetch = mockRecordsFetch(store) as typeof fetch;
@@ -6042,7 +6042,7 @@ test("EntityPanel's add/edit record form lists fields in the user's drag-reorder
  */
 test("EntityPanel's Columns menu lists checkboxes in the user's drag-reordered column order, not the entity's original declared order", async () => {
   await withJsdom(async () => {
-    localStorage.setItem("forge.columnOrder", JSON.stringify({ "proj1:Deal": ["status", "name"] }));
+    localStorage.setItem("forge.columnOrder", JSON.stringify({ "proj1:Deal:user1": ["status", "name"] }));
     const store: EntityRecord[] = [{ id: 1, name: "Globex", status: "won" }];
     const originalFetch = globalThis.fetch;
     globalThis.fetch = mockRecordsFetch(store) as typeof fetch;
@@ -6106,7 +6106,7 @@ test("EntityPanel's per-field filter dropdowns and 'Group by' option list both h
         { name: "name", label: "Name", type: "text", required: true },
       ],
     };
-    localStorage.setItem("forge.columnOrder", JSON.stringify({ "proj1:Deal": ["priority", "status", "name"] }));
+    localStorage.setItem("forge.columnOrder", JSON.stringify({ "proj1:Deal:user1": ["priority", "status", "name"] }));
     const store: EntityRecord[] = [{ id: 1, name: "Globex", status: "new", priority: "high" }];
     const originalFetch = globalThis.fetch;
     globalThis.fetch = mockRecordsFetch(store) as typeof fetch;
@@ -10269,7 +10269,7 @@ test("EntityPanel's table columns are drag-and-drop reorderable, persisting per 
       );
 
       const store2 = JSON.parse(localStorage.getItem("forge.columnOrder") ?? "{}");
-      assert.deepEqual(store2["proj1:Deal"], ["status", "name"], "the real reordered field-name order must be persisted to real localStorage");
+      assert.deepEqual(store2["proj1:Deal:user1"], ["status", "name"], "the real reordered field-name order must be persisted to real localStorage");
 
       // Dropping a column back onto itself must be a real no-op.
       const headersAfter = document.querySelectorAll("thead th.resizable-col");
@@ -10325,7 +10325,7 @@ test("EntityPanel's column headers have keyboard-operable 'move earlier'/'move l
       assert.deepEqual(headerText(), ["Status", "Name"], "clicking 'move later' on Name must move it past Status, the same result dragging it there would give");
 
       const store2 = JSON.parse(localStorage.getItem("forge.columnOrder") ?? "{}");
-      assert.deepEqual(store2["proj1:Deal"], ["status", "name"], "the keyboard-driven reorder must persist to real localStorage exactly like the drag-and-drop one does");
+      assert.deepEqual(store2["proj1:Deal:user1"], ["status", "name"], "the keyboard-driven reorder must persist to real localStorage exactly like the drag-and-drop one does");
 
       // Disabled state must have flipped along with the order: Status is now
       // first (its own "earlier" must disable), Name is now last (its own
