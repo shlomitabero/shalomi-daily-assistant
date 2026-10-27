@@ -2853,6 +2853,7 @@ function AppContent() {
           {showCollaborators && (
             <CollaboratorsPanel
               projectId={project.id}
+              projectName={project.name}
               isOwner={user?.id === project.ownerId}
               currentUserId={user?.id}
               onClose={() => setShowCollaborators(false)}

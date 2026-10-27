@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import { JSDOM } from "jsdom";
 import React from "react";
-import { cleanup, fireEvent, render } from "@testing-library/react";
+import { act, cleanup, fireEvent, render } from "@testing-library/react";
 import type { CollaboratorRole, ProjectCollaborator } from "@forge/shared";
 import { CollaboratorsPanel } from "./CollaboratorsPanel.js";
 import { LanguageProvider } from "./i18n/LanguageContext.js";
@@ -57,7 +57,7 @@ function makeCollaborator(userId: string, email: string, role: CollaboratorRole 
   return { userId, email, addedAt: new Date().toISOString(), role };
 }
 
-function renderPanel(isOwner = true, currentUserId?: string, onLeft: () => void = () => {}) {
+function renderPanel(isOwner = true, currentUserId?: string, onLeft: () => void = () => {}, projectName = "Test Project") {
   return render(
     React.createElement(
       ThemeProvider,
@@ -65,7 +65,7 @@ function renderPanel(isOwner = true, currentUserId?: string, onLeft: () => void 
       React.createElement(
         LanguageProvider,
         null,
-        React.createElement(CollaboratorsPanel, { projectId: "proj1", isOwner, currentUserId, onClose: () => {}, onLeft }),
+        React.createElement(CollaboratorsPanel, { projectId: "proj1", projectName, isOwner, currentUserId, onClose: () => {}, onLeft }),
       ),
     ),
   );
@@ -1215,6 +1215,7 @@ test("CollaboratorsPanel's invite form has Escape-to-clear for an in-progress dr
             null,
             React.createElement(CollaboratorsPanel, {
               projectId: "proj1",
+              projectName: "Test Project",
               isOwner: true,
               currentUserId: undefined,
               onClose: () => {
@@ -1243,6 +1244,136 @@ test("CollaboratorsPanel's invite form has Escape-to-clear for an in-progress dr
       assert.equal(closeCalls, 1, "Escape on an already-pristine invite form must close the dialog normally");
     } finally {
       globalThis.fetch = originalFetch;
+    }
+  });
+});
+
+/**
+ * Round 1112: every other read-heavy "who/what does this project have"
+ * overlay panel in this app (Business Twin, WhatsApp log, Time Machine,
+ * Global Search, Automations, EntityPanel's own CSV copy, BuildProgress)
+ * already has a Copy companion action -- Collaborators was the one panel
+ * left with no way to take its access list anywhere at all, short of a
+ * screenshot or transcribing it by hand. Confirms neither button renders
+ * before the real fetch resolves, both appear once the owner/collaborator
+ * list has loaded, and clicking Copy writes the real formatted report
+ * (not a placeholder) to the clipboard.
+ */
+test("CollaboratorsPanel shows Copy/Download buttons only once loaded, and Copy writes the real formatted report to the clipboard", async (t) => {
+  await withJsdom(async () => {
+    const originalFetch = globalThis.fetch;
+    const dana = makeCollaborator("u1", "dana@example.com", "viewer");
+    globalThis.fetch = (async (input: string) => {
+      if (input === "/api/projects/proj1/collaborators") {
+        return new Response(
+          JSON.stringify({ collaborators: [dana], owner: { userId: "owner1", email: "amit@example.com" } }),
+          { status: 200, headers: { "content-type": "application/json" } },
+        );
+      }
+      throw new Error(`unexpected request ${input}`);
+    }) as typeof fetch;
+
+    let writtenText: string | undefined;
+    Object.defineProperty(navigator, "clipboard", {
+      value: { writeText: async (text: string) => void (writtenText = text) },
+      configurable: true,
+    });
+
+    try {
+      renderPanel(true, undefined, () => {}, "Marketing Site");
+
+      assert.equal(
+        Array.from(document.querySelectorAll("button")).some((b) => b.textContent?.includes("Copy list")),
+        false,
+        "no Copy button should render before the real fetch has resolved",
+      );
+
+      await waitForCondition(() => document.querySelector(".collab-count") !== null);
+
+      const copyButton = Array.from(document.querySelectorAll("button")).find((b) => b.textContent?.includes("Copy list"));
+      const downloadButton = Array.from(document.querySelectorAll("button")).find((b) => b.textContent?.includes("Download list"));
+      assert.ok(copyButton, "expected a Copy list button once the owner/collaborator list has loaded");
+      assert.ok(downloadButton, "expected a Download list button once the owner/collaborator list has loaded");
+      assert.equal(copyButton!.getAttribute("aria-live"), "polite");
+      assert.equal(copyButton!.getAttribute("aria-atomic"), "true");
+
+      t.mock.timers.enable({ apis: ["setTimeout"] });
+
+      await act(async () => {
+        fireEvent.click(copyButton!);
+        await Promise.resolve();
+        await Promise.resolve();
+      });
+
+      assert.equal(typeof writtenText, "string", "clicking Copy must actually call navigator.clipboard.writeText");
+      assert.match(writtenText!, /Marketing Site/, "the copied text must include the real project name");
+      assert.match(writtenText!, /amit@example\.com/, "the copied text must include the real owner's email");
+      assert.match(writtenText!, /dana@example\.com/, "the copied text must include the real collaborator's email");
+      assert.equal(copyButton!.textContent, "✅ Copied!");
+
+      act(() => {
+        t.mock.timers.tick(2000);
+      });
+      assert.equal(copyButton!.textContent, "📋 Copy list", "must revert to the normal label once the delay elapses");
+    } finally {
+      t.mock.timers.reset();
+      globalThis.fetch = originalFetch;
+      delete (navigator as { clipboard?: unknown }).clipboard;
+    }
+  });
+});
+
+test("CollaboratorsPanel's Download button downloads the real list as a named file", async () => {
+  await withJsdom(async () => {
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = (async (input: string) => {
+      if (input === "/api/projects/proj1/collaborators") {
+        return new Response(
+          JSON.stringify({ collaborators: [], owner: { userId: "owner1", email: "amit@example.com" } }),
+          { status: 200, headers: { "content-type": "application/json" } },
+        );
+      }
+      throw new Error(`unexpected request ${input}`);
+    }) as typeof fetch;
+
+    // jsdom doesn't implement the real Blob-URL machinery -- stub just
+    // enough of it to observe what the click handler actually does, the
+    // same technique AutomationsPanel.test.ts's own download test uses.
+    const originalCreateObjectURL = (URL as unknown as { createObjectURL?: (b: Blob) => string }).createObjectURL;
+    const originalRevokeObjectURL = (URL as unknown as { revokeObjectURL?: (u: string) => void }).revokeObjectURL;
+    const anchorProto = (globalThis as unknown as { window: { HTMLAnchorElement: { prototype: HTMLAnchorElement } } }).window
+      .HTMLAnchorElement.prototype;
+    const originalAnchorClick = anchorProto.click;
+    let capturedDownloadName: string | null = null;
+    let clickCount = 0;
+    (URL as unknown as { createObjectURL: (b: Blob) => string }).createObjectURL = () => "blob:mock-url";
+    (URL as unknown as { revokeObjectURL: (u: string) => void }).revokeObjectURL = () => {};
+    anchorProto.click = function (this: HTMLAnchorElement) {
+      capturedDownloadName = this.download;
+      clickCount += 1;
+    };
+
+    try {
+      renderPanel(true, undefined, () => {}, "Marketing Site");
+      await waitForCondition(() => document.querySelector(".collab-count") !== null);
+
+      const downloadButton = Array.from(document.querySelectorAll("button")).find((b) => b.textContent?.includes("Download list"));
+      assert.ok(downloadButton, "expected a Download list button once the owner/collaborator list has loaded");
+
+      fireEvent.click(downloadButton!);
+
+      assert.equal(clickCount, 1, "clicking the download button must trigger exactly one real anchor click");
+      const downloadName: string = capturedDownloadName ?? "";
+      assert.ok(
+        downloadName.includes("Marketing-Site") || downloadName.includes("Marketing Site"),
+        `expected the downloaded filename to be derived from the real project name, got "${downloadName}"`,
+      );
+      assert.ok(downloadName.endsWith("collaborators.txt"), `expected a collaborators.txt filename, got "${downloadName}"`);
+    } finally {
+      globalThis.fetch = originalFetch;
+      if (originalCreateObjectURL) (URL as unknown as { createObjectURL: (b: Blob) => string }).createObjectURL = originalCreateObjectURL;
+      if (originalRevokeObjectURL) (URL as unknown as { revokeObjectURL: (u: string) => void }).revokeObjectURL = originalRevokeObjectURL;
+      anchorProto.click = originalAnchorClick;
     }
   });
 });

@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import type { CollaboratorRole, ProjectCollaborator } from "@forge/shared";
 import { addCollaborator, listCollaborators, regenerateCalendarFeedToken, removeCollaborator, updateCollaboratorRole, type ProjectOwnerInfo } from "./api.js";
 import { formatCollaboratorCount } from "./collaboratorCount.js";
+import { downloadCollaboratorsReport, formatCollaboratorsReport } from "./collaboratorsReport.js";
 import { useTranslation } from "./i18n/LanguageContext.js";
 import { useDialogFocusTrap } from "./useDialogFocusTrap.js";
 
@@ -18,12 +19,14 @@ const LOCALE: Record<string, string> = { he: "he-IL", en: "en-US" };
  */
 export function CollaboratorsPanel({
   projectId,
+  projectName,
   isOwner,
   currentUserId,
   onClose,
   onLeft,
 }: {
   projectId: string;
+  projectName: string;
   isOwner: boolean;
   /** The signed-in user's own id -- lets this panel tell "my own row" apart from every other collaborator's, so only my own row ever gets a "Leave" button. */
   currentUserId: string | undefined;
@@ -50,6 +53,7 @@ export function CollaboratorsPanel({
   const [updatingRoleUserId, setUpdatingRoleUserId] = useState<string | null>(null);
   const [regeneratingFeedToken, setRegeneratingFeedToken] = useState(false);
   const [regenerateFeedTokenInfo, setRegenerateFeedTokenInfo] = useState<string | null>(null);
+  const [copyStatus, setCopyStatus] = useState<"idle" | "copied" | "failed">("idle");
   const dialogRef = useDialogFocusTrap<HTMLDivElement>(onClose);
 
   function loadCollaborators() {
@@ -218,6 +222,33 @@ export function CollaboratorsPanel({
     }
   }
 
+  function handleDownload() {
+    downloadCollaboratorsReport(formatCollaboratorsReport(owner, collaborators ?? [], projectName, lang, t), projectName);
+  }
+
+  /**
+   * Round 1112: same "Copy report" companion action every other read-heavy
+   * "who/what does this project have" overlay panel in this app already has
+   * for its own Download button (Business Twin, WhatsApp log, Time Machine,
+   * Global Search, Automations) -- Collaborators was the one panel left
+   * with no way to take its access list anywhere at all, short of a
+   * screenshot or transcribing it by hand.
+   */
+  async function handleCopy() {
+    try {
+      await navigator.clipboard.writeText(formatCollaboratorsReport(owner, collaborators ?? [], projectName, lang, t));
+      setCopyStatus("copied");
+    } catch {
+      setCopyStatus("failed");
+    }
+  }
+
+  useEffect(() => {
+    if (copyStatus === "idle") return;
+    const timer = setTimeout(() => setCopyStatus("idle"), 2000);
+    return () => clearTimeout(timer);
+  }, [copyStatus]);
+
   return (
     <div className="history-overlay">
       <div className="history-panel" ref={dialogRef} role="dialog" aria-modal="true" aria-labelledby="collab-panel-title">
@@ -228,9 +259,25 @@ export function CollaboratorsPanel({
               <span className="muted small collab-count"> — {formatCollaboratorCount(1 + collaborators.length, t)}</span>
             )}
           </h2>
-          <button type="button" className="secondary" onClick={onClose}>
-            {t("history.close")}
-          </button>
+          <div className="history-header-actions">
+            {owner && collaborators !== null && (
+              <button type="button" className="secondary" onClick={handleCopy} aria-live="polite" aria-atomic="true">
+                {copyStatus === "copied"
+                  ? t("collab.copy.copied")
+                  : copyStatus === "failed"
+                    ? t("collab.copy.failed")
+                    : t("collab.copy")}
+              </button>
+            )}
+            {owner && collaborators !== null && (
+              <button type="button" className="secondary" onClick={handleDownload}>
+                {t("collab.download")}
+              </button>
+            )}
+            <button type="button" className="secondary" onClick={onClose}>
+              {t("history.close")}
+            </button>
+          </div>
         </div>
         <p className="muted small">{t("collab.description")}</p>
 
