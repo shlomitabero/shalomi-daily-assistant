@@ -14160,7 +14160,7 @@ test("EntityPanel's create form deletes a superseded file upload from disk when 
  * before ever submitting, does NOT eagerly delete the record's still-live
  * file out from under it.
  */
-test("EntityPanel's edit form never deletes a file upload from disk just from replacing or removing the picker's selection, before the edit is even saved", async () => {
+test("EntityPanel's edit form never deletes a file upload from disk just from replacing the picker's selection ONCE, before the edit is even saved -- the record's own real persisted file must survive", async () => {
   await withJsdom(async () => {
     const existingDescriptor = { url: "/api/uploads/proj1/Applicant/original.pdf", name: "original.pdf", size: 9, mimeType: "application/pdf" };
     const store: EntityRecord[] = [{ id: 1, name: "Dana", resume: JSON.stringify(existingDescriptor) }];
@@ -14203,10 +14203,92 @@ test("EntityPanel's edit form never deletes a file upload from disk just from re
       });
       await waitForCondition(() => form.querySelector(".file-field-current a")?.textContent === "replacement.pdf");
 
-      fireEvent.click(form.querySelector(".file-field-current .link-button") as HTMLButtonElement);
-      await waitForCondition(() => form.querySelector(".file-field-current") === null);
+      assert.equal(deleteCalls, 0, "replacing the record's own real persisted file, before the edit is ever saved, must never delete it from disk");
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+});
 
-      assert.equal(deleteCalls, 0, "an edit-form replace/remove, before the edit is ever saved, must never delete a file from disk");
+/**
+ * Round 1123: the sibling of round 1002's own create-form test just above
+ * ("deletes a superseded file upload... but not on the very first
+ * upload") -- but for the EDIT form, where the test immediately above
+ * this one confirms the FIRST replacement must never eagerly delete
+ * anything (the record's own real persisted original must survive until
+ * save/cancel decides). Once that first replacement has happened, though,
+ * `currentFile` is no longer the record's persisted value at all -- it's
+ * itself a staged, never-persisted upload from this same session, the
+ * exact same situation the create form is already in from its own very
+ * first upload onward. Confirms a SECOND replacement (and a Remove click
+ * after just one replacement) now deletes that staged replacement
+ * immediately, while the record's own original file is never touched at
+ * any point -- closing the gap where `discardAbandonedFileUploads`/
+ * server-side `deleteReplacedFileFields` only ever compared the FINAL form
+ * value against the original, so a superseded intermediate upload like
+ * this one fell out of `form` entirely and leaked on disk forever.
+ */
+test("EntityPanel's edit form deletes a SECOND (or later) superseded file replacement from disk immediately, since it was never the record's own persisted value to begin with -- but still never touches the record's real original file", async () => {
+  await withJsdom(async () => {
+    const existingDescriptor = { url: "/api/uploads/proj1/Applicant/original.pdf", name: "original.pdf", size: 9, mimeType: "application/pdf" };
+    const store: EntityRecord[] = [{ id: 1, name: "Dana", resume: JSON.stringify(existingDescriptor) }];
+    const deleteCalls: string[] = [];
+    let uploadCalls = 0;
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = (async (input: string, init?: RequestInit): Promise<Response> => {
+      const method = init?.method ?? "GET";
+      if (method === "GET" && input === "/api/projects/proj1/entities/Applicant") {
+        return new Response(JSON.stringify({ records: store }), { status: 200, headers: { "content-type": "application/json" } });
+      }
+      if (method === "POST" && input === "/api/projects/proj1/entities/Applicant/fields/resume/upload") {
+        uploadCalls += 1;
+        const descriptor =
+          uploadCalls === 1
+            ? { url: "/api/uploads/proj1/Applicant/replacement1.pdf", name: "replacement1.pdf", size: 9, mimeType: "application/pdf" }
+            : { url: "/api/uploads/proj1/Applicant/replacement2.pdf", name: "replacement2.pdf", size: 9, mimeType: "application/pdf" };
+        return new Response(JSON.stringify({ file: descriptor }), { status: 200, headers: { "content-type": "application/json" } });
+      }
+      if (method === "DELETE" && input === "/api/projects/proj1/entities/Applicant/fields/resume/upload") {
+        deleteCalls.push((JSON.parse(init!.body as string) as { url: string }).url);
+        return new Response(null, { status: 204 });
+      }
+      throw new Error(`unexpected request ${method} ${input}`);
+    }) as typeof fetch;
+
+    try {
+      renderEntityPanel({ entity: APPLICANT_ENTITY, allEntities: [APPLICANT_ENTITY] });
+      await waitForCondition(() => document.querySelectorAll("table tbody tr").length === 1);
+
+      fireEvent.click(document.querySelector(".row-actions button") as HTMLButtonElement);
+      await waitForCondition(() => (document.querySelector(".record-form input[type=\"text\"]") as HTMLInputElement)?.value === "Dana");
+
+      const form = document.querySelector(".record-form") as HTMLFormElement;
+      const fileInput = form.querySelector('input[type="file"]') as HTMLInputElement;
+      await waitForCondition(() => form.querySelector(".file-field-current a")?.textContent === "original.pdf");
+
+      const first = new File(["one"], "replacement1.pdf", { type: "application/pdf" });
+      await act(async () => {
+        Object.defineProperty(fileInput, "files", { value: [first], configurable: true });
+        fireEvent.change(fileInput);
+        await new Promise((resolve) => setTimeout(resolve, 0));
+      });
+      await waitForCondition(() => form.querySelector(".file-field-current a")?.textContent === "replacement1.pdf");
+      assert.equal(deleteCalls.length, 0, "the first replacement must still never delete the record's own real original file");
+
+      const second = new File(["two"], "replacement2.pdf", { type: "application/pdf" });
+      await act(async () => {
+        Object.defineProperty(fileInput, "files", { value: [second], configurable: true });
+        fireEvent.change(fileInput);
+        await new Promise((resolve) => setTimeout(resolve, 0));
+      });
+      await waitForCondition(() => form.querySelector(".file-field-current a")?.textContent === "replacement2.pdf");
+      await waitForCondition(() => deleteCalls.length === 1);
+      assert.equal(deleteCalls[0], "/api/uploads/proj1/Applicant/replacement1.pdf", "the SECOND replacement must delete the first one it superseded -- that one was never persisted and can never be referenced again");
+
+      fireEvent.click(form.querySelector(".file-field-current .link-button") as HTMLButtonElement);
+      await waitForCondition(() => deleteCalls.length === 2);
+      assert.equal(deleteCalls[1], "/api/uploads/proj1/Applicant/replacement2.pdf", "removing the second (still-unsaved) replacement must delete it too, for the same reason");
+      assert.ok(!deleteCalls.includes("/api/uploads/proj1/Applicant/original.pdf"), "the record's own real original file must never be deleted by any of this, since the edit was never saved");
     } finally {
       globalThis.fetch = originalFetch;
     }

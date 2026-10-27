@@ -939,6 +939,7 @@ function FieldInput({
   projectId,
   entityName,
   editingId,
+  originalValue,
   excludeRecordIds,
 }: {
   field: Field;
@@ -987,8 +988,28 @@ function FieldInput({
    * edit is actually saved; deleting it here, before the user has even
    * submitted the edit, would destroy the still-live record's own file the
    * moment they just replace the picker's selection, with no save and no
-   * way back. */
+   * way back.
+   *
+   * Round 1123: that guard alone only covers the FIRST replacement in an
+   * edit session. Pick replacement1 (not deleted, correctly, per above),
+   * then without saving pick replacement2 -- at that second onChange,
+   * `value` (about to be superseded) is replacement1's own descriptor,
+   * not the record's real persisted file, but the SAME `editingId !==
+   * null` check still blocked deleting it too. `form[field.name]` moves
+   * on to replacement2 and replacement1 falls out of it entirely --
+   * `discardAbandonedFileUploads`/server-side `deleteReplacedFileFields`
+   * only ever compare the FINAL form value against the original, so a
+   * superseded intermediate upload like this is never referenced by
+   * anything again and leaks on disk permanently. `originalValue` (the
+   * record's real persisted value for this field, from
+   * `editingOriginalRef.current`) lets the branch below tell the two
+   * cases apart: `value === originalValue` means `currentFile` IS the
+   * untouched persisted file (must survive, as above); `value !==
+   * originalValue` means `currentFile` is itself an already-staged,
+   * never-persisted upload from this same session, safe to delete the
+   * instant it's superseded, exactly like create-form mode. */
   editingId?: number | null;
+  originalValue?: unknown;
 }) {
   const { t, lang } = useTranslation();
   const [fileUploadError, setFileUploadError] = useState<string | null>(null);
@@ -1192,6 +1213,13 @@ function FieldInput({
   }
   if (field.type === "file") {
     const currentFile = parseFileFieldValue(value);
+    // Round 1123: see this component's own `originalValue` doc comment
+    // above -- a create-form upload (editingId === null) was always safe
+    // to delete on replace/remove, and now so is an edit-form upload that
+    // ISN'T the record's real persisted value (value !== originalValue):
+    // it's itself an already-staged, never-persisted upload from this
+    // same session, not the live record's own file.
+    const currentFileIsDisposable = editingId === null || value !== originalValue;
     return (
       <div className="file-field-input">
         {currentFile && (
@@ -1203,10 +1231,12 @@ function FieldInput({
               type="button"
               className="link-button"
               onClick={() => {
-                // Round 1002: see this component's own editingId doc
-                // comment -- only a create-form upload (never-persisted)
-                // is safe to delete from disk the instant it's removed.
-                if (editingId === null && projectId && entityName) {
+                // Round 1002/1123: see this component's own originalValue
+                // doc comment -- only a disposable upload (create-form,
+                // or an edit-form upload that already isn't the record's
+                // real persisted value) is safe to delete from disk the
+                // instant it's removed.
+                if (currentFileIsDisposable && projectId && entityName) {
                   deleteUploadedRecordFile(projectId, entityName, field.name, currentFile.url).catch(() => {});
                 }
                 onChange("");
@@ -1233,11 +1263,13 @@ function FieldInput({
             }
             try {
               const uploaded = await uploadRecordFile(projectId, entityName, field.name, chosen);
-              // Round 1002: see this component's own editingId doc comment
-              // -- the file this upload just replaced is only safe to
-              // delete from disk when it was never a persisted value to
-              // begin with (create-form mode).
-              if (editingId === null && currentFile) {
+              // Round 1002/1123: see this component's own originalValue
+              // doc comment -- the file this upload just replaced is only
+              // safe to delete from disk when it wasn't a persisted value
+              // to begin with (create-form mode, or an edit-form upload
+              // that's itself already a staged, never-persisted
+              // replacement from this same session).
+              if (currentFileIsDisposable && currentFile) {
                 deleteUploadedRecordFile(projectId, entityName, field.name, currentFile.url).catch(() => {});
               }
               onChange(JSON.stringify(uploaded));
@@ -4013,6 +4045,7 @@ export function EntityPanel({
               projectId={projectId}
               entityName={entity.name}
               editingId={editingId}
+              originalValue={editingOriginalRef.current?.[field.name]}
             />
           </label>
         ))}
