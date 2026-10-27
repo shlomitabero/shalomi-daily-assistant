@@ -1314,6 +1314,48 @@ export function createProjectsRouter(
   });
 
   /**
+   * Round 1110: record create/update/delete (`POST .../entities/:entityName`,
+   * `PATCH`/`DELETE .../entities/:entityName/:recordId`) had NO volumetric
+   * throttle at all -- the one real-effect mutation family round 594's own
+   * doc comment already calls "the single most frequent write in the app",
+   * yet it was skipped by every rate-limiter round that followed
+   * (aiGenerationRateLimiter/whatsappRateLimiter/inviteCollaboratorRateLimiter/
+   * expensiveReadRateLimiter/fileUploadRateLimiter/entityCountsRateLimiter/
+   * specEditRateLimiter above -- none of their own doc comments ever mention
+   * this family). `insertRecord`/`updateRecord`/`deleteRecord`
+   * (packages/db/src/repository.ts) are synchronous better-sqlite3 calls on
+   * this app's one shared Node event loop (the same "no horizontal scaling"
+   * hazard expensiveReadRateLimiter's own doc comment names), and each one
+   * also triggers a fire-and-forget `runAutomationsForRecordChange` whose
+   * own rule lookup is further synchronous DB work before any WhatsApp/
+   * email send is even queued. Any signed-up account with write access to
+   * one built project (free to create) can script a tight loop with no
+   * server-side cap on row count or request volume.
+   *
+   * Deliberately a much higher cap than every sibling limiter above: unlike
+   * an occasional, one-click-at-a-time action, a record write is this app's
+   * own designed unit of BULK work -- CSV import (EntityPanel.tsx's
+   * handleImportFile) fires one create/update request per row, all
+   * concurrently via Promise.allSettled, with no row-count cap at all; bulk-
+   * edit, bulk-delete, and bulk-duplicate likewise map over `selectedIds`
+   * with no cap on how many records a user can select. A cap sized like
+   * specEditRateLimiter's 60 (fine for "how many fields will you add by
+   * hand in one sitting") would make a legitimate CSV import of a real
+   * customer list -- exactly the migration-off-another-system use case that
+   * feature's own doc comment names -- hit 429 partway through, silently
+   * truncating a correct import. 500 per window comfortably covers a large
+   * real import or bulk action while still bounding a genuinely abusive,
+   * sustained scripted loop far below what would meaningfully stall this
+   * process for every other project.
+   */
+  const recordWriteRateLimiter = createRateLimiter({
+    windowMs: 15 * 60 * 1000,
+    max: 500,
+    keyGenerator: (req) => req.userId ?? "unknown",
+    message: "Too many record write requests. Please try again later.",
+  });
+
+  /**
    * /build, /refine, and /answers each read `project.spec` once at the
    * start of the request, then spend real time (an AI/heuristic
    * spec-generation call, and for /build and /refine also a migration)
@@ -2523,6 +2565,7 @@ export function createProjectsRouter(
 
   router.post(
     "/projects/:id/entities/:entityName",
+    recordWriteRateLimiter,
     asyncRoute(async (req, res) => {
       const project = requireProjectWriteAccess(db, req.params.id, req.userId!);
       if (project.status !== "built") {
@@ -3853,6 +3896,7 @@ export function createProjectsRouter(
 
   router.patch(
     "/projects/:id/entities/:entityName/:recordId",
+    recordWriteRateLimiter,
     asyncRoute(async (req, res) => {
       const project = requireProjectWriteAccess(db, req.params.id, req.userId!);
       if (project.status !== "built") {
@@ -3935,6 +3979,7 @@ export function createProjectsRouter(
 
   router.delete(
     "/projects/:id/entities/:entityName/:recordId",
+    recordWriteRateLimiter,
     asyncRoute(async (req, res) => {
       const project = requireProjectWriteAccess(db, req.params.id, req.userId!);
       if (project.status !== "built") {

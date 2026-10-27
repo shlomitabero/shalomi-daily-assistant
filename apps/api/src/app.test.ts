@@ -10757,6 +10757,116 @@ test("POST .../roles and PATCH .../entities/:entityName/label share one per-user
   });
 });
 
+/**
+ * Round 1110: record create/update/delete (the single most frequent write
+ * in the app, per round 594's own doc comment) had NO volumetric throttle
+ * at all, unlike every other repeatable, server-cost-bearing route family
+ * in this router. Cycles across POST (create) and PATCH (update) to reach
+ * the shared budget, then proves DELETE shares the SAME counter -- all
+ * three routes are one real question ("how much record-write work can
+ * this account trigger"), not three independent ones.
+ */
+test("record create/update/delete share one per-user rate limit: the 501st call across all three routes is rejected with 429, while a different account is unaffected", async () => {
+  // Builds a request body that satisfies every required field on the
+  // entity, whatever the heuristic/AI spec provider actually generated
+  // for it (its exact fields and enum option names are an implementation
+  // detail of that provider, not something this test should hardcode).
+  const minimalRecordBody = (fields: { name: string; type: string; required: boolean; enumValues?: string[] }[]) => {
+    const body: Record<string, unknown> = {};
+    for (const field of fields) {
+      if (!field.required) continue;
+      switch (field.type) {
+        case "number":
+          body[field.name] = 1;
+          break;
+        case "boolean":
+          body[field.name] = false;
+          break;
+        case "enum":
+          body[field.name] = field.enumValues?.[0] ?? "";
+          break;
+        case "date":
+          body[field.name] = "2024-01-01";
+          break;
+        default:
+          body[field.name] = "Record under test";
+      }
+    }
+    return body;
+  };
+
+  await withServer(async (baseUrl) => {
+    const token = await signup(baseUrl, "rate-limit-record-write@example.com");
+    const createProjectRes = await fetch(`${baseUrl}/api/projects`, {
+      method: "POST",
+      headers: authHeaders(token),
+      body: JSON.stringify({ description: "A CRM with customers and deals." }),
+    });
+    const { project } = (await createProjectRes.json()) as { project: { id: string } };
+    const buildRes = await fetch(`${baseUrl}/api/projects/${project.id}/build`, { method: "POST", headers: authHeaders(token) });
+    await collectSSE(buildRes);
+    const builtRes = await fetch(`${baseUrl}/api/projects/${project.id}`, { headers: authHeaders(token) });
+    const { project: builtProject } = (await builtRes.json()) as {
+      project: { spec: { entities: { name: string; fields: { name: string; type: string; required: boolean; enumValues?: string[] }[] }[] } };
+    };
+    const entity = builtProject.spec.entities[0];
+
+    // Call 1 of the shared budget: create the one record every subsequent
+    // update in this test targets.
+    const firstCreateRes = await fetch(`${baseUrl}/api/projects/${project.id}/entities/${entity.name}`, {
+      method: "POST",
+      headers: authHeaders(token),
+      body: JSON.stringify(minimalRecordBody(entity.fields)),
+    });
+    assert.notEqual(firstCreateRes.status, 429, "call 1 of 500 (within the shared limit) must not be rate-limited yet");
+    const { record } = (await firstCreateRes.json()) as { record: { id: number } };
+
+    // Calls 2-500: update that same record repeatedly.
+    for (let i = 0; i < 499; i++) {
+      const res = await fetch(`${baseUrl}/api/projects/${project.id}/entities/${entity.name}/${record.id}`, {
+        method: "PATCH",
+        headers: authHeaders(token),
+        body: JSON.stringify(minimalRecordBody(entity.fields)),
+      });
+      assert.notEqual(res.status, 429, `call ${i + 2} of 500 (within the shared limit) must not be rate-limited yet`);
+    }
+
+    // The 501st call across the SAME budget, on DELETE -- the third route
+    // in the family -- proves this is one shared counter across all three
+    // routes, not an independent one per route.
+    const blocked = await fetch(`${baseUrl}/api/projects/${project.id}/entities/${entity.name}/${record.id}`, {
+      method: "DELETE",
+      headers: authHeaders(token),
+    });
+    assert.equal(blocked.status, 429);
+    assert.equal(((await blocked.json()) as { code?: string }).code, "RATE_LIMITED");
+
+    // A completely different account must get its own fresh allowance --
+    // keyed by user id, not IP, so one account exhausting its own budget
+    // must never collaterally block an unrelated account.
+    const otherToken = await signup(baseUrl, "rate-limit-record-write-other@example.com");
+    const otherCreateProjectRes = await fetch(`${baseUrl}/api/projects`, {
+      method: "POST",
+      headers: authHeaders(otherToken),
+      body: JSON.stringify({ description: "A separate, unrelated project." }),
+    });
+    const { project: otherProject } = (await otherCreateProjectRes.json()) as { project: { id: string } };
+    const otherBuildRes = await fetch(`${baseUrl}/api/projects/${otherProject.id}/build`, { method: "POST", headers: authHeaders(otherToken) });
+    await collectSSE(otherBuildRes);
+    const otherBuiltRes = await fetch(`${baseUrl}/api/projects/${otherProject.id}`, { headers: authHeaders(otherToken) });
+    const { project: otherBuiltProject } = (await otherBuiltRes.json()) as {
+      project: { spec: { entities: { name: string; fields: { name: string; type: string; required: boolean; enumValues?: string[] }[] }[] } };
+    };
+    const otherEntity = otherBuiltProject.spec.entities[0];
+    const otherRes = await fetch(`${baseUrl}/api/projects/${otherProject.id}/entities/${otherEntity.name}`, {
+      method: "POST",
+      headers: authHeaders(otherToken),
+      body: JSON.stringify(minimalRecordBody(otherEntity.fields)),
+    });
+    assert.equal(otherRes.status, 201, "a different account must not be collaterally blocked by another account's own rate limit");
+  });
+});
+
 test("a validation failure on project routes returns readable text, not Zod's raw JSON issue dump", async () => {
   await withServer(async (baseUrl) => {
     const token = await signup(baseUrl);
