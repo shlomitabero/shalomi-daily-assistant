@@ -302,7 +302,11 @@ test("sendWhatsAppMessage passes through a normal successful response unchanged"
   const result = await withFakeFetch(new Response(JSON.stringify({ ok: true }), { status: 200 }), () =>
     sendWhatsAppMessage("proj1", "972501234567", "hi"),
   );
-  assert.deepEqual(result, { ok: true });
+  // Round 1081: attachmentAlreadyHandled is true here because the response
+  // actually carried a real `ok` boolean -- the request reached the send
+  // route's own withIdempotency callback, which always cleans up a
+  // resolved attachment file after whatsapp.sendMessage resolves.
+  assert.deepEqual(result, { ok: true, attachmentAlreadyHandled: true });
 });
 
 test("sendWhatsAppMessage passes through this route's own {ok:false, error} failure shape (e.g. a 502 socket failure) unchanged", async () => {
@@ -310,7 +314,54 @@ test("sendWhatsAppMessage passes through this route's own {ok:false, error} fail
     new Response(JSON.stringify({ ok: false, error: "socket write failed" }), { status: 502 }),
     () => sendWhatsAppMessage("proj1", "972501234567", "hi"),
   );
-  assert.deepEqual(result, { ok: false, error: "socket write failed" });
+  // Same reasoning as the success case above -- a real `ok` boolean means
+  // the route's own cleanup already ran, regardless of the send's own
+  // outcome.
+  assert.deepEqual(result, { ok: false, error: "socket write failed", attachmentAlreadyHandled: true });
+});
+
+/**
+ * Regression test for a real bug found by round 1081's Explore survey:
+ * WhatsAppPanel.tsx's handleSendTest used to clear its own testAttachment
+ * state unconditionally after every send attempt, on the mistaken premise
+ * that the server always deletes a resolved attachment file "unconditionally
+ * the moment whatsapp.sendMessage resolves, win or lose" -- true only once
+ * the request actually reaches that point. A WHATSAPP_NOT_CONNECTED 409
+ * (this exact shape) short-circuits before the attachment is ever resolved,
+ * so the real uploaded file is left completely untouched on disk --
+ * attachmentAlreadyHandled must be false here, or the caller has no way to
+ * know it still needs to hold onto the reference.
+ */
+test("sendWhatsAppMessage reports attachmentAlreadyHandled:false for a failure that short-circuits before the send route ever resolves/touches the attachment (e.g. WHATSAPP_NOT_CONNECTED)", async () => {
+  const result = await withFakeFetch(
+    new Response(JSON.stringify({ error: "Connect WhatsApp before sending a message", code: "WHATSAPP_NOT_CONNECTED" }), { status: 409 }),
+    () => sendWhatsAppMessage("proj1", "972501234567", "hi"),
+  );
+  assert.equal(result.ok, false);
+  assert.equal(result.attachmentAlreadyHandled, false, "the real uploaded file is still on disk, untouched -- the caller must not discard its reference");
+});
+
+/**
+ * The counterpart to the test above: when the attachment reference itself
+ * is what the route rejected (already gone, or never a valid reference to
+ * begin with), there was never a real file left to clean up in the first
+ * place, so attachmentAlreadyHandled is true even though the request never
+ * reached whatsapp.sendMessage.
+ */
+test("sendWhatsAppMessage reports attachmentAlreadyHandled:true when the attachment reference itself was rejected (ATTACHMENT_FILE_GONE/INVALID_ATTACHMENT)", async () => {
+  const fileGone = await withFakeFetch(
+    new Response(JSON.stringify({ error: "Attachment file is no longer available", code: "ATTACHMENT_FILE_GONE" }), { status: 400 }),
+    () => sendWhatsAppMessage("proj1", "972501234567", "hi"),
+  );
+  assert.equal(fileGone.ok, false);
+  assert.equal(fileGone.attachmentAlreadyHandled, true, "there was nothing left on disk to clean up -- the reference was already dead");
+
+  const invalid = await withFakeFetch(
+    new Response(JSON.stringify({ error: "Invalid attachment reference", code: "INVALID_ATTACHMENT" }), { status: 400 }),
+    () => sendWhatsAppMessage("proj1", "972501234567", "hi"),
+  );
+  assert.equal(invalid.ok, false);
+  assert.equal(invalid.attachmentAlreadyHandled, true, "an invalid reference was never resolved to a real file path -- nothing to clean up");
 });
 
 /**

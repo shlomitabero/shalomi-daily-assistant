@@ -1293,6 +1293,83 @@ test("WhatsAppPanel clears the chosen attachment after a failed send, instead of
 });
 
 /**
+ * Regression test for a real bug found by round 1081's Explore survey: the
+ * round-1001 fix above is only correct for a failure that actually reaches
+ * routes/projects.ts's own withIdempotency callback -- several real
+ * failures short-circuit BEFORE that point and never touch the attachment
+ * file at all (WHATSAPP_NOT_CONNECTED here, since the connection-status
+ * check runs before the attachment is even resolved). Clearing
+ * unconditionally on every failure (round 1001's own behavior before this
+ * fix) orphaned the real uploaded file on disk with zero remaining
+ * client-side reference to it -- unlike the round-1001 scenario, where the
+ * file really was already gone, here it's still sitting on disk, unsent.
+ */
+test("WhatsAppPanel keeps the chosen attachment selected after a failed send that never reached the server's own attachment cleanup (e.g. WHATSAPP_NOT_CONNECTED)", async () => {
+  await withJsdom(async () => {
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = (async (input: string, init?: RequestInit): Promise<Response> => {
+      const method = init?.method ?? "GET";
+      if (method === "GET" && input === "/api/projects/proj1/integrations/whatsapp/status") {
+        return new Response(
+          JSON.stringify({ status: "connected", phoneNumber: "972501234567", qrDataUrl: null, error: null }),
+          { status: 200, headers: { "content-type": "application/json" } },
+        );
+      }
+      if (method === "GET" && input === "/api/projects/proj1/integrations/whatsapp/messages") {
+        return new Response(JSON.stringify({ messages: [] }), { status: 200, headers: { "content-type": "application/json" } });
+      }
+      if (method === "POST" && input === "/api/projects/proj1/integrations/whatsapp/attachments/upload") {
+        return new Response(
+          JSON.stringify({ file: { url: "/api/uploads/proj1/_whatsapp-attachments/fake-uuid.pdf", name: "brochure.pdf", size: 9, mimeType: "application/pdf" } }),
+          { status: 200, headers: { "content-type": "application/json" } },
+        );
+      }
+      if (method === "POST" && input === "/api/projects/proj1/integrations/whatsapp/send") {
+        // The connection-status check runs before the attachment is ever
+        // resolved -- the real uploaded file is still on disk, untouched.
+        return new Response(
+          JSON.stringify({ error: "Connect WhatsApp before sending a message", code: "WHATSAPP_NOT_CONNECTED" }),
+          { status: 409, headers: { "content-type": "application/json" } },
+        );
+      }
+      throw new Error(`unexpected request ${method} ${input}`);
+    }) as typeof fetch;
+    try {
+      render(
+        React.createElement(
+          ThemeProvider,
+          null,
+          React.createElement(LanguageProvider, null, React.createElement(WhatsAppPanel, { projectId: "proj1", userId: "user1", projectName: "Test Project", onClose: () => {}, onJumpToEntity: () => {}, onJumpToRecord: () => {}, entities: [], onCreateRecordFromMessage: () => {} })),
+        ),
+      );
+      await waitForCondition(() => document.querySelector(".whatsapp-test-form") !== null);
+
+      const inputs = document.querySelectorAll('.whatsapp-test-form input[type="text"]');
+      fireEvent.change(inputs[0] as HTMLInputElement, { target: { value: "972521112233" } });
+      fireEvent.change(inputs[1] as HTMLInputElement, { target: { value: "הנה הברושור" } });
+
+      const fileInput = document.querySelector('.whatsapp-attachment-field input[type="file"]') as HTMLInputElement;
+      const file = new File(["%PDF-fake-brochure"], "brochure.pdf", { type: "application/pdf" });
+      Object.defineProperty(fileInput, "files", { value: [file] });
+      await act(async () => {
+        fireEvent.change(fileInput);
+      });
+      await waitForCondition(() => document.querySelector(".whatsapp-attachment-field .file-field-current") !== null);
+
+      fireEvent.submit(document.querySelector("form.whatsapp-test-form")!);
+      await waitForCondition(() => document.querySelector("form.whatsapp-test-form p.error") !== null);
+
+      assert.ok(
+        document.querySelector(".whatsapp-attachment-field .file-field-current") !== null,
+        "the attachment must stay selected -- the real file is still sitting on disk, untouched, so discarding the only client-side reference to it would orphan it permanently",
+      );
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+});
+
+/**
  * Round 979: clicking "Remove" on a chosen attachment previously only ever
  * cleared local React state -- the real upload stayed on disk forever,
  * since nothing short of deleting the whole project ever touched that

@@ -1132,6 +1132,16 @@ export function disconnectWhatsApp(projectId: string): Promise<WhatsAppStatusVie
 export interface WhatsAppSendResult {
   ok: boolean;
   error?: string;
+  // Round 1081: true once the server either already deleted the resolved
+  // attachment file (the request reached whatsapp.sendMessage, which the
+  // send route always cleans that file up after, win or lose) or confirmed
+  // there was nothing left to clean up (the attachment reference itself
+  // was invalid or already gone). False means the request never got that
+  // far -- e.g. WHATSAPP_NOT_CONNECTED, a VALIDATION_ERROR on to/message,
+  // or the route's own rate limiter rejecting it outright -- so a real
+  // uploaded file is still sitting on disk and the caller must not forget
+  // it. See sendWhatsAppMessage's own comment for how this is derived.
+  attachmentAlreadyHandled: boolean;
 }
 
 /**
@@ -1260,11 +1270,22 @@ export async function sendWhatsAppMessage(
   // -- normalize those too, so every caller can just check `.ok` without
   // needing to know which failure path produced the response.
   const body = (await res.json().catch(() => ({}))) as { ok?: boolean; error?: string; code?: string };
+  // Round 1081: `typeof body.ok === "boolean"` means the request actually
+  // reached the route's own withIdempotency callback (routes/projects.ts),
+  // which always rm()s a resolved attachment file after whatsapp.sendMessage
+  // resolves, whether that send itself succeeded or failed -- so the file
+  // is already gone either way. INVALID_ATTACHMENT/ATTACHMENT_FILE_GONE
+  // mean the route rejected the attachment reference itself before ever
+  // resolving a real file path, so there was nothing on disk to clean up
+  // in the first place. Every other {error, code} shape (WHATSAPP_NOT_CONNECTED,
+  // a VALIDATION_ERROR, the route's own rate limiter) short-circuits BEFORE
+  // the attachment is even looked at -- a real uploaded file, if any, is
+  // still sitting on disk untouched.
   if (typeof body.ok === "boolean") {
     if (!body.ok && body.error && KNOWN_WHATSAPP_SEND_ERROR_CODES.has(body.error)) {
-      return { ok: false, error: resolveErrorMessage({ code: `WHATSAPP_SEND_${body.error.toUpperCase()}`, error: body.error }) };
+      return { ok: false, error: resolveErrorMessage({ code: `WHATSAPP_SEND_${body.error.toUpperCase()}`, error: body.error }), attachmentAlreadyHandled: true };
     }
-    return body as WhatsAppSendResult;
+    return { ...(body as WhatsAppSendResult), attachmentAlreadyHandled: true };
   }
   if (body.code === "SESSION_EXPIRED" || body.code === "AUTH_REQUIRED") notifyAuthExpired();
   // Round 950: same PROJECT_NOT_FOUND gap, and the same fix, as
@@ -1272,7 +1293,8 @@ export async function sendWhatsAppMessage(
   // above.
   if (body.code === "PROJECT_NOT_FOUND") notifyProjectGone(projectId, resolveErrorMessage(body));
   if (body.code === "VIEWER_READ_ONLY") notifyViewerDemoted(projectId);
-  return { ok: false, error: resolveErrorMessage(body) };
+  const attachmentAlreadyHandled = body.code === "INVALID_ATTACHMENT" || body.code === "ATTACHMENT_FILE_GONE";
+  return { ok: false, error: resolveErrorMessage(body), attachmentAlreadyHandled };
 }
 
 export interface WhatsAppMessageLogEntry {

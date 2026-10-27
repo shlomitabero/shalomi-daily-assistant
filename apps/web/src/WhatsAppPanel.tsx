@@ -668,18 +668,31 @@ export function WhatsAppPanel({
       setSendResult(
         result.ok ? { ok: true, text: t("whatsapp.send.success") } : { ok: false, text: result.error ?? t("whatsapp.send.genericError") },
       );
-      // Round 1001: cleared here regardless of result.ok -- the server
-      // (routes/projects.ts's POST .../whatsapp/send, round 979) already
-      // deletes the resolved attachment file from disk unconditionally
-      // the moment whatsapp.sendMessage above resolves, win or lose,
-      // since it's single-use and nothing else in this app ever
-      // references that exact uploaded file again. The comment just
-      // below predates that cleanup; retrying a failed send WITH the
-      // SAME testAttachment reference now guarantees a 400
-      // ATTACHMENT_FILE_GONE on every subsequent attempt, since the one
-      // file it names is already gone -- a confusing dead end with no
-      // indication the user needs to pick the file again.
-      setTestAttachment(null);
+      // Round 1001's own comment claimed the server (routes/projects.ts's
+      // POST .../whatsapp/send) "deletes the resolved attachment file from
+      // disk unconditionally the moment whatsapp.sendMessage above
+      // resolves, win or lose" -- true only for a failure that actually
+      // reaches that point. Several failures short-circuit BEFORE the
+      // server ever touches the file at all: WHATSAPP_NOT_CONNECTED (the
+      // connection-status check runs before the attachment is even
+      // resolved), a VALIDATION_ERROR on `to`/`message`, and the send-route's
+      // own rate limiter rejecting the request outright. Round 1081's
+      // Explore survey found that clearing unconditionally here orphaned
+      // the real uploaded file on disk with zero remaining client-side
+      // reference in every one of those cases -- unlike the success path,
+      // where the server really did delete it, there is now nothing left
+      // pointing at the file for the existing "Remove" button to clean up,
+      // and (per this same file's own round-979 comment) the only other
+      // cleanup for an orphaned attachment is deleting the whole project.
+      // result.attachmentAlreadyHandled (api.ts's sendWhatsAppMessage) is
+      // true exactly when the server already deleted the file or confirmed
+      // there was nothing to clean up -- clearing on that, rather than on
+      // result.ok alone, still fixes round 1001's own original dead end (a
+      // Baileys-level send failure, e.g. an invalid number, still deletes
+      // the file server-side despite result.ok being false) while no longer
+      // discarding the only remaining reference to a file that's still
+      // genuinely sitting on disk, unsent and untouched.
+      if (result.attachmentAlreadyHandled) setTestAttachment(null);
       // Mirrors every other write-form in this app (EntityPanel's own
       // record form resets to empty right after a successful create) --
       // only on success, so a failed send still leaves the typed
