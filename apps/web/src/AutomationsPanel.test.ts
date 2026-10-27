@@ -698,6 +698,49 @@ test("AutomationsPanel's Close button calls onClose", async () => {
 });
 
 /**
+ * Round 1056: useDialogFocusTrap's own Escape handler closes this whole
+ * panel on ANY Escape keypress, unless the event's target sits under a
+ * data-escape-handled-locally marker -- the create-form never had one, so
+ * typing a message-template draft and then pressing Escape (an ordinary
+ * reflex, e.g. dismissing a browser autofill suggestion) silently closed
+ * the whole panel and discarded the draft, with zero confirmation. Confirms
+ * the two-stage fix: Escape while a real draft exists clears the draft and
+ * keeps the panel open (mirroring GlobalSearchPanel.tsx's own conditional
+ * escape-locally pattern), and only a SECOND Escape, once the form is
+ * pristine again, actually closes the panel.
+ */
+test("AutomationsPanel's create-form Escape clears an in-progress draft instead of closing the whole panel, and only closes once the form is pristine again", async () => {
+  await withJsdom(async () => {
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = (async (input: string) => {
+      if (input === "/api/projects/proj1/automations") {
+        return new Response(JSON.stringify({ rules: [] }), { status: 200, headers: { "content-type": "application/json" } });
+      }
+      throw new Error(`unexpected request ${input}`);
+    }) as typeof fetch;
+
+    let closed = 0;
+    try {
+      renderPanel(() => (closed += 1));
+      await waitForCondition(() => document.querySelector(".automations-create-form textarea") !== null);
+
+      const messageField = document.querySelector(".automations-create-form textarea") as HTMLTextAreaElement;
+      fireEvent.change(messageField, { target: { value: "Thanks for your order!" } });
+      assert.equal(messageField.value, "Thanks for your order!", "sanity check: the draft must have actually been typed");
+
+      fireEvent.keyDown(messageField, { key: "Escape" });
+      assert.equal(closed, 0, "a real in-progress draft must not close the whole panel on the first Escape");
+      assert.equal(messageField.value, "", "the first Escape must clear the local draft instead");
+
+      fireEvent.keyDown(messageField, { key: "Escape" });
+      assert.equal(closed, 1, "a second Escape, once the form is pristine, must close the panel normally");
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+});
+
+/**
  * The server (apps/api/src/routes/projects.ts's validateAutomationToField)
  * rejects any toField that isn't "text" or "longtext" -- a round 666
  * regression test: the "send to a field" dropdown used to list every field

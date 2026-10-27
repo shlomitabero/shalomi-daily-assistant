@@ -485,6 +485,34 @@ export function AutomationsPanel({
     (actionType === "send_email" && toMode === "static" && !toEmail.trim()) ||
     (actionType === "send_email" && !emailSubject.trim());
 
+  /**
+   * useDialogFocusTrap's own Escape handler closes this whole panel the
+   * instant Escape is pressed anywhere inside it, unless the event's own
+   * target sits under a `data-escape-handled-locally` marker (see that
+   * hook's own doc comment) -- every other dialog-hosted form with real
+   * free-text draft content already opts out this way (CheckpointLabelEditor.tsx's
+   * rename input, GlobalSearchPanel.tsx's/HistoryPanel.tsx's/WhatsAppPanel.tsx's
+   * own search boxes), but this form never did. A rule's own in-progress
+   * draft -- especially a hand-written WhatsApp/email message template, or
+   * an edit of an existing rule via editingRuleId -- could be silently
+   * discarded by a single ordinary Escape keypress (e.g. dismissing a
+   * browser autofill suggestion), with the whole panel closing underneath
+   * it and no confirmation at all. Scoped to only the fields a user would
+   * actually mourn losing (free-text content, or any edit in progress) --
+   * a pristine create-form with nothing but default dropdown selections
+   * still lets Escape close the panel normally, the same way an empty
+   * search box does for GlobalSearchPanel.tsx above.
+   */
+  const hasUnsavedDraft =
+    editingRuleId !== null ||
+    messageTemplate.trim() !== "" ||
+    fieldValue.trim() !== "" ||
+    webhookUrl.trim() !== "" ||
+    webhookSecret.trim() !== "" ||
+    toNumber.trim() !== "" ||
+    toEmail.trim() !== "" ||
+    emailSubject.trim() !== "";
+
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
     if (formIncomplete || !selectedEntity) return;
@@ -1096,7 +1124,14 @@ export function AutomationsPanel({
         {!readOnly && (
         <>
         <h3 className="automations-new-heading">{editingRuleId ? t("automations.editing.heading") : t("automations.new.heading")}</h3>
-        <form className="automations-create-form" onSubmit={handleSubmit}>
+        <form
+          className="automations-create-form"
+          onSubmit={handleSubmit}
+          data-escape-handled-locally={hasUnsavedDraft ? "" : undefined}
+          onKeyDown={(e) => {
+            if (e.key === "Escape" && hasUnsavedDraft) resetToCreateMode();
+          }}
+        >
           <label>
             {t("automations.entity.label")}
             <select value={entityName} onChange={(e) => setEntityName(e.target.value)} disabled={editingRuleId !== null}>
