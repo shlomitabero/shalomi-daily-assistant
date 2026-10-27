@@ -1,4 +1,4 @@
-import { useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { Entity, Field, Project } from "@forge/shared";
 import { FIELD_TYPES } from "@forge/shared";
 import {
@@ -490,6 +490,42 @@ export function EntitySummaryItem({
   const fieldOccurrences = useMemo(() => fieldLabelOccurrences(entity.fields), [entity.fields]);
 
   /**
+   * Round 1059: the other half of round 1027's own gap, one level up.
+   * Round 1027 only cross-gated this entity's own remove vs. rename against
+   * each other -- it never considered a concurrent FIELD-level action
+   * (FieldChip's required/type/remove/rename, or AddFieldForm adding a new
+   * one) on one of THIS entity's own fields, even though that races the
+   * exact same way: every field route is also a plain, unguarded, name-
+   * keyed read-modify-write of the whole project.spec (confirmed by reading
+   * routes/projects.ts's own .../fields and .../fields/:fieldName/* handlers
+   * -- none of them call assertIndexStillMatches either), so whichever
+   * response the browser *receives* last -- not necessarily the one the
+   * server processed last -- silently overwrites the other via the same
+   * onRenamed/onAdded -> setProject full-state replace. Remove this entity
+   * while a sibling field's required-toggle is still in flight, and if that
+   * toggle's (now-stale) response arrives after the removal's, the
+   * just-deleted entity resurfaces with the field intact. `fieldBusyMap`
+   * collects every mounted FieldChip's own busy state (reported up via its
+   * new onBusyChange prop below) and `addFieldBusy` tracks AddFieldForm's;
+   * folded together with this entity's own busy/rename.busy into one
+   * `anyChildOrSelfBusy` flag that now gates every control on this entity's
+   * whole edit surface -- itself, each field chip, and the add-field form.
+   */
+  const [fieldBusyMap, setFieldBusyMap] = useState<Record<string, boolean>>({});
+  const handleFieldBusyChange = useCallback((fieldName: string, isFieldBusy: boolean) => {
+    setFieldBusyMap((prev) => {
+      if (Boolean(prev[fieldName]) === isFieldBusy) return prev;
+      if (!isFieldBusy) {
+        const { [fieldName]: _removed, ...rest } = prev;
+        return rest;
+      }
+      return { ...prev, [fieldName]: true };
+    });
+  }, []);
+  const [addFieldBusy, setAddFieldBusy] = useState(false);
+  const anyChildOrSelfBusy = busy || rename.busy || addFieldBusy || Object.keys(fieldBusyMap).length > 0;
+
+  /**
    * Round 932: see RoleChip's own handleStartRename -- same gap, same fix.
    * Round 1027: unlike RoleChip/AssumptionItem/PersonaItem (whose server
    * routes re-validate against an `expect` index and reject a stale
@@ -507,9 +543,12 @@ export function EntitySummaryItem({
    * own in-flight flag) closes it -- the remove button is unreachable
    * once rename.editing is true (see that branch above), so this is the
    * only direction that needs a guard.
+   * Round 1059: now guards against `anyChildOrSelfBusy` instead of just
+   * `busy` -- see that flag's own comment above for why a field-level
+   * action racing this entity's own rename needs the same guard.
    */
   function handleStartRename() {
-    if (busy) return;
+    if (anyChildOrSelfBusy) return;
     clearError();
     rename.startEditing();
   }
@@ -587,7 +626,7 @@ export function EntitySummaryItem({
           type="button"
           className="entity-summary-remove"
           onClick={handleRemove}
-          disabled={busy || !canRemove}
+          disabled={anyChildOrSelfBusy || !canRemove}
           aria-label={t("spec.entities.remove")}
           title={canRemove ? t("spec.entities.remove") : t("spec.entities.lastOneHint")}
         >
@@ -610,10 +649,19 @@ export function EntitySummaryItem({
             onChanged={onRenamed}
             allEntities={allEntities}
             labelOccurrences={fieldOccurrences}
+            siblingActionBusy={anyChildOrSelfBusy}
+            onBusyChange={handleFieldBusyChange}
           />
         ))}
       </div>
-      <AddFieldForm projectId={projectId} entityName={entity.name} allEntities={allEntities} onAdded={onRenamed} />
+      <AddFieldForm
+        projectId={projectId}
+        entityName={entity.name}
+        allEntities={allEntities}
+        onAdded={onRenamed}
+        disabled={anyChildOrSelfBusy}
+        onBusyChange={setAddFieldBusy}
+      />
     </div>
   );
 }
@@ -638,6 +686,8 @@ export function FieldChip({
   onChanged,
   labelOccurrences,
   readOnly = false,
+  siblingActionBusy = false,
+  onBusyChange,
 }: {
   field: Field;
   projectId: string;
@@ -651,6 +701,10 @@ export function FieldChip({
   labelOccurrences: Map<string, number>;
   /** See RoleChip's own comment -- same gap, same fix. */
   readOnly?: boolean;
+  /** Round 1059: see EntitySummaryItem's own anyChildOrSelfBusy comment -- true while this entity's own remove/rename, a SIBLING field's own action, or AddFieldForm is in flight, folded into this chip's own fieldChipBusy below so a legitimate concurrent edit elsewhere on this entity disables this chip's controls too, not just this chip's own three actions against each other (round 1026). */
+  siblingActionBusy?: boolean;
+  /** Reports this chip's own busy state up to EntitySummaryItem, which folds every mounted chip's own state into the same aggregate it feeds back via siblingActionBusy above -- the other half of the same cross-gate. Omitted (readOnly's own render never passes it) since a read-only chip has no actions to report. */
+  onBusyChange?: (fieldName: string, busy: boolean) => void;
 }) {
   const { t } = useTranslation();
   const { busy, error, handleRemove, clearError } = useRemovableSpecItem(
@@ -737,7 +791,28 @@ export function FieldChip({
   // the cosmetic stale-banner issue) open -- this closes it the same way
   // CollaboratorsPanel's own controls already reference every sibling
   // action's busy flag, not just their own.
-  const fieldChipBusy = busy || requiredBusy || typeBusy;
+  // Round 1059: now also ORs in siblingActionBusy -- see this prop's own
+  // comment above for why a DIFFERENT field's action (or AddFieldForm, or
+  // this entity's own remove/rename) needs to disable this chip too, not
+  // just this chip's own three actions against each other.
+  const fieldChipBusy = busy || requiredBusy || typeBusy || siblingActionBusy;
+
+  // Round 1059: reports this chip's own busy state (all four of its own
+  // actions, including rename -- unlike fieldChipBusy above, which doesn't
+  // need rename.busy since starting a rename is already separately guarded
+  // by handleStartRename below) up to EntitySummaryItem on every change,
+  // keyed by this field's own stable `name` (never changed by a label-only
+  // rename). A second effect, mount/unmount-only, clears this chip's own
+  // entry when it unmounts (the field was removed) so a stale "busy" entry
+  // doesn't linger in the parent's aggregate forever.
+  const ownBusy = busy || requiredBusy || typeBusy || rename.busy;
+  useEffect(() => {
+    onBusyChange?.(field.name, ownBusy);
+  }, [field.name, ownBusy, onBusyChange]);
+  useEffect(() => {
+    return () => onBusyChange?.(field.name, false);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [field.name, onBusyChange]);
 
   async function commitTypeChange(type: Field["type"], opts?: { enumValues?: string; relationTo?: string }) {
     setTypeBusy(true);
@@ -1134,6 +1209,8 @@ export function AddFieldForm({
   allEntities,
   onAdded,
   readOnly = false,
+  disabled = false,
+  onBusyChange,
 }: {
   projectId: string;
   entityName: string;
@@ -1141,6 +1218,10 @@ export function AddFieldForm({
   onAdded: (project: Project) => void;
   /** See AddRoleForm's own comment -- same gap, same fix. Not actually threaded in from App.tsx (EntitySummaryItem's own readOnly branch above omits AddFieldForm entirely instead), but declared the same way as every sibling Add*Form for consistency and in case a future caller renders it directly. */
   readOnly?: boolean;
+  /** Round 1059: see EntitySummaryItem's own anyChildOrSelfBusy comment -- true while this entity's own remove/rename, or any sibling FieldChip's own action, is in flight. Folded into this form's own local `busy` below so a legitimate concurrent edit to an existing field no longer races this form's add -- the forward direction of the same gap round 1026/1027 only closed within FieldChip's own three actions. */
+  disabled?: boolean;
+  /** Reports this form's own busy state up to EntitySummaryItem, which folds it into the same aggregate it feeds back via FieldChip's siblingActionBusy and this form's own disabled prop above -- the other half of the same cross-gate. */
+  onBusyChange?: (busy: boolean) => void;
 }) {
   const { t } = useTranslation();
   const [label, setLabel] = useState("");
@@ -1154,9 +1235,16 @@ export function AddFieldForm({
   // collision risk as FieldChip's identical dropdown if two entities
   // share a label.
   const entityOccurrences = useMemo(() => entityLabelOccurrences(allEntities), [allEntities]);
+  // Round 1059: see this form's own `disabled` prop comment above.
+  const formDisabled = busy || disabled;
+
+  useEffect(() => {
+    onBusyChange?.(busy);
+  }, [busy, onBusyChange]);
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
+    if (formDisabled) return;
     const trimmedLabel = label.trim();
     if (!trimmedLabel) return;
     if (type === "enum" && !enumValues.trim()) return;
@@ -1190,9 +1278,9 @@ export function AddFieldForm({
         onChange={(e) => setLabel(e.target.value)}
         placeholder={t("spec.fields.addPlaceholder")}
         aria-label={t("spec.fields.addPlaceholder")}
-        disabled={busy}
+        disabled={formDisabled}
       />
-      <select value={type} onChange={(e) => setType(e.target.value as Field["type"])} disabled={busy} aria-label={t("spec.fields.type")}>
+      <select value={type} onChange={(e) => setType(e.target.value as Field["type"])} disabled={formDisabled} aria-label={t("spec.fields.type")}>
         {FIELD_TYPES.map((ft) => (
           <option key={ft} value={ft}>
             {t(`spec.fields.type.${ft}`)}
@@ -1206,11 +1294,11 @@ export function AddFieldForm({
           onChange={(e) => setEnumValues(e.target.value)}
           placeholder={t("spec.fields.enumValues.placeholder")}
           aria-label={t("spec.fields.enumValues.placeholder")}
-          disabled={busy}
+          disabled={formDisabled}
         />
       )}
       {type === "relation" && (
-        <select value={relationTo} onChange={(e) => setRelationTo(e.target.value)} disabled={busy} aria-label={t("spec.fields.relationTo")}>
+        <select value={relationTo} onChange={(e) => setRelationTo(e.target.value)} disabled={formDisabled} aria-label={t("spec.fields.relationTo")}>
           {allEntities.map((e) => (
             <option key={e.name} value={e.name}>
               {entityDisplayLabel(e, entityOccurrences)}
@@ -1221,7 +1309,7 @@ export function AddFieldForm({
       <button
         type="submit"
         className="secondary"
-        disabled={busy || !label.trim() || (type === "enum" && !enumValues.trim()) || (type === "relation" && !relationTo)}
+        disabled={formDisabled || !label.trim() || (type === "enum" && !enumValues.trim()) || (type === "relation" && !relationTo)}
       >
         {t("spec.fields.add")}
       </button>

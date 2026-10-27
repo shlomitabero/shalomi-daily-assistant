@@ -2268,6 +2268,164 @@ test("choosing 'relation' as the add-field type reveals a dropdown of this proje
 });
 
 /**
+ * Round 1059: the forward half of the same gap, one level up. Round 1026
+ * only cross-gated a field chip's own three actions (remove/required-
+ * toggle/type-change) against each other; it never considered
+ * AddFieldForm -- same screen, same entity, same full-project-replace
+ * onChanged/onAdded -- at all. Toggling one field's "required" flag while
+ * adding a brand-new field to the same entity fires two concurrent
+ * requests that both read-modify-write the whole project.spec with no
+ * staleness guard on either route (confirmed by reading routes/projects.ts's
+ * own .../fields and .../fields/:name/required handlers), so whichever
+ * response the browser *receives* last silently overwrites the other via
+ * the shared setProject-style replace.
+ */
+test("the add-field form is disabled while a sibling field's required-toggle request is still in flight, and a different field's own controls are too", async () => {
+  await withJsdom(async () => {
+    const twoFieldEntity: Entity = {
+      name: "Customer",
+      fields: [
+        { name: "email", type: "text", required: false },
+        { name: "phone", type: "text", required: false },
+      ],
+    };
+    const originalFetch = globalThis.fetch;
+    let resolveRequiredPatch: (() => void) | undefined;
+    const requiredGate = new Promise<void>((resolve) => {
+      resolveRequiredPatch = resolve;
+    });
+    globalThis.fetch = (async (input: string, init?: RequestInit) => {
+      const method = init?.method ?? "GET";
+      if (method === "PATCH" && input === "/api/projects/proj1/entities/Customer/fields/email/required") {
+        await requiredGate;
+        return new Response(JSON.stringify({ project: baseProject }), { status: 200, headers: { "content-type": "application/json" } });
+      }
+      throw new Error(`unexpected request ${method} ${input}`);
+    }) as typeof fetch;
+
+    try {
+      render(
+        React.createElement(
+          ThemeProvider,
+          null,
+          React.createElement(
+            LanguageProvider,
+            null,
+            React.createElement(EntitySummaryItem, {
+              entity: twoFieldEntity,
+              allEntities: [twoFieldEntity],
+              fieldsSummary: "email, phone",
+              projectId: "proj1",
+              canRemove: true,
+              onRenamed: () => {},
+              onRemoved: () => {},
+            }),
+          ),
+        ),
+      );
+
+      const requiredCheckboxes = document.querySelectorAll(".chip-field-required input");
+      fireEvent.click(requiredCheckboxes[0] as HTMLInputElement); // toggles "email"'s own required flag
+      await waitForCondition(() => (requiredCheckboxes[0] as HTMLInputElement).disabled);
+
+      const addFieldInput = document.querySelector(".spec-add-field-form input") as HTMLInputElement;
+      const addFieldButton = document.querySelector(".spec-add-field-form button") as HTMLButtonElement;
+      assert.equal(
+        addFieldInput.disabled,
+        true,
+        "the add-field form's own input must be disabled while a sibling field's action is still in flight",
+      );
+      assert.equal(
+        addFieldButton.disabled,
+        true,
+        "the add-field form's own submit button must be disabled while a sibling field's action is still in flight",
+      );
+      assert.equal(
+        (requiredCheckboxes[1] as HTMLInputElement).disabled,
+        true,
+        "a different field's own required checkbox must also be disabled while a sibling field's action is still in flight",
+      );
+    } finally {
+      // Always resolves the gate, even if an assertion above threw -- see
+      // round 1026's own identical comment on why this must live in finally.
+      resolveRequiredPatch!();
+      globalThis.fetch = originalFetch;
+    }
+  });
+});
+
+/**
+ * The other direction of the same gate: adding a brand-new field must
+ * also block every existing sibling field chip's own controls, not just
+ * the reverse.
+ */
+test("a sibling field chip's own controls are disabled while the add-field form's own request is still in flight", async () => {
+  await withJsdom(async () => {
+    const twoFieldEntity: Entity = {
+      name: "Customer",
+      fields: [
+        { name: "email", type: "text", required: false },
+        { name: "phone", type: "text", required: false },
+      ],
+    };
+    const originalFetch = globalThis.fetch;
+    let resolveAddPost: (() => void) | undefined;
+    const addGate = new Promise<void>((resolve) => {
+      resolveAddPost = resolve;
+    });
+    globalThis.fetch = (async (input: string, init?: RequestInit) => {
+      const method = init?.method ?? "GET";
+      if (method === "POST" && input === "/api/projects/proj1/entities/Customer/fields") {
+        await addGate;
+        return new Response(JSON.stringify({ project: baseProject }), { status: 200, headers: { "content-type": "application/json" } });
+      }
+      throw new Error(`unexpected request ${method} ${input}`);
+    }) as typeof fetch;
+
+    try {
+      render(
+        React.createElement(
+          ThemeProvider,
+          null,
+          React.createElement(
+            LanguageProvider,
+            null,
+            React.createElement(EntitySummaryItem, {
+              entity: twoFieldEntity,
+              allEntities: [twoFieldEntity],
+              fieldsSummary: "email, phone",
+              projectId: "proj1",
+              canRemove: true,
+              onRenamed: () => {},
+              onRemoved: () => {},
+            }),
+          ),
+        ),
+      );
+
+      fireEvent.change(document.querySelector(".spec-add-field-form input") as HTMLInputElement, { target: { value: "Fax" } });
+      fireEvent.click(document.querySelector(".spec-add-field-form button") as HTMLButtonElement);
+
+      await waitForCondition(() => (document.querySelector(".chip-field-required input") as HTMLInputElement).disabled);
+
+      assert.equal(
+        (document.querySelectorAll(".chip-field-required input")[1] as HTMLInputElement).disabled,
+        true,
+        "a sibling field chip's own required checkbox must be disabled while the add-field form's own request is still in flight",
+      );
+      assert.equal(
+        (document.querySelector(".chip-remove") as HTMLButtonElement).disabled,
+        true,
+        "a sibling field chip's own remove button must be disabled while the add-field form's own request is still in flight",
+      );
+    } finally {
+      resolveAddPost!();
+      globalThis.fetch = originalFetch;
+    }
+  });
+});
+
+/**
  * Round 696: a viewer collaborator can genuinely land on this exact spec
  * review screen (App.tsx routes any unbuilt project straight to "spec"
  * regardless of role, and a collaborator can be invited before build), and
