@@ -2147,3 +2147,105 @@ test("restoring a checkpoint that still has an entity removed by a later refine 
   assert.equal(restored!.entityName, "Order");
   assert.equal(restored!.fieldName, "total");
 });
+
+/**
+ * Round 1108: the reused-column branch's own sqlType check (just above in
+ * migrate.ts) only ever catches a physically-visible mismatch, like
+ * INTEGER -> TEXT -- but text/longtext/enum/date all collapse onto the
+ * same TEXT column, so a field removed on one refine and re-added two+
+ * refines later under the same name, moving between any two of THOSE
+ * types (here date -> enum), had no prevField to compare against either,
+ * and stayed completely silent. Round 511 identified this exact gap and
+ * deliberately deferred it as needing "a field's full type lineage beyond
+ * one hop, which does not currently exist" -- this proves that lineage now
+ * exists via the Time Machine checkpoint history (ensureCheckpointsTable +
+ * insertCheckpoint, exactly what the real build/refine pipeline does after
+ * every successful diffAndMigrate, mirroring the multi-hop entity-name
+ * collision test above), without needing anything new beyond what
+ * checkpoints.ts already durably stores.
+ */
+test("diffAndMigrate recovers a reused column's last known type across a TEXT-bucket change (date -> enum) that vanished two refines ago", () => {
+  const db = openDatabase(":memory:");
+  ensureCheckpointsTable(db);
+
+  const baseSpec: ProductSpec = {
+    ...spec,
+    entities: [
+      { ...spec.entities[0], fields: [...spec.entities[0].fields, { name: "lastContacted", type: "date", required: false }] },
+      spec.entities[1],
+    ],
+  };
+  applyMigrations(db, "proj1", baseSpec);
+  insertCheckpoint(db, { id: "cp1", projectId: "proj1", label: "Initial build", kind: "build", spec: baseSpec });
+
+  // Refine 1: drop "lastContacted" entirely. previousSpec for THIS call is
+  // baseSpec, so a one-hop check would still see it -- nothing to collide
+  // with yet, since the field isn't coming back this hop.
+  const spec1: ProductSpec = { ...spec };
+  diffAndMigrate(db, "proj1", baseSpec, spec1);
+  insertCheckpoint(db, { id: "cp2", projectId: "proj1", label: "Refine: drop lastContacted", kind: "refine", spec: spec1 });
+
+  // Refine 2: previousSpec is now spec1, which never mentions
+  // "lastContacted" at all -- re-adds a field under the exact same name,
+  // but as an "enum" this time, not the original "date". The physical
+  // column is still there (SQLite never dropped it), still TEXT, and the
+  // newly declared type is also TEXT -- the sqlType check alone sees no
+  // mismatch at all.
+  const spec2: ProductSpec = {
+    ...spec,
+    entities: [
+      {
+        ...spec.entities[0],
+        fields: [...spec.entities[0].fields, { name: "lastContacted", type: "enum", required: false, enumValues: ["Never", "Recently"] }],
+      },
+      spec.entities[1],
+    ],
+  };
+  const changes = diffAndMigrate(db, "proj1", spec1, spec2);
+
+  const reused = changes.find((c) => c.type === "type_changed" && c.column === "lastContacted");
+  assert.ok(reused, "expected a type_changed entry recovering the field's true history, not silence");
+  assert.equal(reused!.fromType, "date", "fromType must be the actual historical type recovered from checkpoint history, not a generic label");
+  assert.equal(reused!.toType, "enum");
+});
+
+/**
+ * The companion "benign reuse" case for the fix above: a field removed and
+ * re-added two+ refines later under the same name AND the same TEXT-bucket
+ * type (text -> text) must stay silent, exactly like it always has for a
+ * same-type reuse -- findLastKnownFieldType recovering a type that matches
+ * field.type exactly must not itself trigger a false-positive type_changed.
+ */
+test("diffAndMigrate stays silent on a reused column whose TEXT-bucket type across two+ refines never actually changed", () => {
+  const db = openDatabase(":memory:");
+  ensureCheckpointsTable(db);
+
+  const baseSpec: ProductSpec = {
+    ...spec,
+    entities: [
+      { ...spec.entities[0], fields: [...spec.entities[0].fields, { name: "notes", type: "text", required: false }] },
+      spec.entities[1],
+    ],
+  };
+  applyMigrations(db, "proj1", baseSpec);
+  insertCheckpoint(db, { id: "cp1", projectId: "proj1", label: "Initial build", kind: "build", spec: baseSpec });
+
+  const spec1: ProductSpec = { ...spec };
+  diffAndMigrate(db, "proj1", baseSpec, spec1);
+  insertCheckpoint(db, { id: "cp2", projectId: "proj1", label: "Refine: drop notes", kind: "refine", spec: spec1 });
+
+  // Refine 2: re-add "notes" as "text" again -- a genuinely benign reuse.
+  const spec2: ProductSpec = {
+    ...spec,
+    entities: [
+      { ...spec.entities[0], fields: [...spec.entities[0].fields, { name: "notes", type: "text", required: false }] },
+      spec.entities[1],
+    ],
+  };
+  const changes = diffAndMigrate(db, "proj1", spec1, spec2);
+
+  assert.ok(
+    !changes.some((c) => c.type === "type_changed" && c.column === "notes"),
+    "a reused column whose historical type matches its current declared type must not be reported as type_changed",
+  );
+});

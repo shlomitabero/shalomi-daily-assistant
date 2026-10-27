@@ -238,6 +238,52 @@ export function listAllCheckpointedEntityNames(db: ForgeDatabase, projectId: str
 }
 
 /**
+ * Round 1108: migrate.ts's "reused column" branch (a field removed on one
+ * refine and re-added two+ refines later under the same name) has no
+ * `prevField` to compare against -- by definition, the field is absent
+ * from `previousSpec`. For the physically-ambiguous TEXT bucket
+ * (text/longtext/enum/date all collapse to the same SQLite column type,
+ * see migrate.ts's own `sqlTypeFor`), that leaves no way at all to tell a
+ * genuine date->enum reuse (stale ISO-date strings now rendered/edited as
+ * an enum select with no matching option) from a benign text->text one --
+ * a gap identified and deliberately deferred at round 511 as needing "a
+ * field's full type lineage beyond one hop, which does not currently
+ * exist." It does, in the sense that matters here: every checkpoint's own
+ * `spec_json` already records this entity+field's declared type at that
+ * point in history, the same data source `extractEntityNamesFromSpecJson`
+ * above already mines leniently for the analogous entity-name question.
+ * Scans newest-first (mirroring `listCheckpoints`'s own ordering) and
+ * returns the most recent checkpoint's own declared type for this exact
+ * entity+field pair -- i.e. its type immediately before whatever refine
+ * removed it -- or undefined if no checkpoint ever had this combination
+ * (a field name that's genuinely brand new, not a reuse at all). Uses the
+ * same tolerant, schema-bypassing JSON read as extractEntityNamesFromSpecJson
+ * (a stored checkpoint whose other fields no longer satisfy today's
+ * stricter ProductSpecSchema must still answer this question) rather than
+ * listCheckpoints/ProductSpecSchema.parse.
+ */
+export function findLastKnownFieldType(db: ForgeDatabase, projectId: string, entityName: string, fieldName: string): string | undefined {
+  const rows = db
+    .prepare("SELECT spec_json FROM checkpoints WHERE projectId = ? ORDER BY createdAt DESC, rowid DESC")
+    .all(projectId) as { spec_json: string }[];
+  for (const row of rows) {
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(row.spec_json);
+    } catch {
+      continue;
+    }
+    const entities = (parsed as { entities?: unknown })?.entities;
+    if (!Array.isArray(entities)) continue;
+    const entity = entities.find((e) => (e as { name?: unknown })?.name === entityName) as { fields?: unknown } | undefined;
+    if (!entity || !Array.isArray(entity.fields)) continue;
+    const field = entity.fields.find((f) => (f as { name?: unknown })?.name === fieldName) as { type?: unknown } | undefined;
+    if (field && typeof field.type === "string") return field.type;
+  }
+  return undefined;
+}
+
+/**
  * The durable twin of listAllCheckpointedEntityNames above (see
  * ensureCheckpointsTable's own doc-comment for why the two differ):
  * listAllCheckpointedEntityNames only ever sees entity names from

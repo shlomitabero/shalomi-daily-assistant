@@ -1,7 +1,7 @@
 import type { Entity, Field, ProductSpec } from "@forge/shared";
 import type { ForgeDatabase } from "./connection.js";
 import { disableAutomationRulesForEntity, disableAutomationRulesForField, ensureAutomationRulesTable } from "./automations.js";
-import { listHistoricalEntityNames, recordEntityNameInHistory } from "./checkpoints.js";
+import { findLastKnownFieldType, listHistoricalEntityNames, recordEntityNameInHistory } from "./checkpoints.js";
 import { assertSafeIdentifier, quoteIdentifier, tableNameFor } from "./identifiers.js";
 import { ValidationError } from "./repository.js";
 
@@ -632,6 +632,36 @@ export function diffAndMigrate(
               fieldsNeedingAutomationDisable.set(entity.name, new Set());
             }
             fieldsNeedingAutomationDisable.get(entity.name)!.add(field.name);
+          }
+        } else if (shape && shape.sqlType === expectedSqlType && shape.sqlType === "TEXT" && hasCheckpointHistoryTable(db)) {
+          // Round 1108: the sqlType check above only ever catches a
+          // physically-visible mismatch (e.g. INTEGER -> TEXT) -- but
+          // text/longtext/enum/date all collapse onto this same TEXT
+          // bucket, so a reused column moving between any two of THOSE
+          // (e.g. date -> enum) stays silent here with no prevField to
+          // compare against either (see round 511's own deferral of this
+          // exact gap). checkpoints.ts's own stored spec_json history
+          // already answers "what did this entity+field last declare" --
+          // the same source allKnownEntityNames above already mines for
+          // the analogous entity-name question -- so this finds the most
+          // recent checkpoint where this field existed and compares its
+          // own declared type directly, rather than guessing from the
+          // physical column alone.
+          const lastKnownType = findLastKnownFieldType(db, projectId, entity.name, field.name);
+          if (lastKnownType && lastKnownType !== field.type) {
+            changes.push({
+              type: "type_changed",
+              table,
+              column: columnName,
+              fromType: lastKnownType,
+              toType: field.type,
+            });
+            if (field.type !== "text" && field.type !== "longtext") {
+              if (!fieldsNeedingAutomationDisable.has(entity.name)) {
+                fieldsNeedingAutomationDisable.set(entity.name, new Set());
+              }
+              fieldsNeedingAutomationDisable.get(entity.name)!.add(field.name);
+            }
           }
         } else if (shape && shape.fkTable !== undefined && field.type !== "relation") {
           // The reused column shares relation's own INTEGER bucket with
