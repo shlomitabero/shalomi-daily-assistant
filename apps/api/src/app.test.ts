@@ -14797,3 +14797,89 @@ test("GET /public/calendar/:projectId/:entityName.ics is rate-limited per projec
     assert.equal(otherRes.status, 200, "a different project's own feed must not be collaterally blocked by another project's exhausted rate limit");
   });
 });
+
+/**
+ * Regression test for a real bug found by round 1082's Explore survey:
+ * unlike its structurally identical sibling, POST .../whatsapp/attachments/upload
+ * (round 973's own doc comment: "Mirrors its idempotency/multer/error-handling
+ * shape exactly" -- already behind whatsappRateLimiter), this route had NO
+ * volumetric throttle at all. createUploadMiddleware's own 10MB-per-file cap
+ * only bounds a single request's own size, never how many requests one
+ * account can fire -- any authenticated collaborator with write access to
+ * even one free project could script an unbounded loop of uploads, filling
+ * the shared ephemeral disk this single-process deployment gives every
+ * project (an uploaded-but-never-attached file just sits on disk forever,
+ * per round 1002's own comment, with no cleanup short of deleting the whole
+ * project). Confirms the new limiter, mirroring every sibling rate-limit
+ * test's own shape above: the 31st call is rejected with 429, while a
+ * different account is unaffected.
+ */
+test("POST .../fields/:fieldName/upload is rate-limited per authenticated account: the 31st upload is rejected with 429, while a different account is unaffected", async () => {
+  await withServer(async (baseUrl, db) => {
+    const email = `file-upload-rate-limit-${randomUUID()}@example.com`;
+    const token = await signup(baseUrl, email);
+    const user = findUserByEmail(db, email)!;
+    const spec: ProductSpec = {
+      summary: "test",
+      personas: [],
+      roles: ["Admin"],
+      entities: [
+        {
+          name: "Customer",
+          fields: [
+            { name: "name", type: "text", required: true },
+            { name: "receipt", type: "file", required: false },
+          ],
+        },
+      ],
+      screens: [],
+      assumptions: [],
+      openQuestions: [],
+    };
+    const projectId = randomUUID();
+    insertProject(db, { id: projectId, ownerId: user.id, name: "CRM", description: "test", spec });
+    diffAndMigrate(db, projectId, undefined, spec);
+    markProjectBuilt(db, projectId);
+
+    for (let i = 0; i < 30; i++) {
+      const formData = new FormData();
+      formData.append("file", new File([`%PDF-fake-receipt-${i}`], `receipt-${i}.pdf`, { type: "application/pdf" }));
+      const res = await fetch(`${baseUrl}/api/projects/${projectId}/entities/Customer/fields/receipt/upload`, {
+        method: "POST",
+        headers: { authorization: `Bearer ${token}` },
+        body: formData,
+      });
+      assert.notEqual(res.status, 429, `upload ${i + 1} of 30 (within the limit) must not be rate-limited yet`);
+    }
+
+    const blockedFormData = new FormData();
+    blockedFormData.append("file", new File(["%PDF-fake-receipt-30"], "receipt-30.pdf", { type: "application/pdf" }));
+    const blocked = await fetch(`${baseUrl}/api/projects/${projectId}/entities/Customer/fields/receipt/upload`, {
+      method: "POST",
+      headers: { authorization: `Bearer ${token}` },
+      body: blockedFormData,
+    });
+    assert.equal(blocked.status, 429);
+    assert.equal(((await blocked.json()) as { code?: string }).code, "RATE_LIMITED");
+
+    // A completely different account must get its own fresh allowance --
+    // keyed by user id, not IP, so one account exhausting its own budget
+    // must never collaterally block an unrelated account's own uploads.
+    const otherEmail = `file-upload-rate-limit-other-${randomUUID()}@example.com`;
+    const otherToken = await signup(baseUrl, otherEmail);
+    const otherUser = findUserByEmail(db, otherEmail)!;
+    const otherProjectId = randomUUID();
+    insertProject(db, { id: otherProjectId, ownerId: otherUser.id, name: "CRM 2", description: "test", spec });
+    diffAndMigrate(db, otherProjectId, undefined, spec);
+    markProjectBuilt(db, otherProjectId);
+
+    const otherFormData = new FormData();
+    otherFormData.append("file", new File(["%PDF-fake-receipt-other"], "receipt-other.pdf", { type: "application/pdf" }));
+    const otherRes = await fetch(`${baseUrl}/api/projects/${otherProjectId}/entities/Customer/fields/receipt/upload`, {
+      method: "POST",
+      headers: { authorization: `Bearer ${otherToken}` },
+      body: otherFormData,
+    });
+    assert.equal(otherRes.status, 200, "a different account must not be collaterally blocked by another account's own rate limit");
+  });
+});

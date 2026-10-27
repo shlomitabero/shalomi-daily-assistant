@@ -1194,6 +1194,39 @@ export function createProjectsRouter(
   });
 
   /**
+   * Round 1082: POST .../fields/:fieldName/upload (an entity record's own
+   * file-type field) had NO volumetric throttle at all, unlike every other
+   * route in this file that writes to this app's own ephemeral disk --
+   * its structurally identical sibling, POST .../whatsapp/attachments/upload
+   * (round 973's own doc comment: "Mirrors its idempotency/multer/
+   * error-handling shape exactly"), already sits behind whatsappRateLimiter.
+   * createUploadMiddleware's own 10MB-per-file cap (doc comment just above
+   * it) exists specifically "without letting one upload exhaust the
+   * ephemeral disk a free-tier host like the current Render deployment
+   * gives this process" -- but that cap only bounds a single request's own
+   * size, never how many requests one account can fire. Any authenticated
+   * collaborator with write access to even one project (free to create) can
+   * script a tight loop of ~10MB uploads with no server-side cap at all;
+   * nothing requires an uploaded file ever be attached to a real record
+   * (round 1002's own comment: an abandoned upload just sits on disk until
+   * the whole project is deleted), so this is a real, account-triggerable
+   * way to fill the shared disk this single-process deployment gives every
+   * project, degrading everyone else's uploads/builds too -- the exact
+   * resource every other limiter in this file already exists to protect.
+   * A dedicated limiter rather than reusing whatsappRateLimiter: that one's
+   * own budget is explicitly "how much can this account churn this
+   * project's WhatsApp integration" (connect/disconnect/send), not disk
+   * usage -- a different real question, even though both happen to share
+   * the same 30-per-15-min shape here.
+   */
+  const fileUploadRateLimiter = createRateLimiter({
+    windowMs: 15 * 60 * 1000,
+    max: 30,
+    keyGenerator: (req) => req.userId ?? "unknown",
+    message: "Too many file upload requests. Please try again later.",
+  });
+
+  /**
    * /build, /refine, and /answers each read `project.spec` once at the
    * start of the request, then spend real time (an AI/heuristic
    * spec-generation call, and for /build and /refine also a migration)
@@ -2516,6 +2549,7 @@ export function createProjectsRouter(
    */
   router.post(
     "/projects/:id/entities/:entityName/fields/:fieldName/upload",
+    fileUploadRateLimiter,
     (req, res, next) => {
       try {
         const project = requireProjectWriteAccess(db, req.params.id, req.userId!);
