@@ -1779,11 +1779,11 @@ export function EntityPanel({
     validFieldNames.add("createdAt");
     const byLowerName = new Map(entity.fields.map((f) => [f.name.toLowerCase(), f.name]));
     setSortKeys(
-      getSortKeysPreference(projectId, entity.name)
+      getSortKeysPreference(projectId, entity.name, userId)
         .map((k) => (validFieldNames.has(k.field) ? k : { ...k, field: byLowerName.get(k.field.toLowerCase()) ?? k.field }))
         .filter((k) => validFieldNames.has(k.field)),
     );
-  }, [projectId, entity.name, fieldNamesKey]);
+  }, [projectId, entity.name, userId, fieldNamesKey]);
 
   // Round 985: hiddenFields had no revalidation effect of its own at all
   // before this round -- unlike every sibling preference module's own
@@ -2376,7 +2376,7 @@ export function EntityPanel({
       } else {
         next = prev.map((k, i) => (i === existingIndex ? { ...k, direction: k.direction === "asc" ? "desc" : "asc" } : k));
       }
-      setSortKeysPreference(projectId, entity.name, next);
+      setSortKeysPreference(projectId, entity.name, userId, next);
       return next;
     });
   }
@@ -4339,7 +4339,7 @@ export function EntityPanel({
               <button
                 type="button"
                 className="secondary small entity-clear-sort"
-                onClick={() => setSortKeys(setSortKeysPreference(projectId, entity.name, []))}
+                onClick={() => setSortKeys(setSortKeysPreference(projectId, entity.name, userId, []))}
               >
                 {t("entity.sort.clearAll")}
               </button>

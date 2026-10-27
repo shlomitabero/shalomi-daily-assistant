@@ -7236,7 +7236,7 @@ test("EntityPanel carries a resized column width and a chosen sort order forward
         /Status/.test(el.textContent ?? ""),
       ) as HTMLButtonElement;
       fireEvent.click(statusColumnHeaderButton);
-      assert.deepEqual(getSortKeys("proj1", "Deal").map((k) => k.field), ["status"], "sanity check: sorting must have actually persisted");
+      assert.deepEqual(getSortKeys("proj1", "Deal", "user1").map((k) => k.field), ["status"], "sanity check: sorting must have actually persisted");
 
       // Simulate a live refine that renames "status" -> "Status" ONLY --
       // same field, same type, same enum values, same entity.name ("Deal"),
@@ -12282,7 +12282,7 @@ test("EntityPanel's multi-column sort survives an unmount+remount of the same en
       fireEvent.click(nameHeader, { shiftKey: true });
       await waitForCondition(() => document.querySelectorAll(".sort-priority").length === 2);
       assert.deepEqual(
-        getSortKeys("proj1", "Deal"),
+        getSortKeys("proj1", "Deal", "user1"),
         [
           { field: "status", direction: "asc" },
           { field: "name", direction: "asc" },
@@ -12640,7 +12640,7 @@ test("EntityPanel shows a 'Clear sort' button only once a sort is active, and it
 
       const sortedHeaders = Array.from(document.querySelectorAll("thead th[aria-sort]")).filter((th) => th.getAttribute("aria-sort") !== "none");
       assert.equal(sortedHeaders.length, 0, "no column header must still report itself as sorted");
-      assert.deepEqual(getSortKeys("proj1", "Deal"), [], "the persisted storage must be cleared too, not just the in-memory state");
+      assert.deepEqual(getSortKeys("proj1", "Deal", "user1"), [], "the persisted storage must be cleared too, not just the in-memory state");
       assert.equal(document.querySelector(".entity-clear-sort"), null, "the button must disappear again once nothing is sorted");
     } finally {
       globalThis.fetch = originalFetch;
