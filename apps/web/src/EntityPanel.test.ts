@@ -6240,7 +6240,7 @@ test("EntityPanel's 'jump to record' clears the persisted field-filter/view-mode
       const boardToggle = document.querySelectorAll(".view-toggle-btn")[1] as HTMLButtonElement;
       fireEvent.click(boardToggle);
       await waitForCondition(() => document.querySelectorAll(".board-column").length === 3);
-      assert.deepEqual(getFieldFilters("proj1", "Deal"), { status: "new" }, "sanity check: the filter must actually be persisted before the jump");
+      assert.deepEqual(getFieldFilters("proj1", "Deal", "user1"), { status: "new" }, "sanity check: the filter must actually be persisted before the jump");
       assert.equal(getViewMode("proj1", "Deal"), "board", "sanity check: the view mode must actually be persisted before the jump");
 
       // Jump to Initech (id 3, status "lost") -- hidden by both the "new"
@@ -6250,7 +6250,7 @@ test("EntityPanel's 'jump to record' clears the persisted field-filter/view-mode
       await waitForCondition(() => handledCount === 1);
       await waitForCondition(() => document.querySelectorAll("table tbody tr").length === 3);
 
-      assert.deepEqual(getFieldFilters("proj1", "Deal"), {}, "the persisted filter storage must be cleared too, not just the in-memory state");
+      assert.deepEqual(getFieldFilters("proj1", "Deal", "user1"), {}, "the persisted filter storage must be cleared too, not just the in-memory state");
       assert.equal(getViewMode("proj1", "Deal"), "table", "the persisted view-mode storage must be cleared too, not just the in-memory state");
 
       // Simulate the real-world trigger: switching to another tab and back
@@ -7314,7 +7314,7 @@ test("EntityPanel carries an active field filter forward under its new spelling 
       const statusFilter = document.querySelector(".entity-status-filter") as HTMLSelectElement;
       fireEvent.change(statusFilter, { target: { value: "new" } });
       await waitForCondition(() => document.querySelectorAll("table tbody tr").length === 1);
-      assert.deepEqual(getFieldFilters("proj1", "Deal"), { status: "new" }, "sanity check: the filter must have actually persisted");
+      assert.deepEqual(getFieldFilters("proj1", "Deal", "user1"), { status: "new" }, "sanity check: the filter must have actually persisted");
 
       // Simulate a live refine that renames "status" -> "Status" ONLY --
       // same field, same type, same enum values, same entity.name ("Deal"),
@@ -12355,7 +12355,7 @@ test("EntityPanel's per-field enum filter survives an unmount+remount of the sam
       const statusFilter = document.querySelector(".entity-status-filter") as HTMLSelectElement;
       fireEvent.change(statusFilter, { target: { value: "new" } });
       await waitForCondition(() => document.querySelectorAll("table tbody tr").length === 2);
-      assert.deepEqual(getFieldFilters("proj1", "Deal"), { status: "new" }, "must actually be persisted, not just held in memory");
+      assert.deepEqual(getFieldFilters("proj1", "Deal", "user1"), { status: "new" }, "must actually be persisted, not just held in memory");
 
       firstView.unmount();
       renderEntityPanel();
@@ -12547,7 +12547,7 @@ test("EntityPanel shows a 'Clear filters' button only once a filter is active, a
       await waitForCondition(() => document.querySelectorAll("table tbody tr").length === 3);
 
       assert.equal((document.querySelector(".entity-status-filter") as HTMLSelectElement).value, "", "the select itself must reset back to 'All'");
-      assert.deepEqual(getFieldFilters("proj1", "Deal"), {}, "the persisted storage must be cleared too, not just the in-memory state");
+      assert.deepEqual(getFieldFilters("proj1", "Deal", "user1"), {}, "the persisted storage must be cleared too, not just the in-memory state");
       assert.equal(document.querySelector(".entity-clear-filters"), null, "the button must disappear again once nothing is filtered");
     } finally {
       globalThis.fetch = originalFetch;

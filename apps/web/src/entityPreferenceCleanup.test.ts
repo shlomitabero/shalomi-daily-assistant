@@ -57,7 +57,11 @@ test("purgeEntityPreferences removes exactly one project+entity's entries from e
     setColumnWidth("abc", "Customer", "name", 220);
     setColumnOrder("abc", "Customer", ["name", "email"]);
     toggleFieldVisibility("abc", "Customer", "email");
-    setFieldFilters("abc", "Customer", { status: "active" });
+    setFieldFilters("abc", "Customer", "userA", { status: "active" });
+    // A DIFFERENT collaborator's own filter for the SAME project+entity --
+    // purgeEntityPreferences must purge every user's entry, the same
+    // round-994 reasoning entityRecentSearches' own userB seed above tests.
+    setFieldFilters("abc", "Customer", "userB", { status: "pending" });
     setGroupByField("abc", "Customer", "status");
     setGroupByFieldType("abc", "Customer", "enum");
     setCollapsedBoardColumns("abc", "Customer", "status", ["done"]);
@@ -79,7 +83,7 @@ test("purgeEntityPreferences removes exactly one project+entity's entries from e
     setColumnWidth("abc", "Deal", "amount", 150);
     setColumnOrder("abc", "Deal", ["amount", "stage"]);
     toggleFieldVisibility("abc", "Deal", "stage");
-    setFieldFilters("abc", "Deal", { stage: "won" });
+    setFieldFilters("abc", "Deal", "userA", { stage: "won" });
     setGroupByField("abc", "Deal", "stage");
     setGroupByFieldType("abc", "Deal", "enum");
     setCollapsedBoardColumns("abc", "Deal", "stage", ["lost"]);
@@ -96,7 +100,7 @@ test("purgeEntityPreferences removes exactly one project+entity's entries from e
     setColumnWidth("proj2", "Customer", "name", 300);
     setColumnOrder("proj2", "Customer", ["email", "name"]);
     toggleFieldVisibility("proj2", "Customer", "name");
-    setFieldFilters("proj2", "Customer", { status: "closed" });
+    setFieldFilters("proj2", "Customer", "userA", { status: "closed" });
     setGroupByField("proj2", "Customer", "owner");
     setGroupByFieldType("proj2", "Customer", "text");
     setCollapsedBoardColumns("proj2", "Customer", "owner", ["archived"]);
@@ -113,7 +117,8 @@ test("purgeEntityPreferences removes exactly one project+entity's entries from e
     assert.deepEqual(getColumnWidths("abc", "Customer"), {}, "columnWidths must be purged");
     assert.deepEqual(getColumnOrder("abc", "Customer"), [], "columnOrder must be purged");
     assert.deepEqual(getHiddenFields("abc", "Customer"), new Set(), "columnVisibility must be purged");
-    assert.deepEqual(getFieldFilters("abc", "Customer"), {}, "fieldFilters must be purged");
+    assert.deepEqual(getFieldFilters("abc", "Customer", "userA"), {}, "fieldFilters must be purged");
+    assert.deepEqual(getFieldFilters("abc", "Customer", "userB"), {}, "fieldFilters must be purged for EVERY collaborator account, not just one");
     assert.equal(getGroupByField("abc", "Customer"), "", "groupBy field must be purged");
     assert.equal(getGroupByFieldType("abc", "Customer"), "", "groupBy field type must be purged alongside it");
     assert.deepEqual(getCollapsedBoardColumns("abc", "Customer", "status"), [], "collapsedBoardColumns must be purged");
@@ -128,7 +133,7 @@ test("purgeEntityPreferences removes exactly one project+entity's entries from e
     assert.deepEqual(getColumnWidths("abc", "Deal"), { amount: 150 }, "columnWidths must survive for a sibling entity");
     assert.deepEqual(getColumnOrder("abc", "Deal"), ["amount", "stage"], "columnOrder must survive for a sibling entity");
     assert.deepEqual(getHiddenFields("abc", "Deal"), new Set(["stage"]), "columnVisibility must survive for a sibling entity");
-    assert.deepEqual(getFieldFilters("abc", "Deal"), { stage: "won" }, "fieldFilters must survive for a sibling entity");
+    assert.deepEqual(getFieldFilters("abc", "Deal", "userA"), { stage: "won" }, "fieldFilters must survive for a sibling entity");
     assert.equal(getGroupByField("abc", "Deal"), "stage", "groupBy field must survive for a sibling entity");
     assert.equal(getGroupByFieldType("abc", "Deal"), "enum", "groupBy field type must survive for a sibling entity");
     assert.deepEqual(getCollapsedBoardColumns("abc", "Deal", "stage"), ["lost"], "collapsedBoardColumns must survive for a sibling entity");
@@ -141,7 +146,7 @@ test("purgeEntityPreferences removes exactly one project+entity's entries from e
     assert.deepEqual(getColumnWidths("proj2", "Customer"), { name: 300 }, "columnWidths must survive for an unrelated project's same-named entity");
     assert.deepEqual(getColumnOrder("proj2", "Customer"), ["email", "name"], "columnOrder must survive for an unrelated project's same-named entity");
     assert.deepEqual(getHiddenFields("proj2", "Customer"), new Set(["name"]), "columnVisibility must survive for an unrelated project's same-named entity");
-    assert.deepEqual(getFieldFilters("proj2", "Customer"), { status: "closed" }, "fieldFilters must survive for an unrelated project's same-named entity");
+    assert.deepEqual(getFieldFilters("proj2", "Customer", "userA"), { status: "closed" }, "fieldFilters must survive for an unrelated project's same-named entity");
     assert.equal(getGroupByField("proj2", "Customer"), "owner", "groupBy field must survive for an unrelated project's same-named entity");
     assert.equal(getGroupByFieldType("proj2", "Customer"), "text", "groupBy field type must survive for an unrelated project's same-named entity");
     assert.deepEqual(getCollapsedBoardColumns("proj2", "Customer", "owner"), ["archived"], "collapsedBoardColumns must survive for an unrelated project's same-named entity");
@@ -203,7 +208,8 @@ test("migrateEntityPreferencesForCaseRename moves exactly one project+entity's e
     setColumnWidth("abc", "customer", "name", 220);
     setColumnOrder("abc", "customer", ["name", "email"]);
     toggleFieldVisibility("abc", "customer", "email");
-    setFieldFilters("abc", "customer", { status: "active" });
+    setFieldFilters("abc", "customer", "userA", { status: "active" });
+    setFieldFilters("abc", "customer", "userB", { status: "pending" });
     setGroupByField("abc", "customer", "status");
     setGroupByFieldType("abc", "customer", "enum");
     setCollapsedBoardColumns("abc", "customer", "status", ["done"]);
@@ -229,7 +235,12 @@ test("migrateEntityPreferencesForCaseRename moves exactly one project+entity's e
     assert.deepEqual(getColumnWidths("abc", "Customer"), { name: 220 }, "columnWidths must resolve under the new casing");
     assert.deepEqual(getColumnOrder("abc", "Customer"), ["name", "email"], "columnOrder must resolve under the new casing");
     assert.deepEqual(getHiddenFields("abc", "Customer"), new Set(["email"]), "columnVisibility must resolve under the new casing");
-    assert.deepEqual(getFieldFilters("abc", "Customer"), { status: "active" }, "fieldFilters must resolve under the new casing");
+    assert.deepEqual(getFieldFilters("abc", "Customer", "userA"), { status: "active" }, "fieldFilters must resolve under the new casing");
+    assert.deepEqual(
+      getFieldFilters("abc", "Customer", "userB"),
+      { status: "pending" },
+      "fieldFilters must resolve under the new casing for EVERY collaborator account, not just one",
+    );
     assert.equal(getGroupByField("abc", "Customer"), "status", "groupBy field must resolve under the new casing");
     assert.equal(getGroupByFieldType("abc", "Customer"), "enum", "groupBy field type must resolve under the new casing, alongside its paired choice");
     assert.deepEqual(getCollapsedBoardColumns("abc", "Customer", "status"), ["done"], "collapsedBoardColumns must resolve under the new casing");
@@ -245,6 +256,7 @@ test("migrateEntityPreferencesForCaseRename moves exactly one project+entity's e
 
     // Nothing is left reachable under the OLD casing.
     assert.deepEqual(getColumnWidths("abc", "customer"), {}, "nothing must remain reachable under the old casing");
+    assert.deepEqual(getFieldFilters("abc", "customer", "userA"), {}, "nothing must remain reachable under the old casing");
     assert.equal(getGroupByField("abc", "customer"), "", "nothing must remain reachable under the old casing");
     assert.deepEqual(getEntityRecentSearches("abc", "customer", "userA"), [], "nothing must remain reachable under the old casing");
 

@@ -1,7 +1,20 @@
 const STORAGE_KEY = "forge.fieldFilters";
 
-function keyFor(projectId: string, entityName: string): string {
-  return `${projectId}:${entityName}`;
+/**
+ * Round 1054: the userId segment was added so two different collaborator
+ * accounts sharing the same project on the same browser no longer see each
+ * other's typed filter values -- see entityRecentSearches.ts's own
+ * keyFor doc comment (round 994) for the full reasoning. This store is
+ * more sensitive than that one: a filter leaking across accounts doesn't
+ * just surface a stray search string, it silently restores another
+ * person's exact chosen condition (e.g. Status = "Overdue") into the next
+ * collaborator's own table view, with no indication it came from someone
+ * else. purgeFieldFiltersForProject/purgeFieldFiltersForEntity below still
+ * match by prefix, which keeps working unchanged regardless of what the
+ * key's own remaining segments (entityName, userId) look like.
+ */
+function keyFor(projectId: string, entityName: string, userId: string): string {
+  return `${projectId}:${entityName}:${userId}`;
 }
 
 function readStore(): Record<string, Record<string, string>> {
@@ -42,16 +55,22 @@ function writeStore(store: Record<string, Record<string, string>>): void {
  * another tab and back -- unlike this entity's sort order, grouping, hidden
  * columns, and column widths, every one of which already survives the same
  * switch. A field absent from the returned record has no active filter.
+ * Round 1054: also scoped per user -- see keyFor's own doc comment above.
  */
-export function getFieldFilters(projectId: string, entityName: string): Record<string, string> {
+export function getFieldFilters(projectId: string, entityName: string, userId: string): Record<string, string> {
   const store = readStore();
-  return { ...(store[keyFor(projectId, entityName)] ?? {}) };
+  return { ...(store[keyFor(projectId, entityName, userId)] ?? {}) };
 }
 
 /** Persists the entity's full updated filter map (dropping any cleared-to-"" entries) and returns it, so callers can update their own state from the return value instead of re-reading storage. */
-export function setFieldFilters(projectId: string, entityName: string, filters: Record<string, string>): Record<string, string> {
+export function setFieldFilters(
+  projectId: string,
+  entityName: string,
+  userId: string,
+  filters: Record<string, string>,
+): Record<string, string> {
   const store = readStore();
-  const key = keyFor(projectId, entityName);
+  const key = keyFor(projectId, entityName, userId);
   const cleaned: Record<string, string> = {};
   for (const [field, value] of Object.entries(filters)) {
     if (value) cleaned[field] = value;
@@ -62,7 +81,7 @@ export function setFieldFilters(projectId: string, entityName: string, filters: 
   return cleaned;
 }
 
-/** Removes every stored filter map for this project, across all of its entities -- see columnWidths.ts's purgeColumnWidthsForProject for the full rationale. */
+/** Removes every stored filter map for this project, across all of its entities and every collaborator -- see columnWidths.ts's purgeColumnWidthsForProject for the full rationale. */
 export function purgeFieldFiltersForProject(projectId: string): void {
   const store = readStore();
   const prefix = `${projectId}:`;
@@ -73,7 +92,11 @@ export function purgeFieldFiltersForProject(projectId: string): void {
 }
 
 /**
- * Removes just one entity's stored filter map, unlike
+ * Removes just one entity's stored filter map, across every collaborator
+ * account (the key's third segment is userId, not something this function
+ * can know in advance -- the same reason
+ * entityRecentSearches.ts's own purgeEntityRecentSearchesForEntity sweeps
+ * by prefix rather than a single exact key), unlike
  * purgeFieldFiltersForProject above (the whole project). Used when a
  * single entity is dropped from an otherwise-surviving project's spec --
  * see entityPreferenceCleanup.ts for why this exists alongside the
@@ -81,22 +104,33 @@ export function purgeFieldFiltersForProject(projectId: string): void {
  */
 export function purgeFieldFiltersForEntity(projectId: string, entityName: string): void {
   const store = readStore();
-  delete store[keyFor(projectId, entityName)];
+  const prefix = `${projectId}:${entityName}:`;
+  for (const key of Object.keys(store)) {
+    if (key.startsWith(prefix)) delete store[key];
+  }
   writeStore(store);
 }
 
 /**
  * Round 1029: mirrors columnWidths.ts's own migrateColumnWidthsForEntityRename
  * -- see its doc comment for the full "case-only entity rename leaves this
- * store's real data unreachable under the old key" mechanism.
+ * store's real data unreachable under the old key" mechanism. Round 1054:
+ * rewrites EVERY collaborator's own entry for this entity, the same way
+ * entityRecentSearches.ts's own migrateEntityRecentSearchesForEntityRename
+ * does, since the key's own userId segment isn't known in advance.
  */
 export function migrateFieldFiltersForEntityRename(projectId: string, oldName: string, newName: string): void {
   if (oldName === newName) return;
   const store = readStore();
-  const oldKey = keyFor(projectId, oldName);
-  const newKey = keyFor(projectId, newName);
-  if (store[oldKey] === undefined || store[newKey] !== undefined) return;
-  store[newKey] = store[oldKey];
-  delete store[oldKey];
-  writeStore(store);
+  const oldPrefix = `${projectId}:${oldName}:`;
+  let changed = false;
+  for (const key of Object.keys(store)) {
+    if (!key.startsWith(oldPrefix)) continue;
+    const userId = key.slice(oldPrefix.length);
+    const newKey = keyFor(projectId, newName, userId);
+    if (store[newKey] === undefined) store[newKey] = store[key];
+    delete store[key];
+    changed = true;
+  }
+  if (changed) writeStore(store);
 }

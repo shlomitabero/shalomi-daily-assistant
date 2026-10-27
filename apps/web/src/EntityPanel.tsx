@@ -1908,7 +1908,7 @@ export function EntityPanel({
   useEffect(() => {
     const fieldsByName = new Map(entity.fields.map((f) => [f.name, f]));
     const fieldsByLowerName = new Map(entity.fields.map((f) => [f.name.toLowerCase(), f]));
-    const persisted = getFieldFiltersPreference(projectId, entity.name);
+    const persisted = getFieldFiltersPreference(projectId, entity.name, userId);
     const next: Record<string, string> = {};
     for (const [field, value] of Object.entries(persisted)) {
       // Round 985: falls back to a case-insensitive match when the exact
@@ -2273,7 +2273,7 @@ export function EntityPanel({
     if (highlightRecordId == null || loading) return;
     setSearch("");
     setFieldFilters(() => {
-      setFieldFiltersPreference(projectId, entity.name, {});
+      setFieldFiltersPreference(projectId, entity.name, userId, {});
       return {};
     });
     setViewMode(setViewModePreference(projectId, entity.name, "table"));
@@ -4158,7 +4158,7 @@ export function EntityPanel({
                   onChange={(e) =>
                     setFieldFilters((prev) => {
                       const next = { ...prev, [f.name]: e.target.value };
-                      setFieldFiltersPreference(projectId, entity.name, next);
+                      setFieldFiltersPreference(projectId, entity.name, userId, next);
                       return next;
                     })
                   }
@@ -4194,7 +4194,7 @@ export function EntityPanel({
                 className="secondary small entity-clear-filters"
                 onClick={() =>
                   setFieldFilters(() => {
-                    setFieldFiltersPreference(projectId, entity.name, {});
+                    setFieldFiltersPreference(projectId, entity.name, userId, {});
                     return {};
                   })
                 }
