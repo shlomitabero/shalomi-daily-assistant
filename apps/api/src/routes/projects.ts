@@ -1162,6 +1162,38 @@ export function createProjectsRouter(
   });
 
   /**
+   * Round 1053: /export, /backup, and /twin had no volumetric throttle at
+   * all, despite being the heaviest, most CPU-bound GET routes in this
+   * router -- zip.ts and backup.ts (and twin.ts's own report builder)
+   * contain no async/await at all, so the entire ZIP build (CRC32 over
+   * every entity's CSV bytes, itself built from a synchronous `listRecords`
+   * SELECT per entity) runs fully synchronously on this app's one Node
+   * event loop (see app.ts's own "single-service" deployment comment --
+   * there's no horizontal scaling to absorb this). /export is the heaviest
+   * of the three: it re-runs the entire codegen.ts template-generation
+   * pipeline (the same code that builds the whole standalone exported
+   * app's source) on every single call, regardless of data size. Any
+   * authenticated collaborator -- owner, editor, or even a read-only
+   * viewer, since all three routes use requireProjectAccess, not
+   * requireProjectWriteAccess -- can script a tight loop of requests
+   * against their own project; because this blocks the *shared*
+   * single-threaded process, it stalls every other user's and project's
+   * requests too, not just the caller's own. One shared limiter across all
+   * three, the same "one real budget, not N independent concerns"
+   * reasoning aiGenerationRateLimiter above already uses, since "how much
+   * expensive synchronous work can this account trigger" is a single
+   * question regardless of which of the three routes answers it. Keyed by
+   * user id, same rationale as every other already-authenticated route's
+   * limiter above.
+   */
+  const expensiveReadRateLimiter = createRateLimiter({
+    windowMs: 15 * 60 * 1000,
+    max: 20,
+    keyGenerator: (req) => req.userId ?? "unknown",
+    message: "Too many export/backup/twin requests. Please try again later.",
+  });
+
+  /**
    * /build, /refine, and /answers each read `project.spec` once at the
    * start of the request, then spend real time (an AI/heuristic
    * spec-generation call, and for /build and /refine also a migration)
@@ -2040,6 +2072,7 @@ export function createProjectsRouter(
 
   router.get(
     "/projects/:id/export",
+    expensiveReadRateLimiter,
     asyncRoute(async (req, res) => {
       const project = requireProjectAccess(db, req.params.id, req.userId!);
       if (project.status !== "built") {
@@ -2083,6 +2116,7 @@ export function createProjectsRouter(
 
   router.get(
     "/projects/:id/backup",
+    expensiveReadRateLimiter,
     asyncRoute(async (req, res) => {
       const project = requireProjectAccess(db, req.params.id, req.userId!);
       if (project.status !== "built") {
@@ -2321,6 +2355,7 @@ export function createProjectsRouter(
 
   router.get(
     "/projects/:id/twin",
+    expensiveReadRateLimiter,
     asyncRoute(async (req, res) => {
       const project = requireProjectAccess(db, req.params.id, req.userId!);
       if (project.status !== "built") {

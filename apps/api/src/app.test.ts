@@ -10570,6 +10570,57 @@ test("POST .../collaborators is rate-limited per authenticated account: the 31st
   });
 });
 
+/**
+ * Round 1053: /export, /backup, and /twin had no volumetric throttle at
+ * all, despite being the heaviest, fully-synchronous CPU-bound GET routes
+ * in this router (zip.ts/backup.ts/twin.ts contain zero async/await) --
+ * any authenticated collaborator could script a tight loop against their
+ * own project that stalls this app's one shared Node event loop for every
+ * other user/project too. All three share one budget (expensiveReadRateLimiter),
+ * so the 21st call across all three routes combined, not 20 on each
+ * individually, is what gets blocked.
+ */
+test("GET .../export, .../backup, and .../twin share one per-user rate limit: the 21st call across all three routes is rejected with 429, while a different account is unaffected", async () => {
+  await withServer(async (baseUrl) => {
+    const token = await signup(baseUrl, "rate-limit-expensive-read@example.com");
+    const createRes = await fetch(`${baseUrl}/api/projects`, {
+      method: "POST",
+      headers: authHeaders(token),
+      body: JSON.stringify({ description: "A CRM with customers and deals." }),
+    });
+    const { project } = (await createRes.json()) as { project: { id: string } };
+    const buildRes = await fetch(`${baseUrl}/api/projects/${project.id}/build`, { method: "POST", headers: authHeaders(token) });
+    await collectSSE(buildRes);
+
+    const routes = ["export", "backup", "twin"];
+    for (let i = 0; i < 20; i++) {
+      const res = await fetch(`${baseUrl}/api/projects/${project.id}/${routes[i % routes.length]}`, { headers: authHeaders(token) });
+      assert.notEqual(res.status, 429, `call ${i + 1} of 20 (within the shared limit) must not be rate-limited yet`);
+    }
+
+    // The 21st call across the SAME budget, on a DIFFERENT one of the three
+    // routes -- proves this is one shared counter, not three independent ones.
+    const blocked = await fetch(`${baseUrl}/api/projects/${project.id}/twin`, { headers: authHeaders(token) });
+    assert.equal(blocked.status, 429);
+    assert.equal(((await blocked.json()) as { code?: string }).code, "RATE_LIMITED");
+
+    // A completely different account must get its own fresh allowance --
+    // keyed by user id, not IP, so one account exhausting its own budget
+    // must never collaterally block an unrelated account.
+    const otherToken = await signup(baseUrl, "rate-limit-expensive-read-other@example.com");
+    const otherCreateRes = await fetch(`${baseUrl}/api/projects`, {
+      method: "POST",
+      headers: authHeaders(otherToken),
+      body: JSON.stringify({ description: "A separate, unrelated project." }),
+    });
+    const { project: otherProject } = (await otherCreateRes.json()) as { project: { id: string } };
+    const otherBuildRes = await fetch(`${baseUrl}/api/projects/${otherProject.id}/build`, { method: "POST", headers: authHeaders(otherToken) });
+    await collectSSE(otherBuildRes);
+    const otherRes = await fetch(`${baseUrl}/api/projects/${otherProject.id}/twin`, { headers: authHeaders(otherToken) });
+    assert.equal(otherRes.status, 200, "a different account must not be collaterally blocked by another account's own rate limit");
+  });
+});
+
 test("a validation failure on project routes returns readable text, not Zod's raw JSON issue dump", async () => {
   await withServer(async (baseUrl) => {
     const token = await signup(baseUrl);
