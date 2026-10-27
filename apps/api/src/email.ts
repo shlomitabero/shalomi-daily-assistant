@@ -39,11 +39,33 @@ export class ResendEmailSender implements EmailSender {
   private readonly apiKey: string | undefined;
   private readonly fromEmail: string;
   private readonly fetchImpl: typeof fetch;
+  private readonly sendSpacingMs: number;
+  /**
+   * Round 1073: mirrors whatsappWeb.ts's own per-project sendQueue (round
+   * 794), for the structurally identical hazard -- EntityPanel.tsx's
+   * bulk-update "Apply to N" fires N concurrent PATCH requests, each
+   * independently triggering a matching send_email automation rule
+   * (deliberately left un-suppressed for bulk-update, same reasoning as
+   * WhatsApp's own doc comment), with zero spacing between any of the
+   * resulting Resend API calls. Resend's own rate limit is keyed to the
+   * API key, not the project, so unlike WhatsApp's per-project Map this is
+   * a single global chain -- every send through one ResendEmailSender
+   * instance (shared across the whole deployment, see app.ts/server.ts)
+   * queues behind the one before it, with the fixed delay appended AFTER
+   * each actual network call so the next queued send doesn't go out
+   * back-to-back with it.
+   */
+  private sendQueue: Promise<void> = Promise.resolve();
 
-  constructor(options?: { apiKey?: string; fromEmail?: string; fetchImpl?: typeof fetch }) {
+  constructor(options?: { apiKey?: string; fromEmail?: string; fetchImpl?: typeof fetch; sendSpacingMs?: number }) {
     this.apiKey = options?.apiKey ?? process.env.RESEND_API_KEY;
     this.fromEmail = options?.fromEmail ?? process.env.RESEND_FROM_EMAIL ?? "Forge AI <onboarding@resend.dev>";
     this.fetchImpl = options?.fetchImpl ?? fetch;
+    // Kept injectable (defaulting to a real 600ms) purely so tests
+    // exercising a multi-send sequence don't actually have to wait out
+    // real spacing delays, the same reason whatsappWeb.ts's own
+    // sendSpacingMs is injectable.
+    this.sendSpacingMs = options?.sendSpacingMs ?? 600;
   }
 
   get configured(): boolean {
@@ -54,6 +76,17 @@ export class ResendEmailSender implements EmailSender {
     if (!this.apiKey) {
       throw new Error("RESEND_API_KEY is not configured");
     }
+    // Validation above runs immediately rather than queueing -- only the
+    // actual network call below is serialized, chained off whatever is
+    // already queued so a burst of concurrent calls ends up as one
+    // deployment-wide sequence instead of each racing Resend's API at once.
+    const previousInQueue = this.sendQueue;
+    const queuedSend = previousInQueue.then(() => this.performSend(to, subject, text, attachments));
+    this.sendQueue = queuedSend.then(() => this.delay(this.sendSpacingMs)).catch(() => {});
+    return queuedSend;
+  }
+
+  private async performSend(to: string, subject: string, text: string, attachments?: EmailAttachment[]): Promise<void> {
     const res = await this.fetchImpl("https://api.resend.com/emails", {
       method: "POST",
       headers: { Authorization: `Bearer ${this.apiKey}`, "content-type": "application/json" },
@@ -69,5 +102,9 @@ export class ResendEmailSender implements EmailSender {
       const body = await res.text().catch(() => "");
       throw new Error(`Resend API request failed (${res.status}): ${body}`);
     }
+  }
+
+  private delay(ms: number): Promise<void> {
+    return new Promise((resolve) => setTimeout(resolve, ms));
   }
 }
