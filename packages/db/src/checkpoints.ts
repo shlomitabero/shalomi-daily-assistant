@@ -281,7 +281,27 @@ export function renameCheckpoint(db: ForgeDatabase, projectId: string, checkpoin
   if (result.changes === 0) {
     throw new NotFoundError(`Checkpoint ${checkpointId} not found in project ${projectId}`);
   }
-  return getCheckpoint(db, checkpointId)!;
+  // Round 1093: re-reading through getCheckpoint's strict rowToCheckpoint
+  // (ProductSpecSchema.parse) would throw for a checkpoint whose stored
+  // spec_json no longer satisfies today's schema (see rowToCheckpoint's own
+  // doc-comment -- ProductSpecSchema can only get stricter over time), but
+  // only AFTER the label UPDATE above already committed -- so the rename
+  // would silently succeed while the caller sees a crash, and every retry
+  // (withIdempotency, routes/projects.ts) would repeat the exact same
+  // failure forever, since nothing about the stale spec_json ever changes.
+  // Renaming never touches spec_json, so this function never needed that
+  // validation in the first place; the rest of the returned Checkpoint is
+  // just echoing back this row's own stored fields, read directly instead
+  // of round-tripped through a schema check this call has no use for.
+  const row = db.prepare("SELECT * FROM checkpoints WHERE id = ?").get(checkpointId) as Record<string, unknown>;
+  return {
+    id: row.id as string,
+    projectId: row.projectId as string,
+    label: row.label as string,
+    kind: row.kind as "build" | "refine",
+    spec: JSON.parse(row.spec_json as string) as ProductSpec,
+    createdAt: row.createdAt as string,
+  };
 }
 
 /**

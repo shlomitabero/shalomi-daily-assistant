@@ -86,6 +86,29 @@ test("getCheckpoint still throws clearly for a single checkpoint whose stored sp
 });
 
 /**
+ * Round 1093: renameCheckpoint used to re-fetch through getCheckpoint
+ * (the strict rowToCheckpoint above) just to build its return value --
+ * so for a checkpoint whose spec_json no longer matches today's schema
+ * (same real, expected case as the test above), the label UPDATE would
+ * already have committed before that re-fetch threw, silently succeeding
+ * while the caller saw a crash. renameCheckpoint never touches spec_json
+ * at all, so it has no real need for that validation to succeed.
+ */
+test("renameCheckpoint still updates and returns the label for a checkpoint whose stored spec no longer matches the current schema", () => {
+  const db = openDatabase(":memory:");
+  ensureCheckpointsTable(db);
+  db.prepare(
+    "INSERT INTO checkpoints (id, projectId, label, spec_json, createdAt) VALUES (?, ?, ?, ?, ?)",
+  ).run("stale", "proj1", "stale checkpoint", JSON.stringify({ summary: "old spec, missing fields" }), new Date().toISOString());
+
+  const renamed = renameCheckpoint(db, "proj1", "stale", "before the pricing overhaul");
+
+  assert.equal(renamed.label, "before the pricing overhaul", "renameCheckpoint must not throw just because the unrelated spec_json is stale");
+  const row = db.prepare("SELECT label FROM checkpoints WHERE id = ?").get("stale") as { label: string };
+  assert.equal(row.label, "before the pricing overhaul", "the real stored row must reflect the new label regardless of the return path");
+});
+
+/**
  * New in this round: a checkpoint's label was previously only ever the
  * automatic one build/refine gave it -- no way to give an important one a
  * name that's actually memorable months later. renameCheckpoint updates
