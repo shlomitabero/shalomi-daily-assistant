@@ -979,6 +979,47 @@ test("computeBusinessTwin phrases the numeric-aggregate observation in Hebrew fo
 });
 
 /**
+ * Round 1090: V8/ICU's "he-IL" locale silently prepends a real, invisible
+ * U+200E LEFT-TO-RIGHT MARK before the minus sign of any negative number
+ * -- confirmed directly via Node (`(-200).toLocaleString("he-IL")` embeds
+ * it, the identical "en-US" call doesn't). sum/average here come from a
+ * number field with no positivity constraint (a profit/loss or balance
+ * field can be genuinely negative), and this observation's own .text
+ * isn't only rendered on screen -- twinReport.ts folds it verbatim into a
+ * downloadable plain-text snapshot (its own doc comment: "WhatsApp,
+ * email, paste anywhere"), the same gap round 1089 already fixed in
+ * automations.ts's interpolateTemplate.
+ */
+test("computeBusinessTwin's numeric-aggregate observation strips the invisible bidi mark toLocaleString adds before a negative sum/average under a Hebrew description", () => {
+  const orderProject: Project = {
+    ...project,
+    description: "חנות מקוונת עם הזמנות",
+    spec: {
+      ...project.spec,
+      entities: [
+        {
+          name: "Order",
+          label: "הזמנות",
+          fields: [
+            { name: "customer", type: "text", required: true },
+            { name: "profit", label: "רווח", type: "number", required: true },
+          ],
+        },
+      ],
+    },
+  };
+  const db = openDatabase(":memory:");
+  applyMigrations(db, orderProject.id, orderProject.spec);
+  insertRecord(db, orderProject.id, orderProject.spec.entities[0], { customer: "דנה", profit: -200 });
+
+  const twin = computeBusinessTwin(db, orderProject);
+  const observation = twin.jumpableObservations.find((o) => o.text.includes('סה"כ') && o.fieldName === "profit");
+  assert.ok(observation, `expected a numeric-aggregate observation for "profit", got: ${JSON.stringify(twin.jumpableObservations)}`);
+  assert.match(observation!.text, /-200/, "the negative sum must render with a plain minus sign, no invisible character before it");
+  assert.ok(!observation!.text.includes("‎") && !observation!.text.includes("‏"), "the observation text must contain no invisible bidi mark at all");
+});
+
+/**
  * Regression test for a real bug found by round 635's Explore survey: the
  * same label-collision gap round 623 closed for computeRelationHubObservation
  * and round 635 closed for computeRelationCoverageObservations above, but

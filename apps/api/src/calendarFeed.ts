@@ -120,9 +120,14 @@ function formatIcsDescriptionDate(value: unknown, lang: Lang): unknown {
   return Number.isNaN(date.getTime()) ? value : date.toLocaleDateString(LOCALE[lang]);
 }
 
+/** Round 1090: see calendarIcs.ts's own doc comment for the full rationale -- "he-IL" silently embeds an invisible U+200E before a negative number's minus sign. */
+function stripBidiMarks(s: string): string {
+  return s.replace(/[‎‏]/g, "");
+}
+
 /** Mirrors calendarIcs.ts's own formatIcsDescriptionNumber exactly. */
 function formatIcsDescriptionNumber(value: unknown, lang: Lang): unknown {
-  return typeof value === "number" ? value.toLocaleString(LOCALE[lang]) : value;
+  return typeof value === "number" ? stripBidiMarks(value.toLocaleString(LOCALE[lang])) : value;
 }
 
 /**

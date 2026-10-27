@@ -33,8 +33,22 @@ function formatIcsDescriptionDate(value: unknown, lang: Lang): unknown {
   return Number.isNaN(date.getTime()) ? value : date.toLocaleDateString(LOCALE[lang]);
 }
 
+/**
+ * Round 1090: V8/ICU's "he-IL" locale silently prepends a real, invisible
+ * U+200E LEFT-TO-RIGHT MARK before the minus sign of any negative number
+ * (confirmed directly: `(-1234.5).toLocaleString("he-IL")` embeds it,
+ * `(-1234.5).toLocaleString("en-US")` doesn't) -- deliberate ICU behavior
+ * for on-screen bidi rendering, but this function's own output goes
+ * straight into a real .ics file's DESCRIPTION text, the same
+ * "no bidi context left to protect once it leaves the app" gap round
+ * 1089 already fixed in automations.ts's interpolateTemplate.
+ */
+function stripBidiMarks(s: string): string {
+  return s.replace(/[‎‏]/g, "");
+}
+
 function formatIcsDescriptionNumber(value: unknown, lang: Lang): unknown {
-  return typeof value === "number" ? value.toLocaleString(LOCALE[lang]) : value;
+  return typeof value === "number" ? stripBidiMarks(value.toLocaleString(LOCALE[lang])) : value;
 }
 
 /** RFC 5545 §3.3.11 TEXT escaping: backslash, semicolon, comma, and newline must be backslash-escaped, or a real calendar app's parser can misread the field boundary or drop the value outright. */

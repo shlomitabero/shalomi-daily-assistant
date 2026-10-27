@@ -319,6 +319,27 @@ test("buildCalendarIcs locale-formats a number/date field in DESCRIPTION, not th
 });
 
 /**
+ * Round 1090: V8/ICU's "he-IL" locale silently prepends a real, invisible
+ * U+200E LEFT-TO-RIGHT MARK before the minus sign of any negative number
+ * -- confirmed directly via Node (`(-1234.5).toLocaleString("he-IL")`
+ * embeds it, the identical "en-US" call doesn't). A number field has no
+ * positivity constraint (a balance/discount/profit-loss field can be
+ * genuinely negative), and this .ics file is downloaded/subscribed-to by
+ * a real calendar app -- no bidi-rendering context left to protect once
+ * it leaves this app, the same gap round 1089 already fixed in
+ * automations.ts's interpolateTemplate.
+ */
+test("buildCalendarIcs strips the invisible bidi mark toLocaleString adds before a negative number field's minus sign under 'he'", () => {
+  const balanceField: Field = { name: "balance", label: "יתרה", type: "number", required: false };
+  const projectEntity: Entity = { name: "Project", label: "פרויקט", fields: [dateField, nameField, balanceField] };
+  const records: EntityRecord[] = [{ id: 1, appointmentDate: "2026-03-15", customerName: "Dana Levi", balance: -150 }];
+  const ics = buildCalendarIcs(projectEntity, dateField, nameField, records, [], {}, new Date(), null, projectEntity.fields, "he");
+  const events = parseEvents(ics);
+  assert.match(events[0]!, /יתרה: -150/, "a negative number field must render with a plain minus sign, no invisible character before it");
+  assert.ok(!events[0]!.includes("‎") && !events[0]!.includes("‏"), "the DESCRIPTION line must contain no invisible bidi mark at all");
+});
+
+/**
  * Same gap, other affected line: SUMMARY uses whatever field
  * calendarChipLabelField picked as the label field, which falls back to
  * the entity's first non-date field when no text/name field exists --

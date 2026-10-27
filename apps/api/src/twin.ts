@@ -418,6 +418,11 @@ function computeActivityObservations(
  * report yet" guard computeRelationCoverageObservations and
  * computeDuplicateObservations both already use.
  */
+/** Round 1090: see this file's own call-site comment below for the full rationale -- "he-IL" silently embeds an invisible U+200E before a negative number's minus sign. */
+function stripBidiMarks(s: string): string {
+  return s.replace(/[‎‏]/g, "");
+}
+
 function computeNumericAggregateObservations(
   recordsByEntity: Map<string, EntityRecord[]>,
   project: Project,
@@ -479,10 +484,23 @@ function computeNumericAggregateObservations(
       // file -- a different workspace, a different mechanism (a formatted
       // number embedded in generated text, not a live render).
       const numberLocale = hebrew ? "he-IL" : "en-US";
+      // Round 1090: "he-IL" silently embeds an invisible U+200E before a
+      // negative number's minus sign (confirmed directly:
+      // `(-45.666).toLocaleString("he-IL", {maximumFractionDigits:1})`
+      // embeds it, the identical "en-US" call doesn't). sum/average here
+      // come from a number field with no positivity constraint (a
+      // profit/loss or balance field can be genuinely negative), and this
+      // sentence isn't only rendered on screen -- twinReport.ts folds
+      // every observation's own .text verbatim into its downloadable
+      // plain-text snapshot (its own doc comment: "WhatsApp, email, paste
+      // anywhere"), the same "no bidi context left once it leaves the
+      // app" gap round 1089 already fixed in automations.ts.
+      const sumText = stripBidiMarks(sum.toLocaleString(numberLocale));
+      const averageText = stripBidiMarks(average.toLocaleString(numberLocale, { maximumFractionDigits: 1 }));
       observations.push({
         text: hebrew
-          ? `סה"כ "${fieldLabel}"${fieldSuffix} ב"${entityLabel}": ${sum.toLocaleString(numberLocale)} (ממוצע ${average.toLocaleString(numberLocale, { maximumFractionDigits: 1 })} על פני ${values.length} רשומות).`
-          : `Total "${fieldLabel}"${fieldSuffix} in "${entityLabel}": ${sum.toLocaleString(numberLocale)} (average ${average.toLocaleString(numberLocale, { maximumFractionDigits: 1 })} across ${values.length} records).`,
+          ? `סה"כ "${fieldLabel}"${fieldSuffix} ב"${entityLabel}": ${sumText} (ממוצע ${averageText} על פני ${values.length} רשומות).`
+          : `Total "${fieldLabel}"${fieldSuffix} in "${entityLabel}": ${sumText} (average ${averageText} across ${values.length} records).`,
         entityName: entity.name,
         entityLabel,
         fieldName: field.name,

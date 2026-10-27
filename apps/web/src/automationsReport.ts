@@ -90,9 +90,23 @@ function fieldValueLabel(rule: AutomationRuleView, entities: Entity[], relatedRe
     const date = parseFieldDate(rule.fieldValue);
     return Number.isNaN(date.getTime()) ? rule.fieldValue : date.toLocaleDateString(LOCALE[lang]);
   }
-  if (field?.type === "number") return Number(rule.fieldValue).toLocaleString(LOCALE[lang]);
+  // Round 1090: "he-IL" silently embeds an invisible U+200E before a
+  // negative number's minus sign (see calendarIcs.ts's own doc comment
+  // for the full rationale) -- rule.fieldValue is free-text from a plain
+  // <input type="text"> (AutomationsPanel.tsx), so a field_equals rule on
+  // a number field can genuinely be "-50", and this report is the same
+  // downloadable plain-text snapshot round 1089 already fixed the
+  // identical gap for (this file's own doc comment: "a plain, shareable
+  // text snapshot"). AutomationsPanel.tsx's own on-screen fieldValueLabel
+  // is deliberately left untouched -- that one renders into live React
+  // UI, where the mark is doing its real, intended bidi job.
+  if (field?.type === "number") return stripBidiMarks(Number(rule.fieldValue).toLocaleString(LOCALE[lang]));
   if (field?.type === "boolean") return rule.fieldValue === "true" ? "TRUE" : "FALSE";
   return rule.fieldValue;
+}
+
+function stripBidiMarks(s: string): string {
+  return s.replace(/[‎‏]/g, "");
 }
 
 function scheduleDayLabel(day: number, lang: Lang): string {

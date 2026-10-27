@@ -272,3 +272,17 @@ test("buildCalendarFeedIcs's DESCRIPTION date/number formatting honors the lang 
   const events = parseEvents(icsHe!);
   assert.match(events[0], /סכום: 1\\,500/, "he-IL's own thousands separator for this value happens to match en-US's, confirming the locale path itself runs without throwing");
 });
+
+/**
+ * Round 1090: mirrors calendarIcs.ts's own identical fix/test exactly --
+ * "he-IL" silently embeds an invisible U+200E before a negative number's
+ * minus sign, which otherwise rides into this real, downloaded/subscribed
+ * .ics file untouched.
+ */
+test("buildCalendarFeedIcs strips the invisible bidi mark toLocaleString adds before a negative number field's minus sign under 'he'", () => {
+  const records: EntityRecord[] = [{ id: 1, appointmentDate: "2026-03-15", customerName: "Dana Levi", amount: -150 }];
+  const icsHe = buildCalendarFeedIcs(richEntity, records, "proj1", new Date(), [], {}, "he");
+  const events = parseEvents(icsHe!);
+  assert.match(events[0], /סכום: -150/, "a negative number field must render with a plain minus sign, no invisible character before it");
+  assert.ok(!events[0].includes("‎") && !events[0].includes("‏"), "the DESCRIPTION line must contain no invisible bidi mark at all");
+});
