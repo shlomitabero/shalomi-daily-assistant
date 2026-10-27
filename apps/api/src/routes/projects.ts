@@ -1227,6 +1227,34 @@ export function createProjectsRouter(
   });
 
   /**
+   * Round 1086: GET .../entity-counts had NO volumetric throttle at all,
+   * unlike its siblings /export, /backup, and /twin (round 1053), which sit
+   * behind expensiveReadRateLimiter for exactly this reason: countRecords
+   * (packages/db/src/repository.ts) is a fully synchronous better-sqlite3
+   * `SELECT COUNT(*)` with no WHERE clause, run once per entity in a loop --
+   * real, uncapped synchronous work on this app's single Node event loop
+   * (see expensiveReadRateLimiter's own doc comment on the lack of
+   * horizontal scaling). Any authenticated collaborator with mere read
+   * access -- this route uses requireProjectAccess, not
+   * requireProjectWriteAccess -- can script a tight loop of requests,
+   * stalling every other user's and project's requests too. A dedicated
+   * limiter rather than reusing expensiveReadRateLimiter: that one's own
+   * message and doc comment explicitly scope its budget to "export/backup/
+   * twin requests" specifically, and legitimate entity-counts traffic is
+   * both much lighter per call (a handful of COUNT(*)s, not a full ZIP/
+   * report build) and more frequent (App.tsx fires one on every project
+   * open, not just on an explicit export/backup/twin click) -- a higher cap
+   * fits its real legitimate usage better without starving it by sharing
+   * a budget meant for much heavier, rarer calls.
+   */
+  const entityCountsRateLimiter = createRateLimiter({
+    windowMs: 15 * 60 * 1000,
+    max: 60,
+    keyGenerator: (req) => req.userId ?? "unknown",
+    message: "Too many entity-count requests. Please try again later.",
+  });
+
+  /**
    * /build, /refine, and /answers each read `project.spec` once at the
    * start of the request, then spend real time (an AI/heuristic
    * spec-generation call, and for /build and /refine also a migration)
@@ -2407,6 +2435,7 @@ export function createProjectsRouter(
    */
   router.get(
     "/projects/:id/entity-counts",
+    entityCountsRateLimiter,
     asyncRoute(async (req, res) => {
       const project = requireProjectAccess(db, req.params.id, req.userId!);
       if (project.status !== "built") {
