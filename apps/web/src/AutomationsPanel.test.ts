@@ -2566,6 +2566,73 @@ test("the rule list's Edit/Toggle/Delete buttons stay disabled while a Save/Crea
 });
 
 /**
+ * Round 1060: the mirror-image of round 831's own finding just above --
+ * Test's own button already waits for busyRuleId/createBusy AND
+ * testingRuleId (so a second Test can't start while one is already
+ * running), but Toggle/Edit/Delete/Duplicate never waited for
+ * testingRuleId at all. Deleting a rule while its own Test POST is still
+ * in flight doesn't crash anything (handleTestRule's own `.finally` only
+ * clears testingRuleId "if (current === rule.id)"), but it does leave a
+ * permanently orphaned automation_runs row behind -- that table's ruleId
+ * column deliberately has no foreign key (so a run survives its own
+ * rule's later deletion for history purposes), but a run for a rule
+ * deleted mid-test serves no one. Toggling/editing/duplicating mid-test
+ * is the same shape, just a smaller surprise.
+ */
+test("the rule list's Toggle/Edit/Delete/Duplicate buttons stay disabled while a Test is still in flight for any rule", async () => {
+  await withJsdom(async () => {
+    const originalFetch = globalThis.fetch;
+    let resolveTest!: (value: Response) => void;
+    const testHeld = new Promise<Response>((resolve) => {
+      resolveTest = resolve;
+    });
+    globalThis.fetch = (async (input: string, init?: RequestInit) => {
+      const method = init?.method ?? "GET";
+      if (method === "GET" && input === "/api/projects/proj1/automations") {
+        return new Response(
+          JSON.stringify({ rules: [makeRule({ id: "rule1" }), makeRule({ id: "rule2" })] }),
+          { status: 200, headers: { "content-type": "application/json" } },
+        );
+      }
+      if (method === "POST" && input === "/api/projects/proj1/automations/rule1/test") {
+        return testHeld; // the rule1 Test stays in flight until the test resolves it
+      }
+      throw new Error(`unexpected request ${method} ${input}`);
+    }) as typeof fetch;
+
+    try {
+      renderPanel();
+      await waitForCondition(() => document.querySelectorAll(".automations-rule-row").length === 2);
+
+      const firstRow = document.querySelectorAll(".automations-rule-row")[0] as HTMLElement;
+      fireEvent.click(Array.from(firstRow.querySelectorAll("button")).find((b) => b.textContent === "Send test") as HTMLButtonElement);
+      await waitForCondition(() => firstRow.textContent?.includes("Sending test") ?? false);
+
+      const secondRow = document.querySelectorAll(".automations-rule-row")[1] as HTMLElement;
+      const secondRowButtons = Array.from(secondRow.querySelectorAll("button"));
+      for (const label of ["Enable", "Disable", "Edit", "Delete", "Duplicate"]) {
+        const button = secondRowButtons.find((b) => b.textContent === label);
+        if (!button) continue;
+        assert.equal(button.disabled, true, `rule2's own ${label} button must stay disabled while rule1's own Test is still in flight`);
+      }
+
+      resolveTest(new Response(JSON.stringify({ run: null }), { status: 200, headers: { "content-type": "application/json" } }));
+      await waitForCondition(() => !(secondRowButtons.find((b) => b.textContent === "Edit") as HTMLButtonElement).disabled);
+    } finally {
+      // Always resolves the gate, even if an assertion above threw and the
+      // try block never reached its own resolveTest call above -- see
+      // round 1026's own identical comment on why this must live in
+      // finally: a real, no-longer-awaited fetch left permanently pending
+      // must never be able to hang the test. A second resolve() call here
+      // (when the try block's own call above already ran) is a harmless
+      // no-op -- a promise can only ever settle once.
+      resolveTest(new Response(JSON.stringify({ run: null }), { status: 200, headers: { "content-type": "application/json" } }));
+      globalThis.fetch = originalFetch;
+    }
+  });
+});
+
+/**
  * Round 679: Automations was the one read-heavy diagnostic panel in this
  * app with no Copy/Download companions at all (Business Twin, WhatsApp
  * log, Time Machine, Global Search all already have both) -- a user

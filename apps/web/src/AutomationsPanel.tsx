@@ -1016,14 +1016,41 @@ export function AutomationsPanel({
                             edit's own data the moment the original submission's unconditional
                             resetToCreateMode()/field-clearing code ran -- the same mutual-exclusion
                             busyRuleId already enforces for toggle/delete, just never extended to
-                            the form's own in-flight submission. */}
-                        <button type="button" className="secondary small" onClick={() => handleToggle(rule)} disabled={busyRuleId !== null || createBusy}>
+                            the form's own in-flight submission.
+                            Round 1060: also disabled by testingRuleId -- the mirror-image gap.
+                            Test's own button below already waits for busyRuleId/createBusy, but
+                            none of these four ever waited for a Test still in flight. Deleting a
+                            rule while its own Test call is still pending (handleTestRule's finally
+                            only clears testingRuleId "if (current === rule.id)", so a delete never
+                            crashes it) left a permanently orphaned automation_runs row -- that
+                            table's own ruleId column has no foreign key (packages/db/src/
+                            automations.ts) specifically because a run must survive its own rule's
+                            deletion for history purposes, but a run for a rule deleted mid-test
+                            serves no one. Toggling/editing/duplicating mid-test is a smaller but
+                            same-shaped surprise (the UI's own busy state no longer matches which
+                            rule the pending Test actually targets). */}
+                        <button
+                          type="button"
+                          className="secondary small"
+                          onClick={() => handleToggle(rule)}
+                          disabled={busyRuleId !== null || createBusy || testingRuleId !== null}
+                        >
                           {rule.enabled ? t("automations.disable") : t("automations.enable")}
                         </button>
-                        <button type="button" className="secondary small" onClick={() => handleStartEdit(rule)} disabled={busyRuleId !== null || createBusy}>
+                        <button
+                          type="button"
+                          className="secondary small"
+                          onClick={() => handleStartEdit(rule)}
+                          disabled={busyRuleId !== null || createBusy || testingRuleId !== null}
+                        >
                           {t("automations.edit")}
                         </button>
-                        <button type="button" className="danger small" onClick={() => handleDelete(rule)} disabled={busyRuleId !== null || createBusy}>
+                        <button
+                          type="button"
+                          className="danger small"
+                          onClick={() => handleDelete(rule)}
+                          disabled={busyRuleId !== null || createBusy || testingRuleId !== null}
+                        >
                           {t("automations.delete")}
                         </button>
                         <button
@@ -1034,7 +1061,12 @@ export function AutomationsPanel({
                         >
                           {testingRuleId === rule.id ? t("automations.test.sending") : t("automations.test")}
                         </button>
-                        <button type="button" className="secondary small" onClick={() => handleDuplicateRule(rule)} disabled={busyRuleId !== null || createBusy}>
+                        <button
+                          type="button"
+                          className="secondary small"
+                          onClick={() => handleDuplicateRule(rule)}
+                          disabled={busyRuleId !== null || createBusy || testingRuleId !== null}
+                        >
                           {t("automations.duplicate")}
                         </button>
                       </>
