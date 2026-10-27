@@ -816,10 +816,27 @@ export function WhatsAppPanel({
    * message was just replied to, risking the drafted text being sent to
    * the wrong person if the user doesn't notice the swap before hitting
    * Send.
+   *
+   * Round 1104: testAttachment is the other half of a drafted send
+   * (sendWhatsAppMessage above sends testTo/testMessage/testAttachment
+   * together) and was missing from this clear entirely -- an attachment
+   * already chosen for one contact silently followed the recipient switch
+   * too, so replying to a DIFFERENT message while a file was still
+   * pending sent that file to the new recipient instead, a real
+   * misdirected-attachment risk, not just a cosmetic one. Deletes the
+   * real upload from disk first (best-effort, same pattern as
+   * handleRemoveAttachment/handleResetTestForm just above), since leaving
+   * it would orphan it the same way round 979 already closed for the
+   * explicit "Remove" button and Escape-to-clear.
    */
   function handleReplyToMessage(m: WhatsAppMessageLogEntry) {
     setTestTo(m.fromNumber);
     setTestMessage("");
+    if (testAttachment) {
+      void deleteWhatsAppAttachment(projectId, testAttachment.url).catch(() => {});
+    }
+    setTestAttachment(null);
+    setAttachmentError(null);
   }
 
   function handleRemoveRecentNumber(n: string) {

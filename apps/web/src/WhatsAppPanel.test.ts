@@ -1662,6 +1662,95 @@ test("WhatsAppPanel's Reply button clears any already-drafted message, not just 
 });
 
 /**
+ * Round 1104: the mirror of the test just above, for the OTHER half of a
+ * drafted send -- testAttachment. handleReplyToMessage already clears
+ * testMessage so drafted text doesn't silently follow a recipient switch,
+ * but never touched testAttachment at all: a file chosen for one contact
+ * stayed selected and would be sent to whichever different message's
+ * sender Reply was just clicked for, a real misdirected-attachment risk,
+ * not just a cosmetic one. Confirms both halves of the real fix: the
+ * local selection clears immediately, AND the real uploaded file is
+ * actually deleted from the server (matching the orphaned-upload cleanup
+ * every other way of abandoning a chosen attachment already has -- round
+ * 979's Remove button, round 1005's panel-close effect).
+ */
+test("WhatsAppPanel's Reply button also clears and deletes any already-chosen attachment, not just the drafted text", async () => {
+  await withJsdom(async () => {
+    const originalFetch = globalThis.fetch;
+    let deleteRequest: { url: string } | undefined;
+    const messages: WhatsAppMessageLogEntry[] = [
+      {
+        id: "m1",
+        direction: "in",
+        fromNumber: "972521112233",
+        toNumber: "972501234567",
+        body: "Hi, do you have this in stock?",
+        matchedLabel: null,
+        matchedEntityName: null,
+        matchedRecordId: null,
+        status: "received",
+        createdAt: new Date().toISOString(),
+      },
+    ];
+    globalThis.fetch = (async (input: string, init?: RequestInit): Promise<Response> => {
+      const method = init?.method ?? "GET";
+      if (method === "GET" && input === "/api/projects/proj1/integrations/whatsapp/status") {
+        return new Response(
+          JSON.stringify({ status: "connected", phoneNumber: "972501234567", qrDataUrl: null, error: null }),
+          { status: 200, headers: { "content-type": "application/json" } },
+        );
+      }
+      if (method === "GET" && input === "/api/projects/proj1/integrations/whatsapp/messages") {
+        return new Response(JSON.stringify({ messages }), { status: 200, headers: { "content-type": "application/json" } });
+      }
+      if (method === "POST" && input === "/api/projects/proj1/integrations/whatsapp/attachments/upload") {
+        return new Response(
+          JSON.stringify({ file: { url: "/api/uploads/proj1/_whatsapp-attachments/fake-uuid.pdf", name: "brochure.pdf", size: 9, mimeType: "application/pdf" } }),
+          { status: 200, headers: { "content-type": "application/json" } },
+        );
+      }
+      if (method === "DELETE" && input === "/api/projects/proj1/integrations/whatsapp/attachments") {
+        deleteRequest = JSON.parse(init!.body as string) as { url: string };
+        return new Response(null, { status: 204 });
+      }
+      throw new Error(`unexpected request ${method} ${input}`);
+    }) as typeof fetch;
+    try {
+      render(
+        React.createElement(
+          ThemeProvider,
+          null,
+          React.createElement(LanguageProvider, null, React.createElement(WhatsAppPanel, { projectId: "proj1", userId: "user1", projectName: "Test Project", onClose: () => {}, onJumpToEntity: () => {}, onJumpToRecord: () => {}, entities: [], onCreateRecordFromMessage: () => {} })),
+        ),
+      );
+      await waitForCondition(() => document.querySelectorAll(".whatsapp-log-list li").length === 1);
+
+      const fileInput = document.querySelector('.whatsapp-attachment-field input[type="file"]') as HTMLInputElement;
+      const file = new File(["%PDF-fake-brochure"], "brochure.pdf", { type: "application/pdf" });
+      Object.defineProperty(fileInput, "files", { value: [file] });
+      await act(async () => {
+        fireEvent.change(fileInput);
+      });
+      await waitForCondition(() => document.querySelector(".whatsapp-attachment-field .file-field-current") !== null);
+
+      const logRow = document.querySelector(".whatsapp-log-in") as HTMLElement;
+      const replyButtons = [...logRow.querySelectorAll("button")].filter((b) => b.textContent === "Reply");
+      fireEvent.click(replyButtons[0]);
+
+      assert.equal(
+        document.querySelector(".whatsapp-attachment-field .file-field-current") === null,
+        true,
+        "clicking Reply must clear any attachment already chosen for a different recipient, not leave it to silently follow the switch",
+      );
+      await waitForCondition(() => deleteRequest !== undefined);
+      assert.equal(deleteRequest!.url, "/api/uploads/proj1/_whatsapp-attachments/fake-uuid.pdf", "must delete the real stale upload, not just clear local state");
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+});
+
+/**
  * Round 630's finding: retryingId is a single panel-wide `string | null`
  * slot, so the Retry button's own disabled check (`retryingId === m.id`,
  * pre-fix) only ever protected the ONE row remembered there. Clicking a
