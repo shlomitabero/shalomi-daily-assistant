@@ -535,9 +535,26 @@ for (const entity of ENTITIES) {
       // Only a field actually present in the request body is re-coerced --
       // an untouched field keeps its already-stored raw value as-is, the
       // same fix as the live Forge AI backend's own repository.ts.
-      const values = entity.fields.map((f) =>
-        req.body && Object.prototype.hasOwnProperty.call(req.body, f.name) ? coerce(f, req.body[f.name]) : existing[f.name],
-      );
+      const values = entity.fields.map((f) => {
+        if (!req.body || !Object.prototype.hasOwnProperty.call(req.body, f.name)) return existing[f.name];
+        const coerced = coerce(f, req.body[f.name]);
+        // Round 1091: mirrors repository.ts's own round-1037 guard, which
+        // this generated server's PATCH route never got. The exported
+        // app's SQL FOREIGN KEY constraint itself allows a row to
+        // reference its own id, and coerce() above only checks that a
+        // relation field's raw value is a finite number -- so a
+        // self-referencing relation field (e.g. Employee.managerId ->
+        // Employee) could be set to the record's own id via this exact
+        // route (the exported app's own public API has no auth on any
+        // route), with no error at all. Only rejected when the caller is
+        // actually setting THIS field to the record's own id right now --
+        // an update to any other field must still succeed even if legacy
+        // data already has a pre-existing self-reference.
+        if (f.type === "relation" && f.relationTo === entity.name && coerced === Number(req.params.id)) {
+          throw new Error(\`Field "\${f.name}" can't reference the record's own id\`);
+        }
+        return coerced;
+      });
       db.prepare(\`UPDATE \${q(entity.name)} SET \${columns.map((c) => \`\${q(c)} = ?\`).join(", ")} WHERE id = ?\`).run(...values, req.params.id);
       const row = db.prepare(\`SELECT * FROM \${q(entity.name)} WHERE id = ?\`).get(req.params.id);
       res.json({ record: rowToRecord(entity, row) });

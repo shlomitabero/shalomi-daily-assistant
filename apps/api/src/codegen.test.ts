@@ -1493,6 +1493,95 @@ test("generated server.js's create and update routes translate a dangling relati
 });
 
 /**
+ * Round 1091: mirrors repository.ts's own round-1037 guard, which this
+ * generated server's PATCH route never got. A self-referencing relation
+ * field (e.g. Employee.managerId -> Employee) has no protection anywhere
+ * else in the generated server's write path -- the SQL FOREIGN KEY
+ * constraint itself allows a row to reference its own id, and coerce()
+ * only checks that a relation field's raw value is a finite number.
+ * Confirmed directly against a real spawned server.js: before this fix,
+ * PATCH /api/Employee/1 {managerId: 1} returned 200 and genuinely
+ * persisted the self-reference, with zero error -- unlike the live Forge
+ * AI backend, which already rejects the identical write with a 400.
+ */
+test("generated server.js's update route rejects a self-referencing relation field the same way the live backend does, instead of silently persisting it", async () => {
+  const selfRelationProject: Project = {
+    ...project,
+    spec: {
+      ...project.spec,
+      entities: [
+        {
+          name: "Employee",
+          fields: [
+            { name: "name", type: "text", required: true },
+            { name: "managerId", type: "relation", required: false, relationTo: "Employee" },
+          ],
+        },
+      ],
+    },
+  };
+  const files = generateExportFiles(selfRelationProject);
+  const serverJs = files.find((f) => f.path === "server.js")!.content;
+
+  const dir = mkdtempSync(path.join(tmpdir(), "codegen-self-relation-test-"));
+  const repoRoot = path.resolve(import.meta.dirname, "../../..");
+  symlinkSync(path.join(repoRoot, "node_modules"), path.join(dir, "node_modules"));
+  writeFileSync(path.join(dir, "server.js"), serverJs);
+
+  const port = 54000 + Math.floor(Math.random() * 5000);
+  const child = spawn(process.execPath, ["--experimental-sqlite", "server.js"], {
+    cwd: dir,
+    env: { ...process.env, PORT: String(port) },
+    stdio: ["ignore", "pipe", "pipe"],
+  });
+  let stderr = "";
+  child.stderr.on("data", (chunk) => {
+    stderr += chunk.toString();
+  });
+
+  try {
+    const deadline = Date.now() + 5000;
+    let lastErr: unknown;
+    while (Date.now() < deadline) {
+      if (child.exitCode !== null) throw new Error(`server.js exited early (code ${child.exitCode}):\n${stderr}`);
+      try {
+        await fetch(`http://localhost:${port}/api/entities`);
+        break;
+      } catch (err) {
+        lastErr = err;
+        await new Promise((r) => setTimeout(r, 100));
+      }
+    }
+    if (child.exitCode !== null) throw lastErr instanceof Error ? lastErr : new Error(String(lastErr));
+
+    const createRes = await fetch(`http://localhost:${port}/api/Employee`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ name: "Dana" }),
+    });
+    const employee = (await createRes.json()).record;
+    assert.equal(employee.managerId, null);
+
+    const patchRes = await fetch(`http://localhost:${port}/api/Employee/${employee.id}`, {
+      method: "PATCH",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ managerId: employee.id }),
+    });
+    assert.equal(patchRes.status, 400, "setting a self-referencing relation field to the record's own id must be rejected, not accepted with a 200");
+    const patchBody = await patchRes.json();
+    assert.equal(patchBody.error, `Field "managerId" can't reference the record's own id`);
+
+    // The record itself must be left completely untouched by the rejected write.
+    const getRes = await fetch(`http://localhost:${port}/api/Employee`);
+    const records = (await getRes.json()).records;
+    assert.equal(records[0].managerId, null, "the rejected self-reference must never have been persisted");
+  } finally {
+    child.kill();
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+/**
  * New in this round: a relation field's `relationTo` can go dangling -- a
  * later refine regenerates the whole spec from plain prose with no access
  * to the previous structure (see pipeline.ts's own computeImpact/
