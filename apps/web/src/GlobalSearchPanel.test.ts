@@ -2370,3 +2370,73 @@ test("GlobalSearchPanel's query box has a 'Clear search' button and Escape-to-cl
     }
   });
 });
+
+/**
+ * Regression test for a real bug found by round 1085's Explore survey:
+ * the round-361/362 fix above only ever put data-escape-handled-locally
+ * (and the actual clearing logic) on the query <input> itself -- its own
+ * sibling controls inside the same form, the "✕ clear query" button and
+ * the "Search" submit button, carried neither. Tab from the input to
+ * either sibling, then press Escape, and the event's own target no longer
+ * has the marker as an ancestor -- useDialogFocusTrap.ts's own closest()
+ * check finds nothing, so its default branch fires and closes the WHOLE
+ * panel, discarding the query and its results, exactly like clicking
+ * "Close". Moving the marker (and the clearing logic) to the <form>
+ * itself -- an ancestor of every control inside it -- fixes this
+ * regardless of which one currently has focus.
+ */
+test("GlobalSearchPanel's Escape-to-clear still works when focus has moved from the query input to the 'Clear search' button or the 'Search' submit button, instead of closing the whole dialog", async () => {
+  await withJsdom(async () => {
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = mockGlobalSearchFetch() as typeof fetch;
+    let closeCalls = 0;
+    try {
+      render(
+        React.createElement(
+          ThemeProvider,
+          null,
+          React.createElement(
+            LanguageProvider,
+            null,
+            React.createElement(GlobalSearchPanel, {
+              projectId: "proj1",
+              userId: "user1",
+              projectName: "Test Project",
+              entities: [SEARCH_CUSTOMER_ENTITY, SEARCH_ORDER_ENTITY],
+              onClose: () => {
+                closeCalls += 1;
+              },
+              onJumpToEntity: () => {},
+              onJumpToRecord: () => {},
+            }),
+          ),
+        ),
+      );
+
+      const input = document.querySelector(".global-search-input") as HTMLInputElement;
+
+      // Escape fired from the "Clear search" button (Tab moves focus there
+      // the instant it appears) -- the exact two-keystroke repro the survey
+      // found.
+      fireEvent.change(input, { target: { value: "widget" } });
+      const clearButton = document.querySelector(".global-search-clear-query") as HTMLButtonElement;
+      fireEvent.keyDown(clearButton, { key: "Escape" });
+      assert.equal(input.value, "", "Escape fired from the Clear button must still clear the query");
+      assert.equal(closeCalls, 0, "clearing the query via Escape from the Clear button must never also close the whole dialog");
+      assert.equal(
+        document.querySelector('[role="dialog"]') == null,
+        false,
+        "the dialog must still be in the DOM after Escape (fired from the Clear button) cleared the query",
+      );
+
+      // Escape fired from the "Search" submit button.
+      fireEvent.change(input, { target: { value: "widget" } });
+      const submitButton = document.querySelector('form.global-search-form button[type="submit"]') as HTMLButtonElement;
+      fireEvent.keyDown(submitButton, { key: "Escape" });
+      assert.equal(input.value, "", "Escape fired from the Search submit button must still clear the query");
+      assert.equal(closeCalls, 0, "clearing the query via Escape from the Search button must never also close the whole dialog");
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+});

@@ -9050,6 +9050,73 @@ test("the exported app's Global Search clears its query on the first Escape, and
 });
 
 /**
+ * Regression test for a real bug found by round 1085's Explore survey:
+ * mirrors the live preview's own round-1085 fix (GlobalSearchPanel.tsx) --
+ * the round-494 fix just above only ever covered Escape fired from the
+ * query <input> itself. Its own sibling, the "Search" submit button
+ * (a plain sibling inside the same form, covered by neither the marker
+ * nor a key handler of its own), had no protection at all -- Tab from the
+ * input to that button, then Escape, closed the whole search overlay
+ * instead of clearing the query, exactly the round-494 bug reopened via a
+ * different focused control.
+ */
+test("the exported app's Global Search still clears its query on Escape fired from the 'Search' submit button, instead of closing the whole overlay", async () => {
+  const files = generateExportFiles(project);
+  const dir = writeGeneratedWebComponent(files);
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = (async (input: string) => {
+    if (input === "/api/entity-counts") {
+      return new Response(JSON.stringify({ counts: {} }), { status: 200, headers: { "content-type": "application/json" } });
+    }
+    if (input === "/api/Customer") {
+      return new Response(JSON.stringify({ records: [{ id: 1, name: "Acme Corp", status: "New" }] }), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      });
+    }
+    return new Response(JSON.stringify({ records: [] }), { status: 200, headers: { "content-type": "application/json" } });
+  }) as typeof fetch;
+
+  try {
+    await withRealLocalStorage(async () => {
+      const { default: App } = await import(path.join(dir, "web", "src", "App.jsx"));
+      const { container } = render(React.createElement(App));
+
+      await act(async () => {
+        fireEvent.click(container.querySelector(".search-trigger") as HTMLButtonElement);
+      });
+      const searchInput = container.querySelector(".global-search-input") as HTMLInputElement;
+      assert.ok(searchInput, "sanity check: the search overlay must actually be open");
+
+      await act(async () => {
+        fireEvent.change(searchInput, { target: { value: "acme" } });
+      });
+      assert.equal(searchInput.value, "acme", "sanity check: the query must actually be typed in");
+
+      const submitButton = container.querySelector('form.global-search-form button[type="submit"]') as HTMLButtonElement;
+      assert.ok(submitButton, "sanity check: the Search submit button must exist");
+
+      await act(async () => {
+        fireEvent.keyDown(submitButton, { key: "Escape" });
+      });
+      assert.ok(
+        container.querySelector(".global-search-input"),
+        "Escape fired from the Search submit button must only clear the query, not close the whole search overlay",
+      );
+      assert.equal(
+        (container.querySelector(".global-search-input") as HTMLInputElement).value,
+        "",
+        "Escape fired from the Search submit button must actually clear the typed query",
+      );
+    });
+  } finally {
+    globalThis.fetch = originalFetch;
+    cleanup();
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+/**
  * Round 629's finding: the live preview (App.tsx, round 199) opens Global
  * Search with "/" as well as Ctrl/Cmd+K -- a second, equally familiar
  * convention (GitHub, Slack, etc. all use it), guarded by

@@ -7329,11 +7329,6 @@ export function GlobalSearch({ entities, onClose, onJumpToEntity, onJumpToRecord
   }
 
   function handleInputKeyDown(e) {
-    if (e.key === "Escape" && query.length > 0) {
-      e.preventDefault();
-      setQuery("");
-      return;
-    }
     if (results.length === 0) return;
     if (e.key === "ArrowDown") {
       e.preventDefault();
@@ -7366,14 +7361,31 @@ export function GlobalSearch({ entities, onClose, onJumpToEntity, onJumpToRecord
         </div>
         <p className="muted small">Searches across every entity at once, not just the open tab.</p>
 
-        <form className="global-search-form" onSubmit={handleSubmit}>
+        <form
+          className="global-search-form"
+          onSubmit={handleSubmit}
+          data-escape-handled-locally={query.length > 0 ? "" : undefined}
+          onKeyDown={(e) => {
+            // Round 1085: mirrors the live preview's own round-1085 fix
+            // (GlobalSearchPanel.tsx) -- the marker used to sit on the
+            // <input> alone, so Tab to the "Search" submit button right
+            // next to it (a plain sibling, covered by neither the marker
+            // nor a key handler of its own), then Escape, closed the
+            // whole panel instead of clearing the query. Moving the
+            // marker to the form (an ancestor of every control inside it)
+            // fixes this regardless of which control currently has focus.
+            if (e.key === "Escape" && query.length > 0) {
+              e.preventDefault();
+              setQuery("");
+            }
+          }}
+        >
           <input
             type="text"
             autoFocus
             className="global-search-input"
             placeholder="Type to search…"
             value={query}
-            data-escape-handled-locally={query.length > 0 ? "" : undefined}
             onChange={(e) => setQuery(e.target.value)}
             onKeyDown={handleInputKeyDown}
           />

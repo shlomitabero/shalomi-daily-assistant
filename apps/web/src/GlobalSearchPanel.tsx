@@ -522,14 +522,11 @@ export function GlobalSearchPanel({
    * unit that matters), and Enter jumps to whichever group is highlighted.
    * Enter with nothing highlighted still submits the form as a normal
    * search, so this never changes behavior for someone who just types and
-   * hits Enter once.
+   * hits Enter once. Escape-to-clear now lives on the form (see the JSX
+   * below) rather than here, so it's covered regardless of which control
+   * inside the form currently has focus.
    */
   function handleInputKeyDown(e: React.KeyboardEvent<HTMLInputElement>) {
-    if (e.key === "Escape" && query.length > 0) {
-      e.preventDefault();
-      setQuery("");
-      return;
-    }
     if (results.length === 0) return;
     if (e.key === "ArrowDown") {
       e.preventDefault();
@@ -570,7 +567,32 @@ export function GlobalSearchPanel({
         </div>
         <p className="muted small">{t("search.description")}</p>
 
-        <form className="global-search-form" onSubmit={handleSubmit}>
+        <form
+          className="global-search-form"
+          onSubmit={handleSubmit}
+          data-escape-handled-locally={query.length > 0 ? "" : undefined}
+          onKeyDown={(e) => {
+            // Round 1085: the marker above used to sit on the <input>
+            // alone, so useDialogFocusTrap.ts's own closest()-based Escape
+            // check only protected a query while the input itself had
+            // focus. Tab to the "✕ clear query" button or the "Search"
+            // submit button right next to it (both plain siblings of the
+            // input inside this same form, covered by neither the marker
+            // nor a key handler of their own), then press Escape, and the
+            // event's target no longer has the marker as an ancestor --
+            // the dialog's own default Escape branch fired instead,
+            // silently closing the WHOLE panel and discarding the query
+            // and its results, exactly like clicking "Close". Moving the
+            // marker to the form (an ancestor of every control inside it)
+            // and handling the actual clear here too means Escape clears
+            // the query and keeps the panel open no matter which of the
+            // three controls currently has focus.
+            if (e.key === "Escape" && query.length > 0) {
+              e.preventDefault();
+              setQuery("");
+            }
+          }}
+        >
           <input
             type="text"
             autoFocus
@@ -578,7 +600,6 @@ export function GlobalSearchPanel({
             placeholder={t("search.placeholder")}
             aria-label={t("search.placeholder")}
             value={query}
-            data-escape-handled-locally={query.length > 0 ? "" : undefined}
             onChange={(e) => setQuery(e.target.value)}
             onKeyDown={handleInputKeyDown}
           />
