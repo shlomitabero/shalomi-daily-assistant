@@ -681,6 +681,26 @@ export function GlobalSearchPanel({
         {!loading && results.length > 0 && (
           <div className="global-search-results" ref={resultsContainerRef}>
             {results.map((result, i) => {
+              // Round 1122: a refine completing while this panel is still
+              // open (its own BuildProgress renders inline on the preview
+              // screen, round 938's own comment confirms it, never as a
+              // blocking overlay -- opening Global Search mid-refine is
+              // entirely possible) is free to drop or rename an entity
+              // `results` already holds a group for (App.tsx's own
+              // handleBuildComplete doc comment: "the AI provider isn't
+              // guaranteed to keep every entity"). Without this, the line
+              // below used to do `entities.find(...)!` with a non-null
+              // assertion and crash the instant it hit `pickDisplayField`'s
+              // `entity.fields.find(...)` on the resulting `undefined` --
+              // `handleShowAll` already guards the identical "entity
+              // vanished" case for its own fetch (`if (!entity) return;`),
+              // but nothing mirrored that guard here. A `useEffect` keyed
+              // on `entities` could not fix this: the crash happens
+              // synchronously during THIS render, before any effect from
+              // the prop change gets a chance to run, so the stale group
+              // must be skipped right here instead.
+              const entity = entities.find((e) => e.name === result.entityName);
+              if (!entity) return null;
               const displayed = expandedSamples[result.entityName] ?? result.sample;
               const remaining = result.totalMatches - displayed.length;
               return (
@@ -721,7 +741,7 @@ export function GlobalSearchPanel({
                           }}
                         >
                           <LinkifiedHighlighted
-                            text={recordPreview(entities.find((e) => e.name === result.entityName)!, record)}
+                            text={recordPreview(entity, record)}
                             query={highlightQuery}
                           />
                         </div>

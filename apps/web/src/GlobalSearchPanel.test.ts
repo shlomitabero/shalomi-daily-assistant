@@ -1366,6 +1366,93 @@ test("GlobalSearchPanel renders a URL or email embedded in a record's own displa
 });
 
 /**
+ * Round 1122: a refine completing while this panel is still open (its own
+ * BuildProgress renders inline on the preview screen, round 938's own
+ * comment confirms it, never as a full-screen blocking overlay) is free to
+ * drop or rename an entity `results` already holds a group for -- the AI
+ * provider isn't guaranteed to keep every entity (App.tsx's own
+ * handleBuildComplete doc comment). Before this round, the very next
+ * render crashed with a real TypeError (`entities.find(...)!` returning
+ * `undefined`, then `pickDisplayField`'s `entity.fields.find(...)`
+ * throwing on it) -- white-screening the whole preview if nothing caught
+ * it. Simulates this with a real search, then a real `rerender` passing a
+ * new `entities` prop missing the entity the already-rendered group is
+ * for, the same prop change App.tsx's own `orderedEntities` would produce
+ * after `setProject(builtProject)`. Deliberately NOT fixed via a
+ * `useEffect` keyed on `entities`: an effect only runs AFTER a render
+ * commits, but this exact render is the one that throws, before any
+ * effect from the very prop change that caused it gets a chance to run --
+ * confirmed empirically (an effect-based fix of this same shape left this
+ * test failing with the identical crash). The real fix instead skips a
+ * stale group synchronously inside the `results.map` callback itself.
+ */
+test("GlobalSearchPanel doesn't crash and drops the stale result group when the entity it belongs to disappears from the live entities prop (e.g. a refine completing while the panel is still open)", async () => {
+  await withJsdom(async () => {
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = mockGlobalSearchFetch() as typeof fetch;
+    try {
+      const { rerender } = render(
+        React.createElement(
+          ThemeProvider,
+          null,
+          React.createElement(
+            LanguageProvider,
+            null,
+            React.createElement(GlobalSearchPanel, {
+              projectId: "proj1",
+              userId: "user1",
+              projectName: "Test Project",
+              entities: [SEARCH_CUSTOMER_ENTITY, SEARCH_ORDER_ENTITY],
+              onClose: () => {},
+              onJumpToEntity: () => {},
+              onJumpToRecord: () => {},
+            }),
+          ),
+        ),
+      );
+
+      const input = document.querySelector(".global-search-input") as HTMLInputElement;
+      fireEvent.change(input, { target: { value: "widget" } });
+      const form = document.querySelector("form.global-search-form")!;
+      fireEvent.submit(form);
+      await waitForCondition(() => document.querySelectorAll(".global-search-group").length === 2);
+
+      // The refine's own completion: Order is gone, Customer survives --
+      // mirrors App.tsx's setProject(builtProject) swapping in a fresh
+      // orderedEntities with no re-search of this already-open panel.
+      rerender(
+        React.createElement(
+          ThemeProvider,
+          null,
+          React.createElement(
+            LanguageProvider,
+            null,
+            React.createElement(GlobalSearchPanel, {
+              projectId: "proj1",
+              userId: "user1",
+              projectName: "Test Project",
+              entities: [SEARCH_CUSTOMER_ENTITY],
+              onClose: () => {},
+              onJumpToEntity: () => {},
+              onJumpToRecord: () => {},
+            }),
+          ),
+        ),
+      );
+
+      assert.equal(document.querySelectorAll(".global-search-group").length, 1, "the dropped entity's stale group must disappear, not crash or linger");
+      assert.equal(
+        document.querySelector(".global-search-entity-label")!.textContent,
+        "Customer",
+        "the surviving entity's own group must still render correctly",
+      );
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+});
+
+/**
  * New in this round: a submitted search now survives closing and
  * reopening the panel, via recentSearches.ts's real localStorage
  * persistence (the same convention pinnedProjects.ts/ideaDraft.ts already
