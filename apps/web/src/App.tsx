@@ -69,8 +69,9 @@ import {
   removeRecentProjectSearch,
 } from "./recentProjectSearches.js";
 import { visibleSelectedIds } from "./projectSelection.js";
-import { getProjectSortMode, setProjectSortMode, type ProjectSortMode } from "./projectSortMode.js";
+import { clearProjectSortMode, getProjectSortMode, setProjectSortMode, type ProjectSortMode } from "./projectSortMode.js";
 import {
+  clearProjectStatusFilter,
   getProjectStatusFilter,
   setProjectStatusFilter as persistProjectStatusFilter,
   type ProjectStatusFilter,
@@ -1883,6 +1884,14 @@ function AppContent() {
     // why this must be cleared here too.
     clearRecentProjectSearches(userId);
     setRecentProjectSearches([]);
+    // Round 1124: unlike handleLogout/subscribeAuthExpired (which
+    // deliberately leave these two alone -- round 1057's whole point in
+    // keying them per user was so they survive a logout and a later
+    // re-login to the SAME account), this path is different: the account
+    // is permanently gone, so "survive the next login" can never happen.
+    // See projectSortMode.ts's own clearProjectSortMode doc comment.
+    clearProjectSortMode(userId);
+    clearProjectStatusFilter(userId);
   }
 
   return (

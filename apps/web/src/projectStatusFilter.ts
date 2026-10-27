@@ -39,3 +39,16 @@ export function setProjectStatusFilter(userId: string, filter: ProjectStatusFilt
     // localStorage can be unavailable (private mode) -- the preference just won't survive a reload.
   }
 }
+
+/**
+ * Round 1124: see projectSortMode.ts's own clearProjectSortMode doc
+ * comment for the full reasoning -- the exact same fix, for the exact
+ * same reason, called only from handleAccountDeleted.
+ */
+export function clearProjectStatusFilter(userId: string): void {
+  try {
+    localStorage.removeItem(storageKey(userId));
+  } catch {
+    // localStorage can be unavailable (private mode) -- nothing to clear.
+  }
+}

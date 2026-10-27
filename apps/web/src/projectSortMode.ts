@@ -39,3 +39,21 @@ export function setProjectSortMode(userId: string, mode: ProjectSortMode): void 
     // localStorage can be unavailable (private mode) -- the preference just won't survive a reload.
   }
 }
+
+/**
+ * Round 1124: handleLogout/subscribeAuthExpired deliberately never clear
+ * this store -- round 1057's whole point in keying it per user was so the
+ * preference survives a logout and a later re-login to the SAME account.
+ * But DELETE /auth/account permanently destroys the user row (no future
+ * login can ever reuse that UUID), so for THAT one path specifically,
+ * "survive the next login" can never happen -- leaving this key behind
+ * forever is pure leak, not the feature it is everywhere else. Mirrors
+ * ideaDraft.ts's own clearIdeaDraft, called only from handleAccountDeleted.
+ */
+export function clearProjectSortMode(userId: string): void {
+  try {
+    localStorage.removeItem(storageKey(userId));
+  } catch {
+    // localStorage can be unavailable (private mode) -- nothing to clear.
+  }
+}

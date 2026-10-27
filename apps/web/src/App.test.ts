@@ -2619,6 +2619,15 @@ test("App's building-view onBack clears selectedAnswers/additionalRequest before
  * every merely-shared project id (the server's own removeAllCollaborationsForUser
  * revokes this account's access to those too) -- confirmed below by passing
  * both arrays and checking both show up in purgeCalls.
+ *
+ * Round 1124: extended to confirm clearProjectSortMode/clearProjectStatusFilter
+ * are called too -- unlike handleLogout/the auth-expiry effect (which
+ * deliberately never clear these two, since round 1057's whole point in
+ * keying them per user was so the preference survives a logout and a
+ * later re-login to the SAME account), this path permanently destroys the
+ * account, so leaving them behind is pure leak, not the feature it is
+ * everywhere else. See projectSortMode.ts's own clearProjectSortMode doc
+ * comment for the full reasoning.
  */
 test("App's handleAccountDeleted purges client-side preferences for every owned AND shared project id, then resets local UI state", () => {
   const appSrc = readFileSync(new URL("./App.tsx", import.meta.url), "utf8");
@@ -2635,6 +2644,8 @@ test("App's handleAccountDeleted purges client-side preferences for every owned 
     user: unknown;
     project: unknown;
     view: string | null;
+    sortModeClearedForUserId: unknown;
+    statusFilterClearedForUserId: unknown;
   } = {
     purgeCalls: [],
     tokenCleared: false,
@@ -2642,6 +2653,8 @@ test("App's handleAccountDeleted purges client-side preferences for every owned 
     user: { id: "user1" },
     project: { id: "p1" },
     view: "preview",
+    sortModeClearedForUserId: "untouched",
+    statusFilterClearedForUserId: "untouched",
   };
   const noop = () => {};
   const fn = new Function(
@@ -2663,6 +2676,8 @@ test("App's handleAccountDeleted purges client-side preferences for every owned 
     "setRefineText",
     "setRefineHistory",
     "setRefineHistorySearch",
+    "clearProjectSortMode",
+    "clearProjectStatusFilter",
     `${code}\nreturn handleAccountDeleted;`,
   )(
     { id: "user1" },
@@ -2683,6 +2698,8 @@ test("App's handleAccountDeleted purges client-side preferences for every owned 
     noop,
     noop,
     noop,
+    (id: string) => (state.sortModeClearedForUserId = id),
+    (id: string) => (state.statusFilterClearedForUserId = id),
   ) as (ownedProjectIds: string[], sharedProjectIds: string[]) => void;
 
   fn(["p1", "p2", "p3"], ["p4", "p5"]);
@@ -2697,6 +2714,16 @@ test("App's handleAccountDeleted purges client-side preferences for every owned 
   assert.equal(state.user, null, "must still clear the deleted user");
   assert.equal(state.project, null, "must still clear the deleted project");
   assert.equal(state.view, "home", "must still navigate back to the auth/home screen");
+  assert.equal(
+    state.sortModeClearedForUserId,
+    "user1",
+    "round 1124: must clear this account's own per-user sort-mode preference -- unlike handleLogout, the account can never log back in to read it again",
+  );
+  assert.equal(
+    state.statusFilterClearedForUserId,
+    "user1",
+    "round 1124: must clear this account's own per-user status-filter preference, for the same reason",
+  );
 
   const noneOwned = { purgeCalls: [] as string[] };
   const fnNoneOwned = new Function(
@@ -2718,10 +2745,14 @@ test("App's handleAccountDeleted purges client-side preferences for every owned 
     "setRefineText",
     "setRefineHistory",
     "setRefineHistorySearch",
+    "clearProjectSortMode",
+    "clearProjectStatusFilter",
     `${code}\nreturn handleAccountDeleted;`,
   )(
     { id: "user1" },
     (id: string) => noneOwned.purgeCalls.push(id),
+    noop,
+    noop,
     noop,
     noop,
     noop,
