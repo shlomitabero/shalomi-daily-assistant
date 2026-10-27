@@ -355,6 +355,39 @@ test("Milestone's 'title' and Supplier's 'name' seed values are entity-appropria
 });
 
 /**
+ * Round 1114's finding: the CRM template's own Contact entity and the
+ * Project Tracker template's own TeamMember entity (both templates.ts
+ * hand-authored entities, same provenance as round 1107's Milestone/
+ * Supplier) each have a "jobTitle" field with no case of its own in
+ * textSeedValueFor -- round 1107's own cross-check only ever covered the
+ * "title" and "name" cases, never auditing every other field name these
+ * hand-authored entities use. "jobTitle" fell all the way through to the
+ * generic placeholder ("Contact - jobTitle 1"), even though a pool for
+ * this exact concept (a person's job title) already existed, built for
+ * JobApplicant's "appliedFor" field. Mirrors round 1107's own fix: reuses
+ * the existing pool rather than inventing a near-duplicate one.
+ */
+test("Contact's and TeamMember's 'jobTitle' seed values are real job titles, not the generic placeholder formula", () => {
+  const contact: Entity = { name: "Contact", fields: [{ name: "jobTitle", type: "text", required: false }] };
+  const teamMember: Entity = { name: "TeamMember", fields: [{ name: "jobTitle", type: "text", required: false }] };
+  const jobApplicant: Entity = { name: "JobApplicant", fields: [{ name: "appliedFor", type: "text", required: false }] };
+
+  const appliedForValues = new Set(generateSeedRecords(jobApplicant, 4).map((r) => r.appliedFor as string));
+
+  const contactTitles = generateSeedRecords(contact, 4).map((r) => r.jobTitle as string);
+  for (const title of contactTitles) {
+    assert.doesNotMatch(title, /Contact.*jobTitle/, `"${title}" must not be the generic entity/field-name placeholder`);
+    assert.ok(appliedForValues.has(title), `Contact's jobTitle "${title}" must reuse appliedFor's own job-title pool`);
+  }
+
+  const teamMemberTitles = generateSeedRecords(teamMember, 4).map((r) => r.jobTitle as string);
+  for (const title of teamMemberTitles) {
+    assert.doesNotMatch(title, /TeamMember.*jobTitle/, `"${title}" must not be the generic entity/field-name placeholder`);
+    assert.ok(appliedForValues.has(title), `TeamMember's jobTitle "${title}" must reuse appliedFor's own job-title pool`);
+  }
+});
+
+/**
  * Round 828's finding: the exact same shape as round 827's "title" fix,
  * one case below it. textSeedValueFor's "service"/"itemName" case had no
  * entity-aware dispatch either -- ITEM_NAMES_HE/EN was written for

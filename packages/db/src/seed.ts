@@ -261,7 +261,14 @@ function textSeedValueFor(fieldName: string, entityName: string, isHebrew: boole
       return pick(isHebrew ? TICKET_SUBJECTS_HE : TICKET_SUBJECTS_EN, index);
     case "planName":
       return pick(isHebrew ? PLAN_NAMES_HE : PLAN_NAMES_EN, index);
+    // Round 1114: "jobTitle" (the CRM template's Contact entity and the
+    // Project Tracker template's TeamMember entity -- both templates.ts's
+    // own hand-authored entities, not domainEntities.ts) is conceptually
+    // the same concept as "appliedFor" (a person's job title) -- reuses
+    // that pool rather than inventing a near-duplicate one, mirroring
+    // round 1107's own Vendor/Supplier fix just below.
     case "appliedFor":
+    case "jobTitle":
       return pick(isHebrew ? JOB_TITLES_HE : JOB_TITLES_EN, index);
     case "campaign":
       return pick(isHebrew ? CAMPAIGN_NAMES_HE : CAMPAIGN_NAMES_EN, index);
