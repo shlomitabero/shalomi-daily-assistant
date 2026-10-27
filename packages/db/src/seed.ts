@@ -82,6 +82,17 @@ const VENDOR_NAMES_HE = ["חברת ציוד המשרד", "ספקי חומרי ג
 const VENDOR_NAMES_EN = ["Office Supplies Co.", "Raw Materials Ltd.", "CloudTech Solutions", "Professional Cleaning Services"];
 const EXPENSE_DESCRIPTIONS_HE = ["שכירות חודש", "רכישת ציוד משרדי", "כרטיסי טיסה לכנס", "חשבון חשמל"];
 const EXPENSE_DESCRIPTIONS_EN = ["Monthly office rent", "Office supplies purchase", "Conference flight tickets", "Electricity bill"];
+// Round 1115: pools for Volunteer.skills and Staff.specialty (templates.ts's
+// Volunteer & Shift Management and Appointments & Clients templates), the
+// next two field names that round-1105/1107/1114's own cross-check of
+// templates.ts's hand-authored entities against this switch never reached.
+const SKILLS_HE = ["אירועים, עזרה ראשונה", "הדרכה, ארגון", "הסעות, לוגיסטיקה", "תרגום, תקשורת"];
+const SKILLS_EN = ["Event setup, First aid", "Training, Organization", "Driving, Logistics", "Translation, Communication"];
+const SPECIALTIES_HE = ["צביעת שיער", "עיסוי רקמות עמוק", "טיפולי פנים", "תזונה קלינית"];
+const SPECIALTIES_EN = ["Hair Coloring", "Deep Tissue Massage", "Facial Treatments", "Clinical Nutrition"];
+// Shift.timeRange (same template) -- a plain time-of-day range, no Hebrew/
+// English distinction needed (digits and a dash read the same either way).
+const TIME_RANGES = ["09:00–13:00", "14:00–18:00", "18:00–22:00"];
 
 function pick(pool: string[], index: number): string {
   return pool[index % pool.length];
@@ -247,7 +258,12 @@ function textSeedValueFor(fieldName: string, entityName: string, isHebrew: boole
     case "address":
     case "destination":
       return pick(isHebrew ? ADDRESSES_HE : ADDRESSES_EN, index);
+    // Round 1115: "location" (the Volunteer & Shift Management template's
+    // own VolunteerEvent entity, templates.ts) is conceptually the same
+    // "where is it happening" concept "venue" already covers for Event --
+    // reuses that pool rather than inventing a near-duplicate one.
     case "venue":
+    case "location":
       return pick(isHebrew ? VENUES_HE : VENUES_EN, index);
     case "species":
       return pick(isHebrew ? SPECIES_HE : SPECIES_EN, index);
@@ -278,8 +294,26 @@ function textSeedValueFor(fieldName: string, entityName: string, isHebrew: boole
       return `TRK-${100000 + index * 37}`;
     case "policyNumber":
       return `POL-${500000 + index * 111}`;
+    // Round 1115: "company" (the Sales CRM template's own Customer entity,
+    // templates.ts) is conceptually the same "business, not a person"
+    // shape as Vendor -- the business a contact works at, not an actual
+    // vendor relationship, but the same realistic-company-name pool fits
+    // either equally well.
     case "vendor":
+    case "company":
       return pick(isHebrew ? VENDOR_NAMES_HE : VENDOR_NAMES_EN, index);
+    // Round 1115: the Volunteer & Shift Management template's own
+    // Volunteer.skills and Shift.timeRange, and the Appointments & Clients
+    // template's own Staff.specialty (all templates.ts, not
+    // domainEntities.ts) -- three more field names round 1105/1107/1114's
+    // own cross-check never reached. timeRange is a plain time-of-day
+    // range with no Hebrew/English distinction needed.
+    case "skills":
+      return pick(isHebrew ? SKILLS_HE : SKILLS_EN, index);
+    case "specialty":
+      return pick(isHebrew ? SPECIALTIES_HE : SPECIALTIES_EN, index);
+    case "timeRange":
+      return pick(TIME_RANGES, index);
     case "description":
       if (entityName === "Expense") return pick(isHebrew ? EXPENSE_DESCRIPTIONS_HE : EXPENSE_DESCRIPTIONS_EN, index);
       return isHebrew ? `${entityName} - ${fieldName} ${index + 1}` : `${entityName} ${fieldName} ${index + 1}`;

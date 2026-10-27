@@ -388,6 +388,39 @@ test("Contact's and TeamMember's 'jobTitle' seed values are real job titles, not
 });
 
 /**
+ * Round 1115's finding: the same "N copies, N+1th missed" pattern as round
+ * 1114's jobTitle fix, three more field names over. The Sales CRM
+ * template's Customer.company, the Volunteer & Shift Management
+ * template's Volunteer.skills and Shift.timeRange, and the Appointments &
+ * Clients template's Staff.specialty (all templates.ts hand-authored
+ * entities) had no case of their own, falling through to the generic
+ * placeholder ("Customer - company 1", etc).
+ */
+test("Customer's 'company', Volunteer's 'skills', Shift's 'timeRange', and Staff's 'specialty' seed values are entity-appropriate, not the generic placeholder formula", () => {
+  const customerEntity: Entity = { name: "Customer", fields: [{ name: "company", type: "text", required: false }] };
+  const vendor: Entity = { name: "Vendor", fields: [{ name: "name", type: "text", required: true }] };
+  const volunteer: Entity = { name: "Volunteer", fields: [{ name: "skills", type: "text", required: false }] };
+  const shift: Entity = { name: "Shift", fields: [{ name: "timeRange", type: "text", required: false }] };
+  const staff: Entity = { name: "Staff", fields: [{ name: "specialty", type: "text", required: false }] };
+
+  const vendorNames = new Set(generateSeedRecords(vendor, 4).map((r) => r.name as string));
+  const companies = generateSeedRecords(customerEntity, 4).map((r) => r.company as string);
+  for (const company of companies) {
+    assert.doesNotMatch(company, /Customer.*company/, `"${company}" must not be the generic entity/field-name placeholder`);
+    assert.ok(vendorNames.has(company), `Customer's company "${company}" must reuse Vendor's own business-name pool`);
+  }
+
+  const skills = generateSeedRecords(volunteer, 4).map((r) => r.skills as string);
+  for (const skill of skills) assert.doesNotMatch(skill, /Volunteer.*skills/, `"${skill}" must not be the generic entity/field-name placeholder`);
+
+  const timeRanges = generateSeedRecords(shift, 4).map((r) => r.timeRange as string);
+  for (const timeRange of timeRanges) assert.doesNotMatch(timeRange, /Shift.*timeRange/, `"${timeRange}" must not be the generic entity/field-name placeholder`);
+
+  const specialties = generateSeedRecords(staff, 4).map((r) => r.specialty as string);
+  for (const specialty of specialties) assert.doesNotMatch(specialty, /Staff.*specialty/, `"${specialty}" must not be the generic entity/field-name placeholder`);
+});
+
+/**
  * Round 828's finding: the exact same shape as round 827's "title" fix,
  * one case below it. textSeedValueFor's "service"/"itemName" case had no
  * entity-aware dispatch either -- ITEM_NAMES_HE/EN was written for
