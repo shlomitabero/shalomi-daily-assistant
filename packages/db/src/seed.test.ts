@@ -329,6 +329,32 @@ test("Case's 'caseType' seed values are a plausible legal practice area, not the
 });
 
 /**
+ * Round 1107's finding: Milestone and Supplier are hand-authored entities
+ * in packages/spec-engine/src/templates.ts's Project Tracker and Inventory
+ * templates respectively -- a separate catalog from domainEntities.ts that
+ * none of the many past per-entity seed fixes (including round 827's own
+ * "title" fix just above) ever cross-checked. Milestone's "title" fell all
+ * the way through to Deal's sales-pitch titles ("Service upgrade"); a
+ * Supplier (a business, the same shape as the already-covered Vendor
+ * entity) fell through "name" to a random person's name instead of a
+ * company name.
+ */
+test("Milestone's 'title' and Supplier's 'name' seed values are entity-appropriate, not Deal's sales titles or a random person's name", () => {
+  const milestone: Entity = { name: "Milestone", fields: [{ name: "title", type: "text", required: true }] };
+  const supplier: Entity = { name: "Supplier", fields: [{ name: "name", type: "text", required: true }] };
+  const vendor: Entity = { name: "Vendor", fields: [{ name: "name", type: "text", required: true }] };
+  const deal: Entity = { name: "Deal", fields: [{ name: "title", type: "text", required: true }] };
+
+  const dealTitles = new Set(generateSeedRecords(deal, 4).map((r) => r.title as string));
+  const milestoneTitles = generateSeedRecords(milestone, 4).map((r) => r.title as string);
+  for (const title of milestoneTitles) assert.ok(!dealTitles.has(title), `Milestone's title "${title}" must not be one of Deal's own sample titles`);
+
+  const vendorNames = new Set(generateSeedRecords(vendor, 4).map((r) => r.name as string));
+  const supplierNames = generateSeedRecords(supplier, 4).map((r) => r.name as string);
+  for (const name of supplierNames) assert.ok(vendorNames.has(name), `Supplier's name "${name}" must reuse Vendor's own business-name pool, not fall through to a random person's name`);
+});
+
+/**
  * Round 828's finding: the exact same shape as round 827's "title" fix,
  * one case below it. textSeedValueFor's "service"/"itemName" case had no
  * entity-aware dispatch either -- ITEM_NAMES_HE/EN was written for

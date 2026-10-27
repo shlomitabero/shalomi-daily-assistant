@@ -38,6 +38,8 @@ const CASE_TYPES_HE = ["דיני חוזים", "דיני מקרקעין", "דינ
 const CASE_TYPES_EN = ["Contract Law", "Real Estate Law", "Employment Law", "Personal Injury"];
 const TASK_TITLES_HE = ["כתיבת דוח רבעוני", "תיקון באג בהתחברות", "פולו-אפ עם לקוח", "עדכון תיעוד הפרויקט"];
 const TASK_TITLES_EN = ["Write quarterly report", "Fix login bug", "Follow up with client", "Update project documentation"];
+const MILESTONE_TITLES_HE = ["סיום שלב התכנון", "השקת גרסת בטא", "סיום בדיקות QA", "השקה לקהל הרחב"];
+const MILESTONE_TITLES_EN = ["Design phase complete", "Beta launch", "QA testing complete", "Public launch"];
 // Pools for the domain entities added later (MenuItem, Property, Course,
 // Project, Event, Pet, Vehicle, Rental) -- see packages/spec-engine/src/
 // domainEntities.ts. Same principle: believable, field-appropriate values
@@ -196,6 +198,14 @@ function textSeedValueFor(fieldName: string, entityName: string, isHebrew: boole
       if (entityName === "WorkOrder") return pick(isHebrew ? WORK_ORDER_TITLES_HE : WORK_ORDER_TITLES_EN, index);
       if (entityName === "Case") return pick(isHebrew ? CASE_TITLES_HE : CASE_TITLES_EN, index);
       if (entityName === "Task") return pick(isHebrew ? TASK_TITLES_HE : TASK_TITLES_EN, index);
+      // Round 1107: Milestone is the Project Tracker template's own
+      // entity (packages/spec-engine/src/templates.ts), not part of
+      // domainEntities.ts's library -- a separate, hand-authored catalog
+      // the previous entity-aware "title" branches above were never
+      // cross-checked against, so it silently fell all the way through
+      // to Deal's own sales-pitch titles below, the exact "nonsensical
+      // for this entity shape" bug this whole switch exists to prevent.
+      if (entityName === "Milestone") return pick(isHebrew ? MILESTONE_TITLES_HE : MILESTONE_TITLES_EN, index);
       return pick(isHebrew ? DEAL_TITLES_HE : DEAL_TITLES_EN, index);
     case "caseType":
       // Case's own optional "practice area" field -- distinct from its
@@ -277,7 +287,14 @@ function textSeedValueFor(fieldName: string, entityName: string, isHebrew: boole
       if (entityName === "Event") return pick(isHebrew ? EVENT_NAMES_HE : EVENT_NAMES_EN, index);
       if (entityName === "Course") return pick(isHebrew ? COURSE_NAMES_HE : COURSE_NAMES_EN, index);
       if (entityName === "Pet") return pick(isHebrew ? PET_NAMES_HE : PET_NAMES_EN, index);
-      if (entityName === "Vendor") return pick(isHebrew ? VENDOR_NAMES_HE : VENDOR_NAMES_EN, index);
+      // Round 1107: Supplier (the Inventory template's own entity,
+      // templates.ts, not domainEntities.ts) is conceptually the same
+      // shape as Vendor -- a business, not a person -- but had no branch
+      // of its own and fell through to the generic person-name default
+      // below, seeding a supplier with a random person's name instead of
+      // a company name. Reuses Vendor's own pool rather than inventing a
+      // near-duplicate one.
+      if (entityName === "Vendor" || entityName === "Supplier") return pick(isHebrew ? VENDOR_NAMES_HE : VENDOR_NAMES_EN, index);
       return pick(isHebrew ? PERSON_NAMES_HE : PERSON_NAMES_EN, index);
     default:
       // No specific pool for this field name (a custom entity from an
