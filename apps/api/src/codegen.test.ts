@@ -10608,6 +10608,62 @@ test("the exported EntityView's CSV import rejects a date field value that isn't
   assert.match(errors[1], /Row 3: "not-a-date" isn't a valid date/);
 });
 
+/**
+ * Regression test for round 1084's Explore survey finding: mirrors the
+ * live preview's own round-1084 fix (entityFormatting.ts) -- FieldSchema's
+ * enumLabels has no uniqueness constraint, so two different declared
+ * enumValues can legitimately share the identical display label. The
+ * generated buildImportRecords used to call .find() for a label match,
+ * silently resolving to whichever value happened to come first in
+ * enumValues instead of rejecting the ambiguity the way the relation
+ * branch right above it already does. Executes the actual generated
+ * buildImportRecords function (extracted from real codegen output).
+ */
+test("the exported EntityView's CSV import rejects an ambiguous enum label that matches more than one declared value, instead of silently resolving to whichever comes first", () => {
+  const statusProject: Project = {
+    ...project,
+    spec: {
+      ...project.spec,
+      entities: [
+        {
+          name: "Order",
+          label: "Order",
+          fields: [
+            { name: "name", label: "Name", type: "text", required: true },
+            { name: "status", label: "Status", type: "enum", required: true, enumValues: ["new", "open"], enumLabels: { new: "פתוח", open: "פתוח" } },
+          ],
+        },
+      ],
+    },
+  };
+  const entityViewJsx = generateExportFiles(statusProject).find((f) => f.path === "web/src/components/EntityView.jsx")!.content;
+
+  const isValidDateSrc = entityViewJsx.match(/const DATE_FORMAT[\s\S]*?\nfunction isValidDate\(value\) \{[\s\S]*?\n\}\n/)?.[0];
+  const fieldLabelOccurrencesSrc = entityViewJsx.match(/function fieldLabelOccurrences\(fields\) \{[\s\S]*?\n\}\n/)?.[0];
+  const fieldDisplayLabelSrc = entityViewJsx.match(/function fieldDisplayLabel\(field, occurrences\) \{[\s\S]*?\n\}\n/)?.[0];
+  const headerSrc = entityViewJsx.match(/function matchesImportHeader\(header, field, labelOccurrences\) \{[\s\S]*?\n\}\n/)?.[0];
+  const importSrc = entityViewJsx.match(/function buildImportRecords\(fields, rows, relatedRecords\) \{[\s\S]*?\n\}\n/)?.[0];
+  assert.ok(
+    isValidDateSrc && fieldLabelOccurrencesSrc && fieldDisplayLabelSrc && headerSrc && importSrc,
+    "expected to find isValidDate/fieldLabelOccurrences/fieldDisplayLabel/matchesImportHeader/buildImportRecords in generated output",
+  );
+
+  const buildImportRecords = new Function(
+    `${isValidDateSrc}\n${fieldLabelOccurrencesSrc}\n${fieldDisplayLabelSrc}\n${headerSrc}\n${importSrc}\nreturn buildImportRecords;`,
+  )();
+
+  const fields = statusProject.spec.entities[0].fields;
+  const rows = [
+    ["Name", "Status"],
+    ["Dana", "פתוח"], // ambiguous: both "new" and "open" share this exact label
+  ];
+  const { records, errors } = buildImportRecords(fields, rows);
+
+  assert.deepEqual(records, []);
+  assert.equal(errors.length, 1);
+  assert.match(errors[0], /matches more than one option for field "Status"/);
+});
+
 // Regression test: new Date(Date.UTC(year, ...)) silently adds 1900 to a
 // year 0-99 (legacy ECMA-262 behavior), so the generated isValidDate's own
 // round-trip check used to fail a syntactically valid "0099-01-01".

@@ -2001,6 +2001,59 @@ test("buildImportRecords coerces booleans, numbers, and enum labels back to thei
 });
 
 /**
+ * Regression test for a real bug found by round 1084's Explore survey:
+ * FieldSchema.enumLabels (packages/shared) has no uniqueness constraint,
+ * so two different declared enumValues can legitimately share the
+ * identical display label -- the realistic way this happens is the same
+ * "AI-generated spec" precondition uniqueEnumValues' own doc comment
+ * already names for the sibling duplicate-raw-value gap, just for labels
+ * instead (e.g. a Hebrew refine translating both "new" and "open" statuses
+ * to the identical word). Before this round, the label-matching branch
+ * called .find(), silently resolving to whichever value happened to come
+ * first in enumValues -- a user exporting, editing, and re-importing a row
+ * meant to be "open" would have it silently written back as "new" instead,
+ * with zero error or warning. Mirrors the relation branch's own existing
+ * ambiguity handling (count matches, reject when more than one) right
+ * above it in the same function.
+ */
+test("buildImportRecords rejects an ambiguous enum label that matches more than one declared value, instead of silently resolving to whichever comes first", () => {
+  const fields: Field[] = [
+    { name: "name", type: "text", required: true },
+    { name: "status", label: "Status", type: "enum", required: true, enumValues: ["new", "open"], enumLabels: { new: "פתוח", open: "פתוח" } },
+  ];
+  const rows = [
+    ["name", "status"],
+    ["Dana", "פתוח"], // ambiguous: both "new" and "open" share this exact label
+  ];
+  const result = buildImportRecords(fields, rows);
+  assert.deepEqual(result.records, []);
+  assert.equal(result.errors.length, 1);
+  assert.match(result.errors[0]!, /matches more than one option for field "Status"/);
+});
+
+/**
+ * The raw-value match must still win unambiguously even when a label
+ * collision exists elsewhere on the same field -- an exported CSV cell
+ * could hold either the display label or the field's own raw value (e.g.
+ * a user typing the stored value directly instead of its ambiguous label),
+ * and the raw-value branch is checked first precisely because it can never
+ * itself be ambiguous.
+ */
+test("buildImportRecords still resolves an enum cell matched by its own raw value unambiguously, even when a DIFFERENT value's label collides with another", () => {
+  const fields: Field[] = [
+    { name: "name", type: "text", required: true },
+    { name: "status", label: "Status", type: "enum", required: true, enumValues: ["new", "open"], enumLabels: { new: "פתוח", open: "פתוח" } },
+  ];
+  const rows = [
+    ["name", "status"],
+    ["Dana", "open"], // the raw value itself -- never ambiguous, even though its label is shared with "new"
+  ];
+  const result = buildImportRecords(fields, rows);
+  assert.deepEqual(result.errors, []);
+  assert.deepEqual(result.records, [{ name: "Dana", status: "open" }]);
+});
+
+/**
  * Round 514's finding: unlike number/enum/date (each of which rejects an
  * unparseable cell with a row-numbered error), a boolean cell had no
  * rejection path at all -- any value outside the exact true-list silently

@@ -1805,14 +1805,42 @@ export function buildImportRecords(
         }
         record[field.name] = n;
       } else if (field.type === "enum") {
+        // A real raw-value match always wins over the label match below,
+        // the same precedence order the relation branch above gives a
+        // real display-label match over the "#<id>" shorthand -- an exact
+        // value match can never be genuinely ambiguous (FieldSchema.enumValues
+        // has no uniqueness constraint either, see uniqueEnumValues' own
+        // doc comment, but two entries sharing the identical raw value
+        // would already collide on write long before import ever runs).
         const byValue = field.enumValues?.find((v) => v.toLowerCase() === raw.toLowerCase());
-        const byLabel = field.enumValues?.find((v) => (field.enumLabels?.[v] ?? v).toLowerCase() === raw.toLowerCase());
-        const resolved = byValue ?? byLabel;
-        if (!resolved) {
+        if (byValue) {
+          record[field.name] = byValue;
+          continue;
+        }
+        // Round 1084: FieldSchema.enumLabels is a plain record with no
+        // uniqueness constraint of its own, so two different declared
+        // values can legitimately share the identical display label --
+        // the realistic way this happens is the same "AI-generated spec"
+        // precondition uniqueEnumValues' own doc comment already names for
+        // the sibling duplicate-raw-value gap, just for labels instead
+        // (e.g. a Hebrew refine translating both "new" and "open" statuses
+        // to the same word). Unlike the relation branch right above, which
+        // explicitly counts matches and rejects an ambiguous one, this used
+        // to call .find() and silently resolve to whichever value happened
+        // to come first in enumValues -- writing the WRONG status into a
+        // re-imported record with zero error or warning. Mirrors the
+        // relation branch's own ambiguity handling instead: only resolve
+        // by label when exactly one declared value maps to it.
+        const labelMatches = field.enumValues?.filter((v) => (field.enumLabels?.[v] ?? v).toLowerCase() === raw.toLowerCase()) ?? [];
+        if (labelMatches.length === 0) {
           rowError = `Row ${rowIndex + 1}: "${raw}" isn't a valid option for field "${field.label ?? field.name}".`;
           break;
         }
-        record[field.name] = resolved;
+        if (labelMatches.length > 1) {
+          rowError = `Row ${rowIndex + 1}: "${raw}" matches more than one option for field "${field.label ?? field.name}" -- use the option's own underlying value (not its label) instead.`;
+          break;
+        }
+        record[field.name] = labelMatches[0];
       } else if (field.type === "date") {
         if (!isValidDateString(raw)) {
           rowError = `Row ${rowIndex + 1}: "${raw}" isn't a valid date (expected YYYY-MM-DD) for field "${field.label ?? field.name}".`;

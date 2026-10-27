@@ -3131,15 +3131,33 @@ function buildImportRecords(fields, rows, relatedRecords) {
         }
         record[field.name] = n;
       } else if (field.type === "enum") {
+        // A real raw-value match always wins over the label match below,
+        // the same precedence order the relation branch above gives a
+        // real display-label match over the "#<id>" shorthand.
         const byValue = field.enumValues && field.enumValues.find((v) => v.toLowerCase() === raw.toLowerCase());
-        const byLabel =
-          field.enumValues && field.enumValues.find((v) => ((field.enumLabels && field.enumLabels[v]) || v).toLowerCase() === raw.toLowerCase());
-        const resolved = byValue || byLabel;
-        if (!resolved) {
+        if (byValue) {
+          record[field.name] = byValue;
+          continue;
+        }
+        // Round 1084: mirrors the live preview's own round-1084 fix
+        // (entityFormatting.ts) -- FieldSchema.enumLabels has no
+        // uniqueness constraint, so two different declared values can
+        // legitimately share the identical display label. This used to
+        // call .find(), silently resolving to whichever value happened to
+        // come first in enumValues -- writing the WRONG status into a
+        // re-imported record with zero error or warning. Mirrors the
+        // relation branch's own ambiguity handling instead: only resolve
+        // by label when exactly one declared value maps to it.
+        const labelMatches = (field.enumValues || []).filter((v) => ((field.enumLabels && field.enumLabels[v]) || v).toLowerCase() === raw.toLowerCase());
+        if (labelMatches.length === 0) {
           rowError = \`Row \${rowIndex + 1}: "\${raw}" isn't a valid option for field "\${field.label || field.name}".\`;
           break;
         }
-        record[field.name] = resolved;
+        if (labelMatches.length > 1) {
+          rowError = \`Row \${rowIndex + 1}: "\${raw}" matches more than one option for field "\${field.label || field.name}" -- use the option's own underlying value (not its label) instead.\`;
+          break;
+        }
+        record[field.name] = labelMatches[0];
       } else if (field.type === "date") {
         if (!isValidDate(raw)) {
           rowError = \`Row \${rowIndex + 1}: "\${raw}" isn't a valid date (expected YYYY-MM-DD) for field "\${field.label || field.name}".\`;
