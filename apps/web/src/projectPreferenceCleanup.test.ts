@@ -61,7 +61,12 @@ test("purgeProjectPreferences removes exactly one project's entries from every p
     const entity = "Customer";
 
     // Seed "abc" -- the project being deleted.
-    setColumnWidth("abc", entity, "name", 220);
+    setColumnWidth("abc", entity, "userA", "name", 220);
+    // A second collaborator account's own resized column width for the
+    // SAME project -- round 1068's own fix: any past collaborator could
+    // have resized a column under their own per-user key, so the purge
+    // must remove it for every account, not just the first one seeded.
+    setColumnWidth("abc", entity, "userB", "name", 999);
     setColumnOrder("abc", entity, ["name", "email"]);
     toggleFieldVisibility("abc", entity, "userA", "email");
     // A second collaborator account's own hidden-column choice for the
@@ -123,7 +128,7 @@ test("purgeProjectPreferences removes exactly one project's entries from every p
     setEntityTabOrder("abc", "userB", ["Customer", "Deal"]);
 
     // Seed "proj2" -- an unrelated project that must survive untouched.
-    setColumnWidth("proj2", entity, "name", 300);
+    setColumnWidth("proj2", entity, "userA", "name", 300);
     setColumnOrder("proj2", entity, ["email", "name"]);
     toggleFieldVisibility("proj2", entity, "userA", "name");
     setFieldFilters("proj2", entity, "userA", { status: "closed" });
@@ -145,7 +150,7 @@ test("purgeProjectPreferences removes exactly one project's entries from every p
     // Seed "abc-other" -- a DIFFERENT project whose id starts with "abc",
     // the one case where naive prefix matching (without the colon) could
     // wrongly treat it as "abc"'s own data.
-    setColumnWidth("abc-other", entity, "name", 400);
+    setColumnWidth("abc-other", entity, "userA", "name", 400);
     setColumnOrder("abc-other", entity, ["name"]);
     toggleFieldVisibility("abc-other", entity, "userA", "name");
     setFieldFilters("abc-other", entity, "userA", { status: "other" });
@@ -167,7 +172,8 @@ test("purgeProjectPreferences removes exactly one project's entries from every p
     purgeProjectPreferences("abc");
 
     // "abc" is gone from every single store.
-    assert.deepEqual(getColumnWidths("abc", entity), {}, "columnWidths must be purged");
+    assert.deepEqual(getColumnWidths("abc", entity, "userA"), {}, "columnWidths must be purged for userA");
+    assert.deepEqual(getColumnWidths("abc", entity, "userB"), {}, "columnWidths must be purged for userB too -- any past collaborator could have resized a column under their own per-user key");
     assert.deepEqual(getColumnOrder("abc", entity), [], "columnOrder must be purged");
     assert.deepEqual(getHiddenFields("abc", entity, "userA"), new Set(), "columnVisibility must be purged for userA");
     assert.deepEqual(getHiddenFields("abc", entity, "userB"), new Set(), "columnVisibility must be purged for userB too -- any past collaborator could have hidden a column under their own per-user key");
@@ -195,7 +201,7 @@ test("purgeProjectPreferences removes exactly one project's entries from every p
     assert.deepEqual(getEntityTabOrder("abc", "userB"), [], "entityTabOrder must be purged for userB too -- any past collaborator could have reordered tabs under their own per-user key");
 
     // "proj2" -- a wholly unrelated project -- is completely untouched.
-    assert.deepEqual(getColumnWidths("proj2", entity), { name: 300 }, "columnWidths must survive for an unrelated project");
+    assert.deepEqual(getColumnWidths("proj2", entity, "userA"), { name: 300 }, "columnWidths must survive for an unrelated project");
     assert.deepEqual(getColumnOrder("proj2", entity), ["email", "name"], "columnOrder must survive");
     assert.deepEqual(getHiddenFields("proj2", entity, "userA"), new Set(["name"]), "columnVisibility must survive");
     assert.deepEqual(getFieldFilters("proj2", entity, "userA"), { status: "closed" }, "fieldFilters must survive");
@@ -218,7 +224,7 @@ test("purgeProjectPreferences removes exactly one project's entries from every p
     // prefix of its id -- must ALSO survive completely untouched. If the
     // purge ever matched by prefix without the colon separator, this is
     // exactly the case that would silently lose data.
-    assert.deepEqual(getColumnWidths("abc-other", entity), { name: 400 }, "columnWidths must survive for a prefix-sharing project id");
+    assert.deepEqual(getColumnWidths("abc-other", entity, "userA"), { name: 400 }, "columnWidths must survive for a prefix-sharing project id");
     assert.deepEqual(getColumnOrder("abc-other", entity), ["name"], "columnOrder must survive for a prefix-sharing project id");
     assert.deepEqual(getHiddenFields("abc-other", entity, "userA"), new Set(["name"]), "columnVisibility must survive for a prefix-sharing project id");
     assert.deepEqual(getFieldFilters("abc-other", entity, "userA"), { status: "other" }, "fieldFilters must survive for a prefix-sharing project id");

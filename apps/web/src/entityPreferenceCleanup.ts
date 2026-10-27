@@ -1,4 +1,4 @@
-import { clearColumnWidths, migrateColumnWidthsForEntityRename } from "./columnWidths.js";
+import { purgeColumnWidthsForEntity, migrateColumnWidthsForEntityRename } from "./columnWidths.js";
 import { purgeColumnOrderForEntity, migrateColumnOrderForEntityRename } from "./columnOrder.js";
 import { purgeHiddenFieldsForEntity, migrateHiddenFieldsForEntityRename } from "./columnVisibility.js";
 import { purgeFieldFiltersForEntity, migrateFieldFiltersForEntityRename } from "./fieldFiltersPreference.js";
@@ -44,7 +44,7 @@ import { purgeEntityNameFromTabOrder } from "./entityTabOrder.js";
  * (round 853) left it as the one sibling never swept.
  */
 export function purgeEntityPreferences(projectId: string, entityName: string): void {
-  clearColumnWidths(projectId, entityName);
+  purgeColumnWidthsForEntity(projectId, entityName);
   purgeColumnOrderForEntity(projectId, entityName);
   purgeHiddenFieldsForEntity(projectId, entityName);
   purgeFieldFiltersForEntity(projectId, entityName);

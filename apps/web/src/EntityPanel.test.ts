@@ -6930,7 +6930,7 @@ test("EntityPanel's column resize handle drags a column to a new width, applies 
     const store: EntityRecord[] = [{ id: 1, name: "Acme Corp", status: "new" }];
     const originalFetch = globalThis.fetch;
     globalThis.fetch = mockRecordsFetch(store) as typeof fetch;
-    setColumnWidth("proj1", "Deal", "name", 200);
+    setColumnWidth("proj1", "Deal", "user1", "name", 200);
     try {
       renderEntityPanel();
       await waitForCondition(() => document.querySelectorAll("table tbody tr").length === 1);
@@ -6950,7 +6950,7 @@ test("EntityPanel's column resize handle drags a column to a new width, applies 
       assert.equal(nameCell.style.width, "260px", "the same resized width must apply to the column's own data cells, not just its header");
 
       assert.deepEqual(
-        getColumnWidths("proj1", "Deal"),
+        getColumnWidths("proj1", "Deal", "user1"),
         { name: 260 },
         "the new width must be genuinely persisted, not just reflected in the live DOM",
       );
@@ -6976,7 +6976,7 @@ test("EntityPanel's column resize handle ignores a mousedown from a non-left mou
     const store: EntityRecord[] = [{ id: 1, name: "Acme Corp", status: "new" }];
     const originalFetch = globalThis.fetch;
     globalThis.fetch = mockRecordsFetch(store) as typeof fetch;
-    setColumnWidth("proj1", "Deal", "name", 200);
+    setColumnWidth("proj1", "Deal", "user1", "name", 200);
     try {
       renderEntityPanel();
       await waitForCondition(() => document.querySelectorAll("table tbody tr").length === 1);
@@ -6996,7 +6996,7 @@ test("EntityPanel's column resize handle ignores a mousedown from a non-left mou
       assert.equal(nameHeader.style.width, "200px", "a middle-click-drag must leave the column's width completely untouched");
 
       assert.deepEqual(
-        getColumnWidths("proj1", "Deal"),
+        getColumnWidths("proj1", "Deal", "user1"),
         { name: 200 },
         "neither non-left-click drag must have persisted any width change",
       );
@@ -7023,7 +7023,7 @@ test("EntityPanel's column resize handle is keyboard-operable via ArrowRight/Arr
     const store: EntityRecord[] = [{ id: 1, name: "Acme Corp", status: "new" }];
     const originalFetch = globalThis.fetch;
     globalThis.fetch = mockRecordsFetch(store) as typeof fetch;
-    setColumnWidth("proj1", "Deal", "name", 200);
+    setColumnWidth("proj1", "Deal", "user1", "name", 200);
     try {
       renderEntityPanel();
       await waitForCondition(() => document.querySelectorAll("table tbody tr").length === 1);
@@ -7049,7 +7049,7 @@ test("EntityPanel's column resize handle is keyboard-operable via ArrowRight/Arr
       assert.equal(nameHeader.style.width, "180px", "ArrowLeft must narrow the column by the same step, below the original width");
 
       assert.deepEqual(
-        getColumnWidths("proj1", "Deal"),
+        getColumnWidths("proj1", "Deal", "user1"),
         { name: 180 },
         "a keyboard resize must persist exactly like a mouse-drag resize does, not just update in-memory state",
       );
@@ -7091,7 +7091,7 @@ test("EntityPanel's 'Reset column widths' button only appears once a column has 
 
       fireEvent.click(resetButton);
       assert.equal(nameHeader.style.width, "", "clicking reset must clear the live inline width back to automatic sizing");
-      assert.deepEqual(getColumnWidths("proj1", "Deal"), {}, "clicking reset must also clear the persisted storage, not just the live DOM");
+      assert.deepEqual(getColumnWidths("proj1", "Deal", "user1"), {}, "clicking reset must also clear the persisted storage, not just the live DOM");
       assert.equal(document.querySelector(".entity-reset-column-widths"), null, "the reset button itself must disappear once there's nothing left to reset");
     } finally {
       globalThis.fetch = originalFetch;
@@ -7147,7 +7147,7 @@ test("EntityPanel drops a persisted column width when a live refine REMOVES that
       fireEvent.mouseDown(handle, { clientX: 100 });
       fireEvent.mouseMove(window, { clientX: 160 });
       fireEvent.mouseUp(window, { clientX: 160 });
-      assert.deepEqual(getColumnWidths("proj1", "Deal"), { status: 60 }, "sanity check: the drag itself must have actually persisted a resized width");
+      assert.deepEqual(getColumnWidths("proj1", "Deal", "user1"), { status: 60 }, "sanity check: the drag itself must have actually persisted a resized width");
       assert.ok(document.querySelector(".entity-table-resized"), "sanity check: the table must be in fixed-layout mode right after resizing");
 
       // Simulate a refine that REMOVES "status" entirely -- not a retype --
@@ -7223,7 +7223,7 @@ test("EntityPanel carries a resized column width and a chosen sort order forward
       { id: 1, createdAt: "x", name: "Acme Corp", status: "new" },
       { id: 2, createdAt: "x", name: "Globex", status: "won" },
     ];
-    setColumnWidth("proj1", "Deal", "status", 220);
+    setColumnWidth("proj1", "Deal", "user1", "status", 220);
     const originalFetch = globalThis.fetch;
     globalThis.fetch = mockRecordsFetch(store) as typeof fetch;
     try {

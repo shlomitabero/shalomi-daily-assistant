@@ -1833,12 +1833,12 @@ export function EntityPanel({
     const validFieldNames = new Set(fieldNamesKey ? fieldNamesKey.split(",") : []);
     const byLowerName = new Map(entity.fields.map((f) => [f.name.toLowerCase(), f.name]));
     const remapped: Record<string, number> = {};
-    for (const [field, width] of Object.entries(getColumnWidths(projectId, entity.name))) {
+    for (const [field, width] of Object.entries(getColumnWidths(projectId, entity.name, userId))) {
       const current = validFieldNames.has(field) ? field : byLowerName.get(field.toLowerCase());
       if (current) remapped[current] = width;
     }
     setColumnWidths(remapped);
-  }, [projectId, entity.name, fieldNamesKey]);
+  }, [projectId, entity.name, userId, fieldNamesKey]);
 
   // Same reasoning as sortKeys' own effect just above -- the chosen per-field
   // enum filters are scoped per project+entity too. Previously fieldFilters
@@ -2161,7 +2161,7 @@ export function EntityPanel({
     function handleUp() {
       setColumnWidths((prev) => {
         const width = prev[resizingField!.field];
-        if (width != null) setColumnWidth(projectId, entity.name, resizingField!.field, width);
+        if (width != null) setColumnWidth(projectId, entity.name, userId, resizingField!.field, width);
         return prev;
       });
       setResizingField(null);
@@ -2209,7 +2209,7 @@ export function EntityPanel({
     setColumnWidths((prev) => {
       const startWidth = prev[fieldName] ?? th?.getBoundingClientRect().width ?? 150;
       const width = computeResizedWidth(startWidth, delta, dirFor(lang));
-      setColumnWidth(projectId, entity.name, fieldName, width);
+      setColumnWidth(projectId, entity.name, userId, fieldName, width);
       return { ...prev, [fieldName]: width };
     });
   }
@@ -4330,7 +4330,7 @@ export function EntityPanel({
               <button
                 type="button"
                 className="secondary small entity-reset-column-widths"
-                onClick={() => setColumnWidths(clearColumnWidths(projectId, entity.name))}
+                onClick={() => setColumnWidths(clearColumnWidths(projectId, entity.name, userId))}
               >
                 {t("entity.columns.resetWidths")}
               </button>
