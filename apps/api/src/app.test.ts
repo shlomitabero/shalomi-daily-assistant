@@ -13574,6 +13574,84 @@ test("creating a 'schedule' automation rule requires scheduleTimeUtc and toMode:
 });
 
 /**
+ * Round 1098: creating a rule with trigger:"schedule" but a leftover
+ * fieldName/fieldValue (e.g. a client that merely forgot to omit them,
+ * rather than the bundled web UI's own convention of always sending
+ * explicit nulls) used to be accepted silently -- nothing in
+ * CreateAutomationRuleSchema's refine chain forbade it. Worse, PATCHing
+ * an existing field_equals rule's trigger to "schedule" without also
+ * explicitly nulling fieldName/fieldValue left the OLD condition in the
+ * row (findAutomationRuleInvariantViolation's own `{ ...existing,
+ * ...parsed.data }` merge never checked for this either) -- a schedule
+ * rule that, per automations.test.ts's own matchesTrigger unit tests,
+ * would then ALSO silently fire on every matching record create/update,
+ * duplicating a real send on top of its own real scheduled firing.
+ */
+test("a 'schedule' automation rule can't carry a leftover fieldName/fieldValue, whether set at creation or left stale by a later PATCH", async () => {
+  await withServer(async (baseUrl, db) => {
+    const email = `stale-field-automation-${randomUUID()}@example.com`;
+    const token = await signup(baseUrl, email);
+    const owner = findUserByEmail(db, email)!;
+
+    const spec: ProductSpec = {
+      summary: "test",
+      personas: [],
+      roles: ["Admin"],
+      entities: [{ name: "Order", fields: [{ name: "status", type: "text", required: true }] }],
+      screens: [],
+      assumptions: [],
+      openQuestions: [],
+    };
+    const projectId = randomUUID();
+    insertProject(db, { id: projectId, ownerId: owner.id, name: "Orders", description: "test", spec });
+    diffAndMigrate(db, projectId, undefined, spec);
+    markProjectBuilt(db, projectId);
+
+    const createWithStaleFields = await fetch(`${baseUrl}/api/projects/${projectId}/entities/Order/automations`, {
+      method: "POST",
+      headers: authHeaders(token),
+      body: JSON.stringify({
+        trigger: "schedule",
+        scheduleTimeUtc: "09:00",
+        fieldName: "status",
+        fieldValue: "urgent",
+        actionType: "send_whatsapp",
+        toMode: "static",
+        toNumber: "972500000000",
+        messageTemplate: "Daily digest",
+      }),
+    });
+    assert.equal(createWithStaleFields.status, 400, "a schedule rule must not be creatable with a leftover fieldName/fieldValue");
+
+    const goodRes = await fetch(`${baseUrl}/api/projects/${projectId}/entities/Order/automations`, {
+      method: "POST",
+      headers: authHeaders(token),
+      body: JSON.stringify({
+        trigger: "field_equals",
+        fieldName: "status",
+        fieldValue: "urgent",
+        actionType: "send_whatsapp",
+        toMode: "static",
+        toNumber: "972500000000",
+        messageTemplate: "Urgent order!",
+      }),
+    });
+    assert.equal(goodRes.status, 201);
+    const { rule } = (await goodRes.json()) as { rule: { id: string } };
+
+    // Flips trigger to "schedule" WITHOUT explicitly nulling fieldName/
+    // fieldValue -- the exact shape a caller other than the bundled web UI
+    // (which always sends explicit nulls) could plausibly send.
+    const patchToStaleSchedule = await fetch(`${baseUrl}/api/projects/${projectId}/automations/${rule.id}`, {
+      method: "PATCH",
+      headers: authHeaders(token),
+      body: JSON.stringify({ trigger: "schedule", scheduleTimeUtc: "09:00" }),
+    });
+    assert.equal(patchToStaleSchedule.status, 400, "a PATCH that changes trigger away from field_equals must not silently keep the old fieldName/fieldValue");
+  });
+});
+
+/**
  * Round 967: a schedule rule's scheduleTimeUtc/scheduleDaysOfWeek are now
  * wall-clock values in its own scheduleTimezone (see isScheduledRuleDue's
  * own doc comment, apps/api/src/automations.ts), not literal UTC --

@@ -446,6 +446,37 @@ test("matchesTrigger: a 'deleted' event never matches a field_equals rule, even 
   assert.equal(matchesTrigger(rule, "deleted", { status: "Delivered" }, new Set()), false);
 });
 
+/**
+ * Round 1098: nothing in this function's own structure ever actually
+ * enforced its own doc comment's claim that "schedule... never matches
+ * any record event at all" -- it relied entirely on fieldName being null
+ * for a schedule rule, an invariant the PATCH route's own
+ * `{ ...existing, ...parsed.data }` merge could leave stale (a trigger
+ * changed away from field_equals without the caller also explicitly
+ * nulling fieldName/fieldValue -- routes/projects.ts's own
+ * findAutomationRuleInvariantViolation is now hardened against writing
+ * this state too, but matchesTrigger must not trust that alone).
+ * insertAutomationRule (the DB layer) has no schema validation of its
+ * own, so it's used directly here to construct exactly that
+ * otherwise-unreachable-through-the-API stale state.
+ */
+test("matchesTrigger: a schedule rule never matches a record event, even when it still carries a stale fieldName/fieldValue left over from being field_equals", () => {
+  const rule = insertAutomationRule(openDbForRuleOnly(), {
+    projectId: "p",
+    entityName: "Order",
+    trigger: "schedule",
+    fieldName: "status",
+    fieldValue: "urgent",
+    scheduleTimeUtc: "09:00",
+    actionType: "send_whatsapp",
+    toMode: "static",
+    toNumber: "972500000000",
+    messageTemplate: "Daily digest",
+  });
+  assert.equal(matchesTrigger(rule, "created", { status: "urgent" }, new Set()), false);
+  assert.equal(matchesTrigger(rule, "updated", { status: "urgent" }, new Set(["status"])), false);
+});
+
 function openDbForRuleOnly() {
   const db = openDatabase(":memory:");
   ensureAutomationRulesTable(db);

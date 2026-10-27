@@ -211,6 +211,10 @@ const CreateAutomationRuleSchema = z
     message: "fieldName and fieldValue are required when trigger is field_equals",
     path: ["fieldName"],
   })
+  .refine((data) => data.trigger === "field_equals" || (!data.fieldName && !data.fieldValue), {
+    message: "fieldName and fieldValue must be empty when trigger is not field_equals",
+    path: ["fieldName"],
+  })
   .refine((data) => data.trigger !== "schedule" || !!data.scheduleTimeUtc, {
     message: "scheduleTimeUtc is required when trigger is schedule",
     path: ["scheduleTimeUtc"],
@@ -300,6 +304,17 @@ export function findAutomationRuleInvariantViolation(rule: {
 }): string | null {
   if (rule.trigger === "field_equals" && !(rule.fieldName && rule.fieldValue)) {
     return "fieldName and fieldValue are required when trigger is field_equals";
+  }
+  // Round 1098: the PATCH route's own `{ ...existing, ...parsed.data }`
+  // merge (see its call site's comment) lets a trigger change leave a
+  // stale fieldName/fieldValue from when this rule used to be
+  // field_equals, since nothing here ever forbade them outside it --
+  // matchesTrigger (automations.ts) now also guards against this at
+  // evaluation time, but the invariant belongs here too, at the write
+  // path, so a caller finds out immediately rather than only once the
+  // rule starts silently double-firing.
+  if (rule.trigger !== "field_equals" && (rule.fieldName || rule.fieldValue)) {
+    return "fieldName and fieldValue must be empty when trigger is not field_equals";
   }
   if (rule.trigger === "schedule" && !rule.scheduleTimeUtc) {
     return "scheduleTimeUtc is required when trigger is schedule";

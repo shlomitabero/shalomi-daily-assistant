@@ -356,6 +356,21 @@ export function matchesTrigger(
   if (rule.trigger === "record_deleted") {
     return event === "deleted";
   }
+  // Round 1098: the doc comment above already claims "schedule, which
+  // never matches any record event at all" -- but nothing below this
+  // point actually enforced that; it relied entirely on `fieldName` being
+  // null for a schedule rule, which findAutomationRuleInvariantViolation/
+  // CreateAutomationRuleSchema (routes/projects.ts) never actually
+  // required. A rule whose trigger was switched away from "field_equals"
+  // via a PATCH that didn't also explicitly null fieldName/fieldValue (the
+  // bundled web UI always does, but any other direct API caller need
+  // not) kept its stale field condition -- and listEnabledAutomationRules
+  // ForEntity (packages/db/src/automations.ts) returns schedule rules to
+  // runAutomationsForRecordChange too, so that stale condition would then
+  // silently ALSO fire the schedule rule on every matching record create/
+  // update, duplicating a real WhatsApp/webhook/email send on top of its
+  // own real scheduled firing.
+  if (rule.trigger !== "field_equals") return false;
   if (event === "deleted") return false;
   if (!rule.fieldName) return false;
   if (event === "updated" && !changedFields.has(rule.fieldName)) return false;
