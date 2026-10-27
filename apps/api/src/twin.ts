@@ -696,6 +696,81 @@ function computeOverdueObservations(
   return observations;
 }
 
+/**
+ * Round 1079: the "dueSoon" half of entityFormatting.ts's own DateUrgency
+ * classification ("overdue" | "dueSoon" | null, see its own getDateUrgency
+ * doc comment) was never surfaced here -- computeOverdueObservations above
+ * only ever reports the strictly-past half. EntityPanel.tsx already renders
+ * these as two visually distinct states (`date-overdue` vs `date-due-soon`
+ * cell styling, `entity.dateOverdue`/`entity.dateDueSoon` i18n titles), so a
+ * deadline landing in the next few days is already treated as its own
+ * actionable fact in the live table/board -- but the Business Twin, built
+ * specifically to surface exactly this kind of data-derived fact, stayed
+ * blind to it: a deadline due tomorrow produces zero observations until the
+ * moment it actually slips into "overdue", the one case this feature could
+ * have given advance notice for. DUE_SOON_WINDOW_DAYS/the days-until
+ * calculation mirror getDateUrgency's own exactly, so "due soon" means the
+ * identical window a user already sees highlighted in the table.
+ */
+const DUE_SOON_WINDOW_DAYS = 3;
+
+function computeDueSoonObservations(
+  recordsByEntity: Map<string, EntityRecord[]>,
+  project: Project,
+  hebrew: boolean,
+  entityLabels: Map<string, number>,
+  today: Date = new Date(),
+): { text: string; entityName: string; entityLabel: string; fieldName: string; fieldLabel: string; dueSoonCount: number; recordCount: number }[] {
+  const observations: ReturnType<typeof computeDueSoonObservations> = [];
+  const startOfToday = new Date(today.getFullYear(), today.getMonth(), today.getDate());
+  const dayMs = 24 * 60 * 60 * 1000;
+  for (const entity of project.spec.entities) {
+    const deadlineFields = entity.fields.filter((f) => f.type === "date" && isDeadlineFieldName(f.name));
+    if (deadlineFields.length === 0) continue;
+    const records = recordsByEntity.get(entity.name) ?? [];
+    if (records.length === 0) continue;
+
+    const entityLabel = entityDisplayLabel(entity, entityLabels);
+    // Same label-collision gap computeOverdueObservations above already guards against.
+    const labelOccurrences = new Map<string, number>();
+    for (const field of deadlineFields) {
+      const label = field.label ?? field.name;
+      labelOccurrences.set(label, (labelOccurrences.get(label) ?? 0) + 1);
+    }
+
+    for (const field of deadlineFields) {
+      let recordCount = 0;
+      let dueSoonCount = 0;
+      for (const record of records) {
+        const raw = record[field.name];
+        if (typeof raw !== "string" || raw === "") continue;
+        const date = parseFieldDate(raw);
+        if (Number.isNaN(date.getTime())) continue;
+        recordCount++;
+        const daysUntil = Math.round((date.getTime() - startOfToday.getTime()) / dayMs);
+        if (daysUntil >= 0 && daysUntil < DUE_SOON_WINDOW_DAYS) dueSoonCount++;
+      }
+      if (dueSoonCount === 0) continue;
+
+      const fieldLabel = field.label ?? field.name;
+      const ambiguous = (labelOccurrences.get(fieldLabel) ?? 0) > 1;
+      const fieldSuffix = ambiguous ? ` (${field.name})` : "";
+      observations.push({
+        text: hebrew
+          ? `${dueSoonCount} מ-${recordCount} רשומות ב"${entityLabel}" מתקרבות לתאריך ב"${fieldLabel}"${fieldSuffix} בימים הקרובים.`
+          : `${dueSoonCount} of ${recordCount} records in "${entityLabel}" have a "${fieldLabel}"${fieldSuffix} coming up soon.`,
+        entityName: entity.name,
+        entityLabel,
+        fieldName: field.name,
+        fieldLabel,
+        dueSoonCount,
+        recordCount,
+      });
+    }
+  }
+  return observations;
+}
+
 export function computeBusinessTwin(db: ForgeDatabase, project: Project, today: Date = new Date()): BusinessTwin {
   const hebrew = isHebrewText(project.description);
 
@@ -777,7 +852,12 @@ export function computeBusinessTwin(db: ForgeDatabase, project: Project, today: 
     jumpableObservations.push(...computeDuplicateObservations(recordsByEntity, project, hebrew, entityLabels));
     numericStats.push(...computeNumericAggregateObservations(recordsByEntity, project, hebrew, entityLabels));
     distributions.push(...computeEnumDistributionObservations(recordsByEntity, project, hebrew, entityLabels));
-    jumpableObservations.push(...numericStats, ...distributions, ...computeOverdueObservations(recordsByEntity, project, hebrew, entityLabels, today));
+    jumpableObservations.push(
+      ...numericStats,
+      ...distributions,
+      ...computeOverdueObservations(recordsByEntity, project, hebrew, entityLabels, today),
+      ...computeDueSoonObservations(recordsByEntity, project, hebrew, entityLabels, today),
+    );
     const activity = computeActivityObservations(recordsByEntity, project, hebrew, entityLabels);
     observations.push(...activity.observations);
     jumpableObservations.push(...activity.jumpableObservations);
