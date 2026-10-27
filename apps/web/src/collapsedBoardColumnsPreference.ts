@@ -6,19 +6,26 @@ const STORAGE_KEY = "forge.collapsedBoardColumns";
 // A colon-joined key made purgeCollapsedBoardColumnsForEntity's prefix scan for
 // "Foo" also match "Foo:Bar"'s keys. JSON.stringify of the tuple makes each
 // segment boundary unambiguous regardless of what characters the segments contain.
-function keyFor(projectId: string, entityName: string, boardFieldName: string): string {
-  return JSON.stringify([projectId, entityName, boardFieldName]);
+//
+// Round 1077: userId was added as a 4th segment -- mirrors
+// collapsedGroupsPreference.ts's own identical round-1077 fix, see its
+// keyFor doc comment for the full reasoning. purgeCollapsedBoardColumnsForProject/
+// purgeCollapsedBoardColumnsForEntity below still match by parsed projectId/
+// entityName alone, which keeps working unchanged regardless of what the
+// key's own remaining segments (boardFieldName, userId) look like.
+function keyFor(projectId: string, entityName: string, boardFieldName: string, userId: string): string {
+  return JSON.stringify([projectId, entityName, boardFieldName, userId]);
 }
 
-function parseKey(key: string): [string, string, string] | null {
+function parseKey(key: string): [string, string, string, string] | null {
   try {
     const parsed = JSON.parse(key);
     if (
       Array.isArray(parsed) &&
-      parsed.length === 3 &&
+      parsed.length === 4 &&
       parsed.every((part): part is string => typeof part === "string")
     ) {
-      return parsed as [string, string, string];
+      return parsed as [string, string, string, string];
     }
     return null;
   } catch {
@@ -71,9 +78,9 @@ function writeStore(store: Record<string, string[]>): void {
  * dimension in the key, the newly-chosen field would inherit whichever
  * columns were collapsed under the field that used to hold that role.
  */
-export function getCollapsedBoardColumns(projectId: string, entityName: string, boardFieldName: string): string[] {
+export function getCollapsedBoardColumns(projectId: string, entityName: string, boardFieldName: string, userId: string): string[] {
   const store = readStore();
-  return [...(store[keyFor(projectId, entityName, boardFieldName)] ?? [])];
+  return [...(store[keyFor(projectId, entityName, boardFieldName, userId)] ?? [])];
 }
 
 /**
@@ -90,18 +97,18 @@ export function getCollapsedBoardColumns(projectId: string, entityName: string, 
  * deliberately collapsed silently reappears, with the real set orphaned
  * under the old key forever.
  */
-export function migrateCollapsedBoardColumnsFieldCase(projectId: string, entityName: string, boardFieldName: string): string[] {
-  const exact = getCollapsedBoardColumns(projectId, entityName, boardFieldName);
+export function migrateCollapsedBoardColumnsFieldCase(projectId: string, entityName: string, boardFieldName: string, userId: string): string[] {
+  const exact = getCollapsedBoardColumns(projectId, entityName, boardFieldName, userId);
   if (exact.length > 0) return exact;
   const store = readStore();
   const lowerFieldName = boardFieldName.toLowerCase();
   for (const key of Object.keys(store)) {
     const parsed = parseKey(key);
-    if (!parsed || parsed[0] !== projectId || parsed[1] !== entityName) continue;
+    if (!parsed || parsed[0] !== projectId || parsed[1] !== entityName || parsed[3] !== userId) continue;
     if (parsed[2] === boardFieldName || parsed[2].toLowerCase() !== lowerFieldName) continue;
     const migrated = [...store[key]];
     delete store[key];
-    const newKey = keyFor(projectId, entityName, boardFieldName);
+    const newKey = keyFor(projectId, entityName, boardFieldName, userId);
     if (migrated.length > 0) store[newKey] = migrated;
     else delete store[newKey];
     writeStore(store);
@@ -111,9 +118,9 @@ export function migrateCollapsedBoardColumnsFieldCase(projectId: string, entityN
 }
 
 /** Persists the entity's full updated set of collapsed board-column values and returns it, so callers can update their own state from the return value instead of re-reading storage. */
-export function setCollapsedBoardColumns(projectId: string, entityName: string, boardFieldName: string, values: string[]): string[] {
+export function setCollapsedBoardColumns(projectId: string, entityName: string, boardFieldName: string, userId: string, values: string[]): string[] {
   const store = readStore();
-  const mapKey = keyFor(projectId, entityName, boardFieldName);
+  const mapKey = keyFor(projectId, entityName, boardFieldName, userId);
   const deduped = [...new Set(values)];
   if (deduped.length === 0) delete store[mapKey];
   else store[mapKey] = deduped;
@@ -163,7 +170,7 @@ export function migrateCollapsedBoardColumnsForEntityRename(projectId: string, o
   for (const key of Object.keys(store)) {
     const parsed = parseKey(key);
     if (!parsed || parsed[0] !== projectId || parsed[1] !== oldName) continue;
-    const newKey = keyFor(projectId, newName, parsed[2]);
+    const newKey = keyFor(projectId, newName, parsed[2], parsed[3]);
     if (store[newKey] === undefined) store[newKey] = store[key];
     delete store[key];
     changed = true;

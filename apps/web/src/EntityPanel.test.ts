@@ -7482,7 +7482,7 @@ test("EntityPanel keeps a collapsed table group collapsed under its new spelling
       fireEvent.click(findGroupToggle("New"));
       await waitForCondition(() => document.querySelectorAll("table tbody tr[data-record-id]").length === 1);
       assert.deepEqual(
-        getCollapsedGroups("proj1", "Deal", "status"),
+        getCollapsedGroups("proj1", "Deal", "status", "user1"),
         ["new"],
         "sanity check: collapsing the 'New' group must have actually persisted under the field's current casing",
       );
@@ -7495,7 +7495,7 @@ test("EntityPanel keeps a collapsed table group collapsed under its new spelling
       await waitForCondition(() => document.querySelector(".entity-group-by") !== null);
 
       assert.deepEqual(
-        getCollapsedGroups("proj1", "Deal", "Status"),
+        getCollapsedGroups("proj1", "Deal", "Status", "user1"),
         ["new"],
         "the collapsed group's real stored set must migrate to the new field-name casing",
       );
@@ -7511,7 +7511,7 @@ test("EntityPanel keeps a collapsed table group collapsed under its new spelling
       // getCollapsedGroups's own migration above is therefore the real
       // proof here, exactly as it is for fieldFilters.
       assert.deepEqual(
-        getCollapsedGroups("proj1", "Deal", "status"),
+        getCollapsedGroups("proj1", "Deal", "status", "user1"),
         [],
         "the old field-name casing's key must be cleaned up, not left orphaned alongside the migrated one",
       );
@@ -7573,7 +7573,7 @@ test("EntityPanel keeps a collapsed board column collapsed under its new spellin
       fireEvent.click(findColumn("New").querySelector(".board-column-toggle") as HTMLButtonElement);
       await waitForCondition(() => findColumn("New").querySelectorAll(".board-card").length === 0);
       assert.deepEqual(
-        getCollapsedBoardColumns("proj1", "Deal", "status"),
+        getCollapsedBoardColumns("proj1", "Deal", "status", "user1"),
         ["new"],
         "sanity check: collapsing the 'New' column must have actually persisted under the field's current casing",
       );
@@ -7593,12 +7593,12 @@ test("EntityPanel keeps a collapsed board column collapsed under its new spellin
       // field.name. getCollapsedBoardColumns's own migration below is
       // therefore the real proof here.
       assert.deepEqual(
-        getCollapsedBoardColumns("proj1", "Deal", "Status"),
+        getCollapsedBoardColumns("proj1", "Deal", "Status", "user1"),
         ["new"],
         "the collapsed column's real stored set must migrate to the new field-name casing",
       );
       assert.deepEqual(
-        getCollapsedBoardColumns("proj1", "Deal", "status"),
+        getCollapsedBoardColumns("proj1", "Deal", "status", "user1"),
         [],
         "the old field-name casing's key must be cleaned up, not left orphaned alongside the migrated one",
       );
@@ -7978,7 +7978,7 @@ test("EntityPanel prunes a collapsed-group entry naming an enum value a refine r
       fireEvent.click(wonToggle);
       await waitForCondition(() => document.querySelectorAll("table tbody tr[data-record-id]").length === 1);
       assert.deepEqual(
-        getCollapsedGroups("proj1", "Deal", "status"),
+        getCollapsedGroups("proj1", "Deal", "status", "user1"),
         ["won"],
         "sanity check: collapsing 'Won' must have actually persisted it",
       );
@@ -7989,7 +7989,7 @@ test("EntityPanel prunes a collapsed-group entry naming an enum value a refine r
       await waitForCondition(() => document.querySelectorAll("table tbody tr[data-record-id]").length === 2);
 
       assert.deepEqual(
-        getCollapsedGroups("proj1", "Deal", "status"),
+        getCollapsedGroups("proj1", "Deal", "status", "user1"),
         [],
         "the dead 'won' entry must be pruned from storage once 'status' no longer has that value, not left to sit there forever",
       );
@@ -8056,7 +8056,7 @@ test("EntityPanel prunes a collapsed-board-column entry naming an enum value a r
       fireEvent.click(findColumn("High").querySelector(".board-column-toggle") as HTMLButtonElement);
       await waitForCondition(() => findColumn("High").querySelectorAll(".board-card").length === 0);
       assert.deepEqual(
-        getCollapsedBoardColumns("proj1", "Deal", "priority"),
+        getCollapsedBoardColumns("proj1", "Deal", "priority", "user1"),
         ["high"],
         "sanity check: collapsing 'High' must have actually persisted it",
       );
@@ -8070,7 +8070,7 @@ test("EntityPanel prunes a collapsed-board-column entry naming an enum value a r
       await waitForCondition(() => document.querySelectorAll(".board-column").length === 3);
 
       assert.deepEqual(
-        getCollapsedBoardColumns("proj1", "Deal", "priority"),
+        getCollapsedBoardColumns("proj1", "Deal", "priority", "user1"),
         [],
         "the dead 'high' entry must be pruned from storage once 'priority' no longer has that value, not left to sit there forever",
       );
@@ -12092,7 +12092,7 @@ test("EntityPanel's group-header toggle collapses and expands just that one grou
       fireEvent.click(wonToggle);
       await waitForCondition(() => document.querySelectorAll("table tbody tr").length === 3);
       assert.deepEqual(
-        getCollapsedGroups("proj1", "Deal", "status"),
+        getCollapsedGroups("proj1", "Deal", "status", "user1"),
         ["won"],
         "the collapsed group key must actually be persisted, not just held in memory",
       );

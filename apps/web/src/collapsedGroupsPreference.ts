@@ -6,19 +6,31 @@ const STORAGE_KEY = "forge.collapsedGroups";
 // A colon-joined key made purgeCollapsedGroupsForEntity's prefix scan for "Foo"
 // also match "Foo:Bar"'s keys. JSON.stringify of the tuple makes each segment
 // boundary unambiguous regardless of what characters the segments contain.
-function keyFor(projectId: string, entityName: string, groupFieldName: string): string {
-  return JSON.stringify([projectId, entityName, groupFieldName]);
+//
+// Round 1077: userId was added as a 4th segment so two different collaborator
+// accounts sharing the same project+entity+groupField on the same browser no
+// longer see each other's own collapsed-group choices -- the same cross-
+// account leak class already closed for every other sibling store on this
+// exact screen (groupByPreference.ts round 1075, sortKeysPreference.ts round
+// 1074, columnOrder.ts round 1069, and others), never ported to this store
+// (or its own board-column twin) until now. See fieldFiltersPreference.ts's
+// own keyFor doc comment for the full reasoning. purgeCollapsedGroupsForProject/
+// purgeCollapsedGroupsForEntity below still match by parsed projectId/
+// entityName alone, which keeps working unchanged regardless of what the
+// key's own remaining segments (groupFieldName, userId) look like.
+function keyFor(projectId: string, entityName: string, groupFieldName: string, userId: string): string {
+  return JSON.stringify([projectId, entityName, groupFieldName, userId]);
 }
 
-function parseKey(key: string): [string, string, string] | null {
+function parseKey(key: string): [string, string, string, string] | null {
   try {
     const parsed = JSON.parse(key);
     if (
       Array.isArray(parsed) &&
-      parsed.length === 3 &&
+      parsed.length === 4 &&
       parsed.every((part): part is string => typeof part === "string")
     ) {
-      return parsed as [string, string, string];
+      return parsed as [string, string, string, string];
     }
     return null;
   } catch {
@@ -67,9 +79,9 @@ function writeStore(store: Record<string, string[]>): void {
  * otherwise collapse each other's groups the moment "Group by" switched
  * from one to the other.
  */
-export function getCollapsedGroups(projectId: string, entityName: string, groupFieldName: string): string[] {
+export function getCollapsedGroups(projectId: string, entityName: string, groupFieldName: string, userId: string): string[] {
   const store = readStore();
-  return [...(store[keyFor(projectId, entityName, groupFieldName)] ?? [])];
+  return [...(store[keyFor(projectId, entityName, groupFieldName, userId)] ?? [])];
 }
 
 /**
@@ -96,18 +108,18 @@ export function getCollapsedGroups(projectId: string, entityName: string, groupF
  * genuinely-collapsed-to-empty set (a user who re-expanded everything)
  * can never be overridden by a stale old-cased entry.
  */
-export function migrateCollapsedGroupsFieldCase(projectId: string, entityName: string, groupFieldName: string): string[] {
-  const exact = getCollapsedGroups(projectId, entityName, groupFieldName);
+export function migrateCollapsedGroupsFieldCase(projectId: string, entityName: string, groupFieldName: string, userId: string): string[] {
+  const exact = getCollapsedGroups(projectId, entityName, groupFieldName, userId);
   if (exact.length > 0) return exact;
   const store = readStore();
   const lowerFieldName = groupFieldName.toLowerCase();
   for (const key of Object.keys(store)) {
     const parsed = parseKey(key);
-    if (!parsed || parsed[0] !== projectId || parsed[1] !== entityName) continue;
+    if (!parsed || parsed[0] !== projectId || parsed[1] !== entityName || parsed[3] !== userId) continue;
     if (parsed[2] === groupFieldName || parsed[2].toLowerCase() !== lowerFieldName) continue;
     const migrated = [...store[key]];
     delete store[key];
-    const newKey = keyFor(projectId, entityName, groupFieldName);
+    const newKey = keyFor(projectId, entityName, groupFieldName, userId);
     if (migrated.length > 0) store[newKey] = migrated;
     else delete store[newKey];
     writeStore(store);
@@ -117,9 +129,9 @@ export function migrateCollapsedGroupsFieldCase(projectId: string, entityName: s
 }
 
 /** Persists the entity's full updated set of collapsed group keys and returns it, so callers can update their own state from the return value instead of re-reading storage. */
-export function setCollapsedGroups(projectId: string, entityName: string, groupFieldName: string, keys: string[]): string[] {
+export function setCollapsedGroups(projectId: string, entityName: string, groupFieldName: string, userId: string, keys: string[]): string[] {
   const store = readStore();
-  const mapKey = keyFor(projectId, entityName, groupFieldName);
+  const mapKey = keyFor(projectId, entityName, groupFieldName, userId);
   const deduped = [...new Set(keys)];
   if (deduped.length === 0) delete store[mapKey];
   else store[mapKey] = deduped;
@@ -173,7 +185,7 @@ export function migrateCollapsedGroupsForEntityRename(projectId: string, oldName
   for (const key of Object.keys(store)) {
     const parsed = parseKey(key);
     if (!parsed || parsed[0] !== projectId || parsed[1] !== oldName) continue;
-    const newKey = keyFor(projectId, newName, parsed[2]);
+    const newKey = keyFor(projectId, newName, parsed[2], parsed[3]);
     if (store[newKey] === undefined) store[newKey] = store[key];
     delete store[key];
     changed = true;

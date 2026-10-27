@@ -1629,7 +1629,7 @@ export function EntityPanel({
   // the user had deliberately collapsed under the field's old casing. See
   // that function's own doc comment for the full mechanism.
   useEffect(() => {
-    const loaded = migrateCollapsedGroupsFieldCase(projectId, entity.name, groupFieldName);
+    const loaded = migrateCollapsedGroupsFieldCase(projectId, entity.name, groupFieldName, userId);
     const field = entity.fields.find((f) => f.name === groupFieldName);
     if (field?.type !== "enum") {
       setCollapsedGroups(new Set(loaded));
@@ -1637,9 +1637,9 @@ export function EntityPanel({
     }
     const validValues = new Set(field.enumValues ?? []);
     const filtered = loaded.filter((v) => validValues.has(v));
-    if (filtered.length !== loaded.length) setCollapsedGroupsPreference(projectId, entity.name, groupFieldName, filtered);
+    if (filtered.length !== loaded.length) setCollapsedGroupsPreference(projectId, entity.name, groupFieldName, userId, filtered);
     setCollapsedGroups(new Set(filtered));
-  }, [projectId, entity.name, groupFieldName, groupFieldEnumValuesKey]);
+  }, [projectId, entity.name, groupFieldName, userId, groupFieldEnumValuesKey]);
 
   /** Toggles one group's collapsed state and persists the full updated set, mirroring handleFieldFilterChange's write-through-to-storage pattern. */
   function toggleGroupCollapsed(groupKey: string) {
@@ -1647,7 +1647,7 @@ export function EntityPanel({
       const next = new Set(prev);
       if (next.has(groupKey)) next.delete(groupKey);
       else next.add(groupKey);
-      setCollapsedGroupsPreference(projectId, entity.name, groupFieldName, [...next]);
+      setCollapsedGroupsPreference(projectId, entity.name, groupFieldName, userId, [...next]);
       return next;
     });
   }
@@ -1680,16 +1680,16 @@ export function EntityPanel({
   // silently re-expand a column the user had deliberately collapsed. See
   // that function's own doc comment for the full mechanism.
   useEffect(() => {
-    const loaded = migrateCollapsedBoardColumnsFieldCase(projectId, entity.name, boardFieldName);
+    const loaded = migrateCollapsedBoardColumnsFieldCase(projectId, entity.name, boardFieldName, userId);
     if (!boardField) {
       setCollapsedBoardColumns(new Set(loaded));
       return;
     }
     const validValues = new Set(boardField.enumValues ?? []);
     const filtered = loaded.filter((v) => validValues.has(v));
-    if (filtered.length !== loaded.length) setCollapsedBoardColumnsPreference(projectId, entity.name, boardFieldName, filtered);
+    if (filtered.length !== loaded.length) setCollapsedBoardColumnsPreference(projectId, entity.name, boardFieldName, userId, filtered);
     setCollapsedBoardColumns(new Set(filtered));
-  }, [projectId, entity.name, boardFieldName, boardFieldEnumValuesKey]);
+  }, [projectId, entity.name, boardFieldName, userId, boardFieldEnumValuesKey]);
 
   /** Mirrors toggleGroupCollapsed above, for board columns instead of table groups. */
   function toggleBoardColumnCollapsed(columnValue: string) {
@@ -1697,7 +1697,7 @@ export function EntityPanel({
       const next = new Set(prev);
       if (next.has(columnValue)) next.delete(columnValue);
       else next.add(columnValue);
-      setCollapsedBoardColumnsPreference(projectId, entity.name, boardFieldName, [...next]);
+      setCollapsedBoardColumnsPreference(projectId, entity.name, boardFieldName, userId, [...next]);
       return next;
     });
   }
