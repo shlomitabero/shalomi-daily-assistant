@@ -9826,6 +9826,71 @@ test("POST .../integrations/whatsapp/send accepts an uploaded attachment and pas
 });
 
 /**
+ * Round 1101: the attachment file is deleted from disk right after the
+ * send resolves either way (round 979, see the test just below and the one
+ * after it), so by the time this message's row is read back there is
+ * nothing left to tell WhatsAppPanel.tsx's Retry button that this
+ * particular failed send ever had a file at all -- without hadAttachment,
+ * Retry silently resends text-only with no warning. Confirms hadAttachment
+ * round-trips through a real HTTP send + a real HTTP read for both an
+ * attachment-bearing send and a plain text send, not just the insert's own
+ * in-process return value.
+ */
+test("GET .../integrations/whatsapp/messages reports hadAttachment: true only for a send that actually included an attachment", async () => {
+  let createdSockets: ReturnType<typeof createFakeWhatsAppSocket>[] = [];
+  await withServer(
+    async (baseUrl) => {
+      const token = await signup(baseUrl, "whatsapp-had-attachment1@example.com");
+      const createRes = await fetch(`${baseUrl}/api/projects`, {
+        method: "POST",
+        headers: authHeaders(token),
+        body: JSON.stringify({ description: "A CRM with customers and deals." }),
+      });
+      const { project } = (await createRes.json()) as { project: { id: string } };
+
+      await fetch(`${baseUrl}/api/projects/${project.id}/integrations/whatsapp/connect`, { method: "POST", headers: authHeaders(token) });
+      createdSockets[0].sock.user = { id: "15550005558:1@s.whatsapp.net" };
+      createdSockets[0].emitConnectionUpdate({ connection: "open" });
+
+      const formData = new FormData();
+      formData.append("file", new File(["%PDF-fake-brochure-contents"], "brochure.pdf", { type: "application/pdf" }));
+      const uploadRes = await fetch(`${baseUrl}/api/projects/${project.id}/integrations/whatsapp/attachments/upload`, {
+        method: "POST",
+        headers: { authorization: `Bearer ${token}` },
+        body: formData,
+      });
+      const uploadBody = (await uploadRes.json()) as { file: { url: string; name: string; mimeType: string } };
+
+      await fetch(`${baseUrl}/api/projects/${project.id}/integrations/whatsapp/send`, {
+        method: "POST",
+        headers: authHeaders(token),
+        body: JSON.stringify({ to: "972501234567", message: "with a file", attachment: uploadBody.file }),
+      });
+      await fetch(`${baseUrl}/api/projects/${project.id}/integrations/whatsapp/send`, {
+        method: "POST",
+        headers: authHeaders(token),
+        body: JSON.stringify({ to: "972501234567", message: "plain text" }),
+      });
+
+      const messagesRes = await fetch(`${baseUrl}/api/projects/${project.id}/integrations/whatsapp/messages`, { headers: authHeaders(token) });
+      const { messages } = (await messagesRes.json()) as { messages: { body: string; hadAttachment: boolean }[] };
+
+      const withFile = messages.find((m) => m.body === "with a file");
+      const textOnly = messages.find((m) => m.body === "plain text");
+      assert.equal(withFile?.hadAttachment, true, "the attachment-bearing send must be reported as hadAttachment: true");
+      assert.equal(textOnly?.hadAttachment, false, "the plain text send must be reported as hadAttachment: false");
+    },
+    {
+      whatsapp: (db) => {
+        const created = createTestWhatsAppManager(db);
+        createdSockets = created.createdSockets;
+        return created.manager;
+      },
+    },
+  );
+});
+
+/**
  * Round 979: a manual test-send attachment was uploaded to disk but never
  * deleted afterward -- not on a successful send, not on a failed one, and
  * not when the user removed it or replaced it with a different file before

@@ -1307,6 +1307,8 @@ export interface WhatsAppMessageLogEntry {
   matchedEntityName: string | null;
   matchedRecordId: number | null;
   status: "received" | "sent" | "failed";
+  /** Round 1101: true when the original send had an attachment -- the attachment itself is never recoverable (deleted from disk right after the send attempt, win or lose), so Retry can only ever resend the text body. Used to warn before a text-only retry silently drops it a second time. Optional (rather than required) purely so every pre-existing mock/fixture typed as this interface doesn't need updating -- an absent value means the same thing a real false does here. */
+  hadAttachment?: boolean;
   createdAt: string;
 }
 

@@ -2359,6 +2359,7 @@ export function createProjectsRouter(
             matchedRecordId: match?.recordId ?? null,
             matchedLabel: match?.label ?? null,
             status: result.ok ? "sent" : "failed",
+            hadAttachment: Boolean(resolvedAttachment),
           });
           if (!result.ok) {
             return { status: 502, body: { ok: false, error: result.error } };

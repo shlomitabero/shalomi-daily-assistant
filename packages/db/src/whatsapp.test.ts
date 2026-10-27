@@ -378,3 +378,47 @@ test("deleteWhatsAppMessage throws NotFoundError for an id that doesn't exist at
   ensureWhatsAppMessagesTable(db);
   assert.throws(() => deleteWhatsAppMessage(db, "proj1", "no-such-id"), NotFoundError);
 });
+
+/**
+ * Round 1101: hadAttachment flags whether a logged message originally had
+ * a file attached -- the WhatsAppPanel Retry button uses it to warn the
+ * user that retrying a failed attachment-bearing send will only resend the
+ * text (the underlying file is already deleted by the time this row is
+ * read back, round 979). Must round-trip through the real column, not just
+ * echo back whatever was passed in.
+ */
+test("insertWhatsAppMessage stores and returns hadAttachment: true, and it survives a fresh read via listWhatsAppMessages", () => {
+  const db = openDatabase(":memory:");
+  ensureWhatsAppMessagesTable(db);
+  const inserted = insertWhatsAppMessage(db, {
+    projectId: "proj1",
+    direction: "out",
+    fromNumber: "972501234567",
+    toNumber: "972521112233",
+    body: "sent with a file",
+    status: "failed",
+    hadAttachment: true,
+  });
+  assert.equal(inserted.hadAttachment, true);
+
+  const { messages } = listWhatsAppMessages(db, "proj1");
+  assert.equal(messages.length, 1);
+  assert.equal(messages[0].hadAttachment, true, "hadAttachment must survive a fresh read, not just the insert's own return value");
+});
+
+test("insertWhatsAppMessage defaults hadAttachment to false when omitted", () => {
+  const db = openDatabase(":memory:");
+  ensureWhatsAppMessagesTable(db);
+  const inserted = insertWhatsAppMessage(db, {
+    projectId: "proj1",
+    direction: "in",
+    fromNumber: "972521112233",
+    toNumber: "972501234567",
+    body: "plain text message",
+    status: "received",
+  });
+  assert.equal(inserted.hadAttachment, false);
+
+  const { messages } = listWhatsAppMessages(db, "proj1");
+  assert.equal(messages[0].hadAttachment, false);
+});

@@ -93,6 +93,23 @@ export interface WhatsAppMessage {
   matchedEntityName: string | null;
   matchedRecordId: number | null;
   status: WhatsAppMessageStatus;
+  /**
+   * Round 1101: the send route always deletes a test-send's uploaded
+   * attachment file right after whatsapp.sendMessage() resolves, win or
+   * lose (round 979's own doc comment: "single-use... deleting it now,
+   * regardless of whether the send itself succeeded") -- and nothing
+   * about the attachment itself (its name, or even that one existed) was
+   * ever stored on the message row. A failed send with an attachment
+   * that's later retried from the log (WhatsAppPanel.tsx's handleRetry)
+   * had no way to know the original attempt had one at all, so it always
+   * resent text-only with no warning -- a real, silent data-loss gap:
+   * the customer never receives the attachment, and nothing in the UI
+   * or log ever says so. This flag alone is enough for the log to warn
+   * before a text-only retry; there's deliberately no way to actually
+   * re-send the original file (it's already gone from disk by the time
+   * this row is even inserted).
+   */
+  hadAttachment: boolean;
   createdAt: string;
 }
 
@@ -109,9 +126,23 @@ export function ensureWhatsAppMessagesTable(db: ForgeDatabase): void {
       matchedEntityName TEXT,
       matchedRecordId INTEGER,
       status TEXT NOT NULL,
+      hadAttachment INTEGER NOT NULL DEFAULT 0,
       createdAt TEXT NOT NULL
     )
   `);
+  // Round 1101: additive-only, same discipline as every other column
+  // migration in this codebase -- a table created before this round has
+  // no hadAttachment column at all. Defaults every pre-existing row to 0
+  // (false): whether any of those messages originally had an attachment
+  // is genuinely unknowable now (the attachment itself was already
+  // deleted from disk and never recorded anywhere), and false is the
+  // safe default here -- it just means the log won't show this round's
+  // new retry warning for a message that predates this column, not that
+  // anything is lost that wasn't already gone.
+  const columns = (db.prepare("PRAGMA table_info(whatsapp_messages)").all() as { name: string }[]).map((c) => c.name);
+  if (!columns.includes("hadAttachment")) {
+    db.exec("ALTER TABLE whatsapp_messages ADD COLUMN hadAttachment INTEGER NOT NULL DEFAULT 0");
+  }
 }
 
 function rowToMessage(row: Record<string, unknown>): WhatsAppMessage {
@@ -126,6 +157,7 @@ function rowToMessage(row: Record<string, unknown>): WhatsAppMessage {
     matchedEntityName: (row.matchedEntityName as string | null) ?? null,
     matchedRecordId: (row.matchedRecordId as number | null) ?? null,
     status: row.status as WhatsAppMessageStatus,
+    hadAttachment: Boolean(row.hadAttachment),
     createdAt: row.createdAt as string,
   };
 }
@@ -142,14 +174,15 @@ export function insertWhatsAppMessage(
     matchedEntityName?: string | null;
     matchedRecordId?: number | null;
     status: WhatsAppMessageStatus;
+    hadAttachment?: boolean;
   },
 ): WhatsAppMessage {
   const id = randomUUID();
   const createdAt = new Date().toISOString();
   db.prepare(
     `INSERT INTO whatsapp_messages
-       (id, projectId, direction, fromNumber, toNumber, body, matchedLabel, matchedEntityName, matchedRecordId, status, createdAt)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+       (id, projectId, direction, fromNumber, toNumber, body, matchedLabel, matchedEntityName, matchedRecordId, status, hadAttachment, createdAt)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
   ).run(
     id,
     message.projectId,
@@ -161,9 +194,18 @@ export function insertWhatsAppMessage(
     message.matchedEntityName ?? null,
     message.matchedRecordId ?? null,
     message.status,
+    message.hadAttachment ? 1 : 0,
     createdAt,
   );
-  return { ...message, id, createdAt, matchedLabel: message.matchedLabel ?? null, matchedEntityName: message.matchedEntityName ?? null, matchedRecordId: message.matchedRecordId ?? null };
+  return {
+    ...message,
+    id,
+    createdAt,
+    matchedLabel: message.matchedLabel ?? null,
+    matchedEntityName: message.matchedEntityName ?? null,
+    matchedRecordId: message.matchedRecordId ?? null,
+    hadAttachment: Boolean(message.hadAttachment),
+  };
 }
 
 /**

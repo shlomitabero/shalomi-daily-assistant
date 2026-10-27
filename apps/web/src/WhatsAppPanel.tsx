@@ -868,6 +868,16 @@ export function WhatsAppPanel({
   }
 
   async function handleRetry(m: WhatsAppMessageLogEntry) {
+    // Round 1101: the original attachment file is already gone by the
+    // time this row even exists (the send route deletes it right after
+    // whatsapp.sendMessage() resolves, win or lose, round 979) -- so
+    // there is no file left to resend, ever. Without this, Retry would
+    // silently call sendWhatsAppMessage with only the text body, and a
+    // "sent" result afterward would look identical to the original
+    // message having gone through in full, with nothing anywhere telling
+    // the user the customer never got the attachment a second time
+    // either.
+    if (m.hadAttachment && !window.confirm(t("whatsapp.log.confirmRetryTextOnly"))) return;
     setRetryingId(m.id);
     setRetryError(null);
     // Round 909: handleClearHistory/handleDisconnect already cross-clear

@@ -5159,3 +5159,231 @@ test("WhatsAppPanel's handleSendTest preserves older pages loaded via 'Load olde
     }
   });
 });
+
+/**
+ * Round 1101: the send route deletes the uploaded attachment file right
+ * after whatsapp.sendMessage() resolves, win or lose (round 979) -- so by
+ * the time a failed message's row exists for Retry to act on, there is no
+ * file left to resend, ever. Before this round's fix, handleRetry called
+ * sendWhatsAppMessage with only the text body for every retry, silently
+ * dropping the attachment with no warning. hadAttachment now flags which
+ * rows actually had one, and handleRetry must confirm with the user before
+ * proceeding on exactly those rows.
+ */
+test("WhatsAppPanel's Retry button warns and waits for confirmation before resending a message that originally had an attachment", async () => {
+  await withJsdom(async () => {
+    const originalFetch = globalThis.fetch;
+    const originalConfirm = globalThis.window.confirm;
+    let confirmCalls = 0;
+    globalThis.window.confirm = (() => {
+      confirmCalls += 1;
+      return true;
+    }) as typeof window.confirm;
+    const failedWithAttachment: WhatsAppMessageLogEntry = {
+      id: "m1",
+      direction: "out",
+      fromNumber: "972501234567",
+      toNumber: "972521112233",
+      body: "had a file once",
+      matchedLabel: null,
+      matchedEntityName: null,
+      matchedRecordId: null,
+      status: "failed",
+      createdAt: new Date("2026-03-15T14:32:00Z").toISOString(),
+      hadAttachment: true,
+    };
+    let sendCalls = 0;
+    globalThis.fetch = (async (input: string, init?: RequestInit): Promise<Response> => {
+      const method = init?.method ?? "GET";
+      if (method === "GET" && input === "/api/projects/proj1/integrations/whatsapp/status") {
+        return new Response(
+          JSON.stringify({ status: "connected", phoneNumber: "972501234567", qrDataUrl: null, error: null }),
+          { status: 200, headers: { "content-type": "application/json" } },
+        );
+      }
+      if (method === "GET" && input === "/api/projects/proj1/integrations/whatsapp/messages") {
+        return new Response(JSON.stringify({ messages: [failedWithAttachment] }), { status: 200, headers: { "content-type": "application/json" } });
+      }
+      if (method === "POST" && input === "/api/projects/proj1/integrations/whatsapp/send") {
+        sendCalls += 1;
+        return new Response(JSON.stringify({ ok: true }), { status: 200, headers: { "content-type": "application/json" } });
+      }
+      throw new Error(`unexpected request ${method} ${input}`);
+    }) as typeof fetch;
+    try {
+      render(
+        React.createElement(
+          ThemeProvider,
+          null,
+          React.createElement(
+            LanguageProvider,
+            null,
+            React.createElement(WhatsAppPanel, {
+              entities: [],
+              onCreateRecordFromMessage: () => {},
+              projectId: "proj1", userId: "user1",
+              projectName: "Test Project",
+              onClose: () => {},
+              onJumpToEntity: () => {},
+              onJumpToRecord: () => {},
+            }),
+          ),
+        ),
+      );
+      await waitForCondition(() => document.querySelectorAll(".whatsapp-log-list li").length === 1);
+
+      const retryButton = document.querySelectorAll(".whatsapp-log-list li")[0].querySelector("button.secondary.small") as HTMLButtonElement;
+      assert.ok(retryButton, "expected the failed message's own Retry button");
+      fireEvent.click(retryButton);
+      await waitForCondition(() => sendCalls === 1);
+
+      assert.equal(confirmCalls, 1, "expected exactly one confirm prompt before resending an attachment-bearing message");
+    } finally {
+      globalThis.fetch = originalFetch;
+      globalThis.window.confirm = originalConfirm;
+    }
+  });
+});
+
+test("WhatsAppPanel's Retry button sends no request at all when the attachment-loss confirm dialog is declined", async () => {
+  await withJsdom(async () => {
+    const originalFetch = globalThis.fetch;
+    const originalConfirm = globalThis.window.confirm;
+    globalThis.window.confirm = (() => false) as typeof window.confirm;
+    const failedWithAttachment: WhatsAppMessageLogEntry = {
+      id: "m1",
+      direction: "out",
+      fromNumber: "972501234567",
+      toNumber: "972521112233",
+      body: "had a file once",
+      matchedLabel: null,
+      matchedEntityName: null,
+      matchedRecordId: null,
+      status: "failed",
+      createdAt: new Date("2026-03-15T14:32:00Z").toISOString(),
+      hadAttachment: true,
+    };
+    let sendCalls = 0;
+    globalThis.fetch = (async (input: string, init?: RequestInit): Promise<Response> => {
+      const method = init?.method ?? "GET";
+      if (method === "GET" && input === "/api/projects/proj1/integrations/whatsapp/status") {
+        return new Response(
+          JSON.stringify({ status: "connected", phoneNumber: "972501234567", qrDataUrl: null, error: null }),
+          { status: 200, headers: { "content-type": "application/json" } },
+        );
+      }
+      if (method === "GET" && input === "/api/projects/proj1/integrations/whatsapp/messages") {
+        return new Response(JSON.stringify({ messages: [failedWithAttachment] }), { status: 200, headers: { "content-type": "application/json" } });
+      }
+      if (method === "POST" && input === "/api/projects/proj1/integrations/whatsapp/send") {
+        sendCalls += 1;
+        return new Response(JSON.stringify({ ok: true }), { status: 200, headers: { "content-type": "application/json" } });
+      }
+      throw new Error(`unexpected request ${method} ${input}`);
+    }) as typeof fetch;
+    try {
+      render(
+        React.createElement(
+          ThemeProvider,
+          null,
+          React.createElement(
+            LanguageProvider,
+            null,
+            React.createElement(WhatsAppPanel, {
+              entities: [],
+              onCreateRecordFromMessage: () => {},
+              projectId: "proj1", userId: "user1",
+              projectName: "Test Project",
+              onClose: () => {},
+              onJumpToEntity: () => {},
+              onJumpToRecord: () => {},
+            }),
+          ),
+        ),
+      );
+      await waitForCondition(() => document.querySelectorAll(".whatsapp-log-list li").length === 1);
+
+      const retryButton = document.querySelectorAll(".whatsapp-log-list li")[0].querySelector("button.secondary.small") as HTMLButtonElement;
+      assert.ok(retryButton, "expected the failed message's own Retry button");
+      fireEvent.click(retryButton);
+      // Give any (wrongly) fired request a real tick to land before asserting.
+      await new Promise((resolve) => setTimeout(resolve, 0));
+
+      assert.equal(sendCalls, 0, "declining the confirm dialog must never actually resend the message");
+    } finally {
+      globalThis.fetch = originalFetch;
+      globalThis.window.confirm = originalConfirm;
+    }
+  });
+});
+
+test("WhatsAppPanel's Retry button resends immediately with no confirm prompt when the original message never had an attachment", async () => {
+  await withJsdom(async () => {
+    const originalFetch = globalThis.fetch;
+    const originalConfirm = globalThis.window.confirm;
+    globalThis.window.confirm = (() => {
+      throw new Error("window.confirm must not be called for a message that never had an attachment");
+    }) as typeof window.confirm;
+    const failedTextOnly: WhatsAppMessageLogEntry = {
+      id: "m1",
+      direction: "out",
+      fromNumber: "972501234567",
+      toNumber: "972521112233",
+      body: "plain text, no file",
+      matchedLabel: null,
+      matchedEntityName: null,
+      matchedRecordId: null,
+      status: "failed",
+      createdAt: new Date("2026-03-15T14:32:00Z").toISOString(),
+      hadAttachment: false,
+    };
+    let sendCalls = 0;
+    globalThis.fetch = (async (input: string, init?: RequestInit): Promise<Response> => {
+      const method = init?.method ?? "GET";
+      if (method === "GET" && input === "/api/projects/proj1/integrations/whatsapp/status") {
+        return new Response(
+          JSON.stringify({ status: "connected", phoneNumber: "972501234567", qrDataUrl: null, error: null }),
+          { status: 200, headers: { "content-type": "application/json" } },
+        );
+      }
+      if (method === "GET" && input === "/api/projects/proj1/integrations/whatsapp/messages") {
+        return new Response(JSON.stringify({ messages: [failedTextOnly] }), { status: 200, headers: { "content-type": "application/json" } });
+      }
+      if (method === "POST" && input === "/api/projects/proj1/integrations/whatsapp/send") {
+        sendCalls += 1;
+        return new Response(JSON.stringify({ ok: true }), { status: 200, headers: { "content-type": "application/json" } });
+      }
+      throw new Error(`unexpected request ${method} ${input}`);
+    }) as typeof fetch;
+    try {
+      render(
+        React.createElement(
+          ThemeProvider,
+          null,
+          React.createElement(
+            LanguageProvider,
+            null,
+            React.createElement(WhatsAppPanel, {
+              entities: [],
+              onCreateRecordFromMessage: () => {},
+              projectId: "proj1", userId: "user1",
+              projectName: "Test Project",
+              onClose: () => {},
+              onJumpToEntity: () => {},
+              onJumpToRecord: () => {},
+            }),
+          ),
+        ),
+      );
+      await waitForCondition(() => document.querySelectorAll(".whatsapp-log-list li").length === 1);
+
+      const retryButton = document.querySelectorAll(".whatsapp-log-list li")[0].querySelector("button.secondary.small") as HTMLButtonElement;
+      assert.ok(retryButton, "expected the failed message's own Retry button");
+      fireEvent.click(retryButton);
+      await waitForCondition(() => sendCalls === 1);
+    } finally {
+      globalThis.fetch = originalFetch;
+      globalThis.window.confirm = originalConfirm;
+    }
+  });
+});
