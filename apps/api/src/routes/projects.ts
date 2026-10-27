@@ -3082,41 +3082,75 @@ export function createProjectsRouter(
         async () => {
           const entity = findEntity(project, req.params.entityName);
           const field = findField(entity, req.params.fieldName);
+          const nextField: Field = {
+            ...field,
+            type: parsed.data.type,
+            enumValues: parsed.data.type === "enum" ? parsed.data.enumValues : undefined,
+            enumLabels:
+              parsed.data.type === "enum" && field.enumLabels
+                ? (() => {
+                    const prevLabelsByLowerValue = new Map(
+                      Object.entries(field.enumLabels!).map(([value, label]) => [value.toLowerCase(), label]),
+                    );
+                    const next: Record<string, string> = {};
+                    for (const value of parsed.data.enumValues!) {
+                      const label = field.enumLabels![value] ?? prevLabelsByLowerValue.get(value.toLowerCase());
+                      if (label !== undefined) next[value] = label;
+                    }
+                    return next;
+                  })()
+                : undefined,
+            relationTo: parsed.data.type === "relation" ? parsed.data.relationTo : undefined,
+          };
           const nextSpec = {
             ...project.spec,
             entities: project.spec.entities.map((e) =>
-              e.name === entity.name
-                ? {
-                    ...e,
-                    fields: e.fields.map((f) =>
-                      f.name === field.name
-                        ? {
-                            ...f,
-                            type: parsed.data.type,
-                            enumValues: parsed.data.type === "enum" ? parsed.data.enumValues : undefined,
-                            enumLabels:
-                              parsed.data.type === "enum" && f.enumLabels
-                                ? (() => {
-                                    const prevLabelsByLowerValue = new Map(
-                                      Object.entries(f.enumLabels!).map(([value, label]) => [value.toLowerCase(), label]),
-                                    );
-                                    const next: Record<string, string> = {};
-                                    for (const value of parsed.data.enumValues!) {
-                                      const label = f.enumLabels![value] ?? prevLabelsByLowerValue.get(value.toLowerCase());
-                                      if (label !== undefined) next[value] = label;
-                                    }
-                                    return next;
-                                  })()
-                                : undefined,
-                            relationTo: parsed.data.type === "relation" ? parsed.data.relationTo : undefined,
-                          }
-                        : f,
-                    ),
-                  }
-                : e,
+              e.name === entity.name ? { ...e, fields: e.fields.map((f) => (f.name === field.name ? nextField : f)) } : e,
             ),
           };
           const updated = updateProjectSpec(db, project.id, nextSpec);
+          // Round 1100: a field's type can change here just as freely as it
+          // can be removed entirely (the field/entity-removal routes'
+          // own round-1099 fix) -- same pre-build-only gate, same lack of
+          // any project.status requirement on automation rule creation
+          // (round 998). validateAutomationFieldValue/validateAutomationToField
+          // (above) are only ever run once, at the moment a rule is
+          // created or PATCHed -- never re-checked against a field that
+          // later changes shape out from under an existing rule. A
+          // field_equals rule's own fieldValue (e.g. "Delivered" against
+          // an enum) or a toMode:"field" rule's own toField (which must
+          // stay text/longtext -- "only a text field can hold a phone
+          // number or email address") can both be silently invalidated by
+          // this exact route, with nothing to notice and nothing to
+          // disable it -- the same permanently-silent-failure shape round
+          // 1099 just closed for removal, left open here for a type
+          // change. Unlike disableAutomationRulesForField (built for
+          // "this field doesn't exist anymore," unconditional), this
+          // re-validates each referencing rule's own stored value against
+          // the field's NEW type specifically, since many type changes
+          // (text -> longtext, or an enum keeping the same value) leave a
+          // referencing rule perfectly valid and must not disable it.
+          for (const rule of listAutomationRules(db, project.id)) {
+            if (rule.entityName !== entity.name || !rule.enabled) continue;
+            let stillValid = true;
+            if (rule.fieldName === field.name && rule.fieldValue) {
+              try {
+                validateAutomationFieldValue(nextField, rule.fieldValue);
+              } catch {
+                stillValid = false;
+              }
+            }
+            if (stillValid && rule.toField === field.name) {
+              try {
+                validateAutomationToField(nextField);
+              } catch {
+                stillValid = false;
+              }
+            }
+            if (!stillValid) {
+              updateAutomationRule(db, project.id, rule.id, { enabled: false });
+            }
+          }
           return { status: 200, body: { project: updated } };
         },
       );

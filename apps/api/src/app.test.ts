@@ -13768,6 +13768,102 @@ test("removing an entity pre-build disables any automation rule that triggers on
 });
 
 /**
+ * Round 1100: the natural sibling of round 1099's fix -- a field's type
+ * can change pre-build just as freely as it can be removed, and
+ * validateAutomationToField ("only a text field can hold a phone number
+ * or email address") is only ever checked once, at rule creation/PATCH,
+ * never re-checked when the referenced field's type changes later.
+ * Changing a toMode:"field" destination from text to number leaves the
+ * rule pointed at a field it can never actually send.
+ */
+test("changing a field's type pre-build disables an automation rule whose toField destination the new type breaks, but leaves a still-valid one (text -> longtext) enabled", async () => {
+  await withServer(async (baseUrl, db) => {
+    const email = `prebuild-type-change-disable-${randomUUID()}@example.com`;
+    const token = await signup(baseUrl, email);
+    const owner = findUserByEmail(db, email)!;
+
+    const spec: ProductSpec = {
+      summary: "test",
+      personas: [],
+      roles: ["Admin"],
+      entities: [
+        {
+          name: "Lead",
+          fields: [
+            { name: "phone", type: "text", required: true },
+            { name: "notes", type: "text", required: false },
+          ],
+        },
+      ],
+      screens: [],
+      assumptions: [],
+      openQuestions: [],
+    };
+    const projectId = randomUUID();
+    insertProject(db, { id: projectId, ownerId: owner.id, name: "Leads", description: "test", spec });
+
+    const createPhoneRule = await fetch(`${baseUrl}/api/projects/${projectId}/entities/Lead/automations`, {
+      method: "POST",
+      headers: authHeaders(token),
+      body: JSON.stringify({
+        trigger: "record_created",
+        actionType: "send_whatsapp",
+        toMode: "field",
+        toField: "phone",
+        messageTemplate: "New lead!",
+      }),
+    });
+    assert.equal(createPhoneRule.status, 201);
+    const { rule: phoneRule } = (await createPhoneRule.json()) as { rule: { id: string } };
+
+    const createNotesRule = await fetch(`${baseUrl}/api/projects/${projectId}/entities/Lead/automations`, {
+      method: "POST",
+      headers: authHeaders(token),
+      body: JSON.stringify({
+        trigger: "record_created",
+        actionType: "send_whatsapp",
+        toMode: "field",
+        toField: "notes",
+        messageTemplate: "New lead!",
+      }),
+    });
+    assert.equal(createNotesRule.status, 201);
+    const { rule: notesRule } = (await createNotesRule.json()) as { rule: { id: string } };
+
+    // Breaks the phone rule's own destination (text -> number).
+    const breakRes = await fetch(`${baseUrl}/api/projects/${projectId}/entities/Lead/fields/phone/type`, {
+      method: "PATCH",
+      headers: authHeaders(token),
+      body: JSON.stringify({ type: "number" }),
+    });
+    assert.equal(breakRes.status, 200);
+
+    // Does NOT break the notes rule's own destination (text -> longtext,
+    // both still valid per validateAutomationToField) -- must NOT be
+    // disabled as a false positive.
+    const safeRes = await fetch(`${baseUrl}/api/projects/${projectId}/entities/Lead/fields/notes/type`, {
+      method: "PATCH",
+      headers: authHeaders(token),
+      body: JSON.stringify({ type: "longtext" }),
+    });
+    assert.equal(safeRes.status, 200);
+
+    const listRes = await fetch(`${baseUrl}/api/projects/${projectId}/automations`, { headers: authHeaders(token) });
+    const { rules } = (await listRes.json()) as { rules: { id: string; enabled: boolean }[] };
+    assert.equal(
+      rules.find((r) => r.id === phoneRule.id)!.enabled,
+      false,
+      "the rule whose toField destination the new type actually breaks must be disabled",
+    );
+    assert.equal(
+      rules.find((r) => r.id === notesRule.id)!.enabled,
+      true,
+      "a rule whose toField is still a valid destination under the new type (text -> longtext) must NOT be disabled as a false positive",
+    );
+  });
+});
+
+/**
  * Round 967: a schedule rule's scheduleTimeUtc/scheduleDaysOfWeek are now
  * wall-clock values in its own scheduleTimezone (see isScheduledRuleDue's
  * own doc comment, apps/api/src/automations.ts), not literal UTC --
