@@ -2617,8 +2617,7 @@ test("App's building-view onBack clears selectedAnswers/additionalRequest before
  * project id DeleteAccountPanel hands back, before the existing local
  * UI-state reset runs. Round 423 extended this same handler to also purge
  * every merely-shared project id (the server's own removeAllCollaborationsForUser
- * revokes this account's access to those too) -- confirmed below by passing
- * both arrays and checking both show up in purgeCalls.
+ * revokes this account's access to those too).
  *
  * Round 1124: extended to confirm clearProjectSortMode/clearProjectStatusFilter
  * are called too -- unlike handleLogout/the auth-expiry effect (which
@@ -2628,8 +2627,19 @@ test("App's building-view onBack clears selectedAnswers/additionalRequest before
  * account, so leaving them behind is pure leak, not the feature it is
  * everywhere else. See projectSortMode.ts's own clearProjectSortMode doc
  * comment for the full reasoning.
+ *
+ * Round 1125: the owned/shared ids no longer go through the SAME function.
+ * `purgeProjectPreferences` (the broad, "assume the project itself is
+ * gone" sweep) is still correct for owned ids -- DELETE /auth/account
+ * really does delete every one of them. But a merely-shared project is
+ * NOT gone -- only this account's own grant on it is revoked -- so
+ * routing it through the broad sweep would silently corrupt a DIFFERENT,
+ * still-active collaborator's own pinned-project star or "new share"
+ * acknowledgment on a browser shared between accounts. Shared ids now go
+ * through `purgeOwnProjectAccess(userId, id)` instead -- see its own doc
+ * comment in projectPreferenceCleanup.ts.
  */
-test("App's handleAccountDeleted purges client-side preferences for every owned AND shared project id, then resets local UI state", () => {
+test("App's handleAccountDeleted purges client-side preferences for every owned project id via the broad sweep, and every shared project id via the narrower own-access-only sweep, then resets local UI state", () => {
   const appSrc = readFileSync(new URL("./App.tsx", import.meta.url), "utf8");
   const handlerMatch = appSrc.match(
     / {2}function handleAccountDeleted\(ownedProjectIds: string\[\], sharedProjectIds: string\[\]\) \{[\s\S]*?\n {2}\}\n/,
@@ -2639,6 +2649,7 @@ test("App's handleAccountDeleted purges client-side preferences for every owned 
 
   const state: {
     purgeCalls: string[];
+    ownAccessPurgeCalls: [string, string][];
     tokenCleared: boolean;
     showDeleteAccount: boolean;
     user: unknown;
@@ -2648,6 +2659,7 @@ test("App's handleAccountDeleted purges client-side preferences for every owned 
     statusFilterClearedForUserId: unknown;
   } = {
     purgeCalls: [],
+    ownAccessPurgeCalls: [],
     tokenCleared: false,
     showDeleteAccount: true,
     user: { id: "user1" },
@@ -2660,6 +2672,7 @@ test("App's handleAccountDeleted purges client-side preferences for every owned 
   const fn = new Function(
     "user",
     "purgeProjectPreferences",
+    "purgeOwnProjectAccess",
     "clearToken",
     "setShowDeleteAccount",
     "setUser",
@@ -2682,6 +2695,7 @@ test("App's handleAccountDeleted purges client-side preferences for every owned 
   )(
     { id: "user1" },
     (id: string) => state.purgeCalls.push(id),
+    (userId: string, id: string) => state.ownAccessPurgeCalls.push([userId, id]),
     () => (state.tokenCleared = true),
     (v: boolean) => (state.showDeleteAccount = v),
     (v: unknown) => (state.user = v),
@@ -2706,8 +2720,16 @@ test("App's handleAccountDeleted purges client-side preferences for every owned 
 
   assert.deepEqual(
     state.purgeCalls,
-    ["p1", "p2", "p3", "p4", "p5"],
-    "must purge preferences for every owned project id AND every shared project id, in order, once each",
+    ["p1", "p2", "p3"],
+    "must purge preferences for every OWNED project id via the broad sweep, since those really are deleted",
+  );
+  assert.deepEqual(
+    state.ownAccessPurgeCalls,
+    [
+      ["user1", "p4"],
+      ["user1", "p5"],
+    ],
+    "must purge only this account's own access for every SHARED project id, via the narrower sweep -- those projects are still alive for every other collaborator",
   );
   assert.equal(state.tokenCleared, true, "must still clear the now-dead token");
   assert.equal(state.showDeleteAccount, false, "must still close the panel");
@@ -2729,6 +2751,7 @@ test("App's handleAccountDeleted purges client-side preferences for every owned 
   const fnNoneOwned = new Function(
     "user",
     "purgeProjectPreferences",
+    "purgeOwnProjectAccess",
     "clearToken",
     "setShowDeleteAccount",
     "setUser",
@@ -2769,6 +2792,7 @@ test("App's handleAccountDeleted purges client-side preferences for every owned 
     noop,
     noop,
     noop,
+    noop,
   ) as (ownedProjectIds: string[], sharedProjectIds: string[]) => void;
   fnNoneOwned([], []);
   assert.deepEqual(
@@ -2789,35 +2813,50 @@ test("App's handleAccountDeleted purges client-side preferences for every owned 
  * "slice between JSX attributes" technique round 350 established, here
  * applied to a prop value instead of a plain string), rather than
  * reimplementing it.
+ *
+ * Round 1125: unlike owner-delete/bulk-delete/account-delete's own owned-
+ * ids loop, the project this user just left is NOT gone -- it's still
+ * fully alive for every other collaborator. Switched from the broad
+ * purgeProjectPreferences to purgeOwnProjectAccess (scoped to just this
+ * user's own pin/seen-share entries) for exactly that reason -- see its
+ * own doc comment in projectPreferenceCleanup.ts. Confirms the real
+ * userId is passed through, not just the project id.
  */
-test("App's CollaboratorsPanel onLeft callback purges the left project's own client-side preferences before navigating home", () => {
+test("App's CollaboratorsPanel onLeft callback purges only this user's own access to the left project before navigating home, leaving the still-shared project's other preferences alone", () => {
   const appSrc = readFileSync(new URL("./App.tsx", import.meta.url), "utf8");
   const handlerMatch = appSrc.match(/ {14}onLeft=\{(\(\) => \{[\s\S]*?\n {14}\})\}\n/);
   assert.ok(handlerMatch, "expected to find the CollaboratorsPanel onLeft callback in App.tsx");
   const { code } = transformSync(handlerMatch![1], { loader: "ts" });
 
-  const state: { purgeCalls: string[]; showCollaborators: boolean; goHomeCalls: number } = {
-    purgeCalls: [],
+  const state: { ownAccessPurgeCalls: [string, string][]; showCollaborators: boolean; goHomeCalls: number } = {
+    ownAccessPurgeCalls: [],
     showCollaborators: true,
     goHomeCalls: 0,
   };
   const project = { id: "shared-project-1" };
+  const user = { id: "user1" };
   const fn = new Function(
-    "purgeProjectPreferences",
+    "purgeOwnProjectAccess",
     "setShowCollaborators",
     "handleGoHome",
     "project",
+    "user",
     `return ${code}`,
   )(
-    (id: string) => state.purgeCalls.push(id),
+    (userId: string, id: string) => state.ownAccessPurgeCalls.push([userId, id]),
     (v: boolean) => (state.showCollaborators = v),
     () => (state.goHomeCalls += 1),
     project,
+    user,
   ) as () => void;
 
   fn();
 
-  assert.deepEqual(state.purgeCalls, ["shared-project-1"], "must purge preferences for exactly the project just left");
+  assert.deepEqual(
+    state.ownAccessPurgeCalls,
+    [["user1", "shared-project-1"]],
+    "must purge only this user's own access to exactly the project just left, not the broad every-collaborator sweep",
+  );
   assert.equal(state.showCollaborators, false, "must still close the collaborators panel");
   assert.equal(state.goHomeCalls, 1, "must still navigate home the same way it always did");
 });

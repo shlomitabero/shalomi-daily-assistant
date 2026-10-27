@@ -13,6 +13,7 @@ import { getSortKeys, setSortKeys } from "./sortKeysPreference.js";
 import { addEntityRecentSearch, getEntityRecentSearches } from "./entityRecentSearches.js";
 import { addRecentHistorySearch, getRecentHistorySearches } from "./historyRecentSearches.js";
 import { getPinnedIds, togglePinned } from "./pinnedProjects.js";
+import { getSeenSharedTimestamps, markSharedProjectSeen } from "./sharedProjectSeen.js";
 import { getEntityTabOrder, setEntityTabOrder } from "./entityTabOrder.js";
 import { getViewMode, setViewMode } from "./viewModePreference.js";
 import { addRecentSearch, getRecentSearches } from "./recentSearches.js";
@@ -20,7 +21,7 @@ import { addRecentWhatsAppNumber, getRecentWhatsAppNumbers } from "./whatsappRec
 import { addWhatsAppLogRecentSearch, getWhatsAppLogRecentSearches } from "./whatsappLogRecentSearches.js";
 import { getWhatsAppLogFilter, setWhatsAppLogFilter } from "./whatsappLogFilter.js";
 import { getWhatsAppLastSeen, setWhatsAppLastSeen } from "./whatsappUnread.js";
-import { purgeProjectPreferences } from "./projectPreferenceCleanup.js";
+import { purgeOwnProjectAccess, purgeProjectPreferences } from "./projectPreferenceCleanup.js";
 
 /** Same full-jsdom-swap technique used by columnWidths.test.ts/columnVisibility.test.ts/pinnedProjects.test.ts: real localStorage, not a mock. */
 async function withJsdom(fn: () => void | Promise<void>): Promise<void> {
@@ -252,5 +253,50 @@ test("purgeProjectPreferences removes exactly one project's entries from every p
     );
     assert.equal(getPinnedIds("userA").has("abc-other"), true, "pinnedProjects must survive for a prefix-sharing project id");
     assert.deepEqual(getEntityTabOrder("abc-other", "userA"), ["Task", "Deal"], "entityTabOrder must survive for a prefix-sharing project id");
+  });
+});
+
+/**
+ * Round 1125: `purgeProjectPreferences` above is only correct once the
+ * project itself is actually gone -- then there's no single "current
+ * user" to scope a removal to, since any OTHER collaborator could have
+ * their own pin/seen-share entry for it. But two of its real callers
+ * (handleAccountDeleted's sharedProjectIds loop; CollaboratorsPanel's
+ * self-service "leave project") never represent a real deletion at all --
+ * only THIS one user's own access to a project that's still fully alive
+ * for everyone else ends. Confirms `purgeOwnProjectAccess` -- the
+ * narrower fix for exactly those two call sites -- removes only userA's
+ * own pin and "new share" acknowledgment for the one project in
+ * question, leaving userB's own entries for that SAME project (and
+ * userA's own entries for a wholly unrelated project) completely intact.
+ * `removePinnedProject`/`removeSeenSharedProject` already existed for
+ * exactly this purpose but were never actually called from anywhere
+ * before this round -- confirmed via a real grep across apps/web/src.
+ */
+test("purgeOwnProjectAccess removes only this one user's own pin and 'new share' acknowledgment for one project, leaving every other collaborator's own entries (and this user's own entries for other projects) untouched", async () => {
+  await withJsdom(() => {
+    togglePinned("userA", "abc");
+    togglePinned("userA", "proj2");
+    togglePinned("userB", "abc");
+    markSharedProjectSeen("userA", "abc", "2024-01-01T00:00:00.000Z");
+    markSharedProjectSeen("userA", "proj2", "2024-02-01T00:00:00.000Z");
+    markSharedProjectSeen("userB", "abc", "2024-03-01T00:00:00.000Z");
+
+    purgeOwnProjectAccess("userA", "abc");
+
+    assert.equal(getPinnedIds("userA").has("abc"), false, "userA's own pin for the project they just left/lost access to must be removed");
+    assert.equal(getPinnedIds("userA").has("proj2"), true, "userA's own pin for an UNRELATED project must survive untouched");
+    assert.equal(
+      getPinnedIds("userB").has("abc"),
+      true,
+      "userB's own pin for the SAME still-shared project must survive -- this is the exact cross-account corruption the broad purgeProjectPreferences would have caused",
+    );
+    assert.equal(getSeenSharedTimestamps("userA").has("abc"), false, "userA's own 'new share' acknowledgment for the project they just left/lost access to must be removed");
+    assert.equal(getSeenSharedTimestamps("userA").has("proj2"), true, "userA's own 'new share' acknowledgment for an UNRELATED project must survive untouched");
+    assert.equal(
+      getSeenSharedTimestamps("userB").has("abc"),
+      true,
+      "userB's own 'new share' acknowledgment for the SAME still-shared project must survive -- otherwise it silently reappears as 'new' for them with no action on their part",
+    );
   });
 });

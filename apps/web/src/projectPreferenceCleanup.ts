@@ -1,5 +1,5 @@
-import { purgePinnedProjectForProject } from "./pinnedProjects.js";
-import { purgeSeenSharedProjectsForProject } from "./sharedProjectSeen.js";
+import { purgePinnedProjectForProject, removePinnedProject } from "./pinnedProjects.js";
+import { purgeSeenSharedProjectsForProject, removeSeenSharedProject } from "./sharedProjectSeen.js";
 import { purgeEntityTabOrderForProject } from "./entityTabOrder.js";
 import { purgeColumnWidthsForProject } from "./columnWidths.js";
 import { purgeColumnOrderForProject } from "./columnOrder.js";
@@ -68,4 +68,40 @@ export function purgeProjectPreferences(projectId: string): void {
   purgeWhatsAppLogRecentSearchesForProject(projectId);
   purgeWhatsAppLogFilterForProject(projectId);
   purgeWhatsAppLastSeenForProject(projectId);
+}
+
+/**
+ * Round 1125: `purgeProjectPreferences` above is only correct when the
+ * project itself is actually gone -- then there's no single "current
+ * user" to scope a removal to, since any number of OTHER collaborators
+ * could have their own entry for it in this same browser's localStorage
+ * (each already-per-user store's own `purgeXForProject` doc comment says
+ * exactly this). But two of its callers never represented a real deletion
+ * at all: `handleAccountDeleted`'s `sharedProjectIds` loop (that account's
+ * own grant was revoked; the project itself, and every OTHER collaborator's
+ * own access to it, is untouched) and CollaboratorsPanel's self-service
+ * "leave project" (identical -- only this one user's own access ends).
+ * Routing either through the broad, "assume it's gone" purge silently
+ * wipes a DIFFERENT, still-active collaborator's own pinned-project star
+ * or "new share" acknowledgment on a browser shared between accounts --
+ * exactly the cross-account corruption rounds 1003/995 added per-user
+ * keying to prevent in the first place, reached through a path neither of
+ * those rounds (nor round 404, which wired up CollaboratorsPanel's onLeft
+ * in the first place) ever audited against `purgeProjectPreferences`'s own
+ * "project is gone" assumption.
+ *
+ * Scoped to exactly the two stores whose corruption is directly visible to
+ * the OTHER collaborator (a project silently unpinning itself, or a "new
+ * share" badge silently reappearing) -- `removePinnedProject`/
+ * `removeSeenSharedProject` already existed for this exact purpose
+ * (pinnedProjects.ts/sharedProjectSeen.ts's own doc comments) but were
+ * never actually called from anywhere before this round. The other
+ * project-preference stores this project's own departing user leaves
+ * behind (column widths, sort order, recent searches, etc.) are lower-
+ * stakes UX-only leftovers, not touched here, matching this fix's own
+ * narrow scope.
+ */
+export function purgeOwnProjectAccess(userId: string, projectId: string): void {
+  removePinnedProject(userId, projectId);
+  removeSeenSharedProject(userId, projectId);
 }

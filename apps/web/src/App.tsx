@@ -60,7 +60,7 @@ import { entityDisplayLabel, entityLabelOccurrences } from "./entityFormatting.j
 import { getEntityTabOrder, setEntityTabOrder } from "./entityTabOrder.js";
 import { getPinnedIds, sortByPinned, togglePinned } from "./pinnedProjects.js";
 import { getSeenSharedTimestamps, markSharedProjectSeen, isNewShare } from "./sharedProjectSeen.js";
-import { purgeProjectPreferences } from "./projectPreferenceCleanup.js";
+import { purgeOwnProjectAccess, purgeProjectPreferences } from "./projectPreferenceCleanup.js";
 import { purgeEntityPreferences, migrateEntityPreferencesForCaseRename } from "./entityPreferenceCleanup.js";
 import {
   addRecentProjectSearch,
@@ -1865,7 +1865,13 @@ function AppContent() {
     // Collaborators panel's own onLeft callback below already sweeps for a
     // single project (round 404). Round 403 only ever passed the owned ids
     // here, so a shared project's own preference entries sat here forever.
-    for (const id of sharedProjectIds) purgeProjectPreferences(id);
+    // Round 1125: unlike the owned-ids loop above, these projects are NOT
+    // gone -- only this one account's own grant on them is. purgeOwnProjectAccess
+    // (not the broad purgeProjectPreferences) scopes the cleanup to this
+    // user's own pin/seen-share entries only, leaving every OTHER
+    // collaborator's own entries for these still-live, still-shared
+    // projects untouched. See its own doc comment.
+    for (const id of sharedProjectIds) purgeOwnProjectAccess(userId, id);
     clearToken();
     setShowDeleteAccount(false);
     setUser(null);
@@ -2874,7 +2880,12 @@ function AppContent() {
                 // this project from this browser ever again -- but was
                 // never wired into that sweep, a 4th convergent path to
                 // "project gone" that round 403's own fix missed. Round 404.
-                purgeProjectPreferences(project.id);
+                // Round 1125: unlike owner-delete/bulk-delete, the project
+                // itself is still fully alive for every other collaborator
+                // -- only THIS user's own access ends. purgeOwnProjectAccess
+                // (not the broad purgeProjectPreferences) scopes the
+                // cleanup to this user's own pin/seen-share entries only.
+                if (user) purgeOwnProjectAccess(user.id, project.id);
                 setShowCollaborators(false);
                 handleGoHome();
               }}
