@@ -58,6 +58,11 @@ export function HistoryPanel({
   const [typeFilter, setTypeFilter] = useState<"all" | CheckpointType>("all");
   const [deletingId, setDeletingId] = useState<string | null>(null);
   const [deleteError, setDeleteError] = useState<string | null>(null);
+  // Round 1120: mirrors busyId/deletingId's own "any one busy blocks all"
+  // convention -- see CheckpointLabelEditor's own onBusyChange/disabled
+  // doc comments for why a rename must cross-gate against restore/delete
+  // in both directions.
+  const [renamingId, setRenamingId] = useState<string | null>(null);
   const [copyStatus, setCopyStatus] = useState<"idle" | "copied" | "failed">("idle");
   const dialogRef = useDialogFocusTrap<HTMLDivElement>(onClose);
   const visibleCheckpoints = filterCheckpointsByType(filterCheckpoints(checkpoints, search), typeFilter);
@@ -376,6 +381,8 @@ export function HistoryPanel({
                       projectId={projectId}
                       onRenamed={handleCheckpointRenamed}
                       onEditStart={handleCheckpointEditStart}
+                      onBusyChange={(busy) => setRenamingId(busy ? checkpoint.id : null)}
+                      disabled={busyId !== null || deletingId !== null}
                       readOnly={readOnly}
                     />
                     {isCurrent && <span className="chip checkpoint-current-chip">{t("history.current")}</span>}
@@ -464,14 +471,18 @@ export function HistoryPanel({
                       button while the first restore is still pending fires a
                       second concurrent restoreCheckpoint request, and
                       whichever response lands last silently overwrites the
-                      other's result via onRestored. */}
+                      other's result via onRestored. Round 1120: also
+                      disabled while ANY row's rename (renamingId) is in
+                      flight, for the identical reason -- a restore/delete
+                      landing while a rename on that same checkpoint is
+                      still pending can race it. */}
                   {!readOnly && (
                     <>
                       <button
                         type="button"
                         className="checkpoint-restore-btn"
                         onClick={() => handleRestore(checkpoint)}
-                        disabled={busyId !== null || deletingId !== null || isCurrent}
+                        disabled={busyId !== null || deletingId !== null || renamingId !== null || isCurrent}
                       >
                         {busyId === checkpoint.id ? t("history.restore.busy") : t("history.restore")}
                       </button>
@@ -480,7 +491,7 @@ export function HistoryPanel({
                         className="checkpoint-delete-btn"
                         aria-label={t("history.deleteOne")}
                         onClick={() => handleDelete(checkpoint)}
-                        disabled={busyId !== null || deletingId !== null}
+                        disabled={busyId !== null || deletingId !== null || renamingId !== null}
                       >
                         {deletingId === checkpoint.id ? "…" : "🗑️"}
                       </button>

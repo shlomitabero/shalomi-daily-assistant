@@ -1,5 +1,6 @@
 import "./jsdomWarmup.js";
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import { test } from "node:test";
 import { JSDOM } from "jsdom";
 import React from "react";
@@ -8,6 +9,8 @@ import type { Checkpoint, ProductSpec, Project } from "@forge/shared";
 import { HistoryPanel } from "./HistoryPanel.js";
 import { LanguageProvider } from "./i18n/LanguageContext.js";
 import { ThemeProvider } from "./theme/ThemeContext.js";
+
+const historyPanelSrc = readFileSync(new URL("./HistoryPanel.tsx", import.meta.url), "utf8");
 
 /** Same jsdom-swap technique as the rest of this project's real-DOM tests. */
 async function withJsdom<T>(fn: () => Promise<T> | T): Promise<T> {
@@ -2326,4 +2329,46 @@ test("HistoryPanel's diff panel shows a real, rendered message when a checkpoint
       globalThis.fetch = originalFetch;
     }
   });
+});
+
+/**
+ * Round 1120: Restore/Delete are already cross-gated against each other
+ * (disabled for EVERY row while busyId or deletingId is set for ANY one --
+ * see their own comment just above these buttons in HistoryPanel.tsx) but
+ * had no equivalent against a checkpoint rename still in flight.
+ * CheckpointLabelEditor's own save() can fire a real renameCheckpoint PATCH
+ * concurrently with a restoreCheckpoint/deleteCheckpoint request on a
+ * DIFFERENT checkpoint with nothing stopping it. Confirms the real
+ * generated source (not reimplemented): HistoryPanel threads its own
+ * renamingId into both buttons' disabled conditions, and wires
+ * CheckpointLabelEditor's onBusyChange/disabled props to update and read
+ * that exact piece of state -- the actual wiring CheckpointLabelEditor.
+ * test.ts's own extraction tests prove the editor side of in isolation.
+ */
+test("HistoryPanel cross-gates checkpoint rename against Restore/Delete in both directions via renamingId", () => {
+  assert.match(
+    historyPanelSrc,
+    /const \[renamingId, setRenamingId\] = useState<string \| null>\(null\);/,
+    "expected a renamingId state, mirroring busyId/deletingId's own shape",
+  );
+  assert.match(
+    historyPanelSrc,
+    /onBusyChange=\{\(busy\) => setRenamingId\(busy \? checkpoint\.id : null\)\}/,
+    "the <CheckpointLabelEditor> call site must update renamingId from the editor's own real busy signal",
+  );
+  assert.match(
+    historyPanelSrc,
+    /disabled=\{busyId !== null \|\| deletingId !== null\}\s*\n\s*readOnly=\{readOnly\}\s*\n\s*\/>/,
+    "the <CheckpointLabelEditor> call site must disable the label while ANY restore/delete is in flight, not just its own",
+  );
+  assert.match(
+    historyPanelSrc,
+    /disabled=\{busyId !== null \|\| deletingId !== null \|\| renamingId !== null \|\| isCurrent\}/,
+    "the Restore button must also be disabled while a rename is in flight",
+  );
+  assert.match(
+    historyPanelSrc,
+    /disabled=\{busyId !== null \|\| deletingId !== null \|\| renamingId !== null\}\s*\n\s*>\s*\n\s*\{deletingId === checkpoint\.id/,
+    "the Delete button must also be disabled while a rename is in flight",
+  );
 });

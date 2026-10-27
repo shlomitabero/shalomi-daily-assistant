@@ -1,6 +1,8 @@
 import "./jsdomWarmup.js";
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import { test } from "node:test";
+import { transformSync } from "esbuild";
 import { JSDOM } from "jsdom";
 import React from "react";
 import { cleanup, fireEvent, render } from "@testing-library/react";
@@ -8,6 +10,8 @@ import type { Checkpoint } from "@forge/shared";
 import { CheckpointLabelEditor } from "./CheckpointLabelEditor.js";
 import { LanguageProvider } from "./i18n/LanguageContext.js";
 import { ThemeProvider } from "./theme/ThemeContext.js";
+
+const checkpointLabelEditorSrc = readFileSync(new URL("./CheckpointLabelEditor.tsx", import.meta.url), "utf8");
 
 /** Same jsdom-swap technique as EntityLabelEditor.test.ts, whose click-to-edit shape this component mirrors exactly. */
 async function withJsdom<T>(fn: () => Promise<T> | T): Promise<T> {
@@ -62,7 +66,7 @@ const checkpoint: Checkpoint = {
   createdAt: new Date().toISOString(),
 };
 
-function renderEditor(onRenamed: (c: Checkpoint) => void, readOnly = false) {
+function renderEditor(onRenamed: (c: Checkpoint) => void, readOnly = false, disabled = false) {
   render(
     React.createElement(
       ThemeProvider,
@@ -70,7 +74,7 @@ function renderEditor(onRenamed: (c: Checkpoint) => void, readOnly = false) {
       React.createElement(
         LanguageProvider,
         null,
-        React.createElement(CheckpointLabelEditor, { checkpoint, projectId: "proj1", onRenamed, readOnly }),
+        React.createElement(CheckpointLabelEditor, { checkpoint, projectId: "proj1", onRenamed, readOnly, disabled }),
       ),
     ),
   );
@@ -294,4 +298,109 @@ test("readOnly=true renders the checkpoint label as plain text, with no click ta
       globalThis.fetch = originalFetch;
     }
   });
+});
+
+/**
+ * Round 1120: HistoryPanel's own Restore/Delete buttons are disabled for
+ * EVERY row while ANY row's restore/delete is in flight (see their own
+ * doc comment), but this editor's label had no equivalent -- clicking it
+ * while a restore/delete was pending (even for this exact checkpoint)
+ * could start a concurrent renameCheckpoint request. `disabled` mirrors
+ * `readOnly`'s own already-tested rendering exactly: plain, non-
+ * interactive text, never a click target that can only ever race.
+ */
+test("disabled=true renders the checkpoint label as plain text, with no click target, role, or edit icon", async () => {
+  await withJsdom(async () => {
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = (async () => {
+      throw new Error("renameCheckpoint must never be reachable at all when disabled");
+    }) as typeof fetch;
+
+    try {
+      renderEditor(() => {}, false, true);
+
+      const label = document.querySelector(".checkpoint-label") as HTMLElement;
+      assert.ok(label, "expected the checkpoint label to still render its text");
+      assert.match(label.textContent ?? "", /Initial build/);
+      assert.equal(label.getAttribute("role"), null, "a disabled label must not look like a clickable control");
+      assert.equal(document.querySelector(".checkpoint-label-edit-icon"), null, "no edit-pencil icon while disabled");
+
+      fireEvent.click(label);
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      assert.equal(document.querySelector(".checkpoint-label-edit"), null, "clicking a disabled label must never open the rename input");
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+});
+
+/**
+ * Round 1120: the handler-level half of the same fix -- extracts the real
+ * startEditing (not reimplemented) and calls it with disabled=true and
+ * every other identifier deliberately undeclared, so that if the guard
+ * were ever removed, the very next line (`cancelling.current = false`)
+ * throws a ReferenceError instead of silently doing nothing. Mirrors the
+ * hang-proof extraction convention rounds 1117-1119 already established,
+ * rather than a full-DOM-render test with a held-open fetch gate.
+ */
+test("the real startEditing is a no-op while disabled is true", () => {
+  const handlerMatch = checkpointLabelEditorSrc.match(/ {2}function startEditing\(\) \{[\s\S]*?\n {2}\}\n/);
+  assert.ok(handlerMatch, "expected to find startEditing in CheckpointLabelEditor.tsx");
+  const { code } = transformSync(handlerMatch![0], { loader: "ts" });
+  const fn = new Function("disabled", `${code}\nreturn startEditing;`)(true) as () => void;
+  fn();
+});
+
+/**
+ * Round 1120: the other half -- extracts the real save (not reimplemented)
+ * and confirms onBusyChange fires (true) before the real renameCheckpoint
+ * call starts and (false) once it settles, on both the success and the
+ * failure path. HistoryPanel folds this into its own renamingId state, the
+ * signal its Restore/Delete buttons' disabled condition now also checks.
+ */
+test("the real save reports busy=true before renameCheckpoint starts and busy=false once it settles, on both success and failure", async () => {
+  const handlerMatch = checkpointLabelEditorSrc.match(/ {2}async function save\(\) \{[\s\S]*?\n {2}\}\n/);
+  assert.ok(handlerMatch, "expected to find save in CheckpointLabelEditor.tsx");
+  const { code } = transformSync(handlerMatch![0], { loader: "ts" });
+
+  async function runSave(renameCheckpointImpl: (...args: unknown[]) => Promise<unknown>) {
+    const busyLog: boolean[] = [];
+    const fn = new Function(
+      "cancelling",
+      "draft",
+      "checkpoint",
+      "setEditing",
+      "setBusy",
+      "onBusyChange",
+      "setError",
+      "renameCheckpoint",
+      "onRenamed",
+      `${code}\nreturn save;`,
+    )(
+      { current: false },
+      "A new, real label",
+      checkpoint,
+      () => {},
+      () => {},
+      (busy: boolean) => busyLog.push(busy),
+      () => {},
+      renameCheckpointImpl,
+      () => {},
+    ) as () => Promise<void>;
+    await fn();
+    return busyLog;
+  }
+
+  assert.deepEqual(
+    await runSave(async () => ({ checkpoint: { ...checkpoint, label: "A new, real label" } })),
+    [true, false],
+    "a successful rename must report busy=true, then busy=false, in that order",
+  );
+  assert.deepEqual(
+    await runSave(async () => {
+      throw new Error("network error");
+    }),
+    [true, false],
+    "a failed rename must still report busy=false once it settles, not leave the caller thinking it's still in flight",
+  );
 });
