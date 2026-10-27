@@ -210,6 +210,41 @@ test("a failed send still rejects its own caller, but does not block the next qu
  * prior tests' setups (a real non-zero spacing AND a failing first
  * send) to catch that gap directly.
  */
+/**
+ * Round 1126: performSend's fetch call had no timeout at all -- if Resend's
+ * API accepts the connection but never responds (the same stall
+ * anthropicFetch.ts and automations.ts's fireWebhookAction already guard
+ * against for their own external fetch calls), the old code's `await
+ * this.fetchImpl(...)` with no AbortController just never settles. Because
+ * send() chains every call through one shared `sendQueue` (see its own doc
+ * comment), that one hang would silently stall every future queued send
+ * forever, not just this one. The fake fetchImpl below mimics a real
+ * aborted fetch: it never resolves on its own, only reacting to the signal
+ * being aborted, so this only passes once performSend actually wires a
+ * timeout through to a real AbortController.
+ */
+test("ResendEmailSender.send rejects with a clear timeout error instead of hanging forever when Resend never responds, and the next queued send still goes through afterward", async () => {
+  let callCount = 0;
+  const sender = new ResendEmailSender({
+    apiKey: "re_test_key",
+    sendSpacingMs: 0,
+    requestTimeoutMs: 20,
+    fetchImpl: (_input, init) =>
+      new Promise<Response>((resolve, reject) => {
+        callCount++;
+        if (callCount === 1) {
+          init?.signal?.addEventListener("abort", () => reject(new Error("simulated network stall, aborted")));
+          return;
+        }
+        resolve(new Response(JSON.stringify({ id: "email-id" }), { status: 200 }));
+      }),
+  });
+
+  await assert.rejects(() => sender.send("dana@example.com", "one", "text"), /Resend API request timed out after 20ms/);
+  await sender.send("dana@example.com", "two", "text");
+  assert.equal(callCount, 2, "a hung first send must not block the second queued send from ever going out");
+});
+
 test("send still waits the full sendSpacingMs before the next queued send, even when the previous send failed", async () => {
   let call = 0;
   const sendTimestamps: number[] = [];

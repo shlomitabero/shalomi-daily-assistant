@@ -30,6 +30,22 @@ export interface EmailAttachment {
   content: string;
 }
 
+/**
+ * Round 1126: mirrors anthropicFetch.ts's own ANTHROPIC_REQUEST_TIMEOUT_MS
+ * and automations.ts's fireWebhookAction, both already given this exact
+ * treatment for the identical reason their own doc comments spell out -- an
+ * external `fetch` with no timeout can hang forever if the server accepts
+ * the TCP connection but never responds. This sender was the one sibling
+ * left without it, and the consequence here is worse than either of those
+ * two: performSend's caller chains every send through a single
+ * deployment-wide `sendQueue` (see its own doc comment below), so a hung
+ * performSend call never lets `queuedSend` settle, which means it never
+ * lets the queue advance -- silently stalling every future login-code
+ * email, password reset, and send_email automation for every project on
+ * the whole deployment, with no recovery short of restarting the process.
+ */
+const RESEND_REQUEST_TIMEOUT_MS = 10_000;
+
 export interface EmailSender {
   readonly configured: boolean;
   send(to: string, subject: string, text: string, attachments?: EmailAttachment[]): Promise<void>;
@@ -40,6 +56,7 @@ export class ResendEmailSender implements EmailSender {
   private readonly fromEmail: string;
   private readonly fetchImpl: typeof fetch;
   private readonly sendSpacingMs: number;
+  private readonly requestTimeoutMs: number;
   /**
    * Round 1073: mirrors whatsappWeb.ts's own per-project sendQueue (round
    * 794), for the structurally identical hazard -- EntityPanel.tsx's
@@ -57,7 +74,13 @@ export class ResendEmailSender implements EmailSender {
    */
   private sendQueue: Promise<void> = Promise.resolve();
 
-  constructor(options?: { apiKey?: string; fromEmail?: string; fetchImpl?: typeof fetch; sendSpacingMs?: number }) {
+  constructor(options?: {
+    apiKey?: string;
+    fromEmail?: string;
+    fetchImpl?: typeof fetch;
+    sendSpacingMs?: number;
+    requestTimeoutMs?: number;
+  }) {
     this.apiKey = options?.apiKey ?? process.env.RESEND_API_KEY;
     this.fromEmail = options?.fromEmail ?? process.env.RESEND_FROM_EMAIL ?? "Forge AI <onboarding@resend.dev>";
     this.fetchImpl = options?.fetchImpl ?? fetch;
@@ -66,6 +89,10 @@ export class ResendEmailSender implements EmailSender {
     // real spacing delays, the same reason whatsappWeb.ts's own
     // sendSpacingMs is injectable.
     this.sendSpacingMs = options?.sendSpacingMs ?? 600;
+    // Kept injectable for the same reason as sendSpacingMs above -- a test
+    // proving the timeout actually fires shouldn't have to wait out a real
+    // 10s budget.
+    this.requestTimeoutMs = options?.requestTimeoutMs ?? RESEND_REQUEST_TIMEOUT_MS;
   }
 
   get configured(): boolean {
@@ -101,17 +128,30 @@ export class ResendEmailSender implements EmailSender {
   }
 
   private async performSend(to: string, subject: string, text: string, attachments?: EmailAttachment[]): Promise<void> {
-    const res = await this.fetchImpl("https://api.resend.com/emails", {
-      method: "POST",
-      headers: { Authorization: `Bearer ${this.apiKey}`, "content-type": "application/json" },
-      body: JSON.stringify({
-        from: this.fromEmail,
-        to,
-        subject,
-        text,
-        ...(attachments && attachments.length > 0 ? { attachments } : {}),
-      }),
-    });
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), this.requestTimeoutMs);
+    let res: Response;
+    try {
+      res = await this.fetchImpl("https://api.resend.com/emails", {
+        method: "POST",
+        headers: { Authorization: `Bearer ${this.apiKey}`, "content-type": "application/json" },
+        body: JSON.stringify({
+          from: this.fromEmail,
+          to,
+          subject,
+          text,
+          ...(attachments && attachments.length > 0 ? { attachments } : {}),
+        }),
+        signal: controller.signal,
+      });
+    } catch (err) {
+      if (controller.signal.aborted) {
+        throw new Error(`Resend API request timed out after ${this.requestTimeoutMs}ms`);
+      }
+      throw err;
+    } finally {
+      clearTimeout(timeout);
+    }
     if (!res.ok) {
       const body = await res.text().catch(() => "");
       throw new Error(`Resend API request failed (${res.status}): ${body}`);
