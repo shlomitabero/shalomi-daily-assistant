@@ -769,6 +769,76 @@ test("an incoming WhatsApp emoji reaction (and its removal) is logged with the r
  * message shape is deliberately NOT guessed at -- it's still skipped
  * exactly as before this fix, the same as a message with no body at all.
  */
+/**
+ * Round 1121: a "View once" photo/video -- WhatsApp's own one-tap toggle on
+ * the camera UI, ordinary usage (e.g. a payment-proof photo), not an edge
+ * case -- was previously dropped with zero trace. Baileys wraps the real
+ * imageMessage/videoMessage one level down inside viewOnceMessage/
+ * viewOnceMessageV2 instead of populating imageMessage/videoMessage
+ * directly, so the existing branches never matched. Covers both wrapper
+ * field versions, an inner type that already has its own placeholder
+ * (photo with caption, video without), and no match at all (an empty
+ * wrapper) to confirm it falls back to a plain "[View once]" rather than
+ * throwing or printing nothing.
+ */
+test("an incoming WhatsApp 'View once' photo/video (across both wrapper field versions) is logged with its inner placeholder prefixed with [View once] instead of being silently dropped", async () => {
+  const { manager, createdSockets, db } = setupManager();
+  insertProject(db, project);
+  applyMigrations(db, project.id, project.spec);
+  markProjectBuilt(db, project.id);
+
+  await manager.connect(project.id);
+  createdSockets[0].emitConnectionUpdate({ connection: "open" });
+
+  createdSockets[0].emitMessagesUpsert({
+    type: "notify",
+    messages: [
+      { key: { remoteJid: "972501234567@s.whatsapp.net", fromMe: false }, message: { viewOnceMessageV2: { message: { imageMessage: { caption: "אישור תשלום" } } } } },
+      { key: { remoteJid: "972501234567@s.whatsapp.net", fromMe: false }, message: { viewOnceMessage: { message: { videoMessage: {} } } } },
+      { key: { remoteJid: "972501234567@s.whatsapp.net", fromMe: false }, message: { viewOnceMessageV2: { message: {} } } },
+    ],
+  });
+
+  // listWhatsAppMessages orders newest-first, the reverse of emission order.
+  const { messages } = listWhatsAppMessages(db, project.id);
+  assert.equal(messages.length, 3);
+  assert.equal(messages[0].body, "[View once]", "an empty inner message must fall back to a plain placeholder, not print nothing or throw");
+  assert.equal(messages[1].body, "[View once] [Video]", "the older viewOnceMessage field must be unwrapped too, not just viewOnceMessageV2");
+  assert.equal(messages[2].body, "[View once] [Photo] אישור תשלום", "the inner photo's own caption must still come through");
+  for (const m of messages) assert.equal(m.direction, "in", "every placeholder row must still be a real, matched-against incoming message, not metadata");
+});
+
+/**
+ * Round 1121: a live-location share (WhatsApp's continuous-sharing mode,
+ * started from the attachment picker) is a distinct field from the
+ * already-handled locationMessage (a single pinned location, round 1035)
+ * and was previously dropped with zero trace the same way.
+ */
+test("an incoming WhatsApp live-location share is logged with a descriptive placeholder instead of being silently dropped", async () => {
+  const { manager, createdSockets, db } = setupManager();
+  insertProject(db, project);
+  applyMigrations(db, project.id, project.spec);
+  markProjectBuilt(db, project.id);
+
+  await manager.connect(project.id);
+  createdSockets[0].emitConnectionUpdate({ connection: "open" });
+
+  createdSockets[0].emitMessagesUpsert({
+    type: "notify",
+    messages: [
+      { key: { remoteJid: "972501234567@s.whatsapp.net", fromMe: false }, message: { liveLocationMessage: { caption: "בדרך אליכם" } } },
+      { key: { remoteJid: "972501234567@s.whatsapp.net", fromMe: false }, message: { liveLocationMessage: {} } },
+    ],
+  });
+
+  // listWhatsAppMessages orders newest-first, the reverse of emission order.
+  const { messages } = listWhatsAppMessages(db, project.id);
+  assert.equal(messages.length, 2);
+  assert.equal(messages[0].body, "[Live location]", "a live-location share with no caption must fall back to a plain placeholder, not print nothing or throw");
+  assert.equal(messages[1].body, "[Live location] בדרך אליכם");
+  for (const m of messages) assert.equal(m.direction, "in", "every placeholder row must still be a real, matched-against incoming message, not metadata");
+});
+
 test("an incoming message of a completely unrecognized shape is still skipped, not guessed at", async () => {
   const { manager, createdSockets, db } = setupManager();
   insertProject(db, project);

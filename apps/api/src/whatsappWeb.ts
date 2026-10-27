@@ -113,6 +113,9 @@ export interface BaileysIncomingMessage {
     pollCreationMessageV3?: { name?: string };
     pollCreationMessageV5?: { name?: string };
     reactionMessage?: { text?: string };
+    liveLocationMessage?: { caption?: string };
+    viewOnceMessage?: { message?: BaileysIncomingMessage["message"] };
+    viewOnceMessageV2?: { message?: BaileysIncomingMessage["message"] };
   };
 }
 
@@ -203,6 +206,18 @@ const CONNECTION_LOST_MESSAGE = "The WhatsApp connection was lost. Click Connect
  * `displayName`/`contacts` are plaintext in the protobuf, the same
  * stable shape round 1035 already verified for the singular
  * contactMessage case.
+ *
+ * Round 1121: a "View once" photo/video -- WhatsApp's own one-tap toggle on
+ * the camera UI, ordinary usage (e.g. a payment-proof photo), not an edge
+ * case -- wraps the real imageMessage/videoMessage one level down inside
+ * viewOnceMessage/viewOnceMessageV2 (proto.Message.IFutureProofMessage's
+ * own `message` field, a full nested IMessage) instead of populating
+ * imageMessage/videoMessage directly, so it fell through to the same
+ * silent drop as every other still-unrecognized shape. A live-location
+ * share (WhatsApp's continuous-sharing mode, proto.Message.
+ * ILiveLocationMessage) is a distinct field from the already-handled
+ * locationMessage (a single pinned location) and was missed the same way.
+ * Both confirmed directly against Baileys' own shipped protobuf types.
  */
 function describeIncomingMessage(message: BaileysIncomingMessage["message"]): string | null {
   if (!message) return null;
@@ -221,6 +236,9 @@ function describeIncomingMessage(message: BaileysIncomingMessage["message"]): st
     const detail = message.locationMessage.name || message.locationMessage.address;
     return detail ? `[Location] ${detail}` : "[Location]";
   }
+  if (message.liveLocationMessage) {
+    return message.liveLocationMessage.caption ? `[Live location] ${message.liveLocationMessage.caption}` : "[Live location]";
+  }
   if (message.contactMessage) {
     const name = message.contactMessage.displayName;
     return name ? `[Contact: ${name}]` : "[Contact]";
@@ -233,6 +251,11 @@ function describeIncomingMessage(message: BaileysIncomingMessage["message"]): st
     message.pollCreationMessage ?? message.pollCreationMessageV2 ?? message.pollCreationMessageV3 ?? message.pollCreationMessageV5;
   if (poll) return poll.name ? `[Poll] ${poll.name}` : "[Poll]";
   if (message.reactionMessage) return message.reactionMessage.text ? `[Reaction] ${message.reactionMessage.text}` : "[Reaction removed]";
+  const viewOnceInner = message.viewOnceMessageV2?.message ?? message.viewOnceMessage?.message;
+  if (viewOnceInner) {
+    const inner = describeIncomingMessage(viewOnceInner);
+    return inner ? `[View once] ${inner}` : "[View once]";
+  }
   return null;
 }
 
