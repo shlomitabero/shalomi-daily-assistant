@@ -7217,25 +7217,39 @@ export function GlobalSearch({ entities, onClose, onJumpToEntity, onJumpToRecord
         // position, so a keyboard-highlighted group could land at a
         // different slot after reordering while selectedIndex still named
         // its OLD slot. Resolves the same entity to its new slot instead.
+        // Round 1083: mirrors the live preview's own fix (GlobalSearchPanel.tsx)
+        // -- nothing disables a DIFFERENT group's own "Show all" button
+        // while one group's is loading (showAllLoading only disables the
+        // clicked group's own button), so two groups' own "Show all"
+        // clicks fired close together both captured the IDENTICAL stale
+        // results snapshot from the same render. Reading that closure
+        // directly here (rather than the functional (prev) => ... form the
+        // sibling removal branch above already uses) meant whichever
+        // fetch resolved SECOND recomputed nextResults from that same
+        // stale array and silently reverted the first group's just-applied
+        // totalMatches patch. selectedIndex resolution still can't thread
+        // a value out of the updater synchronously (see below), so it's
+        // resolved INSIDE the updater instead, against the guaranteed-fresh
+        // prev-derived nextResults.
         // React doesn't guarantee a setState updater function runs
         // synchronously at the point it's passed to the setter (confirmed
         // empirically: a resolvedSelectedIndex written inside a setResults
         // updater was still its initial value on the very next line) -- so
         // the new index can't be threaded through a side-effect variable
-        // written by that updater. Computes the sorted array directly from
-        // the current results closure instead (the same closure-read
-        // tolerance entityName/full.length just above already rely on), so
-        // the resolved index is known synchronously, before either
-        // setState call.
+        // written by that updater and read right after the setResults
+        // call. Calling setSelectedIndex from INSIDE the updater instead
+        // sidesteps that entirely.
         const selectedEntityName = selectedIndex !== null ? results[selectedIndex]?.entityName ?? null : null;
-        const nextResults = results
-          .map((r) => (r.entityName === entityName ? { ...r, totalMatches: full.length } : r))
-          .sort((a, b) => b.totalMatches - a.totalMatches);
-        setResults(nextResults);
-        if (selectedEntityName !== null) {
-          const newIndex = nextResults.findIndex((r) => r.entityName === selectedEntityName);
-          setSelectedIndex(newIndex === -1 ? null : newIndex);
-        }
+        setResults((prev) => {
+          const nextResults = prev
+            .map((r) => (r.entityName === entityName ? { ...r, totalMatches: full.length } : r))
+            .sort((a, b) => b.totalMatches - a.totalMatches);
+          if (selectedEntityName !== null) {
+            const newIndex = nextResults.findIndex((r) => r.entityName === selectedEntityName);
+            setSelectedIndex(newIndex === -1 ? null : newIndex);
+          }
+          return nextResults;
+        });
       }
       // Round 904: a failed "Show all" (just below) surfaces through this
       // same shared error banner -- succeeding on a later retry must clear

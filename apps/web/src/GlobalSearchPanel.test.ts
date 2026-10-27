@@ -660,6 +660,114 @@ test("GlobalSearchPanel's handleShowAll keeps a keyboard-highlighted group ident
 });
 
 /**
+ * Regression test for round 1083: nothing disables a DIFFERENT group's own
+ * "Show all" button while one group's is loading (showAllLoading only
+ * disables the clicked group's own button) -- so two groups' own "Show
+ * all" clicks, fired close enough together that neither's fetch resolves
+ * before the other starts, both capture the IDENTICAL `results` snapshot
+ * from the same render. Before this round, the normal (non-removal)
+ * branch patched totalMatches by reading that closure-captured `results`
+ * directly instead of the functional `(prev) => ...` form the sibling
+ * removal branch already used -- whichever fetch resolved SECOND then
+ * overwrote state computed from the SAME stale array, silently reverting
+ * the first group's already-applied patch. Resolves Customer's fetch
+ * first, then Order's, to prove Order's later write doesn't erase
+ * Customer's earlier one.
+ */
+test("GlobalSearchPanel's handleShowAll never loses one group's own totalMatches patch to a second group's concurrent 'Show all', regardless of which one's fetch resolves first", async () => {
+  const handlerMatch = globalSearchPanelSrc.match(/ {2}async function handleShowAll\(entityName: string\) \{[\s\S]*?\n {2}\}\n/);
+  assert.ok(handlerMatch, "expected to find handleShowAll in GlobalSearchPanel.tsx");
+  const { code } = transformSync(handlerMatch![0], { loader: "ts" });
+
+  const entityOrder = { name: "Order", label: "Order", fields: [] };
+  const entityCustomer = { name: "Customer", label: "Customer", fields: [] };
+
+  function fakeSearchEntityRecords(entity: { name: string; label: string }, records: unknown[]) {
+    return { entityName: entity.name, entityLabel: entity.label, totalMatches: records.length, sample: records };
+  }
+
+  let results: { entityName: string; entityLabel: string; totalMatches: number; sample: unknown[] }[] = [
+    { entityName: "Order", entityLabel: "Order", totalMatches: 5, sample: [] },
+    { entityName: "Customer", entityLabel: "Customer", totalMatches: 5, sample: [] },
+  ];
+  const searchRequestId = { current: 0 };
+
+  const resolvers: Record<string, () => void> = {};
+  const held: Record<string, Promise<void>> = {
+    Order: new Promise((resolve) => {
+      resolvers.Order = resolve;
+    }),
+    Customer: new Promise((resolve) => {
+      resolvers.Customer = resolve;
+    }),
+  };
+
+  const fn = new Function(
+    "entities",
+    "projectId",
+    "listRecords",
+    "searchEntityRecords",
+    "highlightQuery",
+    "lastRecordsByEntityRef",
+    "setShowAllLoading",
+    "setExpandedSamples",
+    "searchRequestId",
+    "lang",
+    "setError",
+    "errorFromShowAllRef",
+    "setResults",
+    "results",
+    "selectedIndex",
+    "setSelectedIndex",
+    `${code}\nreturn handleShowAll;`,
+  )(
+    [entityOrder, entityCustomer],
+    "proj1",
+    async (_projectId: string, entityName: string) => {
+      await held[entityName];
+      // Real, distinct fresh counts for each entity -- confirms each
+      // group's own patch survives with its own correct value, not just
+      // that the array still has two entries.
+      const count = entityName === "Order" ? 20 : 36;
+      return { records: new Array(count).fill(0).map((_, i) => ({ id: i, name: `${entityName}-${i}` })) };
+    },
+    fakeSearchEntityRecords,
+    "smith",
+    { current: {} },
+    () => {},
+    () => {},
+    searchRequestId,
+    "en",
+    () => {},
+    { current: false },
+    (next: typeof results | ((prev: typeof results) => typeof results)) => {
+      results = typeof next === "function" ? (next as (prev: typeof results) => typeof results)(results) : next;
+    },
+    results,
+    null,
+    () => {},
+  ) as (entityName: string) => Promise<void>;
+
+  const orderPromise = fn("Order");
+  const customerPromise = fn("Customer");
+  await Promise.resolve(); // let both calls actually start and reach their held-open listRecords calls
+
+  // Customer's fetch resolves FIRST, patching its own count and writing
+  // results -- then Order's resolves SECOND. With the bug, Order's own
+  // write recomputes from the stale pre-Customer-patch array and silently
+  // reverts Customer's just-applied patch back to 5.
+  resolvers.Customer();
+  await customerPromise;
+  resolvers.Order();
+  await orderPromise;
+
+  const byName = new Map(results.map((r) => [r.entityName, r.totalMatches]));
+  assert.equal(byName.get("Customer"), 36, "Customer's own patch must survive Order's later concurrent write, not get silently reverted back to 5");
+  assert.equal(byName.get("Order"), 20, "Order's own patch must also be applied correctly");
+  assert.equal(results.length, 2, "neither group must be duplicated or dropped");
+});
+
+/**
  * Regression test for round 663: handleShowAll had no catch clause at all,
  * unlike runSearch's own identical listRecords call above it in this same
  * file -- a rejected fetch (a timeout, a cold-starting backend, an entity

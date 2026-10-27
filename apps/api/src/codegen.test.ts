@@ -8857,6 +8857,123 @@ test("the exported GlobalSearch keeps a keyboard-highlighted result group identi
 });
 
 /**
+ * Round 1083: mirrors the live Forge AI preview's own round-1083 fix
+ * (GlobalSearchPanel.tsx) -- nothing disables a DIFFERENT group's own
+ * "Show all" button while one group's is loading (showAllLoading only
+ * disables the clicked group's own button, confirmed above), so clicking
+ * BOTH Service's and Customer's "Show all" before either fetch resolves
+ * captures the identical results snapshot for both. Before this round,
+ * patching totalMatches read that snapshot directly instead of the
+ * functional (prev) => ... form -- resolving Customer's fetch first then
+ * Service's second meant Service's later write recomputed from the SAME
+ * stale array and silently reverted Customer's already-applied patch.
+ * Holds both groups' own /api/Customer and /api/Service fetches open,
+ * clicks both "Show all" buttons, then resolves Customer's first and
+ * Service's second, to prove Service's later write doesn't erase
+ * Customer's earlier one.
+ */
+test("the exported GlobalSearch never loses one group's own totalMatches patch to a second group's concurrent 'Show all', regardless of which one's fetch resolves first", async () => {
+  const files = generateExportFiles(project);
+  const dir = writeGeneratedWebComponent(files);
+  let resolveCustomer!: () => void;
+  let resolveService!: () => void;
+  const customerHeld = new Promise<void>((resolve) => {
+    resolveCustomer = resolve;
+  });
+  const serviceHeld = new Promise<void>((resolve) => {
+    resolveService = resolve;
+  });
+  let customerFetchCount = 0;
+  let serviceFetchCount = 0;
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = (async (input: string): Promise<Response> => {
+    if (input === "/api/Customer") {
+      customerFetchCount += 1;
+      if (customerFetchCount > 1) await customerHeld; // the "Show all" fetch stays open until explicitly resolved below
+      const count = customerFetchCount === 1 ? 8 : 36;
+      const records = new Array(count).fill(0).map((_, i) => ({ id: i, name: `smith customer ${i}`, status: "New" }));
+      return new Response(JSON.stringify({ records }), { status: 200, headers: { "content-type": "application/json" } });
+    }
+    if (input === "/api/Service") {
+      if (serviceFetchCount > 0) await serviceHeld; // the "Show all" fetch stays open until explicitly resolved below
+      serviceFetchCount += 1;
+      const count = serviceFetchCount === 1 ? 20 : 50;
+      const records = new Array(count).fill(0).map((_, i) => ({ id: i, title: `smith service ${i}` }));
+      return new Response(JSON.stringify({ records }), { status: 200, headers: { "content-type": "application/json" } });
+    }
+    throw new Error(`unexpected request ${input}`);
+  }) as typeof fetch;
+
+  try {
+    await withRealLocalStorage(async () => {
+      const { GlobalSearch } = await import(path.join(dir, "web", "src", "components", "GlobalSearch.jsx"));
+      const { container } = render(
+        React.createElement(GlobalSearch, {
+          entities: project.spec.entities,
+          onClose: () => {},
+          onJumpToEntity: () => {},
+          onJumpToRecord: () => {},
+        }),
+      );
+
+      const input = container.querySelector(".global-search-input") as HTMLInputElement;
+      const form = container.querySelector("form.global-search-form") as HTMLFormElement;
+      await act(async () => {
+        fireEvent.change(input, { target: { value: "smith" } });
+        fireEvent.submit(form);
+      });
+      for (let i = 0; i < 40 && container.querySelectorAll(".global-search-group").length < 2; i++) {
+        await act(async () => {
+          await new Promise((resolve) => setTimeout(resolve, 0));
+        });
+      }
+      const labelsBefore = Array.from(container.querySelectorAll(".global-search-entity-label")).map((el) => el.textContent);
+      assert.deepEqual(labelsBefore, ["שירותים", "לקוחות"], "sanity check: Service (20 matches) must rank above Customer (8) at the original search");
+
+      const groupFor = (label: string) =>
+        Array.from(container.querySelectorAll(".global-search-group")).find((g) => g.querySelector(".global-search-entity-label")?.textContent === label) as HTMLElement;
+
+      // Click BOTH groups' own "Show all" before either fetch resolves --
+      // both handleShowAll calls capture the identical results snapshot.
+      await act(async () => {
+        fireEvent.click(groupFor("שירותים").querySelector(".global-search-show-all") as HTMLButtonElement);
+        fireEvent.click(groupFor("לקוחות").querySelector(".global-search-show-all") as HTMLButtonElement);
+      });
+
+      // Customer's fetch resolves FIRST, patching its own count -- then
+      // Service's resolves SECOND. With the bug, Service's own write
+      // would silently revert Customer's just-applied patch back to 8.
+      resolveCustomer();
+      for (let i = 0; i < 40; i++) {
+        const customerLabel = groupFor("לקוחות")?.querySelector(".global-search-group-header")?.textContent ?? "";
+        if (/36/.test(customerLabel)) break;
+        await act(async () => {
+          await new Promise((resolve) => setTimeout(resolve, 0));
+        });
+      }
+      resolveService();
+      for (let i = 0; i < 40; i++) {
+        const serviceLabel = groupFor("שירותים")?.querySelector(".global-search-group-header")?.textContent ?? "";
+        if (/50/.test(serviceLabel)) break;
+        await act(async () => {
+          await new Promise((resolve) => setTimeout(resolve, 0));
+        });
+      }
+
+      const customerCount = groupFor("לקוחות")?.querySelector(".global-search-group-header")?.textContent ?? "";
+      const serviceCount = groupFor("שירותים")?.querySelector(".global-search-group-header")?.textContent ?? "";
+      assert.match(customerCount, /36/, "Customer's own patch must survive Service's later concurrent write, not get silently reverted back to 8");
+      assert.match(serviceCount, /50/, "Service's own patch must also be applied correctly");
+      assert.equal(container.querySelectorAll(".global-search-group").length, 2, "neither group must be duplicated or dropped");
+    });
+  } finally {
+    globalThis.fetch = originalFetch;
+    cleanup();
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+/**
  * Round 494's finding: the exported app's GlobalSearch never got the live
  * preview's own round-290 "Escape clears the query first" behavior
  * (GlobalSearchPanel.tsx's own handleInputKeyDown + its

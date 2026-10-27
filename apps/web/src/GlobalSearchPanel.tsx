@@ -357,26 +357,54 @@ export function GlobalSearchPanel({
         // Resolves the SAME entity to its new slot instead of leaving a
         // stale number, so Enter still jumps to whatever the user actually
         // highlighted, not whatever reordering happened to leave behind.
+        // Round 1083: reading the `results` closure here (instead of the
+        // functional `(prev) => ...` updater form the sibling removal
+        // branch above already uses) meant two different groups' own
+        // "Show all" clicks, fired close enough together that neither's
+        // fetch resolves before the other starts (nothing disables a
+        // DIFFERENT group's own button while one is loading -- only
+        // showAllLoading's own group is disabled), both captured the
+        // IDENTICAL stale `results` snapshot from the same render.
+        // Whichever fetch resolved second then recomputed nextResults from
+        // that same stale array and overwrote state, silently reverting
+        // the first group's just-applied totalMatches patch back to its
+        // old value -- even though that first group's own expandedSamples
+        // (set via the already-functional setExpandedSamples above) really
+        // did show the fresh, fully-loaded rows. Switching to the
+        // functional form fixes this the same way the removal branch
+        // above already relies on: `prev` is always the true latest state
+        // at the moment this update actually applies, regardless of which
+        // of two concurrent calls resolves first.
+        //
+        // selectedIndex resolution still can't use that same trick on its
+        // own (the comment below explains why), so it's resolved HERE,
+        // inside the setResults updater, against the same guaranteed-fresh
+        // `prev`-derived nextResults -- not after the setResults call the
+        // way it used to be, since outside the updater there is no longer
+        // any synchronous `nextResults` variable to read at all.
+        //
         // React doesn't guarantee a setState updater function runs
         // synchronously at the point it's passed to the setter (confirmed
         // empirically, against the real exported app's equivalent in
         // codegen.ts: a value written inside a setResults updater was
         // still unset on the very next line) -- so the new index can't be
-        // threaded through a side-effect variable written by that updater.
-        // Computes the sorted array directly from the current `results`
-        // closure instead (the same closure-read tolerance `entityName`/
-        // `full.sample.length` just above already rely on), so the
-        // resolved index is known synchronously, before either setState
-        // call.
+        // threaded through a side-effect variable written by that updater
+        // and read right after the setResults call. Calling setSelectedIndex
+        // from INSIDE the updater instead sidesteps that entirely: it runs
+        // the moment the updater itself runs (not "the next line" after
+        // the outer setResults call returns), with nextResults already in
+        // scope.
         const selectedEntityName = selectedIndex !== null ? results[selectedIndex]?.entityName ?? null : null;
-        const nextResults = results
-          .map((r) => (r.entityName === entityName ? { ...r, totalMatches: full.sample.length } : r))
-          .sort((a, b) => b.totalMatches - a.totalMatches);
-        setResults(nextResults);
-        if (selectedEntityName !== null) {
-          const newIndex = nextResults.findIndex((r) => r.entityName === selectedEntityName);
-          setSelectedIndex(newIndex === -1 ? null : newIndex);
-        }
+        setResults((prev) => {
+          const nextResults = prev
+            .map((r) => (r.entityName === entityName ? { ...r, totalMatches: full.sample.length } : r))
+            .sort((a, b) => b.totalMatches - a.totalMatches);
+          if (selectedEntityName !== null) {
+            const newIndex = nextResults.findIndex((r) => r.entityName === selectedEntityName);
+            setSelectedIndex(newIndex === -1 ? null : newIndex);
+          }
+          return nextResults;
+        });
       }
       // Round 904: a failed "Show all" (just below) surfaces through this
       // same shared `error` banner -- succeeding on a later retry must
