@@ -1272,6 +1272,48 @@ export function createProjectsRouter(
   });
 
   /**
+   * Round 1109: the entire pre-build spec-editing route family -- add/
+   * remove/rename an entity or field, change a field's type/required flag,
+   * and append/edit/remove a role, assumption, or persona -- had NO
+   * volumetric throttle at all, unlike every other repeatable, server-
+   * cost-bearing route family in this file (aiGenerationRateLimiter,
+   * whatsappRateLimiter, inviteCollaboratorRateLimiter,
+   * expensiveReadRateLimiter, fileUploadRateLimiter, entityCountsRateLimiter
+   * above). Each of these routes is a synchronous read-project.spec-then-
+   * write-it-back round trip with no cap on how large the spec can grow:
+   * neither `EntitySchema.fields` nor `ProductSpecSchema.entities`/`roles`/
+   * `assumptions` (@forge/shared) carry a `.max()`, and updateProjectSpec
+   * (packages/db/src/projects.ts) does a synchronous `JSON.stringify`
+   * write immediately followed by a full `getProject` re-read that
+   * re-validates the ENTIRE spec via `ProductSpecSchema.parse` --
+   * including its own O(entities)/O(fields) duplicate-name refines -- with
+   * no `await` anywhere in the real work. Any signed-up account (signup
+   * and project creation are both free, and the project never needs to
+   * actually be built) can script repeated calls against one project of
+   * their own; each call's cost grows with the spec's own size, so N calls
+   * that each add one entity/field cost roughly O(N^2) total synchronous
+   * CPU time on this app's single Node event loop -- the exact "no
+   * horizontal scaling to absorb this" hazard expensiveReadRateLimiter's
+   * own doc comment above already names, just never extended to this
+   * route family. One shared limiter across the whole family, the same
+   * "one real budget, not N independent concerns" reasoning
+   * aiGenerationRateLimiter below already uses, since "how much spec-
+   * mutation work can this account trigger" is a single question
+   * regardless of which of these routes answers it. A higher cap than
+   * expensiveReadRateLimiter's 20: unlike that budget's heavy, rare
+   * export/backup/twin calls, these are the routine, one-click-at-a-time
+   * edits a user makes while actively building out a project's spec by
+   * hand (adding several entities/fields in one sitting is ordinary, not
+   * suspicious).
+   */
+  const specEditRateLimiter = createRateLimiter({
+    windowMs: 15 * 60 * 1000,
+    max: 60,
+    keyGenerator: (req) => req.userId ?? "unknown",
+    message: "Too many spec edit requests. Please try again later.",
+  });
+
+  /**
    * /build, /refine, and /answers each read `project.spec` once at the
    * start of the request, then spend real time (an AI/heuristic
    * spec-generation call, and for /build and /refine also a migration)
@@ -2883,6 +2925,7 @@ export function createProjectsRouter(
    */
   router.patch(
     "/projects/:id/entities/:entityName/label",
+    specEditRateLimiter,
     asyncRoute(async (req, res) => {
       const project = requireProjectWriteAccess(db, req.params.id, req.userId!);
       // Same read-project.spec-then-write-it-back shape /build, /refine,
@@ -2930,6 +2973,7 @@ export function createProjectsRouter(
   /** Round 960: same withIdempotency() extension as the entity-label PATCH route just above -- see its own doc comment. */
   router.patch(
     "/projects/:id/entities/:entityName/fields/:fieldName/label",
+    specEditRateLimiter,
     asyncRoute(async (req, res) => {
       const project = requireProjectWriteAccess(db, req.params.id, req.userId!);
       // Same activePipelines guard as the entity-label route above, for the
@@ -2980,6 +3024,7 @@ export function createProjectsRouter(
   /** Round 960: same withIdempotency() extension as the entity-label PATCH route above -- see its own doc comment. */
   router.patch(
     "/projects/:id/entities/:entityName/fields/:fieldName/required",
+    specEditRateLimiter,
     asyncRoute(async (req, res) => {
       const project = requireProjectWriteAccess(db, req.params.id, req.userId!);
       if (project.status === "built") {
@@ -3059,6 +3104,7 @@ export function createProjectsRouter(
   /** Round 960: same withIdempotency() extension as the entity-label PATCH route above -- see its own doc comment. */
   router.patch(
     "/projects/:id/entities/:entityName/fields/:fieldName/type",
+    specEditRateLimiter,
     asyncRoute(async (req, res) => {
       const project = requireProjectWriteAccess(db, req.params.id, req.userId!);
       if (project.status === "built") {
@@ -3197,6 +3243,7 @@ export function createProjectsRouter(
    */
   router.post(
     "/projects/:id/roles",
+    specEditRateLimiter,
     asyncRoute(async (req, res) => {
       const project = requireProjectWriteAccess(db, req.params.id, req.userId!);
       // Same activePipelines guard as the entity/field-label routes above --
@@ -3223,6 +3270,7 @@ export function createProjectsRouter(
   /** See POST /projects/:id/roles's own doc comment just above -- same extension, same reasoning. */
   router.post(
     "/projects/:id/assumptions",
+    specEditRateLimiter,
     asyncRoute(async (req, res) => {
       const project = requireProjectWriteAccess(db, req.params.id, req.userId!);
       // Same activePipelines guard as /roles above -- see its own comment.
@@ -3256,6 +3304,7 @@ export function createProjectsRouter(
    */
   router.post(
     "/projects/:id/personas",
+    specEditRateLimiter,
     asyncRoute(async (req, res) => {
       const project = requireProjectWriteAccess(db, req.params.id, req.userId!);
       // Same activePipelines guard as /roles above -- see its own comment.
@@ -3291,6 +3340,7 @@ export function createProjectsRouter(
    */
   router.delete(
     "/projects/:id/roles/:index",
+    specEditRateLimiter,
     asyncRoute(async (req, res) => {
       const project = requireProjectWriteAccess(db, req.params.id, req.userId!);
       // Same activePipelines guard as /roles POST above -- see its own comment.
@@ -3315,6 +3365,7 @@ export function createProjectsRouter(
   /** Round 943: same withIdempotency() extension as the roles DELETE route just above -- see its own doc comment. */
   router.delete(
     "/projects/:id/assumptions/:index",
+    specEditRateLimiter,
     asyncRoute(async (req, res) => {
       const project = requireProjectWriteAccess(db, req.params.id, req.userId!);
       // Same activePipelines guard as /roles POST above -- see its own comment.
@@ -3352,6 +3403,7 @@ export function createProjectsRouter(
    */
   router.delete(
     "/projects/:id/personas/:index",
+    specEditRateLimiter,
     asyncRoute(async (req, res) => {
       const project = requireProjectWriteAccess(db, req.params.id, req.userId!);
       // Same activePipelines guard as /roles POST above -- see its own comment.
@@ -3401,6 +3453,7 @@ export function createProjectsRouter(
    */
   router.patch(
     "/projects/:id/roles/:index",
+    specEditRateLimiter,
     asyncRoute(async (req, res) => {
       const project = requireProjectWriteAccess(db, req.params.id, req.userId!);
       // Same activePipelines guard as /roles POST above -- see its own comment.
@@ -3426,6 +3479,7 @@ export function createProjectsRouter(
   /** Round 943: same withIdempotency() extension as the roles PATCH route just above -- see its own doc comment. */
   router.patch(
     "/projects/:id/assumptions/:index",
+    specEditRateLimiter,
     asyncRoute(async (req, res) => {
       const project = requireProjectWriteAccess(db, req.params.id, req.userId!);
       // Same activePipelines guard as /roles POST above -- see its own comment.
@@ -3471,6 +3525,7 @@ export function createProjectsRouter(
    */
   router.patch(
     "/projects/:id/personas/:index",
+    specEditRateLimiter,
     asyncRoute(async (req, res) => {
       const project = requireProjectWriteAccess(db, req.params.id, req.userId!);
       // Same activePipelines guard as /roles POST above -- see its own comment.
@@ -3539,6 +3594,7 @@ export function createProjectsRouter(
    */
   router.delete(
     "/projects/:id/entities/:entityName",
+    specEditRateLimiter,
     asyncRoute(async (req, res) => {
       const project = requireProjectWriteAccess(db, req.params.id, req.userId!);
       if (project.status === "built") {
@@ -3614,6 +3670,7 @@ export function createProjectsRouter(
   /** Same withIdempotency() extension as POST /projects/:id/roles above -- see its own doc comment. */
   router.post(
     "/projects/:id/entities",
+    specEditRateLimiter,
     asyncRoute(async (req, res) => {
       const project = requireProjectWriteAccess(db, req.params.id, req.userId!);
       if (project.status === "built") {
@@ -3674,6 +3731,7 @@ export function createProjectsRouter(
   /** Same withIdempotency() extension as POST /projects/:id/roles above -- see its own doc comment. */
   router.post(
     "/projects/:id/entities/:entityName/fields",
+    specEditRateLimiter,
     asyncRoute(async (req, res) => {
       const project = requireProjectWriteAccess(db, req.params.id, req.userId!);
       if (project.status === "built") {
@@ -3738,6 +3796,7 @@ export function createProjectsRouter(
    */
   router.delete(
     "/projects/:id/entities/:entityName/fields/:fieldName",
+    specEditRateLimiter,
     asyncRoute(async (req, res) => {
       const project = requireProjectWriteAccess(db, req.params.id, req.userId!);
       if (project.status === "built") {

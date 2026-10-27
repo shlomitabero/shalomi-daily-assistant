@@ -10686,6 +10686,77 @@ test("GET .../export, .../backup, and .../twin share one per-user rate limit: th
   });
 });
 
+/**
+ * Round 1109: the entire pre-build spec-editing route family (add/remove/
+ * rename an entity or field, roles/assumptions/personas) had NO volumetric
+ * throttle at all, unlike every other repeatable, server-cost-bearing
+ * route family in this router (aiGenerationRateLimiter, whatsappRateLimiter,
+ * inviteCollaboratorRateLimiter, expensiveReadRateLimiter,
+ * fileUploadRateLimiter, entityCountsRateLimiter) -- each call is a
+ * synchronous read-project.spec-then-write-it-back round trip with no cap
+ * on spec size, so any signed-up account could script a tight loop
+ * against their own never-built project, each call's cost growing with
+ * the spec's own size. Cycles across two representative routes from the
+ * family (POST .../roles and PATCH .../entities/:entityName/label) to
+ * prove the shared budget spans the whole family, not just one route.
+ */
+test("POST .../roles and PATCH .../entities/:entityName/label share one per-user spec-edit rate limit: the 61st call across both routes is rejected with 429, while a different account is unaffected", async () => {
+  await withServer(async (baseUrl) => {
+    const token = await signup(baseUrl, "rate-limit-spec-edit@example.com");
+    const createRes = await fetch(`${baseUrl}/api/projects`, {
+      method: "POST",
+      headers: authHeaders(token),
+      body: JSON.stringify({ description: "A CRM with customers and deals." }),
+    });
+    const { project } = (await createRes.json()) as { project: { id: string; spec: { entities: { name: string }[] } } };
+    const entityName = project.spec.entities[0].name;
+
+    for (let i = 0; i < 60; i++) {
+      const res =
+        i % 2 === 0
+          ? await fetch(`${baseUrl}/api/projects/${project.id}/roles`, {
+              method: "POST",
+              headers: authHeaders(token),
+              body: JSON.stringify({ role: `Role ${i}` }),
+            })
+          : await fetch(`${baseUrl}/api/projects/${project.id}/entities/${entityName}/label`, {
+              method: "PATCH",
+              headers: authHeaders(token),
+              body: JSON.stringify({ label: `Label ${i}` }),
+            });
+      assert.notEqual(res.status, 429, `call ${i + 1} of 60 (within the shared limit) must not be rate-limited yet`);
+    }
+
+    // The 61st call across the SAME budget, on the OTHER of the two routes
+    // -- proves this is one shared counter across the whole family, not an
+    // independent one per route.
+    const blocked = await fetch(`${baseUrl}/api/projects/${project.id}/roles`, {
+      method: "POST",
+      headers: authHeaders(token),
+      body: JSON.stringify({ role: "One role too many" }),
+    });
+    assert.equal(blocked.status, 429);
+    assert.equal(((await blocked.json()) as { code?: string }).code, "RATE_LIMITED");
+
+    // A completely different account must get its own fresh allowance --
+    // keyed by user id, not IP, so one account exhausting its own budget
+    // must never collaterally block an unrelated account.
+    const otherToken = await signup(baseUrl, "rate-limit-spec-edit-other@example.com");
+    const otherCreateRes = await fetch(`${baseUrl}/api/projects`, {
+      method: "POST",
+      headers: authHeaders(otherToken),
+      body: JSON.stringify({ description: "A separate, unrelated project." }),
+    });
+    const { project: otherProject } = (await otherCreateRes.json()) as { project: { id: string } };
+    const otherRes = await fetch(`${baseUrl}/api/projects/${otherProject.id}/roles`, {
+      method: "POST",
+      headers: authHeaders(otherToken),
+      body: JSON.stringify({ role: "A fresh role" }),
+    });
+    assert.equal(otherRes.status, 200, "a different account must not be collaterally blocked by another account's own rate limit");
+  });
+});
+
 test("a validation failure on project routes returns readable text, not Zod's raw JSON issue dump", async () => {
   await withServer(async (baseUrl) => {
     const token = await signup(baseUrl);
