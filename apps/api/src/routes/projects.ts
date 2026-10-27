@@ -48,6 +48,8 @@ import {
   insertAutomationRule,
   updateAutomationRule,
   deleteAutomationRule,
+  disableAutomationRulesForEntity,
+  disableAutomationRulesForField,
   getOrCreateCalendarFeedToken,
   regenerateCalendarFeedToken,
   isValidDateString,
@@ -3545,6 +3547,10 @@ export function createProjectsRouter(
             screens: project.spec.screens.filter((s) => s.entity !== req.params.entityName),
           };
           const updated = updateProjectSpec(db, project.id, nextSpec);
+          // Round 1099: same pre-build gap as the field-removal route's
+          // own fix just above, for a rule that triggers on this whole
+          // entity (entityName) rather than just one of its fields.
+          disableAutomationRulesForEntity(db, project.id, req.params.entityName);
           return { status: 200, body: { project: updated } };
         },
       );
@@ -3726,6 +3732,24 @@ export function createProjectsRouter(
             ),
           };
           const updated = updateProjectSpec(db, project.id, nextSpec);
+          // Round 1099: an automation rule can be created before the
+          // project's first build (round 998's own, deliberate,
+          // already-tested design -- rule creation has no project.status
+          // guard, "pre-configuring automations ahead of the first
+          // build"), which means one can already exist referencing this
+          // field by the time it's removed here. diffAndMigrate's own
+          // disable-sweep (migrate.ts) only ever runs on a REFINE, diffing
+          // against a previously-BUILT spec -- for a field added and
+          // removed entirely before the very first build, there is no
+          // "previous build" for that sweep to diff against at all, so a
+          // rule left dangling this way was never disabled by anything,
+          // anywhere: not at creation (by design), not here (missing
+          // until now), and not at the first build either. Reusing the
+          // exact same helper migrate.ts's own sweep already uses for the
+          // identical post-build case, so a pre-build removal degrades a
+          // referencing rule exactly the same way instead of leaving it to
+          // fail "no destination configured" forever with no explanation.
+          disableAutomationRulesForField(db, project.id, entity.name, req.params.fieldName);
           return { status: 200, body: { project: updated } };
         },
       );

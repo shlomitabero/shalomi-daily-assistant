@@ -13652,6 +13652,122 @@ test("a 'schedule' automation rule can't carry a leftover fieldName/fieldValue, 
 });
 
 /**
+ * Round 1099: automation rule creation deliberately has no project.status
+ * guard (round 998's own comment: "pre-configuring automations ahead of
+ * the first build" is intentional and already tested) -- so a rule can
+ * already reference a field by the time it's removed, pre-build.
+ * diffAndMigrate's own disable-sweep (migrate.ts) only ever runs on a
+ * REFINE, diffing against a previously-BUILT spec; for a field added and
+ * removed entirely before the very first build there is no "previous
+ * build" for that sweep to diff against at all, so nothing anywhere ever
+ * disabled a rule left dangling this specific way. Mirrors the exact
+ * real-field-reference scenario the field-delete route's own fix reuses
+ * from migrate.ts's sweep.
+ */
+test("removing a field pre-build disables any automation rule still referencing it as fieldName or toField, the same way a post-build refine already does", async () => {
+  await withServer(async (baseUrl, db) => {
+    const email = `prebuild-field-remove-disable-${randomUUID()}@example.com`;
+    const token = await signup(baseUrl, email);
+    const owner = findUserByEmail(db, email)!;
+
+    const spec: ProductSpec = {
+      summary: "test",
+      personas: [],
+      roles: ["Admin"],
+      entities: [
+        {
+          name: "Lead",
+          fields: [
+            { name: "name", type: "text", required: true },
+            { name: "phone", type: "text", required: true },
+          ],
+        },
+      ],
+      screens: [],
+      assumptions: [],
+      openQuestions: [],
+    };
+    const projectId = randomUUID();
+    insertProject(db, { id: projectId, ownerId: owner.id, name: "Leads", description: "test", spec });
+    // Deliberately no diffAndMigrate/markProjectBuilt here -- the project
+    // is never built, the exact pre-build window this bug lives in.
+
+    const createRes = await fetch(`${baseUrl}/api/projects/${projectId}/entities/Lead/automations`, {
+      method: "POST",
+      headers: authHeaders(token),
+      body: JSON.stringify({
+        trigger: "record_created",
+        actionType: "send_whatsapp",
+        toMode: "field",
+        toField: "phone",
+        messageTemplate: "New lead!",
+      }),
+    });
+    assert.equal(createRes.status, 201, "rule creation must still succeed pre-build -- this is the documented, intentional round-998 behavior");
+    const { rule } = (await createRes.json()) as { rule: { id: string; enabled: boolean } };
+    assert.equal(rule.enabled, true);
+
+    const deleteRes = await fetch(`${baseUrl}/api/projects/${projectId}/entities/Lead/fields/phone`, {
+      method: "DELETE",
+      headers: authHeaders(token),
+    });
+    assert.equal(deleteRes.status, 200, "the entity has a second field (name) so this is a normal field removal, not the last-field-rejection case");
+
+    const listRes = await fetch(`${baseUrl}/api/projects/${projectId}/automations`, { headers: authHeaders(token) });
+    const { rules } = (await listRes.json()) as { rules: { id: string; enabled: boolean }[] };
+    const afterRemoval = rules.find((r) => r.id === rule.id)!;
+    assert.equal(afterRemoval.enabled, false, "the rule must be disabled the moment its own toField disappears, not left dangling until some later build/refine notices");
+  });
+});
+
+/**
+ * Round 1099: same gap, the other direction -- removing a whole entity
+ * pre-build never disabled a rule that triggers on it at all (no
+ * equivalent of disableAutomationRulesForEntity was ever called from this
+ * route either).
+ */
+test("removing an entity pre-build disables any automation rule that triggers on it", async () => {
+  await withServer(async (baseUrl, db) => {
+    const email = `prebuild-entity-remove-disable-${randomUUID()}@example.com`;
+    const token = await signup(baseUrl, email);
+    const owner = findUserByEmail(db, email)!;
+
+    const spec: ProductSpec = {
+      summary: "test",
+      personas: [],
+      roles: ["Admin"],
+      entities: [
+        { name: "Lead", fields: [{ name: "name", type: "text", required: true }] },
+        { name: "Note", fields: [{ name: "text", type: "text", required: true }] },
+      ],
+      screens: [],
+      assumptions: [],
+      openQuestions: [],
+    };
+    const projectId = randomUUID();
+    insertProject(db, { id: projectId, ownerId: owner.id, name: "Leads", description: "test", spec });
+
+    const createRes = await fetch(`${baseUrl}/api/projects/${projectId}/entities/Lead/automations`, {
+      method: "POST",
+      headers: authHeaders(token),
+      body: JSON.stringify({ trigger: "record_created", actionType: "send_whatsapp", toMode: "static", toNumber: "972500000000", messageTemplate: "New lead!" }),
+    });
+    assert.equal(createRes.status, 201);
+    const { rule } = (await createRes.json()) as { rule: { id: string } };
+
+    const deleteRes = await fetch(`${baseUrl}/api/projects/${projectId}/entities/Lead`, {
+      method: "DELETE",
+      headers: authHeaders(token),
+    });
+    assert.equal(deleteRes.status, 200);
+
+    const listRes = await fetch(`${baseUrl}/api/projects/${projectId}/automations`, { headers: authHeaders(token) });
+    const { rules } = (await listRes.json()) as { rules: { id: string; enabled: boolean }[] };
+    assert.equal(rules.find((r) => r.id === rule.id)!.enabled, false, "the rule must be disabled the moment the entity it triggers on is removed");
+  });
+});
+
+/**
  * Round 967: a schedule rule's scheduleTimeUtc/scheduleDaysOfWeek are now
  * wall-clock values in its own scheduleTimezone (see isScheduledRuleDue's
  * own doc comment, apps/api/src/automations.ts), not literal UTC --
