@@ -13367,6 +13367,60 @@ test("the exported app's embedded buildZip rejects a single entry whose own file
   assert.doesNotThrow(() => buildZip([{ path: atLimit, content: "data" }]));
 });
 
+/**
+ * Round 1102: the entries.length/nameBuf.length guards above cover this
+ * writer's two 16-bit fields, but round 1038 gave zip.ts (the live app's
+ * own ZIP writer this was ported from) three MORE guards for its several
+ * 32-bit fields (each entry's own compressed/uncompressed size, its
+ * local-header offset in the central directory, and the end record's own
+ * central-directory size/offset) -- none of which were ever ported to
+ * this embedded copy, the exact "missed sibling" the round-845 test
+ * above's own doc comment warns against. Without them, an oversized
+ * entry or an oversized running total fails deep inside
+ * Buffer#writeUInt32LE with a generic, unhelpful RangeError instead of
+ * the clear "Zip64" error the live app's own backup route now gives for
+ * the identical situation. Reuses the same source-extraction technique as
+ * the tests above, and the same real-~4GB-buffer technique zip.test.ts's
+ * own round-1038 tests use (so this exercises the real generated code's
+ * own crc32/Buffer#writeUInt32LE calls, not a reimplementation).
+ */
+test("the exported app's embedded buildZip rejects a single entry whose own data exceeds the non-Zip64 32-bit size limit, matching the live zip.ts", () => {
+  const serverJs = generateExportFiles(project).find((f) => f.path === "server.js")!.content;
+  const crcTableSrc = serverJs.match(/const CRC_TABLE = \(\(\) => \{[\s\S]*?\n\}\)\(\);\n/)?.[0];
+  const crc32Src = serverJs.match(/function crc32\(buf\) \{[\s\S]*?\n\}\n/)?.[0];
+  const dosSrc = serverJs.match(/const DOS_TIME[\s\S]*?const DOS_DATE.*\n/)?.[0];
+  const buildZipSrc = serverJs.match(/function buildZip\(entries\) \{[\s\S]*?\n\}\n/)?.[0];
+  assert.ok(crcTableSrc && crc32Src && dosSrc && buildZipSrc, "expected to find CRC_TABLE/crc32/DOS_TIME/DOS_DATE/buildZip in generated server.js");
+
+  const buildZip = new Function(`${crcTableSrc}\n${crc32Src}\n${dosSrc}\n${buildZipSrc}\nreturn buildZip;`)();
+
+  const oversized = Buffer.alloc(0xffffffff + 1);
+  assert.throws(() => buildZip([{ path: "huge.csv", content: oversized }]), /Zip64/i);
+});
+
+test("the exported app's embedded buildZip rejects a running total offset across multiple entries that exceeds the non-Zip64 32-bit limit, matching the live zip.ts", () => {
+  const serverJs = generateExportFiles(project).find((f) => f.path === "server.js")!.content;
+  const crcTableSrc = serverJs.match(/const CRC_TABLE = \(\(\) => \{[\s\S]*?\n\}\)\(\);\n/)?.[0];
+  const crc32Src = serverJs.match(/function crc32\(buf\) \{[\s\S]*?\n\}\n/)?.[0];
+  const dosSrc = serverJs.match(/const DOS_TIME[\s\S]*?const DOS_DATE.*\n/)?.[0];
+  const buildZipSrc = serverJs.match(/function buildZip\(entries\) \{[\s\S]*?\n\}\n/)?.[0];
+  assert.ok(crcTableSrc && crc32Src && dosSrc && buildZipSrc, "expected to find CRC_TABLE/crc32/DOS_TIME/DOS_DATE/buildZip in generated server.js");
+
+  const buildZip = new Function(`${crcTableSrc}\n${crc32Src}\n${dosSrc}\n${buildZipSrc}\nreturn buildZip;`)();
+
+  // Comfortably under the single-entry limit (so the guard tested above
+  // never fires for THIS entry), but close enough to it that adding this
+  // entry's own local header (30 bytes) and file name tips the running
+  // total over the 32-bit limit by the time the second, tiny entry is
+  // processed.
+  const almostMax = Buffer.alloc(0xffffffff - 10);
+  assert.throws(
+    () => buildZip([{ path: "big.csv", content: almostMax }, { path: "small.csv", content: "x" }]),
+    /Zip64/i,
+    "the second entry's own local-header offset must be rejected once the running total from the first entry alone already exceeds the 32-bit limit",
+  );
+});
+
 // PWA support for the exported standalone app -- installable to a phone's
 // home screen, opening in its own window without browser chrome, and
 // staying usable through a flaky connection. Requested directly by שלומי

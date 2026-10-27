@@ -662,6 +662,18 @@ function buildZip(entries) {
   let offset = 0;
 
   for (const entry of entries) {
+    // Round 1102: mirrors the per-entry offset guard apps/api/src/zip.ts
+    // (the live app's own ZIP writer this was ported from) already has --
+    // this writer's per-entry local-header-offset field is also 32-bit
+    // (written into centralHeader below), so once every entry processed
+    // so far adds up to more than ~4GB, the NEXT entry's own offset would
+    // otherwise fail deep inside Buffer#writeUInt32LE with the same
+    // generic, unhelpful RangeError the 16-bit guards below exist to
+    // avoid. Checked before any work on this entry, since it reflects the
+    // running total from every PRIOR entry, not anything about this one.
+    if (offset > 0xffffffff) {
+      throw new Error(\`buildZip: the archive's total size so far (\${offset} bytes) exceeds the ~4GB limit of this writer's 32-bit offset field (no Zip64 support)\`);
+    }
     const nameBuf = Buffer.from(entry.path, "utf8");
     // Same reasoning as the entries.length guard above, applied to the
     // other fixed-width field this writer has to fill in per entry: the
@@ -679,7 +691,18 @@ function buildZip(entries) {
         \`buildZip: entry "\${entry.path}"'s own file name is \${nameBuf.length} bytes, exceeding the 65535-byte limit of this writer's 16-bit field (no Zip64 support)\`,
       );
     }
-    const dataBuf = Buffer.from(entry.content, "utf8");
+    const dataBuf = Buffer.isBuffer(entry.content) ? entry.content : Buffer.from(entry.content, "utf8");
+    // Round 1102: mirrors the offset guard just above, for the sibling
+    // 32-bit field this entry's own data length gets written into
+    // (writeUInt32LE(dataBuf.length, ...) below, twice) -- the identical
+    // guard apps/api/src/zip.ts already has. Checked before crc32 below
+    // ever touches this buffer, so an oversized entry fails fast instead
+    // of first paying the cost of hashing it.
+    if (dataBuf.length > 0xffffffff) {
+      throw new Error(
+        \`buildZip: entry "\${entry.path}" is \${dataBuf.length} bytes, exceeding the ~4GB limit of this writer's 32-bit size field (no Zip64 support)\`,
+      );
+    }
     const crc = crc32(dataBuf);
 
     const localHeader = Buffer.alloc(30);
@@ -721,6 +744,18 @@ function buildZip(entries) {
 
   const centralDirectory = Buffer.concat(centralParts);
   const centralDirectoryOffset = offset;
+  // Round 1102: the end record's own two 32-bit fields below (central-
+  // directory size and offset) have the identical ~4GB ceiling as every
+  // per-entry field the guards above already check -- the per-entry
+  // offset guard above only ever checks the running total BEFORE each
+  // entry's own contribution is added, so the FINAL total (the last
+  // entry's own contribution included) is never actually checked until
+  // here. Matches the identical guard apps/api/src/zip.ts already has.
+  if (centralDirectoryOffset > 0xffffffff || centralDirectory.length > 0xffffffff) {
+    throw new Error(
+      \`buildZip: the archive's total size (\${centralDirectoryOffset} bytes of file data plus a \${centralDirectory.length}-byte central directory) exceeds the ~4GB limit of this writer's 32-bit fields (no Zip64 support)\`,
+    );
+  }
 
   const end = Buffer.alloc(22);
   end.writeUInt32LE(0x06054b50, 0);
