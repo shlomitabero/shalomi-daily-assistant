@@ -4459,7 +4459,7 @@ test("WhatsAppPanel's log filter choice survives a real unmount+remount, and is 
       assert.equal(select.value, "all", "sanity check: starts at the default before any choice is made");
       fireEvent.change(select, { target: { value: "failed" } });
       assert.equal(select.value, "failed");
-      assert.equal(getWhatsAppLogFilter("proj-filter"), "failed", "the choice must actually be persisted, not just held in memory");
+      assert.equal(getWhatsAppLogFilter("proj-filter", "user1"), "failed", "the choice must actually be persisted, not just held in memory");
       first.unmount();
 
       const second = renderPanel("proj-filter");

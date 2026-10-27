@@ -15,7 +15,7 @@ import { purgeViewModeForProject } from "./viewModePreference.js";
 import { purgeRecentSearchesForProject } from "./recentSearches.js";
 import { purgeRecentWhatsAppNumbersForProject } from "./whatsappRecentNumbers.js";
 import { purgeWhatsAppLogRecentSearchesForProject } from "./whatsappLogRecentSearches.js";
-import { clearWhatsAppLogFilter } from "./whatsappLogFilter.js";
+import { purgeWhatsAppLogFilterForProject } from "./whatsappLogFilter.js";
 import { purgeWhatsAppLastSeenForProject } from "./whatsappUnread.js";
 
 /**
@@ -66,6 +66,6 @@ export function purgeProjectPreferences(projectId: string): void {
   purgeRecentSearchesForProject(projectId);
   purgeRecentWhatsAppNumbersForProject(projectId);
   purgeWhatsAppLogRecentSearchesForProject(projectId);
-  clearWhatsAppLogFilter(projectId);
+  purgeWhatsAppLogFilterForProject(projectId);
   purgeWhatsAppLastSeenForProject(projectId);
 }
