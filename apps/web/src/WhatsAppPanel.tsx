@@ -751,6 +751,39 @@ export function WhatsAppPanel({
     setAttachmentError(null);
   }
 
+  /**
+   * Round 1061: this whole panel is a real dialog (useDialogFocusTrap
+   * above), whose own Escape handler closes it entirely unless the event's
+   * target sits under data-escape-handled-locally -- every other form on
+   * this exact screen with real draft content already opts out this way
+   * (AutomationsPanel.tsx's own create/edit form, this file's own log
+   * search box just below), but this test-send form never did. Pressing
+   * Escape after typing a recipient/message (or choosing an attachment)
+   * for any ordinary reason -- dismissing a browser autofill suggestion,
+   * a reflexive tap -- silently closed the whole panel and discarded the
+   * draft with zero confirmation. `hasUnsavedTestDraft` mirrors
+   * AutomationsPanel's own hasUnsavedDraft shape exactly: true only while
+   * there's something a user would actually lose, so an Escape on a
+   * pristine form still closes the panel normally, matching the log
+   * search box's own already-established "nothing to clear" behavior
+   * (round 362's own comment just above explains why that distinction
+   * matters). handleResetTestForm also deletes an already-uploaded
+   * attachment via the real DELETE call, mirroring handleRemoveAttachment
+   * just above -- otherwise Escape would silently orphan it on disk the
+   * same way round 979 already closed for the explicit "Remove" button.
+   */
+  const hasUnsavedTestDraft = testTo.trim() !== "" || testMessage.trim() !== "" || testAttachment !== null;
+
+  function handleResetTestForm() {
+    if (testAttachment) {
+      void deleteWhatsAppAttachment(projectId, testAttachment.url).catch(() => {});
+    }
+    setTestTo("");
+    setTestMessage("");
+    setTestAttachment(null);
+    setAttachmentError(null);
+  }
+
   function handleRecentNumberClick(n: string) {
     setTestTo(n);
   }
@@ -1076,7 +1109,14 @@ export function WhatsAppPanel({
         )}
 
         {s === "connected" && !readOnly && (
-          <form className="whatsapp-test-form" onSubmit={handleSendTest}>
+          <form
+            className="whatsapp-test-form"
+            onSubmit={handleSendTest}
+            data-escape-handled-locally={hasUnsavedTestDraft ? "" : undefined}
+            onKeyDown={(e) => {
+              if (e.key === "Escape" && hasUnsavedTestDraft) handleResetTestForm();
+            }}
+          >
             <h3>{t("whatsapp.test.heading")}</h3>
             <label className="field-row">
               <span>{t("whatsapp.test.to")}</span>

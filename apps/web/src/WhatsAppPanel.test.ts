@@ -2658,6 +2658,82 @@ test("WhatsAppPanel's log search box has a 'Clear search' button and Escape-to-c
 });
 
 /**
+ * Round 1061: the mirror of the test just above, for this dialog's OTHER
+ * real-draft form -- the "Send test" recipient/message/attachment fields.
+ * Those had neither a data-escape-handled-locally marker nor an Escape
+ * handler at all, so pressing Escape while composing a test message (an
+ * ordinary reflex, e.g. dismissing a browser autofill suggestion) closed
+ * the whole WhatsApp dialog and silently discarded the drafted
+ * recipient/message, exactly the same class of bug round 1056 already
+ * fixed for AutomationsPanel's own create/edit form.
+ */
+test("WhatsAppPanel's test-send form has Escape-to-clear for an in-progress draft, and a second Escape on the now-pristine form closes the dialog normally", async () => {
+  await withJsdom(async () => {
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = (async (input: string, init?: RequestInit): Promise<Response> => {
+      const method = init?.method ?? "GET";
+      if (method === "GET" && input === "/api/projects/proj1/integrations/whatsapp/status") {
+        return new Response(
+          JSON.stringify({ status: "connected", phoneNumber: "972501234567", qrDataUrl: null, error: null }),
+          { status: 200, headers: { "content-type": "application/json" } },
+        );
+      }
+      if (method === "GET" && input === "/api/projects/proj1/integrations/whatsapp/messages") {
+        return new Response(JSON.stringify({ messages: [] }), { status: 200, headers: { "content-type": "application/json" } });
+      }
+      throw new Error(`unexpected request ${method} ${input}`);
+    }) as typeof fetch;
+
+    let closeCalls = 0;
+    try {
+      render(
+        React.createElement(
+          ThemeProvider,
+          null,
+          React.createElement(
+            LanguageProvider,
+            null,
+            React.createElement(WhatsAppPanel, {
+              entities: [],
+              onCreateRecordFromMessage: () => {},
+              projectId: "proj1", userId: "user1",
+              projectName: "Test Project",
+              onClose: () => {
+                closeCalls += 1;
+              },
+              onJumpToEntity: () => {},
+              onJumpToRecord: () => {},
+            }),
+          ),
+        ),
+      );
+      await waitForCondition(() => document.querySelector(".whatsapp-test-form") !== null);
+      assert.ok(document.querySelector('[role="dialog"]'), "sanity check: a real dialog wired to the real onClose must be open");
+
+      const [toInput, messageInput] = Array.from(
+        document.querySelectorAll(".whatsapp-test-form input[type='text']"),
+      ) as HTMLInputElement[];
+      fireEvent.change(toInput, { target: { value: "972521112233" } });
+      fireEvent.change(messageInput, { target: { value: "draft in progress" } });
+
+      fireEvent.keyDown(messageInput, { key: "Escape" });
+      assert.equal(toInput.value, "", "Escape must clear the drafted recipient");
+      assert.equal(messageInput.value, "", "Escape must clear the drafted message");
+      assert.equal(closeCalls, 0, "Escape clearing an in-progress draft must never also close the whole dialog");
+      assert.ok(document.querySelector('[role="dialog"]'), "the dialog itself must still be in the DOM after that Escape");
+
+      // Mirrors the log search box's own round-362 regression just above:
+      // once the form is genuinely pristine (nothing left to clear),
+      // Escape must close the dialog normally, not get silently swallowed.
+      fireEvent.keyDown(messageInput, { key: "Escape" });
+      assert.equal(closeCalls, 1, "Escape on an already-pristine test-send form must close the dialog normally");
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+});
+
+/**
  * New in this round: each message log row shows the real `createdAt` the
  * server actually recorded for it -- the type has always carried this
  * field (see api.ts's WhatsAppMessageLogEntry), but the row markup never
