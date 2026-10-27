@@ -220,6 +220,38 @@ test("interpolateTemplate renders a date field in locale-formatted form and a nu
   assert.equal(he, "Due 15.3.2026, total 1,500");
 });
 
+/**
+ * Round 1089's finding: V8/ICU's Number.prototype.toLocaleString("he-IL")
+ * silently prepends a real, invisible U+200E LEFT-TO-RIGHT MARK right
+ * before the minus sign of any negative number -- confirmed directly via
+ * `Number(-150).toLocaleString("he-IL")`, whose codepoints include 0x200e
+ * immediately before "-150", with no such character for the identical
+ * call under "en-US". interpolateTemplate builds the literal, final text
+ * of a real outbound WhatsApp/email message, with no bidi-rendering
+ * context left to protect once it leaves the app -- so a Hebrew-project
+ * rule referencing a negative "number" field (a balance due, a refund)
+ * would otherwise embed this invisible character into a real recipient's
+ * message. Confirms the number branch strips it for "he" while leaving
+ * "en" (which never had the mark) and a positive "he" value unaffected.
+ */
+test("interpolateTemplate strips the invisible bidi mark toLocaleString adds before a negative number's minus sign under the 'he' locale", () => {
+  const invoiceEntity: Entity = {
+    name: "Invoice",
+    label: "Invoice",
+    fields: [{ name: "balance", type: "number", required: true }],
+  };
+
+  const he = interpolateTemplate("Balance: {{balance}}", invoiceEntity, { balance: -150 }, "he");
+  assert.equal(he, "Balance: -150");
+  assert.ok(!he.includes("‎") && !he.includes("‏"), "must contain no invisible bidi mark at all");
+
+  const hePositive = interpolateTemplate("Balance: {{balance}}", invoiceEntity, { balance: 150 }, "he");
+  assert.equal(hePositive, "Balance: 150", "a positive number under 'he' never had the mark and must be unaffected");
+
+  const en = interpolateTemplate("Balance: {{balance}}", invoiceEntity, { balance: -150 }, "en");
+  assert.equal(en, "Balance: -150", "'en' never had the mark and must be unaffected");
+});
+
 test("interpolateTemplate falls back to the raw stored value for a date field that isn't actually a valid date", () => {
   const invoiceEntity: Entity = {
     name: "Invoice",

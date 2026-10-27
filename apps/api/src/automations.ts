@@ -238,6 +238,25 @@ export function findTemplateFileAttachment(
  * internal upload path -- verbatim to a real WhatsApp recipient or
  * webhook endpoint, instead of just the filename a human actually wants.
  */
+/**
+ * V8/ICU's Number.prototype.toLocaleString("he-IL") silently prepends a
+ * U+200E LEFT-TO-RIGHT MARK right before the minus sign of any negative
+ * number -- real, invisible Unicode, not a rendering artifact -- to keep
+ * the sign from visually reordering when that string is embedded inside
+ * RTL-rendered text on screen. interpolateTemplate's number branch below
+ * builds the literal, final text of a real outbound WhatsApp/email
+ * automation message, not on-screen UI -- there's no RTL bidi context
+ * left to protect once this string leaves the app, so for a Hebrew
+ * project ("he"), any rule whose template references a negative "number"
+ * field (a balance due, a refund, a discount) would otherwise embed this
+ * invisible character into the literal message sent to a real recipient,
+ * and into the stored whatsapp_messages row WhatsAppPanel's own log shows
+ * back to the business owner, with nothing about it visible at all.
+ */
+function stripBidiMarks(s: string): string {
+  return s.replace(/[‎‏]/g, "");
+}
+
 export function interpolateTemplate(template: string, entity: Entity, record: EntityRecord, lang: Lang): string {
   return template.replace(/\{\{\s*([a-zA-Z0-9_]+)\s*\}\}/g, (match, fieldName: string) => {
     const value = record[fieldName];
@@ -250,7 +269,7 @@ export function interpolateTemplate(template: string, entity: Entity, record: En
       const date = parseFieldDate(String(value));
       return Number.isNaN(date.getTime()) ? String(value) : date.toLocaleDateString(LOCALE[lang]);
     }
-    if (field?.type === "number") return Number(value).toLocaleString(LOCALE[lang]);
+    if (field?.type === "number") return stripBidiMarks(Number(value).toLocaleString(LOCALE[lang]));
     // "createdAt" is a reserved key repository.ts's own insert always sets
     // on every EntityRecord, never a declared entity field -- so `field`
     // above is always undefined for it, and it would otherwise fall
