@@ -957,11 +957,22 @@ function feedChipLabelField(entity, dateField) {
   return entity.fields.find((f) => f.name !== dateField.name && f.type !== "relation" && f.type !== "file") ?? dateField;
 }
 
+// Round 1071: mirrors the live apps/api/src/calendarFeed.ts's own
+// identical round-1048 date-branch fix, never ported here -- a \`date\`
+// label field (reachable the same way the boolean/enum branches above it
+// already are: an entity with two+ date fields and no name/title/text/
+// longtext field) rendered the raw unformatted "YYYY-MM-DD" string in
+// this feed's own SUMMARY line instead of a real formatted date. Round
+// 1048's own sweep fixed codegen.ts's other two chip-label copies
+// (calendarLabelValue for the one-shot export's own chip, buildCalendarIcs's
+// inline duplicate) but missed this one, added in round 1010 for this
+// exported app's own equivalent calendar-subscription feed route.
 function feedChipLabelValue(labelField, record) {
   const value = record[labelField.name];
   if (value === null || value === undefined) return "";
   if (labelField.type === "boolean") return value ? "TRUE" : "FALSE";
   if (labelField.type === "enum") return (labelField.enumLabels && labelField.enumLabels[String(value)]) || String(value);
+  if (labelField.type === "date" && typeof value === "string") return String(feedFormatIcsDescriptionDate(value));
   return String(value);
 }
 

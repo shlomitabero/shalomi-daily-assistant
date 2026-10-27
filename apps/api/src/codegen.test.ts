@@ -382,6 +382,79 @@ test("generated server.js's calendar feed DESCRIPTION resolves a relation field 
 });
 
 /**
+ * Round 1071: mirrors the live apps/api/src/calendarFeed.ts's own
+ * identical round-1048 fix -- a `date` label field (reachable the same
+ * way a boolean/enum label field already is: an entity with two+ date
+ * fields and no name/title/text/longtext field) rendered the raw
+ * unformatted "YYYY-MM-DD" string in this feed's own SUMMARY line instead
+ * of a real formatted date. Round 1048's own sweep fixed codegen.ts's
+ * other two chip-label copies (the one-shot export's own calendarLabelValue,
+ * buildCalendarIcs's inline duplicate) but missed this feed route's own
+ * copy entirely.
+ */
+test("generated server.js's calendar feed renders a date label field as a formatted date in SUMMARY, not the raw 'YYYY-MM-DD' string", async () => {
+  const flightEntity: Entity = {
+    name: "Flight",
+    label: "Flights",
+    fields: [
+      { name: "departureDate", label: "Departure Date", type: "date", required: true },
+      { name: "returnDate", label: "Return Date", type: "date", required: false },
+    ],
+  };
+  const feedProject: Project = { ...project, spec: { ...project.spec, entities: [flightEntity] } };
+  const files = generateExportFiles(feedProject);
+  const serverJs = files.find((f) => f.path === "server.js")!.content;
+
+  const dir = mkdtempSync(path.join(tmpdir(), "codegen-feed-date-label-test-"));
+  const repoRoot = path.resolve(import.meta.dirname, "../../..");
+  symlinkSync(path.join(repoRoot, "node_modules"), path.join(dir, "node_modules"));
+  writeFileSync(path.join(dir, "server.js"), serverJs);
+
+  const port = 34000 + Math.floor(Math.random() * 5000);
+  const child = spawn(process.execPath, ["--experimental-sqlite", "server.js"], {
+    cwd: dir,
+    env: { ...process.env, PORT: String(port) },
+    stdio: ["ignore", "pipe", "pipe"],
+  });
+  let stderr = "";
+  child.stderr.on("data", (chunk) => {
+    stderr += chunk.toString();
+  });
+
+  try {
+    const deadline = Date.now() + 5000;
+    let lastErr: unknown;
+    while (Date.now() < deadline) {
+      if (child.exitCode !== null) {
+        throw new Error(`server.js exited early (code ${child.exitCode}):\n${stderr}`);
+      }
+      try {
+        const createRes = await fetch(`http://localhost:${port}/api/Flight`, {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ departureDate: "2026-11-05", returnDate: "2026-11-12" }),
+        });
+        assert.equal(createRes.status, 201);
+
+        const feedRes = await fetch(`http://localhost:${port}/api/calendar/Flight.ics`);
+        assert.equal(feedRes.status, 200);
+        const ics = await feedRes.text();
+        assert.doesNotMatch(ics, /SUMMARY:2026-11-12/, "the date label field must never render as the raw unformatted ISO string");
+        assert.match(ics, /SUMMARY:11\/12\/2026/, "the date label field must render as a real formatted date, matching toLocaleDateString()'s own output");
+        return;
+      } catch (err) {
+        lastErr = err;
+        await new Promise((r) => setTimeout(r, 100));
+      }
+    }
+    throw lastErr instanceof Error ? lastErr : new Error(String(lastErr));
+  } finally {
+    child.kill();
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+/**
  * Round 1010: the client-side half of the same gap -- confirms the
  * generated EntityView.jsx actually wires up the "Subscribe" button
  * (next to the existing one-shot Export ICS button) to copy the real
