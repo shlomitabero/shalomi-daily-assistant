@@ -1279,8 +1279,32 @@ function AppContent() {
 
     async function checkMyRole() {
       try {
-        const { collaborators } = await listCollaborators(projectId);
+        const { collaborators, owner } = await listCollaborators(projectId);
         if (cancelled) return;
+        // Round 1183: transferProjectOwnership's own doc comment in
+        // api.ts explains it only ever updates the ACTING owner's own
+        // held state, via that call's direct response -- the new
+        // owner's own separate browser tab (if they have this same
+        // project open) never receives any signal at all, since there's
+        // no push channel and no other poll ever refreshes
+        // project.ownerId. Before this, that silence actively made
+        // things worse here: once the transfer removes the new owner
+        // from project_collaborators (an owner is never also a
+        // collaborator row), `mine` below went undefined and this same
+        // poll overwrote their role with the "editor" fallback -- short
+        // of their real new "owner" status -- while project.ownerId
+        // stayed stale, hiding every owner-only control in
+        // CollaboratorsPanel until a manual reload. `owner` is already
+        // returned by this same endpoint (round 1052) for the panel's
+        // own "who owns this" display; comparing it here costs nothing
+        // extra. Patching project.ownerId also makes this effect's own
+        // early-return guard above true on the next run, so the poll
+        // naturally stops once the user is recognized as the real owner.
+        if (owner?.userId === userId) {
+          setMyRole("owner");
+          setProject((p) => (p && p.id === projectId ? { ...p, ownerId: owner.userId } : p));
+          return;
+        }
         const mine = collaborators.find((c) => c.userId === userId);
         setMyRole(mine?.role ?? "editor");
       } catch {

@@ -5029,6 +5029,62 @@ test("App's checkMyRole re-derives myRole from a fresh listCollaborators call, i
 });
 
 /**
+ * Round 1183's finding: transferProjectOwnership's own doc comment in
+ * api.ts explains it only ever updates the ACTING owner's own held state
+ * via that call's direct response -- the new owner's own separate
+ * browser tab (if they had this same project open as a mere
+ * collaborator when the transfer landed) never received any signal at
+ * all. Before this fix, this same poll actively made things WORSE for
+ * them: transferProjectOwnership removes the new owner from
+ * project_collaborators entirely (an owner is never also a collaborator
+ * row), so the test just above's own "falls back to editor if missing"
+ * branch fired for them too -- overwriting their real new "owner" status
+ * with "editor" -- while project.ownerId stayed stale, hiding every
+ * owner-only control in CollaboratorsPanel (isOwner={user?.id ===
+ * project.ownerId}) until a manual reload. Confirms the same
+ * listCollaborators response's own `owner` field (already returned since
+ * round 1052) is now checked first: myRole is set to "owner" and
+ * project.ownerId is patched to match, rather than falling through to
+ * the missing-collaborator-entry fallback.
+ */
+test("App's checkMyRole recognizes this account as the project's new owner from a fresh listCollaborators call, after an ownership transfer landed while they still had the project open", async () => {
+  const appSrc = readFileSync(new URL("./App.tsx", import.meta.url), "utf8");
+  const handlerMatch = appSrc.match(/ {4}async function checkMyRole\(\) \{[\s\S]*?\n {4}\}\n/);
+  assert.ok(handlerMatch, "expected to find checkMyRole in App.tsx");
+  const { code } = transformSync(handlerMatch![0], { loader: "ts" });
+
+  const state: { role: unknown; projectUpdater: ((p: { id: string; ownerId: string }) => unknown) | undefined } = {
+    role: "untouched",
+    projectUpdater: undefined,
+  };
+  const fn = new Function(
+    "projectId",
+    "userId",
+    "cancelled",
+    "listCollaborators",
+    "setMyRole",
+    "setProject",
+    `${code}\nreturn checkMyRole;`,
+  )(
+    "project-1",
+    "user-1",
+    false,
+    // The new owner is no longer in `collaborators` at all -- the exact
+    // shape transferProjectOwnership leaves behind.
+    async () => ({ collaborators: [{ userId: "someone-else", role: "editor" }], owner: { userId: "user-1", email: "me@example.com" } }),
+    (v: unknown) => (state.role = v),
+    (updater: (p: { id: string; ownerId: string }) => unknown) => (state.projectUpdater = updater),
+  ) as () => Promise<void>;
+
+  await fn();
+
+  assert.equal(state.role, "owner", "myRole must become 'owner', not fall back to 'editor' just because this account is missing from collaborators");
+  assert.ok(state.projectUpdater, "setProject must be called to patch project.ownerId so isOwner-gated controls update too");
+  const patched = state.projectUpdater!({ id: "project-1", ownerId: "old-owner" }) as { ownerId: string } | null;
+  assert.equal(patched?.ownerId, "user-1", "the patched project must carry the new owner's own userId as ownerId");
+});
+
+/**
  * Round 1173: this poll effect's own doc comment explicitly claims it
  * "mirrors the WhatsApp-unread/failing-automations polls above (same
  * immediate-check-then-interval shape)" -- but until this round, the
