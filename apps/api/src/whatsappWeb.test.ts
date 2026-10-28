@@ -17,7 +17,7 @@ import { WhatsAppWebManager, type BaileysConnectionUpdate, type BaileysMessagesU
  * connected -> disconnected, message logging, sending) without touching
  * the real WhatsApp network. See docs/roadmap.md for the full disclosure.
  */
-function createFakeSocket() {
+function createFakeSocket(options?: { getPNForLID?: (lid: string) => Promise<string | null | undefined> }) {
   const handlers: {
     creds?: () => void;
     connectionUpdate?: (u: BaileysConnectionUpdate) => void;
@@ -35,6 +35,7 @@ function createFakeSocket() {
       },
     },
     user: null,
+    ...(options?.getPNForLID ? { signalRepository: { lidMapping: { getPNForLID: options.getPNForLID } } } : {}),
     async sendMessage(jid, content) {
       if ("text" in content) {
         sendCalls.push({ jid, text: content.text });
@@ -57,7 +58,7 @@ function createFakeSocket() {
   };
 }
 
-function setupManager() {
+function setupManager(options?: { getPNForLID?: (lid: string) => Promise<string | null | undefined> }) {
   const db = openDatabase(":memory:");
   ensureProjectsTable(db);
   ensureWhatsAppConnectionsTable(db);
@@ -70,7 +71,7 @@ function setupManager() {
     sessionsRootDir: "/tmp/forge-whatsapp-test-sessions",
     createSocket: async () => {
       createSocketCalls++;
-      const fake = createFakeSocket();
+      const fake = createFakeSocket(options);
       createdSockets.push(fake);
       return { sock: fake.sock, saveCreds: async () => {} };
     },
@@ -565,6 +566,112 @@ test("an incoming message is skipped when it is a WhatsApp Status update or broa
   });
 
   assert.equal(listWhatsAppMessages(db, project.id).messages.length, 0);
+});
+
+/**
+ * Round 1164: WhatsApp Channels ("newsletters") relay their posts through
+ * this exact same messages.upsert/"notify" stream, with fromMe: false and
+ * remoteJid "<id>@newsletter" -- confirmed directly against the installed
+ * Baileys library's own isJidNewsletter/decodeMessageNode handling of the
+ * "newsletter" msgType, the same way the existing "@broadcast" exclusion
+ * above was confirmed. A business owner who follows any WhatsApp Channel
+ * (actively promoted by WhatsApp itself) would otherwise have every
+ * channel post logged as an unmatched incoming customer message, the
+ * identical "permanent noise" problem the "@broadcast" fix already solved
+ * for Status/broadcast-list messages, just for a sibling JID domain that
+ * fix never covered.
+ */
+test("an incoming message is skipped when it is from a WhatsApp Channel (newsletter), not a real chat message", async () => {
+  const { manager, createdSockets, db } = setupManager();
+  insertProject(db, project);
+  applyMigrations(db, project.id, project.spec);
+  markProjectBuilt(db, project.id);
+
+  await manager.connect(project.id);
+  createdSockets[0].emitConnectionUpdate({ connection: "open" });
+
+  createdSockets[0].emitMessagesUpsert({
+    type: "notify",
+    messages: [{ key: { remoteJid: "120363012345678901@newsletter", fromMe: false }, message: { conversation: "channel broadcast post" } }],
+  });
+
+  assert.equal(listWhatsAppMessages(db, project.id).messages.length, 0);
+});
+
+/**
+ * Round 1164: a real Explore survey, verified directly against the
+ * installed @whiskeysockets/baileys library's own source (WABinary's
+ * isLidUser/jid-utils.js, Utils/decode-wa-message.js's decodeMessageNode,
+ * Signal/lid-mapping.js's getPNForLID), found that WhatsApp's privacy-mode
+ * "LID" sender addressing was never resolved to a real phone number: a
+ * genuine inbound 1:1 DM can carry remoteJid "<opaque-id>@lid" instead of
+ * "<phone>@s.whatsapp.net" (Baileys' own decoder treats this as a normal
+ * chat-message case, not an edge case), and before this fix
+ * remoteJid.split("@")[0] would feed that opaque LID straight into
+ * findMatchingRecord as if it were a phone number -- breaking this
+ * feature's entire "auto-match inbound WhatsApp to a customer record"
+ * purpose for exactly the customers who've enabled WhatsApp's own
+ * phone-number privacy protection. Covers all three resolution paths: (1)
+ * key.remoteJidAlt present (the real-number JID WhatsApp's own server
+ * attaches to the message when available) is preferred, with no mapping
+ * lookup needed; (2) remoteJidAlt absent, resolved via the async
+ * signalRepository.lidMapping.getPNForLID() Baileys itself exposes; (3)
+ * neither resolves (e.g. the very first message from a brand-new LID
+ * contact), falling back to today's raw-LID-as-"from" behavior rather than
+ * dropping the message outright.
+ */
+test("an incoming message from a WhatsApp privacy-mode 'LID' sender is matched by the sender's real phone number, resolved via remoteJidAlt or the async LID-to-phone-number lookup", async () => {
+  const { manager, createdSockets, db } = setupManager({
+    getPNForLID: async (lid) => (lid === "987654321098765@lid" ? "972507654321@s.whatsapp.net" : null),
+  });
+  insertProject(db, project);
+  applyMigrations(db, project.id, project.spec);
+  markProjectBuilt(db, project.id);
+  insertRecord(db, project.id, project.spec.entities[0], { name: "Dana Levi", phone: "050-123-4567" });
+  insertRecord(db, project.id, project.spec.entities[0], { name: "Yossi Cohen", phone: "050-765-4321" });
+
+  await manager.connect(project.id);
+  createdSockets[0].emitConnectionUpdate({ connection: "open" });
+
+  // Path 1: remoteJidAlt is present -- used directly, no lidMapping lookup needed.
+  createdSockets[0].emitMessagesUpsert({
+    type: "notify",
+    messages: [
+      {
+        key: { remoteJid: "123456789012345@lid", remoteJidAlt: "972501234567@s.whatsapp.net", fromMe: false },
+        message: { conversation: "from remoteJidAlt" },
+      },
+    ],
+  });
+
+  // Path 2: no remoteJidAlt, resolved via the async lidMapping.getPNForLID lookup.
+  createdSockets[0].emitMessagesUpsert({
+    type: "notify",
+    messages: [{ key: { remoteJid: "987654321098765@lid", fromMe: false }, message: { conversation: "from lidMapping lookup" } }],
+  });
+  // handleIncomingMessages is fired-and-forgotten by the manager; the LID
+  // path above introduces a genuine async boundary (the lidMapping await)
+  // that path 1 above and every pre-existing synchronous test here don't,
+  // so this one yields a tick before asserting.
+  await new Promise((resolve) => setImmediate(resolve));
+
+  // Path 3: neither resolves -- falls back to the raw LID digits (still
+  // logged, just unmatched) instead of being dropped.
+  createdSockets[0].emitMessagesUpsert({
+    type: "notify",
+    messages: [{ key: { remoteJid: "111222333444555@lid", fromMe: false }, message: { conversation: "unresolvable LID" } }],
+  });
+  await new Promise((resolve) => setImmediate(resolve));
+
+  // listWhatsAppMessages orders newest-first, the reverse of emission order above.
+  const { messages } = listWhatsAppMessages(db, project.id);
+  assert.equal(messages.length, 3);
+  assert.equal(messages[0].fromNumber, "111222333444555");
+  assert.equal(messages[0].matchedEntityName, null);
+  assert.equal(messages[1].fromNumber, "972507654321");
+  assert.equal(messages[1].matchedLabel, "Yossi Cohen");
+  assert.equal(messages[2].fromNumber, "972501234567");
+  assert.equal(messages[2].matchedLabel, "Dana Levi");
 });
 
 /**

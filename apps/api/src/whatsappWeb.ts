@@ -77,6 +77,8 @@ export interface WhatsAppSocket {
     on(event: "messages.upsert", listener: (upsert: BaileysMessagesUpsert) => void): void;
   };
   user?: { id: string } | null;
+  /** Resolves a WhatsApp "LID" (privacy-mode sender id) to the real phone-number JID, when Baileys has learned the mapping. Optional/injectable like the rest of this interface, for testability. */
+  signalRepository?: { lidMapping: { getPNForLID(lid: string): Promise<string | null | undefined> } };
   sendMessage(
     jid: string,
     content:
@@ -96,7 +98,7 @@ export interface BaileysConnectionUpdate {
 }
 
 export interface BaileysIncomingMessage {
-  key: { remoteJid?: string; fromMe?: boolean };
+  key: { remoteJid?: string; remoteJidAlt?: string; fromMe?: boolean };
   message?: {
     conversation?: string;
     extendedTextMessage?: { text?: string };
@@ -646,11 +648,36 @@ export class WhatsAppWebManager {
       // own contacts (far more frequent than real incoming messages for a
       // typical small business) gets logged as an unmatched incoming
       // message from a customer literally named "status", permanent noise
-      // in the one panel this feature exists to keep reliable.
-      if (!remoteJid || remoteJid.endsWith("@g.us") || remoteJid.endsWith("@broadcast")) continue;
+      // in the one panel this feature exists to keep reliable. "@newsletter"
+      // is a WhatsApp Channel the owner follows -- the same "notify" stream
+      // relays its posts too, with fromMe: false, for the identical reason
+      // Status posts leak through, so it needs the same exclusion.
+      if (!remoteJid || remoteJid.endsWith("@g.us") || remoteJid.endsWith("@broadcast") || remoteJid.endsWith("@newsletter")) continue;
       const text = describeIncomingMessage(msg.message);
       if (!text) continue;
-      const from = remoteJid.split("@")[0];
+      // A "@lid" remoteJid is WhatsApp's privacy-mode opaque sender id, not
+      // a phone number -- real for an ordinary 1:1 DM, not a hypothetical
+      // edge case (Baileys' own decodeMessageNode treats isLidUser(from) as
+      // a normal chat-message case, setting key.remoteJid to the LID
+      // itself). Resolving it to the real phone number keeps this
+      // feature's one job -- matching an incoming message to a customer
+      // record by phone number -- working for exactly the customers who've
+      // turned on WhatsApp's phone-number privacy. Prefer key.remoteJidAlt
+      // (the real-number JID WhatsApp's own server attaches to the message
+      // when available) over the async lidMapping lookup, since it needs
+      // no extra round trip; fall back to raw-LID-as-"from" only when
+      // neither resolves (e.g. the very first message from a contact,
+      // before any mapping exists).
+      let resolvedJid = remoteJid;
+      if (remoteJid.endsWith("@lid")) {
+        if (msg.key.remoteJidAlt) {
+          resolvedJid = msg.key.remoteJidAlt;
+        } else if (session.sock?.signalRepository) {
+          const pn = await session.sock.signalRepository.lidMapping.getPNForLID(remoteJid);
+          if (pn) resolvedJid = pn;
+        }
+      }
+      const from = resolvedJid.split("@")[0];
 
       const match = findMatchingRecord(this.db, project, from);
       insertWhatsAppMessage(this.db, {
