@@ -201,7 +201,20 @@ export function RoleChip({
   // it unmounts (the role was removed, or the whole list re-keyed by a
   // sibling's removal) so a stale "busy" entry doesn't linger in the
   // parent's aggregate forever -- mirrors FieldChip's own identical pair.
-  const ownBusy = busy || rename.busy;
+  //
+  // Round 1147: round 1133's own `ownBusy` here never included
+  // `rename.editing` -- only `rename.busy` (true while the save PATCH is
+  // actually in flight). So opening this chip's rename editor (typing a
+  // draft, not yet submitted) never disabled a SIBLING's own remove
+  // button. Removing a sibling then shifts every later chip's own array
+  // index, changing this chip's own `key={`${index}-${role}`}` in
+  // App.tsx -- React unmounts this chip on the key change, silently
+  // discarding the open editor and its unsaved draft with no warning.
+  // Including `rename.editing` here closes the gap the same way every
+  // other cross-gate in this file already closes it: block the sibling
+  // action for as long as this chip has unsaved state, so the array can
+  // never shift out from under an open edit.
+  const ownBusy = busy || rename.busy || rename.editing;
   useEffect(() => {
     onBusyChange?.(index, ownBusy);
   }, [index, ownBusy, onBusyChange]);
@@ -320,7 +333,9 @@ export function AssumptionItem({
   }
 
   // Round 1133: see RoleChip's own ownBusy/onBusyChange effect pair -- same gap, same fix.
-  const ownBusy = busy || rename.busy;
+  // Round 1147: see RoleChip's own `ownBusy` doc comment -- same missing
+  // `rename.editing` gap, same fix.
+  const ownBusy = busy || rename.busy || rename.editing;
   useEffect(() => {
     onBusyChange?.(index, ownBusy);
   }, [index, ownBusy, onBusyChange]);
@@ -446,7 +461,9 @@ export function PersonaItem({
   }
 
   // Round 1133: see RoleChip's own ownBusy/onBusyChange effect pair -- same gap, same fix.
-  const ownBusy = busy || rename.busy;
+  // Round 1147: see RoleChip's own `ownBusy` doc comment -- same missing
+  // `rename.editing` gap, same fix.
+  const ownBusy = busy || rename.busy || rename.editing;
   useEffect(() => {
     onBusyChange?.(index, ownBusy);
   }, [index, ownBusy, onBusyChange]);

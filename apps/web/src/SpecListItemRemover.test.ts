@@ -2844,6 +2844,63 @@ test("RoleChip reports its own busy state up via onBusyChange (keyed by index) w
   });
 });
 
+/**
+ * Round 1147: round 1133's own `ownBusy` here only ever included
+ * `rename.busy` (true while the save PATCH is in flight), never
+ * `rename.editing` (true the moment the rename form opens, before
+ * anything is submitted). So opening this chip's own rename editor never
+ * reported busy up to App.tsx at all -- a SIBLING role's own remove
+ * button stayed enabled the whole time a draft rename sat open and
+ * unsaved. Removing that sibling shifts every later role's own array
+ * index, which changes THIS chip's own `key={`${index}-${role}`}` in
+ * App.tsx and makes React unmount it, silently discarding the open editor
+ * and its typed draft with no warning. This confirms `onBusyChange` now
+ * fires `true` the instant the editor opens (no save in flight needed),
+ * and `false` again once it's cancelled -- never actually saving, so this
+ * is purely about the `editing` state, not `rename.busy`.
+ */
+test("RoleChip reports its own busy state up via onBusyChange the instant its rename editor opens, with no save in flight", async () => {
+  await withJsdom(async () => {
+    const busyCalls: Array<[number, boolean]> = [];
+    render(
+      React.createElement(
+        ThemeProvider,
+        null,
+        React.createElement(
+          LanguageProvider,
+          null,
+          React.createElement(RoleChip, {
+            role: "Manager",
+            projectId: "proj1",
+            index: 1,
+            canRemove: true,
+            onRenamed: () => {},
+            onRemoved: () => {},
+            onBusyChange: (index: number, busy: boolean) => busyCalls.push([index, busy]),
+          }),
+        ),
+      ),
+    );
+
+    fireEvent.click(document.querySelector(".chip-text") as HTMLElement);
+    assert.equal(document.querySelector(".chip-rename-edit") !== null, true, "the rename editor must actually be open");
+    assert.equal(
+      busyCalls.some(([index, busy]) => index === 1 && busy === true),
+      true,
+      "opening the rename editor (not yet saving anything) must already report this role's own index as busy",
+    );
+
+    busyCalls.length = 0;
+    fireEvent.keyDown(document.querySelector(".chip-rename-edit input") as HTMLInputElement, { key: "Escape" });
+    assert.equal(document.querySelector(".chip-rename-edit") === null, true, "Escape must cancel the editor without saving");
+    assert.equal(
+      busyCalls.some(([index, busy]) => index === 1 && busy === false),
+      true,
+      "cancelling the still-unsaved edit must report this role's own index as no longer busy",
+    );
+  });
+});
+
 test("AssumptionItem's own remove button and rename are disabled while siblingActionBusy is true, and re-enable once it clears", async () => {
   await withJsdom(async () => {
     const renderWithSiblingBusy = (siblingActionBusy: boolean) =>
@@ -2939,6 +2996,48 @@ test("AssumptionItem reports its own busy state up via onBusyChange (keyed by in
   });
 });
 
+/** Round 1147: see RoleChip's own identical "the instant its rename editor opens" test -- same gap, same fix. */
+test("AssumptionItem reports its own busy state up via onBusyChange the instant its rename editor opens, with no save in flight", async () => {
+  await withJsdom(async () => {
+    const busyCalls: Array<[number, boolean]> = [];
+    render(
+      React.createElement(
+        ThemeProvider,
+        null,
+        React.createElement(
+          LanguageProvider,
+          null,
+          React.createElement(AssumptionItem, {
+            assumption: "Second assumption",
+            projectId: "proj1",
+            index: 1,
+            onRenamed: () => {},
+            onRemoved: () => {},
+            onBusyChange: (index: number, busy: boolean) => busyCalls.push([index, busy]),
+          }),
+        ),
+      ),
+    );
+
+    fireEvent.click(document.querySelector(".assumption-text") as HTMLElement);
+    assert.equal(document.querySelector(".assumption-rename-edit") !== null, true, "the rename editor must actually be open");
+    assert.equal(
+      busyCalls.some(([index, busy]) => index === 1 && busy === true),
+      true,
+      "opening the rename editor (not yet saving anything) must already report this assumption's own index as busy",
+    );
+
+    busyCalls.length = 0;
+    fireEvent.keyDown(document.querySelector(".assumption-rename-edit input") as HTMLInputElement, { key: "Escape" });
+    assert.equal(document.querySelector(".assumption-rename-edit") === null, true, "Escape must cancel the editor without saving");
+    assert.equal(
+      busyCalls.some(([index, busy]) => index === 1 && busy === false),
+      true,
+      "cancelling the still-unsaved edit must report this assumption's own index as no longer busy",
+    );
+  });
+});
+
 test("PersonaItem's own remove button and rename are disabled while siblingActionBusy is true, and re-enable once it clears", async () => {
   await withJsdom(async () => {
     const renderWithSiblingBusy = (siblingActionBusy: boolean) =>
@@ -3031,6 +3130,48 @@ test("PersonaItem reports its own busy state up via onBusyChange (keyed by index
       resolveRemove!(new Response(JSON.stringify({ project: baseProject }), { status: 200, headers: { "content-type": "application/json" } }));
       globalThis.fetch = originalFetch;
     }
+  });
+});
+
+/** Round 1147: see RoleChip's own identical "the instant its rename editor opens" test -- same gap, same fix. */
+test("PersonaItem reports its own busy state up via onBusyChange the instant its rename editor opens, with no save in flight", async () => {
+  await withJsdom(async () => {
+    const busyCalls: Array<[number, boolean]> = [];
+    render(
+      React.createElement(
+        ThemeProvider,
+        null,
+        React.createElement(
+          LanguageProvider,
+          null,
+          React.createElement(PersonaItem, {
+            persona: "Second persona",
+            projectId: "proj1",
+            index: 1,
+            onRenamed: () => {},
+            onRemoved: () => {},
+            onBusyChange: (index: number, busy: boolean) => busyCalls.push([index, busy]),
+          }),
+        ),
+      ),
+    );
+
+    fireEvent.click(document.querySelector(".persona-text") as HTMLElement);
+    assert.equal(document.querySelector(".persona-rename-edit") !== null, true, "the rename editor must actually be open");
+    assert.equal(
+      busyCalls.some(([index, busy]) => index === 1 && busy === true),
+      true,
+      "opening the rename editor (not yet saving anything) must already report this persona's own index as busy",
+    );
+
+    busyCalls.length = 0;
+    fireEvent.keyDown(document.querySelector(".persona-rename-edit input") as HTMLInputElement, { key: "Escape" });
+    assert.equal(document.querySelector(".persona-rename-edit") === null, true, "Escape must cancel the editor without saving");
+    assert.equal(
+      busyCalls.some(([index, busy]) => index === 1 && busy === false),
+      true,
+      "cancelling the still-unsaved edit must report this persona's own index as no longer busy",
+    );
   });
 });
 
