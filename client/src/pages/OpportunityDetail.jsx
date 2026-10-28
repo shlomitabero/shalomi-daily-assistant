@@ -164,7 +164,14 @@ export default function OpportunityDetail() {
           {settings?.mode === 'approve' && (
             <button className="btn btn-ghost" onClick={onApprove} disabled={busy}>אשר פרסום</button>
           )}
-          <button className="btn btn-primary" onClick={onPublish} disabled={busy}>פרסם מוצר (יצירת תשלום אמיתי)</button>
+          <button
+            className="btn btn-primary"
+            onClick={onPublish}
+            disabled={busy || settings?.mode === 'research'}
+            title={settings?.mode === 'research' ? 'מצב מחקר בלבד — שום פעולה לא מתבצעת אוטומטית' : undefined}
+          >
+            פרסם מוצר (יצירת תשלום אמיתי)
+          </button>
           {publishResult && !publishResult.ok && <p className="form-error">{publishResult.message}</p>}
         </div>
       )}
