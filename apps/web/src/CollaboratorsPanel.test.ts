@@ -62,7 +62,7 @@ function renderPanel(
   currentUserId?: string,
   onLeft: () => void = () => {},
   projectName = "Test Project",
-  onOwnerTransferred: (project: Project) => void = () => {},
+  onOwnerTransferred: (project: Project, selfSharedAt: string | undefined) => void = () => {},
 ) {
   return render(
     React.createElement(
@@ -1344,6 +1344,75 @@ test("CollaboratorsPanel's transfer-ownership button asks for confirmation, send
         "the owner row plus exactly one collaborator row (the previous owner, now demoted)",
       );
       assert.ok(document.body.textContent?.includes("amit@example.com"), "the previous owner must now be listed as a collaborator");
+    } finally {
+      globalThis.fetch = originalFetch;
+      globalThis.window.confirm = originalConfirm;
+    }
+  });
+});
+
+/**
+ * Round 1195: transferProjectOwnership demotes the previous owner to a
+ * brand-new "editor" collaborator row with a fresh addedAt (see that
+ * function's own doc comment in packages/db/src/projects.ts) -- which is
+ * exactly the same shape listProjectsForUser's own sharedAt join uses to
+ * decide the home screen's "New share!" badge. Without the acting owner's
+ * own fresh addedAt being passed up and immediately acknowledged (the same
+ * way openExistingProject already acknowledges an ordinary shared-project
+ * open), transferring ownership away left the former owner's own project
+ * looking like a brand-new invite from someone else on their very next
+ * trip to the home screen. Confirms onOwnerTransferred's second argument
+ * is the acting user's own real addedAt from the server's fresh
+ * collaborators response, not undefined and not some other collaborator's.
+ */
+test("CollaboratorsPanel's transfer-ownership reports the acting owner's own fresh addedAt via onOwnerTransferred's second argument, so the caller can pre-acknowledge it", async () => {
+  await withJsdom(async () => {
+    const originalFetch = globalThis.fetch;
+    const originalConfirm = globalThis.window.confirm;
+    const dana = makeCollaborator("u1", "dana@example.com", "editor");
+    const demotedOwnerAddedAt = "2024-05-01T12:00:00.000Z";
+
+    globalThis.fetch = (async (input: string, init?: RequestInit) => {
+      const method = init?.method ?? "GET";
+      if (method === "GET" && input === "/api/projects/proj1/collaborators") {
+        return new Response(JSON.stringify({ collaborators: [dana], owner: { userId: "owner1", email: "amit@example.com" } }), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        });
+      }
+      if (method === "POST" && input === "/api/projects/proj1/transfer-ownership") {
+        return new Response(
+          JSON.stringify({
+            collaborators: [{ userId: "owner1", email: "amit@example.com", addedAt: demotedOwnerAddedAt, role: "editor" }],
+            owner: { userId: "u1", email: "dana@example.com" },
+            project: { id: "proj1", ownerId: "u1", name: "Test Project" },
+          }),
+          { status: 200, headers: { "content-type": "application/json" } },
+        );
+      }
+      throw new Error(`unexpected request ${method} ${input}`);
+    }) as typeof fetch;
+    globalThis.window.confirm = (() => true) as typeof window.confirm;
+
+    let reportedSelfSharedAt: string | undefined = "not-called";
+    try {
+      // currentUserId is "owner1" -- the acting owner giving the project
+      // away, not the new owner "u1" -- mirroring the real-world actor.
+      renderPanel(true, "owner1", () => {}, "Test Project", (_project, selfSharedAt) => {
+        reportedSelfSharedAt = selfSharedAt;
+      });
+      await waitForCondition(() => document.querySelectorAll(".collab-list li").length === 2);
+
+      const row = Array.from(document.querySelectorAll(".collab-list li")).find((li) => li.textContent?.includes("dana@example.com"))!;
+      const transferBtn = Array.from(row.querySelectorAll("button")).find((b) => b.textContent?.includes("Transfer ownership"))!;
+      fireEvent.click(transferBtn);
+
+      await waitForCondition(() => reportedSelfSharedAt !== "not-called");
+      assert.equal(
+        reportedSelfSharedAt,
+        demotedOwnerAddedAt,
+        "must report the acting owner's own real fresh addedAt from the server's response, not undefined or some other collaborator's",
+      );
     } finally {
       globalThis.fetch = originalFetch;
       globalThis.window.confirm = originalConfirm;

@@ -3109,7 +3109,18 @@ function AppContent() {
                 setShowCollaborators(false);
                 handleGoHome();
               }}
-              onOwnerTransferred={setProject}
+              onOwnerTransferred={(updatedProject, selfSharedAt) => {
+                setProject(updatedProject);
+                // Round 1195: see CollaboratorsPanel's own onOwnerTransferred
+                // doc comment -- pre-acknowledges the fresh "editor"
+                // collaborator row transferring ownership away just minted
+                // for this user, the exact same idiom openExistingProject's
+                // own setSeenShared(markSharedProjectSeen(...)) call uses,
+                // so this project doesn't show a "New share!" badge on this
+                // user's own former project next time they reach the home
+                // screen.
+                if (user && selfSharedAt) setSeenShared(markSharedProjectSeen(user.id, updatedProject.id, selfSharedAt));
+              }}
             />
           )}
 

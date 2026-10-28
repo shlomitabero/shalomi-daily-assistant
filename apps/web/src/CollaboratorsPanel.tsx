@@ -42,8 +42,34 @@ export function CollaboratorsPanel({
   onClose: () => void;
   /** Called once a real self-removal succeeds -- the caller no longer has access to this project at all, so it's expected to navigate away (e.g. back to the home screen), not just close this panel. */
   onLeft: () => void;
-  /** Called once a real ownership transfer succeeds, with the project's own fresh state (new ownerId). The caller is expected to pass its existing project setter (e.g. onOwnerTransferred={setProject}, the exact same pattern ProjectNameEditor's onRenamed already uses) so every owner-gated control derived from project.ownerId -- including this panel's own isOwner prop -- correctly reflects that the signed-in user is no longer the owner, without closing this panel: they're still a collaborator (now "editor"), so staying on this read-only view of the list is the right outcome, the same as any other non-owner collaborator already sees. */
-  onOwnerTransferred: (project: Project) => void;
+  /**
+   * Called once a real ownership transfer succeeds, with the project's own
+   * fresh state (new ownerId). The caller is expected to pass its existing
+   * project setter (e.g. onOwnerTransferred={setProject}, the exact same
+   * pattern ProjectNameEditor's onRenamed already uses) so every owner-gated
+   * control derived from project.ownerId -- including this panel's own
+   * isOwner prop -- correctly reflects that the signed-in user is no longer
+   * the owner, without closing this panel: they're still a collaborator
+   * (now "editor"), so staying on this read-only view of the list is the
+   * right outcome, the same as any other non-owner collaborator already
+   * sees.
+   *
+   * Round 1195: the second argument is the acting user's own fresh
+   * `addedAt` on the brand-new "editor" collaborator row transferring away
+   * ownership just minted for them (transferProjectOwnership demotes the
+   * previous owner to a real collaborator row, see that function's own
+   * doc comment in packages/db/src/projects.ts) -- undefined only if that
+   * row somehow isn't in the response (never in practice; defensive only).
+   * The caller is expected to immediately acknowledge it via
+   * markSharedProjectSeen, the same one-line idiom openExistingProject
+   * already uses for the ordinary "open a shared project" case, so this
+   * project doesn't show a "New share!" badge on its own former owner's
+   * next trip to the home screen -- without it, the home screen's
+   * `sharedAt`-vs-`seenShared` comparison (isNewShare) has no way to know
+   * this grant was self-inflicted rather than a genuine new invite from
+   * someone else, since it's indistinguishable at the data layer from one.
+   */
+  onOwnerTransferred: (project: Project, selfSharedAt: string | undefined) => void;
 }) {
   const { t, lang } = useTranslation();
   const [collaborators, setCollaborators] = useState<ProjectCollaborator[] | null>(null);
@@ -210,7 +236,11 @@ export function CollaboratorsPanel({
       setCollaborators(collaborators);
       setOwner(owner);
       setTransferInfo(t("collab.transferOwnership.success", { email }));
-      onOwnerTransferred(project);
+      // Round 1195: see onOwnerTransferred's own doc comment for why the
+      // acting user's own fresh collaborator row (keyed by currentUserId,
+      // never undefined here in practice) has to be found and passed up.
+      const selfEntry = currentUserId ? collaborators.find((c) => c.userId === currentUserId) : undefined;
+      onOwnerTransferred(project, selfEntry?.addedAt);
     } catch (err) {
       setError((err as Error).message);
     } finally {
