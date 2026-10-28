@@ -97,7 +97,23 @@ export function createCalendarFeedRouter(db: ForgeDatabase): Router {
       // same as "not found" here, consistent with every other 404 branch
       // above never distinguishing its exact reason.
       const parsed = ProductSpecSchema.safeParse(JSON.parse(project.spec_json));
-      const entity = parsed.success ? parsed.data.entities.find((e) => e.name === entityName) : undefined;
+      // Round 1185: exact-case first (the fast, common path), falling
+      // back to case-insensitive -- mirroring routes/projects.ts's own
+      // findEntity helper. entityName comes from the URL path segment of
+      // a "Subscribe" link the client baked in and pasted into a real
+      // calendar app once (EntityPanel.tsx's own subscribe-URL builder),
+      // which then re-fetches that exact URL on its own schedule
+      // forever, with no UI control to "resubscribe." A live refine
+      // recasing this entity's own name (e.g. "customer" -> "Customer",
+      // the same cosmetic, non-destructive rename round 988 and every
+      // round since established must never be treated like a real
+      // drop) used to 404 here permanently, and this router's own
+      // deliberate single undifferentiated 404 (see its own module
+      // comment) gives a subscribed calendar app no way to tell a
+      // cosmetic rename apart from real data loss.
+      const entity = parsed.success
+        ? parsed.data.entities.find((e) => e.name === entityName) ?? parsed.data.entities.find((e) => e.name.toLowerCase() === entityName.toLowerCase())
+        : undefined;
       if (!entity) {
         res.status(404).json({ error: "Calendar feed not found", code: "CALENDAR_FEED_NOT_FOUND" });
         return;

@@ -16062,6 +16062,62 @@ test("GET /public/calendar/:projectId/:entityName.ics's DESCRIPTION still resolv
 });
 
 /**
+ * Round 1185: this route's own entity lookup (`entity.name === entityName`,
+ * entityName coming straight from the URL path a real calendar app
+ * re-fetches on its own schedule forever, once subscribed) was still
+ * exact-case -- unlike every other entity-name-from-URL resolution in
+ * this file (see routes/projects.ts's own findEntity helper, and the
+ * sibling test for GET .../entities/:entityName above), and unlike this
+ * SAME route's own relation-target lookup fixed in round 1160. A live
+ * refine that recases an entity's own name (e.g. "Appointment" ->
+ * "appointment") is the exact cosmetic, non-destructive rename rounds
+ * 988/1029/1068/1145 already established must survive everywhere else
+ * (column widths, sort keys, filters, view mode) -- but this route is
+ * the one feature producing a durable, EXTERNALLY cached artifact a user
+ * has no way to resubscribe themselves: the instant the rename lands,
+ * every already-subscribed calendar silently 404s forever, with no
+ * signal (this router's own doc comment deliberately keeps every 404
+ * branch indistinguishable) that it was a cosmetic rename, not real data
+ * loss. Builds the spec with the entity already named differently-cased
+ * than the URL this test requests, the same way the relation-case test
+ * just above sets up its own mismatch, rather than simulating a live
+ * refine transition the route itself has no way to observe anyway (it
+ * reads project.spec_json fresh on every request).
+ */
+test("GET /public/calendar/:projectId/:entityName.ics still resolves the feed when the URL's own entityName differs from the entity's real name only by letter case", async () => {
+  await withServer(async (baseUrl, db) => {
+    const email = `calendar-feed-entity-case-${randomUUID()}@example.com`;
+    const authToken = await signup(baseUrl, email);
+    const user = findUserByEmail(db, email)!;
+    const spec: ProductSpec = {
+      summary: "test",
+      personas: [],
+      roles: ["Admin"],
+      entities: [{ name: "appointment", fields: [{ name: "name", type: "text", required: true }, { name: "date", type: "date", required: true }] }],
+      screens: [],
+      assumptions: [],
+      openQuestions: [],
+    };
+    const projectId = randomUUID();
+    insertProject(db, { id: projectId, ownerId: user.id, name: "CRM", description: "test", spec });
+    diffAndMigrate(db, projectId, undefined, spec);
+    markProjectBuilt(db, projectId);
+    insertRecord(db, projectId, spec.entities[0], { name: "Checkup", date: "2026-05-01" });
+
+    const tokenRes = await fetch(`${baseUrl}/api/projects/${projectId}/calendar-feed-token`, { headers: authHeaders(authToken) });
+    const { token: feedToken } = (await tokenRes.json()) as { token: string };
+
+    // The subscribe URL a real calendar app had already cached was baked
+    // with "Appointment" -- the entity's OLD casing from before a refine
+    // recased it to "appointment" above.
+    const feedRes = await fetch(`${baseUrl}/api/public/calendar/${projectId}/Appointment.ics?token=${feedToken}`);
+    assert.equal(feedRes.status, 200, "an already-subscribed calendar's cached URL must keep working after a cosmetic, case-only entity rename");
+    const ics = await feedRes.text();
+    assert.match(ics, /SUMMARY:.*Checkup/, "the feed must still contain the real entity's own records, not an empty/wrong feed");
+  });
+});
+
+/**
  * Round 1012: before this round, once a token was handed out via the GET
  * route above, nothing could ever invalidate it -- a removed or demoted
  * collaborator (or anyone who'd been forwarded the URL) kept live,
