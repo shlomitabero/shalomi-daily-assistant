@@ -6,6 +6,13 @@ import Anthropic from '@anthropic-ai/sdk';
 
 const MODEL = 'claude-sonnet-5-5';
 
+// Same gap as productDraft.js's draftProduct(): the SDK's own default is
+// 10 minutes, retried up to 2 more times on a timeout — so a hung
+// connection here could block the autonomous scan's background cron job
+// (or the owner's manual "סרוק עכשיו" click) for roughly half an hour
+// with zero feedback.
+const API_TIMEOUT_MS = 30_000;
+
 export function buildTopicPrompt({ avoidTitles = [] }) {
   const avoid = avoidTitles.length ? ` Avoid repeating these already-tried topics: ${avoidTitles.join('; ')}.` : '';
   return `Propose ONE specific, practical topic for a short paid digital guide (a how-to or reference) that people commonly search for and would plausibly pay a few dollars for.${avoid} ` +
@@ -40,11 +47,11 @@ export function isValidTopicIdea(parsed) {
   );
 }
 
-export async function generateTopicIdea({ avoidTitles = [] } = {}) {
+export async function generateTopicIdea({ avoidTitles = [], timeoutMs = API_TIMEOUT_MS } = {}) {
   const apiKey = process.env.ANTHROPIC_API_KEY;
   if (!apiKey) return demoTopicIdea(avoidTitles);
 
-  const client = new Anthropic({ apiKey });
+  const client = new Anthropic({ apiKey, timeout: timeoutMs });
   const prompt = buildTopicPrompt({ avoidTitles });
   const msg = await client.messages.create({
     model: MODEL,

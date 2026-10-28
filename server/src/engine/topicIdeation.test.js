@@ -2,6 +2,23 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { buildTopicPrompt, generateTopicIdea, isValidTopicIdea } from './topicIdeation.js';
 
+function withEnv(vars, fn) {
+  const originals = {};
+  for (const key of Object.keys(vars)) {
+    originals[key] = process.env[key];
+    if (vars[key] === undefined) delete process.env[key];
+    else process.env[key] = vars[key];
+  }
+  try {
+    return fn();
+  } finally {
+    for (const key of Object.keys(originals)) {
+      if (originals[key] === undefined) delete process.env[key];
+      else process.env[key] = originals[key];
+    }
+  }
+}
+
 test('isValidTopicIdea accepts a complete idea', () => {
   assert.equal(isValidTopicIdea({ topic: 'ניהול תקציב', audience: 'עצמאים' }), true);
 });
@@ -51,6 +68,23 @@ test('generateTopicIdea falls back to a demo idea with no ANTHROPIC_API_KEY, nev
     assert.notEqual(second.topic, first.topic);
   } finally {
     if (original !== undefined) process.env.ANTHROPIC_API_KEY = original;
+  }
+});
+
+test('generateTopicIdea times out instead of hanging for the SDK default of ~10 minutes (retried) when the API never responds', async () => {
+  // Without an explicit timeout, a hung connection would block the
+  // autonomous scan's background cron job (or a manual "סרוק עכשיו" click)
+  // for roughly half an hour with zero feedback.
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async (url, { signal } = {}) => new Promise((resolve, reject) => {
+    signal?.addEventListener('abort', () => reject(Object.assign(new Error('aborted'), { name: 'AbortError' })));
+  });
+  try {
+    await withEnv({ ANTHROPIC_API_KEY: 'test-key' }, () =>
+      assert.rejects(() => generateTopicIdea({ timeoutMs: 5 }))
+    );
+  } finally {
+    globalThis.fetch = originalFetch;
   }
 });
 
