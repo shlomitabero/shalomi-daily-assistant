@@ -480,6 +480,8 @@ test("App's handleEnhanceAndBuild captures enhanceIdea's own providerName into e
   function run(opts: {
     enhanceIdeaFn: (idea: string) => Promise<{ enhanced: string; providerName: string }>;
     createProjectFn: (description: string) => Promise<{ project: Project; providerName: string }>;
+    busy?: boolean;
+    templateBusy?: string | null;
   }) {
     const state: {
       description: string;
@@ -501,6 +503,8 @@ test("App's handleEnhanceAndBuild captures enhanceIdea's own providerName into e
     const fn = new Function(
       "description",
       "user",
+      "busy",
+      "templateBusy",
       "setEnhanceBusy",
       "setError",
       "enhanceIdea",
@@ -516,6 +520,8 @@ test("App's handleEnhanceAndBuild captures enhanceIdea's own providerName into e
     )(
       state.description,
       { id: "user1" },
+      opts.busy ?? false,
+      opts.templateBusy ?? null,
       (v: boolean) => (state.enhanceBusy = v),
       (v: string | null) => (state.error = v),
       opts.enhanceIdeaFn,
@@ -548,6 +554,210 @@ test("App's handleEnhanceAndBuild captures enhanceIdea's own providerName into e
   assert.equal(state.description, "a detailed CRM idea", "the enhanced text must replace the original description");
   assert.equal(state.project, builtProject);
   assert.equal(state.view, "spec");
+});
+
+/**
+ * Round 1131: this home screen has three independent project-creation
+ * entry points (handleDescribe/busy; this handler/enhanceBusy;
+ * handleUseTemplate/templateBusy), none of which used to block the other
+ * two -- a user could click Build, then (while that request was still in
+ * flight) click Enhance & Build, firing two independent, real
+ * POST /projects.../POST /projects/from-template calls that both end by
+ * writing to the exact same shared project/view state. Confirms
+ * handleEnhanceAndBuild now refuses to run at all -- neither enhanceIdea
+ * nor createProject is even called -- when either sibling flag is
+ * already busy, mirroring the identical cross-gate convention this file
+ * already established for handleDeleteProject/handleDuplicateProject/
+ * handleBulkDeleteProjects (rounds 1041/1043).
+ */
+test("App's handleEnhanceAndBuild refuses to run while the Build submit button or a template card is already busy", async () => {
+  const appSrc = readFileSync(new URL("./App.tsx", import.meta.url), "utf8");
+  const handlerMatch = appSrc.match(/ {2}async function handleEnhanceAndBuild\(\) \{[\s\S]*?\n {2}\}\n/);
+  assert.ok(handlerMatch, "expected to find handleEnhanceAndBuild in App.tsx");
+  const { code } = transformSync(handlerMatch![0], { loader: "ts" });
+
+  function run(opts: { busy?: boolean; templateBusy?: string | null }) {
+    const state = { enhanceIdeaCalled: false, createProjectCalled: false, enhanceBusySet: "untouched" as unknown };
+    const fn = new Function(
+      "description",
+      "user",
+      "busy",
+      "templateBusy",
+      "setEnhanceBusy",
+      "setError",
+      "enhanceIdea",
+      "setDescription",
+      "saveIdeaDraft",
+      "setEnhanceProvider",
+      "createProject",
+      "setProject",
+      "setMyRole",
+      "setSpecProvider",
+      "setView",
+      `${code}\nreturn handleEnhanceAndBuild;`,
+    )(
+      "a crm for my shop",
+      { id: "user1" },
+      opts.busy ?? false,
+      opts.templateBusy ?? null,
+      (v: boolean) => (state.enhanceBusySet = v),
+      () => {},
+      async () => {
+        state.enhanceIdeaCalled = true;
+        return { enhanced: "x", providerName: "anthropic" };
+      },
+      () => {},
+      () => {},
+      () => {},
+      async () => {
+        state.createProjectCalled = true;
+        return { project: makeProject([]), providerName: "anthropic" };
+      },
+      () => {},
+      () => {},
+      () => {},
+      () => {},
+    ) as () => Promise<void>;
+    return { fn, state };
+  }
+
+  const { fn: fnWhileBuildBusy, state: stateWhileBuildBusy } = run({ busy: true });
+  await fnWhileBuildBusy();
+  assert.equal(stateWhileBuildBusy.enhanceIdeaCalled, false, "must never call enhanceIdea while the plain Build submit is already in flight");
+  assert.equal(stateWhileBuildBusy.createProjectCalled, false, "must never call createProject either");
+  assert.equal(stateWhileBuildBusy.enhanceBusySet, "untouched", "must not even set its own busy flag, since it never started");
+
+  const { fn: fnWhileTemplateBusy, state: stateWhileTemplateBusy } = run({ templateBusy: "template-1" });
+  await fnWhileTemplateBusy();
+  assert.equal(stateWhileTemplateBusy.enhanceIdeaCalled, false, "must never call enhanceIdea while a template card is already in flight");
+  assert.equal(stateWhileTemplateBusy.createProjectCalled, false, "must never call createProject either");
+});
+
+/**
+ * Round 1131: handleDescribe (the plain Build submit button) is the third
+ * leg of the same three-way cross-gate -- see handleEnhanceAndBuild's own
+ * identical test just above for the full race this closes. No dedicated
+ * extracted-function test existed for handleDescribe before this round.
+ */
+test("App's handleDescribe refuses to run while Enhance & Build or a template card is already busy, but still runs normally otherwise", async () => {
+  const appSrc = readFileSync(new URL("./App.tsx", import.meta.url), "utf8");
+  const handlerMatch = appSrc.match(/ {2}async function handleDescribe\(e: React\.FormEvent\) \{[\s\S]*?\n {2}\}\n/);
+  assert.ok(handlerMatch, "expected to find handleDescribe in App.tsx");
+  const { code } = transformSync(handlerMatch![0], { loader: "ts" });
+
+  function run(opts: { enhanceBusy?: boolean; templateBusy?: string | null }) {
+    const state = { createProjectCalled: false, busySet: "untouched" as unknown, viewSet: "untouched" as unknown, preventDefaultCalled: false };
+    const fn = new Function(
+      "description",
+      "enhanceBusy",
+      "templateBusy",
+      "setBusy",
+      "setError",
+      "createProject",
+      "setProject",
+      "setMyRole",
+      "setSpecProvider",
+      "setEnhanceProvider",
+      "setView",
+      `${code}\nreturn handleDescribe;`,
+    )(
+      "a crm for my shop",
+      opts.enhanceBusy ?? false,
+      opts.templateBusy ?? null,
+      (v: boolean) => (state.busySet = v),
+      () => {},
+      async () => {
+        state.createProjectCalled = true;
+        return { project: makeProject([]), providerName: "anthropic" };
+      },
+      () => {},
+      () => {},
+      () => {},
+      () => {},
+      (v: string) => (state.viewSet = v),
+    ) as (e: { preventDefault: () => void }) => Promise<void>;
+    return { fn, state };
+  }
+
+  const fakeEvent = { preventDefault: () => {} };
+
+  const { fn: fnWhileEnhanceBusy, state: stateWhileEnhanceBusy } = run({ enhanceBusy: true });
+  await fnWhileEnhanceBusy(fakeEvent);
+  assert.equal(stateWhileEnhanceBusy.createProjectCalled, false, "must never call createProject while Enhance & Build is already in flight");
+  assert.equal(stateWhileEnhanceBusy.busySet, "untouched", "must not even set its own busy flag, since it never started");
+
+  const { fn: fnWhileTemplateBusy, state: stateWhileTemplateBusy } = run({ templateBusy: "template-1" });
+  await fnWhileTemplateBusy(fakeEvent);
+  assert.equal(stateWhileTemplateBusy.createProjectCalled, false, "must never call createProject while a template card is already in flight");
+
+  const { fn: fnNormally, state: stateNormally } = run({});
+  await fnNormally(fakeEvent);
+  assert.equal(stateNormally.createProjectCalled, true, "must still run normally when neither sibling flag is busy");
+  assert.equal(stateNormally.viewSet, "spec", "must still navigate to the spec screen on success");
+});
+
+/**
+ * Round 1131: handleUseTemplate (the Templates Gallery's own one-click
+ * path) is the third leg of the same three-way cross-gate, from the
+ * opposite direction -- confirms it now refuses to even set its own
+ * templateBusy flag while the plain Build or Enhance & Build button is
+ * already in flight, closing the one direction of the race the subagent's
+ * own report called out explicitly ("Use this template" used to check
+ * only its own flag).
+ */
+test("App's handleUseTemplate refuses to run while the Build submit button or Enhance & Build is already busy, but still runs normally otherwise", async () => {
+  const appSrc = readFileSync(new URL("./App.tsx", import.meta.url), "utf8");
+  const handlerMatch = appSrc.match(/ {2}async function handleUseTemplate\(templateId: string\) \{[\s\S]*?\n {2}\}\n/);
+  assert.ok(handlerMatch, "expected to find handleUseTemplate in App.tsx");
+  const { code } = transformSync(handlerMatch![0], { loader: "ts" });
+
+  function run(opts: { busy?: boolean; enhanceBusy?: boolean }) {
+    const state = { createProjectFromTemplateCalled: false, templateBusySet: "untouched" as unknown, viewSet: "untouched" as unknown };
+    const fn = new Function(
+      "busy",
+      "enhanceBusy",
+      "setTemplateBusy",
+      "setError",
+      "createProjectFromTemplate",
+      "lang",
+      "setProject",
+      "setMyRole",
+      "setSpecProvider",
+      "setEnhanceProvider",
+      "setView",
+      `${code}\nreturn handleUseTemplate;`,
+    )(
+      opts.busy ?? false,
+      opts.enhanceBusy ?? false,
+      (v: string | null) => (state.templateBusySet = v),
+      () => {},
+      async () => {
+        state.createProjectFromTemplateCalled = true;
+        return { project: makeProject([]) };
+      },
+      "en",
+      () => {},
+      () => {},
+      () => {},
+      () => {},
+      (v: string) => (state.viewSet = v),
+    ) as (templateId: string) => Promise<void>;
+    return { fn, state };
+  }
+
+  const { fn: fnWhileBuildBusy, state: stateWhileBuildBusy } = run({ busy: true });
+  await fnWhileBuildBusy("template-1");
+  assert.equal(stateWhileBuildBusy.createProjectFromTemplateCalled, false, "must never call createProjectFromTemplate while the plain Build submit is already in flight");
+  assert.equal(stateWhileBuildBusy.templateBusySet, "untouched", "must not even set its own templateBusy flag, since it never started");
+
+  const { fn: fnWhileEnhanceBusy, state: stateWhileEnhanceBusy } = run({ enhanceBusy: true });
+  await fnWhileEnhanceBusy("template-1");
+  assert.equal(stateWhileEnhanceBusy.createProjectFromTemplateCalled, false, "must never call createProjectFromTemplate while Enhance & Build is already in flight");
+
+  const { fn: fnNormally, state: stateNormally } = run({});
+  await fnNormally("template-1");
+  assert.equal(stateNormally.createProjectFromTemplateCalled, true, "must still run normally when neither sibling flag is busy");
+  assert.equal(stateNormally.viewSet, "spec", "must still navigate to the spec screen on success");
 });
 
 /**

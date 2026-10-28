@@ -1517,6 +1517,12 @@ function AppContent() {
   async function handleDescribe(e: React.FormEvent) {
     e.preventDefault();
     if (!description.trim()) return;
+    // Round 1131: cross-gates against the home screen's other two
+    // independent project-creation entry points (handleEnhanceAndBuild,
+    // handleUseTemplate) -- see handleUseTemplate's own identical round-1131
+    // doc comment for why all three must block each other, not just guard
+    // their own re-entry.
+    if (enhanceBusy || templateBusy !== null) return;
     setBusy(true);
     setError(null);
     try {
@@ -1545,6 +1551,8 @@ function AppContent() {
    */
   async function handleEnhanceAndBuild() {
     if (!description.trim() || !user) return;
+    // Round 1131: see handleUseTemplate's own identical doc comment.
+    if (busy || templateBusy !== null) return;
     setEnhanceBusy(true);
     setError(null);
     try {
@@ -1575,8 +1583,28 @@ function AppContent() {
    * `templateBusy` (the chosen template's own id, not a plain boolean) lets
    * the gallery disable every card while keeping track of *which* card's
    * button should show its own busy label.
+   *
+   * Round 1131: this home screen has three independent project-creation
+   * entry points (this one; handleDescribe/busy; handleEnhanceAndBuild/
+   * enhanceBusy), and until this round none of their three busy flags
+   * cross-gated the other two -- only the Build submit/Enhance buttons
+   * checked each other (`busy || enhanceBusy`), and no button checked
+   * `templateBusy` at all. All three end by writing to the exact same
+   * shared `project`/`myRole`/`specProvider`/`enhanceProvider`/`view`
+   * state, and each fires its own real, independent `POST /projects...`
+   * call -- clicking Build, then (while that request is still in flight)
+   * clicking a template card still enabled underneath it, created TWO
+   * real projects server-side from one user action, with whichever
+   * response resolved last silently overwriting the other's state. The
+   * per-call idempotency key (api.ts) only de-dupes retries of the SAME
+   * call, so it does nothing for this cross-action race. Now mirrors the
+   * identical "any one in-flight sibling action blocks the others"
+   * convention this file already established for
+   * handleDeleteProject/handleDuplicateProject/handleBulkDeleteProjects
+   * (rounds 1041/1043).
    */
   async function handleUseTemplate(templateId: string) {
+    if (busy || enhanceBusy) return;
     setTemplateBusy(templateId);
     setError(null);
     try {
@@ -2176,13 +2204,13 @@ function AppContent() {
                 saveIdeaDraft(user.id, e.target.value);
               }}
             />
-            <button type="submit" disabled={busy || enhanceBusy}>
+            <button type="submit" disabled={busy || enhanceBusy || templateBusy !== null}>
               {busy ? t("home.submit.busy") : t("home.submit")}
             </button>
             <button
               type="button"
               className="button-ai"
-              disabled={busy || enhanceBusy || !description.trim()}
+              disabled={busy || enhanceBusy || templateBusy !== null || !description.trim()}
               onClick={handleEnhanceAndBuild}
             >
               {enhanceBusy ? t("home.enhance.busy") : t("home.enhance")}
@@ -2230,7 +2258,7 @@ function AppContent() {
                     )}
                     <button
                       type="button"
-                      disabled={templateBusy !== null}
+                      disabled={templateBusy !== null || busy || enhanceBusy}
                       onClick={() => handleUseTemplate(template.id)}
                     >
                       {templateBusy === template.id ? t("home.templates.use.busy") : t("home.templates.use")}
