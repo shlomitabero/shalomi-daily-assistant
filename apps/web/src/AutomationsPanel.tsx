@@ -1045,12 +1045,22 @@ export function AutomationsPanel({
                             deletion for history purposes, but a run for a rule deleted mid-test
                             serves no one. Toggling/editing/duplicating mid-test is a smaller but
                             same-shaped surprise (the UI's own busy state no longer matches which
-                            rule the pending Test actually targets). */}
+                            rule the pending Test actually targets).
+                            Round 1149: also disabled by retryingRunId -- the identical gap, one
+                            round later, for this rule's own OLDER sibling action, Retry (round 971,
+                            predates Test by many rounds). handleRetryRun has the exact same shape
+                            as handleTestRule: a real server call (retryAutomationRun fires the rule
+                            for real, then records a new run), a .finally that only clears
+                            retryingRunId "if (current === run.id)", and a post-success
+                            listAutomationRuns re-fetch that 404s harmlessly into retryErrorByRunId
+                            for a run row no longer displayed anywhere once its own rule is gone --
+                            round 1060 fixed this mechanism for Test but never noticed its older
+                            twin had the same gap. */}
                         <button
                           type="button"
                           className="secondary small"
                           onClick={() => handleToggle(rule)}
-                          disabled={busyRuleId !== null || createBusy || testingRuleId !== null}
+                          disabled={busyRuleId !== null || createBusy || testingRuleId !== null || retryingRunId !== null}
                         >
                           {rule.enabled ? t("automations.disable") : t("automations.enable")}
                         </button>
@@ -1058,7 +1068,7 @@ export function AutomationsPanel({
                           type="button"
                           className="secondary small"
                           onClick={() => handleStartEdit(rule)}
-                          disabled={busyRuleId !== null || createBusy || testingRuleId !== null}
+                          disabled={busyRuleId !== null || createBusy || testingRuleId !== null || retryingRunId !== null}
                         >
                           {t("automations.edit")}
                         </button>
@@ -1066,7 +1076,7 @@ export function AutomationsPanel({
                           type="button"
                           className="danger small"
                           onClick={() => handleDelete(rule)}
-                          disabled={busyRuleId !== null || createBusy || testingRuleId !== null}
+                          disabled={busyRuleId !== null || createBusy || testingRuleId !== null || retryingRunId !== null}
                         >
                           {t("automations.delete")}
                         </button>
@@ -1074,7 +1084,7 @@ export function AutomationsPanel({
                           type="button"
                           className="secondary small"
                           onClick={() => handleTestRule(rule)}
-                          disabled={busyRuleId !== null || createBusy || testingRuleId !== null}
+                          disabled={busyRuleId !== null || createBusy || testingRuleId !== null || retryingRunId !== null}
                         >
                           {testingRuleId === rule.id ? t("automations.test.sending") : t("automations.test")}
                         </button>
@@ -1082,7 +1092,7 @@ export function AutomationsPanel({
                           type="button"
                           className="secondary small"
                           onClick={() => handleDuplicateRule(rule)}
-                          disabled={busyRuleId !== null || createBusy || testingRuleId !== null}
+                          disabled={busyRuleId !== null || createBusy || testingRuleId !== null || retryingRunId !== null}
                         >
                           {t("automations.duplicate")}
                         </button>
@@ -1147,7 +1157,7 @@ export function AutomationsPanel({
                                     type="button"
                                     className="link-button small"
                                     onClick={() => handleRetryRun(rule, run)}
-                                    disabled={retryingRunId === run.id}
+                                    disabled={retryingRunId === run.id || busyRuleId !== null || createBusy || testingRuleId !== null}
                                   >
                                     {retryingRunId === run.id ? t("automations.run.retrying") : t("automations.run.retry")}
                                   </button>

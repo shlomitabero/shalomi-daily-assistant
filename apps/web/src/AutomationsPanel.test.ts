@@ -2633,6 +2633,75 @@ test("the rule list's Toggle/Edit/Delete/Duplicate buttons stay disabled while a
 });
 
 /**
+ * Round 1149: the identical gap round 1060 just fixed for Test, one round
+ * later, for this rule's own OLDER sibling action, Retry (round 971,
+ * predates Test by many rounds) -- handleRetryRun has the exact same shape
+ * as handleTestRule (a real server call, a `.finally` that only clears
+ * retryingRunId "if (current === run.id)"), but none of
+ * Toggle/Edit/Delete/Test/Duplicate ever waited for a Retry still in
+ * flight for any rule, including the retrying rule's own other buttons.
+ */
+test("the rule list's Toggle/Edit/Delete/Test/Duplicate buttons stay disabled while a Retry is still in flight for any rule", async () => {
+  await withJsdom(async () => {
+    const originalFetch = globalThis.fetch;
+    let resolveRetry!: (value: Response) => void;
+    const retryHeld = new Promise<Response>((resolve) => {
+      resolveRetry = resolve;
+    });
+    globalThis.fetch = (async (input: string, init?: RequestInit) => {
+      const method = init?.method ?? "GET";
+      if (method === "GET" && input === "/api/projects/proj1/automations") {
+        return new Response(
+          JSON.stringify({ rules: [makeRule({ id: "rule1" }), makeRule({ id: "rule2" })] }),
+          { status: 200, headers: { "content-type": "application/json" } },
+        );
+      }
+      if (method === "GET" && input === "/api/projects/proj1/automations/rule1/runs") {
+        return new Response(
+          JSON.stringify({ runs: [{ id: "run1", ruleId: "rule1", status: "failed", error: "WhatsApp not connected", recordId: 7, triggeredAt: new Date("2026-03-15T08:00:00Z").toISOString() }] }),
+          { status: 200, headers: { "content-type": "application/json" } },
+        );
+      }
+      if (method === "POST" && input === "/api/projects/proj1/automations/rule1/runs/run1/retry") {
+        return retryHeld; // the rule1 Retry stays in flight until the test resolves it
+      }
+      throw new Error(`unexpected request ${method} ${input}`);
+    }) as typeof fetch;
+
+    try {
+      renderPanel();
+      await waitForCondition(() => document.querySelectorAll(".automations-rule-row").length === 2);
+
+      const firstRow = document.querySelectorAll(".automations-rule-row")[0] as HTMLElement;
+      const historyButton = Array.from(firstRow.querySelectorAll("button")).find((b) => b.textContent === "History") as HTMLButtonElement;
+      fireEvent.click(historyButton);
+      await waitForCondition(() => firstRow.querySelectorAll(".automations-rule-history-list li").length === 1);
+
+      const retryButton = Array.from(firstRow.querySelectorAll("button")).find((b) => b.textContent === "Retry") as HTMLButtonElement;
+      fireEvent.click(retryButton);
+      await waitForCondition(() => firstRow.textContent?.includes("Retrying") ?? false);
+
+      const secondRow = document.querySelectorAll(".automations-rule-row")[1] as HTMLElement;
+      const secondRowButtons = Array.from(secondRow.querySelectorAll("button"));
+      for (const label of ["Enable", "Disable", "Edit", "Delete", "Send test", "Duplicate"]) {
+        const button = secondRowButtons.find((b) => b.textContent === label);
+        if (!button) continue;
+        assert.equal(button.disabled, true, `rule2's own ${label} button must stay disabled while rule1's own Retry is still in flight`);
+      }
+
+      resolveRetry(new Response(JSON.stringify({ run: { id: "run-retry", ruleId: "rule1", status: "sent" } }), { status: 200, headers: { "content-type": "application/json" } }));
+      await waitForCondition(() => !(secondRowButtons.find((b) => b.textContent === "Edit") as HTMLButtonElement).disabled);
+    } finally {
+      // Always resolves the gate, even if an assertion above threw -- see
+      // round 1026's own identical comment on why this must live in
+      // finally.
+      resolveRetry(new Response(JSON.stringify({ run: { id: "run-retry", ruleId: "rule1", status: "sent" } }), { status: 200, headers: { "content-type": "application/json" } }));
+      globalThis.fetch = originalFetch;
+    }
+  });
+});
+
+/**
  * Round 679: Automations was the one read-heavy diagnostic panel in this
  * app with no Copy/Download companions at all (Business Twin, WhatsApp
  * log, Time Machine, Global Search all already have both) -- a user
