@@ -345,6 +345,52 @@ test("BusinessTwinPanel shows the real total-records count from the fetched twin
 });
 
 /**
+ * Round 1138: a fresh survey found that `twin.summary` -- the one-line
+ * description of the project's own business/app domain (the same text
+ * shown on the Home screen's project card, `App.tsx`) -- is pushed as the
+ * very first content line of `formatTwinReport`'s Copy/Download output,
+ * but was never rendered in the live panel at all: a person opening
+ * Business Twin to get oriented on "what is this" could only see that one
+ * sentence by exporting the report and reading the text file.
+ */
+test("BusinessTwinPanel shows the project's own twin.summary text, the same content its Copy/Download report leads with", async () => {
+  await withJsdom(async () => {
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = mockTwinFetch() as typeof fetch;
+    try {
+      renderTwinPanel(() => {});
+      await waitForCondition(() => document.querySelector(".twin-summary") !== null);
+
+      assert.match(document.querySelector(".twin-summary")!.textContent ?? "", /A CRM/, "must show the real twin.summary text from the fetched twin");
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+});
+
+/** Mirrors formatTwinReport's own `.trim().length > 0` guard -- a blank summary must render nothing, not an empty paragraph. */
+test("BusinessTwinPanel renders no summary element at all when twin.summary is blank", async () => {
+  await withJsdom(async () => {
+    const blankSummaryTwin: BusinessTwin = { ...TWIN, summary: "   " };
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = (async (input: string) => {
+      if (input === "/api/projects/proj1/twin") {
+        return new Response(JSON.stringify({ twin: blankSummaryTwin }), { status: 200, headers: { "content-type": "application/json" } });
+      }
+      throw new Error(`unexpected request ${input}`);
+    }) as typeof fetch;
+    try {
+      renderTwinPanel(() => {});
+      await waitForCondition(() => document.querySelector(".twin-total") !== null);
+
+      assert.equal(document.querySelector(".twin-summary"), null, "a blank summary must not render an empty paragraph");
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+});
+
+/**
  * New in this round: the fixture below deliberately lists the busiest
  * entity LAST and a zero-count entity in the middle, mirroring the exact
  * "declaration order, not activity order" shape the server actually

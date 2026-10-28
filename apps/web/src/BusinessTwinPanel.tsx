@@ -181,6 +181,8 @@ export function BusinessTwinPanel({
 
         {twin && (
           <>
+            {twin.summary.trim().length > 0 && <p className="twin-summary">{twin.summary}</p>}
+
             <div className="chips">
               {twin.roles.map((r) => (
                 <span className="chip" key={r}>

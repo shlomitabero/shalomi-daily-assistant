@@ -2915,6 +2915,11 @@ button.sort-header:hover:not(:disabled) {
   max-width: 560px;
 }
 
+.twin-summary {
+  margin: 10px 0 0;
+  font-weight: 600;
+}
+
 .twin-total {
   margin: 10px 0 0;
 }
