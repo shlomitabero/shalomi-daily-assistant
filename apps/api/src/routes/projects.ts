@@ -1553,6 +1553,29 @@ export function createProjectsRouter(
   });
 
   /**
+   * Round 1172: PATCH .../name and PATCH .../description had no volumetric
+   * throttle at all -- the last two plain mutations left in this file
+   * without one after round 1171's own sweep closed every other gap. Not
+   * specEditRateLimiter below: that one is scoped to the pre-build spec
+   * (entities/fields/relations) and every route using it also carries the
+   * activePipelines guard these two routes deliberately don't need (see
+   * their own doc comments -- description is never read-modify-written
+   * anywhere else, and a bare name/description edit doesn't touch
+   * project.spec at all). A project's display name and description are the
+   * same real question either way -- "how much can this account edit this
+   * project's own basic metadata" -- so one dedicated limiter, shared
+   * between both routes, rather than a spec-editing budget that doesn't fit
+   * what either route actually does, or two separate budgets for what is
+   * really one question asked two ways.
+   */
+  const projectMetadataRateLimiter = createRateLimiter({
+    windowMs: 15 * 60 * 1000,
+    max: 60,
+    keyGenerator: (req) => req.userId ?? "unknown",
+    message: "Too many project metadata update requests. Please try again later.",
+  });
+
+  /**
    * /build, /refine, and /answers each read `project.spec` once at the
    * start of the request, then spend real time (an AI/heuristic
    * spec-generation call, and for /build and /refine also a migration)
@@ -1793,6 +1816,7 @@ export function createProjectsRouter(
    */
   router.patch(
     "/projects/:id/name",
+    projectMetadataRateLimiter,
     asyncRoute(async (req, res) => {
       const project = requireProjectWriteAccess(db, req.params.id, req.userId!);
       const parsed = RenameProjectSchema.safeParse(req.body);
@@ -1822,6 +1846,7 @@ export function createProjectsRouter(
    */
   router.patch(
     "/projects/:id/description",
+    projectMetadataRateLimiter,
     asyncRoute(async (req, res) => {
       const project = requireProjectWriteAccess(db, req.params.id, req.userId!);
       const parsed = UpdateProjectDescriptionSchema.safeParse(req.body);

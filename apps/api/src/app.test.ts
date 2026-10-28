@@ -15396,6 +15396,69 @@ test("DELETE .../integrations/whatsapp/messages (bulk-clear) and .../messages/:m
  * own severity (breaking every collaborator's live subscription with no
  * warning), it gets its own dedicated limiter rather than sharing one.
  */
+test("PATCH .../name and PATCH .../description share ONE combined rate-limit budget: the 61st call across both routes is rejected with 429, while a different account is unaffected", async () => {
+  await withServer(async (baseUrl) => {
+    const ownerToken = await signup(baseUrl, "rate-metadata1@example.com");
+    const createRes = await fetch(`${baseUrl}/api/projects`, {
+      method: "POST",
+      headers: authHeaders(ownerToken),
+      body: JSON.stringify({ description: "A CRM with customers and deals." }),
+    });
+    const { project } = (await createRes.json()) as { project: { id: string } };
+
+    for (let i = 0; i < 30; i++) {
+      const res = await fetch(`${baseUrl}/api/projects/${project.id}/name`, {
+        method: "PATCH",
+        headers: authHeaders(ownerToken),
+        body: JSON.stringify({ name: `Renamed ${i}` }),
+      });
+      assert.notEqual(res.status, 429, `name update ${i + 1} of 30 (within the limit) must not be rate-limited yet`);
+    }
+    for (let i = 0; i < 30; i++) {
+      const res = await fetch(`${baseUrl}/api/projects/${project.id}/description`, {
+        method: "PATCH",
+        headers: authHeaders(ownerToken),
+        body: JSON.stringify({ description: `Redescribed ${i}` }),
+      });
+      assert.notEqual(res.status, 429, `description update ${i + 1} of 30 (within the limit) must not be rate-limited yet`);
+    }
+
+    // 60 calls total have now been spent across both routes combined. The
+    // 61st call -- on EITHER route -- must already be blocked, proving one
+    // shared budget rather than two independent 60-call allowances.
+    const blockedName = await fetch(`${baseUrl}/api/projects/${project.id}/name`, {
+      method: "PATCH",
+      headers: authHeaders(ownerToken),
+      body: JSON.stringify({ name: "One too many" }),
+    });
+    assert.equal(blockedName.status, 429);
+    assert.equal(((await blockedName.json()) as { code?: string }).code, "RATE_LIMITED");
+
+    const blockedDescription = await fetch(`${baseUrl}/api/projects/${project.id}/description`, {
+      method: "PATCH",
+      headers: authHeaders(ownerToken),
+      body: JSON.stringify({ description: "Also one too many" }),
+    });
+    assert.equal(blockedDescription.status, 429);
+    assert.equal(((await blockedDescription.json()) as { code?: string }).code, "RATE_LIMITED");
+
+    // A different account must get its own fresh allowance.
+    const otherOwnerToken = await signup(baseUrl, "rate-metadata1-other@example.com");
+    const otherCreateRes = await fetch(`${baseUrl}/api/projects`, {
+      method: "POST",
+      headers: authHeaders(otherOwnerToken),
+      body: JSON.stringify({ description: "A different CRM." }),
+    });
+    const { project: otherProject } = (await otherCreateRes.json()) as { project: { id: string } };
+    const otherRes = await fetch(`${baseUrl}/api/projects/${otherProject.id}/name`, {
+      method: "PATCH",
+      headers: authHeaders(otherOwnerToken),
+      body: JSON.stringify({ name: "Unaffected" }),
+    });
+    assert.equal(otherRes.status, 200, "a different account must not be collaterally blocked by another account's own shared budget");
+  });
+});
+
 test("POST .../calendar-feed-token/regenerate is rate-limited per authenticated account: the 31st regenerate is rejected with 429, while a different account is unaffected", async () => {
   await withServer(async (baseUrl) => {
     const ownerToken = await signup(baseUrl, "rate-feed-token1@example.com");
