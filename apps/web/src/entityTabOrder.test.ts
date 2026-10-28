@@ -135,6 +135,28 @@ test("purgeEntityNameFromTabOrder is a no-op, not an error, when the project was
 });
 
 /**
+ * Round 1132: entityTabOrder.ts is deliberately never migrated on a
+ * case-only entity rename (entityPreferenceCleanup.ts's own
+ * migrateEntityPreferencesForCaseRename doc comment) -- applyColumnOrder's
+ * own case-insensitive lookup at render time resolves an old-cased stored
+ * name against the entity's new casing, so there's no stale key to fix.
+ * But a LATER refine that genuinely drops that same entity calls this
+ * function with its CURRENT name (e.g. "Customer"), while the array still
+ * holds the pre-rename spelling ("customer") -- an exact-string filter
+ * would leave that stale entry rotting forever, and able to silently
+ * resurface if a future entity happens to be named "customer" again.
+ */
+test("purgeEntityNameFromTabOrder matches case-insensitively, so dropping an entity under its CURRENT casing also removes a stale, differently-cased entry left over from an earlier case-only rename", async () => {
+  await withJsdom(() => {
+    setEntityTabOrder("proj1", "userA", ["Task", "customer", "Contact"]);
+
+    purgeEntityNameFromTabOrder("proj1", "Customer");
+
+    assert.deepEqual(getEntityTabOrder("proj1", "userA"), ["Task", "Contact"], "the stale lowercase entry must be removed when the entity is dropped under its new casing");
+  });
+});
+
+/**
  * Round 1127: mirrors pinnedProjects.ts's own removePinnedProject -- used
  * by projectPreferenceCleanup.ts's purgeOwnProjectAccess for the "this one
  * user's own access ended, the project itself is still alive for everyone

@@ -134,8 +134,24 @@ export function purgeEntityTabOrderForProject(projectId: string): void {
  * entity does via applyColumnOrder's own "ignore unknown names" fallback.
  * A no-op (not an error) when a given user never reordered the project, or
  * the name isn't present in their own order.
+ *
+ * Round 1132: matches case-insensitively, mirroring applyColumnOrder's own
+ * convention this store's purge already relies on elsewhere (see
+ * entityPreferenceCleanup.ts's own migrateEntityPreferencesForCaseRename
+ * doc comment: this store is deliberately never remapped on a case-only
+ * entity rename, since applyColumnOrder's read-time case-insensitive
+ * lookup already resolves an old-cased stored name against the entity's
+ * new casing). That design is correct for rendering, but desynced this
+ * purge: an entity reordered as "customer", then case-renamed to
+ * "Customer" by a refine (entityTabOrder's own array still holds the
+ * literal string "customer"), then genuinely dropped by a LATER refine,
+ * reached this function with the entity's CURRENT name "Customer" --
+ * an exact-string filter never matched the array's still-lowercased
+ * "customer" entry, leaving it to rot forever and, worse, silently
+ * resurface if some later entity happens to be named "customer" again.
  */
 export function purgeEntityNameFromTabOrder(projectId: string, entityName: string): void {
+  const lowerName = entityName.toLowerCase();
   try {
     for (const key of Object.keys(localStorage)) {
       if (!key.startsWith(STORAGE_KEY_PREFIX)) continue;
@@ -143,7 +159,7 @@ export function purgeEntityNameFromTabOrder(projectId: string, entityName: strin
       const store = readStore(userId);
       const order = store[projectId];
       if (!order) continue;
-      store[projectId] = order.filter((name) => name !== entityName);
+      store[projectId] = order.filter((name) => name.toLowerCase() !== lowerName);
       writeStore(userId, store);
     }
   } catch {
