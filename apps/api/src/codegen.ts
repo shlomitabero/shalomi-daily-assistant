@@ -8177,10 +8177,12 @@ export default function App() {
           </a>
         </div>
       </div>
-      <nav>
+      <nav role="tablist">
         {orderedEntities.map((e, entityTabIndex) => (
           <span key={e.name} className="tab-wrapper">
             <button
+              role="tab"
+              aria-selected={e.name === active}
               className={e.name === active ? "active" : dragOverEntityTab === e.name ? "drag-over" : ""}
               draggable
               onDragStart={() => setDraggedEntityTab(e.name)}

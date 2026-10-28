@@ -2808,10 +2808,12 @@ function AppContent() {
             </div>
 
             <div className="preview-live-pane">
-              <nav className="entity-tabs">
+              <nav className="entity-tabs" role="tablist">
                 {orderedEntities.map((entity, entityTabIndex) => (
                   <span key={entity.name} className="tab-wrapper">
                     <button
+                      role="tab"
+                      aria-selected={activeEntity === entity.name}
                       className={
                         activeEntity === entity.name
                           ? "tab tab-active"

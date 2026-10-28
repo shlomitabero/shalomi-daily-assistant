@@ -4684,6 +4684,35 @@ test("the home screen's My Projects sort toggle reports its selected state via a
   assert.match(sortToggleBlock![0], /aria-pressed=\{projectSortMode === "alphabetical"\}/, "the Alphabetical button must report its own selected state via aria-pressed");
 });
 
+/**
+ * Round 1144: the project view's entity-tab bar (`<nav className="entity-
+ * tabs">`) is structurally a real ARIA tab list -- exactly one tab's own
+ * content (the active entity's EntityPanel) is ever shown at a time -- but
+ * carried none of the standard tab-pattern semantics, only a CSS class
+ * marking the selected tab. This is a distinct accessibility gap from the
+ * closed toggle-button family (rounds 1135/1140, each a plain `role="group"`
+ * button pair): this nav never surfaced in that family's own `role="group"`
+ * grep because it's a `<nav>`, not a button group, and the right fix here
+ * is the tab pattern's own `role="tablist"`/`role="tab"`/`aria-selected`,
+ * not `aria-pressed`. Source-regex, not a full render, for the same reason
+ * every other App.tsx-level JSX-attribute test in this file uses it: the
+ * project view needs a real auth/routing harness this test file doesn't
+ * set up.
+ */
+test("the project view's entity-tab bar reports its selected tab via role=tablist/role=tab/aria-selected, not just a CSS class", () => {
+  const appSrc = readFileSync(new URL("./App.tsx", import.meta.url), "utf8");
+
+  const entityTabsBlock = appSrc.match(/<nav className="entity-tabs"[^>]*>[\s\S]*?<\/nav>/);
+  assert.ok(entityTabsBlock, "expected the entity-tabs nav's own block");
+  assert.match(entityTabsBlock![0], /role="tablist"/, "the nav itself must be a real tablist, the standard ARIA tab-pattern wrapper role");
+  assert.match(entityTabsBlock![0], /role="tab"/, "each tab button must carry role=\"tab\"");
+  assert.match(
+    entityTabsBlock![0],
+    /aria-selected=\{activeEntity === entity\.name\}/,
+    "each tab button must report its own selected state via aria-selected, the tab-pattern's own equivalent of aria-pressed",
+  );
+});
+
 test("the decorative 3D hero cube's CSS uses real 3D transforms and respects prefers-reduced-motion", () => {
   const stylesCss = readFileSync(new URL("./styles.css", import.meta.url), "utf8");
 

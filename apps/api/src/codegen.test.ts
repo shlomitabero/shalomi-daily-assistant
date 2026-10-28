@@ -16695,6 +16695,27 @@ test("the exported App's entity tabs have keyboard-operable 'move earlier'/'move
 });
 
 /**
+ * Round 1144: mirrors the live Forge AI preview's own App.tsx round-1144
+ * fix -- the exported app's entity-tab bar is structurally a real ARIA tab
+ * list (exactly one tab's own content, the active entity's View, is ever
+ * shown at a time) but carried none of the standard tab-pattern semantics,
+ * only a CSS class marking the selected tab.
+ */
+test("the exported App.jsx's entity-tab bar reports its selected tab via role=tablist/role=tab/aria-selected, not just a CSS class", () => {
+  const files = generateExportFiles(project);
+  const appJsx = files.find((f) => f.path === "web/src/App.jsx")!.content;
+
+  const entityTabsBlock = appJsx.match(/<nav role="tablist">[\s\S]*?<\/nav>/);
+  assert.ok(entityTabsBlock, "expected the entity-tab bar's own <nav> block");
+  assert.match(entityTabsBlock![0], /role="tab"/, "each tab button must carry role=\"tab\"");
+  assert.match(
+    entityTabsBlock![0],
+    /aria-selected=\{e\.name === active\}/,
+    "each tab button must report its own selected state via aria-selected, not just the 'active' CSS class",
+  );
+});
+
+/**
  * Round 1040: ports the live Forge AI preview's own App.tsx entity-tab-bar
  * disambiguation fix (EntitySchema only enforces uniqueness on an entity's
  * `name`, never its `label`) to the exported app's generated App.jsx --
