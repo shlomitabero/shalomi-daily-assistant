@@ -2065,7 +2065,11 @@ function AppContent() {
       )}
 
       {wakingBanner}
-      {error && <p className="error banner">{error}</p>}
+      {error && (
+        <p className="error banner" role="alert">
+          {error}
+        </p>
+      )}
 
       {view === "home" && (
         <main className="home">

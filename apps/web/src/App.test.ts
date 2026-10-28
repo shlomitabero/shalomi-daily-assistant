@@ -5091,3 +5091,24 @@ test("App's checkUnread reads tRef.current fresh on every tick instead of closin
     "a later tick, after a language switch, must pass the NEW tRef.current ('HE'), not the one captured when the poll effect last started",
   );
 });
+
+/**
+ * Round 1168: App's own top-level `error` banner, rendered right below
+ * `wakingBanner` in the exact same JSX block, had no `role` at all --
+ * unlike `wakingBanner` right above it, which already carries
+ * `role="status"` (see that element's own doc comment), and unlike every
+ * other error surface in this app since round 1158's own sweep. Matched
+ * via the real JSX source (App.tsx is never fully rendered in this test
+ * file; every App.tsx-specific test here works the same way, matching
+ * the real JSX text rather than mounting the component).
+ */
+test("App.tsx's own top-level error banner carries role=\"alert\", the same convention every other error surface in this app already follows", () => {
+  const appSrc = readFileSync(new URL("./App.tsx", import.meta.url), "utf8");
+  const bannerMatch = appSrc.match(/\{wakingBanner\}\s*\{error && \([\s\S]*?\)\}/);
+  assert.ok(bannerMatch, "expected to find the top-level error banner's own JSX block, right after wakingBanner");
+  assert.match(
+    bannerMatch![0],
+    /<p className="error banner" role="alert">/,
+    "a screen-reader user must be told about a project describe/build/rename/clone/delete failure, not left in total silence while sighted users see the banner appear",
+  );
+});
