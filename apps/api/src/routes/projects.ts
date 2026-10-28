@@ -1391,6 +1391,35 @@ export function createProjectsRouter(
   });
 
   /**
+   * Round 1146: automation-rule create/update/delete
+   * (`POST .../entities/:entityName/automations`, `PATCH`/`DELETE
+   * .../automations/:ruleId`) had NO volumetric throttle at all -- round
+   * 1143's own closing note claimed this hardening series (aiGenerationRate-
+   * Limiter/whatsappRateLimiter/inviteCollaboratorRateLimiter/
+   * expensiveReadRateLimiter/fileUploadRateLimiter/entityCountsRateLimiter/
+   * specEditRateLimiter/recordWriteRateLimiter/checkpointRateLimiter above)
+   * had closed "the last known un-rate-limited real-effect route family,"
+   * but never actually looked at this one. `insertAutomationRule` is an
+   * unbounded INSERT with no row cap (packages/db/src/automations.ts), the
+   * same "no server-side cap on row count" hazard recordWriteRateLimiter's
+   * own doc comment names for record writes -- except each row created
+   * here is a live rule that can later fire a real WhatsApp/webhook/email
+   * send on every future matching trigger, so the cost compounds well past
+   * the one synchronous INSERT this limiter is gating. Scoped like
+   * specEditRateLimiter's budget, not recordWriteRateLimiter's: creating an
+   * automation rule is an occasional, one-click-at-a-time action through
+   * AutomationsPanel's own form (including its Duplicate button, which
+   * just resubmits this same create route), never a scripted bulk action
+   * the way CSV import/bulk-edit legitimately are.
+   */
+  const automationRuleRateLimiter = createRateLimiter({
+    windowMs: 15 * 60 * 1000,
+    max: 60,
+    keyGenerator: (req) => req.userId ?? "unknown",
+    message: "Too many automation rule requests. Please try again later.",
+  });
+
+  /**
    * /build, /refine, and /answers each read `project.spec` once at the
    * start of the request, then spend real time (an AI/heuristic
    * spec-generation call, and for /build and /refine also a migration)
@@ -4428,6 +4457,7 @@ export function createProjectsRouter(
 
   router.post(
     "/projects/:id/entities/:entityName/automations",
+    automationRuleRateLimiter,
     asyncRoute(async (req, res) => {
       const project = requireProjectWriteAccess(db, req.params.id, req.userId!);
       const entity = findEntity(project, req.params.entityName);
@@ -4513,6 +4543,7 @@ export function createProjectsRouter(
    */
   router.patch(
     "/projects/:id/automations/:ruleId",
+    automationRuleRateLimiter,
     asyncRoute(async (req, res) => {
       const project = requireProjectWriteAccess(db, req.params.id, req.userId!);
       const parsed = UpdateAutomationRuleSchema.safeParse(req.body ?? {});
@@ -4566,6 +4597,7 @@ export function createProjectsRouter(
   /** Round 953: same withIdempotency() extension as the PATCH route just above -- see its own doc comment. */
   router.delete(
     "/projects/:id/automations/:ruleId",
+    automationRuleRateLimiter,
     asyncRoute(async (req, res) => {
       const project = requireProjectWriteAccess(db, req.params.id, req.userId!);
       const idempotencyKey = req.header("X-Idempotency-Key") || undefined;

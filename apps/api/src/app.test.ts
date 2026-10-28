@@ -10931,6 +10931,96 @@ test("checkpoint list/restore/rename/delete share one per-user rate limit: the 6
   });
 });
 
+/**
+ * Round 1146: automation-rule create/update/delete had NO volumetric
+ * throttle at all -- round 1143's own closing note claimed this hardening
+ * series had closed "the last known un-rate-limited real-effect route
+ * family" in this router, but never actually looked at this one.
+ * `insertAutomationRule` is an unbounded INSERT with no row cap, and each
+ * row created is a live rule that can later fire a real WhatsApp/webhook/
+ * email send on every future matching trigger. Cycles PATCH (update) calls
+ * to reach the shared budget after the first POST (create), then proves
+ * DELETE shares the SAME counter -- all three routes are one real question
+ * ("how much automation-rule-mutating work can this account trigger"), not
+ * three independent ones.
+ */
+test("automation rule create/update/delete share one per-user rate limit: the 61st call across the family is rejected with 429, while a different account is unaffected", async () => {
+  await withServer(async (baseUrl) => {
+    const token = await signup(baseUrl, "rate-limit-automation@example.com");
+    const createRes = await fetch(`${baseUrl}/api/projects`, {
+      method: "POST",
+      headers: authHeaders(token),
+      body: JSON.stringify({ description: "A CRM with customers and deals." }),
+    });
+    const { project } = (await createRes.json()) as { project: { id: string } };
+    const buildRes = await fetch(`${baseUrl}/api/projects/${project.id}/build`, { method: "POST", headers: authHeaders(token) });
+    await collectSSE(buildRes);
+
+    // Call 1 of the shared budget: create the rule.
+    const ruleRes = await fetch(`${baseUrl}/api/projects/${project.id}/entities/Customer/automations`, {
+      method: "POST",
+      headers: authHeaders(token),
+      body: JSON.stringify({
+        trigger: "record_created",
+        actionType: "send_whatsapp",
+        toMode: "field",
+        toField: "phone",
+        messageTemplate: "hi",
+      }),
+    });
+    assert.notEqual(ruleRes.status, 429, "call 1 of 60 (within the limit) must not be rate-limited yet");
+    const { rule } = (await ruleRes.json()) as { rule: { id: string } };
+
+    // Calls 2-60: repeated PATCH (toggle enabled) against the same rule.
+    for (let i = 0; i < 59; i++) {
+      const res = await fetch(`${baseUrl}/api/projects/${project.id}/automations/${rule.id}`, {
+        method: "PATCH",
+        headers: authHeaders(token),
+        body: JSON.stringify({ enabled: i % 2 === 0 }),
+      });
+      assert.notEqual(res.status, 429, `call ${i + 2} of 60 (within the shared limit) must not be rate-limited yet`);
+    }
+
+    // The 61st call across the SAME budget, on DELETE -- a third route in
+    // the family -- proves this is one shared counter across all three
+    // automation-rule routes, not an independent one per route.
+    const blocked = await fetch(`${baseUrl}/api/projects/${project.id}/automations/${rule.id}`, {
+      method: "DELETE",
+      headers: authHeaders(token),
+    });
+    assert.equal(blocked.status, 429);
+    assert.equal(((await blocked.json()) as { code?: string }).code, "RATE_LIMITED");
+
+    // A completely different account must get its own fresh allowance --
+    // keyed by user id, not IP, so one account exhausting its own budget
+    // must never collaterally block an unrelated account.
+    const otherToken = await signup(baseUrl, "rate-limit-automation-other@example.com");
+    const otherCreateRes = await fetch(`${baseUrl}/api/projects`, {
+      method: "POST",
+      headers: authHeaders(otherToken),
+      body: JSON.stringify({ description: "A separate, unrelated project." }),
+    });
+    const { project: otherProject } = (await otherCreateRes.json()) as { project: { id: string } };
+    const otherBuildRes = await fetch(`${baseUrl}/api/projects/${otherProject.id}/build`, { method: "POST", headers: authHeaders(otherToken) });
+    await collectSSE(otherBuildRes);
+    const otherEntity = (await (await fetch(`${baseUrl}/api/projects/${otherProject.id}`, { headers: authHeaders(otherToken) })).json()) as {
+      project: { spec: { entities: { name: string }[] } };
+    };
+    const otherRes = await fetch(`${baseUrl}/api/projects/${otherProject.id}/entities/${otherEntity.project.spec.entities[0].name}/automations`, {
+      method: "POST",
+      headers: authHeaders(otherToken),
+      body: JSON.stringify({
+        trigger: "record_created",
+        actionType: "send_whatsapp",
+        toMode: "static",
+        toNumber: "+15551234567",
+        messageTemplate: "hi",
+      }),
+    });
+    assert.equal(otherRes.status, 201, "a different account must not be collaterally blocked by another account's own rate limit");
+  });
+});
+
 test("a validation failure on project routes returns readable text, not Zod's raw JSON issue dump", async () => {
   await withServer(async (baseUrl) => {
     const token = await signup(baseUrl);
