@@ -415,14 +415,20 @@ export function BuildProgress({
   // than silently stuck -- and stops (leaving the final, exact duration
   // frozen on screen) the instant `finished` flips, rather than drifting
   // up to a second past the real finish time waiting for the next tick.
+  // Also stops on `error`: run() rejecting (a real network drop, or the
+  // initial fetch itself failing -- see api.ts's streamPipeline doc
+  // comment) never sets `finished` at all, only `error` -- without this,
+  // the interval kept ticking forever on an already-terminal failed
+  // screen, climbing past the real elapsed time and leaking a timer no
+  // one would ever clear until Retry/Back unmounted or reset it.
   useEffect(() => {
-    if (finished) {
+    if (finished || error) {
       setElapsedMs(Date.now() - startedAt);
       return;
     }
     const interval = setInterval(() => setElapsedMs(Date.now() - startedAt), 1000);
     return () => clearInterval(interval);
-  }, [finished, startedAt]);
+  }, [finished, error, startedAt]);
 
   useEffect(() => {
     if (!finished) return;

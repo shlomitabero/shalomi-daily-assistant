@@ -898,6 +898,76 @@ test("BuildProgress still offers Retry and Back when run() itself rejects before
 });
 
 /**
+ * Round 1136: the elapsed-timer test above (mocking setInterval + Date)
+ * confirms the ticking interval stops once `finished` flips true -- but
+ * `finished` is only ever set in run()'s `.then()` branch, never in
+ * `.catch()`. run() rejecting (this exact scenario: a real network drop,
+ * or the initial fetch itself failing -- see api.ts's streamPipeline doc
+ * comment, and the "still offers Retry and Back" test just above) only
+ * sets `error`, so before this round's fix the interval kept ticking
+ * forever on an already-terminal failed screen: the on-screen elapsed
+ * time kept climbing well past the real failure moment, and the timer
+ * itself was never cleared until a Retry/Back unmount.
+ */
+test("BuildProgress's elapsed timer also freezes (not just the finished-success case) when run() itself rejects, instead of ticking forever on the failed screen", async (t) => {
+  await withJsdom(async () => {
+    t.mock.timers.enable({ apis: ["setInterval", "Date"] });
+    try {
+      let rejectRun!: (err: Error) => void;
+      const runPromise = new Promise<void>((_resolve, reject) => {
+        rejectRun = reject;
+      });
+      const run = (onEvent: (event: AgentStepEvent) => void) => {
+        onEvent({ agent: "Architect", status: "running", message: "…" });
+        return runPromise;
+      };
+
+      render(
+        React.createElement(
+          ThemeProvider,
+          null,
+          React.createElement(
+            LanguageProvider,
+            null,
+            React.createElement(BuildProgress, {
+              title: "Building",
+              projectName: "Test Project",
+              run,
+              onComplete: () => {},
+              onBack: () => {},
+            }),
+          ),
+        ),
+      );
+
+      const elapsedText = () => document.querySelector(".build-elapsed")!.textContent ?? "";
+      act(() => {
+        t.mock.timers.tick(5000);
+      });
+      assert.match(elapsedText(), /0:05/, "sanity check: must still be ticking while run() hasn't settled yet");
+
+      await act(async () => {
+        rejectRun(new Error("Failed to fetch"));
+        await new Promise((resolve) => setTimeout(resolve, 0));
+      });
+      assert.ok(document.querySelector("p.error.banner"), "sanity check: the rejection must actually have surfaced as the error banner");
+      assert.match(elapsedText(), /0:05/, "must freeze at the real elapsed time the instant run() rejects, same as a successful finish");
+
+      act(() => {
+        t.mock.timers.tick(10000);
+      });
+      assert.match(
+        elapsedText(),
+        /0:05/,
+        "must NOT keep climbing after run() has already rejected -- the interval must actually stop, not just get ignored visually",
+      );
+    } finally {
+      t.mock.timers.reset();
+    }
+  });
+});
+
+/**
  * New in this round: once a build finishes (success or failure) there was no
  * way to keep a record of what the AI Team actually did -- the live screen
  * is gone the moment you navigate away. formatBuildSummary renders the same
