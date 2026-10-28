@@ -4662,6 +4662,28 @@ test("the home screen's idea-example and template-card icons are marked aria-hid
   assert.match(templateIconLine![0], /aria-hidden="true"/, "the template-card icon must be aria-hidden, since template-card-name already carries the real text");
 });
 
+/**
+ * Round 1140: the "My Projects" sort toggle (Recent / Alphabetical) marked
+ * its selected option with nothing but a CSS class
+ * (`view-toggle-btn-active`), invisible to a screen reader -- the same
+ * WCAG 4.1.2 gap round 1135 already fixed for LanguageSwitcher.tsx,
+ * EntityPanel.tsx's Table/Board/Calendar toggle, and
+ * BusinessTwinPanel.tsx's Dashboard/Report toggle, but this fifth toggle
+ * had no `role="group"` wrapper at all, so it never surfaced in that
+ * round's own verification grep. Source-regex, not a full render, for the
+ * same reason the hero-cube/icon tests above use it: App.tsx's home
+ * screen needs a real auth/routing harness this file doesn't set up.
+ */
+test("the home screen's My Projects sort toggle reports its selected state via aria-pressed, inside a real role=group, not just a CSS class", () => {
+  const appSrc = readFileSync(new URL("./App.tsx", import.meta.url), "utf8");
+
+  const sortToggleBlock = appSrc.match(/<div className="my-projects-sort view-toggle"[^>]*>[\s\S]*?<\/div>\n\s*\)\}/);
+  assert.ok(sortToggleBlock, "expected the my-projects-sort toggle's own wrapper block");
+  assert.match(sortToggleBlock![0], /role="group"/, "the toggle's wrapper must be a real group, the same convention every sibling toggle already uses");
+  assert.match(sortToggleBlock![0], /aria-pressed=\{projectSortMode === "recent"\}/, "the Recent button must report its own selected state via aria-pressed");
+  assert.match(sortToggleBlock![0], /aria-pressed=\{projectSortMode === "alphabetical"\}/, "the Alphabetical button must report its own selected state via aria-pressed");
+});
+
 test("the decorative 3D hero cube's CSS uses real 3D transforms and respects prefers-reduced-motion", () => {
   const stylesCss = readFileSync(new URL("./styles.css", import.meta.url), "utf8");
 

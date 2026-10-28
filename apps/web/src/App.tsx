@@ -2118,10 +2118,11 @@ function AppContent() {
                 </div>
               )}
               {myProjects.length > 1 && (
-                <div className="my-projects-sort view-toggle">
+                <div className="my-projects-sort view-toggle" role="group">
                   <button
                     type="button"
                     className={projectSortMode === "recent" ? "view-toggle-btn view-toggle-btn-active" : "view-toggle-btn"}
+                    aria-pressed={projectSortMode === "recent"}
                     onClick={() => handleSetProjectSortMode("recent")}
                   >
                     {t("home.myProjects.sort.recent")}
@@ -2129,6 +2130,7 @@ function AppContent() {
                   <button
                     type="button"
                     className={projectSortMode === "alphabetical" ? "view-toggle-btn view-toggle-btn-active" : "view-toggle-btn"}
+                    aria-pressed={projectSortMode === "alphabetical"}
                     onClick={() => handleSetProjectSortMode("alphabetical")}
                   >
                     {t("home.myProjects.sort.alphabetical")}
