@@ -2,7 +2,7 @@ import "./jsdomWarmup.js";
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { JSDOM } from "jsdom";
-import { getViewMode, setViewMode } from "./viewModePreference.js";
+import { getViewMode, removeViewModeForUserProject, setViewMode } from "./viewModePreference.js";
 
 /** Same full-jsdom-swap technique used by groupByPreference.test.ts: real localStorage, not a mock. */
 async function withJsdom(fn: () => void | Promise<void>): Promise<void> {
@@ -90,6 +90,29 @@ test("getViewMode falls back to 'table' for corrupted/foreign localStorage conte
 test("getViewMode ignores a value that isn't a real view mode (foreign data written by something else) instead of returning it", async () => {
   await withJsdom(() => {
     localStorage.setItem("forge.viewMode", JSON.stringify({ "proj1:Deal:userA": "kanban" }));
+    assert.equal(getViewMode("proj1", "Deal", "userA"), "table");
+  });
+});
+
+test("removeViewModeForUserProject removes only this one user's own Table/Board/Calendar choice across every entity of one project, leaving every other collaborator's own choice for the SAME project (and this user's own choice for another project) untouched", async () => {
+  await withJsdom(() => {
+    setViewMode("proj1", "Deal", "userA", "board");
+    setViewMode("proj1", "Customer", "userA", "calendar");
+    setViewMode("proj1", "Deal", "userB", "calendar");
+    setViewMode("proj2", "Deal", "userA", "board");
+
+    removeViewModeForUserProject("proj1", "userA");
+
+    assert.equal(getViewMode("proj1", "Deal", "userA"), "table", "userA's own Deal choice for the left project must be cleared");
+    assert.equal(getViewMode("proj1", "Customer", "userA"), "table", "userA's own Customer choice for the SAME left project must also be cleared, not just one entity");
+    assert.equal(getViewMode("proj1", "Deal", "userB"), "calendar", "userB's own choice for the SAME still-shared project must survive");
+    assert.equal(getViewMode("proj2", "Deal", "userA"), "board", "userA's own choice for an UNRELATED project must survive untouched");
+  });
+});
+
+test("removeViewModeForUserProject is a no-op, not an error, when this user never chose a view mode in this project", async () => {
+  await withJsdom(() => {
+    assert.doesNotThrow(() => removeViewModeForUserProject("proj1", "userA"));
     assert.equal(getViewMode("proj1", "Deal", "userA"), "table");
   });
 });

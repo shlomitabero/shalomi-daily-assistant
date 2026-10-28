@@ -403,3 +403,114 @@ test("purgeOwnProjectAccess also clears this one user's own entityRecentSearches
     assert.deepEqual(getEntityRecentSearches("proj2", "Customer", "userA"), ["q3 leads"], "userA's own search list for an UNRELATED project must survive untouched");
   });
 });
+
+/**
+ * Round 1145: round 1128's own closing note (and its mirror in
+ * docs/roadmap.md) incorrectly claimed nine more per-user-keyed stores --
+ * columnWidths, columnOrder, columnVisibility, fieldFiltersPreference,
+ * groupByPreference, collapsedBoardColumnsPreference,
+ * collapsedGroupsPreference, sortKeysPreference, viewModePreference --
+ * were "NOT per-user-keyed at all", so `purgeOwnProjectAccess` never
+ * reached any of them. Every one of those nine files' own `keyFor` has
+ * taken `userId` as an explicit parameter since rounds 1054-1077, so each
+ * has the identical leak this function exists to close. Confirms
+ * `purgeOwnProjectAccess` now also clears userA's own entry in all nine
+ * stores, across multiple entities where the store is entity-scoped, while
+ * userB's own entries for the SAME still-shared project, and userA's own
+ * entries for an UNRELATED project, all survive untouched.
+ */
+test("purgeOwnProjectAccess also clears this one user's own columnWidths/columnOrder/columnVisibility/fieldFilters/groupBy/collapsedBoardColumns/collapsedGroups/sortKeys/viewMode entries for the one project, leaving every other collaborator's own entries (and this user's own entries for other projects) untouched", async () => {
+  await withJsdom(() => {
+    setColumnWidth("abc", "Customer", "userA", "name", 220);
+    setColumnWidth("abc", "Order", "userA", "total", 180);
+    setColumnWidth("abc", "Customer", "userB", "name", 300);
+    setColumnWidth("proj2", "Customer", "userA", "name", 260);
+
+    setColumnOrder("abc", "Customer", "userA", ["email", "name"]);
+    setColumnOrder("abc", "Order", "userA", ["total", "date"]);
+    setColumnOrder("abc", "Customer", "userB", ["name", "email"]);
+    setColumnOrder("proj2", "Customer", "userA", ["phone", "name"]);
+
+    toggleFieldVisibility("abc", "Customer", "userA", "notes");
+    toggleFieldVisibility("abc", "Order", "userA", "total");
+    toggleFieldVisibility("abc", "Customer", "userB", "phone");
+    toggleFieldVisibility("proj2", "Customer", "userA", "email");
+
+    setFieldFilters("abc", "Customer", "userA", { status: "overdue" });
+    setFieldFilters("abc", "Order", "userA", { status: "shipped" });
+    setFieldFilters("abc", "Customer", "userB", { status: "paid" });
+    setFieldFilters("proj2", "Customer", "userA", { status: "closed" });
+
+    setGroupByField("abc", "Customer", "userA", "status");
+    setGroupByField("abc", "Order", "userA", "owner");
+    setGroupByField("abc", "Customer", "userB", "priority");
+    setGroupByField("proj2", "Customer", "userA", "stage");
+
+    setCollapsedBoardColumns("abc", "Customer", "status", "userA", ["Won"]);
+    setCollapsedBoardColumns("abc", "Order", "owner", "userA", ["Active"]);
+    setCollapsedBoardColumns("abc", "Customer", "status", "userB", ["Lost"]);
+    setCollapsedBoardColumns("proj2", "Customer", "status", "userA", ["Won"]);
+
+    setCollapsedGroups("abc", "Customer", "status", "userA", ["Won"]);
+    setCollapsedGroups("abc", "Order", "owner", "userA", ["Active"]);
+    setCollapsedGroups("abc", "Customer", "status", "userB", ["Lost"]);
+    setCollapsedGroups("proj2", "Customer", "status", "userA", ["Won"]);
+
+    setSortKeys("abc", "Customer", "userA", [{ field: "status", direction: "asc" }]);
+    setSortKeys("abc", "Order", "userA", [{ field: "total", direction: "desc" }]);
+    setSortKeys("abc", "Customer", "userB", [{ field: "name", direction: "asc" }]);
+    setSortKeys("proj2", "Customer", "userA", [{ field: "status", direction: "asc" }]);
+
+    setViewMode("abc", "Customer", "userA", "board");
+    setViewMode("abc", "Order", "userA", "calendar");
+    setViewMode("abc", "Customer", "userB", "calendar");
+    setViewMode("proj2", "Customer", "userA", "board");
+
+    purgeOwnProjectAccess("userA", "abc");
+
+    assert.deepEqual(getColumnWidths("abc", "Customer", "userA"), {}, "userA's own columnWidths for the left project must be cleared");
+    assert.deepEqual(getColumnWidths("abc", "Order", "userA"), {}, "userA's own columnWidths for the SAME left project must also be cleared, not just one entity");
+    assert.deepEqual(getColumnWidths("abc", "Customer", "userB"), { name: 300 }, "userB's own columnWidths for the SAME still-shared project must survive");
+    assert.deepEqual(getColumnWidths("proj2", "Customer", "userA"), { name: 260 }, "userA's own columnWidths for an UNRELATED project must survive untouched");
+
+    assert.deepEqual(getColumnOrder("abc", "Customer", "userA"), [], "userA's own columnOrder for the left project must be cleared");
+    assert.deepEqual(getColumnOrder("abc", "Order", "userA"), [], "userA's own columnOrder for the SAME left project must also be cleared");
+    assert.deepEqual(getColumnOrder("abc", "Customer", "userB"), ["name", "email"], "userB's own columnOrder for the SAME still-shared project must survive");
+    assert.deepEqual(getColumnOrder("proj2", "Customer", "userA"), ["phone", "name"], "userA's own columnOrder for an UNRELATED project must survive untouched");
+
+    assert.deepEqual(getHiddenFields("abc", "Customer", "userA"), new Set(), "userA's own columnVisibility for the left project must be cleared");
+    assert.deepEqual(getHiddenFields("abc", "Order", "userA"), new Set(), "userA's own columnVisibility for the SAME left project must also be cleared");
+    assert.deepEqual(getHiddenFields("abc", "Customer", "userB"), new Set(["phone"]), "userB's own columnVisibility for the SAME still-shared project must survive");
+    assert.deepEqual(getHiddenFields("proj2", "Customer", "userA"), new Set(["email"]), "userA's own columnVisibility for an UNRELATED project must survive untouched");
+
+    assert.deepEqual(getFieldFilters("abc", "Customer", "userA"), {}, "userA's own fieldFilters for the left project must be cleared");
+    assert.deepEqual(getFieldFilters("abc", "Order", "userA"), {}, "userA's own fieldFilters for the SAME left project must also be cleared");
+    assert.deepEqual(getFieldFilters("abc", "Customer", "userB"), { status: "paid" }, "userB's own fieldFilters for the SAME still-shared project must survive");
+    assert.deepEqual(getFieldFilters("proj2", "Customer", "userA"), { status: "closed" }, "userA's own fieldFilters for an UNRELATED project must survive untouched");
+
+    assert.equal(getGroupByField("abc", "Customer", "userA"), "", "userA's own groupBy for the left project must be cleared");
+    assert.equal(getGroupByField("abc", "Order", "userA"), "", "userA's own groupBy for the SAME left project must also be cleared");
+    assert.equal(getGroupByField("abc", "Customer", "userB"), "priority", "userB's own groupBy for the SAME still-shared project must survive");
+    assert.equal(getGroupByField("proj2", "Customer", "userA"), "stage", "userA's own groupBy for an UNRELATED project must survive untouched");
+
+    assert.deepEqual(getCollapsedBoardColumns("abc", "Customer", "status", "userA"), [], "userA's own collapsedBoardColumns for the left project must be cleared");
+    assert.deepEqual(getCollapsedBoardColumns("abc", "Order", "owner", "userA"), [], "userA's own collapsedBoardColumns for the SAME left project must also be cleared");
+    assert.deepEqual(getCollapsedBoardColumns("abc", "Customer", "status", "userB"), ["Lost"], "userB's own collapsedBoardColumns for the SAME still-shared project must survive");
+    assert.deepEqual(getCollapsedBoardColumns("proj2", "Customer", "status", "userA"), ["Won"], "userA's own collapsedBoardColumns for an UNRELATED project must survive untouched");
+
+    assert.deepEqual(getCollapsedGroups("abc", "Customer", "status", "userA"), [], "userA's own collapsedGroups for the left project must be cleared");
+    assert.deepEqual(getCollapsedGroups("abc", "Order", "owner", "userA"), [], "userA's own collapsedGroups for the SAME left project must also be cleared");
+    assert.deepEqual(getCollapsedGroups("abc", "Customer", "status", "userB"), ["Lost"], "userB's own collapsedGroups for the SAME still-shared project must survive");
+    assert.deepEqual(getCollapsedGroups("proj2", "Customer", "status", "userA"), ["Won"], "userA's own collapsedGroups for an UNRELATED project must survive untouched");
+
+    assert.deepEqual(getSortKeys("abc", "Customer", "userA"), [], "userA's own sortKeys for the left project must be cleared");
+    assert.deepEqual(getSortKeys("abc", "Order", "userA"), [], "userA's own sortKeys for the SAME left project must also be cleared");
+    assert.deepEqual(getSortKeys("abc", "Customer", "userB"), [{ field: "name", direction: "asc" }], "userB's own sortKeys for the SAME still-shared project must survive");
+    assert.deepEqual(getSortKeys("proj2", "Customer", "userA"), [{ field: "status", direction: "asc" }], "userA's own sortKeys for an UNRELATED project must survive untouched");
+
+    assert.equal(getViewMode("abc", "Customer", "userA"), "table", "userA's own viewMode for the left project must be cleared");
+    assert.equal(getViewMode("abc", "Order", "userA"), "table", "userA's own viewMode for the SAME left project must also be cleared");
+    assert.equal(getViewMode("abc", "Customer", "userB"), "calendar", "userB's own viewMode for the SAME still-shared project must survive");
+    assert.equal(getViewMode("proj2", "Customer", "userA"), "board", "userA's own viewMode for an UNRELATED project must survive untouched");
+  });
+});

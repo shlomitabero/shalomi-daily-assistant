@@ -10,6 +10,7 @@ import {
   MIN_COLUMN_WIDTH,
   migrateColumnWidthsForEntityRename,
   purgeColumnWidthsForEntity,
+  removeColumnWidthsForUserProject,
   setColumnWidth,
 } from "./columnWidths.js";
 
@@ -166,4 +167,27 @@ test("computeResizedWidth clamps to MIN_COLUMN_WIDTH, never producing an unreada
 
 test("computeResizedWidth clamps to MAX_COLUMN_WIDTH, never producing a runaway-wide column", () => {
   assert.equal(computeResizedWidth(400, 1000), MAX_COLUMN_WIDTH);
+});
+
+test("removeColumnWidthsForUserProject removes only this one user's own widths across every entity of one project, leaving every other collaborator's own widths for the SAME project (and this user's own widths for another project) untouched", async () => {
+  await withJsdom(() => {
+    setColumnWidth("proj1", "Customer", "userA", "name", 220);
+    setColumnWidth("proj1", "Order", "userA", "total", 180);
+    setColumnWidth("proj1", "Customer", "userB", "name", 300);
+    setColumnWidth("proj2", "Customer", "userA", "name", 260);
+
+    removeColumnWidthsForUserProject("proj1", "userA");
+
+    assert.deepEqual(getColumnWidths("proj1", "Customer", "userA"), {}, "userA's own Customer widths for the left project must be cleared");
+    assert.deepEqual(getColumnWidths("proj1", "Order", "userA"), {}, "userA's own Order widths for the SAME left project must also be cleared, not just one entity");
+    assert.deepEqual(getColumnWidths("proj1", "Customer", "userB"), { name: 300 }, "userB's own widths for the SAME still-shared project must survive");
+    assert.deepEqual(getColumnWidths("proj2", "Customer", "userA"), { name: 260 }, "userA's own widths for an UNRELATED project must survive untouched");
+  });
+});
+
+test("removeColumnWidthsForUserProject is a no-op, not an error, when this user never resized anything in this project", async () => {
+  await withJsdom(() => {
+    assert.doesNotThrow(() => removeColumnWidthsForUserProject("proj1", "userA"));
+    assert.deepEqual(getColumnWidths("proj1", "Customer", "userA"), {});
+  });
 });

@@ -8,6 +8,7 @@ import {
   migrateCollapsedBoardColumnsForEntityRename,
   purgeCollapsedBoardColumnsForEntity,
   purgeCollapsedBoardColumnsForProject,
+  removeCollapsedBoardColumnsForUserProject,
   setCollapsedBoardColumns,
 } from "./collapsedBoardColumnsPreference.js";
 
@@ -156,5 +157,28 @@ test("migrateCollapsedBoardColumnsForEntityRename remaps every collaborator's ow
     assert.deepEqual(getCollapsedBoardColumns("proj1", "Deal", "stage", "userB"), ["Lost"], "userB's set must resolve under the new entity casing too");
     assert.deepEqual(getCollapsedBoardColumns("proj1", "deal", "stage", "userA"), [], "nothing must remain reachable under the old entity casing");
     assert.deepEqual(getCollapsedBoardColumns("proj1", "Customer", "owner", "userA"), ["Active"], "a sibling entity's own collapsed set must survive the rename untouched");
+  });
+});
+
+test("removeCollapsedBoardColumnsForUserProject removes only this one user's own collapsed board-columns across every entity+boardField of one project, leaving every other collaborator's own set for the SAME project (and this user's own set for another project) untouched", async () => {
+  await withJsdom(() => {
+    setCollapsedBoardColumns("proj1", "Deal", "stage", "userA", ["Won"]);
+    setCollapsedBoardColumns("proj1", "Customer", "owner", "userA", ["Active"]);
+    setCollapsedBoardColumns("proj1", "Deal", "stage", "userB", ["Lost"]);
+    setCollapsedBoardColumns("proj2", "Deal", "stage", "userA", ["Won"]);
+
+    removeCollapsedBoardColumnsForUserProject("proj1", "userA");
+
+    assert.deepEqual(getCollapsedBoardColumns("proj1", "Deal", "stage", "userA"), [], "userA's own Deal set for the left project must be cleared");
+    assert.deepEqual(getCollapsedBoardColumns("proj1", "Customer", "owner", "userA"), [], "userA's own Customer set for the SAME left project must also be cleared, not just one entity");
+    assert.deepEqual(getCollapsedBoardColumns("proj1", "Deal", "stage", "userB"), ["Lost"], "userB's own set for the SAME still-shared project must survive");
+    assert.deepEqual(getCollapsedBoardColumns("proj2", "Deal", "stage", "userA"), ["Won"], "userA's own set for an UNRELATED project must survive untouched");
+  });
+});
+
+test("removeCollapsedBoardColumnsForUserProject is a no-op, not an error, when this user never collapsed a board column in this project", async () => {
+  await withJsdom(() => {
+    assert.doesNotThrow(() => removeCollapsedBoardColumnsForUserProject("proj1", "userA"));
+    assert.deepEqual(getCollapsedBoardColumns("proj1", "Deal", "stage", "userA"), []);
   });
 });

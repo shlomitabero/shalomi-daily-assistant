@@ -2,7 +2,13 @@ import "./jsdomWarmup.js";
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { JSDOM } from "jsdom";
-import { getGroupByField, setGroupByField } from "./groupByPreference.js";
+import {
+  getGroupByField,
+  getGroupByFieldType,
+  removeGroupByFieldForUserProject,
+  setGroupByField,
+  setGroupByFieldType,
+} from "./groupByPreference.js";
 
 /** Same full-jsdom-swap technique used by columnOrder.test.ts/columnWidths.test.ts: real localStorage, not a mock. */
 async function withJsdom(fn: () => void | Promise<void>): Promise<void> {
@@ -81,6 +87,36 @@ test("getGroupByField falls back to '' for corrupted/foreign localStorage conten
 test("getGroupByField ignores a non-string value under its key (foreign data written by something else) instead of returning it", async () => {
   await withJsdom(() => {
     localStorage.setItem("forge.groupByField", JSON.stringify({ "proj1:Deal:userA": 42 }));
+    assert.equal(getGroupByField("proj1", "Deal", "userA"), "");
+  });
+});
+
+test("removeGroupByFieldForUserProject removes only this one user's own group-by choice (and its paired field-type entry) across every entity of one project, leaving every other collaborator's own choice for the SAME project (and this user's own choice for another project) untouched", async () => {
+  await withJsdom(() => {
+    setGroupByField("proj1", "Deal", "userA", "status");
+    setGroupByFieldType("proj1", "Deal", "userA", "enum");
+    setGroupByField("proj1", "Contact", "userA", "owner");
+    setGroupByFieldType("proj1", "Contact", "userA", "string");
+    setGroupByField("proj1", "Deal", "userB", "priority");
+    setGroupByFieldType("proj1", "Deal", "userB", "enum");
+    setGroupByField("proj2", "Deal", "userA", "stage");
+    setGroupByFieldType("proj2", "Deal", "userA", "enum");
+
+    removeGroupByFieldForUserProject("proj1", "userA");
+
+    assert.equal(getGroupByField("proj1", "Deal", "userA"), "", "userA's own Deal choice for the left project must be cleared");
+    assert.equal(getGroupByFieldType("proj1", "Deal", "userA"), "", "userA's own Deal field-type entry for the left project must also be cleared");
+    assert.equal(getGroupByField("proj1", "Contact", "userA"), "", "userA's own Contact choice for the SAME left project must also be cleared, not just one entity");
+    assert.equal(getGroupByField("proj1", "Deal", "userB"), "priority", "userB's own choice for the SAME still-shared project must survive");
+    assert.equal(getGroupByFieldType("proj1", "Deal", "userB"), "enum", "userB's own field-type entry must survive too");
+    assert.equal(getGroupByField("proj2", "Deal", "userA"), "stage", "userA's own choice for an UNRELATED project must survive untouched");
+    assert.equal(getGroupByFieldType("proj2", "Deal", "userA"), "enum", "userA's own field-type entry for an UNRELATED project must survive untouched");
+  });
+});
+
+test("removeGroupByFieldForUserProject is a no-op, not an error, when this user never chose a group-by field in this project", async () => {
+  await withJsdom(() => {
+    assert.doesNotThrow(() => removeGroupByFieldForUserProject("proj1", "userA"));
     assert.equal(getGroupByField("proj1", "Deal", "userA"), "");
   });
 });

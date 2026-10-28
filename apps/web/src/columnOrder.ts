@@ -60,6 +60,28 @@ export function setColumnOrder(projectId: string, entityName: string, userId: st
   return order;
 }
 
+/**
+ * Round 1145: mirrors columnWidths.ts's own identical
+ * removeColumnWidthsForUserProject -- see its doc comment for the full
+ * "round 1128 incorrectly claimed this store wasn't per-user-keyed"
+ * mechanism. A departing collaborator's own drag-reordered column order
+ * for every entity of a project they left (or lost access to via account
+ * deletion) leaked forever until this fix.
+ */
+export function removeColumnOrderForUserProject(projectId: string, userId: string): void {
+  const store = readStore();
+  const prefix = `${projectId}:`;
+  const suffix = `:${userId}`;
+  let changed = false;
+  for (const key of Object.keys(store)) {
+    if (key.startsWith(prefix) && key.endsWith(suffix)) {
+      delete store[key];
+      changed = true;
+    }
+  }
+  if (changed) writeStore(store);
+}
+
 /** Removes every stored column order for this project, across all of its entities -- see columnWidths.ts's purgeColumnWidthsForProject for the full rationale. */
 export function purgeColumnOrderForProject(projectId: string): void {
   const store = readStore();

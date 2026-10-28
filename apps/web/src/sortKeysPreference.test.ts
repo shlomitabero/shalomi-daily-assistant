@@ -2,7 +2,13 @@ import "./jsdomWarmup.js";
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { JSDOM } from "jsdom";
-import { getSortKeys, migrateSortKeysForEntityRename, purgeSortKeysForEntity, setSortKeys } from "./sortKeysPreference.js";
+import {
+  getSortKeys,
+  migrateSortKeysForEntityRename,
+  purgeSortKeysForEntity,
+  removeSortKeysForUserProject,
+  setSortKeys,
+} from "./sortKeysPreference.js";
 
 /** Same full-jsdom-swap technique used by viewModePreference.test.ts: real localStorage, not a mock. */
 async function withJsdom(fn: () => void | Promise<void>): Promise<void> {
@@ -135,5 +141,28 @@ test("migrateSortKeysForEntityRename remaps every collaborator's own sort choice
     assert.deepEqual(getSortKeys("proj1", "Deal", "userB"), [{ field: "total", direction: "desc" }], "userB's sort choice must resolve under the new casing too");
     assert.deepEqual(getSortKeys("proj1", "deal", "userA"), [], "nothing must remain reachable under the old casing");
     assert.deepEqual(getSortKeys("proj1", "Customer", "userA"), [{ field: "name", direction: "asc" }], "a sibling entity's own sort choice must survive the rename untouched");
+  });
+});
+
+test("removeSortKeysForUserProject removes only this one user's own multi-column sort order across every entity of one project, leaving every other collaborator's own order for the SAME project (and this user's own order for another project) untouched", async () => {
+  await withJsdom(() => {
+    setSortKeys("proj1", "Deal", "userA", [{ field: "status", direction: "asc" }]);
+    setSortKeys("proj1", "Customer", "userA", [{ field: "name", direction: "asc" }]);
+    setSortKeys("proj1", "Deal", "userB", [{ field: "total", direction: "desc" }]);
+    setSortKeys("proj2", "Deal", "userA", [{ field: "status", direction: "asc" }]);
+
+    removeSortKeysForUserProject("proj1", "userA");
+
+    assert.deepEqual(getSortKeys("proj1", "Deal", "userA"), [], "userA's own Deal sort for the left project must be cleared");
+    assert.deepEqual(getSortKeys("proj1", "Customer", "userA"), [], "userA's own Customer sort for the SAME left project must also be cleared, not just one entity");
+    assert.deepEqual(getSortKeys("proj1", "Deal", "userB"), [{ field: "total", direction: "desc" }], "userB's own sort for the SAME still-shared project must survive");
+    assert.deepEqual(getSortKeys("proj2", "Deal", "userA"), [{ field: "status", direction: "asc" }], "userA's own sort for an UNRELATED project must survive untouched");
+  });
+});
+
+test("removeSortKeysForUserProject is a no-op, not an error, when this user never set a sort in this project", async () => {
+  await withJsdom(() => {
+    assert.doesNotThrow(() => removeSortKeysForUserProject("proj1", "userA"));
+    assert.deepEqual(getSortKeys("proj1", "Deal", "userA"), []);
   });
 });

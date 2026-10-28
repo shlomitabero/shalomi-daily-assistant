@@ -2,7 +2,7 @@ import "./jsdomWarmup.js";
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { JSDOM } from "jsdom";
-import { getHiddenFields, replaceHiddenFields, toggleFieldVisibility } from "./columnVisibility.js";
+import { getHiddenFields, removeHiddenFieldsForUserProject, replaceHiddenFields, toggleFieldVisibility } from "./columnVisibility.js";
 
 /** Same full-jsdom-swap technique used by pinnedProjects.test.ts: real localStorage, not a mock, so these tests prove the actual persistence contract. */
 async function withJsdom(fn: () => void | Promise<void>): Promise<void> {
@@ -109,5 +109,28 @@ test("getHiddenFields tolerates corrupted/foreign localStorage content instead o
       new Set(["notes", "phone"]),
       "non-string entries must be dropped, not crash the whole read",
     );
+  });
+});
+
+test("removeHiddenFieldsForUserProject removes only this one user's own hidden-columns choice across every entity of one project, leaving every other collaborator's own choice for the SAME project (and this user's own choice for another project) untouched", async () => {
+  await withJsdom(() => {
+    replaceHiddenFields("proj1", "Customer", "userA", ["notes"]);
+    replaceHiddenFields("proj1", "Order", "userA", ["total"]);
+    replaceHiddenFields("proj1", "Customer", "userB", ["phone"]);
+    replaceHiddenFields("proj2", "Customer", "userA", ["email"]);
+
+    removeHiddenFieldsForUserProject("proj1", "userA");
+
+    assert.deepEqual(getHiddenFields("proj1", "Customer", "userA"), new Set(), "userA's own Customer choice for the left project must be cleared");
+    assert.deepEqual(getHiddenFields("proj1", "Order", "userA"), new Set(), "userA's own Order choice for the SAME left project must also be cleared, not just one entity");
+    assert.deepEqual(getHiddenFields("proj1", "Customer", "userB"), new Set(["phone"]), "userB's own choice for the SAME still-shared project must survive");
+    assert.deepEqual(getHiddenFields("proj2", "Customer", "userA"), new Set(["email"]), "userA's own choice for an UNRELATED project must survive untouched");
+  });
+});
+
+test("removeHiddenFieldsForUserProject is a no-op, not an error, when this user never hid any column in this project", async () => {
+  await withJsdom(() => {
+    assert.doesNotThrow(() => removeHiddenFieldsForUserProject("proj1", "userA"));
+    assert.deepEqual(getHiddenFields("proj1", "Customer", "userA"), new Set());
   });
 });

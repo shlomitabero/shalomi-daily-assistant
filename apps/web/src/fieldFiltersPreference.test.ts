@@ -8,6 +8,7 @@ import {
   purgeFieldFiltersForEntity,
   purgeFieldFiltersForProject,
   migrateFieldFiltersForEntityRename,
+  removeFieldFiltersForUserProject,
 } from "./fieldFiltersPreference.js";
 
 /** Same full-jsdom-swap technique entityRecentSearches.test.ts/columnOrder.test.ts use: real localStorage, not a mock. */
@@ -148,5 +149,28 @@ test("migrateFieldFiltersForEntityRename is a no-op when the old and new names a
     setFieldFilters("proj1", "Customer", "userA", { status: "overdue" });
     migrateFieldFiltersForEntityRename("proj1", "Customer", "Customer");
     assert.deepEqual(getFieldFilters("proj1", "Customer", "userA"), { status: "overdue" });
+  });
+});
+
+test("removeFieldFiltersForUserProject removes only this one user's own toolbar filters across every entity of one project, leaving every other collaborator's own filters for the SAME project (and this user's own filters for another project) untouched", async () => {
+  await withJsdom(() => {
+    setFieldFilters("proj1", "Customer", "userA", { status: "overdue" });
+    setFieldFilters("proj1", "Order", "userA", { status: "shipped" });
+    setFieldFilters("proj1", "Customer", "userB", { status: "paid" });
+    setFieldFilters("proj2", "Customer", "userA", { status: "closed" });
+
+    removeFieldFiltersForUserProject("proj1", "userA");
+
+    assert.deepEqual(getFieldFilters("proj1", "Customer", "userA"), {}, "userA's own Customer filters for the left project must be cleared");
+    assert.deepEqual(getFieldFilters("proj1", "Order", "userA"), {}, "userA's own Order filters for the SAME left project must also be cleared, not just one entity");
+    assert.deepEqual(getFieldFilters("proj1", "Customer", "userB"), { status: "paid" }, "userB's own filters for the SAME still-shared project must survive");
+    assert.deepEqual(getFieldFilters("proj2", "Customer", "userA"), { status: "closed" }, "userA's own filters for an UNRELATED project must survive untouched");
+  });
+});
+
+test("removeFieldFiltersForUserProject is a no-op, not an error, when this user never set any filter in this project", async () => {
+  await withJsdom(() => {
+    assert.doesNotThrow(() => removeFieldFiltersForUserProject("proj1", "userA"));
+    assert.deepEqual(getFieldFilters("proj1", "Customer", "userA"), {});
   });
 });

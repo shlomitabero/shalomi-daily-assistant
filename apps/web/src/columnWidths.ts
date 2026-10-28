@@ -127,6 +127,35 @@ export function migrateColumnWidthsForEntityRename(projectId: string, oldName: s
   if (changed) writeStore(store);
 }
 
+/**
+ * Round 1145: this store's own `keyFor` has carried a `userId` segment
+ * since round 1068, but `purgeOwnProjectAccess` (projectPreferenceCleanup.ts)
+ * never called anything here -- round 1128's own closing note incorrectly
+ * asserted this store (and 8 siblings) was "NOT per-user-keyed at all",
+ * when its own `keyFor` doc comment one screen up says the opposite. On
+ * the "access revoked, not deleted" path (account deletion, leaving a
+ * project), a departing collaborator's own drag-resized column widths for
+ * every entity of that project leaked forever, the exact bug class rounds
+ * 1125/1127/1128 fixed for eight other stores. `entityName` is the one
+ * segment this function can't know in advance (a collaborator could have
+ * resized columns on any number of this project's entities), so it
+ * matches by prefix+suffix, the same technique round 1128's own
+ * `removeEntityRecentSearchesForUserProject` uses.
+ */
+export function removeColumnWidthsForUserProject(projectId: string, userId: string): void {
+  const store = readStore();
+  const prefix = `${projectId}:`;
+  const suffix = `:${userId}`;
+  let changed = false;
+  for (const key of Object.keys(store)) {
+    if (key.startsWith(prefix) && key.endsWith(suffix)) {
+      delete store[key];
+      changed = true;
+    }
+  }
+  if (changed) writeStore(store);
+}
+
 /** Removes every stored width for this project, across all of its entities, regardless of entity name -- unlike purgeColumnWidthsForEntity below, which needs one specific entity. Used when the whole project is deleted (projectPreferenceCleanup.ts): nothing else ever clears this store, so without this a deleted project's entries sit here forever. */
 export function purgeColumnWidthsForProject(projectId: string): void {
   const store = readStore();

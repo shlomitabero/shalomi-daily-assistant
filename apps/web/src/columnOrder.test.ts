@@ -7,6 +7,7 @@ import {
   getColumnOrder,
   migrateColumnOrderForEntityRename,
   purgeColumnOrderForEntity,
+  removeColumnOrderForUserProject,
   reorderColumns,
   setColumnOrder,
 } from "./columnOrder.js";
@@ -170,4 +171,27 @@ test("reorderColumns is a no-op if either name isn't actually in the order", () 
   const order = ["name", "email", "phone"];
   assert.equal(reorderColumns(order, "ghost", "email"), order);
   assert.equal(reorderColumns(order, "name", "ghost"), order);
+});
+
+test("removeColumnOrderForUserProject removes only this one user's own order across every entity of one project, leaving every other collaborator's own order for the SAME project (and this user's own order for another project) untouched", async () => {
+  await withJsdom(() => {
+    setColumnOrder("proj1", "Customer", "userA", ["email", "name"]);
+    setColumnOrder("proj1", "Order", "userA", ["total", "date"]);
+    setColumnOrder("proj1", "Customer", "userB", ["name", "email"]);
+    setColumnOrder("proj2", "Customer", "userA", ["phone", "name"]);
+
+    removeColumnOrderForUserProject("proj1", "userA");
+
+    assert.deepEqual(getColumnOrder("proj1", "Customer", "userA"), [], "userA's own Customer order for the left project must be cleared");
+    assert.deepEqual(getColumnOrder("proj1", "Order", "userA"), [], "userA's own Order order for the SAME left project must also be cleared, not just one entity");
+    assert.deepEqual(getColumnOrder("proj1", "Customer", "userB"), ["name", "email"], "userB's own order for the SAME still-shared project must survive");
+    assert.deepEqual(getColumnOrder("proj2", "Customer", "userA"), ["phone", "name"], "userA's own order for an UNRELATED project must survive untouched");
+  });
+});
+
+test("removeColumnOrderForUserProject is a no-op, not an error, when this user never reordered anything in this project", async () => {
+  await withJsdom(() => {
+    assert.doesNotThrow(() => removeColumnOrderForUserProject("proj1", "userA"));
+    assert.deepEqual(getColumnOrder("proj1", "Customer", "userA"), []);
+  });
 });

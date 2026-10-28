@@ -8,6 +8,7 @@ import {
   migrateCollapsedGroupsForEntityRename,
   purgeCollapsedGroupsForEntity,
   purgeCollapsedGroupsForProject,
+  removeCollapsedGroupsForUserProject,
   setCollapsedGroups,
 } from "./collapsedGroupsPreference.js";
 
@@ -155,5 +156,28 @@ test("migrateCollapsedGroupsForEntityRename remaps every collaborator's own coll
     assert.deepEqual(getCollapsedGroups("proj1", "Deal", "status", "userB"), ["Lost"], "userB's set must resolve under the new entity casing too");
     assert.deepEqual(getCollapsedGroups("proj1", "deal", "status", "userA"), [], "nothing must remain reachable under the old entity casing");
     assert.deepEqual(getCollapsedGroups("proj1", "Customer", "owner", "userA"), ["Active"], "a sibling entity's own collapsed set must survive the rename untouched");
+  });
+});
+
+test("removeCollapsedGroupsForUserProject removes only this one user's own collapsed groups across every entity+groupField of one project, leaving every other collaborator's own set for the SAME project (and this user's own set for another project) untouched", async () => {
+  await withJsdom(() => {
+    setCollapsedGroups("proj1", "Deal", "status", "userA", ["Won"]);
+    setCollapsedGroups("proj1", "Customer", "owner", "userA", ["Active"]);
+    setCollapsedGroups("proj1", "Deal", "status", "userB", ["Lost"]);
+    setCollapsedGroups("proj2", "Deal", "status", "userA", ["Won"]);
+
+    removeCollapsedGroupsForUserProject("proj1", "userA");
+
+    assert.deepEqual(getCollapsedGroups("proj1", "Deal", "status", "userA"), [], "userA's own Deal set for the left project must be cleared");
+    assert.deepEqual(getCollapsedGroups("proj1", "Customer", "owner", "userA"), [], "userA's own Customer set for the SAME left project must also be cleared, not just one entity");
+    assert.deepEqual(getCollapsedGroups("proj1", "Deal", "status", "userB"), ["Lost"], "userB's own set for the SAME still-shared project must survive");
+    assert.deepEqual(getCollapsedGroups("proj2", "Deal", "status", "userA"), ["Won"], "userA's own set for an UNRELATED project must survive untouched");
+  });
+});
+
+test("removeCollapsedGroupsForUserProject is a no-op, not an error, when this user never collapsed a group in this project", async () => {
+  await withJsdom(() => {
+    assert.doesNotThrow(() => removeCollapsedGroupsForUserProject("proj1", "userA"));
+    assert.deepEqual(getCollapsedGroups("proj1", "Deal", "status", "userA"), []);
   });
 });

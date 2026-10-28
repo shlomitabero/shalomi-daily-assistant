@@ -72,6 +72,28 @@ export function setViewMode(projectId: string, entityName: string, userId: strin
   return mode;
 }
 
+/**
+ * Round 1145: mirrors columnWidths.ts's own identical
+ * removeColumnWidthsForUserProject -- see its doc comment for the full
+ * "round 1128 incorrectly claimed this store wasn't per-user-keyed"
+ * mechanism. A departing collaborator's own Table/Board/Calendar choice
+ * for every entity of a project they left (or lost access to via account
+ * deletion) leaked forever until this fix.
+ */
+export function removeViewModeForUserProject(projectId: string, userId: string): void {
+  const store = readStore();
+  const prefix = `${projectId}:`;
+  const suffix = `:${userId}`;
+  let changed = false;
+  for (const key of Object.keys(store)) {
+    if (key.startsWith(prefix) && key.endsWith(suffix)) {
+      delete store[key];
+      changed = true;
+    }
+  }
+  if (changed) writeStore(store);
+}
+
 /** Same purge-on-project-delete pattern as groupByPreference.ts/columnWidths.ts and siblings -- see projectPreferenceCleanup.ts for why this exists. */
 export function purgeViewModeForProject(projectId: string): void {
   const store = readStore();

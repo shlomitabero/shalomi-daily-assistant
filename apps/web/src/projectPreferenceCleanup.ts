@@ -1,17 +1,17 @@
 import { purgePinnedProjectForProject, removePinnedProject } from "./pinnedProjects.js";
 import { purgeSeenSharedProjectsForProject, removeSeenSharedProject } from "./sharedProjectSeen.js";
 import { purgeEntityTabOrderForProject, removeEntityTabOrder } from "./entityTabOrder.js";
-import { purgeColumnWidthsForProject } from "./columnWidths.js";
-import { purgeColumnOrderForProject } from "./columnOrder.js";
-import { purgeHiddenFieldsForProject } from "./columnVisibility.js";
-import { purgeFieldFiltersForProject } from "./fieldFiltersPreference.js";
-import { purgeGroupByFieldForProject } from "./groupByPreference.js";
-import { purgeCollapsedBoardColumnsForProject } from "./collapsedBoardColumnsPreference.js";
-import { purgeCollapsedGroupsForProject } from "./collapsedGroupsPreference.js";
-import { purgeSortKeysForProject } from "./sortKeysPreference.js";
+import { purgeColumnWidthsForProject, removeColumnWidthsForUserProject } from "./columnWidths.js";
+import { purgeColumnOrderForProject, removeColumnOrderForUserProject } from "./columnOrder.js";
+import { purgeHiddenFieldsForProject, removeHiddenFieldsForUserProject } from "./columnVisibility.js";
+import { purgeFieldFiltersForProject, removeFieldFiltersForUserProject } from "./fieldFiltersPreference.js";
+import { purgeGroupByFieldForProject, removeGroupByFieldForUserProject } from "./groupByPreference.js";
+import { purgeCollapsedBoardColumnsForProject, removeCollapsedBoardColumnsForUserProject } from "./collapsedBoardColumnsPreference.js";
+import { purgeCollapsedGroupsForProject, removeCollapsedGroupsForUserProject } from "./collapsedGroupsPreference.js";
+import { purgeSortKeysForProject, removeSortKeysForUserProject } from "./sortKeysPreference.js";
 import { purgeEntityRecentSearchesForProject, removeEntityRecentSearchesForUserProject } from "./entityRecentSearches.js";
 import { purgeRecentHistorySearchesForProject, clearRecentHistorySearches } from "./historyRecentSearches.js";
-import { purgeViewModeForProject } from "./viewModePreference.js";
+import { purgeViewModeForProject, removeViewModeForUserProject } from "./viewModePreference.js";
 import { purgeRecentSearchesForProject, clearRecentSearches } from "./recentSearches.js";
 import { purgeRecentWhatsAppNumbersForProject, clearRecentWhatsAppNumbers } from "./whatsappRecentNumbers.js";
 import { purgeWhatsAppLogRecentSearchesForProject, clearWhatsAppLogRecentSearches } from "./whatsappLogRecentSearches.js";
@@ -139,6 +139,24 @@ export function purgeProjectPreferences(projectId: string): void {
  * same technique `purgeEntityRecentSearchesForEntity`/
  * `migrateEntityRecentSearchesForEntityRename` already use for their own
  * unknowable middle/last segment.
+ *
+ * Round 1145: round 1128's own closing note above (and its mirror in
+ * `docs/roadmap.md`) asserted nine more stores -- `columnWidths.ts`,
+ * `columnOrder.ts`, `columnVisibility.ts`, `fieldFiltersPreference.ts`,
+ * `groupByPreference.ts`, `collapsedBoardColumnsPreference.ts`,
+ * `collapsedGroupsPreference.ts`, `sortKeysPreference.ts`,
+ * `viewModePreference.ts` -- were "NOT per-user-keyed at all" and so never
+ * ambiguous for this function to reach. That was wrong: every one of those
+ * nine files' own `keyFor` has taken `userId` as an explicit parameter
+ * since rounds 1054-1077 (the exact same per-user keying rounds 390-1128
+ * already fixed for every sibling store in this same family), so each one
+ * has the identical "a departing collaborator's own entry for every entity
+ * of a project they left leaked forever" gap this function exists to
+ * close. Added `removeXForUserProject(projectId, userId)` to all nine
+ * (seven use the established prefix+suffix string match; the two
+ * JSON-encoded-key stores, `collapsedBoardColumnsPreference.ts`/
+ * `collapsedGroupsPreference.ts`, match via `parseKey`'s own first/last
+ * segments instead) and wired them in below.
  */
 export function purgeOwnProjectAccess(userId: string, projectId: string): void {
   removePinnedProject(userId, projectId);
@@ -151,4 +169,13 @@ export function purgeOwnProjectAccess(userId: string, projectId: string): void {
   clearWhatsAppLogRecentSearches(projectId, userId);
   setWhatsAppLogFilter(projectId, userId, "all");
   clearWhatsAppLastSeenId(projectId, userId);
+  removeColumnWidthsForUserProject(projectId, userId);
+  removeColumnOrderForUserProject(projectId, userId);
+  removeHiddenFieldsForUserProject(projectId, userId);
+  removeFieldFiltersForUserProject(projectId, userId);
+  removeGroupByFieldForUserProject(projectId, userId);
+  removeCollapsedBoardColumnsForUserProject(projectId, userId);
+  removeCollapsedGroupsForUserProject(projectId, userId);
+  removeSortKeysForUserProject(projectId, userId);
+  removeViewModeForUserProject(projectId, userId);
 }

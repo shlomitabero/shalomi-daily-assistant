@@ -66,6 +66,39 @@ export function setGroupByField(projectId: string, entityName: string, userId: s
   return fieldName;
 }
 
+/**
+ * Round 1145: mirrors columnWidths.ts's own identical
+ * removeColumnWidthsForUserProject -- see its doc comment for the full
+ * "round 1128 incorrectly claimed this store wasn't per-user-keyed"
+ * mechanism. A departing collaborator's own group-by choice (and its
+ * paired field-type entry) for every entity of a project they left (or
+ * lost access to via account deletion) leaked forever until this fix.
+ * Clears both stores together, the same pairing purgeGroupByFieldForEntity
+ * above already keeps in sync.
+ */
+export function removeGroupByFieldForUserProject(projectId: string, userId: string): void {
+  const prefix = `${projectId}:`;
+  const suffix = `:${userId}`;
+  const store = readStore();
+  let storeChanged = false;
+  for (const key of Object.keys(store)) {
+    if (key.startsWith(prefix) && key.endsWith(suffix)) {
+      delete store[key];
+      storeChanged = true;
+    }
+  }
+  if (storeChanged) writeStore(store);
+  const typeStore = readTypeStore();
+  let typeStoreChanged = false;
+  for (const key of Object.keys(typeStore)) {
+    if (key.startsWith(prefix) && key.endsWith(suffix)) {
+      delete typeStore[key];
+      typeStoreChanged = true;
+    }
+  }
+  if (typeStoreChanged) writeTypeStore(typeStore);
+}
+
 /** Removes every stored group-by choice for this project, across all of its entities -- see columnWidths.ts's purgeColumnWidthsForProject for the full rationale. */
 export function purgeGroupByFieldForProject(projectId: string): void {
   const store = readStore();

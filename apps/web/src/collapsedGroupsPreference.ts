@@ -139,6 +139,28 @@ export function setCollapsedGroups(projectId: string, entityName: string, groupF
   return deduped;
 }
 
+/**
+ * Round 1145: mirrors collapsedBoardColumnsPreference.ts's own identical
+ * removeCollapsedBoardColumnsForUserProject -- see columnWidths.ts's
+ * removeColumnWidthsForUserProject for the full "round 1128 incorrectly
+ * claimed this store wasn't per-user-keyed" mechanism. A departing
+ * collaborator's own collapsed groups for every entity+groupField of a
+ * project they left (or lost access to via account deletion) leaked
+ * forever until this fix.
+ */
+export function removeCollapsedGroupsForUserProject(projectId: string, userId: string): void {
+  const store = readStore();
+  let changed = false;
+  for (const key of Object.keys(store)) {
+    const parsed = parseKey(key);
+    if (parsed && parsed[0] === projectId && parsed[3] === userId) {
+      delete store[key];
+      changed = true;
+    }
+  }
+  if (changed) writeStore(store);
+}
+
 /** Removes every stored collapsed-group set for this project, across all of its entities -- see columnWidths.ts's purgeColumnWidthsForProject for the full rationale. */
 export function purgeCollapsedGroupsForProject(projectId: string): void {
   const store = readStore();

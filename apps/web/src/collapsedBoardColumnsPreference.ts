@@ -128,6 +128,31 @@ export function setCollapsedBoardColumns(projectId: string, entityName: string, 
   return deduped;
 }
 
+/**
+ * Round 1145: mirrors columnWidths.ts's own identical
+ * removeColumnWidthsForUserProject -- see its doc comment for the full
+ * "round 1128 incorrectly claimed this store wasn't per-user-keyed"
+ * mechanism. A departing collaborator's own collapsed board-columns for
+ * every entity+boardField of a project they left (or lost access to via
+ * account deletion) leaked forever until this fix. Both entityName and
+ * boardFieldName are unknown in advance, so this matches on the two
+ * segments that ARE known (projectId, userId) via `parseKey`, the same
+ * technique `purgeCollapsedBoardColumnsForEntity` below already uses for
+ * its own unknowable boardFieldName segment.
+ */
+export function removeCollapsedBoardColumnsForUserProject(projectId: string, userId: string): void {
+  const store = readStore();
+  let changed = false;
+  for (const key of Object.keys(store)) {
+    const parsed = parseKey(key);
+    if (parsed && parsed[0] === projectId && parsed[3] === userId) {
+      delete store[key];
+      changed = true;
+    }
+  }
+  if (changed) writeStore(store);
+}
+
 /** Removes every stored collapsed-column set for this project, across all of its entities -- see columnWidths.ts's purgeColumnWidthsForProject for the full rationale. */
 export function purgeCollapsedBoardColumnsForProject(projectId: string): void {
   const store = readStore();
