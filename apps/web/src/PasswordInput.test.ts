@@ -157,6 +157,31 @@ test("PasswordInput's strength meter is opt-in and only shows once a value is ac
   });
 });
 
+/**
+ * Round 1157: the strength meter re-renders its bars/label on every
+ * keystroke, same as the Caps Lock warning two tests below (which already
+ * uses role="alert") -- but had no role/aria-live at all, so a screen-
+ * reader user got zero feedback as the assessed strength changed, only the
+ * sighted bars/label updating. role="status" matches this app's own
+ * established convention for every other dynamic-text surface.
+ */
+test("PasswordInput's strength meter has role=status, so a screen reader is told when it changes", async () => {
+  await withJsdom(async () => {
+    render(
+      React.createElement(
+        ThemeProvider,
+        null,
+        React.createElement(
+          LanguageProvider,
+          null,
+          React.createElement(PasswordInput, { value: "aaaaaaaa", onChange: () => {}, showStrength: true }),
+        ),
+      ),
+    );
+    assert.equal(document.querySelector(".password-strength")!.getAttribute("role"), "status");
+  });
+});
+
 test("PasswordInput never renders a strength meter when showStrength is left off, even with a value present", async () => {
   await withJsdom(async () => {
     renderPasswordInput("hunter2", () => {});

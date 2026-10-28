@@ -84,7 +84,15 @@ export function PasswordInput({
         </p>
       )}
       {strength && (
-        <div className="password-strength" data-strength={strength}>
+        // Round 1157: re-renders on every keystroke while a new password is
+        // typed, same as the Caps Lock warning above -- but unlike that
+        // warning (role="alert"), this had no role/aria-live at all, so a
+        // screen-reader user got zero feedback as the assessed strength
+        // changed, only the sighted bars/label update. role="status"
+        // matches this codebase's own established convention for every
+        // other dynamic-text surface (error/success messages, copy-status
+        // banners).
+        <div className="password-strength" data-strength={strength} role="status">
           <div className="password-strength-bars">
             <span className="password-strength-bar" />
             <span className="password-strength-bar" />
