@@ -10867,6 +10867,70 @@ test("record create/update/delete share one per-user rate limit: the 501st call 
   });
 });
 
+/**
+ * Round 1143: Time Machine's own checkpoint list/restore/rename/delete
+ * routes had NO volumetric throttle at all, unlike every other repeatable,
+ * server-cost-bearing route family in this router -- restore in particular
+ * runs a full diffAndMigrate schema diff plus hazard analysis on every
+ * call. Cycles across GET (list) and PATCH (rename) to reach the shared
+ * budget, then proves POST .../restore shares the SAME counter -- all four
+ * routes are one real question ("how much checkpoint-handling work can
+ * this account trigger"), not four independent ones.
+ */
+test("checkpoint list/restore/rename/delete share one per-user rate limit: the 61st call across the family is rejected with 429, while a different account is unaffected", async () => {
+  await withServer(async (baseUrl) => {
+    const token = await signup(baseUrl, "rate-limit-checkpoint@example.com");
+    const createRes = await fetch(`${baseUrl}/api/projects`, {
+      method: "POST",
+      headers: authHeaders(token),
+      body: JSON.stringify({ description: "A CRM with customers and deals." }),
+    });
+    const { project } = (await createRes.json()) as { project: { id: string } };
+    const buildRes = await fetch(`${baseUrl}/api/projects/${project.id}/build`, { method: "POST", headers: authHeaders(token) });
+    await collectSSE(buildRes);
+    const checkpointsRes = await fetch(`${baseUrl}/api/projects/${project.id}/checkpoints`, { headers: authHeaders(token) });
+    const { checkpoints } = (await checkpointsRes.json()) as { checkpoints: { id: string }[] };
+    const checkpointId = checkpoints[0].id;
+
+    // Call 1 of the shared budget was the GET just above. Calls 2-60:
+    // alternate GET (list) and PATCH (rename).
+    for (let i = 0; i < 59; i++) {
+      const res =
+        i % 2 === 0
+          ? await fetch(`${baseUrl}/api/projects/${project.id}/checkpoints`, { headers: authHeaders(token) })
+          : await fetch(`${baseUrl}/api/projects/${project.id}/checkpoints/${checkpointId}`, {
+              method: "PATCH",
+              headers: authHeaders(token),
+              body: JSON.stringify({ label: `Label ${i}` }),
+            });
+      assert.notEqual(res.status, 429, `call ${i + 2} of 60 (within the shared limit) must not be rate-limited yet`);
+    }
+
+    // The 61st call across the SAME budget, on POST .../restore -- a third
+    // route in the family -- proves this is one shared counter across all
+    // four checkpoint routes, not an independent one per route.
+    const blocked = await fetch(`${baseUrl}/api/projects/${project.id}/checkpoints/${checkpointId}/restore`, {
+      method: "POST",
+      headers: authHeaders(token),
+    });
+    assert.equal(blocked.status, 429);
+    assert.equal(((await blocked.json()) as { code?: string }).code, "RATE_LIMITED");
+
+    // A completely different account must get its own fresh allowance --
+    // keyed by user id, not IP, so one account exhausting its own budget
+    // must never collaterally block an unrelated account.
+    const otherToken = await signup(baseUrl, "rate-limit-checkpoint-other@example.com");
+    const otherCreateRes = await fetch(`${baseUrl}/api/projects`, {
+      method: "POST",
+      headers: authHeaders(otherToken),
+      body: JSON.stringify({ description: "A separate, unrelated project." }),
+    });
+    const { project: otherProject } = (await otherCreateRes.json()) as { project: { id: string } };
+    const otherRes = await fetch(`${baseUrl}/api/projects/${otherProject.id}/checkpoints`, { headers: authHeaders(otherToken) });
+    assert.equal(otherRes.status, 200, "a different account must not be collaterally blocked by another account's own rate limit");
+  });
+});
+
 test("a validation failure on project routes returns readable text, not Zod's raw JSON issue dump", async () => {
   await withServer(async (baseUrl) => {
     const token = await signup(baseUrl);

@@ -1356,6 +1356,41 @@ export function createProjectsRouter(
   });
 
   /**
+   * Round 1143: Time Machine's own checkpoint list/restore/rename/delete
+   * routes had NO volumetric throttle at all -- the one route family this
+   * exact hardening series (aiGenerationRateLimiter/whatsappRateLimiter/
+   * inviteCollaboratorRateLimiter/expensiveReadRateLimiter/
+   * fileUploadRateLimiter/entityCountsRateLimiter/specEditRateLimiter/
+   * recordWriteRateLimiter above, plus routes/calendar.ts's own feed
+   * limiter) never looked at. Restore is the real cost driver: it runs
+   * carryForwardLabels, a full diffAndMigrate schema diff, and
+   * describeMigrationHazards/describeImpactHazards' own hazard analysis
+   * across every entity/field, plus an awaited cleanupFileFieldsRetypedAway
+   * disk-I/O pass -- genuine synchronous work on this app's one shared
+   * Node event loop (the same single-process hazard expensiveReadRateLimiter's
+   * own doc comment names), gated only by activePipelines (an anti-race
+   * check against a *concurrent* restore, not a volumetric cap on many
+   * sequential ones). Any editor collaborator with write access to a
+   * project they created themselves (free, no approval needed) could
+   * script a tight loop against restore and stall every other user's and
+   * project's requests too, not just their own. One shared limiter across
+   * all four routes, the same "one real budget, not N independent
+   * concerns" reasoning every sibling limiter above already uses --
+   * list/rename/delete are each individually cheap, but restore alone
+   * already justifies the same budget specEditRateLimiter uses for its own
+   * occasional, one-click-at-a-time spec-mutation actions (not the much
+   * higher, bulk-sized recordWriteRateLimiter budget, since restoring a
+   * checkpoint is never a scripted bulk action the way CSV import/bulk-edit
+   * legitimately are).
+   */
+  const checkpointRateLimiter = createRateLimiter({
+    windowMs: 15 * 60 * 1000,
+    max: 60,
+    keyGenerator: (req) => req.userId ?? "unknown",
+    message: "Too many checkpoint requests. Please try again later.",
+  });
+
+  /**
    * /build, /refine, and /answers each read `project.spec` once at the
    * start of the request, then spend real time (an AI/heuristic
    * spec-generation call, and for /build and /refine also a migration)
@@ -2017,6 +2052,7 @@ export function createProjectsRouter(
 
   router.get(
     "/projects/:id/checkpoints",
+    checkpointRateLimiter,
     asyncRoute(async (req, res) => {
       const project = requireProjectAccess(db, req.params.id, req.userId!);
       res.json({ checkpoints: listCheckpoints(db, project.id) });
@@ -2041,6 +2077,7 @@ export function createProjectsRouter(
    */
   router.post(
     "/projects/:id/checkpoints/:checkpointId/restore",
+    checkpointRateLimiter,
     asyncRoute(async (req, res) => {
       const project = requireProjectWriteAccess(db, req.params.id, req.userId!);
       const idempotencyKey = req.header("X-Idempotency-Key") || undefined;
@@ -2168,6 +2205,7 @@ export function createProjectsRouter(
    */
   router.patch(
     "/projects/:id/checkpoints/:checkpointId",
+    checkpointRateLimiter,
     asyncRoute(async (req, res) => {
       const project = requireProjectWriteAccess(db, req.params.id, req.userId!);
       const parsed = RenameCheckpointSchema.safeParse(req.body);
@@ -2215,6 +2253,7 @@ export function createProjectsRouter(
    */
   router.delete(
     "/projects/:id/checkpoints/:checkpointId",
+    checkpointRateLimiter,
     asyncRoute(async (req, res) => {
       const project = requireProjectWriteAccess(db, req.params.id, req.userId!);
       const idempotencyKey = req.header("X-Idempotency-Key") || undefined;
