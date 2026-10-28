@@ -159,7 +159,11 @@ export function CheckpointLabelEditor({
           }}
         />
       </form>
-      {error && <p className="error small">{error}</p>}
+      {error && (
+        <p className="error small" role="alert">
+          {error}
+        </p>
+      )}
     </div>
   );
 }

@@ -290,6 +290,9 @@ test("a server error is shown to the user instead of a silent failure, and onDel
 
       await waitForCondition(() => document.querySelector(".error") !== null);
       assert.equal(deletedCount, 0, "onDeleted must never fire when the server rejects the request");
+      // Round 1158: every other dynamic-text surface in this app uses
+      // role="status"/"alert"; this error message had none at all.
+      assert.equal(document.querySelector(".error")!.getAttribute("role"), "alert");
     } finally {
       globalThis.fetch = originalFetch;
     }

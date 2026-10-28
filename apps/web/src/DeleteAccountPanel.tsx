@@ -125,7 +125,11 @@ export function DeleteAccountPanel({
               autoCorrect="off"
             />
           </label>
-          {error && <p className="error small">{error}</p>}
+          {error && (
+            <p className="error small" role="alert">
+              {error}
+            </p>
+          )}
           <div className="form-actions">
             <button type="button" className="secondary" onClick={onClose} disabled={busy}>
               {t("deleteAccount.cancel")}

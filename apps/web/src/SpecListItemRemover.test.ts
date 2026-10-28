@@ -553,6 +553,11 @@ test("a role chip's rename surfaces a real error instead of silently doing nothi
 
       await waitForCondition(() => document.querySelector(".chip-rename-edit .error") !== null);
       assert.equal(renamedProjects.length, 0, "onRenamed must not fire when the request failed");
+      // Round 1158: every other dynamic-text surface in this app uses
+      // role="status"/"alert"; this rename error had none at all, unlike
+      // this same component's own sibling remove-error (which already has
+      // role="alert").
+      assert.equal(document.querySelector(".chip-rename-edit .error")!.getAttribute("role"), "alert");
     } finally {
       globalThis.fetch = originalFetch;
     }
@@ -1046,6 +1051,9 @@ test("an entity summary's rename surfaces a real error instead of silently doing
 
       await waitForCondition(() => document.querySelector(".entity-summary-rename-edit .error") !== null);
       assert.equal(renamedProjects.length, 0, "onRenamed must not fire when the request failed");
+      // Round 1158: every other dynamic-text surface in this app uses
+      // role="status"/"alert"; this rename error had none at all.
+      assert.equal(document.querySelector(".entity-summary-rename-edit .error")!.getAttribute("role"), "alert");
     } finally {
       globalThis.fetch = originalFetch;
     }

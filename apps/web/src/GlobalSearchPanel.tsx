@@ -674,7 +674,11 @@ export function GlobalSearchPanel({
             )}
           </>
         )}
-        {!loading && searched && results.length === 0 && !error && <p className="muted">{t("search.noResults")}</p>}
+        {!loading && searched && results.length === 0 && !error && (
+          <p className="muted" role="status">
+            {t("search.noResults")}
+          </p>
+        )}
 
         {!loading && results.length > 0 && <p className="muted small">{t("search.keyboardHint")}</p>}
 

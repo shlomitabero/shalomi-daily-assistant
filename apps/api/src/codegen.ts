@@ -7594,7 +7594,11 @@ export function GlobalSearch({ entities, onClose, onJumpToEntity, onJumpToRecord
             )}
           </>
         )}
-        {!loading && searched && results.length === 0 && !error && <p className="muted">No matching results in any entity.</p>}
+        {!loading && searched && results.length === 0 && !error && (
+          <p className="muted" role="status">
+            No matching results in any entity.
+          </p>
+        )}
         {!loading && results.length > 0 && <p className="muted small">↑↓ to navigate results, Enter to jump to a tab</p>}
 
         {!loading && results.length > 0 && (

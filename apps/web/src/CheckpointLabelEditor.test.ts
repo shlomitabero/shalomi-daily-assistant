@@ -404,3 +404,29 @@ test("the real save reports busy=true before renameCheckpoint starts and busy=fa
     "a failed rename must still report busy=false once it settles, not leave the caller thinking it's still in flight",
   );
 });
+
+/**
+ * Round 1158: a failed rename's error message had no role at all, unlike
+ * every other panel's own error text in this app (role="status"/"alert").
+ * A screen-reader user got zero announcement that the rename failed.
+ */
+test("a failed checkpoint rename shows its error with role=alert, so a screen reader announces it", async () => {
+  await withJsdom(async () => {
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = (async () =>
+      new Response(JSON.stringify({ error: "That label is already taken." }), { status: 409, headers: { "content-type": "application/json" } })) as typeof fetch;
+    try {
+      renderEditor(() => {});
+      fireEvent.click(document.querySelector(".checkpoint-label") as HTMLElement);
+      await waitForCondition(() => document.querySelector(".checkpoint-label-edit input") !== null);
+      const input = document.querySelector(".checkpoint-label-edit input") as HTMLInputElement;
+      fireEvent.change(input, { target: { value: "A Different Label" } });
+      fireEvent.blur(input);
+
+      await waitForCondition(() => document.querySelector(".error") !== null);
+      assert.equal(document.querySelector(".error")!.getAttribute("role"), "alert");
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+});

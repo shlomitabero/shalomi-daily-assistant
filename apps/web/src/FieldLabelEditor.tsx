@@ -151,7 +151,11 @@ export function FieldLabelEditor({
           }}
         />
       </form>
-      {error && <span className="error small">{error}</span>}
+      {error && (
+        <span className="error small" role="alert">
+          {error}
+        </span>
+      )}
     </span>
   );
 }

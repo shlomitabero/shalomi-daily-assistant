@@ -252,3 +252,29 @@ test("saving an empty or whitespace-only draft cancels back to the read-only vie
     }
   });
 });
+
+/**
+ * Round 1158: a failed edit's error message had no role at all, unlike
+ * every other panel's own error text in this app (role="status"/"alert").
+ * A screen-reader user got zero announcement that the edit failed.
+ */
+test("a failed description edit shows its error with role=alert, so a screen reader announces it", async () => {
+  await withJsdom(async () => {
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = (async () =>
+      new Response(JSON.stringify({ error: "Server exploded." }), { status: 500, headers: { "content-type": "application/json" } })) as typeof fetch;
+    try {
+      renderEditor(() => {});
+      fireEvent.click(document.querySelector(".project-description") as HTMLElement);
+      await waitForCondition(() => document.querySelector(".project-description-edit textarea") !== null);
+      const textarea = document.querySelector(".project-description-edit textarea") as HTMLTextAreaElement;
+      fireEvent.change(textarea, { target: { value: "A new real description." } });
+      fireEvent.blur(textarea);
+
+      await waitForCondition(() => document.querySelector(".error") !== null);
+      assert.equal(document.querySelector(".error")!.getAttribute("role"), "alert");
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+});

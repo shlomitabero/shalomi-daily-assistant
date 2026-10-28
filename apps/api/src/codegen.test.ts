@@ -8987,6 +8987,13 @@ test("the exported GlobalSearch does not jump to a stale arrow-selected result o
         0,
         "the new, edited query must reach a real search with no stale groups left over",
       );
+      // Round 1158: mirrors the live preview's own GlobalSearchPanel.tsx
+      // fix -- the "no matching results" message had no role at all,
+      // unlike its own sibling loading/error states, which already use
+      // role="status" in this exact generated output.
+      const noResultsEl = Array.from(container.querySelectorAll("p")).find((p) => p.textContent?.includes("No matching results"));
+      assert.ok(noResultsEl, "expected the 'no matching results' message");
+      assert.equal(noResultsEl!.getAttribute("role"), "status");
     });
   } finally {
     globalThis.fetch = originalFetch;

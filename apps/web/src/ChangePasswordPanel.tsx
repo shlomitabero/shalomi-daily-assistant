@@ -49,7 +49,9 @@ export function ChangePasswordPanel({ onClose }: { onClose: () => void }) {
         </div>
 
         {done ? (
-          <p className="success">{t("changePassword.success")}</p>
+          <p className="success" role="status">
+            {t("changePassword.success")}
+          </p>
         ) : (
           <form className="auth-form" onSubmit={handleSubmit}>
             <label className="field-row">
@@ -64,7 +66,11 @@ export function ChangePasswordPanel({ onClose }: { onClose: () => void }) {
               <span>{t("changePassword.confirm")}</span>
               <PasswordInput value={confirmPassword} onChange={setConfirmPassword} required minLength={8} autoComplete="new-password" />
             </label>
-            {error && <p className="error small">{error}</p>}
+            {error && (
+              <p className="error small" role="alert">
+                {error}
+              </p>
+            )}
             <button type="submit" disabled={busy}>
               {busy ? t("changePassword.busy") : t("changePassword.submit")}
             </button>

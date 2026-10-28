@@ -101,6 +101,9 @@ test("submitting matching passwords calls the real changePassword API with the e
       // to kick out a lost device with zero confirmation it actually
       // happened.
       assert.match(successText, /other sessions|other device/i);
+      // Round 1158: every other dynamic-text surface in this app uses
+      // role="status"/"alert"; this success message had none at all.
+      assert.equal(document.querySelector(".success")!.getAttribute("role"), "status");
     } finally {
       globalThis.fetch = originalFetch;
     }
@@ -127,6 +130,9 @@ test("a mismatched confirmation never calls the API and shows a mismatch error i
       assert.ok(errorEl, "expected a visible mismatch error");
       assert.match(errorEl!.textContent ?? "", /match/i);
       assert.equal(document.querySelector(".success"), null, "must not show success after a client-side rejection");
+      // Round 1158: every other dynamic-text surface in this app uses
+      // role="status"/"alert"; this error message had none at all.
+      assert.equal(errorEl!.getAttribute("role"), "alert");
     } finally {
       globalThis.fetch = originalFetch;
     }
@@ -149,6 +155,9 @@ test("a server error (e.g. wrong current password) is shown to the user instead 
 
       await waitForCondition(() => document.querySelector(".error") !== null);
       assert.equal(document.querySelector(".success"), null, "must not show success on a server-rejected request");
+      // Round 1158: every other dynamic-text surface in this app uses
+      // role="status"/"alert"; this error message had none at all.
+      assert.equal(document.querySelector(".error")!.getAttribute("role"), "alert");
     } finally {
       globalThis.fetch = originalFetch;
     }

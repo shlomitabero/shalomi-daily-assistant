@@ -249,7 +249,11 @@ export function RoleChip({
             }}
           />
         </form>
-        {rename.error && <span className="error small">{rename.error}</span>}
+        {rename.error && (
+          <span className="error small" role="alert">
+            {rename.error}
+          </span>
+        )}
       </span>
     );
   }
@@ -370,7 +374,11 @@ export function AssumptionItem({
             }}
           />
         </form>
-        {rename.error && <span className="error small">{rename.error}</span>}
+        {rename.error && (
+          <span className="error small" role="alert">
+            {rename.error}
+          </span>
+        )}
       </li>
     );
   }
@@ -498,7 +506,11 @@ export function PersonaItem({
             }}
           />
         </form>
-        {rename.error && <span className="error small">{rename.error}</span>}
+        {rename.error && (
+          <span className="error small" role="alert">
+            {rename.error}
+          </span>
+        )}
       </li>
     );
   }
@@ -747,7 +759,11 @@ export function EntitySummaryItem({
             }}
           />
         </form>
-        {rename.error && <span className="error small">{rename.error}</span>}
+        {rename.error && (
+          <span className="error small" role="alert">
+            {rename.error}
+          </span>
+        )}
       </div>
     );
   }
@@ -1067,7 +1083,11 @@ export function FieldChip({
             }}
           />
         </form>
-        {rename.error && <span className="error small">{rename.error}</span>}
+        {rename.error && (
+          <span className="error small" role="alert">
+            {rename.error}
+          </span>
+        )}
       </span>
     );
   }

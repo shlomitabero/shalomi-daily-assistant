@@ -985,6 +985,34 @@ test("GlobalSearchPanel shows a real error with a Retry button when a search fai
 });
 
 /**
+ * Round 1158: the "no matching results" message had no role at all, unlike
+ * its own sibling loading/error states one line above it in this exact
+ * conditional chain, which already use role="status". A screen reader had
+ * no way to tell a completed, zero-result search apart from one still in
+ * progress.
+ */
+test("GlobalSearchPanel's 'no matching results' message has role=status, so a screen reader is told the search finished", async () => {
+  await withJsdom(async () => {
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = mockGlobalSearchFetch() as typeof fetch;
+    try {
+      renderGlobalSearchPanel(() => {});
+
+      const input = document.querySelector(".global-search-input") as HTMLInputElement;
+      fireEvent.change(input, { target: { value: "zzz-totally-unrelated-query" } });
+      fireEvent.submit(document.querySelector("form.global-search-form")!);
+
+      await waitForCondition(() => document.body.textContent?.includes("No matching results") ?? false);
+      const noResultsEl = Array.from(document.querySelectorAll("p")).find((p) => p.textContent?.includes("No matching results"));
+      assert.ok(noResultsEl, "expected the 'no matching results' message");
+      assert.equal(noResultsEl!.getAttribute("role"), "status");
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+});
+
+/**
  * Real-DOM coverage for the one piece of GlobalSearchPanel that was never
  * tested at all, not even via function extraction: handleInputKeyDown's
  * ArrowDown/ArrowUp/Enter keyboard navigation across result groups. A real
