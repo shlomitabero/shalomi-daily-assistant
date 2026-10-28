@@ -310,7 +310,11 @@ export function buildCalendarFeedIcs(
               : f.type === "file"
                 ? parseFileFieldValue(record[f.name])?.name ?? null
                 : f.type === "boolean"
-                  ? (record[f.name] ? "TRUE" : "FALSE")
+                  ? record[f.name] === null || record[f.name] === undefined
+                    ? null
+                    : record[f.name]
+                      ? "TRUE"
+                      : "FALSE"
                   : f.type === "date"
                     ? formatIcsDescriptionDate(record[f.name], lang)
                     : f.type === "number"

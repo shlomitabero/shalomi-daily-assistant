@@ -1279,7 +1279,7 @@ function buildCalendarFeedIcs(entity, records, recordIndexByEntity) {
           f.type === "relation" ? feedRelationDisplayLabel(f, record[f.name], recordIndexByEntity)
           : f.type === "enum" ? ((f.enumLabels && f.enumLabels[record[f.name]]) || record[f.name])
           : f.type === "file" ? (feedParseFileFieldValue(record[f.name])?.name || null)
-          : f.type === "boolean" ? (record[f.name] ? "TRUE" : "FALSE")
+          : f.type === "boolean" ? (record[f.name] === null || record[f.name] === undefined ? null : record[f.name] ? "TRUE" : "FALSE")
           : f.type === "date" ? feedFormatIcsDescriptionDate(record[f.name])
           : f.type === "number" ? feedFormatIcsDescriptionNumber(record[f.name])
           : record[f.name];
@@ -3723,7 +3723,7 @@ function buildCalendarIcs(entity, dateField, labelField, records, relatedRecords
         // two raw only so a CSV round-trips exactly through
         // buildImportRecords' re-parse, which doesn't apply to this
         // one-way .ics export.
-        const value = f.type === "relation" ? relationDisplayLabel(f, record[f.name], relatedRecords) : f.type === "enum" ? ((f.enumLabels && f.enumLabels[record[f.name]]) || record[f.name]) : f.type === "file" ? parseFileFieldValue(record[f.name])?.name || null : f.type === "boolean" ? (record[f.name] ? "TRUE" : "FALSE") : f.type === "date" ? formatIcsDescriptionDate(record[f.name]) : f.type === "number" ? formatIcsDescriptionNumber(record[f.name]) : record[f.name];
+        const value = f.type === "relation" ? relationDisplayLabel(f, record[f.name], relatedRecords) : f.type === "enum" ? ((f.enumLabels && f.enumLabels[record[f.name]]) || record[f.name]) : f.type === "file" ? parseFileFieldValue(record[f.name])?.name || null : f.type === "boolean" ? (record[f.name] === null || record[f.name] === undefined ? null : record[f.name] ? "TRUE" : "FALSE") : f.type === "date" ? formatIcsDescriptionDate(record[f.name]) : f.type === "number" ? formatIcsDescriptionNumber(record[f.name]) : record[f.name];
         if (value === null || value === undefined || value === "") return null;
         const fieldLabel = f.label || f.name;
         const ambiguous = (descriptionLabelOccurrences[fieldLabel] || 0) > 1;

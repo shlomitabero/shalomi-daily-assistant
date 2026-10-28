@@ -291,6 +291,28 @@ test("buildCalendarIcs renders a boolean field in DESCRIPTION as uppercase TRUE/
 });
 
 /**
+ * Round 1141: every sibling branch in this exact ternary (relation, enum,
+ * file, date, number) correctly propagates a real stored `null` -- a
+ * never-answered field, reachable via migrate.ts's additive refine (round
+ * 1134) -- through to the `if (value === null ...) return null;` filter
+ * right below, so the line is omitted. Only the boolean branch did
+ * `record[f.name] ? "TRUE" : "FALSE"` with no null-check first, so a
+ * never-answered boolean (real `null`) fell through as JS's own
+ * falsy-coercion to the literal string "FALSE" -- a real, silently WRONG
+ * calendar description line, not an honestly-omitted one, and the exact
+ * opposite of this null-safe boolean's own on-screen EntityPanel treatment
+ * (round 1134's own `Boolean(r[fieldName])` filter fix).
+ */
+test("buildCalendarIcs omits a never-answered (null) boolean field from DESCRIPTION, instead of rendering a false 'FALSE' line", () => {
+  const confirmedField: Field = { name: "confirmed", label: "מאושר", type: "boolean", required: false };
+  const confirmedEntity: Entity = { name: "Appointment", label: "תור", fields: [dateField, nameField, confirmedField] };
+  const records: EntityRecord[] = [{ id: 1, appointmentDate: "2026-03-15", customerName: "Dana Levi", confirmed: null }];
+  const ics = buildCalendarIcs(confirmedEntity, dateField, nameField, records, [], {});
+  const events = parseEvents(ics);
+  assert.doesNotMatch(events[0]!, /מאושר/, "a never-answered boolean must be omitted entirely, not rendered as a false 'FALSE' line");
+});
+
+/**
  * Round 763: a number/date field in DESCRIPTION fell through to the raw
  * stored value -- unlike relation/enum/file/boolean, each already given
  * their own branch in an earlier round. apps/api/src/automations.ts's own

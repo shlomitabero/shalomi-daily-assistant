@@ -193,6 +193,24 @@ test("buildCalendarFeedIcs's DESCRIPTION resolves enum/boolean/file/number field
   assert.match(events[0], /קבלה: invoice\.pdf/, "file must render just the filename, never the raw JSON upload descriptor");
 });
 
+/**
+ * Round 1141: every sibling branch in this exact ternary (relation, enum,
+ * file, date, number) correctly propagates a real stored `null` through
+ * to the `if (value === null ...) return null;` filter right below, so
+ * the line is omitted. Only the boolean branch did
+ * `record[f.name] ? "TRUE" : "FALSE"` with no null-check first, so a
+ * never-answered boolean (real stored null, reachable via migrate.ts's
+ * additive refine -- round 1134) fell through as JS's own falsy-coercion
+ * to the literal string "FALSE" -- a real, silently WRONG subscribed
+ * calendar description line, not an honestly-omitted one.
+ */
+test("buildCalendarFeedIcs omits a never-answered (null) boolean field from DESCRIPTION, instead of rendering a false 'FALSE' line", () => {
+  const records: EntityRecord[] = [{ id: 1, appointmentDate: "2026-03-15", customerName: "Dana Levi", confirmed: null }];
+  const ics = buildCalendarFeedIcs(richEntity, records, "proj1");
+  const events = parseEvents(ics!);
+  assert.doesNotMatch(events[0], /אישור/, "a never-answered boolean must be omitted entirely, not rendered as a false 'FALSE' line");
+});
+
 test("buildCalendarFeedIcs's DESCRIPTION resolves a relation field to its related record's display label when allEntities/relatedRecords are supplied", () => {
   const records: EntityRecord[] = [
     { id: 1, appointmentDate: "2026-03-15", customerName: "Dana Levi", confirmed: null, customerId: 9 },
@@ -250,11 +268,14 @@ test("buildCalendarFeedIcs's DESCRIPTION disambiguates two description fields th
 
 test("buildCalendarFeedIcs omits DESCRIPTION entirely when every non-date/label field is empty, matching the pre-round-1034 no-DESCRIPTION shape for that case", () => {
   // A boolean field is deliberately excluded from this fixture: mirroring
-  // calendarIcs.ts's own identical boolean branch exactly, a boolean
-  // description field always renders as TRUE/FALSE (record[f.name] ? ... :
-  // "FALSE" is never itself null/undefined/""), so it alone could never
-  // demonstrate the "every field blank -> no DESCRIPTION at all" case this
-  // test is actually after -- a genuinely optional text field is.
+  // calendarIcs.ts's own identical boolean branch exactly, a genuinely
+  // ANSWERED boolean (true or false) always renders as TRUE/FALSE, so it
+  // alone could never demonstrate the "every field blank -> no DESCRIPTION
+  // at all" case this test is actually after -- a genuinely optional text
+  // field is. (Round 1141: a never-answered boolean, real stored null, is
+  // now correctly omitted too, same as every other field type here -- but
+  // that's exactly the single-blank-field case the dedicated round-1141
+  // test below covers, not this all-blank case.)
   const notesField: Field = { name: "notes", label: "הערות", type: "text", required: false };
   const noNotesEntity: Entity = { name: "Appointment", label: "תור", fields: [dateField, nameField, notesField] };
   const records: EntityRecord[] = [{ id: 1, appointmentDate: "2026-03-15", customerName: "Dana Levi", notes: null }];

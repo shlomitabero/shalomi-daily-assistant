@@ -382,6 +382,79 @@ test("generated server.js's calendar feed DESCRIPTION resolves a relation field 
 });
 
 /**
+ * Round 1141: mirrors the live apps/api/src/calendarFeed.ts's own round-
+ * 1141 fix -- every sibling branch in this exact ternary (relation, enum,
+ * file, date, number) correctly propagates a real stored `null` through to
+ * the `value === null` filter right below, so the line is omitted. Only
+ * the boolean branch did `record[f.name] ? "TRUE" : "FALSE"` with no
+ * null-check first, so a never-answered boolean (real stored null) fell
+ * through as JS's own falsy-coercion to the literal string "FALSE" -- a
+ * real, silently WRONG subscribed calendar description line in the
+ * exported app's own feed route, not an honestly-omitted one.
+ */
+test("generated server.js's calendar feed omits a never-answered (null) boolean field from DESCRIPTION, instead of rendering a false 'FALSE' line", async () => {
+  const dealEntity: Entity = {
+    name: "Deal",
+    label: "Deals",
+    fields: [
+      { name: "title", label: "Title", type: "text", required: true },
+      { name: "eventDate", label: "Event Date", type: "date", required: true },
+      { name: "confirmed", label: "Confirmed", type: "boolean", required: false },
+    ],
+  };
+  const feedProject: Project = { ...project, spec: { ...project.spec, entities: [dealEntity] } };
+  const files = generateExportFiles(feedProject);
+  const serverJs = files.find((f) => f.path === "server.js")!.content;
+
+  const dir = mkdtempSync(path.join(tmpdir(), "codegen-feed-null-boolean-test-"));
+  const repoRoot = path.resolve(import.meta.dirname, "../../..");
+  symlinkSync(path.join(repoRoot, "node_modules"), path.join(dir, "node_modules"));
+  writeFileSync(path.join(dir, "server.js"), serverJs);
+
+  const port = 34000 + Math.floor(Math.random() * 5000);
+  const child = spawn(process.execPath, ["--experimental-sqlite", "server.js"], {
+    cwd: dir,
+    env: { ...process.env, PORT: String(port) },
+    stdio: ["ignore", "pipe", "pipe"],
+  });
+  let stderr = "";
+  child.stderr.on("data", (chunk) => {
+    stderr += chunk.toString();
+  });
+
+  try {
+    const deadline = Date.now() + 5000;
+    let lastErr: unknown;
+    while (Date.now() < deadline) {
+      if (child.exitCode !== null) {
+        throw new Error(`server.js exited early (code ${child.exitCode}):\n${stderr}`);
+      }
+      try {
+        const dealRes = await fetch(`http://localhost:${port}/api/Deal`, {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ title: "Trip to Eilat", eventDate: "2026-11-05" }),
+        });
+        assert.equal(dealRes.status, 201);
+
+        const feedRes = await fetch(`http://localhost:${port}/api/calendar/Deal.ics`);
+        assert.equal(feedRes.status, 200);
+        const ics = await feedRes.text();
+        assert.doesNotMatch(ics, /Confirmed/, "a never-answered boolean field (never submitted, so a real stored null) must be omitted entirely, not rendered as a false 'FALSE' line");
+        return;
+      } catch (err) {
+        lastErr = err;
+        await new Promise((r) => setTimeout(r, 100));
+      }
+    }
+    throw lastErr instanceof Error ? lastErr : new Error(String(lastErr));
+  } finally {
+    child.kill();
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+/**
  * Round 1071: mirrors the live apps/api/src/calendarFeed.ts's own
  * identical round-1048 fix -- a `date` label field (reachable the same
  * way a boolean/enum label field already is: an entity with two+ date
