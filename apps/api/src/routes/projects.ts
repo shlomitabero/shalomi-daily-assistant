@@ -1138,6 +1138,41 @@ export function createProjectsRouter(
   });
 
   /**
+   * Round 1163: round 1153's own survey confirmed /projects/from-template
+   * and /projects/:id/clone "correctly unthrottled on their own merits" --
+   * but that conclusion was narrowly about the real synchronous pipeline
+   * cost /build has and these two routes don't (no diffAndMigrate/seed/QA/
+   * security-scan work at all). It never addressed a separate, real
+   * concern: both routes are still an unconditional insertProject
+   * (packages/db) with zero volumetric cap of their own, unlike
+   * aiGenerationRateLimiter's own identical insertProject call on
+   * POST /projects just above. insertProject has no per-user project-count
+   * cap either, and there's no project-row retention/cleanup anywhere in
+   * this codebase -- a tight loop against either route (no AI cost, so
+   * aiGenerationRateLimiter's own 30/15min budget is never even touched)
+   * creates unbounded project rows for free, growing this app's one shared
+   * better-sqlite3 file forever and permanently slowing listProjectsForUser
+   * for that same account (GET /projects, the home screen's own data
+   * source) and this single Node process's shared synchronous DB access
+   * for everyone else. One shared limiter across both routes, the same
+   * "one real budget, not N independent concerns" reasoning
+   * aiGenerationRateLimiter above already uses -- "how many brand-new,
+   * empty project rows can this account create for free" is a single
+   * question regardless of which of these two routes answers it. Sized
+   * the same as aiGenerationRateLimiter's own budget: each call here is
+   * cheaper (no AI/pipeline cost at all), but the actual resource being
+   * capped -- a new project row -- is identical, so there's no principled
+   * reason to allow more of them for free just because they're faster to
+   * produce.
+   */
+  const projectCreationRateLimiter = createRateLimiter({
+    windowMs: 15 * 60 * 1000,
+    max: 30,
+    keyGenerator: (req) => req.userId ?? "unknown",
+    message: "Too many projects created. Please try again later.",
+  });
+
+  /**
    * Round 862: the WhatsApp integration's connect/disconnect/send routes
    * had no volumetric throttle at all, unlike the AI-generation routes
    * right above (round 858) and every unauthenticated auth route (rounds
@@ -1604,6 +1639,7 @@ export function createProjectsRouter(
    */
   router.post(
     "/projects/from-template",
+    projectCreationRateLimiter,
     asyncRoute(async (req, res) => {
       const parsed = FromTemplateSchema.safeParse(req.body);
       if (!parsed.success) {
@@ -1769,6 +1805,7 @@ export function createProjectsRouter(
    */
   router.post(
     "/projects/:id/clone",
+    projectCreationRateLimiter,
     asyncRoute(async (req, res) => {
       const source = requireProjectAccess(db, req.params.id, req.userId!);
       const suffix = isHebrewText(source.description) ? " (עותק)" : " (copy)";

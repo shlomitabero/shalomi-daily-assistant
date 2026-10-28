@@ -10787,6 +10787,58 @@ test("POST .../build has its own per-user rate limit: the 21st build is rejected
 });
 
 /**
+ * Round 1163: round 1153's own survey confirmed /projects/from-template
+ * and /projects/:id/clone "correctly unthrottled on their own merits"
+ * because neither runs the real pipeline /build does -- but that never
+ * addressed the separate, real concern that both are still an
+ * unconditional insertProject with zero volumetric cap, unlike
+ * aiGenerationRateLimiter's own identical insertProject on POST /projects.
+ * Cycles across both routes to prove the shared budget spans the whole
+ * family, not just one route (same shape as the export/backup/twin test
+ * above and the spec-edit-family test below).
+ */
+test("POST .../from-template and POST .../clone share one per-user rate limit: the 31st project-creation call across both routes is rejected with 429, while a different account is unaffected", async () => {
+  await withServer(async (baseUrl) => {
+    const token = await signup(baseUrl, "rate-limit-project-creation@example.com");
+    const sourceRes = await fetch(`${baseUrl}/api/projects`, {
+      method: "POST",
+      headers: authHeaders(token),
+      body: JSON.stringify({ description: "A CRM with customers and deals." }),
+    });
+    const { project: source } = (await sourceRes.json()) as { project: { id: string } };
+
+    for (let i = 0; i < 30; i++) {
+      const res =
+        i % 2 === 0
+          ? await fetch(`${baseUrl}/api/projects/from-template`, {
+              method: "POST",
+              headers: authHeaders(token),
+              body: JSON.stringify({ templateId: "crm" }),
+            })
+          : await fetch(`${baseUrl}/api/projects/${source.id}/clone`, { method: "POST", headers: authHeaders(token) });
+      assert.notEqual(res.status, 429, `project-creation call ${i + 1} of 30 (within the shared limit) must not be rate-limited yet`);
+    }
+
+    // The 31st call across the SAME budget, on the OTHER of the two
+    // routes -- proves this is one shared counter, not two independent ones.
+    const blocked = await fetch(`${baseUrl}/api/projects/${source.id}/clone`, { method: "POST", headers: authHeaders(token) });
+    assert.equal(blocked.status, 429);
+    assert.equal(((await blocked.json()) as { code?: string }).code, "RATE_LIMITED");
+
+    // A completely different account must get its own fresh allowance --
+    // keyed by user id, not IP, so one account exhausting its own budget
+    // must never collaterally block an unrelated account.
+    const otherToken = await signup(baseUrl, "rate-limit-project-creation-other@example.com");
+    const otherRes = await fetch(`${baseUrl}/api/projects/from-template`, {
+      method: "POST",
+      headers: authHeaders(otherToken),
+      body: JSON.stringify({ templateId: "crm" }),
+    });
+    assert.notEqual(otherRes.status, 429, "a different account must not be collaterally blocked by another account's own rate limit");
+  });
+});
+
+/**
  * Round 1109: the entire pre-build spec-editing route family (add/remove/
  * rename an entity or field, roles/assumptions/personas) had NO volumetric
  * throttle at all, unlike every other repeatable, server-cost-bearing
