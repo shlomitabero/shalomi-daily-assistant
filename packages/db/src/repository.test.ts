@@ -566,6 +566,37 @@ test("updateRecord rejects a self-referencing relation field (field.relationTo p
 });
 
 /**
+ * Round 1176: rounds 1159-1162 already established, across many other
+ * files, that a relationTo string can legitimately differ in letter case
+ * from its target entity's actual declared name -- a real, demonstrated
+ * byproduct of AI-generated/refined specs, not a contrived edge case. The
+ * guard above compared field.relationTo to entity.name with exact-case
+ * equality, so a self-relation whose own relationTo happened to differ in
+ * case from its own entity's name (managerId's relationTo: "employee"
+ * against an entity declared "Employee") silently never hit the guard at
+ * all, storing the exact "record references its own id" state this guard
+ * exists specifically to reject.
+ */
+test("updateRecord rejects a self-referencing relation field even when relationTo differs in case from the entity's own declared name", () => {
+  const employee: Entity = {
+    name: "Employee",
+    fields: [
+      { name: "name", type: "text", required: true },
+      { name: "managerId", type: "relation", required: false, relationTo: "employee" },
+    ],
+  };
+  const db = openDatabase(":memory:");
+  applyMigrations(db, "proj1", { ...spec, entities: [employee] });
+  const created = insertRecord(db, "proj1", employee, { name: "Dana" });
+
+  assert.throws(
+    () => updateRecord(db, "proj1", employee, created.id as number, { managerId: created.id }),
+    ValidationError,
+    "a case-mismatched relationTo ('employee' vs the entity's own 'Employee') must not let a self-reference slip past this guard",
+  );
+});
+
+/**
  * The guard must only fire when the CALLER is actually setting the
  * self-reference right now -- an update to some other, unrelated field on
  * a record that already carries a pre-existing self-reference (seeded

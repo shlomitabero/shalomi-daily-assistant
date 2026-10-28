@@ -599,7 +599,13 @@ for (const entity of ENTITIES) {
         // actually setting THIS field to the record's own id right now --
         // an update to any other field must still succeed even if legacy
         // data already has a pre-existing self-reference.
-        if (f.type === "relation" && f.relationTo === entity.name && coerced === Number(req.params.id)) {
+        //
+        // Round 1176: mirrors repository.ts's own round-1176 fix too --
+        // case-insensitive, since a relationTo string differing in case
+        // from its own entity's name (a real, demonstrated byproduct of
+        // AI-generated/refined specs) made this exact-case comparison
+        // silently never fire for a case-mismatched self-relation.
+        if (f.type === "relation" && f.relationTo?.toLowerCase() === entity.name.toLowerCase() && coerced === Number(req.params.id)) {
           throw new Error(\`Field "\${f.name}" can't reference the record's own id\`);
         }
         return coerced;

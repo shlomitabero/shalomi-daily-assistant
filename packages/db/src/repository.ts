@@ -286,7 +286,19 @@ export function updateRecord(
     // an unrelated write" principle every other per-field validation in
     // this function already follows (see this function's own comment on
     // only re-coercing fields the caller actually supplied).
-    if (field.type === "relation" && field.relationTo === entity.name && coerced === id) {
+    //
+    // Round 1176: case-insensitive, same as every sibling relationTo
+    // comparison rounds 1159-1162 already fixed elsewhere (migrate.ts,
+    // codegen.ts, automations.ts, backup.ts, calendarFeed.ts,
+    // routes/calendar.ts, twin.ts, EntityPanel's relationTargets) -- those
+    // rounds never reached this file. A relationTo string legitimately
+    // differing in case from its target entity's declared name (a real,
+    // demonstrated byproduct of AI-generated/refined specs) meant a
+    // SELF-relation whose own relationTo happened to differ in case from
+    // its own entity's name silently never hit this guard at all --
+    // storing the exact "record references its own id" state this guard
+    // exists specifically to reject, with no error anywhere.
+    if (field.type === "relation" && field.relationTo?.toLowerCase() === entity.name.toLowerCase() && coerced === id) {
       throw new ValidationError(`Field "${field.name}" can't reference the record's own id`);
     }
     return coerced;

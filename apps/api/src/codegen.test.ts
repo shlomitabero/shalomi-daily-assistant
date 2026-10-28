@@ -1889,6 +1889,97 @@ test("generated server.js's update route rejects a self-referencing relation fie
 });
 
 /**
+ * Round 1176: the guard just above compared f.relationTo to entity.name
+ * with exact-case equality -- rounds 1159-1162 already established, across
+ * many other files, that a relationTo string can legitimately differ in
+ * letter case from its target entity's actual declared name (a real,
+ * demonstrated byproduct of AI-generated/refined specs). A self-relation
+ * whose own relationTo happens to differ in case from its own entity's
+ * name ("employee" vs the entity's own "Employee") silently never hit the
+ * guard at all. Confirmed directly against a real spawned server.js, the
+ * same way round 1091's own test above does.
+ */
+test("generated server.js's update route rejects a self-referencing relation field even when relationTo differs in case from the entity's own declared name", async () => {
+  const selfRelationProject: Project = {
+    ...project,
+    spec: {
+      ...project.spec,
+      entities: [
+        {
+          name: "Employee",
+          fields: [
+            { name: "name", type: "text", required: true },
+            { name: "managerId", type: "relation", required: false, relationTo: "employee" },
+          ],
+        },
+      ],
+    },
+  };
+  const files = generateExportFiles(selfRelationProject);
+  const serverJs = files.find((f) => f.path === "server.js")!.content;
+
+  const dir = mkdtempSync(path.join(tmpdir(), "codegen-self-relation-case-test-"));
+  const repoRoot = path.resolve(import.meta.dirname, "../../..");
+  symlinkSync(path.join(repoRoot, "node_modules"), path.join(dir, "node_modules"));
+  writeFileSync(path.join(dir, "server.js"), serverJs);
+
+  const port = 54000 + Math.floor(Math.random() * 5000);
+  const child = spawn(process.execPath, ["--experimental-sqlite", "server.js"], {
+    cwd: dir,
+    env: { ...process.env, PORT: String(port) },
+    stdio: ["ignore", "pipe", "pipe"],
+  });
+  let stderr = "";
+  child.stderr.on("data", (chunk) => {
+    stderr += chunk.toString();
+  });
+
+  try {
+    const deadline = Date.now() + 5000;
+    let lastErr: unknown;
+    while (Date.now() < deadline) {
+      if (child.exitCode !== null) throw new Error(`server.js exited early (code ${child.exitCode}):\n${stderr}`);
+      try {
+        await fetch(`http://localhost:${port}/api/entities`);
+        break;
+      } catch (err) {
+        lastErr = err;
+        await new Promise((r) => setTimeout(r, 100));
+      }
+    }
+    if (child.exitCode !== null) throw lastErr instanceof Error ? lastErr : new Error(String(lastErr));
+
+    const createRes = await fetch(`http://localhost:${port}/api/Employee`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ name: "Dana" }),
+    });
+    const employee = (await createRes.json()).record;
+    assert.equal(employee.managerId, null);
+
+    const patchRes = await fetch(`http://localhost:${port}/api/Employee/${employee.id}`, {
+      method: "PATCH",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ managerId: employee.id }),
+    });
+    assert.equal(
+      patchRes.status,
+      400,
+      "a case-mismatched relationTo ('employee' vs the entity's own 'Employee') must not let a self-reference slip past this guard",
+    );
+    const patchBody = await patchRes.json();
+    assert.equal(patchBody.error, `Field "managerId" can't reference the record's own id`);
+
+    const getRes = await fetch(`http://localhost:${port}/api/Employee`);
+    const records = (await getRes.json()).records;
+    assert.equal(records[0].managerId, null, "the rejected self-reference must never have been persisted");
+  } finally {
+    child.kill();
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+/**
  * New in this round: a relation field's `relationTo` can go dangling -- a
  * later refine regenerates the whole spec from plain prose with no access
  * to the previous structure (see pipeline.ts's own computeImpact/
