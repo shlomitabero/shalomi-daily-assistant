@@ -28,6 +28,23 @@ export function sortTwinStatsByCount(entities: BusinessTwinEntityStat[]): Busine
 }
 
 /**
+ * What share of the project's total records a single entity's own count
+ * represents, as a whole-number percentage -- the live grid (BusinessTwinPanel.tsx,
+ * which imports this from here) shows each tile's raw count and the panel's
+ * own total separately, but never how the two relate on their own. Lives
+ * here, not in BusinessTwinPanel.tsx, for the same reason sortTwinStatsByCount
+ * above does: formatTwinReport below needs the identical figure without a
+ * circular import. Guards against a zero/negative total (an otherwise-real
+ * state for a freshly built project with no data seeded yet) the same
+ * defensive way BuildProgress.tsx's own computeBuildProgressPercent does for
+ * its own div-by-zero case.
+ */
+export function computeTwinStatPercent(count: number, totalRecords: number): number {
+  if (totalRecords <= 0) return 0;
+  return Math.round((count / totalRecords) * 100);
+}
+
+/**
  * Renders the Business Twin's own data (already fetched into the panel --
  * no extra network round-trip) as a plain, shareable text snapshot. Plain
  * UTF-8 text rather than a PDF deliberately: this app's Hebrew-first
@@ -62,7 +79,17 @@ export function formatTwinReport(
   // contradicting the "biggest numbers first" order a reader just saw on
   // screen the moment they share this exact snapshot.
   for (const e of sortTwinStatsByCount(twin.entities)) {
-    lines.push(`- ${e.label}: ${e.count}`);
+    // Same guard, and the same percent figure, the live tile already shows
+    // next to this exact count (BusinessTwinPanel.tsx's own twin-stat-percent)
+    // -- without this, the one artifact a person shares specifically to carry
+    // that context (WhatsApp/email, see this function's own doc comment)
+    // silently dropped the one number that says whether this entity is the
+    // dominant one or a minor one.
+    const percentSuffix =
+      e.count > 0 && twin.totalRecords > 0
+        ? ` (${t("twin.stat.percentOfTotal", { percent: computeTwinStatPercent(e.count, twin.totalRecords) })})`
+        : "";
+    lines.push(`- ${e.label}: ${e.count}${percentSuffix}`);
   }
   lines.push(`${t("twin.report.total")}: ${twin.totalRecords}`);
 

@@ -4,22 +4,7 @@ import { formatNumberValue } from "./entityFormatting.js";
 import { useTranslation } from "./i18n/LanguageContext.js";
 import type { Lang } from "./i18n/language.js";
 import { useDialogFocusTrap } from "./useDialogFocusTrap.js";
-import { downloadTwinReport, formatTwinReport, sortTwinStatsByCount } from "./twinReport.js";
-
-/**
- * What share of the project's total records a single entity's own count
- * represents, as a whole-number percentage -- the grid already shows each
- * tile's raw count and the panel's own total separately (`twin.totalRecords`
- * above the grid), but never how the two relate. Guards against a
- * zero/negative total (an otherwise-real state for a freshly built project
- * with no data seeded yet) the same defensive way
- * BuildProgress.tsx's own computeBuildProgressPercent does for its own
- * div-by-zero case.
- */
-export function computeTwinStatPercent(count: number, totalRecords: number): number {
-  if (totalRecords <= 0) return 0;
-  return Math.round((count / totalRecords) * 100);
-}
+import { computeTwinStatPercent, downloadTwinReport, formatTwinReport, sortTwinStatsByCount } from "./twinReport.js";
 
 /**
  * A single horizontal bar chart -- the dashboard's one reusable chart

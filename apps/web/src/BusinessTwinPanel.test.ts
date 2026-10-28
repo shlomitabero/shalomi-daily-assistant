@@ -5,7 +5,7 @@ import { JSDOM } from "jsdom";
 import React from "react";
 import { act, cleanup, fireEvent, render } from "@testing-library/react";
 import type { BusinessTwin } from "./api.js";
-import { BusinessTwinPanel, computeTwinStatPercent } from "./BusinessTwinPanel.js";
+import { BusinessTwinPanel } from "./BusinessTwinPanel.js";
 import { LanguageProvider } from "./i18n/LanguageContext.js";
 import { ThemeProvider } from "./theme/ThemeContext.js";
 
@@ -456,17 +456,6 @@ test("BusinessTwinPanel renders stat tiles sorted by real record count (busiest 
   });
 });
 
-test("computeTwinStatPercent rounds an entity's real share of the project's total records", () => {
-  assert.equal(computeTwinStatPercent(12, 16), 75);
-  assert.equal(computeTwinStatPercent(4, 16), 25);
-  assert.equal(computeTwinStatPercent(1, 3), 33, "1/3 = 33.33...% must round to 33");
-  assert.equal(computeTwinStatPercent(0, 16), 0);
-});
-
-test("computeTwinStatPercent guards against a zero (or negative) total instead of dividing by zero", () => {
-  assert.equal(computeTwinStatPercent(0, 0), 0);
-  assert.equal(computeTwinStatPercent(5, 0), 0);
-});
 
 /**
  * New in this round: each tile already showed its own raw count and the

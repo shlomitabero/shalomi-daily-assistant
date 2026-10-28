@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import type { BusinessTwin, BusinessTwinEntityStat } from "./api.js";
 import { translate } from "./i18n/language.js";
-import { formatTwinReport, sortTwinStatsByCount } from "./twinReport.js";
+import { computeTwinStatPercent, formatTwinReport, sortTwinStatsByCount } from "./twinReport.js";
 
 function makeTwin(overrides: Partial<BusinessTwin> = {}): BusinessTwin {
   return {
@@ -71,6 +71,18 @@ test("sortTwinStatsByCount breaks a tie between equal counts by keeping the orig
   );
 });
 
+test("computeTwinStatPercent rounds an entity's real share of the project's total records", () => {
+  assert.equal(computeTwinStatPercent(12, 16), 75);
+  assert.equal(computeTwinStatPercent(4, 16), 25);
+  assert.equal(computeTwinStatPercent(1, 3), 33, "1/3 = 33.33...% must round to 33");
+  assert.equal(computeTwinStatPercent(0, 16), 0);
+});
+
+test("computeTwinStatPercent guards against a zero (or negative) total instead of dividing by zero", () => {
+  assert.equal(computeTwinStatPercent(0, 0), 0);
+  assert.equal(computeTwinStatPercent(5, 0), 0);
+});
+
 /**
  * Round 791: formatTwinReport iterated twin.entities in whatever order
  * the server happened to return them (the spec's own raw declaration
@@ -101,6 +113,39 @@ test("formatTwinReport lists entities by count descending, the same order the li
   assert.ok(orderIndex > -1 && customerIndex > -1 && leadIndex > -1, "expected all three entity lines to be present");
   assert.ok(orderIndex < customerIndex, "Orders (500) must be listed before Customers (50), not in declaration order");
   assert.ok(customerIndex < leadIndex, "Customers (50) must be listed before Leads (2), not in declaration order");
+});
+
+/**
+ * Round 1174: the live grid (BusinessTwinPanel.tsx) shows each entity tile's
+ * share of the project's total records right next to its count, but
+ * formatTwinReport -- the plain-text snapshot this feature exists so a
+ * person can share -- dropped that figure entirely, printing only the raw
+ * count. Confirms the shared percent appears for a real (non-zero,
+ * non-100%) entity, is omitted for a genuinely empty entity (matching the
+ * live tile's own `e.count > 0` guard), and is omitted entirely when the
+ * project has zero total records (matching the live tile's own
+ * `twin.totalRecords > 0` guard) -- the same two conditions
+ * computeTwinStatPercent's own zero-guard test above already covers in
+ * isolation, now proven at the call site that actually matters to a reader.
+ */
+test("formatTwinReport includes each entity's share of total records, matching the live grid's own percent figure, and omits it exactly when the live grid would too", () => {
+  const t = (key: string, params?: Record<string, string | number>) => translate("en", key, params);
+  const twin = makeTwin({
+    entities: [
+      { name: "Order", label: "Orders", count: 3 },
+      { name: "Lead", label: "Leads", count: 0 },
+    ],
+    totalRecords: 4,
+  });
+
+  const report = formatTwinReport(twin, "Flower Shop", "en", t);
+
+  assert.match(report, /Orders: 3 \(75% of records\)/, "a real, non-zero entity must carry its own percent-of-total, matching computeTwinStatPercent(3, 4) = 75");
+  assert.match(report, /Leads: 0$/m, "a genuinely empty entity must list its bare 0 count with no percent suffix, matching the live tile's own e.count > 0 guard");
+
+  const zeroTotalTwin = makeTwin({ entities: [{ name: "Order", label: "Orders", count: 0 }], totalRecords: 0 });
+  const zeroTotalReport = formatTwinReport(zeroTotalTwin, "Empty Shop", "en", t);
+  assert.match(zeroTotalReport, /Orders: 0$/m, "with zero total records, no entity line may carry a percent suffix, matching the live tile's own twin.totalRecords > 0 guard");
 });
 
 test("formatTwinReport includes the project name, summary, roles, per-entity counts, total, and observations (Hebrew)", () => {
