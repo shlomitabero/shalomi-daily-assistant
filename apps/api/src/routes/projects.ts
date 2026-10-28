@@ -633,8 +633,28 @@ export function computeChangedFields(
   return new Set(entity.fields.map((f) => f.name).filter((name) => !before || before[name] !== after[name]));
 }
 
+/**
+ * Round 1162: a relation field's own relationTo can permanently differ in
+ * letter case from its real target entity's name (see migrate.ts's own
+ * round-1159 doc comment -- an AI-generated or Debug-Agent-repaired spec
+ * can produce this, and migrate.ts's own case-rename handling never
+ * rewrites a SIBLING field's relationTo string when an entity itself is
+ * renamed). Every client call site that fetches a relation field's own
+ * target records (EntityPanel.tsx's relationTargets, AutomationsPanel.tsx's
+ * relationFieldTargets) passes that raw relationTo string straight through
+ * as this route family's own :entityName param -- an exact-case find here
+ * 404ed every one of those requests, so the live table/board/calendar
+ * cells, CSV export, search, and automation message templates all
+ * silently fell back to the raw "#<id>" the moment a relation's own
+ * relationTo didn't exactly match its target's current spelling, even
+ * though migrate.ts's own round-1159 fix already guarantees the real
+ * foreign key underneath is intact. ProductSpecSchema's own
+ * findCaseInsensitiveDuplicateEntityNames refine guarantees at most one
+ * entity name can ever match a given string this way, so the fallback is
+ * never ambiguous.
+ */
 function findEntity(project: Project, entityName: string): Entity {
-  const entity = project.spec.entities.find((e) => e.name === entityName);
+  const entity = project.spec.entities.find((e) => e.name === entityName) ?? project.spec.entities.find((e) => e.name.toLowerCase() === entityName.toLowerCase());
   if (!entity) {
     throw new HttpError(404, `Entity "${entityName}" is not part of this project's spec`, "ENTITY_NOT_FOUND");
   }

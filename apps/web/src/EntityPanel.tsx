@@ -1459,7 +1459,14 @@ export function EntityPanel({
     const names = entity.fields
       .filter((f) => f.type === "relation" && f.relationTo)
       .map((f) => f.relationTo!);
-    return [...new Set(names)].filter((name) => allEntities.some((e) => e.name === name));
+    // Round 1162: case-insensitive, mirroring migrate.ts's own round-1159
+    // fix -- without it, a relation field whose relationTo differed from
+    // its target entity's current name only by letter case was excluded
+    // from this list entirely, so its related records were never even
+    // fetched (see findEntity's own round-1162 doc comment in
+    // routes/projects.ts for why the fetch itself would 404 without that
+    // server-side fix too).
+    return [...new Set(names)].filter((name) => allEntities.some((e) => e.name.toLowerCase() === name.toLowerCase()));
   }, [entity.fields, allEntities]);
 
   useEffect(() => {

@@ -1819,6 +1819,23 @@ test("relationDisplayLabel resolves a relation field to the related record's dis
 });
 
 /**
+ * Round 1162: mirrors the test above exactly, except the relation field's
+ * own relationTo ("courier") differs from its real target entity's name
+ * ("Courier") only by letter case -- the same genuinely plausible
+ * AI-generated-spec scenario migrate.ts's own round-1159 fix addresses for
+ * FK generation. Before this round, relationDisplayLabel's own exact-case
+ * `allEntities.find((e) => e.name === field.relationTo)` would have
+ * fallen back to "#<id>" here even with the related record already
+ * present in relatedRecords (keyed by the SAME raw relationTo string a
+ * real caller -- EntityPanel.tsx's own round-1162 fix -- fetches under).
+ */
+test("relationDisplayLabel still resolves a relation field when relationTo differs from its target entity's name only by letter case", () => {
+  const caseMismatchedField: Field = { name: "courierId", type: "relation", required: false, relationTo: "courier" };
+  const couriers = [{ id: 42, name: "Avi Mizrahi" }];
+  assert.equal(relationDisplayLabel(caseMismatchedField, 42, [courierEntity], { courier: couriers }), "Avi Mizrahi");
+});
+
+/**
  * Regression test for round 386: relationDisplayLabel is called once per
  * relation field per row (table/board/calendar cells, CSV export, sorting,
  * global search) -- a table of N records with a relation field pointing at

@@ -11605,6 +11605,60 @@ test("EntityPanel's relation column header sorts by the related record's resolve
  * the exclusion actually reaches the live table: double-clicking a relation
  * cell must never open an inline editor.
  */
+/**
+ * Round 1162: mirrors the test below exactly, except the relation field's
+ * own relationTo ("courier") differs from its real target entity's name
+ * ("Courier") only by letter case -- the same genuinely plausible
+ * AI-generated-spec scenario migrate.ts's own round-1159 fix addresses for
+ * FK generation. Before this round, EntityPanel.tsx's own relationTargets
+ * filter excluded this field's target entirely (so its related records
+ * were never even fetched), and even if they had been, both
+ * routes/projects.ts's findEntity and entityFormatting.ts's own
+ * relationDisplayLabel did an exact-case lookup -- the cell would have
+ * shown the raw "#9" fallback instead of "Dana", on the app's own primary,
+ * most-viewed surface (the live table).
+ */
+test("EntityPanel's relation cell still resolves to the real display label when relationTo differs from its target entity's name only by letter case", async () => {
+  await withJsdom(async () => {
+    const orderEntity: Entity = {
+      name: "Order",
+      label: "Order",
+      fields: [
+        { name: "item", label: "Item", type: "text", required: true },
+        { name: "courierId", label: "Courier", type: "relation", relationTo: "courier", required: false },
+      ],
+    };
+    const courierEntity: Entity = { name: "Courier", label: "Courier", fields: [{ name: "name", label: "Name", type: "text", required: true }] };
+    const courierRelated: EntityRecord[] = [{ id: 9, createdAt: "x", name: "Dana" }];
+    const store: EntityRecord[] = [{ id: 1, createdAt: "x", item: "Pizza", courierId: 9 }];
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = (async (input: string, init?: RequestInit) => {
+      if (input === "/api/projects/proj1/entities/Order") {
+        const method = init?.method ?? "GET";
+        if (method === "GET") {
+          return new Response(JSON.stringify({ records: store }), { status: 200, headers: { "content-type": "application/json" } });
+        }
+      }
+      if (input === "/api/projects/proj1/entities/courier") {
+        return new Response(JSON.stringify({ records: courierRelated }), { status: 200, headers: { "content-type": "application/json" } });
+      }
+      throw new Error(`unexpected request ${init?.method ?? "GET"} ${input}`);
+    }) as typeof fetch;
+    try {
+      renderEntityPanel({ entity: orderEntity, allEntities: [orderEntity, courierEntity] });
+      await waitForCondition(() => document.querySelectorAll("table tbody tr").length === 1);
+      await waitForCondition(() => document.querySelectorAll("table tbody td")[2]?.textContent === "Dana");
+      assert.equal(
+        document.querySelectorAll("table tbody td")[2]?.textContent,
+        "Dana",
+        "the relation cell must resolve to the real display label even though relationTo is lowercase courier, not Courier",
+      );
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+});
+
 test("EntityPanel never opens an inline editor for a relation field's cell", async () => {
   await withJsdom(async () => {
     const orderEntity: Entity = {

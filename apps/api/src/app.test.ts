@@ -1685,6 +1685,51 @@ test("POST /projects/:id/entities/:entityName retried with the same idempotency 
  * commitPendingDelete then restores the (already gone) row into the UI
  * and shows that error.
  */
+/**
+ * Round 1162: findEntity (this file's own per-route entity resolver,
+ * used by GET/POST/PATCH/DELETE .../entities/:entityName and its many
+ * sub-routes) used to do an exact-case match against the spec's entity
+ * names. A relation field's own relationTo can legitimately differ from
+ * its target entity's real name only by letter case (the same genuinely
+ * plausible AI-generated-spec scenario migrate.ts's own round-1159 fix
+ * addresses for FK generation) -- EntityPanel.tsx's own relationTargets
+ * fetch (and AutomationsPanel.tsx's identical pattern) passes that raw
+ * relationTo string straight through as this route's own :entityName
+ * param, so this exact-case lookup 404ed that request even though the
+ * real FK underneath is intact, silently leaving the live table/board's
+ * relation cells on "#<id>" with no related records ever fetched.
+ */
+test("GET .../entities/:entityName resolves the entity even when the URL's own entityName differs from its real name only by letter case", async () => {
+  await withServer(async (baseUrl, db) => {
+    const email = `entity-case-${randomUUID()}@example.com`;
+    const token = await signup(baseUrl, email);
+    const user = findUserByEmail(db, email)!;
+
+    const spec: ProductSpec = {
+      summary: "test",
+      personas: [],
+      roles: ["Admin"],
+      entities: [{ name: "Customer", fields: [{ name: "name", type: "text", required: true }] }],
+      screens: [],
+      assumptions: [],
+      openQuestions: [],
+    };
+    const projectId = randomUUID();
+    insertProject(db, { id: projectId, ownerId: user.id, name: "CRM", description: "test", spec });
+    diffAndMigrate(db, projectId, undefined, spec);
+    markProjectBuilt(db, projectId);
+    const record = insertRecord(db, projectId, spec.entities[0], { name: "Dana Levi" });
+
+    const res = await fetch(`${baseUrl}/api/projects/${projectId}/entities/customer`, { headers: authHeaders(token) });
+    assert.equal(res.status, 200, "must resolve the real Customer entity even though the URL spells it lowercase customer");
+    const { records } = (await res.json()) as { records: { id: number; name: string }[] };
+    assert.deepEqual(
+      records.map((r) => r.id),
+      [record.id],
+    );
+  });
+});
+
 test("DELETE .../entities/:entityName/:recordId retried with the same idempotency key after the first attempt already succeeded replays the original 204, instead of 404ing on the now-deleted row", async () => {
   await withServer(async (baseUrl, db) => {
     const email = `delete-idem-${randomUUID()}@example.com`;

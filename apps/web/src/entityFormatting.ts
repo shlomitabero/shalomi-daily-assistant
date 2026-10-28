@@ -1270,7 +1270,13 @@ export function relationDisplayLabel(
   lang: Lang = "en",
 ): string {
   if (value === null || value === undefined || value === "") return "";
-  const targetEntity = field.relationTo ? allEntities.find((e) => e.name === field.relationTo) : undefined;
+  // Round 1162: case-insensitive, mirroring migrate.ts's own round-1159 fix
+  // -- without it, a relation field whose relationTo differed from its
+  // target entity's current name only by letter case always fell back to
+  // "#<id>" here, even once relatedRecords genuinely held the records
+  // (EntityPanel.tsx's own round-1162 fix fetches them keyed by the SAME
+  // raw relationTo string, so the records[] lookup below still matches).
+  const targetEntity = field.relationTo ? allEntities.find((e) => e.name.toLowerCase() === field.relationTo!.toLowerCase()) : undefined;
   const records = field.relationTo ? relatedRecords[field.relationTo] : undefined;
   if (!targetEntity || !records) return `#${value}`;
   const match = relationIndexFor(records).get(Number(value));
