@@ -507,6 +507,58 @@ test("AuthScreen's 'Forgot password?' link only shows in login mode, and submitt
 });
 
 /**
+ * Round 1156: the sibling gap to round 1155's own login-code "Resend"
+ * fix -- a password-reset email is exactly as prone to arriving late or
+ * landing in spam, and the only prior recovery was clicking "Back" and
+ * going through "Forgot password?" again from scratch. email is already
+ * in component state at this step, so "Resend email" just re-runs the
+ * same forgotPassword() call handleForgotPasswordSubmit already makes,
+ * without leaving the confirmation screen.
+ */
+test("AuthScreen's forgot-password confirmation screen has a 'Resend email' button that re-requests the real endpoint and shows a confirmation", async () => {
+  await withJsdom(async () => {
+    const originalFetch = globalThis.fetch;
+    let sendCalls = 0;
+    let lastBody: string | undefined;
+    globalThis.fetch = (async (_input: string, init?: RequestInit) => {
+      sendCalls += 1;
+      lastBody = init?.body as string;
+      return new Response(JSON.stringify({ sent: true }), { status: 200, headers: { "content-type": "application/json" } });
+    }) as typeof fetch;
+    try {
+      renderAuthScreen(() => {});
+      fireEvent.click(document.querySelector("button.link-button") as HTMLButtonElement); // switch to login
+      const forgotLink = Array.from(document.querySelectorAll("button")).find((b) => b.textContent === "Forgot password?") as HTMLButtonElement;
+      fireEvent.click(forgotLink);
+      fireEvent.change(document.querySelector('input[type="email"]') as HTMLInputElement, { target: { value: "dana@example.com" } });
+
+      await act(async () => {
+        fireEvent.submit(document.querySelector("form.auth-form")!);
+        await Promise.resolve();
+        await Promise.resolve();
+      });
+
+      assert.equal(sendCalls, 1);
+      const resendButton = Array.from(document.querySelectorAll("button")).find((b) => b.textContent === "Resend email") as HTMLButtonElement;
+      assert.ok(resendButton, "expected a 'Resend email' button on the confirmation screen");
+
+      await act(async () => {
+        fireEvent.click(resendButton);
+        await Promise.resolve();
+        await Promise.resolve();
+      });
+
+      assert.equal(sendCalls, 2, "resend must call the real forgot-password endpoint again, not just redisplay the same confirmation");
+      assert.equal(JSON.parse(lastBody!).email, "dana@example.com");
+      assert.match(document.body.textContent ?? "", /sent a password reset link/i, "the original confirmation must still be showing");
+      assert.match(document.body.textContent ?? "", /sent again/i, "the resend must show its own confirmation, not resend silently");
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+});
+
+/**
  * Following the real emailed link (`?resetToken=...`) must show the
  * reset-password form instead of the normal login/signup screen --
  * confirms the whole real flow through real DOM events: typing a new

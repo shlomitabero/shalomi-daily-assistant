@@ -53,6 +53,16 @@ export function AuthScreen({ onAuthenticated }: { onAuthenticated: (user: User) 
   // itself null.
   const [forgotPasswordMode, setForgotPasswordMode] = useState(false);
   const [forgotPasswordSent, setForgotPasswordSent] = useState(false);
+  // Round 1156: the sibling gap to round 1155's own codeResent -- a
+  // password-reset email is exactly as prone to arriving late or landing
+  // in spam as a login code is, and the only recovery before this was
+  // clicking "Back" and going through "Forgot password?" again from
+  // scratch. email is still sitting in state right here, so resending is
+  // just re-running the exact same forgotPassword() call
+  // handleForgotPasswordSubmit already makes. True only right after a
+  // resend actually succeeds; cleared the moment the user resends again,
+  // so it never lingers as a stale confirmation.
+  const [forgotPasswordResent, setForgotPasswordResent] = useState(false);
 
   function handleBackToLogin() {
     window.history.replaceState(null, "", window.location.pathname + window.location.hash);
@@ -62,6 +72,7 @@ export function AuthScreen({ onAuthenticated }: { onAuthenticated: (user: User) 
     setResetConfirmPassword("");
     setForgotPasswordMode(false);
     setForgotPasswordSent(false);
+    setForgotPasswordResent(false);
     setMode("login");
     setError(null);
   }
@@ -73,6 +84,20 @@ export function AuthScreen({ onAuthenticated }: { onAuthenticated: (user: User) 
     try {
       await forgotPassword(email, lang);
       setForgotPasswordSent(true);
+    } catch (err) {
+      setError((err as Error).message);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function handleResendForgotPasswordEmail() {
+    setError(null);
+    setForgotPasswordResent(false);
+    setBusy(true);
+    try {
+      await forgotPassword(email, lang);
+      setForgotPasswordResent(true);
     } catch (err) {
       setError((err as Error).message);
     } finally {
@@ -270,8 +295,21 @@ export function AuthScreen({ onAuthenticated }: { onAuthenticated: (user: User) 
               {forgotPasswordSent ? (
                 <>
                   <p className="success">{t("auth.forgotPassword.sent")}</p>
+                  {forgotPasswordResent && (
+                    <p className="success" role="status">
+                      {t("auth.forgotPassword.resent")}
+                    </p>
+                  )}
+                  {error && (
+                    <p className="error" role="status">
+                      {error}
+                    </p>
+                  )}
                   <button type="button" onClick={handleBackToLogin}>
                     {t("auth.forgotPassword.back")}
+                  </button>
+                  <button type="button" className="secondary link-button" disabled={busy} onClick={handleResendForgotPasswordEmail}>
+                    {busy ? t("auth.submit.busy") : t("auth.forgotPassword.resend")}
                   </button>
                 </>
               ) : (
