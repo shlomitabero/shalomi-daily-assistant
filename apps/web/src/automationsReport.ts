@@ -89,7 +89,8 @@ function fieldValueLabel(rule: AutomationRuleView, entities: Entity[], relatedRe
   const field = ruleEntity(rule, entities)?.fields.find((f) => f.name === rule.fieldName);
   if (field?.type === "enum") return field.enumLabels?.[rule.fieldValue] ?? rule.fieldValue;
   if (field?.type === "relation" && field.relationTo) {
-    const targetEntity = entities.find((e) => e.name === field.relationTo);
+    // Round 1181: case-insensitive, mirroring AutomationsPanel.tsx's own fix.
+    const targetEntity = entities.find((e) => e.name.toLowerCase() === field.relationTo!.toLowerCase());
     const records = relatedRecords[field.relationTo];
     const match = targetEntity && records ? records.find((r) => String(r.id) === rule.fieldValue) : undefined;
     return match && targetEntity ? recordDisplayLabel(targetEntity, match, lang) : rule.fieldValue;

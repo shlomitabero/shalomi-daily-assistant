@@ -282,9 +282,12 @@ export function AutomationsPanel({
   // so this fetches for every relation-type field referenced by any rule,
   // not just the form's currently-selected one.
   const [relatedRecords, setRelatedRecords] = useState<RelatedRecordsByEntity>({});
+  // Round 1181: case-insensitive, matching the established relationTo
+  // convention (rounds 1159-1180) -- relationTo can legitimately differ
+  // in letter case from its target entity's own declared name.
   const relationTargetEntity =
     selectedField?.type === "relation" && selectedField.relationTo
-      ? entities.find((e) => e.name === selectedField.relationTo)
+      ? entities.find((e) => e.name.toLowerCase() === selectedField.relationTo!.toLowerCase())
       : undefined;
   const relationTargetRecords = relationTargetEntity ? relatedRecords[relationTargetEntity.name] : undefined;
 
@@ -296,7 +299,12 @@ export function AutomationsPanel({
       const field = ruleFieldEntity?.fields.find((f) => f.name === rule.fieldName);
       if (field?.type === "relation" && field.relationTo) names.add(field.relationTo);
     }
-    return [...names].filter((name) => entities.some((e) => e.name === name));
+    // Round 1181: case-insensitive -- without this, a relationTo that
+    // differs from its target entity's name only by letter case was
+    // dropped here (the antecedent gate), so relatedRecords[name] was
+    // never even fetched below, making any downstream display fix a
+    // no-op for that field.
+    return [...names].filter((name) => entities.some((e) => e.name.toLowerCase() === name.toLowerCase()));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [relationTargetEntity, rules, entities]);
 
@@ -707,7 +715,8 @@ export function AutomationsPanel({
     const field = ruleEntity(rule)?.fields.find((f) => f.name === rule.fieldName);
     if (field?.type === "enum") return field.enumLabels?.[rule.fieldValue] ?? rule.fieldValue;
     if (field?.type === "relation" && field.relationTo) {
-      const targetEntity = entities.find((e) => e.name === field.relationTo);
+      // Round 1181: case-insensitive, same reason as relationTargetEntity above.
+      const targetEntity = entities.find((e) => e.name.toLowerCase() === field.relationTo!.toLowerCase());
       const records = relatedRecords[field.relationTo];
       const match = targetEntity && records ? records.find((r) => String(r.id) === rule.fieldValue) : undefined;
       return match && targetEntity ? recordDisplayLabel(targetEntity, match, lang) : rule.fieldValue;

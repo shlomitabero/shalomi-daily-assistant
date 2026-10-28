@@ -1482,6 +1482,109 @@ test("AutomationsPanel resolves an existing rule's stored relation id back to th
   });
 });
 
+const relationFieldCaseMismatchProject: Project = {
+  ...relationFieldProject,
+  id: "proj6b",
+  spec: {
+    ...relationFieldProject.spec,
+    entities: [
+      {
+        name: "Order",
+        label: "Order",
+        fields: [
+          { name: "label", label: "Label", type: "text", required: true },
+          // Round 1181: relationTo differs from its target entity's real
+          // declared name ("Courier") only by letter case -- the same
+          // legitimate AI-spec-generation case drift rounds 1159-1180
+          // already established across the rest of the app.
+          { name: "courierId", label: "Courier", type: "relation", required: false, relationTo: "courier" },
+        ],
+      },
+      {
+        name: "Courier",
+        label: "Courier",
+        fields: [{ name: "name", label: "Name", type: "text", required: true }],
+      },
+    ],
+  },
+};
+
+/**
+ * Round 1181's finding: the same relationTo-case-sensitivity bug class
+ * rounds 1159-1180 already fixed across the live table, CSV import, and
+ * the entity-delete guard was still present in AutomationsPanel.tsx's own
+ * relationTargetEntity/relationFieldTargets/fieldValueLabel and its
+ * mirrored copy in automationsReport.ts -- the client-side display
+ * counterpart of apps/api/src/automations.ts's own server-side lookups
+ * (fixed back in round 1160), left behind because it lives in different
+ * files. Before the fix, a case-mismatched relationTo meant
+ * relationFieldTargets (the antecedent gate) dropped the target entirely,
+ * so relatedRecords for it was never even fetched, and both the rule list
+ * and the Copy/Download report fell back to printing the bare, never-
+ * meaningful-to-a-user internal record id instead of its real display
+ * label -- for every rule referencing that field, not just new ones.
+ * Exact mirror of the test above, on a fixture whose only difference is
+ * relationTo: "courier" instead of "Courier".
+ */
+test("AutomationsPanel still resolves an existing rule's stored relation id to its display label, in the rule list and the Copy/Download report, when relationTo differs from its target entity's name only by letter case", async () => {
+  await withJsdom(async () => {
+    const originalFetch = globalThis.fetch;
+    const rule = makeRule({
+      id: "rule11b",
+      entityName: "Order",
+      trigger: "field_equals",
+      fieldName: "courierId",
+      fieldValue: "2",
+    });
+    globalThis.fetch = (async (input: string, init?: RequestInit) => {
+      const method = init?.method ?? "GET";
+      if (method === "GET" && input === "/api/projects/proj6b/automations") {
+        return new Response(JSON.stringify({ rules: [rule] }), { status: 200, headers: { "content-type": "application/json" } });
+      }
+      // relationFieldTargets fetches by the literal relationTo string
+      // ("courier"), not by the target entity's declared name
+      // ("Courier") -- that part already worked before this round's fix.
+      if (method === "GET" && input === "/api/projects/proj6b/entities/courier") {
+        return new Response(
+          JSON.stringify({ records: [{ id: 1, name: "Yossi Cohen" }, { id: 2, name: "Dana Levi" }] }),
+          { status: 200, headers: { "content-type": "application/json" } },
+        );
+      }
+      throw new Error(`unexpected request ${method} ${input}`);
+    }) as typeof fetch;
+
+    let writtenText: string | undefined;
+    Object.defineProperty(navigator, "clipboard", {
+      value: { writeText: async (text: string) => void (writtenText = text) },
+      configurable: true,
+    });
+
+    try {
+      renderPanelWith(relationFieldCaseMismatchProject);
+      await waitForCondition(() => document.querySelector(".automations-rule-condition") !== null);
+      await waitForCondition(() => (document.querySelector(".automations-rule-condition")?.textContent ?? "").includes("Dana Levi"));
+      assert.doesNotMatch(
+        document.querySelector(".automations-rule-condition")?.textContent ?? "",
+        /"2"/,
+        "the raw stored id must never be shown once the related record's label is resolvable, even with a case-mismatched relationTo",
+      );
+
+      const copyButton = Array.from(document.querySelectorAll("button")).find((b) => b.textContent?.includes("Copy report")) as HTMLButtonElement;
+      await act(async () => {
+        fireEvent.click(copyButton);
+        await Promise.resolve();
+        await Promise.resolve();
+      });
+
+      assert.equal(typeof writtenText, "string", "clicking Copy must actually call navigator.clipboard.writeText");
+      assert.match(writtenText!, /Dana Levi/, "the Copy report text must also resolve the relation id to its display label despite the case-mismatched relationTo");
+    } finally {
+      globalThis.fetch = originalFetch;
+      delete (navigator as { clipboard?: unknown }).clipboard;
+    }
+  });
+});
+
 /**
  * Round 764 regression test: AutomationsPanel used to derive its entity
  * list straight from project.spec.entities, ignoring any `entities` prop

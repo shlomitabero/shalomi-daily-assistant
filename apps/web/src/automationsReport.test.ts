@@ -43,6 +43,42 @@ const duplicateLabelOrderEntity: Entity = {
   ],
 };
 
+/**
+ * Round 1181: this module's own fieldValueLabel (mirroring AutomationsPanel.
+ * tsx's sibling, round 772's own finding) resolved a relation field's
+ * stored id to its target entity's display label by comparing relationTo
+ * to entities[].name with exact-case equality -- the same bug class
+ * rounds 1159-1180 already fixed across the live table, CSV import, and
+ * the entity-delete guard, just never reached this report-formatting
+ * function or its AutomationsPanel.tsx sibling. Before the fix, the
+ * report fell back to printing the bare, meaningless internal record id
+ * whenever relationTo differed from its target entity's real declared
+ * name only by letter case.
+ */
+const relationCaseMismatchOrderEntity: Entity = {
+  name: "Order",
+  label: "Order",
+  fields: [{ name: "courierId", label: "Courier", type: "relation", relationTo: "courier", required: false }],
+};
+const courierEntity: Entity = { name: "Courier", label: "Courier", fields: [{ name: "name", label: "Name", type: "text", required: true }] };
+
+test("formatAutomationsReport still resolves a relation field's stored id to its display label when relationTo differs from its target entity's name only by letter case", () => {
+  const t = (key: string, params?: Record<string, string | number>) => translate("en", key, params);
+  const rule = makeRule({ fieldName: "courierId", fieldValue: "9" });
+
+  const report = formatAutomationsReport(
+    [rule],
+    [relationCaseMismatchOrderEntity, courierEntity],
+    "Shop",
+    "en",
+    t,
+    { courier: [{ id: 9, createdAt: "x", name: "Dana Levi" }] },
+  );
+
+  assert.match(report, /Dana Levi/, "the report must resolve the relation id to the related record's display label, not the bare id");
+  assert.doesNotMatch(report, /"9"/, "the raw stored id must never be shown once the related record's label is resolvable");
+});
+
 test("formatAutomationsReport disambiguates two fields that share the same label, in both the condition and the destination", () => {
   const t = (key: string, params?: Record<string, string | number>) => translate("en", key, params);
   const rule = makeRule({ fieldName: "subtotal", fieldValue: "5", toField: "shipping" });
