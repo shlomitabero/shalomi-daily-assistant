@@ -809,6 +809,44 @@ test("an incoming WhatsApp 'View once' photo/video (across both wrapper field ve
 });
 
 /**
+ * Round 1139: deleting or editing a message you already sent (long-press ->
+ * "Delete"/"Edit") delivers as a `protocolMessage` -- previously dropped
+ * with zero trace, the same gap every other still-unrecognized message
+ * kind fell into before its own fix. REVOKE (a delete) has no recoverable
+ * content at all, so it gets the same "[Reaction removed]"-style plain
+ * placeholder; MESSAGE_EDIT carries the edit's full replacement content in
+ * `editedMessage`, reusing the View once recursive-inner-describe
+ * convention so an edited photo/location/etc. still shows its own real
+ * placeholder, not a bare "[Edited]".
+ */
+test("an incoming WhatsApp message deletion or edit is logged with a placeholder instead of being silently dropped", async () => {
+  const { manager, createdSockets, db } = setupManager();
+  insertProject(db, project);
+  applyMigrations(db, project.id, project.spec);
+  markProjectBuilt(db, project.id);
+
+  await manager.connect(project.id);
+  createdSockets[0].emitConnectionUpdate({ connection: "open" });
+
+  createdSockets[0].emitMessagesUpsert({
+    type: "notify",
+    messages: [
+      { key: { remoteJid: "972501234567@s.whatsapp.net", fromMe: false }, message: { protocolMessage: { type: 0 } } },
+      { key: { remoteJid: "972501234567@s.whatsapp.net", fromMe: false }, message: { protocolMessage: { type: 14, editedMessage: { conversation: "actually, 3 units please" } } } },
+      { key: { remoteJid: "972501234567@s.whatsapp.net", fromMe: false }, message: { protocolMessage: { type: 14 } } },
+    ],
+  });
+
+  // listWhatsAppMessages orders newest-first, the reverse of emission order.
+  const { messages } = listWhatsAppMessages(db, project.id);
+  assert.equal(messages.length, 3);
+  assert.equal(messages[0].body, "[Edited]", "an edit with no recoverable editedMessage content must fall back to a plain placeholder, not print nothing or throw");
+  assert.equal(messages[1].body, "[Edited] actually, 3 units please", "a genuine text edit's own new content must still come through");
+  assert.equal(messages[2].body, "[Message deleted]", "a revoke (delete) has no recoverable content, so only the plain placeholder is expected");
+  for (const m of messages) assert.equal(m.direction, "in", "every placeholder row must still be a real, matched-against incoming message, not metadata");
+});
+
+/**
  * Round 1121: a live-location share (WhatsApp's continuous-sharing mode,
  * started from the attachment picker) is a distinct field from the
  * already-handled locationMessage (a single pinned location, round 1035)

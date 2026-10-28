@@ -116,6 +116,7 @@ export interface BaileysIncomingMessage {
     liveLocationMessage?: { caption?: string };
     viewOnceMessage?: { message?: BaileysIncomingMessage["message"] };
     viewOnceMessageV2?: { message?: BaileysIncomingMessage["message"] };
+    protocolMessage?: { type?: number; editedMessage?: BaileysIncomingMessage["message"] };
   };
 }
 
@@ -218,6 +219,26 @@ const CONNECTION_LOST_MESSAGE = "The WhatsApp connection was lost. Click Connect
  * ILiveLocationMessage) is a distinct field from the already-handled
  * locationMessage (a single pinned location) and was missed the same way.
  * Both confirmed directly against Baileys' own shipped protobuf types.
+ *
+ * Round 1139: deleting or editing a message you already sent (long-press ->
+ * "Delete"/"Edit") delivers through this exact same messages.upsert stream,
+ * as a message whose `protocolMessage` field is set instead of any of the
+ * content fields above -- so it fell through to the same silent drop as
+ * every other still-unrecognized shape, exactly like an unfixed reaction.
+ * Confirmed against proto.Message.IProtocolMessage: `type` is the
+ * ProtocolMessage.Type enum (REVOKE = 0 for a delete, MESSAGE_EDIT = 14 for
+ * an edit), and `editedMessage` carries the edit's full replacement content
+ * as a plaintext, ordinary IMessage -- not a different field needing
+ * decryption. A customer deleting or correcting something they just sent
+ * (a wrong order quantity, an address typo) previously vanished with zero
+ * trace on the business owner's side even though the customer's own phone
+ * shows "This message was deleted"/an edited-message indicator -- the
+ * owner saw nothing had ever arrived. REVOKE has no recoverable content
+ * (Baileys/WhatsApp never sends the original text back), mirroring
+ * reactionMessage's own "[Reaction removed]" placeholder for a case with
+ * nothing left to show; MESSAGE_EDIT reuses the viewOnceMessage recursive-
+ * inner-describe convention, since `editedMessage` is a full nested
+ * message of any already-handled shape, not just plain text.
  */
 function describeIncomingMessage(message: BaileysIncomingMessage["message"]): string | null {
   if (!message) return null;
@@ -255,6 +276,16 @@ function describeIncomingMessage(message: BaileysIncomingMessage["message"]): st
   if (viewOnceInner) {
     const inner = describeIncomingMessage(viewOnceInner);
     return inner ? `[View once] ${inner}` : "[View once]";
+  }
+  if (message.protocolMessage) {
+    const PROTOCOL_MESSAGE_TYPE_REVOKE = 0;
+    const PROTOCOL_MESSAGE_TYPE_MESSAGE_EDIT = 14;
+    if (message.protocolMessage.type === PROTOCOL_MESSAGE_TYPE_REVOKE) return "[Message deleted]";
+    if (message.protocolMessage.type === PROTOCOL_MESSAGE_TYPE_MESSAGE_EDIT) {
+      const inner = describeIncomingMessage(message.protocolMessage.editedMessage);
+      return inner ? `[Edited] ${inner}` : "[Edited]";
+    }
+    return null;
   }
   return null;
 }
