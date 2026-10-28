@@ -35,7 +35,15 @@ export function formatCollaboratorsReport(
   for (const c of collaborators) {
     lines.push(`${c.email} — ${roleLabel(c.role, t)} (${new Date(c.addedAt).toLocaleDateString(LOCALE[lang])})`);
   }
-  if (!owner && collaborators.length === 0) {
+  // Round 1190: was `!owner && collaborators.length === 0` -- owner is
+  // truthy for every normal project (CollaboratorsPanel.tsx's own Copy/
+  // Download buttons are only rendered once `owner` is truthy at all, see
+  // their own gating condition), so this line could never actually appear
+  // for the single most common real state (an owner with zero invited
+  // collaborators), even though the on-screen panel's own identical-
+  // purpose empty check is gated only on `collaborators.length === 0`,
+  // independent of owner.
+  if (collaborators.length === 0) {
     lines.push(t("collab.empty"));
   }
 
