@@ -1079,6 +1079,71 @@ test("runAutomationsForRecordChange interpolates a relation field's display labe
   );
 });
 
+/**
+ * Round 1160: mirrors the test above exactly, except the relation field's
+ * own relationTo ("customer") differs from its real target entity's name
+ * ("Customer") only by letter case -- the same genuinely plausible
+ * AI-generated-spec scenario migrate.ts's own round-1159 fix addresses for
+ * FK generation. Before this round, resolveRelationFieldsForTemplate's own
+ * exact-case `e.name === field.relationTo` lookup would have left the sent
+ * message carrying the raw "#<id>" instead of the related customer's name.
+ */
+test("runAutomationsForRecordChange interpolates a relation field's display label even when relationTo differs from its target entity's name only by letter case", async () => {
+  const customerEntity: Entity = {
+    name: "Customer",
+    label: "Customer",
+    fields: [{ name: "name", type: "text", required: true }],
+  };
+  const dealEntity: Entity = {
+    name: "Deal",
+    label: "Deal",
+    fields: [
+      { name: "customer", type: "relation", relationTo: "customer", required: true },
+      { name: "status", type: "text", required: true },
+    ],
+  };
+  const db = openDatabase(":memory:");
+  ensureProjectsTable(db);
+  ensureAutomationRulesTable(db);
+  ensureWhatsAppConnectionsTable(db);
+  ensureWhatsAppMessagesTable(db);
+  const spec = {
+    summary: "A deals app",
+    entities: [customerEntity, dealEntity],
+    roles: ["Admin"],
+    screens: [],
+    openQuestions: [],
+  };
+  const inserted = insertProject(db, { id: "proj-case", ownerId: "owner1", name: "Deals", description: "A deals app", spec });
+  applyMigrations(db, inserted.id, inserted.spec);
+  markProjectBuilt(db, inserted.id);
+  const project = { ...inserted, status: "built" as const };
+
+  const customer = insertRecord(db, project.id, customerEntity, { name: "Dana Levi" });
+  insertAutomationRule(db, {
+    projectId: project.id,
+    entityName: "Deal",
+    trigger: "field_equals",
+    fieldName: "status",
+    fieldValue: "Won",
+    actionType: "send_whatsapp",
+    toMode: "static",
+    toNumber: "972501234567",
+    messageTemplate: "Congrats {{customer}}, your deal is {{status}}!",
+  });
+  const { manager, sendCalls } = createFakeWhatsApp({ connected: true });
+  const record = { id: 1, customer: customer.id, status: "Won" };
+
+  await runAutomationsForRecordChange(db, manager, UNUSED_EMAIL_SENDER, project, dealEntity, "updated", record, new Set(["status"]), UNUSED_UPLOADS_DIR, UNUSED_BASE_URL);
+
+  assert.equal(sendCalls.length, 1);
+  assert.equal(
+    sendCalls[0]!.body,
+    "Congrats Dana Levi, your deal is Won!",
+    "the message must carry the related customer's own name even though relationTo is lowercase customer, not Customer",
+  );
+});
+
 function scheduleRuleBase(overrides: Partial<Parameters<typeof insertAutomationRule>[1]> = {}) {
   return {
     projectId: "proj1",

@@ -124,8 +124,16 @@ function fieldDisplayValue(
 ): string {
   if (value === null || value === undefined || value === "") return "";
   if (field.type === "relation") {
-    const targetEntity = field.relationTo ? allEntities.find((e) => e.name === field.relationTo) : undefined;
-    const index = field.relationTo ? recordIndexByEntity[field.relationTo] : undefined;
+    // Round 1160: case-insensitive, mirroring migrate.ts's own round-1159
+    // fix -- without it, a relationTo differing from its target entity's
+    // name only by letter case fell back to "#<id>" in the backup instead
+    // of the related record's real display label. recordIndexByEntity is
+    // keyed by each entity's own real, canonical name (see its own build
+    // site below), so the index lookup must use targetEntity.name, not the
+    // possibly-differently-cased relationTo string itself.
+    const relationTo = field.relationTo;
+    const targetEntity = relationTo ? allEntities.find((e) => e.name.toLowerCase() === relationTo.toLowerCase()) : undefined;
+    const index = targetEntity ? recordIndexByEntity[targetEntity.name] : undefined;
     if (!targetEntity || !index) return `#${value}`;
     const match = index.get(Number(value));
     return match ? recordDisplayLabel(targetEntity, match, lang) : `#${value}`;

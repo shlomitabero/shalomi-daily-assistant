@@ -15389,6 +15389,62 @@ test("GET /public/calendar/:projectId/:entityName.ics's DESCRIPTION resolves a r
 });
 
 /**
+ * Round 1160: mirrors the test above exactly, except the relation field's
+ * own relationTo ("customer") differs from its real target entity's name
+ * ("Customer") only by letter case -- the same genuinely plausible
+ * AI-generated-spec scenario migrate.ts's own round-1159 fix addresses for
+ * FK generation. Before this round, routes/calendar.ts's own relatedRecords
+ * prefetch and calendarFeed.ts's own relationDisplayLabelLocal both did an
+ * exact-case `e.name === field.relationTo` lookup, so this scenario would
+ * have fallen all the way through to the raw "#<id>" fallback through the
+ * real route, not just in a unit test on either file in isolation.
+ */
+test("GET /public/calendar/:projectId/:entityName.ics's DESCRIPTION still resolves a relation field whose relationTo differs from its target entity's name only by letter case", async () => {
+  await withServer(async (baseUrl, db) => {
+    const email = `calendar-feed-relation-case-${randomUUID()}@example.com`;
+    const authToken = await signup(baseUrl, email);
+    const user = findUserByEmail(db, email)!;
+    const spec: ProductSpec = {
+      summary: "test",
+      personas: [],
+      roles: ["Admin"],
+      entities: [
+        { name: "Customer", fields: [{ name: "fullName", type: "text", required: true }] },
+        {
+          name: "Appointment",
+          fields: [
+            { name: "name", type: "text", required: true },
+            { name: "date", type: "date", required: true },
+            { name: "customer", type: "relation", relationTo: "customer", required: false },
+          ],
+        },
+      ],
+      screens: [],
+      assumptions: [],
+      openQuestions: [],
+    };
+    const projectId = randomUUID();
+    insertProject(db, { id: projectId, ownerId: user.id, name: "CRM", description: "test", spec });
+    diffAndMigrate(db, projectId, undefined, spec);
+    markProjectBuilt(db, projectId);
+    const customer = insertRecord(db, projectId, spec.entities[0], { fullName: "Yossi Cohen" });
+    insertRecord(db, projectId, spec.entities[1], { name: "Checkup", date: "2026-05-01", customer: customer.id });
+
+    const tokenRes = await fetch(`${baseUrl}/api/projects/${projectId}/calendar-feed-token`, { headers: authHeaders(authToken) });
+    const { token: feedToken } = (await tokenRes.json()) as { token: string };
+
+    const feedRes = await fetch(`${baseUrl}/api/public/calendar/${projectId}/Appointment.ics?token=${feedToken}`);
+    assert.equal(feedRes.status, 200);
+    const ics = await feedRes.text();
+    assert.match(
+      ics,
+      /DESCRIPTION:.*customer: Yossi Cohen/,
+      "the relation field must still resolve to the related Customer's own real name even though relationTo is lowercase customer, not Customer",
+    );
+  });
+});
+
+/**
  * Round 1012: before this round, once a token was handed out via the GET
  * route above, nothing could ever invalidate it -- a removed or demoted
  * collaborator (or anyone who'd been forwarded the URL) kept live,

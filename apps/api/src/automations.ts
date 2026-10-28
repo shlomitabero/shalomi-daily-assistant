@@ -316,7 +316,14 @@ function resolveRelationFieldsForTemplate(
     if (field.type !== "relation") continue;
     const value = record[field.name];
     if (value === null || value === undefined) continue;
-    const targetEntity = field.relationTo ? allEntities.find((e) => e.name === field.relationTo) : undefined;
+    // Round 1160: entity-name comparison here must tolerate a letter-case
+    // mismatch the same way migrate.ts's own round-1159 fix already does for
+    // FK generation -- without this, an outbound WhatsApp/email message's
+    // {{relationField}} placeholder silently fell back to the raw "#<id>"
+    // instead of the related record's real display label whenever
+    // relationTo differed from its target entity's name only by case.
+    const relationTo = field.relationTo;
+    const targetEntity = relationTo ? allEntities.find((e) => e.name.toLowerCase() === relationTo.toLowerCase()) : undefined;
     const targetRecord = targetEntity ? getRecord(db, projectId, targetEntity, Number(value)) : undefined;
     resolved[field.name] = targetRecord ? recordDisplayLabel(targetEntity!, targetRecord, lang) : `#${value}`;
   }

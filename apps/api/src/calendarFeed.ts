@@ -171,8 +171,16 @@ function relationDisplayLabelLocal(
   lang: Lang = "en",
 ): string {
   if (value === null || value === undefined || value === "") return "";
-  const targetEntity = field.relationTo ? allEntities.find((e) => e.name === field.relationTo) : undefined;
-  const records = field.relationTo ? relatedRecords[field.relationTo] : undefined;
+  // Round 1160: case-insensitive, mirroring migrate.ts's own round-1159 fix
+  // -- without it, a relationTo differing from its target entity's name
+  // only by letter case fell back to "#<id>" in the feed instead of the
+  // related record's real display label. relatedRecords is keyed by the
+  // real, canonical target entity name (see routes/calendar.ts's own
+  // round-1160 fix), so the lookup must use targetEntity.name, not the
+  // possibly-differently-cased relationTo string itself.
+  const relationTo = field.relationTo;
+  const targetEntity = relationTo ? allEntities.find((e) => e.name.toLowerCase() === relationTo.toLowerCase()) : undefined;
+  const records = targetEntity ? relatedRecords[targetEntity.name] : undefined;
   if (!targetEntity || !records) return `#${value}`;
   let index = indexCache.get(records);
   if (!index) {

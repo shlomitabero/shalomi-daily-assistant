@@ -238,6 +238,35 @@ test("a relation field resolves to the related record's display label, not the r
 });
 
 /**
+ * Round 1160: mirrors the test above exactly, except the relation field's
+ * own relationTo ("customer") differs from its real target entity's name
+ * ("Customer") only by letter case -- the same genuinely plausible
+ * AI-generated-spec scenario migrate.ts's own round-1159 fix addresses for
+ * FK generation. Before this round, fieldDisplayValue's own exact-case
+ * `e.name === field.relationTo` lookup would have left the CSV carrying
+ * the raw "#<id>" instead of the related customer's name.
+ */
+test("a relation field still resolves to the related record's display label when relationTo differs from its target entity's name only by letter case", () => {
+  const caseMismatchedProject: Project = {
+    ...project,
+    spec: {
+      ...project.spec,
+      entities: [project.spec.entities[0], { ...project.spec.entities[1], fields: [project.spec.entities[1].fields[0], { ...project.spec.entities[1].fields[1], relationTo: "customer" }] }],
+    },
+  };
+  const db = createTestDb(caseMismatchedProject);
+  const customer = caseMismatchedProject.spec.entities[0];
+  const order = caseMismatchedProject.spec.entities[1];
+  const dana = insertRecord(db, caseMismatchedProject.id, customer, { name: "Dana Levi", status: "New" });
+  insertRecord(db, caseMismatchedProject.id, order, { amount: 150, customerId: dana.id });
+
+  const entries = generateBackupZipEntries(db, caseMismatchedProject);
+  const orderCsv = entries.find((e) => e.path === "Order.csv")!.content.replace(/^﻿/, "");
+  const lines = orderCsv.split("\r\n");
+  assert.equal(lines[1], "150,Dana Levi", "the related customer's name must resolve even though relationTo is lowercase customer, not Customer");
+});
+
+/**
  * Regression test for round 385: resolving a relation field used to
  * `records.find(...)` a full linear scan of the related entity's whole
  * record array for every single row -- O(N*M) for N orders and M

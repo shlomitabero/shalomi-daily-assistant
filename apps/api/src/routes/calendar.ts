@@ -119,10 +119,18 @@ export function createCalendarFeedRouter(db: ForgeDatabase): Router {
       const relatedRecords: RelatedRecordsByEntity = {};
       if (project.status === "built") {
         for (const field of entity.fields) {
-          if (field.type !== "relation" || !field.relationTo || relatedRecords[field.relationTo]) continue;
-          const targetEntity = allEntities.find((e) => e.name === field.relationTo);
-          if (!targetEntity) continue;
-          relatedRecords[field.relationTo] = listRecords(db, projectId, targetEntity) as EntityRecord[];
+          if (field.type !== "relation" || !field.relationTo) continue;
+          // Round 1160: case-insensitive, mirroring migrate.ts's own
+          // round-1159 fix -- without it, a relationTo differing from its
+          // target entity's name only by letter case never found a target
+          // entity here at all, leaving calendarFeed.ts's own lookup with
+          // nothing to resolve the relation to. Keyed by targetEntity's
+          // real, canonical name (not the possibly-differently-cased
+          // relationTo string itself), so calendarFeed.ts's own lookup --
+          // which resolves the same way -- always finds it.
+          const targetEntity = allEntities.find((e) => e.name.toLowerCase() === field.relationTo!.toLowerCase());
+          if (!targetEntity || relatedRecords[targetEntity.name]) continue;
+          relatedRecords[targetEntity.name] = listRecords(db, projectId, targetEntity) as EntityRecord[];
         }
       }
       const lang = isHebrewText(project.description) ? "he" : "en";

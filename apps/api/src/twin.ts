@@ -183,8 +183,13 @@ function computeRelationHubObservation(
   const breakdownByTarget = new Map<string, Map<number, { sourceLabel: string; fieldLabel: string; count: number }[]>>();
 
   for (const sourceEntity of entities) {
+    // Round 1160: case-insensitive, mirroring migrate.ts's own round-1159
+    // fix -- without it, a relationTo differing from its target entity's
+    // name only by letter case was silently excluded from this observation
+    // entirely (filtered out here, so it never reached the non-null find
+    // below either).
     const relationFields = sourceEntity.fields.filter(
-      (f) => f.type === "relation" && f.relationTo && entities.some((e) => e.name === f.relationTo),
+      (f) => f.type === "relation" && f.relationTo && entities.some((e) => e.name.toLowerCase() === f.relationTo!.toLowerCase()),
     );
     if (relationFields.length === 0) continue;
     const sourceRecords = recordsByEntity.get(sourceEntity.name) ?? [];
@@ -200,7 +205,13 @@ function computeRelationHubObservation(
       }
       if (countsById.size === 0) continue;
 
-      const targetName = field.relationTo!;
+      // Resolved to the entity's own real, canonical name (not the
+      // possibly-differently-cased relationTo string itself) -- the
+      // relationFields filter above only lets a field through once it's
+      // confirmed to resolve case-insensitively, so this find is safe, and
+      // every downstream exact-case entities.find(...)! (below) keeps
+      // working against a targetName that's always a real entity name.
+      const targetName = entities.find((e) => e.name.toLowerCase() === field.relationTo!.toLowerCase())!.name;
       if (!breakdownByTarget.has(targetName)) breakdownByTarget.set(targetName, new Map());
       const perId = breakdownByTarget.get(targetName)!;
       for (const [id, count] of countsById) {

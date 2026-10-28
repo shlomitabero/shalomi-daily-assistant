@@ -302,6 +302,66 @@ test("computeBusinessTwin identifies the record most referenced across multiple 
   );
 });
 
+/**
+ * Round 1160: mirrors the test above exactly, except both relation fields'
+ * own relationTo ("customer") differ from their real target entity's name
+ * ("Customer") only by letter case -- the same genuinely plausible
+ * AI-generated-spec scenario migrate.ts's own round-1159 fix addresses for
+ * FK generation. Before this round, computeRelationHubObservation's own
+ * exact-case `entities.some((e) => e.name === f.relationTo)` filter would
+ * have excluded both relation fields entirely, producing no hub insight
+ * at all instead of silently reporting the wrong thing -- this test
+ * confirms the insight is still produced, correctly, through the real
+ * computeBusinessTwin entry point.
+ */
+test("computeBusinessTwin still identifies the most-linked record when relationTo differs from its target entity's name only by letter case", () => {
+  const hubProject: Project = {
+    ...project,
+    description: "I need to track orders and support tickets for my customers",
+    spec: {
+      ...project.spec,
+      entities: [
+        { name: "Customer", label: "Customers", fields: [{ name: "name", type: "text", required: true }] },
+        {
+          name: "Order",
+          label: "Orders",
+          fields: [
+            { name: "total", type: "number", required: true },
+            { name: "customerId", label: "Customer", type: "relation", required: false, relationTo: "customer" },
+          ],
+        },
+        {
+          name: "Ticket",
+          label: "Tickets",
+          fields: [
+            { name: "subject", type: "text", required: true },
+            { name: "customerId", label: "Customer", type: "relation", required: false, relationTo: "customer" },
+          ],
+        },
+      ],
+    },
+  };
+  const db = openDatabase(":memory:");
+  applyMigrations(db, hubProject.id, hubProject.spec);
+  const [customer, order, ticket] = hubProject.spec.entities;
+  const { id: dana } = insertRecord(db, hubProject.id, customer, { name: "Dana Levi" });
+  const { id: yossi } = insertRecord(db, hubProject.id, customer, { name: "Yossi Cohen" });
+  insertRecord(db, hubProject.id, order, { total: 50, customerId: dana });
+  insertRecord(db, hubProject.id, order, { total: 30, customerId: dana });
+  insertRecord(db, hubProject.id, ticket, { subject: "Refund", customerId: dana });
+  insertRecord(db, hubProject.id, order, { total: 10, customerId: yossi });
+
+  const twin = computeBusinessTwin(db, hubProject);
+  assert.ok(
+    twin.mostLinkedRecord,
+    `expected a most-linked-record insight even though relationTo is lowercase customer, not Customer, got: ${JSON.stringify(twin.mostLinkedRecord)}`,
+  );
+  const hubObservation = twin.mostLinkedRecord!.text;
+  assert.ok(hubObservation.includes("Dana Levi"), `expected Dana Levi (3 total links) to be the hub, got: "${hubObservation}"`);
+  assert.equal(twin.mostLinkedRecord!.entityName, "Customer");
+  assert.equal(twin.mostLinkedRecord!.recordId, dana);
+});
+
 test("computeBusinessTwin's most-linked breakdown disambiguates two relation fields on the same entity pointing at the same target", () => {
   // Deal has BOTH customerId and referredBy pointing at Customer -- a
   // schema-legal shape (no uniqueness constraint across a field's own
