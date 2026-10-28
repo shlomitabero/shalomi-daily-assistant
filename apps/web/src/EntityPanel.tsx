@@ -135,6 +135,28 @@ function invalidNumberField(field: Field, value: unknown): boolean {
   return !Number.isFinite(Number(trimmed));
 }
 
+/**
+ * Round 1167: the same bug class invalidNumberField above already fixed
+ * for a non-numeric typed value, for a different root cause: a record
+ * can carry a legacy enum value no longer in field.enumValues (e.g. after
+ * a later /refine narrowed the field's own options -- see FieldInput's
+ * own identical "legacy value" comment below). handleDuplicate/
+ * handleBulkDuplicate copy a record's own stored values verbatim into a
+ * fresh createRecord call with no form in between, so a stale value here
+ * always reached coerceValue's own enum rejection (repository.ts) only to
+ * be masked by resolveErrorMessage's fixed, field-agnostic VALIDATION_ERROR
+ * text -- for an action with no form to "check" at all. Mirrors
+ * coerceValue's own emptiness semantics (an empty/whitespace-only value is
+ * never "stale", it's just unset) so an optional enum field left blank
+ * never trips this.
+ */
+function staleEnumValue(field: Field, value: unknown): boolean {
+  if (field.type !== "enum" || !field.enumValues) return false;
+  const trimmed = String(value ?? "").trim();
+  if (trimmed === "") return false;
+  return !field.enumValues.includes(String(value));
+}
+
 function emptyForm(entity: Entity): Record<string, unknown> {
   const form: Record<string, unknown> = {};
   for (const field of entity.fields) {
@@ -3251,6 +3273,15 @@ export function EntityPanel({
       setError(t("entity.duplicate.requiredFileField", { field: requiredFileField.label ?? requiredFileField.name }));
       return;
     }
+    // Round 1167: see staleEnumValue's own doc comment above -- this
+    // record's own copied value would otherwise always reach coerceValue's
+    // enum rejection only to be masked by the generic VALIDATION_ERROR text,
+    // for an action with no form to show the field-specific message in.
+    const staleEnumField = entity.fields.find((f) => staleEnumValue(f, record[f.name]));
+    if (staleEnumField) {
+      setError(t("entity.duplicate.staleEnumField", { field: staleEnumField.label ?? staleEnumField.name, value: String(record[staleEnumField.name]) }));
+      return;
+    }
     try {
       const copy: Record<string, unknown> = {};
       // A "file" field's stored value is just the uploaded file's own
@@ -3320,6 +3351,18 @@ export function EntityPanel({
         ids.map((id) => {
           const record = records.find((r) => (r.id as number) === id);
           if (!record) return Promise.reject(new Error(t("entity.bulk.recordGone")));
+          // Same staleEnumValue check as handleDuplicate above, applied
+          // per-record rather than as an upfront whole-batch refusal --
+          // unlike requiredFileField (a field-definition-level hazard that
+          // dooms every record identically), staleness is a property of
+          // THIS record's own stored value, so a batch can genuinely mix
+          // records that would succeed with ones that wouldn't.
+          const staleEnumField = entity.fields.find((f) => staleEnumValue(f, record[f.name]));
+          if (staleEnumField) {
+            return Promise.reject(
+              new Error(t("entity.duplicate.staleEnumField", { field: staleEnumField.label ?? staleEnumField.name, value: String(record[staleEnumField.name]) })),
+            );
+          }
           const copy: Record<string, unknown> = {};
           // Same shared-file-reference hazard as handleDuplicate above, and
           // the same fix -- see its own comment for why.

@@ -5721,6 +5721,11 @@ test("the exported EntityView's handleBulkDuplicate and handleBulkUpdate keep on
 
   const handleBulkDuplicateSrc = entityViewJsx.match(/async function handleBulkDuplicate\(\) \{[\s\S]*?\n  \}\n/)?.[0];
   assert.ok(handleBulkDuplicateSrc, "expected to find handleBulkDuplicate in generated output");
+  // Round 1167: handleBulkDuplicate now calls staleEnumValue (added in the
+  // same round) -- every downstream extraction of this handler must carry
+  // its source too, or evaluating it throws a ReferenceError.
+  const staleEnumValueSrcForBulkDup = entityViewJsx.match(/function staleEnumValue\(field, value\) \{[\s\S]*?\n\}\n/)?.[0];
+  assert.ok(staleEnumValueSrcForBulkDup, "expected to find staleEnumValue in generated output");
   {
     let capturedError: string | undefined;
     let capturedSelectedIds: Set<number> | undefined;
@@ -5737,7 +5742,7 @@ test("the exported EntityView's handleBulkDuplicate and handleBulkUpdate keep on
       "setError",
       "createRecord",
       "refresh",
-      `${handleBulkDuplicateSrc}\nreturn handleBulkDuplicate;`,
+      `${staleEnumValueSrcForBulkDup}\n${handleBulkDuplicateSrc}\nreturn handleBulkDuplicate;`,
     )(
       false,
       undefined,
@@ -6202,6 +6207,8 @@ test("the exported EntityView's generated handleBulkDuplicate never calls create
   const entityViewJsx = generateExportFiles(project).find((f) => f.path === "web/src/components/EntityView.jsx")!.content;
   const handleBulkDuplicateSrc = entityViewJsx.match(/async function handleBulkDuplicate\(\) \{[\s\S]*?\n  \}\n/)?.[0];
   assert.ok(handleBulkDuplicateSrc, "expected to find handleBulkDuplicate in generated output");
+  const staleEnumValueSrc = entityViewJsx.match(/function staleEnumValue\(field, value\) \{[\s\S]*?\n\}\n/)?.[0];
+  assert.ok(staleEnumValueSrc, "expected to find staleEnumValue in generated output");
 
   let capturedSelectedIds: Set<number> | undefined;
   const createdCopies: Record<string, unknown>[] = [];
@@ -6216,7 +6223,7 @@ test("the exported EntityView's generated handleBulkDuplicate never calls create
     "setError",
     "createRecord",
     "refresh",
-    `${handleBulkDuplicateSrc}\nreturn handleBulkDuplicate;`,
+    `${staleEnumValueSrc}\n${handleBulkDuplicateSrc}\nreturn handleBulkDuplicate;`,
   )(
     false,
     undefined,
@@ -6265,6 +6272,8 @@ test("the exported EntityView's generated handleBulkDuplicate refuses to start a
   const entityViewJsx = generateExportFiles(project).find((f) => f.path === "web/src/components/EntityView.jsx")!.content;
   const handleBulkDuplicateSrc = entityViewJsx.match(/async function handleBulkDuplicate\(\) \{[\s\S]*?\n  \}\n/)?.[0];
   assert.ok(handleBulkDuplicateSrc, "expected to find handleBulkDuplicate in generated output");
+  const staleEnumValueSrc = entityViewJsx.match(/function staleEnumValue\(field, value\) \{[\s\S]*?\n\}\n/)?.[0];
+  assert.ok(staleEnumValueSrc, "expected to find staleEnumValue in generated output");
 
   const state = {
     bulkActionBusy: false,
@@ -6290,7 +6299,7 @@ test("the exported EntityView's generated handleBulkDuplicate refuses to start a
       "setError",
       "createRecord",
       "refresh",
-      `${handleBulkDuplicateSrc}\nreturn handleBulkDuplicate;`,
+      `${staleEnumValueSrc}\n${handleBulkDuplicateSrc}\nreturn handleBulkDuplicate;`,
     )(
       state.bulkActionBusy,
       undefined,
@@ -6360,7 +6369,8 @@ test("the exported EntityView's handleDuplicate/handleBulkDuplicate null out a '
   const entityViewJsx = generateExportFiles(project).find((f) => f.path === "web/src/components/EntityView.jsx")!.content;
   const handleDuplicateSrc = entityViewJsx.match(/async function handleDuplicate\(id\) \{[\s\S]*?\n  \}\n/)?.[0];
   const handleBulkDuplicateSrc = entityViewJsx.match(/async function handleBulkDuplicate\(\) \{[\s\S]*?\n  \}\n/)?.[0];
-  assert.ok(handleDuplicateSrc && handleBulkDuplicateSrc, "expected to find handleDuplicate/handleBulkDuplicate in generated output");
+  const staleEnumValueSrc = entityViewJsx.match(/function staleEnumValue\(field, value\) \{[\s\S]*?\n\}\n/)?.[0];
+  assert.ok(handleDuplicateSrc && handleBulkDuplicateSrc && staleEnumValueSrc, "expected to find handleDuplicate/handleBulkDuplicate/staleEnumValue in generated output");
 
   const entityWithFile = {
     name: "Applicant",
@@ -6377,7 +6387,7 @@ test("the exported EntityView's handleDuplicate/handleBulkDuplicate null out a '
       "setError",
       "createRecord",
       "refresh",
-      `const requiredFileField = undefined;\n${handleDuplicateSrc}\nreturn handleDuplicate;`,
+      `const requiredFileField = undefined;\n${staleEnumValueSrc}\n${handleDuplicateSrc}\nreturn handleDuplicate;`,
     )(false, entityWithFile, [record], () => {}, async (_entityName: string, copy: Record<string, unknown>) => {
       capturedCopy = copy;
     }, async () => {});
@@ -6398,7 +6408,7 @@ test("the exported EntityView's handleDuplicate/handleBulkDuplicate null out a '
       "setError",
       "createRecord",
       "refresh",
-      `const requiredFileField = undefined;\n${handleBulkDuplicateSrc}\nreturn handleBulkDuplicate;`,
+      `const requiredFileField = undefined;\n${staleEnumValueSrc}\n${handleBulkDuplicateSrc}\nreturn handleBulkDuplicate;`,
     )(
       false,
       entityWithFile,
@@ -6480,6 +6490,114 @@ test("the exported EntityView's handleDuplicate/handleBulkDuplicate refuse outri
   }
 });
 
+/**
+ * Round 1167: mirrors the live preview's own EntityPanel.tsx fix -- a
+ * record can carry a legacy enum value no longer in field.enumValues
+ * (e.g. after a later refine narrowed the field's own options), and
+ * before this fix handleDuplicate copied that stale value straight into
+ * createRecord, which always rejected it with no translation layer in
+ * this exported app to override the generic shape with (see
+ * invalidNumberField's own comment on why -- but still unlabeled/
+ * unfriendly without an upfront check catching it first).
+ */
+test("the exported EntityView's handleDuplicate refuses upfront when a record's own enum field holds a value no longer in the field's current options, instead of always failing with a server rejection", async () => {
+  const entityViewJsx = generateExportFiles(project).find((f) => f.path === "web/src/components/EntityView.jsx")!.content;
+  const handleDuplicateSrc = entityViewJsx.match(/async function handleDuplicate\(id\) \{[\s\S]*?\n  \}\n/)?.[0];
+  const staleEnumValueSrc = entityViewJsx.match(/function staleEnumValue\(field, value\) \{[\s\S]*?\n\}\n/)?.[0];
+  assert.ok(handleDuplicateSrc && staleEnumValueSrc, "expected to find handleDuplicate and staleEnumValue in generated output");
+
+  const entityWithEnum = {
+    name: "Order",
+    fields: [{ name: "name", type: "text" }, { name: "status", label: "Status", type: "enum", enumValues: ["New", "Shipped", "Delivered"] }],
+  };
+  const record = { id: 1, name: "Dana", status: "Pending" };
+
+  let createCalled = false;
+  let capturedError: string | undefined;
+  const fn = new Function(
+    "bulkActionBusy",
+    "requiredFileField",
+    "entity",
+    "records",
+    "setError",
+    "createRecord",
+    "refresh",
+    `${staleEnumValueSrc}\n${handleDuplicateSrc}\nreturn handleDuplicate;`,
+  )(false, undefined, entityWithEnum, [record], (msg: string) => (capturedError = msg), async () => {
+    createCalled = true;
+  }, async () => {});
+  await fn(1);
+  assert.equal(createCalled, false, "handleDuplicate must never call createRecord when the copied value would always be rejected");
+  assert.match(capturedError ?? "", /status/i, "the error must name the actual field standing in the way");
+  assert.match(capturedError ?? "", /Pending/, "the error must name the record's own stale value");
+});
+
+/**
+ * Round 1167: the bulk counterpart -- applied per-record rather than as
+ * an upfront whole-batch refusal, since staleness is a property of each
+ * record's own stored value (unlike requiredFileField, a field-
+ * definition-level hazard that dooms every record identically).
+ */
+test("the exported EntityView's handleBulkDuplicate refuses only the specific record whose own enum field holds a stale value, while still duplicating the others in the same batch", async () => {
+  const entityViewJsx = generateExportFiles(project).find((f) => f.path === "web/src/components/EntityView.jsx")!.content;
+  const handleBulkDuplicateSrc = entityViewJsx.match(/async function handleBulkDuplicate\(\) \{[\s\S]*?\n  \}\n/)?.[0];
+  const staleEnumValueSrc = entityViewJsx.match(/function staleEnumValue\(field, value\) \{[\s\S]*?\n\}\n/)?.[0];
+  assert.ok(handleBulkDuplicateSrc && staleEnumValueSrc, "expected to find handleBulkDuplicate and staleEnumValue in generated output");
+
+  const entityWithEnum = {
+    name: "Order",
+    fields: [{ name: "name", type: "text" }, { name: "status", label: "Status", type: "enum", enumValues: ["New", "Shipped", "Delivered"] }],
+  };
+  const records = [
+    { id: 1, name: "Alice", status: "New" },
+    { id: 2, name: "Bob", status: "Pending" },
+    { id: 3, name: "Carol", status: "Shipped" },
+  ];
+
+  let capturedError: string | undefined;
+  let capturedSelectedIds: Set<number> | undefined;
+  let refreshCalled = 0;
+  const createdCopies: Record<string, unknown>[] = [];
+  const fn = new Function(
+    "bulkActionBusy",
+    "requiredFileField",
+    "entity",
+    "records",
+    "selectedIds",
+    "setBulkActionBusy",
+    "setSelectedIds",
+    "setError",
+    "createRecord",
+    "refresh",
+    `${staleEnumValueSrc}\n${handleBulkDuplicateSrc}\nreturn handleBulkDuplicate;`,
+  )(
+    false,
+    undefined,
+    entityWithEnum,
+    records,
+    new Set([1, 2, 3]),
+    () => {},
+    (next: Set<number>) => (capturedSelectedIds = next),
+    (msg: string) => (capturedError = msg),
+    async (_entityName: string, copy: Record<string, unknown>) => {
+      createdCopies.push(copy);
+    },
+    async () => {
+      refreshCalled += 1;
+    },
+  );
+  await fn();
+
+  assert.deepEqual(
+    createdCopies.map((c) => c.name).sort(),
+    ["Alice", "Carol"],
+    "Alice and Carol's own records have a valid status and must still be duplicated for real",
+  );
+  assert.deepEqual([...capturedSelectedIds!], [2], "only Bob's record (the one with the stale status) must remain selected after the batch");
+  assert.equal(capturedError, "1 of 3 records could not be duplicated.", "a partial failure must show the same generic partial-failure message every other partial batch failure already does");
+  assert.equal(refreshCalled, 1, "refresh() must still run so the table shows the records that WERE successfully duplicated");
+});
+
 test("the exported EntityView renders a real Duplicate action (table and board views) that copies a record via a real createRecord call", () => {
   const files = generateExportFiles(project);
   const entityViewJsx = files.find((f) => f.path === "web/src/components/EntityView.jsx")!.content;
@@ -6525,9 +6643,10 @@ test("the exported EntityView's handleDuplicate/handleMove surface a failed requ
   const handleDuplicateSrc = entityViewJsx.match(/async function handleDuplicate\(id\) \{[\s\S]*?\n  \}\n/)?.[0];
   const handleMoveFieldsSrc = entityViewJsx.match(/async function handleMoveFields\(id, fields\) \{[\s\S]*?\n  \}\n/)?.[0];
   const handleMoveSrc = entityViewJsx.match(/async function handleMove\(id, fieldName, value\) \{[\s\S]*?\n  \}\n/)?.[0];
+  const staleEnumValueSrc = entityViewJsx.match(/function staleEnumValue\(field, value\) \{[\s\S]*?\n\}\n/)?.[0];
   assert.ok(
-    displayFieldHintsSrc && pickDisplayFieldSrc && recordDisplayLabelSrc && handleDuplicateSrc && handleMoveFieldsSrc && handleMoveSrc,
-    "expected to find DISPLAY_FIELD_NAME_HINTS/pickDisplayField/recordDisplayLabel/handleDuplicate/handleMoveFields/handleMove in generated output",
+    displayFieldHintsSrc && pickDisplayFieldSrc && recordDisplayLabelSrc && handleDuplicateSrc && handleMoveFieldsSrc && handleMoveSrc && staleEnumValueSrc,
+    "expected to find DISPLAY_FIELD_NAME_HINTS/pickDisplayField/recordDisplayLabel/handleDuplicate/handleMoveFields/handleMove/staleEnumValue in generated output",
   );
 
   const entity = project.spec.entities[0];
@@ -6550,7 +6669,7 @@ test("the exported EntityView's handleDuplicate/handleMove surface a failed requ
       "createRecord",
       "updateRecord",
       "refresh",
-      `${displayFieldHintsSrc}\n${pickDisplayFieldSrc}\n${recordDisplayLabelSrc}\n${handleMoveFieldsSrc}\n${handlerSrc}\nreturn ${handlerSrc.match(/^async function (\w+)/)![1]};`,
+      `${displayFieldHintsSrc}\n${pickDisplayFieldSrc}\n${recordDisplayLabelSrc}\n${handleMoveFieldsSrc}\n${staleEnumValueSrc}\n${handlerSrc}\nreturn ${handlerSrc.match(/^async function (\w+)/)![1]};`,
     )(
       false,
       { confirm: () => true },

@@ -4138,6 +4138,21 @@ function invalidNumberField(field, value) {
   return !Number.isFinite(Number(trimmed));
 }
 
+// Round 1167: mirrors the live preview's own EntityPanel.tsx fix -- a
+// record can carry a legacy enum value no longer in field.enumValues
+// (e.g. after a later refine narrowed the field's own options).
+// handleDuplicate/handleBulkDuplicate below copy a record's own stored
+// values verbatim into a fresh createRecord call with no form in
+// between, so a stale value here always reached coerceValue's own enum
+// rejection with no upfront check catching it first, same shape as
+// invalidNumberField above fixes for a different root cause.
+function staleEnumValue(field, value) {
+  if (field.type !== "enum" || !field.enumValues) return false;
+  const trimmed = String(value ?? "").trim();
+  if (trimmed === "") return false;
+  return !field.enumValues.includes(String(value));
+}
+
 // autoFocus/onBlur/onKeyDown are only ever set by the entity table's own
 // inline cell editor (see EntityView's editingCell state) -- the plain
 // add/edit form below the table never passes these, so a field there
@@ -5695,6 +5710,15 @@ export function EntityView({ entity, highlightRecordId, onHighlightHandled, onJu
       );
       return;
     }
+    // Round 1167: see staleEnumValue's own doc comment above -- mirrors
+    // the live preview's own identical fix.
+    const staleEnumField = entity.fields.find((f) => staleEnumValue(f, record[f.name]));
+    if (staleEnumField) {
+      setError(
+        \`Can't duplicate: "\${staleEnumField.label || staleEnumField.name}" has a value ("\${record[staleEnumField.name]}") that's no longer one of this field's own options.\`,
+      );
+      return;
+    }
     try {
       const copy = {};
       // A "file" field's stored value is just the uploaded file's own
@@ -5803,6 +5827,17 @@ export function EntityView({ entity, highlightRecordId, onHighlightHandled, onJu
         ids.map((id) => {
           const record = records.find((r) => r.id === id);
           if (!record) return Promise.reject(new Error("This record no longer exists."));
+          // Same staleEnumValue check as handleDuplicate above, applied
+          // per-record rather than as an upfront whole-batch refusal --
+          // see EntityPanel.tsx's own identical comment for why.
+          const staleEnumField = entity.fields.find((f) => staleEnumValue(f, record[f.name]));
+          if (staleEnumField) {
+            return Promise.reject(
+              new Error(
+                \`Can't duplicate: "\${staleEnumField.label || staleEnumField.name}" has a value ("\${record[staleEnumField.name]}") that's no longer one of this field's own options.\`,
+              ),
+            );
+          }
           const copy = {};
           // Same shared-file-reference hazard as handleDuplicate above,
           // and the same fix -- see its own comment for why.

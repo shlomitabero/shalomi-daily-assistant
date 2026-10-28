@@ -50,8 +50,9 @@ const entityPanelSrc = readFileSync(new URL("./EntityPanel.tsx", import.meta.url
  */
 test("EntityPanel's handleDuplicate never copies a 'file' field's value -- duplicating a record with an uploaded file must not make two records share the same file on disk", async () => {
   const handlerMatch = entityPanelSrc.match(/ {2}async function handleDuplicate\(id: number\) \{[\s\S]*?\n {2}\}\n/);
-  assert.ok(handlerMatch, "expected to find handleDuplicate in EntityPanel.tsx");
-  const { code } = transformSync(handlerMatch![0], { loader: "ts" });
+  const helperMatch = entityPanelSrc.match(/function staleEnumValue\(field: Field, value: unknown\): boolean \{[\s\S]*?\n\}\n/);
+  assert.ok(handlerMatch && helperMatch, "expected to find handleDuplicate and staleEnumValue in EntityPanel.tsx");
+  const { code } = transformSync(`${helperMatch![0]}\n${handlerMatch![0]}`, { loader: "ts" });
 
   const entity: Entity = {
     name: "Applicant",
@@ -117,8 +118,9 @@ test("EntityPanel's handleDuplicate never copies a 'file' field's value -- dupli
  */
 test("EntityPanel's handleBulkDuplicate refreshes and keeps only the ids that actually failed selected, instead of one rejection hiding the duplicates that succeeded", async () => {
   const handlerMatch = entityPanelSrc.match(/ {2}async function handleBulkDuplicate\(\) \{[\s\S]*?\n {2}\}\n/);
-  assert.ok(handlerMatch, "expected to find handleBulkDuplicate in EntityPanel.tsx");
-  const { code } = transformSync(handlerMatch![0], { loader: "ts" });
+  const helperMatch = entityPanelSrc.match(/function staleEnumValue\(field: Field, value: unknown\): boolean \{[\s\S]*?\n\}\n/);
+  assert.ok(handlerMatch && helperMatch, "expected to find handleBulkDuplicate and staleEnumValue in EntityPanel.tsx");
+  const { code } = transformSync(`${helperMatch![0]}\n${handlerMatch![0]}`, { loader: "ts" });
 
   let capturedError: string | undefined;
   let capturedSelectedIds: Set<number> | undefined;
@@ -190,8 +192,9 @@ test("EntityPanel's handleBulkDuplicate refreshes and keeps only the ids that ac
 
 test("EntityPanel's handleBulkDuplicate never copies a 'file' field's value either, for the same reason handleDuplicate doesn't", async () => {
   const handlerMatch = entityPanelSrc.match(/ {2}async function handleBulkDuplicate\(\) \{[\s\S]*?\n {2}\}\n/);
-  assert.ok(handlerMatch, "expected to find handleBulkDuplicate in EntityPanel.tsx");
-  const { code } = transformSync(handlerMatch![0], { loader: "ts" });
+  const helperMatch = entityPanelSrc.match(/function staleEnumValue\(field: Field, value: unknown\): boolean \{[\s\S]*?\n\}\n/);
+  assert.ok(handlerMatch && helperMatch, "expected to find handleBulkDuplicate and staleEnumValue in EntityPanel.tsx");
+  const { code } = transformSync(`${helperMatch![0]}\n${handlerMatch![0]}`, { loader: "ts" });
 
   const entity: Entity = {
     name: "Applicant",
@@ -253,8 +256,9 @@ test("EntityPanel's handleBulkDuplicate never copies a 'file' field's value eith
  */
 test("EntityPanel's handleDuplicate refuses upfront for an entity with a required 'file' field, instead of always failing with a generic server error", async () => {
   const handlerMatch = entityPanelSrc.match(/ {2}async function handleDuplicate\(id: number\) \{[\s\S]*?\n {2}\}\n/);
-  assert.ok(handlerMatch, "expected to find handleDuplicate in EntityPanel.tsx");
-  const { code } = transformSync(handlerMatch![0], { loader: "ts" });
+  const helperMatch = entityPanelSrc.match(/function staleEnumValue\(field: Field, value: unknown\): boolean \{[\s\S]*?\n\}\n/);
+  assert.ok(handlerMatch && helperMatch, "expected to find handleDuplicate and staleEnumValue in EntityPanel.tsx");
+  const { code } = transformSync(`${helperMatch![0]}\n${handlerMatch![0]}`, { loader: "ts" });
 
   const entity: Entity = {
     name: "Applicant",
@@ -301,10 +305,215 @@ test("EntityPanel's handleDuplicate refuses upfront for an entity with a require
   assert.match(capturedError!, /"field":"Resume"/, "the refusal must name the real field's own label, not a generic field name");
 });
 
+/**
+ * Round 1167: a record can carry a legacy enum value no longer in
+ * field.enumValues (e.g. after a later refine narrowed the field's own
+ * options) -- see staleEnumValue's own doc comment. Before this fix,
+ * handleDuplicate copied that stale value straight into createRecord,
+ * which coerceValue (repository.ts) always rejected, only for the
+ * generic, field-agnostic VALIDATION_ERROR text to mask the real reason
+ * -- for an action with no form to show the field-specific message in at
+ * all. Confirms the real handleDuplicate now refuses upfront instead,
+ * naming the actual field and its own stale value, and never even calls
+ * createRecord.
+ */
+test("EntityPanel's handleDuplicate refuses upfront when a record's own enum field holds a value no longer in the field's current options, instead of always failing with a generic server error", async () => {
+  const handlerMatch = entityPanelSrc.match(/ {2}async function handleDuplicate\(id: number\) \{[\s\S]*?\n {2}\}\n/);
+  const helperMatch = entityPanelSrc.match(/function staleEnumValue\(field: Field, value: unknown\): boolean \{[\s\S]*?\n\}\n/);
+  assert.ok(handlerMatch && helperMatch, "expected to find handleDuplicate and staleEnumValue in EntityPanel.tsx");
+  const { code } = transformSync(`${helperMatch![0]}\n${handlerMatch![0]}`, { loader: "ts" });
+
+  const entity: Entity = {
+    name: "Order",
+    fields: [
+      { name: "name", type: "text", required: true },
+      { name: "status", label: "Status", type: "enum", enumValues: ["New", "Shipped", "Delivered"], required: false },
+    ],
+  };
+  const records: EntityRecord[] = [{ id: 1, createdAt: "x", name: "Dana", status: "Pending" }];
+
+  let capturedError: string | undefined;
+  let createRecordCalled = 0;
+
+  const fn = new Function(
+    "bulkActionBusy",
+    "records",
+    "setError",
+    "entity",
+    "createRecord",
+    "projectId",
+    "refresh",
+    "t",
+    `${code}\nreturn handleDuplicate;`,
+  )(
+    false,
+    records,
+    (msg: string | null) => {
+      capturedError = msg ?? undefined;
+    },
+    entity,
+    async () => {
+      createRecordCalled += 1;
+    },
+    "proj1",
+    async () => {},
+    (key: string, params?: Record<string, unknown>) => (params ? `${key}:${JSON.stringify(params)}` : key),
+  ) as (id: number) => Promise<void>;
+
+  await fn(1);
+
+  assert.equal(createRecordCalled, 0, "the doomed request must never even be attempted");
+  assert.match(capturedError!, /entity\.duplicate\.staleEnumField/, "expected the translated, specific refusal message");
+  assert.match(capturedError!, /"field":"Status"/, "the refusal must name the real field's own label, not a generic field name");
+  assert.match(capturedError!, /"value":"Pending"/, "the refusal must name the record's own stale value, not a generic placeholder");
+});
+
+/**
+ * Round 1167: a record whose enum value is empty/unset must never be
+ * flagged as stale -- coerceValue's own isEmpty check (repository.ts)
+ * never reaches the enum-rejection branch for an empty value either, so
+ * refusing here would block a perfectly legal duplicate for no real
+ * reason.
+ */
+test("EntityPanel's handleDuplicate does NOT refuse when an optional enum field is simply empty, only when it holds a genuinely stale value", async () => {
+  const handlerMatch = entityPanelSrc.match(/ {2}async function handleDuplicate\(id: number\) \{[\s\S]*?\n {2}\}\n/);
+  const helperMatch = entityPanelSrc.match(/function staleEnumValue\(field: Field, value: unknown\): boolean \{[\s\S]*?\n\}\n/);
+  assert.ok(handlerMatch && helperMatch, "expected to find handleDuplicate and staleEnumValue in EntityPanel.tsx");
+  const { code } = transformSync(`${helperMatch![0]}\n${handlerMatch![0]}`, { loader: "ts" });
+
+  const entity: Entity = {
+    name: "Order",
+    fields: [
+      { name: "name", type: "text", required: true },
+      { name: "status", label: "Status", type: "enum", enumValues: ["New", "Shipped", "Delivered"], required: false },
+    ],
+  };
+  const records: EntityRecord[] = [{ id: 1, createdAt: "x", name: "Dana", status: null }];
+
+  let capturedError: string | undefined;
+  let createRecordCalled = 0;
+
+  const fn = new Function(
+    "bulkActionBusy",
+    "records",
+    "setError",
+    "entity",
+    "createRecord",
+    "projectId",
+    "refresh",
+    "t",
+    `${code}\nreturn handleDuplicate;`,
+  )(
+    false,
+    records,
+    (msg: string | null) => {
+      capturedError = msg ?? undefined;
+    },
+    entity,
+    async () => {
+      createRecordCalled += 1;
+    },
+    "proj1",
+    async () => {},
+    (key: string, params?: Record<string, unknown>) => (params ? `${key}:${JSON.stringify(params)}` : key),
+  ) as (id: number) => Promise<void>;
+
+  await fn(1);
+
+  assert.equal(createRecordCalled, 1, "a simply-empty enum field must not block the duplicate -- the request must still go through");
+  assert.equal(capturedError, undefined, "no refusal should ever be set for an empty, not stale, enum value");
+});
+
+/**
+ * Round 1167: the bulk counterpart to handleDuplicate's own fix above --
+ * applied per-record (not as an upfront whole-batch refusal, unlike
+ * requiredFileField) since staleness is a property of each record's own
+ * stored value, so a batch can genuinely mix records that would succeed
+ * with ones that wouldn't.
+ */
+test("EntityPanel's handleBulkDuplicate refuses only the specific record whose own enum field holds a stale value, while still duplicating the others in the same batch", async () => {
+  const handlerMatch = entityPanelSrc.match(/ {2}async function handleBulkDuplicate\(\) \{[\s\S]*?\n {2}\}\n/);
+  const helperMatch = entityPanelSrc.match(/function staleEnumValue\(field: Field, value: unknown\): boolean \{[\s\S]*?\n\}\n/);
+  assert.ok(handlerMatch && helperMatch, "expected to find handleBulkDuplicate and staleEnumValue in EntityPanel.tsx");
+  const { code } = transformSync(`${helperMatch![0]}\n${handlerMatch![0]}`, { loader: "ts" });
+
+  const entity: Entity = {
+    name: "Order",
+    fields: [
+      { name: "name", type: "text", required: true },
+      { name: "status", label: "Status", type: "enum", enumValues: ["New", "Shipped", "Delivered"], required: false },
+    ],
+  };
+  const records: EntityRecord[] = [
+    { id: 1, createdAt: "x", name: "Alice", status: "New" },
+    { id: 2, createdAt: "x", name: "Bob", status: "Pending" },
+    { id: 3, createdAt: "x", name: "Carol", status: "Shipped" },
+  ];
+
+  let capturedError: string | undefined;
+  let capturedSelectedIds: Set<number> | undefined;
+  let refreshCalled = 0;
+  const createdCopies: Record<string, unknown>[] = [];
+
+  const fn = new Function(
+    "bulkActionBusy",
+    "selectedIds",
+    "records",
+    "entity",
+    "setBulkActionBusy",
+    "setError",
+    "createRecord",
+    "projectId",
+    "setSelectedIds",
+    "refresh",
+    "t",
+    `${code}\nreturn handleBulkDuplicate;`,
+  )(
+    false,
+    new Set([1, 2, 3]),
+    records,
+    entity,
+    () => {},
+    (msg: string | null) => {
+      capturedError = msg ?? undefined;
+    },
+    async (_projectId: string, _entityName: string, copy: Record<string, unknown>) => {
+      createdCopies.push(copy);
+    },
+    "proj1",
+    (next: Set<number>) => {
+      capturedSelectedIds = next;
+    },
+    async () => {
+      refreshCalled += 1;
+    },
+    (key: string, params?: Record<string, unknown>) => (params ? `${key}:${JSON.stringify(params)}` : key),
+  ) as () => Promise<void>;
+
+  await fn();
+
+  assert.deepEqual(
+    createdCopies.map((c) => c.name).sort(),
+    ["Alice", "Carol"],
+    "Alice and Carol's own records have a valid status and must still be duplicated for real",
+  );
+  assert.deepEqual([...capturedSelectedIds!], [2], "only Bob's record (the one with the stale status) must remain selected after the batch");
+  // A partial failure (1 of 3) surfaces the same generic
+  // duplicatePartialFailure message every other partial-batch-failure
+  // case already does (see the round-up test above) -- the specific
+  // staleEnumField reason is still what's actually REJECTED with per
+  // record (proven by Bob's own id being the one left selected), it's
+  // just not what's shown when some records in the same batch succeeded.
+  assert.match(capturedError!, /entity\.bulk\.duplicatePartialFailure/, "a partial failure must show the generic partial-failure message, not the single-record rejection reason");
+  assert.match(capturedError!, /"failed":1/, "exactly one of the three records (Bob's) must be reported as failed");
+  assert.equal(refreshCalled, 1, "refresh() must still run so the table shows the records that WERE successfully duplicated");
+});
+
 test("EntityPanel's handleBulkDuplicate refuses the whole batch upfront for an entity with a required 'file' field, instead of every single duplicate failing the same way", async () => {
   const handlerMatch = entityPanelSrc.match(/ {2}async function handleBulkDuplicate\(\) \{[\s\S]*?\n {2}\}\n/);
-  assert.ok(handlerMatch, "expected to find handleBulkDuplicate in EntityPanel.tsx");
-  const { code } = transformSync(handlerMatch![0], { loader: "ts" });
+  const helperMatch = entityPanelSrc.match(/function staleEnumValue\(field: Field, value: unknown\): boolean \{[\s\S]*?\n\}\n/);
+  assert.ok(handlerMatch && helperMatch, "expected to find handleBulkDuplicate and staleEnumValue in EntityPanel.tsx");
+  const { code } = transformSync(`${helperMatch![0]}\n${handlerMatch![0]}`, { loader: "ts" });
 
   const entity: Entity = {
     name: "Applicant",
@@ -366,7 +575,8 @@ test("EntityPanel's handleBulkDuplicate refuses the whole batch upfront for an e
 
 test("EntityPanel's handleBulkDuplicate still surfaces the raw error message when every duplicate in the batch fails", async () => {
   const handlerMatch = entityPanelSrc.match(/ {2}async function handleBulkDuplicate\(\) \{[\s\S]*?\n {2}\}\n/);
-  const { code } = transformSync(handlerMatch![0], { loader: "ts" });
+  const helperMatch = entityPanelSrc.match(/function staleEnumValue\(field: Field, value: unknown\): boolean \{[\s\S]*?\n\}\n/);
+  const { code } = transformSync(`${helperMatch![0]}\n${handlerMatch![0]}`, { loader: "ts" });
 
   let capturedError: string | undefined;
   const rejection = new Error("network error");
@@ -424,8 +634,9 @@ test("EntityPanel's handleBulkDuplicate still surfaces the raw error message whe
  */
 test("EntityPanel's handleBulkDuplicate never calls createRecord for a selected id whose record is no longer in local state", async () => {
   const handlerMatch = entityPanelSrc.match(/ {2}async function handleBulkDuplicate\(\) \{[\s\S]*?\n {2}\}\n/);
-  assert.ok(handlerMatch, "expected to find handleBulkDuplicate in EntityPanel.tsx");
-  const { code } = transformSync(handlerMatch![0], { loader: "ts" });
+  const helperMatch = entityPanelSrc.match(/function staleEnumValue\(field: Field, value: unknown\): boolean \{[\s\S]*?\n\}\n/);
+  assert.ok(handlerMatch && helperMatch, "expected to find handleBulkDuplicate and staleEnumValue in EntityPanel.tsx");
+  const { code } = transformSync(`${helperMatch![0]}\n${handlerMatch![0]}`, { loader: "ts" });
 
   let capturedSelectedIds: Set<number> | undefined;
   let capturedError: string | undefined;
@@ -502,8 +713,9 @@ test("EntityPanel's handleBulkDuplicate never calls createRecord for a selected 
  */
 test("EntityPanel's handleBulkDuplicate refuses to start a second batch while a previous one is still in flight, and resumes normally once it finishes", async () => {
   const handlerMatch = entityPanelSrc.match(/ {2}async function handleBulkDuplicate\(\) \{[\s\S]*?\n {2}\}\n/);
-  assert.ok(handlerMatch, "expected to find handleBulkDuplicate in EntityPanel.tsx");
-  const { code } = transformSync(handlerMatch![0], { loader: "ts" });
+  const helperMatch = entityPanelSrc.match(/function staleEnumValue\(field: Field, value: unknown\): boolean \{[\s\S]*?\n\}\n/);
+  assert.ok(handlerMatch && helperMatch, "expected to find handleBulkDuplicate and staleEnumValue in EntityPanel.tsx");
+  const { code } = transformSync(`${helperMatch![0]}\n${handlerMatch![0]}`, { loader: "ts" });
 
   const entity: Entity = { name: "Customer", fields: [{ name: "name", type: "text", required: true }] };
   const records: EntityRecord[] = [
