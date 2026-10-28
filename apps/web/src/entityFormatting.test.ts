@@ -3109,6 +3109,26 @@ test("findFilterableFields includes a relation field only once allEntities/relat
   );
 });
 
+/**
+ * Round 1178: mirrors the test above exactly, except the relation field's
+ * own relationTo ("courier") differs from its real target entity's name
+ * ("Courier") only by letter case -- the same case-mismatch scenario
+ * relationDisplayLabel (round 1162) and buildImportRecords (round 1177)
+ * were already fixed for in this same file.
+ */
+test("findFilterableFields still includes a relation field when relationTo differs from its target entity's name only by letter case", () => {
+  const courier: Entity = { name: "Courier", label: "Courier", fields: [{ name: "name", type: "text", required: true }] };
+  const fields: Field[] = [
+    { name: "name", type: "text", required: true },
+    { name: "courierId", label: "Courier", type: "relation", required: false, relationTo: "courier" },
+  ];
+  assert.deepEqual(
+    findFilterableFields(fields, [courier], { courier: [{ id: 1, name: "Dana" }] }).map((f) => f.name),
+    ["courierId"],
+    "a case-mismatched relationTo must not exclude an otherwise fully resolvable relation field",
+  );
+});
+
 test("groupRecordsByField groups by an enum field in the field's own declared order, with an 'other' bucket for a stale value no longer in enumValues", () => {
   const t = (key: string) => translate("en", key);
   const field: Field = {
@@ -3233,6 +3253,22 @@ test("isGroupableField includes a relation field only once allEntities/relatedRe
 });
 
 /**
+ * Round 1178: mirrors the test above exactly, except the relation field's
+ * own relationTo differs from its real target entity's name only by
+ * letter case -- same scenario as findFilterableFields's own round-1178
+ * test just above.
+ */
+test("isGroupableField still includes a relation field when relationTo differs from its target entity's name only by letter case", () => {
+  const courier: Entity = { name: "Courier", label: "Courier", fields: [{ name: "name", type: "text", required: true }] };
+  const field: Field = { name: "courierId", label: "Courier", type: "relation", required: false, relationTo: "courier" };
+  assert.equal(
+    isGroupableField(field, [courier], { courier: [{ id: 1, name: "Dana" }] }),
+    true,
+    "a case-mismatched relationTo must not exclude an otherwise fully resolvable relation field",
+  );
+});
+
+/**
  * Round 738: groupRecordsByField's new relation branch -- groups follow the
  * related entity's own current record order (not first-seen order among
  * the grouped records), labeled via recordDisplayLabel the same way
@@ -3274,6 +3310,27 @@ test("groupRecordsByField groups by a relation field in the related entity's own
     [],
     "with no allEntities/relatedRecords passed at all, grouping by a relation field must produce no groups rather than throw",
   );
+});
+
+/**
+ * Round 1178: mirrors the test above's happy path, except the relation
+ * field's own relationTo differs from its real target entity's name only
+ * by letter case -- same scenario as findFilterableFields/isGroupableField's
+ * own round-1178 tests above. Before this round, the exact-case
+ * `targetEntity` lookup's own `!targetEntity` early return produced zero
+ * groups for every record, even though every record's courierId was
+ * perfectly resolvable.
+ */
+test("groupRecordsByField still groups by a relation field when relationTo differs from its target entity's name only by letter case", () => {
+  const t = (key: string) => translate("en", key);
+  const courier: Entity = { name: "Courier", label: "Courier", fields: [{ name: "name", type: "text", required: true }] };
+  const field: Field = { name: "courierId", label: "Courier", type: "relation", required: false, relationTo: "courier" };
+  const relatedRecords = { courier: [{ id: 1, name: "Dana" }] };
+  const records = [{ id: 10, courierId: 1 }];
+
+  const groups = groupRecordsByField(records, field, t, [courier], relatedRecords);
+  assert.deepEqual(groups.map((g) => g.key), ["1"], "a case-mismatched relationTo must not prevent real grouping");
+  assert.equal(groups[0].label, "Dana");
 });
 
 test("sumNumericFields sums each number-type field across the given records, ignoring non-number fields entirely", () => {

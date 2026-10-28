@@ -727,8 +727,14 @@ export function findFilterableEnumFields(fields: Field[]): Field[] {
  * finished loading yet, never offers a filter with nothing real to pick.
  */
 export function findFilterableFields(fields: Field[], allEntities?: Entity[], relatedRecords?: RelatedRecordsByEntity): Field[] {
+  // Round 1178: case-insensitive, mirroring relationDisplayLabel's own
+  // round-1162 fix -- without it, a relation field whose relationTo
+  // differed from its target entity's current name only by letter case
+  // was never even offered in the toolbar's own filter dropdown, even
+  // though relatedRecords (keyed by the same raw relationTo string) was
+  // already loaded and ready to filter against.
   const relationFields = fields.filter(
-    (f) => f.type === "relation" && f.relationTo && allEntities?.some((e) => e.name === f.relationTo) && relatedRecords?.[f.relationTo],
+    (f) => f.type === "relation" && f.relationTo && allEntities?.some((e) => e.name.toLowerCase() === f.relationTo!.toLowerCase()) && relatedRecords?.[f.relationTo],
   );
   return [...findFilterableEnumFields(fields), ...fields.filter((f) => f.type === "boolean"), ...relationFields];
 }
@@ -2063,7 +2069,10 @@ export function isInlineEditableField(field: Field): boolean {
  */
 export function isGroupableField(field: Field, allEntities?: Entity[], relatedRecords?: RelatedRecordsByEntity): boolean {
   if (field.type === "enum" || field.type === "boolean") return true;
-  return field.type === "relation" && !!field.relationTo && !!allEntities?.some((e) => e.name === field.relationTo) && !!relatedRecords?.[field.relationTo];
+  // Round 1178: case-insensitive, same reason as findFilterableFields above
+  // -- without it, a case-mismatched relation field was never offered in
+  // the "Group by" dropdown either.
+  return field.type === "relation" && !!field.relationTo && !!allEntities?.some((e) => e.name.toLowerCase() === field.relationTo!.toLowerCase()) && !!relatedRecords?.[field.relationTo];
 }
 
 export interface RecordGroup {
@@ -2108,7 +2117,11 @@ export function groupRecordsByField(
   }
 
   if (field.type === "relation") {
-    const targetEntity = field.relationTo ? allEntities?.find((e) => e.name === field.relationTo) : undefined;
+    // Round 1178: case-insensitive, same reason as isGroupableField above
+    // -- without it, even a field isGroupableField had already let through
+    // would fall straight into the `!targetEntity` early-return below,
+    // returning zero groups instead of the real ones.
+    const targetEntity = field.relationTo ? allEntities?.find((e) => e.name.toLowerCase() === field.relationTo!.toLowerCase()) : undefined;
     const relatedList = field.relationTo ? relatedRecords?.[field.relationTo] : undefined;
     if (!targetEntity || !relatedList) return [];
     const groups: RecordGroup[] = [];

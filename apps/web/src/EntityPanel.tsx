@@ -1997,7 +1997,11 @@ export function EntityPanel({
       const stillFilterable =
         f.type === "boolean" ||
         (f.type === "enum" && filterableEnumNames.has(f.name)) ||
-        (f.type === "relation" && !!f.relationTo && allEntities.some((e) => e.name === f.relationTo));
+        // Round 1178: case-insensitive, same reason as this effect's own
+        // fieldsByLowerName fallback just above -- a relation field whose
+        // relationTo differs from its target entity's name only by letter
+        // case must stay filterable too.
+        (f.type === "relation" && !!f.relationTo && allEntities.some((e) => e.name.toLowerCase() === f.relationTo!.toLowerCase()));
       if (!stillFilterable) continue;
       if (f.type === "boolean" && value !== "true" && value !== "false") continue;
       if (f.type === "relation" && (!Number.isInteger(Number(value)) || String(Number(value)) !== value || Number(value) < 0)) continue;
@@ -3975,7 +3979,12 @@ export function EntityPanel({
                   field={f}
                   value={cellDraft}
                   onChange={setCellDraft}
-                  relatedEntity={f.relationTo ? allEntities.find((e) => e.name === f.relationTo) : undefined}
+                  // Round 1178: case-insensitive -- without it, a case-mismatched
+                  // relation field silently fell through FieldInput's own
+                  // "relation" branch (gated on relatedEntity being truthy) to
+                  // its generic number-input fallback, forcing a raw numeric id
+                  // instead of a searchable record picker.
+                  relatedEntity={f.relationTo ? allEntities.find((e) => e.name.toLowerCase() === f.relationTo!.toLowerCase()) : undefined}
                   relatedEntityRecords={f.relationTo ? relatedRecords[f.relationTo] : undefined}
                   excludeRecordIds={f.relationTo === entity.name ? [record.id as number] : undefined}
                   autoFocus
@@ -4106,7 +4115,9 @@ export function EntityPanel({
               field={field}
               value={form[field.name]}
               onChange={(v) => setForm((prev) => ({ ...prev, [field.name]: v }))}
-              relatedEntity={field.relationTo ? allEntities.find((e) => e.name === field.relationTo) : undefined}
+              // Round 1178: case-insensitive, same reason as the inline-cell-edit
+              // call site above.
+              relatedEntity={field.relationTo ? allEntities.find((e) => e.name.toLowerCase() === field.relationTo!.toLowerCase()) : undefined}
               relatedEntityRecords={field.relationTo ? relatedRecords[field.relationTo] : undefined}
               excludeRecordIds={field.relationTo === entity.name && editingId != null ? [editingId] : undefined}
               projectId={projectId}
@@ -4313,7 +4324,10 @@ export function EntityPanel({
                       {!hasCurrentRelationOption && <option value={currentFilterValue}>{`#${currentFilterValue}`}</option>}
                       {knownRelationRecords.map((r) => (
                         <option key={r.id as number} value={String(r.id)}>
-                          {recordDisplayLabel(allEntities.find((e) => e.name === f.relationTo)!, r, lang)}
+                          {/* Round 1178: case-insensitive -- findFilterableFields above now lets a
+                              case-mismatched relation field reach this branch, so this lookup must
+                              resolve the same way or the `!` below would throw on undefined. */}
+                          {recordDisplayLabel(allEntities.find((e) => e.name.toLowerCase() === f.relationTo!.toLowerCase())!, r, lang)}
                         </option>
                       ))}
                     </>
@@ -4652,7 +4666,8 @@ export function EntityPanel({
                       field={bulkEditFieldDef}
                       value={bulkEditValue}
                       onChange={setBulkEditValue}
-                      relatedEntity={bulkEditFieldDef.relationTo ? allEntities.find((e) => e.name === bulkEditFieldDef.relationTo) : undefined}
+                      // Round 1178: case-insensitive, same reason as the two call sites above.
+                      relatedEntity={bulkEditFieldDef.relationTo ? allEntities.find((e) => e.name.toLowerCase() === bulkEditFieldDef.relationTo!.toLowerCase()) : undefined}
                       relatedEntityRecords={bulkEditFieldDef.relationTo ? relatedRecords[bulkEditFieldDef.relationTo] : undefined}
                       excludeRecordIds={bulkEditFieldDef.relationTo === entity.name ? Array.from(selectedIds) : undefined}
                     />

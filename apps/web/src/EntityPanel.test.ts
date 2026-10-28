@@ -11420,6 +11420,73 @@ test("EntityPanel's relation field never falls back to a raw, unvalidated number
 });
 
 /**
+ * Round 1178's finding: the three `relatedEntity={... allEntities.find((e)
+ * => e.name === f.relationTo) ...}` lookups (inline-cell edit, add/edit
+ * form, bulk edit) all used an exact-case match against field.relationTo.
+ * relationTo is a free-form string an AI-generated/refined spec can
+ * legitimately produce in a different letter case than the target entity's
+ * own declared name (e.g. relationTo: "courier" vs Entity.name: "Courier"
+ * -- the same case-mismatch bug class already fixed across many other
+ * call sites in rounds 1159-1177). Unlike the loading-window gap the test
+ * above proves (which self-heals once relatedRecords arrives), this one
+ * never self-heals: relatedEntityRecords is keyed by the literal
+ * field.relationTo string and populates just fine, but relatedEntity
+ * itself stayed permanently undefined, so FieldInput's
+ * `if (field.type === "relation" && relatedEntity)` branch was never
+ * reachable at all -- the field silently degraded to a raw, unvalidated
+ * `<input type="number">` forever, with no searchable picker, for the
+ * entire lifetime of the form. Confirms the real option-backed <select>
+ * now renders instead, once related records resolve.
+ */
+test("EntityPanel's relation field still renders the real searchable picker, not a raw number input, when relationTo differs from its target entity's name only by letter case", async () => {
+  await withJsdom(async () => {
+    const orderEntity: Entity = {
+      name: "Order",
+      label: "Order",
+      fields: [
+        { name: "item", label: "Item", type: "text", required: true },
+        { name: "courierId", label: "Courier", type: "relation", relationTo: "courier", required: false },
+      ],
+    };
+    const courierEntity: Entity = { name: "Courier", label: "Courier", fields: [{ name: "name", label: "Name", type: "text", required: true }] };
+    const courierRelated: EntityRecord[] = [{ id: 9, createdAt: "x", name: "Dana" }];
+    const store: EntityRecord[] = [{ id: 1, createdAt: "x", item: "Pizza", courierId: null }];
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = (async (input: string) => {
+      if (input === "/api/projects/proj1/entities/Order") {
+        return new Response(JSON.stringify({ records: store }), { status: 200, headers: { "content-type": "application/json" } });
+      }
+      // loadRelated fetches by the literal relationTo string ("courier"),
+      // not by the target entity's declared name ("Courier") -- that part
+      // already worked before this round's fix.
+      if (input === "/api/projects/proj1/entities/courier") {
+        return new Response(JSON.stringify({ records: courierRelated }), { status: 200, headers: { "content-type": "application/json" } });
+      }
+      throw new Error(`unexpected request ${input}`);
+    }) as typeof fetch;
+    try {
+      renderEntityPanel({ entity: orderEntity, allEntities: [orderEntity, courierEntity] });
+      await waitForCondition(() => document.querySelectorAll("table tbody tr").length === 1);
+      await waitForCondition(() => {
+        const select = document.querySelector(".record-form select") as HTMLSelectElement | null;
+        return select !== null && !select.disabled && select.querySelectorAll("option").length === 2;
+      });
+
+      assert.equal(
+        document.querySelector('.record-form input[type="number"]') === null,
+        true,
+        "the relation field must never fall back to a raw, unvalidated number input just because relationTo differs in case from its target entity's name",
+      );
+      const realSelect = document.querySelector(".record-form select") as HTMLSelectElement;
+      const optionLabels = Array.from(realSelect.options).map((o) => o.textContent);
+      assert.ok(optionLabels.includes("Dana"), "the real, option-backed select must still resolve its target entity and list the related record's display label");
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+});
+
+/**
  * Round 515's finding: FieldInput's relation branch had no fallback for a
  * stored id missing from relatedEntityRecords -- unlike the enum branch a
  * few lines below it (round 508's own fix), which re-injects a synthetic
