@@ -6859,6 +6859,79 @@ test("removing an entity that another entity's relation field still points to is
 });
 
 /**
+ * Round 1186: this route was the sole entity-level route in this file
+ * that never went through the shared `findEntity` helper (round 1162's
+ * own case-insensitive fallback) -- it reimplemented its own exact-case
+ * existence check and removal filters against the raw URL path segment
+ * instead. Round 1180 already touched this exact route (and this exact
+ * function) to fix the identical bug class in its dependent-relation
+ * guard, without noticing the surrounding existence check and filters
+ * had the same gap. Before this round, a URL spelled with the entity's
+ * OLD casing (the same real, recurring AI-generated-spec recasing
+ * behavior established since round 988) threw a false 404
+ * ENTITY_NOT_FOUND here, blocking a legitimate deletion outright, even
+ * though the entity is plainly present under a different letter case.
+ * Confirms the deletion still succeeds, and that the resolved entity's
+ * own real-cased name (not the request's lowercase spelling) is what
+ * ends up removed from spec.entities/spec.screens and passed to
+ * disableAutomationRulesForEntity.
+ */
+test("removing an entity still succeeds, and cleans up its own screens and automation rules, when the URL's own entityName differs from the entity's real name only by letter case", async () => {
+  await withServer(async (baseUrl, db) => {
+    const email = `entity-remove-case-${randomUUID()}@example.com`;
+    const token = await signup(baseUrl, email);
+    const user = findUserByEmail(db, email)!;
+    const spec: ProductSpec = {
+      summary: "test",
+      personas: [],
+      roles: ["Admin"],
+      entities: [
+        { name: "Customer", fields: [{ name: "fullName", type: "text", required: true }] },
+        { name: "Deal", fields: [{ name: "title", type: "text", required: true }] },
+      ],
+      screens: [
+        { name: "Deal List", type: "list", entity: "Deal" },
+        { name: "Customer List", type: "list", entity: "Customer" },
+      ],
+      assumptions: [],
+      openQuestions: [],
+    };
+    const projectId = randomUUID();
+    insertProject(db, { id: projectId, ownerId: user.id, name: "CRM", description: "test", spec });
+    insertAutomationRule(db, {
+      projectId,
+      entityName: "Deal",
+      trigger: "field_equals",
+      fieldName: "title",
+      fieldValue: "x",
+      actionType: "send_whatsapp",
+      toMode: "field",
+      toField: "title",
+      messageTemplate: "hi",
+    });
+
+    // The URL spells the entity in lowercase -- its real declared name is
+    // "Deal".
+    const res = await fetch(`${baseUrl}/api/projects/${projectId}/entities/deal`, {
+      method: "DELETE",
+      headers: authHeaders(token),
+    });
+    assert.equal(res.status, 200, "deletion must still succeed even though the URL's entityName differs from the entity's real name only by letter case");
+    const { project: updated } = (await res.json()) as {
+      project: { spec: { entities: { name: string }[]; screens: { name: string; entity?: string }[] } };
+    };
+    assert.deepEqual(updated.spec.entities.map((e) => e.name), ["Customer"], "the real Deal entity must have been removed, not left behind");
+    assert.ok(!updated.spec.screens.some((s) => s.entity === "Deal"), "Deal's own screens must be cleaned up, keyed by the entity's real name");
+    assert.ok(updated.spec.screens.some((s) => s.entity === "Customer"), "the surviving entity's own screens must be untouched");
+
+    const rulesRes = await fetch(`${baseUrl}/api/projects/${projectId}/automations`, { headers: authHeaders(token) });
+    const { rules } = (await rulesRes.json()) as { rules: { enabled: boolean }[] };
+    assert.equal(rules.length, 1, "sanity check: the automation rule on the removed entity must still exist, just disabled");
+    assert.equal(rules[0]!.enabled, false, "the automation rule on the removed Deal entity must have been disabled, not left dangling and enabled");
+  });
+});
+
+/**
  * Round 553: this route used to leave `spec.screens` completely untouched,
  * so a removed entity's own screen entries (e.g. "Deal List"/"Deal Form")
  * stayed in the spec forever, dangling and naming an entity that no longer

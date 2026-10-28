@@ -3996,9 +3996,20 @@ export function createProjectsRouter(
         req.userId!,
         `DELETE /projects/${project.id}/entities/${req.params.entityName}`,
         async () => {
-          if (!project.spec.entities.some((e) => e.name === req.params.entityName)) {
-            throw new HttpError(404, "No such screen in this project's spec", "ENTITY_NOT_FOUND");
-          }
+          // Round 1186: resolved via the shared findEntity helper (round
+          // 1162's own case-insensitive fallback), instead of this
+          // route's own ad hoc exact-case checks against the raw URL
+          // path segment -- the sole remaining holdout among every
+          // entity-level route in this file, all of which already go
+          // through findEntity. Round 1180 already patched this exact
+          // route's dependent-relation guard just below for the same
+          // bug class, in the same function, without catching that the
+          // existence check and removal filters around it had the
+          // identical gap: an AI-generated spec recasing an entity's own
+          // name (the same real, recurring behavior rounds 1159-1185
+          // established) threw a false 404 here, blocking a legitimate
+          // deletion outright with a misleading "no such screen" error.
+          const entity = findEntity(project, req.params.entityName);
           if (project.spec.entities.length <= 1) {
             throw new HttpError(400, "Cannot remove the last remaining screen -- at least one is required", "VALIDATION_ERROR");
           }
@@ -4014,8 +4025,7 @@ export function createProjectsRouter(
           // longer exists at all, not merely case-different.
           const dependent = project.spec.entities.find(
             (e) =>
-              e.name !== req.params.entityName &&
-              e.fields.some((f) => f.type === "relation" && f.relationTo?.toLowerCase() === req.params.entityName.toLowerCase()),
+              e.name !== entity.name && e.fields.some((f) => f.type === "relation" && f.relationTo?.toLowerCase() === entity.name.toLowerCase()),
           );
           if (dependent) {
             throw new HttpError(
@@ -4026,14 +4036,14 @@ export function createProjectsRouter(
           }
           const nextSpec = {
             ...project.spec,
-            entities: project.spec.entities.filter((e) => e.name !== req.params.entityName),
-            screens: project.spec.screens.filter((s) => s.entity !== req.params.entityName),
+            entities: project.spec.entities.filter((e) => e.name !== entity.name),
+            screens: project.spec.screens.filter((s) => s.entity !== entity.name),
           };
           const updated = updateProjectSpec(db, project.id, nextSpec);
           // Round 1099: same pre-build gap as the field-removal route's
           // own fix just above, for a rule that triggers on this whole
           // entity (entityName) rather than just one of its fields.
-          disableAutomationRulesForEntity(db, project.id, req.params.entityName);
+          disableAutomationRulesForEntity(db, project.id, entity.name);
           return { status: 200, body: { project: updated } };
         },
       );
