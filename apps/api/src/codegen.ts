@@ -3214,7 +3214,12 @@ function buildImportRecords(fields, rows, relatedRecords) {
           rowError = \`Row \${rowIndex + 1}: missing required field "\${field.label || field.name}".\`;
           break;
         }
-        record[field.name] = field.type === "boolean" ? false : null;
+        // Round 1151: mirrors the live preview's own entityFormatting.ts
+        // fix -- boolean was the one field type coerced to a concrete
+        // value on re-import instead of passing a blank cell through as
+        // NULL, silently turning a never-answered boolean into an explicit
+        // false the moment an exported file was re-imported unmodified.
+        record[field.name] = null;
         continue;
       }
 

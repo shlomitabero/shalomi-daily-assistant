@@ -1777,7 +1777,16 @@ export function buildImportRecords(
           rowError = `Row ${rowIndex + 1}: missing required field "${field.label ?? field.name}".`;
           break;
         }
-        record[field.name] = field.type === "boolean" ? false : null;
+        // Round 1151: this was the one field type coerced to a concrete
+        // value instead of passing the blank cell through as NULL, same
+        // as every other optional type here -- round 1134 already made
+        // fieldDisplayValue (this function's own designed inverse, per its
+        // doc comment above) export a never-answered boolean as a genuine
+        // blank cell, distinguishable from an explicit "FALSE". Re-importing
+        // that exact blank cell silently turned it into an explicit `false`,
+        // the same "unanswered becomes answered" corruption round 1134
+        // fixed on the read/export side, just reopened here on re-import.
+        record[field.name] = null;
         continue;
       }
 

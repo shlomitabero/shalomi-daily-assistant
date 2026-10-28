@@ -11143,6 +11143,74 @@ test("the exported EntityView's CSV import rejects an ambiguous enum label that 
   assert.match(errors[0], /matches more than one option for field "Status"/);
 });
 
+/**
+ * Round 1151: mirrors the live preview's own round-1134 fix (fieldDisplayValue
+ * exports a never-answered, null boolean as a genuinely blank CSV cell,
+ * distinguishable from an explicit "FALSE") and closes the round-trip gap
+ * round 1134 itself never audited on this exported app's own generated
+ * copy -- buildImportRecords special-cased boolean fields alone to coerce
+ * that exact blank cell back into an explicit `false` on re-import, unlike
+ * every other optional field type on the same line (which correctly stays
+ * `null`). Re-importing this exported app's own unmodified CSV export of a
+ * never-answered boolean silently turned it into an explicit "No". Executes
+ * the actual generated fieldDisplayValue/recordsToCsv/parseCsv/
+ * buildImportRecords functions together (extracted from real codegen
+ * output, not reimplemented here) so a future edit to this template can't
+ * silently reintroduce the gap.
+ */
+test("the exported EntityView's CSV export/import round-trip restores a never-answered boolean to null, not an explicit false", () => {
+  const boolProject: Project = {
+    ...project,
+    spec: {
+      ...project.spec,
+      entities: [
+        {
+          name: "Subscriber",
+          label: "Subscriber",
+          fields: [
+            { name: "name", label: "Name", type: "text", required: true },
+            { name: "subscribed", label: "Subscribed", type: "boolean", required: false },
+          ],
+        },
+      ],
+    },
+  };
+  const entityViewJsx = generateExportFiles(boolProject).find((f) => f.path === "web/src/components/EntityView.jsx")!.content;
+
+  const csvEscapeSrc = entityViewJsx.match(/function csvEscape\(value\) \{[\s\S]*?\n\}\n/)?.[0];
+  const fieldDisplayValueSrc = entityViewJsx.match(/function fieldDisplayValue\(field, value, relatedRecords\) \{[\s\S]*?\n\}\n/)?.[0];
+  const recordsToCsvSrc = entityViewJsx.match(/function recordsToCsv\(fields, records, relatedRecords, includeId\) \{[\s\S]*?\n\}\n/)?.[0];
+  const parseCsvSrc = entityViewJsx.match(/function parseCsv\(text\) \{[\s\S]*?\n\}\n/)?.[0];
+  const isValidDateSrc = entityViewJsx.match(/const DATE_FORMAT[\s\S]*?\nfunction isValidDate\(value\) \{[\s\S]*?\n\}\n/)?.[0];
+  const fieldLabelOccurrencesSrc = entityViewJsx.match(/function fieldLabelOccurrences\(fields\) \{[\s\S]*?\n\}\n/)?.[0];
+  const fieldDisplayLabelSrc = entityViewJsx.match(/function fieldDisplayLabel\(field, occurrences\) \{[\s\S]*?\n\}\n/)?.[0];
+  const headerSrc = entityViewJsx.match(/function matchesImportHeader\(header, field, labelOccurrences\) \{[\s\S]*?\n\}\n/)?.[0];
+  const importSrc = entityViewJsx.match(/function buildImportRecords\(fields, rows, relatedRecords\) \{[\s\S]*?\n\}\n/)?.[0];
+  assert.ok(
+    csvEscapeSrc && fieldDisplayValueSrc && recordsToCsvSrc && parseCsvSrc && isValidDateSrc &&
+      fieldLabelOccurrencesSrc && fieldDisplayLabelSrc && headerSrc && importSrc,
+    "expected to find csvEscape/fieldDisplayValue/recordsToCsv/parseCsv/isValidDate/fieldLabelOccurrences/fieldDisplayLabel/matchesImportHeader/buildImportRecords in generated output",
+  );
+
+  const { recordsToCsv, parseCsv, buildImportRecords } = new Function(
+    `${csvEscapeSrc}\n${fieldDisplayValueSrc}\n${recordsToCsvSrc}\n${parseCsvSrc}\n${isValidDateSrc}\n${fieldLabelOccurrencesSrc}\n${fieldDisplayLabelSrc}\n${headerSrc}\n${importSrc}\nreturn { recordsToCsv, parseCsv, buildImportRecords };`,
+  )();
+
+  const fields = boolProject.spec.entities[0].fields;
+  const record = { id: 1, name: "Dana", subscribed: null };
+
+  const csv = recordsToCsv(fields, [record], []);
+  const rows = parseCsv(csv);
+  const { records, errors } = buildImportRecords(fields, rows, []);
+
+  assert.deepEqual(errors, []);
+  assert.deepEqual(
+    records,
+    [{ name: "Dana", subscribed: null }],
+    "re-importing this exported app's own unmodified export must restore the field's own never-answered state, not an explicit false",
+  );
+});
+
 // Regression test: new Date(Date.UTC(year, ...)) silently adds 1900 to a
 // year 0-99 (legacy ECMA-262 behavior), so the generated isValidDate's own
 // round-trip check used to fail a syntactically valid "0099-01-01".

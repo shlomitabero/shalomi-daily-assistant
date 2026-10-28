@@ -1989,15 +1989,46 @@ test("buildImportRecords coerces booleans, numbers, and enum labels back to thei
     ["name", "active", "status"],
     ["Dana", "true", "חדש"], // enum matched by translated label
     ["Yossi", "yes", "Won"], // enum matched by raw value; "yes" also counts as true
-    ["Noa", "", "New"], // empty optional boolean defaults to false, not skipped
+    ["Noa", "", "New"], // Round 1151: empty optional boolean stays null (never answered), not coerced to false
   ];
   const result = buildImportRecords(fields, rows);
   assert.deepEqual(result.errors, []);
   assert.deepEqual(result.records, [
     { name: "Dana", active: true, status: "New" },
     { name: "Yossi", active: true, status: "Won" },
-    { name: "Noa", active: false, status: "New" },
+    { name: "Noa", active: null, status: "New" },
   ]);
+});
+
+/**
+ * Round 1151: buildImportRecords is this function's own designed inverse
+ * of fieldDisplayValue (see buildImportRecords's own doc comment), so a
+ * file this app exported should round-trip back in unchanged. Round 1134
+ * made fieldDisplayValue export a never-answered (`null`) boolean as a
+ * genuine blank cell, distinguishable from an explicit "FALSE" -- but
+ * buildImportRecords still special-cased boolean alone to coerce that
+ * exact blank cell back into an explicit `false`, unlike every other
+ * optional field type on the same line (which correctly stays `null`).
+ * Re-importing an unmodified export of a never-answered boolean silently
+ * turned it into an explicit "No" -- a real round-trip data corruption,
+ * not an honest no-op.
+ */
+test("a never-answered boolean's genuinely blank CSV cell round-trips through recordsToCsv + parseCsv + buildImportRecords back to null, not an explicit false", () => {
+  const fields: Field[] = [
+    { name: "name", type: "text", required: true },
+    { name: "subscribed", type: "boolean", required: false },
+  ];
+  const record: EntityRecord = { id: 1, name: "Dana", subscribed: null, createdAt: "" };
+
+  const csv = recordsToCsv(fields, [record], "en");
+  const rows = parseCsv(csv);
+  const result = buildImportRecords(fields, rows);
+  assert.deepEqual(result.errors, []);
+  assert.deepEqual(
+    result.records,
+    [{ name: "Dana", subscribed: null }],
+    "re-importing this app's own unmodified export must restore the field's own never-answered state, not an explicit false",
+  );
 });
 
 /**
