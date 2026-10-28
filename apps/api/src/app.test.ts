@@ -6804,6 +6804,61 @@ test("removing an entity that another entity's relation field still points to is
 });
 
 /**
+ * Round 1180: the dependent-relation guard just above used to compare
+ * `f.relationTo` to `req.params.entityName` with exact-case equality --
+ * the sole remaining exact-case holdout in the live API's route layer
+ * after rounds 1159-1178 fixed every other relationTo-resolution site
+ * (migrate.ts, automations.ts, calendarFeed.ts, backup.ts, twin.ts,
+ * routes/calendar.ts). An AI-generated spec's relationTo can legitimately
+ * differ in letter case from the real target entity's declared name, so
+ * this guard could be silently bypassed: deleting "Customer" while
+ * another entity's relation field reads relationTo: "customer" would
+ * succeed outright instead of being rejected, leaving the surviving
+ * entity's relation field pointing at an entity that no longer exists at
+ * all (a strictly worse outcome than the display-only bugs those earlier
+ * rounds fixed). Seeds the spec directly (bypassing AI generation, whose
+ * exact casing isn't deterministic) to construct the case mismatch.
+ */
+test("removing an entity that another entity's relation field still points to is rejected even when relationTo differs from the entity's name only by letter case", async () => {
+  await withServer(async (baseUrl, db) => {
+    const email = `entity-remove-dependent-case-${randomUUID()}@example.com`;
+    const token = await signup(baseUrl, email);
+    const user = findUserByEmail(db, email)!;
+    const spec: ProductSpec = {
+      summary: "test",
+      personas: [],
+      roles: ["Admin"],
+      entities: [
+        { name: "Customer", fields: [{ name: "fullName", type: "text", required: true }] },
+        {
+          name: "Order",
+          fields: [
+            { name: "item", type: "text", required: true },
+            { name: "customer", type: "relation", relationTo: "customer", required: false },
+          ],
+        },
+      ],
+      screens: [],
+      assumptions: [],
+      openQuestions: [],
+    };
+    const projectId = randomUUID();
+    insertProject(db, { id: projectId, ownerId: user.id, name: "CRM", description: "test", spec });
+
+    const res = await fetch(`${baseUrl}/api/projects/${projectId}/entities/Customer`, {
+      method: "DELETE",
+      headers: authHeaders(token),
+    });
+    assert.equal(res.status, 400, "deletion must be rejected -- Order's relation field still points to Customer, just lowercase");
+    assert.equal(((await res.json()) as { code?: string }).code, "ENTITY_HAS_DEPENDENT_RELATIONS");
+
+    const getRes = await fetch(`${baseUrl}/api/projects/${projectId}`, { headers: authHeaders(token) });
+    const { project: unchanged } = (await getRes.json()) as { project: { spec: { entities: { name: string }[] } } };
+    assert.deepEqual(unchanged.spec.entities.map((e) => e.name).sort(), ["Customer", "Order"], "neither entity must have changed");
+  });
+});
+
+/**
  * Round 553: this route used to leave `spec.screens` completely untouched,
  * so a removed entity's own screen entries (e.g. "Deal List"/"Deal Form")
  * stayed in the spec forever, dangling and naming an entity that no longer

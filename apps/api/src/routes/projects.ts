@@ -4002,8 +4002,20 @@ export function createProjectsRouter(
           if (project.spec.entities.length <= 1) {
             throw new HttpError(400, "Cannot remove the last remaining screen -- at least one is required", "VALIDATION_ERROR");
           }
+          // Round 1180: case-insensitive, matching the established
+          // relationTo-resolution convention (rounds 1159-1178) everywhere
+          // else in this app -- an AI-generated spec's relationTo can
+          // legitimately differ in letter case from the real target
+          // entity's declared name, and this guard used to compare them
+          // exact-case. When that happened, deleting the entity the OTHER
+          // one's relation field actually points to silently succeeded
+          // instead of being blocked: the surviving entity's relation
+          // field is left with a relationTo naming an entity that no
+          // longer exists at all, not merely case-different.
           const dependent = project.spec.entities.find(
-            (e) => e.name !== req.params.entityName && e.fields.some((f) => f.type === "relation" && f.relationTo === req.params.entityName),
+            (e) =>
+              e.name !== req.params.entityName &&
+              e.fields.some((f) => f.type === "relation" && f.relationTo?.toLowerCase() === req.params.entityName.toLowerCase()),
           );
           if (dependent) {
             throw new HttpError(
