@@ -487,6 +487,12 @@ test("AuthScreen shows the reset-password form when the URL carries a resetToken
         assert.equal(JSON.parse(capturedBody!).token, "abc123");
         assert.equal(JSON.parse(capturedBody!).newPassword, "brand-new-password");
         assert.match(document.body.textContent ?? "", /password has been reset/i);
+        // Round 1154: POST /auth/reset-password's own real side effect
+        // (deleteAllSessionsForUser, see routes/auth.ts's own doc comment)
+        // silently signs out every existing session on every device -- the
+        // success message must say so, not leave someone else still logged
+        // in elsewhere silently kicked out with no explanation anywhere.
+        assert.match(document.body.textContent ?? "", /other device|every device|all devices|previous sessions/i);
 
         const goToLoginButton = Array.from(document.querySelectorAll("button")).find((b) => b.textContent?.includes("login")) as HTMLButtonElement;
         fireEvent.click(goToLoginButton);

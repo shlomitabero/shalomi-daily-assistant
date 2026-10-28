@@ -92,7 +92,15 @@ test("submitting matching passwords calls the real changePassword API with the e
       assert.equal(body.newPassword, "my-new-password");
 
       await waitForCondition(() => document.querySelector(".success") !== null);
-      assert.match(document.querySelector(".success")!.textContent ?? "", /changed/i);
+      const successText = document.querySelector(".success")!.textContent ?? "";
+      assert.match(successText, /changed/i);
+      // Round 1154: PATCH /auth/password's own real side effect
+      // (deleteOtherSessionsForUser, see routes/auth.ts's own doc comment)
+      // silently signs out every other session -- the success message must
+      // say so, not leave a user who changed their password specifically
+      // to kick out a lost device with zero confirmation it actually
+      // happened.
+      assert.match(successText, /other sessions|other device/i);
     } finally {
       globalThis.fetch = originalFetch;
     }
