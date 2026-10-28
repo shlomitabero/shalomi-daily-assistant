@@ -2326,6 +2326,30 @@ test("buildImportRecords resolves a relation cell to the matching related record
   ]);
 });
 
+/**
+ * Round 1177: mirrors the test above exactly, except the relation field's
+ * own relationTo ("courier") differs from its real target entity's name
+ * ("Courier") only by letter case -- the same genuinely plausible
+ * AI-generated-spec scenario relationDisplayLabel's own round-1162 fix
+ * already covers for display. Before this round, relationResolvable's
+ * exact-case `allEntities.some((e) => e.name === f.relationTo)` treated
+ * this REQUIRED relation field as entirely unresolvable, refusing the
+ * whole import outright -- even though relatedRecords already held the
+ * courier records, keyed by the SAME raw relationTo string ("courier")
+ * EntityPanel.tsx's own fetch effect (round 1162) populates it under.
+ */
+test("buildImportRecords still resolves a required relation cell when relationTo differs from its target entity's name only by letter case", () => {
+  const fields: Field[] = [
+    { name: "name", type: "text", required: true },
+    { name: "courierId", label: "Courier", type: "relation", required: true, relationTo: "courier" },
+  ];
+  const couriers: EntityRecord[] = [{ id: 42, name: "Yossi Cohen" }];
+  const rows = [["name", "Courier"], ["Order A", "Yossi Cohen"]];
+  const result = buildImportRecords(fields, rows, [courierEntity], { courier: couriers });
+  assert.deepEqual(result.errors, []);
+  assert.deepEqual(result.records, [{ name: "Order A", courierId: 42 }]);
+});
+
 test("buildImportRecords accepts a relation cell's literal \"#<id>\" form, falling back to it only once no related record's own resolved display label matches the cell", () => {
   const fields: Field[] = [
     { name: "name", type: "text", required: true },

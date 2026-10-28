@@ -1638,8 +1638,17 @@ export function buildImportRecords(
   // of this project's spec, or a caller that never fetched relatedRecords
   // at all). Without that data this field falls back to the original
   // "impossible from a CSV cell" treatment below.
+  // Round 1177: case-insensitive, mirroring this same file's own
+  // relationDisplayLabel (round 1162) and EntityPanel.tsx's relationTargets
+  // (round 1162) -- without it, a relation field whose relationTo differed
+  // from its target entity's current name only by letter case was treated
+  // as entirely unresolvable here, even once EntityPanel.tsx's own fetch
+  // effect had already loaded relatedRecords under that SAME raw
+  // relationTo string (so the relatedRecords[] lookup below still matches
+  // without any change). A REQUIRED such field blocked the whole import
+  // outright; an optional one silently dropped every row's value for it.
   const relationResolvable = (f: Field): boolean =>
-    !!f.relationTo && allEntities.some((e) => e.name === f.relationTo) && !!relatedRecords[f.relationTo];
+    !!f.relationTo && allEntities.some((e) => e.name.toLowerCase() === f.relationTo!.toLowerCase()) && !!relatedRecords[f.relationTo];
 
   const requiredUnsupported = fields.find(
     (f) => (f.type === "file" && f.required) || (f.type === "relation" && f.required && !relationResolvable(f)),
@@ -1749,7 +1758,8 @@ export function buildImportRecords(
           record[field.name] = null;
           continue;
         }
-        const targetEntity = allEntities.find((e) => e.name === field.relationTo)!;
+        // Round 1177: case-insensitive, same reason as relationResolvable above.
+        const targetEntity = allEntities.find((e) => e.name.toLowerCase() === field.relationTo!.toLowerCase())!;
         const targetRecords = relatedRecords[field.relationTo!]!;
         // A real display-label match always wins over the "#<id>" shorthand below:
         // a record's own display field can legitimately hold text that looks like
