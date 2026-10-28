@@ -7652,6 +7652,47 @@ test("adding a relation field whose relationTo names a real sibling entity in th
 });
 
 /**
+ * Round 1196: this route's own relationTo check compared the submitted
+ * value against `entity.name` with exact-case `===`, the same bug every
+ * other relationTo-resolution call site in this app already had fixed
+ * case-insensitively (rounds 1159-1188) -- missed here because these two
+ * validation checks weren't named in any of those earlier sweeps. A real
+ * entity name is case-sensitive but a case-only rename is a supported,
+ * live, lossless action (migrate.ts), so a relationTo differing only by
+ * letter case from the real entity's current name -- exactly what a
+ * second browser tab's own stale dropdown selection would submit right
+ * after a collaborator case-renames the target entity elsewhere -- must
+ * still be accepted, not rejected as "not an entity in this project".
+ */
+test("adding a relation field whose relationTo names a real sibling entity differing only by letter case is accepted, not rejected as RELATION_TARGET_NOT_FOUND", async () => {
+  await withServer(async (baseUrl) => {
+    const token = await signup(baseUrl, "field-add-relation-case@example.com");
+    const createRes = await fetch(`${baseUrl}/api/projects`, {
+      method: "POST",
+      headers: authHeaders(token),
+      body: JSON.stringify({ description: "A CRM with customers and deals." }),
+    });
+    const { project } = (await createRes.json()) as { project: { id: string; spec: { entities: { name: string }[] } } };
+    assert.deepEqual(project.spec.entities.map((e) => e.name), ["Customer", "Deal"]);
+
+    const res = await fetch(`${baseUrl}/api/projects/${project.id}/entities/Deal/fields`, {
+      method: "POST",
+      headers: authHeaders(token),
+      // The real entity is "Customer" (PascalCase) -- submitting the
+      // lowercase variant mirrors a stale dropdown selection from before
+      // a case-only rename.
+      body: JSON.stringify({ label: "Customer", type: "relation", relationTo: "customer" }),
+    });
+    assert.equal(res.status, 200, "a relationTo differing only by letter case from a real entity must be accepted");
+    const { project: updated } = (await res.json()) as {
+      project: { spec: { entities: { name: string; fields: { name: string; type: string; relationTo?: string }[] }[] } };
+    };
+    const newField = updated.spec.entities.find((e) => e.name === "Deal")!.fields.at(-1)!;
+    assert.equal(newField.type, "relation");
+  });
+});
+
+/**
  * The other real correction gap this round closes: a field's own
  * `required` flag was previously static from spec generation onward,
  * with no way to toggle it on the spec review screen at all (unlike its
@@ -7872,6 +7913,21 @@ test("switching a field's type to enum or relation requires the matching extra d
     );
     assert.equal(badRelationTo.status, 400);
     assert.equal(((await badRelationTo.json()) as { code?: string }).code, "RELATION_TARGET_NOT_FOUND");
+
+    // Round 1196: see the identical POST .../fields test's own doc comment
+    // -- same case-insensitive tolerance, same reason, for this sibling
+    // route's own relationTo check. Reuses this same entity/field (rather
+    // than introducing a new one) and targets the real sibling entity
+    // "Deal" via its lowercase variant.
+    const caseOnlyRelationTo = await fetch(
+      `${baseUrl}/api/projects/${project.id}/entities/${entityName}/fields/${fieldName}/type`,
+      { method: "PATCH", headers: authHeaders(token), body: JSON.stringify({ type: "relation", relationTo: "deal" }) },
+    );
+    assert.equal(
+      caseOnlyRelationTo.status,
+      200,
+      "a relationTo differing only by letter case from the real entity \"Deal\" must be accepted, not rejected as RELATION_TARGET_NOT_FOUND",
+    );
 
     const toEnum = await fetch(`${baseUrl}/api/projects/${project.id}/entities/${entityName}/fields/${fieldName}/type`, {
       method: "PATCH",

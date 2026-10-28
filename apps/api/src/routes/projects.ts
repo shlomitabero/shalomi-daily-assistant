@@ -3548,7 +3548,12 @@ export function createProjectsRouter(
       if (!parsed.success) {
         throw new HttpError(400, formatValidationError(parsed.error), "VALIDATION_ERROR");
       }
-      if (parsed.data.type === "relation" && !project.spec.entities.some((e) => e.name === parsed.data.relationTo)) {
+      // Round 1196: same case-insensitive tolerance, same reason, as the
+      // identical check in the POST .../fields route just above.
+      if (
+        parsed.data.type === "relation" &&
+        !project.spec.entities.some((e) => e.name === parsed.data.relationTo || e.name.toLowerCase() === parsed.data.relationTo?.toLowerCase())
+      ) {
         throw new HttpError(400, `"${parsed.data.relationTo}" is not an entity in this project`, "RELATION_TARGET_NOT_FOUND");
       }
       const idempotencyKey = req.header("X-Idempotency-Key") || undefined;
@@ -4200,7 +4205,21 @@ export function createProjectsRouter(
       if (!parsed.success) {
         throw new HttpError(400, formatValidationError(parsed.error), "VALIDATION_ERROR");
       }
-      if (parsed.data.type === "relation" && !project.spec.entities.some((e) => e.name === parsed.data.relationTo)) {
+      // Round 1196: case-insensitive, mirroring findEntity's own round-1162
+      // fallback -- this route's relationTo dropdown is populated from the
+      // client's own `allEntities`, which can go stale by letter case alone
+      // if a DIFFERENT browser tab/collaborator renames the target entity
+      // (a supported, case-only-safe live action, see migrate.ts) between
+      // this form being opened and submitted; this exact client-side race
+      // is otherwise blocked by this file's own cross-entity busy-gating
+      // (anyEntityOrAddBusy in App.tsx), but that gating has no visibility
+      // across separate tabs/sessions, so the server's own check still
+      // needs this same tolerance every other relationTo-resolution call
+      // site in this app already has (rounds 1159-1188).
+      if (
+        parsed.data.type === "relation" &&
+        !project.spec.entities.some((e) => e.name === parsed.data.relationTo || e.name.toLowerCase() === parsed.data.relationTo?.toLowerCase())
+      ) {
         throw new HttpError(400, `"${parsed.data.relationTo}" is not an entity in this project`, "RELATION_TARGET_NOT_FOUND");
       }
       const idempotencyKey = req.header("X-Idempotency-Key") || undefined;
