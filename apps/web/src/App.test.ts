@@ -5028,6 +5028,63 @@ test("App's checkMyRole re-derives myRole from a fresh listCollaborators call, i
   assert.equal(stateMissing.role, "editor", "falls back to 'editor' if this account's own collaborator entry is missing, mirroring openExistingProject's own fallback");
 });
 
+/**
+ * Round 1173: this poll effect's own doc comment explicitly claims it
+ * "mirrors the WhatsApp-unread/failing-automations polls above (same
+ * immediate-check-then-interval shape)" -- but until this round, the
+ * implementation only ever called checkMyRole() inside setInterval's
+ * first tick, never immediately on mount/restart like its two named
+ * siblings actually do. The regex-extraction test above only pulls out
+ * checkMyRole's own inner function body, so it structurally cannot see
+ * whether the surrounding effect calls it immediately; this test extracts
+ * the whole effect callback instead and proves setMyRole is already
+ * updated before the (stubbed, never-fired) interval callback would ever
+ * run -- the same "calls its own poll function before scheduling the
+ * interval" shape the other two polls already pass.
+ */
+test("App's checkMyRole poll effect calls checkMyRole immediately on mount, not just on the first interval tick", async () => {
+  const appSrc = readFileSync(new URL("./App.tsx", import.meta.url), "utf8");
+  const effectMatch = appSrc.match(
+    /useEffect\(\(\) => \{\n( {4}if \(!project \|\| !user \|\| project\.ownerId === user\.id\) return;[\s\S]*?)\n {2}\}, \[project\?\.id, project\?\.ownerId, user\?\.id\]\);\n/,
+  );
+  assert.ok(effectMatch, "expected to find the myRole poll useEffect in App.tsx");
+  const { code } = transformSync(`(() => {\n${effectMatch![1]}\n})`, { loader: "ts" });
+
+  let intervalScheduled = false;
+  const state: { role: unknown } = { role: "untouched" };
+  const effectBody = new Function(
+    "project",
+    "user",
+    "listCollaborators",
+    "setMyRole",
+    "setInterval",
+    "MY_ROLE_POLL_INTERVAL_MS",
+    `return ${code};`,
+  )(
+    { id: "project-1", ownerId: "owner-1" },
+    { id: "collaborator-1" },
+    async () => ({ collaborators: [{ userId: "collaborator-1", role: "viewer" }] }),
+    (v: unknown) => (state.role = v),
+    () => {
+      intervalScheduled = true;
+      return 0;
+    },
+    45_000,
+  ) as () => () => void;
+
+  effectBody();
+  // listCollaborators above resolves immediately (no real network/timer),
+  // so one microtask flush is enough for checkMyRole's own promise chain
+  // to finish -- no fake timer advance, and the stubbed setInterval above
+  // never actually invokes its callback, so this can only pass if
+  // checkMyRole() was called directly, not just scheduled for later.
+  await Promise.resolve();
+  await Promise.resolve();
+
+  assert.equal(state.role, "viewer", "checkMyRole must have already run and set myRole before any interval tick fires");
+  assert.equal(intervalScheduled, true, "the interval must still be scheduled for subsequent re-checks, in addition to the immediate one");
+});
+
 test("App's checkUnread reads tRef.current fresh on every tick instead of closing over a stale `t` from whenever the poll effect last (re)started", async () => {
   // Round 592 regression test: useTranslation()'s `t` is a brand-new closure
   // on every language change, but the poll effect that owns checkUnread only

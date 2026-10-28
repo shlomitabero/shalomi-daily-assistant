@@ -1289,6 +1289,7 @@ function AppContent() {
       }
     }
 
+    checkMyRole();
     intervalId = setInterval(checkMyRole, MY_ROLE_POLL_INTERVAL_MS);
     return () => {
       cancelled = true;
