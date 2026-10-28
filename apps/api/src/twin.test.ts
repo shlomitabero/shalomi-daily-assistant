@@ -1150,6 +1150,54 @@ test("computeBusinessTwin reports a boolean field's TRUE/FALSE value distributio
 });
 
 /**
+ * Round 1134: before repository.ts's rowToRecord fix, a boolean field
+ * left out of insertRecord round-tripped as `false` (Boolean(null)), so a
+ * record that was never actually answered got silently folded into the
+ * FALSE bucket here -- computeEnumDistributionObservations' own `raw ===
+ * null` skip (written for exactly this case) was simply unreachable for
+ * booleans. Confirms a never-answered "paid" record is excluded from the
+ * breakdown entirely, the same way it already is for an enum field left
+ * unset, rather than inflating the FALSE count.
+ */
+test("computeBusinessTwin's boolean distribution excludes a never-answered (null) record entirely, instead of folding it into FALSE", () => {
+  const orderProject: Project = {
+    ...project,
+    description: "An online store with orders",
+    spec: {
+      ...project.spec,
+      entities: [
+        {
+          name: "Order",
+          label: "Orders",
+          fields: [
+            { name: "customer", type: "text", required: true },
+            { name: "paid", label: "Paid", type: "boolean", required: false },
+          ],
+        },
+      ],
+    },
+  };
+  const db = openDatabase(":memory:");
+  applyMigrations(db, orderProject.id, orderProject.spec);
+  const order = orderProject.spec.entities[0];
+  insertRecord(db, orderProject.id, order, { customer: "Dana", paid: true });
+  insertRecord(db, orderProject.id, order, { customer: "Yossi", paid: true });
+  insertRecord(db, orderProject.id, order, { customer: "Noa", paid: false });
+  insertRecord(db, orderProject.id, order, { customer: "Amir" }); // "paid" never answered
+
+  const twin = computeBusinessTwin(db, orderProject);
+  const distribution = twin.jumpableObservations.find((o) => o.text.includes("Paid"));
+  assert.ok(distribution, `expected a boolean-distribution observation, got: ${JSON.stringify(twin.jumpableObservations)}`);
+  assert.match(distribution!.text, /2 "TRUE".*1 "FALSE"/, "the never-answered record must not inflate either bucket");
+  const dist = twin.distributions.find((d) => d.fieldName === "paid");
+  assert.deepEqual(
+    dist!.breakdown.map((b) => b.count),
+    [2, 1],
+    "exactly 3 of the 4 records must be counted -- the never-answered one excluded, not folded into FALSE",
+  );
+});
+
+/**
  * New: the structured sibling of the prose distribution above -- the
  * dashboard view renders a real bar chart from `twin.distributions`
  * directly, rather than re-parsing the `text` sentence, so the raw

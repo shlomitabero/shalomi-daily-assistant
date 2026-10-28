@@ -2657,6 +2657,69 @@ test("EntityPanel renders a filter dropdown for a boolean field too, offering Ye
 });
 
 /**
+ * Round 1134: repository.ts's rowToRecord no longer coerces a genuinely
+ * never-answered boolean field to `false` -- it now round-trips as a real
+ * `null` (see repository.test.ts's own round-1134 test). The generic
+ * filter-matching the test just above exercises (`String(r[fieldName] ??
+ * "") === value`) would turn that `null` into "", which matches neither
+ * of this field's own two filter options ("true"/"false"), silently
+ * hiding a never-answered record from BOTH "Yes" and "No" -- a regression
+ * against entityFormatting.ts's own groupRecordsByField, which
+ * deliberately exposes only two groups for a boolean and already sorts a
+ * null into "No" via its own Boolean()/`!value` coercion. This confirms
+ * the filter stays consistent with that: a never-answered record must
+ * still surface under "No".
+ */
+test("EntityPanel's boolean filter still matches a never-answered (null) record under \"No\", not neither option", async () => {
+  await withJsdom(async () => {
+    const store: EntityRecord[] = [
+      { id: 1, name: "Write report", status: "todo", isUrgent: true },
+      { id: 2, name: "Fix outage", status: "todo", isUrgent: false },
+      { id: 3, name: "Ship release", status: "done", isUrgent: null },
+    ];
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = mockTaskRecordsFetch(store) as typeof fetch;
+    try {
+      render(
+        React.createElement(
+          ThemeProvider,
+          null,
+          React.createElement(
+            LanguageProvider,
+            null,
+            React.createElement(EntityPanel, {
+              projectId: "proj1",
+              userId: "user1",
+              entity: TASK_WITH_BOOLEAN_ENTITY,
+              allEntities: [TASK_WITH_BOOLEAN_ENTITY],
+              onEntityRenamed: () => {},
+            }),
+          ),
+        ),
+      );
+      await waitForCondition(() => document.querySelectorAll("table tbody tr").length === 3);
+
+      const urgentSelect = document.querySelectorAll(".entity-status-filter")[1] as HTMLSelectElement;
+
+      fireEvent.change(urgentSelect, { target: { value: "false" } });
+      await waitForCondition(() => document.querySelectorAll("table tbody tr").length === 2);
+      assert.match(document.querySelector("table tbody")!.textContent ?? "", /Fix outage/);
+      assert.match(
+        document.querySelector("table tbody")!.textContent ?? "",
+        /Ship release/,
+        "a never-answered (null) boolean record must still match the \"No\" filter, same as an explicit false",
+      );
+
+      fireEvent.change(urgentSelect, { target: { value: "true" } });
+      await waitForCondition(() => document.querySelectorAll("table tbody tr").length === 1);
+      assert.match(document.querySelector("table tbody")!.textContent ?? "", /Write report/);
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+});
+
+/**
  * New in this round: a boolean field's table cell rendered as a bare ✓ or
  * – glyph with no aria-label -- unlike every other field type Cell renders
  * (an enum's real label text, a formatted date/number, a relation's

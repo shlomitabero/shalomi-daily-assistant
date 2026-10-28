@@ -305,7 +305,7 @@ test("a value containing a comma or quote is correctly CSV-escaped", () => {
   assert.equal(lines[1], '"Says ""hi"", bye",חדש');
 });
 
-test("a boolean field renders as Excel's own TRUE/FALSE convention -- and unlike every other field type, an unset boolean is never left blank", () => {
+test("a boolean field renders as Excel's own TRUE/FALSE convention -- and, since round 1134, an unset boolean renders blank like every other field type", () => {
   // Every other field type (text, enum, number, relation) already has its
   // own test above, but this backup.ts CSV writer is a standalone copy of
   // entityFormatting.ts's formatting logic (see the file's own top comment
@@ -314,14 +314,14 @@ test("a boolean field renders as Excel's own TRUE/FALSE convention -- and unlike
   //
   // `false` is falsy but isn't null/undefined/"", so it reaches the
   // boolean branch and renders "FALSE" rather than the empty-value guard.
-  // More surprising: an omitted boolean field renders "FALSE" too, not
-  // blank -- packages/db/src/repository.ts's rowToRecord coerces a
+  // Before round 1134, an omitted boolean field also rendered "FALSE",
+  // not blank -- packages/db/src/repository.ts's rowToRecord coerced a
   // boolean column's stored NULL through `Boolean(value)`, so a never-set
-  // boolean is indistinguishable from an explicit `false` by the time it
-  // reaches this CSV writer at all. Confirmed empirically before writing
-  // this assertion (an initial version of this test assumed the unset
-  // case renders blank, like other field types, and failed against the
-  // real code -- see round 117's roadmap entry).
+  // boolean was indistinguishable from an explicit `false` by the time it
+  // reached this CSV writer. Round 1134 fixed rowToRecord to preserve a
+  // real NULL for booleans too, letting this file's own `value === null`
+  // empty-value guard (written for every other field type already) fire
+  // for a boolean for the first time.
   const boolProject: Project = {
     ...project,
     spec: {
@@ -350,7 +350,7 @@ test("a boolean field renders as Excel's own TRUE/FALSE convention -- and unlike
   // in reverse insertion order.
   const lines = taskCsv.split("\r\n");
   assert.equal(lines[0], "כותרת,בוצע");
-  assert.equal(lines[1], "Never set,FALSE");
+  assert.equal(lines[1], "Never set,", "a never-answered boolean must render blank, distinguishable from an explicit FALSE");
   assert.equal(lines[2], "Not finished,FALSE");
   assert.equal(lines[3], "Finished,TRUE");
 });

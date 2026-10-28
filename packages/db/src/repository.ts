@@ -172,7 +172,26 @@ function rowToRecord(entity: Entity, row: Record<string, unknown>): EntityRecord
   const record: EntityRecord = { id: row.id as number, createdAt: row.createdAt as string };
   for (const field of entity.fields) {
     const value = getRowValue(row, field.name);
-    record[field.name] = field.type === "boolean" ? Boolean(value) : (value as string | number | null);
+    // Round 1134: every other field type below passes a real stored NULL
+    // straight through -- boolean was the one type that ran every value
+    // through Boolean(value) unconditionally, so Boolean(null) silently
+    // became `false`, indistinguishable from an explicitly unchecked box.
+    // NULL is a routine, reachable state here, not a hypothetical: a
+    // refine that adds a boolean field to an entity with existing rows
+    // (migrate.ts's own "NOT NULL deliberately omitted" column-add) leaves
+    // every pre-existing record with a real NULL until someone edits it.
+    // Every downstream consumer that renders a boolean as text already
+    // has its own `value === null` guard written and ready
+    // (entityFormatting.ts/backup.ts's fieldDisplayValue, twin.ts's
+    // computeEnumDistributionObservations, automations.ts's
+    // interpolateTemplate) -- that guard was simply unreachable for
+    // booleans specifically, since a real null never survived this far.
+    // Treats getRowValue's own "column not found at all" `undefined`
+    // (its doc comment above) the same as a stored NULL -- both mean "no
+    // real value," and codegen.test.ts's round-117 test already exercised
+    // this exact missing-column shape for a boolean.
+    record[field.name] =
+      field.type === "boolean" ? (value === null || value === undefined ? null : Boolean(value)) : (value as string | number | null);
   }
   return record;
 }

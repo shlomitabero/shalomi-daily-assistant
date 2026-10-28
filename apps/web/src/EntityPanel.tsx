@@ -2526,7 +2526,24 @@ export function EntityPanel({
   const visibleRecords = useMemo(() => {
     const matched = records.filter((r) => matchesSearch(r, entity.fields, search, allEntities, relatedRecords, lang));
     const filtered = matched.filter((r) =>
-      Object.entries(fieldFilters).every(([fieldName, value]) => !value || String(r[fieldName] ?? "") === value),
+      Object.entries(fieldFilters).every(([fieldName, value]) => {
+        if (!value) return true;
+        // Round 1134: a boolean field's stored value can now be a real
+        // `null` (repository.ts's rowToRecord no longer coerces an
+        // unanswered boolean to `false`) -- the generic `String(r[fieldName]
+        // ?? "") === value` below would turn that into "", which never
+        // matches either of this field's own two filter options ("true"/
+        // "false"), silently hiding a never-set record from BOTH the "Yes"
+        // and the "No" filter. groupRecordsByField's own boolean branch
+        // (entityFormatting.ts) deliberately exposes only two groups, never
+        // a third "unanswered" bucket -- this filter, offering the exact
+        // same two options, must keep sorting an unanswered record into
+        // "No" to match that same convention, so coerces through Boolean()
+        // first, exactly like that function's own falsy branch does.
+        const field = entity.fields.find((f) => f.name === fieldName);
+        if (field?.type === "boolean") return String(Boolean(r[fieldName])) === value;
+        return String(r[fieldName] ?? "") === value;
+      }),
     );
     return sortRecordsMulti(filtered, sortKeys, entity.fields, allEntities, relatedRecords);
   }, [records, entity.fields, search, fieldFilters, sortKeys, allEntities, relatedRecords, lang]);

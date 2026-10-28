@@ -2694,7 +2694,7 @@ test("the exported EntityView's table toolbar has one filter dropdown per qualif
   // The filter must actually apply to visibleRecords, not just render inert dropdowns
   assert.match(
     entityViewJsx,
-    /Object\.entries\(fieldFilters\)\.every\(\(\[fieldName, value\]\) => !value \|\| String\(r\[fieldName\] \?\? ""\) === value\)/,
+    /Object\.entries\(fieldFilters\)\.every\(\(\[fieldName, value\]\) => \{[\s\S]*?String\(r\[fieldName\] \?\? ""\) === value;\s*\}\)/,
   );
   // The exported CSS carries the matching filter-dropdown styling too
   const stylesCss = files.find((f) => f.path === "web/src/styles.css")!.content;
@@ -12795,36 +12795,58 @@ test("the exported server.js's own parseColumnOrdersQueryParam defensively falls
 });
 
 // Round 117 found that apps/api/src/backup.ts's boolean CSV rendering was
-// completely untested -- and that an *omitted* boolean field renders
-// "FALSE", not blank, because rowToRecord coerces a stored NULL through
-// Boolean(value) before the CSV writer ever sees it. This exported app's
-// server.js has its own independent copy of that exact same rowToRecord +
-// backupFieldDisplayValue pair (see codegen.ts's template), so the same
-// gap and the same invariant apply here too -- confirmed by extracting and
-// executing the real generated functions (not a reimplementation), the
-// same technique the buildZip test below uses, rather than the heavier
-// spawn-a-real-server approach the /api/backup integration test above
-// uses (unnecessary here since no HTTP or real SQLite round-trip is
-// involved).
-test("the exported server.js's own rowToRecord + backupFieldDisplayValue render a boolean as TRUE/FALSE, and an omitted boolean as FALSE rather than blank", () => {
+// completely untested -- and that an *omitted* boolean field rendered
+// "FALSE", not blank, because rowToRecord coerced a stored NULL through
+// Boolean(value) before the CSV writer ever saw it. That was documented
+// here as the existing invariant, not flagged as wrong -- round 1134
+// fixed the actual bug (packages/db/src/repository.ts's own rowToRecord,
+// ported here to this exported app's independent copy), so this test now
+// asserts the corrected behavior: an omitted/NULL boolean round-trips as
+// a real `null`, letting backupFieldDisplayValue's own already-existing
+// `value === null` guard render it blank, distinguishable from an
+// explicit, answered "FALSE". Confirmed by extracting and executing the
+// real generated functions (not a reimplementation), the same technique
+// the buildZip test below uses, rather than the heavier spawn-a-real-
+// server approach the /api/backup integration test above uses
+// (unnecessary here since no HTTP or real SQLite round-trip is involved).
+//
+// Round 1134 also found this extraction itself had never actually worked:
+// rowToRecord calls getRowValue internally, but this test never extracted
+// getRowValue's own source alongside it, so `new Function` always threw
+// "getRowValue is not defined" the moment rowToRecord ran -- in every
+// environment, on every run, since round 117. It was invisible because
+// this file's own pre-existing SIGKILL truncation (task #55 in this
+// routine's own tracking) has apparently always killed the suite before
+// or at this exact test in every full run, so its real per-test result
+// was never actually observed. Fixed by extracting getRowValue too.
+test("the exported server.js's own rowToRecord + backupFieldDisplayValue render a boolean as TRUE/FALSE, and an omitted/NULL boolean as blank (null), distinguishable from an explicit FALSE", () => {
   const serverJs = generateExportFiles(project).find((f) => f.path === "server.js")!.content;
+  const getRowValueSrc = serverJs.match(/function getRowValue\(row, fieldName\) \{[\s\S]*?\n\}\n/)?.[0];
   const rowToRecordSrc = serverJs.match(/function rowToRecord\(entity, row\) \{[\s\S]*?\n\}\n/)?.[0];
   const backupFieldDisplayValueSrc = serverJs.match(/function backupFieldDisplayValue\(field, value, recordIndexByEntity\) \{[\s\S]*?\n\}\n/)?.[0];
+  assert.ok(getRowValueSrc, "expected to find getRowValue in generated server.js");
   assert.ok(rowToRecordSrc, "expected to find rowToRecord in generated server.js");
   assert.ok(backupFieldDisplayValueSrc, "expected to find backupFieldDisplayValue in generated server.js");
 
   const { rowToRecord, backupFieldDisplayValue } = new Function(
-    `${rowToRecordSrc}\n${backupFieldDisplayValueSrc}\nreturn { rowToRecord, backupFieldDisplayValue };`,
+    `${getRowValueSrc}\n${rowToRecordSrc}\n${backupFieldDisplayValueSrc}\nreturn { rowToRecord, backupFieldDisplayValue };`,
   )();
 
   const entity = { name: "Task", fields: [{ name: "done", type: "boolean" }] };
   const trueRecord = rowToRecord(entity, { id: 1, createdAt: "", done: 1 });
   const falseRecord = rowToRecord(entity, { id: 2, createdAt: "", done: 0 });
-  const unsetRecord = rowToRecord(entity, { id: 3, createdAt: "" }); // no "done" column value at all
+  const nullRecord = rowToRecord(entity, { id: 3, createdAt: "", done: null }); // a real stored SQL NULL
+  const unsetRecord = rowToRecord(entity, { id: 4, createdAt: "" }); // no "done" column value at all
+
+  assert.equal(trueRecord.done, true);
+  assert.equal(falseRecord.done, false);
+  assert.equal(nullRecord.done, null, "a stored NULL must round-trip as a real null, not be coerced to false");
+  assert.equal(unsetRecord.done, null, "a column missing from the row entirely must also round-trip as null");
 
   assert.equal(backupFieldDisplayValue(entity.fields[0], trueRecord.done, {}), "TRUE");
   assert.equal(backupFieldDisplayValue(entity.fields[0], falseRecord.done, {}), "FALSE");
-  assert.equal(backupFieldDisplayValue(entity.fields[0], unsetRecord.done, {}), "FALSE");
+  assert.equal(backupFieldDisplayValue(entity.fields[0], nullRecord.done, {}), "", "a never-answered boolean must render blank in the backup CSV, not FALSE");
+  assert.equal(backupFieldDisplayValue(entity.fields[0], unsetRecord.done, {}), "");
 });
 
 /**

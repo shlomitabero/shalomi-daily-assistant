@@ -504,7 +504,15 @@ function rowToRecord(entity, row) {
   const record = { id: row.id, createdAt: row.createdAt };
   for (const field of entity.fields) {
     const value = getRowValue(row, field.name);
-    record[field.name] = field.type === "boolean" ? Boolean(value) : value;
+    // Round 1134: mirrors the live preview's own repository.ts rowToRecord
+    // fix -- every other field type below passes a real stored NULL
+    // through unchanged, but boolean ran every value through Boolean(value)
+    // unconditionally, so Boolean(null) silently became false for a field
+    // never actually answered, indistinguishable from an explicit uncheck
+    // in this app's own CSV/backup export. Treats a column missing from
+    // the row entirely (getRowValue's undefined fallback above) the same
+    // as a stored NULL -- both mean "no real value".
+    record[field.name] = field.type === "boolean" ? (value === null || value === undefined ? null : Boolean(value)) : value;
   }
   return record;
 }
@@ -5150,7 +5158,17 @@ export function EntityView({ entity, highlightRecordId, onHighlightHandled, onJu
   const visibleRecords = useMemo(() => {
     const matched = records.filter((r) => matchesSearch(r, entity.fields, search, relatedRecords));
     const filtered = matched.filter((r) =>
-      Object.entries(fieldFilters).every(([fieldName, value]) => !value || String(r[fieldName] ?? "") === value),
+      Object.entries(fieldFilters).every(([fieldName, value]) => {
+        if (!value) return true;
+        // Round 1134: mirrors the live preview's own EntityPanel.tsx fix --
+        // a boolean field's stored value can now be a real null, which the
+        // generic String(r[fieldName] ?? "") === value below would turn
+        // into "", matching neither of this field's two filter options and
+        // silently hiding a never-set record from both "Yes" and "No".
+        const field = entity.fields.find((f) => f.name === fieldName);
+        if (field && field.type === "boolean") return String(Boolean(r[fieldName])) === value;
+        return String(r[fieldName] ?? "") === value;
+      }),
     );
     return sortRecordsMulti(filtered, sortKeys, entity.fields, relatedRecords);
   }, [records, entity.fields, search, fieldFilters, sortKeys, relatedRecords]);

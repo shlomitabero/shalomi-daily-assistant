@@ -111,6 +111,31 @@ test("insertRecord rejects a boolean field value outside the true/false allowlis
 });
 
 /**
+ * Round 1134: rowToRecord used to run every boolean value through
+ * Boolean(value) unconditionally, so a genuinely never-answered field (a
+ * real stored SQL NULL -- coerceValue's own isEmpty check stores NULL,
+ * not a default false, for an optional boolean left out of the insert)
+ * silently round-tripped as `false`, indistinguishable from a box someone
+ * actually unchecked. NULL is routine here, not a hypothetical: a refine
+ * that adds a boolean field to an entity with existing rows (see
+ * migrate.ts's own "NOT NULL deliberately omitted" column-add comment)
+ * leaves every pre-existing record with exactly this real NULL until
+ * someone edits it. Downstream consumers (CSV/backup export, the Business
+ * Twin's enum-distribution breakdown, WhatsApp/email template
+ * interpolation) each already had their own `value === null` guard
+ * written and ready -- it was simply unreachable for booleans
+ * specifically, since this function never let a real null survive this
+ * far.
+ */
+test("insertRecord then getRecord round-trips a never-set optional boolean field as a real null, not false", () => {
+  const db = setup();
+  const created = insertRecord(db, "proj1", customer, { name: "Alice", status: "New" }); // vip omitted entirely
+  assert.equal(created.vip, null, "an omitted optional boolean must round-trip as null, not false");
+  const fetched = getRecord(db, "proj1", customer, created.id as number);
+  assert.equal(fetched!.vip, null, "a fresh read must also see null, not just the insert's own return value");
+});
+
+/**
  * Round 855: coerceValue's default branch (text/longtext/file -- every
  * field type not covered by an explicit `case` above) used to have no
  * rejection path at all, unlike every other branch in this same function
@@ -237,10 +262,15 @@ test("updateRecord only validates fields the caller actually supplies, not every
 });
 
 test("updateRecord doesn't re-require a field that's now required but was optional when an existing row was created", () => {
-  // A separate, boolean-free entity -- a boolean's own "unset" value
-  // round-trips through rowToRecord's Boolean() coercion as `false`, which
-  // never hits coerceValue's required check in the first place (only
-  // undefined/null/"" do), so it wouldn't actually exercise this bug.
+  // A separate, boolean-free entity. Before round 1134, a boolean's own
+  // "unset" value round-tripped through rowToRecord's unconditional
+  // Boolean() coercion as `false` rather than a real null, so it wouldn't
+  // have exercised this bug (coerceValue's required check only fires on
+  // undefined/null/""). rowToRecord now preserves a genuinely unset
+  // boolean as null (see repository.test.ts's own round-1134 test above),
+  // so that's no longer a reason to avoid one here -- kept as a plain text
+  // field anyway, since this test has nothing to do with booleans
+  // specifically.
   const task: Entity = {
     name: "Task",
     fields: [
