@@ -15459,6 +15459,60 @@ test("PATCH .../name and PATCH .../description share ONE combined rate-limit bud
   });
 });
 
+/**
+ * Round 1179: `DELETE /projects/:id` -- this route's own doc comment calls
+ * it "the single most destructive route in the app" -- had NO volumetric
+ * throttle at all, unlike every other mutating route in this file
+ * (rounds 1052/1053/1069/1070/1082/1086/1109/1110/1146/1153/1163/1169/
+ * 1171/1172 already closed this exact "unguarded mutating route" gap
+ * everywhere else it was found). Gets its own dedicated budget rather
+ * than sharing projectCreationRateLimiter's: creating and deleting a
+ * project are different real questions with different per-call costs
+ * (this route also tears down a live WhatsApp Web socket and walks the
+ * project's uploads directory on disk). Uses /projects/from-template
+ * (cheap and unthrottled) to generate the projects this test then
+ * deletes, isolating the test to projectDeletionRateLimiter alone.
+ */
+test("DELETE /projects/:id has its own per-user rate limit: the 21st delete is rejected with 429, while a different account is unaffected", async () => {
+  await withServer(async (baseUrl) => {
+    const token = await signup(baseUrl, "rate-limit-delete@example.com");
+
+    for (let i = 0; i < 20; i++) {
+      const createRes = await fetch(`${baseUrl}/api/projects/from-template`, {
+        method: "POST",
+        headers: authHeaders(token),
+        body: JSON.stringify({ templateId: "crm" }),
+      });
+      const { project } = (await createRes.json()) as { project: { id: string } };
+      const deleteRes = await fetch(`${baseUrl}/api/projects/${project.id}`, { method: "DELETE", headers: authHeaders(token) });
+      assert.notEqual(deleteRes.status, 429, `delete ${i + 1} of 20 (within the limit) must not be rate-limited yet`);
+    }
+
+    const extraCreateRes = await fetch(`${baseUrl}/api/projects/from-template`, {
+      method: "POST",
+      headers: authHeaders(token),
+      body: JSON.stringify({ templateId: "crm" }),
+    });
+    const { project: extraProject } = (await extraCreateRes.json()) as { project: { id: string } };
+    const blocked = await fetch(`${baseUrl}/api/projects/${extraProject.id}`, { method: "DELETE", headers: authHeaders(token) });
+    assert.equal(blocked.status, 429);
+    assert.equal(((await blocked.json()) as { code?: string }).code, "RATE_LIMITED");
+
+    // A completely different account must get its own fresh allowance --
+    // keyed by user id, not IP, so one account exhausting its own budget
+    // must never collaterally block an unrelated account.
+    const otherToken = await signup(baseUrl, "rate-limit-delete-other@example.com");
+    const otherCreateRes = await fetch(`${baseUrl}/api/projects/from-template`, {
+      method: "POST",
+      headers: authHeaders(otherToken),
+      body: JSON.stringify({ templateId: "crm" }),
+    });
+    const { project: otherProject } = (await otherCreateRes.json()) as { project: { id: string } };
+    const otherRes = await fetch(`${baseUrl}/api/projects/${otherProject.id}`, { method: "DELETE", headers: authHeaders(otherToken) });
+    assert.equal(otherRes.status, 204, "a different account must not be collaterally blocked by another account's own rate limit");
+  });
+});
+
 test("POST .../calendar-feed-token/regenerate is rate-limited per authenticated account: the 31st regenerate is rejected with 429, while a different account is unaffected", async () => {
   await withServer(async (baseUrl) => {
     const ownerToken = await signup(baseUrl, "rate-feed-token1@example.com");

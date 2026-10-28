@@ -1576,6 +1576,36 @@ export function createProjectsRouter(
   });
 
   /**
+   * Round 1179: `DELETE /projects/:id` -- this file's own doc comment on
+   * that route already calls it "the single most destructive route in the
+   * app" -- was the one mutating route in this entire file with NO
+   * volumetric throttle at all, the exact "unguarded mutating route"
+   * pattern rounds 1163/1169/1171/1172/1153 already closed everywhere
+   * else they found it, just missed on arguably the highest-cost route of
+   * all. Unlike projectCreationRateLimiter above (which bounds how many
+   * NEW project rows an account can create), this route's own real cost
+   * is different and arguably higher per call: a genuine network
+   * round-trip tearing down a live WhatsApp Web socket
+   * (`whatsapp.disconnect`), a full cascading DB delete of every table
+   * the project owns, and a filesystem walk deleting its uploads
+   * directory -- so this gets its own dedicated budget ("how many whole
+   * projects can this account irreversibly delete per window"), not a
+   * shared one with creation, matching this file's own established
+   * sharing-vs-dedicated discipline (round 1082's doc comment): share
+   * only when two routes answer the identical real budget question,
+   * dedicate when the per-call cost and the question genuinely differ.
+   * Capped lower than creation's 30/15min given the heavier per-call
+   * cost, while still well above what a person clicking delete on
+   * several real projects in a row would ever hit.
+   */
+  const projectDeletionRateLimiter = createRateLimiter({
+    windowMs: 15 * 60 * 1000,
+    max: 20,
+    keyGenerator: (req) => req.userId ?? "unknown",
+    message: "Too many project deletion requests. Please try again later.",
+  });
+
+  /**
    * /build, /refine, and /answers each read `project.spec` once at the
    * start of the request, then spend real time (an AI/heuristic
    * spec-generation call, and for /build and /refine also a migration)
@@ -1961,6 +1991,7 @@ export function createProjectsRouter(
    */
   router.delete(
     "/projects/:id",
+    projectDeletionRateLimiter,
     asyncRoute(async (req, res) => {
       const idempotencyKey = req.header("X-Idempotency-Key") || undefined;
       const { status } = await withIdempotency(db, idempotencyKey, req.userId!, `DELETE /projects/${req.params.id}`, async () => {
