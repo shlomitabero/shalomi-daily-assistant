@@ -16716,6 +16716,47 @@ test("the exported App.jsx's entity-tab bar reports its selected tab via role=ta
 });
 
 /**
+ * Round 1150: ports the live Forge AI preview's own round-1150 fix -- round
+ * 1144's fix just above added role="tablist"/"tab"/aria-selected, but
+ * never the WAI-ARIA Tabs pattern's own required keyboard model (roving
+ * tabindex, Arrow/Home/End navigation) or its aria-controls/role="tabpanel"
+ * tab<->panel linkage, in either App.tsx or this exported app's own
+ * duplicated copy.
+ */
+test("the exported App.jsx's entity-tab bar implements the full WAI-ARIA Tabs keyboard model (roving tabindex, arrow/Home/End navigation, aria-controls)", () => {
+  const files = generateExportFiles(project);
+  const appJsx = files.find((f) => f.path === "web/src/App.jsx")!.content;
+
+  const entityTabsBlock = appJsx.match(/<nav role="tablist">[\s\S]*?<\/nav>/);
+  assert.ok(entityTabsBlock, "expected the entity-tab bar's own <nav> block");
+  assert.match(
+    entityTabsBlock![0],
+    /tabIndex=\{e\.name === active \? 0 : -1\}/,
+    "only the selected tab must be a normal Tab stop (roving tabindex) -- every other tab must be -1",
+  );
+  assert.match(entityTabsBlock![0], /aria-controls=\{`entity-tabpanel-\$\{e\.name\}`\}/, "each tab must declare which panel it controls");
+  assert.match(entityTabsBlock![0], /onKeyDown=\{/, "the tab button must handle keyboard navigation");
+  for (const key of ["ArrowLeft", "ArrowRight", "Home", "End"]) {
+    assert.ok(entityTabsBlock![0].includes(`"${key}"`), `the tab bar's own keyboard handler must recognize ${key}`);
+  }
+});
+
+/** Round 1150: see the keyboard-model test above for the full rationale -- this is the pattern's other missing half, the tab<->panel programmatic link. */
+test("the exported App.jsx's active entity View is wrapped in a real tabpanel, linked back to its own tab via aria-labelledby", () => {
+  const files = generateExportFiles(project);
+  const appJsx = files.find((f) => f.path === "web/src/App.jsx")!.content;
+
+  const tabpanelBlock = appJsx.match(/<div id=\{`entity-tabpanel-\$\{activeEntity\.name\}`\}[^>]*>/);
+  assert.ok(tabpanelBlock, "expected a tabpanel wrapper around the active entity's View");
+  assert.match(tabpanelBlock![0], /role="tabpanel"/, "the wrapper must carry role=\"tabpanel\"");
+  assert.match(
+    tabpanelBlock![0],
+    /aria-labelledby=\{`entity-tab-\$\{activeEntity\.name\}`\}/,
+    "the tabpanel must point back at its own tab's id, the tab pattern's own required reverse link",
+  );
+});
+
+/**
  * Round 1040: ports the live Forge AI preview's own App.tsx entity-tab-bar
  * disambiguation fix (EntitySchema only enforces uniqueness on an entity's
  * `name`, never its `label`) to the exported app's generated App.jsx --

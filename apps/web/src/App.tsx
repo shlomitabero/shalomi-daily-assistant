@@ -2812,8 +2812,11 @@ function AppContent() {
                 {orderedEntities.map((entity, entityTabIndex) => (
                   <span key={entity.name} className="tab-wrapper">
                     <button
+                      id={`entity-tab-${entity.name}`}
                       role="tab"
                       aria-selected={activeEntity === entity.name}
+                      aria-controls={`entity-tabpanel-${entity.name}`}
+                      tabIndex={activeEntity === entity.name ? 0 : -1}
                       className={
                         activeEntity === entity.name
                           ? "tab tab-active"
@@ -2833,6 +2836,30 @@ function AppContent() {
                         handleReorderEntityTab(entity.name);
                       }}
                       onClick={() => setActiveEntity(entity.name)}
+                      onKeyDown={(e) => {
+                        // Round 1150: round 1144 added role="tab"/aria-selected
+                        // but never the WAI-ARIA Tabs pattern's own roving-
+                        // tabindex keyboard model -- every tab sat in normal
+                        // Tab order with no arrow-key/Home/End navigation at
+                        // all, the exact behavior a screen-reader user
+                        // encountering role="tab" expects. Moves both focus
+                        // and selection together (the "automatic activation"
+                        // half of the pattern this nav's own plain onClick
+                        // already implies), wrapping at either end the same
+                        // way a carousel would, so ArrowRight on the last tab
+                        // returns to the first rather than doing nothing.
+                        if (e.key !== "ArrowLeft" && e.key !== "ArrowRight" && e.key !== "Home" && e.key !== "End") return;
+                        e.preventDefault();
+                        const currentIndex = orderedEntities.findIndex((candidate) => candidate.name === entity.name);
+                        let nextIndex = currentIndex;
+                        if (e.key === "ArrowRight") nextIndex = (currentIndex + 1) % orderedEntities.length;
+                        else if (e.key === "ArrowLeft") nextIndex = (currentIndex - 1 + orderedEntities.length) % orderedEntities.length;
+                        else if (e.key === "Home") nextIndex = 0;
+                        else if (e.key === "End") nextIndex = orderedEntities.length - 1;
+                        const nextEntity = orderedEntities[nextIndex];
+                        setActiveEntity(nextEntity.name);
+                        document.getElementById(`entity-tab-${nextEntity.name}`)?.focus();
+                      }}
                     >
                       {entityDisplayLabel(entity, entityTabLabelOccurrences)}
                       {entityCounts[entity.name] != null && (
@@ -2867,30 +2894,31 @@ function AppContent() {
               {project.spec.entities
                 .filter((e) => e.name === activeEntity)
                 .map((entity) => (
-                  <EntityPanel
-                    key={entity.name}
-                    projectId={project.id}
-                    entity={entity}
-                    allEntities={project.spec.entities}
-                    userId={user.id}
-                    onEntityRenamed={setProject}
-                    highlightRecordId={highlightRecordId}
-                    onHighlightHandled={() => setHighlightRecordId(null)}
-                    createPrefill={createPrefill}
-                    onCreatePrefillHandled={() => setCreatePrefill(null)}
-                    onJumpToRecord={(targetEntity, recordId) => {
-                      setActiveEntity(targetEntity);
-                      setHighlightRecordId(recordId);
-                    }}
-                    onSendWhatsApp={(phoneNumber) => {
-                      setWhatsappPrefillTo(phoneNumber);
-                      openPanel("whatsapp");
-                    }}
-                    onRecordCountChange={(entityName, count) =>
-                      setEntityCounts((prev) => (prev[entityName] === count ? prev : { ...prev, [entityName]: count }))
-                    }
-                    readOnly={myRole === "viewer"}
-                  />
+                  <div key={entity.name} id={`entity-tabpanel-${entity.name}`} role="tabpanel" aria-labelledby={`entity-tab-${entity.name}`}>
+                    <EntityPanel
+                      projectId={project.id}
+                      entity={entity}
+                      allEntities={project.spec.entities}
+                      userId={user.id}
+                      onEntityRenamed={setProject}
+                      highlightRecordId={highlightRecordId}
+                      onHighlightHandled={() => setHighlightRecordId(null)}
+                      createPrefill={createPrefill}
+                      onCreatePrefillHandled={() => setCreatePrefill(null)}
+                      onJumpToRecord={(targetEntity, recordId) => {
+                        setActiveEntity(targetEntity);
+                        setHighlightRecordId(recordId);
+                      }}
+                      onSendWhatsApp={(phoneNumber) => {
+                        setWhatsappPrefillTo(phoneNumber);
+                        openPanel("whatsapp");
+                      }}
+                      onRecordCountChange={(entityName, count) =>
+                        setEntityCounts((prev) => (prev[entityName] === count ? prev : { ...prev, [entityName]: count }))
+                      }
+                      readOnly={myRole === "viewer"}
+                    />
+                  </div>
                 ))}
             </div>
           </div>

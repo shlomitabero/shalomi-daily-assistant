@@ -8181,8 +8181,11 @@ export default function App() {
         {orderedEntities.map((e, entityTabIndex) => (
           <span key={e.name} className="tab-wrapper">
             <button
+              id={\`entity-tab-\${e.name}\`}
               role="tab"
               aria-selected={e.name === active}
+              aria-controls={\`entity-tabpanel-\${e.name}\`}
+              tabIndex={e.name === active ? 0 : -1}
               className={e.name === active ? "active" : dragOverEntityTab === e.name ? "drag-over" : ""}
               draggable
               onDragStart={() => setDraggedEntityTab(e.name)}
@@ -8196,6 +8199,19 @@ export default function App() {
                 handleReorderEntityTab(e.name);
               }}
               onClick={() => setActive(e.name)}
+              onKeyDown={(ev) => {
+                if (ev.key !== "ArrowLeft" && ev.key !== "ArrowRight" && ev.key !== "Home" && ev.key !== "End") return;
+                ev.preventDefault();
+                const currentIndex = orderedEntities.findIndex((candidate) => candidate.name === e.name);
+                let nextIndex = currentIndex;
+                if (ev.key === "ArrowRight") nextIndex = (currentIndex + 1) % orderedEntities.length;
+                else if (ev.key === "ArrowLeft") nextIndex = (currentIndex - 1 + orderedEntities.length) % orderedEntities.length;
+                else if (ev.key === "Home") nextIndex = 0;
+                else if (ev.key === "End") nextIndex = orderedEntities.length - 1;
+                const nextEntity = orderedEntities[nextIndex];
+                setActive(nextEntity.name);
+                document.getElementById(\`entity-tab-\${nextEntity.name}\`)?.focus();
+              }}
             >
               {entityDisplayLabel(e, entityTabLabelOccurrences)}
               {entityCounts[e.name] != null && <span className="tab-count">{entityCounts[e.name]}</span>}
@@ -8224,17 +8240,19 @@ export default function App() {
         ))}
       </nav>
       {activeEntity && (
-        <activeEntity.View
-          highlightRecordId={highlightRecordId}
-          onHighlightHandled={() => setHighlightRecordId(null)}
-          onJumpToRecord={(name, recordId) => {
-            setActive(name);
-            setHighlightRecordId(recordId);
-          }}
-          onRecordCountChange={(name, count) =>
-            setEntityCounts((prev) => (prev[name] === count ? prev : { ...prev, [name]: count }))
-          }
-        />
+        <div id={\`entity-tabpanel-\${activeEntity.name}\`} role="tabpanel" aria-labelledby={\`entity-tab-\${activeEntity.name}\`}>
+          <activeEntity.View
+            highlightRecordId={highlightRecordId}
+            onHighlightHandled={() => setHighlightRecordId(null)}
+            onJumpToRecord={(name, recordId) => {
+              setActive(name);
+              setHighlightRecordId(recordId);
+            }}
+            onRecordCountChange={(name, count) =>
+              setEntityCounts((prev) => (prev[name] === count ? prev : { ...prev, [name]: count }))
+            }
+          />
+        </div>
       )}
       {showSearch && (
         // orderedEntities (the entity tab bar's own drag/keyboard-reordered

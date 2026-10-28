@@ -1088,7 +1088,7 @@ test("App's openPanel closes every other overlay panel when opening one, instead
  */
 test("App's onSendWhatsApp (EntityPanel's per-record row action) opens the WhatsApp panel via the real openPanel, not a bare setShowWhatsApp", () => {
   const appSrc = readFileSync(new URL("./App.tsx", import.meta.url), "utf8");
-  const callbackMatch = appSrc.match(/onSendWhatsApp=\{\(phoneNumber\) => \{[\s\S]*?\n {20}\}\}/);
+  const callbackMatch = appSrc.match(/onSendWhatsApp=\{\(phoneNumber\) => \{[\s\S]*?\n\s*\}\}/);
   assert.ok(callbackMatch, "expected to find the onSendWhatsApp callback passed to <EntityPanel>");
   assert.doesNotMatch(
     callbackMatch![0],
@@ -4110,7 +4110,7 @@ test("App.tsx's entity-tab bar disambiguates its own tab text and moveEarlier/mo
     "expected entityTabLabelOccurrences to be computed from the real entityLabelOccurrences(orderedEntities)",
   );
 
-  const tabButtonMatch = appSrc.match(/onClick=\{\(\) => setActiveEntity\(entity\.name\)\}\s*>\s*\{([^}]+)\}/);
+  const tabButtonMatch = appSrc.match(/onClick=\{\(\) => setActiveEntity\(entity\.name\)\}[\s\S]*?\n\s*>\s*\n\s*\{([^}]+)\}/);
   assert.ok(tabButtonMatch, "expected to find the entity-tab button's own label expression in App.tsx");
   assert.equal(
     tabButtonMatch![1].trim(),
@@ -4710,6 +4710,53 @@ test("the project view's entity-tab bar reports its selected tab via role=tablis
     entityTabsBlock![0],
     /aria-selected=\{activeEntity === entity\.name\}/,
     "each tab button must report its own selected state via aria-selected, the tab-pattern's own equivalent of aria-pressed",
+  );
+});
+
+/**
+ * Round 1150: round 1144's own fix above added the WAI-ARIA Tabs pattern's
+ * three static attributes (role="tablist"/"tab"/aria-selected) but never
+ * the pattern's own required keyboard model -- every tab still sat in
+ * normal Tab order (no roving tabindex) with no ArrowLeft/ArrowRight/Home/
+ * End handling at all, and no aria-controls/role="tabpanel" linkage between
+ * a tab and the panel it shows. A keyboard or screen-reader user hearing
+ * "tab, 2 of 5" from round 1144's own fix still got no arrow-key model and
+ * no programmatic tab<->panel relationship -- a half-implemented pattern,
+ * not the "missing role entirely" gap round 1144 itself closed.
+ */
+test("the project view's entity-tab bar implements the full WAI-ARIA Tabs keyboard model (roving tabindex, arrow/Home/End navigation, aria-controls)", () => {
+  const appSrc = readFileSync(new URL("./App.tsx", import.meta.url), "utf8");
+
+  const entityTabsBlock = appSrc.match(/<nav className="entity-tabs"[^>]*>[\s\S]*?<\/nav>/);
+  assert.ok(entityTabsBlock, "expected the entity-tabs nav's own block");
+  assert.match(
+    entityTabsBlock![0],
+    /tabIndex=\{activeEntity === entity\.name \? 0 : -1\}/,
+    "only the selected tab must be a normal Tab stop (roving tabindex) -- every other tab must be -1",
+  );
+  assert.match(entityTabsBlock![0], /aria-controls=\{`entity-tabpanel-\$\{entity\.name\}`\}/, "each tab must declare which panel it controls");
+  assert.match(entityTabsBlock![0], /onKeyDown=\{/, "the tab button must handle keyboard navigation");
+  for (const key of ["ArrowLeft", "ArrowRight", "Home", "End"]) {
+    assert.ok(entityTabsBlock![0].includes(`"${key}"`), `the tab bar's own keyboard handler must recognize ${key}`);
+  }
+});
+
+/**
+ * Round 1150: see the keyboard-model test above for the full rationale --
+ * this is the other missing half of the pattern, the programmatic tab<->
+ * panel relationship (aria-controls on the tab paired with role="tabpanel"
+ * + aria-labelledby on the panel it names).
+ */
+test("the project view's active EntityPanel is wrapped in a real tabpanel, linked back to its own tab via aria-labelledby", () => {
+  const appSrc = readFileSync(new URL("./App.tsx", import.meta.url), "utf8");
+
+  const tabpanelBlock = appSrc.match(/<div key=\{entity\.name\} id=\{`entity-tabpanel-\$\{entity\.name\}`\}[^>]*>/);
+  assert.ok(tabpanelBlock, "expected a tabpanel wrapper around the active entity's EntityPanel");
+  assert.match(tabpanelBlock![0], /role="tabpanel"/, "the wrapper must carry role=\"tabpanel\"");
+  assert.match(
+    tabpanelBlock![0],
+    /aria-labelledby=\{`entity-tab-\$\{entity\.name\}`\}/,
+    "the tabpanel must point back at its own tab's id, the tab pattern's own required reverse link",
   );
 });
 
