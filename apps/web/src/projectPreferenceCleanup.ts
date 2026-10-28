@@ -1,6 +1,6 @@
 import { purgePinnedProjectForProject, removePinnedProject } from "./pinnedProjects.js";
 import { purgeSeenSharedProjectsForProject, removeSeenSharedProject } from "./sharedProjectSeen.js";
-import { purgeEntityTabOrderForProject } from "./entityTabOrder.js";
+import { purgeEntityTabOrderForProject, removeEntityTabOrder } from "./entityTabOrder.js";
 import { purgeColumnWidthsForProject } from "./columnWidths.js";
 import { purgeColumnOrderForProject } from "./columnOrder.js";
 import { purgeHiddenFieldsForProject } from "./columnVisibility.js";
@@ -10,13 +10,13 @@ import { purgeCollapsedBoardColumnsForProject } from "./collapsedBoardColumnsPre
 import { purgeCollapsedGroupsForProject } from "./collapsedGroupsPreference.js";
 import { purgeSortKeysForProject } from "./sortKeysPreference.js";
 import { purgeEntityRecentSearchesForProject } from "./entityRecentSearches.js";
-import { purgeRecentHistorySearchesForProject } from "./historyRecentSearches.js";
+import { purgeRecentHistorySearchesForProject, clearRecentHistorySearches } from "./historyRecentSearches.js";
 import { purgeViewModeForProject } from "./viewModePreference.js";
-import { purgeRecentSearchesForProject } from "./recentSearches.js";
-import { purgeRecentWhatsAppNumbersForProject } from "./whatsappRecentNumbers.js";
-import { purgeWhatsAppLogRecentSearchesForProject } from "./whatsappLogRecentSearches.js";
-import { purgeWhatsAppLogFilterForProject } from "./whatsappLogFilter.js";
-import { purgeWhatsAppLastSeenForProject } from "./whatsappUnread.js";
+import { purgeRecentSearchesForProject, clearRecentSearches } from "./recentSearches.js";
+import { purgeRecentWhatsAppNumbersForProject, clearRecentWhatsAppNumbers } from "./whatsappRecentNumbers.js";
+import { purgeWhatsAppLogRecentSearchesForProject, clearWhatsAppLogRecentSearches } from "./whatsappLogRecentSearches.js";
+import { purgeWhatsAppLogFilterForProject, setWhatsAppLogFilter } from "./whatsappLogFilter.js";
+import { purgeWhatsAppLastSeenForProject, clearWhatsAppLastSeenId } from "./whatsappUnread.js";
 
 /**
  * Deleting a project server-side (App.tsx's handleDeleteProject/
@@ -90,18 +90,50 @@ export function purgeProjectPreferences(projectId: string): void {
  * in the first place) ever audited against `purgeProjectPreferences`'s own
  * "project is gone" assumption.
  *
- * Scoped to exactly the two stores whose corruption is directly visible to
- * the OTHER collaborator (a project silently unpinning itself, or a "new
- * share" badge silently reappearing) -- `removePinnedProject`/
- * `removeSeenSharedProject` already existed for this exact purpose
- * (pinnedProjects.ts/sharedProjectSeen.ts's own doc comments) but were
- * never actually called from anywhere before this round. The other
- * project-preference stores this project's own departing user leaves
- * behind (column widths, sort order, recent searches, etc.) are lower-
- * stakes UX-only leftovers, not touched here, matching this fix's own
- * narrow scope.
+ * Round 1125 scoped this to exactly the two stores whose corruption is
+ * directly visible to the OTHER collaborator (a project silently
+ * unpinning itself, or a "new share" badge silently reappearing), and
+ * explicitly deferred seven more per-user-keyed stores as lower-stakes
+ * UX-only leftovers: `entityTabOrder.ts`, `historyRecentSearches.ts`,
+ * `recentSearches.ts`, `whatsappRecentNumbers.ts`,
+ * `whatsappLogRecentSearches.ts`, `whatsappLogFilter.ts`,
+ * `whatsappUnread.ts`. But "lower stakes" was never "correctly handled" --
+ * before this round, none of these seven was cleared by anything at all
+ * for the departing user: not the broad sweep (no longer called from
+ * either of `purgeOwnProjectAccess`'s two real call sites, replaced by
+ * this narrower function), and not any per-user equivalent either, since
+ * this function only ever called the two above. Every one of these seven
+ * leaked forever for that user's own account, the exact same unbounded-
+ * growth bug class rounds 390-1124 fixed for every OTHER store that has
+ * it, just reopened specifically for the "access revoked, not deleted"
+ * event path round 1125 itself created when it stopped routing these two
+ * call sites through the broad sweep.
+ *
+ * Round 1127: added all seven. Six already had an existing single-user,
+ * single-project clear primitive, each parameterized by (projectId,
+ * userId) exactly like `removePinnedProject`/`removeSeenSharedProject`
+ * above, simply never wired into this function --
+ * `clearRecentHistorySearches`, `clearRecentSearches`,
+ * `clearRecentWhatsAppNumbers`, `clearWhatsAppLogRecentSearches`, and
+ * `clearWhatsAppLastSeenId` are called directly; `whatsappLogFilter.ts`
+ * has no dedicated `clear*` export, but its own `setWhatsAppLogFilter`
+ * already removes the stored key entirely when given "all" (its own
+ * implementation's doc comment), so that's used as the equivalent clear.
+ * `entityTabOrder.ts` had no single-user removal at all (only the
+ * broad, every-collaborator `purgeEntityTabOrderForProject`, since its
+ * own single-blob-per-user shape doesn't fit the `${projectId}:${userId}`
+ * key-enumeration pattern the other six share) -- `removeEntityTabOrder`
+ * was added there this round, mirroring `removePinnedProject`'s own shape
+ * (delete just the one project entry from the one user's own store).
  */
 export function purgeOwnProjectAccess(userId: string, projectId: string): void {
   removePinnedProject(userId, projectId);
   removeSeenSharedProject(userId, projectId);
+  removeEntityTabOrder(userId, projectId);
+  clearRecentHistorySearches(projectId, userId);
+  clearRecentSearches(projectId, userId);
+  clearRecentWhatsAppNumbers(projectId, userId);
+  clearWhatsAppLogRecentSearches(projectId, userId);
+  setWhatsAppLogFilter(projectId, userId, "all");
+  clearWhatsAppLastSeenId(projectId, userId);
 }

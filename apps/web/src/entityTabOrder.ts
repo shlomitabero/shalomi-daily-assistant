@@ -79,6 +79,23 @@ export function setEntityTabOrder(projectId: string, userId: string, order: stri
 }
 
 /**
+ * Round 1127: removes just ONE user's own tab order for one project --
+ * mirroring pinnedProjects.ts's own removePinnedProject, for the same
+ * "this one user's own access ended, the project itself is still alive
+ * for everyone else" events (handleAccountDeleted's sharedProjectIds loop;
+ * CollaboratorsPanel's self-service "leave project") that
+ * projectPreferenceCleanup.ts's purgeOwnProjectAccess already handles for
+ * pinnedProjects.ts/sharedProjectSeen.ts. A no-op when this user never
+ * reordered this project's tabs.
+ */
+export function removeEntityTabOrder(userId: string, projectId: string): void {
+  const store = readStore(userId);
+  if (!(projectId in store)) return;
+  delete store[projectId];
+  writeStore(userId, store);
+}
+
+/**
  * Removes every collaborator account's own tab order for one project --
  * used by projectPreferenceCleanup.ts when the project itself is deleted,
  * mirroring pinnedProjects.ts's own purgePinnedProjectForProject: there's

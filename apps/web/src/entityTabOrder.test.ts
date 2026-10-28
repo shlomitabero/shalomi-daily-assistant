@@ -2,7 +2,7 @@ import "./jsdomWarmup.js";
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { JSDOM } from "jsdom";
-import { getEntityTabOrder, setEntityTabOrder, purgeEntityTabOrderForProject, purgeEntityNameFromTabOrder } from "./entityTabOrder.js";
+import { getEntityTabOrder, setEntityTabOrder, purgeEntityTabOrderForProject, purgeEntityNameFromTabOrder, removeEntityTabOrder } from "./entityTabOrder.js";
 
 /** Same full-jsdom-swap technique columnOrder.test.ts/columnWidths.test.ts/columnVisibility.test.ts already use: real localStorage, not a mock. */
 async function withJsdom(fn: () => void | Promise<void>): Promise<void> {
@@ -131,5 +131,35 @@ test("purgeEntityNameFromTabOrder is a no-op, not an error, when the project was
     setEntityTabOrder("proj1", "userA", ["Task"]);
     purgeEntityNameFromTabOrder("proj1", "Deal");
     assert.deepEqual(getEntityTabOrder("proj1", "userA"), ["Task"]);
+  });
+});
+
+/**
+ * Round 1127: mirrors pinnedProjects.ts's own removePinnedProject -- used
+ * by projectPreferenceCleanup.ts's purgeOwnProjectAccess for the "this one
+ * user's own access ended, the project itself is still alive for everyone
+ * else" events (account deletion's shared-project loop; CollaboratorsPanel's
+ * self-service "leave project"), where a plain per-user delete is correct
+ * (unlike purgeEntityTabOrderForProject's every-collaborator sweep, correct
+ * only when the project itself is genuinely gone).
+ */
+test("removeEntityTabOrder removes only this one user's own tab order for one project, leaving every other collaborator's own order for the SAME project (and this user's own order for other projects) untouched", async () => {
+  await withJsdom(() => {
+    setEntityTabOrder("proj1", "userA", ["Task", "Deal"]);
+    setEntityTabOrder("proj2", "userA", ["Contact"]);
+    setEntityTabOrder("proj1", "userB", ["Invoice"]);
+
+    removeEntityTabOrder("userA", "proj1");
+
+    assert.deepEqual(getEntityTabOrder("proj1", "userA"), [], "userA's own order for the project they just left/lost access to must be removed");
+    assert.deepEqual(getEntityTabOrder("proj2", "userA"), ["Contact"], "userA's own order for an UNRELATED project must survive untouched");
+    assert.deepEqual(getEntityTabOrder("proj1", "userB"), ["Invoice"], "userB's own order for the SAME still-shared project must survive");
+  });
+});
+
+test("removeEntityTabOrder is a no-op, not an error, when this user never reordered this project", async () => {
+  await withJsdom(() => {
+    assert.doesNotThrow(() => removeEntityTabOrder("userA", "proj1"));
+    assert.deepEqual(getEntityTabOrder("proj1", "userA"), []);
   });
 });

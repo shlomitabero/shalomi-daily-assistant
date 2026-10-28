@@ -300,3 +300,79 @@ test("purgeOwnProjectAccess removes only this one user's own pin and 'new share'
     );
   });
 });
+
+/**
+ * Round 1127: round 1125 explicitly deferred seven more per-user-keyed
+ * stores (entityTabOrder, historyRecentSearches, recentSearches,
+ * whatsappRecentNumbers, whatsappLogRecentSearches, whatsappLogFilter,
+ * whatsappUnread) as "lower-stakes, not touched here" -- but it also
+ * stopped routing `handleAccountDeleted`'s `sharedProjectIds` loop and
+ * CollaboratorsPanel's `onLeft` through the broad `purgeProjectPreferences`
+ * sweep that used to reach all seven (for every collaborator, which was
+ * itself the bug those two call sites needed fixing for). The result: for
+ * those two specific events, none of these seven stores was cleared by
+ * ANYTHING at all for the departing user -- reopening the exact same
+ * unbounded-growth bug class rounds 390-1124 already fixed for every
+ * other store that has it, just for this one newer "access revoked, not
+ * deleted" event path. Confirms `purgeOwnProjectAccess` now clears all
+ * seven for userA's own entry on the one project, while leaving userB's
+ * own entries for that SAME still-shared project, and userA's own entries
+ * for an UNRELATED project, both fully intact -- the exact same
+ * other-collaborator-survives / other-project-survives shape the
+ * pin/seen-share test above already proves for the first two stores.
+ */
+test("purgeOwnProjectAccess also clears this one user's own entityTabOrder/historyRecentSearches/recentSearches/whatsappRecentNumbers/whatsappLogRecentSearches/whatsappLogFilter/whatsappLastSeen entries for the one project, leaving every other collaborator's own entries (and this user's own entries for other projects) untouched", async () => {
+  await withJsdom(() => {
+    setEntityTabOrder("abc", "userA", ["Task", "Project"]);
+    setEntityTabOrder("proj2", "userA", ["Contact"]);
+    setEntityTabOrder("abc", "userB", ["Invoice"]);
+    addRecentHistorySearch("abc", "userA", "pricing overhaul");
+    addRecentHistorySearch("proj2", "userA", "launch plan");
+    addRecentHistorySearch("abc", "userB", "security audit");
+    addRecentSearch("abc", "userA", "overdue invoices");
+    addRecentSearch("proj2", "userA", "q3 leads");
+    addRecentSearch("abc", "userB", "churned customers");
+    addRecentWhatsAppNumber("abc", "userA", "+15551234567");
+    addRecentWhatsAppNumber("proj2", "userA", "+15559876543");
+    addRecentWhatsAppNumber("abc", "userB", "+15550001111");
+    addWhatsAppLogRecentSearch("abc", "userA", "delivery failed");
+    addWhatsAppLogRecentSearch("proj2", "userA", "appointment");
+    addWhatsAppLogRecentSearch("abc", "userB", "invoice reminder");
+    setWhatsAppLogFilter("abc", "userA", "failed");
+    setWhatsAppLogFilter("proj2", "userA", "in");
+    setWhatsAppLogFilter("abc", "userB", "out");
+    setWhatsAppLastSeen("abc", "userA", { id: "msg-1", createdAt: "2024-01-01T00:00:00.000Z" });
+    setWhatsAppLastSeen("proj2", "userA", { id: "msg-2", createdAt: "2024-02-01T00:00:00.000Z" });
+    setWhatsAppLastSeen("abc", "userB", { id: "msg-3", createdAt: "2024-03-01T00:00:00.000Z" });
+
+    purgeOwnProjectAccess("userA", "abc");
+
+    assert.deepEqual(getEntityTabOrder("abc", "userA"), [], "userA's own tab order for the project they just left/lost access to must be cleared");
+    assert.deepEqual(getEntityTabOrder("proj2", "userA"), ["Contact"], "userA's own tab order for an UNRELATED project must survive untouched");
+    assert.deepEqual(getEntityTabOrder("abc", "userB"), ["Invoice"], "userB's own tab order for the SAME still-shared project must survive");
+
+    assert.deepEqual(getRecentHistorySearches("abc", "userA"), [], "userA's own History search list for the left project must be cleared");
+    assert.deepEqual(getRecentHistorySearches("proj2", "userA"), ["launch plan"], "userA's own History search list for an UNRELATED project must survive");
+    assert.deepEqual(getRecentHistorySearches("abc", "userB"), ["security audit"], "userB's own History search list for the SAME project must survive");
+
+    assert.deepEqual(getRecentSearches("abc", "userA"), [], "userA's own Global Search list for the left project must be cleared");
+    assert.deepEqual(getRecentSearches("proj2", "userA"), ["q3 leads"], "userA's own Global Search list for an UNRELATED project must survive");
+    assert.deepEqual(getRecentSearches("abc", "userB"), ["churned customers"], "userB's own Global Search list for the SAME project must survive");
+
+    assert.deepEqual(getRecentWhatsAppNumbers("abc", "userA"), [], "userA's own recent WhatsApp numbers for the left project must be cleared");
+    assert.deepEqual(getRecentWhatsAppNumbers("proj2", "userA"), ["+15559876543"], "userA's own recent WhatsApp numbers for an UNRELATED project must survive");
+    assert.deepEqual(getRecentWhatsAppNumbers("abc", "userB"), ["+15550001111"], "userB's own recent WhatsApp numbers for the SAME project must survive");
+
+    assert.deepEqual(getWhatsAppLogRecentSearches("abc", "userA"), [], "userA's own WhatsApp log search list for the left project must be cleared");
+    assert.deepEqual(getWhatsAppLogRecentSearches("proj2", "userA"), ["appointment"], "userA's own WhatsApp log search list for an UNRELATED project must survive");
+    assert.deepEqual(getWhatsAppLogRecentSearches("abc", "userB"), ["invoice reminder"], "userB's own WhatsApp log search list for the SAME project must survive");
+
+    assert.equal(getWhatsAppLogFilter("abc", "userA"), "all", "userA's own WhatsApp log filter for the left project must reset to 'all'");
+    assert.equal(getWhatsAppLogFilter("proj2", "userA"), "in", "userA's own WhatsApp log filter for an UNRELATED project must survive");
+    assert.equal(getWhatsAppLogFilter("abc", "userB"), "out", "userB's own WhatsApp log filter for the SAME project must survive");
+
+    assert.equal(getWhatsAppLastSeen("abc", "userA"), null, "userA's own WhatsApp last-seen marker for the left project must be cleared");
+    assert.deepEqual(getWhatsAppLastSeen("proj2", "userA"), { id: "msg-2", createdAt: "2024-02-01T00:00:00.000Z" }, "userA's own last-seen marker for an UNRELATED project must survive");
+    assert.deepEqual(getWhatsAppLastSeen("abc", "userB"), { id: "msg-3", createdAt: "2024-03-01T00:00:00.000Z" }, "userB's own last-seen marker for the SAME project must survive");
+  });
+});
