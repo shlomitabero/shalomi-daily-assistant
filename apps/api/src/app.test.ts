@@ -6932,6 +6932,109 @@ test("removing an entity still succeeds, and cleans up its own screens and autom
 });
 
 /**
+ * Round 1187: findField (unlike findEntity, fixed round 1162) never got its
+ * own case-insensitive fallback, so every field-level route resolving
+ * :fieldName through it -- PATCH label/required/type, the upload routes,
+ * automation-rule field validation -- threw a false 404 when the URL's own
+ * fieldName differed from the field's real declared name only by letter
+ * case. Proven here via the label-rename route, one of the sites that
+ * already correctly captures and reuses findField's resolved field object.
+ */
+test("PATCH .../fields/:fieldName/label still resolves the field when the URL's own fieldName differs from the field's real name only by letter case", async () => {
+  await withServer(async (baseUrl, db) => {
+    const email = `field-case-label-${randomUUID()}@example.com`;
+    const token = await signup(baseUrl, email);
+    const user = findUserByEmail(db, email)!;
+    const spec: ProductSpec = {
+      summary: "test",
+      personas: [],
+      roles: ["Admin"],
+      entities: [{ name: "Deal", fields: [{ name: "dealStatus", type: "text", required: true }, { name: "title", type: "text", required: true }] }],
+      screens: [{ name: "Deal List", type: "list", entity: "Deal" }],
+      assumptions: [],
+      openQuestions: [],
+    };
+    const projectId = randomUUID();
+    insertProject(db, { id: projectId, ownerId: user.id, name: "CRM", description: "test", spec });
+
+    // The URL spells the field in lowercase -- its real declared name is
+    // "dealStatus".
+    const res = await fetch(`${baseUrl}/api/projects/${projectId}/entities/Deal/fields/dealstatus/label`, {
+      method: "PATCH",
+      headers: authHeaders(token),
+      body: JSON.stringify({ label: "Status" }),
+    });
+    assert.equal(res.status, 200, "the label rename must still succeed even though the URL's fieldName differs from the field's real name only by letter case");
+    const { project: updated } = (await res.json()) as { project: { spec: { entities: { fields: { name: string; label?: string }[] }[] } } };
+    const renamed = updated.spec.entities[0]!.fields.find((f) => f.name === "dealStatus");
+    assert.equal(renamed?.label, "Status", "the real dealStatus field must have received the new label");
+  });
+});
+
+/**
+ * Round 1187: the DELETE field route itself has a second, subtler gap on
+ * top of findField's own missing fallback -- it called findField purely
+ * for its 404 side-effect (discarding the resolved field) while its actual
+ * removal filter and disableAutomationRulesForField call both kept using
+ * the raw, unresolved req.params.fieldName. Fixing findField's fallback
+ * alone would have let this exact request through the existence check,
+ * only for the removal filter and the disable call to match nothing
+ * against the raw lowercase param -- turning the previous false-404 into a
+ * worse false-200: the field left in place, and a referencing automation
+ * rule left dangling and enabled, despite a reported success. This test
+ * asserts the field is actually gone and the rule is actually disabled,
+ * not just that the response is 200.
+ */
+test("DELETE .../fields/:fieldName actually removes the field and disables a referencing automation rule when the URL's own fieldName differs from the field's real name only by letter case", async () => {
+  await withServer(async (baseUrl, db) => {
+    const email = `field-case-delete-${randomUUID()}@example.com`;
+    const token = await signup(baseUrl, email);
+    const user = findUserByEmail(db, email)!;
+    const spec: ProductSpec = {
+      summary: "test",
+      personas: [],
+      roles: ["Admin"],
+      entities: [{ name: "Deal", fields: [{ name: "dealStatus", type: "text", required: true }, { name: "title", type: "text", required: true }] }],
+      screens: [{ name: "Deal List", type: "list", entity: "Deal" }],
+      assumptions: [],
+      openQuestions: [],
+    };
+    const projectId = randomUUID();
+    insertProject(db, { id: projectId, ownerId: user.id, name: "CRM", description: "test", spec });
+    insertAutomationRule(db, {
+      projectId,
+      entityName: "Deal",
+      trigger: "field_equals",
+      fieldName: "dealStatus",
+      fieldValue: "closed",
+      actionType: "send_whatsapp",
+      toMode: "field",
+      toField: "title",
+      messageTemplate: "hi",
+    });
+
+    // The URL spells the field in lowercase -- its real declared name is
+    // "dealStatus".
+    const res = await fetch(`${baseUrl}/api/projects/${projectId}/entities/Deal/fields/dealstatus`, {
+      method: "DELETE",
+      headers: authHeaders(token),
+    });
+    assert.equal(res.status, 200, "deletion must still succeed even though the URL's fieldName differs from the field's real name only by letter case");
+    const { project: updated } = (await res.json()) as { project: { spec: { entities: { fields: { name: string }[] }[] } } };
+    assert.deepEqual(
+      updated.spec.entities[0]!.fields.map((f) => f.name),
+      ["title"],
+      "the real dealStatus field must have been removed, not left behind despite the 200",
+    );
+
+    const rulesRes = await fetch(`${baseUrl}/api/projects/${projectId}/automations`, { headers: authHeaders(token) });
+    const { rules } = (await rulesRes.json()) as { rules: { enabled: boolean }[] };
+    assert.equal(rules.length, 1, "sanity check: the automation rule on the removed field must still exist, just disabled");
+    assert.equal(rules[0]!.enabled, false, "the automation rule referencing the removed dealStatus field must have been disabled, not left dangling and enabled");
+  });
+});
+
+/**
  * Round 553: this route used to leave `spec.screens` completely untouched,
  * so a removed entity's own screen entries (e.g. "Deal List"/"Deal Form")
  * stayed in the spec forever, dangling and naming an entity that no longer

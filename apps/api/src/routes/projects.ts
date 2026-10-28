@@ -666,8 +666,19 @@ function findEntity(project: Project, entityName: string): Entity {
   return entity;
 }
 
+/**
+ * Round 1187: case-insensitive, mirroring findEntity's own round-1162
+ * fallback -- migrate.ts's own prevFieldByLowerName leniency (and a
+ * second lowercased sweep disabling stale automation rules) already
+ * treats a field renamed only by letter case as the same field for
+ * data-preservation/migration purposes, proving this exact scenario is
+ * real and anticipated at the migration layer; it was simply never
+ * carried into this route-layer helper, which every field-level route
+ * in this file (PATCH label/required/type, uploads, automation
+ * validation, field removal) resolves `fieldName` through.
+ */
 function findField(entity: Entity, fieldName: string) {
-  const field = entity.fields.find((f) => f.name === fieldName);
+  const field = entity.fields.find((f) => f.name === fieldName) ?? entity.fields.find((f) => f.name.toLowerCase() === fieldName.toLowerCase());
   if (!field) {
     throw new HttpError(404, `Field "${fieldName}" is not part of entity "${entity.name}"`, "FIELD_NOT_FOUND");
   }
@@ -4217,14 +4228,24 @@ export function createProjectsRouter(
         req.userId!,
         `DELETE /projects/${project.id}/entities/${entity.name}/fields/${req.params.fieldName}`,
         async () => {
-          findField(entity, req.params.fieldName);
+          // Round 1187: capture findField's resolved field and reuse its
+          // real name below, instead of discarding it and falling back to
+          // the raw, possibly differently-cased req.params.fieldName --
+          // now that findField has its own case-insensitive fallback
+          // (mirroring findEntity's), a URL spelled with different casing
+          // would otherwise pass this existence check via the fallback
+          // while the filter/disable calls below, still keyed off the raw
+          // param, silently matched nothing: a false 200 with the field
+          // left in place and no automation rule disabled, worse than the
+          // 404 this replaced.
+          const field = findField(entity, req.params.fieldName);
           if (entity.fields.length <= 1) {
             throw new HttpError(400, "Cannot remove the last remaining field -- at least one is required", "VALIDATION_ERROR");
           }
           const nextSpec = {
             ...project.spec,
             entities: project.spec.entities.map((e) =>
-              e.name === entity.name ? { ...e, fields: e.fields.filter((f) => f.name !== req.params.fieldName) } : e,
+              e.name === entity.name ? { ...e, fields: e.fields.filter((f) => f.name !== field.name) } : e,
             ),
           };
           const updated = updateProjectSpec(db, project.id, nextSpec);
@@ -4245,7 +4266,7 @@ export function createProjectsRouter(
           // identical post-build case, so a pre-build removal degrades a
           // referencing rule exactly the same way instead of leaving it to
           // fail "no destination configured" forever with no explanation.
-          disableAutomationRulesForField(db, project.id, entity.name, req.params.fieldName);
+          disableAutomationRulesForField(db, project.id, entity.name, field.name);
           return { status: 200, body: { project: updated } };
         },
       );
