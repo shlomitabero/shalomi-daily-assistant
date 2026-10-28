@@ -4311,6 +4311,7 @@ export function EntityPanel({
                 <button
                   type="button"
                   className={viewMode === "table" ? "view-toggle-btn view-toggle-btn-active" : "view-toggle-btn"}
+                  aria-pressed={viewMode === "table"}
                   onClick={() => setViewMode(setViewModePreference(projectId, entity.name, userId, "table"))}
                 >
                   {t("entity.view.table")}
@@ -4319,6 +4320,7 @@ export function EntityPanel({
                   <button
                     type="button"
                     className={viewMode === "board" ? "view-toggle-btn view-toggle-btn-active" : "view-toggle-btn"}
+                    aria-pressed={viewMode === "board"}
                     onClick={() => setViewMode(setViewModePreference(projectId, entity.name, userId, "board"))}
                   >
                     {t("entity.view.board")}
@@ -4328,6 +4330,7 @@ export function EntityPanel({
                   <button
                     type="button"
                     className={viewMode === "calendar" ? "view-toggle-btn view-toggle-btn-active" : "view-toggle-btn"}
+                    aria-pressed={viewMode === "calendar"}
                     onClick={() => setViewMode(setViewModePreference(projectId, entity.name, userId, "calendar"))}
                   >
                     {t("entity.view.calendar")}

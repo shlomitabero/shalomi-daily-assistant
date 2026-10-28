@@ -104,6 +104,43 @@ function renderTwinPanel(
 }
 
 /**
+ * Round 1135: a fresh survey found this toggle (and two siblings elsewhere
+ * in the app -- LanguageSwitcher.tsx's language toggle, EntityPanel.tsx's
+ * table/board/calendar view toggle, plus codegen.ts's own copy of the
+ * EntityPanel one) marked its selected option with nothing but a CSS class
+ * (`view-toggle-btn-active`), invisible to a screen reader -- the exact
+ * WCAG 4.1.2 gap PasswordInput.tsx's own show/hide toggle already avoids
+ * via `aria-pressed`.
+ */
+test("BusinessTwinPanel's Dashboard/Report toggle reports its selected state via aria-pressed, not just a CSS class", async () => {
+  await withJsdom(async () => {
+    const twinWithObservation: BusinessTwin = { ...TWIN, observations: ["Something worth noting"] };
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = (async (input: string) => {
+      if (input === "/api/projects/proj1/twin") {
+        return new Response(JSON.stringify({ twin: twinWithObservation }), { status: 200, headers: { "content-type": "application/json" } });
+      }
+      throw new Error(`unexpected request ${input}`);
+    }) as typeof fetch;
+    try {
+      renderTwinPanel(() => {});
+      await waitForCondition(() => document.querySelectorAll(".view-toggle-btn").length === 2);
+
+      const [dashboardBtn, reportBtn] = document.querySelectorAll(".view-toggle-btn") as NodeListOf<HTMLButtonElement>;
+      // Defaults to "report", not "dashboard" -- see this panel's own doc comment.
+      assert.equal(reportBtn.getAttribute("aria-pressed"), "true", "the view this panel opens into (Report) must report aria-pressed=true");
+      assert.equal(dashboardBtn.getAttribute("aria-pressed"), "false");
+
+      fireEvent.click(dashboardBtn);
+      assert.equal(dashboardBtn.getAttribute("aria-pressed"), "true", "clicking Dashboard must flip its own aria-pressed to true");
+      assert.equal(reportBtn.getAttribute("aria-pressed"), "false", "switching views must flip the previously-selected button's aria-pressed back to false");
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+});
+
+/**
  * New in this round: each stat tile in Business Twin ("Customers · 12") is
  * now a real clickable button, not inert display text -- clicking it should
  * take you straight to that entity's own records (closing the twin panel in

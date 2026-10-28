@@ -1901,6 +1901,38 @@ test("EntityPanel's board view renders an empty column for every declared status
 });
 
 /**
+ * Round 1135: a fresh survey found this toggle (and two siblings elsewhere
+ * in the app -- LanguageSwitcher.tsx's language toggle, BusinessTwinPanel.tsx's
+ * Dashboard/Report toggle, plus codegen.ts's own copy of this one) marked
+ * its selected option with nothing but a CSS class
+ * (`view-toggle-btn-active`), invisible to a screen reader -- the exact
+ * WCAG 4.1.2 gap PasswordInput.tsx's own show/hide toggle already avoids
+ * via `aria-pressed`.
+ */
+test("EntityPanel's Table/Board view toggle reports its selected state via aria-pressed, not just a CSS class", async () => {
+  await withJsdom(async () => {
+    const store: EntityRecord[] = [{ id: 1, name: "Acme Corp", status: "new" }];
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = mockRecordsFetch(store) as typeof fetch;
+    try {
+      renderEntityPanel();
+      await waitForCondition(() => document.querySelector(".entity-toolbar") !== null);
+
+      const [tableToggle, boardToggle] = document.querySelectorAll(".view-toggle-btn") as NodeListOf<HTMLButtonElement>;
+      assert.equal(tableToggle.getAttribute("aria-pressed"), "true", "Table is the default view, so it must report aria-pressed=true");
+      assert.equal(boardToggle.getAttribute("aria-pressed"), "false");
+
+      fireEvent.click(boardToggle);
+      await waitForCondition(() => document.querySelectorAll(".board-column").length > 0);
+      assert.equal(boardToggle.getAttribute("aria-pressed"), "true", "clicking Board must flip its own aria-pressed to true");
+      assert.equal(tableToggle.getAttribute("aria-pressed"), "false", "switching views must flip the previously-selected button's aria-pressed back to false");
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+});
+
+/**
  * New in this round: selectedIds is view-mode-agnostic state, but the only
  * UI that can ever set it (the row checkboxes, select-all, and the "x"
  * shortcut) lives entirely in Table view -- Board's own card and the

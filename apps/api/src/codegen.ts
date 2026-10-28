@@ -6546,6 +6546,7 @@ export function EntityView({ entity, highlightRecordId, onHighlightHandled, onJu
                 <button
                   type="button"
                   className={viewMode === "table" ? "view-toggle-btn view-toggle-btn-active" : "view-toggle-btn"}
+                  aria-pressed={viewMode === "table"}
                   onClick={() => setViewMode(setPersistedViewMode(entity.name, "table"))}
                 >
                   📋 Table
@@ -6554,6 +6555,7 @@ export function EntityView({ entity, highlightRecordId, onHighlightHandled, onJu
                   <button
                     type="button"
                     className={viewMode === "board" ? "view-toggle-btn view-toggle-btn-active" : "view-toggle-btn"}
+                    aria-pressed={viewMode === "board"}
                     onClick={() => setViewMode(setPersistedViewMode(entity.name, "board"))}
                   >
                     🗂️ Board
@@ -6563,6 +6565,7 @@ export function EntityView({ entity, highlightRecordId, onHighlightHandled, onJu
                   <button
                     type="button"
                     className={viewMode === "calendar" ? "view-toggle-btn view-toggle-btn-active" : "view-toggle-btn"}
+                    aria-pressed={viewMode === "calendar"}
                     onClick={() => setViewMode(setPersistedViewMode(entity.name, "calendar"))}
                   >
                     📅 Calendar

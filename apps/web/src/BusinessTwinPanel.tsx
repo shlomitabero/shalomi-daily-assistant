@@ -221,6 +221,7 @@ export function BusinessTwinPanel({
                 <button
                   type="button"
                   className={view === "dashboard" ? "view-toggle-btn view-toggle-btn-active" : "view-toggle-btn"}
+                  aria-pressed={view === "dashboard"}
                   onClick={() => setView("dashboard")}
                 >
                   {t("twin.view.dashboard")}
@@ -228,6 +229,7 @@ export function BusinessTwinPanel({
                 <button
                   type="button"
                   className={view === "report" ? "view-toggle-btn view-toggle-btn-active" : "view-toggle-btn"}
+                  aria-pressed={view === "report"}
                   onClick={() => setView("report")}
                 >
                   {t("twin.view.report")}

@@ -7479,6 +7479,71 @@ test("the exported EntityView's Export CSV button includes every record once the
 });
 
 /**
+ * Round 1135: a fresh survey found this toggle (and three siblings in the
+ * live preview -- LanguageSwitcher.tsx's language toggle, EntityPanel.tsx's
+ * own identical Table/Board/Calendar toggle, and BusinessTwinPanel.tsx's
+ * Dashboard/Report toggle) marked its selected option with nothing but a
+ * CSS class (`view-toggle-btn-active`), invisible to a screen reader -- the
+ * exact WCAG 4.1.2 gap PasswordInput.tsx's own show/hide toggle already
+ * avoids via `aria-pressed`. This exported app's EntityView.jsx has its own
+ * independent copy of the same toggle (see codegen.ts's template), so the
+ * same gap applies here too.
+ */
+test("the exported EntityView's Table/Board view toggle reports its selected state via aria-pressed, not just a CSS class", async () => {
+  const files = generateExportFiles(project);
+  const dir = writeGeneratedWebComponent(files);
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = (async () => ({
+    ok: true,
+    status: 200,
+    json: async () => ({ records: [{ id: 1, name: "Acme Corp", status: "New" }] }),
+  })) as typeof fetch;
+
+  try {
+    await withRealLocalStorage(async () => {
+      const { EntityView } = await import(path.join(dir, "web", "src", "components", "EntityView.jsx"));
+      const customerEntity = project.spec.entities.find((e) => e.name === "Customer")!;
+      const props = {
+        entity: customerEntity,
+        highlightRecordId: null,
+        onHighlightHandled: () => {},
+        onJumpToRecord: () => {},
+        onRecordCountChange: () => {},
+      };
+
+      const { container } = render(React.createElement(EntityView, props));
+      for (let i = 0; i < 40; i++) {
+        if (container.querySelectorAll(".view-toggle-btn").length === 2) break;
+        await act(async () => {
+          await new Promise((resolve) => setTimeout(resolve, 0));
+        });
+      }
+
+      const [tableToggle, boardToggle] = container.querySelectorAll(".view-toggle-btn") as NodeListOf<HTMLButtonElement>;
+      assert.equal(tableToggle.getAttribute("aria-pressed"), "true", "Table is the default view, so it must report aria-pressed=true");
+      assert.equal(boardToggle.getAttribute("aria-pressed"), "false");
+
+      await act(async () => {
+        fireEvent.click(boardToggle);
+      });
+      for (let i = 0; i < 40; i++) {
+        if (container.querySelectorAll(".board-card").length > 0) break;
+        await act(async () => {
+          await new Promise((resolve) => setTimeout(resolve, 0));
+        });
+      }
+
+      assert.equal(boardToggle.getAttribute("aria-pressed"), "true", "clicking Board must flip its own aria-pressed to true");
+      assert.equal(tableToggle.getAttribute("aria-pressed"), "false", "switching views must flip the previously-selected button's aria-pressed back to false");
+    });
+  } finally {
+    globalThis.fetch = originalFetch;
+    cleanup();
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+/**
  * Round 821's finding: the test above confirms effectivelyVisibleRecords
  * correctly keeps every record once the user leaves Table view with a
  * group still collapsed from before -- Board/Calendar have no "collapsed
