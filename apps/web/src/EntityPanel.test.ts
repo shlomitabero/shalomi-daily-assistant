@@ -14843,6 +14843,106 @@ test("EntityPanel's edit form deletes a SECOND (or later) superseded file replac
 });
 
 /**
+ * Round 1193: a genuinely different hazard from every other orphaned-
+ * upload fix in this file (1002/1004/1123, all of which only ever
+ * cleaned up an upload that had already landed in `form` state) --
+ * `uploadRecordFile`'s own real `await` can resolve AFTER the user has
+ * already moved on to editing a DIFFERENT record. `startEdit`'s own
+ * `discardAbandonedFileUploads()` call runs synchronously, before that
+ * slow upload has resolved, so it finds nothing to clean up; the file
+ * picker's own FieldInput instance then remounts (via EntityPanel's own
+ * formInstanceKey bump) for the new record, but the OLD instance's
+ * `onChange` handler is a plain async closure that keeps running
+ * regardless of the remount -- and it closes only over `setForm`/
+ * `field.name`, neither of which differs between records for the same
+ * entity. Without this round's own `formInstanceKeyRef` guard, the stale
+ * upload resolving after the switch would silently merge straight into
+ * whatever record is now being edited, risking a real save overwriting
+ * that OTHER record's own file field with a file it never had anything
+ * to do with.
+ */
+test("EntityPanel's edit form deletes a file upload directly, instead of merging it into a different record's own form, when the user switches to editing another record before that upload resolves", async () => {
+  await withJsdom(async () => {
+    const store: EntityRecord[] = [
+      { id: 1, name: "Dana" },
+      { id: 2, name: "Yossi" },
+    ];
+    const deleteCalls: string[] = [];
+    let resolveUpload: (() => void) | undefined;
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = (async (input: string, init?: RequestInit): Promise<Response> => {
+      const method = init?.method ?? "GET";
+      if (method === "GET" && input === "/api/projects/proj1/entities/Applicant") {
+        return new Response(JSON.stringify({ records: store }), { status: 200, headers: { "content-type": "application/json" } });
+      }
+      if (method === "POST" && input === "/api/projects/proj1/entities/Applicant/fields/resume/upload") {
+        await new Promise<void>((resolve) => {
+          resolveUpload = resolve;
+        });
+        return new Response(
+          JSON.stringify({ file: { url: "/api/uploads/proj1/Applicant/stray-upload.pdf", name: "stray.pdf", size: 9, mimeType: "application/pdf" } }),
+          { status: 200, headers: { "content-type": "application/json" } },
+        );
+      }
+      if (method === "DELETE" && input === "/api/projects/proj1/entities/Applicant/fields/resume/upload") {
+        deleteCalls.push((JSON.parse(init!.body as string) as { url: string }).url);
+        return new Response(null, { status: 204 });
+      }
+      throw new Error(`unexpected request ${method} ${input}`);
+    }) as typeof fetch;
+
+    try {
+      renderEntityPanel({ entity: APPLICANT_ENTITY, allEntities: [APPLICANT_ENTITY] });
+      await waitForCondition(() => document.querySelectorAll("table tbody tr").length === 2);
+
+      // .row-actions holds several buttons per row (Edit, Duplicate,
+      // Print, Delete) -- find each row's own "Edit" button by text,
+      // the same way the sibling test just below this one does.
+      function editButtonForRow(rowIndex: number): HTMLButtonElement {
+        const row = document.querySelectorAll("table tbody tr")[rowIndex] as HTMLElement;
+        return Array.from(row.querySelectorAll(".row-actions button")).find((b) => /^edit$/i.test(b.textContent ?? "")) as HTMLButtonElement;
+      }
+
+      fireEvent.click(editButtonForRow(0));
+      await waitForCondition(() => (document.querySelector(".record-form input[type=\"text\"]") as HTMLInputElement)?.value === "Dana");
+
+      const fileInput = document.querySelector('.record-form input[type="file"]') as HTMLInputElement;
+      const file = new File(["%PDF-fake"], "stray.pdf", { type: "application/pdf" });
+      await act(async () => {
+        Object.defineProperty(fileInput, "files", { value: [file], configurable: true });
+        fireEvent.change(fileInput);
+      });
+      await waitForCondition(() => resolveUpload !== undefined);
+
+      // Switch to editing a DIFFERENT record while that upload is still
+      // in flight -- exactly the race this test exists to exercise.
+      fireEvent.click(editButtonForRow(1));
+      await waitForCondition(() => (document.querySelector(".record-form input[type=\"text\"]") as HTMLInputElement)?.value === "Yossi");
+      assert.equal(
+        document.querySelector(".record-form .file-field-current"),
+        null,
+        "Yossi's own form must show no file at all right after switching -- nothing has landed yet",
+      );
+
+      // Let Dana's own upload actually finish, now that the form has
+      // already moved on to Yossi.
+      resolveUpload!();
+      await waitForCondition(() => deleteCalls.length > 0);
+      assert.equal(deleteCalls[0], "/api/uploads/proj1/Applicant/stray-upload.pdf", "the stray upload must be deleted directly once it resolves after the form has moved on");
+
+      assert.equal(
+        document.querySelector(".record-form .file-field-current"),
+        null,
+        "Yossi's own form must still show no file after Dana's stray upload resolves -- it must never merge into Yossi's own record",
+      );
+      assert.equal((document.querySelector(".record-form input[type=\"text\"]") as HTMLInputElement)?.value, "Yossi", "the form must still be showing Yossi's own record, untouched by Dana's stray upload");
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+});
+
+/**
  * Round 1004: the follow-on round 1002's own closing entry explicitly
  * left open -- "the riskier edit-form replacement case ... is left for a
  * future round." Replacing a file mid-edit (confirmed a no-op above,

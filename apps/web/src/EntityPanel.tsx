@@ -963,6 +963,7 @@ function FieldInput({
   editingId,
   originalValue,
   excludeRecordIds,
+  formInstanceKeyRef,
 }: {
   field: Field;
   value: unknown;
@@ -1032,6 +1033,27 @@ function FieldInput({
    * instant it's superseded, exactly like create-form mode. */
   editingId?: number | null;
   originalValue?: unknown;
+  /**
+   * Round 1193: the "file" branch below's own upload has a real `await`
+   * that can easily outlive the specific edit/create session that
+   * started it -- the plain add/edit form remounts this component (via
+   * EntityPanel's own formInstanceKey bump) the instant the user moves to
+   * a different record or starts a new one, WITHOUT cancelling that
+   * still-running promise. Unlike a full component unmount (which React
+   * itself could in principle guard against), this is a plain async
+   * closure that keeps running regardless, and its own `onChange` prop
+   * closes only over `setForm`/`field.name` -- neither of which changes
+   * between records for the same entity -- so when it resolves, it
+   * silently merges this field's just-uploaded file descriptor into
+   * WHATEVER form happens to be showing by then, exactly like
+   * handleSubmit's own `formInstanceAtSubmitTime` guard (EntityPanel's
+   * main component) exists to prevent for the submit path. Optional,
+   * since only the plain add/edit form call site actually faces this
+   * risk -- the inline-cell-edit and bulk-edit call sites both already
+   * exclude "file" fields entirely (see the `projectId`/`entityName` doc
+   * comment above), so neither one ever needs this.
+   */
+  formInstanceKeyRef?: { current: number };
 }) {
   const { t, lang } = useTranslation();
   const [fileUploadError, setFileUploadError] = useState<string | null>(null);
@@ -1283,8 +1305,24 @@ function FieldInput({
               setFileUploadError(t("entity.file.tooLarge"));
               return;
             }
+            // Round 1193: snapshot of the edit/create session this pick
+            // belongs to, captured before the real await below -- see this
+            // component's own formInstanceKeyRef doc comment above.
+            const pickedAtInstance = formInstanceKeyRef?.current;
             try {
               const uploaded = await uploadRecordFile(projectId, entityName, field.name, chosen);
+              if (formInstanceKeyRef && formInstanceKeyRef.current !== pickedAtInstance) {
+                // The user has already moved on to a different record or a
+                // fresh create -- the FieldInput instance that started
+                // this upload no longer exists, and this same `onChange`
+                // closure would otherwise merge straight into whatever
+                // form happens to be showing now (it closes only over
+                // `setForm`/`field.name`, neither of which changes between
+                // records for the same entity). Clean up this file
+                // directly instead -- nothing else will ever reference it.
+                void deleteUploadedRecordFile(projectId, entityName, field.name, uploaded.url).catch(() => {});
+                return;
+              }
               // Round 1002/1123: see this component's own originalValue
               // doc comment -- the file this upload just replaced is only
               // safe to delete from disk when it wasn't a persisted value
@@ -4124,6 +4162,7 @@ export function EntityPanel({
               entityName={entity.name}
               editingId={editingId}
               originalValue={editingOriginalRef.current?.[field.name]}
+              formInstanceKeyRef={formInstanceKeyRef}
             />
           </label>
         ))}
