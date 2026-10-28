@@ -4712,6 +4712,114 @@ test("WhatsAppPanel's copy button writes the real formatted log to the clipboard
   });
 });
 
+/**
+ * Round 1137: the on-screen log already shows each matched message's own
+ * entity label right next to its matched name (round 957, via
+ * matchedEntityLabel's own disambiguation), since a matched name alone
+ * can't tell a Customer named "Dana" apart from a Lead named "Dana" when
+ * two entities happen to share a label -- but formatWhatsAppLog never took
+ * an entities param at all, so the Copy/Download report silently showed
+ * the bare name twice with no way to tell which business record each
+ * message was actually linked to. Confirms the copied text now includes
+ * the disambiguated entity label (the "(EntityName)" suffix kicking in
+ * specifically because Customer and Lead here share the same label).
+ */
+test("WhatsAppPanel's copy button includes each matched message's own (disambiguated) entity label, not just its bare matched name", async (t) => {
+  await withJsdom(async () => {
+    const originalFetch = globalThis.fetch;
+    const customerEntity: Entity = { name: "Customer", label: "Contact", fields: [] };
+    const leadEntity: Entity = { name: "Lead", label: "Contact", fields: [] };
+    const messages: WhatsAppMessageLogEntry[] = [
+      {
+        id: "m1",
+        direction: "in",
+        fromNumber: "972521112233",
+        toNumber: "972501234567",
+        body: "From a customer",
+        matchedLabel: "Dana",
+        matchedEntityName: "Customer",
+        matchedRecordId: 1,
+        status: "received",
+        createdAt: new Date().toISOString(),
+      },
+      {
+        id: "m2",
+        direction: "in",
+        fromNumber: "972529998877",
+        toNumber: "972501234567",
+        body: "From a lead",
+        matchedLabel: "Dana",
+        matchedEntityName: "Lead",
+        matchedRecordId: 2,
+        status: "received",
+        createdAt: new Date().toISOString(),
+      },
+    ];
+    globalThis.fetch = (async (input: string, init?: RequestInit): Promise<Response> => {
+      const method = init?.method ?? "GET";
+      if (method === "GET" && input === "/api/projects/proj1/integrations/whatsapp/status") {
+        return new Response(
+          JSON.stringify({ status: "connected", phoneNumber: "972501234567", qrDataUrl: null, error: null }),
+          { status: 200, headers: { "content-type": "application/json" } },
+        );
+      }
+      if (method === "GET" && input === "/api/projects/proj1/integrations/whatsapp/messages") {
+        return new Response(JSON.stringify({ messages }), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        });
+      }
+      throw new Error(`unexpected request ${method} ${input}`);
+    }) as typeof fetch;
+
+    let writtenText: string | undefined;
+    Object.defineProperty(navigator, "clipboard", {
+      value: { writeText: async (text: string) => void (writtenText = text) },
+      configurable: true,
+    });
+
+    try {
+      render(
+        React.createElement(
+          ThemeProvider,
+          null,
+          React.createElement(
+            LanguageProvider,
+            null,
+            React.createElement(WhatsAppPanel, {
+              projectId: "proj1",
+              userId: "user1",
+              projectName: "Flower Shop",
+              onClose: () => {},
+              onJumpToEntity: () => {},
+              onJumpToRecord: () => {},
+              entities: [customerEntity, leadEntity],
+              onCreateRecordFromMessage: () => {},
+            }),
+          ),
+        ),
+      );
+      await waitForCondition(() => document.querySelectorAll(".whatsapp-log-list li").length === 2);
+
+      const copyButton = Array.from(document.querySelectorAll("button")).find((b) => b.textContent === "📋 Copy History");
+      assert.ok(copyButton, "expected a Copy History button once the log has real messages");
+
+      await act(async () => {
+        fireEvent.click(copyButton!);
+        await Promise.resolve();
+        await Promise.resolve();
+      });
+
+      assert.equal(typeof writtenText, "string", "clicking Copy must actually call navigator.clipboard.writeText");
+      assert.match(writtenText!, /Contact \(Customer\)/, "the Customer-matched message must show the disambiguated entity label in the copied text");
+      assert.match(writtenText!, /Contact \(Lead\)/, "the Lead-matched message must show the OTHER entity's own disambiguated label, not the same one twice");
+    } finally {
+      globalThis.fetch = originalFetch;
+      delete (navigator as { clipboard?: unknown }).clipboard;
+    }
+  });
+});
+
 /** The other half: a real rejection (denied permission, insecure context) must show a real failure label, not fail silently or crash. */
 test("WhatsAppPanel's copy button shows a failure label when navigator.clipboard.writeText rejects", async (t) => {
   await withJsdom(async () => {

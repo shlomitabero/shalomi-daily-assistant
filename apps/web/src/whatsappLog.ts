@@ -1,8 +1,36 @@
+import type { Entity } from "@forge/shared";
 import type { WhatsAppMessageLogEntry } from "./api.js";
 import { safeDownloadName } from "./api.js";
 import type { Lang } from "./i18n/language.js";
 
 const LOCALE: Record<Lang, string> = { he: "he-IL", en: "en-US" };
+
+// Round 1137: hand-duplicated entityLabelOccurrences/entityDisplayLabel
+// pair, same shape as every other consuming module in this codebase
+// (WhatsAppPanel.tsx, AutomationsPanel.tsx, automationsReport.ts,
+// checkpointDiff.ts, pipeline.ts) -- the Entity Label editor doesn't
+// enforce uniqueness, so two entities can legitimately share one label,
+// and every other display surface disambiguates that with the entity's
+// own raw name in parens.
+function entityLabelOccurrences(entities: Entity[]): Map<string, number> {
+  const occurrences = new Map<string, number>();
+  for (const e of entities) {
+    const label = e.label ?? e.name;
+    occurrences.set(label, (occurrences.get(label) ?? 0) + 1);
+  }
+  return occurrences;
+}
+
+function entityDisplayLabel(entity: Entity, occurrences: Map<string, number>): string {
+  const label = entity.label ?? entity.name;
+  return (occurrences.get(label) ?? 0) > 1 ? `${label} (${entity.name})` : label;
+}
+
+/** Falls back to the raw stored entityName when the entity has since been renamed or deleted -- same convention as WhatsAppPanel.tsx's own matchedEntityLabel/AutomationsPanel's entityLabel helpers for a reference that no longer resolves. */
+function matchedEntityLabel(entityName: string, entities: Entity[]): string {
+  const entity = entities.find((e) => e.name === entityName);
+  return entity ? entityDisplayLabel(entity, entityLabelOccurrences(entities)) : entityName;
+}
 
 /**
  * Renders the WhatsApp message log (already fetched into the panel -- no
@@ -13,9 +41,17 @@ const LOCALE: Record<Lang, string> = { he: "he-IL", en: "en-US" };
  * justifies). Lets a person keep a real record of a business conversation
  * -- for a dispute, an invoice, or just their own files -- before using
  * the panel's own "Clear history" button, which is irreversible.
+ *
+ * Round 1137: the on-screen log (WhatsAppPanel.tsx) shows a matched
+ * message's own entity label right next to its matched name (round 957,
+ * since a matched name alone can't tell a Customer named "Dana" apart from
+ * a Lead named "Dana") -- this report never took an `entities` param at
+ * all, so the exact same disambiguation it exists to show was silently
+ * missing from the one artifact a person actually keeps/shares.
  */
 export function formatWhatsAppLog(
   messages: WhatsAppMessageLogEntry[],
+  entities: Entity[],
   projectName: string,
   lang: Lang,
   t: (key: string, params?: Record<string, string | number>) => string,
@@ -33,9 +69,10 @@ export function formatWhatsAppLog(
   for (const m of messages) {
     const direction = m.direction === "in" ? t("whatsapp.log.incoming") : t("whatsapp.log.outgoing");
     const who = m.matchedLabel ?? (m.direction === "in" ? m.fromNumber : m.toNumber);
+    const entitySuffix = m.matchedEntityName ? ` — ${matchedEntityLabel(m.matchedEntityName, entities)}` : "";
     const time = new Date(m.createdAt).toLocaleString(LOCALE[lang]);
     const status = m.status === "failed" ? ` [${t("whatsapp.log.failed")}]` : "";
-    lines.push(`[${time}] ${direction} — ${who}${status}`);
+    lines.push(`[${time}] ${direction} — ${who}${entitySuffix}${status}`);
     lines.push(m.body);
     lines.push("");
   }

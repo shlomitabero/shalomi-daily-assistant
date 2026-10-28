@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
+import type { Entity } from "@forge/shared";
 import type { WhatsAppMessageLogEntry } from "./api.js";
 import { translate } from "./i18n/language.js";
 import {
@@ -31,7 +32,7 @@ test("formatWhatsAppLog includes the project name, each message's direction, sen
     makeMessage({ id: "m1", direction: "in", body: "Hi, are you open?", matchedLabel: "Dana Cohen" }),
     makeMessage({ id: "m2", direction: "out", body: "Yes, until 6pm.", fromNumber: "972500000000", toNumber: "972501234567" }),
   ];
-  const report = formatWhatsAppLog(messages, "Flower Shop", "en", t);
+  const report = formatWhatsAppLog(messages, [], "Flower Shop", "en", t);
 
   assert.match(report, /Flower Shop/);
   assert.match(report, /Hi, are you open\?/);
@@ -44,7 +45,7 @@ test("formatWhatsAppLog includes the project name, each message's direction, sen
 test("formatWhatsAppLog falls back to the raw phone number when a message has no matched contact name", () => {
   const t = (key: string, params?: Record<string, string | number>) => translate("en", key, params);
   const messages = [makeMessage({ direction: "in", fromNumber: "972501234567", matchedLabel: null })];
-  const report = formatWhatsAppLog(messages, "Flower Shop", "en", t);
+  const report = formatWhatsAppLog(messages, [], "Flower Shop", "en", t);
 
   assert.match(report, /972501234567/);
 });
@@ -52,7 +53,7 @@ test("formatWhatsAppLog falls back to the raw phone number when a message has no
 test("formatWhatsAppLog marks a failed message so it's distinguishable in the exported text, not silently identical to a sent one", () => {
   const t = (key: string, params?: Record<string, string | number>) => translate("en", key, params);
   const messages = [makeMessage({ direction: "out", status: "failed", body: "This one failed" })];
-  const report = formatWhatsAppLog(messages, "Flower Shop", "en", t);
+  const report = formatWhatsAppLog(messages, [], "Flower Shop", "en", t);
 
   assert.match(report, /Failed/);
   assert.match(report, /This one failed/);
@@ -60,7 +61,7 @@ test("formatWhatsAppLog marks a failed message so it's distinguishable in the ex
 
 test("formatWhatsAppLog shows the empty-log message instead of an empty body when there are no messages", () => {
   const t = (key: string, params?: Record<string, string | number>) => translate("en", key, params);
-  const report = formatWhatsAppLog([], "Flower Shop", "en", t);
+  const report = formatWhatsAppLog([], [], "Flower Shop", "en", t);
 
   assert.match(report, /No messages sent or received yet\./);
 });
@@ -68,11 +69,59 @@ test("formatWhatsAppLog shows the empty-log message instead of an empty body whe
 test("formatWhatsAppLog renders in Hebrew when given the Hebrew translator, with Hebrew text surviving intact", () => {
   const t = (key: string, params?: Record<string, string | number>) => translate("he", key, params);
   const messages = [makeMessage({ body: "שלום, מתי פתוח?", matchedLabel: "דנה כהן" })];
-  const report = formatWhatsAppLog(messages, "חנות הפרחים", "he", t);
+  const report = formatWhatsAppLog(messages, [], "חנות הפרחים", "he", t);
 
   assert.match(report, /חנות הפרחים/);
   assert.match(report, /שלום, מתי פתוח\?/);
   assert.match(report, /דנה כהן/);
+});
+
+/**
+ * Round 1137: the on-screen log (WhatsAppPanel.tsx) shows a matched
+ * message's own entity label right next to its matched name, since a
+ * matched name alone can't tell a Customer named "Dana" apart from a Lead
+ * named "Dana" -- but this report had no `entities` param at all until
+ * this round, so that same disambiguation was silently missing from the
+ * one artifact a person actually keeps/shares.
+ */
+test("formatWhatsAppLog includes a matched message's own entity label alongside its matched name", () => {
+  const t = (key: string, params?: Record<string, string | number>) => translate("en", key, params);
+  const entities: Entity[] = [{ name: "Customer", label: "Customer", fields: [] }];
+  const messages = [makeMessage({ matchedLabel: "Dana Cohen", matchedEntityName: "Customer" })];
+  const report = formatWhatsAppLog(messages, entities, "Flower Shop", "en", t);
+
+  assert.match(report, /Dana Cohen — Customer/);
+});
+
+/**
+ * Companion test: two entities legally sharing a label (the Entity Label
+ * editor doesn't enforce uniqueness) must be disambiguated with the
+ * entity's own raw name in parens, the same convention every other
+ * consuming module in this codebase already applies.
+ */
+test("formatWhatsAppLog disambiguates a matched message's entity label with the entity's own name when two entities share a label", () => {
+  const t = (key: string, params?: Record<string, string | number>) => translate("en", key, params);
+  const entities: Entity[] = [
+    { name: "Customer", label: "Contact", fields: [] },
+    { name: "Lead", label: "Contact", fields: [] },
+  ];
+  const messages = [
+    makeMessage({ id: "m1", matchedLabel: "Dana", matchedEntityName: "Customer" }),
+    makeMessage({ id: "m2", matchedLabel: "Dana", matchedEntityName: "Lead" }),
+  ];
+  const report = formatWhatsAppLog(messages, entities, "Flower Shop", "en", t);
+
+  assert.match(report, /Contact \(Customer\)/);
+  assert.match(report, /Contact \(Lead\)/);
+});
+
+/** A message with no matched record at all (matchedEntityName null) must render exactly as before -- no stray entity suffix, no crash. */
+test("formatWhatsAppLog adds no entity suffix at all for a message with no matched record", () => {
+  const t = (key: string, params?: Record<string, string | number>) => translate("en", key, params);
+  const messages = [makeMessage({ matchedLabel: null, matchedEntityName: null, fromNumber: "972501234567" })];
+  const report = formatWhatsAppLog(messages, [], "Flower Shop", "en", t);
+
+  assert.doesNotMatch(report, /—.*—/, "a message with no matched entity must have only the one direction-separator dash, not a stray second one");
 });
 
 /**

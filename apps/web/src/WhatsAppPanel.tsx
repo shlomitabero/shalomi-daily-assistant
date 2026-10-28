@@ -979,7 +979,7 @@ export function WhatsAppPanel({
   }
 
   function handleDownloadLog() {
-    downloadWhatsAppLog(formatWhatsAppLog(messages, projectName, lang, t), projectName);
+    downloadWhatsAppLog(formatWhatsAppLog(messages, entities, projectName, lang, t), projectName);
   }
 
   /**
@@ -992,7 +992,7 @@ export function WhatsAppPanel({
    */
   async function handleCopyLog() {
     try {
-      await navigator.clipboard.writeText(formatWhatsAppLog(messages, projectName, lang, t));
+      await navigator.clipboard.writeText(formatWhatsAppLog(messages, entities, projectName, lang, t));
       setCopyStatus("copied");
     } catch {
       setCopyStatus("failed");
