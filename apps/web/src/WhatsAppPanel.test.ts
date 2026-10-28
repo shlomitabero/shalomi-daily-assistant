@@ -1544,6 +1544,92 @@ test("WhatsAppPanel never fires a delete on close when no attachment was ever ch
 });
 
 /**
+ * Round 1192: every existing orphan-prevention fix in this file (979,
+ * 1005, 1061, 1104, 1119) only ever cleans up an attachment that's
+ * already landed in testAttachment/testAttachmentRef state -- but
+ * handleAttachmentChange's own upload has a real `await` that resolves
+ * BEFORE setTestAttachment ever runs. If the panel is closed (unmounted)
+ * while that upload is still pending, round 1005's own unmount effect
+ * finds testAttachmentRef.current still null (nothing has landed yet)
+ * and deletes nothing -- then the upload finishes afterward with
+ * setTestAttachment now running on an already-unmounted component, a
+ * silent no-op, leaving the just-uploaded file on disk forever with
+ * nothing anywhere ever referencing it again. Holds the upload's own
+ * fetch pending with a deferred promise so the unmount genuinely happens
+ * while the upload is still in flight, not after it resolves (the
+ * existing round-1005 test above waits for `.file-field-current` to
+ * appear first, so it never actually exercises this race).
+ */
+test("WhatsAppPanel deletes a just-uploaded attachment from the server when the panel is closed WHILE that upload is still in flight", async () => {
+  await withJsdom(async () => {
+    const originalFetch = globalThis.fetch;
+    let deleteRequest: { url: string } | undefined;
+    let resolveUpload: (() => void) | undefined;
+    globalThis.fetch = (async (input: string, init?: RequestInit): Promise<Response> => {
+      const method = init?.method ?? "GET";
+      if (method === "GET" && input === "/api/projects/proj1/integrations/whatsapp/status") {
+        return new Response(
+          JSON.stringify({ status: "connected", phoneNumber: "972501234567", qrDataUrl: null, error: null }),
+          { status: 200, headers: { "content-type": "application/json" } },
+        );
+      }
+      if (method === "GET" && input === "/api/projects/proj1/integrations/whatsapp/messages") {
+        return new Response(JSON.stringify({ messages: [] }), { status: 200, headers: { "content-type": "application/json" } });
+      }
+      if (method === "POST" && input === "/api/projects/proj1/integrations/whatsapp/attachments/upload") {
+        await new Promise<void>((resolve) => {
+          resolveUpload = resolve;
+        });
+        return new Response(
+          JSON.stringify({ file: { url: "/api/uploads/proj1/_whatsapp-attachments/fake-uuid.pdf", name: "brochure.pdf", size: 9, mimeType: "application/pdf" } }),
+          { status: 200, headers: { "content-type": "application/json" } },
+        );
+      }
+      if (method === "DELETE" && input === "/api/projects/proj1/integrations/whatsapp/attachments") {
+        deleteRequest = JSON.parse(init!.body as string) as { url: string };
+        return new Response(null, { status: 204 });
+      }
+      throw new Error(`unexpected request ${method} ${input}`);
+    }) as typeof fetch;
+    try {
+      const view = render(
+        React.createElement(
+          ThemeProvider,
+          null,
+          React.createElement(LanguageProvider, null, React.createElement(WhatsAppPanel, { projectId: "proj1", userId: "user1", projectName: "Test Project", onClose: () => {}, onJumpToEntity: () => {}, onJumpToRecord: () => {}, entities: [], onCreateRecordFromMessage: () => {} })),
+        ),
+      );
+      await waitForCondition(() => document.querySelector(".whatsapp-test-form") !== null);
+
+      const fileInput = document.querySelector('.whatsapp-attachment-field input[type="file"]') as HTMLInputElement;
+      const file = new File(["%PDF-fake-brochure"], "brochure.pdf", { type: "application/pdf" });
+      Object.defineProperty(fileInput, "files", { value: [file] });
+      await act(async () => {
+        fireEvent.change(fileInput);
+      });
+      await waitForCondition(() => resolveUpload !== undefined);
+
+      // The upload is still pending (resolveUpload hasn't been called
+      // yet) -- close the panel now, exactly the race this test exists
+      // to exercise.
+      view.unmount();
+      assert.equal(deleteRequest, undefined, "nothing has landed in testAttachment yet, so the unmount effect itself must not fire a delete");
+
+      // Let the upload actually finish, now that the component is gone.
+      resolveUpload!();
+      await waitForCondition(() => deleteRequest !== undefined);
+      assert.equal(
+        deleteRequest!.url,
+        "/api/uploads/proj1/_whatsapp-attachments/fake-uuid.pdf",
+        "the just-uploaded file must be deleted directly once the upload resolves after the panel has already closed",
+      );
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+});
+
+/**
  * New in this round: every other write-form in this app resets to empty
  * right after a successful submission (e.g. EntityPanel's own record form
  * clears right after createRecord succeeds) -- but this test-send form

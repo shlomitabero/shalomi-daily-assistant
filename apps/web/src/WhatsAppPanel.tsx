@@ -276,6 +276,18 @@ export function WhatsAppPanel({
   // set after that.
   const testAttachmentRef = useRef<WhatsAppAttachmentDescriptor | null>(null);
   testAttachmentRef.current = testAttachment;
+  /**
+   * Round 1192: handleAttachmentChange's own upload has a real `await`
+   * (uploadWhatsAppAttachment) that lands BEFORE setTestAttachment ever
+   * runs -- so if the panel unmounts while that upload is still pending,
+   * the round-1005 unmount effect below finds testAttachmentRef.current
+   * still null (nothing has landed yet) and deletes nothing, then the
+   * upload finishes moments later with nowhere left to tell. Checked
+   * inside handleAttachmentChange's own `.then` continuation to delete
+   * that just-uploaded file directly instead of calling setTestAttachment
+   * once the component is already gone.
+   */
+  const mountedRef = useRef(true);
   const [uploadingAttachment, setUploadingAttachment] = useState(false);
   const [attachmentError, setAttachmentError] = useState<string | null>(null);
   const [recentNumbers, setRecentNumbers] = useState<string[]>(() => getRecentWhatsAppNumbers(projectId, userId));
@@ -539,6 +551,7 @@ export function WhatsAppPanel({
    */
   useEffect(() => {
     return () => {
+      mountedRef.current = false;
       if (testAttachmentRef.current) {
         void deleteWhatsAppAttachment(projectId, testAttachmentRef.current.url).catch(() => {});
       }
@@ -732,6 +745,15 @@ export function WhatsAppPanel({
     setUploadingAttachment(true);
     try {
       const uploaded = await uploadWhatsAppAttachment(projectId, chosen);
+      // Round 1192: the panel closed (unmounted) while this exact upload
+      // was still in flight -- the round-1005 unmount effect already ran
+      // and found nothing in testAttachment yet to delete, so this file
+      // is this call's own, and only this call's own, responsibility to
+      // clean up now that nothing will ever reference it.
+      if (!mountedRef.current) {
+        void deleteWhatsAppAttachment(projectId, uploaded.url).catch(() => {});
+        return;
+      }
       // Round 979: replacing an already-selected attachment with a
       // different file otherwise left the first upload sitting on disk
       // forever (nothing but whole-project deletion ever touched it) --
