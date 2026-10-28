@@ -1520,7 +1520,7 @@ test("generated server.js actually enforces foreign keys: deleting a record anot
   assert.match(serverJs, /db\.exec\("PRAGMA foreign_keys = ON;"\);/);
   assert.match(
     serverJs,
-    /const references = field\.type === "relation" && field\.relationTo && ENTITY_NAMES\.has\(field\.relationTo\) \? ` REFERENCES \$\{q\(field\.relationTo\)\}\(id\)` : "";\n {4}columns\.push\(`\$\{q\(field\.name\)\} \$\{sqlType\(field\.type\)\}\$\{field\.required \? " NOT NULL" : ""\}\$\{references\}`\);/,
+    /const references = field\.type === "relation" && field\.relationTo && ENTITY_NAMES_LOWER\.has\(field\.relationTo\.toLowerCase\(\)\) \? ` REFERENCES \$\{q\(field\.relationTo\)\}\(id\)` : "";\n {4}columns\.push\(`\$\{q\(field\.name\)\} \$\{sqlType\(field\.type\)\}\$\{field\.required \? " NOT NULL" : ""\}\$\{references\}`\);/,
   );
 
   const dir = mkdtempSync(path.join(tmpdir(), "codegen-fk-test-"));
@@ -1592,6 +1592,94 @@ test("generated server.js actually enforces foreign keys: deleting a record anot
     const secondCourier = (await secondCourierRes.json()).record;
     const okDeleteRes = await fetch(`http://localhost:${port}/api/Courier/${secondCourier.id}`, { method: "DELETE" });
     assert.equal(okDeleteRes.status, 204, "an unreferenced record must still delete normally");
+  } finally {
+    child.kill();
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+/**
+ * Round 1159: mirrors the test above exactly, except the relation field's
+ * own relationTo ("courier") differs from its real target entity's name
+ * ("Courier") only by letter case -- the same genuinely plausible
+ * AI-generated-spec scenario migrate.ts's own round-1159 fix addresses for
+ * the live backend. Before that fix, ENTITY_NAMES.has(field.relationTo)
+ * was an exact-case Set lookup, so this generated app would silently drop
+ * the REFERENCES clause and let the delete below through with a plain 204,
+ * leaving Order.courierId dangling -- the real, end-to-end proof this port
+ * closes the identical gap in the exported standalone app, not just a
+ * regex match on the generated source.
+ */
+test("generated server.js still enforces foreign keys when a relation field's relationTo differs from its target entity's name only by letter case", async () => {
+  const caseMismatchedProject: Project = {
+    ...project,
+    spec: {
+      ...project.spec,
+      entities: [
+        { name: "Courier", fields: [{ name: "name", type: "text", required: true }] },
+        {
+          name: "Order",
+          fields: [
+            { name: "item", type: "text", required: true },
+            { name: "courierId", type: "relation", required: false, relationTo: "courier" },
+          ],
+        },
+      ],
+    },
+  };
+  const files = generateExportFiles(caseMismatchedProject);
+  const serverJs = files.find((f) => f.path === "server.js")!.content;
+
+  const dir = mkdtempSync(path.join(tmpdir(), "codegen-fk-case-test-"));
+  const repoRoot = path.resolve(import.meta.dirname, "../../..");
+  symlinkSync(path.join(repoRoot, "node_modules"), path.join(dir, "node_modules"));
+  writeFileSync(path.join(dir, "server.js"), serverJs);
+
+  const port = 54000 + Math.floor(Math.random() * 5000);
+  const child = spawn(process.execPath, ["--experimental-sqlite", "server.js"], {
+    cwd: dir,
+    env: { ...process.env, PORT: String(port) },
+    stdio: ["ignore", "pipe", "pipe"],
+  });
+  let stderr = "";
+  child.stderr.on("data", (chunk) => {
+    stderr += chunk.toString();
+  });
+
+  try {
+    const deadline = Date.now() + 5000;
+    let lastErr: unknown;
+    while (Date.now() < deadline) {
+      if (child.exitCode !== null) throw new Error(`server.js exited early (code ${child.exitCode}):\n${stderr}`);
+      try {
+        await fetch(`http://localhost:${port}/api/entities`);
+        break;
+      } catch (err) {
+        lastErr = err;
+        await new Promise((r) => setTimeout(r, 100));
+      }
+    }
+    if (child.exitCode !== null) throw lastErr instanceof Error ? lastErr : new Error(String(lastErr));
+
+    const courierRes = await fetch(`http://localhost:${port}/api/Courier`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ name: "Bob" }),
+    });
+    assert.equal(courierRes.status, 201);
+    const courier = (await courierRes.json()).record;
+
+    const orderRes = await fetch(`http://localhost:${port}/api/Order`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ item: "Package", courierId: courier.id }),
+    });
+    assert.equal(orderRes.status, 201);
+
+    const deleteRes = await fetch(`http://localhost:${port}/api/Courier/${courier.id}`, { method: "DELETE" });
+    assert.equal(deleteRes.status, 409, "the REFERENCES clause must still be created even though relationTo is lowercase courier, not Courier");
+    const deleteBody = await deleteRes.json();
+    assert.match(deleteBody.error, /still references it/);
   } finally {
     child.kill();
     rmSync(dir, { recursive: true, force: true });

@@ -114,9 +114,35 @@ function isTextLikeFieldType(type: Field["type"]): boolean {
  * failure or schema rejection, so nothing round 415 found is at risk of
  * breaking again.
  */
-function missingFkChangesForNewColumns(table: string, fields: Field[], entityNames: Set<string>): MigrationChange[] {
+/**
+ * Round 1159: resolves a relation field's relationTo to the actual,
+ * current-cased name of the entity it targets, the same way this file's
+ * own entity/field-name lookups already tolerate a letter-case mismatch
+ * (prevFieldByLowerName below, for instance) -- SQLite compares identifiers
+ * case-insensitively even when quoted, the same fact ProductSpecSchema's
+ * own findCaseInsensitiveDuplicateEntityNames refine exists to guard
+ * against within one spec, which also guarantees at most one entity name
+ * can ever match a given relationTo this way. Every relationTo-resolution
+ * site in this file used to compare relationTo against entityNames with a
+ * plain Set.has (exact case only), so an AI-generated or Debug-Agent-
+ * repaired spec whose relation field's relationTo differs only in case
+ * from its real target entity's name (e.g. "customer" vs. the entity
+ * actually named "Customer") silently got no REFERENCES clause at all, and
+ * diffAndMigrate reported it as relation_missing_fk/relationToNeverExisted
+ * -- disabling the field's automation rules and showing a misleading
+ * "no real foreign-key link to the entity it names" hazard, even though
+ * the real target entity does exist, just under different casing. Returns
+ * undefined when relationTo names no entity in this spec at all, case-
+ * insensitively -- the genuine case this file's relation_missing_fk
+ * hazards exist to report.
+ */
+function resolveRelationTarget(relationTo: string | undefined, entityNamesByLowerName: Map<string, string>): string | undefined {
+  return relationTo ? entityNamesByLowerName.get(relationTo.toLowerCase()) : undefined;
+}
+
+function missingFkChangesForNewColumns(table: string, fields: Field[], entityNamesByLowerName: Map<string, string>): MigrationChange[] {
   return fields
-    .filter((f) => f.type === "relation" && f.required && f.relationTo && !entityNames.has(f.relationTo))
+    .filter((f) => f.type === "relation" && f.required && f.relationTo && !resolveRelationTarget(f.relationTo, entityNamesByLowerName))
     .map((f) => ({
       type: "relation_missing_fk" as const,
       table,
@@ -133,7 +159,7 @@ function missingFkChangesForNewColumns(table: string, fields: Field[], entityNam
  * not yet a full migration-diffing/rollback system (see roadmap.md).
  */
 export function generateCreateTableStatements(projectId: string, spec: ProductSpec): string[] {
-  const entityNames = new Set(spec.entities.map((e) => e.name));
+  const entityNamesByLowerName = new Map(spec.entities.map((e) => [e.name.toLowerCase(), e.name]));
   return spec.entities.map((entity: Entity) => {
     const table = tableNameFor(projectId, entity.name);
     const columns = [
@@ -145,8 +171,9 @@ export function generateCreateTableStatements(projectId: string, spec: ProductSp
       const sqlType = sqlTypeFor(field);
       const notNull = field.required ? " NOT NULL" : "";
       let fk = "";
-      if (field.type === "relation" && field.relationTo && entityNames.has(field.relationTo)) {
-        const relatedTable = tableNameFor(projectId, field.relationTo);
+      const relationTarget = field.type === "relation" ? resolveRelationTarget(field.relationTo, entityNamesByLowerName) : undefined;
+      if (relationTarget) {
+        const relatedTable = tableNameFor(projectId, relationTarget);
         fk = ` REFERENCES ${quoteIdentifier(relatedTable)}(id)`;
       }
       columns.push(`${quoteIdentifier(columnName)} ${sqlType}${notNull}${fk}`);
@@ -303,16 +330,17 @@ export function diffAndMigrate(
 ): MigrationChange[] {
   if (!previousSpec) {
     applyMigrations(db, projectId, nextSpec);
-    const entityNames = new Set(nextSpec.entities.map((e) => e.name));
+    const entityNamesByLowerName = new Map(nextSpec.entities.map((e) => [e.name.toLowerCase(), e.name]));
     return nextSpec.entities.flatMap((e) => {
       const table = tableNameFor(projectId, e.name);
-      return [{ type: "new_table" as const, table }, ...missingFkChangesForNewColumns(table, e.fields, entityNames)];
+      return [{ type: "new_table" as const, table }, ...missingFkChangesForNewColumns(table, e.fields, entityNamesByLowerName)];
     });
   }
 
   const statements = generateCreateTableStatements(projectId, nextSpec);
   const previousEntities = new Map(previousSpec.entities.map((e) => [e.name, e]));
   const entityNames = new Set(nextSpec.entities.map((e) => e.name));
+  const entityNamesByLowerName = new Map(nextSpec.entities.map((e) => [e.name.toLowerCase(), e.name]));
   const changes: MigrationChange[] = [];
   // A field kept by name can still invalidate an automation rule that
   // references it without being removed outright: retyped away from
@@ -391,7 +419,7 @@ export function diffAndMigrate(
 
     if (!prevEntity && currentColumns.size === 0) {
       db.exec(statements[index]);
-      changes.push({ type: "new_table", table }, ...missingFkChangesForNewColumns(table, entity.fields, entityNames));
+      changes.push({ type: "new_table", table }, ...missingFkChangesForNewColumns(table, entity.fields, entityNamesByLowerName));
       if (hasCheckpointHistoryTable(db)) recordEntityNameInHistory(db, projectId, entity.name);
       return;
     }
@@ -511,8 +539,8 @@ export function diffAndMigrate(
           // reality here.
           const columnName = assertSafeIdentifier(field.name, "column");
           const shape = physicalShapeByColumn.get(columnName);
-          const expectedFkTable =
-            field.relationTo && entityNames.has(field.relationTo) ? tableNameFor(projectId, field.relationTo) : undefined;
+          const relationTarget = resolveRelationTarget(field.relationTo, entityNamesByLowerName);
+          const expectedFkTable = relationTarget ? tableNameFor(projectId, relationTarget) : undefined;
           if (shape?.fkTable && expectedFkTable && shape.fkTable !== expectedFkTable) {
             changes.push({
               type: "relation_target_changed",
@@ -555,7 +583,7 @@ export function diffAndMigrate(
               fieldsNeedingAutomationDisable.set(entity.name, new Set());
             }
             fieldsNeedingAutomationDisable.get(entity.name)!.add(field.name);
-          } else if (field.required && field.relationTo && !entityNames.has(field.relationTo)) {
+          } else if (field.required && field.relationTo && !resolveRelationTarget(field.relationTo, entityNamesByLowerName)) {
             // Round 863: the mirror-image gap of round 860's own fix, one
             // step later in a field's life. Round 860 covers a relation
             // field created with an unresolvable relationTo from the start
@@ -698,7 +726,8 @@ export function diffAndMigrate(
             fieldsNeedingAutomationDisable.get(entity.name)!.add(field.name);
           }
         } else if (field.type === "relation" && shape) {
-          const expectedFkTable = field.relationTo && entityNames.has(field.relationTo) ? tableNameFor(projectId, field.relationTo) : undefined;
+          const relationTarget = resolveRelationTarget(field.relationTo, entityNamesByLowerName);
+          const expectedFkTable = relationTarget ? tableNameFor(projectId, relationTarget) : undefined;
           if (shape.fkTable && expectedFkTable && shape.fkTable !== expectedFkTable) {
             changes.push({
               type: "relation_target_changed",
@@ -770,13 +799,14 @@ export function diffAndMigrate(
         // returns for this exact case on a relation field that existed from
         // the start.
         let fk = "";
-        if (field.type === "relation" && field.relationTo && entityNames.has(field.relationTo)) {
-          const relatedTable = tableNameFor(projectId, field.relationTo);
+        const newColumnRelationTarget = field.type === "relation" ? resolveRelationTarget(field.relationTo, entityNamesByLowerName) : undefined;
+        if (newColumnRelationTarget) {
+          const relatedTable = tableNameFor(projectId, newColumnRelationTarget);
           fk = ` REFERENCES ${quoteIdentifier(relatedTable)}(id)`;
         }
         db.exec(`ALTER TABLE ${quoteIdentifier(table)} ADD COLUMN ${quoteIdentifier(columnName)} ${sqlType}${fk}`);
       }
-      changes.push({ type: "new_column", table, column: columnName }, ...missingFkChangesForNewColumns(table, [field], entityNames));
+      changes.push({ type: "new_column", table, column: columnName }, ...missingFkChangesForNewColumns(table, [field], entityNamesByLowerName));
     }
     if (hasCheckpointHistoryTable(db)) recordEntityNameInHistory(db, projectId, entity.name);
   });

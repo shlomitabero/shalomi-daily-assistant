@@ -336,6 +336,14 @@ function sqlType(type) {
 }
 
 const ENTITY_NAMES = new Set(ENTITIES.map((e) => e.name));
+// Round 1159: SQLite compares identifiers case-insensitively even when
+// quoted (the same fact migrate.ts's own round-617/618 fix and this file's
+// own existingColumnsLower just below already rely on), but ENTITY_NAMES
+// above is exact-case, so a relation field whose relationTo differed only
+// in letter case from its real target entity's name used to silently get
+// no REFERENCES clause at all -- mirrors migrate.ts's own
+// resolveRelationTarget fix for the identical gap in the live backend.
+const ENTITY_NAMES_LOWER = new Set(ENTITIES.map((e) => e.name.toLowerCase()));
 
 for (const entity of ENTITIES) {
   assertSafe(entity.name);
@@ -354,8 +362,9 @@ for (const entity of ENTITIES) {
     // otherwise reference a table that's never created, which makes every
     // single insert into THIS table fail with "no such table", not just
     // writes that actually set the relation field. Mirrors migrate.ts's own
-    // entityNames.has(field.relationTo) guard.
-    const references = field.type === "relation" && field.relationTo && ENTITY_NAMES.has(field.relationTo) ? \` REFERENCES \${q(field.relationTo)}(id)\` : "";
+    // resolveRelationTarget guard, including (round 1159) its own
+    // case-insensitive fallback.
+    const references = field.type === "relation" && field.relationTo && ENTITY_NAMES_LOWER.has(field.relationTo.toLowerCase()) ? \` REFERENCES \${q(field.relationTo)}(id)\` : "";
     columns.push(\`\${q(field.name)} \${sqlType(field.type)}\${field.required ? " NOT NULL" : ""}\${references}\`);
   }
   db.exec(\`CREATE TABLE IF NOT EXISTS \${q(entity.name)} (\${columns.join(", ")})\`);
@@ -395,7 +404,7 @@ for (const entity of ENTITIES) {
   const existingColumnsLower = new Set(Array.from(existingColumns, (c) => c.toLowerCase()));
   for (const field of entity.fields) {
     if (existingColumnsLower.has(field.name.toLowerCase())) continue;
-    const references = field.type === "relation" && field.relationTo && ENTITY_NAMES.has(field.relationTo) ? \` REFERENCES \${q(field.relationTo)}(id)\` : "";
+    const references = field.type === "relation" && field.relationTo && ENTITY_NAMES_LOWER.has(field.relationTo.toLowerCase()) ? \` REFERENCES \${q(field.relationTo)}(id)\` : "";
     db.exec(\`ALTER TABLE \${q(entity.name)} ADD COLUMN \${q(field.name)} \${sqlType(field.type)}\${references}\`);
   }
 }

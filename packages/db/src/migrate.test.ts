@@ -40,6 +40,51 @@ test("generates one CREATE TABLE per entity with correct SQL types", () => {
   assert.match(statements[1], /"customerId" INTEGER REFERENCES "entity_proj1_Customer"\(id\)/);
 });
 
+/**
+ * Round 1159: every relationTo-resolution site in this file used to compare
+ * relationTo against the spec's entity names with a plain, exact-case
+ * Set.has -- an AI-generated or Debug-Agent-repaired spec whose relation
+ * field's relationTo differs only in letter case from its real target
+ * entity's name (ProductSpecSchema's own findCaseInsensitiveDuplicateEntityNames
+ * refine already guarantees at most one entity name can match a given
+ * relationTo this way, so this is never ambiguous) used to silently get no
+ * REFERENCES clause at all, identical in effect to a genuinely dangling
+ * relationTo naming no entity whatsoever.
+ */
+test("generateCreateTableStatements still emits a REFERENCES clause when relationTo differs from its target entity's name only by letter case", () => {
+  const caseMismatchedSpec: ProductSpec = {
+    ...spec,
+    entities: [spec.entities[0], { ...spec.entities[1], fields: [{ ...spec.entities[1].fields[1], relationTo: "customer" }] }],
+  };
+  const statements = generateCreateTableStatements("proj1", caseMismatchedSpec);
+  assert.match(statements[1], /"customerId" INTEGER REFERENCES "entity_proj1_Customer"\(id\)/);
+});
+
+test("diffAndMigrate never reports relation_missing_fk for a relation field whose relationTo differs from a real target entity only by letter case", () => {
+  const caseMismatchedEntity = (fieldRequired: boolean): ProductSpec => ({
+    ...spec,
+    entities: [...spec.entities, { name: "Task", fields: [{ name: "assigneeId", type: "relation", required: fieldRequired, relationTo: "customer" }] }],
+  });
+
+  const db = openDatabase(":memory:");
+  const changes = diffAndMigrate(db, "proj1", undefined, caseMismatchedEntity(true));
+  assert.ok(
+    !changes.some((c) => c.type === "relation_missing_fk"),
+    "relationTo resolving to the real Customer entity case-insensitively must never be reported as missing its FK",
+  );
+
+  const dbOptional = openDatabase(":memory:");
+  const optionalChanges = diffAndMigrate(dbOptional, "proj1", undefined, caseMismatchedEntity(false));
+  assert.ok(!optionalChanges.some((c) => c.type === "relation_missing_fk"));
+
+  // The physical REFERENCES clause itself must be real, not merely unflagged.
+  const fk = db.prepare(`PRAGMA foreign_key_list("entity_proj1_Task")`).all() as { table: string; from: string }[];
+  assert.ok(
+    fk.some((row) => row.table === "entity_proj1_Customer" && row.from === "assigneeId"),
+    "expected a real foreign key from Task.assigneeId to the Customer table",
+  );
+});
+
 test("applyMigrations actually creates queryable tables", () => {
   const db = openDatabase(":memory:");
   applyMigrations(db, "proj1", spec);
