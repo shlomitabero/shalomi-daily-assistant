@@ -172,6 +172,41 @@ function fieldDisplayLabel(field: Field, occurrences: Map<string, number>): stri
 }
 
 /**
+ * Round 1161: the entity-level sibling of fieldLabelOccurrences/
+ * fieldDisplayLabel just above -- the Entity Label editor doesn't enforce
+ * uniqueness either, so a project with both a "Customer" entity and a
+ * "Lead" entity can legally give both the exact same display label, and a
+ * matched WhatsApp message's own name alone can't tell which one it
+ * actually belongs to. Round 1137 already fixed this identical gap for
+ * apps/web/src/whatsappLog.ts's own "Download/Copy log" export
+ * (entityLabelOccurrences/entityDisplayLabel there) -- whatsappMessagesToCsv
+ * below never got the matching fix, so the one WhatsApp message record a
+ * person actually keeps forever (the full backup, not just whatever page
+ * happens to be loaded in the panel) silently dropped the one piece of
+ * information that disambiguates it. Mirrors (rather than imports, per
+ * this file's own top comment) whatsappLog.ts's identical pair.
+ */
+function entityLabelOccurrences(entities: Entity[]): Map<string, number> {
+  const occurrences = new Map<string, number>();
+  for (const e of entities) {
+    const label = e.label ?? e.name;
+    occurrences.set(label, (occurrences.get(label) ?? 0) + 1);
+  }
+  return occurrences;
+}
+
+function entityDisplayLabel(entity: Entity, occurrences: Map<string, number>): string {
+  const label = entity.label ?? entity.name;
+  return (occurrences.get(label) ?? 0) > 1 ? `${label} (${entity.name})` : label;
+}
+
+/** Falls back to the raw stored entityName when the entity has since been renamed or deleted -- same convention as whatsappLog.ts's/WhatsAppPanel.tsx's own matchedEntityLabel helpers for a reference that no longer resolves. */
+function matchedEntityLabel(entityName: string, entities: Entity[]): string {
+  const entity = entities.find((e) => e.name === entityName);
+  return entity ? entityDisplayLabel(entity, entityLabelOccurrences(entities)) : entityName;
+}
+
+/**
  * Reorders entity.fields to match the user's own drag-reordered column
  * order for this entity's table -- the on-screen table, per-entity "Export
  * CSV", Copy, both Print sheets, the Columns menu, board cards, the add/
@@ -281,7 +316,7 @@ function collectAllWhatsAppMessages(db: ForgeDatabase, projectId: string): Whats
  * description) signal this file's own caller (routes/projects.ts) already
  * uses for "בנייה ראשונית"/"(עותק)" elsewhere in this exact codebase.
  */
-function whatsappMessagesToCsv(messages: WhatsAppMessage[], isHebrew: boolean): string {
+function whatsappMessagesToCsv(messages: WhatsAppMessage[], allEntities: Entity[], isHebrew: boolean): string {
   const header = (
     isHebrew
       ? ["כיוון", "מאת", "אל", "הודעה", "רשומה מותאמת", "סטטוס", "תאריך"]
@@ -291,19 +326,14 @@ function whatsappMessagesToCsv(messages: WhatsAppMessage[], isHebrew: boolean): 
     .join(",");
   const incomingLabel = isHebrew ? "נכנסת" : "Incoming";
   const outgoingLabel = isHebrew ? "יוצאת" : "Outgoing";
-  const rows = messages.map((m) =>
-    [
-      m.direction === "in" ? incomingLabel : outgoingLabel,
-      m.fromNumber,
-      m.toNumber,
-      m.body,
-      m.matchedLabel ?? "",
-      m.status,
-      m.createdAt,
-    ]
-      .map((v) => csvEscape(v))
-      .join(","),
-  );
+  const rows = messages.map((m) => {
+    // Round 1161: see entityLabelOccurrences/matchedEntityLabel's own doc
+    // comment above -- disambiguates a matched name that's shared across
+    // two entities, the same way the on-screen log and its own Download/
+    // Copy export already do.
+    const matched = m.matchedLabel ? (m.matchedEntityName ? `${m.matchedLabel} — ${matchedEntityLabel(m.matchedEntityName, allEntities)}` : m.matchedLabel) : "";
+    return [m.direction === "in" ? incomingLabel : outgoingLabel, m.fromNumber, m.toNumber, m.body, matched, m.status, m.createdAt].map((v) => csvEscape(v)).join(",");
+  });
   return [header, ...rows].join("\r\n");
 }
 
@@ -406,7 +436,7 @@ export function generateBackupZipEntries(
   if (whatsappMessages.length > 0) {
     entries.push({
       path: uniqueWhatsAppLogPath(entries.map((e) => e.path)),
-      content: "﻿" + whatsappMessagesToCsv(whatsappMessages, isHebrewText(project.description)),
+      content: "﻿" + whatsappMessagesToCsv(whatsappMessages, allEntities, isHebrewText(project.description)),
     });
   }
 

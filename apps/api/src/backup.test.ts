@@ -459,9 +459,58 @@ test("real WhatsApp messages produce a 'WhatsApp Messages.csv' entry, correctly 
   // guarded with a leading single quote just like any other field -- same convention, no special case.
   // listWhatsAppMessages returns newest-first, so the "out" reply comes first.
   assert.equal(lines[1], `Outgoing,'+972502222222,'+972501111111,מחר בבוקר,,sent,${second.createdAt}`);
+  // Round 1161: "Matched Record" now also carries the matched entity's own
+  // display label ("לקוחות" -- the Customer entity's own Hebrew label in
+  // this fixture), the same disambiguating information the on-screen log
+  // and its own Download/Copy export already show.
   assert.equal(
     lines[2],
-    `Incoming,'+972501111111,'+972502222222,"מתי אפשר לקבל, את ההזמנה?",Dana Levi,received,${first.createdAt}`,
+    `Incoming,'+972501111111,'+972502222222,"מתי אפשר לקבל, את ההזמנה?",Dana Levi — לקוחות,received,${first.createdAt}`,
+  );
+});
+
+/**
+ * Round 1161: a project with two entities that legally share the same
+ * display label (the Entity Label editor doesn't enforce uniqueness any
+ * more than the Field Label editor does) -- without disambiguation, two
+ * WhatsApp conversations with two different people who happen to share a
+ * name would be attributed identically in the backup, with zero way to
+ * tell which business record either one actually refers to. Confirms
+ * matchedEntityLabel falls through to entityDisplayLabel's own
+ * "(EntityName)" suffix exactly like whatsappLog.ts's round-1137 fix
+ * already does for the live panel's own export.
+ */
+test("a matched WhatsApp message disambiguates its entity when two entities share the same display label", () => {
+  const ambiguousProject: Project = {
+    ...project,
+    spec: {
+      ...project.spec,
+      entities: [
+        { name: "Customer", label: "People", fields: [{ name: "name", type: "text", required: true }] },
+        { name: "Lead", label: "People", fields: [{ name: "name", type: "text", required: true }] },
+      ],
+    },
+  };
+  const db = createTestDb(ambiguousProject);
+  const msg = insertWhatsAppMessage(db, {
+    projectId: ambiguousProject.id,
+    direction: "in",
+    fromNumber: "+972501111111",
+    toNumber: "+972502222222",
+    body: "Hi",
+    matchedLabel: "Dana",
+    matchedEntityName: "Lead",
+    matchedRecordId: 1,
+    status: "received",
+  });
+
+  const entries = generateBackupZipEntries(db, ambiguousProject);
+  const csv = entries.find((e) => e.path === "WhatsApp Messages.csv")!.content.replace(/^﻿/, "");
+  const lines = csv.split("\r\n");
+  assert.equal(
+    lines[1],
+    `Incoming,'+972501111111,'+972502222222,Hi,Dana — People (Lead),received,${msg.createdAt}`,
+    "a matched name shared across two ambiguously-labeled entities must be disambiguated by the entity's own real name",
   );
 });
 
