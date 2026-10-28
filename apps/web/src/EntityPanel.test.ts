@@ -14,7 +14,7 @@ import { getCollapsedGroups } from "./collapsedGroupsPreference.js";
 import { getCollapsedBoardColumns } from "./collapsedBoardColumnsPreference.js";
 import { getViewMode } from "./viewModePreference.js";
 import { getSortKeys } from "./sortKeysPreference.js";
-import { getFieldFilters } from "./fieldFiltersPreference.js";
+import { getFieldFilters, setFieldFilters } from "./fieldFiltersPreference.js";
 import { EntityPanel } from "./EntityPanel.js";
 import { LanguageProvider } from "./i18n/LanguageContext.js";
 import { ThemeProvider } from "./theme/ThemeContext.js";
@@ -11480,6 +11480,125 @@ test("EntityPanel's relation field still renders the real searchable picker, not
       const realSelect = document.querySelector(".record-form select") as HTMLSelectElement;
       const optionLabels = Array.from(realSelect.options).map((o) => o.textContent);
       assert.ok(optionLabels.includes("Dana"), "the real, option-backed select must still resolve its target entity and list the related record's display label");
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+});
+
+/**
+ * Round 1178's finding, continued: the toolbar's own relation filter
+ * <option> label at EntityPanel.tsx's relation-filter branch
+ * (`recordDisplayLabel(allEntities.find((e) => e.name === f.relationTo)!,
+ * r, lang)`) had the exact same exact-case lookup bug as `relatedEntity`
+ * above -- and findFilterableFields (entityFormatting.ts, fixed this same
+ * round) is what decides whether a case-mismatched relation field even
+ * reaches this branch at all. Fixing findFilterableFields alone, without
+ * also fixing this `!`-asserted lookup, would have turned a field that
+ * was simply never offered for filtering into one that crashes the whole
+ * toolbar outright the moment it's offered -- exactly the "fix the whole
+ * chain together" interdependency this round's own commit documents.
+ * Confirms the filter dropdown for a case-mismatched relation field
+ * renders without crashing and lists the related record's real display
+ * label as an option.
+ */
+test("EntityPanel's toolbar filter dropdown still renders a relation field's options, without crashing, when relationTo differs from its target entity's name only by letter case", async () => {
+  await withJsdom(async () => {
+    const orderEntity: Entity = {
+      name: "Order",
+      label: "Order",
+      fields: [
+        { name: "item", label: "Item", type: "text", required: true },
+        { name: "courierId", label: "Courier", type: "relation", relationTo: "courier", required: false },
+      ],
+    };
+    const courierEntity: Entity = { name: "Courier", label: "Courier", fields: [{ name: "name", label: "Name", type: "text", required: true }] };
+    const courierRelated: EntityRecord[] = [{ id: 9, createdAt: "x", name: "Dana" }];
+    const store: EntityRecord[] = [{ id: 1, createdAt: "x", item: "Pizza", courierId: 9 }];
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = (async (input: string) => {
+      if (input === "/api/projects/proj1/entities/Order") {
+        return new Response(JSON.stringify({ records: store }), { status: 200, headers: { "content-type": "application/json" } });
+      }
+      if (input === "/api/projects/proj1/entities/courier") {
+        return new Response(JSON.stringify({ records: courierRelated }), { status: 200, headers: { "content-type": "application/json" } });
+      }
+      throw new Error(`unexpected request ${input}`);
+    }) as typeof fetch;
+    try {
+      renderEntityPanel({ entity: orderEntity, allEntities: [orderEntity, courierEntity] });
+      await waitForCondition(() => document.querySelectorAll("table tbody tr").length === 1);
+
+      const filterSelects = Array.from(document.querySelectorAll(".entity-status-filter")) as HTMLSelectElement[];
+      const courierFilterSelect = filterSelects.find((s) => /Courier/.test(s.getAttribute("aria-label") ?? ""));
+      assert.ok(courierFilterSelect, "a case-mismatched relation field must still be offered in the toolbar's filter dropdown, not silently dropped");
+      const optionLabels = Array.from(courierFilterSelect!.options).map((o) => o.textContent);
+      assert.ok(optionLabels.includes("Dana"), "the filter dropdown must still list the related record's real display label, not throw while resolving it");
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+});
+
+/**
+ * Round 1178's finding, continued: the revalidation effect that re-checks a
+ * PERSISTED field filter (fieldFiltersPreference.ts) is still filterable
+ * whenever entity.fields change (round 985's own case-only-RENAME fix
+ * extended its sibling `fieldsByLowerName` fallback to this same effect)
+ * had its own separate `stillFilterable` relation branch still comparing
+ * `relationTo` to `allEntities` with exact-case equality -- a DIFFERENT
+ * bug from round 985's rename-detection fallback above it: even with the
+ * correct field found by name, a case-mismatched relationTo made
+ * `stillFilterable` false, so this effect silently DROPPED an already-
+ * active, already-persisted relation filter the moment the component
+ * mounted (or entity.fields otherwise changed reference), even though
+ * nothing about the field was renamed or removed at all. Confirms a
+ * filter persisted for a case-mismatched relation field survives being
+ * loaded back in on mount, instead of silently vanishing.
+ */
+test("EntityPanel's field-filter revalidation effect still keeps a persisted filter on a relation field whose relationTo differs from its target entity's name only by letter case", async () => {
+  await withJsdom(async () => {
+    const orderEntity: Entity = {
+      name: "Order",
+      label: "Order",
+      fields: [
+        { name: "item", label: "Item", type: "text", required: true },
+        { name: "courierId", label: "Courier", type: "relation", relationTo: "courier", required: false },
+      ],
+    };
+    const courierEntity: Entity = { name: "Courier", label: "Courier", fields: [{ name: "name", label: "Name", type: "text", required: true }] };
+    const courierRelated: EntityRecord[] = [{ id: 9, createdAt: "x", name: "Dana" }];
+    const store: EntityRecord[] = [
+      { id: 1, createdAt: "x", item: "Pizza", courierId: 9 },
+      { id: 2, createdAt: "x", item: "Salad", courierId: 7 },
+    ];
+    setFieldFilters("proj1", "Order", "user1", { courierId: "9" });
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = (async (input: string) => {
+      if (input === "/api/projects/proj1/entities/Order") {
+        return new Response(JSON.stringify({ records: store }), { status: 200, headers: { "content-type": "application/json" } });
+      }
+      if (input === "/api/projects/proj1/entities/courier") {
+        return new Response(JSON.stringify({ records: courierRelated }), { status: 200, headers: { "content-type": "application/json" } });
+      }
+      throw new Error(`unexpected request ${input}`);
+    }) as typeof fetch;
+    try {
+      renderEntityPanel({ entity: orderEntity, allEntities: [orderEntity, courierEntity] });
+      await waitForCondition(() => document.querySelectorAll("table tbody tr").length === 1);
+
+      assert.equal(
+        getFieldFilters("proj1", "Order", "user1").courierId,
+        "9",
+        "sanity check: the persisted filter must not have been overwritten in storage by this effect itself",
+      );
+      const filterSelects = Array.from(document.querySelectorAll(".entity-status-filter")) as HTMLSelectElement[];
+      const courierFilterSelect = filterSelects.find((s) => /Courier/.test(s.getAttribute("aria-label") ?? ""));
+      assert.equal(
+        courierFilterSelect?.value,
+        "9",
+        "the persisted filter on a case-mismatched relation field must still be applied on mount, not silently dropped as if the field had been removed",
+      );
     } finally {
       globalThis.fetch = originalFetch;
     }
