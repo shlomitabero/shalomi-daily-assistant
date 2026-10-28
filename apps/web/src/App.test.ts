@@ -2655,6 +2655,8 @@ test("App's handleAccountDeleted purges client-side preferences for every owned 
     user: unknown;
     project: unknown;
     view: string | null;
+    ideaDraftClearedForUserId: unknown;
+    recentProjectSearchesClearedForUserId: unknown;
     sortModeClearedForUserId: unknown;
     statusFilterClearedForUserId: unknown;
   } = {
@@ -2665,6 +2667,8 @@ test("App's handleAccountDeleted purges client-side preferences for every owned 
     user: { id: "user1" },
     project: { id: "p1" },
     view: "preview",
+    ideaDraftClearedForUserId: "untouched",
+    recentProjectSearchesClearedForUserId: "untouched",
     sortModeClearedForUserId: "untouched",
     statusFilterClearedForUserId: "untouched",
   };
@@ -2702,8 +2706,8 @@ test("App's handleAccountDeleted purges client-side preferences for every owned 
     (v: unknown) => (state.project = v),
     (v: string) => (state.view = v),
     noop,
-    noop,
-    noop,
+    (id: string) => (state.ideaDraftClearedForUserId = id),
+    (id: string) => (state.recentProjectSearchesClearedForUserId = id),
     noop,
     noop,
     noop,
@@ -2736,6 +2740,16 @@ test("App's handleAccountDeleted purges client-side preferences for every owned 
   assert.equal(state.user, null, "must still clear the deleted user");
   assert.equal(state.project, null, "must still clear the deleted project");
   assert.equal(state.view, "home", "must still navigate back to the auth/home screen");
+  assert.equal(
+    state.ideaDraftClearedForUserId,
+    "user1",
+    "round 1129: must still clear this account's own idea draft -- unlike handleLogout/subscribeAuthExpired (which no longer clear it, per their own round-1129 doc comments), this account can never log back in to read it again",
+  );
+  assert.equal(
+    state.recentProjectSearchesClearedForUserId,
+    "user1",
+    "round 1129: must still clear this account's own recent project searches too, for the identical reason",
+  );
   assert.equal(
     state.sortModeClearedForUserId,
     "user1",
@@ -2800,6 +2814,116 @@ test("App's handleAccountDeleted purges client-side preferences for every owned 
     [],
     "an account that owned no projects and shared in none either must never call purgeProjectPreferences at all",
   );
+});
+
+/**
+ * Round 1129: no dedicated extracted-function test existed for
+ * handleLogout before this round. Confirms it still resets the LIVE idea
+ * description/recent-project-searches state (so a next, possibly
+ * different, signed-in user on the same browser doesn't see this
+ * session's half-typed text) but, unlike handleAccountDeleted just above,
+ * deliberately does NOT call clearIdeaDraft/clearRecentProjectSearches at
+ * all any more -- per-user keying (rounds 1044/1045) already means a
+ * different account can never read this one's own entry, and clearing it
+ * here would destroy the SAME user's own still-unsaved draft/searches on
+ * an ordinary logout, exactly the regression this round fixes. Neither is
+ * even declared as a parameter below: if a future change reintroduces
+ * either call without updating this test, the extracted code throws a
+ * ReferenceError (an undeclared free variable) instead of silently
+ * passing, matching this routine's own "module-load crash is a strong
+ * confirmation" convention.
+ */
+test("App's handleLogout resets local UI state, including the live idea description and recent project searches, without clearing either's own persisted per-user storage", async () => {
+  const appSrc = readFileSync(new URL("./App.tsx", import.meta.url), "utf8");
+  const handlerMatch = appSrc.match(/ {2}async function handleLogout\(\) \{[\s\S]*?\n {2}\}\n/);
+  assert.ok(handlerMatch, "expected to find handleLogout in App.tsx");
+  const { code } = transformSync(handlerMatch![0], { loader: "ts" });
+
+  const state: {
+    logoutCalled: boolean;
+    user: unknown;
+    project: unknown;
+    buildWarning: unknown;
+    view: string | null;
+    description: unknown;
+    error: unknown;
+    activeEntity: unknown;
+    selectedAnswers: unknown;
+    additionalRequest: unknown;
+    refineText: unknown;
+    refineHistory: unknown;
+    refineHistorySearch: unknown;
+    recentProjectSearches: unknown;
+  } = {
+    logoutCalled: false,
+    user: { id: "user1" },
+    project: { id: "p1" },
+    buildWarning: "untouched",
+    view: "preview",
+    description: "untouched",
+    error: "untouched",
+    activeEntity: "untouched",
+    selectedAnswers: "untouched",
+    additionalRequest: "untouched",
+    refineText: "untouched",
+    refineHistory: "untouched",
+    refineHistorySearch: "untouched",
+    recentProjectSearches: "untouched",
+  };
+
+  const fn = new Function(
+    "user",
+    "logout",
+    "setUser",
+    "setProject",
+    "setBuildWarning",
+    "setView",
+    "setDescription",
+    "setError",
+    "setActiveEntity",
+    "setSelectedAnswers",
+    "setAdditionalRequest",
+    "setRefineText",
+    "setRefineHistory",
+    "setRefineHistorySearch",
+    "setRecentProjectSearches",
+    `${code}\nreturn handleLogout;`,
+  )(
+    { id: "user1" },
+    async () => {
+      state.logoutCalled = true;
+    },
+    (v: unknown) => (state.user = v),
+    (v: unknown) => (state.project = v),
+    (v: unknown) => (state.buildWarning = v),
+    (v: string) => (state.view = v),
+    (v: unknown) => (state.description = v),
+    (v: unknown) => (state.error = v),
+    (v: unknown) => (state.activeEntity = v),
+    (v: unknown) => (state.selectedAnswers = v),
+    (v: unknown) => (state.additionalRequest = v),
+    (v: unknown) => (state.refineText = v),
+    (v: unknown) => (state.refineHistory = v),
+    (v: unknown) => (state.refineHistorySearch = v),
+    (v: unknown) => (state.recentProjectSearches = v),
+  ) as () => Promise<void>;
+
+  await fn();
+
+  assert.equal(state.logoutCalled, true, "must call the API's own logout() to revoke the session server-side");
+  assert.equal(state.user, null, "must clear the signed-in user");
+  assert.equal(state.project, null, "must clear the open project");
+  assert.equal(state.buildWarning, null, "must clear any stale build-warning banner");
+  assert.equal(state.view, "home", "must reset view to home");
+  assert.equal(state.description, "", "must clear the LIVE idea description so it doesn't leak into a next session on this same tab");
+  assert.equal(state.error, null, "must clear any stale error banner");
+  assert.equal(state.activeEntity, null, "must clear activeEntity");
+  assert.deepEqual(state.selectedAnswers, {});
+  assert.equal(state.additionalRequest, "");
+  assert.equal(state.refineText, "");
+  assert.deepEqual(state.refineHistory, []);
+  assert.equal(state.refineHistorySearch, "");
+  assert.deepEqual(state.recentProjectSearches, [], "must clear the LIVE recentProjectSearches state too, same as the idea description above");
 });
 
 /**
@@ -3834,7 +3958,6 @@ test("App's subscribeAuthExpired effect clears the token and resets user/project
   let viewSet: unknown = "untouched";
   let descriptionSet: unknown = "untouched";
   let ideaDraftCleared = false;
-  let ideaDraftClearedForUserId: unknown = "untouched";
   let recentProjectSearchesCleared = false;
   let recentProjectSearchesSet: unknown = "untouched";
   let errorSet: unknown = "untouched";
@@ -3924,9 +4047,8 @@ test("App's subscribeAuthExpired effect clears the token and resets user/project
     (v) => (projectSet = v),
     (v) => (viewSet = v),
     (v) => (descriptionSet = v),
-    (userId) => {
+    () => {
       ideaDraftCleared = true;
-      ideaDraftClearedForUserId = userId;
     },
     () => {
       recentProjectSearchesCleared = true;
@@ -3960,18 +4082,17 @@ test("App's subscribeAuthExpired effect clears the token and resets user/project
   assert.equal(projectSet, null, "must clear the open project too, not leave stale project state behind");
   assert.equal(viewSet, "home", "must reset view to home so a later re-login lands on the home screen, not a dead view");
   assert.equal(descriptionSet, "", "must clear the idea description, same as handleAccountDeleted");
-  assert.equal(ideaDraftCleared, true, "must clear the persisted idea draft, same as handleAccountDeleted");
   assert.equal(
-    ideaDraftClearedForUserId,
-    "user1",
-    "must clear the REAL signed-in user's own idea draft (read from userIdRef, since this effect's own closure over `user` is frozen at mount), not call clearIdeaDraft with no id at all",
+    ideaDraftCleared,
+    false,
+    "round 1129: must NOT clear the persisted idea draft -- ideaDraft.ts is per-user-keyed since round 1044, so clearing it here only destroys this SAME user's own still-unsaved draft on an ordinary session expiry, not protect a different account (which the per-user key already does on its own)",
   );
   assert.equal(
     recentProjectSearchesCleared,
-    true,
-    "round 993: must clear the persisted recent-project-searches too, the same unscoped localStorage leak ideaDraft was already cleared for -- otherwise a different user signing into the same tab sees the previous account's typed search terms",
+    false,
+    "round 1129: must NOT clear the persisted recent-project-searches either, for the identical reason -- recentProjectSearches.ts has been per-user-keyed since round 1045",
   );
-  assert.deepEqual(recentProjectSearchesSet, [], "round 993: must also reset the in-memory recentProjectSearches state, not just the localStorage entry");
+  assert.deepEqual(recentProjectSearchesSet, [], "must still reset the in-memory recentProjectSearches state (the live UI), even though the persisted entry itself is left alone");
   assert.equal(errorSet, null, "must clear any stale error banner, same as handleAccountDeleted");
   assert.equal(activeEntitySet, null, "must clear activeEntity so a later project doesn't inherit a stale tab name");
   assert.deepEqual(selectedAnswersSet, {}, "must clear selectedAnswers, same as handleAccountDeleted");

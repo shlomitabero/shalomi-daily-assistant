@@ -13,16 +13,26 @@ const STORAGE_KEY_PREFIX = "forge.ideaDraft.";
  * at all, mirroring pinnedProjects.ts's own pre-round-1003 shape -- but a
  * half-typed BUSINESS DESCRIPTION is far more sensitive than a pinned
  * project id. Clearing it at logout/account-deletion/session-expiry
- * (App.tsx) only protects a continuously-running tab where one user
- * explicitly transitions out before another logs in; it does nothing when
- * a user simply closes the tab (no JS ever runs) and a different user
- * opens a fresh tab on the same shared/public machine and logs into their
- * own account -- that fresh page load's own `useState` initializer would
- * read the first user's still-present draft text straight into the second
- * user's own textarea. Keyed per user now, the same round-1003/994/995
- * fix already applied to pinnedProjects.ts/sharedProjectSeen.ts/the four
- * *RecentSearches.ts stores, so a different account can never see it no
- * matter how the first session actually ended.
+ * (App.tsx, as it stood at the time) only protected a continuously-running
+ * tab where one user explicitly transitions out before another logs in; it
+ * did nothing when a user simply closes the tab (no JS ever runs) and a
+ * different user opens a fresh tab on the same shared/public machine and
+ * logs into their own account -- that fresh page load's own `useState`
+ * initializer would read the first user's still-present draft text
+ * straight into the second user's own textarea. Keyed per user now, the
+ * same round-1003/994/995 fix already applied to pinnedProjects.ts/
+ * sharedProjectSeen.ts/the four *RecentSearches.ts stores, so a different
+ * account can never see it no matter how the first session actually ended.
+ *
+ * Round 1129: once per-user keying above made the clear-on-logout/
+ * session-expiry calls genuinely redundant for protecting a DIFFERENT
+ * account (its own key is already separate), those two calls became
+ * actively harmful instead -- they destroyed the SAME user's own
+ * still-unsaved draft the moment they logged out or their session merely
+ * expired, exactly the loss this whole file exists to prevent. App.tsx's
+ * handleLogout/subscribeAuthExpired no longer call `clearIdeaDraft`;
+ * only `handleAccountDeleted` still does, since that account can never
+ * log back in to read its own draft again.
  */
 function storageKey(userId: string): string {
   return `${STORAGE_KEY_PREFIX}${userId}`;

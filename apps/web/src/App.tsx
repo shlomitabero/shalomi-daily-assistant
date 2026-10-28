@@ -1127,7 +1127,24 @@ function AppContent() {
       setProject(null);
       setView("home");
       setDescription("");
-      if (userIdRef.current) clearIdeaDraft(userIdRef.current);
+      // Round 1129: this used to also call clearIdeaDraft(userIdRef.current)
+      // and clearRecentProjectSearches(userIdRef.current) here (round 993's
+      // own reasoning, predating both stores' round-1044/1045 per-user
+      // keying) -- but per-user keying already means a DIFFERENT account
+      // signing in afterward can never read this one's own entry regardless
+      // of whether it's cleared here, and round 1124's own
+      // projectSortMode/projectStatusFilter doc comment already states the
+      // resulting convention precisely: a per-user store should survive a
+      // logout/session-expiry so this SAME account gets it back on its next
+      // login, since only handleAccountDeleted's own event -- the account
+      // itself permanently gone -- makes "survive the next login"
+      // impossible. Keeping the clear here was silently destroying this
+      // same user's own still-unsaved idea draft and recent project
+      // searches the moment their session merely expired -- exactly the
+      // loss ideaDraft.ts's own doc comment says this feature exists to
+      // prevent. setDescription/setRecentProjectSearches below still reset
+      // the LIVE state; the `[user?.id]`-keyed effect already re-hydrates
+      // both from storage on the next login.
       setError(null);
       setActiveEntity(null);
       setSelectedAnswers({});
@@ -1135,12 +1152,6 @@ function AppContent() {
       setRefineText("");
       setRefineHistory([]);
       setRefineHistorySearch("");
-      // Round 993: see handleLogout's own identical reset for why this
-      // must be cleared here too -- this effect is the one path that
-      // signs a user out reactively (an expired/revoked session), so it
-      // needs the same reset handleLogout/handleAccountDeleted apply on
-      // their own button-driven paths.
-      if (userIdRef.current) clearRecentProjectSearches(userIdRef.current);
       setRecentProjectSearches([]);
       closeAllPanels();
     });
@@ -1803,7 +1814,6 @@ function AppContent() {
 
   async function handleLogout() {
     if (!user) return;
-    const userId = user.id;
     await logout();
     setUser(null);
     setProject(null);
@@ -1816,8 +1826,18 @@ function AppContent() {
     // activeEntity tab name that doesn't exist on the new project's spec
     // (rendering a blank preview pane until manually re-clicked), the old
     // project's refine-history chat entries, and half-filled form state.
+    //
+    // Round 1129: this used to also call clearIdeaDraft(userId) and
+    // clearRecentProjectSearches(userId) here -- see the auth-expiry
+    // effect's own identical round-1129 doc comment for why that was
+    // actively wrong once both stores became per-user-keyed (rounds
+    // 1044/1045): it silently destroyed this SAME user's own still-unsaved
+    // idea draft and recent project searches on every ordinary logout, the
+    // exact loss these two stores exist to prevent. setDescription/
+    // setRecentProjectSearches below still reset the LIVE state; the
+    // `[user?.id]`-keyed effect re-hydrates both from storage on the next
+    // login, by the same or a different account.
     setDescription("");
-    clearIdeaDraft(userId);
     setError(null);
     setActiveEntity(null);
     setSelectedAnswers({});
@@ -1825,12 +1845,6 @@ function AppContent() {
     setRefineText("");
     setRefineHistory([]);
     setRefineHistorySearch("");
-    // Round 993: recentProjectSearches is ideaDraft's own direct sibling --
-    // was never added here when ideaDraft's own clear was. Round 1045:
-    // ideaDraft's own fix (round 1044) applies identically here -- this
-    // store's own clear-on-logout was never enough on its own (it does
-    // nothing for a closed tab), so it's keyed per user now too.
-    clearRecentProjectSearches(userId);
     setRecentProjectSearches([]);
   }
 
@@ -1878,6 +1892,13 @@ function AppContent() {
     setProject(null);
     setView("home");
     setDescription("");
+    // Round 1129: unlike handleLogout/subscribeAuthExpired (which stopped
+    // calling clearIdeaDraft/clearRecentProjectSearches once both became
+    // per-user-keyed -- see either one's own doc comment), this path is
+    // the account itself being permanently gone, so there's no "this same
+    // account's next login" to preserve the draft/searches for. The same
+    // distinction round 1124 already draws for projectSortMode/
+    // projectStatusFilter just below applies identically here.
     clearIdeaDraft(userId);
     setError(null);
     setActiveEntity(null);
@@ -1886,8 +1907,6 @@ function AppContent() {
     setRefineText("");
     setRefineHistory([]);
     setRefineHistorySearch("");
-    // Round 993: see handleLogout's own identical reset, just above, for
-    // why this must be cleared here too.
     clearRecentProjectSearches(userId);
     setRecentProjectSearches([]);
     // Round 1124: unlike handleLogout/subscribeAuthExpired (which

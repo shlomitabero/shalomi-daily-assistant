@@ -16,9 +16,9 @@ const MAX_RECENT_SEARCHES = 5;
  * Round 1045: this store used ONE SINGLE FLAT KEY SHARED BY EVERY ACCOUNT on
  * the same browser, the exact same gap round 1044 just fixed in ideaDraft.ts
  * (this file's own explicitly-named "direct sibling" in App.tsx's own round-
- * 993 comment). App.tsx clears it at logout/account-deletion/session-expiry,
- * but that only protects a continuously-running tab where one user
- * explicitly transitions out before another logs in -- closing the tab
+ * 993 comment). App.tsx cleared it at logout/account-deletion/session-expiry
+ * at the time, but that only protected a continuously-running tab where one
+ * user explicitly transitions out before another logs in -- closing the tab
  * without logging out (an ordinary, arguably more common way to leave a
  * shared/public computer) runs none of that cleanup, so the next account to
  * open a fresh tab on that machine inherited the previous account's own
@@ -26,6 +26,14 @@ const MAX_RECENT_SEARCHES = 5;
  * now, the same round-1003/994/995/1044 fix already applied to
  * pinnedProjects.ts/sharedProjectSeen.ts/ideaDraft.ts/the four
  * *RecentSearches.ts stores.
+ *
+ * Round 1129: see ideaDraft.ts's own identical round-1129 note -- once
+ * per-user keying made the clear-on-logout/session-expiry calls redundant
+ * for protecting a different account, they became actively harmful for
+ * the SAME account instead, wiping its own recent searches on every
+ * ordinary logout or session timeout. App.tsx's handleLogout/
+ * subscribeAuthExpired no longer call `clearRecentProjectSearches`; only
+ * `handleAccountDeleted` still does.
  */
 function storageKey(userId: string): string {
   return `${STORAGE_KEY_PREFIX}${userId}`;
