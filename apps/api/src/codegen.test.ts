@@ -1980,6 +1980,312 @@ test("generated server.js's update route rejects a self-referencing relation fie
 });
 
 /**
+ * Round 1182: ports round 1162's full live-app relationTo
+ * case-insensitivity fix into this file's generated BACKUP route -- never
+ * reached by any of rounds 1159-1181, which all touched the live app or
+ * other generated-app surfaces, not this one. `backupFieldDisplayValue`'s
+ * own `targetEntity` lookup compared `field.relationTo` to `ENTITIES[].name`
+ * exact-case, and (less obviously) even once that's fixed, the record
+ * INDEX it then reads is keyed by the TARGET entity's own real declared
+ * name (built once per real entity by the /api/backup route itself, for
+ * its "dump everything" use case) -- so the index lookup must follow the
+ * resolved targetEntity.name, not the raw relationTo string, unlike every
+ * other relationTo fix in this codebase (which reads relatedRecords[raw
+ * relationTo] because those indexes are built keyed by the raw string).
+ * Before this fix, a case-mismatched relationTo meant every relation
+ * column in the downloaded backup ZIP's CSV silently showed "#<id>"
+ * instead of the related record's real display label. Confirmed directly
+ * against a real spawned server.js, unzipping the real backup response.
+ */
+test("generated server.js's /api/backup CSV still resolves a relation column to the related record's display label when relationTo differs from its target entity's name only by letter case", async () => {
+  const caseMismatchProject: Project = {
+    ...project,
+    spec: {
+      ...project.spec,
+      entities: [
+        { name: "Courier", fields: [{ name: "name", type: "text", required: true }] },
+        {
+          name: "Order",
+          fields: [
+            { name: "item", type: "text", required: true },
+            { name: "courierId", type: "relation", required: false, relationTo: "courier" },
+          ],
+        },
+      ],
+    },
+  };
+  const files = generateExportFiles(caseMismatchProject);
+  const serverJs = files.find((f) => f.path === "server.js")!.content;
+
+  const dir = mkdtempSync(path.join(tmpdir(), "codegen-backup-relation-case-test-"));
+  const repoRoot = path.resolve(import.meta.dirname, "../../..");
+  symlinkSync(path.join(repoRoot, "node_modules"), path.join(dir, "node_modules"));
+  writeFileSync(path.join(dir, "server.js"), serverJs);
+
+  const port = 54000 + Math.floor(Math.random() * 5000);
+  const child = spawn(process.execPath, ["--experimental-sqlite", "server.js"], {
+    cwd: dir,
+    env: { ...process.env, PORT: String(port) },
+    stdio: ["ignore", "pipe", "pipe"],
+  });
+  let stderr = "";
+  child.stderr.on("data", (chunk) => {
+    stderr += chunk.toString();
+  });
+
+  try {
+    const deadline = Date.now() + 5000;
+    let lastErr: unknown;
+    while (Date.now() < deadline) {
+      if (child.exitCode !== null) throw new Error(`server.js exited early (code ${child.exitCode}):\n${stderr}`);
+      try {
+        await fetch(`http://localhost:${port}/api/entities`);
+        break;
+      } catch (err) {
+        lastErr = err;
+        await new Promise((r) => setTimeout(r, 100));
+      }
+    }
+    if (child.exitCode !== null) throw lastErr instanceof Error ? lastErr : new Error(String(lastErr));
+
+    const courierRes = await fetch(`http://localhost:${port}/api/Courier`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ name: "Dana Levi" }),
+    });
+    const courier = (await courierRes.json()).record;
+    await fetch(`http://localhost:${port}/api/Order`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ item: "Package", courierId: courier.id }),
+    });
+
+    const backupRes = await fetch(`http://localhost:${port}/api/backup`);
+    assert.equal(backupRes.status, 200);
+    const zipBuffer = Buffer.from(await backupRes.arrayBuffer());
+    const zipPath = path.join(dir, "backup.zip");
+    writeFileSync(zipPath, zipBuffer);
+    const extractDir = path.join(dir, "extracted");
+    mkdirSync(extractDir);
+    execFileSync("unzip", ["-o", zipPath, "-d", extractDir]);
+    const orderCsv = readFileSync(path.join(extractDir, "Order.csv"), "utf8");
+    assert.match(
+      orderCsv,
+      /Dana Levi/,
+      "the Order.csv's own Courier column must resolve to the related record's real display label, not '#<id>', even though relationTo is lowercase courier, not Courier",
+    );
+  } finally {
+    child.kill();
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+/**
+ * Round 1182: same port, for this file's generated CALENDAR FEED route
+ * (/api/calendar/:entityName.ics) -- `feedRelationDisplayLabel`'s own
+ * `targetEntity` lookup, and the ANTECEDENT that decides whether this
+ * route's own per-request `recordIndexByEntity` even gets built for a
+ * given relationTo at all, both compared exact-case. Unlike the backup
+ * route above, this index IS keyed by the raw relationTo string (built
+ * fresh per request, scoped only to this one entity's own relation
+ * targets, not every entity in the project) -- so fixing the antecedent
+ * builder alone was not enough; the downstream `targetEntity` lookup
+ * inside feedRelationDisplayLabel needed its own separate fix too, since
+ * it's used to resolve the DISPLAY LABEL (via feedRecordDisplayLabel),
+ * not to find the index. Confirmed directly against a real spawned
+ * server.js's live .ics response.
+ */
+test("generated server.js's calendar feed DESCRIPTION still resolves a relation field to the related record's display label when relationTo differs from its target entity's name only by letter case", async () => {
+  const caseMismatchProject: Project = {
+    ...project,
+    spec: {
+      ...project.spec,
+      entities: [
+        { name: "Customer", fields: [{ name: "fullName", type: "text", required: true }] },
+        {
+          name: "Appointment",
+          fields: [
+            { name: "name", type: "text", required: true },
+            { name: "date", type: "date", required: true },
+            { name: "customer", type: "relation", required: false, relationTo: "customer" },
+          ],
+        },
+      ],
+    },
+  };
+  const files = generateExportFiles(caseMismatchProject);
+  const serverJs = files.find((f) => f.path === "server.js")!.content;
+
+  const dir = mkdtempSync(path.join(tmpdir(), "codegen-feed-relation-case-test-"));
+  const repoRoot = path.resolve(import.meta.dirname, "../../..");
+  symlinkSync(path.join(repoRoot, "node_modules"), path.join(dir, "node_modules"));
+  writeFileSync(path.join(dir, "server.js"), serverJs);
+
+  const port = 54000 + Math.floor(Math.random() * 5000);
+  const child = spawn(process.execPath, ["--experimental-sqlite", "server.js"], {
+    cwd: dir,
+    env: { ...process.env, PORT: String(port) },
+    stdio: ["ignore", "pipe", "pipe"],
+  });
+  let stderr = "";
+  child.stderr.on("data", (chunk) => {
+    stderr += chunk.toString();
+  });
+
+  try {
+    const deadline = Date.now() + 5000;
+    let lastErr: unknown;
+    while (Date.now() < deadline) {
+      if (child.exitCode !== null) throw new Error(`server.js exited early (code ${child.exitCode}):\n${stderr}`);
+      try {
+        await fetch(`http://localhost:${port}/api/entities`);
+        break;
+      } catch (err) {
+        lastErr = err;
+        await new Promise((r) => setTimeout(r, 100));
+      }
+    }
+    if (child.exitCode !== null) throw lastErr instanceof Error ? lastErr : new Error(String(lastErr));
+
+    const customerRes = await fetch(`http://localhost:${port}/api/Customer`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ fullName: "Yossi Cohen" }),
+    });
+    const customer = (await customerRes.json()).record;
+    await fetch(`http://localhost:${port}/api/Appointment`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ name: "Checkup", date: "2026-05-01", customer: customer.id }),
+    });
+
+    const feedRes = await fetch(`http://localhost:${port}/api/calendar/Appointment.ics`);
+    assert.equal(feedRes.status, 200);
+    const ics = await feedRes.text();
+    assert.match(
+      ics,
+      /DESCRIPTION:.*customer: Yossi Cohen/,
+      "the relation field must still resolve to the related Customer's own real name even though relationTo is lowercase customer, not Customer",
+    );
+  } finally {
+    child.kill();
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+/**
+ * Round 1182: same port, for this file's generated FRONTEND -- proves the
+ * ANTECEDENT (relationTargets, the useMemo deciding which relation
+ * targets even get fetched into relatedRecords at all) together with
+ * isGroupableField/groupRecordsByField/recordDisplayLabel, end-to-end,
+ * against the REAL generated EntityView.jsx component (not a
+ * reimplementation or a regex match on the generated source). Exact
+ * mirror of this file's own "'Group by' dropdown also covers a relation
+ * field" test above, except relationTo is lowercase "courier" while the
+ * target entity is declared "Courier" -- before this round's fix,
+ * relationTargets' own exact-case filter silently dropped "courier" from
+ * the list of entities to fetch at all, so relatedRecords.courier was
+ * NEVER populated: the "Group by" dropdown never even offered the
+ * Courier field as an option, regardless of any downstream fix.
+ */
+test("the exported EntityView's 'Group by' dropdown still covers a relation field when relationTo differs from its target entity's name only by letter case", async () => {
+  const courierEntity: Entity = { name: "Courier", label: "Courier", fields: [{ name: "name", label: "Name", type: "text", required: true }] };
+  const orderEntity: Entity = {
+    name: "Order",
+    label: "Order",
+    fields: [
+      { name: "item", label: "Item", type: "text", required: true },
+      { name: "courierId", label: "Courier", type: "relation", relationTo: "courier", required: false },
+    ],
+  };
+  const withRelationProject: Project = {
+    ...project,
+    spec: { ...project.spec, entities: [courierEntity, orderEntity] },
+  };
+  const files = generateExportFiles(withRelationProject);
+  const dir = writeGeneratedWebComponent(files);
+  const courierRelated: EntityRecord[] = [
+    { id: 1, name: "Dana Levi" },
+    { id: 2, name: "Yossi Cohen" },
+  ];
+  const store: EntityRecord[] = [
+    { id: 1, item: "Pizza", courierId: 1 },
+    { id: 2, item: "Sushi", courierId: 2 },
+    { id: 3, item: "Burger", courierId: null },
+  ];
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = (async (input: string) => {
+    if (input === "/api/Order") {
+      return new Response(JSON.stringify({ records: store }), { status: 200, headers: { "content-type": "application/json" } });
+    }
+    // relationTargets fetches by the literal relationTo string
+    // ("courier"), not by the target entity's declared name ("Courier")
+    // -- that part already worked before this round's fix.
+    if (input === "/api/courier") {
+      return new Response(JSON.stringify({ records: courierRelated }), { status: 200, headers: { "content-type": "application/json" } });
+    }
+    throw new Error(`unexpected request ${input}`);
+  }) as typeof fetch;
+
+  try {
+    await withRealLocalStorage(async () => {
+      const { EntityView } = await import(path.join(dir, "web", "src", "components", "EntityView.jsx"));
+      const props = {
+        entity: orderEntity,
+        highlightRecordId: null,
+        onHighlightHandled: () => {},
+        onJumpToRecord: () => {},
+        onRecordCountChange: () => {},
+      };
+
+      const { container } = render(React.createElement(EntityView, props));
+      for (let i = 0; i < 40; i++) {
+        if (container.querySelectorAll("tbody tr").length === 3) break;
+        await act(async () => {
+          await new Promise((resolve) => setTimeout(resolve, 0));
+        });
+      }
+
+      let groupBySelect: HTMLSelectElement | null = null;
+      for (let i = 0; i < 40; i++) {
+        groupBySelect = container.querySelector(".entity-group-by") as HTMLSelectElement | null;
+        const optionLabels = groupBySelect ? Array.from(groupBySelect.options).map((o) => o.textContent) : [];
+        if (optionLabels.includes("Courier")) break;
+        await act(async () => {
+          await new Promise((resolve) => setTimeout(resolve, 0));
+        });
+      }
+      assert.ok(groupBySelect, "expected a real 'Group by' dropdown");
+      const optionLabels = Array.from(groupBySelect!.options).map((o) => o.textContent);
+      assert.ok(
+        optionLabels.includes("Courier"),
+        "the relation field must still appear as a 'Group by' option -- relationTargets must still fetch relatedRecords.courier even though relationTo differs in case from the Courier entity's own declared name",
+      );
+
+      await act(async () => {
+        fireEvent.change(groupBySelect!, { target: { value: "courierId" } });
+      });
+      for (let i = 0; i < 40; i++) {
+        if (container.querySelectorAll(".entity-group-header-row").length === 3) break;
+        await act(async () => {
+          await new Promise((resolve) => setTimeout(resolve, 0));
+        });
+      }
+      const headerRows = Array.from(container.querySelectorAll(".entity-group-header-row"));
+      assert.deepEqual(
+        headerRows.map((r) => r.textContent?.trim()),
+        ["▾ Dana Levi (1)", "▾ Yossi Cohen (1)", "▾ Other (1)"],
+        "must still group by the related record's real display label, in the related entity's own record order, with the case-mismatched relationTo resolved throughout the whole pipeline",
+      );
+    });
+  } finally {
+    globalThis.fetch = originalFetch;
+    cleanup();
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+/**
  * New in this round: a relation field's `relationTo` can go dangling -- a
  * later refine regenerates the whole spec from plain prose with no access
  * to the previous structure (see pipeline.ts's own computeImpact/
@@ -3138,7 +3444,8 @@ test("the exported EntityView's 'Group by' dropdown also covers a relation field
 
   assert.match(
     entityViewJsx,
-    /return field\.type === "relation" && !!field\.relationTo && ALL_ENTITIES\.some\(\(e\) => e\.name === field\.relationTo\) && !!\(relatedRecords && relatedRecords\[field\.relationTo\]\);/,
+    // Round 1182: case-insensitive (ALL_ENTITIES.some((e) => e.name.toLowerCase() === field.relationTo.toLowerCase())).
+    /field\.type === "relation" &&\s*!!field\.relationTo &&\s*ALL_ENTITIES\.some\(\(e\) => e\.name\.toLowerCase\(\) === field\.relationTo\.toLowerCase\(\)\) &&\s*!!\(relatedRecords && relatedRecords\[field\.relationTo\]\)/,
     "isGroupableField's relation branch must use the same resolvable guard as findFilterableFields",
   );
 
@@ -5765,7 +6072,8 @@ test("the exported EntityView's bulk-actions bar also supports duplicating and b
   );
   assert.match(
     entityViewJsx,
-    /<FieldInput\s+entity=\{entity\}\s+field=\{bulkEditFieldDef\}\s+value=\{bulkEditValue\}\s+onChange=\{setBulkEditValue\}\s+relatedEntity=\{bulkEditFieldDef\.relationTo \? ALL_ENTITIES\.find\(\(e\) => e\.name === bulkEditFieldDef\.relationTo\) : undefined\}\s+relatedEntityRecords=\{bulkEditFieldDef\.relationTo \? relatedRecords\[bulkEditFieldDef\.relationTo\] : undefined\}\s+excludeRecordIds=\{bulkEditFieldDef\.relationTo === entity\.name \? Array\.from\(selectedIds\) : undefined\}\s*\/>/,
+    // Round 1182: relatedEntity's own lookup is now case-insensitive (e.name.toLowerCase() === bulkEditFieldDef.relationTo.toLowerCase()).
+    /<FieldInput\s+entity=\{entity\}\s+field=\{bulkEditFieldDef\}\s+value=\{bulkEditValue\}\s+onChange=\{setBulkEditValue\}\s+relatedEntity=\{bulkEditFieldDef\.relationTo \? ALL_ENTITIES\.find\(\(e\) => e\.name\.toLowerCase\(\) === bulkEditFieldDef\.relationTo\.toLowerCase\(\)\) : undefined\}\s+relatedEntityRecords=\{bulkEditFieldDef\.relationTo \? relatedRecords\[bulkEditFieldDef\.relationTo\] : undefined\}\s+excludeRecordIds=\{bulkEditFieldDef\.relationTo === entity\.name \? Array\.from\(selectedIds\) : undefined\}\s*\/>/,
     "round 1037: bulk edit must also exclude every selected record's own id from a self-referencing relation field's options",
   );
   assert.match(entityViewJsx, /onClick=\{handleBulkUpdate\}/);

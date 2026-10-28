@@ -921,8 +921,18 @@ function backupRecordDisplayLabel(entity, record) {
 function backupFieldDisplayValue(field, value, recordIndexByEntity) {
   if (value === null || value === undefined || value === "") return "";
   if (field.type === "relation") {
-    const targetEntity = field.relationTo ? ENTITIES.find((e) => e.name === field.relationTo) : null;
-    const index = field.relationTo ? recordIndexByEntity[field.relationTo] : null;
+    // Round 1182: case-insensitive, mirroring the established relationTo
+    // convention (rounds 1159-1181) -- without it, a case-mismatched
+    // relationTo meant the related record's own index (built below,
+    // keyed by the TARGET entity's real declared name) was never found
+    // here, so every relation column in the backup CSV silently fell
+    // back to "#<id>" instead of the real record's display label. The
+    // index itself is keyed by targetEntity.name (not the raw relationTo
+    // string -- see the /api/backup route below, which builds one index
+    // per real entity), so the lookup must follow targetEntity's own
+    // resolved name, not field.relationTo directly.
+    const targetEntity = field.relationTo ? ENTITIES.find((e) => e.name.toLowerCase() === field.relationTo.toLowerCase()) : null;
+    const index = targetEntity ? recordIndexByEntity[targetEntity.name] : null;
     if (!targetEntity || !index) return \`#\${value}\`;
     const match = index.get(Number(value));
     return match ? backupRecordDisplayLabel(targetEntity, match) : \`#\${value}\`;
@@ -1175,7 +1185,11 @@ function feedRecordDisplayLabel(entity, record) {
 
 function feedRelationDisplayLabel(field, value, recordIndexByEntity) {
   if (value === null || value === undefined || value === "") return "";
-  const targetEntity = field.relationTo ? ENTITIES.find((e) => e.name === field.relationTo) : null;
+  // Round 1182: case-insensitive, same reason as backupFieldDisplayValue
+  // above -- this index (built by the /api/calendar/:entityName.ics
+  // route below) IS keyed by the raw relationTo string, so only this
+  // targetEntity lookup needs the fix, not the index access itself.
+  const targetEntity = field.relationTo ? ENTITIES.find((e) => e.name.toLowerCase() === field.relationTo.toLowerCase()) : null;
   const index = field.relationTo ? recordIndexByEntity[field.relationTo] : null;
   if (!targetEntity || !index) return \`#\${value}\`;
   const match = index.get(Number(value));
@@ -1336,7 +1350,11 @@ app.get("/api/calendar/:entityName.ics", (req, res) => {
   const recordIndexByEntity = {};
   for (const field of entity.fields) {
     if (field.type !== "relation" || !field.relationTo || recordIndexByEntity[field.relationTo]) continue;
-    const targetEntity = ENTITIES.find((e) => e.name === field.relationTo);
+    // Round 1182: case-insensitive, the ANTECEDENT for feedRelationDisplayLabel
+    // above -- without this fix, a case-mismatched relationTo meant this
+    // index was never built at all, making feedRelationDisplayLabel's own
+    // fix a no-op for it.
+    const targetEntity = ENTITIES.find((e) => e.name.toLowerCase() === field.relationTo.toLowerCase());
     if (!targetEntity) continue;
     const targetRows = db.prepare(\`SELECT * FROM \${q(targetEntity.name)} ORDER BY id DESC\`).all();
     const targetRecords = targetRows.map((r) => rowToRecord(targetEntity, r));
@@ -2030,7 +2048,8 @@ function sanitizeFieldFilters(filters, fields) {
     const stillFilterable =
       f.type === "boolean" ||
       (f.type === "enum" && filterableEnumNames.has(f.name)) ||
-      (f.type === "relation" && f.relationTo && ALL_ENTITIES.some((e) => e.name === f.relationTo));
+      // Round 1182: case-insensitive, mirroring the established relationTo convention (rounds 1159-1181).
+      (f.type === "relation" && f.relationTo && ALL_ENTITIES.some((e) => e.name.toLowerCase() === f.relationTo.toLowerCase()));
     if (!stillFilterable) continue;
     if (f.type === "boolean" && value !== "true" && value !== "false") continue;
     if (f.type === "relation" && (!Number.isInteger(Number(value)) || String(Number(value)) !== value || Number(value) < 0)) continue;
@@ -2413,7 +2432,10 @@ function relationIndexFor(records) {
 // throwing.
 function relationDisplayLabel(field, value, relatedRecords) {
   if (value === null || value === undefined || value === "") return "";
-  const targetEntity = field.relationTo ? ALL_ENTITIES.find((e) => e.name === field.relationTo) : null;
+  // Round 1182: case-insensitive, mirroring the live preview's own
+  // entityFormatting.ts fix (round 1162) -- the live-app equivalent of
+  // this exact function.
+  const targetEntity = field.relationTo ? ALL_ENTITIES.find((e) => e.name.toLowerCase() === field.relationTo.toLowerCase()) : null;
   const records = field.relationTo ? relatedRecords[field.relationTo] : null;
   if (!targetEntity || !records) return \`#\${value}\`;
   const match = relationIndexFor(records).get(Number(value));
@@ -3087,7 +3109,8 @@ function buildImportRecords(fields, rows, relatedRecords) {
   const BOOLEAN_TRUE_VALUES = ["true", "1", "yes", "כן"];
   const BOOLEAN_FALSE_VALUES = ["false", "0", "no", "לא"];
 
-  const relationResolvable = (f) => !!f.relationTo && ALL_ENTITIES.some((e) => e.name === f.relationTo) && !!(relatedRecords && relatedRecords[f.relationTo]);
+  // Round 1182: case-insensitive, mirroring the established relationTo convention (rounds 1159-1181).
+  const relationResolvable = (f) => !!f.relationTo && ALL_ENTITIES.some((e) => e.name.toLowerCase() === f.relationTo.toLowerCase()) && !!(relatedRecords && relatedRecords[f.relationTo]);
 
   // A required "file" field can never be satisfied from a CSV cell either
   // (same reasoning as the relation case below -- see entityFormatting.ts's
@@ -3199,7 +3222,9 @@ function buildImportRecords(fields, rows, relatedRecords) {
           record[field.name] = null;
           continue;
         }
-        const targetEntity = ALL_ENTITIES.find((e) => e.name === field.relationTo);
+        // Round 1182: case-insensitive, mirroring the live preview's own
+        // entityFormatting.ts buildImportRecords fix (round 1177).
+        const targetEntity = ALL_ENTITIES.find((e) => e.name.toLowerCase() === field.relationTo.toLowerCase());
         const targetRecords = relatedRecords[field.relationTo];
         // A real display-label match always wins over the "#<id>" shorthand below --
         // see the live preview's own buildImportRecords for why.
@@ -3326,8 +3351,15 @@ function findFilterableEnumFields(fields) {
 // relation actually resolves to a loaded set of records, the same
 // "resolvable" guard relationResolvable (above) already uses.
 function findFilterableFields(fields, relatedRecords) {
+  // Round 1182: case-insensitive, mirroring the live preview's own
+  // entityFormatting.ts findFilterableFields fix (round 1178).
   const relationFields = fields.filter(
-    (f) => f.type === "relation" && f.relationTo && ALL_ENTITIES.some((e) => e.name === f.relationTo) && relatedRecords && relatedRecords[f.relationTo],
+    (f) =>
+      f.type === "relation" &&
+      f.relationTo &&
+      ALL_ENTITIES.some((e) => e.name.toLowerCase() === f.relationTo.toLowerCase()) &&
+      relatedRecords &&
+      relatedRecords[f.relationTo],
   );
   return [...findFilterableEnumFields(fields), ...fields.filter((f) => f.type === "boolean"), ...relationFields];
 }
@@ -3397,7 +3429,14 @@ function groupByField(records, field) {
 // preview's own entityFormatting.ts isGroupableField widening (round 738).
 function isGroupableField(field, relatedRecords) {
   if (field.type === "enum" || field.type === "boolean") return true;
-  return field.type === "relation" && !!field.relationTo && ALL_ENTITIES.some((e) => e.name === field.relationTo) && !!(relatedRecords && relatedRecords[field.relationTo]);
+  // Round 1182: case-insensitive, mirroring the live preview's own
+  // entityFormatting.ts isGroupableField fix (round 1178).
+  return (
+    field.type === "relation" &&
+    !!field.relationTo &&
+    ALL_ENTITIES.some((e) => e.name.toLowerCase() === field.relationTo.toLowerCase()) &&
+    !!(relatedRecords && relatedRecords[field.relationTo])
+  );
 }
 
 // Partitions records into ordered groups by one groupable field's value,
@@ -3421,7 +3460,9 @@ function groupRecordsByField(records, field, relatedRecords) {
     return groups;
   }
   if (field.type === "relation") {
-    const targetEntity = field.relationTo ? ALL_ENTITIES.find((e) => e.name === field.relationTo) : undefined;
+    // Round 1182: case-insensitive, mirroring the live preview's own
+    // entityFormatting.ts groupRecordsByField fix (round 1178).
+    const targetEntity = field.relationTo ? ALL_ENTITIES.find((e) => e.name.toLowerCase() === field.relationTo.toLowerCase()) : undefined;
     const relatedList = field.relationTo && relatedRecords ? relatedRecords[field.relationTo] : undefined;
     if (!targetEntity || !relatedList) return [];
     const groups = [];
@@ -4744,7 +4785,13 @@ export function EntityView({ entity, highlightRecordId, onHighlightHandled, onJu
   const endDateField = useMemo(() => (dateField ? findEndDateField(entity.fields, dateField) : null), [entity.fields, dateField]);
   const relationTargets = useMemo(() => {
     const names = entity.fields.filter((f) => f.type === "relation" && f.relationTo).map((f) => f.relationTo);
-    return [...new Set(names)].filter((name) => ALL_ENTITIES.some((e) => e.name === name));
+    // Round 1182: case-insensitive, the ANTECEDENT gate for every relation
+    // display/filter/group/import fix in this file -- without this fix, a
+    // case-mismatched relationTo was dropped here, so relatedRecords for
+    // it was never even fetched below, making every downstream fix in
+    // this file a no-op for it. Mirrors the live preview's own
+    // EntityPanel.tsx relationTargets fix (round 1178).
+    return [...new Set(names)].filter((name) => ALL_ENTITIES.some((e) => e.name.toLowerCase() === name.toLowerCase()));
   }, [entity.fields]);
 
   useEffect(() => {
@@ -6298,7 +6345,7 @@ export function EntityView({ entity, highlightRecordId, onHighlightHandled, onJu
                 field={f}
                 value={cellDraft}
                 onChange={setCellDraft}
-                relatedEntity={f.relationTo ? ALL_ENTITIES.find((e) => e.name === f.relationTo) : undefined}
+                relatedEntity={f.relationTo ? ALL_ENTITIES.find((e) => e.name.toLowerCase() === f.relationTo.toLowerCase()) : undefined}
                 relatedEntityRecords={f.relationTo ? relatedRecords[f.relationTo] : undefined}
                 excludeRecordIds={f.relationTo === entity.name ? [r.id] : undefined}
                 autoFocus
@@ -6380,7 +6427,7 @@ export function EntityView({ entity, highlightRecordId, onHighlightHandled, onJu
               field={f}
               value={form[f.name]}
               onChange={(v) => setForm((prev) => ({ ...prev, [f.name]: v }))}
-              relatedEntity={f.relationTo ? ALL_ENTITIES.find((e) => e.name === f.relationTo) : undefined}
+              relatedEntity={f.relationTo ? ALL_ENTITIES.find((e) => e.name.toLowerCase() === f.relationTo.toLowerCase()) : undefined}
               relatedEntityRecords={f.relationTo ? relatedRecords[f.relationTo] : undefined}
               excludeRecordIds={f.relationTo === entity.name && editingId != null ? [editingId] : undefined}
             />
@@ -6549,7 +6596,7 @@ export function EntityView({ entity, highlightRecordId, onHighlightHandled, onJu
                     {!hasCurrentRelationOption && <option value={currentFilterValue}>{\`#\${currentFilterValue}\`}</option>}
                     {knownRelationRecords.map((r) => (
                       <option key={r.id} value={String(r.id)}>
-                        {recordDisplayLabel(ALL_ENTITIES.find((e) => e.name === f.relationTo), r)}
+                        {recordDisplayLabel(ALL_ENTITIES.find((e) => e.name.toLowerCase() === f.relationTo.toLowerCase()), r)}
                       </option>
                     ))}
                   </>
@@ -6848,7 +6895,7 @@ export function EntityView({ entity, highlightRecordId, onHighlightHandled, onJu
                       field={bulkEditFieldDef}
                       value={bulkEditValue}
                       onChange={setBulkEditValue}
-                      relatedEntity={bulkEditFieldDef.relationTo ? ALL_ENTITIES.find((e) => e.name === bulkEditFieldDef.relationTo) : undefined}
+                      relatedEntity={bulkEditFieldDef.relationTo ? ALL_ENTITIES.find((e) => e.name.toLowerCase() === bulkEditFieldDef.relationTo.toLowerCase()) : undefined}
                       relatedEntityRecords={bulkEditFieldDef.relationTo ? relatedRecords[bulkEditFieldDef.relationTo] : undefined}
                       excludeRecordIds={bulkEditFieldDef.relationTo === entity.name ? Array.from(selectedIds) : undefined}
                     />
@@ -8075,7 +8122,14 @@ export default function App() {
   const [entityTabOrder, setEntityTabOrderState] = useState(() => getEntityTabOrder());
   const [draggedEntityTab, setDraggedEntityTab] = useState(null);
   const [dragOverEntityTab, setDragOverEntityTab] = useState(null);
-  const activeEntity = ENTITIES.find((e) => e.name === active);
+  // Round 1182: falls back to a case-insensitive match when the exact
+  // name misses -- Cell's own "jump to record" button (below) passes
+  // field.relationTo, not the target entity's own declared name, as the
+  // tab to activate; a case-mismatched relationTo previously resolved to
+  // no entity at all, silently doing nothing (no tab switch, no
+  // highlight) instead of jumping to the real target entity's tab.
+  // Mirrors sanitizeFieldFilters' own round-986 case-insensitive fallback.
+  const activeEntity = ENTITIES.find((e) => e.name === active) ?? (active ? ENTITIES.find((e) => e.name.toLowerCase() === active.toLowerCase()) : undefined);
   const orderedEntities = useMemo(() => applyEntityTabOrder(ENTITIES, entityTabOrder), [entityTabOrder]);
   const entityTabLabelOccurrences = useMemo(() => entityLabelOccurrences(orderedEntities), [orderedEntities]);
 
