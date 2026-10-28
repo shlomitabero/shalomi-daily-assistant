@@ -15783,6 +15783,87 @@ test("POST .../fields/:fieldName/upload is rate-limited per authenticated accoun
 });
 
 /**
+ * Regression test for a real bug found by round 1169's Explore survey:
+ * DELETE .../fields/:fieldName/upload (round 1002's own cleanup route for
+ * an abandoned/replaced create-form upload) shared the exact same path as
+ * the POST route above, yet was registered with no rate limiter at all --
+ * unlike its structurally identical sibling, DELETE .../whatsapp/attachments
+ * (already behind whatsappRateLimiter, the same as its own POST sibling).
+ * deleteUploadedFile (uploadPaths.ts) is a silent, best-effort no-op for
+ * any url that doesn't resolve to a real upload, so this route itself
+ * never required a genuine file on disk to hammer -- any authenticated
+ * collaborator could script an unbounded loop of DELETE calls against any
+ * project they can write to. Now wired to the SAME fileUploadRateLimiter
+ * instance as the POST route (both verbs on this one path share a single
+ * combined 30-per-15-min budget, exactly as whatsappRateLimiter already
+ * does for its own POST/DELETE sibling pair), so this test spends the
+ * shared budget via DELETE alone and confirms the 31st call is rejected.
+ */
+test("DELETE .../fields/:fieldName/upload is rate-limited per authenticated account, sharing its POST sibling's own budget: the 31st delete is rejected with 429, while a different account is unaffected", async () => {
+  await withServer(async (baseUrl, db) => {
+    const email = `file-delete-rate-limit-${randomUUID()}@example.com`;
+    const token = await signup(baseUrl, email);
+    const user = findUserByEmail(db, email)!;
+    const spec: ProductSpec = {
+      summary: "test",
+      personas: [],
+      roles: ["Admin"],
+      entities: [
+        {
+          name: "Customer",
+          fields: [
+            { name: "name", type: "text", required: true },
+            { name: "receipt", type: "file", required: false },
+          ],
+        },
+      ],
+      screens: [],
+      assumptions: [],
+      openQuestions: [],
+    };
+    const projectId = randomUUID();
+    insertProject(db, { id: projectId, ownerId: user.id, name: "CRM", description: "test", spec });
+    diffAndMigrate(db, projectId, undefined, spec);
+    markProjectBuilt(db, projectId);
+
+    for (let i = 0; i < 30; i++) {
+      const res = await fetch(`${baseUrl}/api/projects/${projectId}/entities/Customer/fields/receipt/upload`, {
+        method: "DELETE",
+        headers: { authorization: `Bearer ${token}`, "content-type": "application/json" },
+        body: JSON.stringify({ url: `/uploads/${projectId}/Customer/does-not-exist-${i}.pdf` }),
+      });
+      assert.notEqual(res.status, 429, `delete ${i + 1} of 30 (within the limit) must not be rate-limited yet`);
+    }
+
+    const blocked = await fetch(`${baseUrl}/api/projects/${projectId}/entities/Customer/fields/receipt/upload`, {
+      method: "DELETE",
+      headers: { authorization: `Bearer ${token}`, "content-type": "application/json" },
+      body: JSON.stringify({ url: `/uploads/${projectId}/Customer/does-not-exist-30.pdf` }),
+    });
+    assert.equal(blocked.status, 429);
+    assert.equal(((await blocked.json()) as { code?: string }).code, "RATE_LIMITED");
+
+    // A completely different account must get its own fresh allowance --
+    // keyed by user id, not IP, so one account exhausting its own budget
+    // must never collaterally block an unrelated account's own deletes.
+    const otherEmail = `file-delete-rate-limit-other-${randomUUID()}@example.com`;
+    const otherToken = await signup(baseUrl, otherEmail);
+    const otherUser = findUserByEmail(db, otherEmail)!;
+    const otherProjectId = randomUUID();
+    insertProject(db, { id: otherProjectId, ownerId: otherUser.id, name: "CRM 2", description: "test", spec });
+    diffAndMigrate(db, otherProjectId, undefined, spec);
+    markProjectBuilt(db, otherProjectId);
+
+    const otherRes = await fetch(`${baseUrl}/api/projects/${otherProjectId}/entities/Customer/fields/receipt/upload`, {
+      method: "DELETE",
+      headers: { authorization: `Bearer ${otherToken}`, "content-type": "application/json" },
+      body: JSON.stringify({ url: `/uploads/${otherProjectId}/Customer/does-not-exist-other.pdf` }),
+    });
+    assert.equal(otherRes.status, 204, "a different account must not be collaterally blocked by another account's own rate limit");
+  });
+});
+
+/**
  * Regression test for a real bug found by round 1086's Explore survey:
  * unlike its siblings /export, /backup, and /twin (round 1053, behind
  * expensiveReadRateLimiter), GET .../entity-counts had NO volumetric

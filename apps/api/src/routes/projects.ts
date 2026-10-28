@@ -2966,9 +2966,20 @@ export function createProjectsRouter(
    * ever touching it. Mirrors the WhatsApp attachment delete route below:
    * best-effort and a silent no-op for anything that doesn't resolve to a
    * real upload this project's own upload route could have produced.
+   *
+   * Round 1169: this route shared its own path with the POST route above
+   * yet had no rate limiter at all -- unlike the WhatsApp attachment pair
+   * it mirrors, whose own DELETE sibling already sits behind
+   * whatsappRateLimiter the same as its POST. deleteUploadedFile's silent
+   * no-op for a non-matching url means this never needed a real file on
+   * disk to hammer. Now shares fileUploadRateLimiter with the POST route
+   * above (one combined budget per account across both verbs on this
+   * path), the same way whatsappRateLimiter is already shared between its
+   * own upload/delete pair.
    */
   router.delete(
     "/projects/:id/entities/:entityName/fields/:fieldName/upload",
+    fileUploadRateLimiter,
     asyncRoute(async (req, res) => {
       const project = requireProjectWriteAccess(db, req.params.id, req.userId!);
       const entity = findEntity(project, req.params.entityName);
