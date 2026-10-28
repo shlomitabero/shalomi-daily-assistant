@@ -605,7 +605,17 @@ export function recordAutomationRun(
   // its later retry to re-fetch current state instead).
   recordSnapshot: string | null = null,
   at: Date = new Date(),
-): void {
+  // Round 1165: fireWebhookAction (apps/api/src/automations.ts) needs the
+  // exact id this run row ends up with BEFORE this function is called, so
+  // it can include that same id in the outbound webhook payload itself
+  // (as a delivery id a receiving system can use to deduplicate a manual
+  // retry's resend from the original attempt) -- generating the id here,
+  // after the POST has already gone out, made that impossible. Every
+  // other caller doesn't need a specific id, so this stays optional and
+  // defaults to a fresh one exactly like the inline randomUUID() call this
+  // replaces.
+  runId: string = randomUUID(),
+): string {
   const now = at.toISOString();
   db.prepare(
     `UPDATE automation_rules SET lastTriggeredAt = ?, lastStatus = ?, lastError = ?, lastActionType = ? WHERE projectId = ? AND id = ?`,
@@ -616,7 +626,7 @@ export function recordAutomationRun(
   // lastError reader needs to change.
   db.prepare(
     `INSERT INTO automation_runs (id, projectId, ruleId, status, error, actionType, recordId, recordSnapshot, triggeredAt) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-  ).run(randomUUID(), projectId, id, outcome.status, outcome.error ?? null, actionType, recordId, recordSnapshot, now);
+  ).run(runId, projectId, id, outcome.status, outcome.error ?? null, actionType, recordId, recordSnapshot, now);
   // Round 951: pruned in two independent buckets -- the newest
   // AUTOMATION_RUNS_RETENTION_LIMIT "WhatsApp is not connected" rows, and
   // the newest AUTOMATION_RUNS_RETENTION_LIMIT rows of everything else --
@@ -670,6 +680,7 @@ export function recordAutomationRun(
     EMAIL_NOT_CONFIGURED_ERROR,
     AUTOMATION_RUNS_RETENTION_LIMIT,
   );
+  return runId;
 }
 
 export function deleteAutomationRule(db: ForgeDatabase, projectId: string, id: string): void {

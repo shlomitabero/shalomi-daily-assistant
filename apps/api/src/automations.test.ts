@@ -1855,6 +1855,103 @@ test("runAutomationsForRecordChange posts a JSON payload to the webhook URL and 
 });
 
 /**
+ * Round 1165: before this round, the webhook payload carried no ruleId and
+ * no per-delivery id at all -- this feature's own doc comments advertise
+ * compatibility with "Zapier, Slack, Make, or any other system", every one
+ * of which documents itself as expecting a stable delivery id precisely so
+ * the receiver can correlate (and eventually deduplicate) a specific
+ * attempt. Confirms the payload's own deliveryId is exactly the id the
+ * resulting automation_runs row actually got -- not merely present, but
+ * genuinely the same identifier a receiver could use to look that exact
+ * attempt up again later (e.g. via GET .../runs) -- and that ruleId
+ * identifies which configured rule fired it (useful when one destination
+ * URL receives payloads from more than one rule/project).
+ */
+test("runAutomationsForRecordChange's webhook payload carries a ruleId and a deliveryId that exactly matches the resulting automation_runs row's own id", async () => {
+  const { db, project } = setupProject();
+  const rule = insertAutomationRule(db, {
+    projectId: project.id,
+    entityName: "Order",
+    trigger: "record_created",
+    actionType: "webhook",
+    webhookUrl: "https://hooks.example.com/forge",
+    toMode: "static",
+    messageTemplate: "New order from {{customerName}}!",
+  });
+  const record = { id: 1, customerName: "Dana Levi", customerPhone: "972501234567", status: "New" };
+
+  const originalFetch = globalThis.fetch;
+  const calls: { url: string; init: RequestInit }[] = [];
+  globalThis.fetch = (async (url: string, init?: RequestInit) => {
+    calls.push({ url, init: init! });
+    return new Response(null, { status: 200 });
+  }) as typeof fetch;
+  try {
+    await runAutomationsForRecordChange(db, {} as WhatsAppWebManager, UNUSED_EMAIL_SENDER, project, orderEntity, "created", record, new Set(), UNUSED_UPLOADS_DIR, UNUSED_BASE_URL);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+
+  const payload = JSON.parse(calls[0]!.init.body as string);
+  assert.equal(payload.ruleId, rule.id);
+  assert.equal(typeof payload.deliveryId, "string");
+  assert.ok(payload.deliveryId.length > 0);
+
+  const [run] = listAutomationRuns(db, project.id, rule.id, 1);
+  assert.equal(run!.id, payload.deliveryId, "the payload's own deliveryId must be the exact id this attempt's automation_runs row got, not an unrelated value");
+});
+
+/**
+ * Round 1165: a manual Retry (POST .../runs/:runId/retry) re-invokes this
+ * exact same fireRule/fireWebhookAction logic against the same rule and
+ * record (see routes/projects.ts's own doc comment on that route) --
+ * simulated here by calling runAutomationsForRecordChange twice in a row
+ * against the identical record, the same way the real create-then-retry
+ * flow fires this function's underlying logic twice. Confirms the retry's
+ * own deliveryId is genuinely distinct from the original attempt's, since
+ * each is tracked as its own separate automation_runs row (round 971) --
+ * reusing the original's id here would collide with that row's own
+ * primary key, so a fresh id per attempt is the only option that doesn't
+ * corrupt the run history the Retry feature itself depends on.
+ */
+test("runAutomationsForRecordChange's webhook payload gets a genuinely different deliveryId on a second (retry-like) fire against the same rule and record", async () => {
+  const { db, project } = setupProject();
+  const rule = insertAutomationRule(db, {
+    projectId: project.id,
+    entityName: "Order",
+    trigger: "record_created",
+    actionType: "webhook",
+    webhookUrl: "https://hooks.example.com/forge",
+    toMode: "static",
+    messageTemplate: "New order from {{customerName}}!",
+  });
+  const record = { id: 1, customerName: "Dana Levi", customerPhone: "972501234567", status: "New" };
+
+  const originalFetch = globalThis.fetch;
+  const calls: { url: string; init: RequestInit }[] = [];
+  globalThis.fetch = (async (url: string, init?: RequestInit) => {
+    calls.push({ url, init: init! });
+    return new Response(null, { status: 200 });
+  }) as typeof fetch;
+  try {
+    await runAutomationsForRecordChange(db, {} as WhatsAppWebManager, UNUSED_EMAIL_SENDER, project, orderEntity, "created", record, new Set(), UNUSED_UPLOADS_DIR, UNUSED_BASE_URL);
+    await runAutomationsForRecordChange(db, {} as WhatsAppWebManager, UNUSED_EMAIL_SENDER, project, orderEntity, "created", record, new Set(), UNUSED_UPLOADS_DIR, UNUSED_BASE_URL);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+
+  assert.equal(calls.length, 2);
+  const firstPayload = JSON.parse(calls[0]!.init.body as string);
+  const secondPayload = JSON.parse(calls[1]!.init.body as string);
+  assert.notEqual(firstPayload.deliveryId, secondPayload.deliveryId);
+  assert.equal(firstPayload.ruleId, secondPayload.ruleId, "both attempts fired the same rule, so ruleId itself must stay identical across them");
+
+  const runs = listAutomationRuns(db, project.id, rule.id, 10);
+  assert.equal(runs.length, 2, "each attempt must be tracked as its own distinct run row, never collapsed or overwritten");
+  assert.notEqual(runs[0]!.id, runs[1]!.id);
+});
+
+/**
  * Round 974: before this round, fireWebhookAction's outbound request carried
  * no auth of any kind -- every real destination that requires one (bearer
  * token, HMAC signature header) would simply reject it. Confirms a rule

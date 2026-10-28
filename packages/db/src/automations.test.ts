@@ -193,6 +193,38 @@ test("recordAutomationRun stamps lastTriggeredAt/lastStatus/lastError, and silen
 });
 
 /**
+ * Round 1165: fireWebhookAction (apps/api/src/automations.ts) needs the
+ * exact id a run row will get BEFORE this function is called, so it can
+ * include that same id in the outbound webhook payload as a delivery id a
+ * receiver could use to correlate that specific attempt -- generating the
+ * id internally (the pre-round-1165 behavior) made that impossible, since
+ * the id didn't exist until after the POST had already gone out. Confirms
+ * the optional runId both ends up as the stored row's own id (not just
+ * accepted and ignored) and is returned, so a caller that generated it
+ * up front can treat this call as "confirm what I already sent", not
+ * "tell me what id you picked instead".
+ */
+test("recordAutomationRun accepts and returns a caller-supplied runId, storing it as the run row's own id", () => {
+  const db = openDatabase(":memory:");
+  ensureAutomationRulesTable(db);
+  const rule = insertAutomationRule(db, baseRule());
+
+  const returned = recordAutomationRun(db, "proj1", rule.id, { status: "sent" }, "webhook", null, null, new Date(), "caller-chosen-id-123");
+  assert.equal(returned, "caller-chosen-id-123");
+
+  const [run] = listAutomationRuns(db, "proj1", rule.id);
+  assert.equal(run!.id, "caller-chosen-id-123");
+
+  // The retention-pruning deletes (round 951/1032) sit after the insert in
+  // the function body -- confirms they still actually run when a runId is
+  // passed in, not skipped by an early return that would otherwise let
+  // automation_runs grow unbounded.
+  const secondReturned = recordAutomationRun(db, "proj1", rule.id, { status: "sent" }, "webhook");
+  assert.notEqual(secondReturned, "caller-chosen-id-123", "omitting runId must still generate a fresh id, not reuse the previous call's");
+  assert.equal(listAutomationRuns(db, "proj1", rule.id, 10).length, 2, "both the caller-supplied-id run and the auto-generated-id run must be present");
+});
+
+/**
  * Round 948: a rule's actionType can be edited after it last fired
  * (updateAutomationRule never touches lastTriggeredAt/lastStatus/lastError),
  * so a live `rule.actionType` read at display time is NOT necessarily the

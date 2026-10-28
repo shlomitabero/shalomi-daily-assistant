@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import { isIP } from "node:net";
 import path from "node:path";
@@ -669,8 +670,24 @@ async function fireWebhookAction(
           isHebrewText(project.description) ? "he" : "en",
         )
       : rule.messageTemplate;
+  // Round 1165: this feature's own doc comments advertise compatibility
+  // with "Zapier, Slack, Make, or any other system" -- every one of those
+  // documents itself as expecting a stable delivery id in the payload so
+  // the receiver can deduplicate a resend from a genuinely new event. The
+  // manual Retry route (round 971) re-fires this exact function against
+  // the same rule/record/trigger, producing an identical-looking payload
+  // with no field a receiver could use to tell "this is a resend" from
+  // "this is a second, distinct event" -- generated up front (rather than
+  // left to recordAutomationRun's own internal id generation, which only
+  // ran AFTER the POST had already gone out) so it can be included in
+  // what's actually sent over the wire, and then passed through to
+  // recordAutomationRun below so the stored run row's own id matches
+  // exactly what the receiver saw.
+  const deliveryId = randomUUID();
   const payload = {
     event: rule.trigger,
+    ruleId: rule.id,
+    deliveryId,
     project: { id: project.id, name: project.name },
     entity: entity?.name ?? null,
     message,
@@ -722,6 +739,7 @@ async function fireWebhookAction(
       record ? Number(record.id) : null,
       recordSnapshot,
       now,
+      deliveryId,
     );
   } catch (err) {
     recordAutomationRun(
@@ -736,6 +754,7 @@ async function fireWebhookAction(
       record ? Number(record.id) : null,
       recordSnapshot,
       now,
+      deliveryId,
     );
   } finally {
     clearTimeout(timeout);
