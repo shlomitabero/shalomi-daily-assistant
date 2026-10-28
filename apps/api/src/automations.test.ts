@@ -346,8 +346,8 @@ test("matchesTrigger: record_created only matches the 'created' event, never 'up
     toNumber: "972500000000",
     messageTemplate: "Welcome!",
   });
-  assert.equal(matchesTrigger(rule, "created", { status: "New" }, new Set()), true);
-  assert.equal(matchesTrigger(rule, "updated", { status: "New" }, new Set(["status"])), false);
+  assert.equal(matchesTrigger(rule, "created", { status: "New" }, new Set(), orderEntity), true);
+  assert.equal(matchesTrigger(rule, "updated", { status: "New" }, new Set(["status"]), orderEntity), false);
 });
 
 test("matchesTrigger: field_equals matches a create whose field already has the target value", () => {
@@ -362,7 +362,7 @@ test("matchesTrigger: field_equals matches a create whose field already has the 
     toNumber: "972500000000",
     messageTemplate: "Delivered!",
   });
-  assert.equal(matchesTrigger(rule, "created", { status: "Delivered" }, new Set(["status"])), true);
+  assert.equal(matchesTrigger(rule, "created", { status: "Delivered" }, new Set(["status"]), orderEntity), true);
 });
 
 test("matchesTrigger: field_equals on an update only matches when the matching field is part of this update's own payload", () => {
@@ -381,8 +381,8 @@ test("matchesTrigger: field_equals on an update only matches when the matching f
   // The record's current value is "Delivered", but this particular update
   // never touched `status` at all (e.g. only customerPhone changed) -- must
   // not re-fire on every unrelated edit to an already-delivered record.
-  assert.equal(matchesTrigger(rule, "updated", { status: "Delivered" }, new Set(["customerPhone"])), false);
-  assert.equal(matchesTrigger(rule, "updated", { status: "Delivered" }, new Set(["status"])), true);
+  assert.equal(matchesTrigger(rule, "updated", { status: "Delivered" }, new Set(["customerPhone"]), orderEntity), false);
+  assert.equal(matchesTrigger(rule, "updated", { status: "Delivered" }, new Set(["status"]), orderEntity), true);
 });
 
 test("matchesTrigger: field_equals does not match when the record's value differs from the target", () => {
@@ -397,7 +397,7 @@ test("matchesTrigger: field_equals does not match when the record's value differ
     toNumber: "972500000000",
     messageTemplate: "Delivered!",
   });
-  assert.equal(matchesTrigger(rule, "updated", { status: "Cancelled" }, new Set(["status"])), false);
+  assert.equal(matchesTrigger(rule, "updated", { status: "Cancelled" }, new Set(["status"]), orderEntity), false);
 });
 
 /**
@@ -415,9 +415,9 @@ test("matchesTrigger: record_deleted only matches the 'deleted' event, never 'cr
     toNumber: "972500000000",
     messageTemplate: "Order {{orderId}} was deleted.",
   });
-  assert.equal(matchesTrigger(rule, "deleted", { orderId: "A1" }, new Set()), true);
-  assert.equal(matchesTrigger(rule, "created", { orderId: "A1" }, new Set()), false);
-  assert.equal(matchesTrigger(rule, "updated", { orderId: "A1" }, new Set(["orderId"])), false);
+  assert.equal(matchesTrigger(rule, "deleted", { orderId: "A1" }, new Set(), orderEntity), true);
+  assert.equal(matchesTrigger(rule, "created", { orderId: "A1" }, new Set(), orderEntity), false);
+  assert.equal(matchesTrigger(rule, "updated", { orderId: "A1" }, new Set(["orderId"]), orderEntity), false);
 });
 
 /**
@@ -443,7 +443,7 @@ test("matchesTrigger: a 'deleted' event never matches a field_equals rule, even 
     toNumber: "972500000000",
     messageTemplate: "Delivered!",
   });
-  assert.equal(matchesTrigger(rule, "deleted", { status: "Delivered" }, new Set()), false);
+  assert.equal(matchesTrigger(rule, "deleted", { status: "Delivered" }, new Set(), orderEntity), false);
 });
 
 /**
@@ -473,8 +473,8 @@ test("matchesTrigger: a schedule rule never matches a record event, even when it
     toNumber: "972500000000",
     messageTemplate: "Daily digest",
   });
-  assert.equal(matchesTrigger(rule, "created", { status: "urgent" }, new Set()), false);
-  assert.equal(matchesTrigger(rule, "updated", { status: "urgent" }, new Set(["status"])), false);
+  assert.equal(matchesTrigger(rule, "created", { status: "urgent" }, new Set(), orderEntity), false);
+  assert.equal(matchesTrigger(rule, "updated", { status: "urgent" }, new Set(["status"]), orderEntity), false);
 });
 
 function openDbForRuleOnly() {
@@ -508,6 +508,66 @@ test("runAutomationsForRecordChange sends a WhatsApp message when a matching rul
   assert.equal(messages.length, 1);
   assert.equal(messages[0]!.status, "sent");
   assert.equal(messages[0]!.toNumber, "972501234567");
+});
+
+/**
+ * Round 1188: packages/db/src/migrate.ts explicitly treats a case-only
+ * field rename (type unchanged) as "the same field" and deliberately does
+ * NOT disable a referencing rule for it (its own prevFieldByLowerName
+ * leniency, migrate.ts:470-473) -- but rule.fieldName is a string
+ * persisted at rule-creation time, and repository.ts's rowToRecord keys
+ * every record strictly by the entity's CURRENT field.name. Without
+ * resolveStoredFieldName, a rule created while the field was named
+ * "status" would silently stop matching anything at all the moment a live
+ * refine recased that same field to "Status" -- not because the field was
+ * removed, but because changedFields.has(rule.fieldName) and
+ * record[rule.fieldName] both missed the new casing entirely. The
+ * template's own {{status}} placeholder (authored against the same old
+ * casing) has the identical gap in interpolateTemplate.
+ */
+test("runAutomationsForRecordChange still fires a field_equals rule and interpolates its own template placeholder after the entity's field was renamed only by letter case", async () => {
+  const { db, project } = setupProject();
+  insertAutomationRule(db, {
+    projectId: project.id,
+    entityName: "Order",
+    trigger: "field_equals",
+    fieldName: "status", // stored at rule-creation time, lowercase "s"
+    fieldValue: "Delivered",
+    actionType: "send_whatsapp",
+    toMode: "field",
+    toField: "customerPhone",
+    messageTemplate: "Hi {{customerName}}, your {{status}} order is ready!",
+  });
+  // Simulates the entity AFTER a live refine recased "status" to "Status"
+  // (same type, same position) -- the real shape repository.ts's
+  // rowToRecord keys the record object by.
+  const renamedEntity: Entity = {
+    ...orderEntity,
+    fields: orderEntity.fields.map((f) => (f.name === "status" ? { ...f, name: "Status" } : f)),
+  };
+  const { manager, sendCalls } = createFakeWhatsApp({ connected: true });
+  const record = { id: 1, customerName: "Dana", customerPhone: "972501234567", Status: "Delivered" };
+
+  await runAutomationsForRecordChange(
+    db,
+    manager,
+    UNUSED_EMAIL_SENDER,
+    project,
+    renamedEntity,
+    "updated",
+    record,
+    new Set(["Status"]),
+    UNUSED_UPLOADS_DIR,
+    UNUSED_BASE_URL,
+  );
+
+  assert.equal(sendCalls.length, 1, "the rule must still fire even though its own stored fieldName is the field's OLD casing");
+  assert.equal(sendCalls[0]!.to, "972501234567");
+  assert.equal(
+    sendCalls[0]!.body,
+    "Hi Dana, your Delivered order is ready!",
+    "the template's own {{status}} placeholder (also authored against the old casing) must still resolve to the record's real value",
+  );
 });
 
 /**
@@ -2613,6 +2673,42 @@ test("runAutomationsForRecordChange sends a 'send_email' rule's email to a toFie
   assert.equal(emailSender.sentTo.length, 1);
   assert.equal(emailSender.sentTo[0]!.to, "dana@example.com");
   assert.equal(emailSender.sentTo[0]!.text, "Hi Dana Levi!");
+});
+
+/**
+ * Round 1188: the send_email sibling of the WhatsApp/field_equals test
+ * above -- a toMode:"field" destination's own toField is likewise a
+ * string persisted at rule-creation time, with the identical stale-casing
+ * gap after a live case-only field rename (see that test's own doc
+ * comment for the full chain).
+ */
+test("runAutomationsForRecordChange still resolves a 'send_email' rule's toField destination after the entity's field was renamed only by letter case", async () => {
+  const { db, project } = setupProject();
+  insertAutomationRule(db, {
+    projectId: project.id,
+    entityName: "Order",
+    trigger: "record_created",
+    actionType: "send_email",
+    toMode: "field",
+    toField: "customerPhone", // stored at rule-creation time, lowercase "p"
+    emailSubject: "Order update",
+    messageTemplate: "Hi {{customerName}}!",
+  });
+  // Simulates the entity AFTER a live refine recased "customerPhone" to
+  // "CustomerPhone" (same type, same position).
+  const renamedEntity: Entity = {
+    ...orderEntity,
+    fields: orderEntity.fields.map((f) => (f.name === "customerPhone" ? { ...f, name: "CustomerPhone" } : f)),
+  };
+  // Reused here to hold an email address, same as the pre-existing test
+  // above's own convention of not caring about a field's own name.
+  const record = { id: 1, customerName: "Dana Levi", CustomerPhone: "dana@example.com", status: "New" };
+  const emailSender = createFakeEmailSender();
+
+  await runAutomationsForRecordChange(db, {} as WhatsAppWebManager, emailSender, project, renamedEntity, "created", record, new Set(), UNUSED_UPLOADS_DIR, UNUSED_BASE_URL);
+
+  assert.equal(emailSender.sentTo.length, 1, "the email must still be sent even though toField is the field's OLD casing");
+  assert.equal(emailSender.sentTo[0]!.to, "dana@example.com");
 });
 
 /**

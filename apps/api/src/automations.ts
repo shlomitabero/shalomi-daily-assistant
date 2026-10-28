@@ -126,6 +126,31 @@ export function resolveFileFieldsForWebhook(entity: Entity, record: EntityRecord
 }
 
 /**
+ * Round 1188: mirrors routes/projects.ts's own findField convention
+ * (exact match first, case-insensitive fallback second) for every place in
+ * this file that resolves a FIELD NAME STORED ON THE RULE OR INSIDE A
+ * TEMPLATE -- rule.fieldName/toField and a template's own {{placeholder}}
+ * text are persisted strings, authored against whatever casing a field had
+ * at rule-creation time. packages/db/src/migrate.ts explicitly treats a
+ * later case-only field rename (type unchanged) as "the same field" and
+ * deliberately does NOT disable a referencing rule for it (its own
+ * prevFieldByLowerName leniency, migrate.ts:470-473) -- but
+ * repository.ts's rowToRecord keys every record strictly by the entity's
+ * CURRENT field.name, so a stale, differently-cased stored string here
+ * would silently stop matching anything in the record object: a trigger
+ * condition that can never match again, a toField destination that
+ * resolves to nothing, and a template placeholder left as raw literal text
+ * in a real outbound message -- all without any error surfacing anywhere.
+ * Falls back to the original string, unresolved, when no field matches at
+ * all (a genuinely removed field, or a typo), preserving every existing
+ * caller's own documented "unmatched reference" behavior for that case.
+ */
+function resolveStoredFieldName(entity: Entity, fieldName: string): string {
+  const field = entity.fields.find((f) => f.name === fieldName) ?? entity.fields.find((f) => f.name.toLowerCase() === fieldName.toLowerCase());
+  return field?.name ?? fieldName;
+}
+
+/**
  * Mirrors routes/projects.ts's own deleteUploadedFile -- the only other
  * place that ever turns a file field's stored `{url, name, size,
  * mimeType}` descriptor back into a real path on disk (uploadsDir/
@@ -186,7 +211,7 @@ export function findTemplateFileAttachment(
   record: EntityRecord,
 ): WhatsAppAttachment | null {
   for (const match of template.matchAll(/\{\{\s*([a-zA-Z0-9_]+)\s*\}\}/g)) {
-    const fieldName = match[1];
+    const fieldName = resolveStoredFieldName(entity, match[1]);
     const field = entity.fields.find((f) => f.name === fieldName && f.type === "file");
     if (!field) continue;
     const rawValue = record[fieldName];
@@ -259,7 +284,8 @@ function stripBidiMarks(s: string): string {
 }
 
 export function interpolateTemplate(template: string, entity: Entity, record: EntityRecord, lang: Lang): string {
-  return template.replace(/\{\{\s*([a-zA-Z0-9_]+)\s*\}\}/g, (match, fieldName: string) => {
+  return template.replace(/\{\{\s*([a-zA-Z0-9_]+)\s*\}\}/g, (match, rawFieldName: string) => {
+    const fieldName = resolveStoredFieldName(entity, rawFieldName);
     const value = record[fieldName];
     if (value === null || value === undefined) return match;
     const field = entity.fields.find((f) => f.name === fieldName);
@@ -357,6 +383,7 @@ export function matchesTrigger(
   event: "created" | "updated" | "deleted",
   record: EntityRecord,
   changedFields: Set<string>,
+  entity: Entity,
 ): boolean {
   if (rule.trigger === "record_created") {
     return event === "created";
@@ -381,8 +408,12 @@ export function matchesTrigger(
   if (rule.trigger !== "field_equals") return false;
   if (event === "deleted") return false;
   if (!rule.fieldName) return false;
-  if (event === "updated" && !changedFields.has(rule.fieldName)) return false;
-  const actual = record[rule.fieldName];
+  // Round 1188: rule.fieldName is the field's casing as of rule creation,
+  // not necessarily its current declared name -- see resolveStoredFieldName's
+  // own doc comment above.
+  const fieldName = resolveStoredFieldName(entity, rule.fieldName);
+  if (event === "updated" && !changedFields.has(fieldName)) return false;
+  const actual = record[fieldName];
   if (actual === null || actual === undefined) return false;
   return String(actual) === rule.fieldValue;
 }
@@ -423,7 +454,7 @@ export async function runAutomationsForRecordChange(
 ): Promise<void> {
   const rules = listEnabledAutomationRulesForEntity(db, project.id, entity.name);
   for (const rule of rules) {
-    if (!matchesTrigger(rule, event, record, changedFields)) continue;
+    if (!matchesTrigger(rule, event, record, changedFields, entity)) continue;
     try {
       await fireRule(db, whatsapp, emailSender, project, entity, rule, record, uploadsDir, baseUrl);
     } catch (err) {
@@ -787,7 +818,13 @@ async function fireEmailAction(
   // "record_deleted" is the one trigger a later retry can never re-fetch
   // the record for, since the triggering event IS that record's deletion.
   const recordSnapshot = rule.trigger === "record_deleted" && record ? JSON.stringify(record) : null;
-  const to = rule.toMode === "static" ? rule.toEmail : rule.toField && record ? record[rule.toField] : null;
+  // Round 1188: resolve against the entity's current field casing -- see
+  // resolveStoredFieldName's own doc comment. entity/record are null only
+  // for a schedule rule (no record context at all), in which case toField
+  // can't be resolved either and the existing `record ?` guard below
+  // already yields null regardless.
+  const resolvedToField = entity && rule.toField ? resolveStoredFieldName(entity, rule.toField) : rule.toField;
+  const to = rule.toMode === "static" ? rule.toEmail : resolvedToField && record ? record[resolvedToField] : null;
   if (!to || typeof to !== "string" || !to.trim()) {
     recordAutomationRun(
       db,
@@ -924,7 +961,10 @@ export async function fireRule(
   // "record_deleted" is the one trigger a later retry can never re-fetch
   // the record for, since the triggering event IS that record's deletion.
   const recordSnapshot = rule.trigger === "record_deleted" ? JSON.stringify(record) : null;
-  const to = rule.toMode === "static" ? rule.toNumber : rule.toField ? record[rule.toField] : null;
+  // Round 1188: resolve against the entity's current field casing -- see
+  // resolveStoredFieldName's own doc comment.
+  const resolvedToField = rule.toField ? resolveStoredFieldName(entity, rule.toField) : null;
+  const to = rule.toMode === "static" ? rule.toNumber : resolvedToField ? record[resolvedToField] : null;
   if (!to || typeof to !== "string" || !to.trim()) {
     recordAutomationRun(
       db,
