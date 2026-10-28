@@ -39,10 +39,21 @@ export function CheckpointLabelEditor({
    * Round 1120: the reverse half of `disabled` just below -- HistoryPanel's
    * own Restore/Delete buttons are already disabled for ALL rows while
    * ANY row's restore/delete is in flight (see their own comment), but had
-   * no way to know a rename was in flight too. Fired with `true` the
-   * instant the real renameCheckpoint request starts and `false` once it
-   * settles, so HistoryPanel can fold this into that same "any one busy
-   * blocks all" guard.
+   * no way to know a rename was in flight too.
+   *
+   * Round 1175: round 1120's own version only fired this from inside
+   * save(), the instant the real renameCheckpoint request started -- never
+   * when the editor merely opened. A draft can sit typed-but-unsubmitted
+   * indefinitely, and during that whole window HistoryPanel's renamingId
+   * stayed null, so clicking Restore/Delete on a DIFFERENT checkpoint
+   * still disabled this one via the shared `disabled` prop below, which
+   * rips the open `<input>` out of the DOM (the render guard just below
+   * returns plain text instead) with no warning and no way to recover
+   * whatever was mid-typing. The exact same gap round 1147 already closed
+   * for RoleChip/PersonaItem/AssumptionItem's own rename editors -- fired
+   * now from startEditing/cancelEditing too, not just save(), so opening
+   * an editor blocks every sibling action for as long as it stays open,
+   * the same way a REAL rename in flight already does.
    */
   onBusyChange?: (busy: boolean) => void;
   /**
@@ -78,11 +89,13 @@ export function CheckpointLabelEditor({
     setError(null);
     onEditStart?.();
     setEditing(true);
+    onBusyChange?.(true);
   }
 
   function cancelEditing() {
     cancelling.current = true;
     setEditing(false);
+    onBusyChange?.(false);
   }
 
   async function save() {
@@ -93,20 +106,26 @@ export function CheckpointLabelEditor({
     const trimmed = draft.trim();
     if (!trimmed || trimmed === checkpoint.label) {
       setEditing(false);
+      onBusyChange?.(false);
       return;
     }
     setBusy(true);
-    onBusyChange?.(true);
     setError(null);
     try {
       const { checkpoint: renamed } = await renameCheckpoint(projectId, checkpoint.id, trimmed);
       onRenamed(renamed);
       setEditing(false);
+      onBusyChange?.(false);
     } catch (err) {
+      // Round 1175: deliberately does NOT call onBusyChange?.(false) here --
+      // editing stays true (the form re-renders with the error below, open
+      // for a retry), so this checkpoint must keep reporting busy to
+      // HistoryPanel until the editor actually closes (a successful save,
+      // or Escape's own cancelEditing), not merely because this one
+      // network attempt settled.
       setError((err as Error).message);
     } finally {
       setBusy(false);
-      onBusyChange?.(false);
     }
   }
 

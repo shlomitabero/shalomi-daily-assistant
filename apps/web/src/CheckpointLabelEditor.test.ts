@@ -66,7 +66,12 @@ const checkpoint: Checkpoint = {
   createdAt: new Date().toISOString(),
 };
 
-function renderEditor(onRenamed: (c: Checkpoint) => void, readOnly = false, disabled = false) {
+function renderEditor(
+  onRenamed: (c: Checkpoint) => void,
+  readOnly = false,
+  disabled = false,
+  onBusyChange?: (busy: boolean) => void,
+) {
   render(
     React.createElement(
       ThemeProvider,
@@ -74,7 +79,7 @@ function renderEditor(onRenamed: (c: Checkpoint) => void, readOnly = false, disa
       React.createElement(
         LanguageProvider,
         null,
-        React.createElement(CheckpointLabelEditor, { checkpoint, projectId: "proj1", onRenamed, readOnly, disabled }),
+        React.createElement(CheckpointLabelEditor, { checkpoint, projectId: "proj1", onRenamed, readOnly, disabled, onBusyChange }),
       ),
     ),
   );
@@ -352,57 +357,81 @@ test("the real startEditing is a no-op while disabled is true", () => {
 });
 
 /**
- * Round 1120: the other half -- extracts the real save (not reimplemented)
- * and confirms onBusyChange fires (true) before the real renameCheckpoint
- * call starts and (false) once it settles, on both the success and the
- * failure path. HistoryPanel folds this into its own renamingId state, the
- * signal its Restore/Delete buttons' disabled condition now also checks.
+ * Round 1120: onBusyChange fires so HistoryPanel's Restore/Delete buttons
+ * (its own renamingId state) can block while a rename is in flight.
+ *
+ * Round 1175: round 1120's own version only fired this from inside save(),
+ * the instant the real network call started -- never when the editor
+ * merely opened with an unsaved draft. That left a sibling's Restore/
+ * Delete free to disable THIS row (via the shared `disabled` prop) while
+ * its own editor was still open, ripping the `<input>` out of the DOM
+ * mid-edit with no warning (the exact bug class round 1147 already closed
+ * for RoleChip/PersonaItem/AssumptionItem). Exercises the real component
+ * end-to-end (not an extracted function in isolation, since the fix now
+ * spans startEditing/cancelEditing/save together) to prove the full,
+ * corrected contract: busy the instant the editor opens, clear on a
+ * successful save, clear on Escape/cancel, but -- unlike before this
+ * round -- NOT cleared on a failed save, since the editor (and its unsaved
+ * draft) stays open for a retry and must keep blocking siblings until it
+ * actually closes.
  */
-test("the real save reports busy=true before renameCheckpoint starts and busy=false once it settles, on both success and failure", async () => {
-  const handlerMatch = checkpointLabelEditorSrc.match(/ {2}async function save\(\) \{[\s\S]*?\n {2}\}\n/);
-  assert.ok(handlerMatch, "expected to find save in CheckpointLabelEditor.tsx");
-  const { code } = transformSync(handlerMatch![0], { loader: "ts" });
-
-  async function runSave(renameCheckpointImpl: (...args: unknown[]) => Promise<unknown>) {
+test("onBusyChange fires true the instant the editor opens (not just once a real save starts), clears on success or cancel, but stays true through a failed save", async () => {
+  await withJsdom(async () => {
+    const originalFetch = globalThis.fetch;
     const busyLog: boolean[] = [];
-    const fn = new Function(
-      "cancelling",
-      "draft",
-      "checkpoint",
-      "setEditing",
-      "setBusy",
-      "onBusyChange",
-      "setError",
-      "renameCheckpoint",
-      "onRenamed",
-      `${code}\nreturn save;`,
-    )(
-      { current: false },
-      "A new, real label",
-      checkpoint,
-      () => {},
-      () => {},
-      (busy: boolean) => busyLog.push(busy),
-      () => {},
-      renameCheckpointImpl,
-      () => {},
-    ) as () => Promise<void>;
-    await fn();
-    return busyLog;
-  }
+    let shouldFail = false;
+    globalThis.fetch = (async (_input: string, init?: RequestInit) => {
+      if (shouldFail) {
+        return new Response(JSON.stringify({ error: "That label is already taken." }), {
+          status: 409,
+          headers: { "content-type": "application/json" },
+        });
+      }
+      const body = JSON.parse(init!.body as string) as { label: string };
+      return new Response(JSON.stringify({ checkpoint: { ...checkpoint, label: body.label } }), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      });
+    }) as typeof fetch;
 
-  assert.deepEqual(
-    await runSave(async () => ({ checkpoint: { ...checkpoint, label: "A new, real label" } })),
-    [true, false],
-    "a successful rename must report busy=true, then busy=false, in that order",
-  );
-  assert.deepEqual(
-    await runSave(async () => {
-      throw new Error("network error");
-    }),
-    [true, false],
-    "a failed rename must still report busy=false once it settles, not leave the caller thinking it's still in flight",
-  );
+    try {
+      renderEditor(
+        () => {},
+        false,
+        false,
+        (busy) => busyLog.push(busy),
+      );
+
+      fireEvent.click(document.querySelector(".checkpoint-label") as HTMLElement);
+      await waitForCondition(() => document.querySelector(".checkpoint-label-edit input") !== null);
+      assert.deepEqual(busyLog, [true], "opening the editor, before any save is attempted, must already report busy=true");
+
+      // Escape cancels without ever having saved -- must clear busy.
+      const input1 = document.querySelector(".checkpoint-label-edit input") as HTMLInputElement;
+      fireEvent.keyDown(input1, { key: "Escape" });
+      await waitForCondition(() => document.querySelector(".checkpoint-label-edit input") === null);
+      assert.deepEqual(busyLog, [true, false], "Escape/cancel must clear busy even though no save ever ran");
+
+      // Re-open and fail a save: busy must stay true (editor stays open for a retry).
+      busyLog.length = 0;
+      shouldFail = true;
+      fireEvent.click(document.querySelector(".checkpoint-label") as HTMLElement);
+      await waitForCondition(() => document.querySelector(".checkpoint-label-edit input") !== null);
+      const input2 = document.querySelector(".checkpoint-label-edit input") as HTMLInputElement;
+      fireEvent.change(input2, { target: { value: "A Different Label" } });
+      fireEvent.blur(input2);
+      await waitForCondition(() => document.querySelector(".error") !== null);
+      assert.deepEqual(busyLog, [true], "a FAILED save must never report busy=false -- the editor (and its unsaved draft) is still open for a retry");
+
+      // Now let the retry succeed: busy must finally clear.
+      shouldFail = false;
+      fireEvent.blur(document.querySelector(".checkpoint-label-edit input") as HTMLElement);
+      await waitForCondition(() => document.querySelector(".checkpoint-label-edit input") === null);
+      assert.deepEqual(busyLog, [true, false], "a subsequent SUCCESSFUL save must clear busy once the editor actually closes");
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
 });
 
 /**
