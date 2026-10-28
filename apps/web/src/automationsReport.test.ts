@@ -208,6 +208,30 @@ test("formatAutomationsReport translates a send_email rule's known raw error cod
 });
 
 /**
+ * Round 1166: rounds 935/1080 above only ever translated the stable
+ * snake_case codes a per-send ATTEMPT failure stores. This mirrors
+ * AutomationsPanel.tsx's own identical fix (see its own comment) for the
+ * sibling gap: apps/api/src/automations.ts also stores whole-rule/
+ * whole-record MISCONFIGURATION errors as fixed, untranslated English
+ * sentences (WHATSAPP_NOT_CONNECTED_ERROR among them) -- before this
+ * round, the downloaded/copied report showed this raw sentence verbatim.
+ */
+test("formatAutomationsReport translates a send_whatsapp rule's WhatsApp-not-connected misconfiguration error instead of showing the bare server sentence", () => {
+  const t = (key: string, params?: Record<string, string | number>) => translate("en", key, params);
+  const rule = makeRule({
+    actionType: "send_whatsapp",
+    lastTriggeredAt: "2026-03-15T09:00:00Z",
+    lastStatus: "failed",
+    lastError: "WhatsApp is not connected",
+  });
+
+  const report = formatAutomationsReport([rule], [], "Shop", "en", t);
+
+  assert.match(report, /Reconnect and try again/, "the report must show the same translated WhatsApp-disconnected message the manual send panel already uses");
+  assert.equal(report.includes("WhatsApp is not connected"), false, "the bare raw server sentence must never leak into the report");
+});
+
+/**
  * Round 948: same fix as AutomationsPanel.tsx's own identical regression
  * (see its own comment) -- editing a rule's actionType never
  * retroactively clears/updates its own already-stored lastError

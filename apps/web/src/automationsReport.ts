@@ -1,5 +1,6 @@
 import type { Entity } from "@forge/shared";
 import {
+  AUTOMATION_CONFIG_ERROR_CODES,
   KNOWN_EMAIL_SEND_ERROR_CODES,
   KNOWN_WHATSAPP_SEND_ERROR_CODES,
   safeDownloadName,
@@ -203,6 +204,14 @@ function translateAutomationError(actionType: AutomationActionType | null, error
   // above -- see KNOWN_EMAIL_SEND_ERROR_CODES's own doc comment (api.ts).
   if (actionType === "send_email" && KNOWN_EMAIL_SEND_ERROR_CODES.has(error)) {
     return resolveErrorMessage(lang, { code: `EMAIL_SEND_${error.toUpperCase()}`, error });
+  }
+  // Round 1166: see AUTOMATION_CONFIG_ERROR_CODES's own doc comment
+  // (api.ts) -- the whole-rule/whole-record misconfiguration sibling of
+  // the two per-send-attempt code sets just above, which never covered
+  // these plain-English sentences at all.
+  const configCode = AUTOMATION_CONFIG_ERROR_CODES[error];
+  if (configCode) {
+    return resolveErrorMessage(lang, { code: configCode, error });
   }
   return error;
 }

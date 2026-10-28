@@ -3186,6 +3186,78 @@ test("AutomationsPanel translates a send_email rule's known raw error code (inva
 });
 
 /**
+ * Round 1166: rounds 935/1080 above only ever translated the stable
+ * snake_case codes a per-send ATTEMPT failure stores (not_connected,
+ * missing_country_code, invalid_email_address, ...). This rule never
+ * covered the whole-rule/whole-record MISCONFIGURATION errors
+ * apps/api/src/automations.ts stores as fixed, untranslated English
+ * sentences -- e.g. a webhook rule saved with no URL at all, or
+ * WHATSAPP_NOT_CONNECTED_ERROR for a send_whatsapp rule firing while
+ * disconnected. Before this round these leaked raw English straight into
+ * this Hebrew-primary app's rule summary and run-history list, the exact
+ * same bug rounds 935/1080 fixed for a different set of error strings.
+ */
+test("AutomationsPanel translates whole-rule misconfiguration errors (a webhook rule's missing URL, and WhatsApp-not-connected) in both its rule-row summary and its run-history list, instead of showing the bare English sentence", async () => {
+  await withJsdom(async () => {
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = (async (input: string) => {
+      if (input === "/api/projects/proj1/automations") {
+        return new Response(
+          JSON.stringify({
+            rules: [
+              makeRule({
+                actionType: "webhook",
+                webhookUrl: null,
+                lastTriggeredAt: new Date("2026-03-15T09:00:00Z").toISOString(),
+                lastStatus: "failed",
+                lastError: "This rule has no valid webhook URL configured",
+              }),
+            ],
+          }),
+          { status: 200, headers: { "content-type": "application/json" } },
+        );
+      }
+      if (input === "/api/projects/proj1/automations/rule1/runs") {
+        return new Response(
+          JSON.stringify({
+            runs: [{ id: "run1", ruleId: "rule1", status: "failed", error: "WhatsApp is not connected", triggeredAt: new Date("2026-03-15T09:00:00Z").toISOString() }],
+          }),
+          { status: 200, headers: { "content-type": "application/json" } },
+        );
+      }
+      throw new Error(`unexpected request ${input}`);
+    }) as typeof fetch;
+
+    try {
+      renderPanel();
+      await waitForCondition(() => document.querySelectorAll(".automations-rule-row").length === 1);
+
+      // The English copy for this key is deliberately close to the raw
+      // server sentence (Hebrew users are the ones this round actually
+      // protects), so checking the raw substring's ABSENCE would be a
+      // weak, coincidentally-passing assertion here -- assert the exact
+      // translated i18n string instead, proving resolveErrorMessage's
+      // lookup genuinely ran rather than just happening to look similar.
+      const row = document.querySelector(".automations-rule-row") as HTMLElement;
+      assert.ok(
+        (row.textContent ?? "").includes("This rule has no valid webhook URL configured."),
+        "the rule row must show the exact translated i18n string, which (unlike the raw server sentence) ends in a period -- proving the lookup actually ran, not just a coincidental resemblance to the raw text",
+      );
+
+      const historyButton = Array.from(document.querySelectorAll("button")).find((b) => b.textContent === "History") as HTMLButtonElement;
+      fireEvent.click(historyButton);
+      await waitForCondition(() => document.querySelectorAll(".automations-rule-history-list li").length === 1);
+
+      const historyText = document.querySelector(".automations-rule-history-list")?.textContent ?? "";
+      assert.equal(historyText.includes("WhatsApp is not connected"), false, "the bare raw English sentence must never leak into the run-history list either");
+      assert.match(historyText, /reconnect/i, "the run-history list must show the same translated WhatsApp-disconnected message the manual send panel already uses");
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+});
+
+/**
  * Round 948: editing a rule's actionType (switching it between
  * send_whatsapp and webhook) never clears/retroactively updates its own
  * already-stored lastError/run history -- a rule's CURRENT actionType is

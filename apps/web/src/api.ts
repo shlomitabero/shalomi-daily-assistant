@@ -1171,6 +1171,34 @@ export const KNOWN_WHATSAPP_SEND_ERROR_CODES = new Set(["not_connected", "invali
  */
 export const KNOWN_EMAIL_SEND_ERROR_CODES = new Set(["invalid_email_address"]);
 
+/**
+ * Round 1166: apps/api/src/automations.ts also stores a handful of
+ * whole-rule/whole-record misconfiguration failures as fixed English
+ * sentences (never translated server-side, same "client concern" design
+ * as the snake_case codes above) -- e.g. a webhook rule with no URL set,
+ * or a toMode:"field" send_whatsapp rule whose triggering record has no
+ * value in the configured phone field. Before this round these leaked
+ * raw English into AutomationsPanel.tsx/automationsReport.ts's Hebrew-
+ * primary rule summaries, run history, and downloaded/copied reports --
+ * the exact "untranslated server error" problem the snake_case codes
+ * above already solve, just never extended to these plain-sentence
+ * errors. Maps each literal to a stable error.<CODE> key via the same
+ * resolveErrorMessage convention every other server error already uses.
+ * Two of these intentionally mirror apps/api/src/automations.ts's own
+ * exported WHATSAPP_NOT_CONNECTED_ERROR/EMAIL_NOT_CONFIGURED_ERROR text
+ * as a literal rather than an import, since apps/web depends on
+ * @forge/shared, not the server-only @forge/db that actually defines
+ * those constants.
+ */
+export const AUTOMATION_CONFIG_ERROR_CODES: Record<string, string> = {
+  "WhatsApp is not connected": "WHATSAPP_NOT_CONNECTED",
+  "Email sending is not configured for this deployment": "AUTOMATION_EMAIL_NOT_CONFIGURED",
+  "This rule has no valid webhook URL configured": "AUTOMATION_NO_WEBHOOK_URL",
+  "This rule has no destination email address configured": "AUTOMATION_NO_EMAIL_DESTINATION",
+  "This rule has no destination phone number configured": "AUTOMATION_NO_PHONE_DESTINATION",
+  "This record has no value in the configured phone-number field": "AUTOMATION_PHONE_FIELD_EMPTY",
+};
+
 export interface WhatsAppAttachmentDescriptor {
   url: string;
   name: string;
