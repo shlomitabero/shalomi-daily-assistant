@@ -475,6 +475,27 @@ export function formatCheckpointCount(
  * record of a project's own build history outside the app -- the same gap
  * this app's other two panels (Business Twin, round 129; WhatsApp log,
  * round 154) already closed for their own data.
+ *
+ * Round 1130: this used to omit every checkpoint's own restore-impact diff
+ * entirely, even though HistoryPanel.tsx's own "What would change?" toggle
+ * treats that exact information (which entities/fields restoring this
+ * checkpoint would remove or add, relative to the live app) as central
+ * enough to put a dedicated per-checkpoint control on -- the same
+ * "a sibling report module never included content its own panel already
+ * computes and prominently renders" gap round 1116 found and fixed for
+ * automationsReport.ts's run history (itself the 4th time that exact class
+ * of miss hit that one file -- rounds 759/760, 772, 1000, 935/1080). Diffed
+ * against currentSpec, the same default baseline HistoryPanel.tsx's own
+ * toggle starts at (`compareTargetId === null`) -- this function has no
+ * interactive "compare with" dropdown to pick a different baseline, and
+ * "what would restoring this remove from the live app right now" is this
+ * report's own primary purpose, matching every checkpoint's own `current`
+ * tag just above (also computed against currentSpec). Omitted entirely
+ * (no heading, no "no changes" line) when the diff is empty, rather than
+ * mirroring the on-screen toggle's own explicit noChanges message -- the
+ * one checkpoint this is ever true for is already the one tagged
+ * `[Current state]` just above, so a redundant "no changes" line under it
+ * would be pure noise in a report meant to be scanned across many entries.
  */
 export function formatCheckpointHistory(
   checkpoints: Checkpoint[],
@@ -500,6 +521,24 @@ export function formatCheckpointHistory(
     // count must read spec.screens, not spec.entities -- see HistoryPanel.tsx's
     // own identical fix for why entities.length under-reports the real count.
     lines.push(`${time} — ${t("history.screenCount", { count: checkpoint.spec.screens.length })}`);
+    const diff = computeCheckpointDiff(currentSpec, checkpoint.spec);
+    if (diff.removedEntities.length > 0 || diff.addedEntities.length > 0 || diff.changedEntities.length > 0) {
+      lines.push(t("history.diff.show"));
+      for (const e of diff.removedEntities) lines.push(`- ${t("history.diff.entityRemoved", { entity: e.label })}`);
+      for (const e of diff.addedEntities) lines.push(`- ${t("history.diff.entityAdded", { entity: e.label })}`);
+      for (const e of diff.changedEntities) {
+        if (e.removedFieldNames.length > 0) {
+          lines.push(`- ${t("history.diff.entityLostFields", { entity: e.label, fields: e.removedFieldNames.join(", ") })}`);
+        }
+        if (e.addedFieldNames.length > 0) {
+          lines.push(`- ${t("history.diff.entityGainedFields", { entity: e.label, fields: e.addedFieldNames.join(", ") })}`);
+        }
+        if (e.changedFieldNames.length > 0) {
+          lines.push(`- ${t("history.diff.entityChangedFields", { entity: e.label, fields: e.changedFieldNames.join(", ") })}`);
+        }
+        if (e.descriptionChanged) lines.push(`- ${t("history.diff.entityDescriptionChanged", { entity: e.label })}`);
+      }
+    }
     lines.push("");
   }
 

@@ -965,6 +965,64 @@ test("formatCheckpointHistory renders in Hebrew when given the Hebrew translator
   assert.match(report, /בנייה ראשונית/);
 });
 
+/**
+ * Round 1130: formatCheckpointHistory used to never call
+ * computeCheckpointDiff at all -- the one piece of information
+ * HistoryPanel.tsx's own "What would change?" toggle treats as central
+ * enough to put a dedicated per-checkpoint control on, the exact same
+ * "sibling report module omits content its own panel already computes"
+ * gap round 1116 found and fixed for automationsReport.ts's run history.
+ * This checkpoint removed the Invoice entity and changed Customer's own
+ * fields relative to currentSpec, so every one of CheckpointDiff's four
+ * kinds of entries (removed entity, lost field, gained field, changed
+ * field) must appear in the exported report, using the exact same i18n
+ * keys/params HistoryPanel.tsx's own on-screen rendering uses.
+ */
+test("formatCheckpointHistory includes each checkpoint's own restore-impact diff against currentSpec, the same information HistoryPanel.tsx's 'What would change?' toggle shows on screen", () => {
+  const t = (key: string, params?: Record<string, string | number>) => translate("en", key, params);
+  const currentSpec: ProductSpec = makeSpec([
+    {
+      name: "Customer",
+      label: "Customers",
+      fields: [
+        { name: "name", type: "text", required: true },
+        { name: "notes", type: "text", required: false },
+        { name: "tier", type: "enum", required: false, enumValues: ["gold", "silver"] },
+      ],
+    },
+  ]);
+  const checkpointSpec: ProductSpec = makeSpec([
+    { name: "Customer", label: "Customers", fields: [{ name: "name", type: "text", required: true }, { name: "phone", type: "text", required: false }] },
+    { name: "Invoice", label: "Invoices", fields: [{ name: "total", type: "number", required: true }] },
+  ]);
+  const checkpoints: Checkpoint[] = [
+    { id: "cp1", projectId: "p1", label: "Older build", kind: "build", spec: checkpointSpec, createdAt: "2026-03-01T09:00:00.000Z" },
+  ];
+
+  const report = formatCheckpointHistory(checkpoints, currentSpec, "Flower Shop", "en", t);
+
+  assert.match(report, /"Invoices" would be added to the menu\./, "Invoice exists in the checkpoint but not currentSpec, so restoring would ADD it");
+  assert.match(report, /"Customers" would lose these fields: notes, tier\./, "fields present in currentSpec but not the checkpoint would be lost on restore");
+  assert.match(report, /"Customers" would gain these fields: phone\./, "a field present in the checkpoint but not currentSpec would be gained on restore");
+});
+
+/**
+ * The counterpart to the test above: a checkpoint whose spec is identical
+ * to currentSpec (the one the report already tags `[Current state]`) must
+ * not grow a redundant "no changes" block -- see this function's own doc
+ * comment for why that's a deliberate choice, not an oversight.
+ */
+test("formatCheckpointHistory omits the diff section entirely for a checkpoint whose spec matches currentSpec, rather than printing a redundant 'no changes' line", () => {
+  const t = (key: string, params?: Record<string, string | number>) => translate("en", key, params);
+  const currentSpec = makeSpec([{ name: "Customer", label: "Customers", fields: [{ name: "name", type: "text", required: true }] }]);
+  const checkpoints: Checkpoint[] = [{ id: "cp1", projectId: "p1", label: "Initial build", kind: "build", spec: currentSpec, createdAt: "2026-03-01T09:00:00.000Z" }];
+
+  const report = formatCheckpointHistory(checkpoints, currentSpec, "Flower Shop", "en", t);
+
+  assert.doesNotMatch(report, /What would change\?/, "a checkpoint with no diff must not even show the diff section's own heading");
+  assert.doesNotMatch(report, /No changes/, "and must not fall back to the on-screen toggle's own 'no changes' message either");
+});
+
 test("resolveCompareSpec returns currentSpec when compareTargetId is null, keeping the original 'vs current' behavior unchanged", () => {
   const currentSpec = makeSpec([{ name: "Customer", fields: [] }]);
   const checkpoints: Checkpoint[] = [
