@@ -15564,6 +15564,60 @@ test("PATCH .../collaborators/:userId/role, DELETE .../collaborators/:userId, an
 });
 
 /**
+ * Round 1189: this route's own effect invalidates the exact auth check
+ * (requireProjectOwner) a retry re-evaluates -- once the transfer
+ * succeeds, the caller is no longer project.ownerId, so a retry with no
+ * idempotency protection used to 404 ("Project not found") for a transfer
+ * that, from the caller's own point of view, already fully succeeded. Same
+ * shape as DELETE /projects/:id's own round-945 idempotency test above.
+ */
+test("POST .../transfer-ownership retried with the same idempotency key after the first attempt already succeeded replays the original response, instead of 404ing now that the caller is no longer the owner", async () => {
+  await withServer(async (baseUrl) => {
+    const ownerToken = await signup(baseUrl, "transfer-idem-owner1@example.com");
+    const newOwnerToken = await signup(baseUrl, "transfer-idem-new-owner1@example.com");
+
+    const createRes = await fetch(`${baseUrl}/api/projects`, {
+      method: "POST",
+      headers: authHeaders(ownerToken),
+      body: JSON.stringify({ description: "A CRM with customers and deals." }),
+    });
+    const { project } = (await createRes.json()) as { project: { id: string } };
+
+    await fetch(`${baseUrl}/api/projects/${project.id}/collaborators`, {
+      method: "POST",
+      headers: authHeaders(ownerToken),
+      body: JSON.stringify({ email: "transfer-idem-new-owner1@example.com" }),
+    });
+    const listRes = await fetch(`${baseUrl}/api/projects/${project.id}/collaborators`, { headers: authHeaders(ownerToken) });
+    const { collaborators } = (await listRes.json()) as { collaborators: { userId: string; email: string }[] };
+    const newOwnerUserId = collaborators.find((c) => c.email === "transfer-idem-new-owner1@example.com")!.userId;
+
+    const headers = { ...authHeaders(ownerToken), "x-idempotency-key": "transfer-ownership-repro-key" };
+    const firstRes = await fetch(`${baseUrl}/api/projects/${project.id}/transfer-ownership`, {
+      method: "POST",
+      headers,
+      body: JSON.stringify({ userId: newOwnerUserId }),
+    });
+    assert.equal(firstRes.status, 200);
+    const { project: projectAfterFirst } = (await firstRes.json()) as { project: { ownerId: string } };
+    assert.equal(projectAfterFirst.ownerId, newOwnerUserId, "sanity check: the first call must have genuinely transferred ownership");
+
+    const retryRes = await fetch(`${baseUrl}/api/projects/${project.id}/transfer-ownership`, {
+      method: "POST",
+      headers,
+      body: JSON.stringify({ userId: newOwnerUserId }),
+    });
+    assert.equal(
+      retryRes.status,
+      200,
+      "a retried transfer with the same idempotency key must replay the original success, not 404 now that the original caller is no longer the owner",
+    );
+    const { project: projectAfterRetry } = (await retryRes.json()) as { project: { ownerId: string } };
+    assert.equal(projectAfterRetry.ownerId, newOwnerUserId, "the replayed response must still reflect the real, successful transfer");
+  });
+});
+
+/**
  * Regression test for the same round-1171 finding: DELETE
  * .../integrations/whatsapp/messages (bulk-clear) and its sibling
  * .../messages/:messageId (one row at a time) had no rate limiter at all.

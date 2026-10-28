@@ -1099,12 +1099,27 @@ export function updateCollaboratorRole(
   });
 }
 
-/** The caller (CollaboratorsPanel) is no longer the project's own owner once this succeeds -- the returned `project` has the new ownerId, so the caller can update its own held Project state (e.g. via setProject) the same way ProjectNameEditor's onRenamed already does, which flips isOwner for every owner-gated control derived from project.ownerId. */
+/**
+ * The caller (CollaboratorsPanel) is no longer the project's own owner once
+ * this succeeds -- the returned `project` has the new ownerId, so the
+ * caller can update its own held Project state (e.g. via setProject) the
+ * same way ProjectNameEditor's onRenamed already does, which flips isOwner
+ * for every owner-gated control derived from project.ownerId.
+ *
+ * Round 1189: same X-Idempotency-Key mechanism createProject already uses
+ * (see its own doc comment) -- the server-side fix makes this route
+ * retry-safe, but only once this request actually carries a key for
+ * withIdempotency to key its cached response on.
+ */
 export function transferProjectOwnership(
   projectId: string,
   userId: string,
 ): Promise<{ collaborators: ProjectCollaborator[]; owner: ProjectOwnerInfo | null; project: Project }> {
-  return request(`/projects/${projectId}/transfer-ownership`, { method: "POST", body: JSON.stringify({ userId }) });
+  return request(`/projects/${projectId}/transfer-ownership`, {
+    method: "POST",
+    headers: { "x-idempotency-key": crypto.randomUUID() },
+    body: JSON.stringify({ userId }),
+  });
 }
 
 /**

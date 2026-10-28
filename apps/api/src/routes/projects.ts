@@ -2159,21 +2159,42 @@ export function createProjectsRouter(
    * inviteCollaboratorRateLimiter's own budget, the same reasoning as the
    * role-change/remove routes above: one real question for this whole
    * family of actions.
+   *
+   * Round 1189: same withIdempotency() extension, and the same reason, as
+   * DELETE /projects/:id's own fix (round 945, see its doc comment) --
+   * this route's own effect INVALIDATES the exact auth check
+   * (requireProjectOwner) a retry re-evaluates: once a transfer succeeds,
+   * the caller is no longer project.ownerId, so fetchWithWakeRetry's own
+   * retry of a response lost in transit (its documented, accepted risk
+   * window -- docs/wakeRetry-idempotency-design.md) got a plain 404
+   * "Project not found" for a transfer that, from the caller's own point
+   * of view, already fully succeeded -- CollaboratorsPanel's
+   * handleTransferOwnership surfaces that 404 as a generic error message,
+   * reading as "the project is gone" rather than "you handed it off"
+   * right after the user did exactly that. requireProjectOwner has to
+   * move INSIDE the withIdempotency callback for the identical reason
+   * DELETE /projects/:id's own doc comment already explains: a genuine
+   * retry never reaches it, the wrap short-circuits first with the first
+   * attempt's own cached response.
    */
   router.post(
     "/projects/:id/transfer-ownership",
     inviteCollaboratorRateLimiter,
     asyncRoute(async (req, res) => {
-      const project = requireProjectOwner(db, req.params.id, req.userId!);
       const parsed = TransferOwnershipSchema.safeParse(req.body);
       if (!parsed.success) {
         throw new HttpError(400, formatValidationError(parsed.error), "VALIDATION_ERROR");
       }
-      if (getCollaboratorRole(db, project.id, parsed.data.userId) === null) {
-        throw new HttpError(404, "Collaborator not found", "COLLABORATOR_NOT_FOUND");
-      }
-      const updated = transferProjectOwnership(db, project.id, parsed.data.userId);
-      res.json({ collaborators: listCollaborators(db, updated.id), owner: getOwnerInfo(db, updated), project: updated });
+      const idempotencyKey = req.header("X-Idempotency-Key") || undefined;
+      const { status, body } = await withIdempotency(db, idempotencyKey, req.userId!, `POST /projects/${req.params.id}/transfer-ownership`, async () => {
+        const project = requireProjectOwner(db, req.params.id, req.userId!);
+        if (getCollaboratorRole(db, project.id, parsed.data.userId) === null) {
+          throw new HttpError(404, "Collaborator not found", "COLLABORATOR_NOT_FOUND");
+        }
+        const updated = transferProjectOwnership(db, project.id, parsed.data.userId);
+        return { status: 200, body: { collaborators: listCollaborators(db, updated.id), owner: getOwnerInfo(db, updated), project: updated } };
+      });
+      res.status(status).json(body);
     }),
   );
 
