@@ -2116,6 +2116,62 @@ test("clicking a field chip's text opens an inline edit, and saving it calls the
   });
 });
 
+/**
+ * Round 1194: see RoleChip's own identical "the instant its rename editor
+ * opens" test (round 1147) -- same gap, missed when round 1147's fix was
+ * applied to RoleChip/AssumptionItem/PersonaItem but not to this sibling,
+ * despite FieldChip's own `ownBusy` doc comment already (incorrectly)
+ * claiming to cover "all four of its own actions, including rename".
+ * Confirms onBusyChange now fires true the instant this field's rename
+ * editor opens (no save in flight), which is what feeds EntitySummaryItem's
+ * fieldBusyMap -- and so a sibling field's remove/required/type action, or
+ * this entity's own remove, which otherwise stayed enabled the whole time
+ * this field's rename draft sat open and unsaved, racing the eventual
+ * rename PATCH with no server-side staleness check on either route.
+ */
+test("FieldChip reports its own busy state up via onBusyChange the instant its rename editor opens, with no save in flight", async () => {
+  await withJsdom(async () => {
+    const busyCalls: Array<[string, boolean]> = [];
+    render(
+      React.createElement(
+        ThemeProvider,
+        null,
+        React.createElement(
+          LanguageProvider,
+          null,
+          React.createElement(FieldChip, {
+            field: { name: "email", type: "text", required: true },
+            projectId: "proj1",
+            entityName: "Customer",
+            canRemove: true,
+            onChanged: () => {},
+            allEntities: baseProject.spec.entities,
+            labelOccurrences: new Map(),
+            onBusyChange: (fieldName: string, busy: boolean) => busyCalls.push([fieldName, busy]),
+          }),
+        ),
+      ),
+    );
+
+    fireEvent.click(document.querySelector(".chip-text") as HTMLElement);
+    assert.equal(document.querySelector(".chip-rename-edit") !== null, true, "the rename editor must actually be open");
+    assert.equal(
+      busyCalls.some(([name, busy]) => name === "email" && busy === true),
+      true,
+      "opening the rename editor (not yet saving anything) must already report this field as busy",
+    );
+
+    busyCalls.length = 0;
+    fireEvent.keyDown(document.querySelector(".chip-rename-edit input") as HTMLInputElement, { key: "Escape" });
+    assert.equal(document.querySelector(".chip-rename-edit") === null, true, "Escape must cancel the editor without saving");
+    assert.equal(
+      busyCalls.some(([name, busy]) => name === "email" && busy === false),
+      true,
+      "cancelling the still-unsaved edit must report this field as no longer busy",
+    );
+  });
+});
+
 /** Mirrors ProjectNameEditor.test.ts's own keyboard-focus test for the identical gap round 483 fixed in a sibling family of click-to-rename components. */
 test("a field chip's text is keyboard-focusable and Enter opens edit mode", async () => {
   await withJsdom(async () => {
@@ -2595,6 +2651,62 @@ test("EntitySummaryItem reports its own busy state up via onBusyChange while its
       resolveRemove!(new Response(JSON.stringify({ project: baseProject }), { status: 200, headers: { "content-type": "application/json" } }));
       globalThis.fetch = originalFetch;
     }
+  });
+});
+
+/**
+ * Round 1194: see RoleChip's own identical "the instant its rename editor
+ * opens" test (round 1147) -- same gap, missed when round 1147's fix was
+ * applied to RoleChip/AssumptionItem/PersonaItem but not to this sibling,
+ * which shares the exact same useRenamableSpecItem-based architecture.
+ * Confirms onBusyChange now fires true the instant this entity's rename
+ * editor opens (no save in flight), which is what a sibling entity's own
+ * siblingActionBusy (and so its remove button) depends on -- without this,
+ * a sibling entity's remove stayed enabled the whole time this entity's
+ * rename draft sat open and unsaved, and entity remove/rename routes have
+ * no server-side staleness check at all (see handleStartRename's own
+ * round-1027 comment in SpecListItemRemover.tsx).
+ */
+test("EntitySummaryItem reports its own busy state up via onBusyChange the instant its rename editor opens, with no save in flight", async () => {
+  await withJsdom(async () => {
+    const busyCalls: Array<[string, boolean]> = [];
+    render(
+      React.createElement(
+        ThemeProvider,
+        null,
+        React.createElement(
+          LanguageProvider,
+          null,
+          React.createElement(EntitySummaryItem, {
+            entity: baseProject.spec.entities[0],
+            allEntities: baseProject.spec.entities,
+            fieldsSummary: "name *",
+            projectId: "proj1",
+            canRemove: true,
+            onRenamed: () => {},
+            onRemoved: () => {},
+            onBusyChange: (entityName: string, busy: boolean) => busyCalls.push([entityName, busy]),
+          }),
+        ),
+      ),
+    );
+
+    fireEvent.click(document.querySelector(".entity-summary-label") as HTMLElement);
+    assert.equal(document.querySelector(".entity-summary-rename-edit") !== null, true, "the rename editor must actually be open");
+    assert.equal(
+      busyCalls.some(([name, busy]) => name === "Customer" && busy === true),
+      true,
+      "opening the rename editor (not yet saving anything) must already report this entity as busy",
+    );
+
+    busyCalls.length = 0;
+    fireEvent.keyDown(document.querySelector(".entity-summary-rename-edit input") as HTMLInputElement, { key: "Escape" });
+    assert.equal(document.querySelector(".entity-summary-rename-edit") === null, true, "Escape must cancel the editor without saving");
+    assert.equal(
+      busyCalls.some(([name, busy]) => name === "Customer" && busy === false),
+      true,
+      "cancelling the still-unsaved edit must report this entity as no longer busy",
+    );
   });
 });
 

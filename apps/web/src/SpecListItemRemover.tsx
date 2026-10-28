@@ -666,7 +666,19 @@ export function EntitySummaryItem({
   // comment above for why a DIFFERENT entity's action (or AddEntityForm)
   // needs to disable this entity's whole edit surface too, not just this
   // entity's own children against each other.
-  const anyChildOrSelfBusy = busy || rename.busy || addFieldBusy || Object.keys(fieldBusyMap).length > 0 || siblingActionBusy;
+  // Round 1194: also ORs in rename.editing -- see RoleChip's own `ownBusy`
+  // doc comment (round 1147) for the general gap. It applies here too,
+  // and more severely: anyChildOrSelfBusy is the value this component
+  // reports up via onBusyChange below, which becomes a SIBLING entity's
+  // own siblingActionBusy -- without rename.editing in it, opening this
+  // entity's rename editor and leaving it open (unsaved) left every
+  // sibling entity's remove button enabled the whole time, and entity
+  // remove/rename routes have no server-side staleness check at all (see
+  // handleStartRename's own round-1027 comment below) -- client busy-
+  // gating is the only protection against the exact same stale-response
+  // resurrection race round 1147 already closed for RoleChip/
+  // AssumptionItem/PersonaItem.
+  const anyChildOrSelfBusy = busy || rename.busy || rename.editing || addFieldBusy || Object.keys(fieldBusyMap).length > 0 || siblingActionBusy;
 
   // Round 1063: reports this entity's own anyChildOrSelfBusy state (which
   // already includes every one of its own children -- fields and
@@ -968,7 +980,16 @@ export function FieldChip({
   // rename). A second effect, mount/unmount-only, clears this chip's own
   // entry when it unmounts (the field was removed) so a stale "busy" entry
   // doesn't linger in the parent's aggregate forever.
-  const ownBusy = busy || requiredBusy || typeBusy || rename.busy;
+  // Round 1194: this aggregate's own doc comment above already claimed
+  // "including rename", but only ever ORed in rename.busy (true once the
+  // PATCH is in flight), never rename.editing (true the moment the editor
+  // opens, before anything is submitted) -- see RoleChip's own `ownBusy`
+  // doc comment (round 1147) for the general gap this chip was missed by.
+  // Leaving this field's rename editor open (unsaved) left a sibling
+  // field's remove/type-change, or this entity's own remove, fully
+  // enabled the whole time, racing the eventual rename PATCH with no
+  // server-side staleness check on either route to catch it.
+  const ownBusy = busy || requiredBusy || typeBusy || rename.busy || rename.editing;
   useEffect(() => {
     onBusyChange?.(field.name, ownBusy);
   }, [field.name, ownBusy, onBusyChange]);
