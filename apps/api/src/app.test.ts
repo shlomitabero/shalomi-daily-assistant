@@ -10687,6 +10687,61 @@ test("GET .../export, .../backup, and .../twin share one per-user rate limit: th
 });
 
 /**
+ * Round 1153: /build had NO volumetric throttle at all, unlike /refine
+ * right next to it (aiGenerationRateLimiter) and the heaviest synchronous
+ * GET routes in this router (export/backup/twin -> expensiveReadRateLimiter,
+ * round 1053) -- despite running a comparably heavy pipeline itself
+ * (diffAndMigrate DDL, seed inserts, runQaChecks, runSecurityScan, all
+ * synchronous on this app's one shared Node event loop). Uses
+ * /projects/from-template (itself cheap and unthrottled, since it only
+ * ever does a bare insertProject with no pipeline run) to generate 21
+ * fresh, already-buildable draft projects without touching
+ * aiGenerationRateLimiter's own separate budget, isolating this test to
+ * buildPipelineRateLimiter alone.
+ */
+test("POST .../build has its own per-user rate limit: the 21st build is rejected with 429, while a different account is unaffected", async () => {
+  await withServer(async (baseUrl) => {
+    const token = await signup(baseUrl, "rate-limit-build@example.com");
+
+    for (let i = 0; i < 20; i++) {
+      const createRes = await fetch(`${baseUrl}/api/projects/from-template`, {
+        method: "POST",
+        headers: authHeaders(token),
+        body: JSON.stringify({ templateId: "crm" }),
+      });
+      const { project } = (await createRes.json()) as { project: { id: string } };
+      const buildRes = await fetch(`${baseUrl}/api/projects/${project.id}/build`, { method: "POST", headers: authHeaders(token) });
+      assert.notEqual(buildRes.status, 429, `build ${i + 1} of 20 (within the limit) must not be rate-limited yet`);
+      await collectSSE(buildRes);
+    }
+
+    const extraCreateRes = await fetch(`${baseUrl}/api/projects/from-template`, {
+      method: "POST",
+      headers: authHeaders(token),
+      body: JSON.stringify({ templateId: "crm" }),
+    });
+    const { project: extraProject } = (await extraCreateRes.json()) as { project: { id: string } };
+    const blocked = await fetch(`${baseUrl}/api/projects/${extraProject.id}/build`, { method: "POST", headers: authHeaders(token) });
+    assert.equal(blocked.status, 429);
+    assert.equal(((await blocked.json()) as { code?: string }).code, "RATE_LIMITED");
+
+    // A completely different account must get its own fresh allowance --
+    // keyed by user id, not IP, so one account exhausting its own budget
+    // must never collaterally block an unrelated account.
+    const otherToken = await signup(baseUrl, "rate-limit-build-other@example.com");
+    const otherCreateRes = await fetch(`${baseUrl}/api/projects/from-template`, {
+      method: "POST",
+      headers: authHeaders(otherToken),
+      body: JSON.stringify({ templateId: "crm" }),
+    });
+    const { project: otherProject } = (await otherCreateRes.json()) as { project: { id: string } };
+    const otherRes = await fetch(`${baseUrl}/api/projects/${otherProject.id}/build`, { method: "POST", headers: authHeaders(otherToken) });
+    assert.notEqual(otherRes.status, 429, "a different account must not be collaterally blocked by another account's own rate limit");
+    await collectSSE(otherRes);
+  });
+});
+
+/**
  * Round 1109: the entire pre-build spec-editing route family (add/remove/
  * rename an entity or field, roles/assumptions/personas) had NO volumetric
  * throttle at all, unlike every other repeatable, server-cost-bearing

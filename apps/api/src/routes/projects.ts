@@ -1211,6 +1211,41 @@ export function createProjectsRouter(
   });
 
   /**
+   * Round 1153: /build had NO volumetric throttle at all -- the one
+   * comparably-expensive mutation route in this file this hardening
+   * series never looked at. Unlike /refine right below it (gated by
+   * aiGenerationRateLimiter), /build was deliberately excluded from that
+   * specific limiter (see aiGenerationRateLimiter's own doc comment
+   * above) because an ordinary build makes no *extra* AI call -- but that
+   * reasoning never addressed /build's own separate, real cost: it runs
+   * diffAndMigrate (real CREATE TABLE/index DDL per entity),
+   * generateSeedRecords+insertRecord (real seed inserts per entity), and
+   * runQaChecks (pipeline.ts -- for every required field of every entity,
+   * a full insertRecord attempt it expects to throw, i.e. extra
+   * synchronous DB round-trips per required field) plus runSecurityScan,
+   * all synchronously on better-sqlite3's API on this app's one shared
+   * Node event loop -- the exact "no horizontal scaling to absorb this"
+   * hazard expensiveReadRateLimiter's own doc comment names, just for a
+   * heavier pipeline than export/backup/twin. activePipelines (checked
+   * just below) only blocks a second concurrent build/refine on the SAME
+   * project; it does nothing to cap how many DIFFERENT projects one
+   * account can build back-to-back -- and /projects/from-template and
+   * /projects/:id/clone (both free, instant, already-unthrottled since
+   * neither runs this pipeline itself) make an unbounded supply of
+   * freshly-buildable projects trivially reachable. Reuses
+   * expensiveReadRateLimiter's own budget shape rather than inventing a
+   * new one: "how much expensive synchronous pipeline work can this
+   * account trigger" is the same kind of single-process-blocking question
+   * that budget was already sized for.
+   */
+  const buildPipelineRateLimiter = createRateLimiter({
+    windowMs: 15 * 60 * 1000,
+    max: 20,
+    keyGenerator: (req) => req.userId ?? "unknown",
+    message: "Too many build requests. Please try again later.",
+  });
+
+  /**
    * Round 1082: POST .../fields/:fieldName/upload (an entity record's own
    * file-type field) had NO volumetric throttle at all, unlike every other
    * route in this file that writes to this app's own ephemeral disk --
@@ -2001,6 +2036,7 @@ export function createProjectsRouter(
 
   router.post(
     "/projects/:id/build",
+    buildPipelineRateLimiter,
     asyncRoute(async (req, res) => {
       const project = requireProjectWriteAccess(db, req.params.id, req.userId!);
       // Mirrors /refine's own status guard below: without this, calling
