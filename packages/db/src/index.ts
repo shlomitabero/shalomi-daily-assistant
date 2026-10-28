@@ -28,6 +28,7 @@ export {
   updateProjectSpec,
   updateProjectName,
   updateProjectDescription,
+  transferProjectOwnership,
   deleteProject,
   getOrCreateCalendarFeedToken,
   getCalendarFeedToken,

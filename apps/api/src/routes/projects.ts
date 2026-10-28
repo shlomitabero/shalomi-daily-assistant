@@ -22,6 +22,7 @@ import {
   updateProjectSpec,
   updateProjectName,
   updateProjectDescription,
+  transferProjectOwnership,
   deleteProject,
   insertRecord,
   listRecords,
@@ -364,6 +365,10 @@ const AddCollaboratorSchema = z.object({
 
 const UpdateCollaboratorRoleSchema = z.object({
   role: CollaboratorRoleSchema,
+});
+
+const TransferOwnershipSchema = z.object({
+  userId: z.string().min(1, "userId is required"),
 });
 
 const RenameProjectSchema = z.object({
@@ -2011,6 +2016,33 @@ export function createProjectsRouter(
       }
       removeCollaborator(db, project.id, req.params.userId);
       res.status(204).end();
+    }),
+  );
+
+  /**
+   * Owner-only. The target must already be a collaborator on this project
+   * (any role) -- getCollaboratorRole naturally returns null for a userId
+   * that's either not a collaborator at all OR the project's own current
+   * owner (who was never a collaborator row to begin with, see
+   * collaborators.ts's own module comment), so this one check also already
+   * rejects "transfer to yourself" with no extra code. transferProjectOwnership
+   * (packages/db) swaps project.ownerId and demotes the previous owner to
+   * an "editor" collaborator in one call, so they keep full access instead
+   * of losing it outright.
+   */
+  router.post(
+    "/projects/:id/transfer-ownership",
+    asyncRoute(async (req, res) => {
+      const project = requireProjectOwner(db, req.params.id, req.userId!);
+      const parsed = TransferOwnershipSchema.safeParse(req.body);
+      if (!parsed.success) {
+        throw new HttpError(400, formatValidationError(parsed.error), "VALIDATION_ERROR");
+      }
+      if (getCollaboratorRole(db, project.id, parsed.data.userId) === null) {
+        throw new HttpError(404, "Collaborator not found", "COLLABORATOR_NOT_FOUND");
+      }
+      const updated = transferProjectOwnership(db, project.id, parsed.data.userId);
+      res.json({ collaborators: listCollaborators(db, updated.id), owner: getOwnerInfo(db, updated), project: updated });
     }),
   );
 

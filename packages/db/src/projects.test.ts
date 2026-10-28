@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import type { ProductSpec } from "@forge/shared";
 import { openDatabase } from "./connection.js";
-import { ensureProjectCollaboratorsTable, addCollaborator, removeCollaborator, isCollaborator } from "./collaborators.js";
+import { ensureProjectCollaboratorsTable, addCollaborator, removeCollaborator, isCollaborator, getCollaboratorRole } from "./collaborators.js";
 import { ensureCheckpointsTable, insertCheckpoint, listCheckpoints, deleteCheckpoint, recordEntityHistory } from "./checkpoints.js";
 import { applyMigrations, diffAndMigrate } from "./migrate.js";
 import { insertRecord, ValidationError } from "./repository.js";
@@ -26,6 +26,7 @@ import {
   markProjectBuilt,
   updateProjectName,
   updateProjectDescription,
+  transferProjectOwnership,
   updateProjectSpec,
   getOrCreateCalendarFeedToken,
   getCalendarFeedToken,
@@ -229,6 +230,57 @@ test("updateProjectDescription changes only the description, leaving every other
   assert.equal(updated.ownerId, project.ownerId);
   assert.equal(updated.status, project.status);
   assert.deepEqual(updated.spec, project.spec);
+});
+
+test("transferProjectOwnership changes only ownerId, leaving every other field (name, description, status, spec) untouched -- and demotes the previous owner to an editor collaborator while removing the new owner from the collaborator table", () => {
+  const db = openDatabase(":memory:");
+  ensureProjectsTable(db);
+  ensureProjectCollaboratorsTable(db);
+  const project = insertProject(db, {
+    id: "p1",
+    ownerId: "owner1",
+    name: "My Business",
+    description: "the original description",
+    spec: validSpec,
+  });
+  addCollaborator(db, project.id, "collaborator1", "editor");
+
+  const transferred = transferProjectOwnership(db, project.id, "collaborator1");
+  assert.equal(transferred.ownerId, "collaborator1");
+  assert.equal(transferred.name, project.name);
+  assert.equal(transferred.description, project.description);
+  assert.equal(transferred.status, project.status);
+  assert.deepEqual(transferred.spec, project.spec);
+
+  // Ownership is project.ownerId, never a row in project_collaborators (see
+  // collaborators.ts's own module comment) -- the new owner must not be
+  // left behind as a stale "editor" collaborator entry alongside their own
+  // new ownership, which would make listCollaborators show them twice.
+  assert.equal(isCollaborator(db, project.id, "collaborator1"), false);
+
+  // The previous owner keeps full access, demoted to "editor" rather than
+  // losing it outright -- a handoff, not an eviction.
+  assert.equal(getCollaboratorRole(db, project.id, "owner1"), "editor");
+});
+
+test("transferProjectOwnership works regardless of the target's PRIOR role -- a viewer being promoted to owner still ends up with full ownership, not just an editor-level grant", () => {
+  const db = openDatabase(":memory:");
+  ensureProjectsTable(db);
+  ensureProjectCollaboratorsTable(db);
+  const project = insertProject(db, { id: "p1", ownerId: "owner1", name: "My Business", description: "test", spec: validSpec });
+  addCollaborator(db, project.id, "viewer1", "viewer");
+
+  const transferred = transferProjectOwnership(db, project.id, "viewer1");
+  assert.equal(transferred.ownerId, "viewer1");
+  assert.equal(isCollaborator(db, project.id, "viewer1"), false);
+  assert.equal(getCollaboratorRole(db, project.id, "owner1"), "editor");
+});
+
+test("transferProjectOwnership throws for a project that doesn't exist, the same contract updateProjectName/updateProjectDescription already have", () => {
+  const db = openDatabase(":memory:");
+  ensureProjectsTable(db);
+  ensureProjectCollaboratorsTable(db);
+  assert.throws(() => transferProjectOwnership(db, "does-not-exist", "someone"), /not found/);
 });
 
 /**

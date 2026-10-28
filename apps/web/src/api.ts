@@ -1099,6 +1099,14 @@ export function updateCollaboratorRole(
   });
 }
 
+/** The caller (CollaboratorsPanel) is no longer the project's own owner once this succeeds -- the returned `project` has the new ownerId, so the caller can update its own held Project state (e.g. via setProject) the same way ProjectNameEditor's onRenamed already does, which flips isOwner for every owner-gated control derived from project.ownerId. */
+export function transferProjectOwnership(
+  projectId: string,
+  userId: string,
+): Promise<{ collaborators: ProjectCollaborator[]; owner: ProjectOwnerInfo | null; project: Project }> {
+  return request(`/projects/${projectId}/transfer-ownership`, { method: "POST", body: JSON.stringify({ userId }) });
+}
+
 /**
  * WhatsApp sync connects the way WhatsApp Web/Desktop does -- scanning a QR
  * code with your own phone links this app as an additional device -- so no

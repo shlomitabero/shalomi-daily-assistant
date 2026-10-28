@@ -1,6 +1,14 @@
 import { useEffect, useState } from "react";
-import type { CollaboratorRole, ProjectCollaborator } from "@forge/shared";
-import { addCollaborator, listCollaborators, regenerateCalendarFeedToken, removeCollaborator, updateCollaboratorRole, type ProjectOwnerInfo } from "./api.js";
+import type { CollaboratorRole, Project, ProjectCollaborator } from "@forge/shared";
+import {
+  addCollaborator,
+  listCollaborators,
+  regenerateCalendarFeedToken,
+  removeCollaborator,
+  transferProjectOwnership,
+  updateCollaboratorRole,
+  type ProjectOwnerInfo,
+} from "./api.js";
 import { formatCollaboratorCount } from "./collaboratorCount.js";
 import { downloadCollaboratorsReport, formatCollaboratorsReport } from "./collaboratorsReport.js";
 import { useTranslation } from "./i18n/LanguageContext.js";
@@ -24,6 +32,7 @@ export function CollaboratorsPanel({
   currentUserId,
   onClose,
   onLeft,
+  onOwnerTransferred,
 }: {
   projectId: string;
   projectName: string;
@@ -33,6 +42,8 @@ export function CollaboratorsPanel({
   onClose: () => void;
   /** Called once a real self-removal succeeds -- the caller no longer has access to this project at all, so it's expected to navigate away (e.g. back to the home screen), not just close this panel. */
   onLeft: () => void;
+  /** Called once a real ownership transfer succeeds, with the project's own fresh state (new ownerId). The caller is expected to pass its existing project setter (e.g. onOwnerTransferred={setProject}, the exact same pattern ProjectNameEditor's onRenamed already uses) so every owner-gated control derived from project.ownerId -- including this panel's own isOwner prop -- correctly reflects that the signed-in user is no longer the owner, without closing this panel: they're still a collaborator (now "editor"), so staying on this read-only view of the list is the right outcome, the same as any other non-owner collaborator already sees. */
+  onOwnerTransferred: (project: Project) => void;
 }) {
   const { t, lang } = useTranslation();
   const [collaborators, setCollaborators] = useState<ProjectCollaborator[] | null>(null);
@@ -51,6 +62,8 @@ export function CollaboratorsPanel({
   const [inviteInfo, setInviteInfo] = useState<string | null>(null);
   const [removingUserId, setRemovingUserId] = useState<string | null>(null);
   const [updatingRoleUserId, setUpdatingRoleUserId] = useState<string | null>(null);
+  const [transferringUserId, setTransferringUserId] = useState<string | null>(null);
+  const [transferInfo, setTransferInfo] = useState<string | null>(null);
   const [regeneratingFeedToken, setRegeneratingFeedToken] = useState(false);
   const [regenerateFeedTokenInfo, setRegenerateFeedTokenInfo] = useState<string | null>(null);
   const [copyStatus, setCopyStatus] = useState<"idle" | "copied" | "failed">("idle");
@@ -171,6 +184,37 @@ export function CollaboratorsPanel({
       setError((err as Error).message);
     } finally {
       setRemovingUserId(null);
+    }
+  }
+
+  /**
+   * Round 1170: previously the only way an owner could stop being
+   * responsible for a project was deleting the whole account or the
+   * project outright -- both destroy it for every collaborator, with no
+   * way to hand it off instead. Owner-only, mirroring handleRemove's own
+   * confirm-dialog convention for the same reason: this is a serious,
+   * essentially irreversible-feeling action from the acting owner's own
+   * point of view. Does a full setCollaborators/setOwner replace from the
+   * server's fresh response, exactly like handleRoleChange/handleRemove
+   * already do, so it's cross-gated against them the same way (see the
+   * disabled= conditions below) rather than introducing a fourth,
+   * independently-racing actor against the identical shared list state.
+   */
+  async function handleTransferOwnership(userId: string, email: string) {
+    if (!window.confirm(t("collab.transferOwnership.confirm", { email }))) return;
+    setTransferringUserId(userId);
+    setError(null);
+    setTransferInfo(null);
+    try {
+      const { collaborators, owner, project } = await transferProjectOwnership(projectId, userId);
+      setCollaborators(collaborators);
+      setOwner(owner);
+      setTransferInfo(t("collab.transferOwnership.success", { email }));
+      onOwnerTransferred(project);
+    } catch (err) {
+      setError((err as Error).message);
+    } finally {
+      setTransferringUserId(null);
     }
   }
 
@@ -341,7 +385,14 @@ export function CollaboratorsPanel({
                 "role unchanged" feedback, looking like a genuine success. */}
             <button
               type="submit"
-              disabled={inviteBusy || !email.trim() || removingUserId !== null || updatingRoleUserId !== null || collaborators === null}
+              disabled={
+                inviteBusy ||
+                !email.trim() ||
+                removingUserId !== null ||
+                updatingRoleUserId !== null ||
+                transferringUserId !== null ||
+                collaborators === null
+              }
             >
               {inviteBusy ? t("collab.invite.busy") : t("collab.invite")}
             </button>
@@ -351,6 +402,12 @@ export function CollaboratorsPanel({
         {inviteInfo && (
           <p className="muted small" role="status">
             {inviteInfo}
+          </p>
+        )}
+
+        {transferInfo && (
+          <p className="muted small" role="status">
+            {transferInfo}
           </p>
         )}
 
@@ -393,13 +450,15 @@ export function CollaboratorsPanel({
                       against remove, but left invite, a third actor doing
                       the identical full-replace, out of the cross-gate).
                       Mirrors HistoryPanel's own restore/delete cross-gate
-                      for the identical hazard. */}
+                      for the identical hazard. Round 1170 extends the same
+                      cross-gate to handleTransferOwnership, a fourth actor
+                      doing the identical full-replace. */}
                   {isOwner ? (
                     <select
                       aria-label={t("collab.role.label")}
                       value={c.role}
                       onChange={(e) => handleRoleChange(c.userId, e.target.value as CollaboratorRole)}
-                      disabled={updatingRoleUserId !== null || removingUserId !== null || inviteBusy}
+                      disabled={updatingRoleUserId !== null || removingUserId !== null || transferringUserId !== null || inviteBusy}
                     >
                       <option value="editor">{t("collab.role.editor")}</option>
                       <option value="viewer">{t("collab.role.viewer")}</option>
@@ -411,21 +470,31 @@ export function CollaboratorsPanel({
                   )}
                   {updatingRoleUserId === c.userId && <span className="muted small">{t("collab.role.updating")}</span>}
                   {isOwner ? (
-                    <button
-                      type="button"
-                      className="secondary"
-                      onClick={() => handleRemove(c.userId, c.email)}
-                      disabled={removingUserId !== null || updatingRoleUserId !== null || inviteBusy}
-                    >
-                      {removingUserId === c.userId ? t("collab.remove.busy") : t("collab.remove")}
-                    </button>
+                    <>
+                      <button
+                        type="button"
+                        className="secondary"
+                        onClick={() => handleRemove(c.userId, c.email)}
+                        disabled={removingUserId !== null || updatingRoleUserId !== null || transferringUserId !== null || inviteBusy}
+                      >
+                        {removingUserId === c.userId ? t("collab.remove.busy") : t("collab.remove")}
+                      </button>
+                      <button
+                        type="button"
+                        className="secondary"
+                        onClick={() => handleTransferOwnership(c.userId, c.email)}
+                        disabled={removingUserId !== null || updatingRoleUserId !== null || transferringUserId !== null || inviteBusy}
+                      >
+                        {transferringUserId === c.userId ? t("collab.transferOwnership.busy") : t("collab.transferOwnership")}
+                      </button>
+                    </>
                   ) : (
                     c.userId === currentUserId && (
                       <button
                         type="button"
                         className="secondary"
                         onClick={handleLeave}
-                        disabled={removingUserId !== null || updatingRoleUserId !== null || inviteBusy}
+                        disabled={removingUserId !== null || updatingRoleUserId !== null || transferringUserId !== null || inviteBusy}
                       >
                         {removingUserId === currentUserId ? t("collab.leave.busy") : t("collab.leave")}
                       </button>

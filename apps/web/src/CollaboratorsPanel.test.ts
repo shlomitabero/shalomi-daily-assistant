@@ -4,7 +4,7 @@ import { test } from "node:test";
 import { JSDOM } from "jsdom";
 import React from "react";
 import { act, cleanup, fireEvent, render } from "@testing-library/react";
-import type { CollaboratorRole, ProjectCollaborator } from "@forge/shared";
+import type { CollaboratorRole, Project, ProjectCollaborator } from "@forge/shared";
 import { CollaboratorsPanel } from "./CollaboratorsPanel.js";
 import { LanguageProvider } from "./i18n/LanguageContext.js";
 import { ThemeProvider } from "./theme/ThemeContext.js";
@@ -57,7 +57,13 @@ function makeCollaborator(userId: string, email: string, role: CollaboratorRole 
   return { userId, email, addedAt: new Date().toISOString(), role };
 }
 
-function renderPanel(isOwner = true, currentUserId?: string, onLeft: () => void = () => {}, projectName = "Test Project") {
+function renderPanel(
+  isOwner = true,
+  currentUserId?: string,
+  onLeft: () => void = () => {},
+  projectName = "Test Project",
+  onOwnerTransferred: (project: Project) => void = () => {},
+) {
   return render(
     React.createElement(
       ThemeProvider,
@@ -65,7 +71,15 @@ function renderPanel(isOwner = true, currentUserId?: string, onLeft: () => void 
       React.createElement(
         LanguageProvider,
         null,
-        React.createElement(CollaboratorsPanel, { projectId: "proj1", projectName, isOwner, currentUserId, onClose: () => {}, onLeft }),
+        React.createElement(CollaboratorsPanel, {
+          projectId: "proj1",
+          projectName,
+          isOwner,
+          currentUserId,
+          onClose: () => {},
+          onLeft,
+          onOwnerTransferred,
+        }),
       ),
     ),
   );
@@ -1222,6 +1236,7 @@ test("CollaboratorsPanel's invite form has Escape-to-clear for an in-progress dr
                 closeCalls += 1;
               },
               onLeft: () => {},
+              onOwnerTransferred: () => {},
             }),
           ),
         ),
@@ -1259,6 +1274,127 @@ test("CollaboratorsPanel's invite form has Escape-to-clear for an in-progress dr
  * list has loaded, and clicking Copy writes the real formatted report
  * (not a placeholder) to the clipboard.
  */
+
+/**
+ * Round 1170: previously the only way an owner could stop being
+ * responsible for a project was deleting it outright -- destroying it for
+ * every collaborator. Confirms the owner's "Transfer ownership" button
+ * asks for confirmation, sends a real POST on confirm, updates the
+ * collaborators/owner list from the server's fresh response, and reports
+ * the new ownerId back to the caller via onOwnerTransferred -- the signal
+ * the host app uses (the same way ProjectNameEditor's onRenamed already
+ * does) to update its own held Project and flip every owner-gated control.
+ */
+test("CollaboratorsPanel's transfer-ownership button asks for confirmation, sends a real POST on confirm, and reports the new owner back via onOwnerTransferred", async () => {
+  await withJsdom(async () => {
+    const originalFetch = globalThis.fetch;
+    const originalConfirm = globalThis.window.confirm;
+    const dana = makeCollaborator("u1", "dana@example.com", "editor");
+    let transferCalls = 0;
+    let confirmMessage: string | undefined;
+    let reportedProject: Project | undefined;
+
+    globalThis.fetch = (async (input: string, init?: RequestInit) => {
+      const method = init?.method ?? "GET";
+      if (method === "GET" && input === "/api/projects/proj1/collaborators") {
+        return new Response(JSON.stringify({ collaborators: [dana], owner: { userId: "owner1", email: "amit@example.com" } }), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        });
+      }
+      if (method === "POST" && input === "/api/projects/proj1/transfer-ownership") {
+        transferCalls += 1;
+        assert.deepEqual(JSON.parse(init!.body as string), { userId: "u1" });
+        return new Response(
+          JSON.stringify({
+            collaborators: [makeCollaborator("owner1", "amit@example.com", "editor")],
+            owner: { userId: "u1", email: "dana@example.com" },
+            project: { id: "proj1", ownerId: "u1", name: "Test Project" },
+          }),
+          { status: 200, headers: { "content-type": "application/json" } },
+        );
+      }
+      throw new Error(`unexpected request ${method} ${input}`);
+    }) as typeof fetch;
+    globalThis.window.confirm = ((message: string) => {
+      confirmMessage = message;
+      return true;
+    }) as typeof window.confirm;
+
+    try {
+      renderPanel(true, undefined, () => {}, "Test Project", (project) => {
+        reportedProject = project;
+      });
+      await waitForCondition(() => document.querySelectorAll(".collab-list li").length === 2);
+
+      const row = Array.from(document.querySelectorAll(".collab-list li")).find((li) => li.textContent?.includes("dana@example.com"))!;
+      const transferBtn = Array.from(row.querySelectorAll("button")).find((b) => b.textContent?.includes("Transfer ownership"))!;
+      fireEvent.click(transferBtn);
+
+      assert.match(confirmMessage ?? "", /dana@example\.com/, "the confirmation must name the real target collaborator's email");
+      await waitForCondition(() => transferCalls === 1);
+      await waitForCondition(() => reportedProject?.ownerId === "u1");
+      await waitForCondition(() => document.body.textContent?.includes("Ownership transferred") ?? false);
+
+      // The new owner must no longer appear as a collaborator row, and the
+      // previous owner must now show up as a real "editor" collaborator.
+      assert.equal(
+        document.querySelectorAll(".collab-list li").length,
+        2,
+        "the owner row plus exactly one collaborator row (the previous owner, now demoted)",
+      );
+      assert.ok(document.body.textContent?.includes("amit@example.com"), "the previous owner must now be listed as a collaborator");
+    } finally {
+      globalThis.fetch = originalFetch;
+      globalThis.window.confirm = originalConfirm;
+    }
+  });
+});
+
+test("CollaboratorsPanel's transfer-ownership button, when declined, leaves the collaborator list and the server untouched", async () => {
+  await withJsdom(async () => {
+    const originalFetch = globalThis.fetch;
+    const originalConfirm = globalThis.window.confirm;
+    const dana = makeCollaborator("u1", "dana@example.com");
+    let transferCalls = 0;
+
+    globalThis.fetch = (async (input: string, init?: RequestInit) => {
+      const method = init?.method ?? "GET";
+      if (method === "GET" && input === "/api/projects/proj1/collaborators") {
+        return new Response(JSON.stringify({ collaborators: [dana] }), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        });
+      }
+      if (method === "POST" && input === "/api/projects/proj1/transfer-ownership") {
+        transferCalls += 1;
+        return new Response(JSON.stringify({ collaborators: [dana], owner: null, project: { id: "proj1", ownerId: "u1" } }), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        });
+      }
+      throw new Error(`unexpected request ${method} ${input}`);
+    }) as typeof fetch;
+    globalThis.window.confirm = (() => false) as typeof window.confirm;
+
+    try {
+      renderPanel();
+      await waitForCondition(() => document.querySelectorAll(".collab-list li").length === 1);
+
+      const row = document.querySelector(".collab-list li")!;
+      const transferBtn = Array.from(row.querySelectorAll("button")).find((b) => b.textContent?.includes("Transfer ownership"))!;
+      fireEvent.click(transferBtn);
+      await new Promise((resolve) => setTimeout(resolve, 0));
+
+      assert.equal(transferCalls, 0, "declining the confirmation must never call the real transfer-ownership endpoint");
+      assert.equal(document.querySelectorAll(".collab-list li").length, 1, "the collaborator must still be listed, unchanged");
+    } finally {
+      globalThis.fetch = originalFetch;
+      globalThis.window.confirm = originalConfirm;
+    }
+  });
+});
+
 test("CollaboratorsPanel shows Copy/Download buttons only once loaded, and Copy writes the real formatted report to the clipboard", async (t) => {
   await withJsdom(async () => {
     const originalFetch = globalThis.fetch;

@@ -3075,6 +3075,7 @@ function AppContent() {
                 setShowCollaborators(false);
                 handleGoHome();
               }}
+              onOwnerTransferred={setProject}
             />
           )}
 

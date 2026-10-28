@@ -4,7 +4,7 @@ import { ProductSpecSchema } from "@forge/shared";
 import type { ForgeDatabase } from "./connection.js";
 import { tableNameFor, quoteIdentifier } from "./identifiers.js";
 import { deleteCheckpointsForProject, extractEntityNamesFromSpecJson, listAllCheckpointedEntityNames, listHistoricalEntityNames } from "./checkpoints.js";
-import { removeAllCollaborators } from "./collaborators.js";
+import { addCollaborator, removeAllCollaborators, removeCollaborator } from "./collaborators.js";
 import { deleteWhatsAppData } from "./whatsapp.js";
 import { deleteAutomationRulesForProject } from "./automations.js";
 
@@ -209,6 +209,40 @@ export function updateProjectDescription(db: ForgeDatabase, id: string, descript
   const project = getProjectLenient(db, id);
   if (!project) throw new Error(`Project ${id} not found`);
   return project;
+}
+
+/**
+ * Round 1170: ownerId was otherwise write-once -- set at insertProject and
+ * never updated anywhere else in this package -- so the only way an owner
+ * could stop being responsible for a project was deleteProject (routes/
+ * auth.ts's account-closure cascade included), which destroys the project
+ * for every collaborator with no way to hand it off instead. The caller
+ * (routes/projects.ts) is responsible for confirming newOwnerId is already
+ * a collaborator on this project before calling this -- that check also
+ * already rejects "transfer to yourself", since the current owner is never
+ * a collaborator row to begin with (see collaborators.ts's own module
+ * comment).
+ *
+ * The previous owner is demoted to an "editor" collaborator rather than
+ * losing access outright: swapping who owns a project is a handoff, not an
+ * eviction, and every other place in this codebase that reduces someone's
+ * standing (role downgrade, round 1037's self-referencing-relation guard)
+ * already prefers "keep working, just with a different grant" over
+ * "silently lose everything". The new owner is removed from
+ * project_collaborators (ownership is project.ownerId, never a row in that
+ * table) so listCollaborators never shows them twice -- once as the new
+ * owner, once as a stale "editor" collaborator entry.
+ */
+export function transferProjectOwnership(db: ForgeDatabase, id: string, newOwnerId: string): Project {
+  const project = getProjectLenient(db, id);
+  if (!project) throw new Error(`Project ${id} not found`);
+  const previousOwnerId = project.ownerId;
+  db.prepare("UPDATE projects SET ownerId = ? WHERE id = ?").run(newOwnerId, id);
+  removeCollaborator(db, id, newOwnerId);
+  addCollaborator(db, id, previousOwnerId, "editor");
+  const updated = getProjectLenient(db, id);
+  if (!updated) throw new Error(`Project ${id} not found`);
+  return updated;
 }
 
 /**

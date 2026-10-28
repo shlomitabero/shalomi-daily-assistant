@@ -15089,6 +15089,165 @@ test("changing a collaborator's role is owner-only, can't target the owner's own
   });
 });
 
+/**
+ * Regression test for a real gap found by round 1170's Explore survey:
+ * project.ownerId was otherwise write-once, set at insertProject and never
+ * updated anywhere -- the only way an owner could stop being responsible
+ * for a project was deleting it outright (destroying it for every
+ * collaborator). Confirms the full handoff: the new owner gains every
+ * owner-only power (inviting, removing, changing roles) immediately, the
+ * previous owner is demoted to "editor" (not evicted -- they keep full
+ * write access, confirmed via a real write), and GET .../collaborators
+ * reflects the new owner/collaborator list correctly on both sides.
+ */
+test("POST .../transfer-ownership hands the project to an existing collaborator, who immediately gains every owner-only power, while the previous owner is demoted to a full-access editor collaborator instead of losing access", async () => {
+  await withServer(async (baseUrl) => {
+    const ownerToken = await signup(baseUrl, "transfer-owner1@example.com");
+    const newOwnerToken = await signup(baseUrl, "transfer-new-owner1@example.com");
+    await signup(baseUrl, "transfer-third-party1@example.com");
+
+    const createRes = await fetch(`${baseUrl}/api/projects`, {
+      method: "POST",
+      headers: authHeaders(ownerToken),
+      body: JSON.stringify({ description: "A CRM with customers and deals." }),
+    });
+    const { project } = (await createRes.json()) as { project: { id: string; ownerId: string } };
+
+    await fetch(`${baseUrl}/api/projects/${project.id}/collaborators`, {
+      method: "POST",
+      headers: authHeaders(ownerToken),
+      body: JSON.stringify({ email: "transfer-new-owner1@example.com" }),
+    });
+    const listRes = await fetch(`${baseUrl}/api/projects/${project.id}/collaborators`, { headers: authHeaders(ownerToken) });
+    const { collaborators } = (await listRes.json()) as { collaborators: { userId: string; email: string }[] };
+    const newOwnerUserId = collaborators.find((c) => c.email === "transfer-new-owner1@example.com")!.userId;
+
+    const transferRes = await fetch(`${baseUrl}/api/projects/${project.id}/transfer-ownership`, {
+      method: "POST",
+      headers: authHeaders(ownerToken),
+      body: JSON.stringify({ userId: newOwnerUserId }),
+    });
+    assert.equal(transferRes.status, 200);
+    const { collaborators: afterTransfer, owner: ownerAfter, project: projectAfter } = (await transferRes.json()) as {
+      collaborators: { userId: string; role: string }[];
+      owner: { userId: string } | null;
+      project: { ownerId: string };
+    };
+    assert.equal(projectAfter.ownerId, newOwnerUserId, "the response's own project must reflect the new owner immediately");
+    assert.equal(ownerAfter?.userId, newOwnerUserId);
+    // The previous owner must now appear as an "editor" collaborator --
+    // not vanish, and not stay the owner.
+    assert.equal(afterTransfer.find((c) => c.userId === project.ownerId)?.role, "editor");
+    // The new owner must NOT also appear as a stale collaborator row
+    // alongside their own new ownership (collaborators.ts's own module
+    // comment: ownership is project.ownerId, never a row in that table).
+    assert.equal(afterTransfer.find((c) => c.userId === newOwnerUserId), undefined);
+
+    // The new owner can immediately do something only the owner can do --
+    // invite a genuinely new third party -- proving the handoff took
+    // effect on THIS request, not just eventually.
+    const inviteByNewOwner = await fetch(`${baseUrl}/api/projects/${project.id}/collaborators`, {
+      method: "POST",
+      headers: authHeaders(newOwnerToken),
+      body: JSON.stringify({ email: "transfer-third-party1@example.com" }),
+    });
+    assert.equal(inviteByNewOwner.status, 201, "the new owner must be able to invite someone, proving the handoff took effect on this exact request");
+
+    // The previous owner, now demoted, still has full write access -- a
+    // handoff, not an eviction.
+    const writeByPreviousOwner = await fetch(`${baseUrl}/api/projects/${project.id}/name`, {
+      method: "PATCH",
+      headers: authHeaders(ownerToken),
+      body: JSON.stringify({ name: "Still editing after being demoted" }),
+    });
+    assert.equal(writeByPreviousOwner.status, 200);
+
+    // The previous owner has no owner-only powers left -- removing a
+    // collaborator now 404s for them the same way it would for any other
+    // non-owner collaborator.
+    const removeByPreviousOwner = await fetch(`${baseUrl}/api/projects/${project.id}/collaborators/${newOwnerUserId}`, {
+      method: "DELETE",
+      headers: authHeaders(ownerToken),
+    });
+    assert.equal(removeByPreviousOwner.status, 403, "a non-owner collaborator removing someone ELSE must 403, the same as any other collaborator");
+  });
+});
+
+test("POST .../transfer-ownership is owner-only, 404s for a userId that isn't an existing collaborator (including the owner's own id), and rejects a missing userId", async () => {
+  await withServer(async (baseUrl) => {
+    const ownerToken = await signup(baseUrl, "transfer-owner2@example.com");
+    const collabToken = await signup(baseUrl, "transfer-collab2@example.com");
+    const outsiderToken = await signup(baseUrl, "transfer-outsider2@example.com");
+
+    const createRes = await fetch(`${baseUrl}/api/projects`, {
+      method: "POST",
+      headers: authHeaders(ownerToken),
+      body: JSON.stringify({ description: "A CRM with customers and deals." }),
+    });
+    const { project } = (await createRes.json()) as { project: { id: string; ownerId: string } };
+
+    await fetch(`${baseUrl}/api/projects/${project.id}/collaborators`, {
+      method: "POST",
+      headers: authHeaders(ownerToken),
+      body: JSON.stringify({ email: "transfer-collab2@example.com" }),
+    });
+    const listRes = await fetch(`${baseUrl}/api/projects/${project.id}/collaborators`, { headers: authHeaders(ownerToken) });
+    const { collaborators } = (await listRes.json()) as { collaborators: { userId: string }[] };
+    const collabUserId = collaborators[0].userId;
+
+    // A non-owner (not even a collaborator on this project) can't transfer
+    // ownership -- 404, the same existence-hiding treatment every other
+    // owner-only action here uses.
+    const asOutsider = await fetch(`${baseUrl}/api/projects/${project.id}/transfer-ownership`, {
+      method: "POST",
+      headers: authHeaders(outsiderToken),
+      body: JSON.stringify({ userId: collabUserId }),
+    });
+    assert.equal(asOutsider.status, 404);
+
+    // Targeting the owner's own id is already naturally rejected: the
+    // owner is never a row in project_collaborators, so getCollaboratorRole
+    // returns null for it -- the same COLLABORATOR_NOT_FOUND path a
+    // genuinely unknown userId would hit, with no separate "transfer to
+    // yourself" check needed.
+    const targetingSelf = await fetch(`${baseUrl}/api/projects/${project.id}/transfer-ownership`, {
+      method: "POST",
+      headers: authHeaders(ownerToken),
+      body: JSON.stringify({ userId: project.ownerId }),
+    });
+    assert.equal(targetingSelf.status, 404);
+    assert.equal(((await targetingSelf.json()) as { code?: string }).code, "COLLABORATOR_NOT_FOUND");
+
+    // A userId that was never a collaborator on this project at all.
+    const unknownUser = await fetch(`${baseUrl}/api/projects/${project.id}/transfer-ownership`, {
+      method: "POST",
+      headers: authHeaders(ownerToken),
+      body: JSON.stringify({ userId: "not-a-real-user-id" }),
+    });
+    assert.equal(unknownUser.status, 404);
+    assert.equal(((await unknownUser.json()) as { code?: string }).code, "COLLABORATOR_NOT_FOUND");
+
+    // A missing userId is rejected by the schema, not silently coerced.
+    const missingUserId = await fetch(`${baseUrl}/api/projects/${project.id}/transfer-ownership`, {
+      method: "POST",
+      headers: authHeaders(ownerToken),
+      body: JSON.stringify({}),
+    });
+    assert.equal(missingUserId.status, 400);
+    assert.equal(((await missingUserId.json()) as { code?: string }).code, "VALIDATION_ERROR");
+
+    // Collaborator-token sanity check wasn't exercised above -- confirm a
+    // real, existing collaborator (not the owner) can't transfer ownership
+    // either, the same 404 as the outsider case.
+    const asCollaborator = await fetch(`${baseUrl}/api/projects/${project.id}/transfer-ownership`, {
+      method: "POST",
+      headers: authHeaders(collabToken),
+      body: JSON.stringify({ userId: collabUserId }),
+    });
+    assert.equal(asCollaborator.status, 404);
+  });
+});
+
 test("POST /auth/signup is rate-limited per IP: the 21st signup attempt in the window is rejected with 429 even though every earlier one used a distinct, otherwise-valid email", async () => {
   await withServer(async (baseUrl) => {
     for (let i = 0; i < 20; i++) {
