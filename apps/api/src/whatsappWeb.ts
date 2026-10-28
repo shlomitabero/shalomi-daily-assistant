@@ -117,6 +117,7 @@ export interface BaileysIncomingMessage {
     viewOnceMessage?: { message?: BaileysIncomingMessage["message"] };
     viewOnceMessageV2?: { message?: BaileysIncomingMessage["message"] };
     protocolMessage?: { type?: number; editedMessage?: BaileysIncomingMessage["message"] };
+    ephemeralMessage?: { message?: BaileysIncomingMessage["message"] };
   };
 }
 
@@ -239,9 +240,27 @@ const CONNECTION_LOST_MESSAGE = "The WhatsApp connection was lost. Click Connect
  * nothing left to show; MESSAGE_EDIT reuses the viewOnceMessage recursive-
  * inner-describe convention, since `editedMessage` is a full nested
  * message of any already-handled shape, not just plain text.
+ *
+ * Round 1142: a chat with WhatsApp's own "Disappearing messages" toggle
+ * turned on (an ordinary, user-controlled, widely-used per-chat setting --
+ * not an edge case) wraps EVERY message in that chat, of ANY shape, inside
+ * an `ephemeralMessage` envelope (`{ message: <the real content> }`,
+ * confirmed against proto.Message.IFutureProofMessage -- the identical
+ * shape viewOnceMessage/viewOnceMessageV2 already use). Before this round,
+ * none of the checks above it ever matched (the real content lives one
+ * level deeper), so the function fell straight through to `return null`
+ * for literally every message in such a chat -- not just one still-
+ * unrecognized shape like every prior round in this family, but the
+ * entire conversation, silently, with zero trace. Checked first (not
+ * alongside the other type-specific branches below) and unwrapped via a
+ * plain recursive call with no added placeholder, since the envelope is
+ * otherwise completely transparent -- WhatsApp's own UI shows a
+ * disappearing-messages chat exactly like any other, with no per-message
+ * marker, so this mirrors that.
  */
 function describeIncomingMessage(message: BaileysIncomingMessage["message"]): string | null {
   if (!message) return null;
+  if (message.ephemeralMessage?.message) return describeIncomingMessage(message.ephemeralMessage.message);
   const text = message.conversation ?? message.extendedTextMessage?.text;
   if (text) return text;
   if (message.imageMessage) return message.imageMessage.caption ? `[Photo] ${message.imageMessage.caption}` : "[Photo]";

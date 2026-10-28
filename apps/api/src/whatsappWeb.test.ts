@@ -847,6 +847,42 @@ test("an incoming WhatsApp message deletion or edit is logged with a placeholder
 });
 
 /**
+ * Round 1142: a chat with WhatsApp's own "Disappearing messages" toggle on
+ * (an ordinary, user-controlled, widely-used per-chat setting) wraps EVERY
+ * message in that chat inside an `ephemeralMessage` envelope, of any
+ * shape -- not just one still-unrecognized type like every prior round in
+ * this family, but the entire conversation, silently, with zero trace.
+ * Covers a plain text message, a photo (confirming the unwrap is generic,
+ * not text-only), and a never-answered empty wrapper (falls back to null
+ * -- genuinely skipped, not guessed at).
+ */
+test("an incoming WhatsApp message from a disappearing-messages chat is logged normally, instead of the entire chat being silently dropped", async () => {
+  const { manager, createdSockets, db } = setupManager();
+  insertProject(db, project);
+  applyMigrations(db, project.id, project.spec);
+  markProjectBuilt(db, project.id);
+
+  await manager.connect(project.id);
+  createdSockets[0].emitConnectionUpdate({ connection: "open" });
+
+  createdSockets[0].emitMessagesUpsert({
+    type: "notify",
+    messages: [
+      { key: { remoteJid: "972501234567@s.whatsapp.net", fromMe: false }, message: { ephemeralMessage: { message: { conversation: "מתי אתם פתוחים?" } } } },
+      { key: { remoteJid: "972501234567@s.whatsapp.net", fromMe: false }, message: { ephemeralMessage: { message: { imageMessage: { caption: "תמונה של המוצר" } } } } },
+      { key: { remoteJid: "972501234567@s.whatsapp.net", fromMe: false }, message: { ephemeralMessage: {} } },
+    ],
+  });
+
+  // listWhatsAppMessages orders newest-first, the reverse of emission order.
+  const { messages } = listWhatsAppMessages(db, project.id);
+  assert.equal(messages.length, 2, "the empty ephemeralMessage wrapper (no recoverable content) must still be genuinely skipped, not guessed at or logged as a stray row");
+  assert.equal(messages[0].body, "[Photo] תמונה של המוצר", "a photo wrapped in ephemeralMessage must unwrap to its own real placeholder, not just a text message");
+  assert.equal(messages[1].body, "מתי אתם פתוחים?", "a plain text message wrapped in ephemeralMessage must unwrap transparently, with no added placeholder prefix");
+  for (const m of messages) assert.equal(m.direction, "in", "every unwrapped row must still be a real, matched-against incoming message, not metadata");
+});
+
+/**
  * Round 1121: a live-location share (WhatsApp's continuous-sharing mode,
  * started from the attachment picker) is a distinct field from the
  * already-handled locationMessage (a single pinned location, round 1035)
