@@ -116,6 +116,8 @@ export interface BaileysIncomingMessage {
     liveLocationMessage?: { caption?: string };
     viewOnceMessage?: { message?: BaileysIncomingMessage["message"] };
     viewOnceMessageV2?: { message?: BaileysIncomingMessage["message"] };
+    viewOnceMessageV2Extension?: { message?: BaileysIncomingMessage["message"] };
+    documentWithCaptionMessage?: { message?: BaileysIncomingMessage["message"] };
     protocolMessage?: { type?: number; editedMessage?: BaileysIncomingMessage["message"] };
     ephemeralMessage?: { message?: BaileysIncomingMessage["message"] };
   };
@@ -257,10 +259,26 @@ const CONNECTION_LOST_MESSAGE = "The WhatsApp connection was lost. Click Connect
  * otherwise completely transparent -- WhatsApp's own UI shows a
  * disappearing-messages chat exactly like any other, with no per-message
  * marker, so this mirrors that.
+ *
+ * Round 1152: `documentWithCaptionMessage` is the same kind of fully
+ * transparent wrapper as `ephemeralMessage` -- confirmed against the
+ * installed @whiskeysockets/baileys library's own normalizeMessageContent
+ * (lib/Utils/messages.js), whose `getFutureProofMessage` helper groups it
+ * in the exact same bucket as ephemeralMessage/viewOnceMessage/
+ * viewOnceMessageV2/viewOnceMessageV2Extension, all unwrapped identically.
+ * A newer WhatsApp client sends a document with a caption through this
+ * wrapper instead of a plain documentMessage, so it needs the same
+ * transparent recursive unwrap ephemeralMessage already gets, not a
+ * distinct placeholder -- the inner content is already a documentMessage,
+ * which the check below already describes correctly once unwrapped.
+ * `viewOnceMessageV2Extension` is WhatsApp's newer envelope for a
+ * disappearing *video* specifically (the same role viewOnceMessageV2
+ * already plays for images), so it joins that existing check instead.
  */
 function describeIncomingMessage(message: BaileysIncomingMessage["message"]): string | null {
   if (!message) return null;
   if (message.ephemeralMessage?.message) return describeIncomingMessage(message.ephemeralMessage.message);
+  if (message.documentWithCaptionMessage?.message) return describeIncomingMessage(message.documentWithCaptionMessage.message);
   const text = message.conversation ?? message.extendedTextMessage?.text;
   if (text) return text;
   if (message.imageMessage) return message.imageMessage.caption ? `[Photo] ${message.imageMessage.caption}` : "[Photo]";
@@ -291,7 +309,8 @@ function describeIncomingMessage(message: BaileysIncomingMessage["message"]): st
     message.pollCreationMessage ?? message.pollCreationMessageV2 ?? message.pollCreationMessageV3 ?? message.pollCreationMessageV5;
   if (poll) return poll.name ? `[Poll] ${poll.name}` : "[Poll]";
   if (message.reactionMessage) return message.reactionMessage.text ? `[Reaction] ${message.reactionMessage.text}` : "[Reaction removed]";
-  const viewOnceInner = message.viewOnceMessageV2?.message ?? message.viewOnceMessage?.message;
+  const viewOnceInner =
+    message.viewOnceMessageV2Extension?.message ?? message.viewOnceMessageV2?.message ?? message.viewOnceMessage?.message;
   if (viewOnceInner) {
     const inner = describeIncomingMessage(viewOnceInner);
     return inner ? `[View once] ${inner}` : "[View once]";

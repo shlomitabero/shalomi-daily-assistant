@@ -883,6 +883,48 @@ test("an incoming WhatsApp message from a disappearing-messages chat is logged n
 });
 
 /**
+ * Round 1152: a "View once" *video* sent from a newer WhatsApp client uses
+ * `viewOnceMessageV2Extension` instead of `viewOnceMessage`/
+ * `viewOnceMessageV2` -- confirmed against the installed
+ * @whiskeysockets/baileys library's own normalizeMessageContent, which
+ * groups all three as the same kind of envelope. Likewise, a document sent
+ * with a caption from a newer client arrives wrapped in
+ * `documentWithCaptionMessage` instead of populating `documentMessage`
+ * directly -- the same fully transparent wrapper `ephemeralMessage` already
+ * gets, confirmed by the library grouping it there too. Both previously
+ * fell through every branch and were silently dropped with zero trace, the
+ * same gap every other still-unrecognized shape in this family fell into
+ * before its own fix.
+ */
+test("an incoming WhatsApp 'View once' video via its newer wrapper field, and a document-with-caption via its own wrapper field, are both logged instead of being silently dropped", async () => {
+  const { manager, createdSockets, db } = setupManager();
+  insertProject(db, project);
+  applyMigrations(db, project.id, project.spec);
+  markProjectBuilt(db, project.id);
+
+  await manager.connect(project.id);
+  createdSockets[0].emitConnectionUpdate({ connection: "open" });
+
+  createdSockets[0].emitMessagesUpsert({
+    type: "notify",
+    messages: [
+      { key: { remoteJid: "972501234567@s.whatsapp.net", fromMe: false }, message: { viewOnceMessageV2Extension: { message: { videoMessage: { caption: "הדגמה" } } } } },
+      {
+        key: { remoteJid: "972501234567@s.whatsapp.net", fromMe: false },
+        message: { documentWithCaptionMessage: { message: { documentMessage: { fileName: "חוזה.pdf", caption: "לחתימה" } } } },
+      },
+    ],
+  });
+
+  // listWhatsAppMessages orders newest-first, the reverse of emission order.
+  const { messages } = listWhatsAppMessages(db, project.id);
+  assert.equal(messages.length, 2);
+  assert.equal(messages[0].body, "[Document: חוזה.pdf] לחתימה", "documentWithCaptionMessage must unwrap transparently to its inner documentMessage's own real placeholder, with no added prefix");
+  assert.equal(messages[1].body, "[View once] [Video] הדגמה", "viewOnceMessageV2Extension must be checked alongside viewOnceMessage/viewOnceMessageV2, not silently dropped");
+  for (const m of messages) assert.equal(m.direction, "in", "every placeholder row must still be a real, matched-against incoming message, not metadata");
+});
+
+/**
  * Round 1121: a live-location share (WhatsApp's continuous-sharing mode,
  * started from the attachment picker) is a distinct field from the
  * already-handled locationMessage (a single pinned location, round 1035)
