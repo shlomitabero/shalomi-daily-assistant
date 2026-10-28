@@ -9,6 +9,7 @@ import {
   purgeEntityRecentSearchesForEntity,
   purgeEntityRecentSearchesForProject,
   removeEntityRecentSearch,
+  removeEntityRecentSearchesForUserProject,
 } from "./entityRecentSearches.js";
 
 /** Same full-jsdom-swap technique columnOrder.test.ts/recentProjectSearches.test.ts use: real localStorage, not a mock. */
@@ -180,5 +181,43 @@ test("purgeEntityRecentSearchesForProject removes every collaborator account's o
     assert.deepEqual(getEntityRecentSearches("proj1", "Customer", "userA"), []);
     assert.deepEqual(getEntityRecentSearches("proj1", "Order", "userB"), []);
     assert.deepEqual(getEntityRecentSearches("proj2", "Customer", "userA"), ["zeta"], "a completely different project's own entries must be untouched");
+  });
+});
+
+/**
+ * Round 1128: mirrors entityTabOrder.ts's own round-1127
+ * removeEntityTabOrder -- used by projectPreferenceCleanup.ts's
+ * purgeOwnProjectAccess for the "this one user's own access ended, the
+ * project itself is still alive for everyone else" events (account
+ * deletion's shared-project loop; CollaboratorsPanel's self-service
+ * "leave project"), where a plain per-user delete is correct (unlike
+ * purgeEntityRecentSearchesForProject's every-collaborator sweep, correct
+ * only when the project itself is genuinely gone). Unlike that sibling,
+ * this store has no single exact key for one user's whole project-wide
+ * footprint -- entityName is a third, unknowable segment -- so this also
+ * confirms every one of this user's OWN entities (not just one) is swept
+ * by the prefix+suffix match, not just whichever single entity a
+ * narrower test might happen to check.
+ */
+test("removeEntityRecentSearchesForUserProject removes only this one user's own lists across every entity of one project, leaving every other collaborator's own lists for the SAME project (and this user's own lists for another project) untouched", async () => {
+  await withJsdom(() => {
+    addEntityRecentSearch("proj1", "Customer", "userA", "acme");
+    addEntityRecentSearch("proj1", "Order", "userA", "overdue");
+    addEntityRecentSearch("proj1", "Customer", "userB", "zenith");
+    addEntityRecentSearch("proj2", "Customer", "userA", "beta corp");
+
+    removeEntityRecentSearchesForUserProject("proj1", "userA");
+
+    assert.deepEqual(getEntityRecentSearches("proj1", "Customer", "userA"), [], "userA's own Customer list for the left project must be cleared");
+    assert.deepEqual(getEntityRecentSearches("proj1", "Order", "userA"), [], "userA's own Order list for the SAME left project must also be cleared, not just one entity");
+    assert.deepEqual(getEntityRecentSearches("proj1", "Customer", "userB"), ["zenith"], "userB's own list for the SAME still-shared project must survive");
+    assert.deepEqual(getEntityRecentSearches("proj2", "Customer", "userA"), ["beta corp"], "userA's own list for an UNRELATED project must survive untouched");
+  });
+});
+
+test("removeEntityRecentSearchesForUserProject is a no-op, not an error, when this user never searched anything in this project", async () => {
+  await withJsdom(() => {
+    assert.doesNotThrow(() => removeEntityRecentSearchesForUserProject("proj1", "userA"));
+    assert.deepEqual(getEntityRecentSearches("proj1", "Customer", "userA"), []);
   });
 });

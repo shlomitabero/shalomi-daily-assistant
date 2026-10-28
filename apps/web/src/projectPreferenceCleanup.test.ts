@@ -376,3 +376,30 @@ test("purgeOwnProjectAccess also clears this one user's own entityTabOrder/histo
     assert.deepEqual(getWhatsAppLastSeen("abc", "userB"), { id: "msg-3", createdAt: "2024-03-01T00:00:00.000Z" }, "userB's own last-seen marker for the SAME project must survive");
   });
 });
+
+/**
+ * Round 1128: round 1127's own doc comment on `purgeOwnProjectAccess`
+ * named `entityRecentSearches.ts` as an eighth per-user-keyed store it
+ * still didn't reach, deliberately left for a dedicated look since its
+ * per-(projectId,entityName,userId) compound key inside one shared blob
+ * needs enumerating every entity rather than a single exact key. Confirms
+ * `purgeOwnProjectAccess` now also clears userA's own entity-search lists
+ * for the project across MULTIPLE entities at once, while userB's own
+ * list for the SAME entity on the SAME still-shared project, and userA's
+ * own list for an UNRELATED project, both survive untouched.
+ */
+test("purgeOwnProjectAccess also clears this one user's own entityRecentSearches lists across every entity of the one project, leaving every other collaborator's own lists for the SAME project (and this user's own lists for other projects) untouched", async () => {
+  await withJsdom(() => {
+    addEntityRecentSearch("abc", "Customer", "userA", "overdue invoices");
+    addEntityRecentSearch("abc", "Order", "userA", "refunds");
+    addEntityRecentSearch("abc", "Customer", "userB", "vip clients");
+    addEntityRecentSearch("proj2", "Customer", "userA", "q3 leads");
+
+    purgeOwnProjectAccess("userA", "abc");
+
+    assert.deepEqual(getEntityRecentSearches("abc", "Customer", "userA"), [], "userA's own Customer search list for the left project must be cleared");
+    assert.deepEqual(getEntityRecentSearches("abc", "Order", "userA"), [], "userA's own Order search list for the SAME left project must also be cleared");
+    assert.deepEqual(getEntityRecentSearches("abc", "Customer", "userB"), ["vip clients"], "userB's own search list for the SAME still-shared project must survive");
+    assert.deepEqual(getEntityRecentSearches("proj2", "Customer", "userA"), ["q3 leads"], "userA's own search list for an UNRELATED project must survive untouched");
+  });
+});

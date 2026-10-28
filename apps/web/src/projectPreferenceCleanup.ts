@@ -9,7 +9,7 @@ import { purgeGroupByFieldForProject } from "./groupByPreference.js";
 import { purgeCollapsedBoardColumnsForProject } from "./collapsedBoardColumnsPreference.js";
 import { purgeCollapsedGroupsForProject } from "./collapsedGroupsPreference.js";
 import { purgeSortKeysForProject } from "./sortKeysPreference.js";
-import { purgeEntityRecentSearchesForProject } from "./entityRecentSearches.js";
+import { purgeEntityRecentSearchesForProject, removeEntityRecentSearchesForUserProject } from "./entityRecentSearches.js";
 import { purgeRecentHistorySearchesForProject, clearRecentHistorySearches } from "./historyRecentSearches.js";
 import { purgeViewModeForProject } from "./viewModePreference.js";
 import { purgeRecentSearchesForProject, clearRecentSearches } from "./recentSearches.js";
@@ -125,11 +125,26 @@ export function purgeProjectPreferences(projectId: string): void {
  * key-enumeration pattern the other six share) -- `removeEntityTabOrder`
  * was added there this round, mirroring `removePinnedProject`'s own shape
  * (delete just the one project entry from the one user's own store).
+ *
+ * Round 1127's own doc comment explicitly named an eighth per-user-keyed
+ * store this function still didn't reach, `entityRecentSearches.ts`
+ * (`${projectId}:${entityName}:${userId}` inside one shared blob), as a
+ * legitimate but structurally different candidate deliberately left for a
+ * dedicated look rather than folded in unverified. Round 1128 is that
+ * look: confirmed it had no single-user removal primitive at all (only
+ * the broad `purgeEntityRecentSearchesForProject`), added
+ * `removeEntityRecentSearchesForUserProject(projectId, userId)` there --
+ * entityName is the one segment this function can't know in advance, so
+ * it matches every key by prefix+suffix instead of one exact key, the
+ * same technique `purgeEntityRecentSearchesForEntity`/
+ * `migrateEntityRecentSearchesForEntityRename` already use for their own
+ * unknowable middle/last segment.
  */
 export function purgeOwnProjectAccess(userId: string, projectId: string): void {
   removePinnedProject(userId, projectId);
   removeSeenSharedProject(userId, projectId);
   removeEntityTabOrder(userId, projectId);
+  removeEntityRecentSearchesForUserProject(projectId, userId);
   clearRecentHistorySearches(projectId, userId);
   clearRecentSearches(projectId, userId);
   clearRecentWhatsAppNumbers(projectId, userId);

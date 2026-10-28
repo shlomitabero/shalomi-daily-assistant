@@ -134,6 +134,37 @@ export function migrateEntityRecentSearchesForEntityRename(projectId: string, ol
   if (changed) writeStore(store);
 }
 
+/**
+ * Round 1128: removes just ONE user's own recent-search lists for this
+ * project, across all of its entities -- mirroring entityTabOrder.ts's own
+ * round-1127 removeEntityTabOrder, for the same "this one user's own
+ * access ended, the project itself is still alive for everyone else"
+ * events (account deletion's shared-project loop; CollaboratorsPanel's
+ * self-service "leave project") that projectPreferenceCleanup.ts's
+ * purgeOwnProjectAccess already handles for every other per-user store.
+ * The entityName segment is unknowable in advance (this user could have
+ * searched any number of this project's entities), so -- like
+ * purgeEntityRecentSearchesForEntity/migrateEntityRecentSearchesForEntityRename
+ * above, which face the identical "can't build one exact key" problem for
+ * their own missing middle/last segment -- this matches on BOTH the
+ * `${projectId}:` prefix AND the `:${userId}` suffix, not a single exact
+ * key, so a key only qualifies when every other collaborator's own
+ * entityName*userId combination is ruled out by one or the other test.
+ */
+export function removeEntityRecentSearchesForUserProject(projectId: string, userId: string): void {
+  const store = readStore();
+  const prefix = `${projectId}:`;
+  const suffix = `:${userId}`;
+  let changed = false;
+  for (const key of Object.keys(store)) {
+    if (key.startsWith(prefix) && key.endsWith(suffix)) {
+      delete store[key];
+      changed = true;
+    }
+  }
+  if (changed) writeStore(store);
+}
+
 /** Removes every stored recent-search list for this project, across all of its entities -- see columnWidths.ts's purgeColumnWidthsForProject for the full rationale. */
 export function purgeEntityRecentSearchesForProject(projectId: string): void {
   const store = readStore();
