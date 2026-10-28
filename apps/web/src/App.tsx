@@ -94,7 +94,7 @@ const LOCALE: Record<string, string> = { he: "he-IL", en: "en-US" };
 const WHATSAPP_UNREAD_POLL_INTERVAL_MS = 20000;
 /** How often the topbar's own failing-automations badge poll re-checks rule status. Slightly longer than WHATSAPP_UNREAD_POLL_INTERVAL_MS since a rule's lastStatus only changes when it actually fires (schedule/webhook/field-change), not on every incoming message. */
 const AUTOMATIONS_FAILING_POLL_INTERVAL_MS = 30000;
-/** How often a non-owner's own myRole poll re-checks their real collaborator role. Longer than the other two polls above since a role change is rarer than either an incoming message or a firing automation rule. */
+/** How often the myRole poll re-checks this account's real role/ownership. Longer than the other two polls above since a role or ownership change is rarer than either an incoming message or a firing automation rule. */
 const MY_ROLE_POLL_INTERVAL_MS = 45000;
 
 /** A project card's own creation date, locale-formatted -- separated out (rather than inlined in the JSX) purely so it's directly unit-testable, matching this file's own summarizeRefineImpact/filterAndSortProjects convention. */
@@ -1271,7 +1271,7 @@ function AppContent() {
    * side benefit, not this poll's primary purpose.
    */
   useEffect(() => {
-    if (!project || !user || project.ownerId === user.id) return;
+    if (!project || !user) return;
     const projectId = project.id;
     const userId = user.id;
     let cancelled = false;
@@ -1287,22 +1287,31 @@ function AppContent() {
         // owner's own separate browser tab (if they have this same
         // project open) never receives any signal at all, since there's
         // no push channel and no other poll ever refreshes
-        // project.ownerId. Before this, that silence actively made
-        // things worse here: once the transfer removes the new owner
-        // from project_collaborators (an owner is never also a
-        // collaborator row), `mine` below went undefined and this same
-        // poll overwrote their role with the "editor" fallback -- short
-        // of their real new "owner" status -- while project.ownerId
-        // stayed stale, hiding every owner-only control in
-        // CollaboratorsPanel until a manual reload. `owner` is already
-        // returned by this same endpoint (round 1052) for the panel's
-        // own "who owns this" display; comparing it here costs nothing
-        // extra. Patching project.ownerId also makes this effect's own
-        // early-return guard above true on the next run, so the poll
-        // naturally stops once the user is recognized as the real owner.
+        // project.ownerId. `owner` is already returned by this same
+        // endpoint (round 1052) for the panel's own "who owns this"
+        // display; comparing it here costs nothing extra.
+        //
+        // Round 1184: this effect used to early-return when
+        // project.ownerId === user.id, on the theory that an already-
+        // recognized owner has nothing to poll for -- but that guard
+        // reads the exact same stale local value a transfer-AWAY needs
+        // corrected, a chicken-and-egg problem: the FORMER owner's own
+        // second open tab (if any) kept showing them as owner forever,
+        // isOwner stayed true, and every owner-only CollaboratorsPanel
+        // control (role-change, Remove, Transfer, regenerate-feed-token)
+        // kept rendering as live/enabled there, each now correctly
+        // 403ing server-side with no "you're no longer the owner,
+        // please reload" explanation. Removing the guard (matching the
+        // WhatsApp-unread/failing-automations polls above, which also
+        // run unconditionally once their own project-level precondition
+        // holds) lets this same poll patch project.ownerId in EITHER
+        // direction on every tick, not just when it happens to already
+        // know to look.
+        if (owner) {
+          setProject((p) => (p && p.id === projectId && p.ownerId !== owner.userId ? { ...p, ownerId: owner.userId } : p));
+        }
         if (owner?.userId === userId) {
           setMyRole("owner");
-          setProject((p) => (p && p.id === projectId ? { ...p, ownerId: owner.userId } : p));
           return;
         }
         const mine = collaborators.find((c) => c.userId === userId);

@@ -5085,6 +5085,59 @@ test("App's checkMyRole recognizes this account as the project's new owner from 
 });
 
 /**
+ * Round 1184: the symmetric case the round-1183 fix deliberately deferred
+ * -- the FORMER owner's own second open tab, whose local project.ownerId
+ * stayed stale (still equal to their own id) after they transferred
+ * ownership away in a different tab. Before this round, the poll's own
+ * start guard (`project.ownerId === user.id`) read that exact same stale
+ * value, so the poll never even ran there to correct it -- a chicken-
+ * and-egg problem. This round removed that guard entirely (the poll now
+ * always runs once project/user exist, mirroring the WhatsApp-unread/
+ * failing-automations polls' own unconditional shape); this test proves
+ * checkMyRole's own body, on its own, still does the right thing once
+ * given the chance to run: patches project.ownerId to the real new
+ * owner and sets myRole to this account's own real remaining role
+ * ("editor", the role transferProjectOwnership itself grants the former
+ * owner), not "owner".
+ */
+test("App's checkMyRole corrects a stale project.ownerId and demotes myRole away from 'owner' once this account is no longer the real owner", async () => {
+  const appSrc = readFileSync(new URL("./App.tsx", import.meta.url), "utf8");
+  const handlerMatch = appSrc.match(/ {4}async function checkMyRole\(\) \{[\s\S]*?\n {4}\}\n/);
+  assert.ok(handlerMatch, "expected to find checkMyRole in App.tsx");
+  const { code } = transformSync(handlerMatch![0], { loader: "ts" });
+
+  const state: { role: unknown; projectUpdater: ((p: { id: string; ownerId: string }) => unknown) | undefined } = {
+    role: "untouched",
+    projectUpdater: undefined,
+  };
+  const fn = new Function(
+    "projectId",
+    "userId",
+    "cancelled",
+    "listCollaborators",
+    "setMyRole",
+    "setProject",
+    `${code}\nreturn checkMyRole;`,
+  )(
+    "project-1",
+    "user-1",
+    false,
+    // transferProjectOwnership adds the former owner back as an "editor"
+    // collaborator, and reports the real new owner separately.
+    async () => ({ collaborators: [{ userId: "user-1", role: "editor" }], owner: { userId: "new-owner", email: "new-owner@example.com" } }),
+    (v: unknown) => (state.role = v),
+    (updater: (p: { id: string; ownerId: string }) => unknown) => (state.projectUpdater = updater),
+  ) as () => Promise<void>;
+
+  await fn();
+
+  assert.equal(state.role, "editor", "myRole must be demoted to this account's own real remaining role, not stay 'owner'");
+  assert.ok(state.projectUpdater, "setProject must be called to correct the stale project.ownerId");
+  const patched = state.projectUpdater!({ id: "project-1", ownerId: "user-1" }) as { ownerId: string } | null;
+  assert.equal(patched?.ownerId, "new-owner", "the patched project must carry the real new owner's own userId as ownerId");
+});
+
+/**
  * Round 1173: this poll effect's own doc comment explicitly claims it
  * "mirrors the WhatsApp-unread/failing-automations polls above (same
  * immediate-check-then-interval shape)" -- but until this round, the
@@ -5101,7 +5154,7 @@ test("App's checkMyRole recognizes this account as the project's new owner from 
 test("App's checkMyRole poll effect calls checkMyRole immediately on mount, not just on the first interval tick", async () => {
   const appSrc = readFileSync(new URL("./App.tsx", import.meta.url), "utf8");
   const effectMatch = appSrc.match(
-    /useEffect\(\(\) => \{\n( {4}if \(!project \|\| !user \|\| project\.ownerId === user\.id\) return;[\s\S]*?)\n {2}\}, \[project\?\.id, project\?\.ownerId, user\?\.id\]\);\n/,
+    /useEffect\(\(\) => \{\n( {4}if \(!project \|\| !user\) return;[\s\S]*?)\n {2}\}, \[project\?\.id, project\?\.ownerId, user\?\.id\]\);\n/,
   );
   assert.ok(effectMatch, "expected to find the myRole poll useEffect in App.tsx");
   const { code } = transformSync(`(() => {\n${effectMatch![1]}\n})`, { loader: "ts" });
@@ -5113,6 +5166,7 @@ test("App's checkMyRole poll effect calls checkMyRole immediately on mount, not 
     "user",
     "listCollaborators",
     "setMyRole",
+    "setProject",
     "setInterval",
     "MY_ROLE_POLL_INTERVAL_MS",
     `return ${code};`,
@@ -5121,6 +5175,7 @@ test("App's checkMyRole poll effect calls checkMyRole immediately on mount, not 
     { id: "collaborator-1" },
     async () => ({ collaborators: [{ userId: "collaborator-1", role: "viewer" }] }),
     (v: unknown) => (state.role = v),
+    () => {},
     () => {
       intervalScheduled = true;
       return 0;
