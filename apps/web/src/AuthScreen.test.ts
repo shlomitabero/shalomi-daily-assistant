@@ -391,6 +391,65 @@ test("AuthScreen's code-entry 'back' button returns to the login form and clears
 });
 
 /**
+ * Round 1155: the code-entry step's only prior recovery path for a slow/
+ * lost transactional email was "Back" (full restart), which also silently
+ * burned the first code (routes/auth.ts's own deleteLoginCodesForUser runs
+ * on every /auth/login call). email/password are still sitting in this
+ * component's own state at this step, so "Resend code" just re-runs the
+ * same login() call handleSubmit already makes, swaps in the fresh
+ * loginCodeId, and shows a confirmation -- without discarding the
+ * email/password fields or returning to the login form.
+ */
+test("AuthScreen's code-entry 'Resend code' button re-requests a fresh code without leaving the code-entry step, and shows a confirmation", async () => {
+  await withJsdom(async () => {
+    const originalFetch = globalThis.fetch;
+    let loginCalls = 0;
+    globalThis.fetch = (async () => {
+      loginCalls += 1;
+      return new Response(JSON.stringify({ requiresCode: true, loginCodeId: `code-id-${loginCalls}` }), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      });
+    }) as typeof fetch;
+    try {
+      renderAuthScreen(() => {});
+      fireEvent.click(document.querySelector("button.link-button") as HTMLButtonElement); // switch to login
+      fireEvent.change(document.querySelector('input[type="email"]') as HTMLInputElement, { target: { value: "dana@example.com" } });
+      fireEvent.change(document.querySelector('input[name="password"]') as HTMLInputElement, { target: { value: "correct-horse-battery" } });
+
+      await act(async () => {
+        fireEvent.submit(document.querySelector("form.auth-form")!);
+        await Promise.resolve();
+        await Promise.resolve();
+      });
+
+      assert.equal(loginCalls, 1);
+      fireEvent.change(document.querySelector('input[inputmode="numeric"]') as HTMLInputElement, { target: { value: "111111" } });
+
+      const resendButton = Array.from(document.querySelectorAll("button")).find((b) => b.textContent === "Resend code") as HTMLButtonElement;
+      assert.ok(resendButton, "expected a 'Resend code' button on the code-entry step");
+
+      await act(async () => {
+        fireEvent.click(resendButton);
+        await Promise.resolve();
+        await Promise.resolve();
+      });
+
+      assert.equal(loginCalls, 2, "resend must call the real login endpoint again, not just redisplay the same step");
+      assert.ok(document.querySelector('input[inputmode="numeric"]'), "must still be on the code-entry step, not back on the login form");
+      assert.equal(
+        (document.querySelector('input[inputmode="numeric"]') as HTMLInputElement).value,
+        "",
+        "the previously-typed (now-invalidated) code must be cleared after a resend",
+      );
+      assert.match(document.body.textContent ?? "", /new code has been sent/i, "the resend must show a real confirmation, not resend silently");
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+});
+
+/**
  * Round 716: the real "forgot password" recovery flow. The link only
  * makes sense in login mode (there's no existing password to have
  * forgotten while signing up for the first time); submitting the typed

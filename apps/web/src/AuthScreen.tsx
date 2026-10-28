@@ -22,6 +22,15 @@ export function AuthScreen({ onAuthenticated }: { onAuthenticated: (user: User) 
   // side, so most deployments of this app never see this step at all.
   const [pendingLoginCodeId, setPendingLoginCodeId] = useState<string | null>(null);
   const [code, setCode] = useState("");
+  // Round 1155: a transactional email's code routinely arrives late or
+  // lands in spam, and the only existing recovery before this was clicking
+  // "Back" and resubmitting the whole login form from scratch -- email and
+  // password are still sitting in state right here, so resending is just
+  // re-running the exact same login() call handleSubmit already makes.
+  // True only right after a resend actually succeeds; cleared the moment
+  // the user submits a code or resends again, so it never lingers as a
+  // stale confirmation.
+  const [codeResent, setCodeResent] = useState(false);
 
   // Read once, at mount -- a URL this app itself never otherwise reads any
   // query param from (see routes/auth.ts's own forgot-password route,
@@ -141,11 +150,37 @@ export function AuthScreen({ onAuthenticated }: { onAuthenticated: (user: User) 
   async function handleVerifyCode(e: React.FormEvent) {
     e.preventDefault();
     setError(null);
+    setCodeResent(false);
     setBusy(true);
     try {
       const { user, token } = await verifyLoginCode(pendingLoginCodeId!, code);
       setToken(token);
       onAuthenticated(user);
+    } catch (err) {
+      setError((err as Error).message);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function handleResendCode() {
+    setError(null);
+    setCodeResent(false);
+    setBusy(true);
+    try {
+      const result = await login(email, password, lang);
+      if ("requiresCode" in result) {
+        setPendingLoginCodeId(result.loginCodeId);
+        setCode("");
+        setCodeResent(true);
+        return;
+      }
+      // Can't actually happen mid-session (emailSender.configured doesn't
+      // flip while this screen is open), but if the server ever did return
+      // a direct token here, finishing the login is the right response,
+      // not silently discarding it.
+      setToken(result.token);
+      onAuthenticated(result.user);
     } catch (err) {
       setError((err as Error).message);
     } finally {
@@ -298,6 +333,11 @@ export function AuthScreen({ onAuthenticated }: { onAuthenticated: (user: User) 
                   {busy ? t("auth.submit.busy") : t("auth.code.submit")}
                 </button>
               </form>
+              {codeResent && (
+                <p className="success" role="status">
+                  {t("auth.code.resent")}
+                </p>
+              )}
               {error && (
                 <p className="error" role="status">
                   {error}
@@ -311,9 +351,13 @@ export function AuthScreen({ onAuthenticated }: { onAuthenticated: (user: User) 
                   setPendingLoginCodeId(null);
                   setCode("");
                   setError(null);
+                  setCodeResent(false);
                 }}
               >
                 {t("auth.code.back")}
+              </button>
+              <button type="button" className="secondary link-button" disabled={busy} onClick={handleResendCode}>
+                {busy ? t("auth.submit.busy") : t("auth.code.resend")}
               </button>
             </>
           ) : (
