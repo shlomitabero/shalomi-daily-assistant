@@ -632,3 +632,24 @@ test("seed records satisfy the real repository validation and insert cleanly", (
     assert.ok(inserted.id);
   }
 });
+
+/**
+ * Round 1148's finding: VolunteerEvent (the Volunteer & Shift Management
+ * template's own entity, templates.ts) has a "name" field with no case of
+ * its own in textSeedValueFor's "name" switch -- round 1115's own
+ * cross-check of this exact template only ever reached three of its OTHER
+ * field names (Volunteer.skills, Shift.timeRange, Staff.specialty), never
+ * VolunteerEvent's own "name". It fell all the way through to the generic
+ * person-name default, seeding an event's own name with a random person's
+ * name ("Dana Levi") instead of an event name.
+ */
+test("VolunteerEvent's 'name' seed values are entity-appropriate event names, not a random person's name", () => {
+  const volunteerEvent: Entity = { name: "VolunteerEvent", fields: [{ name: "name", type: "text", required: true }] };
+  const event: Entity = { name: "Event", fields: [{ name: "name", type: "text", required: true }] };
+
+  const eventNames = new Set(generateSeedRecords(event, 4).map((r) => r.name as string));
+  const volunteerEventNames = generateSeedRecords(volunteerEvent, 4).map((r) => r.name as string);
+  for (const name of volunteerEventNames) {
+    assert.ok(eventNames.has(name), `VolunteerEvent's name "${name}" must reuse Event's own event-name pool, not fall through to a random person's name`);
+  }
+});

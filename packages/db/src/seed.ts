@@ -326,6 +326,13 @@ function textSeedValueFor(fieldName: string, entityName: string, isHebrew: boole
       if (entityName === "MenuItem") return pick(isHebrew ? DISH_NAMES_HE : DISH_NAMES_EN, index);
       if (entityName === "Project") return pick(isHebrew ? PROJECT_NAMES_HE : PROJECT_NAMES_EN, index);
       if (entityName === "Event") return pick(isHebrew ? EVENT_NAMES_HE : EVENT_NAMES_EN, index);
+      // Round 1148: VolunteerEvent (the Volunteer & Shift Management
+      // template's own entity, templates.ts -- round 1115 already found
+      // three of this same template's other field names, but never
+      // cross-checked "name" itself) is conceptually the same "an event,
+      // not a person" shape as domainEntities.ts's own Event -- reuses
+      // that pool rather than inventing a near-duplicate one.
+      if (entityName === "VolunteerEvent") return pick(isHebrew ? EVENT_NAMES_HE : EVENT_NAMES_EN, index);
       if (entityName === "Course") return pick(isHebrew ? COURSE_NAMES_HE : COURSE_NAMES_EN, index);
       if (entityName === "Pet") return pick(isHebrew ? PET_NAMES_HE : PET_NAMES_EN, index);
       // Round 1107: Supplier (the Inventory template's own entity,
