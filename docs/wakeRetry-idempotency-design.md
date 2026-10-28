@@ -49,11 +49,22 @@ a theoretical one.
 
 ### Already safe — no idempotency key needed
 
-- **Every `DELETE` route** (`/roles/:index`, `/assumptions/:index`,
-  `/entities/:name`, `/entities/:name/fields/:name`, `/projects/:id`,
-  `/checkpoints/:id`, `/collaborators/:userId`, WhatsApp message deletes):
-  deleting an already-deleted or nonexistent row is a no-op or a 404, not a
-  second deletion of something else. A duplicate retry changes nothing.
+- **Every `DELETE` route whose own auth check doesn't depend on the thing
+  it's deleting** (`/roles/:index`, `/assumptions/:index`,
+  `/entities/:name`, `/entities/:name/fields/:name`,
+  `/checkpoints/:id`, WhatsApp message deletes, and `/collaborators/:userId`
+  for the owner-removes-someone-else case): deleting an already-deleted or
+  nonexistent row is a no-op or a 404, not a second deletion of something
+  else. A duplicate retry changes nothing.
+  **Exception, now wrapped in `withIdempotency` instead**: `/projects/:id`
+  (round 945) and `/collaborators/:userId`'s own self-leave case (round
+  1191) are NOT actually safe this way -- each route's own auth check
+  (`requireProjectOwner`/`requireProjectAccess`) depends on the EXACT
+  relationship the route's own successful effect just removed (the
+  caller's ownership, or the caller's own collaborator row), so a retry
+  re-evaluates that check against the already-changed state and gets a
+  false 404 for an action that, from the caller's own point of view,
+  already fully succeeded.
 - **Every `PATCH` that sets a field to an explicit value** (project
   name/description, entity/field label, checkpoint label): setting the same
   value twice leaves the exact same end state. Pure overwrite, no

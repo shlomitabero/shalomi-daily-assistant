@@ -2127,18 +2127,37 @@ export function createProjectsRouter(
    * is an owner removing someone else or a collaborator leaving on their
    * own, so a self-service "leave" never collides with a separate
    * account's own unrelated allowance.
+   *
+   * Round 1191: same withIdempotency() extension, and the same reason, as
+   * POST .../transfer-ownership's own round-1189 fix -- docs/wakeRetry-
+   * idempotency-design.md's standing inventory classified this whole
+   * route as "already safe" because removeCollaborator (a plain
+   * `DELETE ... WHERE`) is a no-op on a retried call, but that reasoning
+   * never checked the AUTH GATE that runs before it. For the self-leave
+   * path specifically (isSelf below), the first successful call removes
+   * the caller's own collaborator row, so requireProjectAccess on a
+   * retry -- the caller is no longer the owner OR a collaborator --
+   * throws its own 404 "Project not found" for a leave that, from the
+   * caller's own point of view, already fully succeeded. The owner-
+   * removes-someone-else path has no such issue (the owner's own access
+   * is untouched by removing a different collaborator), but this route
+   * serves both, so the fix covers it unconditionally.
    */
   router.delete(
     "/projects/:id/collaborators/:userId",
     inviteCollaboratorRateLimiter,
     asyncRoute(async (req, res) => {
-      const project = requireProjectAccess(db, req.params.id, req.userId!);
-      const isSelf = req.params.userId === req.userId;
-      if (project.ownerId !== req.userId! && !isSelf) {
-        throw new HttpError(403, "Only the project owner can remove a different collaborator", "COLLABORATOR_CANNOT_REMOVE_OTHERS");
-      }
-      removeCollaborator(db, project.id, req.params.userId);
-      res.status(204).end();
+      const idempotencyKey = req.header("X-Idempotency-Key") || undefined;
+      const { status } = await withIdempotency(db, idempotencyKey, req.userId!, `DELETE /projects/${req.params.id}/collaborators/${req.params.userId}`, async () => {
+        const project = requireProjectAccess(db, req.params.id, req.userId!);
+        const isSelf = req.params.userId === req.userId;
+        if (project.ownerId !== req.userId! && !isSelf) {
+          throw new HttpError(403, "Only the project owner can remove a different collaborator", "COLLABORATOR_CANNOT_REMOVE_OTHERS");
+        }
+        removeCollaborator(db, project.id, req.params.userId);
+        return { status: 204, body: null };
+      });
+      res.status(status).end();
     }),
   );
 

@@ -1084,8 +1084,20 @@ export function addCollaborator(
   return request(`/projects/${projectId}/collaborators`, { method: "POST", body: JSON.stringify({ email, role }) });
 }
 
+/**
+ * Round 1191: same X-Idempotency-Key mechanism createProject/
+ * transferProjectOwnership already use (see their own doc comments) --
+ * this route serves both "owner removes someone else" and self-service
+ * "leave project," and the self-leave path's own server-side fix
+ * (withIdempotency wrapping requireProjectAccess) only actually protects
+ * a retry once this call carries a key for it to key its cached response
+ * on.
+ */
 export function removeCollaborator(projectId: string, userId: string): Promise<void> {
-  return request(`/projects/${projectId}/collaborators/${userId}`, { method: "DELETE" });
+  return request(`/projects/${projectId}/collaborators/${userId}`, {
+    method: "DELETE",
+    headers: { "x-idempotency-key": crypto.randomUUID() },
+  });
 }
 
 export function updateCollaboratorRole(

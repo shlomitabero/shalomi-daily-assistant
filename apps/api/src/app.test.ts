@@ -4553,6 +4553,53 @@ test("a collaborator can leave a project by removing their own id, losing access
 });
 
 /**
+ * Round 1191: this route's own self-leave path is a case docs/wakeRetry-
+ * idempotency-design.md's standing inventory got wrong -- it classified
+ * every DELETE route as "already safe" because deleting an already-
+ * deleted row is a no-op, but that reasoning never checked the auth gate
+ * (requireProjectAccess) that runs BEFORE the deletion. Once a self-leave
+ * succeeds, the caller is no longer a collaborator (or the owner), so a
+ * retry with no idempotency protection used to re-evaluate that same
+ * check and 404 ("Project not found") for a leave that, from the
+ * caller's own point of view, already fully succeeded. Same shape as
+ * round 1189's transfer-ownership fix.
+ */
+test("DELETE .../collaborators/:userId (self-leave) retried with the same idempotency key after the first attempt already succeeded replays the original 204, instead of 404ing now that the caller is no longer a collaborator", async () => {
+  await withServer(async (baseUrl) => {
+    const ownerToken = await signup(baseUrl, "leave-idem-owner1@example.com");
+    const leavingToken = await signup(baseUrl, "leave-idem-collab1@example.com");
+
+    const createRes = await fetch(`${baseUrl}/api/projects`, {
+      method: "POST",
+      headers: authHeaders(ownerToken),
+      body: JSON.stringify({ description: "A CRM with customers and deals." }),
+    });
+    const { project } = (await createRes.json()) as { project: { id: string } };
+    await fetch(`${baseUrl}/api/projects/${project.id}/collaborators`, {
+      method: "POST",
+      headers: authHeaders(ownerToken),
+      body: JSON.stringify({ email: "leave-idem-collab1@example.com" }),
+    });
+    const meRes = await fetch(`${baseUrl}/api/auth/me`, { headers: authHeaders(leavingToken) });
+    const { user: leavingUser } = (await meRes.json()) as { user: { id: string } };
+
+    const headers = { ...authHeaders(leavingToken), "x-idempotency-key": "self-leave-repro-key" };
+    const firstRes = await fetch(`${baseUrl}/api/projects/${project.id}/collaborators/${leavingUser.id}`, { method: "DELETE", headers });
+    assert.equal(firstRes.status, 204);
+
+    const afterFirst = await fetch(`${baseUrl}/api/projects/${project.id}`, { headers: authHeaders(leavingToken) });
+    assert.equal(afterFirst.status, 404, "sanity check: the first call must have genuinely removed this account's own access");
+
+    const retryRes = await fetch(`${baseUrl}/api/projects/${project.id}/collaborators/${leavingUser.id}`, { method: "DELETE", headers });
+    assert.equal(
+      retryRes.status,
+      204,
+      "a retried self-leave with the same idempotency key must replay the original success, not 404 now that the caller is no longer a collaborator",
+    );
+  });
+});
+
+/**
  * The critical cross-collaborator check this project's established rule
  * (rounds 208-212) requires for any delete/update endpoint that accepts a
  * client-supplied id: a real id belonging to a DIFFERENT collaborator, not
