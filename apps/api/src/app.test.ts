@@ -15248,6 +15248,195 @@ test("POST .../transfer-ownership is owner-only, 404s for a userId that isn't an
   });
 });
 
+/**
+ * Regression test for a real gap found by round 1171's Explore survey:
+ * PATCH .../collaborators/:userId/role, DELETE .../collaborators/:userId,
+ * and POST .../transfer-ownership (added just last round, with no limiter
+ * of its own either) all had no rate limiter at all, unlike their sibling
+ * POST .../collaborators (invite, round 1052). All four now deliberately
+ * SHARE inviteCollaboratorRateLimiter's own budget -- "how much can this
+ * owner churn who has access to, or owns, this project" is one question
+ * regardless of which specific action does the churning. Confirms the
+ * shared budget really is shared: one invite plus role-change calls
+ * exhaust it, and the 31st call across ANY of these three actions (role-
+ * change, remove, transfer-ownership) is rejected with 429.
+ */
+test("PATCH .../collaborators/:userId/role, DELETE .../collaborators/:userId, and POST .../transfer-ownership share ONE combined rate-limit budget with POST .../collaborators (invite)", async () => {
+  await withServer(async (baseUrl) => {
+    const ownerToken = await signup(baseUrl, "rate-collab-owner1@example.com");
+    const collabToken = await signup(baseUrl, "rate-collab-editor1@example.com");
+
+    const createRes = await fetch(`${baseUrl}/api/projects`, {
+      method: "POST",
+      headers: authHeaders(ownerToken),
+      body: JSON.stringify({ description: "A CRM with customers and deals." }),
+    });
+    const { project } = (await createRes.json()) as { project: { id: string } };
+
+    // Call 1 of 30: invite the one real collaborator this test needs,
+    // deliberately counted as part of the shared budget below.
+    const inviteRes = await fetch(`${baseUrl}/api/projects/${project.id}/collaborators`, {
+      method: "POST",
+      headers: authHeaders(ownerToken),
+      body: JSON.stringify({ email: "rate-collab-editor1@example.com" }),
+    });
+    assert.equal(inviteRes.status, 201);
+    const { collaborators } = (await inviteRes.json()) as { collaborators: { userId: string }[] };
+    const collabUserId = collaborators[0].userId;
+
+    // Calls 2-30 of 30: harmless, idempotent role-change calls (toggling
+    // back to the same "editor" role every time) spend the rest of the
+    // shared budget without actually changing anything real.
+    for (let i = 0; i < 29; i++) {
+      const res = await fetch(`${baseUrl}/api/projects/${project.id}/collaborators/${collabUserId}/role`, {
+        method: "PATCH",
+        headers: authHeaders(ownerToken),
+        body: JSON.stringify({ role: "editor" }),
+      });
+      assert.notEqual(res.status, 429, `role-change ${i + 2} of 30 (within the shared limit) must not be rate-limited yet`);
+    }
+
+    // Call 31: a DIFFERENT action in the same shared family (remove) must
+    // already be blocked, proving the budget really is shared across
+    // invite/role-change/remove, not three independent 30-call budgets.
+    const blockedRemove = await fetch(`${baseUrl}/api/projects/${project.id}/collaborators/${collabUserId}`, {
+      method: "DELETE",
+      headers: authHeaders(ownerToken),
+    });
+    assert.equal(blockedRemove.status, 429);
+    assert.equal(((await blockedRemove.json()) as { code?: string }).code, "RATE_LIMITED");
+
+    // transfer-ownership, the newest member of this same shared family,
+    // must be blocked too.
+    const blockedTransfer = await fetch(`${baseUrl}/api/projects/${project.id}/transfer-ownership`, {
+      method: "POST",
+      headers: authHeaders(ownerToken),
+      body: JSON.stringify({ userId: collabUserId }),
+    });
+    assert.equal(blockedTransfer.status, 429);
+
+    // A different account must get its own fresh allowance.
+    const otherOwnerToken = await signup(baseUrl, "rate-collab-owner1-other@example.com");
+    const otherCreateRes = await fetch(`${baseUrl}/api/projects`, {
+      method: "POST",
+      headers: authHeaders(otherOwnerToken),
+      body: JSON.stringify({ description: "A different CRM." }),
+    });
+    const { project: otherProject } = (await otherCreateRes.json()) as { project: { id: string } };
+    const otherInviteRes = await fetch(`${baseUrl}/api/projects/${otherProject.id}/collaborators`, {
+      method: "POST",
+      headers: authHeaders(otherOwnerToken),
+      body: JSON.stringify({ email: "rate-collab-editor1@example.com" }),
+    });
+    assert.equal(otherInviteRes.status, 201, "a different account must not be collaterally blocked by another account's own shared budget");
+  });
+});
+
+/**
+ * Regression test for the same round-1171 finding: DELETE
+ * .../integrations/whatsapp/messages (bulk-clear) and its sibling
+ * .../messages/:messageId (one row at a time) had no rate limiter at all.
+ * Both now share ONE dedicated whatsappHistoryRateLimiter, deliberately
+ * separate from whatsappRateLimiter (reserved for WhatsApp INTEGRATION
+ * churn -- connect/disconnect/send, not message-history housekeeping).
+ */
+test("DELETE .../integrations/whatsapp/messages (bulk-clear) and .../messages/:messageId share ONE combined rate-limit budget, separate from whatsappRateLimiter", async () => {
+  await withServer(async (baseUrl) => {
+    const ownerToken = await signup(baseUrl, "rate-whatsapp-history1@example.com");
+    const createRes = await fetch(`${baseUrl}/api/projects`, {
+      method: "POST",
+      headers: authHeaders(ownerToken),
+      body: JSON.stringify({ description: "A CRM with customers and deals." }),
+    });
+    const { project } = (await createRes.json()) as { project: { id: string } };
+
+    for (let i = 0; i < 30; i++) {
+      const res = await fetch(`${baseUrl}/api/projects/${project.id}/integrations/whatsapp/messages`, {
+        method: "DELETE",
+        headers: authHeaders(ownerToken),
+      });
+      assert.notEqual(res.status, 429, `bulk-clear ${i + 1} of 30 (within the limit) must not be rate-limited yet`);
+    }
+
+    const blockedBulk = await fetch(`${baseUrl}/api/projects/${project.id}/integrations/whatsapp/messages`, {
+      method: "DELETE",
+      headers: authHeaders(ownerToken),
+    });
+    assert.equal(blockedBulk.status, 429);
+    assert.equal(((await blockedBulk.json()) as { code?: string }).code, "RATE_LIMITED");
+
+    // The single-message delete sibling must already be blocked too --
+    // same shared budget, not an independent one.
+    const blockedSingle = await fetch(`${baseUrl}/api/projects/${project.id}/integrations/whatsapp/messages/not-a-real-message-id`, {
+      method: "DELETE",
+      headers: authHeaders(ownerToken),
+    });
+    assert.equal(blockedSingle.status, 429);
+
+    // A different account must get its own fresh allowance.
+    const otherOwnerToken = await signup(baseUrl, "rate-whatsapp-history1-other@example.com");
+    const otherCreateRes = await fetch(`${baseUrl}/api/projects`, {
+      method: "POST",
+      headers: authHeaders(otherOwnerToken),
+      body: JSON.stringify({ description: "A different CRM." }),
+    });
+    const { project: otherProject } = (await otherCreateRes.json()) as { project: { id: string } };
+    const otherRes = await fetch(`${baseUrl}/api/projects/${otherProject.id}/integrations/whatsapp/messages`, {
+      method: "DELETE",
+      headers: authHeaders(otherOwnerToken),
+    });
+    assert.equal(otherRes.status, 204, "a different account must not be collaterally blocked by another account's own shared budget");
+  });
+});
+
+/**
+ * Regression test for the same round-1171 finding: POST
+ * .../calendar-feed-token/regenerate had no rate limiter at all, unlike
+ * every sibling owner-only mutation this file already guards. Given its
+ * own severity (breaking every collaborator's live subscription with no
+ * warning), it gets its own dedicated limiter rather than sharing one.
+ */
+test("POST .../calendar-feed-token/regenerate is rate-limited per authenticated account: the 31st regenerate is rejected with 429, while a different account is unaffected", async () => {
+  await withServer(async (baseUrl) => {
+    const ownerToken = await signup(baseUrl, "rate-feed-token1@example.com");
+    const createRes = await fetch(`${baseUrl}/api/projects`, {
+      method: "POST",
+      headers: authHeaders(ownerToken),
+      body: JSON.stringify({ description: "A CRM with customers and deals." }),
+    });
+    const { project } = (await createRes.json()) as { project: { id: string } };
+
+    for (let i = 0; i < 30; i++) {
+      const res = await fetch(`${baseUrl}/api/projects/${project.id}/calendar-feed-token/regenerate`, {
+        method: "POST",
+        headers: authHeaders(ownerToken),
+      });
+      assert.notEqual(res.status, 429, `regenerate ${i + 1} of 30 (within the limit) must not be rate-limited yet`);
+    }
+
+    const blocked = await fetch(`${baseUrl}/api/projects/${project.id}/calendar-feed-token/regenerate`, {
+      method: "POST",
+      headers: authHeaders(ownerToken),
+    });
+    assert.equal(blocked.status, 429);
+    assert.equal(((await blocked.json()) as { code?: string }).code, "RATE_LIMITED");
+
+    // A different account must get its own fresh allowance.
+    const otherOwnerToken = await signup(baseUrl, "rate-feed-token1-other@example.com");
+    const otherCreateRes = await fetch(`${baseUrl}/api/projects`, {
+      method: "POST",
+      headers: authHeaders(otherOwnerToken),
+      body: JSON.stringify({ description: "A different CRM." }),
+    });
+    const { project: otherProject } = (await otherCreateRes.json()) as { project: { id: string } };
+    const otherRes = await fetch(`${baseUrl}/api/projects/${otherProject.id}/calendar-feed-token/regenerate`, {
+      method: "POST",
+      headers: authHeaders(otherOwnerToken),
+    });
+    assert.equal(otherRes.status, 200, "a different account must not be collaterally blocked by another account's own shared budget");
+  });
+});
+
 test("POST /auth/signup is rate-limited per IP: the 21st signup attempt in the window is rejected with 429 even though every earlier one used a distinct, otherwise-valid email", async () => {
   await withServer(async (baseUrl) => {
     for (let i = 0; i < 20; i++) {

@@ -1515,6 +1515,44 @@ export function createProjectsRouter(
   });
 
   /**
+   * Round 1171: POST .../calendar-feed-token/regenerate had no volumetric
+   * throttle at all, unlike every sibling owner-only mutation this file
+   * already guards. Lower severity than an unbounded-disk-growth hazard
+   * (round-972's own doc comment: "rotating the token also breaks every
+   * OTHER collaborator's already-configured subscription with no warning
+   * to them"), but that's exactly the abuse surface a cap matters for --
+   * a single authenticated account looping this call griefs every real
+   * collaborator's live calendar subscription repeatedly, with nothing
+   * server-side slowing it down.
+   */
+  const calendarFeedTokenRateLimiter = createRateLimiter({
+    windowMs: 15 * 60 * 1000,
+    max: 30,
+    keyGenerator: (req) => req.userId ?? "unknown",
+    message: "Too many calendar feed token requests. Please try again later.",
+  });
+
+  /**
+   * Round 1171: DELETE .../integrations/whatsapp/messages (bulk-clear, a
+   * single unbounded DELETE over the whole message-history table for this
+   * project) and its sibling .../messages/:messageId (one row at a time)
+   * both had no volumetric throttle at all. Deliberately a dedicated
+   * limiter, not whatsappRateLimiter above: that one's own doc comment
+   * scopes it specifically to "how much can this account churn this
+   * project's WhatsApp INTEGRATION" (connect/disconnect/send) -- clearing
+   * already-received message history is a different real question (log
+   * housekeeping, not integration churn), even though nothing stops an
+   * account from looping either route to repeatedly wipe a project's own
+   * WhatsApp log.
+   */
+  const whatsappHistoryRateLimiter = createRateLimiter({
+    windowMs: 15 * 60 * 1000,
+    max: 30,
+    keyGenerator: (req) => req.userId ?? "unknown",
+    message: "Too many WhatsApp history requests. Please try again later.",
+  });
+
+  /**
    * /build, /refine, and /answers each read `project.spec` once at the
    * start of the request, then spend real time (an AI/heuristic
    * spec-generation call, and for /build and /refine also a migration)
@@ -1738,6 +1776,7 @@ export function createProjectsRouter(
    */
   router.post(
     "/projects/:id/calendar-feed-token/regenerate",
+    calendarFeedTokenRateLimiter,
     asyncRoute(async (req, res) => {
       requireProjectOwner(db, req.params.id, req.userId!);
       res.json({ token: regenerateCalendarFeedToken(db, req.params.id) });
@@ -1973,9 +2012,17 @@ export function createProjectsRouter(
    * enforced by requireProjectWriteAccess on every mutating route). Does
    * NOT let the owner target their own id -- ownership isn't a role row at
    * all, so there is no "role" of the owner's to change.
+   *
+   * Round 1171: had no volumetric throttle at all, unlike every sibling
+   * mutation in this file. Shares inviteCollaboratorRateLimiter's own
+   * budget rather than a new dedicated limiter -- inviting, changing a
+   * role, removing, and (below) transferring ownership are all the same
+   * real question: how much can this owner churn who has access to, or
+   * owns, this project.
    */
   router.patch(
     "/projects/:id/collaborators/:userId/role",
+    inviteCollaboratorRateLimiter,
     asyncRoute(async (req, res) => {
       const project = requireProjectOwner(db, req.params.id, req.userId!);
       if (req.params.userId === project.ownerId) {
@@ -2005,9 +2052,18 @@ export function createProjectsRouter(
    * chance to check who's being removed; the owner-or-self check below is
    * what actually gates it. A collaborator can never remove a *different*
    * collaborator -- that stays owner-only.
+   *
+   * Round 1171: had no volumetric throttle at all. Shares
+   * inviteCollaboratorRateLimiter's own budget, the same "churn who has
+   * access to this project" question as invite/role-change/transfer-
+   * ownership -- keyed by req.userId regardless of whether this request
+   * is an owner removing someone else or a collaborator leaving on their
+   * own, so a self-service "leave" never collides with a separate
+   * account's own unrelated allowance.
    */
   router.delete(
     "/projects/:id/collaborators/:userId",
+    inviteCollaboratorRateLimiter,
     asyncRoute(async (req, res) => {
       const project = requireProjectAccess(db, req.params.id, req.userId!);
       const isSelf = req.params.userId === req.userId;
@@ -2029,9 +2085,17 @@ export function createProjectsRouter(
    * (packages/db) swaps project.ownerId and demotes the previous owner to
    * an "editor" collaborator in one call, so they keep full access instead
    * of losing it outright.
+   *
+   * Round 1171: had no rate limiter at all when this route was first
+   * added (round 1170) -- same gap round 1146/1169 already found and
+   * fixed on this file's other owner-only mutations. Shares
+   * inviteCollaboratorRateLimiter's own budget, the same reasoning as the
+   * role-change/remove routes above: one real question for this whole
+   * family of actions.
    */
   router.post(
     "/projects/:id/transfer-ownership",
+    inviteCollaboratorRateLimiter,
     asyncRoute(async (req, res) => {
       const project = requireProjectOwner(db, req.params.id, req.userId!);
       const parsed = TransferOwnershipSchema.safeParse(req.body);
@@ -2665,8 +2729,15 @@ export function createProjectsRouter(
     }),
   );
 
+  /**
+   * Round 1171: had no volumetric throttle at all -- a single unbounded
+   * DELETE over the whole message-history table for this project, which
+   * any collaborator with write access (not just the owner) can call in a
+   * tight loop with nothing server-side slowing it down.
+   */
   router.delete(
     "/projects/:id/integrations/whatsapp/messages",
+    whatsappHistoryRateLimiter,
     asyncRoute(async (req, res) => {
       const project = requireProjectWriteAccess(db, req.params.id, req.userId!);
       clearWhatsAppMessages(db, project.id);
@@ -2689,9 +2760,15 @@ export function createProjectsRouter(
    * short of a page reload. The sibling bulk-clear route just above needs
    * no such wrapper -- clearing an already-empty table is naturally a
    * no-op -- but deleting one specific row by id is not.
+   *
+   * Round 1171: shares the bulk-clear route's own whatsappHistoryRateLimiter
+   * -- the same real question (how much message-history housekeeping can
+   * this account do), whether it's done one row or the whole table at a
+   * time.
    */
   router.delete(
     "/projects/:id/integrations/whatsapp/messages/:messageId",
+    whatsappHistoryRateLimiter,
     asyncRoute(async (req, res) => {
       const project = requireProjectWriteAccess(db, req.params.id, req.userId!);
       const idempotencyKey = req.header("X-Idempotency-Key") || undefined;
