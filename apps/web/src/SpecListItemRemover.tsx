@@ -133,6 +133,8 @@ export function RoleChip({
   onRenamed,
   onRemoved,
   readOnly = false,
+  siblingActionBusy = false,
+  onBusyChange,
 }: {
   role: string;
   projectId: string;
@@ -143,10 +145,33 @@ export function RoleChip({
   onRemoved: (project: Project) => void;
   /** A viewer collaborator can land on the spec review screen (it's shown for any unbuilt project, regardless of role) -- the server already rejects a rename/remove with 403 VIEWER_READ_ONLY, but without this the chip still looked and behaved like a live rename/remove control up until that rejection. Mirrors CheckpointLabelEditor's own `if (readOnly) return <strong>...` pattern. */
   readOnly?: boolean;
+  /** Round 1133: see FieldChip's own siblingActionBusy comment for the
+   * general shape -- true while a SIBLING role's own remove/rename, or
+   * AddRoleForm, is in flight, so this chip's own controls wait on an
+   * unrelated role's in-flight action too, the same cross-gate
+   * EntitySummaryItem/FieldChip already got (rounds 1026/1059/1063), just
+   * never extended to this file's three plain string-list sibling
+   * families (roles/personas/assumptions) at all. */
+  siblingActionBusy?: boolean;
+  /** Reports this chip's own busy state up to App.tsx, which folds every
+   * mounted RoleChip's own state into one aggregate fed back via
+   * siblingActionBusy above and AddRoleForm's own disabled prop -- the
+   * other half of the same cross-gate. Keyed by `index` (roles/personas/
+   * assumptions have no stable identity beyond array position, the same
+   * identity useRemovableSpecItem/useRenamableSpecItem already close over). */
+  onBusyChange?: (index: number, busy: boolean) => void;
 }) {
   const { t } = useTranslation();
   const { busy, error, handleRemove, clearError } = useRemovableSpecItem(() => removeRole(projectId, index, role), onRemoved);
   const rename = useRenamableSpecItem(role, (value) => renameRole(projectId, index, value, role), onRenamed);
+
+  // Round 1133: see FieldChip's own fieldChipBusy comment -- this chip's
+  // own remove/rename each independently PATCH/DELETE then call
+  // onRemoved/onRenamed -> App.tsx's setProject(project) full-state
+  // replace, the same unguarded read-modify-write race FieldChip already
+  // had closed for fields (rounds 1026/1027). ORs in siblingActionBusy so
+  // a DIFFERENT role's action (or AddRoleForm) also disables this chip.
+  const chipBusy = busy || siblingActionBusy;
 
   // Round 932: clearError() lives on the OTHER hook (useRemovableSpecItem)
   // from the one startEditing() belongs to (useRenamableSpecItem), which
@@ -156,10 +181,34 @@ export function RoleChip({
   // true, since this chip's two error states render in mutually exclusive
   // branches -- so without this, it would silently reappear the moment a
   // completely unrelated, successful rename returns to this branch.
+  // Round 1133: also guards against starting a rename while chipBusy --
+  // see FieldChip's own handleStartRename comment for why guarding just
+  // this entry point (rather than disabling the chip-text span, which has
+  // no disabled attribute) closes the whole gap: once rename.editing is
+  // true, the remove button is unrendered entirely (see the editing
+  // branch below).
   function handleStartRename() {
+    if (chipBusy) return;
     clearError();
     rename.startEditing();
   }
+
+  // Round 1133: reports this chip's own busy state (both actions -- unlike
+  // chipBusy above, which doesn't need rename.busy since starting a rename
+  // is already separately guarded by handleStartRename above) up to
+  // App.tsx on every change, keyed by this role's own stable `index`. A
+  // second effect, mount/unmount-only, clears this chip's own entry when
+  // it unmounts (the role was removed, or the whole list re-keyed by a
+  // sibling's removal) so a stale "busy" entry doesn't linger in the
+  // parent's aggregate forever -- mirrors FieldChip's own identical pair.
+  const ownBusy = busy || rename.busy;
+  useEffect(() => {
+    onBusyChange?.(index, ownBusy);
+  }, [index, ownBusy, onBusyChange]);
+  useEffect(() => {
+    return () => onBusyChange?.(index, false);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [index, onBusyChange]);
 
   if (readOnly) {
     return <span className="chip">{role}</span>;
@@ -212,7 +261,7 @@ export function RoleChip({
         type="button"
         className="chip-remove"
         onClick={handleRemove}
-        disabled={busy || !canRemove}
+        disabled={chipBusy || !canRemove}
         aria-label={t("spec.roles.remove")}
         title={canRemove ? t("spec.roles.remove") : t("spec.roles.lastOneHint")}
       >
@@ -234,6 +283,8 @@ export function AssumptionItem({
   onRenamed,
   onRemoved,
   readOnly = false,
+  siblingActionBusy = false,
+  onBusyChange,
 }: {
   assumption: string;
   projectId: string;
@@ -242,6 +293,10 @@ export function AssumptionItem({
   onRemoved: (project: Project) => void;
   /** See RoleChip's own comment -- same gap, same fix. */
   readOnly?: boolean;
+  /** See RoleChip's own siblingActionBusy comment -- same gap, same fix. */
+  siblingActionBusy?: boolean;
+  /** See RoleChip's own onBusyChange comment -- same gap, same fix. */
+  onBusyChange?: (index: number, busy: boolean) => void;
 }) {
   const { t } = useTranslation();
   const { busy, error, handleRemove, clearError } = useRemovableSpecItem(
@@ -254,11 +309,25 @@ export function AssumptionItem({
     onRenamed,
   );
 
-  /** Round 932: see RoleChip's own handleStartRename -- same gap, same fix. */
+  // Round 1133: see RoleChip's own chipBusy comment -- same gap, same fix.
+  const itemBusy = busy || siblingActionBusy;
+
+  /** Round 932: see RoleChip's own handleStartRename -- same gap, same fix. Round 1133: also guards against chipBusy, same gap, same fix. */
   function handleStartRename() {
+    if (itemBusy) return;
     clearError();
     rename.startEditing();
   }
+
+  // Round 1133: see RoleChip's own ownBusy/onBusyChange effect pair -- same gap, same fix.
+  const ownBusy = busy || rename.busy;
+  useEffect(() => {
+    onBusyChange?.(index, ownBusy);
+  }, [index, ownBusy, onBusyChange]);
+  useEffect(() => {
+    return () => onBusyChange?.(index, false);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [index, onBusyChange]);
 
   if (readOnly) {
     return <li className="assumption-item">{assumption}</li>;
@@ -311,7 +380,7 @@ export function AssumptionItem({
         type="button"
         className="assumption-remove"
         onClick={handleRemove}
-        disabled={busy}
+        disabled={itemBusy}
         aria-label={t("spec.assumptions.remove")}
         title={t("spec.assumptions.remove")}
       >
@@ -344,6 +413,8 @@ export function PersonaItem({
   onRenamed,
   onRemoved,
   readOnly = false,
+  siblingActionBusy = false,
+  onBusyChange,
 }: {
   persona: string;
   projectId: string;
@@ -352,6 +423,10 @@ export function PersonaItem({
   onRemoved: (project: Project) => void;
   /** See RoleChip's own comment -- same gap, same fix. */
   readOnly?: boolean;
+  /** See RoleChip's own siblingActionBusy comment -- same gap, same fix. */
+  siblingActionBusy?: boolean;
+  /** See RoleChip's own onBusyChange comment -- same gap, same fix. */
+  onBusyChange?: (index: number, busy: boolean) => void;
 }) {
   const { t } = useTranslation();
   const { busy, error, handleRemove, clearError } = useRemovableSpecItem(
@@ -360,11 +435,25 @@ export function PersonaItem({
   );
   const rename = useRenamableSpecItem(persona, (value) => renamePersona(projectId, index, value, persona), onRenamed);
 
-  /** Round 932: see RoleChip's own handleStartRename -- same gap, same fix. */
+  // Round 1133: see RoleChip's own chipBusy comment -- same gap, same fix.
+  const itemBusy = busy || siblingActionBusy;
+
+  /** Round 932: see RoleChip's own handleStartRename -- same gap, same fix. Round 1133: also guards against chipBusy, same gap, same fix. */
   function handleStartRename() {
+    if (itemBusy) return;
     clearError();
     rename.startEditing();
   }
+
+  // Round 1133: see RoleChip's own ownBusy/onBusyChange effect pair -- same gap, same fix.
+  const ownBusy = busy || rename.busy;
+  useEffect(() => {
+    onBusyChange?.(index, ownBusy);
+  }, [index, ownBusy, onBusyChange]);
+  useEffect(() => {
+    return () => onBusyChange?.(index, false);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [index, onBusyChange]);
 
   if (readOnly) {
     return <li className="persona-item">{persona}</li>;
@@ -417,7 +506,7 @@ export function PersonaItem({
         type="button"
         className="persona-remove"
         onClick={handleRemove}
-        disabled={busy}
+        disabled={itemBusy}
         aria-label={t("spec.personas.remove")}
         title={t("spec.personas.remove")}
       >
@@ -1142,17 +1231,29 @@ export function AddRoleForm({
   projectId,
   onAdded,
   readOnly = false,
+  disabled = false,
+  onBusyChange,
 }: {
   projectId: string;
   onAdded: (project: Project) => void;
   /** See RoleChip's own comment -- same gap, same fix: hidden entirely, the same way EntityPanel's own record form is hidden (not just disabled) for a read-only viewer. */
   readOnly?: boolean;
+  /** Round 1133: see AddEntityForm's own disabled comment -- same gap, same fix, one level down (roles rather than entities). True while any role's own remove/rename is in flight. */
+  disabled?: boolean;
+  /** Reports this form's own busy state up to App.tsx, which folds it into the same aggregate it feeds back via each RoleChip's own siblingActionBusy prop -- the other half of the same cross-gate. */
+  onBusyChange?: (busy: boolean) => void;
 }) {
   const { t } = useTranslation();
   const { value, setValue, busy, error, handleSubmit } = useAddableSpecItem(
     (role) => addRole(projectId, role),
     onAdded,
   );
+  const formDisabled = busy || disabled;
+
+  useEffect(() => {
+    onBusyChange?.(busy);
+  }, [busy, onBusyChange]);
+
   if (readOnly) return null;
   return (
     <form className="spec-add-item-form" onSubmit={handleSubmit}>
@@ -1162,9 +1263,9 @@ export function AddRoleForm({
         onChange={(e) => setValue(e.target.value)}
         placeholder={t("spec.roles.addPlaceholder")}
         aria-label={t("spec.roles.addPlaceholder")}
-        disabled={busy}
+        disabled={formDisabled}
       />
-      <button type="submit" className="secondary" disabled={busy || !value.trim()}>
+      <button type="submit" className="secondary" disabled={formDisabled || !value.trim()}>
         {t("spec.roles.add")}
       </button>
       {error && (
@@ -1390,17 +1491,29 @@ export function AddAssumptionForm({
   projectId,
   onAdded,
   readOnly = false,
+  disabled = false,
+  onBusyChange,
 }: {
   projectId: string;
   onAdded: (project: Project) => void;
   /** See AddRoleForm's own comment -- same gap, same fix. */
   readOnly?: boolean;
+  /** See AddRoleForm's own disabled comment -- same gap, same fix. */
+  disabled?: boolean;
+  /** See AddRoleForm's own onBusyChange comment -- same gap, same fix. */
+  onBusyChange?: (busy: boolean) => void;
 }) {
   const { t } = useTranslation();
   const { value, setValue, busy, error, handleSubmit } = useAddableSpecItem(
     (assumption) => addAssumption(projectId, assumption),
     onAdded,
   );
+  const formDisabled = busy || disabled;
+
+  useEffect(() => {
+    onBusyChange?.(busy);
+  }, [busy, onBusyChange]);
+
   if (readOnly) return null;
   return (
     <form className="spec-add-item-form" onSubmit={handleSubmit}>
@@ -1410,9 +1523,9 @@ export function AddAssumptionForm({
         onChange={(e) => setValue(e.target.value)}
         placeholder={t("spec.assumptions.addPlaceholder")}
         aria-label={t("spec.assumptions.addPlaceholder")}
-        disabled={busy}
+        disabled={formDisabled}
       />
-      <button type="submit" className="secondary" disabled={busy || !value.trim()}>
+      <button type="submit" className="secondary" disabled={formDisabled || !value.trim()}>
         {t("spec.assumptions.add")}
       </button>
       {error && (
@@ -1429,17 +1542,29 @@ export function AddPersonaForm({
   projectId,
   onAdded,
   readOnly = false,
+  disabled = false,
+  onBusyChange,
 }: {
   projectId: string;
   onAdded: (project: Project) => void;
   /** See AddRoleForm's own comment -- same gap, same fix. */
   readOnly?: boolean;
+  /** See AddRoleForm's own disabled comment -- same gap, same fix. */
+  disabled?: boolean;
+  /** See AddRoleForm's own onBusyChange comment -- same gap, same fix. */
+  onBusyChange?: (busy: boolean) => void;
 }) {
   const { t } = useTranslation();
   const { value, setValue, busy, error, handleSubmit } = useAddableSpecItem(
     (persona) => addPersona(projectId, persona),
     onAdded,
   );
+  const formDisabled = busy || disabled;
+
+  useEffect(() => {
+    onBusyChange?.(busy);
+  }, [busy, onBusyChange]);
+
   if (readOnly) return null;
   return (
     <form className="spec-add-item-form" onSubmit={handleSubmit}>
@@ -1449,9 +1574,9 @@ export function AddPersonaForm({
         onChange={(e) => setValue(e.target.value)}
         placeholder={t("spec.personas.addPlaceholder")}
         aria-label={t("spec.personas.addPlaceholder")}
-        disabled={busy}
+        disabled={formDisabled}
       />
-      <button type="submit" className="secondary" disabled={busy || !value.trim()}>
+      <button type="submit" className="secondary" disabled={formDisabled || !value.trim()}>
         {t("spec.personas.add")}
       </button>
       {error && (

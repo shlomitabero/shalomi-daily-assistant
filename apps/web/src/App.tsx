@@ -502,6 +502,61 @@ function AppContent() {
   }, []);
   const [addEntityBusy, setAddEntityBusy] = useState(false);
   const anyEntityOrAddBusy = addEntityBusy || Object.keys(entityBusyMap).length > 0;
+  /**
+   * Round 1133: the identical round-1063 cross-gate (RoleChip/PersonaItem/
+   * AssumptionItem vs. their own AddRoleForm/AddPersonaForm/AddAssumptionForm
+   * siblings), never extended from EntitySummaryItem/AddEntityForm to this
+   * file's three plain string-list sibling families -- each of RoleChip/
+   * PersonaItem/AssumptionItem's remove/rename, and each matching Add*Form's
+   * add, independently calls onRemoved/onRenamed/onAdded -> this same
+   * setProject full-state replace, the exact unguarded read-modify-write
+   * race already closed for entities/fields. Three independent aggregates
+   * (one per list, keyed by the chip's own array `index` -- these three
+   * lists have no stable identity beyond array position, unlike entity/
+   * field names), each mirroring entityBusyMap/handleEntityBusyChange/
+   * addEntityBusy/anyEntityOrAddBusy exactly.
+   */
+  const [roleBusyMap, setRoleBusyMap] = useState<Record<number, boolean>>({});
+  const handleRoleBusyChange = useCallback((index: number, isRoleBusy: boolean) => {
+    setRoleBusyMap((prev) => {
+      if (Boolean(prev[index]) === isRoleBusy) return prev;
+      if (!isRoleBusy) {
+        const { [index]: _removed, ...rest } = prev;
+        return rest;
+      }
+      return { ...prev, [index]: true };
+    });
+  }, []);
+  const [addRoleBusy, setAddRoleBusy] = useState(false);
+  const anyRoleOrAddBusy = addRoleBusy || Object.keys(roleBusyMap).length > 0;
+
+  const [personaBusyMap, setPersonaBusyMap] = useState<Record<number, boolean>>({});
+  const handlePersonaBusyChange = useCallback((index: number, isPersonaBusy: boolean) => {
+    setPersonaBusyMap((prev) => {
+      if (Boolean(prev[index]) === isPersonaBusy) return prev;
+      if (!isPersonaBusy) {
+        const { [index]: _removed, ...rest } = prev;
+        return rest;
+      }
+      return { ...prev, [index]: true };
+    });
+  }, []);
+  const [addPersonaBusy, setAddPersonaBusy] = useState(false);
+  const anyPersonaOrAddBusy = addPersonaBusy || Object.keys(personaBusyMap).length > 0;
+
+  const [assumptionBusyMap, setAssumptionBusyMap] = useState<Record<number, boolean>>({});
+  const handleAssumptionBusyChange = useCallback((index: number, isAssumptionBusy: boolean) => {
+    setAssumptionBusyMap((prev) => {
+      if (Boolean(prev[index]) === isAssumptionBusy) return prev;
+      if (!isAssumptionBusy) {
+        const { [index]: _removed, ...rest } = prev;
+        return rest;
+      }
+      return { ...prev, [index]: true };
+    });
+  }, []);
+  const [addAssumptionBusy, setAddAssumptionBusy] = useState(false);
+  const anyAssumptionOrAddBusy = addAssumptionBusy || Object.keys(assumptionBusyMap).length > 0;
   // Which spec provider actually built the CURRENT draft's spec -- null for
   // a re-opened existing project (createProject's own response is the only
   // source of this, and it isn't stored on the project itself, so there's
@@ -2306,10 +2361,18 @@ function AppContent() {
                   onRenamed={setProject}
                   onRemoved={setProject}
                   readOnly={myRole === "viewer"}
+                  siblingActionBusy={anyRoleOrAddBusy}
+                  onBusyChange={handleRoleBusyChange}
                 />
               ))}
             </div>
-            <AddRoleForm projectId={project.id} onAdded={setProject} readOnly={myRole === "viewer"} />
+            <AddRoleForm
+              projectId={project.id}
+              onAdded={setProject}
+              readOnly={myRole === "viewer"}
+              disabled={anyRoleOrAddBusy}
+              onBusyChange={setAddRoleBusy}
+            />
           </section>
 
           <section>
@@ -2324,10 +2387,18 @@ function AppContent() {
                   onRenamed={setProject}
                   onRemoved={setProject}
                   readOnly={myRole === "viewer"}
+                  siblingActionBusy={anyPersonaOrAddBusy}
+                  onBusyChange={handlePersonaBusyChange}
                 />
               ))}
             </ul>
-            <AddPersonaForm projectId={project.id} onAdded={setProject} readOnly={myRole === "viewer"} />
+            <AddPersonaForm
+              projectId={project.id}
+              onAdded={setProject}
+              readOnly={myRole === "viewer"}
+              disabled={anyPersonaOrAddBusy}
+              onBusyChange={setAddPersonaBusy}
+            />
           </section>
 
           <section>
@@ -2371,10 +2442,18 @@ function AppContent() {
                   onRenamed={setProject}
                   onRemoved={setProject}
                   readOnly={myRole === "viewer"}
+                  siblingActionBusy={anyAssumptionOrAddBusy}
+                  onBusyChange={handleAssumptionBusyChange}
                 />
               ))}
             </ul>
-            <AddAssumptionForm projectId={project.id} onAdded={setProject} readOnly={myRole === "viewer"} />
+            <AddAssumptionForm
+              projectId={project.id}
+              onAdded={setProject}
+              readOnly={myRole === "viewer"}
+              disabled={anyAssumptionOrAddBusy}
+              onBusyChange={setAddAssumptionBusy}
+            />
           </section>
 
           {project.spec.openQuestions.length > 0 && (
@@ -2565,10 +2644,18 @@ function AppContent() {
                   onRenamed={setProject}
                   onRemoved={setProject}
                   readOnly={myRole === "viewer"}
+                  siblingActionBusy={anyRoleOrAddBusy}
+                  onBusyChange={handleRoleBusyChange}
                 />
               ))}
             </div>
-            <AddRoleForm projectId={project.id} onAdded={setProject} readOnly={myRole === "viewer"} />
+            <AddRoleForm
+              projectId={project.id}
+              onAdded={setProject}
+              readOnly={myRole === "viewer"}
+              disabled={anyRoleOrAddBusy}
+              onBusyChange={setAddRoleBusy}
+            />
           </section>
 
           <section className="preview-personas-section">
@@ -2583,10 +2670,18 @@ function AppContent() {
                   onRenamed={setProject}
                   onRemoved={setProject}
                   readOnly={myRole === "viewer"}
+                  siblingActionBusy={anyPersonaOrAddBusy}
+                  onBusyChange={handlePersonaBusyChange}
                 />
               ))}
             </ul>
-            <AddPersonaForm projectId={project.id} onAdded={setProject} readOnly={myRole === "viewer"} />
+            <AddPersonaForm
+              projectId={project.id}
+              onAdded={setProject}
+              readOnly={myRole === "viewer"}
+              disabled={anyPersonaOrAddBusy}
+              onBusyChange={setAddPersonaBusy}
+            />
           </section>
 
           <section className="preview-assumptions-section">
@@ -2601,10 +2696,18 @@ function AppContent() {
                   onRenamed={setProject}
                   onRemoved={setProject}
                   readOnly={myRole === "viewer"}
+                  siblingActionBusy={anyAssumptionOrAddBusy}
+                  onBusyChange={handleAssumptionBusyChange}
                 />
               ))}
             </ul>
-            <AddAssumptionForm projectId={project.id} onAdded={setProject} readOnly={myRole === "viewer"} />
+            <AddAssumptionForm
+              projectId={project.id}
+              onAdded={setProject}
+              readOnly={myRole === "viewer"}
+              disabled={anyAssumptionOrAddBusy}
+              onBusyChange={setAddAssumptionBusy}
+            />
           </section>
 
           <div className="preview-body">

@@ -2738,3 +2738,475 @@ test("AddRoleForm, AddAssumptionForm, AddPersonaForm, AddEntityForm, and AddFiel
     assert.equal(document.querySelector("form") === null, true, "a read-only AddFieldForm must render nothing");
   });
 });
+
+/**
+ * Round 1133: the identical round-1063 cross-gate (EntitySummaryItem vs.
+ * AddEntityForm, tested just above), extended to this file's three plain
+ * string-list sibling families -- RoleChip/PersonaItem/AssumptionItem vs.
+ * their own AddRoleForm/AddPersonaForm/AddAssumptionForm. Unlike entities/
+ * fields, these three lists have no stable identity beyond array position,
+ * so onBusyChange is keyed by `index` (a number) rather than by name.
+ */
+test("RoleChip's own remove button and rename are disabled while siblingActionBusy is true, and re-enable once it clears", async () => {
+  await withJsdom(async () => {
+    const renderWithSiblingBusy = (siblingActionBusy: boolean) =>
+      render(
+        React.createElement(
+          ThemeProvider,
+          null,
+          React.createElement(
+            LanguageProvider,
+            null,
+            React.createElement(RoleChip, {
+              role: "Manager",
+              projectId: "proj1",
+              index: 1,
+              canRemove: true,
+              onRenamed: () => {},
+              onRemoved: () => {},
+              siblingActionBusy,
+            }),
+          ),
+        ),
+      );
+
+    renderWithSiblingBusy(true);
+    assert.equal(
+      (document.querySelector(".chip-remove") as HTMLButtonElement).disabled,
+      true,
+      "the remove button must be disabled while a sibling role's own action (or AddRoleForm) is in flight",
+    );
+    fireEvent.click(document.querySelector(".chip-text") as HTMLElement);
+    assert.equal(
+      document.querySelector(".chip-rename-edit") === null,
+      true,
+      "clicking the label must not open the rename editor while siblingActionBusy is true",
+    );
+    cleanup();
+
+    renderWithSiblingBusy(false);
+    assert.equal(
+      (document.querySelector(".chip-remove") as HTMLButtonElement).disabled,
+      false,
+      "the remove button must re-enable once siblingActionBusy clears",
+    );
+  });
+});
+
+test("RoleChip reports its own busy state up via onBusyChange (keyed by index) while its remove is in flight, and clears its entry on unmount", async () => {
+  await withJsdom(async () => {
+    const originalFetch = globalThis.fetch;
+    let resolveRemove!: (value: Response) => void;
+    const removeHeld = new Promise<Response>((resolve) => {
+      resolveRemove = resolve;
+    });
+    globalThis.fetch = (async (input: string, init?: RequestInit) => {
+      const method = init?.method ?? "GET";
+      if (method === "DELETE" && input === "/api/projects/proj1/roles/1") return removeHeld;
+      throw new Error(`unexpected request ${method} ${input}`);
+    }) as typeof fetch;
+
+    const busyCalls: Array<[number, boolean]> = [];
+    try {
+      const { unmount } = render(
+        React.createElement(
+          ThemeProvider,
+          null,
+          React.createElement(
+            LanguageProvider,
+            null,
+            React.createElement(RoleChip, {
+              role: "Manager",
+              projectId: "proj1",
+              index: 1,
+              canRemove: true,
+              onRenamed: () => {},
+              onRemoved: () => {},
+              onBusyChange: (index: number, busy: boolean) => busyCalls.push([index, busy]),
+            }),
+          ),
+        ),
+      );
+
+      fireEvent.click(document.querySelector(".chip-remove") as HTMLButtonElement);
+      await waitForCondition(() => busyCalls.some(([index, busy]) => index === 1 && busy === true));
+
+      resolveRemove(new Response(JSON.stringify({ project: baseProject }), { status: 200, headers: { "content-type": "application/json" } }));
+      await waitForCondition(() => busyCalls.some(([index, busy]) => index === 1 && busy === false));
+
+      busyCalls.length = 0;
+      unmount();
+      assert.deepEqual(busyCalls, [[1, false]], "unmounting must report this role's own entry as no longer busy, so a removed role never lingers in the parent's aggregate");
+    } finally {
+      resolveRemove!(new Response(JSON.stringify({ project: baseProject }), { status: 200, headers: { "content-type": "application/json" } }));
+      globalThis.fetch = originalFetch;
+    }
+  });
+});
+
+test("AssumptionItem's own remove button and rename are disabled while siblingActionBusy is true, and re-enable once it clears", async () => {
+  await withJsdom(async () => {
+    const renderWithSiblingBusy = (siblingActionBusy: boolean) =>
+      render(
+        React.createElement(
+          ThemeProvider,
+          null,
+          React.createElement(
+            LanguageProvider,
+            null,
+            React.createElement(AssumptionItem, {
+              assumption: "Second assumption",
+              projectId: "proj1",
+              index: 1,
+              onRenamed: () => {},
+              onRemoved: () => {},
+              siblingActionBusy,
+            }),
+          ),
+        ),
+      );
+
+    renderWithSiblingBusy(true);
+    assert.equal(
+      (document.querySelector(".assumption-remove") as HTMLButtonElement).disabled,
+      true,
+      "the remove button must be disabled while a sibling assumption's own action (or AddAssumptionForm) is in flight",
+    );
+    fireEvent.click(document.querySelector(".assumption-text") as HTMLElement);
+    assert.equal(
+      document.querySelector(".assumption-rename-edit") === null,
+      true,
+      "clicking the label must not open the rename editor while siblingActionBusy is true",
+    );
+    cleanup();
+
+    renderWithSiblingBusy(false);
+    assert.equal(
+      (document.querySelector(".assumption-remove") as HTMLButtonElement).disabled,
+      false,
+      "the remove button must re-enable once siblingActionBusy clears",
+    );
+  });
+});
+
+test("AssumptionItem reports its own busy state up via onBusyChange (keyed by index) while its remove is in flight, and clears its entry on unmount", async () => {
+  await withJsdom(async () => {
+    const originalFetch = globalThis.fetch;
+    let resolveRemove!: (value: Response) => void;
+    const removeHeld = new Promise<Response>((resolve) => {
+      resolveRemove = resolve;
+    });
+    globalThis.fetch = (async (input: string, init?: RequestInit) => {
+      const method = init?.method ?? "GET";
+      if (method === "DELETE" && input === "/api/projects/proj1/assumptions/1") return removeHeld;
+      throw new Error(`unexpected request ${method} ${input}`);
+    }) as typeof fetch;
+
+    const busyCalls: Array<[number, boolean]> = [];
+    try {
+      const { unmount } = render(
+        React.createElement(
+          ThemeProvider,
+          null,
+          React.createElement(
+            LanguageProvider,
+            null,
+            React.createElement(AssumptionItem, {
+              assumption: "Second assumption",
+              projectId: "proj1",
+              index: 1,
+              onRenamed: () => {},
+              onRemoved: () => {},
+              onBusyChange: (index: number, busy: boolean) => busyCalls.push([index, busy]),
+            }),
+          ),
+        ),
+      );
+
+      fireEvent.click(document.querySelector(".assumption-remove") as HTMLButtonElement);
+      await waitForCondition(() => busyCalls.some(([index, busy]) => index === 1 && busy === true));
+
+      resolveRemove(new Response(JSON.stringify({ project: baseProject }), { status: 200, headers: { "content-type": "application/json" } }));
+      await waitForCondition(() => busyCalls.some(([index, busy]) => index === 1 && busy === false));
+
+      busyCalls.length = 0;
+      unmount();
+      assert.deepEqual(busyCalls, [[1, false]], "unmounting must report this assumption's own entry as no longer busy, so a removed assumption never lingers in the parent's aggregate");
+    } finally {
+      resolveRemove!(new Response(JSON.stringify({ project: baseProject }), { status: 200, headers: { "content-type": "application/json" } }));
+      globalThis.fetch = originalFetch;
+    }
+  });
+});
+
+test("PersonaItem's own remove button and rename are disabled while siblingActionBusy is true, and re-enable once it clears", async () => {
+  await withJsdom(async () => {
+    const renderWithSiblingBusy = (siblingActionBusy: boolean) =>
+      render(
+        React.createElement(
+          ThemeProvider,
+          null,
+          React.createElement(
+            LanguageProvider,
+            null,
+            React.createElement(PersonaItem, {
+              persona: "Second persona",
+              projectId: "proj1",
+              index: 1,
+              onRenamed: () => {},
+              onRemoved: () => {},
+              siblingActionBusy,
+            }),
+          ),
+        ),
+      );
+
+    renderWithSiblingBusy(true);
+    assert.equal(
+      (document.querySelector(".persona-remove") as HTMLButtonElement).disabled,
+      true,
+      "the remove button must be disabled while a sibling persona's own action (or AddPersonaForm) is in flight",
+    );
+    fireEvent.click(document.querySelector(".persona-text") as HTMLElement);
+    assert.equal(
+      document.querySelector(".persona-rename-edit") === null,
+      true,
+      "clicking the label must not open the rename editor while siblingActionBusy is true",
+    );
+    cleanup();
+
+    renderWithSiblingBusy(false);
+    assert.equal(
+      (document.querySelector(".persona-remove") as HTMLButtonElement).disabled,
+      false,
+      "the remove button must re-enable once siblingActionBusy clears",
+    );
+  });
+});
+
+test("PersonaItem reports its own busy state up via onBusyChange (keyed by index) while its remove is in flight, and clears its entry on unmount", async () => {
+  await withJsdom(async () => {
+    const originalFetch = globalThis.fetch;
+    let resolveRemove!: (value: Response) => void;
+    const removeHeld = new Promise<Response>((resolve) => {
+      resolveRemove = resolve;
+    });
+    globalThis.fetch = (async (input: string, init?: RequestInit) => {
+      const method = init?.method ?? "GET";
+      if (method === "DELETE" && input === "/api/projects/proj1/personas/1") return removeHeld;
+      throw new Error(`unexpected request ${method} ${input}`);
+    }) as typeof fetch;
+
+    const busyCalls: Array<[number, boolean]> = [];
+    try {
+      const { unmount } = render(
+        React.createElement(
+          ThemeProvider,
+          null,
+          React.createElement(
+            LanguageProvider,
+            null,
+            React.createElement(PersonaItem, {
+              persona: "Second persona",
+              projectId: "proj1",
+              index: 1,
+              onRenamed: () => {},
+              onRemoved: () => {},
+              onBusyChange: (index: number, busy: boolean) => busyCalls.push([index, busy]),
+            }),
+          ),
+        ),
+      );
+
+      fireEvent.click(document.querySelector(".persona-remove") as HTMLButtonElement);
+      await waitForCondition(() => busyCalls.some(([index, busy]) => index === 1 && busy === true));
+
+      resolveRemove(new Response(JSON.stringify({ project: baseProject }), { status: 200, headers: { "content-type": "application/json" } }));
+      await waitForCondition(() => busyCalls.some(([index, busy]) => index === 1 && busy === false));
+
+      busyCalls.length = 0;
+      unmount();
+      assert.deepEqual(busyCalls, [[1, false]], "unmounting must report this persona's own entry as no longer busy, so a removed persona never lingers in the parent's aggregate");
+    } finally {
+      resolveRemove!(new Response(JSON.stringify({ project: baseProject }), { status: 200, headers: { "content-type": "application/json" } }));
+      globalThis.fetch = originalFetch;
+    }
+  });
+});
+
+test("AddRoleForm's own input and submit button are disabled while its disabled prop is true, regardless of its own local busy state", async () => {
+  await withJsdom(async () => {
+    render(
+      React.createElement(
+        ThemeProvider,
+        null,
+        React.createElement(
+          LanguageProvider,
+          null,
+          React.createElement(AddRoleForm, { projectId: "proj1", onAdded: () => {}, disabled: true }),
+        ),
+      ),
+    );
+    fireEvent.change(document.querySelector(".spec-add-item-form input") as HTMLInputElement, { target: { value: "Director" } });
+    assert.equal((document.querySelector(".spec-add-item-form input") as HTMLInputElement).disabled, true, "the input must be disabled while the disabled prop is true");
+    assert.equal((document.querySelector(".spec-add-item-form button") as HTMLButtonElement).disabled, true, "the submit button must be disabled while the disabled prop is true");
+  });
+});
+
+test("AddRoleForm reports its own busy state up via onBusyChange while its own add request is in flight", async () => {
+  await withJsdom(async () => {
+    const originalFetch = globalThis.fetch;
+    let resolveAdd!: (value: Response) => void;
+    const addHeld = new Promise<Response>((resolve) => {
+      resolveAdd = resolve;
+    });
+    globalThis.fetch = (async (input: string, init?: RequestInit) => {
+      const method = init?.method ?? "GET";
+      if (method === "POST" && input === "/api/projects/proj1/roles") return addHeld;
+      throw new Error(`unexpected request ${method} ${input}`);
+    }) as typeof fetch;
+
+    const busyCalls: boolean[] = [];
+    try {
+      render(
+        React.createElement(
+          ThemeProvider,
+          null,
+          React.createElement(
+            LanguageProvider,
+            null,
+            React.createElement(AddRoleForm, { projectId: "proj1", onAdded: () => {}, onBusyChange: (busy: boolean) => busyCalls.push(busy) }),
+          ),
+        ),
+      );
+
+      fireEvent.change(document.querySelector(".spec-add-item-form input") as HTMLInputElement, { target: { value: "Director" } });
+      fireEvent.click(document.querySelector(".spec-add-item-form button") as HTMLButtonElement);
+
+      await waitForCondition(() => busyCalls.includes(true));
+      resolveAdd(new Response(JSON.stringify({ project: baseProject }), { status: 200, headers: { "content-type": "application/json" } }));
+      await waitForCondition(() => busyCalls.length >= 2 && busyCalls[busyCalls.length - 1] === false);
+    } finally {
+      resolveAdd!(new Response(JSON.stringify({ project: baseProject }), { status: 200, headers: { "content-type": "application/json" } }));
+      globalThis.fetch = originalFetch;
+    }
+  });
+});
+
+test("AddAssumptionForm's own input and submit button are disabled while its disabled prop is true, regardless of its own local busy state", async () => {
+  await withJsdom(async () => {
+    render(
+      React.createElement(
+        ThemeProvider,
+        null,
+        React.createElement(
+          LanguageProvider,
+          null,
+          React.createElement(AddAssumptionForm, { projectId: "proj1", onAdded: () => {}, disabled: true }),
+        ),
+      ),
+    );
+    fireEvent.change(document.querySelector(".spec-add-item-form input") as HTMLInputElement, { target: { value: "Third assumption" } });
+    assert.equal((document.querySelector(".spec-add-item-form input") as HTMLInputElement).disabled, true, "the input must be disabled while the disabled prop is true");
+    assert.equal((document.querySelector(".spec-add-item-form button") as HTMLButtonElement).disabled, true, "the submit button must be disabled while the disabled prop is true");
+  });
+});
+
+test("AddAssumptionForm reports its own busy state up via onBusyChange while its own add request is in flight", async () => {
+  await withJsdom(async () => {
+    const originalFetch = globalThis.fetch;
+    let resolveAdd!: (value: Response) => void;
+    const addHeld = new Promise<Response>((resolve) => {
+      resolveAdd = resolve;
+    });
+    globalThis.fetch = (async (input: string, init?: RequestInit) => {
+      const method = init?.method ?? "GET";
+      if (method === "POST" && input === "/api/projects/proj1/assumptions") return addHeld;
+      throw new Error(`unexpected request ${method} ${input}`);
+    }) as typeof fetch;
+
+    const busyCalls: boolean[] = [];
+    try {
+      render(
+        React.createElement(
+          ThemeProvider,
+          null,
+          React.createElement(
+            LanguageProvider,
+            null,
+            React.createElement(AddAssumptionForm, { projectId: "proj1", onAdded: () => {}, onBusyChange: (busy: boolean) => busyCalls.push(busy) }),
+          ),
+        ),
+      );
+
+      fireEvent.change(document.querySelector(".spec-add-item-form input") as HTMLInputElement, { target: { value: "Third assumption" } });
+      fireEvent.click(document.querySelector(".spec-add-item-form button") as HTMLButtonElement);
+
+      await waitForCondition(() => busyCalls.includes(true));
+      resolveAdd(new Response(JSON.stringify({ project: baseProject }), { status: 200, headers: { "content-type": "application/json" } }));
+      await waitForCondition(() => busyCalls.length >= 2 && busyCalls[busyCalls.length - 1] === false);
+    } finally {
+      resolveAdd!(new Response(JSON.stringify({ project: baseProject }), { status: 200, headers: { "content-type": "application/json" } }));
+      globalThis.fetch = originalFetch;
+    }
+  });
+});
+
+test("AddPersonaForm's own input and submit button are disabled while its disabled prop is true, regardless of its own local busy state", async () => {
+  await withJsdom(async () => {
+    render(
+      React.createElement(
+        ThemeProvider,
+        null,
+        React.createElement(
+          LanguageProvider,
+          null,
+          React.createElement(AddPersonaForm, { projectId: "proj1", onAdded: () => {}, disabled: true }),
+        ),
+      ),
+    );
+    fireEvent.change(document.querySelector(".spec-add-item-form input") as HTMLInputElement, { target: { value: "Third persona" } });
+    assert.equal((document.querySelector(".spec-add-item-form input") as HTMLInputElement).disabled, true, "the input must be disabled while the disabled prop is true");
+    assert.equal((document.querySelector(".spec-add-item-form button") as HTMLButtonElement).disabled, true, "the submit button must be disabled while the disabled prop is true");
+  });
+});
+
+test("AddPersonaForm reports its own busy state up via onBusyChange while its own add request is in flight", async () => {
+  await withJsdom(async () => {
+    const originalFetch = globalThis.fetch;
+    let resolveAdd!: (value: Response) => void;
+    const addHeld = new Promise<Response>((resolve) => {
+      resolveAdd = resolve;
+    });
+    globalThis.fetch = (async (input: string, init?: RequestInit) => {
+      const method = init?.method ?? "GET";
+      if (method === "POST" && input === "/api/projects/proj1/personas") return addHeld;
+      throw new Error(`unexpected request ${method} ${input}`);
+    }) as typeof fetch;
+
+    const busyCalls: boolean[] = [];
+    try {
+      render(
+        React.createElement(
+          ThemeProvider,
+          null,
+          React.createElement(
+            LanguageProvider,
+            null,
+            React.createElement(AddPersonaForm, { projectId: "proj1", onAdded: () => {}, onBusyChange: (busy: boolean) => busyCalls.push(busy) }),
+          ),
+        ),
+      );
+
+      fireEvent.change(document.querySelector(".spec-add-item-form input") as HTMLInputElement, { target: { value: "Third persona" } });
+      fireEvent.click(document.querySelector(".spec-add-item-form button") as HTMLButtonElement);
+
+      await waitForCondition(() => busyCalls.includes(true));
+      resolveAdd(new Response(JSON.stringify({ project: baseProject }), { status: 200, headers: { "content-type": "application/json" } }));
+      await waitForCondition(() => busyCalls.length >= 2 && busyCalls[busyCalls.length - 1] === false);
+    } finally {
+      resolveAdd!(new Response(JSON.stringify({ project: baseProject }), { status: 200, headers: { "content-type": "application/json" } }));
+      globalThis.fetch = originalFetch;
+    }
+  });
+});

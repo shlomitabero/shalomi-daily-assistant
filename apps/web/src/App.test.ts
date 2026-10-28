@@ -1483,13 +1483,19 @@ test("App.tsx renders the roles/personas/assumptions editors on the built-projec
     /<RoleChip\b/,
     "expected the built-project preview screen to render RoleChip too, the same way the spec-review screen already does",
   );
-  assert.match(previewBlockMatch![0], /<AddRoleForm projectId=\{project\.id\} onAdded=\{setProject\} readOnly=\{myRole === "viewer"\} \/>/);
+  assert.match(
+    previewBlockMatch![0],
+    /<AddRoleForm\s+projectId=\{project\.id\}\s+onAdded=\{setProject\}\s+readOnly=\{myRole === "viewer"\}[\s\S]*?\/>/,
+  );
   assert.match(
     previewBlockMatch![0],
     /<PersonaItem\b/,
     "expected the built-project preview screen to render PersonaItem too",
   );
-  assert.match(previewBlockMatch![0], /<AddPersonaForm projectId=\{project\.id\} onAdded=\{setProject\} readOnly=\{myRole === "viewer"\} \/>/);
+  assert.match(
+    previewBlockMatch![0],
+    /<AddPersonaForm\s+projectId=\{project\.id\}\s+onAdded=\{setProject\}\s+readOnly=\{myRole === "viewer"\}[\s\S]*?\/>/,
+  );
   assert.match(
     previewBlockMatch![0],
     /<AssumptionItem\b/,
@@ -1497,7 +1503,7 @@ test("App.tsx renders the roles/personas/assumptions editors on the built-projec
   );
   assert.match(
     previewBlockMatch![0],
-    /<AddAssumptionForm projectId=\{project\.id\} onAdded=\{setProject\} readOnly=\{myRole === "viewer"\} \/>/,
+    /<AddAssumptionForm\s+projectId=\{project\.id\}\s+onAdded=\{setProject\}\s+readOnly=\{myRole === "viewer"\}[\s\S]*?\/>/,
   );
 });
 
