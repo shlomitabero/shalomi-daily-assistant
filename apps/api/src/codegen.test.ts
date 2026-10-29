@@ -4049,13 +4049,15 @@ test("the exported EntityView's calendar record chips are drag-and-drop-able ont
     /className=\{record\.id === moveErrorId \? "calendar-record-chip calendar-record-chip-move-error" : "calendar-record-chip"\}\s*draggable=\{!bulkActionBusy\}\s*onDragStart=\{\(e\) => \{/,
   );
   assert.match(entityViewJsx, /e\.dataTransfer\.setData\("text\/plain", `\$\{record\.id\}\|\$\{dayKey\}`\);\s*e\.dataTransfer\.effectAllowed = "move";/);
-  // The day cell itself must be a real drop target, highlighted only while actually dragged over.
-  assert.match(entityViewJsx, /onDragOver=\{\s*day\.inCurrentMonth\s*\?\s*\(e\) => \{\s*e\.preventDefault\(\);\s*setDragOverDay\(dayKey\);\s*\}\s*: undefined\s*\}/);
+  // The day cell itself must be a real drop target, highlighted only while actually dragged over --
+  // and, since round 1202, gated on its own dayDropTarget flag rather than day.inCurrentMonth, so a
+  // leading/trailing day of an adjacent month (still a real, correctly-dated cell) accepts a drop too.
+  assert.match(entityViewJsx, /onDragOver=\{\s*dayDropTarget\s*\?\s*\(e\) => \{\s*e\.preventDefault\(\);\s*setDragOverDay\(dayKey\);\s*\}\s*: undefined\s*\}/);
   assert.match(
     entityViewJsx,
-    /onDragLeave=\{\s*day\.inCurrentMonth \? \(\) => setDragOverDay\(\(prev\) => \(prev === dayKey \? null : prev\)\) : undefined\s*\}/,
+    /onDragLeave=\{\s*dayDropTarget \? \(\) => setDragOverDay\(\(prev\) => \(prev === dayKey \? null : prev\)\) : undefined\s*\}/,
   );
-  assert.match(entityViewJsx, /isDragOver = day\.inCurrentMonth && dragOverDay === dayKey;/);
+  assert.match(entityViewJsx, /isDragOver = dayDropTarget && dragOverDay === dayKey;/);
   assert.match(entityViewJsx, /if \(isDragOver\) dayClasses\.push\("calendar-day-drag-over"\);/);
   assert.match(
     entityViewJsx,
@@ -4101,6 +4103,98 @@ test("the exported EntityView's calendar record chips are drag-and-drop-able ont
   calls.length = 0;
   handleCalendarDrop({ id: 7, date: "2026-09-15" }, "date", new Date(2026, 8, 15)); // dropped back on the same day
   assert.deepEqual(calls, [], "dropping a chip back onto the day it's already on must never call handleMoveFields");
+});
+
+/**
+ * Round 1202: mirrors the live preview's own round-1201 fix. The exported
+ * CalendarView used to gate its drop target (onDragOver/onDragLeave/
+ * onDrop/isDragOver) on the SAME day.inCurrentMonth flag as the click-to-
+ * add affordance, so a record could never be dragged onto a leading/
+ * trailing day cell of an adjacent month -- even one already visibly
+ * rendered, with the correct date, in the same 6-week grid -- since no
+ * drop handler was ever attached to that cell. Confirms the generated
+ * onDrop expression is now gated on its own dayDropTarget flag (always
+ * true in the exported app, which has no readOnly/collaborator-viewer
+ * concept) and, executed for real, still calls onReschedule with that
+ * cell's own real date even for a day where inCurrentMonth is false.
+ */
+test("the exported EntityView's calendar day cell accepts a drop even when it's a leading/trailing day of an adjacent month, not just the currently displayed month's own days", () => {
+  const withDate: Project = {
+    ...project,
+    spec: {
+      ...project.spec,
+      entities: [
+        ...project.spec.entities,
+        {
+          name: "Appointment",
+          label: "תורים",
+          fields: [
+            { name: "customerName", label: "שם לקוח", type: "text", required: true },
+            { name: "date", label: "תאריך", type: "date", required: true },
+          ],
+        },
+      ],
+    },
+  };
+  const files = generateExportFiles(withDate);
+  const entityViewJsx = files.find((f) => f.path === "web/src/components/EntityView.jsx")!.content;
+
+  // dayDropTarget must be its own, unconditional flag -- not folded back
+  // into day.inCurrentMonth the way click-to-add/keyboard activation
+  // deliberately still is -- confirming this can't silently regress to
+  // round 1202's own pre-fix shape.
+  assert.match(entityViewJsx, /const dayDropTarget = true;/);
+
+  const onDropExpr = entityViewJsx
+    .slice(entityViewJsx.indexOf("onDrop={") + "onDrop={".length, entityViewJsx.indexOf('<span className="calendar-day-number"'))
+    .trim()
+    .replace(/\s*>\s*$/, "")
+    .replace(/\}\s*$/, "")
+    .trim();
+  assert.match(onDropExpr, /dayDropTarget/, "expected to find the real generated onDrop expression");
+
+  const makeHandler = (
+    dayDropTarget: boolean,
+    day: { date: string },
+    records: { id: number }[],
+    setDragOverDay: (v: unknown) => void,
+    onReschedule: (record: unknown, date: unknown, originDay: unknown) => void,
+  ) =>
+    new Function(
+      "dayDropTarget",
+      "day",
+      "records",
+      "setDragOverDay",
+      "onReschedule",
+      `return (${onDropExpr});`,
+    )(dayDropTarget, day, records, setDragOverDay, onReschedule) as ((e: unknown) => void) | undefined;
+
+  const records = [{ id: 7 }];
+  let rescheduled: unknown[] = [];
+  const onReschedule = (record: unknown, date: unknown, originDay: unknown) => {
+    rescheduled = [record, date, originDay];
+  };
+
+  // The day object here has inCurrentMonth: false -- an adjacent month's
+  // leading/trailing cell -- yet dayDropTarget (passed in as true, exactly
+  // as the generated source now always computes it) must still produce a
+  // real handler.
+  const outsideDay = { inCurrentMonth: false, date: "2026-10-01" };
+  const handler = makeHandler(true, outsideDay, records, () => {}, onReschedule);
+  assert.equal(
+    typeof handler,
+    "function",
+    "a day cell outside the current month must still get a real onDrop handler now that drop targets aren't gated on inCurrentMonth",
+  );
+
+  let prevented = false;
+  handler!({ preventDefault: () => (prevented = true), dataTransfer: { getData: () => "7|2026-09-30" } });
+  assert.equal(prevented, true);
+  assert.deepEqual(
+    rescheduled,
+    [records[0], "2026-10-01", "2026-09-30"],
+    "dropping onto an adjacent-month day cell must still call onReschedule with that cell's own real date",
+  );
 });
 
 /**

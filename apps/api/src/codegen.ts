@@ -3878,15 +3878,27 @@ function CalendarView({ entity, dateField, endDateField, records, month, onPrevM
       <div className="calendar-grid calendar-days">
         {days.map((day, i) => {
           const dayKey = formatDateForInput(day.date);
-          const isDragOver = day.inCurrentMonth && dragOverDay === dayKey;
+          // The drop target is its own flag, not folded into
+          // day.inCurrentMonth -- mirrors the live preview's own round-1201
+          // fix (EntityPanel.tsx): day.date is always a real, correctly-
+          // dated Date for every one of the 42 grid cells (including
+          // adjacent months' leading/trailing days), so gating drag-and-
+          // drop on inCurrentMonth too meant a ranged record could never be
+          // dragged across a month boundary even onto a cell already
+          // visibly showing the right date. Click-to-add and keyboard
+          // activation stay gated on inCurrentMonth, unchanged. The
+          // exported app has no readOnly/collaborator-viewer concept, so
+          // unlike EntityPanel.tsx's dayDropTarget this one is simply true.
+          const dayDropTarget = true;
+          const isDragOver = dayDropTarget && dragOverDay === dayKey;
           const isToday = day.inCurrentMonth && isSameCalendarDay(day.date, new Date());
           const dayClasses = ["calendar-day"];
           if (day.inCurrentMonth) {
             dayClasses.push("calendar-day-clickable");
-            if (isDragOver) dayClasses.push("calendar-day-drag-over");
           } else {
             dayClasses.push("calendar-day-outside");
           }
+          if (isDragOver) dayClasses.push("calendar-day-drag-over");
           if (isToday) dayClasses.push("calendar-day-today");
           return (
           <div
@@ -3908,7 +3920,7 @@ function CalendarView({ entity, dateField, endDateField, records, month, onPrevM
                 : undefined
             }
             onDragOver={
-              day.inCurrentMonth
+              dayDropTarget
                 ? (e) => {
                     e.preventDefault();
                     setDragOverDay(dayKey);
@@ -3916,10 +3928,10 @@ function CalendarView({ entity, dateField, endDateField, records, month, onPrevM
                 : undefined
             }
             onDragLeave={
-              day.inCurrentMonth ? () => setDragOverDay((prev) => (prev === dayKey ? null : prev)) : undefined
+              dayDropTarget ? () => setDragOverDay((prev) => (prev === dayKey ? null : prev)) : undefined
             }
             onDrop={
-              day.inCurrentMonth
+              dayDropTarget
                 ? (e) => {
                     e.preventDefault();
                     setDragOverDay(null);
