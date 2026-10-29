@@ -27,6 +27,7 @@ import {
 import {
   fireScheduledRule,
   findTemplateFileAttachment,
+  hasTooManyConsecutiveFailuresToday,
   interpolateTemplate,
   isAllowedWebhookUrl,
   isScheduledRuleDue,
@@ -1469,6 +1470,53 @@ test("fireScheduledRule called with isManualTest omitted (the real scheduler's o
   const after = getAutomationRule(db, project.id, rule.id)!;
   assert.ok(after.lastTriggeredAt, "the real scheduler's own call must still update lastTriggeredAt, unchanged by this round's fix");
   assert.equal(after.lastStatus, "sent");
+});
+
+/**
+ * Round 1263: round 1261 stopped a manual Test from marking today's real
+ * occurrence as "already sent" (isScheduledRuleDue), but every Test call
+ * still inserted a fully real automation_runs row with no way to tell it
+ * apart from a genuine scheduler-tick failure -- so repeatedly Testing a
+ * broken rule while debugging it (five failed Test clicks while
+ * iterating on a fix is an entirely ordinary troubleshooting flow) could
+ * trip hasTooManyConsecutiveFailuresToday on nothing but Test clicks,
+ * silently skipping that day's real scheduled send even after the real
+ * misconfiguration was fixed. Confirms 5 consecutive Test-originated
+ * failures never trip the cap, while 5 consecutive REAL failures (via
+ * the real scheduler, isManualTest omitted) still do, exactly as before.
+ */
+test("5 consecutive isManualTest=true failures never trip hasTooManyConsecutiveFailuresToday, but 5 consecutive real scheduler failures still do", async () => {
+  const { db, project } = setupProject();
+  const rule = insertAutomationRule(db, scheduleRuleBase());
+  const { manager: brokenManager } = createFakeWhatsApp({ connected: true, sendResult: { ok: false, error: "recipient not found" } });
+
+  for (let i = 0; i < 5; i++) {
+    await fireScheduledRule(db, brokenManager, UNUSED_EMAIL_SENDER, project, rule, new Date("2026-03-15T09:00:00.000Z"), true);
+  }
+  assert.equal(
+    hasTooManyConsecutiveFailuresToday(db, getAutomationRule(db, project.id, rule.id)!, new Date("2026-03-15T09:00:00.000Z")),
+    false,
+    "5 consecutive Test-originated failures must never trip the real scheduler's own daily failure-pause cap",
+  );
+
+  // The real misconfiguration gets fixed, and the real scheduler ticks --
+  // must still actually attempt the send, not stay falsely paused.
+  const { manager: fixedManager, sendCalls } = createFakeWhatsApp({ connected: true });
+  await runScheduledAutomationsCheck(db, fixedManager, UNUSED_EMAIL_SENDER, new Date("2026-03-15T09:01:00.000Z"));
+  assert.equal(sendCalls.length, 1, "the real scheduler must still fire this rule -- Test clicks alone must never pause it");
+
+  // A SEPARATE rule, failing for real via the scheduler itself (never
+  // Tested), must still trip the cap exactly as before this round.
+  const realRule = insertAutomationRule(db, scheduleRuleBase({ toNumber: "972509999999" }));
+  const { manager: stillBrokenManager } = createFakeWhatsApp({ connected: true, sendResult: { ok: false, error: "recipient not found" } });
+  for (const minute of ["09:00", "09:01", "09:02", "09:03", "09:04"]) {
+    await runScheduledAutomationsCheck(db, stillBrokenManager, UNUSED_EMAIL_SENDER, new Date(`2026-03-15T${minute}:00.000Z`));
+  }
+  assert.equal(
+    hasTooManyConsecutiveFailuresToday(db, getAutomationRule(db, project.id, realRule.id)!, new Date("2026-03-15T09:05:00.000Z")),
+    true,
+    "5 consecutive REAL scheduler failures must still trip the cap, unchanged by this round's fix",
+  );
 });
 
 test("runScheduledAutomationsCheck fires exactly the rules that are due right now, across different projects, and skips disabled/not-yet-due ones", async () => {

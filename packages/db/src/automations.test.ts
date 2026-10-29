@@ -228,6 +228,29 @@ test("recordAutomationRun skips the rule's own lastTriggeredAt/lastStatus/lastEr
 });
 
 /**
+ * Round 1263: skipRuleSummaryUpdate's own value (true only at the Test
+ * route's call site) is also stored verbatim as the inserted run's own
+ * isTest column -- see AutomationRun.isTest's own doc comment for why
+ * (hasTooManyConsecutiveFailuresToday in apps/api/src/automations.ts
+ * needs to tell a Test-originated failure apart from a genuine
+ * scheduler-tick failure).
+ */
+test("recordAutomationRun stores skipRuleSummaryUpdate's own value as the inserted run's isTest column", () => {
+  const db = openDatabase(":memory:");
+  ensureAutomationRulesTable(db);
+  const rule = insertAutomationRule(db, baseRule());
+
+  recordAutomationRun(db, "proj1", rule.id, { status: "failed", error: "test failure" }, "send_whatsapp", null, null, new Date(), randomUUID(), true);
+  recordAutomationRun(db, "proj1", rule.id, { status: "failed", error: "real failure" }, "send_whatsapp", null, null, new Date(), randomUUID(), false);
+  recordAutomationRun(db, "proj1", rule.id, { status: "failed", error: "default call" });
+
+  const runs = listAutomationRuns(db, "proj1", rule.id);
+  assert.equal(runs.find((r) => r.error === "test failure")!.isTest, true, "a run fired with skipRuleSummaryUpdate=true must be stored as isTest");
+  assert.equal(runs.find((r) => r.error === "real failure")!.isTest, false, "a run fired with skipRuleSummaryUpdate=false must be stored as not-test");
+  assert.equal(runs.find((r) => r.error === "default call")!.isTest, false, "a run fired with skipRuleSummaryUpdate omitted (every real caller) must default to not-test");
+});
+
+/**
  * Round 1165: fireWebhookAction (apps/api/src/automations.ts) needs the
  * exact id a run row will get BEFORE this function is called, so it can
  * include that same id in the outbound webhook payload as a delivery id a
@@ -370,6 +393,39 @@ test("ensureAutomationRulesTable adds recordId to a pre-existing automation_runs
 
   assert.doesNotThrow(() => ensureAutomationRunsTable(db));
   assert.equal(getAutomationRun(db, "proj1", "rule1", "old-run")!.status, "sent");
+});
+
+/**
+ * Round 1263: the isTest column migration -- same additive-only,
+ * no-backfill discipline as recordId/recordSnapshot above. A
+ * pre-existing row has no way to know whether it was a Test or a real
+ * run, so it defaults to false (not-test), which is also the correct
+ * "count this toward hasTooManyConsecutiveFailuresToday's cap" behavior
+ * for a run that predates the Test/real distinction entirely.
+ */
+test("ensureAutomationRunsTable adds isTest to a pre-existing automation_runs table from an older app version, defaulting existing rows to not-test, and is idempotent", () => {
+  const db = openDatabase(":memory:");
+  db.exec(`
+    CREATE TABLE automation_runs (
+      id TEXT PRIMARY KEY,
+      projectId TEXT NOT NULL,
+      ruleId TEXT NOT NULL,
+      status TEXT NOT NULL,
+      error TEXT,
+      triggeredAt TEXT NOT NULL
+    )
+  `);
+  db.prepare(
+    `INSERT INTO automation_runs (id, projectId, ruleId, status, error, triggeredAt) VALUES ('old-run', 'proj1', 'rule1', 'sent', NULL, '2026-01-01T00:00:00.000Z')`,
+  ).run();
+
+  ensureAutomationRunsTable(db);
+
+  const oldRun = getAutomationRun(db, "proj1", "rule1", "old-run")!;
+  assert.equal(oldRun.isTest, false, "the migration must default a pre-existing row's isTest to false, not null or true");
+
+  assert.doesNotThrow(() => ensureAutomationRunsTable(db));
+  assert.equal(getAutomationRun(db, "proj1", "rule1", "old-run")!.isTest, false);
 });
 
 test("recordAutomationRun called with no actionType argument (every pre-round-948 call site) leaves lastActionType/the run's own actionType null, not throwing or defaulting to the rule's current one", () => {

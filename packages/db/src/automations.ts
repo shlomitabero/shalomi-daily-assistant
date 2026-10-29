@@ -183,6 +183,26 @@ export interface AutomationRun {
    */
   recordSnapshot: string | null;
   triggeredAt: string;
+  /**
+   * Round 1263: true only for a run fired by the manual "Test" button
+   * (routes/projects.ts's POST .../test, schedule-rule branch) -- every
+   * real caller (the scheduler itself, every record-triggered fire, and
+   * the manual Retry route) leaves this false, exactly mirroring
+   * recordAutomationRun's own `skipRuleSummaryUpdate` parameter, whose
+   * value this column stores verbatim (see that parameter's own doc
+   * comment for why it's true at exactly that one call site). Lets
+   * hasTooManyConsecutiveFailuresToday (apps/api/src/automations.ts)
+   * exclude Test-originated runs from the real scheduler's own daily
+   * failure-pause cap -- without this, repeatedly Testing a rule while
+   * debugging a real misconfiguration could trip that cap and silently
+   * skip the rule's genuine scheduled send later the same day, even
+   * after the real problem was fixed. False (not null) for any run
+   * recorded before this column existed, since every one of those was
+   * necessarily a pre-round-1261 run with no Test-vs-real distinction to
+   * begin with, and false is the correct "count this toward the cap"
+   * default for it either way.
+   */
+  isTest: boolean;
 }
 
 /**
@@ -223,6 +243,10 @@ export function ensureAutomationRunsTable(db: ForgeDatabase): void {
   if (!runColumns.includes("recordSnapshot")) {
     db.exec("ALTER TABLE automation_runs ADD COLUMN recordSnapshot TEXT");
   }
+  // Round 1263: see AutomationRun.isTest's own doc comment.
+  if (!runColumns.includes("isTest")) {
+    db.exec("ALTER TABLE automation_runs ADD COLUMN isTest INTEGER");
+  }
 }
 
 function rowToRun(row: Record<string, unknown>): AutomationRun {
@@ -236,6 +260,7 @@ function rowToRun(row: Record<string, unknown>): AutomationRun {
     recordId: (row.recordId as number | null) ?? null,
     recordSnapshot: (row.recordSnapshot as string | null) ?? null,
     triggeredAt: row.triggeredAt as string,
+    isTest: row.isTest === 1,
   };
 }
 
@@ -635,6 +660,14 @@ export function recordAutomationRun(
   // as before regardless, so a test's outcome still shows up in the
   // rule's own run history, just without feeding back into whether the
   // real schedule still considers itself due.
+  //
+  // Round 1263: this same value is ALSO stored verbatim as the inserted
+  // row's own isTest column (AutomationRun.isTest's own doc comment) --
+  // it already means exactly "this run was fired by the manual Test
+  // button" at every call site, which is exactly what
+  // hasTooManyConsecutiveFailuresToday needs to exclude Test runs from
+  // the real scheduler's own daily failure-pause cap, so no separate
+  // parameter is needed.
   skipRuleSummaryUpdate: boolean = false,
 ): string {
   const now = at.toISOString();
@@ -648,8 +681,8 @@ export function recordAutomationRun(
   // rather than instead of it so no existing lastTriggeredAt/lastStatus/
   // lastError reader needs to change.
   db.prepare(
-    `INSERT INTO automation_runs (id, projectId, ruleId, status, error, actionType, recordId, recordSnapshot, triggeredAt) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-  ).run(runId, projectId, id, outcome.status, outcome.error ?? null, actionType, recordId, recordSnapshot, now);
+    `INSERT INTO automation_runs (id, projectId, ruleId, status, error, actionType, recordId, recordSnapshot, triggeredAt, isTest) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+  ).run(runId, projectId, id, outcome.status, outcome.error ?? null, actionType, recordId, recordSnapshot, now, skipRuleSummaryUpdate ? 1 : 0);
   // Round 951: pruned in two independent buckets -- the newest
   // AUTOMATION_RUNS_RETENTION_LIMIT "WhatsApp is not connected" rows, and
   // the newest AUTOMATION_RUNS_RETENTION_LIMIT rows of everything else --

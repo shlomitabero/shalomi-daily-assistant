@@ -1311,6 +1311,20 @@ const MAX_CONSECUTIVE_SCHEDULE_FAILURES_PER_DAY = 5;
  * after the owner reconnects minutes later" -- a daily report could go
  * completely unsent for the rest of the day over a 5-minute outage.
  *
+ * Round 1263: a run's own isTest flag (AutomationRun.isTest's own doc
+ * comment) is excluded from this count for the identical reason -- round
+ * 1261 already stopped a manual Test from marking today's real
+ * occurrence as "already sent" via isScheduledRuleDue, but every Test
+ * still inserted a fully real automation_runs row with no way to tell it
+ * apart from a genuine scheduler-tick failure. Debugging a broken rule
+ * by clicking Test repeatedly (five failed attempts while iterating on a
+ * fix is an entirely ordinary troubleshooting flow) could trip this cap
+ * on nothing but Test clicks, silently skipping that day's real
+ * scheduled send even after the real misconfiguration was fixed --
+ * directly contradicting Test's own stated "no side effects on the real
+ * schedule" contract, the same root cause as round 1261 but a different
+ * downstream consumer of the same unconditional history row.
+ *
  * Round 951: isScheduledRuleDue keeps this rule "due" every single tick
  * (every 60s, startScheduledAutomationsLoop) for the rest of the day after
  * ANY failure, disconnect included -- so one ordinary outage can easily
@@ -1362,7 +1376,7 @@ const MAX_CONSECUTIVE_SCHEDULE_FAILURES_PER_DAY = 5;
 export function hasTooManyConsecutiveFailuresToday(db: ForgeDatabase, rule: AutomationRule, now: Date): boolean {
   const todayUtc = now.toISOString().slice(0, 10);
   const runs = listAutomationRuns(db, rule.projectId, rule.id, 3 * AUTOMATION_RUNS_RETENTION_LIMIT)
-    .filter((run) => run.error !== WHATSAPP_NOT_CONNECTED_ERROR && run.error !== EMAIL_NOT_CONFIGURED_ERROR)
+    .filter((run) => run.error !== WHATSAPP_NOT_CONNECTED_ERROR && run.error !== EMAIL_NOT_CONFIGURED_ERROR && !run.isTest)
     .slice(0, MAX_CONSECUTIVE_SCHEDULE_FAILURES_PER_DAY);
   if (runs.length < MAX_CONSECUTIVE_SCHEDULE_FAILURES_PER_DAY) return false;
   return runs.every((run) => run.status === "failed" && run.triggeredAt.slice(0, 10) === todayUtc);
