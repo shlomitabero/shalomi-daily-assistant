@@ -16443,6 +16443,113 @@ test("changing a collaborator's role itself still succeeds, with no notification
   );
 });
 
+/**
+ * Round 1262: unlike the sibling invite route's own isNewGrant check
+ * (round 1253), this route sent its round-1254 notification unconditionally
+ * -- re-submitting the SAME role the collaborator already had (a UI
+ * double-click, or any other no-op PATCH) sent an email falsely claiming
+ * "your access was changed," with no real change behind it.
+ */
+test("re-submitting a collaborator's CURRENT role as a no-op sends no notification, while a genuine change still does", async () => {
+  const emailSender = createFakeEmailSender();
+  await withServer(
+    async (baseUrl) => {
+      const ownerToken = await signup(baseUrl, `owner-role-noop-${Date.now()}@example.com`);
+      const collabEmail = `collab-role-noop-${Date.now()}@example.com`;
+      await signup(baseUrl, collabEmail);
+
+      const createRes = await fetch(`${baseUrl}/api/projects`, {
+        method: "POST",
+        headers: authHeaders(ownerToken),
+        body: JSON.stringify({ description: "A CRM with customers and deals." }),
+      });
+      const { project } = (await createRes.json()) as { project: { id: string } };
+
+      await fetch(`${baseUrl}/api/projects/${project.id}/collaborators`, {
+        method: "POST",
+        headers: authHeaders(ownerToken),
+        body: JSON.stringify({ email: collabEmail }),
+      });
+      const listRes = await fetch(`${baseUrl}/api/projects/${project.id}/collaborators`, { headers: authHeaders(ownerToken) });
+      const { collaborators } = (await listRes.json()) as { collaborators: { userId: string; role: string }[] };
+      const collabUserId = collaborators[0].userId;
+      assert.equal(collaborators[0].role, "editor");
+      emailSender.sentTo.length = 0; // The invite itself also sends one -- only the role-change sends matter here.
+
+      const noOpRes = await fetch(`${baseUrl}/api/projects/${project.id}/collaborators/${collabUserId}/role`, {
+        method: "PATCH",
+        headers: authHeaders(ownerToken),
+        body: JSON.stringify({ role: "editor" }),
+      });
+      assert.equal(noOpRes.status, 200, "re-submitting the current role must still succeed");
+      assert.equal(emailSender.sentTo.length, 0, "no notification must be sent for a role 'change' that isn't actually a change");
+
+      const genuineRes = await fetch(`${baseUrl}/api/projects/${project.id}/collaborators/${collabUserId}/role`, {
+        method: "PATCH",
+        headers: authHeaders(ownerToken),
+        body: JSON.stringify({ role: "viewer" }),
+      });
+      assert.equal(genuineRes.status, 200);
+      assert.equal(emailSender.sentTo.length, 1, "a genuine role change must still send exactly one notification");
+    },
+    { emailSender },
+  );
+});
+
+/**
+ * Round 1262: this route had no withIdempotency() wrap at all -- unlike its
+ * three sibling mutation routes in the same family (invite, DELETE
+ * collaborator, transfer-ownership). A retried PATCH with the same
+ * X-Idempotency-Key used to re-run the mutation (harmlessly, since setting
+ * the same role twice is itself idempotent at the DB layer) AND re-send the
+ * notification email a second time for what the client sees as one request.
+ */
+test("PATCH .../collaborators/:userId/role retried with the same idempotency key sends the role-change notification only once", async () => {
+  const emailSender = createFakeEmailSender();
+  await withServer(
+    async (baseUrl) => {
+      const ownerToken = await signup(baseUrl, `owner-role-idem-${Date.now()}@example.com`);
+      const collabEmail = `collab-role-idem-${Date.now()}@example.com`;
+      await signup(baseUrl, collabEmail);
+
+      const createRes = await fetch(`${baseUrl}/api/projects`, {
+        method: "POST",
+        headers: authHeaders(ownerToken),
+        body: JSON.stringify({ description: "A CRM with customers and deals." }),
+      });
+      const { project } = (await createRes.json()) as { project: { id: string } };
+
+      await fetch(`${baseUrl}/api/projects/${project.id}/collaborators`, {
+        method: "POST",
+        headers: authHeaders(ownerToken),
+        body: JSON.stringify({ email: collabEmail }),
+      });
+      const listRes = await fetch(`${baseUrl}/api/projects/${project.id}/collaborators`, { headers: authHeaders(ownerToken) });
+      const { collaborators } = (await listRes.json()) as { collaborators: { userId: string }[] };
+      const collabUserId = collaborators[0].userId;
+      emailSender.sentTo.length = 0;
+
+      const headers = { ...authHeaders(ownerToken), "x-idempotency-key": "role-change-repro-key" };
+      const firstRes = await fetch(`${baseUrl}/api/projects/${project.id}/collaborators/${collabUserId}/role`, {
+        method: "PATCH",
+        headers,
+        body: JSON.stringify({ role: "viewer" }),
+      });
+      assert.equal(firstRes.status, 200);
+
+      const retryRes = await fetch(`${baseUrl}/api/projects/${project.id}/collaborators/${collabUserId}/role`, {
+        method: "PATCH",
+        headers,
+        body: JSON.stringify({ role: "viewer" }),
+      });
+      assert.equal(retryRes.status, 200, "a retried role change with the same idempotency key must replay the original success");
+
+      assert.equal(emailSender.sentTo.length, 1, "the retry must replay the cached response, not re-run the mutation and send a second notification");
+    },
+    { emailSender },
+  );
+});
+
 test("changing a collaborator's role is owner-only, can't target the owner's own id, and 404s for a userId that isn't a real collaborator", async () => {
   await withServer(async (baseUrl) => {
     const ownerToken = await signup(baseUrl, "rbac-owner4@example.com");

@@ -1153,6 +1153,7 @@ export function updateCollaboratorRole(
 ): Promise<{ collaborators: ProjectCollaborator[]; owner: ProjectOwnerInfo | null }> {
   return request(`/projects/${projectId}/collaborators/${userId}/role`, {
     method: "PATCH",
+    headers: { "x-idempotency-key": crypto.randomUUID() },
     body: JSON.stringify({ role, lang }),
   });
 }

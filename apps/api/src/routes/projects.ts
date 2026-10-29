@@ -2178,36 +2178,48 @@ export function createProjectsRouter(
     "/projects/:id/collaborators/:userId/role",
     inviteCollaboratorRateLimiter,
     asyncRoute(async (req, res) => {
-      const project = requireProjectOwner(db, req.params.id, req.userId!);
-      if (req.params.userId === project.ownerId) {
-        throw new HttpError(400, "The project owner doesn't have a collaborator role to change", "CANNOT_CHANGE_OWNER_ROLE");
-      }
-      if (getCollaboratorRole(db, project.id, req.params.userId) === null) {
-        throw new HttpError(404, "Collaborator not found", "COLLABORATOR_NOT_FOUND");
-      }
       const parsed = UpdateCollaboratorRoleSchema.safeParse(req.body);
       if (!parsed.success) {
         throw new HttpError(400, formatValidationError(parsed.error), "VALIDATION_ERROR");
       }
-      updateCollaboratorRole(db, project.id, req.params.userId, parsed.data.role);
-      const affected = findUserById(db, req.params.userId);
-      if (affected && emailSender.configured) {
-        const isHebrew = parsed.data.lang !== "en";
-        const roleLabel = parsed.data.role === "viewer" ? (isHebrew ? "צפייה בלבד" : "view-only") : isHebrew ? "עריכה" : "editor";
-        const subject = isHebrew ? `ההרשאה שלך בפרויקט "${project.name}" ב-Forge AI השתנתה` : `Your access to "${project.name}" on Forge AI was changed`;
-        const body = isHebrew
-          ? `ההרשאה שלך בפרויקט "${project.name}" ב-Forge AI שונתה להרשאת ${roleLabel}.`
-          : `Your access to "${project.name}" on Forge AI was changed to ${roleLabel}.`;
-        try {
-          await emailSender.send(affected.email, subject, body);
-        } catch {
-          // Swallowed, deliberately, same as the invite route's own send
-          // above -- the role change itself already succeeded and was
-          // already committed to the database; a failed best-effort
-          // notification must never turn that into an error response.
+      const idempotencyKey = req.header("X-Idempotency-Key") || undefined;
+      const { status, body } = await withIdempotency(db, idempotencyKey, req.userId!, `PATCH /projects/${req.params.id}/collaborators/${req.params.userId}/role`, async () => {
+        const project = requireProjectOwner(db, req.params.id, req.userId!);
+        if (req.params.userId === project.ownerId) {
+          throw new HttpError(400, "The project owner doesn't have a collaborator role to change", "CANNOT_CHANGE_OWNER_ROLE");
         }
-      }
-      res.json({ collaborators: listCollaborators(db, project.id), owner: getOwnerInfo(db, project) });
+        const previousRole = getCollaboratorRole(db, project.id, req.params.userId);
+        if (previousRole === null) {
+          throw new HttpError(404, "Collaborator not found", "COLLABORATOR_NOT_FOUND");
+        }
+        updateCollaboratorRole(db, project.id, req.params.userId, parsed.data.role);
+        // Round 1262: mirrors the sibling invite route's own isNewGrant
+        // check (round 1253) -- without comparing against the role this
+        // collaborator already had, re-submitting the same role (a UI
+        // double-click, or a retried request this withIdempotency wrap
+        // itself doesn't catch on its very first attempt) sent a "your
+        // access was changed to X" email claiming a change that never
+        // happened.
+        const affected = previousRole !== parsed.data.role ? findUserById(db, req.params.userId) : null;
+        if (affected && emailSender.configured) {
+          const isHebrew = parsed.data.lang !== "en";
+          const roleLabel = parsed.data.role === "viewer" ? (isHebrew ? "צפייה בלבד" : "view-only") : isHebrew ? "עריכה" : "editor";
+          const subject = isHebrew ? `ההרשאה שלך בפרויקט "${project.name}" ב-Forge AI השתנתה` : `Your access to "${project.name}" on Forge AI was changed`;
+          const emailBody = isHebrew
+            ? `ההרשאה שלך בפרויקט "${project.name}" ב-Forge AI שונתה להרשאת ${roleLabel}.`
+            : `Your access to "${project.name}" on Forge AI was changed to ${roleLabel}.`;
+          try {
+            await emailSender.send(affected.email, subject, emailBody);
+          } catch {
+            // Swallowed, deliberately, same as the invite route's own send
+            // above -- the role change itself already succeeded and was
+            // already committed to the database; a failed best-effort
+            // notification must never turn that into an error response.
+          }
+        }
+        return { status: 200, body: { collaborators: listCollaborators(db, project.id), owner: getOwnerInfo(db, project) } };
+      });
+      res.status(status).json(body);
     }),
   );
 
