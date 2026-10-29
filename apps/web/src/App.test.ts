@@ -1664,7 +1664,11 @@ test("App's handleBulkDeleteProjects removes only the projects that actually suc
       () => {},
       (v: string | null) => (state.error = v),
       (updater: (prev: Project[]) => Project[]) => (state.myProjects = updater(state.myProjects)),
-      (next: Set<string>) => (state.selectedProjectIds = next),
+      // Round 1197: setSelectedProjectIds is now called with a functional
+      // updater (prev => ...) rather than a plain Set -- mirrors how a
+      // real React setState call is invoked either way.
+      (next: Set<string> | ((prev: Set<string>) => Set<string>)) =>
+        (state.selectedProjectIds = typeof next === "function" ? next(state.selectedProjectIds) : next),
       (id: string) => purgeCalls.push(id),
     ) as () => Promise<void>;
     return { fn, state, confirmCalls, purgeCalls };
@@ -1741,7 +1745,7 @@ test("App's handleBulkDeleteProjects only ever deletes visible+selected projects
   // (as if "b" is hidden by a status filter or search term).
   const attempted: string[] = [];
   const purgeCalls: string[] = [];
-  const state = { myProjects: [a, b] as Project[], selectedProjectIds: null as Set<string> | null };
+  const state = { myProjects: [a, b] as Project[], selectedProjectIds: new Set(["a", "b"]) as Set<string> };
   const fn = new Function(
     "bulkDeleteBusy",
     "deletingId",
@@ -1769,7 +1773,10 @@ test("App's handleBulkDeleteProjects only ever deletes visible+selected projects
     () => {},
     () => {},
     (updater: (prev: Project[]) => Project[]) => (state.myProjects = updater(state.myProjects)),
-    (next: Set<string>) => (state.selectedProjectIds = next),
+    // Round 1197: setSelectedProjectIds is now called with a functional
+    // updater (prev => ...) rather than a plain Set.
+    (next: Set<string> | ((prev: Set<string>) => Set<string>)) =>
+      (state.selectedProjectIds = typeof next === "function" ? next(state.selectedProjectIds) : next),
     (id: string) => purgeCalls.push(id),
   ) as () => Promise<void>;
 
@@ -1777,6 +1784,15 @@ test("App's handleBulkDeleteProjects only ever deletes visible+selected projects
   assert.deepEqual(attempted, ["a"], "must attempt to delete only the visible+selected project, never the hidden-but-raw-selected one");
   assert.deepEqual(state.myProjects, [b], "only the visible+selected project (a) must actually be removed -- the hidden one (b) must remain untouched");
   assert.deepEqual(purgeCalls, ["a"], "must purge client-side preferences only for the visible+selected project actually deleted, never the hidden one");
+  // Round 1197: "b" was raw-selected the whole time but hidden by the
+  // filter, never attempted, never in `failedIds` -- it must stay
+  // selected afterward, not get silently wiped just because SOME bulk
+  // delete ran. Only "a" (the one that actually succeeded) is removed.
+  assert.deepEqual(
+    [...state.selectedProjectIds],
+    ["b"],
+    "a hidden-but-raw-selected project must remain selected after a bulk delete that never touched it",
+  );
 });
 
 /**
@@ -1852,7 +1868,11 @@ test("App's handleBulkDeleteProjects refuses to start a second batch while a pre
       (v: boolean) => (state.bulkDeleteBusy = v),
       (v: string | null) => (state.error = v),
       (updater: (prev: Project[]) => Project[]) => (state.myProjects = updater(state.myProjects)),
-      (next: Set<string>) => (state.selectedProjectIds = next),
+      // Round 1197: setSelectedProjectIds is now called with a functional
+      // updater (prev => ...) rather than a plain Set -- mirrors how a
+      // real React setState call is invoked either way.
+      (next: Set<string> | ((prev: Set<string>) => Set<string>)) =>
+        (state.selectedProjectIds = typeof next === "function" ? next(state.selectedProjectIds) : next),
       () => {},
     ) as () => Promise<void>;
   }

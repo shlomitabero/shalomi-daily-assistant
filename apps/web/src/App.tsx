@@ -1541,7 +1541,22 @@ function AppContent() {
       const succeededIds = new Set(ids.filter((_, i) => results[i].status === "fulfilled"));
       setMyProjects((prev) => prev.filter((p) => !succeededIds.has(p.id)));
       for (const id of succeededIds) purgeProjectPreferences(id);
-      setSelectedProjectIds(new Set(failedIds));
+      // Round 1197: replacing the whole set with `new Set(failedIds)` (as
+      // this line used to) silently dropped any id that was raw-selected
+      // but currently hidden by the search/status filter -- `ids` (and so
+      // `failedIds`) only ever contains the VISIBLE subset (see
+      // visibleSelectedProjectIds's own comment above), so a hidden
+      // selection was never in `failedIds` to begin with and got wiped
+      // the instant ANY bulk delete ran, even one that never touched it.
+      // toggleSelectAllOwnedProjects (below) already gets this right --
+      // only remove the ids this action actually resolved (succeeded),
+      // leaving every other id (failed, or hidden and never attempted)
+      // exactly as the user left it.
+      setSelectedProjectIds((prev) => {
+        const next = new Set(prev);
+        for (const id of succeededIds) next.delete(id);
+        return next;
+      });
       if (failedIds.length > 0) {
         const firstFailure = results.find((r): r is PromiseRejectedResult => r.status === "rejected")!;
         setError(
