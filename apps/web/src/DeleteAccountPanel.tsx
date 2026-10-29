@@ -61,6 +61,28 @@ export function DeleteAccountPanel({
   const [idsFetchSettled, setIdsFetchSettled] = useState(false);
   const dialogRef = useDialogFocusTrap<HTMLDivElement>(onClose);
 
+  /**
+   * Round 1251: this panel is a real dialog (useDialogFocusTrap above),
+   * whose own Escape handler closes it entirely unless the event's target
+   * sits under data-escape-handled-locally -- every other form on this
+   * screen with real draft content already opts out this way
+   * (ChangePasswordPanel.tsx's round-1245 fix, CollaboratorsPanel.tsx's
+   * round-1062 invite form, AutomationsPanel.tsx's round-1056 create/edit
+   * form, WhatsAppPanel.tsx's round-1061 test-send form), but this one
+   * never did -- useDialogFocusTrap.ts's own doc comment even calls out
+   * that DeleteAccount was historically missing from round 290's original
+   * Escape-to-close rollout, which is presumably why later sweeps of this
+   * exact mechanism kept overlooking it too. The whole component unmounts
+   * on close (App.tsx renders it conditionally), so the typed confirmation
+   * email isn't just visually cleared, it's destroyed.
+   */
+  const hasUnsavedDraft = confirmText.trim() !== "";
+
+  function handleResetForm() {
+    setConfirmText("");
+    setError(null);
+  }
+
   // Fetches the real project id lists itself (rather than trusting App.tsx's
   // own myProjects, which is only ever populated while `view === "home"` --
   // this panel can just as easily be opened from a project's own preview
@@ -110,7 +132,14 @@ export function DeleteAccountPanel({
           </button>
         </div>
 
-        <form className="auth-form" onSubmit={handleSubmit}>
+        <form
+          className="auth-form"
+          onSubmit={handleSubmit}
+          data-escape-handled-locally={hasUnsavedDraft ? "" : undefined}
+          onKeyDown={(e) => {
+            if (e.key === "Escape" && hasUnsavedDraft) handleResetForm();
+          }}
+        >
           <p className="delete-account-warning">{t("deleteAccount.warning")}</p>
           {summaryText && <p className="delete-account-summary muted small">{summaryText}</p>}
           <label className="field-row">

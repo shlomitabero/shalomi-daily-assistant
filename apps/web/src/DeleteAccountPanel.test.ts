@@ -522,3 +522,46 @@ test("shows no project-count summary at all for an account with zero owned and z
     }
   });
 });
+
+/**
+ * Round 1251: this panel is a real dialog (useDialogFocusTrap), whose own
+ * Escape handler closes the whole thing unless the event's target sits
+ * under data-escape-handled-locally -- the confirmation-email input never
+ * had that marker. The whole component unmounts on close (App.tsx renders
+ * it conditionally), so a typed confirmation email isn't just visually
+ * cleared, it's destroyed. Passes a REAL onClose spy (not renderPanel's
+ * own no-op default) specifically to prove Escape here only clears the
+ * draft and never also closes the panel, mirroring the identical test
+ * already added for ChangePasswordPanel (round 1245), CollaboratorsPanel
+ * (round 1062), AutomationsPanel (round 1056), and WhatsAppPanel (round
+ * 1061).
+ */
+test("Escape clears an in-progress delete-confirmation draft instead of closing the dialog, and a second Escape on the now-pristine form closes it normally", async () => {
+  await withJsdom(async () => {
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = withListProjectsStub([], async (input) => {
+      throw new Error(`unexpected request ${input}`);
+    });
+
+    try {
+      let closeCalls = 0;
+      renderPanel({ onClose: () => (closeCalls += 1) });
+      typeConfirmation("dana@example.com");
+      const input = document.querySelector("input[type='text']") as HTMLInputElement;
+      assert.equal(input.value, "dana@example.com");
+
+      fireEvent.keyDown(input, { key: "Escape" });
+      assert.equal(input.value, "", "Escape must clear the confirmation-email field");
+      assert.equal(closeCalls, 0, "Escape clearing an in-progress draft must never also close the whole dialog");
+      assert.ok(document.querySelector('[role="dialog"]'), "the dialog itself must still be in the DOM after that Escape");
+
+      // Mirrors the identical round-362/1056/1061/1062/1245 regression: once
+      // the form is genuinely pristine (nothing left to clear), Escape must
+      // close the dialog normally, not get silently swallowed.
+      fireEvent.keyDown(input, { key: "Escape" });
+      assert.equal(closeCalls, 1, "Escape on an already-pristine form must close the dialog normally");
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+});
