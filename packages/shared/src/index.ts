@@ -137,7 +137,25 @@ export const FieldSchema = z
     label: z.string().min(1).optional(),
     type: z.enum(FIELD_TYPES),
     required: z.boolean().default(false),
-    enumValues: z.array(z.string()).optional(),
+    /**
+     * Round 1215: the `.refine()` below only checked the ARRAY's own
+     * length, never that each element is non-empty -- an AI-generated
+     * spec emitting `enumValues: ["", "Active"]` passed validation
+     * cleanly. Unlike `label` (purely display), an empty element here
+     * becomes real STORED DATA: packages/db/src/seed.ts's
+     * `field.enumValues?.[index % length] ?? null` cycles through every
+     * declared value when seeding, and `"" ?? null` is `""` (not `null`),
+     * so some seeded records get their enum column literally set to the
+     * empty string. It also breaks the record-editing UI: EntityPanel.tsx
+     * renders a blank enum badge/option, and `uniqueEnumValues` (which
+     * only de-dupes, never filters blanks) produces an `<option value="">`
+     * that collides with the enum `<select>`'s own "clear value"
+     * placeholder -- the native `required` validation then can't
+     * distinguish the two, silently blocking re-save of that record with
+     * no error shown. `.min(1)` closes this the same way round 1213/1214
+     * closed it for `label`/`roles`/`personas`/`assumptions`.
+     */
+    enumValues: z.array(z.string().min(1)).optional(),
     /** Display text per raw enumValue (e.g. {"New": "חדש"}). The stored/API value is always the raw enumValue. */
     enumLabels: z.record(z.string(), z.string()).optional(),
     relationTo: z.string().optional(),

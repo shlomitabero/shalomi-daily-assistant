@@ -29,6 +29,21 @@ test("FieldSchema accepts an enum field with at least one enumValue", () => {
   assert.ok(result.success);
 });
 
+/**
+ * Round 1215: same bug class as round 1213/1214's `label`/`roles`/etc.
+ * fixes -- the array-length refine above only guarantees enumValues is
+ * non-empty, never that each element is. An empty element here becomes
+ * real stored data via seed.ts's cycling-index seeder, and breaks the
+ * enum <select>'s own "clear value" placeholder in EntityPanel.tsx.
+ */
+test("FieldSchema rejects an enum field with an empty-string enumValues element, but still accepts genuinely non-empty ones", () => {
+  const empty = FieldSchema.safeParse({ name: "status", type: "enum", required: true, enumValues: ["New", ""] });
+  assert.ok(!empty.success, "expected an empty-string enumValues element to be rejected");
+
+  const genuine = FieldSchema.safeParse({ name: "status", type: "enum", required: true, enumValues: ["New", "Active", "סגור"] });
+  assert.ok(genuine.success, "expected genuinely non-empty enumValues to still be accepted");
+});
+
 test("FieldSchema rejects a relation field with no relationTo", () => {
   const result = FieldSchema.safeParse({ name: "customerId", type: "relation", required: false });
   assert.ok(!result.success);
