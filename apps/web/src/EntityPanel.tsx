@@ -1500,6 +1500,19 @@ export function EntityPanel({
   const [subscribeStatus, setSubscribeStatus] = useState<"idle" | "copied" | "failed">("idle");
   const [relatedRecords, setRelatedRecords] = useState<RelatedRecordsByEntity>({});
   const [importBusy, setImportBusy] = useState(false);
+  // Round 1260: bulkActionBusy and importBusy were two fully independent
+  // flags guarding the exact same hazard -- a batch of concurrent writes
+  // (Promise.allSettled) still in flight racing some OTHER write to one of
+  // the same records. Rounds 1117/1118 cross-gated every bulk/single action
+  // against bulkActionBusy, but CSV/JSON import (round 1241, added after
+  // those rounds) was never wired into that network: an import's PATCH to
+  // an existing row (id column round-tripped) could land after a delete the
+  // user fired mid-import, resurrecting a record the optimistic UI already
+  // removed, and the reverse (bulk delete racing an import's POST of a new
+  // record) was just as possible. This single combined flag is read
+  // everywhere bulkActionBusy used to guard/disable, so the two batches are
+  // now mutually exclusive with everything else that writes.
+  const writesInFlight = bulkActionBusy || importBusy;
   const [importMessage, setImportMessage] = useState<string | null>(null);
   const [importErrors, setImportErrors] = useState<string[]>([]);
   const [showImportErrors, setShowImportErrors] = useState(false);
@@ -3298,8 +3311,9 @@ export function EntityPanel({
     // update/duplicate/delete batch still in flight on the exact same
     // record -- round 1117 only cross-gated the bulk-action bar's own
     // three buttons against each other, never against every OTHER way to
-    // mutate a record. See handleBulkDelete's own identical guard.
-    if (bulkActionBusy) return false;
+    // mutate a record. See handleBulkDelete's own identical guard. Round
+    // 1260: also guards against a CSV/JSON import batch (see writesInFlight).
+    if (writesInFlight) return false;
     const index = records.findIndex((r) => (r.id as number) === id);
     if (index === -1) return false;
     const record = records[index];
@@ -3373,7 +3387,8 @@ export function EntityPanel({
     // single-record duplicate (table row, board card, in-form button, or
     // keyboard shortcut) can race a bulk batch on the same record just as
     // easily as the bulk-action bar's own buttons could race each other.
-    if (bulkActionBusy) return;
+    // Round 1260: also guards against an in-flight import (writesInFlight).
+    if (writesInFlight) return;
     const record = records.find((r) => (r.id as number) === id);
     if (!record) return;
     setError(null);
@@ -3449,7 +3464,9 @@ export function EntityPanel({
   // duplicates one at a time. No confirmation, for the same reason
   // handleDuplicate has none: duplicating creates rather than destroys.
   async function handleBulkDuplicate() {
-    if (bulkActionBusy) return;
+    // Round 1260: also refuses while a CSV/JSON import batch is in flight
+    // (writesInFlight) -- see its own declaration for why.
+    if (writesInFlight) return;
     const ids = [...selectedIds];
     if (ids.length === 0) return;
     // Same upfront refusal as handleDuplicate above -- a required "file"
@@ -3523,8 +3540,8 @@ export function EntityPanel({
     // bulkActionBusy guard at all -- clicking this while one of those two
     // was still awaiting its own Promise.allSettled raced a real PATCH/
     // POST against this handler's own optimistic removal + delayed DELETE
-    // for the same ids, in unpredictable order.
-    if (bulkActionBusy) return;
+    // for the same ids, in unpredictable order. Round 1260: also an import.
+    if (writesInFlight) return;
     const ids = [...selectedIds];
     if (ids.length === 0) return;
     if (!window.confirm(t("entity.bulk.confirmDelete", { count: ids.length }))) return;
@@ -3582,7 +3599,9 @@ export function EntityPanel({
    * record add/edit form sends through this same updateRecord call.
    */
   async function handleBulkUpdate() {
-    if (bulkActionBusy) return;
+    // Round 1260: also refuses while a CSV/JSON import batch is in flight
+    // (writesInFlight) -- see its own declaration for why.
+    if (writesInFlight) return;
     const ids = [...selectedIds];
     if (ids.length === 0 || !bulkEditField) return;
     // Mirrors the single-record add/edit form's own pre-submit required-field
@@ -3814,6 +3833,11 @@ export function EntityPanel({
     const file = e.target.files?.[0];
     e.target.value = ""; // allow re-selecting the same file to retry
     if (!file) return;
+    // Round 1260: the reverse direction of writesInFlight's own guard --
+    // refuses to start an import while a bulk batch is still in flight on
+    // the exact same records, instead of firing a second independent set
+    // of concurrent writes on top of it.
+    if (bulkActionBusy) return;
     setImportBusy(true);
     setImportMessage(null);
     setImportErrors([]);
@@ -3855,6 +3879,8 @@ export function EntityPanel({
     const file = e.target.files?.[0];
     e.target.value = ""; // allow re-selecting the same file to retry
     if (!file) return;
+    // Round 1260: see handleImportFile's own identical guard just above.
+    if (bulkActionBusy) return;
     setImportBusy(true);
     setImportMessage(null);
     setImportErrors([]);
@@ -3945,8 +3971,8 @@ export function EntityPanel({
     // handleCardDrop/handleCalendarDrop (board + calendar drag-and-drop),
     // all of which funnel through here -- see handleDelete's own identical
     // guard above for why a single-record write must never race a bulk
-    // batch still in flight on the same record.
-    if (bulkActionBusy) return;
+    // batch still in flight on the same record. Round 1260: also an import.
+    if (writesInFlight) return;
     setError(null);
     try {
       await updateRecord(projectId, entity.name, id, fields);
@@ -4242,7 +4268,7 @@ export function EntityPanel({
             </button>
           )}
           {!readOnly && (
-            <button type="button" disabled={bulkActionBusy} onClick={() => handleDuplicate(record.id as number)}>
+            <button type="button" disabled={writesInFlight} onClick={() => handleDuplicate(record.id as number)}>
               {t("entity.duplicate")}
             </button>
           )}
@@ -4255,7 +4281,7 @@ export function EntityPanel({
             {t("entity.print")}
           </button>
           {!readOnly && (
-            <button type="button" className="danger" disabled={bulkActionBusy} onClick={() => handleDelete(record.id as number)}>
+            <button type="button" className="danger" disabled={writesInFlight} onClick={() => handleDelete(record.id as number)}>
               {t("entity.delete")}
             </button>
           )}
@@ -4363,7 +4389,7 @@ export function EntityPanel({
             </button>
           )}
           {editingId != null && (
-            <button type="button" disabled={bulkActionBusy} onClick={() => handleDuplicate(editingId)}>
+            <button type="button" disabled={writesInFlight} onClick={() => handleDuplicate(editingId)}>
               {t("entity.duplicate")}
             </button>
           )}
@@ -4371,7 +4397,7 @@ export function EntityPanel({
             <button
               type="button"
               className="danger"
-              disabled={bulkActionBusy}
+              disabled={writesInFlight}
               onClick={() => {
                 const id = editingId;
                 const deleted = handleDelete(id);
@@ -4435,11 +4461,11 @@ export function EntityPanel({
       <div className="csv-import-row">
         <label className="csv-import-label">
           {importBusy ? t("entity.import.parsing") : t("entity.importCsv")}
-          <input type="file" accept=".csv,text/csv" onChange={handleImportFile} disabled={importBusy} hidden />
+          <input type="file" accept=".csv,text/csv" onChange={handleImportFile} disabled={writesInFlight} hidden />
         </label>
         <label className="json-import-label">
           {importBusy ? t("entity.import.parsing") : t("entity.importJson")}
-          <input type="file" accept=".json,application/json" onChange={handleImportJsonFile} disabled={importBusy} hidden />
+          <input type="file" accept=".json,application/json" onChange={handleImportJsonFile} disabled={writesInFlight} hidden />
         </label>
         {importMessage && (
           <span className="muted small" role="status">
@@ -4859,7 +4885,7 @@ export function EntityPanel({
                       onDragEnd={() => setDragOverColumn(null)}
                       onJumpToRecord={onJumpToRecord}
                       readOnly={readOnly}
-                      bulkActionBusy={bulkActionBusy}
+                      bulkActionBusy={writesInFlight}
                     />
                   ))}
                 </div>
@@ -4884,7 +4910,7 @@ export function EntityPanel({
               onReschedule={readOnly ? () => {} : (record, date, originDay) => handleCalendarDrop(record, dateField.name, date, originDay)}
               moveErrorId={moveErrorId}
               readOnly={readOnly}
-              bulkActionBusy={bulkActionBusy}
+              bulkActionBusy={writesInFlight}
             />
           ) : (
             <div className="table-scroll" ref={tableScrollRef}>
@@ -4916,14 +4942,14 @@ export function EntityPanel({
                     />
                   )}
                   {bulkEditField && (
-                    <button type="button" className="secondary" disabled={bulkActionBusy} onClick={handleBulkUpdate}>
+                    <button type="button" className="secondary" disabled={writesInFlight} onClick={handleBulkUpdate}>
                       {bulkActionBusy ? t("entity.bulk.apply.busy") : t("entity.bulk.apply", { count: selectedIds.size })}
                     </button>
                   )}
-                  <button type="button" className="secondary" disabled={bulkActionBusy} onClick={handleBulkDuplicate}>
+                  <button type="button" className="secondary" disabled={writesInFlight} onClick={handleBulkDuplicate}>
                     {bulkActionBusy ? t("entity.bulk.duplicateSelected.busy") : t("entity.bulk.duplicateSelected")}
                   </button>
-                  <button type="button" className="danger" disabled={bulkActionBusy} onClick={handleBulkDelete}>
+                  <button type="button" className="danger" disabled={writesInFlight} onClick={handleBulkDelete}>
                     {t("entity.bulk.deleteSelected")}
                   </button>
                   <button type="button" className="secondary" onClick={() => setSelectedIds(new Set())}>

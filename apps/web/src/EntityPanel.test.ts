@@ -68,7 +68,7 @@ test("EntityPanel's handleDuplicate never copies a 'file' field's value -- dupli
   let refreshCalled = 0;
 
   const fn = new Function(
-    "bulkActionBusy",
+    "writesInFlight",
     "records",
     "setError",
     "entity",
@@ -135,7 +135,7 @@ test("EntityPanel's handleBulkDuplicate refreshes and keeps only the ids that ac
   ];
 
   const fn = new Function(
-    "bulkActionBusy",
+    "writesInFlight",
     "setBulkActionBusy",
     "t",
     "projectId",
@@ -209,7 +209,7 @@ test("EntityPanel's handleBulkDuplicate never copies a 'file' field's value eith
   const attemptedCopies: Record<string, unknown>[] = [];
 
   const fn = new Function(
-    "bulkActionBusy",
+    "writesInFlight",
     "setBulkActionBusy",
     "t",
     "projectId",
@@ -274,7 +274,7 @@ test("EntityPanel's handleDuplicate refuses upfront for an entity with a require
   let createRecordCalled = 0;
 
   const fn = new Function(
-    "bulkActionBusy",
+    "writesInFlight",
     "records",
     "setError",
     "entity",
@@ -336,7 +336,7 @@ test("EntityPanel's handleDuplicate refuses upfront when a record's own enum fie
   let createRecordCalled = 0;
 
   const fn = new Function(
-    "bulkActionBusy",
+    "writesInFlight",
     "records",
     "setError",
     "entity",
@@ -394,7 +394,7 @@ test("EntityPanel's handleDuplicate does NOT refuse when an optional enum field 
   let createRecordCalled = 0;
 
   const fn = new Function(
-    "bulkActionBusy",
+    "writesInFlight",
     "records",
     "setError",
     "entity",
@@ -456,7 +456,7 @@ test("EntityPanel's handleBulkDuplicate refuses only the specific record whose o
   const createdCopies: Record<string, unknown>[] = [];
 
   const fn = new Function(
-    "bulkActionBusy",
+    "writesInFlight",
     "selectedIds",
     "records",
     "entity",
@@ -533,7 +533,7 @@ test("EntityPanel's handleBulkDuplicate refuses the whole batch upfront for an e
   let createRecordCalled = 0;
 
   const fn = new Function(
-    "bulkActionBusy",
+    "writesInFlight",
     "setBulkActionBusy",
     "t",
     "projectId",
@@ -584,7 +584,7 @@ test("EntityPanel's handleBulkDuplicate still surfaces the raw error message whe
   const records: EntityRecord[] = [{ id: 1, createdAt: "x", name: "Alice" }];
 
   const fn = new Function(
-    "bulkActionBusy",
+    "writesInFlight",
     "setBulkActionBusy",
     "t",
     "projectId",
@@ -652,7 +652,7 @@ test("EntityPanel's handleBulkDuplicate never calls createRecord for a selected 
   ];
 
   const fn = new Function(
-    "bulkActionBusy",
+    "writesInFlight",
     "setBulkActionBusy",
     "t",
     "projectId",
@@ -737,7 +737,7 @@ test("EntityPanel's handleBulkDuplicate refuses to start a second batch while a 
 
   function makeHandler() {
     return new Function(
-      "bulkActionBusy",
+      "writesInFlight",
       "setBulkActionBusy",
       "t",
       "projectId",
@@ -877,11 +877,14 @@ test("EntityPanel's bulk delete removes every selected row immediately and shows
  * the code path that releases it is exactly what's missing).
  */
 test("EntityPanel's handleBulkDelete is a no-op while bulkActionBusy is true, and the Delete button's own disabled attribute matches its two siblings", () => {
-  // The button itself: confirms disabled={bulkActionBusy} is wired onto
+  // The button itself: confirms disabled={writesInFlight} is wired onto
   // "Delete selected", the same way it already is on "Apply to N" and
-  // "Duplicate selected" right above it.
-  const barMatch = entityPanelSrc.match(/<button type="button" className="danger" disabled=\{bulkActionBusy\} onClick=\{handleBulkDelete\}>/);
-  assert.ok(barMatch, "expected the 'Delete selected' button to carry disabled={bulkActionBusy}, matching its sibling bulk-action buttons");
+  // "Duplicate selected" right above it. Round 1260: writesInFlight (not
+  // the bare bulkActionBusy this test originally asserted) is the combined
+  // bulkActionBusy||importBusy flag -- see its own declaration in
+  // EntityPanel.tsx for why cross-gating against an in-flight import too.
+  const barMatch = entityPanelSrc.match(/<button type="button" className="danger" disabled=\{writesInFlight\} onClick=\{handleBulkDelete\}>/);
+  assert.ok(barMatch, "expected the 'Delete selected' button to carry disabled={writesInFlight}, matching its sibling bulk-action buttons");
 
   // The handler itself: confirms handleBulkDelete refuses to even start
   // while a concurrent handleBulkUpdate/handleBulkDuplicate batch is still
@@ -898,7 +901,7 @@ test("EntityPanel's handleBulkDelete is a no-op while bulkActionBusy is true, an
   let pendingDeleteSet = 0;
 
   const fn = new Function(
-    "bulkActionBusy",
+    "writesInFlight",
     "selectedIds",
     "window",
     "t",
@@ -919,7 +922,7 @@ test("EntityPanel's handleBulkDelete is a no-op while bulkActionBusy is true, an
     "UNDO_WINDOW_MS",
     `${code}\nreturn handleBulkDelete;`,
   )(
-    true, // bulkActionBusy: a bulk update/duplicate is still in flight
+    true, // writesInFlight: a bulk update/duplicate (or an import) is still in flight
     new Set([1, 2]),
     { confirm: () => (confirmCalls += 1, true) },
     (key: string) => key,
@@ -976,7 +979,10 @@ test("EntityPanel's handleDelete, handleDuplicate, and handleMoveFields are each
     const handlerMatch = entityPanelSrc.match(signature);
     assert.ok(handlerMatch, `expected to find ${name} in EntityPanel.tsx`);
     const { code } = transformSync(handlerMatch![0], { loader: "ts" });
-    const fn = new Function("bulkActionBusy", `${code}\nreturn ${name};`)(true) as (...args: unknown[]) => unknown;
+    // Round 1260: these three now read the combined writesInFlight flag,
+    // not the bare bulkActionBusy this test originally injected -- see
+    // EntityPanel.tsx's own writesInFlight declaration.
+    const fn = new Function("writesInFlight", `${code}\nreturn ${name};`)(true) as (...args: unknown[]) => unknown;
     const result = await fn(1, {});
     if (name === "handleDelete") assert.equal(result, false, "handleDelete must return false (nothing deleted) while bulkActionBusy is true");
   }
@@ -995,22 +1001,22 @@ test("EntityPanel's handleDelete, handleDuplicate, and handleMoveFields are each
 test("EntityPanel disables every single-record write affordance (table row, in-form, BoardCard, CalendarView) while bulkActionBusy is true", () => {
   assert.match(
     entityPanelSrc,
-    /<button type="button" disabled=\{bulkActionBusy\} onClick=\{\(\) => handleDuplicate\(record\.id as number\)\}>/,
+    /<button type="button" disabled=\{writesInFlight\} onClick=\{\(\) => handleDuplicate\(record\.id as number\)\}>/,
     "the table row's own Duplicate button must be disabled while bulkActionBusy is true",
   );
   assert.match(
     entityPanelSrc,
-    /<button type="button" className="danger" disabled=\{bulkActionBusy\} onClick=\{\(\) => handleDelete\(record\.id as number\)\}>/,
+    /<button type="button" className="danger" disabled=\{writesInFlight\} onClick=\{\(\) => handleDelete\(record\.id as number\)\}>/,
     "the table row's own Delete button must be disabled while bulkActionBusy is true",
   );
   assert.match(
     entityPanelSrc,
-    /<button type="button" disabled=\{bulkActionBusy\} onClick=\{\(\) => handleDuplicate\(editingId\)\}>/,
+    /<button type="button" disabled=\{writesInFlight\} onClick=\{\(\) => handleDuplicate\(editingId\)\}>/,
     "the in-form Duplicate button must be disabled while bulkActionBusy is true",
   );
   assert.match(
     entityPanelSrc,
-    /className="danger"\s*\n\s*disabled=\{bulkActionBusy\}\s*\n\s*onClick=\{\(\) => \{\s*\n\s*const id = editingId;\s*\n\s*const deleted = handleDelete\(id\);/,
+    /className="danger"\s*\n\s*disabled=\{writesInFlight\}\s*\n\s*onClick=\{\(\) => \{\s*\n\s*const id = editingId;\s*\n\s*const deleted = handleDelete\(id\);/,
     "the in-form Delete button must be disabled while bulkActionBusy is true",
   );
   assert.match(
@@ -1043,14 +1049,65 @@ test("EntityPanel disables every single-record write affordance (table row, in-f
   // declaring the prop on them.
   assert.match(
     entityPanelSrc,
-    /onJumpToRecord=\{onJumpToRecord\}\s*\n\s*readOnly=\{readOnly\}\s*\n\s*bulkActionBusy=\{bulkActionBusy\}\s*\n\s*\/>\s*\n\s*\)\)\}/,
-    "the <BoardCard> call site must pass its own bulkActionBusy state through",
+    /onJumpToRecord=\{onJumpToRecord\}\s*\n\s*readOnly=\{readOnly\}\s*\n\s*bulkActionBusy=\{writesInFlight\}\s*\n\s*\/>\s*\n\s*\)\)\}/,
+    "the <BoardCard> call site must pass the combined writesInFlight state through",
   );
   assert.match(
     entityPanelSrc,
-    /moveErrorId=\{moveErrorId\}\s*\n\s*readOnly=\{readOnly\}\s*\n\s*bulkActionBusy=\{bulkActionBusy\}\s*\n\s*\/>/,
-    "the <CalendarView> call site must pass its own bulkActionBusy state through",
+    /moveErrorId=\{moveErrorId\}\s*\n\s*readOnly=\{readOnly\}\s*\n\s*bulkActionBusy=\{writesInFlight\}\s*\n\s*\/>/,
+    "the <CalendarView> call site must pass the combined writesInFlight state through",
   );
+});
+
+/**
+ * Round 1260: bulkActionBusy and importBusy were two fully independent
+ * flags guarding the exact same hazard (a batch of concurrent writes still
+ * in flight racing some other write to one of the same records) -- rounds
+ * 1117/1118 cross-gated every bulk/single action against bulkActionBusy,
+ * but CSV/JSON import (added later, round 1241) was never wired into that
+ * network at all. Confirms the two are now genuinely ORed together in one
+ * combined flag, source-text only (every test above that exercises
+ * writesInFlight's effect injects a plain boolean for it directly, which
+ * would pass identically whether or not the two real flags were ever
+ * actually combined -- this is the one test that confirms the combination
+ * itself exists).
+ */
+test("EntityPanel combines bulkActionBusy and importBusy into one writesInFlight flag", () => {
+  assert.match(
+    entityPanelSrc,
+    /const writesInFlight = bulkActionBusy \|\| importBusy;/,
+    "expected a single writesInFlight flag ORing bulkActionBusy and importBusy together",
+  );
+});
+
+/**
+ * Round 1260: the reverse direction of the same gap -- handleImportFile and
+ * handleImportJsonFile never checked bulkActionBusy before starting, so a
+ * CSV/JSON import could fire its own independent batch of concurrent
+ * createRecord/updateRecord calls on top of a bulk update/duplicate/delete
+ * batch already running against the same selection. Each is extracted and
+ * called with ONLY bulkActionBusy declared (mirroring round 1118's own
+ * handleDelete/handleDuplicate/handleMoveFields test just above) -- if the
+ * guard were ever removed, the very next line each function reaches
+ * (setImportBusy) throws a ReferenceError instead of silently doing
+ * nothing, proving the guard itself is what's stopping execution.
+ */
+test("EntityPanel's handleImportFile and handleImportJsonFile are each a no-op while a bulk batch is still in flight", async () => {
+  for (const [name, signature] of [
+    ["handleImportFile", / {2}async function handleImportFile\(e: React\.ChangeEvent<HTMLInputElement>\) \{[\s\S]*?\n {2}\}\n/],
+    ["handleImportJsonFile", / {2}async function handleImportJsonFile\(e: React\.ChangeEvent<HTMLInputElement>\) \{[\s\S]*?\n {2}\}\n/],
+  ] as const) {
+    const handlerMatch = entityPanelSrc.match(signature);
+    assert.ok(handlerMatch, `expected to find ${name} in EntityPanel.tsx`);
+    const { code } = transformSync(handlerMatch![0], { loader: "ts" });
+    const fn = new Function("bulkActionBusy", `${code}\nreturn ${name};`)(true) as (e: unknown) => Promise<void>;
+    // A real file must be present -- handleImportFile/handleImportJsonFile
+    // both bail out on a missing file BEFORE ever reaching the
+    // bulkActionBusy guard, so an empty FileList would trivially "pass" this
+    // test even with the guard removed.
+    const fakeEvent = { target: { files: [{}], value: "" } };
+    await fn(fakeEvent); // resolves cleanly only if the guard fires; a removed guard throws ReferenceError on setImportBusy
+  }
 });
 
 /**
@@ -1255,7 +1312,7 @@ test("EntityPanel's handleBulkUpdate refreshes and keeps only the ids that actua
   globalThis.window.confirm = (() => true) as typeof window.confirm;
   try {
     const fn = new Function(
-      "bulkActionBusy",
+      "writesInFlight",
       "setBulkActionBusy",
       "t",
       "projectId",
@@ -1356,7 +1413,7 @@ test("EntityPanel's handleBulkUpdate asks for confirmation before applying, and 
   }) as typeof window.confirm;
   try {
     const fn = new Function(
-      "bulkActionBusy",
+      "writesInFlight",
       "setBulkActionBusy",
       "t",
       "projectId",
@@ -1410,7 +1467,7 @@ test("EntityPanel's handleBulkUpdate does nothing when no field has been chosen 
   let updateCalled = false;
   let refreshCalled = false;
   const fn = new Function(
-    "bulkActionBusy",
+    "writesInFlight",
     "setBulkActionBusy",
     "t",
     "projectId",
@@ -1475,7 +1532,7 @@ test("EntityPanel's handleBulkUpdate refuses a blank value for a required field 
   }) as typeof window.confirm;
   try {
     const fn = new Function(
-      "bulkActionBusy",
+      "writesInFlight",
       "setBulkActionBusy",
       "t",
       "projectId",
@@ -1543,7 +1600,7 @@ test("EntityPanel's handleBulkUpdate still proceeds when a required field is giv
   globalThis.window.confirm = (() => true) as typeof window.confirm;
   try {
     const fn = new Function(
-      "bulkActionBusy",
+      "writesInFlight",
       "setBulkActionBusy",
       "t",
       "projectId",
@@ -1610,7 +1667,7 @@ test("EntityPanel's handleBulkUpdate names the field and value in the confirm me
   }) as typeof window.confirm;
   try {
     const fn = new Function(
-      "bulkActionBusy",
+      "writesInFlight",
       "setBulkActionBusy",
       "t",
       "projectId",
@@ -1668,7 +1725,7 @@ test("EntityPanel's handleBulkUpdate treats a boolean field's false as a real ch
   }) as typeof window.confirm;
   try {
     const fn = new Function(
-      "bulkActionBusy",
+      "writesInFlight",
       "setBulkActionBusy",
       "t",
       "projectId",
@@ -1738,7 +1795,7 @@ test("EntityPanel's handleBulkUpdate refuses a non-numeric value for a 'number' 
   }) as typeof window.confirm;
   try {
     const fn = new Function(
-      "bulkActionBusy",
+      "writesInFlight",
       "setBulkActionBusy",
       "t",
       "projectId",
