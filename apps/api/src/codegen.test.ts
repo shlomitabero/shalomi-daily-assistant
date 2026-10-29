@@ -2178,6 +2178,159 @@ test("generated server.js's update route rejects a self-referencing relation fie
 });
 
 /**
+ * Round 1231: mirrors the PATCH route's own round-1091/1176 self-reference
+ * guard, which this generated server's POST (create) route never got. The
+ * new row's id is only known after the insert commits, but a freshly-
+ * built entity table's very first record gets a predictable id
+ * (AUTOINCREMENT starts at 1), so a direct POST setting managerId to that
+ * same, now-known id self-references with nothing to stop it -- same gap
+ * as repository.ts's own insertRecord before this round. Confirmed
+ * directly against a real spawned server.js: before this fix, POST
+ * /api/Employee {name: "Dana", managerId: 1} returned 201 and genuinely
+ * persisted the self-reference, with zero error.
+ */
+test("generated server.js's create route rejects a self-referencing relation field set to the new record's own (freshly-assigned) id", async () => {
+  const selfRelationProject: Project = {
+    ...project,
+    spec: {
+      ...project.spec,
+      entities: [
+        {
+          name: "Employee",
+          fields: [
+            { name: "name", type: "text", required: true },
+            { name: "managerId", type: "relation", required: false, relationTo: "Employee" },
+          ],
+        },
+      ],
+    },
+  };
+  const files = generateExportFiles(selfRelationProject);
+  const serverJs = files.find((f) => f.path === "server.js")!.content;
+
+  const dir = mkdtempSync(path.join(tmpdir(), "codegen-insert-self-relation-test-"));
+  const repoRoot = path.resolve(import.meta.dirname, "../../..");
+  symlinkSync(path.join(repoRoot, "node_modules"), path.join(dir, "node_modules"));
+  writeFileSync(path.join(dir, "server.js"), serverJs);
+
+  const port = 54000 + Math.floor(Math.random() * 5000);
+  const child = spawn(process.execPath, ["--experimental-sqlite", "server.js"], {
+    cwd: dir,
+    env: { ...process.env, PORT: String(port) },
+    stdio: ["ignore", "pipe", "pipe"],
+  });
+  let stderr = "";
+  child.stderr.on("data", (chunk) => {
+    stderr += chunk.toString();
+  });
+
+  try {
+    const deadline = Date.now() + 5000;
+    let lastErr: unknown;
+    while (Date.now() < deadline) {
+      if (child.exitCode !== null) throw new Error(`server.js exited early (code ${child.exitCode}):\n${stderr}`);
+      try {
+        await fetch(`http://localhost:${port}/api/entities`);
+        break;
+      } catch (err) {
+        lastErr = err;
+        await new Promise((r) => setTimeout(r, 100));
+      }
+    }
+    if (child.exitCode !== null) throw lastErr instanceof Error ? lastErr : new Error(String(lastErr));
+
+    // The very first record in a fresh table: AUTOINCREMENT guarantees id 1.
+    const createRes = await fetch(`http://localhost:${port}/api/Employee`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ name: "Dana", managerId: 1 }),
+    });
+    assert.equal(createRes.status, 400, "creating a record whose own self-referencing relation field is set to its own freshly-assigned id must be rejected, not accepted with a 201");
+    const createBody = await createRes.json();
+    assert.equal(createBody.error, `Field "managerId" can't reference the record's own id`);
+
+    const getRes = await fetch(`http://localhost:${port}/api/Employee`);
+    const records = (await getRes.json()).records;
+    assert.equal(records.length, 0, "the rejected self-referencing row must not be left committed");
+  } finally {
+    child.kill();
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("generated server.js's create route rejects a self-referencing relation field even when relationTo differs in case from the entity's own declared name", async () => {
+  const selfRelationProject: Project = {
+    ...project,
+    spec: {
+      ...project.spec,
+      entities: [
+        {
+          name: "Employee",
+          fields: [
+            { name: "name", type: "text", required: true },
+            { name: "managerId", type: "relation", required: false, relationTo: "employee" },
+          ],
+        },
+      ],
+    },
+  };
+  const files = generateExportFiles(selfRelationProject);
+  const serverJs = files.find((f) => f.path === "server.js")!.content;
+
+  const dir = mkdtempSync(path.join(tmpdir(), "codegen-insert-self-relation-case-test-"));
+  const repoRoot = path.resolve(import.meta.dirname, "../../..");
+  symlinkSync(path.join(repoRoot, "node_modules"), path.join(dir, "node_modules"));
+  writeFileSync(path.join(dir, "server.js"), serverJs);
+
+  const port = 54000 + Math.floor(Math.random() * 5000);
+  const child = spawn(process.execPath, ["--experimental-sqlite", "server.js"], {
+    cwd: dir,
+    env: { ...process.env, PORT: String(port) },
+    stdio: ["ignore", "pipe", "pipe"],
+  });
+  let stderr = "";
+  child.stderr.on("data", (chunk) => {
+    stderr += chunk.toString();
+  });
+
+  try {
+    const deadline = Date.now() + 5000;
+    let lastErr: unknown;
+    while (Date.now() < deadline) {
+      if (child.exitCode !== null) throw new Error(`server.js exited early (code ${child.exitCode}):\n${stderr}`);
+      try {
+        await fetch(`http://localhost:${port}/api/entities`);
+        break;
+      } catch (err) {
+        lastErr = err;
+        await new Promise((r) => setTimeout(r, 100));
+      }
+    }
+    if (child.exitCode !== null) throw lastErr instanceof Error ? lastErr : new Error(String(lastErr));
+
+    const createRes = await fetch(`http://localhost:${port}/api/Employee`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ name: "Dana", managerId: 1 }),
+    });
+    assert.equal(
+      createRes.status,
+      400,
+      "a case-mismatched relationTo ('employee' vs the entity's own 'Employee') must not let a create-time self-reference slip past this guard",
+    );
+    const createBody = await createRes.json();
+    assert.equal(createBody.error, `Field "managerId" can't reference the record's own id`);
+
+    const getRes = await fetch(`http://localhost:${port}/api/Employee`);
+    const records = (await getRes.json()).records;
+    assert.equal(records.length, 0, "the rejected self-referencing row must not be left committed");
+  } finally {
+    child.kill();
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+/**
  * Round 1182: ports round 1162's full live-app relationTo
  * case-insensitivity fix into this file's generated BACKUP route -- never
  * reached by any of rounds 1159-1181, which all touched the live app or

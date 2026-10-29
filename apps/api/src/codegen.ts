@@ -559,6 +559,24 @@ for (const entity of ENTITIES) {
       const placeholders = ["?", ...columns.map(() => "?")].join(", ");
       const stmt = db.prepare(\`INSERT INTO \${q(entity.name)} (createdAt, \${columns.map(q).join(", ")}) VALUES (\${placeholders})\`);
       const result = stmt.run(createdAt, ...values);
+      // Round 1231: mirrors the PATCH route's own round-1091/1176 self-
+      // reference guard, which this POST route never got. The new row's
+      // id is only known after the insert above -- unlike PATCH, where
+      // the id is the caller's own URL param, known before any field is
+      // coerced -- so a self-referencing relation field can only be
+      // caught here, after the fact. A freshly-built entity table's very
+      // first record gets a predictable id (AUTOINCREMENT starts at 1),
+      // making e.g. {"managerId": 1} on the first Employee record a
+      // real, reachable self-reference via this exported app's public
+      // API (it has no auth on any route), with no error anywhere.
+      const newId = Number(result.lastInsertRowid);
+      const selfRefField = entity.fields.find(
+        (f, i) => f.type === "relation" && f.relationTo?.toLowerCase() === entity.name.toLowerCase() && values[i] === newId,
+      );
+      if (selfRefField) {
+        db.prepare(\`DELETE FROM \${q(entity.name)} WHERE id = ?\`).run(newId);
+        throw new Error(\`Field "\${selfRefField.name}" can't reference the record's own id\`);
+      }
       const row = db.prepare(\`SELECT * FROM \${q(entity.name)} WHERE id = ?\`).get(result.lastInsertRowid);
       res.status(201).json({ record: rowToRecord(entity, row) });
     } catch (err) {

@@ -649,3 +649,89 @@ test("updateRecord's self-reference guard never rejects a relation field pointin
   const updated = updateRecord(db, "proj1", employee, emp.id as number, { departmentId: dept.id });
   assert.equal(updated.departmentId, dept.id, "a relation to a different entity must never be rejected by the self-reference guard, regardless of numeric id overlap");
 });
+
+/**
+ * Round 1231: updateRecord got the self-reference guard above (rounds
+ * 1037/1176), but insertRecord never did -- and a self-reference is just
+ * as reachable on CREATE as on update. The new row's id is only known
+ * after the INSERT commits, but that's exactly why this was reachable
+ * with no error at all: a freshly-built entity table's very first record
+ * gets a predictable id (AUTOINCREMENT starts at 1), so a direct create
+ * call setting managerId to that same, now-known id self-references with
+ * nothing to stop it -- the SQL FOREIGN KEY constraint itself allows a
+ * row to reference its own id, and coerceValue only checks the raw value
+ * is a finite number, same as updateRecord's own pre-1037 gap.
+ */
+test("insertRecord rejects a self-referencing relation field set to the new record's own (freshly-assigned) id", () => {
+  const employee: Entity = {
+    name: "Employee",
+    fields: [
+      { name: "name", type: "text", required: true },
+      { name: "managerId", type: "relation", required: false, relationTo: "Employee" },
+    ],
+  };
+  const db = openDatabase(":memory:");
+  applyMigrations(db, "proj1", { ...spec, entities: [employee] });
+
+  // The very first record in a fresh table: AUTOINCREMENT guarantees id 1.
+  assert.throws(
+    () => insertRecord(db, "proj1", employee, { name: "Dana", managerId: 1 }),
+    ValidationError,
+    "creating a record whose own self-referencing relation field is set to its own freshly-assigned id must be rejected",
+  );
+  assert.equal(countRecords(db, "proj1", employee), 0, "the rejected self-referencing row must not be left committed");
+});
+
+test("insertRecord rejects a self-referencing relation field even when relationTo differs in case from the entity's own declared name", () => {
+  const employee: Entity = {
+    name: "Employee",
+    fields: [
+      { name: "name", type: "text", required: true },
+      { name: "managerId", type: "relation", required: false, relationTo: "employee" },
+    ],
+  };
+  const db = openDatabase(":memory:");
+  applyMigrations(db, "proj1", { ...spec, entities: [employee] });
+
+  assert.throws(
+    () => insertRecord(db, "proj1", employee, { name: "Dana", managerId: 1 }),
+    ValidationError,
+    "a case-mismatched relationTo ('employee' vs the entity's own 'Employee') must not let a create-time self-reference slip past this guard",
+  );
+  assert.equal(countRecords(db, "proj1", employee), 0, "the rejected self-referencing row must not be left committed");
+});
+
+test("insertRecord's self-reference guard doesn't reject a relation field referencing an EARLIER, different, already-existing record", () => {
+  const employee: Entity = {
+    name: "Employee",
+    fields: [
+      { name: "name", type: "text", required: true },
+      { name: "managerId", type: "relation", required: false, relationTo: "Employee" },
+    ],
+  };
+  const db = openDatabase(":memory:");
+  applyMigrations(db, "proj1", { ...spec, entities: [employee] });
+  const boss = insertRecord(db, "proj1", employee, { name: "Dana" });
+
+  const created = insertRecord(db, "proj1", employee, { name: "Bob", managerId: boss.id });
+  assert.equal(created.managerId, boss.id, "referencing a different, already-existing record of the same entity is an entirely ordinary relation and must never be rejected");
+});
+
+test("insertRecord's self-reference guard never rejects a relation field pointing at a DIFFERENT entity, even if the ids numerically collide", () => {
+  const department: Entity = { name: "Department", fields: [{ name: "title", type: "text", required: true }] };
+  const employee: Entity = {
+    name: "Employee",
+    fields: [
+      { name: "name", type: "text", required: true },
+      { name: "departmentId", type: "relation", required: false, relationTo: "Department" },
+    ],
+  };
+  const db = openDatabase(":memory:");
+  applyMigrations(db, "proj1", { ...spec, entities: [department, employee] });
+  const dept = insertRecord(db, "proj1", department, { title: "Engineering" });
+
+  // dept.id is 1; the first Employee record will also be assigned id 1,
+  // but departmentId targets a different entity, so no self-reference.
+  const created = insertRecord(db, "proj1", employee, { name: "Dana", departmentId: dept.id });
+  assert.equal(created.departmentId, dept.id, "a relation to a different entity must never be rejected by the self-reference guard, regardless of numeric id overlap");
+});

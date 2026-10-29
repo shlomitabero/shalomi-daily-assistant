@@ -249,7 +249,27 @@ export function insertRecord(
     `INSERT INTO ${quoteIdentifier(table)} (createdAt, ${columns.map(quoteIdentifier).join(", ")}) VALUES (${placeholders})`,
   );
   const result = stmt.run(createdAt, ...values);
-  return getRecord(db, projectId, entity, Number(result.lastInsertRowid))!;
+  const id = Number(result.lastInsertRowid);
+  // Round 1231: mirrors updateRecord's own round-1037/1176 self-reference
+  // guard, which this function never got. The new row's id is only known
+  // after the insert above, so unlike updateRecord (where the id is the
+  // caller's own URL param, known before any field is coerced), a
+  // self-referencing relation field can only be caught here, after the
+  // fact -- a freshly-built entity table's very first record gets a
+  // predictable id (AUTOINCREMENT starts at 1), making e.g. {"managerId":
+  // 1} on the first Employee record a real, reachable self-reference via
+  // a direct POST, with no error anywhere (the SQL FOREIGN KEY constraint
+  // itself allows a row to reference its own id). Deletes the row it just
+  // inserted and throws the identical message updateRecord already uses,
+  // rather than leaving a self-referencing row committed.
+  const selfRefField = entity.fields.find(
+    (field, i) => field.type === "relation" && field.relationTo?.toLowerCase() === entity.name.toLowerCase() && values[i] === id,
+  );
+  if (selfRefField) {
+    db.prepare(`DELETE FROM ${quoteIdentifier(table)} WHERE id = ?`).run(id);
+    throw new ValidationError(`Field "${selfRefField.name}" can't reference the record's own id`);
+  }
+  return getRecord(db, projectId, entity, id)!;
 }
 
 export function listRecords(db: ForgeDatabase, projectId: string, entity: Entity): EntityRecord[] {
