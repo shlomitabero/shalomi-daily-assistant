@@ -3084,6 +3084,10 @@ test("the exported EntityView's handleSubmit saves only the field the user actua
     "createRecord",
     "refresh",
     "emptyForm",
+    // Round 1264: handleSubmit's own new guard (bulkActionBusy) is now a
+    // free variable it references -- false here, since this test exercises
+    // handleSubmit's own normal field-diffing behavior, not the guard.
+    "bulkActionBusy",
     `
     let form = {};
     let editingId = null;
@@ -3125,6 +3129,7 @@ test("the exported EntityView's handleSubmit saves only the field the user actua
       for (const field of entity.fields) f[field.name] = field.type === "boolean" ? false : "";
       return f;
     },
+    false,
   );
 
   const record = { id: 7, name: "Alice", status: "New" };
@@ -12258,6 +12263,33 @@ test("the exported EntityView asks for confirmation before deleting a single rec
   const entityViewJsx = files.find((f) => f.path === "web/src/components/EntityView.jsx")!.content;
   assert.match(entityViewJsx, /function handleDelete\(id\) \{[\s\S]*?const index = records\.findIndex/);
   assert.match(entityViewJsx, /window\.confirm\(`Delete "\$\{label\}"\? You can undo this for a few seconds after deleting\.`\)/);
+});
+
+/**
+ * Round 1264: ports the live preview's own identical fix to this exported
+ * app -- handleSubmit (the add/edit record form's own Save button) was the
+ * one single-record write path never gated against bulkActionBusy, unlike
+ * its sibling Duplicate button two lines away, which already is.
+ */
+test("the exported EntityView's handleSubmit refuses to run while bulkActionBusy is true, and its Save button is disabled too", () => {
+  const files = generateExportFiles(project);
+  const entityViewJsx = files.find((f) => f.path === "web/src/components/EntityView.jsx")!.content;
+  // Extracts handleSubmit's own body first (bounded to its own closing
+  // brace), not a bare substring search across the whole file -- without
+  // this, the guard regex below could falsely match handleDelete's own,
+  // unrelated "if (bulkActionBusy) return;" elsewhere in the file.
+  const handleSubmitMatch = entityViewJsx.match(/async function handleSubmit\(e\) \{[\s\S]*?\n {2}\}\n/);
+  assert.ok(handleSubmitMatch, "expected to find handleSubmit in the exported EntityView");
+  assert.match(
+    handleSubmitMatch![0],
+    /e\.preventDefault\(\);[\s\S]*?\n\s*if \(bulkActionBusy\) return;/,
+    "handleSubmit must refuse to run while a bulk batch is still in flight, exactly like handleDelete/handleDuplicate already do",
+  );
+  assert.match(
+    entityViewJsx,
+    /<button type="submit" className="btn" disabled=\{!!recordHasNoRequiredFile \|\| bulkActionBusy\}>/,
+    "the Save button must be disabled while bulkActionBusy is true, exactly like its sibling Duplicate button",
+  );
 });
 
 /**

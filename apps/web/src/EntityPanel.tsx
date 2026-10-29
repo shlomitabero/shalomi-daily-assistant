@@ -3032,6 +3032,13 @@ export function EntityPanel({
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
+    // Round 1264: see handleDelete's own identical guard -- the form's own
+    // Save button was the one single-record write path in this whole
+    // writesInFlight family (rounds 1117/1118/1260) that was never gated
+    // against a bulk batch or an import still in flight. Its sibling
+    // Duplicate/Delete buttons, in this exact same <form>, already guard
+    // against it.
+    if (writesInFlight) return;
     setError(null);
     // Checked client-side (with noValidate on the <form>) rather than
     // relying on the browser's own native required-field validation: that
@@ -4369,7 +4376,9 @@ export function EntityPanel({
           </label>
         ))}
         <div className="form-actions">
-          <button type="submit">{editingId != null ? t("entity.save") : t("entity.add")}</button>
+          <button type="submit" disabled={writesInFlight}>
+            {editingId != null ? t("entity.save") : t("entity.add")}
+          </button>
           {editingId != null && (
             <button
               type="button"

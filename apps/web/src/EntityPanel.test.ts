@@ -1111,6 +1111,37 @@ test("EntityPanel's handleImportFile and handleImportJsonFile are each a no-op w
 });
 
 /**
+ * Round 1264: handleSubmit (the add/edit record form's own Save button) was
+ * the one single-record write path in this whole writesInFlight family
+ * (rounds 1117/1118/1260) that was never gated against it at all -- its
+ * sibling Duplicate/Delete buttons, in this exact same <form>, already
+ * guard against writesInFlight. Extracted and called with ONLY
+ * writesInFlight declared, mirroring the handleDelete/handleDuplicate/
+ * handleMoveFields and handleImportFile/handleImportJsonFile tests just
+ * above -- if the guard were ever removed, the very next line
+ * (setError(null)) throws a ReferenceError instead of silently doing
+ * nothing, proving the guard itself is what's stopping execution.
+ */
+test("EntityPanel's handleSubmit is a no-op while writesInFlight is true", async () => {
+  const handlerMatch = entityPanelSrc.match(/async function handleSubmit\(e: React\.FormEvent\) \{[\s\S]*?\n {2}\}\n/);
+  assert.ok(handlerMatch, "expected to find handleSubmit in EntityPanel.tsx");
+  const { code } = transformSync(handlerMatch![0], { loader: "ts" });
+  const fn = new Function("writesInFlight", `${code}\nreturn handleSubmit;`)(true) as (e: unknown) => Promise<void>;
+  const fakeEvent = { preventDefault: () => {} };
+  await fn(fakeEvent); // resolves cleanly only if the guard fires; a removed guard throws ReferenceError on setError
+});
+
+/**
+ * Round 1264: the positive half -- the form's own Save button must be
+ * disabled while writesInFlight is true, the same wiring its sibling
+ * Duplicate/Delete buttons in this exact <form> already had.
+ */
+test("EntityPanel's in-form Save button is disabled while writesInFlight is true", () => {
+  const saveButtonMatch = entityPanelSrc.match(/<button type="submit" disabled=\{writesInFlight\}>\s*\n\s*\{editingId != null \? t\("entity\.save"\) : t\("entity\.add"\)\}\s*\n\s*<\/button>/);
+  assert.ok(saveButtonMatch, "expected the in-form Save button to be disabled={writesInFlight}");
+});
+
+/**
  * The other half: NOT clicking Undo must commit every real delete in the
  * batch once the undo window actually elapses, mirroring single-delete's
  * own equivalent test -- the whole point is a temporary reprieve for the

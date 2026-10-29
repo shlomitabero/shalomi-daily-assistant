@@ -5899,6 +5899,12 @@ export function EntityView({ entity, highlightRecordId, onHighlightHandled, onJu
 
   async function handleSubmit(e) {
     e.preventDefault();
+    // Round 1264: see handleDelete's own identical guard above -- the
+    // form's own Save button was the one single-record write path never
+    // gated against a bulk batch still in flight, unlike its sibling
+    // Duplicate/Delete buttons in this exact same <form>. Mirrors the
+    // live preview's own identical fix.
+    if (bulkActionBusy) return;
     setError(null);
     // Checked first, and worded specifically, because the generic
     // missingField message below ("is a required field") reads like a
@@ -6909,7 +6915,7 @@ export function EntityView({ entity, highlightRecordId, onHighlightHandled, onJu
           </p>
         )}
         <div>
-          <button type="submit" className="btn" disabled={!!recordHasNoRequiredFile}>
+          <button type="submit" className="btn" disabled={!!recordHasNoRequiredFile || bulkActionBusy}>
             {editingId != null ? "Save" : "Add"}
           </button>
           {editingId != null && (
