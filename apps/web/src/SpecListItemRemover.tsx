@@ -1105,6 +1105,24 @@ export function FieldChip({
     setDraftRelationTo(field.relationTo ?? allEntities[0]?.name ?? "");
   }
 
+  // Round 1236: openDraftFor above only re-derives draftRelationTo at the
+  // moment the draft OPENS. If it's left open (the user hasn't submitted
+  // or cancelled yet) and a DIFFERENT entity -- the one draftRelationTo is
+  // currently pointing at -- gets removed elsewhere on the same spec-review
+  // screen, nothing re-ran that derivation: draftRelationTo stays pointed
+  // at the now-missing entity while the select's own options (rebuilt
+  // fresh from allEntities every render, same as AddFieldForm's identical
+  // select) silently drop it, reproducing the exact stale-submit bug round
+  // 1235 fixed for AddFieldForm, just via a second trigger neither
+  // component's one-shot derivation covered. Watching allEntities itself
+  // closes both triggers (the open-moment one above, and this one) with a
+  // single mechanism.
+  useEffect(() => {
+    if (draftType === "relation" && !allEntities.some((e) => e.name === draftRelationTo)) {
+      setDraftRelationTo(allEntities[0]?.name ?? "");
+    }
+  }, [draftType, allEntities, draftRelationTo]);
+
   function handleTypeSelectChange(newType: Field["type"]) {
     if (newType === field.type) {
       setDraftType(null);
@@ -1522,15 +1540,24 @@ export function AddFieldForm({
   // silently diverges from the actual relationTo state the submit button
   // sends -- the user sees one target, submits a different, stale one,
   // and gets back a confusing "is not an entity in this project" error
-  // for a value they never picked. Re-deriving the moment the type switches
-  // TO "relation" (the only point a stale value could otherwise reach the
-  // user) keeps it fresh without disturbing any other field's own type.
+  // for a value they never picked.
+  // Round 1236: that round's own fix only ever re-derived relationTo at
+  // the moment the type <select> itself fired a change event -- if the
+  // form is already sitting open with type already "relation" (not
+  // freshly switched to it) and the SAME kind of removal happens while
+  // it's open, nothing re-ran the correction. Watching allEntities itself
+  // (FieldChip's identical draftRelationTo effect, just above, has the
+  // same two triggers) closes both with one mechanism, so the one-shot
+  // check this handler used to carry is gone -- setType alone is enough,
+  // the effect below reacts to the result on every render.
   function handleTypeChange(newType: Field["type"]) {
     setType(newType);
-    if (newType === "relation" && !allEntities.some((e) => e.name === relationTo)) {
+  }
+  useEffect(() => {
+    if (type === "relation" && !allEntities.some((e) => e.name === relationTo)) {
       setRelationTo(allEntities[0]?.name ?? "");
     }
-  }
+  }, [type, allEntities, relationTo]);
   // Round 1039: see EntitySummaryItem's own identical comment -- this
   // form's own relation-target dropdown (below) has the same unresolved
   // collision risk as FieldChip's identical dropdown if two entities

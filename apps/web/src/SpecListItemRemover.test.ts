@@ -2482,6 +2482,194 @@ test("AddFieldForm's relationTo default re-derives from the current allEntities,
 });
 
 /**
+ * Round 1236: the test just above confirms switching the type TO
+ * "relation" re-derives a stale relationTo -- but round 1235's own fix
+ * only ever ran that correction at the moment of that switch. If the form
+ * is already sitting open with type already "relation" (never touched
+ * again) and the entity relationTo is currently pointing at gets removed
+ * elsewhere on the same spec-review screen while it's still open, nothing
+ * re-ran the correction: relationTo stayed stale even though the select's
+ * own options (rebuilt fresh from allEntities every render) silently
+ * dropped it. Confirms the form self-corrects from this second trigger too.
+ */
+test("AddFieldForm's relationTo re-derives even while already open in relation mode, when the entity it points at is removed out from under it", async () => {
+  await withJsdom(async () => {
+    const originalFetch = globalThis.fetch;
+    let postedBody: { label: string; type: string; relationTo?: string } | undefined;
+    globalThis.fetch = (async (input: string, init?: RequestInit) => {
+      if (init?.method === "POST" && input === "/api/projects/proj1/entities/Account/fields") {
+        postedBody = JSON.parse(init.body as string) as typeof postedBody;
+        return new Response(JSON.stringify({ project: baseProject }), { status: 200, headers: { "content-type": "application/json" } });
+      }
+      throw new Error(`unexpected request ${init?.method ?? "GET"} ${input}`);
+    }) as typeof fetch;
+
+    const withCustomer: Entity[] = [
+      { name: "Customer", fields: [{ name: "name", type: "text", required: true }] },
+      { name: "Deal", fields: [{ name: "amount", type: "number", required: false }] },
+      { name: "Account", fields: [{ name: "name", type: "text", required: true }] },
+    ];
+    const withoutCustomer: Entity[] = withCustomer.slice(1);
+
+    try {
+      const addedProjects: Project[] = [];
+      const view = render(
+        React.createElement(
+          ThemeProvider,
+          null,
+          React.createElement(
+            LanguageProvider,
+            null,
+            React.createElement(AddFieldForm, {
+              projectId: "proj1",
+              entityName: "Account",
+              allEntities: withCustomer,
+              onAdded: (p: Project) => addedProjects.push(p),
+            }),
+          ),
+        ),
+      );
+
+      fireEvent.change(document.querySelector(".spec-add-item-form input") as HTMLInputElement, { target: { value: "Owner" } });
+      // Switch to "relation" WHILE "Customer" (allEntities[0]) still
+      // exists -- relationTo lands on "Customer" and the form is left
+      // sitting open, exactly like round 1235's own fix already handles.
+      fireEvent.change(document.querySelector(".spec-add-field-form select") as HTMLSelectElement, { target: { value: "relation" } });
+      assert.equal(
+        (document.querySelectorAll(".spec-add-field-form select")[1] as HTMLSelectElement).value,
+        "Customer",
+        "relationTo must land on Customer while it still exists",
+      );
+
+      // Now "Customer" is removed elsewhere on the same screen -- the
+      // form is NOT remounted (same as round 1235's own scenario), and
+      // the type <select> is never touched again.
+      view.rerender(
+        React.createElement(
+          ThemeProvider,
+          null,
+          React.createElement(
+            LanguageProvider,
+            null,
+            React.createElement(AddFieldForm, {
+              projectId: "proj1",
+              entityName: "Account",
+              allEntities: withoutCustomer,
+              onAdded: (p: Project) => addedProjects.push(p),
+            }),
+          ),
+        ),
+      );
+
+      const relationSelect = document.querySelectorAll(".spec-add-field-form select")[1] as HTMLSelectElement;
+      assert.deepEqual(
+        Array.from(relationSelect.options).map((o) => o.value),
+        ["Deal", "Account"],
+        "the relation target dropdown must list only the current, still-real entities",
+      );
+
+      fireEvent.click(document.querySelector(".spec-add-field-form button") as HTMLButtonElement);
+      await waitForCondition(() => addedProjects.length === 1);
+
+      assert.deepEqual(postedBody, { label: "Owner", type: "relation", relationTo: "Deal" });
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+});
+
+/**
+ * Round 1236: FieldChip's own openDraftFor has the identical gap -- it
+ * re-derives draftRelationTo fresh when the draft OPENS, but not while
+ * it's left open afterward. Confirms the same self-correction for an
+ * existing relation field's "edit target" draft.
+ */
+test("FieldChip's draftRelationTo re-derives even while its edit-target draft is already open, when the entity it points at is removed out from under it", async () => {
+  await withJsdom(async () => {
+    const originalFetch = globalThis.fetch;
+    let patchBody: { type: string; relationTo?: string } | undefined;
+    globalThis.fetch = (async (input: string, init?: RequestInit) => {
+      if (init?.method === "PATCH" && input === "/api/projects/proj1/entities/Customer/fields/supplierId/type") {
+        patchBody = JSON.parse(init.body as string) as { type: string; relationTo?: string };
+        return new Response(JSON.stringify({ project: baseProject }), { status: 200, headers: { "content-type": "application/json" } });
+      }
+      throw new Error(`unexpected request ${init?.method ?? "GET"} ${input}`);
+    }) as typeof fetch;
+
+    const withSupplier: Entity[] = [
+      ...baseProject.spec.entities,
+      { name: "Supplier", label: "Supplier", fields: [{ name: "name", type: "text", required: true }] },
+      { name: "Warehouse", label: "Warehouse", fields: [{ name: "name", type: "text", required: true }] },
+    ];
+    const withoutSupplier: Entity[] = withSupplier.filter((e) => e.name !== "Supplier");
+    const field: Field = { name: "supplierId", type: "relation", required: false, relationTo: "Supplier" };
+
+    try {
+      const changedProjects: Project[] = [];
+      const view = render(
+        React.createElement(
+          ThemeProvider,
+          null,
+          React.createElement(
+            LanguageProvider,
+            null,
+            React.createElement(FieldChip, {
+              field,
+              projectId: "proj1",
+              entityName: "Customer",
+              canRemove: true,
+              onChanged: (p: Project) => changedProjects.push(p),
+              allEntities: withSupplier,
+              labelOccurrences: new Map(),
+            }),
+          ),
+        ),
+      );
+
+      fireEvent.click(document.querySelector(".chip-field-edit-values") as HTMLButtonElement);
+      const confirmForm = document.querySelector(".chip-field-type-confirm") as HTMLFormElement;
+      assert.equal((confirmForm.querySelector("select") as HTMLSelectElement).value, "Supplier", "the draft must start pre-filled with the field's own current relationTo");
+
+      // "Supplier" -- the field's own current target -- is removed
+      // elsewhere on the same screen while the draft is still open.
+      view.rerender(
+        React.createElement(
+          ThemeProvider,
+          null,
+          React.createElement(
+            LanguageProvider,
+            null,
+            React.createElement(FieldChip, {
+              field,
+              projectId: "proj1",
+              entityName: "Customer",
+              canRemove: true,
+              onChanged: (p: Project) => changedProjects.push(p),
+              allEntities: withoutSupplier,
+              labelOccurrences: new Map(),
+            }),
+          ),
+        ),
+      );
+
+      const relationSelect = document.querySelector(".chip-field-type-confirm select") as HTMLSelectElement;
+      assert.deepEqual(
+        Array.from(relationSelect.options).map((o) => o.value),
+        withoutSupplier.map((e) => e.name),
+        "the relation target dropdown must list only the current, still-real entities",
+      );
+
+      fireEvent.submit(confirmForm);
+      await waitForCondition(() => changedProjects.length === 1);
+
+      assert.deepEqual(patchBody, { type: "relation", relationTo: withoutSupplier[0]?.name });
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+});
+
+/**
  * Round 1059: the forward half of the same gap, one level up. Round 1026
  * only cross-gated a field chip's own three actions (remove/required-
  * toggle/type-change) against each other; it never considered
