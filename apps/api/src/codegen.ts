@@ -3297,8 +3297,42 @@ function matchesImportHeader(header, field, labelOccurrences) {
 // "impossible from a CSV cell" treatment: an optional column is ignored,
 // and a required relation field refuses the whole import with one clear
 // error instead of guessing.
-function buildImportRecords(fields, rows, relatedRecords) {
-  if (rows.length === 0) return { records: [], errors: [] };
+// Round 1268: mirrors the live preview's own entityFormatting.ts
+// makeDuplicateWarningChecker (round 1241) -- an advisory-only check
+// (never blocks a row, unlike the \`errors\` list below) for a new row (no
+// resolved id, so it will be POSTed rather than PATCHed) whose
+// display-field value matches either an existing record already in this
+// entity's table or an earlier row in this same import batch. Restricted
+// to the same text/longtext display-field precondition pickDisplayField's
+// own caller twin.ts's computeDuplicateObservations already requires: a
+// relation/enum/boolean/date/number/file display field's stored value is
+// a foreign-key id or raw code, never a human name, so two rows sharing
+// one is no evidence of an actual duplicate.
+function makeDuplicateWarningChecker(entity, existingRecords) {
+  const displayField = entity ? pickDisplayField(entity) : null;
+  if (!displayField || (displayField.type !== "text" && displayField.type !== "longtext")) {
+    return () => null;
+  }
+  const existingLabels = new Set();
+  for (const r of existingRecords) {
+    const v = r[displayField.name];
+    if (typeof v === "string" && v.trim() !== "") existingLabels.add(v.trim().toLowerCase());
+  }
+  const importBatchLabels = new Set();
+  return (record, rowIndex) => {
+    if (record.id !== undefined) return null;
+    const raw = record[displayField.name];
+    if (typeof raw !== "string" || raw.trim() === "") return null;
+    const key = raw.trim().toLowerCase();
+    const isDuplicate = existingLabels.has(key) || importBatchLabels.has(key);
+    importBatchLabels.add(key);
+    if (!isDuplicate) return null;
+    return \`Row \${rowIndex + 1}: a record named "\${raw.trim()}" already exists -- this will create a new, separate record (possibly a duplicate).\`;
+  };
+}
+
+function buildImportRecords(fields, rows, relatedRecords, entity, existingRecords) {
+  if (rows.length === 0) return { records: [], errors: [], warnings: [] };
 
   // Unlike number/enum/date below, a boolean cell used to have no
   // rejection path at all: anything outside this exact true-list
@@ -3328,6 +3362,7 @@ function buildImportRecords(fields, rows, relatedRecords) {
     return {
       records: [],
       errors: [\`CSV import isn't supported yet for entities with a required \${requiredUnsupported.type} field ("\${requiredUnsupported.label || requiredUnsupported.name}").\`],
+      warnings: [],
     };
   }
 
@@ -3362,6 +3397,8 @@ function buildImportRecords(fields, rows, relatedRecords) {
 
   const records = [];
   const errors = [];
+  const warnings = [];
+  const checkDuplicateWarning = makeDuplicateWarningChecker(entity, existingRecords || []);
   // Round 1042: mirrors the live preview's own entityFormatting.ts fix --
   // two rows sharing the same trusted id each fire their own independent
   // updateRecord() call below (handleImportFile's own Promise.allSettled),
@@ -3524,11 +3561,13 @@ function buildImportRecords(fields, rows, relatedRecords) {
     if (rowError) {
       errors.push(rowError);
     } else {
+      const dupWarning = checkDuplicateWarning(record, rowIndex);
+      if (dupWarning) warnings.push(dupWarning);
       records.push(record);
     }
   });
 
-  return { records, errors };
+  return { records, errors, warnings };
 }
 
 // Mirrors the live preview's own entityFormatting.ts buildImportRecordsFromJson
@@ -3542,8 +3581,8 @@ function buildImportRecords(fields, rows, relatedRecords) {
 // from an import cell" treatment buildImportRecords gives them -- the
 // exported descriptor only ever carries a URL to an already-uploaded file,
 // never the file's own bytes.
-function buildImportRecordsFromJson(fields, rows, relatedRecords) {
-  if (rows.length === 0) return { records: [], errors: [] };
+function buildImportRecordsFromJson(fields, rows, relatedRecords, entity, existingRecords) {
+  if (rows.length === 0) return { records: [], errors: [], warnings: [] };
 
   const relationResolvable = (f) => !!f.relationTo && ALL_ENTITIES.some((e) => e.name.toLowerCase() === f.relationTo.toLowerCase()) && !!(relatedRecords && relatedRecords[f.relationTo]);
 
@@ -3552,11 +3591,14 @@ function buildImportRecordsFromJson(fields, rows, relatedRecords) {
     return {
       records: [],
       errors: [\`JSON import isn't supported yet for entities with a required \${requiredUnsupported.type} field ("\${requiredUnsupported.label || requiredUnsupported.name}").\`],
+      warnings: [],
     };
   }
 
   const records = [];
   const errors = [];
+  const warnings = [];
+  const checkDuplicateWarning = makeDuplicateWarningChecker(entity, existingRecords || []);
   const seenIds = new Set();
 
   rows.forEach((row, rowIndex) => {
@@ -3650,11 +3692,13 @@ function buildImportRecordsFromJson(fields, rows, relatedRecords) {
     if (rowError) {
       errors.push(rowError);
     } else {
+      const dupWarning = checkDuplicateWarning(record, rowIndex);
+      if (dupWarning) warnings.push(dupWarning);
       records.push(record);
     }
   });
 
-  return { records, errors };
+  return { records, errors, warnings };
 }
 
 // Every enum field with a workable, human-scannable number of distinct
@@ -5073,6 +5117,11 @@ export function EntityView({ entity, highlightRecordId, onHighlightHandled, onJu
   const [importMessage, setImportMessage] = useState(null);
   const [importErrors, setImportErrors] = useState([]);
   const [showImportErrors, setShowImportErrors] = useState(false);
+  // Round 1268: advisory possible-duplicate warnings from buildImportRecords/
+  // buildImportRecordsFromJson -- mirrors the live preview's own
+  // EntityPanel.tsx importWarnings/showImportWarnings (round 1241).
+  const [importWarnings, setImportWarnings] = useState([]);
+  const [showImportWarnings, setShowImportWarnings] = useState(false);
   // Round 986: remaps a stale hidden-field entry that still matches a
   // current field CASE-INSENSITIVELY to that field's current casing,
   // instead of leaving it un-matchable (and so no longer actually hiding
@@ -6674,10 +6723,13 @@ export function EntityView({ entity, highlightRecordId, onHighlightHandled, onJu
     setImportMessage(null);
     setImportErrors([]);
     setShowImportErrors(false);
+    setImportWarnings([]);
+    setShowImportWarnings(false);
     try {
       const text = await file.text();
       const rows = parseCsv(text);
-      const { records: parsedRecords, errors: parseErrors } = buildImportRecords(entity.fields, rows, relatedRecords);
+      const { records: parsedRecords, errors: parseErrors, warnings } = buildImportRecords(entity.fields, rows, relatedRecords, entity, records);
+      setImportWarnings(warnings);
 
       if (parsedRecords.length === 0) {
         setImportErrors(parseErrors);
@@ -6735,6 +6787,8 @@ export function EntityView({ entity, highlightRecordId, onHighlightHandled, onJu
     setImportMessage(null);
     setImportErrors([]);
     setShowImportErrors(false);
+    setImportWarnings([]);
+    setShowImportWarnings(false);
     try {
       const text = await file.text();
       let parsed;
@@ -6748,7 +6802,8 @@ export function EntityView({ entity, highlightRecordId, onHighlightHandled, onJu
         setImportMessage("The file isn't valid JSON for a list of records.");
         return;
       }
-      const { records: parsedRecords, errors: parseErrors } = buildImportRecordsFromJson(entity.fields, parsed, relatedRecords);
+      const { records: parsedRecords, errors: parseErrors, warnings } = buildImportRecordsFromJson(entity.fields, parsed, relatedRecords, entity, records);
+      setImportWarnings(warnings);
 
       if (parsedRecords.length === 0) {
         setImportErrors(parseErrors);
@@ -6996,10 +7051,22 @@ export function EntityView({ entity, highlightRecordId, onHighlightHandled, onJu
             {showImportErrors ? "Hide errors" : "Show errors"}
           </button>
         )}
+        {importWarnings.length > 0 && (
+          <button type="button" className="import-errors-toggle" onClick={() => setShowImportWarnings((v) => !v)}>
+            {showImportWarnings ? "Hide warnings" : \`Show \${importWarnings.length} possible duplicates\`}
+          </button>
+        )}
       </div>
       {showImportErrors && importErrors.length > 0 && (
         <ul className="csv-import-errors">
           {importErrors.map((msg, i) => (
+            <li key={i}>{msg}</li>
+          ))}
+        </ul>
+      )}
+      {showImportWarnings && importWarnings.length > 0 && (
+        <ul className="csv-import-warnings">
+          {importWarnings.map((msg, i) => (
             <li key={i}>{msg}</li>
           ))}
         </ul>
@@ -9135,6 +9202,7 @@ nav button.active .tab-count { background: rgba(255, 255, 255, 0.25); color: inh
 .import-errors-toggle { padding: 8px 14px; font-size: 13px; border-radius: 8px; border: 1px solid var(--border); background: var(--surface); color: var(--text); cursor: pointer; font: inherit; }
 .import-errors-toggle:hover { background: var(--bg); }
 .csv-import-errors { margin: -6px 0 14px; padding-inline-start: 20px; color: var(--danger); font-size: 13px; display: flex; flex-direction: column; gap: 3px; }
+.csv-import-warnings { margin: -6px 0 14px; padding-inline-start: 20px; color: var(--warning); font-size: 13px; display: flex; flex-direction: column; gap: 3px; }
 .bulk-actions-bar { display: flex; align-items: center; flex-wrap: wrap; gap: 12px; padding: 8px 12px; margin-bottom: 8px; background: var(--surface-muted); border: 1px solid var(--border-soft); border-radius: 8px; font-size: 13.5px; }
 .bulk-edit-field-label { display: flex; align-items: center; gap: 6px; }
 .select-col { width: 1%; white-space: nowrap; }

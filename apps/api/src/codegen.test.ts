@@ -11836,7 +11836,8 @@ test("the exported EntityView's own generated buildImportRecordsFromJson round-t
   const entityViewJsx = files.find((f) => f.path === "web/src/components/EntityView.jsx")!.content;
   const recordsToJsonSrc = entityViewJsx.match(/function recordsToJson\(fields, records\) \{[\s\S]*?\n\}\n/)?.[0];
   const parseFileFieldValueSrc = entityViewJsx.match(/function parseFileFieldValue\(value\) \{[\s\S]*?\n\}\n/)?.[0];
-  const importJsonSrc = entityViewJsx.match(/function buildImportRecordsFromJson\(fields, rows, relatedRecords\) \{[\s\S]*?\n\}\n/)?.[0];
+  const importJsonSrc = entityViewJsx.match(/function buildImportRecordsFromJson\(fields, rows, relatedRecords, entity, existingRecords\) \{[\s\S]*?\n\}\n/)?.[0];
+  const makeDuplicateWarningCheckerSrc = entityViewJsx.match(/function makeDuplicateWarningChecker\(entity, existingRecords\) \{[\s\S]*?\n\}\n/)?.[0];
   assert.ok(
     recordsToJsonSrc && parseFileFieldValueSrc && importJsonSrc,
     "expected to find recordsToJson/parseFileFieldValue/buildImportRecordsFromJson in the generated EntityView.jsx",
@@ -11851,7 +11852,7 @@ test("the exported EntityView's own generated buildImportRecordsFromJson round-t
   const allEntitiesDecl = "const ALL_ENTITIES = [];";
 
   const { recordsToJson, buildImportRecordsFromJson } = new Function(
-    `${allEntitiesDecl}\n${parseFileFieldValueSrc}\n${recordsToJsonSrc}\n${importJsonSrc}\nreturn { recordsToJson, buildImportRecordsFromJson };`,
+    `${allEntitiesDecl}\n${parseFileFieldValueSrc}\n${recordsToJsonSrc}\n${makeDuplicateWarningCheckerSrc}\n${importJsonSrc}\nreturn { recordsToJson, buildImportRecordsFromJson };`,
   )();
 
   const fields = [
@@ -11884,7 +11885,7 @@ test("the exported EntityView's Import JSON input routes through buildImportReco
   assert.ok(handleImportJsonSrc, "expected to find handleImportJsonFile in generated output");
   assert.match(
     handleImportJsonSrc!,
-    /buildImportRecordsFromJson\(entity\.fields, parsed, relatedRecords\)/,
+    /buildImportRecordsFromJson\(entity\.fields, parsed, relatedRecords, entity, records\)/,
     "handleImportJsonFile must route through the real generated buildImportRecordsFromJson",
   );
   assert.match(handleImportJsonSrc!, /id != null \? updateRecord\(entity\.name, id, data\) : createRecord\(entity\.name, data\)/, "must PATCH-vs-POST exactly like handleImportFile");
@@ -11895,6 +11896,39 @@ test("the exported EntityView's Import JSON input routes through buildImportReco
 
   const stylesCss = files.find((f) => f.path === "web/src/styles.css")!.content;
   assert.match(stylesCss, /\.json-import-label/);
+});
+
+/**
+ * Round 1268: the generated EntityView's handleImportFile/handleImportJsonFile
+ * now route through buildImportRecords/buildImportRecordsFromJson's new
+ * warnings return value and expose it via a "Show N possible duplicates"
+ * toggle, mirroring the live preview's own importWarnings/showImportWarnings
+ * (round 1241). Only checks the real generated JSX/CSS wiring -- the
+ * underlying duplicate-detection logic itself is covered by the
+ * "warns (without blocking)..." test above.
+ */
+test("the exported EntityView's handleImportFile/handleImportJsonFile route through buildImportRecords' warnings and render a possible-duplicates toggle", () => {
+  const files = generateExportFiles(project);
+  const entityViewJsx = files.find((f) => f.path === "web/src/components/EntityView.jsx")!.content;
+
+  const handleImportSrc = entityViewJsx.match(/async function handleImportFile\(e\) \{[\s\S]*?\n {2}\}\n/)?.[0];
+  assert.ok(handleImportSrc, "expected to find handleImportFile in generated output");
+  assert.match(
+    handleImportSrc!,
+    /buildImportRecords\(entity\.fields, rows, relatedRecords, entity, records\)/,
+    "handleImportFile must pass entity/records through to the real generated buildImportRecords",
+  );
+  assert.match(handleImportSrc!, /setImportWarnings\(warnings\)/, "handleImportFile must surface buildImportRecords' own warnings");
+
+  const handleImportJsonSrc = entityViewJsx.match(/async function handleImportJsonFile\(e\) \{[\s\S]*?\n {2}\}\n/)?.[0];
+  assert.ok(handleImportJsonSrc, "expected to find handleImportJsonFile in generated output");
+  assert.match(handleImportJsonSrc!, /setImportWarnings\(warnings\)/, "handleImportJsonFile must surface buildImportRecordsFromJson's own warnings");
+
+  assert.match(entityViewJsx, /Show \$\{importWarnings\.length\} possible duplicates/, "expected the 'Show N possible duplicates' toggle label in generated output");
+  assert.match(entityViewJsx, /className="csv-import-warnings"/, "expected the warnings list's own CSS class in generated output");
+
+  const stylesCss = files.find((f) => f.path === "web/src/styles.css")!.content;
+  assert.match(stylesCss, /\.csv-import-warnings \{[^}]*color: var\(--warning\)/, "the warnings list must use the advisory --warning token, not --danger");
 });
 
 /**
@@ -12675,7 +12709,7 @@ test("the exported EntityView renders a real CSV import (the complement to CSV e
   const files = generateExportFiles(project);
   const entityViewJsx = files.find((f) => f.path === "web/src/components/EntityView.jsx")!.content;
   assert.match(entityViewJsx, /function parseCsv\(text\)/);
-  assert.match(entityViewJsx, /function buildImportRecords\(fields, rows, relatedRecords\)/);
+  assert.match(entityViewJsx, /function buildImportRecords\(fields, rows, relatedRecords, entity, existingRecords\)/);
   assert.match(entityViewJsx, /async function handleImportFile\(e\)/);
   assert.match(entityViewJsx, /csv-import-label/);
   assert.match(entityViewJsx, /Promise\.allSettled/);
@@ -12723,14 +12757,15 @@ test("the exported EntityView's CSV import rejects a date field value that isn't
   const fieldLabelOccurrencesSrc = entityViewJsx.match(/function fieldLabelOccurrences\(fields\) \{[\s\S]*?\n\}\n/)?.[0];
   const fieldDisplayLabelSrc = entityViewJsx.match(/function fieldDisplayLabel\(field, occurrences\) \{[\s\S]*?\n\}\n/)?.[0];
   const headerSrc = entityViewJsx.match(/function matchesImportHeader\(header, field, labelOccurrences\) \{[\s\S]*?\n\}\n/)?.[0];
-  const importSrc = entityViewJsx.match(/function buildImportRecords\(fields, rows, relatedRecords\) \{[\s\S]*?\n\}\n/)?.[0];
+  const importSrc = entityViewJsx.match(/function buildImportRecords\(fields, rows, relatedRecords, entity, existingRecords\) \{[\s\S]*?\n\}\n/)?.[0];
+  const makeDuplicateWarningCheckerSrc = entityViewJsx.match(/function makeDuplicateWarningChecker\(entity, existingRecords\) \{[\s\S]*?\n\}\n/)?.[0];
   assert.ok(
     isValidDateSrc && fieldLabelOccurrencesSrc && fieldDisplayLabelSrc && headerSrc && importSrc,
     "expected to find isValidDate/fieldLabelOccurrences/fieldDisplayLabel/matchesImportHeader/buildImportRecords in generated output",
   );
 
   const buildImportRecords = new Function(
-    `${isValidDateSrc}\n${fieldLabelOccurrencesSrc}\n${fieldDisplayLabelSrc}\n${headerSrc}\n${importSrc}\nreturn buildImportRecords;`,
+    `${isValidDateSrc}\n${fieldLabelOccurrencesSrc}\n${fieldDisplayLabelSrc}\n${headerSrc}\n${makeDuplicateWarningCheckerSrc}\n${importSrc}\nreturn buildImportRecords;`,
   )();
 
   const fields = dateProject.spec.entities[0].fields;
@@ -12782,14 +12817,15 @@ test("the exported EntityView's CSV import rejects an ambiguous enum label that 
   const fieldLabelOccurrencesSrc = entityViewJsx.match(/function fieldLabelOccurrences\(fields\) \{[\s\S]*?\n\}\n/)?.[0];
   const fieldDisplayLabelSrc = entityViewJsx.match(/function fieldDisplayLabel\(field, occurrences\) \{[\s\S]*?\n\}\n/)?.[0];
   const headerSrc = entityViewJsx.match(/function matchesImportHeader\(header, field, labelOccurrences\) \{[\s\S]*?\n\}\n/)?.[0];
-  const importSrc = entityViewJsx.match(/function buildImportRecords\(fields, rows, relatedRecords\) \{[\s\S]*?\n\}\n/)?.[0];
+  const importSrc = entityViewJsx.match(/function buildImportRecords\(fields, rows, relatedRecords, entity, existingRecords\) \{[\s\S]*?\n\}\n/)?.[0];
+  const makeDuplicateWarningCheckerSrc = entityViewJsx.match(/function makeDuplicateWarningChecker\(entity, existingRecords\) \{[\s\S]*?\n\}\n/)?.[0];
   assert.ok(
     isValidDateSrc && fieldLabelOccurrencesSrc && fieldDisplayLabelSrc && headerSrc && importSrc,
     "expected to find isValidDate/fieldLabelOccurrences/fieldDisplayLabel/matchesImportHeader/buildImportRecords in generated output",
   );
 
   const buildImportRecords = new Function(
-    `${isValidDateSrc}\n${fieldLabelOccurrencesSrc}\n${fieldDisplayLabelSrc}\n${headerSrc}\n${importSrc}\nreturn buildImportRecords;`,
+    `${isValidDateSrc}\n${fieldLabelOccurrencesSrc}\n${fieldDisplayLabelSrc}\n${headerSrc}\n${makeDuplicateWarningCheckerSrc}\n${importSrc}\nreturn buildImportRecords;`,
   )();
 
   const fields = statusProject.spec.entities[0].fields;
@@ -12846,7 +12882,8 @@ test("the exported EntityView's CSV export/import round-trip restores a never-an
   const fieldLabelOccurrencesSrc = entityViewJsx.match(/function fieldLabelOccurrences\(fields\) \{[\s\S]*?\n\}\n/)?.[0];
   const fieldDisplayLabelSrc = entityViewJsx.match(/function fieldDisplayLabel\(field, occurrences\) \{[\s\S]*?\n\}\n/)?.[0];
   const headerSrc = entityViewJsx.match(/function matchesImportHeader\(header, field, labelOccurrences\) \{[\s\S]*?\n\}\n/)?.[0];
-  const importSrc = entityViewJsx.match(/function buildImportRecords\(fields, rows, relatedRecords\) \{[\s\S]*?\n\}\n/)?.[0];
+  const importSrc = entityViewJsx.match(/function buildImportRecords\(fields, rows, relatedRecords, entity, existingRecords\) \{[\s\S]*?\n\}\n/)?.[0];
+  const makeDuplicateWarningCheckerSrc = entityViewJsx.match(/function makeDuplicateWarningChecker\(entity, existingRecords\) \{[\s\S]*?\n\}\n/)?.[0];
   assert.ok(
     csvEscapeSrc && fieldDisplayValueSrc && recordsToCsvSrc && parseCsvSrc && isValidDateSrc &&
       fieldLabelOccurrencesSrc && fieldDisplayLabelSrc && headerSrc && importSrc,
@@ -12854,7 +12891,7 @@ test("the exported EntityView's CSV export/import round-trip restores a never-an
   );
 
   const { recordsToCsv, parseCsv, buildImportRecords } = new Function(
-    `${csvEscapeSrc}\n${fieldDisplayValueSrc}\n${recordsToCsvSrc}\n${parseCsvSrc}\n${isValidDateSrc}\n${fieldLabelOccurrencesSrc}\n${fieldDisplayLabelSrc}\n${headerSrc}\n${importSrc}\nreturn { recordsToCsv, parseCsv, buildImportRecords };`,
+    `${csvEscapeSrc}\n${fieldDisplayValueSrc}\n${recordsToCsvSrc}\n${parseCsvSrc}\n${isValidDateSrc}\n${fieldLabelOccurrencesSrc}\n${fieldDisplayLabelSrc}\n${headerSrc}\n${makeDuplicateWarningCheckerSrc}\n${importSrc}\nreturn { recordsToCsv, parseCsv, buildImportRecords };`,
   )();
 
   const fields = boolProject.spec.entities[0].fields;
@@ -12898,14 +12935,15 @@ test("the exported EntityView's CSV import accepts a date field value in the yea
   const fieldLabelOccurrencesSrc = entityViewJsx.match(/function fieldLabelOccurrences\(fields\) \{[\s\S]*?\n\}\n/)?.[0];
   const fieldDisplayLabelSrc = entityViewJsx.match(/function fieldDisplayLabel\(field, occurrences\) \{[\s\S]*?\n\}\n/)?.[0];
   const headerSrc = entityViewJsx.match(/function matchesImportHeader\(header, field, labelOccurrences\) \{[\s\S]*?\n\}\n/)?.[0];
-  const importSrc = entityViewJsx.match(/function buildImportRecords\(fields, rows, relatedRecords\) \{[\s\S]*?\n\}\n/)?.[0];
+  const importSrc = entityViewJsx.match(/function buildImportRecords\(fields, rows, relatedRecords, entity, existingRecords\) \{[\s\S]*?\n\}\n/)?.[0];
+  const makeDuplicateWarningCheckerSrc = entityViewJsx.match(/function makeDuplicateWarningChecker\(entity, existingRecords\) \{[\s\S]*?\n\}\n/)?.[0];
   assert.ok(
     isValidDateSrc && fieldLabelOccurrencesSrc && fieldDisplayLabelSrc && headerSrc && importSrc,
     "expected to find isValidDate/fieldLabelOccurrences/fieldDisplayLabel/matchesImportHeader/buildImportRecords in generated output",
   );
 
   const buildImportRecords = new Function(
-    `${isValidDateSrc}\n${fieldLabelOccurrencesSrc}\n${fieldDisplayLabelSrc}\n${headerSrc}\n${importSrc}\nreturn buildImportRecords;`,
+    `${isValidDateSrc}\n${fieldLabelOccurrencesSrc}\n${fieldDisplayLabelSrc}\n${headerSrc}\n${makeDuplicateWarningCheckerSrc}\n${importSrc}\nreturn buildImportRecords;`,
   )();
 
   const fields = dateProject.spec.entities[0].fields;
@@ -12952,14 +12990,15 @@ test("the exported EntityView's CSV import rejects an unrecognized boolean value
   const fieldLabelOccurrencesSrc = entityViewJsx.match(/function fieldLabelOccurrences\(fields\) \{[\s\S]*?\n\}\n/)?.[0];
   const fieldDisplayLabelSrc = entityViewJsx.match(/function fieldDisplayLabel\(field, occurrences\) \{[\s\S]*?\n\}\n/)?.[0];
   const headerSrc = entityViewJsx.match(/function matchesImportHeader\(header, field, labelOccurrences\) \{[\s\S]*?\n\}\n/)?.[0];
-  const importSrc = entityViewJsx.match(/function buildImportRecords\(fields, rows, relatedRecords\) \{[\s\S]*?\n\}\n/)?.[0];
+  const importSrc = entityViewJsx.match(/function buildImportRecords\(fields, rows, relatedRecords, entity, existingRecords\) \{[\s\S]*?\n\}\n/)?.[0];
+  const makeDuplicateWarningCheckerSrc = entityViewJsx.match(/function makeDuplicateWarningChecker\(entity, existingRecords\) \{[\s\S]*?\n\}\n/)?.[0];
   assert.ok(
     isValidDateSrc && fieldLabelOccurrencesSrc && fieldDisplayLabelSrc && headerSrc && importSrc,
     "expected to find isValidDate/fieldLabelOccurrences/fieldDisplayLabel/matchesImportHeader/buildImportRecords in generated output",
   );
 
   const buildImportRecords = new Function(
-    `${isValidDateSrc}\n${fieldLabelOccurrencesSrc}\n${fieldDisplayLabelSrc}\n${headerSrc}\n${importSrc}\nreturn buildImportRecords;`,
+    `${isValidDateSrc}\n${fieldLabelOccurrencesSrc}\n${fieldDisplayLabelSrc}\n${headerSrc}\n${makeDuplicateWarningCheckerSrc}\n${importSrc}\nreturn buildImportRecords;`,
   )();
 
   const fields = boolProject.spec.entities[0].fields;
@@ -13016,14 +13055,15 @@ test("the exported EntityView's CSV import rejects \"Infinity\"/\"-Infinity\" as
   const fieldLabelOccurrencesSrc = entityViewJsx.match(/function fieldLabelOccurrences\(fields\) \{[\s\S]*?\n\}\n/)?.[0];
   const fieldDisplayLabelSrc = entityViewJsx.match(/function fieldDisplayLabel\(field, occurrences\) \{[\s\S]*?\n\}\n/)?.[0];
   const headerSrc = entityViewJsx.match(/function matchesImportHeader\(header, field, labelOccurrences\) \{[\s\S]*?\n\}\n/)?.[0];
-  const importSrc = entityViewJsx.match(/function buildImportRecords\(fields, rows, relatedRecords\) \{[\s\S]*?\n\}\n/)?.[0];
+  const importSrc = entityViewJsx.match(/function buildImportRecords\(fields, rows, relatedRecords, entity, existingRecords\) \{[\s\S]*?\n\}\n/)?.[0];
+  const makeDuplicateWarningCheckerSrc = entityViewJsx.match(/function makeDuplicateWarningChecker\(entity, existingRecords\) \{[\s\S]*?\n\}\n/)?.[0];
   assert.ok(
     isValidDateSrc && fieldLabelOccurrencesSrc && fieldDisplayLabelSrc && headerSrc && importSrc,
     "expected to find isValidDate/fieldLabelOccurrences/fieldDisplayLabel/matchesImportHeader/buildImportRecords in generated output",
   );
 
   const buildImportRecords = new Function(
-    `${isValidDateSrc}\n${fieldLabelOccurrencesSrc}\n${fieldDisplayLabelSrc}\n${headerSrc}\n${importSrc}\nreturn buildImportRecords;`,
+    `${isValidDateSrc}\n${fieldLabelOccurrencesSrc}\n${fieldDisplayLabelSrc}\n${headerSrc}\n${makeDuplicateWarningCheckerSrc}\n${importSrc}\nreturn buildImportRecords;`,
   )();
 
   const fields = invoiceProject.spec.entities[0].fields;
@@ -13074,14 +13114,15 @@ test("the exported EntityView's CSV import maps each column to a distinct field 
   const fieldLabelOccurrencesSrc = entityViewJsx.match(/function fieldLabelOccurrences\(fields\) \{[\s\S]*?\n\}\n/)?.[0];
   const fieldDisplayLabelSrc = entityViewJsx.match(/function fieldDisplayLabel\(field, occurrences\) \{[\s\S]*?\n\}\n/)?.[0];
   const headerSrc = entityViewJsx.match(/function matchesImportHeader\(header, field, labelOccurrences\) \{[\s\S]*?\n\}\n/)?.[0];
-  const importSrc = entityViewJsx.match(/function buildImportRecords\(fields, rows, relatedRecords\) \{[\s\S]*?\n\}\n/)?.[0];
+  const importSrc = entityViewJsx.match(/function buildImportRecords\(fields, rows, relatedRecords, entity, existingRecords\) \{[\s\S]*?\n\}\n/)?.[0];
+  const makeDuplicateWarningCheckerSrc = entityViewJsx.match(/function makeDuplicateWarningChecker\(entity, existingRecords\) \{[\s\S]*?\n\}\n/)?.[0];
   assert.ok(
     isValidDateSrc && fieldLabelOccurrencesSrc && fieldDisplayLabelSrc && headerSrc && importSrc,
     "expected to find isValidDate/fieldLabelOccurrences/fieldDisplayLabel/matchesImportHeader/buildImportRecords in generated output",
   );
 
   const buildImportRecords = new Function(
-    `${isValidDateSrc}\n${fieldLabelOccurrencesSrc}\n${fieldDisplayLabelSrc}\n${headerSrc}\n${importSrc}\nreturn buildImportRecords;`,
+    `${isValidDateSrc}\n${fieldLabelOccurrencesSrc}\n${fieldDisplayLabelSrc}\n${headerSrc}\n${makeDuplicateWarningCheckerSrc}\n${importSrc}\nreturn buildImportRecords;`,
   )();
 
   const fields = twoStatusProject.spec.entities[0].fields;
@@ -13137,14 +13178,15 @@ test("the exported EntityView's CSV export and import round-trip two same-labele
   const parseCsvSrc = entityViewJsx.match(/function parseCsv\(text\) \{[\s\S]*?\n\}\n/)?.[0];
   const headerSrc = entityViewJsx.match(/function matchesImportHeader\(header, field, labelOccurrences\) \{[\s\S]*?\n\}\n/)?.[0];
   const isValidDateSrc = entityViewJsx.match(/const DATE_FORMAT[\s\S]*?\nfunction isValidDate\(value\) \{[\s\S]*?\n\}\n/)?.[0];
-  const importSrc = entityViewJsx.match(/function buildImportRecords\(fields, rows, relatedRecords\) \{[\s\S]*?\n\}\n/)?.[0];
+  const importSrc = entityViewJsx.match(/function buildImportRecords\(fields, rows, relatedRecords, entity, existingRecords\) \{[\s\S]*?\n\}\n/)?.[0];
+  const makeDuplicateWarningCheckerSrc = entityViewJsx.match(/function makeDuplicateWarningChecker\(entity, existingRecords\) \{[\s\S]*?\n\}\n/)?.[0];
   assert.ok(
     csvEscapeSrc && fieldDisplayValueSrc && recordsToCsvSrc && fieldLabelOccurrencesSrc && fieldDisplayLabelSrc && parseCsvSrc && headerSrc && isValidDateSrc && importSrc,
     "expected to find csvEscape/fieldDisplayValue/recordsToCsv/fieldLabelOccurrences/fieldDisplayLabel/parseCsv/matchesImportHeader/isValidDate/buildImportRecords in generated output",
   );
 
   const { recordsToCsv, parseCsv, buildImportRecords } = new Function(
-    `${csvEscapeSrc}\n${fieldDisplayValueSrc}\n${fieldLabelOccurrencesSrc}\n${fieldDisplayLabelSrc}\n${recordsToCsvSrc}\n${parseCsvSrc}\n${isValidDateSrc}\n${headerSrc}\n${importSrc}\nreturn { recordsToCsv, parseCsv, buildImportRecords };`,
+    `${csvEscapeSrc}\n${fieldDisplayValueSrc}\n${fieldLabelOccurrencesSrc}\n${fieldDisplayLabelSrc}\n${recordsToCsvSrc}\n${parseCsvSrc}\n${isValidDateSrc}\n${headerSrc}\n${makeDuplicateWarningCheckerSrc}\n${importSrc}\nreturn { recordsToCsv, parseCsv, buildImportRecords };`,
   )();
 
   const fields = amountProject.spec.entities[0].fields;
@@ -13194,14 +13236,15 @@ test("the exported EntityView's CSV import ignores a blank/unnamed column instea
   const fieldLabelOccurrencesSrc = entityViewJsx.match(/function fieldLabelOccurrences\(fields\) \{[\s\S]*?\n\}\n/)?.[0];
   const fieldDisplayLabelSrc = entityViewJsx.match(/function fieldDisplayLabel\(field, occurrences\) \{[\s\S]*?\n\}\n/)?.[0];
   const headerSrc = entityViewJsx.match(/function matchesImportHeader\(header, field, labelOccurrences\) \{[\s\S]*?\n\}\n/)?.[0];
-  const importSrc = entityViewJsx.match(/function buildImportRecords\(fields, rows, relatedRecords\) \{[\s\S]*?\n\}\n/)?.[0];
+  const importSrc = entityViewJsx.match(/function buildImportRecords\(fields, rows, relatedRecords, entity, existingRecords\) \{[\s\S]*?\n\}\n/)?.[0];
+  const makeDuplicateWarningCheckerSrc = entityViewJsx.match(/function makeDuplicateWarningChecker\(entity, existingRecords\) \{[\s\S]*?\n\}\n/)?.[0];
   assert.ok(
     isValidDateSrc && fieldLabelOccurrencesSrc && fieldDisplayLabelSrc && headerSrc && importSrc,
     "expected to find isValidDate/fieldLabelOccurrences/fieldDisplayLabel/matchesImportHeader/buildImportRecords in generated output",
   );
 
   const buildImportRecords = new Function(
-    `${isValidDateSrc}\n${fieldLabelOccurrencesSrc}\n${fieldDisplayLabelSrc}\n${headerSrc}\n${importSrc}\nreturn buildImportRecords;`,
+    `${isValidDateSrc}\n${fieldLabelOccurrencesSrc}\n${fieldDisplayLabelSrc}\n${headerSrc}\n${makeDuplicateWarningCheckerSrc}\n${importSrc}\nreturn buildImportRecords;`,
   )();
 
   const fields = noLabelProject.spec.entities[0].fields;
@@ -13244,14 +13287,15 @@ test("the exported EntityView's CSV export and import round-trip a value csvEsca
   const parseCsvSrc = entityViewJsx.match(/function parseCsv\(text\) \{[\s\S]*?\n\}\n/)?.[0];
   const headerSrc = entityViewJsx.match(/function matchesImportHeader\(header, field, labelOccurrences\) \{[\s\S]*?\n\}\n/)?.[0];
   const isValidDateSrc = entityViewJsx.match(/const DATE_FORMAT[\s\S]*?\nfunction isValidDate\(value\) \{[\s\S]*?\n\}\n/)?.[0];
-  const importSrc = entityViewJsx.match(/function buildImportRecords\(fields, rows, relatedRecords\) \{[\s\S]*?\n\}\n/)?.[0];
+  const importSrc = entityViewJsx.match(/function buildImportRecords\(fields, rows, relatedRecords, entity, existingRecords\) \{[\s\S]*?\n\}\n/)?.[0];
+  const makeDuplicateWarningCheckerSrc = entityViewJsx.match(/function makeDuplicateWarningChecker\(entity, existingRecords\) \{[\s\S]*?\n\}\n/)?.[0];
   assert.ok(
     csvEscapeSrc && fieldDisplayValueSrc && recordsToCsvSrc && fieldLabelOccurrencesSrc && fieldDisplayLabelSrc && parseCsvSrc && headerSrc && isValidDateSrc && importSrc,
     "expected to find csvEscape/fieldDisplayValue/recordsToCsv/fieldLabelOccurrences/fieldDisplayLabel/parseCsv/matchesImportHeader/isValidDate/buildImportRecords in generated output",
   );
 
   const { recordsToCsv, parseCsv, buildImportRecords } = new Function(
-    `${csvEscapeSrc}\n${fieldDisplayValueSrc}\n${fieldLabelOccurrencesSrc}\n${fieldDisplayLabelSrc}\n${recordsToCsvSrc}\n${parseCsvSrc}\n${isValidDateSrc}\n${headerSrc}\n${importSrc}\nreturn { recordsToCsv, parseCsv, buildImportRecords };`,
+    `${csvEscapeSrc}\n${fieldDisplayValueSrc}\n${fieldLabelOccurrencesSrc}\n${fieldDisplayLabelSrc}\n${recordsToCsvSrc}\n${parseCsvSrc}\n${isValidDateSrc}\n${headerSrc}\n${makeDuplicateWarningCheckerSrc}\n${importSrc}\nreturn { recordsToCsv, parseCsv, buildImportRecords };`,
   )();
 
   const fields = [
@@ -13297,14 +13341,15 @@ test("the exported EntityView's CSV export and import round-trip a value that ge
   const parseCsvSrc = entityViewJsx.match(/function parseCsv\(text\) \{[\s\S]*?\n\}\n/)?.[0];
   const headerSrc = entityViewJsx.match(/function matchesImportHeader\(header, field, labelOccurrences\) \{[\s\S]*?\n\}\n/)?.[0];
   const isValidDateSrc = entityViewJsx.match(/const DATE_FORMAT[\s\S]*?\nfunction isValidDate\(value\) \{[\s\S]*?\n\}\n/)?.[0];
-  const importSrc = entityViewJsx.match(/function buildImportRecords\(fields, rows, relatedRecords\) \{[\s\S]*?\n\}\n/)?.[0];
+  const importSrc = entityViewJsx.match(/function buildImportRecords\(fields, rows, relatedRecords, entity, existingRecords\) \{[\s\S]*?\n\}\n/)?.[0];
+  const makeDuplicateWarningCheckerSrc = entityViewJsx.match(/function makeDuplicateWarningChecker\(entity, existingRecords\) \{[\s\S]*?\n\}\n/)?.[0];
   assert.ok(
     csvEscapeSrc && fieldDisplayValueSrc && recordsToCsvSrc && fieldLabelOccurrencesSrc && fieldDisplayLabelSrc && parseCsvSrc && headerSrc && isValidDateSrc && importSrc,
     "expected to find csvEscape/fieldDisplayValue/recordsToCsv/fieldLabelOccurrences/fieldDisplayLabel/parseCsv/matchesImportHeader/isValidDate/buildImportRecords in generated output",
   );
 
   const { recordsToCsv, parseCsv, buildImportRecords } = new Function(
-    `${csvEscapeSrc}\n${fieldDisplayValueSrc}\n${fieldLabelOccurrencesSrc}\n${fieldDisplayLabelSrc}\n${recordsToCsvSrc}\n${parseCsvSrc}\n${isValidDateSrc}\n${headerSrc}\n${importSrc}\nreturn { recordsToCsv, parseCsv, buildImportRecords };`,
+    `${csvEscapeSrc}\n${fieldDisplayValueSrc}\n${fieldLabelOccurrencesSrc}\n${fieldDisplayLabelSrc}\n${recordsToCsvSrc}\n${parseCsvSrc}\n${isValidDateSrc}\n${headerSrc}\n${makeDuplicateWarningCheckerSrc}\n${importSrc}\nreturn { recordsToCsv, parseCsv, buildImportRecords };`,
   )();
 
   const fields = [
@@ -13350,14 +13395,15 @@ test("the exported EntityView's CSV export (with includeId) and import round-tri
   const parseCsvSrc = entityViewJsx.match(/function parseCsv\(text\) \{[\s\S]*?\n\}\n/)?.[0];
   const headerSrc = entityViewJsx.match(/function matchesImportHeader\(header, field, labelOccurrences\) \{[\s\S]*?\n\}\n/)?.[0];
   const isValidDateSrc = entityViewJsx.match(/const DATE_FORMAT[\s\S]*?\nfunction isValidDate\(value\) \{[\s\S]*?\n\}\n/)?.[0];
-  const importSrc = entityViewJsx.match(/function buildImportRecords\(fields, rows, relatedRecords\) \{[\s\S]*?\n\}\n/)?.[0];
+  const importSrc = entityViewJsx.match(/function buildImportRecords\(fields, rows, relatedRecords, entity, existingRecords\) \{[\s\S]*?\n\}\n/)?.[0];
+  const makeDuplicateWarningCheckerSrc = entityViewJsx.match(/function makeDuplicateWarningChecker\(entity, existingRecords\) \{[\s\S]*?\n\}\n/)?.[0];
   assert.ok(
     csvEscapeSrc && fieldDisplayValueSrc && recordsToCsvSrc && fieldLabelOccurrencesSrc && fieldDisplayLabelSrc && parseCsvSrc && headerSrc && isValidDateSrc && importSrc,
     "expected to find csvEscape/fieldDisplayValue/recordsToCsv/fieldLabelOccurrences/fieldDisplayLabel/parseCsv/matchesImportHeader/isValidDate/buildImportRecords in generated output",
   );
 
   const { recordsToCsv, parseCsv, buildImportRecords } = new Function(
-    `${csvEscapeSrc}\n${fieldDisplayValueSrc}\n${fieldLabelOccurrencesSrc}\n${fieldDisplayLabelSrc}\n${recordsToCsvSrc}\n${parseCsvSrc}\n${isValidDateSrc}\n${headerSrc}\n${importSrc}\nreturn { recordsToCsv, parseCsv, buildImportRecords };`,
+    `${csvEscapeSrc}\n${fieldDisplayValueSrc}\n${fieldLabelOccurrencesSrc}\n${fieldDisplayLabelSrc}\n${recordsToCsvSrc}\n${parseCsvSrc}\n${isValidDateSrc}\n${headerSrc}\n${makeDuplicateWarningCheckerSrc}\n${importSrc}\nreturn { recordsToCsv, parseCsv, buildImportRecords };`,
   )();
 
   const fields = [{ name: "name", label: "Name", type: "text" }];
@@ -13395,14 +13441,15 @@ test("the exported EntityView's CSV import ignores an \"id\" column (treats ever
   const fieldLabelOccurrencesSrc = entityViewJsx.match(/function fieldLabelOccurrences\(fields\) \{[\s\S]*?\n\}\n/)?.[0];
   const fieldDisplayLabelSrc = entityViewJsx.match(/function fieldDisplayLabel\(field, occurrences\) \{[\s\S]*?\n\}\n/)?.[0];
   const headerSrc = entityViewJsx.match(/function matchesImportHeader\(header, field, labelOccurrences\) \{[\s\S]*?\n\}\n/)?.[0];
-  const importSrc = entityViewJsx.match(/function buildImportRecords\(fields, rows, relatedRecords\) \{[\s\S]*?\n\}\n/)?.[0];
+  const importSrc = entityViewJsx.match(/function buildImportRecords\(fields, rows, relatedRecords, entity, existingRecords\) \{[\s\S]*?\n\}\n/)?.[0];
+  const makeDuplicateWarningCheckerSrc = entityViewJsx.match(/function makeDuplicateWarningChecker\(entity, existingRecords\) \{[\s\S]*?\n\}\n/)?.[0];
   assert.ok(
     fieldLabelOccurrencesSrc && fieldDisplayLabelSrc && headerSrc && importSrc,
     "expected to find fieldLabelOccurrences/fieldDisplayLabel/matchesImportHeader/buildImportRecords in generated output",
   );
 
   const buildImportRecords = new Function(
-    `${fieldLabelOccurrencesSrc}\n${fieldDisplayLabelSrc}\n${headerSrc}\n${importSrc}\nreturn buildImportRecords;`,
+    `${fieldLabelOccurrencesSrc}\n${fieldDisplayLabelSrc}\n${headerSrc}\n${makeDuplicateWarningCheckerSrc}\n${importSrc}\nreturn buildImportRecords;`,
   )();
 
   const fields = [
@@ -13430,14 +13477,15 @@ test("the exported EntityView's CSV import still trusts the \"id\" column once t
   const fieldLabelOccurrencesSrc = entityViewJsx.match(/function fieldLabelOccurrences\(fields\) \{[\s\S]*?\n\}\n/)?.[0];
   const fieldDisplayLabelSrc = entityViewJsx.match(/function fieldDisplayLabel\(field, occurrences\) \{[\s\S]*?\n\}\n/)?.[0];
   const headerSrc = entityViewJsx.match(/function matchesImportHeader\(header, field, labelOccurrences\) \{[\s\S]*?\n\}\n/)?.[0];
-  const importSrc = entityViewJsx.match(/function buildImportRecords\(fields, rows, relatedRecords\) \{[\s\S]*?\n\}\n/)?.[0];
+  const importSrc = entityViewJsx.match(/function buildImportRecords\(fields, rows, relatedRecords, entity, existingRecords\) \{[\s\S]*?\n\}\n/)?.[0];
+  const makeDuplicateWarningCheckerSrc = entityViewJsx.match(/function makeDuplicateWarningChecker\(entity, existingRecords\) \{[\s\S]*?\n\}\n/)?.[0];
   assert.ok(
     fieldLabelOccurrencesSrc && fieldDisplayLabelSrc && headerSrc && importSrc,
     "expected to find fieldLabelOccurrences/fieldDisplayLabel/matchesImportHeader/buildImportRecords in generated output",
   );
 
   const buildImportRecords = new Function(
-    `${fieldLabelOccurrencesSrc}\n${fieldDisplayLabelSrc}\n${headerSrc}\n${importSrc}\nreturn buildImportRecords;`,
+    `${fieldLabelOccurrencesSrc}\n${fieldDisplayLabelSrc}\n${headerSrc}\n${makeDuplicateWarningCheckerSrc}\n${importSrc}\nreturn buildImportRecords;`,
   )();
 
   const fields = [
@@ -13471,14 +13519,15 @@ test("the exported EntityView's CSV import rejects every row after the first tha
   const fieldLabelOccurrencesSrc = entityViewJsx.match(/function fieldLabelOccurrences\(fields\) \{[\s\S]*?\n\}\n/)?.[0];
   const fieldDisplayLabelSrc = entityViewJsx.match(/function fieldDisplayLabel\(field, occurrences\) \{[\s\S]*?\n\}\n/)?.[0];
   const headerSrc = entityViewJsx.match(/function matchesImportHeader\(header, field, labelOccurrences\) \{[\s\S]*?\n\}\n/)?.[0];
-  const importSrc = entityViewJsx.match(/function buildImportRecords\(fields, rows, relatedRecords\) \{[\s\S]*?\n\}\n/)?.[0];
+  const importSrc = entityViewJsx.match(/function buildImportRecords\(fields, rows, relatedRecords, entity, existingRecords\) \{[\s\S]*?\n\}\n/)?.[0];
+  const makeDuplicateWarningCheckerSrc = entityViewJsx.match(/function makeDuplicateWarningChecker\(entity, existingRecords\) \{[\s\S]*?\n\}\n/)?.[0];
   assert.ok(
     fieldLabelOccurrencesSrc && fieldDisplayLabelSrc && headerSrc && importSrc,
     "expected to find fieldLabelOccurrences/fieldDisplayLabel/matchesImportHeader/buildImportRecords in generated output",
   );
 
   const buildImportRecords = new Function(
-    `${fieldLabelOccurrencesSrc}\n${fieldDisplayLabelSrc}\n${headerSrc}\n${importSrc}\nreturn buildImportRecords;`,
+    `${fieldLabelOccurrencesSrc}\n${fieldDisplayLabelSrc}\n${headerSrc}\n${makeDuplicateWarningCheckerSrc}\n${importSrc}\nreturn buildImportRecords;`,
   )();
 
   const fields = [{ name: "name", label: "Name", type: "text", required: true }];
@@ -13539,7 +13588,8 @@ test("the exported EntityView's CSV import resolves a relation cell to the match
   const fieldLabelOccurrencesSrc = entityViewJsx.match(/function fieldLabelOccurrences\(fields\) \{[\s\S]*?\n\}\n/)?.[0];
   const fieldDisplayLabelSrc = entityViewJsx.match(/function fieldDisplayLabel\(field, occurrences\) \{[\s\S]*?\n\}\n/)?.[0];
   const headerSrc = entityViewJsx.match(/function matchesImportHeader\(header, field, labelOccurrences\) \{[\s\S]*?\n\}\n/)?.[0];
-  const importSrc = entityViewJsx.match(/function buildImportRecords\(fields, rows, relatedRecords\) \{[\s\S]*?\n\}\n/)?.[0];
+  const importSrc = entityViewJsx.match(/function buildImportRecords\(fields, rows, relatedRecords, entity, existingRecords\) \{[\s\S]*?\n\}\n/)?.[0];
+  const makeDuplicateWarningCheckerSrc = entityViewJsx.match(/function makeDuplicateWarningChecker\(entity, existingRecords\) \{[\s\S]*?\n\}\n/)?.[0];
   assert.ok(
     displayFieldHintsSrc && pickDisplaySrc && recordDisplayLabelSrc && fieldLabelOccurrencesSrc && fieldDisplayLabelSrc && headerSrc && importSrc,
     "expected to find DISPLAY_FIELD_NAME_HINTS/pickDisplayField/recordDisplayLabel/fieldLabelOccurrences/fieldDisplayLabel/matchesImportHeader/buildImportRecords in generated output",
@@ -13552,7 +13602,7 @@ test("the exported EntityView's CSV import resolves a relation cell to the match
   const allEntitiesDecl = `const ALL_ENTITIES = ${JSON.stringify(relationProject.spec.entities)};`;
 
   const buildImportRecords = new Function(
-    `${allEntitiesDecl}\n${displayFieldHintsSrc}\n${pickDisplaySrc}\n${recordDisplayLabelSrc}\n${fieldLabelOccurrencesSrc}\n${fieldDisplayLabelSrc}\n${headerSrc}\n${importSrc}\nreturn buildImportRecords;`,
+    `${allEntitiesDecl}\n${displayFieldHintsSrc}\n${pickDisplaySrc}\n${recordDisplayLabelSrc}\n${fieldLabelOccurrencesSrc}\n${fieldDisplayLabelSrc}\n${headerSrc}\n${makeDuplicateWarningCheckerSrc}\n${importSrc}\nreturn buildImportRecords;`,
   )();
 
   const fields = relationProject.spec.entities[1].fields;
@@ -13588,6 +13638,91 @@ test("the exported EntityView's CSV import resolves a relation cell to the match
   assert.deepEqual(noData.records, []);
   assert.equal(noData.errors.length, 1);
   assert.match(noData.errors[0], /CSV import isn't supported yet for entities with a required relation field/);
+});
+
+/**
+ * Round 1268: the live preview's own entityFormatting.ts gained an advisory
+ * "possible duplicate" warning for CSV/JSON import (round 1241) -- a new
+ * row (no resolved id, so it will be POSTed) whose display-field value
+ * matches either an existing record already in the table or an earlier row
+ * in the same import batch. Round 1241's own roadmap entry claimed this
+ * exported standalone app "has no CSV/JSON import feature at all" and
+ * skipped porting it on that basis, but that claim was wrong -- this file's
+ * buildImportRecords/buildImportRecordsFromJson/handleImportFile/
+ * handleImportJsonFile predate round 1241 by hundreds of rounds. This test
+ * exercises the real generated makeDuplicateWarningChecker/buildImportRecords
+ * together (extracted from real codegen output, not reimplemented here).
+ */
+test("the exported EntityView's CSV import warns (without blocking) on a new row whose display-field value matches an existing record or an earlier row in the same batch", () => {
+  const nameProject: Project = {
+    ...project,
+    spec: {
+      ...project.spec,
+      entities: [
+        {
+          name: "Customer",
+          label: "Customer",
+          fields: [
+            { name: "name", label: "Name", type: "text", required: true },
+            { name: "status", label: "Status", type: "enum", required: false, enumValues: ["active", "inactive"] },
+          ],
+        },
+      ],
+    },
+  };
+  const entityViewJsx = generateExportFiles(nameProject).find((f) => f.path === "web/src/components/EntityView.jsx")!.content;
+
+  const displayFieldHintsSrc = entityViewJsx.match(/const DISPLAY_FIELD_NAME_HINTS = .*;\n/)?.[0];
+  const pickDisplaySrc = entityViewJsx.match(/export function pickDisplayField\(entity\) \{[\s\S]*?\n\}\n/)?.[0]?.replace("export ", "");
+  const fieldLabelOccurrencesSrc = entityViewJsx.match(/function fieldLabelOccurrences\(fields\) \{[\s\S]*?\n\}\n/)?.[0];
+  const fieldDisplayLabelSrc = entityViewJsx.match(/function fieldDisplayLabel\(field, occurrences\) \{[\s\S]*?\n\}\n/)?.[0];
+  const headerSrc = entityViewJsx.match(/function matchesImportHeader\(header, field, labelOccurrences\) \{[\s\S]*?\n\}\n/)?.[0];
+  const importSrc = entityViewJsx.match(/function buildImportRecords\(fields, rows, relatedRecords, entity, existingRecords\) \{[\s\S]*?\n\}\n/)?.[0];
+  const makeDuplicateWarningCheckerSrc = entityViewJsx.match(/function makeDuplicateWarningChecker\(entity, existingRecords\) \{[\s\S]*?\n\}\n/)?.[0];
+  assert.ok(
+    displayFieldHintsSrc && pickDisplaySrc && fieldLabelOccurrencesSrc && fieldDisplayLabelSrc && headerSrc && importSrc && makeDuplicateWarningCheckerSrc,
+    "expected to find DISPLAY_FIELD_NAME_HINTS/pickDisplayField/fieldLabelOccurrences/fieldDisplayLabel/matchesImportHeader/makeDuplicateWarningChecker/buildImportRecords in generated output",
+  );
+
+  const buildImportRecords = new Function(
+    `${displayFieldHintsSrc}\n${pickDisplaySrc}\n${fieldLabelOccurrencesSrc}\n${fieldDisplayLabelSrc}\n${headerSrc}\n${makeDuplicateWarningCheckerSrc}\n${importSrc}\nreturn buildImportRecords;`,
+  )();
+
+  const entity = nameProject.spec.entities[0];
+  const fields = entity.fields;
+  const existingRecords: EntityRecord[] = [{ id: 1, name: "Dana Levi", status: "active" }];
+
+  // A new row (no id column at all here) whose "Name" matches an existing
+  // record warns, but is never blocked -- it still comes back as a record
+  // to create, with zero errors.
+  const dup = buildImportRecords(fields, [["Name", "Status"], ["Dana Levi", "active"]], {}, entity, existingRecords);
+  assert.deepEqual(dup.errors, []);
+  assert.deepEqual(dup.records, [{ name: "Dana Levi", status: "active" }]);
+  assert.equal(dup.warnings.length, 1);
+  assert.match(dup.warnings[0], /Row 1/);
+  assert.match(dup.warnings[0], /"Dana Levi" already exists/);
+
+  // Two new rows in the same batch sharing a name: only the SECOND one warns.
+  const batchDup = buildImportRecords(fields, [["Name", "Status"], ["Noa Peretz", "active"], ["Noa Peretz", "inactive"]], {}, entity, []);
+  assert.equal(batchDup.warnings.length, 1);
+  assert.match(batchDup.warnings[0], /Row 2/);
+
+  // A row whose id column resolves (an intentional update of that exact
+  // record) is never flagged as "a duplicate" of itself, even though its
+  // name matches an existing record -- it IS that existing record.
+  const ownUpdate = buildImportRecords(
+    [{ name: "name", label: "Name", type: "text", required: true }],
+    [["id", "Name"], ["1", "Dana Levi"]],
+    {},
+    entity,
+    existingRecords,
+  );
+  assert.deepEqual(ownUpdate.warnings, []);
+
+  // No entity/existingRecords passed at all (every pre-round-1268 call
+  // site) -- the feature is fully opt-in, never warns.
+  const optOut = buildImportRecords(fields, [["Name", "Status"], ["Dana Levi", "active"]]);
+  assert.deepEqual(optOut.warnings, []);
 });
 
 /**
@@ -13633,7 +13768,8 @@ test("the exported EntityView's CSV import prefers a real display-label match ov
   const fieldLabelOccurrencesSrc = entityViewJsx.match(/function fieldLabelOccurrences\(fields\) \{[\s\S]*?\n\}\n/)?.[0];
   const fieldDisplayLabelSrc = entityViewJsx.match(/function fieldDisplayLabel\(field, occurrences\) \{[\s\S]*?\n\}\n/)?.[0];
   const headerSrc = entityViewJsx.match(/function matchesImportHeader\(header, field, labelOccurrences\) \{[\s\S]*?\n\}\n/)?.[0];
-  const importSrc = entityViewJsx.match(/function buildImportRecords\(fields, rows, relatedRecords\) \{[\s\S]*?\n\}\n/)?.[0];
+  const importSrc = entityViewJsx.match(/function buildImportRecords\(fields, rows, relatedRecords, entity, existingRecords\) \{[\s\S]*?\n\}\n/)?.[0];
+  const makeDuplicateWarningCheckerSrc = entityViewJsx.match(/function makeDuplicateWarningChecker\(entity, existingRecords\) \{[\s\S]*?\n\}\n/)?.[0];
   assert.ok(
     displayFieldHintsSrc && pickDisplaySrc && recordDisplayLabelSrc && fieldLabelOccurrencesSrc && fieldDisplayLabelSrc && headerSrc && importSrc,
     "expected to find DISPLAY_FIELD_NAME_HINTS/pickDisplayField/recordDisplayLabel/fieldLabelOccurrences/fieldDisplayLabel/matchesImportHeader/buildImportRecords in generated output",
@@ -13642,7 +13778,7 @@ test("the exported EntityView's CSV import prefers a real display-label match ov
   const allEntitiesDecl = `const ALL_ENTITIES = ${JSON.stringify(relationProject.spec.entities)};`;
 
   const buildImportRecords = new Function(
-    `${allEntitiesDecl}\n${displayFieldHintsSrc}\n${pickDisplaySrc}\n${recordDisplayLabelSrc}\n${fieldLabelOccurrencesSrc}\n${fieldDisplayLabelSrc}\n${headerSrc}\n${importSrc}\nreturn buildImportRecords;`,
+    `${allEntitiesDecl}\n${displayFieldHintsSrc}\n${pickDisplaySrc}\n${recordDisplayLabelSrc}\n${fieldLabelOccurrencesSrc}\n${fieldDisplayLabelSrc}\n${headerSrc}\n${makeDuplicateWarningCheckerSrc}\n${importSrc}\nreturn buildImportRecords;`,
   )();
 
   const fields = relationProject.spec.entities[1].fields;
@@ -16327,7 +16463,7 @@ test("the exported EntityView's CSV import skips an optional file column, but re
     },
   };
   const entityViewJsx = generateExportFiles(withFile).find((f) => f.path === "web/src/components/EntityView.jsx")!.content;
-  const buildImportRecordsSrc = entityViewJsx.match(/function buildImportRecords\(fields, rows, relatedRecords\) \{[\s\S]*?\n  return \{ records, errors \};\n\}\n/)?.[0];
+  const buildImportRecordsSrc = entityViewJsx.match(/function buildImportRecords\(fields, rows, relatedRecords, entity, existingRecords\) \{[\s\S]*?\n  return \{ records, errors, warnings \};\n\}\n/)?.[0];
   const matchesImportHeaderSrc = entityViewJsx.match(/function matchesImportHeader\([\s\S]*?\n\}\n/)?.[0];
   const fieldLabelOccurrencesSrc = entityViewJsx.match(/function fieldLabelOccurrences\(fields\) \{[\s\S]*?\n\}\n/)?.[0];
   assert.ok(buildImportRecordsSrc && matchesImportHeaderSrc && fieldLabelOccurrencesSrc, "expected to find buildImportRecords/matchesImportHeader/fieldLabelOccurrences in generated output");
