@@ -3,7 +3,7 @@ import { readFileSync } from "node:fs";
 import { test } from "node:test";
 import { transformSync } from "esbuild";
 import type { AgentStepEvent, Entity, Field, OpenQuestion, Project } from "@forge/shared";
-import type { WhatsAppMessageLogEntry } from "./api.js";
+import type { AutomationRuleView, WhatsAppMessageLogEntry } from "./api.js";
 import {
   canNavigateHome,
   countAnsweredOpenQuestions,
@@ -18,6 +18,7 @@ import {
   formatProjectCreatedDate,
   formatRefineTimestamp,
   isEditableEventTarget,
+  maybeNotifyFailingAutomations,
   maybeNotifyNewWhatsAppMessages,
   removeRefineHistoryEntry,
   specProviderLabel,
@@ -1281,6 +1282,190 @@ test("maybeNotifyNewWhatsAppMessages does nothing at all on the first-ever check
     maybeNotifyNewWhatsAppMessages(messages, ref, true, notifyT);
     assert.equal(constructed, 0, "the very first check must only seed the baseline, never notify for pre-existing history");
     assert.deepEqual(ref.current, { id: "m2", createdAt: timeFor("m2") }, "the baseline must still be seeded to the newest message's own id and createdAt");
+  } finally {
+    (globalThis as { Notification?: unknown }).Notification = originalNotification;
+  }
+});
+
+/** Builds a minimal AutomationRuleView for maybeNotifyFailingAutomations tests -- only the fields that function reads are given real values. */
+function automationRule(overrides: Partial<AutomationRuleView> & { id: string }): AutomationRuleView {
+  return {
+    entityName: "Order",
+    trigger: "schedule",
+    fieldName: null,
+    fieldValue: null,
+    scheduleTimeUtc: null,
+    scheduleDaysOfWeek: null,
+    scheduleTimezone: null,
+    actionType: "webhook",
+    toMode: "static",
+    toNumber: null,
+    toField: null,
+    webhookUrl: "https://example.com/hook",
+    webhookSecret: null,
+    toEmail: null,
+    emailSubject: null,
+    messageTemplate: "",
+    enabled: true,
+    lastTriggeredAt: null,
+    lastStatus: null,
+    lastError: null,
+    lastActionType: null,
+    pausedForToday: false,
+    ...overrides,
+  };
+}
+
+/**
+ * Round 1218: mirrors maybeNotifyNewWhatsAppMessages' own test suite above
+ * -- a rule that starts failing in the background while the tab is
+ * backgrounded should surface a real desktop notification the same way a
+ * new WhatsApp message does, not only the in-page failing-count badge.
+ */
+test("maybeNotifyFailingAutomations fires a real Notification with the correct title when the tab is hidden and permission is granted", () => {
+  const originalNotification = (globalThis as { Notification?: unknown }).Notification;
+  const calls: string[] = [];
+  class FakeNotification {
+    static permission = "granted";
+    constructor(title: string) {
+      calls.push(title);
+    }
+  }
+  (globalThis as { Notification: unknown }).Notification = FakeNotification;
+  try {
+    const rules = [automationRule({ id: "r1", entityName: "Invoice", lastStatus: "failed" })];
+    const ref: { current: Set<string> | null } = { current: new Set() };
+    maybeNotifyFailingAutomations(rules, ref, true, notifyT);
+    assert.deepEqual(calls, ['automations.notification.title.one:{"entity":"Invoice"}']);
+    assert.deepEqual(ref.current, new Set(["r1"]), "the ref must advance to the full currently-failing id set");
+  } finally {
+    (globalThis as { Notification?: unknown }).Notification = originalNotification;
+  }
+});
+
+test("maybeNotifyFailingAutomations never calls Notification when the tab is NOT hidden, even with a newly-failing rule and granted permission -- but still advances the ref", () => {
+  const originalNotification = (globalThis as { Notification?: unknown }).Notification;
+  let constructed = 0;
+  class FakeNotification {
+    static permission = "granted";
+    constructor() {
+      constructed++;
+    }
+  }
+  (globalThis as { Notification: unknown }).Notification = FakeNotification;
+  try {
+    const rules = [automationRule({ id: "r1", lastStatus: "failed" })];
+    const ref: { current: Set<string> | null } = { current: new Set() };
+    maybeNotifyFailingAutomations(rules, ref, false, notifyT);
+    assert.equal(constructed, 0, "must never construct a Notification while the tab is focused");
+    assert.deepEqual(ref.current, new Set(["r1"]), "the ref must still advance even though no notification fired");
+  } finally {
+    (globalThis as { Notification?: unknown }).Notification = originalNotification;
+  }
+});
+
+test("maybeNotifyFailingAutomations never calls Notification when permission isn't granted, even while the tab is hidden", () => {
+  const originalNotification = (globalThis as { Notification?: unknown }).Notification;
+  let constructed = 0;
+  class FakeNotification {
+    static permission = "default";
+    constructor() {
+      constructed++;
+    }
+  }
+  (globalThis as { Notification: unknown }).Notification = FakeNotification;
+  try {
+    const rules = [automationRule({ id: "r1", lastStatus: "failed" })];
+    const ref: { current: Set<string> | null } = { current: new Set() };
+    maybeNotifyFailingAutomations(rules, ref, true, notifyT);
+    assert.equal(constructed, 0, "must never construct a Notification while permission is merely 'default' (not yet granted)");
+  } finally {
+    (globalThis as { Notification?: unknown }).Notification = originalNotification;
+  }
+});
+
+test("maybeNotifyFailingAutomations shows the 'many' title with a real count when several rules start failing at once", () => {
+  const originalNotification = (globalThis as { Notification?: unknown }).Notification;
+  const calls: string[] = [];
+  class FakeNotification {
+    static permission = "granted";
+    constructor(title: string) {
+      calls.push(title);
+    }
+  }
+  (globalThis as { Notification: unknown }).Notification = FakeNotification;
+  try {
+    const rules = [
+      automationRule({ id: "r1", lastStatus: "failed" }),
+      automationRule({ id: "r2", lastStatus: "failed" }),
+    ];
+    const ref: { current: Set<string> | null } = { current: new Set() };
+    maybeNotifyFailingAutomations(rules, ref, true, notifyT);
+    assert.deepEqual(calls, ['automations.notification.title.many:{"count":"2"}']);
+  } finally {
+    (globalThis as { Notification?: unknown }).Notification = originalNotification;
+  }
+});
+
+test("maybeNotifyFailingAutomations does nothing at all on the first-ever check (null ref baseline), even with the tab hidden and permission granted", () => {
+  const originalNotification = (globalThis as { Notification?: unknown }).Notification;
+  let constructed = 0;
+  class FakeNotification {
+    static permission = "granted";
+    constructor() {
+      constructed++;
+    }
+  }
+  (globalThis as { Notification: unknown }).Notification = FakeNotification;
+  try {
+    const rules = [automationRule({ id: "r1", lastStatus: "failed" })];
+    const ref: { current: Set<string> | null } = { current: null };
+    maybeNotifyFailingAutomations(rules, ref, true, notifyT);
+    assert.equal(constructed, 0, "the very first check must only seed the baseline, never notify for a pre-existing failure");
+    assert.deepEqual(ref.current, new Set(["r1"]), "the baseline must still be seeded to the full currently-failing id set");
+  } finally {
+    (globalThis as { Notification?: unknown }).Notification = originalNotification;
+  }
+});
+
+test("maybeNotifyFailingAutomations never fires for a rule that was already failing on the previous check (not newly failing)", () => {
+  const originalNotification = (globalThis as { Notification?: unknown }).Notification;
+  let constructed = 0;
+  class FakeNotification {
+    static permission = "granted";
+    constructor() {
+      constructed++;
+    }
+  }
+  (globalThis as { Notification: unknown }).Notification = FakeNotification;
+  try {
+    const rules = [automationRule({ id: "r1", lastStatus: "failed" })];
+    const ref: { current: Set<string> | null } = { current: new Set(["r1"]) };
+    maybeNotifyFailingAutomations(rules, ref, true, notifyT);
+    assert.equal(constructed, 0, "a rule still failing from before must not re-notify every poll");
+  } finally {
+    (globalThis as { Notification?: unknown }).Notification = originalNotification;
+  }
+});
+
+test("maybeNotifyFailingAutomations re-notifies for a rule that recovered and then failed again (full-snapshot diff forgets recovered rules)", () => {
+  const originalNotification = (globalThis as { Notification?: unknown }).Notification;
+  const calls: string[] = [];
+  class FakeNotification {
+    static permission = "granted";
+    constructor(title: string) {
+      calls.push(title);
+    }
+  }
+  (globalThis as { Notification: unknown }).Notification = FakeNotification;
+  try {
+    const ref: { current: Set<string> | null } = { current: new Set(["r1"]) };
+    // r1 recovers -- a poll with lastStatus "sent" must drop it from the baseline.
+    maybeNotifyFailingAutomations([automationRule({ id: "r1", lastStatus: "sent" })], ref, true, notifyT);
+    assert.deepEqual(ref.current, new Set(), "a recovered rule must be dropped from the failing-id baseline");
+    // r1 fails again -- it's no longer in the baseline, so this must notify again.
+    maybeNotifyFailingAutomations([automationRule({ id: "r1", lastStatus: "failed" })], ref, true, notifyT);
+    assert.deepEqual(calls, ['automations.notification.title.one:{"entity":"Order"}'], "a rule failing again after recovering must notify again");
   } finally {
     (globalThis as { Notification?: unknown }).Notification = originalNotification;
   }
@@ -4961,22 +5146,31 @@ test("App's checkFailingAutomations counts only enabled rules with lastStatus \"
 
   function run(rules: Array<{ enabled: boolean; lastStatus: "sent" | "failed" | null }>) {
     const state = { count: -1 };
+    const notifyCalls: unknown[][] = [];
     const fn = new Function(
       "projectId",
       "cancelled",
       "listAutomationRules",
       "setAutomationsFailingCount",
+      "maybeNotifyFailingAutomations",
+      "lastFailingAutomationIdsRef",
+      "document",
+      "tRef",
       `${code}\nreturn checkFailingAutomations;`,
     )(
       "project-1",
       false,
       async () => ({ rules }),
       (v: number) => (state.count = v),
+      (...args: unknown[]) => notifyCalls.push(args),
+      { current: null },
+      { hidden: false },
+      { current: (key: string) => key },
     ) as () => Promise<void>;
-    return { fn, state };
+    return { fn, state, notifyCalls };
   }
 
-  const { fn: fnMixed, state: stateMixed } = run([
+  const { fn: fnMixed, state: stateMixed, notifyCalls: notifyCallsMixed } = run([
     { enabled: true, lastStatus: "failed" },
     { enabled: false, lastStatus: "failed" }, // disabled -- must not count even though it last failed
     { enabled: true, lastStatus: "sent" }, // enabled but healthy -- must not count
@@ -4985,6 +5179,7 @@ test("App's checkFailingAutomations counts only enabled rules with lastStatus \"
   ]);
   await fnMixed();
   assert.equal(stateMixed.count, 2, "expected exactly the 2 enabled+failed rules to count, not the disabled or healthy ones");
+  assert.equal(notifyCallsMixed.length, 1, "checkFailingAutomations must also wire the freshly-fetched rules into maybeNotifyFailingAutomations on every tick");
 
   const { fn: fnHealthy, state: stateHealthy } = run([
     { enabled: true, lastStatus: "sent" },

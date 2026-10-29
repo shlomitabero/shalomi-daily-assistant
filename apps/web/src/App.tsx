@@ -26,10 +26,12 @@ import {
   subscribeProjectGone,
   subscribeViewerDemoted,
   subscribeWakeStatus,
+  type AutomationRuleView,
   type CollaboratorRole,
   type TemplateSummary,
   type WhatsAppMessageLogEntry,
 } from "./api.js";
+import { findNewlyFailingAutomations } from "./automationsNotify.js";
 import { AuthScreen } from "./AuthScreen.js";
 import { BuildProgress } from "./BuildProgress.js";
 import { BusinessTwinPanel } from "./BusinessTwinPanel.js";
@@ -438,6 +440,35 @@ export function maybeNotifyNewWhatsAppMessages(
   new Notification(title, { body: newMessages.snippet });
 }
 
+/**
+ * Mirrors maybeNotifyNewWhatsAppMessages above, so a rule that starts
+ * failing while the tab is backgrounded surfaces the same way a new
+ * WhatsApp message does, instead of only showing up in the in-page badge
+ * the next time the user happens to look at the tab.
+ *
+ * `previouslyFailingIdsRef` is always replaced with the full current
+ * failing-id set, whether or not a notification actually fires -- see
+ * findNewlyFailingAutomations's own doc comment for why a full snapshot
+ * (not a single id) is the right baseline for rules, which can recover and
+ * fail again, unlike WhatsApp's append-only message log.
+ */
+export function maybeNotifyFailingAutomations(
+  rules: AutomationRuleView[],
+  previouslyFailingIdsRef: { current: Set<string> | null },
+  isTabHidden: boolean,
+  t: (key: string, params?: Record<string, string>) => string,
+): void {
+  const newlyFailing = findNewlyFailingAutomations(rules, previouslyFailingIdsRef.current);
+  previouslyFailingIdsRef.current = new Set(rules.filter((r) => r.enabled && r.lastStatus === "failed").map((r) => r.id));
+  if (!newlyFailing || !isTabHidden) return;
+  if (typeof Notification === "undefined" || Notification.permission !== "granted") return;
+  const title =
+    newlyFailing.count === 1
+      ? t("automations.notification.title.one", { entity: newlyFailing.entityName })
+      : t("automations.notification.title.many", { count: String(newlyFailing.count) });
+  new Notification(title);
+}
+
 export default function App() {
   return (
     <ThemeProvider>
@@ -652,6 +683,13 @@ function AppContent() {
   // actually opened and can stay stale for a long time. See the unread-poll
   // effect below for why this needs its own tracking.
   const lastNotifiedWhatsAppIdRef = useRef<LastNotifiedWhatsAppMessage | null>(null);
+  // The set of enabled automation rule ids that were already known to be
+  // failing the last time a desktop notification check ran -- a full
+  // snapshot, not a single newest-id marker like lastNotifiedWhatsAppIdRef
+  // above, because rules aren't an append-only log and can recover and
+  // fail again. See findNewlyFailingAutomations (automationsNotify.ts) for
+  // why this shape handles that case with no extra bookkeeping.
+  const lastFailingAutomationIdsRef = useRef<Set<string> | null>(null);
   // Every existing purgeProjectPreferences call site (handleDeleteProject,
   // handleBulkDeleteProjects, handleAccountDeleted, CollaboratorsPanel's
   // onLeft) is an action THIS browser just performed, so it can purge
@@ -1004,12 +1042,16 @@ function AppContent() {
     const projectId = project.id;
     let cancelled = false;
     let intervalId: ReturnType<typeof setInterval> | null = null;
+    // A fresh baseline per project/reconnect -- same reasoning as
+    // lastNotifiedWhatsAppIdRef's own reset in the unread-poll effect above.
+    lastFailingAutomationIdsRef.current = null;
 
     async function checkFailingAutomations() {
       try {
         const { rules } = await listAutomationRules(projectId);
         if (cancelled) return;
         setAutomationsFailingCount(rules.filter((r) => r.enabled && r.lastStatus === "failed").length);
+        maybeNotifyFailingAutomations(rules, lastFailingAutomationIdsRef, document.hidden, tRef.current);
       } catch {
         // A single failed background check isn't worth surfacing to the
         // user -- just skip this tick and try again on the next one.
