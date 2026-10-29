@@ -84,6 +84,32 @@ function paymentOpenQuestion(entities: EntitySpec[], isHebrew: boolean): OpenQue
     : [{ question: "Which payment provider should this use?", options: ["Stripe", "PayPal", "No payments", "Decide for me"], recommendation: "Stripe" }];
 }
 
+/**
+ * Round 1257: mirrors heuristic.ts's own buildAssumptions exactly -- every
+ * template runs on the identical generic schema-driven engine a heuristic-
+ * or AI-generated spec does (same auth/collaboration model, same real
+ * WhatsApp integration, same "other integrations aren't wired up yet, see
+ * open questions" caveat), so the same three assumptions apply regardless
+ * of which template produced the spec. Kept as its own small copy here
+ * rather than importing heuristic.ts's module-private function, the same
+ * "duplicate the small pure helper per module" convention round 1248's own
+ * BILLING_ENTITY_NAMES copy already established in this file.
+ */
+function templateAssumptions(isHebrew: boolean): string[] {
+  if (isHebrew) {
+    return [
+      "האפליקציה בנויה כרגע על מנוע גנרי משותף עם בסיס נתונים אמיתי — לא קוד ייעודי מלא לכל פרויקט.",
+      "יש כניסה אמיתית למשתמשים (הרשמה+סיסמה), ואפשר להזמין משתמשים קיימים כשותפים לאותו פרויקט עם הרשאת \"עורך/ת\" (גישה מלאה) או \"צפייה בלבד\" שנאכפת בפועל על כל שינוי — רק הבעלים יכול לנהל מי מוזמן או לשנות את ההרשאה של שותף.",
+      "חיבור וואטסאפ אמיתי קיים לכל פרויקט (סריקת QR, הודעות נכנסות/יוצאות, הפעלת אוטומציות) — אך כל אינטגרציה אחרת שהוזכרה בתיאור (תשלומים וכו') עדיין לא מחוברת בפועל, ראו את השאלות הפתוחות למטה.",
+    ];
+  }
+  return [
+    "Using a generic schema-driven CRUD engine backed by SQLite for this Phase 1 slice, not a dedicated generated codebase per project yet.",
+    "Real signup/login authentication exists, and the project owner can invite existing users as collaborators on the same project with either \"editor\" (full access) or \"viewer\" (read-only) permission, enforced on every change — only the owner can manage who else is invited or change their role.",
+    "A real WhatsApp Web connection is available for every project (QR-code linking, inbound/outbound messages, automation triggers) — but any other integration mentioned in the description (payments, etc.) is not wired up yet, see open questions and the product roadmap.",
+  ];
+}
+
 function spec(input: {
   summary: string;
   roles: string[];
@@ -98,7 +124,7 @@ function spec(input: {
     roles: input.roles,
     entities: input.entities,
     screens: screensFor(input.entities.map((e) => e.name)),
-    assumptions: input.assumptions ?? [],
+    assumptions: input.assumptions ?? templateAssumptions(input.isHebrew ?? true),
     // Round 1248: every template used to hardcode an empty array here,
     // unlike a heuristic- or AI-generated spec with the identical
     // business shape (e.g. the exact same MenuItem/Order entities), which

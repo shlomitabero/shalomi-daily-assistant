@@ -243,6 +243,42 @@ test("a template with no billing entity (e.g. the CRM/Project Tracker/Volunteer/
   }
 });
 
+/**
+ * Round 1257's finding: `spec()` (templates.ts) hardcoded `assumptions:
+ * []` for every template, the exact same kind of gap round 1248 just
+ * closed for `openQuestions` -- a heuristic- or AI-generated spec always
+ * gets 3 real assumption strings (heuristic.ts's own buildAssumptions)
+ * explaining the generic engine, the real auth/collaboration model, and
+ * that only WhatsApp (not other integrations) is actually wired up, but
+ * every template silently skipped all three. App.tsx renders the
+ * "Assumptions" heading unconditionally (unlike `openQuestions`, which IS
+ * gated on `.length > 0`), so a template user saw a bare heading with no
+ * list and none of that explanatory text.
+ */
+test("every template's spec and specEn carry the same 3 assumptions heuristic.ts's own buildAssumptions always generates, in the matching language", () => {
+  const heAssumptions = [
+    "האפליקציה בנויה כרגע על מנוע גנרי משותף עם בסיס נתונים אמיתי — לא קוד ייעודי מלא לכל פרויקט.",
+    "יש כניסה אמיתית למשתמשים (הרשמה+סיסמה), ואפשר להזמין משתמשים קיימים כשותפים לאותו פרויקט עם הרשאת \"עורך/ת\" (גישה מלאה) או \"צפייה בלבד\" שנאכפת בפועל על כל שינוי — רק הבעלים יכול לנהל מי מוזמן או לשנות את ההרשאה של שותף.",
+    "חיבור וואטסאפ אמיתי קיים לכל פרויקט (סריקת QR, הודעות נכנסות/יוצאות, הפעלת אוטומציות) — אך כל אינטגרציה אחרת שהוזכרה בתיאור (תשלומים וכו') עדיין לא מחוברת בפועל, ראו את השאלות הפתוחות למטה.",
+  ];
+  const enAssumptions = [
+    "Using a generic schema-driven CRUD engine backed by SQLite for this Phase 1 slice, not a dedicated generated codebase per project yet.",
+    "Real signup/login authentication exists, and the project owner can invite existing users as collaborators on the same project with either \"editor\" (full access) or \"viewer\" (read-only) permission, enforced on every change — only the owner can manage who else is invited or change their role.",
+    "A real WhatsApp Web connection is available for every project (QR-code linking, inbound/outbound messages, automation triggers) — but any other integration mentioned in the description (payments, etc.) is not wired up yet, see open questions and the product roadmap.",
+  ];
+  for (const template of TEMPLATES) {
+    assert.deepEqual(template.spec.assumptions, heAssumptions, `template "${template.id}"'s Hebrew spec must carry the same generic-engine assumptions every other generation path gets`);
+    assert.deepEqual(template.specEn.assumptions, enAssumptions, `template "${template.id}"'s English specEn must carry the same generic-engine assumptions every other generation path gets`);
+  }
+});
+
+test("the Restaurant template composes correctly: it gets the new assumptions AND still keeps round 1248's own payment-provider open question", () => {
+  const restaurant = TEMPLATES.find((t) => t.id === "restaurant");
+  assert.ok(restaurant, "expected a \"restaurant\" template to exist");
+  assert.equal(restaurant!.spec.assumptions.length, 3, "the payment-related open question must not suppress or alter the generic assumptions");
+  assert.equal(restaurant!.spec.openQuestions.length, 1, "the new assumptions must not suppress or alter the existing payment-provider open question");
+});
+
 test("every template's screen count matches heuristic.ts's own Dashboard-plus-List+Form-pair-per-entity convention", () => {
   for (const template of TEMPLATES) {
     const expected = 2 * template.spec.entities.length + 1;
