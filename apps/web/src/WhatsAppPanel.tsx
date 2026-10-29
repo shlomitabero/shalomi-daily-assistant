@@ -504,6 +504,18 @@ export function WhatsAppPanel({
     setInitialLoadError(null);
     getWhatsAppStatus(projectId)
       .then((s) => {
+        // Round 1238: this is the panel's very first network call, fired
+        // unconditionally from the mount effect below. Unlike
+        // startPolling/startConnectedPolling's own ticks (each guarded by
+        // their own `cancelled` closure) and handleAttachmentChange's own
+        // post-upload check (round 1192), this .then had no guard at all --
+        // closing the panel before this resolves lets it still call
+        // startPolling/startConnectedPolling on a component instance that's
+        // already gone, arming a setInterval nothing will ever clear again
+        // (the unmount cleanup already ran, and the polling refs it clears
+        // are still null -- polling hadn't started yet). Same mountedRef
+        // convention as round 1192's own fix closes it here too.
+        if (!mountedRef.current) return;
         setStatus(s);
         if (s.status === "connecting" || s.status === "qr") startPolling();
         if (s.status === "connected") {
@@ -526,7 +538,10 @@ export function WhatsAppPanel({
           startConnectedPolling();
         }
       })
-      .catch((err) => setInitialLoadError((err as Error).message));
+      .catch((err) => {
+        if (!mountedRef.current) return;
+        setInitialLoadError((err as Error).message);
+      });
   }
 
   useEffect(() => {

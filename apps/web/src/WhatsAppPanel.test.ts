@@ -493,6 +493,7 @@ test("WhatsAppPanel's loadInitialStatus discards a listWhatsAppMessages page fet
   });
 
   const { loadInitialStatus } = new Function(
+    "mountedRef",
     "messagesVersionRef",
     "setInitialLoadError",
     "getWhatsAppStatus",
@@ -505,6 +506,11 @@ test("WhatsAppPanel's loadInitialStatus discards a listWhatsAppMessages page fet
     "projectId",
     `${code}\nreturn { loadInitialStatus };`,
   )(
+    // Round 1238: loadInitialStatus now reads mountedRef.current to guard
+    // against the panel having unmounted before this fetch resolves -- the
+    // panel is still mounted throughout this test's own scenario (a
+    // disconnect mid-fetch, not an unmount), so this is simply `true`.
+    { current: true },
     messagesVersionRef,
     () => {},
     async () => ({ status: "connected" }),
@@ -1622,6 +1628,75 @@ test("WhatsAppPanel deletes a just-uploaded attachment from the server when the 
         deleteRequest!.url,
         "/api/uploads/proj1/_whatsapp-attachments/fake-uuid.pdf",
         "the just-uploaded file must be deleted directly once the upload resolves after the panel has already closed",
+      );
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+});
+
+/**
+ * Round 1238: loadInitialStatus's own .then had no unmount guard at all --
+ * unlike startPolling/startConnectedPolling's own ticks (each guarded by
+ * their own `cancelled` closure) and handleAttachmentChange's own
+ * round-1192 fix (mountedRef). If the panel is closed before this very
+ * first status fetch resolves, the unmount effect's own
+ * stopPolling()/stopConnectedPolling() calls are no-ops (polling hasn't
+ * started yet), so the stale .then would still call startPolling()
+ * afterward, arming a setInterval nothing will ever clear again -- firing
+ * every POLL_INTERVAL_MS forever. Holds the initial status fetch pending
+ * with a deferred promise, unmounts while it's still in flight, then
+ * resolves it with a "connecting" status (the one that would call
+ * startPolling) and confirms the status endpoint is never hit again.
+ */
+test("WhatsAppPanel does not start polling from its initial status fetch if the panel is closed before that fetch resolves", async () => {
+  await withJsdom(async () => {
+    const originalFetch = globalThis.fetch;
+    let statusCallCount = 0;
+    let resolveStatus: (() => void) | undefined;
+    globalThis.fetch = (async (input: string, init?: RequestInit): Promise<Response> => {
+      const method = init?.method ?? "GET";
+      if (method === "GET" && input === "/api/projects/proj1/integrations/whatsapp/status") {
+        statusCallCount += 1;
+        await new Promise<void>((resolve) => {
+          resolveStatus = resolve;
+        });
+        return new Response(
+          JSON.stringify({ status: "connecting", phoneNumber: null, qrDataUrl: null, error: null }),
+          { status: 200, headers: { "content-type": "application/json" } },
+        );
+      }
+      throw new Error(`unexpected request ${method} ${input}`);
+    }) as typeof fetch;
+    try {
+      const view = render(
+        React.createElement(
+          ThemeProvider,
+          null,
+          React.createElement(LanguageProvider, null, React.createElement(WhatsAppPanel, { projectId: "proj1", userId: "user1", projectName: "Test Project", onClose: () => {}, onJumpToEntity: () => {}, onJumpToRecord: () => {}, entities: [], onCreateRecordFromMessage: () => {} })),
+        ),
+      );
+      await waitForCondition(() => resolveStatus !== undefined);
+
+      // The initial status fetch is still pending -- close the panel now,
+      // exactly the race this test exists to exercise.
+      view.unmount();
+      assert.equal(statusCallCount, 1, "only the one initial fetch must have fired so far");
+
+      // Let it resolve now that the component is already gone, with the
+      // one status value that would otherwise call startPolling().
+      resolveStatus!();
+      // WhatsAppPanel.tsx's own POLL_INTERVAL_MS is 1500 -- waiting past
+      // two full ticks of it (with margin) is enough to catch a leaked
+      // interval actually firing, not just the first setInterval call.
+      await act(async () => {
+        await new Promise((resolve) => setTimeout(resolve, 3500));
+      });
+
+      assert.equal(
+        statusCallCount,
+        1,
+        "the status endpoint must never be hit again -- a guarded .then must not have armed a polling interval for an already-unmounted panel",
       );
     } finally {
       globalThis.fetch = originalFetch;
