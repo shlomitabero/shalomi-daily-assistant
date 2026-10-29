@@ -24,7 +24,7 @@ import { useDialogFocusTrap } from "./useDialogFocusTrap.js";
  * already does for a project.
  */
 export function ChangeEmailPanel({ currentEmail, onClose, onChanged }: { currentEmail: string; onClose: () => void; onChanged: (user: User) => void }) {
-  const { t } = useTranslation();
+  const { t, lang } = useTranslation();
   const [currentPassword, setCurrentPassword] = useState("");
   const [email, setEmail] = useState(currentEmail);
   const [confirmEmail, setConfirmEmail] = useState(currentEmail);
@@ -52,7 +52,7 @@ export function ChangeEmailPanel({ currentEmail, onClose, onChanged }: { current
     }
     setBusy(true);
     try {
-      const { user } = await changeEmail(currentPassword, newEmail);
+      const { user } = await changeEmail(currentPassword, newEmail, lang);
       onChanged(user);
       setDone(true);
     } catch (err) {

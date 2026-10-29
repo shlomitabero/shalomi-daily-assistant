@@ -327,9 +327,16 @@ export function changePassword(currentPassword: string, newPassword: string): Pr
   return request("/auth/password", { method: "PATCH", body: JSON.stringify({ currentPassword, newPassword }) });
 }
 
-/** ChangeEmailPanel.tsx's own API call -- returns the updated User (new email included) so the caller can update its own held `user` state, the same way CollaboratorsPanel's onOwnerTransferred already does for a project. */
-export function changeEmail(currentPassword: string, email: string): Promise<{ user: User }> {
-  return request("/auth/email", { method: "PATCH", body: JSON.stringify({ currentPassword, email }) });
+/**
+ * ChangeEmailPanel.tsx's own API call -- returns the updated User (new
+ * email included) so the caller can update its own held `user` state, the
+ * same way CollaboratorsPanel's onOwnerTransferred already does for a
+ * project. `lang` (round 1206) picks which language the server's own
+ * old-email notification is written in, the same `login`/`forgotPassword`
+ * convention above.
+ */
+export function changeEmail(currentPassword: string, email: string, lang: "he" | "en"): Promise<{ user: User }> {
+  return request("/auth/email", { method: "PATCH", body: JSON.stringify({ currentPassword, email, lang }) });
 }
 
 /**

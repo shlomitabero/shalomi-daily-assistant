@@ -1000,6 +1000,101 @@ test("changing your email does NOT revoke any other session, unlike changing you
   });
 });
 
+/**
+ * Round 1206: this route used to send no notification anywhere once the
+ * change succeeded, the one sensitive auth action in this file with no
+ * matching email (unlike the login-code and forgot-password routes,
+ * which both notify the account holder). Confirms the real
+ * EmailSender.send call reaches the OLD address, not the new one, and
+ * that the body actually names the new address so the real owner can
+ * tell at a glance whether it's legitimate.
+ */
+test("changing your email sends a real notification to the OLD address, naming the new one, when email is configured", async () => {
+  const emailSender = createFakeEmailSender();
+  await withServer(
+    async (baseUrl) => {
+      const oldEmail = `change-email-notify-old-${Date.now()}@example.com`;
+      const newEmail = `change-email-notify-new-${Date.now()}@example.com`;
+      const token = await signup(baseUrl, oldEmail);
+
+      const changeRes = await fetch(`${baseUrl}/api/auth/email`, {
+        method: "PATCH",
+        headers: authHeaders(token),
+        body: JSON.stringify({ currentPassword: "correct-horse-battery", email: newEmail, lang: "en" }),
+      });
+      assert.equal(changeRes.status, 200);
+
+      assert.equal(emailSender.sentTo.length, 1, "exactly one notification must be sent");
+      assert.equal(emailSender.sentTo[0].to, oldEmail, "the notification must go to the OLD address, not the one being switched to");
+      assert.match(emailSender.sentTo[0].text, new RegExp(newEmail.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")), "the body must name the real new address");
+    },
+    { emailSender },
+  );
+});
+
+test("changing your email still succeeds, with no notification attempted, when no email provider is configured", async () => {
+  const emailSender = createFakeEmailSender({ configured: false });
+  await withServer(
+    async (baseUrl) => {
+      const token = await signup(baseUrl, `change-email-notify-unconfigured-${Date.now()}@example.com`);
+      const changeRes = await fetch(`${baseUrl}/api/auth/email`, {
+        method: "PATCH",
+        headers: authHeaders(token),
+        body: JSON.stringify({ currentPassword: "correct-horse-battery", email: `change-email-notify-unconfigured-new-${Date.now()}@example.com` }),
+      });
+      assert.equal(changeRes.status, 200, "the change itself must still work exactly as before this feature existed");
+      assert.equal(emailSender.sentTo.length, 0, "no send should even be attempted when email isn't configured");
+    },
+    { emailSender },
+  );
+});
+
+test("resubmitting your own current email as the 'new' email is a no-op that sends no notification", async () => {
+  const emailSender = createFakeEmailSender();
+  await withServer(
+    async (baseUrl) => {
+      const email = `change-email-notify-noop-${Date.now()}@example.com`;
+      const token = await signup(baseUrl, email);
+      const changeRes = await fetch(`${baseUrl}/api/auth/email`, {
+        method: "PATCH",
+        headers: authHeaders(token),
+        body: JSON.stringify({ currentPassword: "correct-horse-battery", email }),
+      });
+      assert.equal(changeRes.status, 200);
+      assert.equal(emailSender.sentTo.length, 0, "re-submitting the exact same email is a no-op -- nothing to alert anyone about");
+    },
+    { emailSender },
+  );
+});
+
+/**
+ * A failed notification send must never undo or block an already-
+ * successful, already-committed email change -- mirrors the
+ * forgot-password route's own swallowed-send contract for the identical
+ * reason (surfacing it here would make a security side effect look like
+ * the primary request failed, when the actual account change already
+ * went through).
+ */
+test("a failed notification send never fails the email-change request itself -- the change already succeeded", async () => {
+  const emailSender = createFakeEmailSender({ failWith: new Error("simulated provider outage") });
+  await withServer(
+    async (baseUrl) => {
+      const oldEmail = `change-email-notify-fail-${Date.now()}@example.com`;
+      const newEmail = `change-email-notify-fail-new-${Date.now()}@example.com`;
+      const token = await signup(baseUrl, oldEmail);
+      const changeRes = await fetch(`${baseUrl}/api/auth/email`, {
+        method: "PATCH",
+        headers: authHeaders(token),
+        body: JSON.stringify({ currentPassword: "correct-horse-battery", email: newEmail }),
+      });
+      assert.equal(changeRes.status, 200, "the response must still report success -- the email change itself already succeeded");
+      const { user } = (await changeRes.json()) as { user: { email: string } };
+      assert.equal(user.email, newEmail, "the change must have actually gone through despite the notification failing");
+    },
+    { emailSender },
+  );
+});
+
 test("changing your email requires a valid session, the same as any other authenticated route", async () => {
   await withServer(async (baseUrl) => {
     const res = await fetch(`${baseUrl}/api/auth/email`, {

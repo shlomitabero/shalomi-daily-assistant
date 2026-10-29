@@ -63,6 +63,10 @@ const ChangeEmailSchema = z.object({
   // field above -- keeps the uniqueness check and every future login
   // consistent no matter which casing someone types.
   email: z.string().email().transform((email) => email.toLowerCase()),
+  // Round 1206: same optional client-language hint CredentialsSchema/
+  // ForgotPasswordSchema already carry, for the notification email this
+  // route now sends to the OLD address.
+  lang: z.enum(["he", "en"]).optional(),
 });
 
 const VerifyLoginCodeSchema = z.object({
@@ -618,6 +622,20 @@ export function createAuthRouter(
    * doesn't by itself invalidate anything an existing session could
    * already do, so there's no matching security reason to sign out other
    * devices for what's usually just a correction.
+   *
+   * Round 1206: that reasoning covered *revocation*, not *notification* --
+   * this route used to send nothing anywhere once the change succeeded,
+   * the one sensitive auth action in this file with no matching email at
+   * all (compare the login-code and forgot-password routes above, which
+   * both notify the account holder). An attacker who obtains the real
+   * password (a leaked/reused credential, not a stolen session -- the
+   * current-password check above already rules that out) could silently
+   * redirect the account's own recovery address with zero visible signal
+   * to the real owner, who'd have no way to notice until a later
+   * password-reset went to the wrong inbox. Best-effort, mirroring
+   * forgot-password's own swallowed-send contract below: a failed send
+   * must never undo or block an already-successful, already-committed
+   * email change.
    */
   router.patch("/auth/email", requireAuth(db), changeEmailRateLimiter, async (req, res, next) => {
     const parsed = ChangeEmailSchema.safeParse(req.body);
@@ -626,7 +644,7 @@ export function createAuthRouter(
       return;
     }
     try {
-      const { currentPassword, email } = parsed.data;
+      const { currentPassword, email, lang } = parsed.data;
       const storedHash = getPasswordHash(db, req.userId!);
       if (!storedHash || !(await verifyPassword(currentPassword, storedHash))) {
         next(new HttpError(401, "Current password is incorrect", "INVALID_CURRENT_PASSWORD"));
@@ -635,12 +653,34 @@ export function createAuthRouter(
       // Same post-await existence re-check as PATCH /auth/password just
       // above -- see that route's own doc comment for why: verifyPassword's
       // genuine scrypt await is long enough for a concurrent DELETE
-      // /auth/account on this same still-valid token to finish first.
-      if (!findUserById(db, req.userId!)) {
+      // /auth/account on this same still-valid token to finish first. Also
+      // captures the real, pre-change email here -- the one the
+      // notification below must reach, not the new one being switched to.
+      const existing = findUserById(db, req.userId!);
+      if (!existing) {
         next(new HttpError(401, "This account no longer exists", "USER_NOT_FOUND"));
         return;
       }
+      const previousEmail = existing.email;
       const user = updateUserEmail(db, req.userId!, email);
+      // Resubmitting your own current email (updateUserEmail's own
+      // self-exclusion from the uniqueness check already allows this, per
+      // round 1199) is a genuine no-op -- nothing to alert anyone about.
+      if (emailSender.configured && previousEmail !== email) {
+        const isHebrew = lang !== "en";
+        const subject = isHebrew ? "כתובת האימייל של חשבונך ב-Forge AI השתנתה" : "Your Forge AI account's email address was changed";
+        const body = isHebrew
+          ? `כתובת האימייל של חשבונך ב-Forge AI שונתה לכתובת ${email}.\n\nאם זו לא הייתה אתם, מישהו אחר ידע את הסיסמה הנוכחית שלכם -- היכנסו לחשבון והחליפו סיסמה מיד.`
+          : `Your Forge AI account's email address was changed to ${email}.\n\nIf this wasn't you, someone else knows your current password -- sign in and change it immediately.`;
+        try {
+          await emailSender.send(previousEmail, subject, body);
+        } catch {
+          // Swallowed, deliberately, same as forgot-password's own send
+          // above -- the email change itself already succeeded and was
+          // already committed to the database; a failed best-effort
+          // notification must never turn that into an error response.
+        }
+      }
       res.json({ user });
     } catch (err) {
       if (err instanceof DuplicateEmailError) {
