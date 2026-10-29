@@ -20,7 +20,7 @@ import {
 } from "./api.js";
 import { downloadAutomationsReport, formatAutomationsReport } from "./automationsReport.js";
 import { applyColumnOrder, getColumnOrder } from "./columnOrder.js";
-import { fieldDisplayLabel, fieldLabelOccurrences, parseFieldDate, recordDisplayLabel, uniqueEnumValues, type RelatedRecordsByEntity } from "./entityFormatting.js";
+import { fieldDisplayLabel, fieldLabelOccurrences, isValidDateString, parseFieldDate, recordDisplayLabel, uniqueEnumValues, type RelatedRecordsByEntity } from "./entityFormatting.js";
 import { useTranslation } from "./i18n/LanguageContext.js";
 import { resolveErrorMessage } from "./i18n/language.js";
 import { useDialogFocusTrap } from "./useDialogFocusTrap.js";
@@ -266,6 +266,25 @@ export function AutomationsPanel({
       if (!enumValues.includes(fieldValue)) {
         setFieldValue(enumValues[0] ?? "");
       }
+    } else if (selectedField?.type === "date" && !isValidDateString(fieldValue)) {
+      // Round 1225: a stale value left over from a previously-selected
+      // field (e.g. an enum's "High") is not just wrong for a date field --
+      // the native <input type="date"> (round 1224) silently renders a
+      // non-conforming value as BLANK (the HTML date-input value-
+      // sanitization algorithm), hiding that fieldValue is still that
+      // stale string instead of showing it the way the plain-text
+      // fallback used to. Without this reset, the box looks empty, the
+      // user has no reason to touch it, and handleSubmit sends the stale
+      // value straight to the server, which rejects it with a confusing
+      // error that doesn't match what was visibly in the box.
+      setFieldValue("");
+    } else if (selectedField?.type === "number" && fieldValue !== "" && (!Number.isFinite(Number(fieldValue)) || String(Number(fieldValue)) !== fieldValue)) {
+      // Same stale-value class for a number field -- lower-severity since
+      // this control stays a plain text input (the leftover text is at
+      // least visible), but still reset for consistency with the
+      // boolean/enum/date branches above and to match the server's own
+      // validateAutomationFieldValue shape exactly.
+      setFieldValue("");
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [fieldName, fieldTypesKey, fieldEnumValuesKey]);

@@ -143,7 +143,7 @@ const DATE_FORMAT = /^(\d{4})-(\d{2})-(\d{2})$/;
  * only finding out from the server's own generic rejection after every
  * row has already been POSTed.
  */
-function isValidDateString(value: string): boolean {
+export function isValidDateString(value: string): boolean {
   const match = DATE_FORMAT.exec(value);
   if (!match) return false;
   const [, yearStr, monthStr, dayStr] = match;

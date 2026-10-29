@@ -3938,3 +3938,126 @@ test("AutomationsPanel resets a stale field_equals value when a live refine narr
     }
   });
 });
+
+/**
+ * Round 1225: a sixth instance of this same "stale value from a
+ * previously-selected field survives a field switch" class, but for
+ * switching the Field dropdown itself to a DIFFERENT field (no live
+ * refine/rerender needed) -- the reset effect (fieldName/fieldTypesKey/
+ * fieldEnumValuesKey deps) already re-runs on a plain Field-dropdown
+ * change, but before this round had no branch at all for `date`/`number`,
+ * only `boolean`/`enum`. Picking an enum field ("priority"), setting its
+ * Value to "High", then switching the Field dropdown to a `date` field
+ * ("dueDate") left fieldValue as the stale string "High" -- and because
+ * round 1224 gave date fields a real native <input type="date">, the
+ * HTML date-input's own value-sanitization algorithm renders that
+ * non-conforming value as BLANK, hiding from the user that fieldValue
+ * itself is still "High" (unlike the boolean checkbox case fixed in round
+ * 806, where the mismatch was at least visible as an unchecked box).
+ * Confirms the date input now shows a real empty value (not a hidden
+ * stale one) and that the Create button is correctly disabled until a
+ * real date is chosen -- never silently submitting "High" for a date
+ * trigger.
+ */
+test("AutomationsPanel resets a stale field_equals value to empty when switching the Field dropdown from an enum field to a date field", async () => {
+  await withJsdom(async () => {
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = (async (input: string) => {
+      if (input === "/api/projects/proj5/automations") {
+        return new Response(JSON.stringify({ rules: [] }), { status: 200, headers: { "content-type": "application/json" } });
+      }
+      throw new Error(`unexpected request ${input}`);
+    }) as typeof fetch;
+
+    try {
+      renderPanelWith(triggerFieldProject);
+      await waitForCondition(() => document.body.textContent?.includes("No automations yet") ?? false);
+
+      const triggerSelect = Array.from(document.querySelectorAll("select")).find((s) =>
+        Array.from(s.options).some((o) => o.value === "field_equals"),
+      ) as HTMLSelectElement;
+      fireEvent.change(triggerSelect, { target: { value: "field_equals" } });
+
+      const fieldSelect = Array.from(document.querySelectorAll("label"))
+        .find((l) => l.textContent?.startsWith("Field"))
+        ?.querySelector("select") as HTMLSelectElement;
+      fireEvent.change(fieldSelect, { target: { value: "priority" } });
+
+      const valueSelect = Array.from(document.querySelectorAll("select")).find((s) =>
+        Array.from(s.options).some((o) => o.value === "High"),
+      ) as HTMLSelectElement;
+      fireEvent.change(valueSelect, { target: { value: "High" } });
+      await waitForCondition(() => valueSelect.value === "High");
+
+      fireEvent.change(fieldSelect, { target: { value: "dueDate" } });
+
+      const dateInput = await (async () => {
+        await waitForCondition(() => document.querySelector('.automations-create-form input[type="date"]') !== null);
+        return document.querySelector('.automations-create-form input[type="date"]') as HTMLInputElement;
+      })();
+      assert.equal(dateInput.value, "", "the stale enum value \"High\" must be reset to empty, not left as a hidden non-conforming value inside the native date input");
+
+      const messageField = document.querySelector(".automations-create-form textarea") as HTMLTextAreaElement;
+      fireEvent.change(messageField, { target: { value: "Due soon" } });
+      const submitButton = document.querySelector('.automations-create-form button[type="submit"]') as HTMLButtonElement;
+      assert.equal(submitButton.disabled, true, "Create must stay disabled with the Value reset to empty, never silently submittable with the stale \"High\"");
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+});
+
+/**
+ * Round 1225: same fix, for the `number` field case. Lower-severity than
+ * the date case above since the Value control stays a plain text input
+ * (the leftover "High" would at least be visible, unlike date's hidden
+ * blank), but reset for consistency with every other branch and to match
+ * validateAutomationFieldValue's own exact-match requirement.
+ */
+test("AutomationsPanel resets a stale field_equals value to empty when switching the Field dropdown from an enum field to a number field", async () => {
+  await withJsdom(async () => {
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = (async (input: string) => {
+      if (input === "/api/projects/proj5/automations") {
+        return new Response(JSON.stringify({ rules: [] }), { status: 200, headers: { "content-type": "application/json" } });
+      }
+      throw new Error(`unexpected request ${input}`);
+    }) as typeof fetch;
+
+    try {
+      renderPanelWith(triggerFieldProject);
+      await waitForCondition(() => document.body.textContent?.includes("No automations yet") ?? false);
+
+      const triggerSelect = Array.from(document.querySelectorAll("select")).find((s) =>
+        Array.from(s.options).some((o) => o.value === "field_equals"),
+      ) as HTMLSelectElement;
+      fireEvent.change(triggerSelect, { target: { value: "field_equals" } });
+
+      const fieldSelect = Array.from(document.querySelectorAll("label"))
+        .find((l) => l.textContent?.startsWith("Field"))
+        ?.querySelector("select") as HTMLSelectElement;
+      fireEvent.change(fieldSelect, { target: { value: "priority" } });
+
+      const valueSelect = Array.from(document.querySelectorAll("select")).find((s) =>
+        Array.from(s.options).some((o) => o.value === "High"),
+      ) as HTMLSelectElement;
+      fireEvent.change(valueSelect, { target: { value: "High" } });
+      await waitForCondition(() => valueSelect.value === "High");
+
+      fireEvent.change(fieldSelect, { target: { value: "amount" } });
+
+      const amountInput = await (async () => {
+        await waitForCondition(() => document.querySelector(".automations-create-form input[inputmode=\"decimal\"]") !== null);
+        return document.querySelector(".automations-create-form input[inputmode=\"decimal\"]") as HTMLInputElement;
+      })();
+      assert.equal(amountInput.value, "", "the stale enum value \"High\" must be reset to empty, not left sitting in the number field's own Value input");
+
+      const messageField = document.querySelector(".automations-create-form textarea") as HTMLTextAreaElement;
+      fireEvent.change(messageField, { target: { value: "Balance changed" } });
+      const submitButton = document.querySelector('.automations-create-form button[type="submit"]') as HTMLButtonElement;
+      assert.equal(submitButton.disabled, true, "Create must stay disabled with the Value reset to empty, never silently submittable with the stale \"High\"");
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+});
