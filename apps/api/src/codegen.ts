@@ -2993,6 +2993,23 @@ function recordsToCsv(fields, records, relatedRecords, includeId) {
   return [header, ...rows].join("\\r\\n");
 }
 
+// Mirrors the live preview's own entityFormatting.ts recordsToJson -- keeps
+// each field's own value exactly as this app's own row-mapping stores and
+// returns it (a real number/boolean, not recordsToCsv's display text),
+// with the one exception of \`file\`, whose stored value is itself a
+// JSON-encoded descriptor string parsed into a real {url, name, size,
+// mimeType} object (or null) via parseFileFieldValue above.
+function recordsToJson(fields, records) {
+  const rows = records.map((record) => {
+    const row = { id: record.id };
+    for (const field of fields) {
+      row[field.name] = field.type === "file" ? parseFileFieldValue(record[field.name]) : record[field.name];
+    }
+    return row;
+  });
+  return JSON.stringify(rows, null, 2);
+}
+
 // Parses CSV text into rows of raw string cells (RFC 4180: quoted fields
 // may contain commas, newlines, and doubled-quote escapes) -- the reverse
 // of recordsToCsv, so a spreadsheet export (or a hand-edited copy of one)
@@ -6212,6 +6229,19 @@ export function EntityView({ entity, highlightRecordId, onHighlightHandled, onJu
     URL.revokeObjectURL(url);
   }
 
+  function handleExportJson() {
+    const json = recordsToJson(orderedFields, selectedOrAllRecords(records, effectivelyVisibleRecords, selectedIds));
+    const blob = new Blob([json], { type: "application/json;charset=utf-8;" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = \`\${entity.name}.json\`;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    URL.revokeObjectURL(url);
+  }
+
   async function handleCopy() {
     try {
       const csv = recordsToCsv(orderedFields, selectedOrAllRecords(records, effectivelyVisibleRecords, selectedIds), relatedRecords);
@@ -6720,6 +6750,14 @@ export function EntityView({ entity, highlightRecordId, onHighlightHandled, onJu
               disabled={selectedIds.size === 0 && effectivelyVisibleRecords.length === 0}
             >
               {selectedIds.size > 0 ? <>⬇️ Export {selectedIds.size} selected</> : "⬇️ Export CSV"}
+            </button>
+            <button
+              type="button"
+              className="json-export-btn"
+              onClick={handleExportJson}
+              disabled={selectedIds.size === 0 && effectivelyVisibleRecords.length === 0}
+            >
+              {selectedIds.size > 0 ? <>⬇️ Export {selectedIds.size} selected as JSON</> : "⬇️ Export JSON"}
             </button>
             <button
               type="button"
@@ -8613,9 +8651,9 @@ nav button.active .tab-count { background: rgba(255, 255, 255, 0.25); color: inh
 .calendar-record-chip-move-error { background: var(--danger-soft); border-color: var(--danger); }
 .calendar-record-more { font-size: 11px; color: var(--muted); padding: 2px 5px; background: none; border: none; text-align: start; cursor: pointer; font: inherit; }
 .calendar-record-more:hover { color: var(--text); text-decoration: underline; }
-.csv-export-btn, .ics-export-btn, .ics-subscribe-btn, .copy-records-btn, .print-list-btn { flex-shrink: 0; padding: 8px 14px; font-size: 13px; border-radius: 8px; border: 1px solid var(--border); background: var(--surface); color: var(--text); cursor: pointer; font: inherit; }
-.csv-export-btn:hover:not(:disabled), .ics-export-btn:hover:not(:disabled), .ics-subscribe-btn:hover:not(:disabled), .copy-records-btn:hover:not(:disabled), .print-list-btn:hover:not(:disabled) { background: var(--bg); }
-.csv-export-btn:disabled, .ics-export-btn:disabled, .ics-subscribe-btn:disabled, .copy-records-btn:disabled, .print-list-btn:disabled { opacity: 0.55; cursor: default; }
+.csv-export-btn, .json-export-btn, .ics-export-btn, .ics-subscribe-btn, .copy-records-btn, .print-list-btn { flex-shrink: 0; padding: 8px 14px; font-size: 13px; border-radius: 8px; border: 1px solid var(--border); background: var(--surface); color: var(--text); cursor: pointer; font: inherit; }
+.csv-export-btn:hover:not(:disabled), .json-export-btn:hover:not(:disabled), .ics-export-btn:hover:not(:disabled), .ics-subscribe-btn:hover:not(:disabled), .copy-records-btn:hover:not(:disabled), .print-list-btn:hover:not(:disabled) { background: var(--bg); }
+.csv-export-btn:disabled, .json-export-btn:disabled, .ics-export-btn:disabled, .ics-subscribe-btn:disabled, .copy-records-btn:disabled, .print-list-btn:disabled { opacity: 0.55; cursor: default; }
 .columns-menu-wrapper { position: relative; flex-shrink: 0; }
 .columns-menu-btn { padding: 8px 14px; font-size: 13px; border-radius: 8px; border: 1px solid var(--border); background: var(--surface); color: var(--text); cursor: pointer; font: inherit; }
 .columns-menu-btn:hover { background: var(--bg); }

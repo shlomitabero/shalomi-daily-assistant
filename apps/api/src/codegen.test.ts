@@ -10971,6 +10971,84 @@ test("the exported EntityView renders a real Copy button that writes the selecti
 });
 
 /**
+ * Round 1217 added "Export JSON" (recordsToJson) alongside the live
+ * preview's own CSV export, keeping each field's real typed value
+ * (numbers/booleans/raw enum/relation-id values, no display-text
+ * substitution) rather than recordsToCsv's human-readable conversions --
+ * but that round only touched apps/web/src/entityFormatting.ts, never the
+ * exported standalone app's own EntityView.jsx template. Extracts and
+ * executes the real generated parseFileFieldValue/recordsToJson (not a
+ * reimplementation), mirroring the CSV formatting test just above.
+ */
+test("the exported EntityView's own generated recordsToJson preserves each field's real typed value, unlike recordsToCsv's display-text conversions", () => {
+  const files = generateExportFiles(project);
+  const entityViewJsx = files.find((f) => f.path === "web/src/components/EntityView.jsx")!.content;
+  const parseFileFieldValueSrc = entityViewJsx.match(/function parseFileFieldValue\(value\) \{[\s\S]*?\n\}\n/)?.[0];
+  const recordsToJsonSrc = entityViewJsx.match(/function recordsToJson\(fields, records\) \{[\s\S]*?\n\}\n/)?.[0];
+  assert.ok(parseFileFieldValueSrc && recordsToJsonSrc, "expected to find parseFileFieldValue/recordsToJson in the generated EntityView.jsx");
+
+  const { recordsToJson } = new Function(`${parseFileFieldValueSrc}\n${recordsToJsonSrc}\nreturn { recordsToJson };`)();
+
+  const fields = [
+    { name: "title", label: "Title", type: "text" },
+    { name: "done", label: "Done", type: "boolean" },
+    { name: "status", label: "Status", type: "enum", enumLabels: { New: "New", Won: "Won!" } },
+    { name: "attachment", label: "Attachment", type: "file" },
+  ];
+  const records = [
+    {
+      id: 7,
+      title: "Task A",
+      done: true,
+      status: "Won",
+      attachment: JSON.stringify({ url: "/api/uploads/proj-1/Task/report.pdf", name: "report.pdf", size: 1024, mimeType: "application/pdf" }),
+    },
+    { id: 8, title: "Task B", done: false, status: "New", attachment: "" },
+  ];
+
+  const rows = JSON.parse(recordsToJson(fields, records));
+  assert.deepEqual(rows[0], {
+    id: 7,
+    title: "Task A",
+    done: true,
+    status: "Won",
+    attachment: { url: "/api/uploads/proj-1/Task/report.pdf", name: "report.pdf", size: 1024, mimeType: "application/pdf" },
+  });
+  assert.equal(rows[0].status, "Won", "the raw enum VALUE must pass through unchanged, not its enumLabels display text ('Won!')");
+  assert.strictEqual(rows[0].done, true, "a boolean must stay a real JS boolean, not the CSV export's 'TRUE' string");
+  assert.deepEqual(rows[1], { id: 8, title: "Task B", done: false, status: "New", attachment: null }, "an empty file field must parse to null, not an empty string");
+});
+
+/**
+ * Round 1217's own "Export JSON" button mirrors "Export CSV" exactly:
+ * routes through the same selectedOrAllRecords selection logic, disabled
+ * under the same condition, and disambiguated from the CSV button's own
+ * generic "N selected" text with an explicit "as JSON" suffix now that
+ * two export buttons sit side by side.
+ */
+test("the exported EntityView's Export JSON button routes through selectedOrAllRecords and is disambiguated from Export CSV's own button text", () => {
+  const files = generateExportFiles(project);
+  const entityViewJsx = files.find((f) => f.path === "web/src/components/EntityView.jsx")!.content;
+
+  const handleExportJsonSrc = entityViewJsx.match(/function handleExportJson\(\) \{[\s\S]*?\n {2}\}\n/)?.[0];
+  assert.ok(handleExportJsonSrc, "expected to find handleExportJson in generated output");
+  assert.match(
+    handleExportJsonSrc!,
+    /recordsToJson\(orderedFields, selectedOrAllRecords\(records, effectivelyVisibleRecords, selectedIds\)\)/,
+    "handleExportJson must route through selectedOrAllRecords, same as handleExportCsv",
+  );
+  assert.match(handleExportJsonSrc!, /application\/json/);
+
+  const exportJsonBtnSrc = entityViewJsx.match(/<button\s+type="button"\s+className="json-export-btn"[\s\S]*?<\/button>/)?.[0];
+  assert.ok(exportJsonBtnSrc, "expected to find the json-export-btn button in generated output");
+  assert.match(exportJsonBtnSrc!, /disabled=\{selectedIds\.size === 0 && effectivelyVisibleRecords\.length === 0\}/);
+  assert.match(exportJsonBtnSrc!, /as JSON/, "the selected-count label must say 'as JSON' so it reads distinctly from the CSV button's own 'N selected' text");
+
+  const stylesCss = files.find((f) => f.path === "web/src/styles.css")!.content;
+  assert.match(stylesCss, /\.json-export-btn/);
+});
+
+/**
  * Same feature as above, but rendering the real generated EntityView.jsx
  * end to end: clicks the real Copy button and confirms the exact CSV text
  * handed to a stubbed navigator.clipboard.writeText, then confirms the
