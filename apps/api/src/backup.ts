@@ -1,7 +1,9 @@
+import { readFileSync } from "node:fs";
 import type { Entity, EntityRecord, Field, Project } from "@forge/shared";
 import { listRecords, listWhatsAppMessages, type ForgeDatabase, type WhatsAppMessage } from "@forge/db";
 import { isHebrewText } from "@forge/spec-engine";
 import { recordDisplayLabel } from "./displayField.js";
+import { resolveUploadedFilePath } from "./uploadPaths.js";
 
 type Lang = "he" | "en";
 
@@ -100,9 +102,9 @@ function csvEscape(value: string): string {
  * Mirrors entityFormatting.ts's own parseFileFieldValue -- a `file` field's
  * stored value is a JSON-encoded `{url, name, size, mimeType}` descriptor,
  * not a plain string like every other field type, so fieldDisplayValue
- * below needs just the filename out of it (the backup ZIP has no way to
- * also carry the uploaded bytes themselves, same limitation the live
- * per-entity CSV export already has).
+ * below needs just the filename out of it for the CSV cell (the actual
+ * uploaded bytes, when a real uploadsDir is available, are instead added
+ * to the ZIP as their own entries -- see addUploadedFileEntries below).
  */
 function fileFieldDisplayName(value: unknown): string {
   if (typeof value !== "string" || value === "") return "";
@@ -404,11 +406,57 @@ function uniqueWhatsAppLogPath(existingPaths: string[]): string {
  * no path that hands this function a project whose spec skipped it --
  * so entity.name here can never actually produce two colliding paths.
  */
+/**
+ * Round 1203: the CSV cell for a `file` field only ever carried the
+ * uploaded file's own NAME (fileFieldDisplayName above) -- never its
+ * actual bytes, despite the feature being literally labeled "Backup all
+ * data". A project with any `file` field (a resume, a receipt scan) that
+ * a user backs up and then deletes -- the record, the whole project, or
+ * their account, all of which really delete the underlying upload, per
+ * the orphaned-upload-cleanup rounds -- permanently loses that file's
+ * real content, despite having a "backup" in hand. Reads each `file`
+ * field's currently-stored upload via resolveUploadedFilePath (the exact
+ * same validated resolution deleteUploadedFile uses to find what to
+ * delete, now shared rather than duplicated), and adds it as its own ZIP
+ * entry alongside the CSVs -- best-effort: a value that doesn't resolve
+ * to a real upload (already-deleted, malformed, or simply empty) is
+ * silently skipped, exactly like deleteUploadedFile's own best-effort
+ * contract, rather than failing the whole backup over one missing file.
+ * `uploadsDir` is optional so every existing caller/test that doesn't
+ * pass one keeps the old CSV-only behavior unchanged.
+ */
+function addUploadedFileEntries(
+  entries: { path: string; content: string | Buffer }[],
+  uploadsDir: string,
+  projectId: string,
+  entity: Entity,
+  records: EntityRecord[],
+): void {
+  const fileFields = entity.fields.filter((f) => f.type === "file");
+  if (fileFields.length === 0) return;
+  const entityDir = sanitizeZipEntryName(entity.name);
+  for (const record of records) {
+    for (const field of fileFields) {
+      const target = resolveUploadedFilePath(uploadsDir, projectId, entity.name, record[field.name]);
+      if (!target) continue;
+      let content: Buffer;
+      try {
+        content = readFileSync(target);
+      } catch {
+        continue;
+      }
+      const originalName = sanitizeZipEntryName(fileFieldDisplayName(String(record[field.name])) || target.slice(target.lastIndexOf("/") + 1));
+      entries.push({ path: `${entityDir}/files/${record.id}-${sanitizeZipEntryName(field.name)}-${originalName}`, content });
+    }
+  }
+}
+
 export function generateBackupZipEntries(
   db: ForgeDatabase,
   project: Project,
   columnOrders: Record<string, string[]> = {},
-): { path: string; content: string }[] {
+  uploadsDir?: string,
+): { path: string; content: string | Buffer }[] {
   const allEntities = project.spec.entities;
   const recordsByEntity: Record<string, EntityRecord[]> = {};
   const recordIndexByEntity: Record<string, Map<number, EntityRecord>> = {};
@@ -418,7 +466,7 @@ export function generateBackupZipEntries(
     recordIndexByEntity[entity.name] = new Map(records.map((r) => [Number(r.id), r]));
   }
 
-  const entries = allEntities.map((entity) => ({
+  const entries: { path: string; content: string | Buffer }[] = allEntities.map((entity) => ({
     path: `${sanitizeZipEntryName(entity.name)}.csv`,
     content:
       "﻿" +
@@ -438,6 +486,12 @@ export function generateBackupZipEntries(
       path: uniqueWhatsAppLogPath(entries.map((e) => e.path)),
       content: "﻿" + whatsappMessagesToCsv(whatsappMessages, allEntities, isHebrewText(project.description)),
     });
+  }
+
+  if (uploadsDir) {
+    for (const entity of allEntities) {
+      addUploadedFileEntries(entries, uploadsDir, project.id, entity, recordsByEntity[entity.name]);
+    }
   }
 
   return entries;

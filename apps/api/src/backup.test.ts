@@ -1,4 +1,8 @@
 import assert from "node:assert/strict";
+import { randomUUID } from "node:crypto";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import path from "node:path";
 import { test } from "node:test";
 import type { Project } from "@forge/shared";
 import {
@@ -423,6 +427,101 @@ test("a file field renders as just the uploaded filename, not the raw JSON descr
   assert.equal(lines[0], "שם,קורות חיים");
   assert.equal(lines[1], "No resume yet,", "an unset file field must render blank, not 'null' or an empty JSON shape");
   assert.equal(lines[2], "Dana Levi,dana-resume.pdf", "a set file field must render just the filename, not the raw JSON descriptor");
+});
+
+/**
+ * Round 1203: the CSV cell above only ever carries a `file` field's own
+ * NAME -- never its actual bytes, despite the feature being literally
+ * labeled "Backup all data". Passing a real uploadsDir (the 4th,
+ * optional, argument) now adds the real uploaded file's content as its
+ * own ZIP entry alongside the CSVs, resolved via the exact same validated
+ * path deleteUploadedFile would use to find what to delete.
+ */
+test("generateBackupZipEntries includes a file field's real uploaded bytes as its own ZIP entry, when given a real uploadsDir", () => {
+  const fileProject: Project = {
+    ...project,
+    spec: {
+      ...project.spec,
+      entities: [
+        {
+          name: "Applicant",
+          label: "מועמדים",
+          fields: [
+            { name: "name", label: "שם", type: "text", required: true },
+            { name: "resume", label: "קורות חיים", type: "file", required: false },
+          ],
+        },
+      ],
+    },
+  };
+  const db = createTestDb(fileProject);
+  const applicant = fileProject.spec.entities[0];
+  const uploadsDir = mkdtempSync(path.join(tmpdir(), "forge-backup-test-"));
+  try {
+    const filename = `${randomUUID()}.pdf`;
+    mkdirSync(path.join(uploadsDir, fileProject.id, "Applicant"), { recursive: true });
+    const realBytes = Buffer.from("%PDF-fake-resume-bytes");
+    writeFileSync(path.join(uploadsDir, fileProject.id, "Applicant", filename), realBytes);
+    const { id } = insertRecord(db, fileProject.id, applicant, {
+      name: "Dana Levi",
+      resume: JSON.stringify({ url: `/api/uploads/${fileProject.id}/Applicant/${filename}`, name: "dana-resume.pdf", size: realBytes.length, mimeType: "application/pdf" }),
+    });
+
+    const entries = generateBackupZipEntries(db, fileProject, {}, uploadsDir);
+    const fileEntry = entries.find((e) => e.path === `Applicant/files/${id}-resume-dana-resume.pdf`);
+    assert.ok(fileEntry, "expected a real file entry alongside the CSV, named after the record id, field, and original filename");
+    assert.ok(Buffer.isBuffer(fileEntry!.content), "the file entry's content must be the real binary bytes, not a string");
+    assert.deepEqual(fileEntry!.content, realBytes, "the ZIP entry's bytes must exactly match what was actually uploaded");
+
+    // The CSV itself is untouched -- still just the filename, exactly as before.
+    const applicantCsv = entries.find((e) => e.path === "Applicant.csv")!.content as string;
+    assert.match(applicantCsv, /Dana Levi,dana-resume\.pdf/);
+  } finally {
+    rmSync(uploadsDir, { recursive: true, force: true });
+  }
+});
+
+/**
+ * A file field pointing at an upload that's already been deleted (or was
+ * never a real upload to begin with -- e.g. a case-mismatched or stale
+ * descriptor) must never fail the whole backup; it's simply skipped,
+ * mirroring deleteUploadedFile's own best-effort contract for the same
+ * underlying resolution.
+ */
+test("generateBackupZipEntries silently skips a file field whose upload no longer exists on disk, without failing the rest of the backup", () => {
+  const fileProject: Project = {
+    ...project,
+    spec: {
+      ...project.spec,
+      entities: [
+        {
+          name: "Applicant",
+          label: "מועמדים",
+          fields: [
+            { name: "name", label: "שם", type: "text", required: true },
+            { name: "resume", label: "קורות חיים", type: "file", required: false },
+          ],
+        },
+      ],
+    },
+  };
+  const db = createTestDb(fileProject);
+  const applicant = fileProject.spec.entities[0];
+  const uploadsDir = mkdtempSync(path.join(tmpdir(), "forge-backup-test-"));
+  try {
+    const filename = `${randomUUID()}.pdf`;
+    // Deliberately never written to disk -- a real descriptor pointing at a since-deleted (or never-real) upload.
+    insertRecord(db, fileProject.id, applicant, {
+      name: "Dana Levi",
+      resume: JSON.stringify({ url: `/api/uploads/${fileProject.id}/Applicant/${filename}`, name: "dana-resume.pdf", size: 1, mimeType: "application/pdf" }),
+    });
+
+    const entries = generateBackupZipEntries(db, fileProject, {}, uploadsDir);
+    assert.equal(entries.filter((e) => e.path.includes("/files/")).length, 0, "no file entry should exist for an upload that was never actually on disk");
+    assert.ok(entries.find((e) => e.path === "Applicant.csv"), "the CSV itself must still be produced normally");
+  } finally {
+    rmSync(uploadsDir, { recursive: true, force: true });
+  }
 });
 
 test("real WhatsApp messages produce a 'WhatsApp Messages.csv' entry, correctly escaped and ordered", () => {

@@ -2649,7 +2649,7 @@ export function createProjectsRouter(
         throw new HttpError(409, "Build the project before backing up its data", "BUILD_REQUIRED");
       }
       const columnOrders = parseColumnOrdersQueryParam(req.query.columnOrders);
-      const entries = generateBackupZipEntries(db, project, columnOrders);
+      const entries = generateBackupZipEntries(db, project, columnOrders, uploadsDir);
       const zip = buildZip(entries);
       const safeName = project.name.replace(/[^A-Za-z0-9 _-]/g, "").trim() || "forge-app";
       res.setHeader("content-type", "application/zip");

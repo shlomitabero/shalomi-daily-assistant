@@ -46,39 +46,48 @@ export function isPathInsideDir(candidate: string, dir: string): boolean {
 export const UPLOADED_FILENAME = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}(\.[a-z0-9]{1,10})?$/;
 
 /**
+ * Resolves a `file`-type field's stored descriptor to the real path it
+ * names on disk -- the read-only sibling of deleteUploadedFile's own
+ * resolution logic below, which both now share. Applies the identical
+ * validation: a `file` field's stored value is otherwise-unvalidated,
+ * client-settable JSON (coerceValue's "file" case falls through to its
+ * plain `String(raw)` default, same as any other untyped field -- see
+ * packages/db/repository.ts), so this can never be handed a value and
+ * trusted to resolve wherever its own embedded URL points. Only the
+ * filename's final path segment is used, and only once it matches
+ * UPLOADED_FILENAME exactly (the one shape this server itself ever
+ * generates); the project/entity directory segments are NOT inherently
+ * safe (entity.name has no character-set restriction), so isPathInsideDir
+ * is what actually constrains the resolved target back inside uploadsDir.
+ * Returns null for any value that doesn't resolve to a real, safely-
+ * bounded upload -- never throws.
+ */
+export function resolveUploadedFilePath(uploadsDir: string, projectId: string, entityName: string, rawValue: unknown): string | null {
+  if (typeof rawValue !== "string" || rawValue === "") return null;
+  let url: string;
+  try {
+    const parsed = JSON.parse(rawValue) as { url?: unknown };
+    if (typeof parsed.url !== "string") return null;
+    url = parsed.url;
+  } catch {
+    return null;
+  }
+  const filename = url.slice(url.lastIndexOf("/") + 1);
+  if (!UPLOADED_FILENAME.test(filename)) return null;
+  const target = path.join(uploadsDir, projectId, entityName, filename);
+  if (!isPathInsideDir(target, uploadsDir)) return null;
+  return target;
+}
+
+/**
  * Deletes one `file`-type field's currently-stored upload from disk,
  * best-effort. Moved here in round 977 (originally routes/projects.ts, round
  * 674/848/849) so pipeline.ts's own migration-cleanup step (round 977) can
  * reuse it too, without routes/projects.ts and pipeline.ts importing from
  * each other in both directions.
- *
- * A `file` field's stored value is otherwise-unvalidated, client-settable
- * JSON (coerceValue's "file" case falls through to its plain `String(raw)`
- * default, same as any other untyped field -- see packages/db/
- * repository.ts) -- so this can never be handed a value and trusted to
- * resolve wherever its own embedded URL points. Only the filename's final
- * path segment is used, and only once it matches UPLOADED_FILENAME exactly
- * (the one shape this server itself ever generates).
- *
- * The project/entity directory segments are NOT inherently safe: entity.name
- * (`EntitySchema`'s own `name` has no character-set restriction) can be
- * anything a project's spec claims, including something path-traversal-
- * shaped -- `isPathInsideDir` below is what actually constrains the
- * resolved target back inside `uploadsDir`.
  */
 export async function deleteUploadedFile(uploadsDir: string, projectId: string, entityName: string, rawValue: unknown): Promise<void> {
-  if (typeof rawValue !== "string" || rawValue === "") return;
-  let url: string;
-  try {
-    const parsed = JSON.parse(rawValue) as { url?: unknown };
-    if (typeof parsed.url !== "string") return;
-    url = parsed.url;
-  } catch {
-    return;
-  }
-  const filename = url.slice(url.lastIndexOf("/") + 1);
-  if (!UPLOADED_FILENAME.test(filename)) return;
-  const target = path.join(uploadsDir, projectId, entityName, filename);
-  if (!isPathInsideDir(target, uploadsDir)) return;
+  const target = resolveUploadedFilePath(uploadsDir, projectId, entityName, rawValue);
+  if (!target) return;
   await rm(target, { force: true }).catch(() => {});
 }
