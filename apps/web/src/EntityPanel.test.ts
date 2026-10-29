@@ -4423,18 +4423,30 @@ test("EntityPanel's ICS export emits exactly one VEVENT per ranged record, not o
  */
 test("EntityPanel's calendar view shifts a ranged record by the days actually dragged, even when the dragged chip is NOT the record's start day", async () => {
   await withJsdom(async () => {
+    // Anchored to the 10th of the real current month, not the real
+    // "today" -- the calendar's grid intentionally renders adjacent
+    // months' leading/trailing days too (see buildCalendarMonth), each
+    // with its own day-of-month number, so a day-of-month collides with
+    // an entirely different calendar date whenever "today" is within 3
+    // days of month-end (e.g. day-of-month "1" is both this month's 1st
+    // AND next month's 1st, visible in the same grid). dayCellFor/
+    // dropTargetDay below look a cell up by day-of-month number, so an
+    // anchor without 3 days of headroom on both sides risks silently
+    // resolving to the wrong month's cell. The 10th has headroom on both
+    // sides in every month length, so this no longer depends on which
+    // real day the suite happens to run on.
     const addDays = (n: number) => {
       const d = new Date();
-      d.setDate(d.getDate() + n);
+      d.setDate(10 + n);
       const pad = (v: number) => String(v).padStart(2, "0");
       return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
     };
     const dayNumber = (n: number) => {
       const d = new Date();
-      d.setDate(d.getDate() + n);
+      d.setDate(10 + n);
       return String(d.getDate());
     };
-    // A 3-night stay: today (start) through today+2 (end/last night).
+    // A 3-night stay: the anchor day (start) through anchor+2 (end/last night).
     const store: EntityRecord[] = [{ id: 1, title: "Dana's stay", startDate: addDays(0), endDate: addDays(2) }];
     let lastPatchBody: Record<string, unknown> | null = null;
     const originalFetch = globalThis.fetch;
@@ -4472,14 +4484,14 @@ test("EntityPanel's calendar view shifts a ranged record by the days actually dr
         return { setData: (_type: string, value: string) => (payload = value), getData: () => payload };
       }
 
-      // Drag the LAST night's own chip instance (today+2, the stay's end
-      // day) forward by exactly one day, onto today+3 (empty, outside the stay).
+      // Drag the LAST night's own chip instance (anchor+2, the stay's end
+      // day) forward by exactly one day, onto anchor+3 (empty, outside the stay).
       const lastNightCell = dayCellFor(2);
       const lastNightChip = lastNightCell.querySelector(".calendar-record-chip") as HTMLButtonElement;
       const dropTargetDay = Array.from(document.querySelectorAll(".calendar-day-clickable")).find(
         (el) => el.querySelector(".calendar-day-number")?.textContent === dayNumber(3),
       ) as HTMLElement;
-      assert.ok(dropTargetDay, "expected to find today+3's day cell to drop onto");
+      assert.ok(dropTargetDay, "expected to find anchor+3's day cell to drop onto");
 
       const dataTransfer = makeDataTransfer();
       fireEvent.dragStart(lastNightChip, { dataTransfer });
