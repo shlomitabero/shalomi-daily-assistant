@@ -1572,12 +1572,32 @@ export function EntityPanel({
     // pre-creation snapshot would wholesale-replace relatedRecords,
     // silently undoing round 438's fix the moment a user created a
     // same-entity record quickly enough (round 540).
-    const isSelfReferencing = relationTargets.includes(entity.name);
-    const otherTargets = relationTargets.filter((name) => name !== entity.name);
+    // Round 1237: these two used to compare each raw relationTo string
+    // against entity.name with exact-case equality -- relationTargets
+    // itself is only ever filtered case-insensitively against allEntities
+    // above (round 1162), never normalized to the target's own canonical
+    // casing. A self-referencing field whose relationTo differs from its
+    // own entity's current name only by letter case (the same ordinary-
+    // refine drift documented at this exact useMemo's own round-1162
+    // comment) was wrongly treated as pointing to a DIFFERENT entity --
+    // see refresh()'s own matching fix below for why that's reachable in
+    // practice, not just theoretical.
+    const selfReferencingTargets = relationTargets.filter((name) => name.toLowerCase() === entity.name.toLowerCase());
+    const otherTargets = relationTargets.filter((name) => name.toLowerCase() !== entity.name.toLowerCase());
     async function loadRelated() {
       if (otherTargets.length === 0) {
         if (!cancelled) {
-          setRelatedRecords((prev) => (isSelfReferencing ? { [entity.name]: prev[entity.name] } : {}));
+          // Preserve by each self-referencing target's own RAW relationTo
+          // string, not entity.name -- the picker below reads
+          // relatedRecords[f.relationTo] verbatim, so when that string's
+          // casing differs from entity.name, preserving under entity.name
+          // instead would both miss the real data under its own key AND
+          // write a second, never-read key alongside it.
+          setRelatedRecords((prev) => {
+            const preserved: typeof prev = {};
+            for (const name of selfReferencingTargets) preserved[name] = prev[name];
+            return preserved;
+          });
         }
         return;
       }
@@ -1592,10 +1612,11 @@ export function EntityPanel({
         }),
       );
       if (!cancelled) {
-        setRelatedRecords((prev) => ({
-          ...Object.fromEntries(entries),
-          ...(isSelfReferencing ? { [entity.name]: prev[entity.name] } : {}),
-        }));
+        setRelatedRecords((prev) => {
+          const preserved: typeof prev = {};
+          for (const name of selfReferencingTargets) preserved[name] = prev[name];
+          return { ...Object.fromEntries(entries), ...preserved };
+        });
       }
     }
     void loadRelated();
@@ -1650,16 +1671,34 @@ export function EntityPanel({
       // A self-referencing relation field (e.g. Category.parentCategoryId ->
       // Category, Employee.managerId -> Employee -- schema-legal, see
       // FieldSchema's own relation refine) makes this entity its own
-      // relation target. relatedRecords[entity.name] is otherwise only ever
-      // populated once, by the loadRelated effect above, and never kept in
-      // sync with a record this very refresh() just created/edited --
-      // silently hiding a newly-created record from every relation picker
-      // (and display label) pointing back at this same entity until a full
-      // remount. A relation to a *different* entity doesn't need this: the
-      // only way to create a record there is switching to its own tab,
-      // which remounts this component and refetches everything fresh.
-      if (relationTargets.includes(entity.name)) {
-        setRelatedRecords((prev) => ({ ...prev, [entity.name]: visible }));
+      // relation target. relatedRecords[<that field's own relationTo
+      // string>] is otherwise only ever populated once, by the loadRelated
+      // effect above, and never kept in sync with a record this very
+      // refresh() just created/edited -- silently hiding a newly-created
+      // record from every relation picker (and display label) pointing
+      // back at this same entity until a full remount. A relation to a
+      // *different* entity doesn't need this: the only way to create a
+      // record there is switching to its own tab, which remounts this
+      // component and refetches everything fresh.
+      // Round 1237: this used to key the write by entity.name and guard it
+      // with an exact-case `.includes(entity.name)` -- but the picker
+      // below reads relatedRecords[f.relationTo] verbatim (its own raw
+      // string, never normalized), and relationTargets holds exactly that
+      // raw string too. When a self-referencing field's relationTo
+      // differed from entity.name only by letter case, the guard never
+      // fired at all, so this merge silently never ran -- and even if it
+      // had, writing under entity.name would have updated a key the
+      // picker never reads. Using each matching raw relationTargets
+      // string (there can legitimately be more than one, if two fields on
+      // this entity self-reference with different relationTo casing)
+      // fixes both at once.
+      const selfReferencingTargets = relationTargets.filter((name) => name.toLowerCase() === entity.name.toLowerCase());
+      if (selfReferencingTargets.length > 0) {
+        setRelatedRecords((prev) => {
+          const updates: typeof prev = {};
+          for (const name of selfReferencingTargets) updates[name] = visible;
+          return { ...prev, ...updates };
+        });
       }
     } catch (err) {
       if (refreshRequestId.current !== requestId) return;

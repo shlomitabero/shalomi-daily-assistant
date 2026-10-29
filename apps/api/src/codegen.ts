@@ -5043,12 +5043,25 @@ export function EntityView({ entity, highlightRecordId, onHighlightHandled, onJu
     // round 438's fix the moment a user created a same-entity record
     // quickly enough. Mirrors the live preview's own fix (EntityPanel.tsx,
     // round 540).
-    const isSelfReferencing = relationTargets.includes(entity.name);
-    const otherTargets = relationTargets.filter((name) => name !== entity.name);
+    // Round 1237: these two used to compare each raw relationTo string
+    // against entity.name with exact-case equality -- relationTargets
+    // itself is only ever filtered case-insensitively against ALL_ENTITIES
+    // above (round 1182), never normalized to the target's own canonical
+    // casing. Mirrors the live preview's own EntityPanel.tsx fix for the
+    // identical gap.
+    const selfReferencingTargets = relationTargets.filter((name) => name.toLowerCase() === entity.name.toLowerCase());
+    const otherTargets = relationTargets.filter((name) => name.toLowerCase() !== entity.name.toLowerCase());
     async function loadRelated() {
       if (otherTargets.length === 0) {
         if (!cancelled) {
-          setRelatedRecords((prev) => (isSelfReferencing ? { [entity.name]: prev[entity.name] } : {}));
+          // Preserve by each self-referencing target's own RAW relationTo
+          // string, not entity.name -- every relatedRecords[f.relationTo]
+          // read site above keys off that raw string verbatim.
+          setRelatedRecords((prev) => {
+            const preserved = {};
+            for (const name of selfReferencingTargets) preserved[name] = prev[name];
+            return preserved;
+          });
         }
         return;
       }
@@ -5063,10 +5076,11 @@ export function EntityView({ entity, highlightRecordId, onHighlightHandled, onJu
         }),
       );
       if (!cancelled) {
-        setRelatedRecords((prev) => ({
-          ...Object.fromEntries(entries),
-          ...(isSelfReferencing ? { [entity.name]: prev[entity.name] } : {}),
-        }));
+        setRelatedRecords((prev) => {
+          const preserved = {};
+          for (const name of selfReferencingTargets) preserved[name] = prev[name];
+          return { ...Object.fromEntries(entries), ...preserved };
+        });
       }
     }
     loadRelated();
@@ -5123,14 +5137,25 @@ export function EntityView({ entity, highlightRecordId, onHighlightHandled, onJu
       setRecords(visible);
       // A self-referencing relation field (e.g. Category.parentCategoryId ->
       // Category) makes this entity its own relation target. Without this,
-      // relatedRecords[entity.name] would only ever be populated once by
-      // the loadRelated effect above and never kept in sync with a record
-      // this very refresh() just created/edited -- silently hiding a
-      // newly-created record from every relation picker pointing back at
-      // this same entity. Mirrors the live Forge AI preview's own
-      // EntityPanel.tsx fix for the identical gap.
-      if (relationTargets.includes(entity.name)) {
-        setRelatedRecords((prev) => ({ ...prev, [entity.name]: visible }));
+      // relatedRecords[<that field's own relationTo string>] would only
+      // ever be populated once by the loadRelated effect above and never
+      // kept in sync with a record this very refresh() just
+      // created/edited -- silently hiding a newly-created record from
+      // every relation picker pointing back at this same entity. Mirrors
+      // the live Forge AI preview's own EntityPanel.tsx fix for the
+      // identical gap.
+      // Round 1237: keyed this write by entity.name with an exact-case
+      // guard before -- every relatedRecords[f.relationTo] read site
+      // above keys off that field's own raw relationTo string, which can
+      // legitimately differ from entity.name only by letter case. Mirrors
+      // the live preview's own round-1237 fix.
+      const selfReferencingTargets = relationTargets.filter((name) => name.toLowerCase() === entity.name.toLowerCase());
+      if (selfReferencingTargets.length > 0) {
+        setRelatedRecords((prev) => {
+          const updates = {};
+          for (const name of selfReferencingTargets) updates[name] = visible;
+          return { ...prev, ...updates };
+        });
       }
     } catch (err) {
       if (refreshRequestId.current !== requestId) return;

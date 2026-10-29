@@ -20767,6 +20767,121 @@ test("the exported EntityView's self-referencing relation field picker includes 
 });
 
 /**
+ * Round 1237: the same scenario as the test just above, but relationTo
+ * ("category") differs from the entity's own current name ("Category")
+ * only by letter case -- an ordinary refine drift (round 1182's own
+ * comment on relationTargets documents this exact gap). refresh()'s own
+ * guard used to compare relationTargets (which holds this exact raw,
+ * un-normalized relationTo string) against entity.name with exact-case
+ * equality, so it never recognized this field as self-referencing at all
+ * -- the merge that keeps a just-created record visible in this field's
+ * own picker (round 438, confirmed working above for the exact-case case)
+ * never ran. Mirrors the live preview's own round-1237 fix.
+ */
+test("the exported EntityView's self-referencing relation field picker includes a record created after the panel first loaded, even when relationTo differs from the entity's own name only by letter case", async () => {
+  const categoryEntity: Entity = {
+    name: "Category",
+    label: "Category",
+    fields: [
+      { name: "name", label: "Name", type: "text", required: true },
+      { name: "parentCategoryId", label: "Parent Category", type: "relation", relationTo: "category", required: false },
+    ],
+  };
+  const categoryProject: Project = {
+    ...project,
+    spec: { ...project.spec, entities: [categoryEntity] },
+  };
+  const files = generateExportFiles(categoryProject);
+  const dir = writeGeneratedWebComponent(files);
+  const originalFetch = globalThis.fetch;
+  const store: { id: number; name: string; parentCategoryId: number | null }[] = [
+    { id: 1, name: "Electronics", parentCategoryId: null },
+  ];
+  let nextId = 2;
+  globalThis.fetch = (async (input: string, init?: RequestInit): Promise<Response> => {
+    const method = init?.method ?? "GET";
+    // The main entity.name fetch (refresh()) hits the canonical-case URL;
+    // the loadRelated effect's own relation-data fetch for this field's
+    // raw, un-normalized relationTo hits the lowercase one -- both are
+    // the same real server-side entity, just reached via two different
+    // literal URLs, exactly mirroring the real app's own two call sites.
+    if (input === "/api/Category" || input === "/api/category") {
+      if (method === "GET") {
+        return new Response(JSON.stringify({ records: store }), { status: 200, headers: { "content-type": "application/json" } });
+      }
+      if (method === "POST") {
+        const record = { id: nextId++, ...JSON.parse(init!.body as string) };
+        store.push(record);
+        return new Response(JSON.stringify({ record }), { status: 201, headers: { "content-type": "application/json" } });
+      }
+    }
+    throw new Error(`unexpected request ${method} ${input}`);
+  }) as typeof fetch;
+
+  try {
+    await withRealLocalStorage(async () => {
+      const { EntityView } = await import(path.join(dir, "web", "src", "components", "EntityView.jsx"));
+      const props = {
+        entity: categoryEntity,
+        highlightRecordId: null,
+        onHighlightHandled: () => {},
+        onJumpToRecord: () => {},
+        onRecordCountChange: () => {},
+      };
+
+      const { container } = render(React.createElement(EntityView, props));
+      for (let i = 0; i < 40; i++) {
+        if (container.querySelectorAll("tbody tr").length === 1) break;
+        await act(async () => {
+          await new Promise((resolve) => setTimeout(resolve, 0));
+        });
+      }
+
+      const nameInput = container.querySelector('.record-form input[type="text"]') as HTMLInputElement;
+      const submitButton = container.querySelector(".record-form button[type=submit]") as HTMLButtonElement;
+      await act(async () => {
+        fireEvent.change(nameInput, { target: { value: "Office Supplies" } });
+        fireEvent.click(submitButton);
+      });
+      for (let i = 0; i < 40; i++) {
+        if (container.querySelectorAll("tbody tr").length === 2) break;
+        await act(async () => {
+          await new Promise((resolve) => setTimeout(resolve, 0));
+        });
+      }
+      assert.equal(container.querySelectorAll("tbody tr").length, 2, "expected the newly created category to appear in the table");
+
+      const electronicsRow = Array.from(container.querySelectorAll("tbody tr")).find((r) =>
+        /Electronics/.test(r.textContent ?? ""),
+      ) as HTMLElement;
+      const editButton = electronicsRow.querySelector(".row-actions button") as HTMLButtonElement;
+      await act(async () => {
+        fireEvent.click(editButton);
+      });
+
+      const parentSelect = container.querySelector(".record-form select") as HTMLSelectElement;
+      assert.ok(parentSelect, "expected the self-relation field to render as a real <select>");
+      for (let i = 0; i < 40; i++) {
+        if (Array.from(parentSelect.options).some((o) => o.textContent === "Office Supplies")) break;
+        await act(async () => {
+          await new Promise((resolve) => setTimeout(resolve, 0));
+        });
+      }
+
+      const optionLabels = Array.from(parentSelect.options).map((o) => o.textContent);
+      assert.ok(
+        optionLabels.includes("Office Supplies"),
+        `expected the just-created "Office Supplies" category to be a selectable parent even though relationTo ("category") differs from the entity's own name ("Category") only by letter case, got options: ${optionLabels.join(", ")}`,
+      );
+    });
+  } finally {
+    globalThis.fetch = originalFetch;
+    cleanup();
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+/**
  * Round 540's own fix (EntityPanel.tsx, live preview) was never ported to
  * the exported app's EntityView.jsx: the mount-time loadRelated effect and
  * refresh() (round 438's own fix, confirmed present above) are two
