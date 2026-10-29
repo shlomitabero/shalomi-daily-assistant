@@ -12228,6 +12228,64 @@ test("EntityPanel excludes the record currently being edited from its own self-r
 });
 
 /**
+ * Round 1243: the SAME self-exclusion round 1037 fixed above, but for a
+ * self-referencing relation field whose own `relationTo` differs from this
+ * entity's current declared name only by letter case -- a demonstrated,
+ * reachable byproduct of AI-generated/refined specs (rounds 1162/1176/
+ * 1178/1237 all independently hit and fixed this exact casing-drift
+ * scenario elsewhere in this same file). `excludeRecordIds` compared
+ * `field.relationTo === entity.name` with exact-case equality, one line
+ * below the sibling `relatedEntity`/`relatedEntityRecords` props on the
+ * SAME FieldInput call that round 1178 already made case-insensitive --
+ * so the record being edited silently stopped being excluded from its own
+ * relation dropdown the moment the casing drifted, offering an option the
+ * server's own already-case-insensitive self-reference guard
+ * (repository.ts, round 1176) only rejects with a 400 after Save.
+ */
+test("EntityPanel excludes the record currently being edited from its own self-referencing relation field's options, even when relationTo differs from the entity's own name only by letter case", async () => {
+  await withJsdom(async () => {
+    const employeeEntity: Entity = {
+      name: "Employee",
+      label: "Employee",
+      fields: [
+        { name: "name", label: "Name", type: "text", required: true },
+        { name: "managerId", label: "Manager", type: "relation", relationTo: "employee", required: false },
+      ],
+    };
+    const store: EntityRecord[] = [
+      { id: 1, createdAt: "x", name: "Dana", managerId: null },
+      { id: 2, createdAt: "x", name: "Yossi", managerId: null },
+    ];
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = (async (input: string) => {
+      if (input === "/api/projects/proj1/entities/Employee") {
+        return new Response(JSON.stringify({ records: store }), { status: 200, headers: { "content-type": "application/json" } });
+      }
+      throw new Error(`unexpected request ${input}`);
+    }) as typeof fetch;
+    try {
+      renderEntityPanel({ entity: employeeEntity, allEntities: [employeeEntity] });
+      await waitForCondition(() => document.querySelectorAll("table tbody tr").length === 2);
+
+      const editButtons = document.querySelectorAll(".row-actions button");
+      fireEvent.click(editButtons[0] as HTMLButtonElement);
+      await waitForCondition(() => (document.querySelector(".record-form input[type=\"text\"]") as HTMLInputElement)?.value === "Dana");
+
+      const managerSelect = document.querySelector(".record-form select") as HTMLSelectElement;
+      await waitForCondition(() => !managerSelect.disabled);
+      const optionLabels = Array.from(managerSelect.options).map((o) => o.textContent);
+      assert.ok(optionLabels.includes("Yossi"), "a genuinely different record must still be selectable as this record's manager");
+      assert.ok(
+        !optionLabels.includes("Dana"),
+        "the record currently being edited must never appear as an option in its own self-referencing relation field, even with a case-mismatched relationTo",
+      );
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+});
+
+/**
  * Round 698: a relation field's plain <select> had no way to narrow a
  * long list of related records -- a browser's own type-ahead inside an
  * open <select> only jumps to an option whose label *starts with* what's

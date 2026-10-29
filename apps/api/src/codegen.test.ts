@@ -3955,6 +3955,87 @@ test("the exported EntityView excludes the record currently being edited from it
 });
 
 /**
+ * Round 1243: mirrors the live preview's own identical fix (EntityPanel.tsx)
+ * -- the exported app's three excludeRecordIds call sites (mirrored from
+ * the live editor, round 1037) still compared relationTo to this entity's
+ * own name with exact-case equality, one line below the sibling
+ * relatedEntity/relatedEntityRecords props that were already made
+ * case-insensitive. A self-referencing relation field whose relationTo
+ * differs from the entity's own declared name only by letter case -- a
+ * demonstrated, reachable refine-drift artifact -- silently stopped
+ * excluding the record being edited from its own relation dropdown.
+ */
+test("the exported EntityView excludes the record currently being edited from its own self-referencing relation field's options, even when relationTo differs from the entity's own name only by letter case", async () => {
+  const employeeEntity: Entity = {
+    name: "Employee",
+    label: "Employee",
+    fields: [
+      { name: "name", label: "Name", type: "text", required: true },
+      { name: "managerId", label: "Manager", type: "relation", relationTo: "employee", required: false },
+    ],
+  };
+  const selfRelationProject: Project = { ...project, spec: { ...project.spec, entities: [employeeEntity] } };
+  const files = generateExportFiles(selfRelationProject);
+  const dir = writeGeneratedWebComponent(files);
+  const store: EntityRecord[] = [
+    { id: 1, name: "Dana", managerId: null },
+    { id: 2, name: "Yossi", managerId: null },
+  ];
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = (async (input: string) => {
+    if (input === "/api/Employee") {
+      return new Response(JSON.stringify({ records: store }), { status: 200, headers: { "content-type": "application/json" } });
+    }
+    throw new Error(`unexpected request ${input}`);
+  }) as typeof fetch;
+
+  try {
+    await withRealLocalStorage(async () => {
+      const { EntityView } = await import(path.join(dir, "web", "src", "components", "EntityView.jsx"));
+      const props = {
+        entity: employeeEntity,
+        highlightRecordId: null,
+        onHighlightHandled: () => {},
+        onJumpToRecord: () => {},
+        onRecordCountChange: () => {},
+      };
+
+      const { container } = render(React.createElement(EntityView, props));
+      for (let i = 0; i < 40; i++) {
+        if (container.querySelectorAll("tbody tr").length === 2) break;
+        await act(async () => {
+          await new Promise((resolve) => setTimeout(resolve, 0));
+        });
+      }
+
+      await act(async () => {
+        fireEvent.click(container.querySelectorAll(".row-actions button")[0] as HTMLButtonElement);
+      });
+
+      let managerSelect: HTMLSelectElement | null = null;
+      for (let i = 0; i < 40; i++) {
+        managerSelect = container.querySelector(".record-form select") as HTMLSelectElement | null;
+        if (managerSelect && !managerSelect.disabled) break;
+        await act(async () => {
+          await new Promise((resolve) => setTimeout(resolve, 0));
+        });
+      }
+      assert.ok(managerSelect, "expected a real Manager relation select");
+      const optionLabels = Array.from(managerSelect!.options).map((o) => o.textContent);
+      assert.ok(optionLabels.includes("Yossi"), "a genuinely different record must still be selectable as this record's manager");
+      assert.ok(
+        !optionLabels.includes("Dana"),
+        "the record currently being edited must never appear as an option in its own self-referencing relation field, even with a case-mismatched relationTo",
+      );
+    });
+  } finally {
+    globalThis.fetch = originalFetch;
+    cleanup();
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+/**
  * New in this round: round 305's entity-tab record-count badges (GET
  * /projects/:id/entity-counts in the live Forge AI API, the .tab-count
  * badge in App.tsx) existed only in the live preview -- confirmed absent
@@ -6659,8 +6740,9 @@ test("the exported EntityView's bulk-actions bar also supports duplicating and b
   );
   assert.match(
     entityViewJsx,
-    // Round 1182: relatedEntity's own lookup is now case-insensitive (e.name.toLowerCase() === bulkEditFieldDef.relationTo.toLowerCase()).
-    /<FieldInput\s+entity=\{entity\}\s+field=\{bulkEditFieldDef\}\s+value=\{bulkEditValue\}\s+onChange=\{setBulkEditValue\}\s+relatedEntity=\{bulkEditFieldDef\.relationTo \? ALL_ENTITIES\.find\(\(e\) => e\.name\.toLowerCase\(\) === bulkEditFieldDef\.relationTo\.toLowerCase\(\)\) : undefined\}\s+relatedEntityRecords=\{bulkEditFieldDef\.relationTo \? relatedRecords\[bulkEditFieldDef\.relationTo\] : undefined\}\s+excludeRecordIds=\{bulkEditFieldDef\.relationTo === entity\.name \? Array\.from\(selectedIds\) : undefined\}\s*\/>/,
+    // Round 1182: relatedEntity's own lookup is case-insensitive (e.name.toLowerCase() === bulkEditFieldDef.relationTo.toLowerCase()).
+    // Round 1243: excludeRecordIds is now case-insensitive too (bulkEditFieldDef.relationTo?.toLowerCase() === entity.name.toLowerCase()).
+    /<FieldInput\s+entity=\{entity\}\s+field=\{bulkEditFieldDef\}\s+value=\{bulkEditValue\}\s+onChange=\{setBulkEditValue\}\s+relatedEntity=\{bulkEditFieldDef\.relationTo \? ALL_ENTITIES\.find\(\(e\) => e\.name\.toLowerCase\(\) === bulkEditFieldDef\.relationTo\.toLowerCase\(\)\) : undefined\}\s+relatedEntityRecords=\{bulkEditFieldDef\.relationTo \? relatedRecords\[bulkEditFieldDef\.relationTo\] : undefined\}\s+excludeRecordIds=\{bulkEditFieldDef\.relationTo\?\.toLowerCase\(\) === entity\.name\.toLowerCase\(\) \? Array\.from\(selectedIds\) : undefined\}\s*\/>/,
     "round 1037: bulk edit must also exclude every selected record's own id from a self-referencing relation field's options",
   );
   assert.match(entityViewJsx, /onClick=\{handleBulkUpdate\}/);

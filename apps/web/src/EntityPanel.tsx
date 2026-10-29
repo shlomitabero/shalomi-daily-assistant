@@ -4190,7 +4190,16 @@ export function EntityPanel({
                   // instead of a searchable record picker.
                   relatedEntity={f.relationTo ? allEntities.find((e) => e.name.toLowerCase() === f.relationTo!.toLowerCase()) : undefined}
                   relatedEntityRecords={f.relationTo ? relatedRecords[f.relationTo] : undefined}
-                  excludeRecordIds={f.relationTo === entity.name ? [record.id as number] : undefined}
+                  // Round 1243: case-insensitive, same reason as relatedEntity/
+                  // relatedEntityRecords just above (round 1178) and
+                  // repository.ts's own server-side self-reference guard
+                  // (round 1176) -- without it, a self-referencing relation
+                  // field whose relationTo differed from this entity's own
+                  // name only by letter case silently stopped excluding the
+                  // record being edited from its own relation dropdown,
+                  // offering a guaranteed-400 option the server-side guard
+                  // (already case-insensitive) only rejects after Save.
+                  excludeRecordIds={f.relationTo?.toLowerCase() === entity.name.toLowerCase() ? [record.id as number] : undefined}
                   autoFocus
                   onBlur={handleCellBlur}
                   onKeyDown={(e) => {
@@ -4323,7 +4332,8 @@ export function EntityPanel({
               // call site above.
               relatedEntity={field.relationTo ? allEntities.find((e) => e.name.toLowerCase() === field.relationTo!.toLowerCase()) : undefined}
               relatedEntityRecords={field.relationTo ? relatedRecords[field.relationTo] : undefined}
-              excludeRecordIds={field.relationTo === entity.name && editingId != null ? [editingId] : undefined}
+              // Round 1243: case-insensitive, same reason as the inline-cell-edit call site above.
+              excludeRecordIds={field.relationTo?.toLowerCase() === entity.name.toLowerCase() && editingId != null ? [editingId] : undefined}
               projectId={projectId}
               entityName={entity.name}
               editingId={editingId}
@@ -4901,7 +4911,8 @@ export function EntityPanel({
                       // Round 1178: case-insensitive, same reason as the two call sites above.
                       relatedEntity={bulkEditFieldDef.relationTo ? allEntities.find((e) => e.name.toLowerCase() === bulkEditFieldDef.relationTo!.toLowerCase()) : undefined}
                       relatedEntityRecords={bulkEditFieldDef.relationTo ? relatedRecords[bulkEditFieldDef.relationTo] : undefined}
-                      excludeRecordIds={bulkEditFieldDef.relationTo === entity.name ? Array.from(selectedIds) : undefined}
+                      // Round 1243: case-insensitive, same reason as the two call sites above.
+                      excludeRecordIds={bulkEditFieldDef.relationTo?.toLowerCase() === entity.name.toLowerCase() ? Array.from(selectedIds) : undefined}
                     />
                   )}
                   {bulkEditField && (

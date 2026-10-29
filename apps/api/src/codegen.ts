@@ -6691,7 +6691,7 @@ export function EntityView({ entity, highlightRecordId, onHighlightHandled, onJu
                 onChange={setCellDraft}
                 relatedEntity={f.relationTo ? ALL_ENTITIES.find((e) => e.name.toLowerCase() === f.relationTo.toLowerCase()) : undefined}
                 relatedEntityRecords={f.relationTo ? relatedRecords[f.relationTo] : undefined}
-                excludeRecordIds={f.relationTo === entity.name ? [r.id] : undefined}
+                excludeRecordIds={f.relationTo?.toLowerCase() === entity.name.toLowerCase() ? [r.id] : undefined}
                 autoFocus
                 onBlur={handleCellBlur}
                 onKeyDown={(e) => {
@@ -6773,7 +6773,7 @@ export function EntityView({ entity, highlightRecordId, onHighlightHandled, onJu
               onChange={(v) => setForm((prev) => ({ ...prev, [f.name]: v }))}
               relatedEntity={f.relationTo ? ALL_ENTITIES.find((e) => e.name.toLowerCase() === f.relationTo.toLowerCase()) : undefined}
               relatedEntityRecords={f.relationTo ? relatedRecords[f.relationTo] : undefined}
-              excludeRecordIds={f.relationTo === entity.name && editingId != null ? [editingId] : undefined}
+              excludeRecordIds={f.relationTo?.toLowerCase() === entity.name.toLowerCase() && editingId != null ? [editingId] : undefined}
             />
           </label>
         ))}
@@ -7254,7 +7254,7 @@ export function EntityView({ entity, highlightRecordId, onHighlightHandled, onJu
                       onChange={setBulkEditValue}
                       relatedEntity={bulkEditFieldDef.relationTo ? ALL_ENTITIES.find((e) => e.name.toLowerCase() === bulkEditFieldDef.relationTo.toLowerCase()) : undefined}
                       relatedEntityRecords={bulkEditFieldDef.relationTo ? relatedRecords[bulkEditFieldDef.relationTo] : undefined}
-                      excludeRecordIds={bulkEditFieldDef.relationTo === entity.name ? Array.from(selectedIds) : undefined}
+                      excludeRecordIds={bulkEditFieldDef.relationTo?.toLowerCase() === entity.name.toLowerCase() ? Array.from(selectedIds) : undefined}
                     />
                   )}
                   {bulkEditField && (
