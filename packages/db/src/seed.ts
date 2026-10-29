@@ -21,6 +21,14 @@ const ITEM_NAMES_HE = ["חבילת בסיס", "שדרוג פרימיום", "טי
 const ITEM_NAMES_EN = ["Basic Package", "Premium Upgrade", "Standard Treatment", "Monthly Plan"];
 const RENTAL_ITEM_NAMES_HE = ["מקדחה חשמלית", "מקרן נייד", "אוהל קמפינג", "אופני הרים"];
 const RENTAL_ITEM_NAMES_EN = ["Power Drill", "Portable Projector", "Camping Tent", "Mountain Bike"];
+// Round 1244: the exact same shape as RENTAL_ITEM_NAMES above -- Product
+// (domainEntities.ts: "An item the business sells or tracks", with its own
+// sku/quantity fields) is a physical, countable inventory good, not a
+// service plan, so it needs its own pool instead of ITEM_NAMES_HE/EN's
+// service-plan phrasing ("Monthly Plan" with a SKU and a stock quantity
+// attached reads as broken placeholder data).
+const PRODUCT_NAMES_HE = ["עכבר אלחוטי", "כיסא משרדי", "מחצלת יוגה", "כיסוי לטלפון"];
+const PRODUCT_NAMES_EN = ["Wireless Mouse", "Office Chair", "Yoga Mat", "Phone Case"];
 const EMAIL_LOCAL_PARTS = ["dana.levi", "yossi.cohen", "michal.abraham", "ron.peretz", "noa.sharon", "alon.mizrahi"];
 const PHONES_HE = ["050-123-4567", "052-987-6543", "054-222-1188", "058-765-4321"];
 const PHONES_EN = ["(555) 123-4567", "(555) 987-6543", "(555) 222-1188", "(555) 765-4321"];
@@ -183,8 +191,11 @@ function seedValueFor(field: Field, entity: Entity, index: number): unknown {
 // Entities whose "name" field names a generic catalog item/thing, not a
 // person. MenuItem/Project/Event/Course/Pet get their own dedicated pools
 // below instead, since "a generic package" reads oddly as a dish or a
-// project name.
-const CATALOG_NAME_ENTITIES = new Set(["Service", "Product", "Item"]);
+// project name. Round 1244: Product doesn't belong here either, for the
+// same reason Rental was already carved out of the sibling "itemName"
+// case below -- see its own dedicated branch in textSeedValueFor's "name"
+// case.
+const CATALOG_NAME_ENTITIES = new Set(["Service", "Item"]);
 
 function textSeedValueFor(fieldName: string, entityName: string, isHebrew: boolean, index: number): string {
   switch (fieldName) {
@@ -322,6 +333,12 @@ function textSeedValueFor(fieldName: string, entityName: string, isHebrew: boole
       // person for people-shaped entities, a thing for catalog-shaped
       // ones, and its own dedicated pool for a few entities where neither
       // fits well (a project isn't a "product", a pet isn't a "customer").
+      // Round 1244: Product (its own sku/quantity fields -- a physical,
+      // countable inventory good) is checked before the generic
+      // CATALOG_NAME_ENTITIES fallback below, the same "entity-specific
+      // branch wins over the shared pool" precedence the service/itemName
+      // case already established for Rental.
+      if (entityName === "Product") return pick(isHebrew ? PRODUCT_NAMES_HE : PRODUCT_NAMES_EN, index);
       if (CATALOG_NAME_ENTITIES.has(entityName)) return pick(isHebrew ? ITEM_NAMES_HE : ITEM_NAMES_EN, index);
       if (entityName === "MenuItem") return pick(isHebrew ? DISH_NAMES_HE : DISH_NAMES_EN, index);
       if (entityName === "Project") return pick(isHebrew ? PROJECT_NAMES_HE : PROJECT_NAMES_EN, index);

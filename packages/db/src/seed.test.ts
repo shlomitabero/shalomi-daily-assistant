@@ -440,6 +440,33 @@ test("Rental's 'itemName' seed values are a plausible rentable item, not Appoint
   for (const name of itemNames) assert.ok(!servicePlanNames.has(name), `Rental's itemName "${name}" must not be one of Appointment's own service-plan sample names`);
 });
 
+/**
+ * Round 1244: the exact same shape as round 828's Rental fix just above,
+ * for the sibling "name" case instead of "service"/"itemName". Product
+ * (domainEntities.ts: "An item the business sells or tracks", with its own
+ * sku/quantity fields -- a physical, countable inventory good) was lumped
+ * into CATALOG_NAME_ENTITIES alongside Service, so its seeded "name" came
+ * from the exact same ITEM_NAMES pool written for Appointment's own
+ * "service" field ("Standard Treatment"/"Monthly Plan" fit a scheduled
+ * service, not a SKU-and-stock-quantity inventory item).
+ */
+test("Product's 'name' seed values are a plausible retail good, not Appointment's service-plan phrasing", () => {
+  const product: Entity = {
+    name: "Product",
+    fields: [
+      { name: "name", type: "text", required: true },
+      { name: "sku", type: "text", required: false },
+      { name: "quantity", type: "number", required: false },
+    ],
+  };
+  const appointment: Entity = { name: "Appointment", fields: [{ name: "service", type: "text", required: false }] };
+
+  const servicePlanNames = new Set(generateSeedRecords(appointment, 4).map((r) => r.service as string));
+
+  const productNames = generateSeedRecords(product, 4).map((r) => r.name as string);
+  for (const name of productNames) assert.ok(!servicePlanNames.has(name), `Product's name "${name}" must not be one of Appointment's own service-plan sample names`);
+});
+
 test("an unrecognized field name still gets a labeled fallback value instead of throwing", () => {
   const custom: Entity = { name: "Widget", fields: [{ name: "colorPreference", type: "text", required: false }] };
   const [record] = generateSeedRecords(custom, 1);
