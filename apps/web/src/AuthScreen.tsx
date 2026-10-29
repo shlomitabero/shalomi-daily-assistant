@@ -116,7 +116,7 @@ export function AuthScreen({ onAuthenticated }: { onAuthenticated: (user: User) 
     }
     setBusy(true);
     try {
-      await resetPassword(resetToken!, resetNewPassword);
+      await resetPassword(resetToken!, resetNewPassword, lang);
       // Strips the now-consumed token from the URL immediately, the same
       // one-liner handleBackToLogin uses -- but deliberately WITHOUT also
       // nulling the resetToken state itself, which would flip the

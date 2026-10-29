@@ -1314,6 +1314,71 @@ test("forgot-password emails a real reset link, and following it with a new pass
 });
 
 /**
+ * Round 1265: this route used to send no notification anywhere once the
+ * reset succeeded -- round 1252 closed the identical gap for PATCH
+ * /auth/password but never touched this route, despite the risk being
+ * sharper here: deleteAllSessionsForUser kills EVERY session on the
+ * account (not just "other" ones), and this route is reachable by anyone
+ * holding a leaked/intercepted reset link, not just someone who already
+ * knows the current password. Confirms the real EmailSender.send call
+ * reaches the account's own address. Inserts the reset token row
+ * directly (same technique the garbage/expired-token test above uses),
+ * so this test isn't itself exercising forgot-password's own email.
+ */
+test("resetting your password sends a real notification to your own address, when email is configured", async () => {
+  const emailSender = createFakeEmailSender();
+  await withServer(
+    async (baseUrl, db) => {
+      const email = `reset-pw-notify-${Date.now()}@example.com`;
+      await signup(baseUrl, email);
+      emailSender.sentTo.length = 0; // The login-code email signup itself sent -- only the reset notification matters here.
+
+      const token = "fresh-raw-reset-token";
+      const tokenHash = createHash("sha256").update(token).digest("hex");
+      db.prepare(
+        "INSERT INTO password_reset_tokens (id, userId, tokenHash, expiresAt, createdAt) SELECT ?, id, ?, ?, ? FROM users WHERE email = ?",
+      ).run(randomUUID(), tokenHash, new Date(Date.now() + 60 * 60 * 1000).toISOString(), new Date().toISOString(), email);
+
+      const resetRes = await fetch(`${baseUrl}/api/auth/reset-password`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ token, newPassword: "brand-new-password", lang: "en" }),
+      });
+      assert.equal(resetRes.status, 204);
+
+      assert.equal(emailSender.sentTo.length, 1, "exactly one notification must be sent");
+      assert.equal(emailSender.sentTo[0].to, email, "the notification must go to the account's own address");
+    },
+    { emailSender },
+  );
+});
+
+test("resetting your password still succeeds, with no notification attempted, when no email provider is configured", async () => {
+  const emailSender = createFakeEmailSender({ configured: false });
+  await withServer(
+    async (baseUrl, db) => {
+      const email = `reset-pw-notify-unconfigured-${Date.now()}@example.com`;
+      await signup(baseUrl, email);
+
+      const token = "fresh-raw-reset-token-unconfigured";
+      const tokenHash = createHash("sha256").update(token).digest("hex");
+      db.prepare(
+        "INSERT INTO password_reset_tokens (id, userId, tokenHash, expiresAt, createdAt) SELECT ?, id, ?, ?, ? FROM users WHERE email = ?",
+      ).run(randomUUID(), tokenHash, new Date(Date.now() + 60 * 60 * 1000).toISOString(), new Date().toISOString(), email);
+
+      const resetRes = await fetch(`${baseUrl}/api/auth/reset-password`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ token, newPassword: "brand-new-password" }),
+      });
+      assert.equal(resetRes.status, 204, "the reset itself must still work exactly as before this feature existed");
+      assert.equal(emailSender.sentTo.length, 0, "no send should even be attempted when email isn't configured");
+    },
+    { emailSender },
+  );
+});
+
+/**
  * Regression test for a real bug (round 1024): POST /auth/reset-password's
  * own existence check (findUserById) ran BEFORE its one genuine scrypt
  * await (hashPassword -- offloaded to libuv's threadpool, see

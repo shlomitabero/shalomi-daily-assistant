@@ -310,8 +310,8 @@ export function forgotPassword(email: string, lang: "he" | "en"): Promise<{ sent
 }
 
 /** The second half of the flow above -- `token` is whatever AuthScreen.tsx read from the emailed link's own `?resetToken=` query param. */
-export function resetPassword(token: string, newPassword: string): Promise<void> {
-  return request("/auth/reset-password", { method: "POST", body: JSON.stringify({ token, newPassword }) });
+export function resetPassword(token: string, newPassword: string, lang?: "he" | "en"): Promise<void> {
+  return request("/auth/reset-password", { method: "POST", body: JSON.stringify({ token, newPassword, lang }) });
 }
 
 export function me(): Promise<{ user: User }> {

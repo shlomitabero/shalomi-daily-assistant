@@ -91,6 +91,7 @@ const ForgotPasswordSchema = z.object({
 const ResetPasswordSchema = z.object({
   token: z.string().min(1, "token is required"),
   newPassword: z.string().min(8, "newPassword must be at least 8 characters"),
+  lang: z.enum(["he", "en"]).optional(),
 });
 
 const PASSWORD_RESET_TOKEN_TTL_MS = 60 * 60 * 1000; // 1 hour
@@ -535,6 +536,28 @@ export function createAuthRouter(
       }
       updatePasswordHash(db, user.id, newHash);
       deleteAllSessionsForUser(db, user.id);
+      // Round 1265: mirrors PATCH /auth/password's own round-1252
+      // notification -- this route's own revocation is the MORE sensitive
+      // of the two (every session on the account, not just other ones, and
+      // reachable by anyone holding a leaked/intercepted reset link rather
+      // than someone who already knows the current password), yet round
+      // 1252 only ever touched the PATCH route. Best-effort, same
+      // swallowed-send contract as every sibling route in this file.
+      if (emailSender.configured) {
+        const isHebrew = parsed.data.lang !== "en";
+        const subject = isHebrew ? "הסיסמה של חשבונך ב-Forge AI השתנתה" : "Your Forge AI account's password was changed";
+        const body = isHebrew
+          ? `הסיסמה של חשבונך ב-Forge AI שונתה כעת.\n\nאם זו לא הייתם אתם, מישהו אחר ידע את הסיסמה הקודמת שלכם -- היכנסו לחשבון והחליפו אותה מיד.`
+          : `Your Forge AI account's password was just changed.\n\nIf this wasn't you, someone else knew your previous password -- sign in and change it immediately.`;
+        try {
+          await emailSender.send(user.email, subject, body);
+        } catch {
+          // Swallowed, deliberately, same as PATCH /auth/password's own
+          // send above -- the reset itself already succeeded and was
+          // already committed to the database; a failed best-effort
+          // notification must never turn that into an error response.
+        }
+      }
       res.status(204).end();
     } catch (err) {
       next(err);
