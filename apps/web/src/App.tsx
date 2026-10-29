@@ -459,7 +459,27 @@ export function maybeNotifyFailingAutomations(
   t: (key: string, params?: Record<string, string>) => string,
 ): void {
   const newlyFailing = findNewlyFailingAutomations(rules, previouslyFailingIdsRef.current);
-  previouslyFailingIdsRef.current = new Set(rules.filter((r) => r.enabled && r.lastStatus === "failed").map((r) => r.id));
+  // Round 1240: this baseline used to also require r.enabled -- but
+  // updateAutomationRule (apps/api's PATCH .../automations/:ruleId) never
+  // touches lastStatus/lastError when only `enabled` changes (confirmed by
+  // its own doc comment and automations.test.ts). Pausing a known-broken
+  // rule with the ordinary enable/disable switch (AutomationsPanel's
+  // handleToggle, no confirmation needed) dropped its id from this Set
+  // purely because it became disabled, even though lastStatus was still
+  // "failed" server-side. Re-enabling it before it had actually re-run
+  // left it enabled + still "failed" + missing from the baseline --
+  // findNewlyFailingAutomations's own `!previouslyFailingIds.has(r.id)`
+  // check then read that stale failure as brand new, firing a desktop
+  // notification for a problem that never actually recurred. Dropping the
+  // enabled check here (findNewlyFailingAutomations's own result filter
+  // above still requires it, so a disabled rule's failure still never
+  // notifies) keeps a rule's id in the baseline for as long as its
+  // lastStatus stays "failed", regardless of how its enabled flag is
+  // toggled in between -- the recovered-then-failed-again re-notify case
+  // this same baseline already handles (see this function's own doc
+  // comment) still works identically, since that path changes lastStatus
+  // itself, not just enabled.
+  previouslyFailingIdsRef.current = new Set(rules.filter((r) => r.lastStatus === "failed").map((r) => r.id));
   if (!newlyFailing || !isTabHidden) return;
   if (typeof Notification === "undefined" || Notification.permission !== "granted") return;
   const title =

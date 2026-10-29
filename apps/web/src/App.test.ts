@@ -1472,6 +1472,42 @@ test("maybeNotifyFailingAutomations re-notifies for a rule that recovered and th
 });
 
 /**
+ * Round 1240: updateAutomationRule (the server endpoint AutomationsPanel's
+ * one-click handleToggle calls) never touches lastStatus/lastError when
+ * only `enabled` changes -- confirmed in packages/db/src/automations.ts.
+ * So a rule that's known-broken (lastStatus "failed"), gets disabled, and
+ * is re-enabled before it actually runs again still has lastStatus
+ * "failed" the whole time -- nothing about its *failure* ever changed.
+ * Before this round's fix, the baseline computation in
+ * maybeNotifyFailingAutomations also required `enabled`, so disabling the
+ * rule dropped its id from the baseline even though it was still failing;
+ * re-enabling it then made findNewlyFailingAutomations see a "new"
+ * failure and fire a spurious notification for a problem that never
+ * actually recurred.
+ */
+test("maybeNotifyFailingAutomations does not re-notify for a still-failing rule that was merely disabled and re-enabled before it ran again", () => {
+  const originalNotification = (globalThis as { Notification?: unknown }).Notification;
+  const calls: string[] = [];
+  class FakeNotification {
+    static permission = "granted";
+    constructor(title: string) {
+      calls.push(title);
+    }
+  }
+  (globalThis as { Notification: unknown }).Notification = FakeNotification;
+  try {
+    const ref: { current: Set<string> | null } = { current: new Set(["r1"]) };
+    // User pauses the known-broken rule -- lastStatus stays "failed" (the server never touches it on an enabled-only toggle).
+    maybeNotifyFailingAutomations([automationRule({ id: "r1", enabled: false, lastStatus: "failed" })], ref, true, notifyT);
+    // User re-enables it before it has actually re-run -- still lastStatus "failed", same underlying failure.
+    maybeNotifyFailingAutomations([automationRule({ id: "r1", enabled: true, lastStatus: "failed" })], ref, true, notifyT);
+    assert.deepEqual(calls, [], "disabling and re-enabling a rule must not make its unchanged, still-stale failure look newly failing");
+  } finally {
+    (globalThis as { Notification?: unknown }).Notification = originalNotification;
+  }
+});
+
+/**
  * Regression test for a real behavioral choice in openExistingProject
  * (the handler the new "Your projects" home-screen list uses to jump back
  * into a project someone already created or was added to as a
