@@ -1508,6 +1508,29 @@ export function AddFieldForm({
   const [relationTo, setRelationTo] = useState(allEntities[0]?.name ?? "");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  // Round 1235: mirrors FieldChip's own openDraftFor, which re-derives
+  // draftRelationTo fresh every time its own relation draft opens, rather
+  // than seeding it once like this form's own useState above does. This
+  // entity's own sibling EntitySummaryItem is keyed only by entity.name
+  // (App.tsx), so removing a DIFFERENT entity elsewhere on the same
+  // spec-review screen never remounts this form -- relationTo stays
+  // pinned to whichever entity happened to be allEntities[0] at mount,
+  // even after that entity no longer exists in allEntities. The relation
+  // <select> below is rebuilt fresh from the current allEntities on every
+  // render, so its visible selection (whatever option now sits first)
+  // silently diverges from the actual relationTo state the submit button
+  // sends -- the user sees one target, submits a different, stale one,
+  // and gets back a confusing "is not an entity in this project" error
+  // for a value they never picked. Re-deriving the moment the type switches
+  // TO "relation" (the only point a stale value could otherwise reach the
+  // user) keeps it fresh without disturbing any other field's own type.
+  function handleTypeChange(newType: Field["type"]) {
+    setType(newType);
+    if (newType === "relation" && !allEntities.some((e) => e.name === relationTo)) {
+      setRelationTo(allEntities[0]?.name ?? "");
+    }
+  }
   // Round 1039: see EntitySummaryItem's own identical comment -- this
   // form's own relation-target dropdown (below) has the same unresolved
   // collision risk as FieldChip's identical dropdown if two entities
@@ -1558,7 +1581,7 @@ export function AddFieldForm({
         aria-label={t("spec.fields.addPlaceholder")}
         disabled={formDisabled}
       />
-      <select value={type} onChange={(e) => setType(e.target.value as Field["type"])} disabled={formDisabled} aria-label={t("spec.fields.type")}>
+      <select value={type} onChange={(e) => handleTypeChange(e.target.value as Field["type"])} disabled={formDisabled} aria-label={t("spec.fields.type")}>
         {FIELD_TYPES.map((ft) => (
           <option key={ft} value={ft}>
             {t(`spec.fields.type.${ft}`)}

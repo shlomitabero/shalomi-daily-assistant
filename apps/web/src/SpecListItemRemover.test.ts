@@ -2385,6 +2385,103 @@ test("choosing 'relation' as the add-field type reveals a dropdown of this proje
 });
 
 /**
+ * Round 1235: relationTo was seeded once from allEntities[0] at mount and
+ * never resynced afterward -- unlike FieldChip's own sibling draft
+ * (openDraftFor), which re-derives draftRelationTo fresh every time it
+ * opens. This form's own entity (e.g. "Account") is never remounted by a
+ * DIFFERENT sibling entity's own removal elsewhere on the same spec-review
+ * screen (EntitySummaryItem is keyed only by entity.name), so relationTo
+ * could keep pointing at an entity that no longer exists in allEntities --
+ * the relation <select> below is rebuilt fresh from the current
+ * allEntities on every render, so its visible selection silently diverges
+ * from the actual stale relationTo state the submit button sends, and the
+ * user gets back a confusing "is not an entity in this project" error for
+ * a value they never picked. Confirms switching the type TO "relation"
+ * after allEntities changes lands on a real, still-existing entity instead
+ * of the stale one.
+ */
+test("AddFieldForm's relationTo default re-derives from the current allEntities, not a stale one-time snapshot, when a sibling entity it pointed at is removed", async () => {
+  await withJsdom(async () => {
+    const originalFetch = globalThis.fetch;
+    let postedBody: { label: string; type: string; relationTo?: string } | undefined;
+    globalThis.fetch = (async (input: string, init?: RequestInit) => {
+      if (init?.method === "POST" && input === "/api/projects/proj1/entities/Account/fields") {
+        postedBody = JSON.parse(init.body as string) as typeof postedBody;
+        return new Response(JSON.stringify({ project: baseProject }), { status: 200, headers: { "content-type": "application/json" } });
+      }
+      throw new Error(`unexpected request ${init?.method ?? "GET"} ${input}`);
+    }) as typeof fetch;
+
+    const withCustomer: Entity[] = [
+      { name: "Customer", fields: [{ name: "name", type: "text", required: true }] },
+      { name: "Deal", fields: [{ name: "amount", type: "number", required: false }] },
+      { name: "Account", fields: [{ name: "name", type: "text", required: true }] },
+    ];
+    // Mirrors a different sibling entity ("Customer") being removed
+    // elsewhere on the same screen -- this form's own entity ("Account")
+    // is untouched and never remounts, but allEntities[0] is now "Deal".
+    const withoutCustomer: Entity[] = withCustomer.slice(1);
+
+    try {
+      const addedProjects: Project[] = [];
+      const view = render(
+        React.createElement(
+          ThemeProvider,
+          null,
+          React.createElement(
+            LanguageProvider,
+            null,
+            React.createElement(AddFieldForm, {
+              projectId: "proj1",
+              entityName: "Account",
+              allEntities: withCustomer,
+              onAdded: (p: Project) => addedProjects.push(p),
+            }),
+          ),
+        ),
+      );
+
+      view.rerender(
+        React.createElement(
+          ThemeProvider,
+          null,
+          React.createElement(
+            LanguageProvider,
+            null,
+            React.createElement(AddFieldForm, {
+              projectId: "proj1",
+              entityName: "Account",
+              allEntities: withoutCustomer,
+              onAdded: (p: Project) => addedProjects.push(p),
+            }),
+          ),
+        ),
+      );
+
+      fireEvent.change(document.querySelector(".spec-add-item-form input") as HTMLInputElement, { target: { value: "Owner" } });
+      fireEvent.change(document.querySelector(".spec-add-field-form select") as HTMLSelectElement, { target: { value: "relation" } });
+
+      const relationSelect = document.querySelectorAll(".spec-add-field-form select")[1] as HTMLSelectElement;
+      assert.deepEqual(
+        Array.from(relationSelect.options).map((o) => o.value),
+        ["Deal", "Account"],
+        "the relation target dropdown must list only the current, still-real entities",
+      );
+
+      // Submitted WITHOUT ever touching the relation select -- the stale
+      // default must have already been corrected the moment the type
+      // switched to "relation", not left pointing at the removed entity.
+      fireEvent.click(document.querySelector(".spec-add-field-form button") as HTMLButtonElement);
+      await waitForCondition(() => addedProjects.length === 1);
+
+      assert.deepEqual(postedBody, { label: "Owner", type: "relation", relationTo: "Deal" });
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+});
+
+/**
  * Round 1059: the forward half of the same gap, one level up. Round 1026
  * only cross-gated a field chip's own three actions (remove/required-
  * toggle/type-change) against each other; it never considered
