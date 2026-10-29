@@ -803,15 +803,31 @@ function CalendarView({
           // (round 695's own fix for this exact hazard elsewhere in this
           // same file).
           const dayInteractive = day.inCurrentMonth && !readOnly;
-          const isDragOver = dayInteractive && dragOverDay === dayKey;
+          // The drop target is intentionally its OWN flag, not folded into
+          // dayInteractive: round 1200 confirmed day.date is always a real,
+          // correctly-dated Date for every one of the 42 cells (including
+          // the leading/trailing days of adjacent months rendered for a
+          // full grid), and handleCalendarDrop/handleMoveFields already
+          // operate on that real Date with no month-boundary assumption of
+          // their own. Gating the drop target on inCurrentMonth too, as
+          // before, meant a ranged record's end could never be dragged
+          // across a month boundary even onto a cell already visibly
+          // showing the right date -- the single most common case for
+          // dragging a multi-night stay. Click-to-add-a-record and
+          // keyboard activation stay gated on dayInteractive: an add on a
+          // cell that isn't "centered" in the displayed month is a
+          // separate, lower-priority affordance question this round
+          // doesn't touch.
+          const dayDropTarget = !readOnly;
+          const isDragOver = dayDropTarget && dragOverDay === dayKey;
           const isToday = day.inCurrentMonth && isSameDay(day.date, new Date());
           const dayClasses = ["calendar-day"];
           if (dayInteractive) {
             dayClasses.push("calendar-day-clickable");
-            if (isDragOver) dayClasses.push("calendar-day-drag-over");
           } else if (!day.inCurrentMonth) {
             dayClasses.push("calendar-day-outside");
           }
+          if (isDragOver) dayClasses.push("calendar-day-drag-over");
           if (isToday) dayClasses.push("calendar-day-today");
           return (
           <div
@@ -836,7 +852,7 @@ function CalendarView({
                 : undefined
             }
             onDragOver={
-              dayInteractive
+              dayDropTarget
                 ? (e) => {
                     e.preventDefault();
                     setDragOverDay(dayKey);
@@ -844,10 +860,10 @@ function CalendarView({
                 : undefined
             }
             onDragLeave={
-              dayInteractive ? () => setDragOverDay((prev) => (prev === dayKey ? null : prev)) : undefined
+              dayDropTarget ? () => setDragOverDay((prev) => (prev === dayKey ? null : prev)) : undefined
             }
             onDrop={
-              dayInteractive
+              dayDropTarget
                 ? (e) => {
                     e.preventDefault();
                     setDragOverDay(null);

@@ -4510,6 +4510,96 @@ test("EntityPanel's calendar view shifts a ranged record by the days actually dr
   });
 });
 
+/**
+ * Round 1201: buildCalendarMonth deliberately renders a full 6-week grid,
+ * including the real, correctly-dated leading/trailing days of adjacent
+ * months (confirmed in round 1200's own investigation) -- but the day
+ * cell's onDragOver/onDragLeave/onDrop handlers used to be gated on the
+ * SAME flag as the click-to-add affordance (day.inCurrentMonth), so a cell
+ * outside the currently displayed month had no drop handlers at all: the
+ * browser's native drag-and-drop simply refused the drop outright, with
+ * no error message. For a ranged record (Rental's startDate/endDate),
+ * this meant the single most common "drag to reschedule" case -- shifting
+ * a stay that ends on the last day of a month forward by just one day --
+ * was impossible via drag-and-drop even though the target cell is right
+ * there on screen as that month's trailing row. Confirms dragging a
+ * single-day record's only chip, shown on the real last day of the
+ * currently displayed month, onto the very next cell (the 1st of next
+ * month, rendered as a dimmed trailing day) now reschedules it there.
+ */
+test("EntityPanel's calendar view accepts a drop onto a leading/trailing day cell from an adjacent month, not just the currently-displayed month's own days", async () => {
+  await withJsdom(async () => {
+    // The real last day of the currently displayed (real) month, and the
+    // first day of the next one -- computed from the real clock so this
+    // works regardless of which month it is when the suite runs, the same
+    // way round 1200 fixed this file's other date-dependent calendar test.
+    const lastOfMonth = new Date();
+    lastOfMonth.setMonth(lastOfMonth.getMonth() + 1, 0);
+    const firstOfNextMonth = new Date(lastOfMonth);
+    firstOfNextMonth.setDate(lastOfMonth.getDate() + 1);
+    const pad = (n: number) => String(n).padStart(2, "0");
+    const toIso = (d: Date) => `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+    const lastOfMonthStr = toIso(lastOfMonth);
+    const firstOfNextMonthStr = toIso(firstOfNextMonth);
+
+    const store: EntityRecord[] = [{ id: 1, title: "Dana's checkout day", startDate: lastOfMonthStr, endDate: lastOfMonthStr }];
+    let lastPatchBody: Record<string, unknown> | null = null;
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = (async (input: string, init?: RequestInit) => {
+      const method = init?.method ?? "GET";
+      if (method === "GET" && input === "/api/projects/proj1/entities/Rental") {
+        return new Response(JSON.stringify({ records: store }), { status: 200, headers: { "content-type": "application/json" } });
+      }
+      const patchMatch = /^\/api\/projects\/proj1\/entities\/Rental\/(\d+)$/.exec(input);
+      if (method === "PATCH" && patchMatch) {
+        const id = Number(patchMatch[1]);
+        const record = store.find((r) => r.id === id)!;
+        lastPatchBody = JSON.parse(init!.body as string);
+        Object.assign(record, lastPatchBody);
+        return new Response(JSON.stringify({ record }), { status: 200, headers: { "content-type": "application/json" } });
+      }
+      throw new Error(`unexpected request ${method} ${input}`);
+    }) as typeof fetch;
+    try {
+      renderRentalPanel();
+      await waitForCondition(() => document.querySelector(".entity-toolbar") !== null);
+
+      const calendarToggle = document.querySelectorAll(".view-toggle-btn")[1] as HTMLButtonElement;
+      fireEvent.click(calendarToggle);
+      await waitForCondition(() => document.querySelectorAll(".calendar-record-chip").length === 1);
+
+      const sourceCell = Array.from(document.querySelectorAll(".calendar-day:not(.calendar-day-outside)")).find(
+        (el) => el.querySelector(".calendar-day-number")?.textContent === String(lastOfMonth.getDate()) && el.querySelector(".calendar-record-chip"),
+      ) as HTMLElement;
+      assert.ok(sourceCell, "expected to find the last-of-month cell carrying the record's only chip");
+      const sourceChip = sourceCell.querySelector(".calendar-record-chip") as HTMLButtonElement;
+
+      const dropTargetDay = Array.from(document.querySelectorAll(".calendar-day-outside")).find(
+        (el) => el.querySelector(".calendar-day-number")?.textContent === String(firstOfNextMonth.getDate()),
+      ) as HTMLElement;
+      assert.ok(dropTargetDay, "expected to find next month's 1st, rendered as a dimmed trailing day in this month's own grid");
+
+      function makeDataTransfer() {
+        let payload = "";
+        return { setData: (_type: string, value: string) => (payload = value), getData: () => payload };
+      }
+      const dataTransfer = makeDataTransfer();
+      fireEvent.dragStart(sourceChip, { dataTransfer });
+      fireEvent.dragOver(dropTargetDay, { dataTransfer });
+      fireEvent.drop(dropTargetDay, { dataTransfer });
+
+      await waitForCondition(() => lastPatchBody !== null);
+      assert.deepEqual(
+        lastPatchBody,
+        { startDate: firstOfNextMonthStr, endDate: firstOfNextMonthStr },
+        "dropping onto next month's 1st must reschedule the record there, not be silently rejected for landing outside the currently displayed month",
+      );
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+});
+
 const CUSTOMER_ENTITY: Entity = {
   name: "Customer",
   label: "Customer",
