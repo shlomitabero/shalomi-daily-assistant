@@ -69,10 +69,18 @@ function entityLabel(rule: AutomationRuleView, entities: Entity[]): string {
   return entity ? entityDisplayLabel(entity, entityLabelOccurrences(entities)) : rule.entityName;
 }
 
+// Round 1267: mirrors apps/api/src/automations.ts's own resolveStoredFieldName
+// (see AutomationsPanel.tsx's own identical copy for the full rationale) --
+// a case-only field rename is a true no-op at the db layer, so a rule's
+// stored fieldName/toField can legitimately carry stale casing.
+function resolveStoredFieldName(ruleFields: Entity["fields"], fieldName: string): Entity["fields"][number] | undefined {
+  return ruleFields.find((f) => f.name === fieldName) ?? ruleFields.find((f) => f.name.toLowerCase() === fieldName.toLowerCase());
+}
+
 function fieldLabel(rule: AutomationRuleView, fieldName: string | null, entities: Entity[]): string {
   if (!fieldName) return "";
   const ruleFields = ruleEntity(rule, entities)?.fields ?? [];
-  const field = ruleFields.find((f) => f.name === fieldName);
+  const field = resolveStoredFieldName(ruleFields, fieldName);
   if (!field) return fieldName;
   return fieldDisplayLabel(field, fieldLabelOccurrences(ruleFields));
 }
@@ -86,7 +94,7 @@ function fieldLabel(rule: AutomationRuleView, fieldName: string | null, entities
 // checkbox stores the raw lowercase string "true"/"false" as fieldValue.
 function fieldValueLabel(rule: AutomationRuleView, entities: Entity[], relatedRecords: RelatedRecordsByEntity, lang: Lang): string {
   if (!rule.fieldValue) return "";
-  const field = ruleEntity(rule, entities)?.fields.find((f) => f.name === rule.fieldName);
+  const field = rule.fieldName ? resolveStoredFieldName(ruleEntity(rule, entities)?.fields ?? [], rule.fieldName) : undefined;
   if (field?.type === "enum") return field.enumLabels?.[rule.fieldValue] ?? rule.fieldValue;
   if (field?.type === "relation" && field.relationTo) {
     // Round 1181: case-insensitive, mirroring AutomationsPanel.tsx's own fix.

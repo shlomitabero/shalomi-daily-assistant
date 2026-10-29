@@ -1921,6 +1921,85 @@ test("AutomationsPanel shows uppercase TRUE/FALSE for a boolean field_equals rul
 });
 
 /**
+ * Round 1267 regression test: packages/db/src/migrate.ts's own
+ * prevFieldByLowerName treats a case-only field rename (e.g. "dueDate" ->
+ * "DueDate") as the very same field, a true no-op -- so an existing rule's
+ * stored fieldName legitimately keeps the OLD casing while the entity's
+ * live field list now has the NEW one. Round 1188 already taught every
+ * SERVER-side consumer of a rule's stored fieldName/toField
+ * (apps/api/src/automations.ts) to resolve that casing drift via its own
+ * resolveStoredFieldName, but AutomationsPanel.tsx's fieldLabel/
+ * fieldValueLabel (and automationsReport.ts's identical mirrors) never got
+ * the matching fix: an exact-case field lookup there silently failed,
+ * falling back to the raw, stale-cased internal field name instead of the
+ * real label, and (for fieldValueLabel) skipping every type-aware
+ * formatting branch entirely -- a date field_equals rule's value reverted
+ * to the bare, unformatted ISO string.
+ */
+test("AutomationsPanel resolves a rule's case-drifted stored fieldName to the entity's current field, in both the rule list and the Copy report", async () => {
+  await withJsdom(async () => {
+    const originalFetch = globalThis.fetch;
+    const staleCasedRule = makeRule({
+      id: "rule15",
+      entityName: "Order",
+      trigger: "field_equals",
+      fieldName: "dueDate",
+      fieldValue: "2024-01-15",
+    });
+    const recasedProject: Project = {
+      ...dateFieldProject,
+      spec: {
+        ...dateFieldProject.spec,
+        entities: [
+          {
+            ...dateFieldProject.spec.entities[0]!,
+            fields: dateFieldProject.spec.entities[0]!.fields.map((f) => (f.name === "dueDate" ? { ...f, name: "DueDate" } : f)),
+          },
+        ],
+      },
+    };
+    globalThis.fetch = (async (input: string, init?: RequestInit) => {
+      const method = init?.method ?? "GET";
+      if (method === "GET" && input === "/api/projects/proj7/automations") {
+        return new Response(JSON.stringify({ rules: [staleCasedRule] }), { status: 200, headers: { "content-type": "application/json" } });
+      }
+      throw new Error(`unexpected request ${method} ${input}`);
+    }) as typeof fetch;
+
+    let writtenText: string | undefined;
+    Object.defineProperty(navigator, "clipboard", {
+      value: { writeText: async (text: string) => void (writtenText = text) },
+      configurable: true,
+    });
+
+    try {
+      renderPanelWith(recasedProject);
+      await waitForCondition(() => document.querySelector(".automations-rule-condition") !== null);
+      const conditionText = document.querySelector(".automations-rule-condition")?.textContent ?? "";
+
+      assert.ok(conditionText.includes("Due Date"), `expected the field's real label "Due Date", got: ${JSON.stringify(conditionText)}`);
+      assert.ok(!conditionText.includes("dueDate"), "the raw, stale-cased stored fieldName must never be shown once the field is resolvable under its current casing");
+      assert.ok(conditionText.includes("1/15/2024"), `expected the date value to still be locale-formatted, got: ${JSON.stringify(conditionText)}`);
+      assert.ok(!conditionText.includes("2024-01-15"), "the raw ISO date string must never be shown once the field's type is resolvable as \"date\"");
+
+      const copyButton = Array.from(document.querySelectorAll("button")).find((b) => b.textContent?.includes("Copy report")) as HTMLButtonElement;
+      await act(async () => {
+        fireEvent.click(copyButton);
+        await Promise.resolve();
+        await Promise.resolve();
+      });
+
+      assert.equal(typeof writtenText, "string", "clicking Copy must actually call navigator.clipboard.writeText");
+      assert.match(writtenText!, /Due Date/, "the Copy report text must also resolve the case-drifted fieldName to its real label");
+      assert.match(writtenText!, /1\/15\/2024/, "the Copy report text must also locale-format the date value despite the case-drifted fieldName");
+    } finally {
+      globalThis.fetch = originalFetch;
+      delete (navigator as { clipboard?: unknown }).clipboard;
+    }
+  });
+});
+
+/**
  * New: the "schedule" trigger -- a recurring, time-of-day rule with no
  * triggering record at all, unlike record_created/field_equals. Choosing
  * it must reveal a time input and a day-of-week picker, force toMode to

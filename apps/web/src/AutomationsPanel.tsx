@@ -702,10 +702,23 @@ export function AutomationsPanel({
     return entity ? entityDisplayLabel(entity, entityOccurrences) : rule.entityName;
   }
 
+  // Round 1267: mirrors apps/api/src/automations.ts's own
+  // resolveStoredFieldName -- packages/db/src/migrate.ts's
+  // prevFieldByLowerName treats a case-only field rename (e.g. "status" ->
+  // "Status") as the same field, a true no-op, so an existing rule's
+  // stored fieldName/toField survives in its OLD casing while the entity's
+  // live field list now has the NEW casing. Without this, an exact-case
+  // find() here failed after such a rename and fell back to the raw,
+  // stale-cased internal name instead of the real label -- round 1188 only
+  // ever ported this fallback into the server-side consumers.
+  function resolveStoredFieldName(ruleFields: Entity["fields"], fieldName: string): Entity["fields"][number] | undefined {
+    return ruleFields.find((f) => f.name === fieldName) ?? ruleFields.find((f) => f.name.toLowerCase() === fieldName.toLowerCase());
+  }
+
   function fieldLabel(rule: AutomationRuleView, fieldName: string | null): string {
     if (!fieldName) return "";
     const ruleFields = ruleEntity(rule)?.fields ?? [];
-    const field = ruleFields.find((f) => f.name === fieldName);
+    const field = resolveStoredFieldName(ruleFields, fieldName);
     if (!field) return fieldName;
     return fieldDisplayLabel(field, fieldLabelOccurrences(ruleFields));
   }
@@ -731,7 +744,7 @@ export function AutomationsPanel({
   // one display surface in the app that didn't follow this convention.
   function fieldValueLabel(rule: AutomationRuleView): string {
     if (!rule.fieldValue) return "";
-    const field = ruleEntity(rule)?.fields.find((f) => f.name === rule.fieldName);
+    const field = rule.fieldName ? resolveStoredFieldName(ruleEntity(rule)?.fields ?? [], rule.fieldName) : undefined;
     if (field?.type === "enum") return field.enumLabels?.[rule.fieldValue] ?? rule.fieldValue;
     if (field?.type === "relation" && field.relationTo) {
       // Round 1181: case-insensitive, same reason as relationTargetEntity above.
