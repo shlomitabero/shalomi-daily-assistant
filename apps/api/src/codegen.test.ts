@@ -607,6 +607,76 @@ test("generated server.js's calendar feed renders a date label field as a format
 });
 
 /**
+ * Round 1230: mirrors the live apps/api/src/calendarFeed.ts's own
+ * round-1229 fix -- a `number` label field (reachable the same way the
+ * date fix just above is: an entity with no name/title/text/longtext/
+ * enum/boolean/date field other than the one auto-detected for calendar
+ * placement) rendered the raw un-grouped digits in this feed's own
+ * SUMMARY line instead of a real locale-formatted number.
+ */
+test("generated server.js's calendar feed renders a number label field as a locale-formatted number in SUMMARY, not the raw ungrouped digits", async () => {
+  const dailyLogEntity: Entity = {
+    name: "DailyLog",
+    label: "Logs",
+    fields: [
+      { name: "loggedAt", label: "Logged At", type: "date", required: true },
+      { name: "temperature", label: "Temperature", type: "number", required: false },
+    ],
+  };
+  const feedProject: Project = { ...project, spec: { ...project.spec, entities: [dailyLogEntity] } };
+  const files = generateExportFiles(feedProject);
+  const serverJs = files.find((f) => f.path === "server.js")!.content;
+
+  const dir = mkdtempSync(path.join(tmpdir(), "codegen-feed-number-label-test-"));
+  const repoRoot = path.resolve(import.meta.dirname, "../../..");
+  symlinkSync(path.join(repoRoot, "node_modules"), path.join(dir, "node_modules"));
+  writeFileSync(path.join(dir, "server.js"), serverJs);
+
+  const port = 34000 + Math.floor(Math.random() * 5000);
+  const child = spawn(process.execPath, ["--experimental-sqlite", "server.js"], {
+    cwd: dir,
+    env: { ...process.env, PORT: String(port) },
+    stdio: ["ignore", "pipe", "pipe"],
+  });
+  let stderr = "";
+  child.stderr.on("data", (chunk) => {
+    stderr += chunk.toString();
+  });
+
+  try {
+    const deadline = Date.now() + 5000;
+    let lastErr: unknown;
+    while (Date.now() < deadline) {
+      if (child.exitCode !== null) {
+        throw new Error(`server.js exited early (code ${child.exitCode}):\n${stderr}`);
+      }
+      try {
+        const createRes = await fetch(`http://localhost:${port}/api/DailyLog`, {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ loggedAt: "2026-11-05", temperature: 1500 }),
+        });
+        assert.equal(createRes.status, 201);
+
+        const feedRes = await fetch(`http://localhost:${port}/api/calendar/DailyLog.ics`);
+        assert.equal(feedRes.status, 200);
+        const ics = await feedRes.text();
+        assert.doesNotMatch(ics, /SUMMARY:1500\r?\n/, "the number label field must never render as the raw ungrouped digits");
+        assert.match(ics, /SUMMARY:1\\,500/, "the number label field must render with real locale thousands separators (RFC 5545 escapes the comma as \\,)");
+        return;
+      } catch (err) {
+        lastErr = err;
+        await new Promise((r) => setTimeout(r, 100));
+      }
+    }
+    throw lastErr instanceof Error ? lastErr : new Error(String(lastErr));
+  } finally {
+    child.kill();
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+/**
  * Round 1072: a separate, previously-unaudited sibling of the SUMMARY fix
  * just above -- this feed's own DESCRIPTION resolves a RELATION field's
  * own target record to a display label via feedRecordDisplayLabel/
@@ -5503,6 +5573,103 @@ test("the exported EntityView's real generated buildCalendarIcs renders a date l
 
   assert.match(ics, /SUMMARY:4\/2\/2026/, "a date label field must render as a formatted date, not the raw ISO string");
   assert.doesNotMatch(ics, /SUMMARY:2026-04-02/, "must never leak the raw unformatted 'YYYY-MM-DD' string");
+});
+
+/**
+ * Round 1230: mirrors the live preview's own round-1229 calendarIcs.ts
+ * fix -- a `number` label field (reachable the same way the date fix
+ * just above is: an entity with no name/title/text/longtext/enum/
+ * boolean/second-date field, only a number alongside the date field
+ * used for calendar placement) previously rendered the raw un-grouped
+ * digits in SUMMARY instead of a real locale-formatted number.
+ */
+test("the exported EntityView's real generated buildCalendarIcs renders a number label field as a locale-formatted number in SUMMARY, not the raw ungrouped digits", () => {
+  const withNumber: Project = {
+    ...project,
+    spec: {
+      ...project.spec,
+      entities: [
+        ...project.spec.entities,
+        {
+          name: "DailyLog",
+          fields: [
+            { name: "loggedAt", type: "date", required: true },
+            { name: "temperature", type: "number", required: false },
+          ],
+        },
+      ],
+    },
+  };
+  const entityViewJsx = generateExportFiles(withNumber).find((f) => f.path === "web/src/components/EntityView.jsx")!.content;
+
+  const pickDisplaySrc = entityViewJsx.match(/export function pickDisplayField\(entity\) \{[\s\S]*?\n\}\n/)?.[0]?.replace(/^export /, "");
+  const labelFieldSrc = entityViewJsx.match(/function calendarLabelField\(entity, dateField\) \{[\s\S]*?\n\}\n/)?.[0];
+  const pad2Src = entityViewJsx.match(/function icsPad2\(n\) \{[\s\S]*?\n\}\n/)?.[0];
+  const dateSrc = entityViewJsx.match(/function formatIcsDate\(date\) \{[\s\S]*?\n\}\n/)?.[0];
+  const tsSrc = entityViewJsx.match(/function formatIcsTimestamp\(date\) \{[\s\S]*?\n\}\n/)?.[0];
+  const escSrc = entityViewJsx.match(/function icsEscapeText\(value\) \{[\s\S]*?\n\}\n/)?.[0];
+  const utf8LenSrc = entityViewJsx.match(/function utf8ByteLength\(s\) \{[\s\S]*?\n\}\n/)?.[0];
+  const foldSrc = entityViewJsx.match(/function foldIcsLine\(line\) \{[\s\S]*?\n\}\n/)?.[0];
+  const stripBidiMarksSrc = entityViewJsx.match(/function stripBidiMarks\(s\) \{[\s\S]*?\n\}\n/)?.[0];
+  const descNumberSrc = entityViewJsx.match(/function formatIcsDescriptionNumber\(value\) \{[\s\S]*?\n\}\n/)?.[0];
+  const buildSrc = entityViewJsx.match(
+    /function buildCalendarIcs\(entity, dateField, labelField, records, relatedRecords, now, endField, orderedFields = entity\.fields\) \{[\s\S]*?\n\}\n/,
+  )?.[0];
+  assert.ok(
+    pickDisplaySrc && labelFieldSrc && pad2Src && dateSrc && tsSrc && escSrc && utf8LenSrc && foldSrc && stripBidiMarksSrc && descNumberSrc && buildSrc,
+    "expected to find every ICS helper function (including formatIcsDescriptionNumber) in the real generated output",
+  );
+
+  const relationStub = "function relationDisplayLabel() { return ''; }\n";
+  const parseFieldDateStub = "function parseFieldDate(raw) { const m = /^(\\d{4})-(\\d{2})-(\\d{2})$/.exec(raw); return m ? new Date(Number(m[1]), Number(m[2]) - 1, Number(m[3])) : new Date(raw); }\n";
+  const buildCalendarIcs = new Function(
+    `${pickDisplaySrc}\n${labelFieldSrc}\n${pad2Src}\n${dateSrc}\n${tsSrc}\n${escSrc}\n${utf8LenSrc}\n${foldSrc}\n${relationStub}\n${parseFieldDateStub}\n${stripBidiMarksSrc}\n${descNumberSrc}\n${buildSrc}\nreturn buildCalendarIcs;`,
+  )() as (entity: unknown, dateField: unknown, labelField: unknown, records: unknown[], relatedRecords: unknown, now: Date) => string;
+
+  const entity = {
+    name: "DailyLog",
+    fields: [
+      { name: "loggedAt", type: "date" },
+      { name: "temperature", type: "number" },
+    ],
+  };
+  const dateField = entity.fields[0];
+  const labelField = entity.fields[1];
+  const records = [{ id: 1, loggedAt: "2026-03-15", temperature: 1500 }];
+
+  const ics = buildCalendarIcs(entity, dateField, labelField, records, {}, new Date("2026-01-01T00:00:00Z"));
+
+  assert.match(ics, /SUMMARY:1\\,500/, "a number label field must render with real locale thousands separators (RFC 5545 escapes the comma as \\,), not the raw ungrouped digits");
+  assert.doesNotMatch(ics, /SUMMARY:1500\r?\n/, "must never leak the raw ungrouped digits with no thousands separator");
+});
+
+/**
+ * Round 1230: mirrors the live apps/web/src/entityFormatting.ts's own
+ * round-1229 calendarChipLabelValue fix -- the exported app's own
+ * calendar VIEW uses this separate function (not buildCalendarIcs) to
+ * render a day-chip's own label tooltip, and it had the identical
+ * missing `number` branch, falling through to the raw ungrouped digits.
+ */
+test("the exported EntityView's calendarLabelValue renders a number display field with locale thousands separators, not the raw ungrouped digits", () => {
+  const entityViewJsx = generateExportFiles(project).find((f) => f.path === "web/src/components/EntityView.jsx")!.content;
+  const calendarLabelValueSrc = entityViewJsx.match(/function calendarLabelValue\(labelField, record\) \{[\s\S]*?\n\}\n/)?.[0];
+  const stripBidiMarksSrc = entityViewJsx.match(/function stripBidiMarks\(s\) \{[\s\S]*?\n\}\n/)?.[0];
+  const descNumberSrc = entityViewJsx.match(/function formatIcsDescriptionNumber\(value\) \{[\s\S]*?\n\}\n/)?.[0];
+  assert.ok(
+    calendarLabelValueSrc && stripBidiMarksSrc && descNumberSrc,
+    "expected to find calendarLabelValue/stripBidiMarks/formatIcsDescriptionNumber in generated output",
+  );
+
+  const calendarLabelValue = new Function(
+    `${stripBidiMarksSrc}\n${descNumberSrc}\n${calendarLabelValueSrc}\nreturn calendarLabelValue;`,
+  )() as (labelField: unknown, record: unknown) => string;
+
+  const temperatureField = { name: "temperature", type: "number" };
+  assert.equal(
+    calendarLabelValue(temperatureField, { id: 1, temperature: 1500 }),
+    "1,500",
+    "must render the number field with real locale thousands separators, not the raw \"1500\"",
+  );
 });
 
 /**

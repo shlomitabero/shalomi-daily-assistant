@@ -1119,6 +1119,13 @@ function feedChipLabelValue(labelField, record) {
   if (labelField.type === "boolean") return value ? "TRUE" : "FALSE";
   if (labelField.type === "enum") return (labelField.enumLabels && labelField.enumLabels[String(value)]) || String(value);
   if (labelField.type === "date" && typeof value === "string") return String(feedFormatIcsDescriptionDate(value));
+  // Round 1230: mirrors the live apps/api/src/calendarFeed.ts's own
+  // round-1229 fix -- the SAME last-resort fallback reasoning applies
+  // here, and this used to String() the raw un-grouped digits in the
+  // feed's own SUMMARY line instead of a real locale-formatted number.
+  // feedFormatIcsDescriptionNumber (below, hoisted) already exists in
+  // this template for DESCRIPTION lines but was never reused here.
+  if (labelField.type === "number" && typeof value === "number") return String(feedFormatIcsDescriptionNumber(value));
   return String(value);
 }
 
@@ -3804,6 +3811,14 @@ function calendarLabelValue(labelField, record) {
   if (labelField.type === "boolean") return value ? "TRUE" : "FALSE";
   if (labelField.type === "enum") return (labelField.enumLabels && labelField.enumLabels[value]) || String(value);
   if (labelField.type === "date" && typeof value === "string") return String(formatIcsDescriptionDate(value));
+  // Round 1230: mirrors the live apps/web/src/calendarIcs.ts's own
+  // round-1229 fix -- the SAME last-resort fallback reasoning applies
+  // here, and this used to String() the raw un-grouped digits in the
+  // one-shot export's own SUMMARY line instead of a real locale-
+  // formatted number. formatIcsDescriptionNumber (below, hoisted)
+  // already exists in this template for DESCRIPTION lines but was never
+  // reused here.
+  if (labelField.type === "number" && typeof value === "number") return String(formatIcsDescriptionNumber(value));
   return String(value);
 }
 
@@ -3918,7 +3933,14 @@ function buildCalendarIcs(entity, dateField, labelField, records, relatedRecords
           // "YYYY-MM-DD" string instead of a real formatted date.
           : labelField.type === "date"
             ? formatIcsDescriptionDate(rawLabelValue)
-            : rawLabelValue;
+            // Round 1230: mirrors the live apps/web/src/calendarIcs.ts's
+            // own round-1229 fix -- the SAME last-resort fallback
+            // reasoning applies here, and this used to pass the raw
+            // un-grouped digits straight through as SUMMARY instead of
+            // a real locale-formatted number.
+            : labelField.type === "number"
+              ? formatIcsDescriptionNumber(rawLabelValue)
+              : rawLabelValue;
     // Round 1022: mirrors the live apps/web/src/calendarIcs.ts's own
     // identical fix -- \`??\` only falls through on null/undefined, never
     // on a genuinely blank string, so a blank text display field used to
