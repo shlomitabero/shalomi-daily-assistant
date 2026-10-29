@@ -242,6 +242,66 @@ test("computeBusinessTwin's relation-coverage observations disambiguate two rela
   );
 });
 
+/**
+ * Round 1249: the exact "file" twin of the relation-coverage test above --
+ * a `file` field (e.g. a resume, ID photo, receipt) is exactly as
+ * business-meaningful to report coverage for as a relation field, but
+ * twin.ts had zero "file"-type awareness anywhere in it before this round.
+ * Mirrors backup.test.ts's own real `{url, name, size, mimeType}` JSON
+ * descriptor fixture shape for a genuinely-present file, and confirms a
+ * missing upload (null, never answered) is counted the same way a missing
+ * relation is.
+ */
+test("computeBusinessTwin reports how many records are missing a file upload, and stays silent once it's fully uploaded", () => {
+  const fileProject: Project = {
+    ...project,
+    description: "I need to track insurance claims with a receipt upload",
+    spec: {
+      ...project.spec,
+      entities: [
+        {
+          name: "Claim",
+          label: "Claims",
+          fields: [
+            { name: "description", type: "text", required: true },
+            { name: "receipt", label: "Receipt", type: "file", required: false },
+          ],
+        },
+      ],
+    },
+  };
+  const db = openDatabase(":memory:");
+  applyMigrations(db, fileProject.id, fileProject.spec);
+  const claim = fileProject.spec.entities[0];
+  insertRecord(db, fileProject.id, claim, { description: "Car repair", receipt: null });
+  insertRecord(db, fileProject.id, claim, { description: "Medical visit", receipt: null });
+  insertRecord(db, fileProject.id, claim, {
+    description: "Dental work",
+    receipt: JSON.stringify({ url: `/api/uploads/${fileProject.id}/Claim/11111111-1111-1111-1111-111111111111.pdf`, name: "receipt.pdf", size: 1234, mimeType: "application/pdf" }),
+  });
+
+  const twin = computeBusinessTwin(db, fileProject);
+  assert.ok(
+    twin.jumpableObservations.some((o) => o.text.includes("2 of 3 records have no") && o.text.includes("uploaded") && o.entityName === "Claim"),
+    `expected a file-coverage observation, got: ${JSON.stringify(twin.jumpableObservations)}`,
+  );
+  assert.ok(
+    !twin.observations.some((o) => o.includes("have no")),
+    "the file-coverage fact must live only in jumpableObservations, not also duplicated into the plain observations array",
+  );
+
+  // Once every claim has a receipt, the observation must disappear -- it
+  // reports a real gap, not a permanent nag.
+  const db2 = openDatabase(":memory:");
+  applyMigrations(db2, fileProject.id, fileProject.spec);
+  insertRecord(db2, fileProject.id, claim, {
+    description: "Car repair",
+    receipt: JSON.stringify({ url: `/api/uploads/${fileProject.id}/Claim/22222222-2222-2222-2222-222222222222.pdf`, name: "receipt.pdf", size: 1234, mimeType: "application/pdf" }),
+  });
+  const twinFullyUploaded = computeBusinessTwin(db2, fileProject);
+  assert.ok(!twinFullyUploaded.jumpableObservations.some((o) => o.text.includes("have no")));
+});
+
 test("computeBusinessTwin identifies the record most referenced across multiple relation fields, with a per-entity breakdown", () => {
   const hubProject: Project = {
     ...project,

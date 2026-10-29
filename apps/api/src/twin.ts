@@ -164,6 +164,79 @@ function computeRelationCoverageObservations(
 }
 
 /**
+ * Mirrors entityFormatting.ts's/backup.ts's/calendarFeed.ts's own identical
+ * parseFileFieldValue/fileFieldDisplayName check -- a `file` field's stored
+ * value is a JSON-encoded `{url, name, size, mimeType}` descriptor, not a
+ * plain string like every other field type, so a missing upload can be
+ * `null`/`undefined` (never answered) OR a non-empty string that fails to
+ * parse as a real descriptor (never a reachable case through this app's own
+ * upload route, but still "no real file" the same way this codebase's other
+ * three copies of this check already treat it).
+ */
+function hasRealFileValue(value: unknown): boolean {
+  if (typeof value !== "string" || value === "") return false;
+  try {
+    const parsed = JSON.parse(value) as { name?: unknown };
+    return typeof parsed.name === "string" && parsed.name.length > 0;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Round 1249: the exact "file" twin of computeRelationCoverageObservations
+ * just above -- a `file` field (e.g. a resume, ID photo, invoice, contract
+ * scan; see anthropic.ts's own system-prompt wording for when `type:
+ * "file"` gets used) is exactly as business-meaningful to report coverage
+ * for as a relation field is ("3 of 10 Claims have no receipt uploaded" is
+ * the same genuine, actionable, no-fabricated-insight fact as "3 of 5
+ * tickets have no customer linked"), but this file had zero `file`-type
+ * awareness anywhere in it before this round (confirmed via
+ * `grep -n '"file"' twin.ts` returning no hits) despite every sibling
+ * surface in this codebase (entityFormatting.ts, backup.ts, repository.ts,
+ * seed.ts, calendarFeed.ts) already having a dedicated `file` branch.
+ */
+function computeFileFieldCoverageObservations(
+  recordsByEntity: Map<string, EntityRecord[]>,
+  project: Project,
+  hebrew: boolean,
+  entityLabels: Map<string, number>,
+): { text: string; entityName: string }[] {
+  const observations: { text: string; entityName: string }[] = [];
+  for (const entity of project.spec.entities) {
+    const fileFields = entity.fields.filter((f) => f.type === "file");
+    if (fileFields.length === 0) continue;
+    const records = recordsByEntity.get(entity.name) ?? [];
+    if (records.length === 0) continue;
+
+    // Mirrors computeRelationCoverageObservations's own labelOccurrences
+    // disambiguation exactly -- FieldSchema/the field-label route enforce
+    // no uniqueness on a field's display label, so two file fields here
+    // can legitimately share one.
+    const labelOccurrences = new Map<string, number>();
+    for (const field of fileFields) {
+      const label = field.label ?? field.name;
+      labelOccurrences.set(label, (labelOccurrences.get(label) ?? 0) + 1);
+    }
+
+    for (const field of fileFields) {
+      const missing = records.filter((r) => !hasRealFileValue(r[field.name])).length;
+      if (missing === 0) continue;
+      const entityLabel = entityDisplayLabel(entity, entityLabels);
+      const fieldLabel = field.label ?? field.name;
+      const ambiguous = (labelOccurrences.get(fieldLabel) ?? 0) > 1;
+      observations.push({
+        text: hebrew
+          ? `ב"${entityLabel}", ל-${missing} מתוך ${records.length} רשומות אין "${fieldLabel}"${ambiguous ? ` (${field.name})` : ""} מועלה.`
+          : `In "${entityLabel}", ${missing} of ${records.length} records have no "${fieldLabel}"${ambiguous ? ` (${field.name})` : ""} uploaded.`,
+        entityName: entity.name,
+      });
+    }
+  }
+  return observations;
+}
+
+/**
  * Finds the single record that's referenced the most across every relation
  * field in the project that points to it -- e.g. "Dana Levi" being both a
  * customer on 2 orders and 1 support ticket -- and reports it as one
@@ -878,6 +951,7 @@ export function computeBusinessTwin(db: ForgeDatabase, project: Project, today: 
     }
     mostLinkedRecord = computeRelationHubObservation(db, recordsByEntity, project, hebrew, entityLabels);
     jumpableObservations.push(...computeRelationCoverageObservations(recordsByEntity, project, hebrew, entityLabels));
+    jumpableObservations.push(...computeFileFieldCoverageObservations(recordsByEntity, project, hebrew, entityLabels));
     jumpableObservations.push(...computeDuplicateObservations(recordsByEntity, project, hebrew, entityLabels));
     numericStats.push(...computeNumericAggregateObservations(recordsByEntity, project, hebrew, entityLabels));
     distributions.push(...computeEnumDistributionObservations(recordsByEntity, project, hebrew, entityLabels));
