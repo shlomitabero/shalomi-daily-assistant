@@ -37448,3 +37448,21 @@ Fail-before/pass-after verified directly: `git stash push --keep-index -- apps/a
 Full `apps/api` suite run (only this workspace touched this round), `npm run build` (esbuild bundle), clean.
 
 **Topic status**: this round's port is closed. The exported standalone app's data export now offers the same CSV/JSON pairing the live preview does.
+
+### Round 1220: added `role="status"` to App.tsx's `viewer-readonly-banner` -- a genuinely live-changing banner that had no ARIA live-region role at all, unlike every sibling banner right around it
+
+**The gap**: `{myRole === "viewer" && <p className="viewer-readonly-banner">{t("viewer.readOnlyBanner")}</p>}` (`apps/web/src/App.tsx`, right after the preview topbar's action buttons) had no `role` attribute at all -- while `wakingBanner` right above it and `buildWarning` right below it both already carry `role="status"`, and the top-level `error` banner four lines below carries `role="alert"` (round 1168's own fix, confirmed to have touched only that one element, never this one).
+
+**Why this is real and reachable, not cosmetic**: `myRole` is NOT fixed at page load -- it's genuinely live and can flip mid-session two independent ways, both read directly in `App.tsx`: `subscribeViewerDemoted` sets `myRole` to `"viewer"` the instant any write 403s with `VIEWER_READ_ONLY` (e.g. the project owner demotes this collaborator while they're actively editing), and the separate `checkMyRole` poll (`MY_ROLE_POLL_INTERVAL_MS`) independently re-derives `myRole` from a fresh `listCollaborators` call so a demotion is caught even before any write is attempted. When either fires, this banner newly appears (or disappears, on a promotion back to editor) with zero announcement -- a screen-reader user who was actively editing the project would have every write control start failing or hiding with no indication of why; they'd only discover the access change by trial and error on their next edit attempt.
+
+**Found by**: a fresh Explore survey subagent for round 1220, which grepped for every existing reference to `viewer-readonly-banner`/`readOnlyBanner` in `App.test.ts` and `docs/roadmap.md` and found none -- confirming this specific element had never been examined by round 1158's exhaustive 10-message ARIA sweep or round 1168's own follow-up (which explicitly scoped itself to just the `error` banner four lines below this one).
+
+**Independent verification**: read the exact JSX directly (`App.tsx`, right after the preview topbar's button row), confirming the missing `role` and the two sibling banners' own existing `role="status"`/`role="alert"` conventions immediately around it. Read `subscribeViewerDemoted`'s call site and the `checkMyRole` poll effect directly, confirming `myRole` genuinely changes after initial mount, not just once at load. Confirmed `codegen.ts`'s exported standalone app has no collaborator/viewer-role concept at all (per round 1210's own doc comment), so no port is needed there.
+
+**The fix**: added `role="status"` to the `<p className="viewer-readonly-banner">` element -- informational/state-describing, not an error, so it mirrors `buildWarning`'s own `role="status"` immediately below it rather than the `error` banner's `role="alert"`.
+
+**Tests**: 1 new in `App.test.ts`, mirroring round 1168's own `error`-banner test exactly (regex-matches the real JSX source rather than mounting `App.tsx`, the established convention for every `App.tsx`-specific test in this file) -- confirms the real `<p className="viewer-readonly-banner" role="status">` text is present in the generated JSX block. Fail-before/pass-after verified directly: `git stash push --keep-index -- apps/web/src/App.tsx` reverted the fix (keeping the new test staged) and confirmed it failed (the regex, which now expects the wrapped multi-line JSX the fix introduces, no longer matches the original single-line element); `git stash pop` restored it and a re-run came back clean.
+
+Full `apps/web` suite run (only this workspace touched this round): 1557/1557 clean. `npx tsc -b` and `npm run build` both clean.
+
+**Topic status**: this round's fix is closed. Every state-change banner in `App.tsx`'s preview topbar area now has an appropriate ARIA live-region role.

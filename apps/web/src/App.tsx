@@ -2698,7 +2698,11 @@ function AppContent() {
             </div>
           </div>
 
-          {myRole === "viewer" && <p className="viewer-readonly-banner">{t("viewer.readOnlyBanner")}</p>}
+          {myRole === "viewer" && (
+            <p className="viewer-readonly-banner" role="status">
+              {t("viewer.readOnlyBanner")}
+            </p>
+          )}
 
           {buildWarning && (
             <p className="muted small" role="status">

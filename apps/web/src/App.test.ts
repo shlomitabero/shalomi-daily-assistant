@@ -5496,3 +5496,27 @@ test("App.tsx's own top-level error banner carries role=\"alert\", the same conv
     "a screen-reader user must be told about a project describe/build/rename/clone/delete failure, not left in total silence while sighted users see the banner appear",
   );
 });
+
+/**
+ * Round 1220: the `viewer-readonly-banner` right below the preview topbar
+ * had no `role` at all -- unlike `wakingBanner`/the `error` banner (round
+ * 1168) and `buildWarning` right below it, all of which already carry
+ * `role="status"`/`role="alert"`. myRole is genuinely live, not fixed at
+ * page load: subscribeViewerDemoted flips it to "viewer" the instant a
+ * write 403s with VIEWER_READ_ONLY, and the checkMyRole poll re-derives it
+ * independently -- so this banner can newly appear (or disappear, on
+ * promotion) mid-session with zero announcement to a screen-reader user who
+ * was actively editing when their access was downgraded. Informational, not
+ * an error, so it mirrors `buildWarning`'s `role="status"`, not `error
+ * banner`'s `role="alert"`.
+ */
+test("App.tsx's viewer-readonly-banner carries role=\"status\", since myRole can change mid-session via subscribeViewerDemoted/checkMyRole", () => {
+  const appSrc = readFileSync(new URL("./App.tsx", import.meta.url), "utf8");
+  const bannerMatch = appSrc.match(/\{myRole === "viewer" && \([\s\S]*?\)\}/);
+  assert.ok(bannerMatch, "expected to find the viewer-readonly-banner's own JSX block");
+  assert.match(
+    bannerMatch![0],
+    /<p className="viewer-readonly-banner" role="status">/,
+    "a screen-reader user must be told when they are downgraded to read-only mid-session, not left in total silence while sighted users see the banner appear",
+  );
+});
