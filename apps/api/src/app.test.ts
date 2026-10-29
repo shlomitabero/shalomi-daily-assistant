@@ -4704,6 +4704,115 @@ test("inviting a collaborator by email works regardless of the typed capitalizat
   });
 });
 
+/**
+ * Round 1253: this route used to send no notification anywhere once the
+ * invite succeeded, the one gap `sharedProjectSeen.ts`'s own round-401 doc
+ * comment named explicitly ("a collaborator invite ... has no email, no
+ * desktop notification, and no 'new' marker of any kind") and left open
+ * only pending real email infrastructure -- infra that now exists and
+ * already notifies on login-code, forgot-password, change-email (round
+ * 1206), and change-password (round 1252). Confirms the real
+ * EmailSender.send call reaches the INVITED user's own address, naming the
+ * project and role.
+ */
+test("inviting a collaborator sends a real notification to the invited user, naming the project and role, when email is configured", async () => {
+  const emailSender = createFakeEmailSender();
+  await withServer(
+    async (baseUrl) => {
+      const ownerToken = await signup(baseUrl, `owner-collab-notify-${Date.now()}@example.com`);
+      const invitedEmail = `collab-notify-${Date.now()}@example.com`;
+      await signup(baseUrl, invitedEmail);
+
+      const createRes = await fetch(`${baseUrl}/api/projects`, {
+        method: "POST",
+        headers: authHeaders(ownerToken),
+        body: JSON.stringify({ description: "A CRM with customers and deals." }),
+      });
+      const { project } = (await createRes.json()) as { project: { id: string; name: string } };
+
+      const inviteRes = await fetch(`${baseUrl}/api/projects/${project.id}/collaborators`, {
+        method: "POST",
+        headers: authHeaders(ownerToken),
+        body: JSON.stringify({ email: invitedEmail, role: "viewer", lang: "en" }),
+      });
+      assert.equal(inviteRes.status, 201);
+
+      assert.equal(emailSender.sentTo.length, 1, "exactly one notification must be sent");
+      assert.equal(emailSender.sentTo[0].to, invitedEmail, "the notification must go to the INVITED user, not the owner who sent it");
+      assert.match(emailSender.sentTo[0].text, new RegExp(project.name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")), "the body must name the real project");
+      assert.match(emailSender.sentTo[0].text, /view-only/, "the body must name the real role granted");
+    },
+    { emailSender },
+  );
+});
+
+test("inviting a collaborator still succeeds, with no notification attempted, when no email provider is configured", async () => {
+  const emailSender = createFakeEmailSender({ configured: false });
+  await withServer(
+    async (baseUrl) => {
+      const ownerToken = await signup(baseUrl, `owner-collab-notify-unconfigured-${Date.now()}@example.com`);
+      const invitedEmail = `collab-notify-unconfigured-${Date.now()}@example.com`;
+      await signup(baseUrl, invitedEmail);
+
+      const createRes = await fetch(`${baseUrl}/api/projects`, {
+        method: "POST",
+        headers: authHeaders(ownerToken),
+        body: JSON.stringify({ description: "A CRM with customers and deals." }),
+      });
+      const { project } = (await createRes.json()) as { project: { id: string } };
+
+      const inviteRes = await fetch(`${baseUrl}/api/projects/${project.id}/collaborators`, {
+        method: "POST",
+        headers: authHeaders(ownerToken),
+        body: JSON.stringify({ email: invitedEmail }),
+      });
+      assert.equal(inviteRes.status, 201, "the invite itself must still work exactly as before this feature existed");
+      assert.equal(emailSender.sentTo.length, 0, "no send should even be attempted when email isn't configured");
+    },
+    { emailSender },
+  );
+});
+
+/**
+ * Round 1253: addCollaborator is deliberately idempotent (see
+ * CollaboratorsPanel.tsx's own handleInvite comment) -- re-inviting
+ * someone already on the project is a silent no-op server-side. Confirms
+ * that no-op never fires a second, spurious notification.
+ */
+test("re-inviting an existing collaborator is a no-op that sends no notification", async () => {
+  const emailSender = createFakeEmailSender();
+  await withServer(
+    async (baseUrl) => {
+      const ownerToken = await signup(baseUrl, `owner-collab-notify-noop-${Date.now()}@example.com`);
+      const invitedEmail = `collab-notify-noop-${Date.now()}@example.com`;
+      await signup(baseUrl, invitedEmail);
+
+      const createRes = await fetch(`${baseUrl}/api/projects`, {
+        method: "POST",
+        headers: authHeaders(ownerToken),
+        body: JSON.stringify({ description: "A CRM with customers and deals." }),
+      });
+      const { project } = (await createRes.json()) as { project: { id: string } };
+
+      await fetch(`${baseUrl}/api/projects/${project.id}/collaborators`, {
+        method: "POST",
+        headers: authHeaders(ownerToken),
+        body: JSON.stringify({ email: invitedEmail }),
+      });
+      assert.equal(emailSender.sentTo.length, 1, "the first, genuine invite must send its own notification");
+
+      const secondInviteRes = await fetch(`${baseUrl}/api/projects/${project.id}/collaborators`, {
+        method: "POST",
+        headers: authHeaders(ownerToken),
+        body: JSON.stringify({ email: invitedEmail }),
+      });
+      assert.equal(secondInviteRes.status, 201);
+      assert.equal(emailSender.sentTo.length, 1, "re-inviting an already-added collaborator is a no-op -- nothing new to notify them about");
+    },
+    { emailSender },
+  );
+});
+
 test("the owner can remove a collaborator, which revokes their access again", async () => {
   await withServer(async (baseUrl) => {
     const ownerToken = await signup(baseUrl, "owner-collab2@example.com");

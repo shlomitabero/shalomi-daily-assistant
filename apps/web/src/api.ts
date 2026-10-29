@@ -1101,12 +1101,18 @@ export function listCollaborators(projectId: string): Promise<{ collaborators: P
   return request(`/projects/${projectId}/collaborators`);
 }
 
+/**
+ * `lang` (round 1253) picks which language the server's own invite
+ * notification email is written in, the same `changeEmail`/`changePassword`
+ * convention.
+ */
 export function addCollaborator(
   projectId: string,
   email: string,
   role: CollaboratorRole = "editor",
+  lang?: "he" | "en",
 ): Promise<{ collaborators: ProjectCollaborator[]; owner: ProjectOwnerInfo | null }> {
-  return request(`/projects/${projectId}/collaborators`, { method: "POST", body: JSON.stringify({ email, role }) });
+  return request(`/projects/${projectId}/collaborators`, { method: "POST", body: JSON.stringify({ email, role, lang }) });
 }
 
 /**

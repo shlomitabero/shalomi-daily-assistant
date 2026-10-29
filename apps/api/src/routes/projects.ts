@@ -361,6 +361,10 @@ const AddCollaboratorSchema = z.object({
   // UI before this round, any script/integration already using this
   // route) keeps behaving exactly as before -- full access, same as today.
   role: CollaboratorRoleSchema.default("editor"),
+  // Round 1253: same optional client-language hint ChangeEmailSchema/
+  // ChangePasswordSchema already carry, for the invite notification email
+  // this route now sends to the invited user.
+  lang: z.enum(["he", "en"]).optional(),
 });
 
 const UpdateCollaboratorRoleSchema = z.object({
@@ -2052,6 +2056,25 @@ export function createProjectsRouter(
     }),
   );
 
+  /**
+   * Round 1253: until now this route gave the invited user zero signal that
+   * it happened -- no email, no desktop notification, nothing (confirmed by
+   * `sharedProjectSeen.ts`'s own round-401 doc comment, which built an
+   * in-app "New share" chip specifically because no other signal existed,
+   * and whose own closing note left a real email notification open only
+   * "if שלומי explicitly asks for real email infrastructure" -- infra that
+   * now exists and is already used, unprompted, for four other
+   * notifications: login-code, forgot-password, change-email (round 1206),
+   * and change-password (round 1252)). Best-effort, mirroring those same
+   * routes' own swallowed-send contract: the grant itself already
+   * succeeded and was already committed, so a failed send must never
+   * surface as an error on this request. Checked BEFORE calling
+   * addCollaborator (not via its own return value, which is `void`) --
+   * addCollaborator is deliberately idempotent (CollaboratorsPanel.tsx's
+   * own doc comment on `handleInvite`), so re-inviting someone already on
+   * the project is a silent no-op with nothing for them to be notified
+   * about.
+   */
   router.post(
     "/projects/:id/collaborators",
     inviteCollaboratorRateLimiter,
@@ -2068,7 +2091,24 @@ export function createProjectsRouter(
       if (invited.id === project.ownerId) {
         throw new HttpError(400, "The project owner already has full access", "CANNOT_ADD_OWNER_AS_COLLABORATOR");
       }
+      const isNewGrant = getCollaboratorRole(db, project.id, invited.id) === null;
       addCollaborator(db, project.id, invited.id, parsed.data.role);
+      if (isNewGrant && emailSender.configured) {
+        const isHebrew = parsed.data.lang !== "en";
+        const subject = isHebrew ? `הוזמנת לפרויקט "${project.name}" ב-Forge AI` : `You were invited to "${project.name}" on Forge AI`;
+        const body = isHebrew
+          ? `הוזמנת לשתף פעולה בפרויקט "${project.name}" ב-Forge AI, עם הרשאת ${parsed.data.role === "viewer" ? "צפייה בלבד" : "עריכה"}.\n\nהיכנסו לחשבונכם כדי לראות אותו.`
+          : `You were invited to collaborate on "${project.name}" on Forge AI, with ${parsed.data.role === "viewer" ? "view-only" : "editor"} access.\n\nSign in to your account to see it.`;
+        try {
+          await emailSender.send(invited.email, subject, body);
+        } catch {
+          // Swallowed, deliberately, same as the auth.ts notification
+          // routes' own convention -- the invite itself already succeeded
+          // and was already committed to the database; a failed
+          // best-effort notification must never turn that into an error
+          // response.
+        }
+      }
       res.status(201).json({ collaborators: listCollaborators(db, project.id), owner: getOwnerInfo(db, project) });
     }),
   );

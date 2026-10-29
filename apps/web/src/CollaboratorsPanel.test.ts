@@ -791,7 +791,7 @@ test("CollaboratorsPanel's invite form defaults to the 'editor' role, and submit
       fireEvent.submit(document.querySelector(".collab-invite-form")!);
       await waitForCondition(() => requestBodies.length === 1);
 
-      assert.deepEqual(requestBodies[0], { email: "dana@example.com", role: "viewer" });
+      assert.deepEqual(requestBodies[0], { email: "dana@example.com", role: "viewer", lang: "en" });
     } finally {
       globalThis.fetch = originalFetch;
     }

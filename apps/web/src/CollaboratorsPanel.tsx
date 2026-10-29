@@ -127,7 +127,7 @@ export function CollaboratorsPanel({
     // response alone can't tell a genuine new add apart from a no-op.
     const existingCollaborator = (collaborators ?? []).find((c) => c.email.toLowerCase() === trimmed.toLowerCase());
     try {
-      const { collaborators, owner } = await addCollaborator(projectId, trimmed, inviteRole);
+      const { collaborators, owner } = await addCollaborator(projectId, trimmed, inviteRole, lang);
       setCollaborators(collaborators);
       setOwner(owner);
       setEmail("");
