@@ -1161,6 +1161,8 @@ const triggerFieldProject: Project = {
             enumValues: ["Low", "High"],
             enumLabels: { Low: "נמוכה", High: "גבוהה" },
           },
+          { name: "dueDate", label: "Due date", type: "date", required: false },
+          { name: "amount", label: "Amount", type: "number", required: false },
         ],
       },
     ],
@@ -1285,6 +1287,136 @@ test("AutomationsPanel's field_equals Value control renders a <select> of the fi
 
       await waitForCondition(() => createBody !== undefined);
       assert.equal(createBody?.fieldValue, "High", "must submit the raw enum value, not its enumLabels display text");
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+});
+
+/**
+ * Round 1224: a date/number field_equals field fell through to the same
+ * plain free-text input every unrecognized field type gets, with an
+ * enum-flavored placeholder ("Value (e.g. Shipped)") -- but the server's
+ * own validateAutomationFieldValue (apps/api/src/routes/projects.ts,
+ * rounds 607/613) only ever accepts the field's exact stored shape: a real
+ * "YYYY-MM-DD" string for a date field, never the locale-formatted date a
+ * user has actually seen anywhere else in this app. Confirms the Value
+ * control now renders a real native <input type="date">, mirroring
+ * EntityPanel.tsx's own date-field convention exactly, so the submitted
+ * value is always a well-formed YYYY-MM-DD string.
+ */
+test("AutomationsPanel's field_equals Value control renders a native date input for a date field, and submits a YYYY-MM-DD string", async () => {
+  await withJsdom(async () => {
+    const originalFetch = globalThis.fetch;
+    let createBody: Record<string, unknown> | undefined;
+    globalThis.fetch = (async (input: string, init?: RequestInit) => {
+      const method = init?.method ?? "GET";
+      if (method === "GET" && input === "/api/projects/proj5/automations") {
+        return new Response(JSON.stringify({ rules: [] }), { status: 200, headers: { "content-type": "application/json" } });
+      }
+      if (method === "POST" && input === "/api/projects/proj5/entities/Ticket/automations") {
+        createBody = JSON.parse(init!.body as string);
+        return new Response(JSON.stringify({ rule: { id: "rule13", ...createBody } }), {
+          status: 201,
+          headers: { "content-type": "application/json" },
+        });
+      }
+      throw new Error(`unexpected request ${method} ${input}`);
+    }) as typeof fetch;
+
+    try {
+      renderPanelWith(triggerFieldProject);
+      await waitForCondition(() => document.body.textContent?.includes("No automations yet") ?? false);
+
+      const triggerSelect = Array.from(document.querySelectorAll("select")).find((s) =>
+        Array.from(s.options).some((o) => o.value === "field_equals"),
+      ) as HTMLSelectElement;
+      fireEvent.change(triggerSelect, { target: { value: "field_equals" } });
+
+      const fieldSelect = Array.from(document.querySelectorAll("label"))
+        .find((l) => l.textContent?.startsWith("Field"))
+        ?.querySelector("select") as HTMLSelectElement;
+      fireEvent.change(fieldSelect, { target: { value: "dueDate" } });
+
+      const valueInput = await (async () => {
+        await waitForCondition(() => document.querySelector('.automations-create-form input[type="date"]') !== null);
+        return document.querySelector('.automations-create-form input[type="date"]') as HTMLInputElement;
+      })();
+      assert.ok(valueInput, "a date field's Value control must be a real <input type=\"date\">, not free text");
+      fireEvent.change(valueInput, { target: { value: "2026-11-05" } });
+
+      const messageField = document.querySelector(".automations-create-form textarea") as HTMLTextAreaElement;
+      fireEvent.change(messageField, { target: { value: "Ticket due soon" } });
+      fireEvent.submit(document.querySelector(".automations-create-form")!);
+
+      await waitForCondition(() => createBody !== undefined);
+      assert.equal(createBody?.fieldValue, "2026-11-05", "must submit a well-formed YYYY-MM-DD string, exactly as the native date input produces it");
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+});
+
+/**
+ * Round 1224: same gap for a number field -- the generic free-text input
+ * had no numeric input hint at all, unlike EntityPanel.tsx's own number
+ * field (round 980), which deliberately kept a plain text input (never
+ * type="number", whose native value-sanitization eats a leading "-" typed
+ * from empty) but added inputMode="decimal" for a numeric mobile keyboard.
+ * Confirms the Value control mirrors that exact convention: still a plain
+ * text input (so typing a leading "-" still works), now with
+ * inputMode="decimal", and that it does NOT switch to <input type="date">
+ * or any enum/relation control.
+ */
+test("AutomationsPanel's field_equals Value control keeps a plain text input with a numeric inputMode for a number field (not type=\"number\", not type=\"date\")", async () => {
+  await withJsdom(async () => {
+    const originalFetch = globalThis.fetch;
+    let createBody: Record<string, unknown> | undefined;
+    globalThis.fetch = (async (input: string, init?: RequestInit) => {
+      const method = init?.method ?? "GET";
+      if (method === "GET" && input === "/api/projects/proj5/automations") {
+        return new Response(JSON.stringify({ rules: [] }), { status: 200, headers: { "content-type": "application/json" } });
+      }
+      if (method === "POST" && input === "/api/projects/proj5/entities/Ticket/automations") {
+        createBody = JSON.parse(init!.body as string);
+        return new Response(JSON.stringify({ rule: { id: "rule14", ...createBody } }), {
+          status: 201,
+          headers: { "content-type": "application/json" },
+        });
+      }
+      throw new Error(`unexpected request ${method} ${input}`);
+    }) as typeof fetch;
+
+    try {
+      renderPanelWith(triggerFieldProject);
+      await waitForCondition(() => document.body.textContent?.includes("No automations yet") ?? false);
+
+      const triggerSelect = Array.from(document.querySelectorAll("select")).find((s) =>
+        Array.from(s.options).some((o) => o.value === "field_equals"),
+      ) as HTMLSelectElement;
+      fireEvent.change(triggerSelect, { target: { value: "field_equals" } });
+
+      const fieldSelect = Array.from(document.querySelectorAll("label"))
+        .find((l) => l.textContent?.startsWith("Field"))
+        ?.querySelector("select") as HTMLSelectElement;
+      fireEvent.change(fieldSelect, { target: { value: "amount" } });
+
+      const valueInput = await (async () => {
+        await waitForCondition(() => document.querySelector(".automations-create-form input[inputmode=\"decimal\"]") !== null);
+        return document.querySelector(".automations-create-form input[inputmode=\"decimal\"]") as HTMLInputElement;
+      })();
+      assert.ok(valueInput, "a number field's Value control must carry inputMode=\"decimal\"");
+      assert.equal(valueInput.type, "text", "must stay a plain text input, never type=\"number\" (round 980's leading-minus fix)");
+      assert.equal(document.querySelector('.automations-create-form input[type="date"]'), null, "a number field must not render a date input");
+
+      fireEvent.change(valueInput, { target: { value: "-5" } });
+
+      const messageField = document.querySelector(".automations-create-form textarea") as HTMLTextAreaElement;
+      fireEvent.change(messageField, { target: { value: "Balance went negative" } });
+      fireEvent.submit(document.querySelector(".automations-create-form")!);
+
+      await waitForCondition(() => createBody !== undefined);
+      assert.equal(createBody?.fieldValue, "-5", "must submit the typed value as-is, including a leading '-' the native number input could never have accepted from empty");
     } finally {
       globalThis.fetch = originalFetch;
     }

@@ -1295,9 +1295,17 @@ export function AutomationsPanel({
                     <option>{t("entity.relation.loading")}</option>
                   </select>
                 )
+              ) : selectedField?.type === "date" ? (
+                <input
+                  type="date"
+                  aria-label={t("automations.fieldValue.placeholder")}
+                  value={fieldValue}
+                  onChange={(e) => setFieldValue(e.target.value)}
+                />
               ) : (
                 <input
                   type="text"
+                  inputMode={selectedField?.type === "number" ? "decimal" : undefined}
                   placeholder={t("automations.fieldValue.placeholder")}
                   aria-label={t("automations.fieldValue.placeholder")}
                   value={fieldValue}
