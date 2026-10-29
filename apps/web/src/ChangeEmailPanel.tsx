@@ -36,13 +36,23 @@ export function ChangeEmailPanel({ currentEmail, onClose, onChanged }: { current
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
     setError(null);
-    if (email !== confirmEmail) {
+    // Round 1205: mirrors CollaboratorsPanel's own email-comparison
+    // convention (c.email.toLowerCase() === trimmed.toLowerCase()) and the
+    // server's own ChangeEmailSchema, which normalizes with .toLowerCase()
+    // before ever comparing or storing it -- a raw, exact-case, untrimmed
+    // comparison here could reject two fields the server would treat as
+    // identical (e.g. "Dana@Example.com" vs "dana@example.com", or a
+    // trailing space from autofill/paste), blocking a perfectly valid
+    // change with a false "don't match" error.
+    const newEmail = email.trim();
+    const confirmed = confirmEmail.trim();
+    if (newEmail.toLowerCase() !== confirmed.toLowerCase()) {
       setError(t("changeEmail.mismatch"));
       return;
     }
     setBusy(true);
     try {
-      const { user } = await changeEmail(currentPassword, email);
+      const { user } = await changeEmail(currentPassword, newEmail);
       onChanged(user);
       setDone(true);
     } catch (err) {

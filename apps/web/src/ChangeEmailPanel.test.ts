@@ -133,6 +133,47 @@ test("a mismatched confirmation never calls the API and shows a mismatch error i
   });
 });
 
+/**
+ * Round 1205: the mismatch check used to be a raw, exact-case, untrimmed
+ * `===` -- the server's own ChangeEmailSchema normalizes with
+ * .toLowerCase() before ever comparing or storing it (the same convention
+ * CollaboratorsPanel's own email comparison already follows), so a user
+ * typing the same address with different casing or a trailing space
+ * (plausible via autofill/paste in one field but manual typing in the
+ * other) got a false "don't match" error for two fields the server would
+ * have accepted as identical. Confirms the real call still succeeds, and
+ * that the actual value sent to the server is trimmed too.
+ */
+test("a new email differing from its confirmation only by letter case or surrounding whitespace is still accepted as a match", async () => {
+  await withJsdom(async () => {
+    const originalFetch = globalThis.fetch;
+    const calls: { body: string }[] = [];
+    const updatedUser: User = { id: "u1", email: "dana.new@example.com", createdAt: "2024-01-01T00:00:00.000Z" };
+    globalThis.fetch = (async (input: string, init?: RequestInit) => {
+      if (init?.method === "PATCH" && input === "/api/auth/email") {
+        calls.push({ body: init.body as string });
+        return new Response(JSON.stringify({ user: updatedUser }), { status: 200, headers: { "content-type": "application/json" } });
+      }
+      throw new Error(`unexpected request ${init?.method ?? "GET"} ${input}`);
+    }) as typeof fetch;
+
+    try {
+      renderPanel();
+      fillForm("Dana.New@Example.com ", " dana.new@example.com", "my-current-password");
+      fireEvent.submit(document.querySelector("form")!);
+
+      await waitForCondition(() => calls.length === 1);
+      const body = JSON.parse(calls[0].body) as { email: string };
+      assert.equal(body.email, "Dana.New@Example.com", "the submitted value must be trimmed, but not forcibly lowercased -- the server does its own normalization");
+
+      await waitForCondition(() => document.querySelector(".success") !== null);
+      assert.equal(document.querySelector(".error"), null, "a same-email-different-case/whitespace pair must never be treated as a mismatch");
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+});
+
 test("a server error (e.g. wrong current password, or email already taken) is shown to the user instead of a silent failure", async () => {
   await withJsdom(async () => {
     const originalFetch = globalThis.fetch;
