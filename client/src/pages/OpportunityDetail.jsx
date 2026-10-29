@@ -53,6 +53,7 @@ export default function OpportunityDetail() {
   }
 
   async function onApprove() {
+    setError('');
     setBusy(true);
     try {
       await api.approve(id, 'publish_product');
