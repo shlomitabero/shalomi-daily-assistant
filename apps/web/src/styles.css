@@ -1510,6 +1510,7 @@ tbody tr:hover {
 }
 
 .csv-export-btn,
+.json-export-btn,
 .ics-export-btn {
   flex-shrink: 0;
   padding: 8px 14px;

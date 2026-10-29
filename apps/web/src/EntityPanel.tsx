@@ -69,6 +69,7 @@ import {
   recordDisplayLabel,
   relationDisplayLabel,
   recordsToCsv,
+  recordsToJson,
   restoreRecordAt,
   scrollIntoViewRespectingMotion,
   selectedOrAllRecords,
@@ -3632,6 +3633,27 @@ export function EntityPanel({
   }
 
   /**
+   * Round 1217: the sibling of Export CSV just above, for anyone taking
+   * this data into another tool or script rather than a spreadsheet --
+   * see `recordsToJson`'s own doc comment (entityFormatting.ts) for why
+   * CSV's display-text values (a relation's resolved label, an enum's
+   * enumLabels text, "TRUE"/"FALSE") aren't usable for that, while this
+   * preserves each field's real stored value instead.
+   */
+  function handleExportJson() {
+    const json = recordsToJson(orderedFields, selectedOrAllRecords(records, effectivelyVisibleRecords, selectedIds));
+    const blob = new Blob([json], { type: "application/json;charset=utf-8;" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `${safeDownloadName(entity.name, "export")}.json`;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    URL.revokeObjectURL(url);
+  }
+
+  /**
    * The same "Copy" companion action BusinessTwinPanel/HistoryPanel/
    * GlobalSearchPanel/WhatsAppPanel's own log already have next to their
    * Download button -- EntityPanel, the single most-used screen in the
@@ -4504,6 +4526,14 @@ export function EntityPanel({
               disabled={selectedIds.size === 0 && effectivelyVisibleRecords.length === 0}
             >
               {selectedIds.size > 0 ? t("entity.exportCsv.selected", { count: selectedIds.size }) : t("entity.exportCsv")}
+            </button>
+            <button
+              type="button"
+              className="secondary json-export-btn"
+              onClick={handleExportJson}
+              disabled={selectedIds.size === 0 && effectivelyVisibleRecords.length === 0}
+            >
+              {selectedIds.size > 0 ? t("entity.exportJson.selected", { count: selectedIds.size }) : t("entity.exportJson")}
             </button>
             <button
               type="button"

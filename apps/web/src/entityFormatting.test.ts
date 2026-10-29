@@ -36,6 +36,7 @@ import {
   pickDisplayField,
   recordDisplayLabel,
   recordsToCsv,
+  recordsToJson,
   relationDisplayLabel,
   restoreRecordAt,
   scrollIntoViewRespectingMotion,
@@ -2547,6 +2548,53 @@ test("recordsToCsv prepends a leading \"id\" column when includeId is true", () 
   const fields: Field[] = [{ name: "name", label: "Name", type: "text", required: true }];
   const csv = recordsToCsv(fields, [{ id: 7, name: "Dana" }], "en", [], {}, true);
   assert.equal(csv, "id,Name\r\n7,Dana", "includeId must put the record's real id first, ahead of every real field column");
+});
+
+/**
+ * Round 1217: unlike recordsToCsv (deliberately lossy -- display text a
+ * human reading a spreadsheet wants), recordsToJson must round-trip the
+ * REAL stored value for every type: a real number (not a numeric
+ * string), a real boolean (not "TRUE"/0/1), and the raw enum value/
+ * relation id (not its resolved display label) -- with no allEntities/
+ * relatedRecords/lang parameters at all, since there's no display
+ * resolution to do.
+ */
+test("recordsToJson preserves each field's real stored value -- a real number, a real boolean, and the raw enum value/relation id, not a display label", () => {
+  const fields: Field[] = [
+    { name: "name", label: "Name", type: "text", required: true },
+    { name: "status", label: "Status", type: "enum", required: true, enumValues: ["New", "Won"], enumLabels: { New: "New lead" } },
+    { name: "active", label: "Active", type: "boolean", required: false },
+    { name: "amount", label: "Amount", type: "number", required: false },
+    { name: "customerId", label: "Customer", type: "relation", required: false, relationTo: "Customer" },
+  ];
+  const records = [{ id: 7, name: "Dana", status: "New", active: true, amount: 1234, customerId: 42 }];
+  const parsed = JSON.parse(recordsToJson(fields, records)) as Array<Record<string, unknown>>;
+  assert.deepEqual(parsed, [{ id: 7, name: "Dana", status: "New", active: true, amount: 1234, customerId: 42 }]);
+});
+
+test("recordsToJson always includes the record's own id, with no includeId flag needed (unlike recordsToCsv)", () => {
+  const fields: Field[] = [{ name: "name", label: "Name", type: "text", required: true }];
+  const parsed = JSON.parse(recordsToJson(fields, [{ id: 3, name: "Dana" }])) as Array<Record<string, unknown>>;
+  assert.deepEqual(parsed, [{ id: 3, name: "Dana" }]);
+});
+
+test("recordsToJson parses a file field's stored JSON-descriptor string into a real object, reusing parseFileFieldValue's own validation", () => {
+  const fields: Field[] = [{ name: "attachment", label: "Attachment", type: "file", required: false }];
+  const descriptor = JSON.stringify({ url: "/api/uploads/proj1/Customer/11111111-1111-1111-1111-111111111111.pdf", name: "contract.pdf", size: 500, mimeType: "application/pdf" });
+  const parsed = JSON.parse(recordsToJson(fields, [{ id: 1, attachment: descriptor }])) as Array<Record<string, unknown>>;
+  assert.deepEqual(parsed[0].attachment, {
+    url: "/api/uploads/proj1/Customer/11111111-1111-1111-1111-111111111111.pdf",
+    name: "contract.pdf",
+    size: 500,
+    mimeType: "application/pdf",
+  });
+});
+
+test("recordsToJson emits null for an empty/missing file field, not an empty string or the string \"null\"", () => {
+  const fields: Field[] = [{ name: "attachment", label: "Attachment", type: "file", required: false }];
+  const parsed = JSON.parse(recordsToJson(fields, [{ id: 1, attachment: null }, { id: 2, attachment: "" }])) as Array<Record<string, unknown>>;
+  assert.equal(parsed[0].attachment, null);
+  assert.equal(parsed[1].attachment, null);
 });
 
 test("buildImportRecords resolves a valid \"id\" column into each record's own `id` key, leaving the field data unchanged", () => {

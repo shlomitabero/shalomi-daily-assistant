@@ -1448,6 +1448,37 @@ export function recordsToCsv(
 }
 
 /**
+ * Round 1217: `recordsToCsv` above is lossy by design -- every value is
+ * rendered as the display TEXT a human reading a spreadsheet would want
+ * (a relation resolves to the target record's own label, an enum to its
+ * enumLabels text, a boolean to "TRUE"/"FALSE"), which throws away the
+ * real stored value needed to round-trip this data into another tool or
+ * script (the raw relation id, the raw enum value, a real boolean). This
+ * sibling export keeps each field's own value exactly as `repository.ts`'s
+ * `coerceValue`/row-mapping already store and return it -- a number stays
+ * a JS number, a boolean a real JS boolean (not 0/1 -- see repository.ts's
+ * own `Boolean(value)` conversion on read), and date/enum/relation-id
+ * values stay their raw string, with NO display-label substitution at
+ * all. The one exception is `file`: its stored value is itself a JSON-
+ * encoded descriptor string (see `parseFileFieldValue`'s own doc comment),
+ * so leaving it untouched would produce a doubly-escaped JSON string
+ * inside the JSON export; parsing it into a real `{url, name, size,
+ * mimeType}` object (or `null` for an empty/invalid one, reusing the same
+ * validated parser EntityPanel.tsx already renders with) keeps the output
+ * genuinely structured instead of a string a consumer has to re-parse.
+ */
+export function recordsToJson(fields: Field[], records: EntityRecord[]): string {
+  const rows = records.map((record) => {
+    const row: Record<string, unknown> = { id: record.id };
+    for (const field of fields) {
+      row[field.name] = field.type === "file" ? parseFileFieldValue(record[field.name]) : record[field.name];
+    }
+    return row;
+  });
+  return JSON.stringify(rows, null, 2);
+}
+
+/**
  * Parses CSV text into rows of raw string cells (RFC 4180: quoted fields
  * may contain commas, newlines, and doubled-quote escapes), the reverse of
  * `recordsToCsv` -- this is what lets "import my customer list" mean
