@@ -498,6 +498,14 @@ export function addField(
   });
 }
 
+/** Round 1216: same idempotency-key shape as addField's own fix -- a lost response after this entity was already duplicated must replay that success on retry, not create a second duplicate. */
+export function duplicateEntity(projectId: string, entityName: string): Promise<{ project: Project }> {
+  return request(`/projects/${projectId}/entities/${encodeURIComponent(entityName)}/duplicate`, {
+    method: "POST",
+    headers: { "x-idempotency-key": crypto.randomUUID() },
+  });
+}
+
 /** Round 941: same idempotency-key shape as deleteRecord's own fix (round 792) -- a lost response after this field was already removed must replay that success on retry, not surface a confusing "not found". */
 export function removeField(projectId: string, entityName: string, fieldName: string): Promise<{ project: Project }> {
   return request(`/projects/${projectId}/entities/${encodeURIComponent(entityName)}/fields/${encodeURIComponent(fieldName)}`, {

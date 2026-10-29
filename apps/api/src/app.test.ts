@@ -7720,6 +7720,125 @@ test("adding an entity on a project you have no access to still 404s, the same a
   });
 });
 
+test("duplicating an entity clones its whole field list into a new entity with a derived, uniquely-suffixed name and a \" (copy)\" label", async () => {
+  await withServer(async (baseUrl) => {
+    const token = await signup(baseUrl, "entity-duplicate1@example.com");
+    const createRes = await fetch(`${baseUrl}/api/projects`, {
+      method: "POST",
+      headers: authHeaders(token),
+      body: JSON.stringify({ description: "A CRM with customers and deals." }),
+    });
+    const { project } = (await createRes.json()) as {
+      project: { id: string; spec: { entities: { name: string; label?: string; fields: { name: string; type: string }[] }[] } };
+    };
+    const source = project.spec.entities[0];
+
+    const res = await fetch(`${baseUrl}/api/projects/${project.id}/entities/${source.name}/duplicate`, {
+      method: "POST",
+      headers: authHeaders(token),
+    });
+    assert.equal(res.status, 200);
+    const { project: updated } = (await res.json()) as {
+      project: { spec: { entities: { name: string; label?: string; fields: { name: string; type: string }[] }[] } };
+    };
+    assert.equal(updated.spec.entities.length, project.spec.entities.length + 1, "must append exactly one new entity");
+    const clone = updated.spec.entities.at(-1)!;
+    assert.notEqual(clone.name, source.name, "the clone must get its own, distinct table name");
+    assert.equal(clone.label, `${source.label ?? source.name} (copy)`, "the clone's label must be the source's own label/name with a \" (copy)\" suffix, matching /projects/:id/clone's own convention");
+    assert.deepEqual(clone.fields, source.fields, "every field (name, type, required, enumValues, relationTo, etc.) must be copied verbatim");
+  });
+});
+
+test("duplicating an entity twice in a row gets two distinct names (no collision), the second time deriving from the same original source label", async () => {
+  await withServer(async (baseUrl) => {
+    const token = await signup(baseUrl, "entity-duplicate2@example.com");
+    const createRes = await fetch(`${baseUrl}/api/projects`, {
+      method: "POST",
+      headers: authHeaders(token),
+      body: JSON.stringify({ description: "A CRM with customers and deals." }),
+    });
+    const { project } = (await createRes.json()) as { project: { id: string; spec: { entities: { name: string }[] } } };
+    const source = project.spec.entities[0];
+
+    const firstRes = await fetch(`${baseUrl}/api/projects/${project.id}/entities/${source.name}/duplicate`, {
+      method: "POST",
+      headers: authHeaders(token),
+    });
+    const { project: afterFirst } = (await firstRes.json()) as { project: { spec: { entities: { name: string }[] } } };
+
+    const secondRes = await fetch(`${baseUrl}/api/projects/${project.id}/entities/${source.name}/duplicate`, {
+      method: "POST",
+      headers: authHeaders(token),
+    });
+    assert.equal(secondRes.status, 200);
+    const { project: afterSecond } = (await secondRes.json()) as { project: { spec: { entities: { name: string }[] } } };
+    assert.equal(afterSecond.spec.entities.length, afterFirst.spec.entities.length + 1);
+    const names = afterSecond.spec.entities.map((e) => e.name);
+    assert.equal(new Set(names).size, names.length, "every entity name must still be unique after duplicating the same source twice");
+  });
+});
+
+test("duplicating an entity to a project that's already been built is rejected with ENTITY_DUPLICATE_AFTER_BUILD, since the real database table and generated code would never reflect it", async () => {
+  await withServer(async (baseUrl) => {
+    const token = await signup(baseUrl, "entity-duplicate-afterbuild@example.com");
+    const createRes = await fetch(`${baseUrl}/api/projects`, {
+      method: "POST",
+      headers: authHeaders(token),
+      body: JSON.stringify({ description: "A CRM with customers and deals." }),
+    });
+    const { project } = (await createRes.json()) as { project: { id: string; spec: { entities: { name: string }[] } } };
+    const source = project.spec.entities[0];
+
+    const buildRes = await fetch(`${baseUrl}/api/projects/${project.id}/build`, {
+      method: "POST",
+      headers: authHeaders(token),
+    });
+    await collectSSE(buildRes);
+
+    const res = await fetch(`${baseUrl}/api/projects/${project.id}/entities/${source.name}/duplicate`, {
+      method: "POST",
+      headers: authHeaders(token),
+    });
+    assert.equal(res.status, 409);
+    assert.equal(((await res.json()) as { code?: string }).code, "ENTITY_DUPLICATE_AFTER_BUILD");
+  });
+});
+
+test("POST /projects/:id/entities/:entityName/duplicate retried with the same idempotency key after the first attempt already finished replays the original response instead of duplicating twice", async () => {
+  await withServer(async (baseUrl) => {
+    const token = await signup(baseUrl, "entity-duplicate-idem1@example.com");
+    const createRes = await fetch(`${baseUrl}/api/projects`, {
+      method: "POST",
+      headers: authHeaders(token),
+      body: JSON.stringify({ description: "A CRM with customers and deals." }),
+    });
+    const { project } = (await createRes.json()) as { project: { id: string; spec: { entities: { name: string }[] } } };
+    const source = project.spec.entities[0];
+    const originalCount = project.spec.entities.length;
+
+    const headers = { ...authHeaders(token), "x-idempotency-key": "entity-duplicate-repro-key" };
+    const firstRes = await fetch(`${baseUrl}/api/projects/${project.id}/entities/${source.name}/duplicate`, {
+      method: "POST",
+      headers,
+    });
+    assert.equal(firstRes.status, 200);
+    const first = (await firstRes.json()) as { project: { spec: { entities: { name: string }[] } } };
+    assert.equal(first.project.spec.entities.length, originalCount + 1);
+
+    const retryRes = await fetch(`${baseUrl}/api/projects/${project.id}/entities/${source.name}/duplicate`, {
+      method: "POST",
+      headers,
+    });
+    assert.equal(retryRes.status, 200);
+    const retry = (await retryRes.json()) as { project: { spec: { entities: { name: string }[] } } };
+    assert.deepEqual(
+      retry.project.spec.entities,
+      first.project.spec.entities,
+      "the retry must replay the original response, not duplicate the entity a second time",
+    );
+  });
+});
+
 test("adding an entity to a project that's already been built is rejected with ENTITY_ADD_AFTER_BUILD, since the real database table and generated code would never reflect it", async () => {
   await withServer(async (baseUrl) => {
     const token = await signup(baseUrl, "entity-add-afterbuild@example.com");

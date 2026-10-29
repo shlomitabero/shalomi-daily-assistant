@@ -2554,6 +2554,130 @@ test("a sibling field chip's own controls are disabled while the add-field form'
  * of EntitySummaryItem's own already-tested fieldBusyMap/addFieldBusy
  * pattern) wires together.
  */
+/**
+ * Round 1216: the new "Duplicate" button -- clicking it calls the new
+ * duplicateEntity endpoint and feeds the server's returned project back
+ * through the same onRenamed callback App.tsx already passes for rename
+ * (both just setProject with the whole updated spec).
+ */
+test("EntitySummaryItem's Duplicate button calls the duplicate endpoint and reports the server's updated project via onRenamed", async () => {
+  await withJsdom(async () => {
+    const originalFetch = globalThis.fetch;
+    const clonedEntity = { name: "Customer2", label: "Customer (copy)", fields: baseProject.spec.entities[0].fields };
+    const updatedProject: Project = { ...baseProject, spec: { ...baseProject.spec, entities: [...baseProject.spec.entities, clonedEntity] } };
+    globalThis.fetch = (async (input: string, init?: RequestInit) => {
+      const method = init?.method ?? "GET";
+      if (method === "POST" && input === "/api/projects/proj1/entities/Customer/duplicate") {
+        return new Response(JSON.stringify({ project: updatedProject }), { status: 200, headers: { "content-type": "application/json" } });
+      }
+      throw new Error(`unexpected request ${method} ${input}`);
+    }) as typeof fetch;
+
+    let renamedWith: Project | null = null;
+    try {
+      render(
+        React.createElement(
+          ThemeProvider,
+          null,
+          React.createElement(
+            LanguageProvider,
+            null,
+            React.createElement(EntitySummaryItem, {
+              entity: baseProject.spec.entities[0],
+              allEntities: baseProject.spec.entities,
+              fieldsSummary: "name *",
+              projectId: "proj1",
+              canRemove: true,
+              onRenamed: (p: Project) => {
+                renamedWith = p;
+              },
+              onRemoved: () => {},
+            }),
+          ),
+        ),
+      );
+
+      fireEvent.click(document.querySelector(".entity-summary-duplicate") as HTMLButtonElement);
+      await waitForCondition(() => renamedWith !== null);
+      assert.deepEqual(renamedWith, updatedProject, "the server's returned project must be reported up via onRenamed");
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+});
+
+test("EntitySummaryItem's Duplicate button shows the server's error on failure, and is disabled (along with remove/rename) while siblingActionBusy is true", async () => {
+  await withJsdom(async () => {
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = (async (input: string, init?: RequestInit) => {
+      const method = init?.method ?? "GET";
+      if (method === "POST" && input === "/api/projects/proj1/entities/Customer/duplicate") {
+        return new Response(JSON.stringify({ error: "cannot duplicate right now" }), {
+          status: 409,
+          headers: { "content-type": "application/json" },
+        });
+      }
+      throw new Error(`unexpected request ${method} ${input}`);
+    }) as typeof fetch;
+
+    try {
+      render(
+        React.createElement(
+          ThemeProvider,
+          null,
+          React.createElement(
+            LanguageProvider,
+            null,
+            React.createElement(EntitySummaryItem, {
+              entity: baseProject.spec.entities[0],
+              allEntities: baseProject.spec.entities,
+              fieldsSummary: "name *",
+              projectId: "proj1",
+              canRemove: true,
+              onRenamed: () => {},
+              onRemoved: () => {},
+            }),
+          ),
+        ),
+      );
+
+      fireEvent.click(document.querySelector(".entity-summary-duplicate") as HTMLButtonElement);
+      await waitForCondition(() => document.body.textContent?.includes("cannot duplicate right now") ?? false);
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+    cleanup();
+
+    // Same siblingActionBusy cross-gate every other control on this entity
+    // already respects (see the pre-existing remove/rename test just below).
+    render(
+      React.createElement(
+        ThemeProvider,
+        null,
+        React.createElement(
+          LanguageProvider,
+          null,
+          React.createElement(EntitySummaryItem, {
+            entity: baseProject.spec.entities[0],
+            allEntities: baseProject.spec.entities,
+            fieldsSummary: "name *",
+            projectId: "proj1",
+            canRemove: true,
+            onRenamed: () => {},
+            onRemoved: () => {},
+            siblingActionBusy: true,
+          }),
+        ),
+      ),
+    );
+    assert.equal(
+      (document.querySelector(".entity-summary-duplicate") as HTMLButtonElement).disabled,
+      true,
+      "the duplicate button must be disabled while a sibling entity's own action (or AddEntityForm) is in flight",
+    );
+  });
+});
+
 test("EntitySummaryItem's own remove button and rename are disabled while siblingActionBusy is true, and re-enable once it clears", async () => {
   await withJsdom(async () => {
     const entity = baseProject.spec.entities[0];

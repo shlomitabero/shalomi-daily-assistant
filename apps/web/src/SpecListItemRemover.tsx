@@ -7,6 +7,7 @@ import {
   addField,
   addPersona,
   addRole,
+  duplicateEntity,
   removeAssumption,
   removeEntity,
   removeField,
@@ -607,6 +608,17 @@ export function EntitySummaryItem({
 }) {
   const { t } = useTranslation();
   const { busy, error, handleRemove, clearError } = useRemovableSpecItem(() => removeEntity(projectId, entity.name), onRemoved);
+  // Round 1216: reuses useRemovableSpecItem's own generic
+  // busy/error/call/callback shape -- it's not actually remove-specific
+  // (just "call this async action, track busy/error, report the result
+  // up"), the exact same shape "duplicate" needs. onRenamed is reused
+  // rather than onRemoved since both just feed the server's returned
+  // `project` back into the same setProject-style callback App.tsx
+  // already passes for rename.
+  const { busy: duplicateBusy, error: duplicateError, handleRemove: handleDuplicate, clearError: clearDuplicateError } = useRemovableSpecItem(
+    () => duplicateEntity(projectId, entity.name),
+    onRenamed,
+  );
   const rename = useRenamableSpecItem(
     entity.label ?? entity.name,
     (value) => renameEntityLabel(projectId, entity.name, value),
@@ -678,7 +690,13 @@ export function EntitySummaryItem({
   // gating is the only protection against the exact same stale-response
   // resurrection race round 1147 already closed for RoleChip/
   // AssumptionItem/PersonaItem.
-  const anyChildOrSelfBusy = busy || rename.busy || rename.editing || addFieldBusy || Object.keys(fieldBusyMap).length > 0 || siblingActionBusy;
+  // Round 1216: also ORs in duplicateBusy -- the new Duplicate button is
+  // one more real-effect action on this same entity, racing remove/rename
+  // exactly the same way a sibling field action already does (same
+  // unguarded, name-keyed read-modify-write shape; see handleStartRename's
+  // own round-1027 comment below).
+  const anyChildOrSelfBusy =
+    busy || duplicateBusy || rename.busy || rename.editing || addFieldBusy || Object.keys(fieldBusyMap).length > 0 || siblingActionBusy;
 
   // Round 1063: reports this entity's own anyChildOrSelfBusy state (which
   // already includes every one of its own children -- fields and
@@ -721,6 +739,7 @@ export function EntitySummaryItem({
   function handleStartRename() {
     if (anyChildOrSelfBusy) return;
     clearError();
+    clearDuplicateError();
     rename.startEditing();
   }
 
@@ -799,6 +818,16 @@ export function EntitySummaryItem({
         </strong>
         <button
           type="button"
+          className="entity-summary-duplicate secondary small"
+          onClick={handleDuplicate}
+          disabled={anyChildOrSelfBusy}
+          aria-label={t("spec.entities.duplicate")}
+          title={t("spec.entities.duplicate")}
+        >
+          {t("spec.entities.duplicate")}
+        </button>
+        <button
+          type="button"
           className="entity-summary-remove"
           onClick={handleRemove}
           disabled={anyChildOrSelfBusy || !canRemove}
@@ -811,6 +840,11 @@ export function EntitySummaryItem({
       {error && (
         <p className="error small" role="alert">
           {error}
+        </p>
+      )}
+      {duplicateError && (
+        <p className="error small" role="alert">
+          {duplicateError}
         </p>
       )}
       <div className="entity-summary-fields chips" aria-label={fieldsSummary}>

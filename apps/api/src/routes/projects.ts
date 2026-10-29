@@ -4183,6 +4183,79 @@ export function createProjectsRouter(
   );
 
   /**
+   * Round 1216: record/project/automation-rule all already have a
+   * "Duplicate" action (handleDuplicate/handleBulkDuplicate in
+   * EntityPanel.tsx, /projects/:id/clone, round 1047's
+   * handleDuplicateRule) -- an entire ENTITY never did. A user building a
+   * CRM who already shaped "Customer" (name/email/phone/address/notes,
+   * enums, a relation) and now wants a similarly-shaped "Vendor" had to
+   * manually replay every single AddFieldForm submission one field at a
+   * time; this clones the whole field list in one request, so they can
+   * rename/tweak from a real starting point instead. Same pre-build-only
+   * gate and activePipelines guard as every sibling spec-edit route (see
+   * the entity-add route's own comment just above) -- once built, the
+   * real database table and generated code already exist and a spec-only
+   * clone wouldn't create a matching table anyway. The new entity's
+   * fields are copied verbatim, INCLUDING any `relationTo` -- deliberately
+   * not rewritten to point at the new entity even for a self-relation,
+   * matching EntityPanel's own handleDuplicate convention of cloning a
+   * record's own values as-is rather than reinterpreting them; a
+   * relationTo naming the clone's own source entity still names a real,
+   * valid entity in this spec either way, so there's nothing to fix up.
+   * The new label/name derivation mirrors /projects/:id/clone's own
+   * Hebrew-aware " (עותק)"/" (copy)" suffix exactly, then runs the result
+   * through the same `deriveEntityName` the manual add-entity route above
+   * uses, so a repeated duplicate (or a name that happens to collide with
+   * an existing one) still gets a real, unique table name instead of a
+   * silent collision.
+   */
+  /** Same withIdempotency() extension as POST /projects/:id/roles above -- see its own doc comment. */
+  router.post(
+    "/projects/:id/entities/:entityName/duplicate",
+    specEditRateLimiter,
+    asyncRoute(async (req, res) => {
+      const project = requireProjectWriteAccess(db, req.params.id, req.userId!);
+      if (project.status === "built") {
+        throw new HttpError(409, "Cannot duplicate a screen after the project has already been built", "ENTITY_DUPLICATE_AFTER_BUILD");
+      }
+      // Same activePipelines guard as the entity-add route above -- see its
+      // own comment.
+      if (activePipelines.has(project.id)) {
+        throw new HttpError(409, "A build or refine is already running for this project", "PIPELINE_IN_PROGRESS");
+      }
+      const idempotencyKey = req.header("X-Idempotency-Key") || undefined;
+      const { status, body } = await withIdempotency(
+        db,
+        idempotencyKey,
+        req.userId!,
+        `POST /projects/${project.id}/entities/${req.params.entityName}/duplicate`,
+        async () => {
+          const entity = findEntity(project, req.params.entityName);
+          const sourceLabel = entity.label ?? entity.name;
+          const suffix = isHebrewText(sourceLabel) ? " (עותק)" : " (copy)";
+          const newLabel = `${sourceLabel}${suffix}`;
+          const name = deriveEntityName(newLabel, project.spec.entities.map((e) => e.name));
+          const newEntity: Entity = {
+            ...entity,
+            name,
+            label: newLabel,
+            fields: entity.fields.map((f) => ({ ...f })),
+          };
+          const newScreens = deriveScreensForNewEntity(name, project.spec.entities, project.spec.screens);
+          const nextSpec = {
+            ...project.spec,
+            entities: [...project.spec.entities, newEntity],
+            screens: [...project.spec.screens, ...newScreens],
+          };
+          const updated = updateProjectSpec(db, project.id, nextSpec);
+          return { status: 200, body: { project: updated } };
+        },
+      );
+      res.status(status).json(body);
+    }),
+  );
+
+  /**
    * The other half of the same one-directional gap entities themselves had
    * before the add route above -- roles, assumptions, and whole entities
    * all got a real add/remove/rename correction path on the spec review
