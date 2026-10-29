@@ -1013,6 +1013,16 @@ export function calendarChipLabelValue(labelField: Field, record: EntityRecord, 
   if (labelField.type === "boolean") return value ? "TRUE" : "FALSE";
   if (labelField.type === "enum") return (labelField.enumLabels && labelField.enumLabels[String(value)]) || String(value);
   if (labelField.type === "date" && typeof value === "string") return formatDateValue(value, lang);
+  // Round 1229: mirrors recordDisplayLabel's own round-1227 number-branch
+  // fix -- the SAME last-resort fallback reasoning applies here (an
+  // entity with no name/title/text/longtext/enum/boolean/date field,
+  // e.g. DailyLog { loggedAt: date, temperature: number }, lands on the
+  // number field as its own calendar day-chip's label), and this used to
+  // String() the raw un-grouped digits instead of a real locale-
+  // formatted number. stripBidiMarks matches this file's own established
+  // convention for a locale-formatted number that leaves the app (the
+  // calendar chip's own tooltip/day-cell text).
+  if (labelField.type === "number" && typeof value === "number") return stripBidiMarks(formatNumberValue(value, lang));
   return String(value);
 }
 

@@ -213,7 +213,16 @@ export function buildCalendarIcs(
           // relied on for DESCRIPTION lines just below.
           : labelField.type === "date"
             ? formatIcsDescriptionDate(rawLabelValue, lang)
-            : rawLabelValue;
+            // Round 1229: mirrors recordDisplayLabel's own round-1227
+            // number-branch fix -- the SAME last-resort fallback
+            // reasoning applies here, and this used to pass the raw
+            // un-grouped digits straight through instead of a real
+            // locale-formatted number. Reuses this file's own
+            // formatIcsDescriptionNumber, already relied on for
+            // DESCRIPTION lines just below.
+            : labelField.type === "number"
+              ? formatIcsDescriptionNumber(rawLabelValue, lang)
+              : rawLabelValue;
     // Round 1022: `??` only falls through on null/undefined, never on a
     // genuinely blank string -- a text/longtext display field (pickDisplayField
     // never requires one to be `required: true`) left empty on one record

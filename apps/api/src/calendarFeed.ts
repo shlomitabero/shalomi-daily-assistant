@@ -86,6 +86,13 @@ function calendarChipLabelValue(labelField: Field, record: EntityRecord, lang: L
   if (labelField.type === "boolean") return value ? "TRUE" : "FALSE";
   if (labelField.type === "enum") return (labelField.enumLabels && labelField.enumLabels[String(value)]) || String(value);
   if (labelField.type === "date" && typeof value === "string") return String(formatIcsDescriptionDate(value, lang));
+  // Round 1229: mirrors recordDisplayLabel's own round-1227/1228 number-
+  // branch fix -- the SAME last-resort fallback reasoning applies here,
+  // and this used to String() the raw un-grouped digits in the
+  // subscription feed's own SUMMARY line instead of a real locale-
+  // formatted number. Reuses this file's own formatIcsDescriptionNumber
+  // (round 1097).
+  if (labelField.type === "number" && typeof value === "number") return String(formatIcsDescriptionNumber(value, lang));
   return String(value);
 }
 

@@ -1633,6 +1633,23 @@ test("calendarChipLabelValue resolves a date display field to a formatted date, 
   assert.equal(calendarChipLabelValue(field, { id: 1, returnDate: "2026-04-02" }, "he"), "2.4.2026");
 });
 
+/**
+ * Round 1229: mirrors recordDisplayLabel's own round-1227 number-branch
+ * fix -- the SAME last-resort fallback reasoning applies here (an entity
+ * with no name/title/text/longtext/enum/boolean/date field, e.g.
+ * DailyLog { loggedAt: date, temperature: number }, lands on the number
+ * field as its own calendar day-chip's label), and calendarChipLabelValue
+ * used to String() the raw un-grouped digits instead of a real locale-
+ * formatted number.
+ */
+test("calendarChipLabelValue resolves a number display field to a locale-formatted number, not the raw ungrouped digits", () => {
+  const field: Field = { name: "temperature", type: "number", required: false };
+  assert.equal(calendarChipLabelValue(field, { id: 1, temperature: 1500 }, "en"), "1,500");
+  const he = calendarChipLabelValue(field, { id: 1, temperature: -150 }, "he");
+  assert.equal(he, "-150", "must honor the given lang and strip the invisible bidi mark before a negative number's minus sign");
+  assert.ok(!he.includes("‎") && !he.includes("‏"), "must contain no invisible bidi mark at all");
+});
+
 test("recordDisplayLabel shows the display field's value, falling back to #id when it's empty or missing", () => {
   const courier: Entity = {
     name: "Courier",

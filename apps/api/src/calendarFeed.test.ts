@@ -89,6 +89,25 @@ test("buildCalendarFeedIcs resolves a date label field to a formatted date in SU
   assert.doesNotMatch(ics!, /SUMMARY:2026-04-02/, "must never leak the raw unformatted 'YYYY-MM-DD' string");
 });
 
+/**
+ * Round 1229: same gap as the date fix just above, for the one remaining
+ * type calendarChipLabelField's own last-resort fallback can equally
+ * land on -- a `number` field (an entity with no name/title/text/
+ * longtext/enum/boolean/second-date field, only a number alongside the
+ * auto-detected date field). Before this round, the raw un-grouped
+ * digits leaked straight into SUMMARY, mirroring calendarIcs.ts's own
+ * identical fix for the one-shot export.
+ */
+test("buildCalendarFeedIcs resolves a number label field to a locale-formatted number in SUMMARY, not the raw ungrouped digits", () => {
+  const temperatureField: Field = { name: "temperature", label: "טמפרטורה", type: "number", required: false };
+  const dailyLogEntity: Entity = { name: "DailyLog", label: "יומן", fields: [dateField, temperatureField] };
+  const records: EntityRecord[] = [{ id: 1, appointmentDate: "2026-03-15", temperature: 1500 }];
+  const ics = buildCalendarFeedIcs(dailyLogEntity, records, "proj1", new Date(), [], {}, "en");
+  assert.ok(ics);
+  assert.match(ics!, /SUMMARY:1\\,500/, "a number label field must render with real locale thousands separators (RFC 5545 escapes the comma as \\,)");
+  assert.doesNotMatch(ics!, /SUMMARY:1500\r?\n/, "must never leak the raw ungrouped digits with no thousands separator");
+});
+
 test("buildCalendarFeedIcs includes EVERY record with a valid date, not just one month -- the whole point of a live feed vs. the one-shot export", () => {
   const records: EntityRecord[] = [
     { id: 1, appointmentDate: "2024-01-01", customerName: "Old One", confirmed: false },

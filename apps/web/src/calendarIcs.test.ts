@@ -419,6 +419,24 @@ test("buildCalendarIcs resolves a date label field to a formatted date in SUMMAR
 });
 
 /**
+ * Round 1229: same gap as the boolean/enum/date fixes above, for the one
+ * remaining type calendarChipLabelField's own last-resort fallback can
+ * equally land on -- a `number` field (reachable the same way: an entity
+ * with no name/title/text/longtext/enum/boolean/date field, only a
+ * number and a date, e.g. DailyLog { loggedAt: date, temperature: number }).
+ * Before this round, the raw un-grouped digits leaked straight into
+ * SUMMARY unformatted.
+ */
+test("buildCalendarIcs resolves a number label field to a locale-formatted number in SUMMARY, not the raw ungrouped digits", () => {
+  const temperatureField: Field = { name: "temperature", label: "טמפרטורה", type: "number", required: false };
+  const dailyLogEntity: Entity = { name: "DailyLog", label: "יומן", fields: [dateField, temperatureField] };
+  const records: EntityRecord[] = [{ id: 1, appointmentDate: "2026-03-15", temperature: 1500 }];
+  const ics = buildCalendarIcs(dailyLogEntity, dateField, temperatureField, records, [], {}, new Date(), null, undefined, "en");
+  assert.match(ics, /SUMMARY:1\\,500/, "a number label field must render with real locale thousands separators (RFC 5545 escapes the comma as \\,)");
+  assert.doesNotMatch(ics, /SUMMARY:1500\r?\n/, "must never leak the raw ungrouped digits with no thousands separator");
+});
+
+/**
  * Round 1022: `??` only falls through on null/undefined, never on a
  * genuinely blank string -- a text display field left empty on one
  * record (pickDisplayField never requires one to be `required: true`)
