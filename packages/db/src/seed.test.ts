@@ -615,6 +615,39 @@ test("orderForSeeding doesn't loop forever on a self-relation (e.g. Employee.man
   );
 });
 
+/**
+ * Round 1209: the same casing drift rounds 1159-1188/1196/1208 already
+ * fixed in every other consumer of relationTo -- an ordinary refine can
+ * leave a relation field's relationTo differently cased from its real
+ * target entity's declared name. Before this fix, "customer" (lower-case
+ * relationTo) against a real entity declared "Customer" silently failed
+ * the exact-string Set.has check this dependency edge relied on, so
+ * Invoice was never recognized as depending on Customer and could be
+ * seeded first -- exactly the gap this whole function exists to close.
+ */
+test("orderForSeeding still moves the target entity first when relationTo differs from the target's own declared name only by letter case", () => {
+  const invoice: Entity = {
+    name: "Invoice",
+    fields: [{ name: "customerId", type: "relation", relationTo: "customer", required: true }],
+  };
+  const customerEntity: Entity = { name: "Customer", fields: [{ name: "name", type: "text", required: true }] };
+  assert.deepEqual(
+    orderForSeeding([invoice, customerEntity]).map((e) => e.name),
+    ["Customer", "Invoice"],
+  );
+});
+
+test("orderForSeeding still recognizes a self-relation as a non-dependency when relationTo differs from the entity's own name only by letter case", () => {
+  const employee: Entity = {
+    name: "Employee",
+    fields: [{ name: "managerId", type: "relation", relationTo: "employee", required: true }],
+  };
+  assert.deepEqual(
+    orderForSeeding([employee]).map((e) => e.name),
+    ["Employee"],
+  );
+});
+
 test("seed records satisfy the real repository validation and insert cleanly", () => {
   const db = openDatabase(":memory:");
   applyMigrations(db, "proj1", {

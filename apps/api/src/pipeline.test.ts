@@ -699,6 +699,74 @@ test("refining to add an entity with a required relation to an existing-but-empt
   assert.ok(countRecords(db, project.id, customer) > 0, "Customer must be reseeded too, since it was genuinely empty");
 });
 
+/**
+ * Round 1209: the identical scenario as the test just above, except
+ * Invoice's own relationTo is cased "customer" while the real entity is
+ * declared "Customer" -- the same AI-regeneration casing drift
+ * rounds 1159-1188/1196/1208 already fixed in every other consumer of
+ * relationTo in this codebase. Before this fix, the reseed graph walk's
+ * entityByName lookup was exact-case, so this differently-cased
+ * relationTo never resolved to the real Customer entity at all: Customer
+ * was never added to mustAlsoSeed despite being genuinely empty, leaving
+ * Invoice's every generated record to fail insertRecord's own real FK
+ * constraint (row 1 doesn't exist) with the exact same cryptic error
+ * round 467's own fix exists to prevent.
+ */
+test("refining to add an entity whose relationTo is cased differently from its existing-but-emptied target's own declared name still seeds both", async () => {
+  const spec: ProductSpec = {
+    summary: "test",
+    personas: [],
+    roles: ["Admin"],
+    screens: [],
+    assumptions: [],
+    openQuestions: [],
+    entities: [{ name: "Customer", fields: [{ name: "name", type: "text", required: true }] }],
+  };
+  const db = openDatabase(":memory:");
+  ensureProjectsTable(db);
+  ensureCheckpointsTable(db);
+  const project = insertProject(db, { id: "proj1", ownerId: "user1", name: "test", description: "test", spec });
+  const customer = spec.entities[0];
+
+  await collect(runBuildPipeline(db, project, { nextSpec: spec, changeLabel: "Initial build" }));
+  assert.ok(countRecords(db, project.id, customer) > 0, "the initial build should have seeded Customer");
+
+  for (const record of listRecords(db, project.id, customer)) {
+    deleteRecord(db, project.id, customer, record.id as number);
+  }
+  assert.equal(countRecords(db, project.id, customer), 0, "Customer must genuinely be empty before the refine");
+
+  const refinedSpec: ProductSpec = {
+    ...spec,
+    entities: [
+      ...spec.entities,
+      {
+        name: "Invoice",
+        fields: [
+          { name: "amount", type: "number", required: true },
+          { name: "customerId", type: "relation", relationTo: "customer", required: true },
+        ],
+      },
+    ],
+  };
+  const events = await collect(
+    runBuildPipeline(db, project, { previousSpec: spec, nextSpec: refinedSpec, changeLabel: "Refine: add invoices" }),
+  );
+  const forgeEvent = events.find((e) => e.agent === "Forge");
+  assert.ok(forgeEvent && forgeEvent.status === "success", "the refine should still succeed overall");
+
+  const seedEvent = events.find((e) => e.agent === "Seed Data" && e.status !== "running");
+  assert.equal(
+    seedEvent!.status,
+    "success",
+    "seeding must not report any FK-constraint-violation failures for Invoice's required relation, despite relationTo's own differing letter case",
+  );
+
+  const invoice = refinedSpec.entities[1];
+  assert.ok(countRecords(db, project.id, invoice) > 0, "Invoice must actually have seeded rows");
+  assert.ok(countRecords(db, project.id, customer) > 0, "Customer must be reseeded too, since it was genuinely empty");
+});
+
 test("the Architect step's impact summary is re-emitted with the corrected spec after a Debug Agent recovery, not left stale", async () => {
   // requestSpecFix is free to rename/add/remove entities and fields while
   // fixing the error -- the Architect event already streamed to the

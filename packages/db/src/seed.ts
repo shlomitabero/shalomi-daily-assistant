@@ -374,13 +374,29 @@ function textSeedValueFor(fieldName: string, entityName: string, isHebrew: boole
  * actually satisfy anyway).
  */
 export function orderForSeeding(entities: Entity[]): Entity[] {
-  const names = new Set(entities.map((e) => e.name));
+  // Round 1209: resolved through a LOWERCASE-keyed lookup to the target's
+  // real declared name, not a raw case-sensitive Set.has/string-equality
+  // check against relationTo itself -- the same AI-regeneration casing
+  // drift rounds 1159-1188/1196/1208 already fixed in every other
+  // consumer of relationTo (migrate.ts's own resolveRelationTarget
+  // convention this mirrors) can leave a relation field's relationTo
+  // differently cased from its target's real name with nothing else
+  // about the spec changed. Before this, that dependency edge was
+  // silently dropped (names.has(field.relationTo) failed, so the target
+  // was never added to this entity's own requiredTargets), with no
+  // guarantee the target got seeded first -- resolving against the
+  // target's real name here means `targets` always holds the same
+  // canonical casing `placed` is populated with below, so the ordering
+  // comparison stays meaningful regardless of relationTo's own casing.
+  const namesByLowerName = new Map(entities.map((e) => [e.name.toLowerCase(), e.name]));
   const requiredTargets = new Map<string, Set<string>>();
   for (const entity of entities) {
     const targets = new Set<string>();
     for (const field of entity.fields) {
-      if (field.type === "relation" && field.required && field.relationTo && field.relationTo !== entity.name && names.has(field.relationTo)) {
-        targets.add(field.relationTo);
+      if (field.type !== "relation" || !field.required || !field.relationTo) continue;
+      const resolvedTarget = namesByLowerName.get(field.relationTo.toLowerCase());
+      if (resolvedTarget && resolvedTarget !== entity.name) {
+        targets.add(resolvedTarget);
       }
     }
     requiredTargets.set(entity.name, targets);

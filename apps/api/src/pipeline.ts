@@ -700,18 +700,30 @@ export async function* runBuildPipeline(
   // though it isn't itself "new". Same countRecords===0 safety check as
   // above, so an existing entity that genuinely still has rows is never
   // touched.
-  const entityByName = new Map(nextSpec.entities.map((e) => [e.name, e]));
+  // Round 1209: keyed by LOWERCASE name, not the entity's own exact-case
+  // name -- a relation field's own relationTo can drift in letter case
+  // from its target entity's real declared name across an ordinary
+  // refine (the same AI-regeneration casing noise rounds 1159-1188/1196/
+  // 1208 already found and fixed in every OTHER consumer of relationTo in
+  // this codebase, migrate.ts's own resolveRelationTarget convention
+  // among them). Before this, a relation field whose relationTo was, say,
+  // "customer" while the real entity was declared "Customer" silently
+  // failed every lookup below -- the target was never added to
+  // mustAlsoSeed even with zero rows, so it never got reseeded, and this
+  // exact mismatch is what round 467's own fix (the whole reason this
+  // graph walk exists) was written to catch in the first place.
+  const entityByName = new Map(nextSpec.entities.map((e) => [e.name.toLowerCase(), e]));
   const mustAlsoSeed = new Set<string>();
   const newEntitiesList = nextSpec.entities.filter((e) => newEntityNames.has(tableNameFor(project.id, e.name)));
-  const visited = new Set(newEntitiesList.map((e) => e.name));
+  const visited = new Set(newEntitiesList.map((e) => e.name.toLowerCase()));
   const frontier = [...newEntitiesList];
   while (frontier.length > 0) {
     const entity = frontier.shift()!;
     for (const field of entity.fields) {
-      if (field.type !== "relation" || !field.required || !field.relationTo || visited.has(field.relationTo)) continue;
-      const target = entityByName.get(field.relationTo);
+      if (field.type !== "relation" || !field.required || !field.relationTo || visited.has(field.relationTo.toLowerCase())) continue;
+      const target = entityByName.get(field.relationTo.toLowerCase());
       if (!target || countRecords(db, project.id, target) > 0) continue;
-      visited.add(target.name);
+      visited.add(target.name.toLowerCase());
       mustAlsoSeed.add(target.name);
       frontier.push(target);
     }
@@ -774,7 +786,7 @@ export async function* runBuildPipeline(
     // handles.
     const unseedableRelationField = entity.fields.find((f) => {
       if (f.type !== "relation" || !f.required || !f.relationTo) return false;
-      const target = entityByName.get(f.relationTo);
+      const target = entityByName.get(f.relationTo.toLowerCase());
       return !!target && countRecords(db, project.id, target) === 0;
     });
     if (unseedableRelationField) {
@@ -799,7 +811,7 @@ export async function* runBuildPipeline(
       // guess is left exactly as fragile as before.
       for (const field of entity.fields) {
         if (field.type !== "relation" || !field.required || !field.relationTo) continue;
-        const target = entityByName.get(field.relationTo);
+        const target = entityByName.get(field.relationTo.toLowerCase());
         const existing = target ? listRecords(db, project.id, target) : [];
         if (existing.length > 0) record[field.name] = existing[0].id;
       }
