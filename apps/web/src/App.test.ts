@@ -1767,6 +1767,7 @@ test("App's handleDeleteProject only calls the API and updates myProjects after 
       "cloningId",
       "window",
       "t",
+      "lang",
       "deleteProject",
       "setDeletingId",
       "setError",
@@ -1779,6 +1780,7 @@ test("App's handleDeleteProject only calls the API and updates myProjects after 
       null,
       { confirm: (message: string) => (confirmCalls.push(message), opts.confirmReturns) },
       (key: string) => key,
+      "en",
       opts.deleteProjectFn,
       (v: string | null) => (state.deletingId = v),
       (v: string | null) => (state.error = v),
@@ -1866,6 +1868,7 @@ test("App's handleBulkDeleteProjects removes only the projects that actually suc
       "cloningId",
       "window",
       "t",
+      "lang",
       "deleteProject",
       "visibleSelectedProjectIds",
       "setBulkDeleteBusy",
@@ -1880,6 +1883,7 @@ test("App's handleBulkDeleteProjects removes only the projects that actually suc
       null,
       { confirm: (message: string) => (confirmCalls.push(message), opts.confirmReturns) },
       (key: string, params?: Record<string, unknown>) => (params ? `${key}:${JSON.stringify(params)}` : key),
+      "en",
       opts.deleteProjectFn,
       visibleSelectedIds(state.selectedProjectIds, initialMyProjects.map((p) => p.id)),
       () => {},
@@ -1973,6 +1977,7 @@ test("App's handleBulkDeleteProjects only ever deletes visible+selected projects
     "cloningId",
     "window",
     "t",
+    "lang",
     "deleteProject",
     "visibleSelectedProjectIds",
     "setBulkDeleteBusy",
@@ -1987,6 +1992,7 @@ test("App's handleBulkDeleteProjects only ever deletes visible+selected projects
     null,
     { confirm: () => true },
     (key: string, params?: Record<string, unknown>) => (params ? `${key}:${JSON.stringify(params)}` : key),
+    "en",
     async (id: string) => {
       attempted.push(id);
     },
@@ -2062,6 +2068,7 @@ test("App's handleBulkDeleteProjects refuses to start a second batch while a pre
       "cloningId",
       "window",
       "t",
+      "lang",
       "deleteProject",
       "visibleSelectedProjectIds",
       "setBulkDeleteBusy",
@@ -2081,6 +2088,7 @@ test("App's handleBulkDeleteProjects refuses to start a second batch while a pre
         },
       },
       (key: string, params?: Record<string, unknown>) => (params ? `${key}:${JSON.stringify(params)}` : key),
+      "en",
       async (id: string) => {
         deleteCalls.push(id);
         await deleteGate;
@@ -2156,6 +2164,7 @@ test("App's handleDeleteProject and handleBulkDeleteProjects are cross-gated aga
       "cloningId",
       "window",
       "t",
+      "lang",
       "deleteProject",
       "setDeletingId",
       "setError",
@@ -2168,6 +2177,7 @@ test("App's handleDeleteProject and handleBulkDeleteProjects are cross-gated aga
       null,
       { confirm: () => (confirmCalls += 1, true) },
       (key: string) => key,
+      "en",
       async () => {
         deleteApiCalls += 1;
       },
@@ -2192,6 +2202,7 @@ test("App's handleDeleteProject and handleBulkDeleteProjects are cross-gated aga
       "cloningId",
       "window",
       "t",
+      "lang",
       "deleteProject",
       "visibleSelectedProjectIds",
       "setBulkDeleteBusy",
@@ -2206,6 +2217,7 @@ test("App's handleDeleteProject and handleBulkDeleteProjects are cross-gated aga
       null,
       { confirm: () => (confirmCalls += 1, true) },
       (key: string, params?: Record<string, unknown>) => (params ? `${key}:${JSON.stringify(params)}` : key),
+      "en",
       async () => {
         deleteApiCalls += 1;
       },
@@ -2290,6 +2302,7 @@ test("App's handleDuplicateProject is cross-gated against handleDeleteProject/ha
       "cloningId",
       "window",
       "t",
+      "lang",
       "deleteProject",
       "setDeletingId",
       "setError",
@@ -2302,6 +2315,7 @@ test("App's handleDuplicateProject is cross-gated against handleDeleteProject/ha
       "a",
       { confirm: () => (confirmCalls += 1, true) },
       (key: string) => key,
+      "en",
       async () => {
         deleteApiCalls += 1;
       },
@@ -2323,6 +2337,7 @@ test("App's handleDuplicateProject is cross-gated against handleDeleteProject/ha
       "cloningId",
       "window",
       "t",
+      "lang",
       "deleteProject",
       "visibleSelectedProjectIds",
       "setBulkDeleteBusy",
@@ -2337,6 +2352,7 @@ test("App's handleDuplicateProject is cross-gated against handleDeleteProject/ha
       "a",
       { confirm: () => (confirmCalls += 1, true) },
       (key: string, params?: Record<string, unknown>) => (params ? `${key}:${JSON.stringify(params)}` : key),
+      "en",
       async () => {
         deleteApiCalls += 1;
       },

@@ -9083,6 +9083,99 @@ test("DELETE /projects/:id retried with the same idempotency key after the first
   });
 });
 
+test("deleting a project sends a real notification to every remaining collaborator, naming the project, when email is configured", async () => {
+  const emailSender = createFakeEmailSender();
+  await withServer(
+    async (baseUrl) => {
+      const ownerToken = await signup(baseUrl, `owner-delete-notify-${Date.now()}@example.com`);
+      const collabEmailA = `collab-a-delete-notify-${Date.now()}@example.com`;
+      const collabEmailB = `collab-b-delete-notify-${Date.now()}@example.com`;
+      await signup(baseUrl, collabEmailA);
+      await signup(baseUrl, collabEmailB);
+
+      const createRes = await fetch(`${baseUrl}/api/projects`, {
+        method: "POST",
+        headers: authHeaders(ownerToken),
+        body: JSON.stringify({ description: "A CRM with customers and deals." }),
+      });
+      const { project } = (await createRes.json()) as { project: { id: string; name: string } };
+
+      await fetch(`${baseUrl}/api/projects/${project.id}/collaborators`, {
+        method: "POST",
+        headers: authHeaders(ownerToken),
+        body: JSON.stringify({ email: collabEmailA }),
+      });
+      await fetch(`${baseUrl}/api/projects/${project.id}/collaborators`, {
+        method: "POST",
+        headers: authHeaders(ownerToken),
+        body: JSON.stringify({ email: collabEmailB }),
+      });
+      emailSender.sentTo.length = 0; // The 2 invites themselves (round 1253) also send -- only the delete's own sends matter here.
+
+      const deleteRes = await fetch(`${baseUrl}/api/projects/${project.id}?lang=en`, { method: "DELETE", headers: authHeaders(ownerToken) });
+      assert.equal(deleteRes.status, 204);
+
+      assert.equal(emailSender.sentTo.length, 2, "exactly one notification per remaining collaborator must be sent");
+      const recipients = emailSender.sentTo.map((m) => m.to).sort();
+      assert.deepEqual(recipients, [collabEmailA, collabEmailB].sort(), "the notifications must go to the two collaborators, never the owner who initiated the delete");
+      const namePattern = new RegExp(project.name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"));
+      for (const message of emailSender.sentTo) {
+        assert.match(message.text, namePattern, "each notification's body must name the real project");
+      }
+    },
+    { emailSender },
+  );
+});
+
+test("deleting a project itself still succeeds, with no notification attempted, when no email provider is configured", async () => {
+  const emailSender = createFakeEmailSender({ configured: false });
+  await withServer(
+    async (baseUrl) => {
+      const ownerToken = await signup(baseUrl, `owner-delete-notify-unconfigured-${Date.now()}@example.com`);
+      const collabEmail = `collab-delete-notify-unconfigured-${Date.now()}@example.com`;
+      await signup(baseUrl, collabEmail);
+
+      const createRes = await fetch(`${baseUrl}/api/projects`, {
+        method: "POST",
+        headers: authHeaders(ownerToken),
+        body: JSON.stringify({ description: "A CRM with customers and deals." }),
+      });
+      const { project } = (await createRes.json()) as { project: { id: string } };
+
+      await fetch(`${baseUrl}/api/projects/${project.id}/collaborators`, {
+        method: "POST",
+        headers: authHeaders(ownerToken),
+        body: JSON.stringify({ email: collabEmail }),
+      });
+
+      const deleteRes = await fetch(`${baseUrl}/api/projects/${project.id}`, { method: "DELETE", headers: authHeaders(ownerToken) });
+      assert.equal(deleteRes.status, 204, "the delete itself must still work exactly as before this feature existed");
+      assert.equal(emailSender.sentTo.length, 0, "no send should even be attempted when email isn't configured");
+    },
+    { emailSender },
+  );
+});
+
+test("deleting a project with no collaborators sends no notification, and the delete still succeeds", async () => {
+  const emailSender = createFakeEmailSender();
+  await withServer(
+    async (baseUrl) => {
+      const ownerToken = await signup(baseUrl, `owner-delete-notify-solo-${Date.now()}@example.com`);
+      const createRes = await fetch(`${baseUrl}/api/projects`, {
+        method: "POST",
+        headers: authHeaders(ownerToken),
+        body: JSON.stringify({ description: "A CRM with customers and deals." }),
+      });
+      const { project } = (await createRes.json()) as { project: { id: string } };
+
+      const deleteRes = await fetch(`${baseUrl}/api/projects/${project.id}`, { method: "DELETE", headers: authHeaders(ownerToken) });
+      assert.equal(deleteRes.status, 204);
+      assert.equal(emailSender.sentTo.length, 0, "a project with no collaborators has nobody to notify");
+    },
+    { emailSender },
+  );
+});
+
 test("deleting a project with a live WhatsApp connection tears the connection down cleanly instead of erroring", async () => {
   let createdSockets: ReturnType<typeof createFakeWhatsAppSocket>[] = [];
   await withServer(

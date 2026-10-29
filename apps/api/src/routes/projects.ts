@@ -2010,6 +2010,16 @@ export function createProjectsRouter(
    * wrap short-circuits first), and the idempotency route key is built
    * from req.params.id directly rather than project.id, since no `project`
    * exists yet at that point.
+   *
+   * Round 1256: like invite/role-change/removal/transfer-ownership before
+   * their own fixes (rounds 1253/1254/1254/1255), this gave every
+   * collaborator on the project zero signal that their access was just
+   * revoked -- arguably the starkest version of that same gap, since
+   * deleteProject's cascade (collaborators.ts's own module comment) drops
+   * every collaborator row on this project in one shot, and App.tsx's
+   * subscribeProjectGone/subscribeViewerDemoted only self-correct an
+   * already-open tab's in-session state, so an offline collaborator finds
+   * out only by noticing the project missing next time they look.
    */
   router.delete(
     "/projects/:id",
@@ -2021,6 +2031,9 @@ export function createProjectsRouter(
         if (activePipelines.has(project.id)) {
           throw new HttpError(409, "A build or refine is already running for this project", "PIPELINE_IN_PROGRESS");
         }
+        // Round 1256: must be read BEFORE deleteProject's own cascade
+        // erases these very rows -- see this route's own doc comment above.
+        const collaboratorsBeforeDelete = listCollaborators(db, project.id);
         // This route has its own genuine await (whatsapp.disconnect() -> a
         // real network round-trip to the WhatsApp Web socket, when one is
         // connected) before deleteProject() actually runs -- the same kind
@@ -2041,6 +2054,23 @@ export function createProjectsRouter(
           await deleteProjectUploads(uploadsDir, project.id);
         } finally {
           activePipelines.delete(project.id);
+        }
+        if (collaboratorsBeforeDelete.length > 0 && emailSender.configured) {
+          const isHebrew = req.query.lang !== "en";
+          const subject = isHebrew ? `הפרויקט "${project.name}" ב-Forge AI נמחק` : `"${project.name}" on Forge AI was deleted`;
+          const body = isHebrew
+            ? `הפרויקט "${project.name}" ב-Forge AI נמחק על ידי הבעלים שלו, ואין לך יותר גישה אליו.`
+            : `"${project.name}" on Forge AI was deleted by its owner, and you no longer have access to it.`;
+          for (const collaborator of collaboratorsBeforeDelete) {
+            try {
+              await emailSender.send(collaborator.email, subject, body);
+            } catch {
+              // Swallowed, deliberately, same as this route family's own
+              // convention -- the delete itself already succeeded and was
+              // already committed; a failed best-effort notification must
+              // never turn that into an error response.
+            }
+          }
         }
         return { status: 204, body: null };
       });

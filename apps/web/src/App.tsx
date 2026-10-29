@@ -1570,7 +1570,7 @@ function AppContent() {
     setDeletingId(p.id);
     setError(null);
     try {
-      await deleteProject(p.id);
+      await deleteProject(p.id, lang);
       setMyProjects((prev) => prev.filter((existing) => existing.id !== p.id));
       purgeProjectPreferences(p.id);
     } catch (err) {
@@ -1600,7 +1600,7 @@ function AppContent() {
     setBulkDeleteBusy(true);
     setError(null);
     try {
-      const results = await Promise.allSettled(ids.map((id) => deleteProject(id)));
+      const results = await Promise.allSettled(ids.map((id) => deleteProject(id, lang)));
       const failedIds = ids.filter((_, i) => results[i].status === "rejected");
       const succeededIds = new Set(ids.filter((_, i) => results[i].status === "fulfilled"));
       setMyProjects((prev) => prev.filter((p) => !succeededIds.has(p.id)));
