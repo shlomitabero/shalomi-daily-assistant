@@ -293,6 +293,165 @@ test("generated server.js serves a real, working calendar subscription feed for 
 });
 
 /**
+ * Round 1258: the live Forge AI backend's own round-1247 feature (a
+ * combined calendar feed merging every date-bearing entity into one
+ * "Subscribe" URL) was never ported to this exported app's own
+ * server.js until now. Spawns a real server.js (same pattern as the
+ * round-1010 test above), confirms the merged feed's SUMMARY lines are
+ * prefixed with each record's own entity label (so events from
+ * different entities stay distinguishable once merged), confirms an
+ * entity with no date field contributes nothing to the merged feed
+ * (its own records never show up), and confirms a project where NO
+ * entity has a date field at all gets a 404, not an always-empty feed.
+ */
+test("generated server.js serves a real combined calendar feed merging every date-bearing entity, prefixed by entity label", async () => {
+  const dealEntity: Entity = {
+    name: "Deal",
+    label: "Deals",
+    fields: [
+      { name: "title", label: "Title", type: "text", required: true },
+      { name: "eventDate", label: "Event Date", type: "date", required: true },
+    ],
+  };
+  const invoiceEntity: Entity = {
+    name: "Invoice",
+    label: "Invoices",
+    fields: [
+      { name: "number", label: "Number", type: "text", required: true },
+      { name: "dueDate", label: "Due Date", type: "date", required: true },
+    ],
+  };
+  const noDateEntity: Entity = {
+    name: "Note",
+    label: "Notes",
+    fields: [{ name: "text", label: "Text", type: "text", required: true }],
+  };
+  const feedProject: Project = { ...project, spec: { ...project.spec, entities: [dealEntity, invoiceEntity, noDateEntity] } };
+  const files = generateExportFiles(feedProject);
+  const serverJs = files.find((f) => f.path === "server.js")!.content;
+
+  const dir = mkdtempSync(path.join(tmpdir(), "codegen-combined-feed-test-"));
+  const repoRoot = path.resolve(import.meta.dirname, "../../..");
+  symlinkSync(path.join(repoRoot, "node_modules"), path.join(dir, "node_modules"));
+  writeFileSync(path.join(dir, "server.js"), serverJs);
+
+  const port = 34000 + Math.floor(Math.random() * 5000);
+  const child = spawn(process.execPath, ["--experimental-sqlite", "server.js"], {
+    cwd: dir,
+    env: { ...process.env, PORT: String(port) },
+    stdio: ["ignore", "pipe", "pipe"],
+  });
+  let stderr = "";
+  child.stderr.on("data", (chunk) => {
+    stderr += chunk.toString();
+  });
+
+  try {
+    const deadline = Date.now() + 5000;
+    let lastErr: unknown;
+    while (Date.now() < deadline) {
+      if (child.exitCode !== null) {
+        throw new Error(`server.js exited early (code ${child.exitCode}):\n${stderr}`);
+      }
+      try {
+        const dealRes = await fetch(`http://localhost:${port}/api/Deal`, {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ title: "Trip to Eilat", eventDate: "2026-11-05" }),
+        });
+        assert.equal(dealRes.status, 201);
+        const invoiceRes = await fetch(`http://localhost:${port}/api/Invoice`, {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ number: "INV-1", dueDate: "2026-12-01" }),
+        });
+        assert.equal(invoiceRes.status, 201);
+        const noteRes = await fetch(`http://localhost:${port}/api/Note`, {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ text: "A note with no date at all." }),
+        });
+        assert.equal(noteRes.status, 201);
+
+        const feedRes = await fetch(`http://localhost:${port}/api/calendar/all/feed.ics`);
+        assert.equal(feedRes.status, 200, "a project with at least one date-bearing entity must get a real merged feed, not a 404");
+        assert.equal(feedRes.headers.get("content-type"), "text/calendar; charset=utf-8");
+        const ics = await feedRes.text();
+        assert.match(ics, /BEGIN:VCALENDAR/);
+        assert.match(ics, /SUMMARY:\[Deals\] Trip to Eilat/, "the Deal record's SUMMARY must be prefixed with its own entity label");
+        assert.match(ics, /SUMMARY:\[Invoices\] INV-1/, "the Invoice record's SUMMARY must be prefixed with its own entity label");
+        assert.doesNotMatch(ics, /A note with no date at all/, "an entity with no date field must contribute nothing to the merged feed");
+        assert.match(ics, /DTSTART;VALUE=DATE:20261105/);
+        assert.match(ics, /DTSTART;VALUE=DATE:20261201/);
+        assert.match(ics, /END:VCALENDAR/);
+        return;
+      } catch (err) {
+        lastErr = err;
+        await new Promise((r) => setTimeout(r, 100));
+      }
+    }
+    throw lastErr instanceof Error ? lastErr : new Error(String(lastErr));
+  } finally {
+    child.kill();
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("generated server.js's combined calendar feed 404s when NO entity in the project has a date field at all, instead of serving an always-empty feed", async () => {
+  const noDateEntityA: Entity = {
+    name: "Task",
+    label: "Tasks",
+    fields: [{ name: "title", label: "Title", type: "text", required: true }],
+  };
+  const noDateEntityB: Entity = {
+    name: "Note",
+    label: "Notes",
+    fields: [{ name: "text", label: "Text", type: "text", required: true }],
+  };
+  const feedProject: Project = { ...project, spec: { ...project.spec, entities: [noDateEntityA, noDateEntityB] } };
+  const files = generateExportFiles(feedProject);
+  const serverJs = files.find((f) => f.path === "server.js")!.content;
+
+  const dir = mkdtempSync(path.join(tmpdir(), "codegen-combined-feed-nodate-test-"));
+  const repoRoot = path.resolve(import.meta.dirname, "../../..");
+  symlinkSync(path.join(repoRoot, "node_modules"), path.join(dir, "node_modules"));
+  writeFileSync(path.join(dir, "server.js"), serverJs);
+
+  const port = 34000 + Math.floor(Math.random() * 5000);
+  const child = spawn(process.execPath, ["--experimental-sqlite", "server.js"], {
+    cwd: dir,
+    env: { ...process.env, PORT: String(port) },
+    stdio: ["ignore", "pipe", "pipe"],
+  });
+  let stderr = "";
+  child.stderr.on("data", (chunk) => {
+    stderr += chunk.toString();
+  });
+
+  try {
+    const deadline = Date.now() + 5000;
+    let lastErr: unknown;
+    while (Date.now() < deadline) {
+      if (child.exitCode !== null) {
+        throw new Error(`server.js exited early (code ${child.exitCode}):\n${stderr}`);
+      }
+      try {
+        const feedRes = await fetch(`http://localhost:${port}/api/calendar/all/feed.ics`);
+        assert.equal(feedRes.status, 404, "a project with no date-bearing entity at all must 404, not serve an always-empty feed");
+        return;
+      } catch (err) {
+        lastErr = err;
+        await new Promise((r) => setTimeout(r, 100));
+      }
+    }
+    throw lastErr instanceof Error ? lastErr : new Error(String(lastErr));
+  } finally {
+    child.kill();
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+/**
  * Round 1223: the exported app's own calendar feed route resolved
  * entityName exact-case only, unlike the live preview's identical route
  * (routes/calendar.ts, round 1185) and this very route's own
@@ -846,6 +1005,37 @@ test("the exported EntityView wires up a calendar 'Subscribe' button next to the
     /className="ics-subscribe-btn" onClick=\{handleSubscribeCalendar\}/,
     "expected a real Subscribe button wired to the real handler",
   );
+});
+
+/**
+ * Round 1258: the client-side half of the combined-feed port -- confirms
+ * the generated App.jsx actually wires up an app-header "Subscribe (all
+ * calendars)" button, next to the existing "Backup All Data" link, that
+ * copies the real combined-feed URL with no token (unlike the live
+ * preview's own handleSubscribeAllCalendars), matching this export's own
+ * no-auth design and mirroring the per-entity button's own round-1010
+ * pattern.
+ */
+test("the exported App.jsx wires up a 'Subscribe (all calendars)' button next to the existing Backup All Data link", () => {
+  const files = generateExportFiles(project);
+  const appJsx = files.find((f) => f.path === "web/src/App.jsx")!.content;
+
+  assert.match(
+    appJsx,
+    /async function handleSubscribeAllCalendars\(\)[\s\S]{0,300}navigator\.clipboard\.writeText\(url\)/,
+    "expected handleSubscribeAllCalendars to copy a URL to the clipboard",
+  );
+  assert.match(
+    appJsx,
+    /\/api\/calendar\/all\/feed\.ics/,
+    "expected the copied URL to point at the new combined-feed route, with no token in it",
+  );
+  assert.match(
+    appJsx,
+    /className="subscribe-all-btn" onClick=\{handleSubscribeAllCalendars\}/,
+    "expected a real Subscribe-all button wired to the real handler",
+  );
+  assert.match(appJsx, /backup-all-btn[\s\S]{0,400}subscribe-all-btn/, "expected the Subscribe-all button to sit next to the Backup All Data link in the app header");
 });
 
 /**

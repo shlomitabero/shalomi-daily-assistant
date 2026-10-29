@@ -1374,6 +1374,128 @@ function buildCalendarFeedIcs(entity, records, recordIndexByEntity) {
   return lines.join("\\r\\n");
 }
 
+// Round 1258: the project-wide counterpart to buildCalendarFeedIcs above --
+// ported from the live Forge AI backend's own round-1247 feature
+// (calendarFeed.ts's buildCombinedCalendarFeedIcs), never carried over to
+// this exported app until now. Merges every date-bearing entity's records
+// into ONE VCALENDAR, prefixing each VEVENT's SUMMARY with its own
+// entity's label (e.g. "[Invoice] ...") so events from different entities
+// stay distinguishable once merged. Duplicates buildCalendarFeedIcs's own
+// per-record VEVENT-building loop rather than refactoring it into a
+// shared helper, matching this file's own established "duplicate the
+// small pure helper" convention (stripBidiMarks above, templates.ts's own
+// BILLING_ENTITY_NAMES copy) rather than risking the already-tested
+// single-entity route above. Returns null when NO entity has a date
+// field at all, the same "nothing for a calendar app to ever subscribe
+// to" contract as buildCalendarFeedIcs.
+function buildCombinedCalendarFeedIcs(entities, recordsByEntityName) {
+  const dateBearingEntities = entities.filter((e) => findFeedDateField(e.fields) !== null);
+  if (dateBearingEntities.length === 0) return null;
+  const dtstamp = formatFeedIcsTimestamp(new Date());
+  // Covers every relation target ANY date-bearing entity's fields point
+  // to, not just one entity's -- a combined feed's DESCRIPTION lines can
+  // need to resolve a relation from any of the merged entities, not only
+  // whichever one the per-entity route's own URL used to name.
+  const recordIndexByEntity = {};
+  for (const entity of dateBearingEntities) {
+    for (const field of entity.fields) {
+      if (field.type !== "relation" || !field.relationTo || recordIndexByEntity[field.relationTo]) continue;
+      const targetEntity = ENTITIES.find((e) => e.name.toLowerCase() === field.relationTo.toLowerCase());
+      if (!targetEntity) continue;
+      const targetRecords = recordsByEntityName[targetEntity.name] || [];
+      recordIndexByEntity[field.relationTo] = new Map(targetRecords.map((r) => [Number(r.id), r]));
+    }
+  }
+  const lines = ["BEGIN:VCALENDAR", "VERSION:2.0", "PRODID:-//Forge AI//All Entities//EN", "CALSCALE:GREGORIAN"];
+  for (const entity of dateBearingEntities) {
+    const records = recordsByEntityName[entity.name] || [];
+    const dateField = findFeedDateField(entity.fields);
+    const endField = findFeedEndDateField(entity.fields, dateField);
+    const labelField = feedChipLabelField(entity, dateField);
+    const descriptionFields = entity.fields.filter((f) => f.name !== dateField.name && f.name !== labelField.name && f.name !== (endField && endField.name));
+    const descriptionLabelOccurrences = {};
+    for (const f of descriptionFields) {
+      const label = f.label || f.name;
+      descriptionLabelOccurrences[label] = (descriptionLabelOccurrences[label] || 0) + 1;
+    }
+    // Not pre-escaped here: feedIcsEscapeText(summary) below escapes the
+    // whole prefix+label string exactly once.
+    const summaryPrefix = \`[\${entity.label || entity.name}] \`;
+    for (const record of records) {
+      const raw = record[dateField.name];
+      if (raw === null || raw === undefined || raw === "") continue;
+      const match = /^(\\d{4})-(\\d{2})-(\\d{2})/.exec(String(raw));
+      if (!match) continue;
+      const start = new Date(Number(match[1]), Number(match[2]) - 1, Number(match[3]));
+      if (Number.isNaN(start.getTime())) continue;
+      const end = new Date(start);
+      end.setDate(end.getDate() + 1);
+      if (endField) {
+        const rawEnd = record[endField.name];
+        const endMatch = rawEnd === null || rawEnd === undefined || rawEnd === "" ? null : /^(\\d{4})-(\\d{2})-(\\d{2})/.exec(String(rawEnd));
+        if (endMatch) {
+          const explicitEnd = new Date(Number(endMatch[1]), Number(endMatch[2]) - 1, Number(endMatch[3]));
+          if (!Number.isNaN(explicitEnd.getTime()) && explicitEnd.getTime() >= start.getTime()) {
+            end.setTime(explicitEnd.getTime());
+            end.setDate(end.getDate() + 1);
+          }
+        }
+      }
+      const feedChipLabel = feedChipLabelValue(labelField, record);
+      const summary = summaryPrefix + (feedChipLabel === "" ? \`#\${record.id}\` : feedChipLabel);
+      const descriptionLines = descriptionFields
+        .map((f) => {
+          const value =
+            f.type === "relation" ? feedRelationDisplayLabel(f, record[f.name], recordIndexByEntity)
+            : f.type === "enum" ? ((f.enumLabels && f.enumLabels[record[f.name]]) || record[f.name])
+            : f.type === "file" ? (feedParseFileFieldValue(record[f.name])?.name || null)
+            : f.type === "boolean" ? (record[f.name] === null || record[f.name] === undefined ? null : record[f.name] ? "TRUE" : "FALSE")
+            : f.type === "date" ? feedFormatIcsDescriptionDate(record[f.name])
+            : f.type === "number" ? feedFormatIcsDescriptionNumber(record[f.name])
+            : record[f.name];
+          if (value === null || value === undefined || value === "") return null;
+          const fieldLabel = f.label || f.name;
+          const ambiguous = (descriptionLabelOccurrences[fieldLabel] || 0) > 1;
+          return fieldLabel + (ambiguous ? " (" + f.name + ")" : "") + ": " + value;
+        })
+        .filter((line) => line !== null);
+      lines.push("BEGIN:VEVENT");
+      lines.push(foldFeedIcsLine(\`UID:\${feedIcsEscapeText(entity.name)}-\${record.id}@${project.id}.forge-ai\`));
+      lines.push(\`DTSTAMP:\${dtstamp}\`);
+      lines.push(\`DTSTART;VALUE=DATE:\${formatFeedIcsDate(start)}\`);
+      lines.push(\`DTEND;VALUE=DATE:\${formatFeedIcsDate(end)}\`);
+      lines.push(foldFeedIcsLine(\`SUMMARY:\${feedIcsEscapeText(summary)}\`));
+      if (descriptionLines.length > 0) {
+        lines.push(foldFeedIcsLine(\`DESCRIPTION:\${feedIcsEscapeText(descriptionLines.join("\\n"))}\`));
+      }
+      lines.push("END:VEVENT");
+    }
+  }
+  lines.push("END:VCALENDAR");
+  return lines.join("\\r\\n");
+}
+
+// Round 1258: registered before the per-entity route below (harmless
+// either way now, but mirrors the live app's own routes/calendar.ts
+// ordering) -- a two-segment path (\`all/feed.ics\`) can never collide
+// with the per-entity route's own exactly-one-segment \`:entityName.ics\`
+// pattern, the same collision-proof shape the live app's own round-1250
+// fix settled on, adopted here from the start.
+app.get("/api/calendar/all/feed.ics", (req, res) => {
+  const recordsByEntityName = {};
+  for (const entity of ENTITIES) {
+    const rows = db.prepare(\`SELECT * FROM \${q(entity.name)} ORDER BY id DESC\`).all();
+    recordsByEntityName[entity.name] = rows.map((r) => rowToRecord(entity, r));
+  }
+  const ics = buildCombinedCalendarFeedIcs(ENTITIES, recordsByEntityName);
+  if (ics === null) {
+    res.status(404).json({ error: "Calendar feed not found" });
+    return;
+  }
+  res.setHeader("content-type", "text/calendar; charset=utf-8");
+  res.send(ics);
+});
+
 app.get("/api/calendar/:entityName.ics", (req, res) => {
   // Round 1223: exact-case first (the fast, common path), falling back to
   // case-insensitive -- mirroring the live preview's own identical
@@ -8477,6 +8599,12 @@ export default function App() {
   // or blocks the system-change listener below.
   const hasExplicitChoiceRef = useRef(storedTheme === "light" || storedTheme === "dark");
   const [entityCounts, setEntityCounts] = useState({});
+  // Round 1258: the app-header-wide companion to EntityView.jsx's own
+  // per-entity subscribeStatus (handleSubscribeCalendar) -- this one
+  // isn't scoped to a single entity's own calendar view, so it lives
+  // here instead, mirroring the live preview's own round-1247
+  // CollaboratorsPanel.tsx subscribeAllStatus.
+  const [subscribeAllStatus, setSubscribeAllStatus] = useState("idle");
   const [entityTabOrder, setEntityTabOrderState] = useState(() => getEntityTabOrder());
   const [draggedEntityTab, setDraggedEntityTab] = useState(null);
   const [dragOverEntityTab, setDragOverEntityTab] = useState(null);
@@ -8614,6 +8742,29 @@ export default function App() {
     return () => mediaQuery.removeEventListener("change", handleSystemThemeChange);
   }, []);
 
+  // Round 1258: the app-header "Subscribe (all calendars)" button's own
+  // handler -- ported from the live Forge AI preview's round-1247
+  // handleSubscribeAllCalendars (CollaboratorsPanel.tsx), never carried
+  // over to this exported app until now. No token to fetch first and no
+  // owner/collaborator access check, the same reasoning EntityView.jsx's
+  // own per-entity handleSubscribeCalendar already documents: this
+  // exported app has no authentication of any kind.
+  async function handleSubscribeAllCalendars() {
+    try {
+      const url = \`\${window.location.origin}/api/calendar/all/feed.ics\`;
+      await navigator.clipboard.writeText(url);
+      setSubscribeAllStatus("copied");
+    } catch {
+      setSubscribeAllStatus("failed");
+    }
+  }
+
+  useEffect(() => {
+    if (subscribeAllStatus === "idle") return;
+    const timer = setTimeout(() => setSubscribeAllStatus("idle"), 2000);
+    return () => clearTimeout(timer);
+  }, [subscribeAllStatus]);
+
   return (
     <div className="app">
       <div className="app-header">
@@ -8646,6 +8797,9 @@ export default function App() {
           <a className="backup-all-btn" href={buildBackupAllHref()} download="backup.zip">
             ⬇️ Backup All Data
           </a>
+          <button type="button" className="subscribe-all-btn" onClick={handleSubscribeAllCalendars} aria-live="polite" aria-atomic="true">
+            {subscribeAllStatus === "copied" ? "✅ Link copied!" : subscribeAllStatus === "failed" ? "❌ Copy failed" : "📅 Subscribe (all calendars)"}
+          </button>
         </div>
       </div>
       <nav role="tablist">
@@ -8988,6 +9142,8 @@ nav button.active .tab-count { background: rgba(255, 255, 255, 0.25); color: inh
 .search-trigger:hover { background: var(--bg); }
 .backup-all-btn { padding: 8px 16px; border-radius: 8px; border: 1px solid var(--border); background: var(--surface); color: var(--text); text-decoration: none; font-size: 14px; display: inline-block; }
 .backup-all-btn:hover { background: var(--bg); }
+.subscribe-all-btn { padding: 8px 16px; border-radius: 8px; border: 1px solid var(--border); background: var(--surface); color: var(--text); font-size: 14px; cursor: pointer; font: inherit; }
+.subscribe-all-btn:hover { background: var(--bg); }
 .shortcut-hint { margin-inline-start: 6px; padding: 1px 6px; border: 1px solid var(--border); border-radius: 4px; font-size: 0.7rem; font-family: monospace; color: var(--muted); }
 .shortcuts-list { list-style: none; margin: 0; padding: 0; }
 .shortcuts-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 8px 0; border-bottom: 1px solid var(--border); }
