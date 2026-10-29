@@ -659,6 +659,55 @@ test("the generated server.js's own feedRecordDisplayLabel renders a date displa
 });
 
 /**
+ * Round 1228: the exact same bug class as the date fix just above, never
+ * done for "number" -- a join entity with no name/title/text/enum/
+ * boolean/date field at all, only a number and a relation, has
+ * pickFeedDisplayField's own last-resort step land on the number field
+ * regardless, and feedRecordDisplayLabel used to String() the raw
+ * un-grouped digits as the related record's own label in this feed's
+ * DESCRIPTION line. Reuses feedFormatIcsDescriptionNumber (round 1097),
+ * already in this template for the DESCRIPTION line's own number cells
+ * but never wired into this function.
+ */
+test("the generated server.js's own feedRecordDisplayLabel renders a number display field with locale thousands separators, not the raw ungrouped digits", () => {
+  const serverJs = generateExportFiles(project).find((f) => f.path === "server.js")!.content;
+  const feedDisplayFieldHintsSrc = serverJs.match(/const FEED_DISPLAY_FIELD_NAME_HINTS = .*;\n/)?.[0];
+  const pickFeedDisplayFieldSrc = serverJs.match(/function pickFeedDisplayField\(entity\) \{[\s\S]*?\n\}\n/)?.[0];
+  const feedRecordDisplayLabelSrc = serverJs.match(/function feedRecordDisplayLabel\(entity, record\) \{[\s\S]*?\n\}\n/)?.[0];
+  const feedRelationDisplayLabelSrc = serverJs.match(/function feedRelationDisplayLabel\(field, value, recordIndexByEntity\) \{[\s\S]*?\n\}\n/)?.[0];
+  const stripBidiMarksSrc = serverJs.match(/function stripBidiMarks\(s\) \{[\s\S]*?\n\}\n/)?.[0];
+  const feedFormatIcsDescriptionNumberSrc = serverJs.match(/function feedFormatIcsDescriptionNumber\(value\) \{[\s\S]*?\n\}\n/)?.[0];
+  assert.ok(
+    feedDisplayFieldHintsSrc &&
+      pickFeedDisplayFieldSrc &&
+      feedRecordDisplayLabelSrc &&
+      feedRelationDisplayLabelSrc &&
+      stripBidiMarksSrc &&
+      feedFormatIcsDescriptionNumberSrc,
+    "expected to find FEED_DISPLAY_FIELD_NAME_HINTS/pickFeedDisplayField/feedRecordDisplayLabel/feedRelationDisplayLabel/stripBidiMarks/feedFormatIcsDescriptionNumber in generated server.js",
+  );
+
+  const stockLevelEntity = {
+    name: "StockLevel",
+    fields: [
+      { name: "quantity", type: "number" },
+      { name: "warehouseId", type: "relation", relationTo: "Warehouse" },
+    ],
+  };
+  const feedRelationDisplayLabel = new Function(
+    "ENTITIES",
+    `${stripBidiMarksSrc}\n${feedFormatIcsDescriptionNumberSrc}\n${feedDisplayFieldHintsSrc}\n${pickFeedDisplayFieldSrc}\n${feedRecordDisplayLabelSrc}\n${feedRelationDisplayLabelSrc}\nreturn feedRelationDisplayLabel;`,
+  )([stockLevelEntity]);
+
+  const stockField = { name: "stock", type: "relation", relationTo: "StockLevel" };
+  assert.equal(
+    feedRelationDisplayLabel(stockField, 7, { StockLevel: new Map([[7, { id: 7, quantity: 1500, warehouseId: 2 }]]) }),
+    "1,500",
+    "must render the number field with real locale thousands separators in the feed's own DESCRIPTION, not the raw \"1500\"",
+  );
+});
+
+/**
  * Round 1097: the live Forge AI backend's own calendarFeed.ts/calendarIcs.ts
  * (and automations.ts/twin.ts/automationsReport.ts) were fixed in rounds
  * 1089/1090 to strip V8/ICU's invisible U+200E LEFT-TO-RIGHT MARK that
@@ -4977,6 +5026,51 @@ test("the exported EntityView's recordDisplayLabel renders a date display field 
     recordDisplayLabel(entity, { id: 5, loggedAt: "2026-04-02", temperature: 21 }),
     "4/2/2026",
     "must render the date field as a real formatted date, not the raw ISO string",
+  );
+});
+
+/**
+ * Round 1228: the exact same bug class as the enum (761), boolean (771),
+ * relation (968), file (982), and date (1072) fixes above, never done
+ * for "number" in the exported app's own recordDisplayLabel -- a
+ * measurement-only entity like StockLevel { quantity: number,
+ * warehouseId: relation->Warehouse } has no name/title/text/longtext/
+ * enum/boolean/date field at all, so this function used to String() the
+ * raw un-grouped digits as the record's own label in every relation
+ * picker/cell, CSV export, and search result this exported app's own
+ * recordDisplayLabel feeds. Mirrors the live apps/web/src/
+ * entityFormatting.ts's own round-1227 fix, reusing stripBidiMarks
+ * (already in this same EntityView.jsx template for the "Download .ics"
+ * button's own DESCRIPTION-number formatting, per round 1097).
+ */
+test("the exported EntityView's recordDisplayLabel renders a number display field with locale thousands separators, not the raw ungrouped digits", () => {
+  const files = generateExportFiles(project);
+  const entityViewJsx = files.find((f) => f.path === "web/src/components/EntityView.jsx")!.content;
+
+  const displayFieldHintsSrc = entityViewJsx.match(/const DISPLAY_FIELD_NAME_HINTS = .*;\n/)?.[0];
+  const pickDisplayFieldSrc = entityViewJsx.match(/export function pickDisplayField\([\s\S]*?\n\}\n/)?.[0]?.replace("export ", "");
+  const recordDisplayLabelSrc = entityViewJsx.match(/export function recordDisplayLabel\(entity, record\) \{[\s\S]*?\n\}\n/)?.[0]?.replace("export ", "");
+  const stripBidiMarksSrc = entityViewJsx.match(/function stripBidiMarks\(s\) \{[\s\S]*?\n\}\n/)?.[0];
+  assert.ok(
+    displayFieldHintsSrc && pickDisplayFieldSrc && recordDisplayLabelSrc && stripBidiMarksSrc,
+    "expected to find DISPLAY_FIELD_NAME_HINTS/pickDisplayField/recordDisplayLabel/stripBidiMarks in generated output",
+  );
+
+  const recordDisplayLabel = new Function(
+    `${displayFieldHintsSrc}\n${stripBidiMarksSrc}\n${pickDisplayFieldSrc}\n${recordDisplayLabelSrc}\nreturn recordDisplayLabel;`,
+  )() as (entity: unknown, record: unknown) => string;
+
+  const entity = {
+    name: "StockLevel",
+    fields: [
+      { name: "quantity", type: "number" },
+      { name: "warehouseId", type: "relation", relationTo: "Warehouse" },
+    ],
+  };
+  assert.equal(
+    recordDisplayLabel(entity, { id: 7, quantity: 1500, warehouseId: 2 }),
+    "1,500",
+    "must render the number field with real locale thousands separators, not the raw \"1500\"",
   );
 });
 
@@ -14217,6 +14311,49 @@ test("the exported server.js's own backupRecordDisplayLabel renders a date displ
     backupFieldDisplayValue(logField, 5, { DailyLog: new Map([[5, { id: 5, loggedAt: "2026-04-02", studentId: 2 }]]) }),
     "4/2/2026",
     "must render the date field as a real formatted date into the backup CSV, not the raw ISO string",
+  );
+});
+
+/**
+ * Round 1228: the exact same bug class as the enum/boolean, relation,
+ * file, and date fixes above, never done for "number" in this fourth,
+ * separately-named copy either -- when backupPickDisplayField's own
+ * last-resort step lands on a number field (a join entity with no name/
+ * title/text/enum/boolean/date field at all, only a number and a
+ * relation), backupRecordDisplayLabel used to String() the raw
+ * un-grouped digits into the downloaded backup CSV's relation column as
+ * the related record's own label. Mirrors the live apps/api/src/
+ * displayField.ts's own round-1227 fix, reusing this template's own
+ * stripBidiMarks (round 1097).
+ */
+test("the exported server.js's own backupRecordDisplayLabel renders a number display field with locale thousands separators, not the raw ungrouped digits", () => {
+  const serverJs = generateExportFiles(project).find((f) => f.path === "server.js")!.content;
+  const backupRecordDisplayLabelSrc = serverJs.match(/function backupRecordDisplayLabel\(entity, record\) \{[\s\S]*?\n\}\n/)?.[0];
+  const backupPickDisplayFieldSrc = serverJs.match(/const BACKUP_DISPLAY_FIELD_HINTS[\s\S]*?\nfunction backupPickDisplayField\(entity\) \{[\s\S]*?\n\}\n/)?.[0];
+  const backupFieldDisplayValueSrc = serverJs.match(/function backupFieldDisplayValue\(field, value, recordIndexByEntity\) \{[\s\S]*?\n\}\n/)?.[0];
+  const stripBidiMarksSrc = serverJs.match(/function stripBidiMarks\(s\) \{[\s\S]*?\n\}\n/)?.[0];
+  assert.ok(
+    backupRecordDisplayLabelSrc && backupPickDisplayFieldSrc && backupFieldDisplayValueSrc && stripBidiMarksSrc,
+    "expected to find backupRecordDisplayLabel/backupPickDisplayField/backupFieldDisplayValue/stripBidiMarks in generated server.js",
+  );
+
+  const stockLevelEntity = {
+    name: "StockLevel",
+    fields: [
+      { name: "quantity", type: "number" },
+      { name: "warehouseId", type: "relation", relationTo: "Warehouse" },
+    ],
+  };
+  const backupFieldDisplayValue = new Function(
+    "ENTITIES",
+    `${stripBidiMarksSrc}\n${backupPickDisplayFieldSrc}\n${backupRecordDisplayLabelSrc}\n${backupFieldDisplayValueSrc}\nreturn backupFieldDisplayValue;`,
+  )([stockLevelEntity]);
+
+  const stockField = { name: "stock", type: "relation", relationTo: "StockLevel" };
+  assert.equal(
+    backupFieldDisplayValue(stockField, 7, { StockLevel: new Map([[7, { id: 7, quantity: 1500, warehouseId: 2 }]]) }),
+    "1,500",
+    "must render the number field with real locale thousands separators into the backup CSV, not the raw \"1500\"",
   );
 });
 

@@ -915,6 +915,13 @@ function backupRecordDisplayLabel(entity, record) {
   // descriptor (including its internal /api/uploads/... path) was leaked
   // into the backup CSV as this record's own label.
   if (field && field.type === "file") return \`#\${record.id}\`;
+  // Round 1228: mirrors the live apps/api/src/displayField.ts's own
+  // round-1227 number-branch fix -- the SAME last-resort fallback can
+  // also land on a "number" field, which without this branch leaked the
+  // raw un-grouped digits into the backup CSV as a relation column's own
+  // display label. stripBidiMarks (below, hoisted) matches this same
+  // server.js template's own established convention.
+  if (field && field.type === "number" && typeof value === "number") return stripBidiMarks(value.toLocaleString());
   return String(value);
 }
 
@@ -1178,6 +1185,15 @@ function feedRecordDisplayLabel(entity, record) {
   // date field would otherwise render the raw unformatted "YYYY-MM-DD"
   // string as the related record's own label in this feed's DESCRIPTION.
   if (field && field.type === "date" && typeof value === "string") return String(feedFormatIcsDescriptionDate(value));
+  // Round 1228: mirrors this file's own EntityView.jsx recordDisplayLabel
+  // fix (and the live apps/api/src/displayField.ts's round-1227 fix) --
+  // a join entity with no name/title/text/enum field that happens to
+  // have a number field would otherwise render the raw un-grouped digits
+  // as the related record's own label in this feed's DESCRIPTION.
+  // feedFormatIcsDescriptionNumber (below, hoisted) already exists in
+  // this template for the DESCRIPTION line itself but was never reused
+  // here.
+  if (field && field.type === "number" && typeof value === "number") return String(feedFormatIcsDescriptionNumber(value));
   if (field && field.type === "relation") return \`#\${record.id}\`;
   if (field && field.type === "file") return \`#\${record.id}\`;
   return String(value);
@@ -2411,6 +2427,15 @@ export function recordDisplayLabel(entity, record) {
   // upload descriptor as the record's own label. #\${record.id} matches
   // the exact same fallback the relation branch just above already uses.
   if (field?.type === "file") return \`#\${record.id}\`;
+  // Round 1228: the same last-resort fallback can also land on a
+  // "number" field -- a measurement-only entity like StockLevel
+  // { quantity: number, warehouseId: relation->Warehouse } has no name/
+  // title/text/longtext/enum/boolean/date field at all, so this fell
+  // through to the raw un-grouped digits as the record's own label
+  // everywhere one is shown by name. stripBidiMarks (hoisted below)
+  // mirrors the live apps/web/src/entityFormatting.ts's own round-1227
+  // fix.
+  if (field?.type === "number" && typeof value === "number") return stripBidiMarks(value.toLocaleString());
   return String(value);
 }
 

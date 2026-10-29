@@ -146,6 +146,13 @@ function recordDisplayLabelForRelation(entity: Entity, record: EntityRecord, lan
   // above) -- see their doc comments for the full "no name/title/text/
   // longtext field" reasoning.
   if (field?.type === "date" && typeof value === "string") return String(formatIcsDescriptionDate(value, lang));
+  // Round 1228: mirrors entityFormatting.ts's/displayField.ts's own
+  // round-1227 number-branch fix exactly -- see their doc comments for
+  // the full "last-resort fallback can also land on a number field"
+  // reasoning. formatIcsDescriptionNumber (above) already exists in
+  // this file for calendarIcs's own DESCRIPTION line but was never
+  // reused here.
+  if (field?.type === "number" && typeof value === "number") return String(formatIcsDescriptionNumber(value, lang));
   if (field?.type === "relation") return `#${record.id}`;
   if (field?.type === "file") return `#${record.id}`;
   return String(value);
