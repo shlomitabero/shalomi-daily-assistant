@@ -9507,6 +9507,108 @@ test("DELETE /auth/account is all-or-nothing: an in-flight pipeline on one owned
   );
 });
 
+/**
+ * Round 1259: DELETE /auth/account's per-project deletion loop
+ * (apps/api/src/routes/auth.ts) is a second, structurally separate call site
+ * of the same deleteProject() that DELETE /projects/:id calls -- round 1256
+ * added a "this project was deleted" notification to every remaining
+ * collaborator there, but that route's own loop never got the same fix,
+ * even though deleteProject's cascade revokes those collaborators' access
+ * the exact same way either way the project is deleted.
+ */
+test("deleting your account sends a real notification to every remaining collaborator on each project you owned, naming the project, when email is configured", async () => {
+  const emailSender = createFakeEmailSender();
+  await withServer(
+    async (baseUrl) => {
+      const ownerToken = await signup(baseUrl, `owner-acct-delete-notify-${Date.now()}@example.com`);
+      const collabEmailA = `collab-a-acct-delete-notify-${Date.now()}@example.com`;
+      const collabEmailB = `collab-b-acct-delete-notify-${Date.now()}@example.com`;
+      await signup(baseUrl, collabEmailA);
+      await signup(baseUrl, collabEmailB);
+
+      const createRes = await fetch(`${baseUrl}/api/projects`, {
+        method: "POST",
+        headers: authHeaders(ownerToken),
+        body: JSON.stringify({ description: "A CRM with customers and deals." }),
+      });
+      const { project } = (await createRes.json()) as { project: { id: string; name: string } };
+
+      await fetch(`${baseUrl}/api/projects/${project.id}/collaborators`, {
+        method: "POST",
+        headers: authHeaders(ownerToken),
+        body: JSON.stringify({ email: collabEmailA }),
+      });
+      await fetch(`${baseUrl}/api/projects/${project.id}/collaborators`, {
+        method: "POST",
+        headers: authHeaders(ownerToken),
+        body: JSON.stringify({ email: collabEmailB }),
+      });
+      emailSender.sentTo.length = 0; // The 2 invites themselves (round 1253) also send -- only the account-deletion's own sends matter here.
+
+      const deleteRes = await fetch(`${baseUrl}/api/auth/account?lang=en`, { method: "DELETE", headers: authHeaders(ownerToken) });
+      assert.equal(deleteRes.status, 204);
+
+      assert.equal(emailSender.sentTo.length, 2, "exactly one notification per remaining collaborator must be sent");
+      const recipients = emailSender.sentTo.map((m) => m.to).sort();
+      assert.deepEqual(recipients, [collabEmailA, collabEmailB].sort(), "the notifications must go to the two collaborators, never the account being deleted");
+      const namePattern = new RegExp(project.name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"));
+      for (const message of emailSender.sentTo) {
+        assert.match(message.text, namePattern, "each notification's body must name the real project");
+      }
+    },
+    { emailSender },
+  );
+});
+
+test("deleting your account itself still succeeds, with no notification attempted, when no email provider is configured", async () => {
+  const emailSender = createFakeEmailSender({ configured: false });
+  await withServer(
+    async (baseUrl) => {
+      const ownerToken = await signup(baseUrl, `owner-acct-delete-notify-unconfigured-${Date.now()}@example.com`);
+      const collabEmail = `collab-acct-delete-notify-unconfigured-${Date.now()}@example.com`;
+      await signup(baseUrl, collabEmail);
+
+      const createRes = await fetch(`${baseUrl}/api/projects`, {
+        method: "POST",
+        headers: authHeaders(ownerToken),
+        body: JSON.stringify({ description: "A CRM with customers and deals." }),
+      });
+      const { project } = (await createRes.json()) as { project: { id: string } };
+
+      await fetch(`${baseUrl}/api/projects/${project.id}/collaborators`, {
+        method: "POST",
+        headers: authHeaders(ownerToken),
+        body: JSON.stringify({ email: collabEmail }),
+      });
+
+      const deleteRes = await fetch(`${baseUrl}/api/auth/account`, { method: "DELETE", headers: authHeaders(ownerToken) });
+      assert.equal(deleteRes.status, 204, "account deletion itself must still work exactly as before this feature existed");
+      assert.equal(emailSender.sentTo.length, 0, "no send should even be attempted when email isn't configured");
+    },
+    { emailSender },
+  );
+});
+
+test("deleting your account with an owned project that has no collaborators sends no notification, and the deletion still succeeds", async () => {
+  const emailSender = createFakeEmailSender();
+  await withServer(
+    async (baseUrl) => {
+      const ownerToken = await signup(baseUrl, `owner-acct-delete-notify-solo-${Date.now()}@example.com`);
+      const createRes = await fetch(`${baseUrl}/api/projects`, {
+        method: "POST",
+        headers: authHeaders(ownerToken),
+        body: JSON.stringify({ description: "A CRM with customers and deals." }),
+      });
+      await createRes.json();
+
+      const deleteRes = await fetch(`${baseUrl}/api/auth/account`, { method: "DELETE", headers: authHeaders(ownerToken) });
+      assert.equal(deleteRes.status, 204);
+      assert.equal(emailSender.sentTo.length, 0, "an owned project with no collaborators has nobody to notify");
+    },
+    { emailSender },
+  );
+});
+
 test("a user cannot restore another user's checkpoint into their own project by guessing/reusing its id", async () => {
   await withServer(async (baseUrl) => {
     const ownerToken = await signup(baseUrl, "owner2@example.com");

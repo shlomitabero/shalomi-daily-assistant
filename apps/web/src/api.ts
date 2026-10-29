@@ -352,8 +352,9 @@ export function changeEmail(currentPassword: string, email: string, lang: "he" |
  * succeeds, the same way logout() above pairs a server call with its own
  * local cleanup.
  */
-export function deleteAccount(): Promise<void> {
-  return request("/auth/account", { method: "DELETE" });
+export function deleteAccount(lang?: "he" | "en"): Promise<void> {
+  const query = lang ? `?lang=${lang}` : "";
+  return request(`/auth/account${query}`, { method: "DELETE" });
 }
 
 /**

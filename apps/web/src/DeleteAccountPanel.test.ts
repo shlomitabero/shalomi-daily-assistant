@@ -131,7 +131,7 @@ test("typing the account's own email exactly and submitting calls the real DELET
     const originalFetch = globalThis.fetch;
     let calls: { method?: string }[] = [];
     globalThis.fetch = withListProjectsStub([], async (input: string, init?: RequestInit) => {
-      if (init?.method === "DELETE" && input === "/api/auth/account") {
+      if (init?.method === "DELETE" && input === "/api/auth/account?lang=en") {
         calls.push({ method: init.method });
         return new Response(null, { status: 204 });
       }
@@ -172,7 +172,7 @@ test("onDeleted's first argument is exactly the real owned project ids, excludin
     const originalFetch = globalThis.fetch;
     const projects = [makeProject("p1", "user1"), makeProject("p2", "user1"), makeProject("p3", "someone-else")];
     globalThis.fetch = withListProjectsStub(projects, async (input: string, init?: RequestInit) => {
-      if (init?.method === "DELETE" && input === "/api/auth/account") {
+      if (init?.method === "DELETE" && input === "/api/auth/account?lang=en") {
         return new Response(null, { status: 204 });
       }
       throw new Error(`unexpected request ${init?.method ?? "GET"} ${input}`);
@@ -209,7 +209,7 @@ test("onDeleted's second argument is exactly the real shared-with-you project id
     const originalFetch = globalThis.fetch;
     const projects = [makeProject("p1", "user1"), makeProject("p2", "user1"), makeProject("p3", "someone-else")];
     globalThis.fetch = withListProjectsStub(projects, async (input: string, init?: RequestInit) => {
-      if (init?.method === "DELETE" && input === "/api/auth/account") {
+      if (init?.method === "DELETE" && input === "/api/auth/account?lang=en") {
         return new Response(null, { status: 204 });
       }
       throw new Error(`unexpected request ${init?.method ?? "GET"} ${input}`);
@@ -396,7 +396,7 @@ test("still counts and passes along an owned project id that GET /api/projects/m
           headers: { "content-type": "application/json" },
         });
       }
-      if (init?.method === "DELETE" && input === "/api/auth/account") {
+      if (init?.method === "DELETE" && input === "/api/auth/account?lang=en") {
         return new Response(null, { status: 204 });
       }
       throw new Error(`unexpected request ${init?.method ?? "GET"} ${input} -- this panel must never call GET /api/projects itself`);
@@ -458,7 +458,7 @@ test("submitting before the mount-time project-ids fetch has resolved does not c
           headers: { "content-type": "application/json" },
         });
       }
-      if (init?.method === "DELETE" && input === "/api/auth/account") {
+      if (init?.method === "DELETE" && input === "/api/auth/account?lang=en") {
         deleteCalls += 1;
         return new Response(null, { status: 204 });
       }

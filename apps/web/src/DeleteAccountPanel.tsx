@@ -23,7 +23,7 @@ export function DeleteAccountPanel({
   onClose: () => void;
   onDeleted: (ownedProjectIds: string[], sharedProjectIds: string[]) => void;
 }) {
-  const { t } = useTranslation();
+  const { t, lang } = useTranslation();
   const [confirmText, setConfirmText] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -114,7 +114,7 @@ export function DeleteAccountPanel({
     setBusy(true);
     setError(null);
     try {
-      await deleteAccount();
+      await deleteAccount(lang);
       onDeleted(ownedProjectIds, sharedProjectIds);
     } catch (err) {
       setError((err as Error).message);
