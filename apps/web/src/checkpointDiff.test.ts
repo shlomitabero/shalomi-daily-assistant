@@ -338,6 +338,51 @@ test("computeCheckpointDiff reports a same-named field that changed type as chan
   ]);
 });
 
+/**
+ * Round 1208: a relation field's own relationTo can drift in letter case
+ * across an ordinary refine (e.g. "Customer" -> "customer") with the
+ * target entity itself completely untouched -- every live consumer of
+ * relationTo already resolves this case-insensitively (rounds 1159-1188,
+ * 1196), so this difference is never actually observable anywhere in the
+ * rendered app. Before this fix, fieldSignature compared relationTo with
+ * raw, case-sensitive equality -- the one place left in this entire
+ * family that still reported a same-named, same-typed, same-required
+ * relation field as "changed" over a difference with zero real effect.
+ */
+test("computeCheckpointDiff does not flag a relation field as changed when only its relationTo differs by letter case, with the target entity itself unchanged", () => {
+  const current = makeSpec([
+    { name: "Customer", fields: [{ name: "name", type: "text", required: false }] },
+    { name: "Order", fields: [{ name: "customer", type: "relation", relationTo: "customer", required: false }] },
+  ]);
+  const checkpoint = makeSpec([
+    { name: "Customer", fields: [{ name: "name", type: "text", required: false }] },
+    { name: "Order", fields: [{ name: "customer", type: "relation", relationTo: "Customer", required: false }] },
+  ]);
+
+  const diff = computeCheckpointDiff(current, checkpoint);
+  assert.deepEqual(diff.changedEntities, [], "a relationTo casing drift alone must report no change -- nothing about it is ever rendered");
+  assert.equal(isCheckpointCurrent(current, checkpoint), true, "the checkpoint must still read as current -- the two specs are indistinguishable on screen");
+});
+
+test("computeCheckpointDiff still reports a relation field as changed when it was genuinely retargeted to a different entity, even with matching letter case", () => {
+  const current = makeSpec([
+    { name: "Customer", fields: [] },
+    { name: "Employee", fields: [] },
+    { name: "Order", fields: [{ name: "owner", type: "relation", relationTo: "Employee", required: false }] },
+  ]);
+  const checkpoint = makeSpec([
+    { name: "Customer", fields: [] },
+    { name: "Employee", fields: [] },
+    { name: "Order", fields: [{ name: "owner", type: "relation", relationTo: "Customer", required: false }] },
+  ]);
+
+  const diff = computeCheckpointDiff(current, checkpoint);
+  assert.deepEqual(diff.changedEntities, [
+    { name: "Order", label: "Order", removedFieldNames: [], addedFieldNames: [], changedFieldNames: ["owner"], descriptionChanged: false },
+  ]);
+  assert.equal(isCheckpointCurrent(current, checkpoint), false, "a genuine retarget to a different entity must still read as not current");
+});
+
 test("computeCheckpointDiff reports a same-named enum field whose enumValues changed as changedFieldNames", () => {
   const current = makeSpec([
     {

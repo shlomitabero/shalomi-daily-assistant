@@ -68,7 +68,24 @@ function fieldSignature(f: Field): string {
           .map(([value, label]) => `${value}:${label}`)
           .join(",")
       : "";
-  const relationPart = f.type === "relation" ? (f.relationTo ?? "") : "";
+  // Round 1208: lowercased, not the raw string -- relationTo is never
+  // itself rendered as text anywhere (the UI shows the resolved target
+  // entity's own label/records, never this raw reference string), and
+  // every live consumer of relationTo (migrate.ts, display/automation
+  // lookups, CSV import, the entity-delete dependency guard -- rounds
+  // 1159-1188, 1196) already resolves it case-insensitively, treating a
+  // target entity's own case-only rename as the true no-op migrate.ts's
+  // own hardening (rounds 617-620) established it to be. An ordinary
+  // refine step regenerating one entity's relation field can easily drift
+  // relationTo's own letter-casing (e.g. "Customer" -> "customer") with
+  // zero change to the target entity itself and zero observable effect
+  // anywhere the app actually renders something -- without lowercasing
+  // here, that pure casing drift was the one remaining place in this
+  // entire family of fixes that still reported a same-named, same-typed,
+  // same-required relation field as "changed," and marked an otherwise
+  // byte-identical checkpoint as not current, over a difference nothing
+  // on screen could ever reveal.
+  const relationPart = f.type === "relation" ? (f.relationTo ?? "").toLowerCase() : "";
   return `${f.type}|${relationPart}|${enumPart}|${enumLabelsPart}|${f.required ? "required" : "optional"}`;
 }
 
