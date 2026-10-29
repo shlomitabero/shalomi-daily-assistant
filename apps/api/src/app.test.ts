@@ -890,6 +890,53 @@ test("changing your password requires a valid session, the same as any other aut
 });
 
 /**
+ * Round 1252: this route used to send no notification anywhere once the
+ * change succeeded -- round 1206 closed the identical gap for PATCH
+ * /auth/email but never touched this route, despite the risk being
+ * sharper here: an attacker who obtains the real current password (a
+ * leaked/reused credential, not a stolen session) locks the real owner
+ * out of every other session with zero visible signal. Confirms the real
+ * EmailSender.send call reaches the account's own address.
+ */
+test("changing your password sends a real notification to your own address, when email is configured", async () => {
+  const emailSender = createFakeEmailSender();
+  await withServer(
+    async (baseUrl) => {
+      const email = `change-pw-notify-${Date.now()}@example.com`;
+      const token = await signup(baseUrl, email);
+
+      const changeRes = await fetch(`${baseUrl}/api/auth/password`, {
+        method: "PATCH",
+        headers: authHeaders(token),
+        body: JSON.stringify({ currentPassword: "correct-horse-battery", newPassword: "brand-new-password", lang: "en" }),
+      });
+      assert.equal(changeRes.status, 204);
+
+      assert.equal(emailSender.sentTo.length, 1, "exactly one notification must be sent");
+      assert.equal(emailSender.sentTo[0].to, email, "the notification must go to the account's own address");
+    },
+    { emailSender },
+  );
+});
+
+test("changing your password still succeeds, with no notification attempted, when no email provider is configured", async () => {
+  const emailSender = createFakeEmailSender({ configured: false });
+  await withServer(
+    async (baseUrl) => {
+      const token = await signup(baseUrl, `change-pw-notify-unconfigured-${Date.now()}@example.com`);
+      const changeRes = await fetch(`${baseUrl}/api/auth/password`, {
+        method: "PATCH",
+        headers: authHeaders(token),
+        body: JSON.stringify({ currentPassword: "correct-horse-battery", newPassword: "brand-new-password" }),
+      });
+      assert.equal(changeRes.status, 204, "the change itself must still work exactly as before this feature existed");
+      assert.equal(emailSender.sentTo.length, 0, "no send should even be attempted when email isn't configured");
+    },
+    { emailSender },
+  );
+});
+
+/**
  * Round 1199: `email` was otherwise write-once -- set once at signup and
  * never touched again, the one account field with no self-service fix: a
  * typo or an inaccessible provider left `DELETE /auth/account` (cascading

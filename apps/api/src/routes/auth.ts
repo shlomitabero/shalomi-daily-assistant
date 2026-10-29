@@ -55,6 +55,10 @@ const SESSION_TTL_MS = 30 * 24 * 60 * 60 * 1000; // 30 days
 const ChangePasswordSchema = z.object({
   currentPassword: z.string().min(1, "currentPassword is required"),
   newPassword: z.string().min(8, "newPassword must be at least 8 characters"),
+  // Round 1252: same optional client-language hint CredentialsSchema/
+  // ForgotPasswordSchema/ChangeEmailSchema already carry, for the
+  // notification email this route now sends.
+  lang: z.enum(["he", "en"]).optional(),
 });
 
 const ChangeEmailSchema = z.object({
@@ -566,6 +570,18 @@ export function createAuthRouter(
    * password change, e.g. kicking out a lost laptop or a leaked token --
    * while deliberately keeping this exact request's own session alive, so
    * the 204 response below still has a valid session to return against.
+   *
+   * Round 1252: that revocation is silent -- the real owner just discovers
+   * they're logged out everywhere else, with no way to tell a deliberate
+   * password change caused it rather than, say, a generic session expiry.
+   * Round 1206 closed this exact blind spot for PATCH /auth/email (compare
+   * that route's own doc comment below) but never touched this one, despite
+   * this being the route where the risk is sharper: an attacker who
+   * obtained the real current password (a leaked/reused credential, not a
+   * stolen session -- the check below already rules that out) can lock the
+   * real owner out with zero visible signal. Best-effort, mirroring that
+   * route's own swallowed-send contract: a failed send must never undo or
+   * block an already-successful, already-committed password change.
    */
   router.patch("/auth/password", requireAuth(db), changePasswordRateLimiter, async (req, res, next) => {
     const parsed = ChangePasswordSchema.safeParse(req.body);
@@ -574,7 +590,7 @@ export function createAuthRouter(
       return;
     }
     try {
-      const { currentPassword, newPassword } = parsed.data;
+      const { currentPassword, newPassword, lang } = parsed.data;
       const storedHash = getPasswordHash(db, req.userId!);
       if (!storedHash || !(await verifyPassword(currentPassword, storedHash))) {
         next(new HttpError(401, "Current password is incorrect", "INVALID_CURRENT_PASSWORD"));
@@ -589,12 +605,28 @@ export function createAuthRouter(
       // Without this re-check, the writes below would both silently affect
       // zero rows and this handler would still report 204, as if the
       // password change succeeded on an account that no longer exists.
-      if (!findUserById(db, req.userId!)) {
+      const user = findUserById(db, req.userId!);
+      if (!user) {
         next(new HttpError(401, "This account no longer exists", "USER_NOT_FOUND"));
         return;
       }
       updatePasswordHash(db, req.userId!, newHash);
       deleteOtherSessionsForUser(db, req.userId!, extractBearerToken(req)!);
+      if (emailSender.configured) {
+        const isHebrew = lang !== "en";
+        const subject = isHebrew ? "הסיסמה של חשבונך ב-Forge AI השתנתה" : "Your Forge AI account's password was changed";
+        const body = isHebrew
+          ? `הסיסמה של חשבונך ב-Forge AI שונתה כעת.\n\nאם זו לא הייתם אתם, מישהו אחר ידע את הסיסמה הקודמת שלכם -- היכנסו לחשבון והחליפו אותה מיד.`
+          : `Your Forge AI account's password was just changed.\n\nIf this wasn't you, someone else knew your previous password -- sign in and change it immediately.`;
+        try {
+          await emailSender.send(user.email, subject, body);
+        } catch {
+          // Swallowed, deliberately, same as PATCH /auth/email's own send
+          // above -- the password change itself already succeeded and was
+          // already committed to the database; a failed best-effort
+          // notification must never turn that into an error response.
+        }
+      }
       res.status(204).end();
     } catch (err) {
       next(err);

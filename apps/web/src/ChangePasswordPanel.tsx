@@ -11,7 +11,7 @@ import { useDialogFocusTrap } from "./useDialogFocusTrap.js";
  * typo before it's sent -- a mismatch never reaches the server.
  */
 export function ChangePasswordPanel({ onClose }: { onClose: () => void }) {
-  const { t } = useTranslation();
+  const { t, lang } = useTranslation();
   const [currentPassword, setCurrentPassword] = useState("");
   const [newPassword, setNewPassword] = useState("");
   const [confirmPassword, setConfirmPassword] = useState("");
@@ -51,7 +51,7 @@ export function ChangePasswordPanel({ onClose }: { onClose: () => void }) {
     }
     setBusy(true);
     try {
-      await changePassword(currentPassword, newPassword);
+      await changePassword(currentPassword, newPassword, lang);
       setDone(true);
     } catch (err) {
       setError((err as Error).message);

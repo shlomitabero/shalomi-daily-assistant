@@ -323,8 +323,13 @@ export async function logout(): Promise<void> {
   clearToken();
 }
 
-export function changePassword(currentPassword: string, newPassword: string): Promise<void> {
-  return request("/auth/password", { method: "PATCH", body: JSON.stringify({ currentPassword, newPassword }) });
+/**
+ * `lang` (round 1252) picks which language the server's own
+ * password-changed notification is written in, the same `changeEmail`
+ * convention just below.
+ */
+export function changePassword(currentPassword: string, newPassword: string, lang: "he" | "en"): Promise<void> {
+  return request("/auth/password", { method: "PATCH", body: JSON.stringify({ currentPassword, newPassword, lang }) });
 }
 
 /**
