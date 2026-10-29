@@ -1503,6 +1503,12 @@ export function EntityPanel({
   const [importMessage, setImportMessage] = useState<string | null>(null);
   const [importErrors, setImportErrors] = useState<string[]>([]);
   const [showImportErrors, setShowImportErrors] = useState(false);
+  // Round 1241: advisory possible-duplicate warnings from buildImportRecords/
+  // buildImportRecordsFromJson -- kept separate from importErrors (never
+  // blocks a row, so it's not a "problem" in that sense), mirroring the
+  // same toggle-to-reveal UI those already use.
+  const [importWarnings, setImportWarnings] = useState<string[]>([]);
+  const [showImportWarnings, setShowImportWarnings] = useState(false);
   const [recordToPrint, setRecordToPrint] = useState<EntityRecord | null>(null);
   const [showPrintList, setShowPrintList] = useState(false);
   const [hiddenFields, setHiddenFields] = useState<Set<string>>(() => new Set());
@@ -3812,10 +3818,21 @@ export function EntityPanel({
     setImportMessage(null);
     setImportErrors([]);
     setShowImportErrors(false);
+    setImportWarnings([]);
+    setShowImportWarnings(false);
     try {
       const text = await file.text();
       const rows = parseCsv(text);
-      const { records: parsedRecords, errors: parseErrors } = buildImportRecords(entity.fields, rows, allEntities, relatedRecords, lang);
+      const { records: parsedRecords, errors: parseErrors, warnings } = buildImportRecords(
+        entity.fields,
+        rows,
+        allEntities,
+        relatedRecords,
+        lang,
+        entity,
+        records,
+      );
+      setImportWarnings(warnings);
       await writeImportedRecords(parsedRecords, parseErrors);
     } catch (err) {
       setError((err as Error).message);
@@ -3842,6 +3859,8 @@ export function EntityPanel({
     setImportMessage(null);
     setImportErrors([]);
     setShowImportErrors(false);
+    setImportWarnings([]);
+    setShowImportWarnings(false);
     try {
       const text = await file.text();
       let parsed: unknown;
@@ -3855,7 +3874,15 @@ export function EntityPanel({
         setImportMessage(t("entity.import.jsonParseError"));
         return;
       }
-      const { records: parsedRecords, errors: parseErrors } = buildImportRecordsFromJson(entity.fields, parsed, allEntities, relatedRecords);
+      const { records: parsedRecords, errors: parseErrors, warnings } = buildImportRecordsFromJson(
+        entity.fields,
+        parsed,
+        allEntities,
+        relatedRecords,
+        entity,
+        records,
+      );
+      setImportWarnings(warnings);
       await writeImportedRecords(parsedRecords, parseErrors);
     } catch (err) {
       setError((err as Error).message);
@@ -4414,11 +4441,25 @@ export function EntityPanel({
             {showImportErrors ? t("entity.import.hideErrors") : t("entity.import.showErrors")}
           </button>
         )}
+        {importWarnings.length > 0 && (
+          <button type="button" className="secondary small" onClick={() => setShowImportWarnings((v) => !v)}>
+            {showImportWarnings
+              ? t("entity.import.hideWarnings")
+              : t("entity.import.showWarnings", { count: importWarnings.length })}
+          </button>
+        )}
       </div>
       )}
       {showImportErrors && importErrors.length > 0 && (
         <ul className="csv-import-errors">
           {importErrors.map((msg, i) => (
+            <li key={i}>{msg}</li>
+          ))}
+        </ul>
+      )}
+      {showImportWarnings && importWarnings.length > 0 && (
+        <ul className="csv-import-warnings">
+          {importWarnings.map((msg, i) => (
             <li key={i}>{msg}</li>
           ))}
         </ul>

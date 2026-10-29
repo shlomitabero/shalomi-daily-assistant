@@ -5011,6 +5011,85 @@ test("EntityPanel's CSV import creates a real record from an uploaded file and s
 });
 
 /**
+ * Round 1241: CSV import had no signal at all for a new row that
+ * coincides with a record already sitting in this entity's table --
+ * buildImportRecords' own advisory `warnings` (new this round, mirroring
+ * twin.ts's computeDuplicateObservations) only fires when the caller
+ * actually passes the current entity + its loaded records through, so
+ * this confirms EntityPanel's handleImportFile really does that wiring:
+ * importing a new ("Dana", no id) row while an existing "Dana" record is
+ * already in the table surfaces the "Show N possible duplicates" toggle,
+ * revealing the warning text on click -- and, being advisory only, the
+ * row still gets created exactly as it would without this feature.
+ */
+test("EntityPanel's CSV import surfaces a possible-duplicate warning for a new row matching an existing record's name, without blocking the import", async () => {
+  await withJsdom(async () => {
+    const store: EntityRecord[] = [{ id: 1, name: "Dana", email: "dana@old.com" } as unknown as EntityRecord];
+    let nextId = 2;
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = (async (input: string, init?: RequestInit) => {
+      const method = init?.method ?? "GET";
+      if (method === "GET" && input === "/api/projects/proj1/entities/Customer") {
+        return new Response(JSON.stringify({ records: store }), { status: 200, headers: { "content-type": "application/json" } });
+      }
+      if (method === "POST" && input === "/api/projects/proj1/entities/Customer") {
+        const data = JSON.parse(init!.body as string);
+        const record = { id: nextId++, ...data };
+        store.push(record);
+        return new Response(JSON.stringify({ record }), { status: 201, headers: { "content-type": "application/json" } });
+      }
+      throw new Error(`unexpected request ${method} ${input}`);
+    }) as typeof fetch;
+    try {
+      render(
+        React.createElement(
+          ThemeProvider,
+          null,
+          React.createElement(
+            LanguageProvider,
+            null,
+            React.createElement(EntityPanel, {
+              projectId: "proj1",
+              userId: "user1",
+              entity: CUSTOMER_IMPORT_ENTITY,
+              allEntities: [CUSTOMER_IMPORT_ENTITY],
+              onEntityRenamed: () => {},
+            }),
+          ),
+        ),
+      );
+      await waitForCondition(() => document.querySelector(".csv-import-row") !== null);
+      await waitForCondition(() => document.querySelectorAll("tbody tr").length === 1);
+
+      const csvText = "name,email\nDana,dana@example.com\n";
+      const file = new File([csvText], "customers.csv", { type: "text/csv" });
+      const fileInput = document.querySelector('input[type="file"]') as HTMLInputElement;
+      Object.defineProperty(fileInput, "files", { value: [file], configurable: true });
+      fireEvent.change(fileInput);
+
+      await waitForCondition(() => document.querySelectorAll("tbody tr").length === 2);
+
+      assert.equal(store.length, 2, "the new row must still be imported -- the duplicate warning is advisory, never blocking");
+
+      const buttons = Array.from(document.querySelectorAll(".csv-import-row button"));
+      const warningButton = buttons.find((b) => /possible duplicate/i.test(b.textContent ?? ""));
+      assert.ok(warningButton, "a 'Show N possible duplicates' toggle must appear once a new row's name coincides with an existing record");
+      assert.match(warningButton!.textContent ?? "", /\b1\b/, "the toggle must report exactly 1 possible duplicate");
+
+      fireEvent.click(warningButton!);
+      await waitForCondition(() => document.querySelector(".csv-import-warnings") !== null);
+      assert.match(
+        document.querySelector(".csv-import-warnings")!.textContent ?? "",
+        /Dana/,
+        "the revealed warning text must name the actual duplicated value",
+      );
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+});
+
+/**
  * Round 643: CSV import POSTs every parsed row through the exact same
  * createRecord call (and server route) a single "Add" form submission
  * uses -- without a way to tell the two apart, every "record_created"

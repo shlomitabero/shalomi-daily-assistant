@@ -1595,6 +1595,17 @@ tbody tr:hover {
   gap: 3px;
 }
 
+/* Round 1241: advisory-only, never blocks a row (unlike .csv-import-errors above) -- uses --warning instead of --danger for the same reason every other advisory badge in this file does. */
+.csv-import-warnings {
+  margin: -6px 0 14px;
+  padding-inline-start: 20px;
+  color: var(--warning);
+  font-size: 13px;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
 .view-toggle-btn {
   padding: 6px 12px;
   border-radius: calc(var(--radius-sm) - 2px);

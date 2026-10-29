@@ -1594,6 +1594,62 @@ export interface ImportResult {
   records: Record<string, unknown>[];
   /** Human-readable problems, each naming the 1-based data row it came from (or none, for a whole-file problem). */
   errors: string[];
+  /**
+   * Round 1241: advisory-only, never blocks a row (unlike `errors`) --
+   * a new row (no resolved `id`, so it will be POSTed rather than
+   * PATCHed) whose display-field value matches either an existing record
+   * already in this entity's table or an earlier row in this same import
+   * batch. Mirrors twin.ts's own computeDuplicateObservations (the
+   * Business Twin's after-the-fact "possibly a duplicate" observation),
+   * just surfaced at import time instead, while the row is still easy to
+   * skip, map to the existing record, or confirm as a deliberate second
+   * entry.
+   */
+  warnings: string[];
+}
+
+/**
+ * Shared by buildImportRecords and buildImportRecordsFromJson below --
+ * mirrors twin.ts's own computeDuplicateObservations (see this file's
+ * own ImportResult.warnings doc comment above for the full rationale),
+ * restricted to the exact same text/longtext display-field precondition
+ * that function already requires: a relation/enum/boolean/date/number/
+ * file display field's stored value is a foreign-key id or raw code,
+ * never a human name, so two rows sharing one is not evidence of an
+ * actual duplicate the way two matching names are. `entity` is only used
+ * to pick that display field (via pickDisplayField); when the caller
+ * doesn't have the full entity on hand (e.g. every pre-round-1241 test
+ * call site), this returns a checker that never warns, the same
+ * "feature absent, not broken" default every other optional parameter in
+ * these two functions already falls back to.
+ */
+function makeDuplicateWarningChecker(
+  entity: Entity | null,
+  existingRecords: EntityRecord[],
+): (record: Record<string, unknown>, rowIndex: number) => string | null {
+  const displayField = entity ? pickDisplayField(entity) : null;
+  if (!displayField || (displayField.type !== "text" && displayField.type !== "longtext")) {
+    return () => null;
+  }
+  const existingLabels = new Set<string>();
+  for (const r of existingRecords) {
+    const v = r[displayField.name];
+    if (typeof v === "string" && v.trim() !== "") existingLabels.add(v.trim().toLowerCase());
+  }
+  const importBatchLabels = new Set<string>();
+  return (record, rowIndex) => {
+    // An existing record's id was resolved onto this row (re-importing an
+    // edited copy of this entity's own export) -- that's an intentional
+    // update of that exact record, never "a duplicate" of itself.
+    if (record.id !== undefined) return null;
+    const raw = record[displayField.name];
+    if (typeof raw !== "string" || raw.trim() === "") return null;
+    const key = raw.trim().toLowerCase();
+    const isDuplicate = existingLabels.has(key) || importBatchLabels.has(key);
+    importBatchLabels.add(key);
+    if (!isDuplicate) return null;
+    return `Row ${rowIndex + 1}: a record named "${raw.trim()}" already exists -- this will create a new, separate record (possibly a duplicate).`;
+  };
 }
 
 function matchesHeader(header: string, field: Field, labelOccurrences: Map<string, number>): boolean {
@@ -1700,8 +1756,10 @@ export function buildImportRecords(
   allEntities: Entity[] = [],
   relatedRecords: RelatedRecordsByEntity = {},
   lang: Lang = "en",
+  entity: Entity | null = null,
+  existingRecords: EntityRecord[] = [],
 ): ImportResult {
-  if (rows.length === 0) return { records: [], errors: [] };
+  if (rows.length === 0) return { records: [], errors: [], warnings: [] };
 
   // A relation field can only be resolved when the caller has already
   // loaded its target entity's records (relatedRecords/allEntities) -- see
@@ -1731,6 +1789,7 @@ export function buildImportRecords(
       errors: [
         `CSV import isn't supported yet for entities with a required ${requiredUnsupported.type} field ("${requiredUnsupported.label ?? requiredUnsupported.name}").`,
       ],
+      warnings: [],
     };
   }
 
@@ -1779,6 +1838,8 @@ export function buildImportRecords(
 
   const records: Record<string, unknown>[] = [];
   const errors: string[] = [];
+  const warnings: string[] = [];
+  const checkDuplicateWarning = makeDuplicateWarningChecker(entity, existingRecords);
   // Round 1042: two rows sharing the same trusted id (a duplicated row,
   // copy/pasted as a template for a new one and never blanked out) each
   // become their own independent updateRecord() call (EntityPanel.tsx's
@@ -1952,11 +2013,13 @@ export function buildImportRecords(
     if (rowError) {
       errors.push(rowError);
     } else {
+      const dupWarning = checkDuplicateWarning(record, rowIndex);
+      if (dupWarning) warnings.push(dupWarning);
       records.push(record);
     }
   });
 
-  return { records, errors };
+  return { records, errors, warnings };
 }
 
 /**
@@ -2002,8 +2065,10 @@ export function buildImportRecordsFromJson(
   rows: unknown[],
   allEntities: Entity[] = [],
   relatedRecords: RelatedRecordsByEntity = {},
+  entity: Entity | null = null,
+  existingRecords: EntityRecord[] = [],
 ): ImportResult {
-  if (rows.length === 0) return { records: [], errors: [] };
+  if (rows.length === 0) return { records: [], errors: [], warnings: [] };
 
   const relationResolvable = (f: Field): boolean =>
     !!f.relationTo && allEntities.some((e) => e.name.toLowerCase() === f.relationTo!.toLowerCase()) && !!relatedRecords[f.relationTo];
@@ -2017,11 +2082,14 @@ export function buildImportRecordsFromJson(
       errors: [
         `JSON import isn't supported yet for entities with a required ${requiredUnsupported.type} field ("${requiredUnsupported.label ?? requiredUnsupported.name}").`,
       ],
+      warnings: [],
     };
   }
 
   const records: Record<string, unknown>[] = [];
   const errors: string[] = [];
+  const warnings: string[] = [];
+  const checkDuplicateWarning = makeDuplicateWarningChecker(entity, existingRecords);
   const seenIds = new Set<number>();
 
   rows.forEach((row, rowIndex) => {
@@ -2116,11 +2184,13 @@ export function buildImportRecordsFromJson(
     if (rowError) {
       errors.push(rowError);
     } else {
+      const dupWarning = checkDuplicateWarning(record, rowIndex);
+      if (dupWarning) warnings.push(dupWarning);
       records.push(record);
     }
   });
 
-  return { records, errors };
+  return { records, errors, warnings };
 }
 
 /**

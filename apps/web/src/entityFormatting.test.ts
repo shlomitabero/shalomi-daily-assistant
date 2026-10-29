@@ -2794,6 +2794,72 @@ test("buildImportRecords still trusts the \"id\" column once the header covers e
 });
 
 /**
+ * Round 1241: a new feature -- a found-by-survey gap where buildImportRecords
+ * had no signal at all for a new row (no trusted id) whose display-field
+ * value coincides with a record already in this entity's table, even
+ * though twin.ts's computeDuplicateObservations already flags the exact
+ * same thing for the Business Twin, just after the fact. `entity` and
+ * `existingRecords` are both new optional trailing parameters -- every
+ * pre-1241 call site above this comment (bare `fields, rows`) keeps
+ * returning `warnings: []`, confirming the feature is additive, not a
+ * silent behavior change for an existing caller.
+ */
+const DUPLICATE_CHECK_ENTITY: Entity = {
+  name: "Customer",
+  label: "Customer",
+  fields: [{ name: "name", label: "Name", type: "text", required: true }],
+};
+
+test("buildImportRecords warns (but still imports) a new row whose name matches an existing record, when entity+existingRecords are passed", () => {
+  const fields = DUPLICATE_CHECK_ENTITY.fields;
+  const rows = [["Name"], ["Dana"]];
+  const existing: EntityRecord[] = [{ id: 1, name: "Dana" }];
+  const result = buildImportRecords(fields, rows, [], {}, "en", DUPLICATE_CHECK_ENTITY, existing);
+  assert.deepEqual(result.errors, [], "a possible duplicate must never be treated as a row error");
+  assert.deepEqual(result.records, [{ name: "Dana" }], "the row must still be imported despite the warning");
+  assert.equal(result.warnings.length, 1);
+  assert.match(result.warnings[0], /Dana/);
+});
+
+test("buildImportRecords warns on two new rows in the same file that share a name, even with no existing records at all", () => {
+  const fields = DUPLICATE_CHECK_ENTITY.fields;
+  const rows = [["Name"], ["Dana"], ["Dana"]];
+  const result = buildImportRecords(fields, rows, [], {}, "en", DUPLICATE_CHECK_ENTITY, []);
+  assert.equal(result.records.length, 2, "both rows must still be imported -- within-batch duplicates are advisory too");
+  assert.equal(result.warnings.length, 1, "only the SECOND occurrence warns -- the first instance of a name is never a duplicate of itself");
+});
+
+test("buildImportRecords never warns about a row whose id column resolves it to an update of that exact existing record", () => {
+  const fields = DUPLICATE_CHECK_ENTITY.fields;
+  const rows = [
+    ["id", "Name"],
+    ["1", "Dana"],
+  ];
+  const existing: EntityRecord[] = [{ id: 1, name: "Dana" }];
+  const result = buildImportRecords(fields, rows, [], {}, "en", DUPLICATE_CHECK_ENTITY, existing);
+  assert.deepEqual(result.warnings, [], "updating a record by its own id is never a duplicate of itself");
+});
+
+test("buildImportRecords never warns when the entity's display field isn't text/longtext, mirroring twin.ts's own computeDuplicateObservations restriction", () => {
+  const enumEntity: Entity = {
+    name: "Order",
+    label: "Order",
+    fields: [{ name: "status", label: "Status", type: "enum", required: true, enumValues: ["New", "Done"] }],
+  };
+  const rows = [["Status"], ["New"], ["New"]];
+  const existing: EntityRecord[] = [{ id: 1, status: "New" }];
+  const result = buildImportRecords(enumEntity.fields, rows, [], {}, "en", enumEntity, existing);
+  assert.deepEqual(result.warnings, [], "an enum display field's shared value is never evidence of a duplicate record");
+});
+
+test("buildImportRecords never warns when the caller doesn't pass entity/existingRecords at all (every pre-1241 call site)", () => {
+  const fields = DUPLICATE_CHECK_ENTITY.fields;
+  const rows = [["Name"], ["Dana"], ["Dana"]];
+  const result = buildImportRecords(fields, rows);
+  assert.deepEqual(result.warnings, [], "the feature must be fully opt-in -- an old call site with no entity/existingRecords must behave exactly as before");
+});
+
+/**
  * Round 1221: the JSON counterpart to round 1217's Export JSON -- a user
  * who clicked "Export JSON" had no way back in, unlike CSV's full export/
  * import round-trip. buildImportRecordsFromJson is dramatically simpler
@@ -2940,6 +3006,41 @@ test("buildImportRecordsFromJson rejects a number field's value when it isn't ac
   assert.deepEqual(result.records, []);
   assert.equal(result.errors.length, 1);
   assert.match(result.errors[0], /isn't a number/);
+});
+
+/**
+ * Round 1241: the JSON counterpart to buildImportRecords' own new
+ * possible-duplicate warnings above -- same makeDuplicateWarningChecker
+ * helper, same entity+existingRecords trailing parameters, same
+ * never-blocks guarantee. A JSON re-import of a hand-edited export is
+ * exactly the shape most likely to introduce a NEW id-less row (someone
+ * copy-pasted a record's own JSON and forgot to remove its id before
+ * adding a new entry) that coincides with an existing one.
+ */
+test("buildImportRecordsFromJson warns (but still imports) a new row whose name matches an existing record, when entity+existingRecords are passed", () => {
+  const fields = DUPLICATE_CHECK_ENTITY.fields;
+  const rows = [{ name: "Dana" }];
+  const existing: EntityRecord[] = [{ id: 1, name: "Dana" }];
+  const result = buildImportRecordsFromJson(fields, rows, [], {}, DUPLICATE_CHECK_ENTITY, existing);
+  assert.deepEqual(result.errors, []);
+  assert.deepEqual(result.records, [{ name: "Dana" }]);
+  assert.equal(result.warnings.length, 1);
+  assert.match(result.warnings[0], /Dana/);
+});
+
+test("buildImportRecordsFromJson never warns about a row whose own id resolves it to an update of that exact existing record", () => {
+  const fields = DUPLICATE_CHECK_ENTITY.fields;
+  const rows = [{ id: 1, name: "Dana" }];
+  const existing: EntityRecord[] = [{ id: 1, name: "Dana" }];
+  const result = buildImportRecordsFromJson(fields, rows, [], {}, DUPLICATE_CHECK_ENTITY, existing);
+  assert.deepEqual(result.warnings, [], "updating a record by its own id is never a duplicate of itself");
+});
+
+test("buildImportRecordsFromJson never warns when the caller doesn't pass entity/existingRecords at all (every pre-1241 call site)", () => {
+  const fields = DUPLICATE_CHECK_ENTITY.fields;
+  const rows = [{ name: "Dana" }, { name: "Dana" }];
+  const result = buildImportRecordsFromJson(fields, rows);
+  assert.deepEqual(result.warnings, [], "the feature must be fully opt-in -- an old call site with no entity/existingRecords must behave exactly as before");
 });
 
 test("uniqueEnumValues de-dupes while preserving first-occurrence order, and tolerates a missing array", () => {
