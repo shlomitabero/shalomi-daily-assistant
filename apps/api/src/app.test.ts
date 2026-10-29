@@ -4015,6 +4015,72 @@ test("POST .../automations/:ruleId/test fires a schedule rule immediately (bypas
 });
 
 /**
+ * Round 1261: this route's own test above already confirms a schedule
+ * rule's Test bypasses isScheduledRuleDue's due-time gate -- but it never
+ * checked the SIDE EFFECT of that successful fire: fireScheduledRule used
+ * to unconditionally update the rule's own lastTriggeredAt/lastStatus, the
+ * exact two columns isScheduledRuleDue later reads to decide whether
+ * today's REAL scheduled occurrence has already happened. A rule tested
+ * successfully would then never actually fire at its own scheduled time
+ * later that same day -- directly contradicting Test's own purpose
+ * (verify a rule works "immediately instead of waiting for... its own
+ * next due time", not replace that occurrence). Confirms via the real
+ * GET .../automations list response (which spreads the rule's own raw
+ * row, lastTriggeredAt included) that a successful test leaves it null.
+ */
+test("a successful Test of a schedule rule leaves its own lastTriggeredAt/lastStatus untouched, so the real scheduler still considers it due later the same day", async () => {
+  let createdSockets: ReturnType<typeof createFakeWhatsAppSocket>[] = [];
+  await withServer(
+    async (baseUrl) => {
+      const token = await signup(baseUrl, `schedule-test-no-mark-${randomUUID()}@example.com`);
+      const createRes = await fetch(`${baseUrl}/api/projects`, {
+        method: "POST",
+        headers: authHeaders(token),
+        body: JSON.stringify({ description: "A CRM with customers and deals." }),
+      });
+      const { project } = (await createRes.json()) as { project: { id: string; spec: { entities: { name: string }[] } } };
+      const entityName = project.spec.entities[0].name;
+
+      await fetch(`${baseUrl}/api/projects/${project.id}/integrations/whatsapp/connect`, { method: "POST", headers: authHeaders(token) });
+      createdSockets[0].sock.user = { id: "15550001111:1@s.whatsapp.net" };
+      createdSockets[0].emitConnectionUpdate({ connection: "open" });
+
+      const ruleRes = await fetch(`${baseUrl}/api/projects/${project.id}/entities/${entityName}/automations`, {
+        method: "POST",
+        headers: authHeaders(token),
+        body: JSON.stringify({
+          trigger: "schedule",
+          scheduleTimeUtc: "09:00",
+          actionType: "send_whatsapp",
+          toMode: "static",
+          toNumber: "972500000000",
+          messageTemplate: "Daily report",
+        }),
+      });
+      const { rule } = (await ruleRes.json()) as { rule: { id: string } };
+
+      const testRes = await fetch(`${baseUrl}/api/projects/${project.id}/automations/${rule.id}/test`, { method: "POST", headers: authHeaders(token) });
+      assert.equal(testRes.status, 200);
+      const { run } = (await testRes.json()) as { run: { status: string } | null };
+      assert.equal(run?.status, "sent", "WhatsApp is connected, so the test must genuinely succeed");
+
+      const listRes = await fetch(`${baseUrl}/api/projects/${project.id}/automations`, { headers: authHeaders(token) });
+      const { rules } = (await listRes.json()) as { rules: { id: string; lastTriggeredAt: string | null; lastStatus: string | null }[] };
+      const afterTest = rules.find((r) => r.id === rule.id)!;
+      assert.equal(afterTest.lastTriggeredAt, null, "a successful test must never mark the rule as having fired for real");
+      assert.equal(afterTest.lastStatus, null);
+    },
+    {
+      whatsapp: (db) => {
+        const { manager, createdSockets: sockets } = createTestWhatsAppManager(db);
+        createdSockets = sockets;
+        return manager;
+      },
+    },
+  );
+});
+
+/**
  * Round 953: the sibling POST (create) route above already got
  * withIdempotency protection in round 600; this PATCH route never did.
  * fetchWithWakeRetry retries on ANY thrown fetch() error, so a response

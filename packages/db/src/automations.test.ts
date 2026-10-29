@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { randomUUID } from "node:crypto";
 import { test } from "node:test";
 import { openDatabase } from "./connection.js";
 import { NotFoundError } from "./repository.js";
@@ -190,6 +191,40 @@ test("recordAutomationRun stamps lastTriggeredAt/lastStatus/lastError, and silen
   // Must not throw for an id that no longer exists -- this runs from
   // fire-and-forget background code, never on a user-facing request path.
   assert.doesNotThrow(() => recordAutomationRun(db, "proj1", "nonexistent", { status: "sent" }));
+});
+
+/**
+ * Round 1261: a manual "Test" of a schedule-trigger rule
+ * (apps/api/src/routes/projects.ts) fires it through the exact same
+ * fireScheduledRule path the real scheduler uses, which always reached
+ * here and unconditionally updated lastTriggeredAt/lastStatus -- the
+ * two columns isScheduledRuleDue (apps/api/src/automations.ts) reads to
+ * decide whether today's real scheduled occurrence already happened.
+ * skipRuleSummaryUpdate lets that one caller keep the real history row
+ * (so the test's own outcome still shows up in the rule's run list)
+ * without also marking the rule as already sent for the day.
+ */
+test("recordAutomationRun skips the rule's own lastTriggeredAt/lastStatus/lastError update when skipRuleSummaryUpdate is true, but still inserts the real automation_runs history row", () => {
+  const db = openDatabase(":memory:");
+  ensureAutomationRulesTable(db);
+  const rule = insertAutomationRule(db, baseRule());
+
+  recordAutomationRun(db, "proj1", rule.id, { status: "sent" }, "send_whatsapp", null, null, new Date(), randomUUID(), true);
+
+  const afterTest = getAutomationRule(db, "proj1", rule.id)!;
+  assert.equal(afterTest.lastTriggeredAt, null, "the rule's own summary columns must stay untouched");
+  assert.equal(afterTest.lastStatus, null);
+
+  const [run] = listAutomationRuns(db, "proj1", rule.id);
+  assert.equal(run!.status, "sent", "the real history row must still be inserted, so the test's own outcome is visible in the run list");
+
+  // The very next ordinary call (skipRuleSummaryUpdate omitted, defaulting
+  // false) must update the rule's own summary normally -- this round's fix
+  // only ever skips the update for the one call that explicitly asks for it.
+  recordAutomationRun(db, "proj1", rule.id, { status: "failed", error: "oops" });
+  const afterReal = getAutomationRule(db, "proj1", rule.id)!;
+  assert.ok(afterReal.lastTriggeredAt, "an ordinary call must still update the rule's own summary as before");
+  assert.equal(afterReal.lastStatus, "failed");
 });
 
 /**

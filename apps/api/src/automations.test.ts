@@ -1425,6 +1425,52 @@ test("fireScheduledRule records a failed outcome when WhatsApp isn't connected, 
   assert.equal(getAutomationRule(db, project.id, rule.id)!.lastStatus, "failed");
 });
 
+/**
+ * Round 1261: routes/projects.ts's POST .../test route fires a
+ * schedule-trigger rule through this exact function, passing
+ * isManualTest=true specifically so a successful test never marks today's
+ * REAL scheduled occurrence as already sent -- isScheduledRuleDue reads
+ * exactly the two columns (lastTriggeredAt/lastStatus) an ordinary call
+ * updates. Before this fix, a rule tested successfully in the morning
+ * would never actually fire at its own scheduled time later that same
+ * day. Confirms both halves: the rule's own summary columns stay
+ * untouched, AND isScheduledRuleDue genuinely still considers the rule
+ * due afterward (not just that the columns look right in isolation).
+ */
+test("fireScheduledRule called with isManualTest=true records a real run but leaves the rule's own lastTriggeredAt/lastStatus untouched, so isScheduledRuleDue still considers it due later the same day", async () => {
+  const { db, project } = setupProject();
+  const rule = insertAutomationRule(db, scheduleRuleBase());
+  const { manager, sendCalls } = createFakeWhatsApp({ connected: true });
+
+  await fireScheduledRule(db, manager, UNUSED_EMAIL_SENDER, project, rule, new Date(), true);
+
+  assert.equal(sendCalls.length, 1, "a manual test must still genuinely attempt the real send, not a fake dry run");
+  const afterTest = getAutomationRule(db, project.id, rule.id)!;
+  assert.equal(afterTest.lastTriggeredAt, null, "a manual test must never update the rule's own lastTriggeredAt");
+  assert.equal(afterTest.lastStatus, null, "a manual test must never update the rule's own lastStatus");
+
+  const [run] = listAutomationRuns(db, project.id, rule.id);
+  assert.equal(run!.status, "sent", "the test's own outcome must still show up as a real run in the rule's history");
+
+  assert.equal(
+    isScheduledRuleDue({ ...afterTest, scheduleTimeUtc: "00:00" }, new Date()),
+    true,
+    "the real scheduler must still consider this rule due right now, exactly as if the test had never happened",
+  );
+});
+
+test("fireScheduledRule called with isManualTest omitted (the real scheduler's own call shape) updates the rule's own lastTriggeredAt/lastStatus as before", async () => {
+  const { db, project } = setupProject();
+  const rule = insertAutomationRule(db, scheduleRuleBase());
+  const { manager } = createFakeWhatsApp({ connected: true });
+
+  await fireScheduledRule(db, manager, UNUSED_EMAIL_SENDER, project, rule);
+
+  const after = getAutomationRule(db, project.id, rule.id)!;
+  assert.ok(after.lastTriggeredAt, "the real scheduler's own call must still update lastTriggeredAt, unchanged by this round's fix");
+  assert.equal(after.lastStatus, "sent");
+});
+
 test("runScheduledAutomationsCheck fires exactly the rules that are due right now, across different projects, and skips disabled/not-yet-due ones", async () => {
   const db = openDatabase(":memory:");
   ensureProjectsTable(db);

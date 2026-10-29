@@ -671,6 +671,9 @@ async function fireWebhookAction(
   // hasTooManyConsecutiveFailuresToday judges "today" against, rather
   // than silently drifting to the real wall clock.
   now: Date = new Date(),
+  // Round 1261: see recordAutomationRun's own doc comment (packages/db).
+  // Only fireScheduledRule's own Test-route call site ever passes true.
+  skipRuleSummaryUpdate: boolean = false,
 ): Promise<void> {
   // Round 991: see AutomationRun.recordSnapshot's own doc comment --
   // "record_deleted" is the one trigger a later retry can never re-fetch
@@ -689,6 +692,8 @@ async function fireWebhookAction(
       record ? Number(record.id) : null,
       recordSnapshot,
       now,
+      randomUUID(),
+      skipRuleSummaryUpdate,
     );
     return;
   }
@@ -782,6 +787,7 @@ async function fireWebhookAction(
       recordSnapshot,
       now,
       deliveryId,
+      skipRuleSummaryUpdate,
     );
   } catch (err) {
     if (!getProject(db, project.id)) return;
@@ -798,6 +804,7 @@ async function fireWebhookAction(
       recordSnapshot,
       now,
       deliveryId,
+      skipRuleSummaryUpdate,
     );
   } finally {
     clearTimeout(timeout);
@@ -825,6 +832,8 @@ async function fireEmailAction(
   record: EntityRecord | null,
   uploadsDir: string | null = null,
   now: Date = new Date(),
+  // Round 1261: see fireWebhookAction's own identical parameter just above.
+  skipRuleSummaryUpdate: boolean = false,
 ): Promise<void> {
   // Round 991: see AutomationRun.recordSnapshot's own doc comment --
   // "record_deleted" is the one trigger a later retry can never re-fetch
@@ -847,6 +856,8 @@ async function fireEmailAction(
       record ? Number(record.id) : null,
       recordSnapshot,
       now,
+      randomUUID(),
+      skipRuleSummaryUpdate,
     );
     return;
   }
@@ -873,6 +884,8 @@ async function fireEmailAction(
       record ? Number(record.id) : null,
       recordSnapshot,
       now,
+      randomUUID(),
+      skipRuleSummaryUpdate,
     );
     return;
   }
@@ -886,6 +899,8 @@ async function fireEmailAction(
       record ? Number(record.id) : null,
       recordSnapshot,
       now,
+      randomUUID(),
+      skipRuleSummaryUpdate,
     );
     return;
   }
@@ -937,7 +952,18 @@ async function fireEmailAction(
     // every such row for, permanently orphaned since that table has no
     // foreign key/cascade of its own.
     if (!getProject(db, project.id)) return;
-    recordAutomationRun(db, project.id, rule.id, { status: "sent", error: null }, rule.actionType, record ? Number(record.id) : null, recordSnapshot, now);
+    recordAutomationRun(
+      db,
+      project.id,
+      rule.id,
+      { status: "sent", error: null },
+      rule.actionType,
+      record ? Number(record.id) : null,
+      recordSnapshot,
+      now,
+      randomUUID(),
+      skipRuleSummaryUpdate,
+    );
   } catch (err) {
     if (!getProject(db, project.id)) return;
     recordAutomationRun(
@@ -949,6 +975,8 @@ async function fireEmailAction(
       record ? Number(record.id) : null,
       recordSnapshot,
       now,
+      randomUUID(),
+      skipRuleSummaryUpdate,
     );
   }
 }
@@ -1157,13 +1185,21 @@ export async function fireScheduledRule(
   // due, which hasTooManyConsecutiveFailuresToday then judges "today"
   // against.
   now: Date = new Date(),
+  // Round 1261: set by routes/projects.ts's POST .../test route alone, for
+  // a "schedule"-trigger rule, so a manual Test's own successful send
+  // never marks today's REAL scheduled occurrence as already having
+  // happened -- see recordAutomationRun's own doc comment (packages/db)
+  // for the full reasoning. The real scheduler (runScheduledAutomationsCheck
+  // below) and the existing manual Retry route both leave this at its
+  // default false, unchanged.
+  isManualTest: boolean = false,
 ): Promise<void> {
   if (rule.actionType === "webhook") {
-    await fireWebhookAction(db, project, null, rule, null, null, now);
+    await fireWebhookAction(db, project, null, rule, null, null, now, isManualTest);
     return;
   }
   if (rule.actionType === "send_email") {
-    await fireEmailAction(db, emailSender, project, null, rule, null, null, now);
+    await fireEmailAction(db, emailSender, project, null, rule, null, null, now, isManualTest);
     return;
   }
   const to = rule.toNumber;
@@ -1180,12 +1216,25 @@ export async function fireScheduledRule(
       null,
       null,
       now,
+      randomUUID(),
+      isManualTest,
     );
     return;
   }
   const status = whatsapp.getStatus(project.id);
   if (status.status !== "connected") {
-    recordAutomationRun(db, project.id, rule.id, { status: "failed", error: WHATSAPP_NOT_CONNECTED_ERROR }, rule.actionType, null, null, now);
+    recordAutomationRun(
+      db,
+      project.id,
+      rule.id,
+      { status: "failed", error: WHATSAPP_NOT_CONNECTED_ERROR },
+      rule.actionType,
+      null,
+      null,
+      now,
+      randomUUID(),
+      isManualTest,
+    );
     return;
   }
   const result = await whatsapp.sendMessage(project.id, to, rule.messageTemplate);
@@ -1215,6 +1264,8 @@ export async function fireScheduledRule(
     null,
     null,
     now,
+    randomUUID(),
+    isManualTest,
   );
 }
 

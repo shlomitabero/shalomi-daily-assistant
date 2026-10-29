@@ -615,11 +615,34 @@ export function recordAutomationRun(
   // defaults to a fresh one exactly like the inline randomUUID() call this
   // replaces.
   runId: string = randomUUID(),
+  // Round 1261: a manual "Test" of a schedule-trigger rule
+  // (apps/api/src/routes/projects.ts's POST .../test) fires it through
+  // fireScheduledRule, the exact same path the real scheduler uses, so it
+  // always reached here and unconditionally updated these same two
+  // columns -- which isScheduledRuleDue (apps/api/src/automations.ts) then
+  // reads to decide whether today's REAL scheduled occurrence has already
+  // happened. A rule tested successfully in the morning looked "already
+  // sent today" to the scheduler, silently skipping that day's actual
+  // scheduled send -- directly contradicting Test's own stated purpose
+  // (AutomationsPanel.tsx's doc comment: verify a rule "immediately
+  // instead of waiting for... its own next due time", not replace that
+  // occurrence). Defaults to false for every real caller (the scheduler
+  // itself, every record-triggered fire, and the existing manual Retry
+  // route, whose own round-972 design deliberately DOES want a successful
+  // retry to count as today's send and un-pause the rest of the day's
+  // ticks) -- only the Test route's own schedule-rule call site passes
+  // true. The automation_runs history row below is still inserted exactly
+  // as before regardless, so a test's outcome still shows up in the
+  // rule's own run history, just without feeding back into whether the
+  // real schedule still considers itself due.
+  skipRuleSummaryUpdate: boolean = false,
 ): string {
   const now = at.toISOString();
-  db.prepare(
-    `UPDATE automation_rules SET lastTriggeredAt = ?, lastStatus = ?, lastError = ?, lastActionType = ? WHERE projectId = ? AND id = ?`,
-  ).run(now, outcome.status, outcome.error ?? null, actionType, projectId, id);
+  if (!skipRuleSummaryUpdate) {
+    db.prepare(
+      `UPDATE automation_rules SET lastTriggeredAt = ?, lastStatus = ?, lastError = ?, lastActionType = ? WHERE projectId = ? AND id = ?`,
+    ).run(now, outcome.status, outcome.error ?? null, actionType, projectId, id);
+  }
   // The rule row above stays a cheap, already-wired-up "most recent
   // outcome" summary; this is the actual history, inserted alongside it
   // rather than instead of it so no existing lastTriggeredAt/lastStatus/

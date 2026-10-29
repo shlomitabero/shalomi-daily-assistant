@@ -5002,7 +5002,13 @@ export function createProjectsRouter(
    * null-recordId branch above: fireScheduledRule directly, bypassing
    * isScheduledRuleDue/hasTooManyConsecutiveFailuresToday entirely, same
    * precedent round 972's retry route already established for this exact
-   * bypass. Every other trigger needs a real record to interpolate
+   * bypass. Round 1261: unlike that retry route, this call passes
+   * isManualTest=true -- a successful Test must not ALSO mark today's
+   * real scheduled occurrence as already sent (isScheduledRuleDue reads
+   * exactly the two columns a Test would otherwise update), the opposite
+   * of what the retry route intentionally does (round 972, letting a
+   * successful retry un-pause the rest of the day's own automatic ticks).
+   * Every other trigger needs a real record to interpolate
    * {{field}} placeholders and resolve a toMode:"field" destination from
    * -- uses the entity's own most-recently-created record (listRecords is
    * already ORDER BY id DESC, so `[0]` is cheap, no extra query), and
@@ -5026,7 +5032,11 @@ export function createProjectsRouter(
           req.userId!,
           `POST /projects/${project.id}/automations/${rule.id}/test`,
           async () => {
-            await fireScheduledRule(db, whatsapp, emailSender, project, rule);
+            // Round 1261: isManualTest=true -- see fireScheduledRule's own
+            // doc comment on that parameter for why this route specifically
+            // must not let a successful test mark today's real scheduled
+            // occurrence as already sent.
+            await fireScheduledRule(db, whatsapp, emailSender, project, rule, new Date(), true);
             const [latestRun] = listAutomationRuns(db, project.id, rule.id, 1);
             return { status: 200, body: { run: latestRun ?? null } };
           },
