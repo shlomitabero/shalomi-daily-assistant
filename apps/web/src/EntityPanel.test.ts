@@ -3961,6 +3961,66 @@ test("EntityPanel's calendar view reschedules a record via a real drag-and-drop 
 });
 
 /**
+ * Round 1232: the calendar view's own sibling of the board column's identical
+ * gap -- native HTML5 drag-and-drop only fires `dragleave` on a day cell the
+ * pointer actually moves off of, so cancelling a drag with Escape (which
+ * fires `dragend` on the source chip instead, with the pointer never having
+ * left the day cell underneath it) left `dragOverDay`'s accent highlight
+ * stuck permanently. Confirms a real `dragend` with no preceding `drop`
+ * clears it, exactly what the browser does on Escape.
+ */
+test("EntityPanel's calendar view drag-over highlight clears when a drag is cancelled (dragend with no drop), not just on a real drop", async () => {
+  await withJsdom(async () => {
+    const today = isoDateToday();
+    const store: EntityRecord[] = [{ id: 1, title: "Dana's appointment", date: today }];
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = (async (input: string, init?: RequestInit) => {
+      const method = init?.method ?? "GET";
+      if (method === "GET" && input === "/api/projects/proj1/entities/Appointment") {
+        return new Response(JSON.stringify({ records: store }), { status: 200, headers: { "content-type": "application/json" } });
+      }
+      throw new Error(`unexpected request ${method} ${input}`);
+    }) as typeof fetch;
+    try {
+      renderAppointmentPanel();
+      await waitForCondition(() => document.querySelector(".entity-toolbar") !== null);
+
+      const calendarToggle = document.querySelectorAll(".view-toggle-btn")[1] as HTMLButtonElement;
+      fireEvent.click(calendarToggle);
+      await waitForCondition(() => document.querySelectorAll(".calendar-record-chip").length === 1);
+
+      function makeDataTransfer() {
+        let payload = "";
+        return { setData: (_type: string, value: string) => (payload = value), getData: () => payload };
+      }
+
+      const chip = document.querySelector(".calendar-record-chip") as HTMLButtonElement;
+      const emptyDayCells = Array.from(document.querySelectorAll(".calendar-day-clickable")).filter(
+        (el) => el.querySelectorAll(".calendar-record-chip").length === 0,
+      );
+      const targetDay = emptyDayCells[0] as HTMLElement;
+
+      const dataTransfer = makeDataTransfer();
+      fireEvent.dragStart(chip, { dataTransfer });
+      fireEvent.dragOver(targetDay, { dataTransfer });
+      assert.ok(targetDay.classList.contains("calendar-day-drag-over"), "dragging over a day must show real drag-over feedback");
+
+      // Escape cancels the drag: the browser fires dragend on the source,
+      // never dragleave on the day cell still under the pointer.
+      fireEvent.dragEnd(chip);
+
+      assert.equal(
+        targetDay.classList.contains("calendar-day-drag-over"),
+        false,
+        "a cancelled drag must clear the drag-over highlight, not leave it stuck",
+      );
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+});
+
+/**
  * The calendar-view sibling of the inline-edit/board-move tests above: a
  * failed reschedule-drag PATCH used to leave the dragged chip with zero
  * visual cue -- it just silently stayed on its original day. Confirms the
@@ -8495,6 +8555,61 @@ test("EntityPanel's board column drop with no real record id (an entity tab or a
 });
 
 /**
+ * Round 1232: native HTML5 drag-and-drop only fires `dragleave` on a column
+ * the pointer actually moves off of -- cancelling a drag with Escape (or
+ * dropping it outside any valid target) fires `dragend` on the source
+ * instead, with the pointer never having left the column still highlighted
+ * underneath it. Before this round, nothing in EntityPanel.tsx ever
+ * attached an `onDragEnd` handler anywhere, so `dragOverColumn` (and its
+ * CSS-driven accent border/background) stuck permanently once a drag was
+ * cancelled this way -- confirmed by firing a real `dragend` DOM event
+ * with no preceding `drop`, exactly what the browser does on Escape.
+ */
+test("EntityPanel's board column drag-over highlight clears when a drag is cancelled (dragend with no drop), not just on a real drop", async () => {
+  await withJsdom(async () => {
+    const store: EntityRecord[] = [{ id: 1, name: "Acme Corp", status: "new" }];
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = mockRecordsFetch(store) as typeof fetch;
+    try {
+      renderEntityPanel();
+      await waitForCondition(() => document.querySelector(".entity-toolbar") !== null);
+
+      const boardToggle = document.querySelectorAll(".view-toggle-btn")[1] as HTMLButtonElement;
+      fireEvent.click(boardToggle);
+      await waitForCondition(() => document.querySelectorAll(".board-card").length === 1);
+
+      const columns = document.querySelectorAll(".board-column");
+      const card = columns[0].querySelector(".board-card") as HTMLDivElement;
+
+      function makeDataTransfer() {
+        let payload = "";
+        return { setData: (_type: string, value: string) => (payload = value), getData: () => payload };
+      }
+      const dataTransfer = makeDataTransfer();
+
+      fireEvent.dragStart(card, { dataTransfer });
+      fireEvent.dragOver(columns[1], { dataTransfer });
+      assert.ok(
+        columns[1].classList.contains("board-column-drag-over"),
+        "dragging over a different column must show real drag-over feedback",
+      );
+
+      // Escape cancels the drag: the browser fires dragend on the source,
+      // never dragleave on the column still under the pointer.
+      fireEvent.dragEnd(card);
+
+      assert.equal(
+        columns[1].classList.contains("board-column-drag-over"),
+        false,
+        "a cancelled drag must clear the drag-over highlight, not leave it stuck",
+      );
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+});
+
+/**
  * New in this round: a huge "Done"/"Won" column with dozens of cards always
  * rendered every single one, with no way to collapse it out of the way.
  * Each column header now has its own toggle button. Confirms: (1) toggling
@@ -11041,6 +11156,54 @@ test("EntityPanel's table columns are drag-and-drop reorderable, persisting per 
       fireEvent.drop(headersAfter[0], { dataTransfer: dataTransfer2 });
       await new Promise((resolve) => setTimeout(resolve, 0));
       assert.deepEqual(headerText(), ["Status", "Name"], "dropping a column back onto itself must not change the order");
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+});
+
+/**
+ * Round 1232: the table column-header reorder's own sibling of the board
+ * column's identical gap -- native HTML5 drag-and-drop only fires
+ * `dragleave` on a header the pointer actually moves off of, so cancelling
+ * a drag with Escape (which fires `dragend` on the source header instead,
+ * with the pointer never having left the header underneath it) left
+ * `dragOverField`'s accent highlight stuck permanently. Confirms a real
+ * `dragend` with no preceding `drop` clears it, exactly what the browser
+ * does on Escape.
+ */
+test("EntityPanel's table column-header drag-over highlight clears when a drag is cancelled (dragend with no drop), not just on a real drop", async () => {
+  await withJsdom(async () => {
+    const store: EntityRecord[] = [{ id: 1, createdAt: "x", name: "Acme Corp", status: "new" }];
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = mockRecordsFetch(store) as typeof fetch;
+    try {
+      renderEntityPanel();
+      await waitForCondition(() => document.querySelector("table") !== null);
+
+      function makeDataTransfer() {
+        let payload = "";
+        return { setData: (_type: string, value: string) => (payload = value), getData: () => payload };
+      }
+
+      const headers = document.querySelectorAll("thead th.resizable-col");
+      const nameHeader = headers[0] as HTMLElement;
+      const statusHeader = headers[1] as HTMLElement;
+
+      const dataTransfer = makeDataTransfer();
+      fireEvent.dragStart(statusHeader, { dataTransfer });
+      fireEvent.dragOver(nameHeader, { dataTransfer });
+      assert.ok(nameHeader.classList.contains("resizable-col-drag-over"), "dragging a column over another must show real drag-over feedback");
+
+      // Escape cancels the drag: the browser fires dragend on the source,
+      // never dragleave on the header still under the pointer.
+      fireEvent.dragEnd(statusHeader);
+
+      assert.equal(
+        nameHeader.classList.contains("resizable-col-drag-over"),
+        false,
+        "a cancelled drag must clear the drag-over highlight, not leave it stuck",
+      );
     } finally {
       globalThis.fetch = originalFetch;
     }

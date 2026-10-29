@@ -552,6 +552,7 @@ function BoardCard({
   phoneField,
   onSendWhatsApp,
   onJumpToRecord,
+  onDragEnd,
   readOnly = false,
   bulkActionBusy = false,
 }: {
@@ -572,6 +573,15 @@ function BoardCard({
   phoneField?: Field | null;
   onSendWhatsApp?: (phoneNumber: string) => void;
   onJumpToRecord?: (targetEntity: string, recordId: number) => void;
+  /** Round 1232: native HTML5 drag-and-drop only fires `dragleave` on a
+   * column the pointer actually moves off of -- cancelling a drag with
+   * Escape (or dropping outside any valid target) fires `dragend` on the
+   * source instead, with the pointer never having left the column still
+   * highlighted underneath it. Without this, board-column-drag-over's
+   * accent border/background stuck permanently, surviving even a
+   * Table/Calendar-and-back view switch (the state lives in the parent's
+   * own useState, untouched by viewMode). */
+  onDragEnd?: () => void;
   readOnly?: boolean;
   /** Round 1118: mirrors readOnly's own gating, but only for the affordances
    * that actually write to this record (drag-to-move, Duplicate, Delete) --
@@ -618,6 +628,7 @@ function BoardCard({
         if (readOnly || bulkActionBusy) return;
         e.dataTransfer.setData("text/plain", String(record.id));
       }}
+      onDragEnd={onDragEnd}
     >
       {otherFields.map((f) => (
         <div key={f.name} className="board-card-field">
@@ -909,6 +920,7 @@ function CalendarView({
                     e.dataTransfer.setData("text/plain", `${record.id}|${dayKey}`);
                     e.dataTransfer.effectAllowed = "move";
                   }}
+                  onDragEnd={() => setDragOverDay(null)}
                   onClick={(e) => {
                     // Clicking a record edits it -- without stopping the
                     // click from bubbling, the day cell's own onDayClick
@@ -4754,6 +4766,7 @@ export function EntityPanel({
                       onPrint={() => setRecordToPrint(record)}
                       phoneField={phoneField}
                       onSendWhatsApp={onSendWhatsApp}
+                      onDragEnd={() => setDragOverColumn(null)}
                       onJumpToRecord={onJumpToRecord}
                       readOnly={readOnly}
                       bulkActionBusy={bulkActionBusy}
@@ -4861,6 +4874,7 @@ export function EntityPanel({
                           style={columnWidths[f.name] ? { width: columnWidths[f.name] } : undefined}
                           draggable
                           onDragStart={() => setDraggedField(f.name)}
+                          onDragEnd={() => setDragOverField(null)}
                           onDragOver={(e) => {
                             e.preventDefault();
                             setDragOverField(f.name);
