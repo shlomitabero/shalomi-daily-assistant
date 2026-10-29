@@ -3104,6 +3104,24 @@ export function createProjectsRouter(
       const project = requireProjectWriteAccess(db, req.params.id, req.userId!);
       const entity = findEntity(project, req.params.entityName);
       const field = findField(entity, req.params.fieldName);
+      // Round 1211: normalized to the entity's own canonical-cased name
+      // now that findEntity has resolved it -- multer's own destination
+      // callback (createUploadMiddleware above) and this route's own
+      // response body below both read req.params.entityName directly, so
+      // a differently-cased but still-resolving :entityName (findEntity's
+      // own case-insensitive fallback, round 1162 -- a real, demonstrated
+      // occurrence after a case-only entity rename, or simply a stale
+      // client) would otherwise write the file to, and return a url
+      // naming, a directory cased differently from every downstream
+      // reader of the same descriptor: coerceValue's round-1210 fix
+      // (packages/db/src/repository.ts) requires the stored url to match
+      // this record's own canonical entity.name exactly, rejecting a
+      // completely legitimate upload the moment its descriptor is saved
+      // into a record; resolveUploadedFilePath/deleteUploadedFile
+      // (uploadPaths.ts) rebuild the physical path from the canonical
+      // entityName they're called with, never finding a file actually
+      // written under the mismatched casing either.
+      req.params.entityName = entity.name;
       const idempotencyKey = req.header("X-Idempotency-Key") || undefined;
       const { status, body } = await withIdempotency(
         db,

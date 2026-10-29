@@ -14475,6 +14475,73 @@ test("creating or updating a record with a file field whose url shape-matches /a
 });
 
 /**
+ * Round 1211: findEntity resolves `:entityName` case-insensitively
+ * (round 1162's own fallback) -- a real, demonstrated occurrence after a
+ * case-only entity rename, or simply a stale client sending the
+ * pre-rename casing. POST .../fields/:fieldName/upload used the RAW
+ * req.params.entityName (not the resolved entity's own canonical name)
+ * for both multer's own disk-storage destination and the returned file
+ * descriptor's url -- internally consistent with itself, but not with
+ * every downstream consumer of that same descriptor: coerceValue's
+ * round-1210 fix (packages/db/src/repository.ts) requires the stored url
+ * to exactly match the record's own canonical entity.name, so uploading
+ * through a differently-cased but still-resolving url and then saving
+ * that exact descriptor into a record used to be rejected outright --
+ * a completely legitimate upload, made through this exact server's own
+ * upload route for this exact project/entity, with no way to recover
+ * short of guessing the right casing on a re-upload.
+ */
+test("uploading through a differently-cased but still-resolving :entityName returns a url cased to match the entity's own canonical name, and that descriptor is accepted when saved into a record", async () => {
+  await withServer(async (baseUrl, db, uploadsDir) => {
+    const email = `upload-entity-case-mismatch-${randomUUID()}@example.com`;
+    const token = await signup(baseUrl, email);
+    const user = findUserByEmail(db, email)!;
+
+    const spec: ProductSpec = {
+      summary: "test",
+      personas: [],
+      roles: ["Admin"],
+      entities: [{ name: "Applicant", fields: [{ name: "resume", type: "file", required: false }] }],
+      screens: [],
+      assumptions: [],
+      openQuestions: [],
+    };
+    const projectId = randomUUID();
+    insertProject(db, { id: projectId, ownerId: user.id, name: "Hiring", description: "test", spec });
+    diffAndMigrate(db, projectId, undefined, spec);
+    markProjectBuilt(db, projectId);
+
+    const formData = new FormData();
+    formData.append("file", new File(["%PDF-fake"], "resume.pdf", { type: "application/pdf" }));
+    // Lowercase "applicant" in the URL -- still resolves to the real
+    // "Applicant" entity via findEntity's own case-insensitive fallback.
+    const uploadRes = await fetch(`${baseUrl}/api/projects/${projectId}/entities/applicant/fields/resume/upload`, {
+      method: "POST",
+      headers: { authorization: `Bearer ${token}` },
+      body: formData,
+    });
+    assert.equal(uploadRes.status, 200);
+    const { file } = (await uploadRes.json()) as { file: { url: string; name: string; size: number; mimeType: string } };
+    assert.match(file.url, new RegExp(`^/api/uploads/${projectId}/Applicant/[^/]+\\.pdf$`), "the returned url must be cased to match the entity's own canonical name, not the lowercase url segment the request used");
+
+    const filePathOnDisk = path.join(uploadsDir, file.url.replace(/^\/api\/uploads\//, ""));
+    assert.ok(existsSync(filePathOnDisk), "the file must physically exist at the same canonically-cased path the returned url names");
+
+    // Saving that exact descriptor into a record (through the entity's
+    // own canonical casing, as the live UI always does) must succeed --
+    // round 1210's own stricter coerceValue check would have rejected it
+    // before this round's fix, since the url's own project/entity
+    // segments must exactly match the record's real project/entity.
+    const createRes = await fetch(`${baseUrl}/api/projects/${projectId}/entities/Applicant`, {
+      method: "POST",
+      headers: authHeaders(token),
+      body: JSON.stringify({ resume: JSON.stringify(file) }),
+    });
+    assert.equal(createRes.status, 201, "a record save using the upload route's own returned descriptor must be accepted, not rejected as an invalid file reference");
+  });
+});
+
+/**
  * Field-type validation (and project-access validation) runs in its own
  * middleware BEFORE multer's disk-storage middleware (see the route's own
  * comment in routes/projects.ts) -- specifically so a rejected upload
