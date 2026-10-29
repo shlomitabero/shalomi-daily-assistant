@@ -758,6 +758,17 @@ async function fireWebhookAction(
       signal: controller.signal,
       redirect: "manual",
     });
+    // Same re-check-after-await hazard fireRule's own WhatsApp branch
+    // already documents (its own comment a few dozen lines above) --
+    // queuedWebhookFetch is a genuine network round-trip (up to the 10s
+    // timeout below), during which this project could have been deleted.
+    // deleteProject's own deleteAutomationRulesForProject already removed
+    // every automation_runs row for this project synchronously; without
+    // this check, recordAutomationRun below would silently recreate one
+    // for a project id that no longer exists -- a permanently orphaned
+    // row nothing else will ever clean up, since automation_runs has no
+    // foreign key/cascade of its own.
+    if (!getProject(db, project.id)) return;
     recordAutomationRun(
       db,
       project.id,
@@ -773,6 +784,7 @@ async function fireWebhookAction(
       deliveryId,
     );
   } catch (err) {
+    if (!getProject(db, project.id)) return;
     recordAutomationRun(
       db,
       project.id,
@@ -917,8 +929,17 @@ async function fireEmailAction(
   }
   try {
     await emailSender.send(to, subject, body, attachments);
+    // Same re-check-after-await hazard fireWebhookAction's own identical
+    // comment documents, applied to this sibling action's own genuine
+    // network round-trip (a real Resend API call) -- without it,
+    // recordAutomationRun below would silently recreate an
+    // automation_runs row for a project deleteProject already removed
+    // every such row for, permanently orphaned since that table has no
+    // foreign key/cascade of its own.
+    if (!getProject(db, project.id)) return;
     recordAutomationRun(db, project.id, rule.id, { status: "sent", error: null }, rule.actionType, record ? Number(record.id) : null, recordSnapshot, now);
   } catch (err) {
+    if (!getProject(db, project.id)) return;
     recordAutomationRun(
       db,
       project.id,

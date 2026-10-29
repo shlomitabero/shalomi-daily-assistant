@@ -6,7 +6,10 @@ import { test } from "node:test";
 import type { Entity, Project } from "@forge/shared";
 import {
   applyMigrations,
+  deleteProject,
   ensureAutomationRulesTable,
+  ensureCheckpointsTable,
+  ensureProjectCollaboratorsTable,
   ensureProjectsTable,
   ensureWhatsAppConnectionsTable,
   ensureWhatsAppMessagesTable,
@@ -1915,6 +1918,52 @@ test("runAutomationsForRecordChange posts a JSON payload to the webhook URL and 
 });
 
 /**
+ * Round 1207: fireRule's own WhatsApp branch already re-checks the project
+ * still exists after its own genuine network await (see its own comment,
+ * a few hundred lines up), to guard against deleteProject's synchronous
+ * deleteAutomationRulesForProject (which removes every automation_runs row
+ * for the project) finishing WHILE this exact fetch is still in flight --
+ * without the same guard here, recordAutomationRun would resurrect a
+ * permanently orphaned row for a project id automation_runs' own lack of
+ * any foreign key/cascade can never clean up on its own. The real
+ * deletion happens from inside the mocked fetch itself, so it genuinely
+ * races the awaited call the production code is actually suspended on,
+ * not a contrived ordering.
+ */
+test("runAutomationsForRecordChange's webhook action never resurrects an automation_runs row for a project deleted while the webhook request was in flight", async () => {
+  const { db, project } = setupProject();
+  // deleteProject itself also touches checkpoints/project_collaborators
+  // (both plain DELETEs, no IF EXISTS) -- setupProject's own table set
+  // doesn't include them since no other existing test here ever needed
+  // to actually call deleteProject.
+  ensureCheckpointsTable(db);
+  ensureProjectCollaboratorsTable(db);
+  const rule = insertAutomationRule(db, {
+    projectId: project.id,
+    entityName: "Order",
+    trigger: "record_created",
+    actionType: "webhook",
+    webhookUrl: "https://hooks.example.com/forge",
+    toMode: "static",
+    messageTemplate: "New order from {{customerName}}!",
+  });
+  const record = { id: 1, customerName: "Dana Levi", customerPhone: "972501234567", status: "New" };
+
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = (async () => {
+    deleteProject(db, project.id);
+    return new Response(null, { status: 200 });
+  }) as typeof fetch;
+  try {
+    await runAutomationsForRecordChange(db, {} as WhatsAppWebManager, UNUSED_EMAIL_SENDER, project, orderEntity, "created", record, new Set(), UNUSED_UPLOADS_DIR, UNUSED_BASE_URL);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+
+  assert.equal(listAutomationRuns(db, project.id, rule.id, 10).length, 0, "no run row must exist for a project that was deleted while this exact request was still in flight");
+});
+
+/**
  * Round 1165: before this round, the webhook payload carried no ruleId and
  * no per-delivery id at all -- this feature's own doc comments advertise
  * compatibility with "Zapier, Slack, Make, or any other system", every one
@@ -2648,6 +2697,41 @@ test("runAutomationsForRecordChange sends a 'send_email' rule's email to a stati
   assert.equal(emailSender.sentTo[0]!.subject, "New order from Dana Levi");
   assert.equal(emailSender.sentTo[0]!.text, "Order status: New");
   assert.equal(getAutomationRule(db, project.id, rule.id)!.lastStatus, "sent");
+});
+
+/**
+ * Round 1207: the send_email sibling of the identical webhook-action test
+ * above -- fireEmailAction's own await (a real Resend API round-trip) has
+ * the same hazard fireRule's WhatsApp branch and fireWebhookAction above
+ * both already guard against. The real deletion happens from inside the
+ * fake sender's own send() call, genuinely racing the awaited call the
+ * production code is actually suspended on.
+ */
+test("runAutomationsForRecordChange's send_email action never resurrects an automation_runs row for a project deleted while the email send was in flight", async () => {
+  const { db, project } = setupProject();
+  ensureCheckpointsTable(db);
+  ensureProjectCollaboratorsTable(db);
+  const rule = insertAutomationRule(db, {
+    projectId: project.id,
+    entityName: "Order",
+    trigger: "record_created",
+    actionType: "send_email",
+    toMode: "static",
+    toEmail: "owner@example.com",
+    emailSubject: "New order from {{customerName}}",
+    messageTemplate: "Order status: {{status}}",
+  });
+  const record = { id: 1, customerName: "Dana Levi", customerPhone: "972501234567", status: "New" };
+  const emailSender: EmailSender = {
+    configured: true,
+    async send() {
+      deleteProject(db, project.id);
+    },
+  };
+
+  await runAutomationsForRecordChange(db, {} as WhatsAppWebManager, emailSender, project, orderEntity, "created", record, new Set(), UNUSED_UPLOADS_DIR, UNUSED_BASE_URL);
+
+  assert.equal(listAutomationRuns(db, project.id, rule.id, 10).length, 0, "no run row must exist for a project that was deleted while this exact send was still in flight");
 });
 
 test("runAutomationsForRecordChange sends a 'send_email' rule's email to a toField-resolved destination when toMode is field", async () => {
