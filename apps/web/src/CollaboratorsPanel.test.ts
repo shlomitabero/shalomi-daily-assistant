@@ -1359,7 +1359,7 @@ test("CollaboratorsPanel's transfer-ownership button asks for confirmation, send
       }
       if (method === "POST" && input === "/api/projects/proj1/transfer-ownership") {
         transferCalls += 1;
-        assert.deepEqual(JSON.parse(init!.body as string), { userId: "u1" });
+        assert.deepEqual(JSON.parse(init!.body as string), { userId: "u1", lang: "en" });
         return new Response(
           JSON.stringify({
             collaborators: [makeCollaborator("owner1", "amit@example.com", "editor")],

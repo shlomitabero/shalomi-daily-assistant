@@ -377,6 +377,9 @@ const UpdateCollaboratorRoleSchema = z.object({
 
 const TransferOwnershipSchema = z.object({
   userId: z.string().min(1, "userId is required"),
+  // Round 1255: same optional client-language hint UpdateCollaboratorRoleSchema
+  // already carries, for the new-owner notification email this route now sends.
+  lang: z.enum(["he", "en"]).optional(),
 });
 
 const RenameProjectSchema = z.object({
@@ -2291,6 +2294,18 @@ export function createProjectsRouter(
    * DELETE /projects/:id's own doc comment already explains: a genuine
    * retry never reaches it, the wrap short-circuits first with the first
    * attempt's own cached response.
+   *
+   * Round 1255: like the role-change and removal routes before round
+   * 1254's own fix, this gave the new owner zero signal despite being
+   * the single biggest access-change action in the file -- the new
+   * owner gains full control (including the ability to delete the
+   * project outright) with no email telling them so if they're offline
+   * or don't have the project open. Best-effort, mirroring round 1254's
+   * own swallowed-send contract exactly: the transfer itself already
+   * succeeded and was already committed. The previous owner initiated
+   * the transfer themselves, so -- same "notifying someone of the thing
+   * they themselves just did is noise" rationale as the self-leave path
+   * above -- they get nothing.
    */
   router.post(
     "/projects/:id/transfer-ownership",
@@ -2307,6 +2322,22 @@ export function createProjectsRouter(
           throw new HttpError(404, "Collaborator not found", "COLLABORATOR_NOT_FOUND");
         }
         const updated = transferProjectOwnership(db, project.id, parsed.data.userId);
+        const newOwner = findUserById(db, parsed.data.userId);
+        if (newOwner && emailSender.configured) {
+          const isHebrew = parsed.data.lang !== "en";
+          const subject = isHebrew ? `הפרויקט "${project.name}" ב-Forge AI הועבר אליך` : `"${project.name}" on Forge AI was transferred to you`;
+          const emailBody = isHebrew
+            ? `הפרויקט "${project.name}" ב-Forge AI הועבר אליך וכעת אתה הבעלים שלו.`
+            : `"${project.name}" on Forge AI was transferred to you, and you are now its owner.`;
+          try {
+            await emailSender.send(newOwner.email, subject, emailBody);
+          } catch {
+            // Swallowed, deliberately, same as this route family's own
+            // convention -- the transfer itself already succeeded and was
+            // already committed to the database; a failed best-effort
+            // notification must never turn that into an error response.
+          }
+        }
         return { status: 200, body: { collaborators: listCollaborators(db, updated.id), owner: getOwnerInfo(db, updated), project: updated } };
       });
       res.status(status).json(body);

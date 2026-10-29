@@ -1170,11 +1170,12 @@ export function updateCollaboratorRole(
 export function transferProjectOwnership(
   projectId: string,
   userId: string,
+  lang?: "he" | "en",
 ): Promise<{ collaborators: ProjectCollaborator[]; owner: ProjectOwnerInfo | null; project: Project }> {
   return request(`/projects/${projectId}/transfer-ownership`, {
     method: "POST",
     headers: { "x-idempotency-key": crypto.randomUUID() },
-    body: JSON.stringify({ userId }),
+    body: JSON.stringify({ userId, lang }),
   });
 }
 

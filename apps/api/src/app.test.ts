@@ -16331,6 +16331,81 @@ test("POST .../transfer-ownership hands the project to an existing collaborator,
   });
 });
 
+test("transferring ownership sends a real notification to the NEW owner, naming the project, when email is configured", async () => {
+  const emailSender = createFakeEmailSender();
+  await withServer(
+    async (baseUrl) => {
+      const ownerToken = await signup(baseUrl, `owner-transfer-notify-${Date.now()}@example.com`);
+      const newOwnerEmail = `new-owner-transfer-notify-${Date.now()}@example.com`;
+      await signup(baseUrl, newOwnerEmail);
+
+      const createRes = await fetch(`${baseUrl}/api/projects`, {
+        method: "POST",
+        headers: authHeaders(ownerToken),
+        body: JSON.stringify({ description: "A CRM with customers and deals." }),
+      });
+      const { project } = (await createRes.json()) as { project: { id: string; name: string } };
+
+      await fetch(`${baseUrl}/api/projects/${project.id}/collaborators`, {
+        method: "POST",
+        headers: authHeaders(ownerToken),
+        body: JSON.stringify({ email: newOwnerEmail }),
+      });
+      const listRes = await fetch(`${baseUrl}/api/projects/${project.id}/collaborators`, { headers: authHeaders(ownerToken) });
+      const { collaborators } = (await listRes.json()) as { collaborators: { userId: string }[] };
+      const newOwnerUserId = collaborators[0].userId;
+      emailSender.sentTo.length = 0; // The invite itself (round 1253) also sends one -- only the transfer send matters here.
+
+      const transferRes = await fetch(`${baseUrl}/api/projects/${project.id}/transfer-ownership`, {
+        method: "POST",
+        headers: authHeaders(ownerToken),
+        body: JSON.stringify({ userId: newOwnerUserId, lang: "en" }),
+      });
+      assert.equal(transferRes.status, 200);
+
+      assert.equal(emailSender.sentTo.length, 1, "exactly one notification must be sent");
+      assert.equal(emailSender.sentTo[0].to, newOwnerEmail, "the notification must go to the NEW owner, not the previous owner who initiated the transfer");
+      assert.match(emailSender.sentTo[0].text, new RegExp(project.name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")), "the body must name the real project");
+    },
+    { emailSender },
+  );
+});
+
+test("transferring ownership itself still succeeds, with no notification attempted, when no email provider is configured", async () => {
+  const emailSender = createFakeEmailSender({ configured: false });
+  await withServer(
+    async (baseUrl) => {
+      const ownerToken = await signup(baseUrl, `owner-transfer-notify-unconfigured-${Date.now()}@example.com`);
+      const newOwnerEmail = `new-owner-transfer-notify-unconfigured-${Date.now()}@example.com`;
+      await signup(baseUrl, newOwnerEmail);
+
+      const createRes = await fetch(`${baseUrl}/api/projects`, {
+        method: "POST",
+        headers: authHeaders(ownerToken),
+        body: JSON.stringify({ description: "A CRM with customers and deals." }),
+      });
+      const { project } = (await createRes.json()) as { project: { id: string } };
+
+      await fetch(`${baseUrl}/api/projects/${project.id}/collaborators`, {
+        method: "POST",
+        headers: authHeaders(ownerToken),
+        body: JSON.stringify({ email: newOwnerEmail }),
+      });
+      const listRes = await fetch(`${baseUrl}/api/projects/${project.id}/collaborators`, { headers: authHeaders(ownerToken) });
+      const { collaborators } = (await listRes.json()) as { collaborators: { userId: string }[] };
+
+      const transferRes = await fetch(`${baseUrl}/api/projects/${project.id}/transfer-ownership`, {
+        method: "POST",
+        headers: authHeaders(ownerToken),
+        body: JSON.stringify({ userId: collaborators[0].userId }),
+      });
+      assert.equal(transferRes.status, 200, "the transfer itself must still work exactly as before this feature existed");
+      assert.equal(emailSender.sentTo.length, 0, "no send should even be attempted when email isn't configured");
+    },
+    { emailSender },
+  );
+});
+
 test("POST .../transfer-ownership is owner-only, 404s for a userId that isn't an existing collaborator (including the owner's own id), and rejects a missing userId", async () => {
   await withServer(async (baseUrl) => {
     const ownerToken = await signup(baseUrl, "transfer-owner2@example.com");

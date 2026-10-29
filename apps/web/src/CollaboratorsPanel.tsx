@@ -234,7 +234,7 @@ export function CollaboratorsPanel({
     setError(null);
     setTransferInfo(null);
     try {
-      const { collaborators, owner, project } = await transferProjectOwnership(projectId, userId);
+      const { collaborators, owner, project } = await transferProjectOwnership(projectId, userId, lang);
       setCollaborators(collaborators);
       setOwner(owner);
       setTransferInfo(t("collab.transferOwnership.success", { email }));
