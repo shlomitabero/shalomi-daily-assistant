@@ -890,6 +890,142 @@ test("changing your password requires a valid session, the same as any other aut
 });
 
 /**
+ * Round 1199: `email` was otherwise write-once -- set once at signup and
+ * never touched again, the one account field with no self-service fix: a
+ * typo or an inaccessible provider left `DELETE /auth/account` (cascading
+ * away every owned project) and re-registering as the only way out. Also
+ * mirrors PATCH /auth/password's own confirmation requirement exactly
+ * (requires the current password, not just the session token).
+ */
+test("changing your email with the correct current password works, and only the new email logs in afterward", async () => {
+  await withServer(async (baseUrl) => {
+    const oldEmail = `change-email-1-old-${Date.now()}@example.com`;
+    const newEmail = `change-email-1-new-${Date.now()}@example.com`;
+    const signupRes = await fetch(`${baseUrl}/api/auth/signup`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ email: oldEmail, password: "correct-horse-battery" }),
+    });
+    const { token } = (await signupRes.json()) as { token: string };
+
+    const changeRes = await fetch(`${baseUrl}/api/auth/email`, {
+      method: "PATCH",
+      headers: authHeaders(token),
+      body: JSON.stringify({ currentPassword: "correct-horse-battery", email: newEmail }),
+    });
+    assert.equal(changeRes.status, 200);
+    const { user } = (await changeRes.json()) as { user: { email: string } };
+    assert.equal(user.email, newEmail, "the response must report the new email back");
+
+    const oldLogin = await fetch(`${baseUrl}/api/auth/login`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ email: oldEmail, password: "correct-horse-battery" }),
+    });
+    assert.equal(oldLogin.status, 401, "the old email must no longer log in");
+
+    const newLogin = await fetch(`${baseUrl}/api/auth/login`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ email: newEmail, password: "correct-horse-battery" }),
+    });
+    assert.equal(newLogin.status, 200, "the new email must now log in, with the SAME password, completely unaffected");
+  });
+});
+
+test("changing your email with the wrong current password is rejected, and the email stays unchanged", async () => {
+  await withServer(async (baseUrl) => {
+    const originalEmail = `change-email-2-${Date.now()}@example.com`;
+    const token = await signup(baseUrl, originalEmail);
+
+    const changeRes = await fetch(`${baseUrl}/api/auth/email`, {
+      method: "PATCH",
+      headers: authHeaders(token),
+      body: JSON.stringify({ currentPassword: "totally-wrong-password", email: "someone-else@example.com" }),
+    });
+    assert.equal(changeRes.status, 401);
+    assert.equal(((await changeRes.json()) as { code?: string }).code, "INVALID_CURRENT_PASSWORD");
+
+    const meRes = await fetch(`${baseUrl}/api/auth/me`, { headers: authHeaders(token) });
+    const { user } = (await meRes.json()) as { user: { email: string } };
+    assert.equal(user.email, originalEmail, "a rejected change must leave the original email in place");
+  });
+});
+
+test("changing your email to one already registered to a DIFFERENT account is rejected with 409 EMAIL_TAKEN", async () => {
+  await withServer(async (baseUrl) => {
+    const takenEmail = `change-email-3-taken-${Date.now()}@example.com`;
+    await signup(baseUrl, takenEmail);
+    const token = await signup(baseUrl, `change-email-3-mine-${Date.now()}@example.com`);
+
+    const changeRes = await fetch(`${baseUrl}/api/auth/email`, {
+      method: "PATCH",
+      headers: authHeaders(token),
+      body: JSON.stringify({ currentPassword: "correct-horse-battery", email: takenEmail }),
+    });
+    assert.equal(changeRes.status, 409);
+    assert.equal(((await changeRes.json()) as { code?: string }).code, "EMAIL_TAKEN");
+  });
+});
+
+/**
+ * Unlike PATCH /auth/password (which revokes every OTHER session, the
+ * standard security purpose of a password change), PATCH /auth/email
+ * deliberately does NOT: a changed email doesn't by itself invalidate
+ * anything an existing session could already do, so there's no matching
+ * security reason to sign out other devices for what's usually just a
+ * correction. Pins this as the intended contract, not an oversight.
+ */
+test("changing your email does NOT revoke any other session, unlike changing your password", async () => {
+  await withServer(async (baseUrl) => {
+    const email = `change-email-4-${Date.now()}@example.com`;
+    const firstSessionToken = await signup(baseUrl, email);
+
+    const secondLoginRes = await fetch(`${baseUrl}/api/auth/login`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ email, password: "correct-horse-battery" }),
+    });
+    const { token: secondSessionToken } = (await secondLoginRes.json()) as { token: string };
+
+    const changeRes = await fetch(`${baseUrl}/api/auth/email`, {
+      method: "PATCH",
+      headers: authHeaders(firstSessionToken),
+      body: JSON.stringify({ currentPassword: "correct-horse-battery", email: `change-email-4-new-${Date.now()}@example.com` }),
+    });
+    assert.equal(changeRes.status, 200);
+
+    const secondSessionMe = await fetch(`${baseUrl}/api/auth/me`, { headers: authHeaders(secondSessionToken) });
+    assert.equal(secondSessionMe.status, 200, "the other session must stay valid -- an email change must never revoke other sessions");
+  });
+});
+
+test("changing your email requires a valid session, the same as any other authenticated route", async () => {
+  await withServer(async (baseUrl) => {
+    const res = await fetch(`${baseUrl}/api/auth/email`, {
+      method: "PATCH",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ currentPassword: "whatever", email: "someone@example.com" }),
+    });
+    assert.equal(res.status, 401);
+    assert.equal(((await res.json()) as { code?: string }).code, "AUTH_REQUIRED");
+  });
+});
+
+test("changing your email rejects a malformed email address with VALIDATION_ERROR", async () => {
+  await withServer(async (baseUrl) => {
+    const token = await signup(baseUrl, `change-email-5-${Date.now()}@example.com`);
+    const changeRes = await fetch(`${baseUrl}/api/auth/email`, {
+      method: "PATCH",
+      headers: authHeaders(token),
+      body: JSON.stringify({ currentPassword: "correct-horse-battery", email: "not-an-email" }),
+    });
+    assert.equal(changeRes.status, 400);
+    assert.equal(((await changeRes.json()) as { code?: string }).code, "VALIDATION_ERROR");
+  });
+});
+
+/**
  * Regression test for a real bug: PATCH /auth/password's own writes
  * (updatePasswordHash + deleteOtherSessionsForUser) ran unconditionally
  * after its two genuine scrypt awaits (verifyPassword, then hashPassword --

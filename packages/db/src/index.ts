@@ -60,6 +60,7 @@ export {
   deleteUser,
   getPasswordHash,
   updatePasswordHash,
+  updateUserEmail,
   DuplicateEmailError,
 } from "./users.js";
 export {

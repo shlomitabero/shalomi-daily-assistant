@@ -148,6 +148,34 @@ export function updatePasswordHash(db: ForgeDatabase, userId: string, passwordHa
   db.prepare("UPDATE users SET passwordHash = ? WHERE id = ?").run(passwordHash, userId);
 }
 
+/**
+ * For the "change my email" flow (routes/auth.ts) -- `email` was otherwise
+ * write-once, set once at createUser and never touched again, the same gap
+ * updateProjectName/updateProjectDescription (routes/projects.ts) already
+ * closed for a project's own name/description: a signup typo, or an email
+ * provider becoming inaccessible, left the only "fix" as deleting the
+ * entire account (DELETE /auth/account, cascading away every owned
+ * project) and re-registering from scratch. It also broke collaboration --
+ * addCollaborator/CollaboratorsPanel identify people strictly by email
+ * (findUserByEmail), so a stale or wrong email on one's own account meant
+ * collaborators could no longer find or re-invite that person correctly,
+ * with no self-service fix available either way.
+ *
+ * Same uniqueness guard as createUser, just scoped to exclude this user's
+ * own current row (`AND id != ?`) -- without it, re-submitting your own
+ * unchanged email back (a no-op from the caller's point of view) would be
+ * rejected as "already taken", since the row that already has it is this
+ * exact user.
+ */
+export function updateUserEmail(db: ForgeDatabase, userId: string, email: string): User {
+  const existing = db.prepare("SELECT id FROM users WHERE email = ? AND id != ?").get(email, userId);
+  if (existing) {
+    throw new DuplicateEmailError(`An account with email "${email}" already exists`);
+  }
+  db.prepare("UPDATE users SET email = ? WHERE id = ?").run(email, userId);
+  return findUserById(db, userId)!;
+}
+
 /** Part of the "delete my account" flow (routes/auth.ts) -- signs the user out of every device at once, not just the one session making this request. */
 export function deleteAllSessionsForUser(db: ForgeDatabase, userId: string): void {
   db.prepare("DELETE FROM sessions WHERE userId = ?").run(userId);

@@ -327,6 +327,11 @@ export function changePassword(currentPassword: string, newPassword: string): Pr
   return request("/auth/password", { method: "PATCH", body: JSON.stringify({ currentPassword, newPassword }) });
 }
 
+/** ChangeEmailPanel.tsx's own API call -- returns the updated User (new email included) so the caller can update its own held `user` state, the same way CollaboratorsPanel's onOwnerTransferred already does for a project. */
+export function changeEmail(currentPassword: string, email: string): Promise<{ user: User }> {
+  return request("/auth/email", { method: "PATCH", body: JSON.stringify({ currentPassword, email }) });
+}
+
 /**
  * Real, permanent self-service account deletion (DeleteAccountPanel.tsx).
  * The server's own session is already gone by the time this resolves (the

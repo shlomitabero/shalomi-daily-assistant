@@ -3693,9 +3693,10 @@ test("App's preview keydown handler (Ctrl+K, '/', '?') never opens a panel while
  * hook's own new Escape-to-close behavior itself is tested directly in
  * useDialogFocusTrap.test.ts).
  */
-test("App.tsx wires onClose into useDialogFocusTrap for every one of its 8 dialogs, including ChangePassword and DeleteAccount", () => {
+test("App.tsx wires onClose into useDialogFocusTrap for every one of its 9 dialogs, including ChangePassword, ChangeEmail, and DeleteAccount", () => {
   const dialogFiles = [
     "BusinessTwinPanel.tsx",
+    "ChangeEmailPanel.tsx",
     "ChangePasswordPanel.tsx",
     "CollaboratorsPanel.tsx",
     "DeleteAccountPanel.tsx",

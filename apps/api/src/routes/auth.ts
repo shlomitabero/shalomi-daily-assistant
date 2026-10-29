@@ -24,6 +24,7 @@ import {
   listOwnedProjectIds,
   removeAllCollaborationsForUser,
   updatePasswordHash,
+  updateUserEmail,
   DuplicateEmailError,
   type ForgeDatabase,
 } from "@forge/db";
@@ -54,6 +55,14 @@ const SESSION_TTL_MS = 30 * 24 * 60 * 60 * 1000; // 30 days
 const ChangePasswordSchema = z.object({
   currentPassword: z.string().min(1, "currentPassword is required"),
   newPassword: z.string().min(8, "newPassword must be at least 8 characters"),
+});
+
+const ChangeEmailSchema = z.object({
+  currentPassword: z.string().min(1, "currentPassword is required"),
+  // Same case-insensitive normalization as CredentialsSchema's own email
+  // field above -- keeps the uniqueness check and every future login
+  // consistent no matter which casing someone types.
+  email: z.string().email().transform((email) => email.toLowerCase()),
 });
 
 const VerifyLoginCodeSchema = z.object({
@@ -257,6 +266,14 @@ export function createAuthRouter(
     max: 30,
     keyGenerator: (req) => req.userId ?? "unknown",
     message: "Too many password change attempts. Please try again later.",
+  });
+
+  /** Same rationale and shape as changePasswordRateLimiter just above -- PATCH /auth/email is the other route in this file that checks `currentPassword` against a live session token. */
+  const changeEmailRateLimiter = createRateLimiter({
+    windowMs: RATE_LIMIT_WINDOW_MS,
+    max: 30,
+    keyGenerator: (req) => req.userId ?? "unknown",
+    message: "Too many email change attempts. Please try again later.",
   });
 
   router.post("/auth/signup", signupRateLimiter, async (req, res, next) => {
@@ -576,6 +593,60 @@ export function createAuthRouter(
       deleteOtherSessionsForUser(db, req.userId!, extractBearerToken(req)!);
       res.status(204).end();
     } catch (err) {
+      next(err);
+    }
+  });
+
+  /**
+   * `email` was otherwise write-once -- set once at signup and never
+   * touched again, the one account field with no self-service fix:
+   * `DELETE /auth/account` (destroying every owned project) and
+   * re-registering was the only way to correct a typo or recover from an
+   * inaccessible provider. Also the one piece of identifying information
+   * `addCollaborator`/`findUserByEmail` match a collaborator invite
+   * against, so a stale email on one's own account silently broke being
+   * found or re-invited by name, same as if the account didn't exist.
+   *
+   * Requires the *current* password, mirroring PATCH /auth/password's own
+   * rationale exactly: someone briefly at an already-logged-in device (or
+   * holding a stolen bearer token alone, without the real password)
+   * shouldn't be able to redirect this account's own recovery address --
+   * the one real account-takeover risk this route could otherwise open,
+   * since a changed email controls where a future `/auth/forgot-password`
+   * reset link goes. Deliberately does NOT revoke other sessions the way
+   * a password change does -- unlike a leaked password, a changed email
+   * doesn't by itself invalidate anything an existing session could
+   * already do, so there's no matching security reason to sign out other
+   * devices for what's usually just a correction.
+   */
+  router.patch("/auth/email", requireAuth(db), changeEmailRateLimiter, async (req, res, next) => {
+    const parsed = ChangeEmailSchema.safeParse(req.body);
+    if (!parsed.success) {
+      next(new HttpError(400, formatValidationError(parsed.error), "VALIDATION_ERROR"));
+      return;
+    }
+    try {
+      const { currentPassword, email } = parsed.data;
+      const storedHash = getPasswordHash(db, req.userId!);
+      if (!storedHash || !(await verifyPassword(currentPassword, storedHash))) {
+        next(new HttpError(401, "Current password is incorrect", "INVALID_CURRENT_PASSWORD"));
+        return;
+      }
+      // Same post-await existence re-check as PATCH /auth/password just
+      // above -- see that route's own doc comment for why: verifyPassword's
+      // genuine scrypt await is long enough for a concurrent DELETE
+      // /auth/account on this same still-valid token to finish first.
+      if (!findUserById(db, req.userId!)) {
+        next(new HttpError(401, "This account no longer exists", "USER_NOT_FOUND"));
+        return;
+      }
+      const user = updateUserEmail(db, req.userId!, email);
+      res.json({ user });
+    } catch (err) {
+      if (err instanceof DuplicateEmailError) {
+        next(new HttpError(409, err.message, "EMAIL_TAKEN"));
+        return;
+      }
       next(err);
     }
   });

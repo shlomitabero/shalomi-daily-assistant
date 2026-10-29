@@ -14,6 +14,8 @@ import {
   getSessionUser,
   hashSessionToken,
   updatePasswordHash,
+  updateUserEmail,
+  DuplicateEmailError,
 } from "./users.js";
 
 const HOUR_MS = 60 * 60 * 1000;
@@ -176,6 +178,64 @@ test("updatePasswordHash replaces the stored hash, and getPasswordHash reads it 
   assert.equal(row.id, user.id);
   assert.equal(row.email, user.email);
   assert.equal(row.createdAt, user.createdAt);
+});
+
+/**
+ * Round 1199: `email` was otherwise write-once -- set once at createUser
+ * and never touched again -- the same gap updateProjectName/
+ * updateProjectDescription already closed for a project's own name/
+ * description. Mirrors updatePasswordHash's own test shape just above:
+ * the update takes effect, is read back correctly, and leaves every other
+ * field (id, createdAt, passwordHash) untouched.
+ */
+test("updateUserEmail replaces the stored email, leaving every other field untouched", () => {
+  const db = openDatabase(":memory:");
+  ensureUsersTable(db);
+  const user = createUser(db, { id: "u1", email: "dana@example.com", passwordHash: "original-hash" });
+
+  const updated = updateUserEmail(db, user.id, "dana.new@example.com");
+  assert.equal(updated.email, "dana.new@example.com");
+  assert.equal(updated.id, user.id);
+  assert.equal(updated.createdAt, user.createdAt);
+
+  const row = db.prepare("SELECT * FROM users WHERE id = ?").get(user.id) as {
+    id: string;
+    email: string;
+    passwordHash: string;
+    createdAt: string;
+  };
+  assert.equal(row.email, "dana.new@example.com");
+  assert.equal(row.id, user.id);
+  assert.equal(row.passwordHash, "original-hash");
+  assert.equal(row.createdAt, user.createdAt);
+});
+
+test("updateUserEmail rejects an email already taken by a DIFFERENT account, and leaves the original email unchanged", () => {
+  const db = openDatabase(":memory:");
+  ensureUsersTable(db);
+  createUser(db, { id: "u1", email: "dana@example.com", passwordHash: "hash-1" });
+  const other = createUser(db, { id: "u2", email: "yossi@example.com", passwordHash: "hash-2" });
+
+  assert.throws(() => updateUserEmail(db, other.id, "dana@example.com"), DuplicateEmailError);
+
+  const row = db.prepare("SELECT email FROM users WHERE id = ?").get(other.id) as { email: string };
+  assert.equal(row.email, "yossi@example.com", "a rejected change must leave the original email in place");
+});
+
+/**
+ * The uniqueness check is scoped to exclude the caller's OWN row (`AND id
+ * != ?`) specifically so this case -- re-submitting your own unchanged
+ * email, a harmless no-op from the caller's point of view -- isn't
+ * rejected as "already taken", since the only row that already has it is
+ * this exact user.
+ */
+test("updateUserEmail allows re-submitting your own unchanged email as a no-op, not a false DuplicateEmailError", () => {
+  const db = openDatabase(":memory:");
+  ensureUsersTable(db);
+  const user = createUser(db, { id: "u1", email: "dana@example.com", passwordHash: "original-hash" });
+
+  const updated = updateUserEmail(db, user.id, "dana@example.com");
+  assert.equal(updated.email, "dana@example.com");
 });
 
 test("getPasswordHash returns undefined for a user id that doesn't exist", () => {

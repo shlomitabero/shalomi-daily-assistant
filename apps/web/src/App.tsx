@@ -39,6 +39,7 @@ import { HistoryPanel } from "./HistoryPanel.js";
 import { WhatsAppPanel } from "./WhatsAppPanel.js";
 import { AutomationsPanel } from "./AutomationsPanel.js";
 import { CollaboratorsPanel } from "./CollaboratorsPanel.js";
+import { ChangeEmailPanel } from "./ChangeEmailPanel.js";
 import { ChangePasswordPanel } from "./ChangePasswordPanel.js";
 import { DeleteAccountPanel } from "./DeleteAccountPanel.js";
 import { ProjectNameEditor } from "./ProjectNameEditor.js";
@@ -666,6 +667,7 @@ function AppContent() {
   const myProjectIdsRef = useRef<Set<string>>(new Set());
   const [showCollaborators, setShowCollaborators] = useState(false);
   const [showChangePassword, setShowChangePassword] = useState(false);
+  const [showChangeEmail, setShowChangeEmail] = useState(false);
   const [showDeleteAccount, setShowDeleteAccount] = useState(false);
   const [showShortcuts, setShowShortcuts] = useState(false);
   const [myProjects, setMyProjects] = useState<Project[]>([]);
@@ -2090,6 +2092,9 @@ function AppContent() {
           </div>
           <div className="topbar-account">
             <span className="muted small topbar-account-email">{user.email}</span>
+            <button type="button" className="secondary" onClick={() => setShowChangeEmail(true)}>
+              {t("topbar.changeEmail")}
+            </button>
             <button type="button" className="secondary" onClick={() => setShowChangePassword(true)}>
               {t("topbar.changePassword")}
             </button>
@@ -2103,6 +2108,7 @@ function AppContent() {
         </div>
       </header>
 
+      {showChangeEmail && <ChangeEmailPanel currentEmail={user.email} onClose={() => setShowChangeEmail(false)} onChanged={setUser} />}
       {showChangePassword && <ChangePasswordPanel onClose={() => setShowChangePassword(false)} />}
       {showDeleteAccount && (
         <DeleteAccountPanel
