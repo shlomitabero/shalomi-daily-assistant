@@ -279,6 +279,25 @@ test("the Restaurant template composes correctly: it gets the new assumptions AN
   assert.equal(restaurant!.spec.openQuestions.length, 1, "the new assumptions must not suppress or alter the existing payment-provider open question");
 });
 
+/**
+ * Round 1266's finding: `spec()` (templates.ts) hardcoded `personas: []`
+ * for every template, the third sibling in the same parity family rounds
+ * 1248 (openQuestions) and 1257 (assumptions) already closed -- a
+ * heuristic- or AI-generated spec with the identical roles always gets
+ * real personas (heuristic.ts's own `roles.map(...)` 1:1 derivation), but
+ * every template silently skipped it. App.tsx renders the "Who uses this
+ * app" (personas) heading unconditionally, the same unconditional-render
+ * shape round 1257's own finding already flagged for assumptions.
+ */
+test("every template's spec and specEn carry personas derived 1:1 from its own roles, in the matching language, exactly like heuristic.ts's own provider", () => {
+  for (const template of TEMPLATES) {
+    const expectedHe = template.spec.roles.map((r) => `משתמש/ת מסוג ${r}`);
+    const expectedEn = template.specEn.roles.map((r) => `${r} user`);
+    assert.deepEqual(template.spec.personas, expectedHe, `template "${template.id}"'s Hebrew spec must carry personas derived 1:1 from its own roles`);
+    assert.deepEqual(template.specEn.personas, expectedEn, `template "${template.id}"'s English specEn must carry personas derived 1:1 from its own roles`);
+  }
+});
+
 test("every template's screen count matches heuristic.ts's own Dashboard-plus-List+Form-pair-per-entity convention", () => {
   for (const template of TEMPLATES) {
     const expected = 2 * template.spec.entities.length + 1;

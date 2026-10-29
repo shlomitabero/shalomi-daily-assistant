@@ -110,6 +110,26 @@ function templateAssumptions(isHebrew: boolean): string[] {
   ];
 }
 
+/**
+ * Round 1266: mirrors heuristic.ts's own personas derivation exactly --
+ * every template already declares real `roles` (e.g. Restaurant's own
+ * ["Staff", "Manager"]), so a from-scratch description of the identical
+ * business shape gets matching personas like "Staff user"/"Manager user"
+ * via heuristic.ts's own 1:1 roles.map(...). A template used to hardcode
+ * an empty array here instead, the third sibling in the same parity
+ * family rounds 1248 (openQuestions) and 1257 (assumptions) already
+ * closed -- App.tsx's own "Who uses this app" section (spec.personas.heading)
+ * renders unconditionally, with no `.length > 0` gate, so a Templates
+ * Gallery project showed a populated Roles section right above an empty
+ * personas one. Kept as its own small copy here rather than importing
+ * heuristic.ts's module-private logic, the same "duplicate the small pure
+ * helper per module" convention this file's own BILLING_ENTITY_NAMES/
+ * templateAssumptions copies already established.
+ */
+function templatePersonas(roles: string[], isHebrew: boolean): string[] {
+  return roles.map((r) => (isHebrew ? `משתמש/ת מסוג ${r}` : `${r} user`));
+}
+
 function spec(input: {
   summary: string;
   roles: string[];
@@ -120,7 +140,7 @@ function spec(input: {
 }): ProductSpec {
   return ProductSpecSchema.parse({
     summary: input.summary,
-    personas: input.personas ?? [],
+    personas: input.personas ?? templatePersonas(input.roles, input.isHebrew ?? true),
     roles: input.roles,
     entities: input.entities,
     screens: screensFor(input.entities.map((e) => e.name)),
