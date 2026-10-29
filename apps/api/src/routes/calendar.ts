@@ -4,7 +4,7 @@ import type { ForgeDatabase } from "@forge/db";
 import { getCalendarFeedToken, listRecords } from "@forge/db";
 import { ProductSpecSchema, type Entity, type EntityRecord } from "@forge/shared";
 import { isHebrewText } from "@forge/spec-engine";
-import { buildCalendarFeedIcs, type RelatedRecordsByEntity } from "../calendarFeed.js";
+import { buildCalendarFeedIcs, buildCombinedCalendarFeedIcs, type RelatedRecordsByEntity } from "../calendarFeed.js";
 import { createRateLimiter } from "../auth/rateLimit.js";
 
 function tokenMatches(provided: string, stored: string): boolean {
@@ -72,6 +72,82 @@ export function createCalendarFeedRouter(db: ForgeDatabase): Router {
     keyGenerator: (req) => `${req.params.projectId}:${typeof req.query.token === "string" ? req.query.token : ""}`,
     message: "Too many calendar feed requests. Please try again later.",
   });
+
+  /**
+   * Round 1247: the project-wide counterpart to the per-entity route
+   * below -- a real project routinely has more than one entity with its
+   * own independent date field (a clinic's Appointment.date alongside its
+   * Invoice.dueDate, a CRM's Task.deadline alongside an Event.date), each
+   * today needing its own separate "Subscribe" URL with zero cross-entity
+   * view once pasted into a real calendar app. This route merges every
+   * date-bearing entity's records into ONE feed via
+   * buildCombinedCalendarFeedIcs. Registered BEFORE the per-entity route
+   * below on purpose: Express matches routes in registration order, and
+   * that route's own `:entityName.ics` segment would otherwise match
+   * "all.ics" too (treating "all" as a literal entity name) and shadow
+   * this one, since the more specific literal path never gets a chance to
+   * win just by being more specific -- only registration order decides.
+   * Shares the exact same token-auth and `calendarFeedRateLimiter` as the
+   * per-entity route (keyed by project+token together, so this route's
+   * own requests share the same budget as that one against the same
+   * project -- the right scope, since both are reads against the same
+   * underlying resource).
+   */
+  router.get(
+    "/public/calendar/:projectId/all.ics",
+    calendarFeedRateLimiter,
+    asyncRoute((req, res) => {
+      const { projectId } = req.params;
+      const provided = typeof req.query.token === "string" ? req.query.token : "";
+      const stored = getCalendarFeedToken(db, projectId);
+      if (!stored || !provided || !tokenMatches(provided, stored)) {
+        res.status(404).json({ error: "Calendar feed not found", code: "CALENDAR_FEED_NOT_FOUND" });
+        return;
+      }
+      const project = db.prepare("SELECT spec_json, status, description FROM projects WHERE id = ?").get(projectId) as
+        | { spec_json: string; status: string; description: string }
+        | undefined;
+      if (!project) {
+        res.status(404).json({ error: "Calendar feed not found", code: "CALENDAR_FEED_NOT_FOUND" });
+        return;
+      }
+      const parsed = ProductSpecSchema.safeParse(JSON.parse(project.spec_json));
+      if (!parsed.success) {
+        res.status(404).json({ error: "Calendar feed not found", code: "CALENDAR_FEED_NOT_FOUND" });
+        return;
+      }
+      const allEntities: Entity[] = parsed.data.entities;
+      // Mirrors the per-entity route's own recordsByEntity fetch, but for
+      // EVERY entity that has a date field, not just one -- and mirrors
+      // its own relatedRecords fetch, but scanning every entity's relation
+      // fields (not just one entity's), since a combined feed's
+      // DESCRIPTION lines can need to resolve a relation from any of the
+      // merged entities, not only the one the route URL used to name.
+      const recordsByEntity: RelatedRecordsByEntity = {};
+      const relatedRecords: RelatedRecordsByEntity = {};
+      if (project.status === "built") {
+        for (const entity of allEntities) {
+          recordsByEntity[entity.name] = listRecords(db, projectId, entity) as EntityRecord[];
+        }
+        for (const entity of allEntities) {
+          for (const field of entity.fields) {
+            if (field.type !== "relation" || !field.relationTo) continue;
+            const targetEntity = allEntities.find((e) => e.name.toLowerCase() === field.relationTo!.toLowerCase());
+            if (!targetEntity || relatedRecords[targetEntity.name]) continue;
+            relatedRecords[targetEntity.name] = recordsByEntity[targetEntity.name] ?? (listRecords(db, projectId, targetEntity) as EntityRecord[]);
+          }
+        }
+      }
+      const lang = isHebrewText(project.description) ? "he" : "en";
+      const ics = buildCombinedCalendarFeedIcs(allEntities, recordsByEntity, projectId, new Date(), allEntities, relatedRecords, lang);
+      if (ics === null) {
+        res.status(404).json({ error: "Calendar feed not found", code: "CALENDAR_FEED_NOT_FOUND" });
+        return;
+      }
+      res.setHeader("Content-Type", "text/calendar; charset=utf-8");
+      res.send(ics);
+    }),
+  );
 
   router.get(
     "/public/calendar/:projectId/:entityName.ics",

@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import type { Entity, EntityRecord, Field } from "@forge/shared";
-import { buildCalendarFeedIcs, findDateField, findEndDateField } from "./calendarFeed.js";
+import { buildCalendarFeedIcs, buildCombinedCalendarFeedIcs, findDateField, findEndDateField } from "./calendarFeed.js";
 
 const dateField: Field = { name: "appointmentDate", label: "תאריך תור", type: "date", required: true };
 const nameField: Field = { name: "customerName", label: "שם לקוח", type: "text", required: true };
@@ -351,4 +351,76 @@ test("buildCalendarFeedIcs strips the invisible bidi mark toLocaleString adds be
   const events = parseEvents(icsHe!);
   assert.match(events[0], /סכום: -150/, "a negative number field must render with a plain minus sign, no invisible character before it");
   assert.ok(!events[0].includes("‎") && !events[0].includes("‏"), "the DESCRIPTION line must contain no invisible bidi mark at all");
+});
+
+/**
+ * Round 1247: buildCombinedCalendarFeedIcs's own dedicated tests -- the
+ * project-wide counterpart to buildCalendarFeedIcs, merging every
+ * date-bearing entity's records into ONE VCALENDAR instead of one entity
+ * needing its own separate feed.
+ */
+test("buildCombinedCalendarFeedIcs returns null when NO entity in the list has a date field at all, matching buildCalendarFeedIcs's own null contract", () => {
+  const noDateEntity: Entity = { name: "Note", label: "Note", fields: [nameField] };
+  assert.equal(buildCombinedCalendarFeedIcs([noDateEntity], {}, "proj1"), null);
+});
+
+test("buildCombinedCalendarFeedIcs merges every date-bearing entity's records into ONE VCALENDAR, prefixing each SUMMARY with its own entity's label", () => {
+  const appointmentRecords: EntityRecord[] = [{ id: 1, appointmentDate: "2026-03-15", customerName: "Dana Levi", confirmed: true }];
+  const rentalRecords: EntityRecord[] = [{ id: 1, itemName: "Projector", startDate: "2026-04-01", endDate: "2026-04-03" }];
+  const ics = buildCombinedCalendarFeedIcs([entity, rentalEntity], { Appointment: appointmentRecords, Rental: rentalRecords }, "proj1");
+  assert.ok(ics);
+  assert.match(ics!, /^BEGIN:VCALENDAR\r\nVERSION:2\.0\r\nPRODID:-\/\/Forge AI\/\/All Entities\/\/EN\r\nCALSCALE:GREGORIAN/);
+  assert.match(ics!, /END:VCALENDAR$/);
+  const events = parseEvents(ics!);
+  assert.equal(events.length, 2, "one VEVENT per record across BOTH entities, merged into the same feed");
+  assert.match(events[0], /SUMMARY:\[תור\] Dana Levi/, "the Appointment event's SUMMARY must be prefixed with its own entity's label");
+  assert.match(events[1], /SUMMARY:\[השכרה\] Projector/, "the Rental event's SUMMARY must be prefixed with its own entity's label");
+});
+
+test("buildCombinedCalendarFeedIcs skips an entity with no records for it in recordsByEntity, instead of throwing", () => {
+  const ics = buildCombinedCalendarFeedIcs([entity, rentalEntity], { Appointment: [{ id: 1, appointmentDate: "2026-03-15", customerName: "Dana Levi" }] }, "proj1");
+  assert.ok(ics);
+  const events = parseEvents(ics!);
+  assert.equal(events.length, 1, "Rental has no entry in recordsByEntity at all -- it must contribute zero events, not throw");
+});
+
+test("buildCombinedCalendarFeedIcs excludes a non-date-bearing entity from the merged feed entirely, even if it has records", () => {
+  const noDateEntity: Entity = { name: "Note", label: "Note", fields: [nameField] };
+  const ics = buildCombinedCalendarFeedIcs(
+    [entity, noDateEntity],
+    { Appointment: [{ id: 1, appointmentDate: "2026-03-15", customerName: "Dana Levi" }], Note: [{ id: 1, customerName: "irrelevant" }] },
+    "proj1",
+  );
+  assert.ok(ics);
+  const events = parseEvents(ics!);
+  assert.equal(events.length, 1, "an entity with no date field must never contribute an event, regardless of its own records");
+});
+
+test("buildCombinedCalendarFeedIcs's UID stays unique per entity+record id, so two different entities' record #1 never collide in the same merged feed", () => {
+  const ics = buildCombinedCalendarFeedIcs(
+    [entity, rentalEntity],
+    { Appointment: [{ id: 1, appointmentDate: "2026-03-15", customerName: "Dana Levi" }], Rental: [{ id: 1, itemName: "Projector", startDate: "2026-04-01" }] },
+    "proj1",
+  );
+  const events = parseEvents(ics!);
+  const uids = events.map((e) => /UID:(.+)/.exec(unfold(e))![1]);
+  assert.notEqual(uids[0], uids[1], "the Appointment and Rental records both have id 1 -- their UIDs must still differ");
+  assert.match(uids[0], /^Appointment-1@proj1\.forge-ai/);
+  assert.match(uids[1], /^Rental-1@proj1\.forge-ai/);
+});
+
+test("buildCombinedCalendarFeedIcs's DESCRIPTION still resolves a relation field to its related record's display label, matching buildCalendarFeedIcs's own relation support", () => {
+  const customerField: Field = { name: "customerId", label: "לקוח", type: "relation", relationTo: "Customer", required: true };
+  const bookingEntity: Entity = { name: "Booking", label: "הזמנה", fields: [dateField, customerField] };
+  const customerEntity: Entity = { name: "Customer", label: "לקוח", fields: [nameField] };
+  const ics = buildCombinedCalendarFeedIcs(
+    [bookingEntity],
+    { Booking: [{ id: 1, appointmentDate: "2026-03-15", customerId: 42 }] },
+    "proj1",
+    new Date(),
+    [bookingEntity, customerEntity],
+    { Customer: [{ id: 42, customerName: "Dana Levi" }] },
+  );
+  const events = parseEvents(ics!);
+  assert.match(unfold(events[0]), /לקוח: Dana Levi/, "the relation field must resolve to the related Customer record's own display label");
 });

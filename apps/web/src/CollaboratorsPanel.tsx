@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import type { CollaboratorRole, Project, ProjectCollaborator } from "@forge/shared";
 import {
   addCollaborator,
+  getCalendarFeedToken,
   listCollaborators,
   regenerateCalendarFeedToken,
   removeCollaborator,
@@ -93,6 +94,7 @@ export function CollaboratorsPanel({
   const [regeneratingFeedToken, setRegeneratingFeedToken] = useState(false);
   const [regenerateFeedTokenInfo, setRegenerateFeedTokenInfo] = useState<string | null>(null);
   const [copyStatus, setCopyStatus] = useState<"idle" | "copied" | "failed">("idle");
+  const [subscribeAllStatus, setSubscribeAllStatus] = useState<"idle" | "copied" | "failed">("idle");
   const dialogRef = useDialogFocusTrap<HTMLDivElement>(onClose);
 
   function loadCollaborators() {
@@ -295,6 +297,36 @@ export function CollaboratorsPanel({
       setRegeneratingFeedToken(false);
     }
   }
+
+  /**
+   * Round 1247: the project-wide counterpart to EntityPanel.tsx's own
+   * per-entity handleSubscribeCalendar -- a real project routinely has
+   * more than one entity with its own independent date field (a clinic's
+   * Appointment.date alongside its Invoice.dueDate), each needing its own
+   * separate "Subscribe" URL today, with zero cross-entity view once
+   * pasted into a real calendar app. Mirrors handleSubscribeCalendar's
+   * own shape exactly: fetches the project's own feed token fresh each
+   * click (cheap, same reasoning as that function's own doc comment)
+   * rather than caching it, and builds the new combined-feed route's URL
+   * (routes/calendar.ts's `GET /public/calendar/:projectId/all.ics`)
+   * instead of one entity-scoped URL.
+   */
+  async function handleSubscribeAllCalendars() {
+    try {
+      const { token } = await getCalendarFeedToken(projectId);
+      const url = `${window.location.origin}/api/public/calendar/${projectId}/all.ics?token=${token}`;
+      await navigator.clipboard.writeText(url);
+      setSubscribeAllStatus("copied");
+    } catch {
+      setSubscribeAllStatus("failed");
+    }
+  }
+
+  useEffect(() => {
+    if (subscribeAllStatus === "idle") return;
+    const timer = setTimeout(() => setSubscribeAllStatus("idle"), 2000);
+    return () => clearTimeout(timer);
+  }, [subscribeAllStatus]);
 
   function handleDownload() {
     downloadCollaboratorsReport(formatCollaboratorsReport(owner, collaborators ?? [], projectName, lang, t), projectName);
@@ -536,6 +568,25 @@ export function CollaboratorsPanel({
             {collaborators !== null && collaborators.length === 0 && <p className="muted small">{t("collab.empty")}</p>}
           </>
         )}
+
+        {/*
+          Round 1247: NOT owner-gated, unlike the regenerate section just
+          below -- GET .../calendar-feed-token (which this button calls,
+          via getCalendarFeedToken) uses requireProjectAccess, not
+          requireProjectOwner, the same access any collaborator already
+          has to EntityPanel.tsx's own per-entity "Subscribe" button.
+        */}
+        <div className="collab-calendar-subscribe-all-section">
+          <h3>{t("collab.calendarFeed.subscribeAll.heading")}</h3>
+          <p className="muted small">{t("collab.calendarFeed.subscribeAll.description")}</p>
+          <button type="button" className="secondary" onClick={handleSubscribeAllCalendars} aria-live="polite" aria-atomic="true">
+            {subscribeAllStatus === "copied"
+              ? t("collab.calendarFeed.subscribeAll.copied")
+              : subscribeAllStatus === "failed"
+                ? t("collab.calendarFeed.subscribeAll.failed")
+                : t("collab.calendarFeed.subscribeAll.button")}
+          </button>
+        </div>
 
         {isOwner && (
           <div className="collab-calendar-feed-section">

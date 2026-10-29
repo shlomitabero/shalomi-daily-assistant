@@ -1197,6 +1197,61 @@ test("CollaboratorsPanel's calendar-feed regenerate button calls the real endpoi
 });
 
 /**
+ * Round 1247: the "Subscribe to a combined calendar" button, the
+ * project-wide counterpart to EntityPanel.tsx's own per-entity subscribe
+ * button. Unlike the regenerate section just above (owner-only, since
+ * rotating the token breaks every collaborator's subscription), this one
+ * must be visible and usable for a plain, non-owner collaborator too --
+ * GET .../calendar-feed-token (which this button calls) uses
+ * requireProjectAccess, not requireProjectOwner, the exact same access any
+ * collaborator already has to EntityPanel.tsx's own per-entity button.
+ */
+test("CollaboratorsPanel's \"Subscribe to combined calendar\" button is visible to a plain collaborator (not just the owner), and copies the real all.ics URL built from the real token", async () => {
+  await withJsdom(async () => {
+    const originalFetch = globalThis.fetch;
+    let tokenCalls = 0;
+    globalThis.fetch = (async (input: string, init?: RequestInit) => {
+      const method = init?.method ?? "GET";
+      if (method === "GET" && input === "/api/projects/proj1/collaborators") {
+        return new Response(JSON.stringify({ collaborators: [] }), { status: 200, headers: { "content-type": "application/json" } });
+      }
+      if (method === "GET" && input === "/api/projects/proj1/calendar-feed-token") {
+        tokenCalls += 1;
+        return new Response(JSON.stringify({ token: "real-feed-token" }), { status: 200, headers: { "content-type": "application/json" } });
+      }
+      throw new Error(`unexpected request ${method} ${input}`);
+    }) as typeof fetch;
+
+    let writtenText: string | null = null;
+    Object.defineProperty(navigator, "clipboard", {
+      value: { writeText: async (text: string) => { writtenText = text; } },
+      configurable: true,
+    });
+
+    try {
+      // Not the owner -- confirms this button is reachable for a plain collaborator too.
+      renderPanel(false);
+      await waitForCondition(() => document.querySelector(".collab-calendar-subscribe-all-section") !== null);
+      assert.equal(
+        document.querySelector(".collab-calendar-feed-section"),
+        null,
+        "a plain collaborator must still never see the owner-only regenerate section",
+      );
+
+      const button = document.querySelector(".collab-calendar-subscribe-all-section button") as HTMLButtonElement;
+      fireEvent.click(button);
+      await waitForCondition(() => tokenCalls === 1);
+      await waitForCondition(() => writtenText !== null);
+
+      assert.equal(writtenText, `${window.location.origin}/api/public/calendar/proj1/all.ics?token=real-feed-token`);
+    } finally {
+      globalThis.fetch = originalFetch;
+      delete (navigator as { clipboard?: unknown }).clipboard;
+    }
+  });
+});
+
+/**
  * Round 1062: this panel is a real dialog (useDialogFocusTrap), whose own
  * Escape handler closes the whole thing unless the event's target sits
  * under data-escape-handled-locally -- the invite email input never had

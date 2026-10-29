@@ -2753,13 +2753,15 @@ button.sort-header:hover:not(:disabled) {
   flex-wrap: wrap;
 }
 
-.collab-calendar-feed-section {
+.collab-calendar-feed-section,
+.collab-calendar-subscribe-all-section {
   margin-top: 20px;
   padding-top: 16px;
   border-top: 1px solid var(--border);
 }
 
-.collab-calendar-feed-section h3 {
+.collab-calendar-feed-section h3,
+.collab-calendar-subscribe-all-section h3 {
   margin: 0 0 6px;
   font-size: 15px;
 }

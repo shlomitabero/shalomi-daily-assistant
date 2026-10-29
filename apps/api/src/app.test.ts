@@ -17030,6 +17030,96 @@ test("POST /projects/:id/calendar-feed-token/regenerate invalidates the old toke
   });
 });
 
+/**
+ * Round 1247: the project-wide counterpart to the per-entity feed route --
+ * a project with more than one entity carrying its own independent date
+ * field (Appointment.date and Invoice.dueDate here) can now subscribe to
+ * ONE combined feed instead of one per entity. Shares the exact same
+ * token-auth as the per-entity route (confirmed by the 404 case below).
+ */
+test("GET /public/calendar/:projectId/all.ics merges every date-bearing entity's records into one feed, and 404s for the same bad-token cases as the per-entity route", async () => {
+  await withServer(async (baseUrl, db) => {
+    const email = `calendar-feed-all-${randomUUID()}@example.com`;
+    const authToken = await signup(baseUrl, email);
+    const user = findUserByEmail(db, email)!;
+    const spec: ProductSpec = {
+      summary: "test",
+      personas: [],
+      roles: ["Admin"],
+      entities: [
+        { name: "Appointment", fields: [{ name: "name", type: "text", required: true }, { name: "date", type: "date", required: true }] },
+        { name: "Invoice", fields: [{ name: "name", type: "text", required: true }, { name: "dueDate", type: "date", required: true }] },
+        { name: "Note", fields: [{ name: "name", type: "text", required: true }] },
+      ],
+      screens: [],
+      assumptions: [],
+      openQuestions: [],
+    };
+    const projectId = randomUUID();
+    insertProject(db, { id: projectId, ownerId: user.id, name: "CRM", description: "test", spec });
+    diffAndMigrate(db, projectId, undefined, spec);
+    markProjectBuilt(db, projectId);
+    insertRecord(db, projectId, spec.entities[0], { name: "Checkup", date: "2026-05-01" });
+    insertRecord(db, projectId, spec.entities[1], { name: "Invoice #1", dueDate: "2026-05-10" });
+    insertRecord(db, projectId, spec.entities[2], { name: "irrelevant" });
+
+    const tokenRes = await fetch(`${baseUrl}/api/projects/${projectId}/calendar-feed-token`, { headers: authHeaders(authToken) });
+    const { token: feedToken } = (await tokenRes.json()) as { token: string };
+
+    const feedRes = await fetch(`${baseUrl}/api/public/calendar/${projectId}/all.ics?token=${feedToken}`);
+    assert.equal(feedRes.status, 200);
+    assert.match(feedRes.headers.get("content-type") ?? "", /text\/calendar/);
+    const ics = await feedRes.text();
+    assert.match(ics, /BEGIN:VCALENDAR/);
+    assert.match(ics, /SUMMARY:\[Appointment\] Checkup/, "the Appointment record's SUMMARY must be prefixed with its own entity's label");
+    assert.match(ics, /SUMMARY:\[Invoice\] Invoice #1/, "the Invoice record's SUMMARY must be prefixed with its own entity's label");
+    assert.doesNotMatch(ics, /irrelevant/, "Note has no date field at all -- it must never contribute an event to the combined feed");
+
+    const noTokenRes = await fetch(`${baseUrl}/api/public/calendar/${projectId}/all.ics?token=anything`);
+    assert.equal(noTokenRes.status, 404, "the combined feed route must share the exact same token-auth as the per-entity route");
+
+    const wrongProjectRes = await fetch(`${baseUrl}/api/public/calendar/${randomUUID()}/all.ics?token=${feedToken}`);
+    assert.equal(wrongProjectRes.status, 404);
+  });
+});
+
+/**
+ * Round 1247: confirms the route-registration-order fix actually works --
+ * an entity genuinely named "Appointment" (not "all") must still be
+ * reachable through its own per-entity URL even now that a literal
+ * "/all.ics" route is registered first, proving the more specific
+ * per-entity route isn't accidentally shadowed by the new one.
+ */
+test("GET /public/calendar/:projectId/:entityName.ics still works for an ordinary entity after the new /all.ics route was added", async () => {
+  await withServer(async (baseUrl, db) => {
+    const email = `calendar-feed-coexist-${randomUUID()}@example.com`;
+    const authToken = await signup(baseUrl, email);
+    const user = findUserByEmail(db, email)!;
+    const spec: ProductSpec = {
+      summary: "test",
+      personas: [],
+      roles: ["Admin"],
+      entities: [{ name: "Appointment", fields: [{ name: "name", type: "text", required: true }, { name: "date", type: "date", required: true }] }],
+      screens: [],
+      assumptions: [],
+      openQuestions: [],
+    };
+    const projectId = randomUUID();
+    insertProject(db, { id: projectId, ownerId: user.id, name: "CRM", description: "test", spec });
+    diffAndMigrate(db, projectId, undefined, spec);
+    markProjectBuilt(db, projectId);
+    insertRecord(db, projectId, spec.entities[0], { name: "Checkup", date: "2026-05-01" });
+
+    const tokenRes = await fetch(`${baseUrl}/api/projects/${projectId}/calendar-feed-token`, { headers: authHeaders(authToken) });
+    const { token: feedToken } = (await tokenRes.json()) as { token: string };
+
+    const feedRes = await fetch(`${baseUrl}/api/public/calendar/${projectId}/Appointment.ics?token=${feedToken}`);
+    assert.equal(feedRes.status, 200);
+    const ics = await feedRes.text();
+    assert.match(ics, /SUMMARY:Checkup/, "the per-entity route's own SUMMARY must have no [EntityLabel] prefix -- that's the combined feed's own behavior only");
+  });
+});
+
 test("POST /projects/:id/calendar-feed-token/regenerate is owner-only, with the same existence-hiding 404 every other owner-only action uses", async () => {
   await withServer(async (baseUrl, db) => {
     const ownerEmail = `calendar-feed-regen-owner-${randomUUID()}@example.com`;

@@ -246,25 +246,33 @@ function foldIcsLine(line: string): string {
 }
 
 /**
- * Builds a real RFC 5545 .ics calendar for EVERY record of `entity` that
- * has a valid value in its auto-detected date field -- not just the
- * records a client happened to pass in for one visible month, the way
- * buildCalendarIcs's one-shot export caller scopes it. Returns null when
- * the entity has no date field at all (nothing for a calendar app to ever
- * subscribe to), so the caller can 404 instead of serving an always-empty
- * feed that looks broken to the subscriber.
+ * Round 1247: the shared per-record VEVENT-building loop, factored out of
+ * buildCalendarFeedIcs below so buildCombinedCalendarFeedIcs can reuse the
+ * exact same formatting (date/end-date handling, SUMMARY/DESCRIPTION
+ * computation, relation resolution, line folding) for more than one
+ * entity's records inside a single VCALENDAR, instead of duplicating this
+ * whole loop. `summaryPrefix` is the one behavioral difference a caller
+ * can ask for: buildCalendarFeedIcs passes "" (unchanged single-entity
+ * output, byte-identical to before this refactor), while
+ * buildCombinedCalendarFeedIcs passes `[<entity label>] ` so events from
+ * different entities stay visually distinguishable once merged into one
+ * feed. `dtstamp` is computed once by the caller and threaded through
+ * (not recomputed per entity), so every VEVENT across a combined feed
+ * shares the exact same DTSTAMP, matching a single real .ics generation
+ * pass.
  */
-export function buildCalendarFeedIcs(
+function buildVeventLinesForEntity(
   entity: Entity,
   records: EntityRecord[],
   projectId: string,
-  now: Date = new Date(),
-  allEntities: Entity[] = [],
-  relatedRecords: RelatedRecordsByEntity = {},
-  lang: Lang = "en",
-): string | null {
+  dtstamp: string,
+  allEntities: Entity[],
+  relatedRecords: RelatedRecordsByEntity,
+  lang: Lang,
+  summaryPrefix: string,
+): string[] {
   const dateField = findDateField(entity.fields);
-  if (!dateField) return null;
+  if (!dateField) return [];
   const endField = findEndDateField(entity.fields, dateField);
   const labelField = calendarChipLabelField(entity, dateField);
   // Mirrors calendarIcs.ts's own descriptionFields exactly, minus its
@@ -279,13 +287,7 @@ export function buildCalendarFeedIcs(
     descriptionLabelOccurrences.set(label, (descriptionLabelOccurrences.get(label) ?? 0) + 1);
   }
   const relationIndexCache = new Map<EntityRecord[], Map<number, EntityRecord>>();
-  const dtstamp = formatIcsTimestamp(now);
-  const lines: string[] = [
-    "BEGIN:VCALENDAR",
-    "VERSION:2.0",
-    foldIcsLine(`PRODID:-//Forge AI//${icsEscapeText(entity.label ?? entity.name)}//EN`),
-    "CALSCALE:GREGORIAN",
-  ];
+  const lines: string[] = [];
   for (const record of records) {
     const raw = record[dateField.name];
     if (raw === null || raw === undefined || raw === "") continue;
@@ -318,7 +320,7 @@ export function buildCalendarFeedIcs(
     // record, unlike entity.label/name, which every unnamed record
     // sharing this entity would otherwise show identically.
     const chipLabel = calendarChipLabelValue(labelField, record, lang);
-    const summary = chipLabel === "" ? `#${record.id}` : chipLabel;
+    const summary = summaryPrefix + (chipLabel === "" ? `#${record.id}` : chipLabel);
     // Mirrors calendarIcs.ts's own descriptionLines computation exactly,
     // including the field-label-collision disambiguation (round 635's
     // fix, applied here the same way calendarIcs.ts already applies it).
@@ -359,6 +361,84 @@ export function buildCalendarFeedIcs(
     }
     lines.push("END:VEVENT");
   }
-  lines.push("END:VCALENDAR");
+  return lines;
+}
+
+/**
+ * Builds a real RFC 5545 .ics calendar for EVERY record of `entity` that
+ * has a valid value in its auto-detected date field -- not just the
+ * records a client happened to pass in for one visible month, the way
+ * buildCalendarIcs's one-shot export caller scopes it. Returns null when
+ * the entity has no date field at all (nothing for a calendar app to ever
+ * subscribe to), so the caller can 404 instead of serving an always-empty
+ * feed that looks broken to the subscriber.
+ */
+export function buildCalendarFeedIcs(
+  entity: Entity,
+  records: EntityRecord[],
+  projectId: string,
+  now: Date = new Date(),
+  allEntities: Entity[] = [],
+  relatedRecords: RelatedRecordsByEntity = {},
+  lang: Lang = "en",
+): string | null {
+  const dateField = findDateField(entity.fields);
+  if (!dateField) return null;
+  const dtstamp = formatIcsTimestamp(now);
+  const eventLines = buildVeventLinesForEntity(entity, records, projectId, dtstamp, allEntities, relatedRecords, lang, "");
+  const lines: string[] = [
+    "BEGIN:VCALENDAR",
+    "VERSION:2.0",
+    foldIcsLine(`PRODID:-//Forge AI//${icsEscapeText(entity.label ?? entity.name)}//EN`),
+    "CALSCALE:GREGORIAN",
+    ...eventLines,
+    "END:VCALENDAR",
+  ];
+  return lines.join("\r\n");
+}
+
+/**
+ * Round 1247: the project-wide counterpart to buildCalendarFeedIcs above --
+ * many real projects have more than one entity with its own independent
+ * date field (a clinic's Appointment.date alongside its Invoice.dueDate, a
+ * CRM's Task.deadline alongside an Event.date), each needing its own
+ * separate "Subscribe" URL and showing up as a visually distinct calendar
+ * with zero cross-entity view. This merges every date-bearing entity's
+ * records into ONE VCALENDAR, prefixing each VEVENT's SUMMARY with its own
+ * entity's label (e.g. "[Invoice] ...") so events from different entities
+ * stay distinguishable once merged. `recordsByEntity` is keyed by entity
+ * name, mirroring RelatedRecordsByEntity's own convention. Returns null
+ * when NO entity in `entities` has a date field at all, the same
+ * "nothing for a calendar app to ever subscribe to" contract as
+ * buildCalendarFeedIcs.
+ */
+export function buildCombinedCalendarFeedIcs(
+  entities: Entity[],
+  recordsByEntity: RelatedRecordsByEntity,
+  projectId: string,
+  now: Date = new Date(),
+  allEntities: Entity[] = [],
+  relatedRecords: RelatedRecordsByEntity = {},
+  lang: Lang = "en",
+): string | null {
+  const dateBearingEntities = entities.filter((e) => findDateField(e.fields) !== null);
+  if (dateBearingEntities.length === 0) return null;
+  const dtstamp = formatIcsTimestamp(now);
+  const eventLines: string[] = [];
+  for (const entity of dateBearingEntities) {
+    const records = recordsByEntity[entity.name] ?? [];
+    // Not pre-escaped here: the shared loop's own icsEscapeText(summary)
+    // call escapes the whole prefix+label string exactly once.
+    const summaryPrefix = `[${entity.label ?? entity.name}] `;
+    eventLines.push(...buildVeventLinesForEntity(entity, records, projectId, dtstamp, allEntities, relatedRecords, lang, summaryPrefix));
+  }
+  const lines: string[] = [
+    "BEGIN:VCALENDAR",
+    "VERSION:2.0",
+    "PRODID:-//Forge AI//All Entities//EN",
+    "CALSCALE:GREGORIAN",
+    ...eventLines,
+    "END:VCALENDAR",
+  ];
   return lines.join("\r\n");
 }
