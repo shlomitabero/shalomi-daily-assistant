@@ -216,7 +216,8 @@ export type Screen = z.infer<typeof ScreenSchema>;
 
 export const OpenQuestionSchema = z.object({
   question: z.string().min(1),
-  options: z.array(z.string()).default([]),
+  /** Round 1214: see ProductSpecSchema's own `roles`/`personas`/`assumptions` comment just below -- same gap, same fix. */
+  options: z.array(z.string().min(1)).default([]),
   recommendation: z.string().optional(),
 });
 
@@ -243,11 +244,31 @@ export type OpenQuestion = z.infer<typeof OpenQuestionSchema>;
 export const ProductSpecSchema = z
   .object({
     summary: z.string().min(1),
-    personas: z.array(z.string()).default([]),
-    roles: z.array(z.string()).min(1),
+    /**
+     * Round 1214: `roles`/`personas`/`assumptions` are plain free-text
+     * string arrays with no guard on each element's own content -- unlike
+     * the narrow, purpose-built `AddRoleSchema`/`AddPersonaSchema`/
+     * `AddAssumptionSchema` in routes/projects.ts (all `z.string().trim().min(1)`,
+     * since "any non-empty string is a valid role/persona/assumption" per
+     * that file's own comment), which a human can never bypass through the
+     * UI. An AI-generated spec hitting this broader schema instead can
+     * emit a stray `""` element in one of these arrays with nothing to
+     * stop it. `RoleChip`/`PersonaItem`/`AssumptionItem`
+     * (SpecListItemRemover.tsx) render the string DIRECTLY with no
+     * fallback at all (unlike `label ?? name` -- round 1213's fix was for
+     * a field with a fallback; these have none), so an empty element
+     * renders as a ghost chip: invisible text, only a dangling remove
+     * button, with no error ever surfaced. `.min(1)` on each element
+     * closes this the same way round 1213 closed it for `label` and round
+     * 856 closed it for `name` -- sending a spec with an empty element
+     * back through generateSpec's existing heuristic-provider fallback
+     * instead of silently storing/rendering a blank chip.
+     */
+    personas: z.array(z.string().min(1)).default([]),
+    roles: z.array(z.string().min(1)).min(1),
     entities: z.array(EntitySchema).min(1),
     screens: z.array(ScreenSchema).default([]),
-    assumptions: z.array(z.string()).default([]),
+    assumptions: z.array(z.string().min(1)).default([]),
     openQuestions: z.array(OpenQuestionSchema).default([]),
   })
   .refine((spec) => findCaseInsensitiveDuplicateEntityNames(spec.entities).length === 0, (spec) => ({

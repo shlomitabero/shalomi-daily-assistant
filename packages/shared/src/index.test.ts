@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { EntitySchema, FieldSchema, ProductSpecSchema } from "./index.js";
+import { EntitySchema, FieldSchema, OpenQuestionSchema, ProductSpecSchema } from "./index.js";
 
 /**
  * FieldSchema's two `.refine()` checks -- an enum field must declare
@@ -151,6 +151,39 @@ function baseSpec(entities: unknown[]) {
     openQuestions: [],
   };
 }
+
+/**
+ * Round 1214: same bug class as round 1213's `label` fix, applied to
+ * `roles`/`personas`/`assumptions`/`openQuestions.options` -- a stray
+ * empty-string element in one of these free-text arrays rendered as a
+ * ghost chip (RoleChip/PersonaItem/AssumptionItem render the string
+ * directly, with no fallback at all).
+ */
+test("ProductSpecSchema rejects an empty-string element in roles/personas/assumptions, but still accepts genuinely non-empty ones", () => {
+  const emptyRole = ProductSpecSchema.safeParse({ ...baseSpec([{ name: "Order", fields: [{ name: "total", type: "number", required: true }] }]), roles: ["Admin", ""] });
+  assert.ok(!emptyRole.success, "expected an empty-string role to be rejected");
+
+  const emptyPersona = ProductSpecSchema.safeParse({ ...baseSpec([{ name: "Order", fields: [{ name: "total", type: "number", required: true }] }]), personas: [""] });
+  assert.ok(!emptyPersona.success, "expected an empty-string persona to be rejected");
+
+  const emptyAssumption = ProductSpecSchema.safeParse({ ...baseSpec([{ name: "Order", fields: [{ name: "total", type: "number", required: true }] }]), assumptions: [""] });
+  assert.ok(!emptyAssumption.success, "expected an empty-string assumption to be rejected");
+
+  const genuine = ProductSpecSchema.safeParse({
+    ...baseSpec([{ name: "Order", fields: [{ name: "total", type: "number", required: true }] }]),
+    personas: ["Shop owner"],
+    assumptions: ["Payments are handled offline"],
+  });
+  assert.ok(genuine.success, "expected genuinely non-empty personas/assumptions to still be accepted");
+});
+
+test("OpenQuestionSchema rejects an empty-string option, but still accepts genuinely non-empty ones", () => {
+  const empty = OpenQuestionSchema.safeParse({ question: "Which payment methods?", options: ["Cash", ""] });
+  assert.ok(!empty.success, "expected an empty-string option to be rejected");
+
+  const genuine = OpenQuestionSchema.safeParse({ question: "Which payment methods?", options: ["Cash", "Credit card"] });
+  assert.ok(genuine.success, "expected genuinely non-empty options to still be accepted");
+});
 
 test("ProductSpecSchema rejects two entities whose names collide case-insensitively", () => {
   const result = ProductSpecSchema.safeParse(
