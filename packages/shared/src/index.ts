@@ -156,8 +156,21 @@ export const FieldSchema = z
      * closed it for `label`/`roles`/`personas`/`assumptions`.
      */
     enumValues: z.array(z.string().min(1)).optional(),
-    /** Display text per raw enumValue (e.g. {"New": "חדש"}). The stored/API value is always the raw enumValue. */
-    enumLabels: z.record(z.string(), z.string()).optional(),
+    /**
+     * Display text per raw enumValue (e.g. {"New": "חדש"}). The stored/API
+     * value is always the raw enumValue.
+     *
+     * Round 1246: same bug class as round 1213/1215's `label`/`enumValues`
+     * fixes -- every render site across this app falls back with
+     * `field.enumLabels?.[value] ?? value`, which only falls back on
+     * `null`/`undefined`, never on `""`. An AI-generated spec emitting
+     * `enumLabels: {"Active": ""}` passed validation cleanly and then
+     * rendered a literally blank label everywhere that enum value appears
+     * (table cells, Kanban columns, calendar feed, backup CSV, automation
+     * reports). `.min(1)` on the value closes it the same way round
+     * 1213/1215 closed it for `label`/`enumValues`'s own elements.
+     */
+    enumLabels: z.record(z.string(), z.string().min(1)).optional(),
     relationTo: z.string().optional(),
   })
   .refine(

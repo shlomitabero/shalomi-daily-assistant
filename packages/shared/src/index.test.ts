@@ -44,6 +44,22 @@ test("FieldSchema rejects an enum field with an empty-string enumValues element,
   assert.ok(genuine.success, "expected genuinely non-empty enumValues to still be accepted");
 });
 
+/**
+ * Round 1246: same bug class as round 1215's enumValues-element fix just
+ * above, for the sibling enumLabels field instead. Every render site in
+ * this app falls back with `field.enumLabels?.[value] ?? value`, which
+ * only falls back on null/undefined, never on "" -- an AI-generated spec
+ * emitting an empty-string override rendered a literally blank label
+ * everywhere that enum value appeared.
+ */
+test("FieldSchema rejects an enum field with an empty-string enumLabels value, but still accepts genuinely non-empty ones", () => {
+  const empty = FieldSchema.safeParse({ name: "status", type: "enum", required: true, enumValues: ["Active"], enumLabels: { Active: "" } });
+  assert.ok(!empty.success, "expected an empty-string enumLabels value to be rejected");
+
+  const genuine = FieldSchema.safeParse({ name: "status", type: "enum", required: true, enumValues: ["Active"], enumLabels: { Active: "פעיל" } });
+  assert.ok(genuine.success, "expected a genuinely non-empty enumLabels value to still be accepted");
+});
+
 test("FieldSchema rejects a relation field with no relationTo", () => {
   const result = FieldSchema.safeParse({ name: "customerId", type: "relation", required: false });
   assert.ok(!result.success);
