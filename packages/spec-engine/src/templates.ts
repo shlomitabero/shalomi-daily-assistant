@@ -1,4 +1,4 @@
-import { type ProductSpec, ProductSpecSchema } from "@forge/shared";
+import { type OpenQuestion, type ProductSpec, ProductSpecSchema } from "@forge/shared";
 
 /**
  * A curated "Templates Gallery" (the long-standing "Template/agent
@@ -57,12 +57,40 @@ function screensFor(entityNames: string[]): ProductSpec["screens"] {
   return screens;
 }
 
+/**
+ * Round 1248: mirrors heuristic.ts's own BILLING_ENTITY_NAMES exactly --
+ * an entity whose whole purpose is receiving money, so its presence alone
+ * means a generated spec should surface the payment-provider open
+ * question. Kept as its own small copy here rather than importing
+ * heuristic.ts's module-private Set, matching this codebase's established
+ * "duplicate the small pure helper per module" convention (backup.ts/
+ * twin.ts/checkpointDiff.ts each keep their own small copies of shared
+ * pure logic rather than cross-importing between spec-engine modules).
+ */
+const BILLING_ENTITY_NAMES = new Set(["Invoice", "Order", "Donation", "Subscription", "Rental", "Property", "MenuItem"]);
+
+/**
+ * Round 1248: mirrors heuristic.ts's own buildOpenQuestions exactly for
+ * the one question it always asks (payment provider) -- a template's
+ * entities are fixed data known at module-load time, so there's no
+ * description text to scan for PAYMENT_KEYWORDS the way heuristic.ts's own
+ * provider does; only the entity-name check applies here.
+ */
+function paymentOpenQuestion(entities: EntitySpec[], isHebrew: boolean): OpenQuestion[] {
+  const needsPayments = entities.some((e) => BILLING_ENTITY_NAMES.has(e.name));
+  if (!needsPayments) return [];
+  return isHebrew
+    ? [{ question: "באיזה ספק תשלומים כדאי להשתמש?", options: ["Stripe", "PayPal", "בלי תשלומים", "תחליטו בשבילי"], recommendation: "Stripe" }]
+    : [{ question: "Which payment provider should this use?", options: ["Stripe", "PayPal", "No payments", "Decide for me"], recommendation: "Stripe" }];
+}
+
 function spec(input: {
   summary: string;
   roles: string[];
   entities: EntitySpec[];
   personas?: string[];
   assumptions?: string[];
+  isHebrew?: boolean;
 }): ProductSpec {
   return ProductSpecSchema.parse({
     summary: input.summary,
@@ -71,7 +99,19 @@ function spec(input: {
     entities: input.entities,
     screens: screensFor(input.entities.map((e) => e.name)),
     assumptions: input.assumptions ?? [],
-    openQuestions: [],
+    // Round 1248: every template used to hardcode an empty array here,
+    // unlike a heuristic- or AI-generated spec with the identical
+    // business shape (e.g. the exact same MenuItem/Order entities), which
+    // always gets a payment-provider open question via heuristic.ts's own
+    // BILLING_ENTITY_NAMES check. Answering an open question is a real,
+    // functional decision point (POST /projects/:id/answers genuinely
+    // re-generates the spec with the answer appended), unlike `screens`
+    // (round 1028's own comment: purely display metadata with zero build
+    // effect) -- so a template user reached no way to even surface the
+    // payment-provider decision the dedicated Open Questions UI exists
+    // for, despite running the same billing entities as a from-scratch
+    // description would.
+    openQuestions: paymentOpenQuestion(input.entities, input.isHebrew ?? true),
   });
 }
 
@@ -754,6 +794,7 @@ export const TEMPLATES: AppTemplate[] = [
       summary: "A restaurant management system -- menu, tables, customers and orders.",
       roles: ["Manager", "Staff"],
       entities: RESTAURANT_ENTITIES_EN,
+      isHebrew: false,
     }),
   },
   {
@@ -772,6 +813,7 @@ export const TEMPLATES: AppTemplate[] = [
       summary: "A CRM system for managing customers, contacts, deals and follow-up tasks.",
       roles: ["Sales Rep", "Manager"],
       entities: CRM_ENTITIES_EN,
+      isHebrew: false,
     }),
   },
   {
@@ -790,6 +832,7 @@ export const TEMPLATES: AppTemplate[] = [
       summary: "A project tracking system -- milestones, tasks and team members.",
       roles: ["Project Manager", "Team Member"],
       entities: PROJECT_TRACKER_ENTITIES_EN,
+      isHebrew: false,
     }),
   },
   {
@@ -808,6 +851,7 @@ export const TEMPLATES: AppTemplate[] = [
       summary: "A volunteer management system -- events and shift scheduling.",
       roles: ["Coordinator", "Volunteer"],
       entities: VOLUNTEER_ENTITIES_EN,
+      isHebrew: false,
     }),
   },
   {
@@ -826,6 +870,7 @@ export const TEMPLATES: AppTemplate[] = [
       summary: "An appointment management system -- clients, staff, services and scheduled appointments.",
       roles: ["Staff", "Customer"],
       entities: APPOINTMENTS_ENTITIES_EN,
+      isHebrew: false,
     }),
   },
   {
@@ -844,6 +889,7 @@ export const TEMPLATES: AppTemplate[] = [
       summary: "An inventory management system -- products, suppliers, purchase orders and stock movements.",
       roles: ["Warehouse Manager", "Buyer"],
       entities: INVENTORY_ENTITIES_EN,
+      isHebrew: false,
     }),
   },
 ];

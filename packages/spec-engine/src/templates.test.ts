@@ -207,6 +207,42 @@ test("every template's Hebrew spec.roles are genuinely Hebrew, not reused Englis
  * screens" figure of an otherwise-identical heuristic-built project with
  * the same entities.
  */
+/**
+ * Round 1248's finding: `spec()` (templates.ts) hardcoded `openQuestions:
+ * []` for every template, unlike a heuristic- or AI-generated spec with
+ * the identical business shape, which always surfaces a payment-provider
+ * open question when the generated entities include a billing entity
+ * (heuristic.ts's own BILLING_ENTITY_NAMES/buildOpenQuestions). Answering
+ * an open question is a real, functional decision point (POST
+ * /projects/:id/answers genuinely re-generates the spec), unlike
+ * `screens` (round 1028's own finding: purely display metadata) -- so a
+ * Templates Gallery user reached no way to even surface the
+ * payment-provider decision for a template whose entities are the exact
+ * same shape (MenuItem with a required price field, Order) a from-scratch
+ * "restaurant with a menu and orders" description would get it for.
+ */
+test("the Restaurant template (the one template with a billing entity -- MenuItem/Order) surfaces the same payment-provider open question heuristic.ts generates for an identical business shape, in both languages", () => {
+  const restaurant = TEMPLATES.find((t) => t.id === "restaurant");
+  assert.ok(restaurant, "expected a \"restaurant\" template to exist");
+  assert.equal(restaurant!.spec.openQuestions.length, 1, "expected exactly one open question for the Hebrew spec");
+  assert.equal(restaurant!.spec.openQuestions[0].question, "באיזה ספק תשלומים כדאי להשתמש?");
+  assert.deepEqual(restaurant!.spec.openQuestions[0].options, ["Stripe", "PayPal", "בלי תשלומים", "תחליטו בשבילי"]);
+  assert.equal(restaurant!.spec.openQuestions[0].recommendation, "Stripe");
+
+  assert.equal(restaurant!.specEn.openQuestions.length, 1, "expected exactly one open question for the English specEn");
+  assert.equal(restaurant!.specEn.openQuestions[0].question, "Which payment provider should this use?");
+  assert.deepEqual(restaurant!.specEn.openQuestions[0].options, ["Stripe", "PayPal", "No payments", "Decide for me"]);
+  assert.equal(restaurant!.specEn.openQuestions[0].recommendation, "Stripe");
+});
+
+test("a template with no billing entity (e.g. the CRM/Project Tracker/Volunteer/Appointments/Inventory templates) still gets an empty openQuestions array, matching its pre-round-1248 behavior", () => {
+  for (const template of TEMPLATES) {
+    if (template.id === "restaurant") continue;
+    assert.deepEqual(template.spec.openQuestions, [], `template "${template.id}" has no billing entity and must keep an empty openQuestions array`);
+    assert.deepEqual(template.specEn.openQuestions, [], `template "${template.id}" has no billing entity and must keep an empty openQuestions array`);
+  }
+});
+
 test("every template's screen count matches heuristic.ts's own Dashboard-plus-List+Form-pair-per-entity convention", () => {
   for (const template of TEMPLATES) {
     const expected = 2 * template.spec.entities.length + 1;
