@@ -106,6 +106,40 @@ test("FieldSchema accepts a field name with a leading letter, digits, and unders
   }
 });
 
+/**
+ * Round 1213: `label` is optional (a field/entity may legitimately omit it
+ * and fall back to `name`), but every display site's own fallback is
+ * `label ?? name`, which only triggers for `null`/`undefined` -- never for
+ * an explicit `""`. Before this fix, `label: ""` passed this schema
+ * cleanly and then rendered as a literally blank string everywhere a label
+ * is shown. Mirrors round 856's identical `.min(1)` treatment for `name`.
+ */
+test("FieldSchema rejects an empty-string label, but still accepts one that's simply absent", () => {
+  const empty = FieldSchema.safeParse({ name: "dueDate", label: "", type: "text", required: false });
+  assert.ok(!empty.success, "expected an empty-string label to be rejected");
+
+  const absent = FieldSchema.safeParse({ name: "dueDate", type: "text", required: false });
+  assert.ok(absent.success, "expected an absent label to still be accepted");
+
+  const real = FieldSchema.safeParse({ name: "dueDate", label: "תאריך", type: "text", required: false });
+  assert.ok(real.success, "expected a genuine, non-empty label to still be accepted");
+});
+
+test("EntitySchema rejects an empty-string label, but still accepts one that's simply absent", () => {
+  const empty = EntitySchema.safeParse({
+    name: "Customer",
+    label: "",
+    fields: [{ name: "name", type: "text", required: true }],
+  });
+  assert.ok(!empty.success, "expected an empty-string label to be rejected");
+
+  const absent = EntitySchema.safeParse({
+    name: "Customer",
+    fields: [{ name: "name", type: "text", required: true }],
+  });
+  assert.ok(absent.success, "expected an absent label to still be accepted");
+});
+
 function baseSpec(entities: unknown[]) {
   return {
     summary: "A tiny app",

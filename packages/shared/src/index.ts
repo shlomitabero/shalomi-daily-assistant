@@ -120,8 +120,21 @@ function findSanitizedIdentifierCollisions(entities: { name: string }[]): string
 export const FieldSchema = z
   .object({
     name: z.string().min(1),
-    /** Human-facing name shown in the UI (e.g. Hebrew). Falls back to `name` when absent. */
-    label: z.string().optional(),
+    /**
+     * Human-facing name shown in the UI (e.g. Hebrew). Falls back to `name`
+     * when ABSENT -- every display site uses `field.label ?? field.name`,
+     * and `??` only falls back on `null`/`undefined`, never on `""`. Round
+     * 856 (see this file's own name-sanitization comment just above)
+     * already closed the equivalent gap for `name`; `label` was never
+     * given the same treatment, so an AI-generated spec emitting
+     * `"label": ""` (a model's plausible way of saying "no custom label")
+     * passed validation cleanly and then rendered as a literally blank
+     * string everywhere a label is shown, with no error surfaced anywhere.
+     * `.min(1)` rejects that empty string the same way it already rejects
+     * a malformed `name`, sending it back through generateSpec's existing
+     * fallback instead of silently corrupting display text project-wide.
+     */
+    label: z.string().min(1).optional(),
     type: z.enum(FIELD_TYPES),
     required: z.boolean().default(false),
     enumValues: z.array(z.string()).optional(),
@@ -182,8 +195,8 @@ function findCaseInsensitiveDuplicateFieldNames(fields: { name: string }[]): str
 export const EntitySchema = z
   .object({
     name: z.string().min(1),
-    /** Human-facing name shown in the UI (e.g. Hebrew). Falls back to `name` when absent. */
-    label: z.string().optional(),
+    /** Human-facing name shown in the UI (e.g. Hebrew). Falls back to `name` when absent -- see FieldSchema's own `label` comment above for why this is `.min(1)`, not just `.optional()`. */
+    label: z.string().min(1).optional(),
     description: z.string().optional(),
     fields: z.array(FieldSchema).min(1),
   })
