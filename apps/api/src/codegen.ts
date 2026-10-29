@@ -4179,6 +4179,7 @@ function CalendarView({ entity, dateField, endDateField, records, month, onPrevM
                     e.dataTransfer.setData("text/plain", \`\${record.id}|\${dayKey}\`);
                     e.dataTransfer.effectAllowed = "move";
                   }}
+                  onDragEnd={() => setDragOverDay(null)}
                   onClick={(e) => {
                     e.stopPropagation();
                     onEdit(record);
@@ -4330,7 +4331,7 @@ function RecordListPrintSheet({ entity, fields, records, groups, relatedRecords,
 // field itself, since that's implied by which column the card is in), a
 // select to move it directly to another column, and the same Edit/Delete
 // actions the table row has.
-function BoardCard({ orderedFields, boardField, record, relatedRecords, highlightQuery, hasMoveError, onMove, onEdit, onDuplicate, onDelete, onPrint, onJumpToRecord, bulkActionBusy }) {
+function BoardCard({ orderedFields, boardField, record, relatedRecords, highlightQuery, hasMoveError, onMove, onEdit, onDuplicate, onDelete, onPrint, onJumpToRecord, bulkActionBusy, onDragEnd }) {
   // orderedFields (not the entity's raw declared order) -- mirrors round
   // 615's fix for Export CSV/Copy/per-record Print/Print list, so a board
   // card's field order follows the user's drag-reordered columns the same
@@ -4365,6 +4366,7 @@ function BoardCard({ orderedFields, boardField, record, relatedRecords, highligh
         if (bulkActionBusy) return;
         e.dataTransfer.setData("text/plain", String(record.id));
       }}
+      onDragEnd={onDragEnd}
     >
       {otherFields.map((f) => (
         <div key={f.name} className="board-card-field">
@@ -7179,6 +7181,7 @@ export function EntityView({ entity, highlightRecordId, onHighlightHandled, onJu
                       onPrint={() => setRecordToPrint(r)}
                       onJumpToRecord={onJumpToRecord}
                       bulkActionBusy={bulkActionBusy}
+                      onDragEnd={() => setDragOverColumn(null)}
                     />
                   ))}
                 </div>
@@ -7272,6 +7275,7 @@ export function EntityView({ entity, highlightRecordId, onHighlightHandled, onJu
                           style={columnWidths[f.name] ? { width: columnWidths[f.name] } : undefined}
                           draggable
                           onDragStart={() => setDraggedField(f.name)}
+                          onDragEnd={() => setDragOverField(null)}
                           onDragOver={(e) => {
                             e.preventDefault();
                             setDragOverField(f.name);
@@ -8631,6 +8635,7 @@ export default function App() {
               className={e.name === active ? "active" : dragOverEntityTab === e.name ? "drag-over" : ""}
               draggable
               onDragStart={() => setDraggedEntityTab(e.name)}
+              onDragEnd={() => setDragOverEntityTab(null)}
               onDragOver={(ev) => {
                 ev.preventDefault();
                 setDragOverEntityTab(e.name);

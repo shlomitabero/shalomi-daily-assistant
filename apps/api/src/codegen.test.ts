@@ -11134,7 +11134,7 @@ test("the exported EntityView's relation cells jump to the related record via th
   // and App's own activeEntity.View call -- not just the leaf component.
   assert.match(
     entityViewJsx,
-    /function BoardCard\(\{ orderedFields, boardField, record, relatedRecords, highlightQuery, hasMoveError, onMove, onEdit, onDuplicate, onDelete, onPrint, onJumpToRecord, bulkActionBusy \}\)/,
+    /function BoardCard\(\{ orderedFields, boardField, record, relatedRecords, highlightQuery, hasMoveError, onMove, onEdit, onDuplicate, onDelete, onPrint, onJumpToRecord, bulkActionBusy, onDragEnd \}\)/,
   );
   assert.match(entityViewJsx, /<Cell\s+field=\{f\}\s+value=\{record\[f\.name\]\}\s+relationLabel=\{[^}]+\}\s+highlightQuery=\{highlightQuery\}\s+onJumpToRecord=\{onJumpToRecord\}/);
   assert.match(entityViewJsx, /export function EntityView\(\{ entity, highlightRecordId, onHighlightHandled, onJumpToRecord, onRecordCountChange \}\)/);
@@ -18160,6 +18160,65 @@ test("the exported App's entity tabs have keyboard-operable 'move earlier'/'move
   assert.deepEqual(run(entities, "Task", "earlier"), ["Deal", "Task", "Contact"], "'earlier' must swap with the previous neighbor, the same result dragging it there would give");
   assert.equal(run(entities, "Deal", "earlier"), null, "'earlier' on the first tab must be a no-op -- there's nothing before it");
   assert.equal(run(entities, "Task", "later"), null, "'later' on the last tab must be a no-op -- there's nothing after it");
+});
+
+/**
+ * Round 1233: mirrors round 1232's live-app EntityPanel.tsx fix for the
+ * identical gap, now ported to codegen.ts's own 4 generated copies of this
+ * same drag-state family -- the Kanban board column, the calendar day
+ * cell, the table column-header reorder (all 3 in EntityView.jsx), and the
+ * entity-tab reorder (App.jsx, a separate generated file). Native HTML5
+ * drag-and-drop only fires `dragleave` on a drop target the pointer
+ * actually moves off of -- cancelling a drag with Escape (or dropping it
+ * anywhere outside a valid target) fires `dragend` on the source instead,
+ * with the pointer never having left the target underneath it. None of
+ * these 4 generated drag sources ever got an `onDragEnd` handler (confirmed
+ * via grep -i "onDragEnd" across codegen.ts before this round -- zero
+ * matches), so each one's drag-over accent highlight stuck permanently
+ * once a drag was cancelled this way.
+ */
+test("the exported EntityView's Kanban column, calendar day, and table column-header all wire onDragEnd to clear their own drag-over state, mirroring round 1232's live-app fix", () => {
+  const files = generateExportFiles(project);
+  const entityViewJsx = files.find((f) => f.path === "web/src/components/EntityView.jsx")!.content;
+
+  assert.match(
+    entityViewJsx,
+    /function BoardCard\(\{ orderedFields, boardField, record, relatedRecords, highlightQuery, hasMoveError, onMove, onEdit, onDuplicate, onDelete, onPrint, onJumpToRecord, bulkActionBusy, onDragEnd \}\)/,
+    "BoardCard must accept an onDragEnd prop",
+  );
+  assert.match(
+    entityViewJsx,
+    /onDragStart=\{\(e\) => \{\s*if \(bulkActionBusy\) return;\s*e\.dataTransfer\.setData\("text\/plain", String\(record\.id\)\);\s*\}\}\s*\n\s*onDragEnd=\{onDragEnd\}/,
+    "BoardCard's draggable card must attach the onDragEnd prop it received",
+  );
+  assert.match(
+    entityViewJsx,
+    /onJumpToRecord=\{onJumpToRecord\}\s*\n\s*bulkActionBusy=\{bulkActionBusy\}\s*\n\s*onDragEnd=\{\(\) => setDragOverColumn\(null\)\}/,
+    "the <BoardCard> call site must pass onDragEnd clearing dragOverColumn",
+  );
+
+  assert.match(
+    entityViewJsx,
+    /e\.dataTransfer\.setData\("text\/plain", `\$\{record\.id\}\|\$\{dayKey\}`\);\s*\n\s*e\.dataTransfer\.effectAllowed = "move";\s*\n\s*\}\}\s*\n\s*onDragEnd=\{\(\) => setDragOverDay\(null\)\}/,
+    "the calendar record chip must clear dragOverDay on dragend",
+  );
+
+  assert.match(
+    entityViewJsx,
+    /onDragStart=\{\(\) => setDraggedField\(f\.name\)\}\s*\n\s*onDragEnd=\{\(\) => setDragOverField\(null\)\}/,
+    "the table column header must clear dragOverField on dragend",
+  );
+});
+
+test("the exported App's entity-tab reorder wires onDragEnd to clear dragOverEntityTab, mirroring round 1232's live-app fix for the identical gap", () => {
+  const files = generateExportFiles(project);
+  const appJsx = files.find((f) => f.path === "web/src/App.jsx")!.content;
+
+  assert.match(
+    appJsx,
+    /onDragStart=\{\(\) => setDraggedEntityTab\(e\.name\)\}\s*\n\s*onDragEnd=\{\(\) => setDragOverEntityTab\(null\)\}/,
+    "the draggable entity tab must clear dragOverEntityTab on dragend",
+  );
 });
 
 /**

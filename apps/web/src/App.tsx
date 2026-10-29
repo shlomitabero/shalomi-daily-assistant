@@ -2931,6 +2931,7 @@ function AppContent() {
                       }
                       draggable
                       onDragStart={() => setDraggedEntityTab(entity.name)}
+                      onDragEnd={() => setDragOverEntityTab(null)}
                       onDragOver={(e) => {
                         e.preventDefault();
                         setDragOverEntityTab(entity.name);

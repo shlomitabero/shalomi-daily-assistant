@@ -4905,6 +4905,30 @@ test("the home screen's My Projects sort toggle reports its selected state via a
  * project view needs a real auth/routing harness this test file doesn't
  * set up.
  */
+/**
+ * Round 1233: the entity-tab bar's own drag-to-reorder (dragOverEntityTab)
+ * is a separate drag state from EntityPanel.tsx's three Kanban/calendar/
+ * table-header states that round 1232 already fixed -- this nav lives in
+ * App.tsx, outside EntityPanel.tsx entirely, and was never touched by that
+ * round. It has the identical gap: native HTML5 drag-and-drop only fires
+ * `dragleave` on a tab the pointer actually moves off of, so cancelling a
+ * drag with Escape (which fires `dragend` on the source tab instead, with
+ * the pointer never having left the tab underneath it) left the
+ * `tab-drag-over` highlight stuck permanently. Source-regex, for the same
+ * reason the test just above this one uses it.
+ */
+test("the project view's entity-tab bar wires onDragEnd to clear dragOverEntityTab, mirroring round 1232's EntityPanel fix for the identical gap", () => {
+  const appSrc = readFileSync(new URL("./App.tsx", import.meta.url), "utf8");
+
+  const entityTabsBlock = appSrc.match(/<nav className="entity-tabs"[^>]*>[\s\S]*?<\/nav>/);
+  assert.ok(entityTabsBlock, "expected the entity-tabs nav's own block");
+  assert.match(
+    entityTabsBlock![0],
+    /onDragStart=\{\(\) => setDraggedEntityTab\(entity\.name\)\}\s*\n\s*onDragEnd=\{\(\) => setDragOverEntityTab\(null\)\}/,
+    "the draggable tab must clear dragOverEntityTab on dragend, not just on a real drop",
+  );
+});
+
 test("the project view's entity-tab bar reports its selected tab via role=tablist/role=tab/aria-selected, not just a CSS class", () => {
   const appSrc = readFileSync(new URL("./App.tsx", import.meta.url), "utf8");
 
