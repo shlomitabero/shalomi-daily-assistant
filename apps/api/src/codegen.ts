@@ -1334,7 +1334,20 @@ function buildCalendarFeedIcs(entity, records, recordIndexByEntity) {
 }
 
 app.get("/api/calendar/:entityName.ics", (req, res) => {
-  const entity = ENTITIES.find((e) => e.name === req.params.entityName);
+  // Round 1223: exact-case first (the fast, common path), falling back to
+  // case-insensitive -- mirroring the live preview's own identical
+  // round-1185 fix (routes/calendar.ts) and this very route's own
+  // relation-lookup fix 20 lines below (round 1182). entityName comes
+  // from the URL path segment of a "Subscribe" link this exported app's
+  // own frontend baked in (handleSubscribeCalendar) and pasted into a
+  // real calendar app once, which then re-fetches that exact URL on its
+  // own schedule forever. A later redeploy of this exported app over the
+  // same running server, after a live-preview refine recased this
+  // entity's own name (e.g. "customer" -> "Customer", the same cosmetic,
+  // non-destructive rename every round since 988 has established must
+  // never be treated like a real drop), used to 404 this URL
+  // permanently, with no way for the subscriber to resubscribe.
+  const entity = ENTITIES.find((e) => e.name === req.params.entityName) ?? ENTITIES.find((e) => e.name.toLowerCase() === req.params.entityName.toLowerCase());
   if (!entity) {
     res.status(404).json({ error: "Calendar feed not found" });
     return;

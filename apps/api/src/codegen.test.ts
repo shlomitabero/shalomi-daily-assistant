@@ -293,6 +293,85 @@ test("generated server.js serves a real, working calendar subscription feed for 
 });
 
 /**
+ * Round 1223: the exported app's own calendar feed route resolved
+ * entityName exact-case only, unlike the live preview's identical route
+ * (routes/calendar.ts, round 1185) and this very route's own
+ * relation-lookup 20 lines below it (round 1182). entityName comes from
+ * the URL path segment of a "Subscribe" link this app's own frontend
+ * baked in (handleSubscribeCalendar) and pasted into a real calendar app
+ * once, which re-fetches that exact URL forever -- a later redeploy of
+ * this exported app over the same server, after a live-preview refine
+ * recased this entity's own name, used to 404 an already-subscribed feed
+ * permanently. Spawns a real server.js (same pattern as the round-1010
+ * test above), confirms a lowercase URL still serves the "Deal" entity's
+ * real feed, and confirms a genuinely nonexistent name still 404s (no
+ * over-broad matching).
+ */
+test("generated server.js's calendar feed resolves entityName case-insensitively, mirroring routes/calendar.ts's own round-1185 fix", async () => {
+  const dealEntity: Entity = {
+    name: "Deal",
+    label: "Deals",
+    fields: [
+      { name: "title", label: "Title", type: "text", required: true },
+      { name: "eventDate", label: "Event Date", type: "date", required: true },
+    ],
+  };
+  const feedProject: Project = { ...project, spec: { ...project.spec, entities: [dealEntity] } };
+  const files = generateExportFiles(feedProject);
+  const serverJs = files.find((f) => f.path === "server.js")!.content;
+
+  const dir = mkdtempSync(path.join(tmpdir(), "codegen-feed-case-test-"));
+  const repoRoot = path.resolve(import.meta.dirname, "../../..");
+  symlinkSync(path.join(repoRoot, "node_modules"), path.join(dir, "node_modules"));
+  writeFileSync(path.join(dir, "server.js"), serverJs);
+
+  const port = 34000 + Math.floor(Math.random() * 5000);
+  const child = spawn(process.execPath, ["--experimental-sqlite", "server.js"], {
+    cwd: dir,
+    env: { ...process.env, PORT: String(port) },
+    stdio: ["ignore", "pipe", "pipe"],
+  });
+  let stderr = "";
+  child.stderr.on("data", (chunk) => {
+    stderr += chunk.toString();
+  });
+
+  try {
+    const deadline = Date.now() + 5000;
+    let lastErr: unknown;
+    while (Date.now() < deadline) {
+      if (child.exitCode !== null) {
+        throw new Error(`server.js exited early (code ${child.exitCode}):\n${stderr}`);
+      }
+      try {
+        const createRes = await fetch(`http://localhost:${port}/api/Deal`, {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ title: "Trip to Eilat", eventDate: "2026-11-05" }),
+        });
+        assert.equal(createRes.status, 201);
+
+        const lowercaseFeedRes = await fetch(`http://localhost:${port}/api/calendar/deal.ics`);
+        assert.equal(lowercaseFeedRes.status, 200, "a case-mismatched entity name (e.g. after a cosmetic rename) must still resolve, not 404 an already-subscribed feed");
+        const ics = await lowercaseFeedRes.text();
+        assert.match(ics, /SUMMARY:Trip to Eilat/);
+
+        const missingEntityFeedRes = await fetch(`http://localhost:${port}/api/calendar/NoSuchEntity.ics`);
+        assert.equal(missingEntityFeedRes.status, 404, "a genuinely nonexistent entity name must still 404, not match anything by accident");
+        return;
+      } catch (err) {
+        lastErr = err;
+        await new Promise((r) => setTimeout(r, 100));
+      }
+    }
+    throw lastErr instanceof Error ? lastErr : new Error(String(lastErr));
+  } finally {
+    child.kill();
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+/**
  * Round 1034: DESCRIPTION parity with this exported app's own one-shot
  * "Export ICS" button (buildCalendarIcs) -- before this round the feed's
  * own VEVENTs carried only SUMMARY/DTSTART/DTEND. Spawns a real server.js
