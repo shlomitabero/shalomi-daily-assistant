@@ -20,6 +20,28 @@ export function ChangePasswordPanel({ onClose }: { onClose: () => void }) {
   const [done, setDone] = useState(false);
   const dialogRef = useDialogFocusTrap<HTMLDivElement>(onClose);
 
+  /**
+   * Round 1245: this whole panel is a real dialog (useDialogFocusTrap
+   * above), whose own Escape handler closes it entirely unless the event's
+   * target sits under data-escape-handled-locally -- every other form on
+   * this exact screen with real draft content already opts out this way
+   * (CollaboratorsPanel.tsx's round-1062 invite form, AutomationsPanel.tsx's
+   * round-1056 create/edit form, WhatsAppPanel.tsx's round-1061 test-send
+   * form), but this one never did, despite holding the single
+   * highest-stakes typed draft in the app -- a real new password typed
+   * twice, plus the current password. The whole component unmounts on
+   * close (App.tsx renders it conditionally), so the typed values are
+   * destroyed, not just visually cleared.
+   */
+  const hasUnsavedDraft = currentPassword.trim() !== "" || newPassword.trim() !== "" || confirmPassword.trim() !== "";
+
+  function handleResetForm() {
+    setCurrentPassword("");
+    setNewPassword("");
+    setConfirmPassword("");
+    setError(null);
+  }
+
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
     setError(null);
@@ -53,7 +75,14 @@ export function ChangePasswordPanel({ onClose }: { onClose: () => void }) {
             {t("changePassword.success")}
           </p>
         ) : (
-          <form className="auth-form" onSubmit={handleSubmit}>
+          <form
+            className="auth-form"
+            onSubmit={handleSubmit}
+            data-escape-handled-locally={hasUnsavedDraft ? "" : undefined}
+            onKeyDown={(e) => {
+              if (e.key === "Escape" && hasUnsavedDraft) handleResetForm();
+            }}
+          >
             <label className="field-row">
               <span>{t("changePassword.current")}</span>
               <PasswordInput value={currentPassword} onChange={setCurrentPassword} required autoComplete="current-password" />

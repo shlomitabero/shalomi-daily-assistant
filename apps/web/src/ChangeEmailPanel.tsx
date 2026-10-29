@@ -33,6 +33,25 @@ export function ChangeEmailPanel({ currentEmail, onClose, onChanged }: { current
   const [done, setDone] = useState(false);
   const dialogRef = useDialogFocusTrap<HTMLDivElement>(onClose);
 
+  /**
+   * Round 1245: the same gap round 1062/1056/1061 already fixed for
+   * CollaboratorsPanel/AutomationsPanel/WhatsAppPanel -- this dialog's own
+   * Escape handler (useDialogFocusTrap) closes the whole panel unless the
+   * event's target sits under data-escape-handled-locally, and this form
+   * never opted out despite holding a typed new login email (twice) plus
+   * the current password. Compares email/confirmEmail against
+   * `currentEmail`, not against "", since both fields start pre-filled
+   * with it -- an untouched field must not count as a draft worth saving.
+   */
+  const hasUnsavedDraft = currentPassword.trim() !== "" || email.trim() !== currentEmail || confirmEmail.trim() !== currentEmail;
+
+  function handleResetForm() {
+    setCurrentPassword("");
+    setEmail(currentEmail);
+    setConfirmEmail(currentEmail);
+    setError(null);
+  }
+
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
     setError(null);
@@ -77,7 +96,14 @@ export function ChangeEmailPanel({ currentEmail, onClose, onChanged }: { current
             {t("changeEmail.success")}
           </p>
         ) : (
-          <form className="auth-form" onSubmit={handleSubmit}>
+          <form
+            className="auth-form"
+            onSubmit={handleSubmit}
+            data-escape-handled-locally={hasUnsavedDraft ? "" : undefined}
+            onKeyDown={(e) => {
+              if (e.key === "Escape" && hasUnsavedDraft) handleResetForm();
+            }}
+          >
             <label className="field-row">
               <span>{t("changeEmail.newEmail")}</span>
               <input type="email" value={email} onChange={(e) => setEmail(e.target.value)} required autoComplete="email" />

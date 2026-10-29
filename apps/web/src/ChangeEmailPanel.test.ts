@@ -205,6 +205,44 @@ test("the new-email field starts pre-filled with the account's current email, no
   });
 });
 
+/**
+ * Round 1245: this panel is a real dialog (useDialogFocusTrap), whose own
+ * Escape handler closes the whole thing unless the event's target sits
+ * under data-escape-handled-locally -- none of the three inputs ever had
+ * that marker, despite this form holding a typed new login email (twice)
+ * plus the current password. The whole component unmounts on close
+ * (App.tsx renders it conditionally), so the draft isn't just visually
+ * cleared, it's destroyed. Passes a REAL onClose spy (not renderPanel's own
+ * no-op default) specifically to prove Escape here only resets the draft
+ * back to the account's current email and never also closes the panel,
+ * mirroring the identical test already added for CollaboratorsPanel (round
+ * 1062), AutomationsPanel (round 1056), and WhatsAppPanel (round 1061).
+ */
+test("Escape resets an in-progress email-change draft back to the current email instead of closing the dialog, and a second Escape on the now-pristine form closes it normally", async () => {
+  await withJsdom(async () => {
+    let closeCalls = 0;
+    renderPanel("dana@example.com", () => {
+      closeCalls += 1;
+    });
+    fillForm("dana.new@example.com", "dana.new@example.com", "my-current-password");
+    const emailInputs = document.querySelectorAll("input[type='email']") as NodeListOf<HTMLInputElement>;
+    const passwordInput = document.querySelector("input[type='password']") as HTMLInputElement;
+
+    fireEvent.keyDown(emailInputs[0], { key: "Escape" });
+    assert.equal(emailInputs[0].value, "dana@example.com", "Escape must reset the new-email field back to the current email");
+    assert.equal(emailInputs[1].value, "dana@example.com", "Escape must reset the confirm-email field back to the current email");
+    assert.equal(passwordInput.value, "", "Escape must clear the current-password field");
+    assert.equal(closeCalls, 0, "Escape clearing an in-progress draft must never also close the whole dialog");
+    assert.ok(document.querySelector('[role="dialog"]'), "the dialog itself must still be in the DOM after that Escape");
+
+    // Mirrors the identical round-362/1056/1061/1062 regression: once the
+    // form is genuinely pristine (nothing left to clear), Escape must
+    // close the dialog normally, not get silently swallowed.
+    fireEvent.keyDown(emailInputs[0], { key: "Escape" });
+    assert.equal(closeCalls, 1, "Escape on an already-pristine form must close the dialog normally");
+  });
+});
+
 test("clicking Close calls onClose", async () => {
   await withJsdom(async () => {
     let closed = 0;

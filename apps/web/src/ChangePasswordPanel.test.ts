@@ -164,6 +164,42 @@ test("a server error (e.g. wrong current password) is shown to the user instead 
   });
 });
 
+/**
+ * Round 1245: this panel is a real dialog (useDialogFocusTrap), whose own
+ * Escape handler closes the whole thing unless the event's target sits
+ * under data-escape-handled-locally -- none of the three password inputs
+ * ever had that marker. The whole component unmounts on close (App.tsx
+ * renders it conditionally), so a typed new password isn't just visually
+ * cleared, it's destroyed. Passes a REAL onClose spy (not renderPanel's own
+ * no-op default) specifically to prove Escape here only clears the draft
+ * and never also closes the panel, mirroring the identical test already
+ * added for CollaboratorsPanel (round 1062), AutomationsPanel (round 1056),
+ * and WhatsAppPanel (round 1061).
+ */
+test("Escape clears an in-progress password draft instead of closing the dialog, and a second Escape on the now-pristine form closes it normally", async () => {
+  await withJsdom(async () => {
+    let closeCalls = 0;
+    renderPanel(() => {
+      closeCalls += 1;
+    });
+    fillForm("my-current-password", "my-new-password", "my-new-password");
+    const inputs = document.querySelectorAll("input[type='password']") as NodeListOf<HTMLInputElement>;
+
+    fireEvent.keyDown(inputs[0], { key: "Escape" });
+    assert.equal(inputs[0].value, "", "Escape must clear the current-password field");
+    assert.equal(inputs[1].value, "", "Escape must clear the new-password field");
+    assert.equal(inputs[2].value, "", "Escape must clear the confirm-password field");
+    assert.equal(closeCalls, 0, "Escape clearing an in-progress draft must never also close the whole dialog");
+    assert.ok(document.querySelector('[role="dialog"]'), "the dialog itself must still be in the DOM after that Escape");
+
+    // Mirrors the identical round-362/1056/1061/1062 regression: once the
+    // form is genuinely pristine (nothing left to clear), Escape must
+    // close the dialog normally, not get silently swallowed.
+    fireEvent.keyDown(inputs[0], { key: "Escape" });
+    assert.equal(closeCalls, 1, "Escape on an already-pristine form must close the dialog normally");
+  });
+});
+
 test("clicking Close calls onClose", async () => {
   await withJsdom(async () => {
     let closed = 0;
