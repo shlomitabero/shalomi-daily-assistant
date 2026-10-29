@@ -756,6 +756,108 @@ test("diffAndMigrate reports no relation_target_changed when relationTo oscillat
 });
 
 /**
+ * Round 1198: the non-relation twin of the oscillation test just above.
+ * `type_changed` (the prevField branch, migrate.ts line ~475) only ever
+ * compared `prevField.type` against `field.type` -- the IMMEDIATELY
+ * preceding spec, never physical reality -- unlike relation_target_changed,
+ * which round 444 already fixed to compare the column's real FK target
+ * instead. A field that round-trips back to a type it was already
+ * physically storing (boolean -> text, hop 1, correctly reported: the
+ * column stays INTEGER but the spec now claims TEXT -> boolean again, hop
+ * 2, the field never removed from the spec) used to report ANOTHER
+ * type_changed on hop 2 ("kept the original database column type --
+ * existing data was not converted"), even though the column had been
+ * INTEGER the entire time and now, once again, genuinely matches what the
+ * field declares -- nothing was ever converted because nothing ever
+ * needed to be.
+ */
+test("diffAndMigrate reports no type_changed when a field's type oscillates back to the SQL type the column has physically had the whole time", () => {
+  const db = openDatabase(":memory:");
+  const boolSpec: ProductSpec = {
+    ...spec,
+    entities: [
+      { name: "Customer", fields: [{ name: "name", type: "text", required: true }, { name: "verified", type: "boolean", required: false }] },
+      spec.entities[1],
+    ],
+  };
+  applyMigrations(db, "proj1", boolSpec);
+  insertRecord(db, "proj1", boolSpec.entities[0], { name: "Alice", verified: true });
+
+  const textSpec: ProductSpec = {
+    ...boolSpec,
+    entities: [
+      { name: "Customer", fields: [{ name: "name", type: "text", required: true }, { name: "verified", type: "text", required: false }] },
+      spec.entities[1],
+    ],
+  };
+  const firstHopChanges = diffAndMigrate(db, "proj1", boolSpec, textSpec);
+  assert.deepEqual(firstHopChanges, [
+    { type: "type_changed", table: "entity_proj1_Customer", column: "verified", entityName: "Customer", fromType: "boolean", toType: "text" },
+  ]);
+
+  // Refine again, retyping back to boolean -- the field was never removed
+  // from the spec, so this goes through the prevField branch, not the
+  // field-reuse/checkpoint-history path round 1108 already covers.
+  const backToBoolSpec: ProductSpec = {
+    ...textSpec,
+    entities: [
+      { name: "Customer", fields: [{ name: "name", type: "text", required: true }, { name: "verified", type: "boolean", required: false }] },
+      spec.entities[1],
+    ],
+  };
+  const secondHopChanges = diffAndMigrate(db, "proj1", textSpec, backToBoolSpec);
+  assert.deepEqual(
+    secondHopChanges,
+    [],
+    "verified returned to boolean, exactly matching the column's real, never-converted INTEGER storage -- nothing should be reported",
+  );
+
+  // The column must still physically be INTEGER -- it never changed,
+  // through either hop, and existing data must still be readable.
+  const columnInfo = db.prepare('PRAGMA table_info("entity_proj1_Customer")').all() as { name: string; type: string }[];
+  assert.equal(columnInfo.find((c) => c.name === "verified")!.type, "INTEGER");
+  const customers = listRecords(db, "proj1", boolSpec.entities[0]);
+  assert.equal(customers[0].verified, true);
+});
+
+/**
+ * Round 1198: the TEXT bucket (text/longtext/enum/date, all sharing one SQL
+ * column type) is deliberately NOT covered by the fix above -- existing
+ * string values can still be semantically wrong for the new type regardless
+ * of how many times the declared type has round-tripped (e.g. stale
+ * enum-label strings read back as a date), so every transition within this
+ * bucket keeps being reported, oscillation or not. Pins that this round's
+ * fix did not over-reach into suppressing this case too.
+ */
+test("diffAndMigrate still reports type_changed for a TEXT-bucket oscillation (enum -> text -> enum), unlike the INTEGER/REAL-bucket fix above", () => {
+  const db = openDatabase(":memory:");
+  applyMigrations(db, "proj1", spec);
+
+  const textStatusSpec: ProductSpec = {
+    ...spec,
+    entities: [
+      { name: "Customer", fields: [spec.entities[0].fields[0], { name: "status", type: "text", required: true }] },
+      spec.entities[1],
+    ],
+  };
+  const firstHopChanges = diffAndMigrate(db, "proj1", spec, textStatusSpec);
+  assert.deepEqual(firstHopChanges, [
+    { type: "type_changed", table: "entity_proj1_Customer", column: "status", entityName: "Customer", fromType: "enum", toType: "text" },
+  ]);
+
+  const backToEnumSpec: ProductSpec = {
+    ...textStatusSpec,
+    entities: [{ name: "Customer", fields: [spec.entities[0].fields[0], spec.entities[0].fields[1]] }, spec.entities[1]],
+  };
+  const secondHopChanges = diffAndMigrate(db, "proj1", textStatusSpec, backToEnumSpec);
+  assert.deepEqual(
+    secondHopChanges,
+    [{ type: "type_changed", table: "entity_proj1_Customer", column: "status", entityName: "Customer", fromType: "text", toType: "enum" }],
+    "the TEXT bucket must still report every transition, even an oscillation back -- stale string values can still be the wrong shape for the restored type",
+  );
+});
+
+/**
  * Round 444: the mirror-image case of the oscillation test above, for
  * relation_missing_fk rather than relation_target_changed. A relation field
  * whose relationTo was invalid (pointing at a not-yet-existing entity) when

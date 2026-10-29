@@ -473,19 +473,54 @@ export function diffAndMigrate(
       const prevField = prevFieldsByName.get(field.name) ?? prevFieldByLowerName.get(field.name.toLowerCase());
       if (prevField) {
         if (prevField.type !== field.type) {
-          changes.push({
-            type: "type_changed",
-            table,
-            column: assertSafeIdentifier(field.name, "column"),
-            entityName: entity.name,
-            fromType: prevField.type,
-            toType: field.type,
-          });
-          if (!isTextLikeFieldType(prevField.type) || !isTextLikeFieldType(field.type)) {
-            if (!fieldsNeedingAutomationDisable.has(entity.name)) {
-              fieldsNeedingAutomationDisable.set(entity.name, new Set());
+          const columnName = assertSafeIdentifier(field.name, "column");
+          // Round 1198: retyping is additive-only (sqlTypeFor's own callers
+          // never run an ALTER COLUMN TYPE), so a field that round-trips
+          // back to a type it already physically was -- e.g. boolean ->
+          // text (hop 1, correctly reported: column stays INTEGER but the
+          // spec now claims TEXT) -> boolean again (hop 2) -- lands back on
+          // a column that was INTEGER the entire time, genuinely consistent
+          // with the restored declaration. Without this, hop 2 reported
+          // ANOTHER type_changed ("kept the original database column type
+          // -- existing data was not converted"), backwards: nothing needs
+          // converting, the column already matches what the field claims
+          // again. Mirrors relation_target_changed's own identical
+          // physical-reality comparison a few lines below (round 444) --
+          // but, unlike a relationTo (which always maps to one distinct
+          // physical table), only trusted for the two UNAMBIGUOUS sqlType
+          // buckets here: REAL (number, the only type mapped to it) and
+          // INTEGER (boolean vs relation, distinguished by the real
+          // foreign_key_list's fkTable presence, the same signal the
+          // "reused column" branch below already uses for this identical
+          // pair). Deliberately NOT applied to the TEXT bucket (text/
+          // longtext/enum/date all collapse onto the same column type) --
+          // existing string VALUES can still be semantically wrong for the
+          // new type regardless of how many times the declared type has
+          // round-tripped (e.g. stale enum-label strings read as a date),
+          // so every TEXT-bucket transition keeps being reported, same as
+          // before this round.
+          const shape = physicalShapeByColumn.get(columnName);
+          const expectedSqlType = sqlTypeFor(field);
+          const physicallyUnchanged =
+            expectedSqlType !== "TEXT" &&
+            shape !== undefined &&
+            shape.sqlType === expectedSqlType &&
+            (field.type === "relation" ? shape.fkTable !== undefined : field.type === "boolean" ? shape.fkTable === undefined : true);
+          if (!physicallyUnchanged) {
+            changes.push({
+              type: "type_changed",
+              table,
+              column: columnName,
+              entityName: entity.name,
+              fromType: prevField.type,
+              toType: field.type,
+            });
+            if (!isTextLikeFieldType(prevField.type) || !isTextLikeFieldType(field.type)) {
+              if (!fieldsNeedingAutomationDisable.has(entity.name)) {
+                fieldsNeedingAutomationDisable.set(entity.name, new Set());
+              }
+              fieldsNeedingAutomationDisable.get(entity.name)!.add(field.name);
             }
-            fieldsNeedingAutomationDisable.get(entity.name)!.add(field.name);
           }
         } else if (field.type === "enum" && prevField.type === "enum") {
           // Same mechanism as the type_changed branch above, but the type

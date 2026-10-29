@@ -12624,29 +12624,35 @@ test("restoring a checkpoint surfaces a migrationWarning when a reused column's 
       ownerId: user.id,
       name: "Deal tracker",
       description: "A CRM for tracking deals.",
-      spec: specWithBooleanWon,
+      spec: specWithTextWon,
     });
-    // Builds the physical table with "won" as an INTEGER column (boolean).
-    diffAndMigrate(db, projectId, undefined, specWithBooleanWon);
+    // Builds the physical table with "won" as a TEXT column.
+    diffAndMigrate(db, projectId, undefined, specWithTextWon);
     const checkpoint = insertCheckpoint(db, {
       id: randomUUID(),
       projectId,
       label: "Initial build",
       kind: "build",
-      spec: specWithBooleanWon,
+      spec: specWithTextWon,
     });
 
-    // Simulates a later refine that retypes "won" to text under the same
-    // name -- diffAndMigrate leaves the physical column as INTEGER (same
+    // Simulates a later refine that retypes "won" to boolean under the same
+    // name -- diffAndMigrate leaves the physical column as TEXT (same
     // documented limitation type_changed exists to report), and the spec
     // pointer moves on, exactly like /refine's own route does.
-    diffAndMigrate(db, projectId, specWithBooleanWon, specWithTextWon);
-    updateProjectSpec(db, projectId, specWithTextWon);
+    diffAndMigrate(db, projectId, specWithTextWon, specWithBooleanWon);
+    updateProjectSpec(db, projectId, specWithBooleanWon);
 
     // Restoring the original checkpoint moves the spec pointer back to
-    // "won: boolean", but the physical column was never altered -- this is
-    // exactly the hazard type_changed exists to report, and the fix under
-    // test is that the restore route must no longer discard it.
+    // "won: text", but the physical column has been TEXT the entire time --
+    // round 1198's own fix deliberately still reports this one: it only
+    // suppresses an oscillation back to a type whose SQL shape is
+    // UNAMBIGUOUS (boolean/relation's shared INTEGER bucket, number's own
+    // REAL), never the TEXT bucket (text/longtext/enum/date) a field's
+    // existing string values can still be semantically wrong for, however
+    // many times the declared type has round-tripped -- so this restore
+    // must still surface a genuine hazard, and the fix under test is that
+    // the restore route must no longer discard it.
     const restoreRes = await fetch(`${baseUrl}/api/projects/${projectId}/checkpoints/${checkpoint.id}/restore`, {
       method: "POST",
       headers: authHeaders(token),
@@ -12658,16 +12664,16 @@ test("restoring a checkpoint surfaces a migrationWarning when a reused column's 
     };
     assert.equal(
       restoreBody.project.spec.entities[0].fields.find((f) => f.name === "won")!.type,
-      "boolean",
+      "text",
       "the restore itself must still move the spec pointer back",
     );
     assert.ok(restoreBody.migrationWarning, "a migrationWarning must be present given the reused column's type mismatch");
-    assert.match(restoreBody.migrationWarning!, /won \(text → boolean\)/);
+    assert.match(restoreBody.migrationWarning!, /won \(boolean → text\)/);
     assert.match(restoreBody.migrationWarning!, /kept the original database column type/);
 
     // Control: restoring a checkpoint whose spec already matches the
     // current project.spec (the restore above just moved the pointer back
-    // to specWithBooleanWon) reports no mismatch, so migrationWarning must
+    // to specWithTextWon) reports no mismatch, so migrationWarning must
     // come back null, not an empty-but-present string.
     const cleanRestoreRes = await fetch(`${baseUrl}/api/projects/${projectId}/checkpoints/${checkpoint.id}/restore`, {
       method: "POST",
@@ -12978,18 +12984,18 @@ test("POST .../restore retried with the same idempotency key after the first att
       ownerId: user.id,
       name: "Deal tracker",
       description: "A CRM for tracking deals.",
-      spec: specWithBooleanWon,
+      spec: specWithTextWon,
     });
-    diffAndMigrate(db, projectId, undefined, specWithBooleanWon);
+    diffAndMigrate(db, projectId, undefined, specWithTextWon);
     const checkpoint = insertCheckpoint(db, {
       id: randomUUID(),
       projectId,
       label: "Initial build",
       kind: "build",
-      spec: specWithBooleanWon,
+      spec: specWithTextWon,
     });
-    diffAndMigrate(db, projectId, specWithBooleanWon, specWithTextWon);
-    updateProjectSpec(db, projectId, specWithTextWon);
+    diffAndMigrate(db, projectId, specWithTextWon, specWithBooleanWon);
+    updateProjectSpec(db, projectId, specWithBooleanWon);
 
     const headers = { ...authHeaders(token), "x-idempotency-key": "restore-repro-key" };
     const firstRes = await fetch(`${baseUrl}/api/projects/${projectId}/checkpoints/${checkpoint.id}/restore`, {
@@ -12998,8 +13004,13 @@ test("POST .../restore retried with the same idempotency key after the first att
     });
     assert.equal(firstRes.status, 200);
     const firstBody = (await firstRes.json()) as { migrationWarning: string | null };
+    // Round 1198: restoring moves "won" from boolean back to TEXT -- its
+    // physical type the whole time (the column was built that way) -- so
+    // this keeps producing a genuine hazard even after round 1198's fix,
+    // which deliberately never suppresses a TEXT-bucket transition (see
+    // the migrationWarning test's own doc comment just above for why).
     assert.ok(firstBody.migrationWarning, "the first call must produce a genuine warning -- the premise this test depends on");
-    assert.match(firstBody.migrationWarning!, /won \(text → boolean\)/);
+    assert.match(firstBody.migrationWarning!, /won \(boolean → text\)/);
 
     const retryRes = await fetch(`${baseUrl}/api/projects/${projectId}/checkpoints/${checkpoint.id}/restore`, {
       method: "POST",
