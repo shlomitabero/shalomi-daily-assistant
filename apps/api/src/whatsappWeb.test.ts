@@ -17,13 +17,23 @@ import { WhatsAppWebManager, type BaileysConnectionUpdate, type BaileysMessagesU
  * connected -> disconnected, message logging, sending) without touching
  * the real WhatsApp network. See docs/roadmap.md for the full disclosure.
  */
-function createFakeSocket(options?: { getPNForLID?: (lid: string) => Promise<string | null | undefined> }) {
+function createFakeSocket(options?: {
+  getPNForLID?: (lid: string) => Promise<string | null | undefined>;
+  /** Round 1242: lets a test make one specific sendMessage call fail (e.g. "the audio send"), while every other call on the same socket still succeeds -- needed to reproduce the two-call audio branch's own partial-failure scenario. */
+  failWhen?: (content: Parameters<WhatsAppSocket["sendMessage"]>[1]) => boolean;
+}) {
   const handlers: {
     creds?: () => void;
     connectionUpdate?: (u: BaileysConnectionUpdate) => void;
     messagesUpsert?: (u: BaileysMessagesUpsert) => void;
   } = {};
-  const sendCalls: ({ jid: string; text: string } | { jid: string; document: Buffer; mimetype: string; fileName: string; caption?: string })[] = [];
+  const sendCalls: (
+    | { jid: string; text: string }
+    | { jid: string; document: Buffer; mimetype: string; fileName: string; caption?: string }
+    | { jid: string; image: Buffer; mimetype: string; caption?: string }
+    | { jid: string; video: Buffer; mimetype: string; caption?: string }
+    | { jid: string; audio: Buffer; mimetype: string; ptt?: boolean }
+  )[] = [];
   let loggedOut = false;
 
   const sock: WhatsAppSocket = {
@@ -37,10 +47,19 @@ function createFakeSocket(options?: { getPNForLID?: (lid: string) => Promise<str
     user: null,
     ...(options?.getPNForLID ? { signalRepository: { lidMapping: { getPNForLID: options.getPNForLID } } } : {}),
     async sendMessage(jid, content) {
+      if (options?.failWhen?.(content)) {
+        throw new Error("fake Baileys send failure");
+      }
       if ("text" in content) {
         sendCalls.push({ jid, text: content.text });
-      } else {
+      } else if ("document" in content) {
         sendCalls.push({ jid, document: content.document, mimetype: content.mimetype, fileName: content.fileName, caption: content.caption });
+      } else if ("image" in content) {
+        sendCalls.push({ jid, image: content.image, mimetype: content.mimetype, caption: content.caption });
+      } else if ("video" in content) {
+        sendCalls.push({ jid, video: content.video, mimetype: content.mimetype, caption: content.caption });
+      } else {
+        sendCalls.push({ jid, audio: content.audio, mimetype: content.mimetype, ptt: content.ptt });
       }
       return {};
     },
@@ -58,7 +77,7 @@ function createFakeSocket(options?: { getPNForLID?: (lid: string) => Promise<str
   };
 }
 
-function setupManager(options?: { getPNForLID?: (lid: string) => Promise<string | null | undefined> }) {
+function setupManager(options?: Parameters<typeof createFakeSocket>[0]) {
   const db = openDatabase(":memory:");
   ensureProjectsTable(db);
   ensureWhatsAppConnectionsTable(db);
@@ -383,6 +402,84 @@ test("sendMessage falls back to a plain text send when the attachment's file no 
   });
   assert.equal(result.ok, true);
   assert.deepEqual(createdSockets[0].sendCalls, [{ jid: "972509998888@s.whatsapp.net", text: "הנה החשבונית שלך: invoice-203.pdf" }]);
+});
+
+/**
+ * Round 966's own audio branch has no `caption` field to pass through (see
+ * performSend's own doc comment there), so it sends the caption text and
+ * the audio clip as two independent Baileys calls -- this confirms the
+ * happy path sends both, and in the real order (round 1242: audio first,
+ * caption text second -- see the next test for why).
+ */
+test("sendMessage attaches a real audio file from disk, sending the audio clip first and the caption text second", async () => {
+  const { manager, createdSockets } = setupManager();
+  await manager.connect("proj1");
+  createdSockets[0].sock.user = { id: "972501234567:1@s.whatsapp.net" };
+  createdSockets[0].emitConnectionUpdate({ connection: "open" });
+
+  const dir = await mkdtemp(path.join(tmpdir(), "forge-whatsapp-audio-attachment-test-"));
+  try {
+    const filePath = path.join(dir, "voice-note.ogg");
+    await writeFile(filePath, "fake-ogg-audio-bytes");
+
+    const result = await manager.sendMessage("proj1", "972509998888", "הנה הקלטה", {
+      filePath,
+      fileName: "voice-note.ogg",
+      mimeType: "audio/ogg",
+    });
+    assert.equal(result.ok, true);
+    assert.deepEqual(createdSockets[0].sendCalls, [
+      { jid: "972509998888@s.whatsapp.net", audio: Buffer.from("fake-ogg-audio-bytes"), mimetype: "audio/ogg", ptt: false },
+      { jid: "972509998888@s.whatsapp.net", text: "הנה הקלטה" },
+    ]);
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+/**
+ * Round 1242: a real bug the survey found -- the audio branch used to send
+ * the caption TEXT first and the audio clip second. A real Baileys media
+ * upload (the audio send) is a far more failure-prone network round-trip
+ * than a plain text send, so the common real-world partial failure was
+ * "caption text delivered, then the audio upload throws" -- performSend's
+ * own outer catch reports the WHOLE send as failed, automations.ts's
+ * fireRule records the run as "failed", and clicking the Automations
+ * History panel's own "Retry" action (fireRule fired again from scratch,
+ * with zero partial-progress tracking -- see automations.ts's own fireRule
+ * doc comment) resent the identical caption text a SECOND time to the real
+ * customer, before attempting the audio again. This test reproduces the
+ * underlying send-order bug directly: forces the FIRST Baileys call this
+ * branch makes to throw, and confirms nothing else was sent alongside it --
+ * with the fix (audio first), that first-call failure now means nothing
+ * was delivered at all, so a subsequent Retry is safe to resend both from
+ * scratch exactly once.
+ */
+test("sendMessage's audio branch sends nothing at all when its first Baileys call fails, so a later Retry resending both from scratch can never duplicate anything", async () => {
+  const { manager, createdSockets } = setupManager({ failWhen: (content) => "audio" in content });
+  await manager.connect("proj1");
+  createdSockets[0].sock.user = { id: "972501234567:1@s.whatsapp.net" };
+  createdSockets[0].emitConnectionUpdate({ connection: "open" });
+
+  const dir = await mkdtemp(path.join(tmpdir(), "forge-whatsapp-audio-attachment-test-"));
+  try {
+    const filePath = path.join(dir, "voice-note.ogg");
+    await writeFile(filePath, "fake-ogg-audio-bytes");
+
+    const result = await manager.sendMessage("proj1", "972509998888", "הנה הקלטה", {
+      filePath,
+      fileName: "voice-note.ogg",
+      mimeType: "audio/ogg",
+    });
+    assert.equal(result.ok, false, "the overall send must still be reported as failed");
+    assert.deepEqual(
+      createdSockets[0].sendCalls,
+      [],
+      "the caption text must NOT have gone out at all once the audio upload (the first call) failed -- otherwise a later Retry duplicates it",
+    );
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
 });
 
 test("sendMessage refuses honestly when 'to' is a bare local-format number missing its country code, instead of addressing a wrong/nonexistent JID", async () => {

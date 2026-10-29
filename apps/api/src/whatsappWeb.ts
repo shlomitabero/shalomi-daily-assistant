@@ -833,11 +833,34 @@ export class WhatsAppWebManager {
           // the image/video branch's shape would (an untyped field Baileys
           // simply never serializes) would silently discard a caption the
           // user explicitly wrote, every single time. Sending it as its
-          // own text message first, immediately before the now-playable
+          // own text message, immediately before/after the now-playable
           // (not generic-document) audio attachment, preserves it in full
           // instead.
-          await session.sock.sendMessage(jid, { text: body });
+          //
+          // Round 1242: the audio attachment goes FIRST, the caption text
+          // SECOND -- the reverse of how this originally shipped. Every
+          // other branch above (image/video/document) sends its media and
+          // caption in a single atomic Baileys call: if it throws, nothing
+          // was delivered, so a Retry (fireRule fired again from scratch --
+          // see automations.ts's own fireRule, which has no partial-
+          // progress tracking) safely resends exactly once. This branch is
+          // the one exception, needing two independent sends -- and a real
+          // Baileys media upload (this audio clip) is a far more failure-
+          // prone network round-trip than a plain text send (oversized
+          // file, a transient drop mid-upload, a Baileys media-processing
+          // error). With text first, that likely failure point sat SECOND:
+          // the cheap text send had already gone out to the real customer
+          // by the time the fragile media send failed, so Retry resent the
+          // exact same caption text a second time -- a real, concretely
+          // reproducible bug (see this round's own regression test below).
+          // Putting the fragile step first means its far more common
+          // failure mode now leaves nothing delivered yet, so Retry is
+          // safe in exactly the case that actually happens; the residual
+          // risk (the audio succeeding and then the plain text failing) is
+          // real too, just far rarer, since no file upload is involved in
+          // that second step at all.
           await session.sock.sendMessage(jid, { audio: fileBuffer, mimetype: attachment.mimeType, ptt: false });
+          await session.sock.sendMessage(jid, { text: body });
         } else {
           await session.sock.sendMessage(jid, { document: fileBuffer, mimetype: attachment.mimeType, fileName: attachment.fileName, caption: body });
         }

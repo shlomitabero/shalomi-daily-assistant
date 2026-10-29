@@ -2674,9 +2674,20 @@ test("an automation's file attachment sends as a real inline image when the refe
  * own messageTemplate text -- which would otherwise be silently dropped,
  * since Baileys simply never serializes an unrecognized `caption` field on
  * an audio message -- is preserved in full by sending it as its own
- * separate text message immediately before the audio.
+ * separate text message.
+ *
+ * Round 1242: the audio clip now sends FIRST and the caption text SECOND
+ * -- the reverse of how round 966 originally shipped this. See
+ * whatsappWeb.ts's performSend (its own audio branch) for the real bug
+ * this reorder fixes: a real media upload is far more failure-prone than
+ * a plain text send, so with text first, the common partial-failure case
+ * left the caption already delivered to the real customer by the time the
+ * audio send failed -- and Retry (which fires the rule again from
+ * scratch, with no partial-progress tracking) then resent that same
+ * caption a second time. This is the SAME scenario this test already
+ * covered, just asserting the new, safer order.
  */
-test("an automation's file attachment sends as a real playable audio message when the referenced file is audio, with its own caption text preserved as a separate message first", async () => {
+test("an automation's file attachment sends as a real playable audio message when the referenced file is audio, with its own caption text preserved as a separate message after the audio", async () => {
   let createdSockets: ReturnType<typeof createFakeWhatsAppSocket>[] = [];
   await withServer(
     async (baseUrl, db) => {
@@ -2741,20 +2752,20 @@ test("an automation's file attachment sends as a real playable audio message whe
       assert.equal(
         createdSockets[0].sendCalls.length,
         2,
-        "an audio attachment must send as two physical messages -- the caption text, then the playable audio",
+        "an audio attachment must send as two physical messages -- the playable audio, then the caption text",
       );
 
-      const textContent = createdSockets[0].sendCalls[0]!.content as { text?: string };
+      const audioContent = createdSockets[0].sendCalls[0]!.content as { audio?: Buffer; document?: Buffer; mimetype?: string; ptt?: boolean };
+      assert.ok("audio" in audioContent, "the attachment itself must send as Baileys' own real playable audio content, not a generic document");
+      assert.equal("document" in audioContent, false);
+      assert.equal(audioContent.mimetype, "audio/ogg");
+
+      const textContent = createdSockets[0].sendCalls[1]!.content as { text?: string };
       assert.equal(
         textContent.text,
         "Here's your order confirmation! confirmation.ogg",
         "the rule's own caption text must be sent in full as its own message, not silently dropped",
       );
-
-      const audioContent = createdSockets[0].sendCalls[1]!.content as { audio?: Buffer; document?: Buffer; mimetype?: string; ptt?: boolean };
-      assert.ok("audio" in audioContent, "the attachment itself must send as Baileys' own real playable audio content, not a generic document");
-      assert.equal("document" in audioContent, false);
-      assert.equal(audioContent.mimetype, "audio/ogg");
     },
     {
       whatsapp: (db) => {
