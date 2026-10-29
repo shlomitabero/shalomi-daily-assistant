@@ -443,9 +443,25 @@ export function runQaChecks(
       // isn't this server's own /api/uploads/<project>/<entity>/<filename>
       // shape, so the placeholder's url must match that shape too (an
       // empty string, as used before round 908, is now itself rejected).
+      // Round 1210: coerceValue tightened further to require the url's own
+      // project/entity segments to exactly match the record's REAL
+      // projectId/entity.name (both already in scope right here), and the
+      // filename to match the real UPLOADED_FILENAME shape -- the
+      // "qa-placeholder/qa-placeholder" fixed string this used before
+      // always failed that match regardless of which entity/project was
+      // under test, so every insertRecord call in the loop below (even one
+      // testing a completely unrelated sibling field) started failing on
+      // THIS field first, reproducing the exact misattribution bug round
+      // 753's own fix exists to catch and report clearly instead of
+      // silently masking.
       for (const f of entity.fields) {
         if (f.type === "file" && f.required)
-          validRecord[f.name] = JSON.stringify({ url: "/api/uploads/qa-placeholder/qa-placeholder/placeholder.txt", name: "placeholder", size: 0, mimeType: "" });
+          validRecord[f.name] = JSON.stringify({
+            url: `/api/uploads/${projectId}/${entity.name}/00000000-0000-0000-0000-000000000000.txt`,
+            name: "placeholder",
+            size: 0,
+            mimeType: "",
+          });
       }
       for (const requiredField of requiredFields) {
         const recordMissingThisField = { ...validRecord };

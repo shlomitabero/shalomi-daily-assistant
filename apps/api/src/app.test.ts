@@ -14394,6 +14394,87 @@ test("creating or updating a record with a file field whose url isn't this serve
 });
 
 /**
+ * Round 1210: round 908's own shape-only regex (three non-slash segments
+ * after /api/uploads/) blocked the XSS primitive above, but it still
+ * accepted ANY other project's own real, well-formed upload URL verbatim
+ * -- a genuinely different hazard the test just above never covers (every
+ * one of its malicious descriptors is either a bad scheme, malformed, or
+ * a traversal attempt, never a shape-valid reference to a real, unrelated
+ * project). coerceValue now requires the url's own project/entity segments
+ * to exactly match the record's OWN project/entity, and the filename
+ * segment to actually match UPLOADED_FILENAME's real UUID shape -- not
+ * just "no slashes". Every downstream reader of this same descriptor
+ * (resolveUploadedFilePath/deleteUploadedFile, findTemplateFileAttachment)
+ * already discards the URL's own embedded segments and rebuilds the path
+ * from trusted context, so THEY were never actually exploitable this way
+ * -- but /api/uploads is a plain, unauthenticated express.static route
+ * with no project-ownership check of its own, and EntityPanel.tsx renders
+ * this descriptor's url completely verbatim with no equivalent
+ * rebuild-from-trusted-context step, so a crafted reference to some other
+ * real project's real file would have been silently served to every
+ * collaborator of THIS project who opens the record and clicks the link.
+ */
+test("creating or updating a record with a file field whose url shape-matches /api/uploads/... but names a DIFFERENT project/entity is rejected with 400, not silently stored", async () => {
+  await withServer(async (baseUrl, db) => {
+    const email = `file-field-cross-project-url-${randomUUID()}@example.com`;
+    const token = await signup(baseUrl, email);
+    const user = findUserByEmail(db, email)!;
+
+    const spec: ProductSpec = {
+      summary: "test",
+      personas: [],
+      roles: ["Admin"],
+      entities: [{ name: "Applicant", fields: [{ name: "resume", type: "file", required: false }] }],
+      screens: [],
+      assumptions: [],
+      openQuestions: [],
+    };
+    const projectId = randomUUID();
+    insertProject(db, { id: projectId, ownerId: user.id, name: "Hiring", description: "test", spec });
+    diffAndMigrate(db, projectId, undefined, spec);
+    markProjectBuilt(db, projectId);
+
+    const otherProjectId = randomUUID();
+    const realUuidFilename = `${randomUUID()}.pdf`;
+    const crossProjectDescriptors = [
+      // A real, well-formed UUID filename, but under a DIFFERENT project id.
+      JSON.stringify({ url: `/api/uploads/${otherProjectId}/Applicant/${realUuidFilename}`, name: "resume.pdf", size: 123, mimeType: "application/pdf" }),
+      // The correct project, but a DIFFERENT entity's own upload directory.
+      JSON.stringify({ url: `/api/uploads/${projectId}/OtherEntity/${realUuidFilename}`, name: "resume.pdf", size: 123, mimeType: "application/pdf" }),
+      // The correct project AND entity, but a filename that isn't a real
+      // UUID shape at all (shape-only would have accepted this too).
+      JSON.stringify({ url: `/api/uploads/${projectId}/Applicant/not-a-real-upload.pdf`, name: "resume.pdf", size: 123, mimeType: "application/pdf" }),
+    ];
+
+    for (const resume of crossProjectDescriptors) {
+      const createRes = await fetch(`${baseUrl}/api/projects/${projectId}/entities/Applicant`, {
+        method: "POST",
+        headers: authHeaders(token),
+        body: JSON.stringify({ resume }),
+      });
+      assert.equal(createRes.status, 400, `expected 400 for cross-project/cross-entity/non-UUID descriptor ${resume}`);
+    }
+
+    const countRow = db.prepare(`SELECT COUNT(*) as count FROM ${quoteIdentifier(tableNameFor(projectId, "Applicant"))}`).get() as {
+      count: number;
+    };
+    assert.equal(countRow.count, 0, "none of the rejected creates should have written a record");
+
+    // The identical, real-looking UUID filename -- but under THIS record's
+    // own real project and entity -- must still be accepted, confirming
+    // the fix rejects by MISMATCH, not by the mere presence of a real
+    // UUID filename anywhere in the url.
+    const legitDescriptor = JSON.stringify({ url: `/api/uploads/${projectId}/Applicant/${realUuidFilename}`, name: "resume.pdf", size: 123, mimeType: "application/pdf" });
+    const legitRes = await fetch(`${baseUrl}/api/projects/${projectId}/entities/Applicant`, {
+      method: "POST",
+      headers: authHeaders(token),
+      body: JSON.stringify({ resume: legitDescriptor }),
+    });
+    assert.equal(legitRes.status, 201, "the identical filename under this record's own real project/entity must still be accepted");
+  });
+});
+
+/**
  * Field-type validation (and project-access validation) runs in its own
  * middleware BEFORE multer's disk-storage middleware (see the route's own
  * comment in routes/projects.ts) -- specifically so a rejected upload

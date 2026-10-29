@@ -417,7 +417,7 @@ test("a file field renders as just the uploaded filename, not the raw JSON descr
   const applicant = fileProject.spec.entities[0];
   insertRecord(db, fileProject.id, applicant, {
     name: "Dana Levi",
-    resume: JSON.stringify({ url: "/api/uploads/p1/Applicant/abc.pdf", name: "dana-resume.pdf", size: 12345, mimeType: "application/pdf" }),
+    resume: JSON.stringify({ url: `/api/uploads/${fileProject.id}/Applicant/11111111-1111-1111-1111-111111111111.pdf`, name: "dana-resume.pdf", size: 12345, mimeType: "application/pdf" }),
   });
   insertRecord(db, fileProject.id, applicant, { name: "No resume yet" });
 

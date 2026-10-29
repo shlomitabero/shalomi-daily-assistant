@@ -33,7 +33,16 @@ export function isValidDateString(value: string): boolean {
   return parsed.getUTCFullYear() === year && parsed.getUTCMonth() === month - 1 && parsed.getUTCDate() === day;
 }
 
-function coerceValue(field: Field, raw: unknown): string | number | null {
+// Round 1210: mirrors apps/api/src/uploadPaths.ts's own UPLOADED_FILENAME
+// regex exactly -- the one filename shape createUploadMiddleware's own
+// filename callback (routes/projects.ts) ever actually generates.
+// Duplicated here rather than imported: this package has no dependency
+// on apps/api (and shouldn't gain one just for this one constant), the
+// same cross-package duplication this codebase already documents
+// elsewhere (codegen.ts's own duplicated copies of live-app logic).
+const UPLOADED_FILENAME = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}(\.[a-z0-9]{1,10})?$/;
+
+function coerceValue(field: Field, raw: unknown, projectId: string, entityName: string): string | number | null {
   // A whitespace-only string (" ", "\t\n", …) is not caught by `raw === ""`,
   // so it used to fall straight through to the type-specific coercion below
   // -- for a required `number`/`relation` field, `Number(" ")` is `0` (a
@@ -119,6 +128,29 @@ function coerceValue(field: Field, raw: unknown): string | number | null {
       // (routes/projects.ts's upload route response) -- reject anything
       // else here, the one place every real record write (create or
       // update, not just the upload route) already funnels through.
+      //
+      // Round 1210: the shape-only regex this round 908 fix originally had
+      // (three non-slash segments) blocked the XSS primitive above, but it
+      // still accepted ANY other project's own real upload URL verbatim --
+      // every DOWNSTREAM reader of this same descriptor (resolveUploadedFilePath/
+      // deleteUploadedFile in uploadPaths.ts, findTemplateFileAttachment in
+      // automations.ts) already discards the URL's own embedded path
+      // segments and rebuilds the path from trusted context instead of
+      // trusting them (their own doc comments: entity.name has no
+      // character-set restriction, so the embedded segments were never
+      // safe to trust) -- but /api/uploads is served by a plain,
+      // unauthenticated express.static with no project-ownership check of
+      // its own, and EntityPanel.tsx's rendered <a href>/<img src> uses
+      // this descriptor's url completely verbatim, with no equivalent
+      // rebuild-from-trusted-context step. A crafted descriptor pointing
+      // at some OTHER project's real, already-uploaded file -- set via a
+      // normal record write, exactly like the XSS case above -- would be
+      // stored, then silently served to every collaborator of THIS
+      // project (even one with zero access to the other project) who
+      // opens the record and clicks the link. Requiring an exact match
+      // against this record's own projectId/entityName, and the real
+      // UUID filename shape (not just "no slashes"), closes that gap at
+      // the same single write-time chokepoint the XSS fix already used.
       const str = String(raw);
       let parsed: unknown;
       try {
@@ -127,7 +159,8 @@ function coerceValue(field: Field, raw: unknown): string | number | null {
         throw new ValidationError(`Field "${field.name}" must be a valid file descriptor`);
       }
       const url = (parsed as { url?: unknown } | null)?.url;
-      if (typeof url !== "string" || !/^\/api\/uploads\/[^/]+\/[^/]+\/[^/]+$/.test(url)) {
+      const expectedPrefix = `/api/uploads/${projectId}/${entityName}/`;
+      if (typeof url !== "string" || !url.startsWith(expectedPrefix) || !UPLOADED_FILENAME.test(url.slice(expectedPrefix.length))) {
         throw new ValidationError(`Field "${field.name}" must be a valid file descriptor`);
       }
       return str;
@@ -208,7 +241,7 @@ export function insertRecord(
 ): EntityRecord {
   const table = tableNameFor(projectId, entity.name);
   const columns = fieldColumns(entity);
-  const values = entity.fields.map((field) => coerceValue(field, data[field.name]));
+  const values = entity.fields.map((field) => coerceValue(field, data[field.name], projectId, entity.name));
   const createdAt = new Date().toISOString();
 
   const placeholders = ["?", ...columns.map(() => "?")].join(", ");
@@ -272,7 +305,7 @@ export function updateRecord(
   // field update, a Kanban drag) that never touches that field at all.
   const values = entity.fields.map((field) => {
     if (!Object.prototype.hasOwnProperty.call(data, field.name)) return getRowValue(existingRow, field.name);
-    const coerced = coerceValue(field, data[field.name]);
+    const coerced = coerceValue(field, data[field.name], projectId, entity.name);
     // Round 1037: a self-referencing relation field (field.relationTo ===
     // this entity's own name -- e.g. Employee.managerId -> Employee) has
     // no guard anywhere else in the write path: the SQL FOREIGN KEY
