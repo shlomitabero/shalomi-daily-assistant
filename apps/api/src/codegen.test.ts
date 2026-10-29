@@ -11049,6 +11049,85 @@ test("the exported EntityView's Export JSON button routes through selectedOrAllR
 });
 
 /**
+ * Round 1221 added "Import JSON" (buildImportRecordsFromJson) to the live
+ * preview's EntityPanel.tsx, the missing write-back half of round 1217's
+ * "Export JSON" -- but, like round 1217 itself, that round only touched
+ * apps/web, never this exported standalone app's own EntityView.jsx
+ * template, even though its own "Export JSON" half was already ported
+ * (round 1219). Extracts and executes the real generated
+ * buildImportRecordsFromJson (not a reimplementation), mirroring the
+ * recordsToJson formatting test above: a real round-trip through
+ * recordsToJson -> JSON.parse -> buildImportRecordsFromJson confirms
+ * every field's real typed value survives unchanged, including the id
+ * key and the raw enum VALUE (not its display label).
+ */
+test("the exported EntityView's own generated buildImportRecordsFromJson round-trips recordsToJson's own output back to the exact same typed values", () => {
+  const files = generateExportFiles(project);
+  const entityViewJsx = files.find((f) => f.path === "web/src/components/EntityView.jsx")!.content;
+  const recordsToJsonSrc = entityViewJsx.match(/function recordsToJson\(fields, records\) \{[\s\S]*?\n\}\n/)?.[0];
+  const parseFileFieldValueSrc = entityViewJsx.match(/function parseFileFieldValue\(value\) \{[\s\S]*?\n\}\n/)?.[0];
+  const importJsonSrc = entityViewJsx.match(/function buildImportRecordsFromJson\(fields, rows, relatedRecords\) \{[\s\S]*?\n\}\n/)?.[0];
+  assert.ok(
+    recordsToJsonSrc && parseFileFieldValueSrc && importJsonSrc,
+    "expected to find recordsToJson/parseFileFieldValue/buildImportRecordsFromJson in the generated EntityView.jsx",
+  );
+
+  // ALL_ENTITIES is a real module-level const in the generated file (built
+  // from the project's own entities), not part of the extracted function
+  // snippets above -- same injection convention the buildImportRecords
+  // relation tests above already use. Not exercised by this particular
+  // test (no relation field), but required for buildImportRecordsFromJson
+  // to even load without a ReferenceError.
+  const allEntitiesDecl = "const ALL_ENTITIES = [];";
+
+  const { recordsToJson, buildImportRecordsFromJson } = new Function(
+    `${allEntitiesDecl}\n${parseFileFieldValueSrc}\n${recordsToJsonSrc}\n${importJsonSrc}\nreturn { recordsToJson, buildImportRecordsFromJson };`,
+  )();
+
+  const fields = [
+    { name: "title", label: "Title", type: "text", required: true },
+    { name: "amount", label: "Amount", type: "number", required: true },
+    { name: "done", label: "Done", type: "boolean", required: false },
+    { name: "status", label: "Status", type: "enum", required: true, enumValues: ["New", "Won"], enumLabels: { New: "New", Won: "Won!" } },
+  ];
+  const record = { id: 7, title: "Order A", amount: 120.5, done: true, status: "Won" };
+
+  const rows = JSON.parse(recordsToJson(fields, [record]));
+  const result = buildImportRecordsFromJson(fields, rows, {});
+  assert.deepEqual(result.errors, []);
+  assert.deepEqual(result.records, [{ id: 7, title: "Order A", amount: 120.5, done: true, status: "Won" }]);
+  assert.strictEqual(result.records[0].done, true, "a boolean must round-trip as a real JS boolean, not a string");
+  assert.equal(result.records[0].status, "Won", "the raw enum VALUE must round-trip unchanged, not its enumLabels display text ('Won!')");
+});
+
+/**
+ * Round 1221's own "Import JSON" input mirrors "Import CSV" exactly:
+ * routes through buildImportRecordsFromJson/the same write-and-summarize
+ * shape as handleImportFile, and renders right alongside the existing
+ * CSV import input with its own CSS class.
+ */
+test("the exported EntityView's Import JSON input routes through buildImportRecordsFromJson and renders alongside Import CSV", () => {
+  const files = generateExportFiles(project);
+  const entityViewJsx = files.find((f) => f.path === "web/src/components/EntityView.jsx")!.content;
+
+  const handleImportJsonSrc = entityViewJsx.match(/async function handleImportJsonFile\(e\) \{[\s\S]*?\n {2}\}\n/)?.[0];
+  assert.ok(handleImportJsonSrc, "expected to find handleImportJsonFile in generated output");
+  assert.match(
+    handleImportJsonSrc!,
+    /buildImportRecordsFromJson\(entity\.fields, parsed, relatedRecords\)/,
+    "handleImportJsonFile must route through the real generated buildImportRecordsFromJson",
+  );
+  assert.match(handleImportJsonSrc!, /id != null \? updateRecord\(entity\.name, id, data\) : createRecord\(entity\.name, data\)/, "must PATCH-vs-POST exactly like handleImportFile");
+
+  const jsonImportLabelSrc = entityViewJsx.match(/<label className="json-import-label">[\s\S]*?<\/label>/)?.[0];
+  assert.ok(jsonImportLabelSrc, "expected to find the json-import-label element in generated output");
+  assert.match(jsonImportLabelSrc!, /accept="\.json,application\/json"/);
+
+  const stylesCss = files.find((f) => f.path === "web/src/styles.css")!.content;
+  assert.match(stylesCss, /\.json-import-label/);
+});
+
+/**
  * Same feature as above, but rendering the real generated EntityView.jsx
  * end to end: clicks the real Copy button and confirms the exact CSV text
  * handed to a stubbed navigator.clipboard.writeText, then confirms the

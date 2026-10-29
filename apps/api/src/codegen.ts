@@ -3346,6 +3346,132 @@ function buildImportRecords(fields, rows, relatedRecords) {
   return { records, errors };
 }
 
+// Mirrors the live preview's own entityFormatting.ts buildImportRecordsFromJson
+// (round 1221) -- keeps each field's own value exactly as JSON.parse already
+// delivers it (a real number/boolean, the raw relation id, the raw enum
+// value), so unlike buildImportRecords above there's no display-text
+// coercion to reverse, just validation. A JSON key this function doesn't
+// recognize (an extra field, one since removed from the entity) is simply
+// ignored, the same tolerance buildImportRecords already has for an
+// unmatched CSV column. File fields keep the same "impossible to attach
+// from an import cell" treatment buildImportRecords gives them -- the
+// exported descriptor only ever carries a URL to an already-uploaded file,
+// never the file's own bytes.
+function buildImportRecordsFromJson(fields, rows, relatedRecords) {
+  if (rows.length === 0) return { records: [], errors: [] };
+
+  const relationResolvable = (f) => !!f.relationTo && ALL_ENTITIES.some((e) => e.name.toLowerCase() === f.relationTo.toLowerCase()) && !!(relatedRecords && relatedRecords[f.relationTo]);
+
+  const requiredUnsupported = fields.find((f) => (f.type === "file" && f.required) || (f.type === "relation" && f.required && !relationResolvable(f)));
+  if (requiredUnsupported) {
+    return {
+      records: [],
+      errors: [\`JSON import isn't supported yet for entities with a required \${requiredUnsupported.type} field ("\${requiredUnsupported.label || requiredUnsupported.name}").\`],
+    };
+  }
+
+  const records = [];
+  const errors = [];
+  const seenIds = new Set();
+
+  rows.forEach((row, rowIndex) => {
+    if (typeof row !== "object" || row === null || Array.isArray(row)) {
+      errors.push(\`Row \${rowIndex + 1}: expected a JSON object, got \${Array.isArray(row) ? "an array" : typeof row}.\`);
+      return;
+    }
+    const record = {};
+    let rowError = null;
+
+    if (row.id !== undefined && row.id !== null) {
+      const parsedId = Number(row.id);
+      if (!Number.isInteger(parsedId) || parsedId <= 0) {
+        rowError = \`Row \${rowIndex + 1}: "\${row.id}" isn't a valid record id.\`;
+      } else if (seenIds.has(parsedId)) {
+        rowError = \`Row \${rowIndex + 1}: id \${parsedId} was already used by an earlier row in this file -- only one row per id is supported.\`;
+      } else {
+        seenIds.add(parsedId);
+        record.id = parsedId;
+      }
+    }
+
+    for (const field of rowError ? [] : fields) {
+      const raw = row[field.name];
+
+      if (field.type === "file") continue;
+
+      if (field.type === "relation") {
+        if (!relationResolvable(field)) continue;
+        if (raw === null || raw === undefined) {
+          if (field.required) {
+            rowError = \`Row \${rowIndex + 1}: missing required field "\${field.label || field.name}".\`;
+            break;
+          }
+          record[field.name] = null;
+          continue;
+        }
+        const id = Number(raw);
+        const targetRecords = relatedRecords[field.relationTo];
+        if (!Number.isInteger(id) || !targetRecords.some((r) => Number(r.id) === id)) {
+          const targetEntity = ALL_ENTITIES.find((e) => e.name.toLowerCase() === field.relationTo.toLowerCase());
+          rowError = \`Row \${rowIndex + 1}: "\${raw}" doesn't match any \${targetEntity.label || targetEntity.name} record for field "\${field.label || field.name}".\`;
+          break;
+        }
+        record[field.name] = id;
+        continue;
+      }
+
+      if (raw === null || raw === undefined) {
+        if (field.required) {
+          rowError = \`Row \${rowIndex + 1}: missing required field "\${field.label || field.name}".\`;
+          break;
+        }
+        record[field.name] = null;
+        continue;
+      }
+
+      if (field.type === "boolean") {
+        if (typeof raw !== "boolean") {
+          rowError = \`Row \${rowIndex + 1}: "\${raw}" isn't a true/false value for field "\${field.label || field.name}".\`;
+          break;
+        }
+        record[field.name] = raw;
+      } else if (field.type === "number") {
+        if (typeof raw !== "number" || !Number.isFinite(raw)) {
+          rowError = \`Row \${rowIndex + 1}: "\${raw}" isn't a number for field "\${field.label || field.name}".\`;
+          break;
+        }
+        record[field.name] = raw;
+      } else if (field.type === "enum") {
+        if (typeof raw !== "string" || !field.enumValues || !field.enumValues.includes(raw)) {
+          rowError = \`Row \${rowIndex + 1}: "\${raw}" isn't a valid option for field "\${field.label || field.name}".\`;
+          break;
+        }
+        record[field.name] = raw;
+      } else if (field.type === "date") {
+        if (typeof raw !== "string" || !isValidDate(raw)) {
+          rowError = \`Row \${rowIndex + 1}: "\${raw}" isn't a valid date (expected YYYY-MM-DD) for field "\${field.label || field.name}".\`;
+          break;
+        }
+        record[field.name] = raw;
+      } else {
+        if (typeof raw !== "string") {
+          rowError = \`Row \${rowIndex + 1}: "\${raw}" isn't valid text for field "\${field.label || field.name}".\`;
+          break;
+        }
+        record[field.name] = raw;
+      }
+    }
+
+    if (rowError) {
+      errors.push(rowError);
+    } else {
+      records.push(record);
+    }
+  });
+
+  return { records, errors };
+}
+
 // Every enum field with a workable, human-scannable number of distinct
 // values (2-8) -- used both by findBoardField below (which picks just one,
 // for Kanban grouping) and by the entity table's own per-field filter
@@ -6361,6 +6487,77 @@ export function EntityView({ entity, highlightRecordId, onHighlightHandled, onJu
     }
   }
 
+  // The JSON counterpart to handleImportFile -- the write-back half of
+  // Export JSON (handleExportJson above), mirroring the live preview's
+  // own handleImportJsonFile (round 1221). buildImportRecordsFromJson
+  // already validates everything per-row; a malformed JSON file (not
+  // valid JSON, or not an array) is its own whole-file problem, reported
+  // through importMessage the same way every other whole-file import
+  // problem already is.
+  async function handleImportJsonFile(e) {
+    const file = e.target.files && e.target.files[0];
+    e.target.value = "";
+    if (!file) return;
+    setImportBusy(true);
+    setImportMessage(null);
+    setImportErrors([]);
+    setShowImportErrors(false);
+    try {
+      const text = await file.text();
+      let parsed;
+      try {
+        parsed = JSON.parse(text);
+      } catch {
+        setImportMessage("The file isn't valid JSON for a list of records.");
+        return;
+      }
+      if (!Array.isArray(parsed)) {
+        setImportMessage("The file isn't valid JSON for a list of records.");
+        return;
+      }
+      const { records: parsedRecords, errors: parseErrors } = buildImportRecordsFromJson(entity.fields, parsed, relatedRecords);
+
+      if (parsedRecords.length === 0) {
+        setImportErrors(parseErrors);
+        setImportMessage(
+          parseErrors.length > 0 ? \`Import failed: \${parseErrors.length} errors. No records were created.\` : "The file contained no data rows to import.",
+        );
+        return;
+      }
+
+      const results = await Promise.allSettled(
+        parsedRecords.map((record) => {
+          const { id, ...data } = record;
+          return id != null ? updateRecord(entity.name, id, data) : createRecord(entity.name, data);
+        }),
+      );
+      const serverErrors = results.filter((r) => r.status === "rejected").map((r) => r.reason.message);
+      let createdCount = 0;
+      let updatedCount = 0;
+      results.forEach((r, i) => {
+        if (r.status !== "fulfilled") return;
+        if (parsedRecords[i].id != null) updatedCount += 1;
+        else createdCount += 1;
+      });
+      const allErrors = [...parseErrors, ...serverErrors];
+      setImportErrors(allErrors);
+      setImportMessage(
+        updatedCount === 0
+          ? allErrors.length === 0
+            ? \`Imported \${createdCount} records successfully.\`
+            : \`Imported \${createdCount} records, skipped \${allErrors.length} rows.\`
+          : allErrors.length === 0
+            ? \`Imported \${createdCount} new records and updated \${updatedCount} existing records.\`
+            : \`Imported \${createdCount} new records, updated \${updatedCount} existing records, skipped \${allErrors.length} rows.\`,
+      );
+      await refresh();
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setImportBusy(false);
+    }
+  }
+
   // Extracted so both the flat table and the grouped table (see
   // recordGroups above) can render the identical row -- grouping only
   // changes which records a given <tbody> section lists, never how a
@@ -6555,6 +6752,10 @@ export function EntityView({ entity, highlightRecordId, onHighlightHandled, onJu
         <label className="csv-import-label">
           {importBusy ? "Importing…" : "⬆️ Import CSV"}
           <input type="file" accept=".csv,text/csv" onChange={handleImportFile} disabled={importBusy} hidden />
+        </label>
+        <label className="json-import-label">
+          {importBusy ? "Importing…" : "⬆️ Import JSON"}
+          <input type="file" accept=".json,application/json" onChange={handleImportJsonFile} disabled={importBusy} hidden />
         </label>
         {importMessage && <span className="muted small">{importMessage}</span>}
         {importErrors.length > 0 && (
@@ -8660,9 +8861,9 @@ nav button.active .tab-count { background: rgba(255, 255, 255, 0.25); color: inh
 .columns-menu-panel { position: absolute; z-index: 20; top: calc(100% + 6px); inset-inline-end: 0; min-width: 180px; padding: 8px; display: flex; flex-direction: column; gap: 6px; background: var(--surface); border: 1px solid var(--border); border-radius: 10px; box-shadow: var(--shadow-lg); }
 .columns-menu-item { display: flex; align-items: center; gap: 8px; font-size: 13px; cursor: pointer; color: var(--text); }
 .csv-import-row { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin: 0 0 14px; }
-.csv-import-label { display: inline-flex; align-items: center; padding: 8px 14px; font-size: 13px; font-weight: 600; border-radius: 8px; background: var(--surface); color: var(--text); border: 1px solid var(--border); cursor: pointer; font: inherit; }
-.csv-import-label:has(input:disabled) { opacity: 0.55; cursor: default; }
-.csv-import-label:hover { background: var(--bg); }
+.csv-import-label, .json-import-label { display: inline-flex; align-items: center; padding: 8px 14px; font-size: 13px; font-weight: 600; border-radius: 8px; background: var(--surface); color: var(--text); border: 1px solid var(--border); cursor: pointer; font: inherit; }
+.csv-import-label:has(input:disabled), .json-import-label:has(input:disabled) { opacity: 0.55; cursor: default; }
+.csv-import-label:hover, .json-import-label:hover { background: var(--bg); }
 .import-errors-toggle { padding: 8px 14px; font-size: 13px; border-radius: 8px; border: 1px solid var(--border); background: var(--surface); color: var(--text); cursor: pointer; font: inherit; }
 .import-errors-toggle:hover { background: var(--bg); }
 .csv-import-errors { margin: -6px 0 14px; padding-inline-start: 20px; color: var(--danger); font-size: 13px; display: flex; flex-direction: column; gap: 3px; }
