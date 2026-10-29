@@ -4847,6 +4847,68 @@ test("the owner can remove a collaborator, which revokes their access again", as
   });
 });
 
+/**
+ * Round 1254: this route used to send no notification anywhere once a
+ * collaborator was removed by the owner -- the same gap round 1254's own
+ * role-change fix (above) just closed for a role change. Confirms the
+ * real EmailSender.send call reaches the REMOVED collaborator, naming
+ * the real project, and that the self-leave path (handleLeave's own
+ * call site) never fires one -- notifying someone of the thing they
+ * themselves just asked to do is pure noise, not a signal.
+ */
+test("removing a collaborator sends a real notification to the REMOVED collaborator naming the project, but a self-initiated 'leave' sends none", async () => {
+  const emailSender = createFakeEmailSender();
+  await withServer(
+    async (baseUrl) => {
+      const ownerToken = await signup(baseUrl, `owner-remove-notify-${Date.now()}@example.com`);
+      const removedEmail = `collab-remove-notify-${Date.now()}@example.com`;
+      await signup(baseUrl, removedEmail);
+      const leaverEmail = `collab-leave-notify-${Date.now()}@example.com`;
+      const leaverToken = await signup(baseUrl, leaverEmail);
+
+      const createRes = await fetch(`${baseUrl}/api/projects`, {
+        method: "POST",
+        headers: authHeaders(ownerToken),
+        body: JSON.stringify({ description: "A CRM with customers and deals." }),
+      });
+      const { project } = (await createRes.json()) as { project: { id: string; name: string } };
+
+      await fetch(`${baseUrl}/api/projects/${project.id}/collaborators`, {
+        method: "POST",
+        headers: authHeaders(ownerToken),
+        body: JSON.stringify({ email: removedEmail }),
+      });
+      await fetch(`${baseUrl}/api/projects/${project.id}/collaborators`, {
+        method: "POST",
+        headers: authHeaders(ownerToken),
+        body: JSON.stringify({ email: leaverEmail }),
+      });
+      const listRes = await fetch(`${baseUrl}/api/projects/${project.id}/collaborators`, { headers: authHeaders(ownerToken) });
+      const { collaborators } = (await listRes.json()) as { collaborators: { userId: string; email: string }[] };
+      const removedUserId = collaborators.find((c) => c.email === removedEmail)!.userId;
+      const leaverUserId = collaborators.find((c) => c.email === leaverEmail)!.userId;
+      emailSender.sentTo.length = 0; // The two invites above (round 1253) also each send one -- only the removal sends matter here.
+
+      const removeRes = await fetch(`${baseUrl}/api/projects/${project.id}/collaborators/${removedUserId}?lang=en`, {
+        method: "DELETE",
+        headers: authHeaders(ownerToken),
+      });
+      assert.equal(removeRes.status, 204);
+      assert.equal(emailSender.sentTo.length, 1, "exactly one notification must be sent for the owner-initiated removal");
+      assert.equal(emailSender.sentTo[0].to, removedEmail, "the notification must go to the REMOVED collaborator");
+      assert.match(emailSender.sentTo[0].text, new RegExp(project.name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")), "the body must name the real project");
+
+      const leaveRes = await fetch(`${baseUrl}/api/projects/${project.id}/collaborators/${leaverUserId}`, {
+        method: "DELETE",
+        headers: authHeaders(leaverToken),
+      });
+      assert.equal(leaveRes.status, 204);
+      assert.equal(emailSender.sentTo.length, 1, "a self-initiated leave must never send a notification to the leaver themselves");
+    },
+    { emailSender },
+  );
+});
+
 test("a collaborator (not the owner) cannot invite or remove other collaborators", async () => {
   await withServer(async (baseUrl) => {
     const ownerToken = await signup(baseUrl, "owner-collab3@example.com");
@@ -16032,6 +16094,92 @@ test("the owner can change an existing collaborator's role between 'editor' and 
     });
     assert.equal(afterPromoteWrite.status, 200);
   });
+});
+
+/**
+ * Round 1254: this route used to send no notification anywhere once the
+ * role change succeeded -- the same gap round 1253 just closed for the
+ * sibling invite route, except here the affected collaborator (not the
+ * owner who made the change) is the one who needs to know, since
+ * rounds 886/891's own in-session UI self-correction never reaches an
+ * offline collaborator or a closed tab. Confirms the real
+ * EmailSender.send call reaches the AFFECTED collaborator, naming the
+ * real project and the real new role.
+ */
+test("changing a collaborator's role sends a real notification to the AFFECTED collaborator, naming the project and new role, when email is configured", async () => {
+  const emailSender = createFakeEmailSender();
+  await withServer(
+    async (baseUrl) => {
+      const ownerToken = await signup(baseUrl, `owner-role-notify-${Date.now()}@example.com`);
+      const collabEmail = `collab-role-notify-${Date.now()}@example.com`;
+      await signup(baseUrl, collabEmail);
+
+      const createRes = await fetch(`${baseUrl}/api/projects`, {
+        method: "POST",
+        headers: authHeaders(ownerToken),
+        body: JSON.stringify({ description: "A CRM with customers and deals." }),
+      });
+      const { project } = (await createRes.json()) as { project: { id: string; name: string } };
+
+      await fetch(`${baseUrl}/api/projects/${project.id}/collaborators`, {
+        method: "POST",
+        headers: authHeaders(ownerToken),
+        body: JSON.stringify({ email: collabEmail }),
+      });
+      const listRes = await fetch(`${baseUrl}/api/projects/${project.id}/collaborators`, { headers: authHeaders(ownerToken) });
+      const { collaborators } = (await listRes.json()) as { collaborators: { userId: string }[] };
+      const collabUserId = collaborators[0].userId;
+      emailSender.sentTo.length = 0; // The invite itself (round 1253) also sends one -- only the role-change send matters here.
+
+      const roleRes = await fetch(`${baseUrl}/api/projects/${project.id}/collaborators/${collabUserId}/role`, {
+        method: "PATCH",
+        headers: authHeaders(ownerToken),
+        body: JSON.stringify({ role: "viewer", lang: "en" }),
+      });
+      assert.equal(roleRes.status, 200);
+
+      assert.equal(emailSender.sentTo.length, 1, "exactly one notification must be sent");
+      assert.equal(emailSender.sentTo[0].to, collabEmail, "the notification must go to the AFFECTED collaborator, not the owner who made the change");
+      assert.match(emailSender.sentTo[0].text, new RegExp(project.name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")), "the body must name the real project");
+      assert.match(emailSender.sentTo[0].text, /view-only/, "the body must name the real new role");
+    },
+    { emailSender },
+  );
+});
+
+test("changing a collaborator's role itself still succeeds, with no notification attempted, when no email provider is configured", async () => {
+  const emailSender = createFakeEmailSender({ configured: false });
+  await withServer(
+    async (baseUrl) => {
+      const ownerToken = await signup(baseUrl, `owner-role-notify-unconfigured-${Date.now()}@example.com`);
+      const collabEmail = `collab-role-notify-unconfigured-${Date.now()}@example.com`;
+      await signup(baseUrl, collabEmail);
+
+      const createRes = await fetch(`${baseUrl}/api/projects`, {
+        method: "POST",
+        headers: authHeaders(ownerToken),
+        body: JSON.stringify({ description: "A CRM with customers and deals." }),
+      });
+      const { project } = (await createRes.json()) as { project: { id: string } };
+
+      await fetch(`${baseUrl}/api/projects/${project.id}/collaborators`, {
+        method: "POST",
+        headers: authHeaders(ownerToken),
+        body: JSON.stringify({ email: collabEmail }),
+      });
+      const listRes = await fetch(`${baseUrl}/api/projects/${project.id}/collaborators`, { headers: authHeaders(ownerToken) });
+      const { collaborators } = (await listRes.json()) as { collaborators: { userId: string }[] };
+
+      const roleRes = await fetch(`${baseUrl}/api/projects/${project.id}/collaborators/${collaborators[0].userId}/role`, {
+        method: "PATCH",
+        headers: authHeaders(ownerToken),
+        body: JSON.stringify({ role: "viewer" }),
+      });
+      assert.equal(roleRes.status, 200, "the role change itself must still work exactly as before this feature existed");
+      assert.equal(emailSender.sentTo.length, 0, "no send should even be attempted when email isn't configured");
+    },
+    { emailSender },
+  );
 });
 
 test("changing a collaborator's role is owner-only, can't target the owner's own id, and 404s for a userId that isn't a real collaborator", async () => {

@@ -369,6 +369,10 @@ const AddCollaboratorSchema = z.object({
 
 const UpdateCollaboratorRoleSchema = z.object({
   role: CollaboratorRoleSchema,
+  // Round 1254: same optional client-language hint AddCollaboratorSchema
+  // already carries, for the role-change notification email this route
+  // now sends to the affected collaborator.
+  lang: z.enum(["he", "en"]).optional(),
 });
 
 const TransferOwnershipSchema = z.object({
@@ -2126,6 +2130,16 @@ export function createProjectsRouter(
    * role, removing, and (below) transferring ownership are all the same
    * real question: how much can this owner churn who has access to, or
    * owns, this project.
+   *
+   * Round 1254: like the sibling invite route before round 1253's own
+   * fix, this gave the AFFECTED collaborator zero signal that their own
+   * access level just changed -- rounds 886/891's subscribeViewerDemoted
+   * only self-corrects an already-open tab's in-session UI state, so a
+   * collaborator who's offline or has the tab closed has no way to find
+   * out until they happen to notice different buttons next time they
+   * open the project. Best-effort, mirroring round 1253's own
+   * swallowed-send contract exactly: the role change itself already
+   * succeeded and was already committed.
    */
   router.patch(
     "/projects/:id/collaborators/:userId/role",
@@ -2143,6 +2157,23 @@ export function createProjectsRouter(
         throw new HttpError(400, formatValidationError(parsed.error), "VALIDATION_ERROR");
       }
       updateCollaboratorRole(db, project.id, req.params.userId, parsed.data.role);
+      const affected = findUserById(db, req.params.userId);
+      if (affected && emailSender.configured) {
+        const isHebrew = parsed.data.lang !== "en";
+        const roleLabel = parsed.data.role === "viewer" ? (isHebrew ? "צפייה בלבד" : "view-only") : isHebrew ? "עריכה" : "editor";
+        const subject = isHebrew ? `ההרשאה שלך בפרויקט "${project.name}" ב-Forge AI השתנתה` : `Your access to "${project.name}" on Forge AI was changed`;
+        const body = isHebrew
+          ? `ההרשאה שלך בפרויקט "${project.name}" ב-Forge AI שונתה להרשאת ${roleLabel}.`
+          : `Your access to "${project.name}" on Forge AI was changed to ${roleLabel}.`;
+        try {
+          await emailSender.send(affected.email, subject, body);
+        } catch {
+          // Swallowed, deliberately, same as the invite route's own send
+          // above -- the role change itself already succeeded and was
+          // already committed to the database; a failed best-effort
+          // notification must never turn that into an error response.
+        }
+      }
       res.json({ collaborators: listCollaborators(db, project.id), owner: getOwnerInfo(db, project) });
     }),
   );
@@ -2182,6 +2213,15 @@ export function createProjectsRouter(
    * removes-someone-else path has no such issue (the owner's own access
    * is untouched by removing a different collaborator), but this route
    * serves both, so the fix covers it unconditionally.
+   *
+   * Round 1254: the owner-removes-someone-else path gave the removed
+   * collaborator zero signal, the same gap round 1254's own role-change
+   * fix above just closed -- see that route's own doc comment. Never
+   * sent for the self-leave path (isSelf): notifying someone that they
+   * just did the thing they themselves asked to do is pure noise, not a
+   * signal. `lang` has nowhere to live in a bodyless DELETE, so it's
+   * read as a query param instead, the one place left for it on this
+   * route.
    */
   router.delete(
     "/projects/:id/collaborators/:userId",
@@ -2194,7 +2234,23 @@ export function createProjectsRouter(
         if (project.ownerId !== req.userId! && !isSelf) {
           throw new HttpError(403, "Only the project owner can remove a different collaborator", "COLLABORATOR_CANNOT_REMOVE_OTHERS");
         }
+        const removed = isSelf ? null : findUserById(db, req.params.userId);
         removeCollaborator(db, project.id, req.params.userId);
+        if (removed && emailSender.configured) {
+          const isHebrew = req.query.lang !== "en";
+          const subject = isHebrew ? `הוסרת מהפרויקט "${project.name}" ב-Forge AI` : `You were removed from "${project.name}" on Forge AI`;
+          const body = isHebrew
+            ? `הוסרת מהפרויקט "${project.name}" ב-Forge AI ואין לך יותר גישה אליו.`
+            : `You were removed from "${project.name}" on Forge AI and no longer have access to it.`;
+          try {
+            await emailSender.send(removed.email, subject, body);
+          } catch {
+            // Swallowed, deliberately, same as this route family's own
+            // convention -- the removal itself already succeeded and was
+            // already committed to the database; a failed best-effort
+            // notification must never turn that into an error response.
+          }
+        }
         return { status: 204, body: null };
       });
       res.status(status).end();

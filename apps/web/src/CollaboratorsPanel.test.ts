@@ -383,7 +383,7 @@ test("CollaboratorsPanel actually removes the collaborator once the confirmation
           headers: { "content-type": "application/json" },
         });
       }
-      if (method === "DELETE" && input === "/api/projects/proj1/collaborators/u1") {
+      if (method === "DELETE" && input === "/api/projects/proj1/collaborators/u1?lang=en") {
         deleteCalls += 1;
         return new Response(null, { status: 204 });
       }
@@ -840,7 +840,7 @@ test("CollaboratorsPanel lets the owner change a collaborator's role via a per-r
       fireEvent.change(rowSelect, { target: { value: "viewer" } });
       await waitForCondition(() => patchCalls === 1);
 
-      assert.deepEqual(patchBody, { role: "viewer" });
+      assert.deepEqual(patchBody, { role: "viewer", lang: "en" });
       await waitForCondition(() => (document.querySelector(".collab-list li select") as HTMLSelectElement)?.value === "viewer");
     } finally {
       globalThis.fetch = originalFetch;
@@ -927,7 +927,7 @@ test("CollaboratorsPanel disables every row's role select and remove button whil
           headers: { "content-type": "application/json" },
         });
       }
-      if (method === "DELETE" && input === "/api/projects/proj1/collaborators/u2") {
+      if (method === "DELETE" && input === "/api/projects/proj1/collaborators/u2?lang=en") {
         deleteCalls += 1;
         return new Response(null, { status: 204 });
       }
@@ -1024,7 +1024,7 @@ test("CollaboratorsPanel cross-gates the invite form against any role update or 
           headers: { "content-type": "application/json" },
         });
       }
-      if (method === "DELETE" && input === "/api/projects/proj1/collaborators/u2") {
+      if (method === "DELETE" && input === "/api/projects/proj1/collaborators/u2?lang=en") {
         deleteCalls += 1;
         await deletePromise;
         return new Response(null, { status: 204 });

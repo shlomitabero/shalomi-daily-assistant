@@ -1124,21 +1124,34 @@ export function addCollaborator(
  * a retry once this call carries a key for it to key its cached response
  * on.
  */
-export function removeCollaborator(projectId: string, userId: string): Promise<void> {
-  return request(`/projects/${projectId}/collaborators/${userId}`, {
+/**
+ * `lang` (round 1254) picks which language the server's own removal
+ * notification is written in -- sent only when the owner removes a
+ * DIFFERENT collaborator, never on a self-initiated "leave." Optional
+ * since a bodyless DELETE has nowhere else to carry it, so it's sent as
+ * a query param instead.
+ */
+export function removeCollaborator(projectId: string, userId: string, lang?: "he" | "en"): Promise<void> {
+  const query = lang ? `?lang=${lang}` : "";
+  return request(`/projects/${projectId}/collaborators/${userId}${query}`, {
     method: "DELETE",
     headers: { "x-idempotency-key": crypto.randomUUID() },
   });
 }
 
+/**
+ * `lang` (round 1254) picks which language the server's own role-change
+ * notification email is written in, the same `addCollaborator` convention.
+ */
 export function updateCollaboratorRole(
   projectId: string,
   userId: string,
   role: CollaboratorRole,
+  lang?: "he" | "en",
 ): Promise<{ collaborators: ProjectCollaborator[]; owner: ProjectOwnerInfo | null }> {
   return request(`/projects/${projectId}/collaborators/${userId}/role`, {
     method: "PATCH",
-    body: JSON.stringify({ role }),
+    body: JSON.stringify({ role, lang }),
   });
 }
 

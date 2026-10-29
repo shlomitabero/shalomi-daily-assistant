@@ -192,7 +192,7 @@ export function CollaboratorsPanel({
     setUpdatingRoleUserId(userId);
     setError(null);
     try {
-      const { collaborators } = await updateCollaboratorRole(projectId, userId, role);
+      const { collaborators } = await updateCollaboratorRole(projectId, userId, role, lang);
       setCollaborators(collaborators);
     } catch (err) {
       setError((err as Error).message);
@@ -206,7 +206,7 @@ export function CollaboratorsPanel({
     setRemovingUserId(userId);
     setError(null);
     try {
-      await removeCollaborator(projectId, userId);
+      await removeCollaborator(projectId, userId, lang);
       setCollaborators((current) => (current ? current.filter((c) => c.userId !== userId) : current));
     } catch (err) {
       setError((err as Error).message);
