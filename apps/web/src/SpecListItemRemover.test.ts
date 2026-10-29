@@ -2678,6 +2678,97 @@ test("EntitySummaryItem's Duplicate button shows the server's error on failure, 
   });
 });
 
+/**
+ * Round 1234: EntitySummaryItem backs Remove and Duplicate with two
+ * separate useRemovableSpecItem instances, each with its own independent
+ * error state (error/duplicateError), rendered unconditionally side by
+ * side -- with nothing cross-clearing them. A failed Remove (a completely
+ * ordinary, everyday failure -- the server rejects removing an entity
+ * another entity still has a relation field pointing at) used to leave its
+ * error banner on screen indefinitely through a later, unrelated,
+ * successful Duplicate on the same still-present entity, mirroring the
+ * exact class of bug already fixed for HistoryPanel (round 903),
+ * WhatsAppPanel (rounds 902/909), and this same file's own FieldChip
+ * (round 931) -- the only sibling in this remove/rename/duplicate chip
+ * family that had never gotten the cross-clear treatment.
+ */
+test("EntitySummaryItem's successful Duplicate clears a stale Remove error, and vice versa", async () => {
+  await withJsdom(async () => {
+    const originalFetch = globalThis.fetch;
+    const duplicatedProject: Project = {
+      ...baseProject,
+      spec: { ...baseProject.spec, entities: [...baseProject.spec.entities, { name: "Customer2", label: "Customer (copy)", fields: baseProject.spec.entities[0].fields }] },
+    };
+    globalThis.fetch = (async (input: string, init?: RequestInit) => {
+      const method = init?.method ?? "GET";
+      if (method === "DELETE" && input === "/api/projects/proj1/entities/Customer") {
+        return new Response(JSON.stringify({ error: 'Cannot remove this screen -- "Order" still links to it' }), {
+          status: 400,
+          headers: { "content-type": "application/json" },
+        });
+      }
+      if (method === "POST" && input === "/api/projects/proj1/entities/Customer/duplicate") {
+        return new Response(JSON.stringify({ project: duplicatedProject }), { status: 200, headers: { "content-type": "application/json" } });
+      }
+      throw new Error(`unexpected request ${method} ${input}`);
+    }) as typeof fetch;
+
+    try {
+      renderEntitySummaryItem(() => {});
+
+      fireEvent.click(document.querySelector(".entity-summary-remove") as HTMLButtonElement);
+      await waitForCondition(() => document.body.textContent?.includes("still links to it") ?? false);
+
+      fireEvent.click(document.querySelector(".entity-summary-duplicate") as HTMLButtonElement);
+      await waitForCondition(() => !(document.body.textContent?.includes("still links to it") ?? false));
+      assert.equal(
+        document.body.textContent?.includes("still links to it"),
+        false,
+        "a stale Remove error must not survive a later, unrelated successful Duplicate",
+      );
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+});
+
+test("EntitySummaryItem's successful Remove clears a stale Duplicate error", async () => {
+  await withJsdom(async () => {
+    const originalFetch = globalThis.fetch;
+    const removedProject: Project = { ...baseProject, spec: { ...baseProject.spec, entities: baseProject.spec.entities.slice(1) } };
+    globalThis.fetch = (async (input: string, init?: RequestInit) => {
+      const method = init?.method ?? "GET";
+      if (method === "POST" && input === "/api/projects/proj1/entities/Customer/duplicate") {
+        return new Response(JSON.stringify({ error: "cannot duplicate right now" }), {
+          status: 409,
+          headers: { "content-type": "application/json" },
+        });
+      }
+      if (method === "DELETE" && input === "/api/projects/proj1/entities/Customer") {
+        return new Response(JSON.stringify({ project: removedProject }), { status: 200, headers: { "content-type": "application/json" } });
+      }
+      throw new Error(`unexpected request ${method} ${input}`);
+    }) as typeof fetch;
+
+    try {
+      renderEntitySummaryItem(() => {});
+
+      fireEvent.click(document.querySelector(".entity-summary-duplicate") as HTMLButtonElement);
+      await waitForCondition(() => document.body.textContent?.includes("cannot duplicate right now") ?? false);
+
+      fireEvent.click(document.querySelector(".entity-summary-remove") as HTMLButtonElement);
+      await waitForCondition(() => !(document.body.textContent?.includes("cannot duplicate right now") ?? false));
+      assert.equal(
+        document.body.textContent?.includes("cannot duplicate right now"),
+        false,
+        "a stale Duplicate error must not survive a later, unrelated successful Remove",
+      );
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+});
+
 test("EntitySummaryItem's own remove button and rename are disabled while siblingActionBusy is true, and re-enable once it clears", async () => {
   await withJsdom(async () => {
     const entity = baseProject.spec.entities[0];

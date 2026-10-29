@@ -743,6 +743,27 @@ export function EntitySummaryItem({
     rename.startEditing();
   }
 
+  // Round 1234: mirrors FieldChip's own round-931 handleRemoveField --
+  // handleRemove/handleDuplicate come from two separate useRemovableSpecItem
+  // instances, each with no knowledge of the other's error state, so error/
+  // duplicateError render unconditionally side by side below with nothing
+  // cross-clearing them. Without this, failing a Remove (e.g. a relation
+  // dependency this entity still has) left its error banner showing
+  // indefinitely through a later, unrelated successful Duplicate on the
+  // same still-present entity -- the only action in this file's own
+  // remove/rename/duplicate chip family (RoleChip, AssumptionItem,
+  // PersonaItem, FieldChip) that never got this treatment, the same class
+  // already fixed for HistoryPanel (round 903) and WhatsAppPanel (rounds
+  // 902/909).
+  async function handleRemoveEntity() {
+    clearDuplicateError();
+    await handleRemove();
+  }
+  async function handleDuplicateEntity() {
+    clearError();
+    await handleDuplicate();
+  }
+
   if (readOnly) {
     return (
       <div className="entity-summary">
@@ -819,7 +840,7 @@ export function EntitySummaryItem({
         <button
           type="button"
           className="entity-summary-duplicate secondary small"
-          onClick={handleDuplicate}
+          onClick={handleDuplicateEntity}
           disabled={anyChildOrSelfBusy}
           aria-label={t("spec.entities.duplicate")}
           title={t("spec.entities.duplicate")}
@@ -829,7 +850,7 @@ export function EntitySummaryItem({
         <button
           type="button"
           className="entity-summary-remove"
-          onClick={handleRemove}
+          onClick={handleRemoveEntity}
           disabled={anyChildOrSelfBusy || !canRemove}
           aria-label={t("spec.entities.remove")}
           title={canRemove ? t("spec.entities.remove") : t("spec.entities.lastOneHint")}
