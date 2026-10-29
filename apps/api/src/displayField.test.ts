@@ -383,3 +383,35 @@ test("recordDisplayLabel renders a date display field as a real formatted date, 
     "must honor the given lang, matching this file's own LOCALE convention (he-IL)",
   );
 });
+
+/**
+ * Round 1227: the exact same bug class as the enum (761), boolean (771),
+ * relation (968), file (982), and date (1072) fixes above, never done for
+ * "number" -- a measurement-only entity like `StockLevel { quantity:
+ * number, warehouseId: relation->Warehouse }` has no name/title/text/
+ * longtext/enum/boolean/date field at all, so pickDisplayField's own
+ * last-resort step lands on the number field regardless, and
+ * recordDisplayLabel used to String() the raw un-grouped digits as the
+ * record's own label -- everywhere one is shown by name from this file's
+ * own real callers. Also confirms the invisible bidi mark toLocaleString
+ * adds before a negative number's minus sign under "he" (round 1089's
+ * finding) is stripped here too, matching interpolateTemplate's own
+ * established convention in this exact file's sibling module.
+ */
+test("recordDisplayLabel renders a number display field with locale thousands separators, not the raw ungrouped digits, and strips the invisible bidi mark under 'he'", () => {
+  const entity: Entity = {
+    name: "StockLevel",
+    fields: [
+      { name: "quantity", type: "number", required: true },
+      { name: "warehouseId", type: "relation", relationTo: "Warehouse", required: true },
+    ],
+  };
+  assert.equal(
+    recordDisplayLabel(entity, { id: 7, createdAt: "", quantity: 1500, warehouseId: 2 }),
+    "1,500",
+    "must render the number field with real locale thousands separators (default lang \"en\"), not the raw \"1500\"",
+  );
+  const he = recordDisplayLabel(entity, { id: 7, createdAt: "", quantity: -150, warehouseId: 2 }, "he");
+  assert.equal(he, "-150", "must honor the given lang and strip the invisible bidi mark before a negative number's minus sign");
+  assert.ok(!he.includes("‎") && !he.includes("‏"), "must contain no invisible bidi mark at all");
+});

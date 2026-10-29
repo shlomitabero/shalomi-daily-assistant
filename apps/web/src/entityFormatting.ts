@@ -263,6 +263,19 @@ export function formatNumberValue(value: number, lang: Lang, options?: Intl.Numb
 }
 
 /**
+ * Mirrors automationsReport.ts's own stripBidiMarks exactly -- see its
+ * doc comment for the full "V8/ICU's toLocaleString('he-IL') silently
+ * prepends an invisible bidi mark before a negative number's minus sign"
+ * rationale. Needed by recordDisplayLabel's own number branch below,
+ * since that output isn't only shown on-screen (where the mark is
+ * harmless) -- it also flows into a CSV export a user downloads and
+ * shares outside the app, with no RTL bidi context left to protect.
+ */
+function stripBidiMarks(s: string): string {
+  return s.replace(/[‎‏]/g, "");
+}
+
+/**
  * Sums every `number`-type field across a set of records -- the table
  * view's own totals row, so an invoice-amount or quantity column doesn't
  * require a business owner to manually add it up by eye or a separate
@@ -1203,6 +1216,18 @@ export function recordDisplayLabel(entity: Entity, record: EntityRecord, lang: L
   // 1048-1071 already fixed for the calendar view's own chip-label
   // functions, never audited for this far more pervasive sibling.
   if (field?.type === "date" && typeof value === "string") return formatDateValue(value, lang);
+  // Round 1227: the SAME last-resort fallback can also land on a `number`
+  // field -- a measurement-only entity like `StockLevel { quantity:
+  // number, warehouseId: relation }` has no name/title/text/longtext/
+  // enum/boolean/date field at all, so pickDisplayField's own final step
+  // picks the number field regardless. Falling through to `String(value)`
+  // here would render the raw, un-grouped digits ("1500" instead of
+  // "1,500") as this record's own label everywhere one is shown by name --
+  // inconsistent with this file's own formatNumberValue (already used by
+  // the table view's own cell rendering) for the identical reason.
+  // stripBidiMarks matches automationsReport.ts's own established
+  // convention for a locale-formatted number that can leave the app.
+  if (field?.type === "number" && typeof value === "number") return stripBidiMarks(formatNumberValue(value, lang));
   if (field?.type === "relation") return `#${record.id}`;
   // Round 982: the SAME last-resort fallback can also land on a `file`
   // field -- an attachment/join entity like `Enrollment { certificate:
