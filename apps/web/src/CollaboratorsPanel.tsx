@@ -308,13 +308,17 @@ export function CollaboratorsPanel({
    * own shape exactly: fetches the project's own feed token fresh each
    * click (cheap, same reasoning as that function's own doc comment)
    * rather than caching it, and builds the new combined-feed route's URL
-   * (routes/calendar.ts's `GET /public/calendar/:projectId/all.ics`)
-   * instead of one entity-scoped URL.
+   * (routes/calendar.ts's `GET /public/calendar/:projectId/all/feed.ics`
+   * -- a two-segment path, not a single-segment `all.ics` literal, since
+   * round 1250 found that a literal `all.ics` would silently collide with
+   * any real entity named "All" in any letter case, because Express's
+   * route matching is case-insensitive by default; see that route's own
+   * doc comment) instead of one entity-scoped URL.
    */
   async function handleSubscribeAllCalendars() {
     try {
       const { token } = await getCalendarFeedToken(projectId);
-      const url = `${window.location.origin}/api/public/calendar/${projectId}/all.ics?token=${token}`;
+      const url = `${window.location.origin}/api/public/calendar/${projectId}/all/feed.ics?token=${token}`;
       await navigator.clipboard.writeText(url);
       setSubscribeAllStatus("copied");
     } catch {

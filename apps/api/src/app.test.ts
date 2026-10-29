@@ -17037,7 +17037,7 @@ test("POST /projects/:id/calendar-feed-token/regenerate invalidates the old toke
  * ONE combined feed instead of one per entity. Shares the exact same
  * token-auth as the per-entity route (confirmed by the 404 case below).
  */
-test("GET /public/calendar/:projectId/all.ics merges every date-bearing entity's records into one feed, and 404s for the same bad-token cases as the per-entity route", async () => {
+test("GET /public/calendar/:projectId/all/feed.ics merges every date-bearing entity's records into one feed, and 404s for the same bad-token cases as the per-entity route", async () => {
   await withServer(async (baseUrl, db) => {
     const email = `calendar-feed-all-${randomUUID()}@example.com`;
     const authToken = await signup(baseUrl, email);
@@ -17066,7 +17066,7 @@ test("GET /public/calendar/:projectId/all.ics merges every date-bearing entity's
     const tokenRes = await fetch(`${baseUrl}/api/projects/${projectId}/calendar-feed-token`, { headers: authHeaders(authToken) });
     const { token: feedToken } = (await tokenRes.json()) as { token: string };
 
-    const feedRes = await fetch(`${baseUrl}/api/public/calendar/${projectId}/all.ics?token=${feedToken}`);
+    const feedRes = await fetch(`${baseUrl}/api/public/calendar/${projectId}/all/feed.ics?token=${feedToken}`);
     assert.equal(feedRes.status, 200);
     assert.match(feedRes.headers.get("content-type") ?? "", /text\/calendar/);
     const ics = await feedRes.text();
@@ -17075,22 +17075,30 @@ test("GET /public/calendar/:projectId/all.ics merges every date-bearing entity's
     assert.match(ics, /SUMMARY:\[Invoice\] Invoice #1/, "the Invoice record's SUMMARY must be prefixed with its own entity's label");
     assert.doesNotMatch(ics, /irrelevant/, "Note has no date field at all -- it must never contribute an event to the combined feed");
 
-    const noTokenRes = await fetch(`${baseUrl}/api/public/calendar/${projectId}/all.ics?token=anything`);
+    const noTokenRes = await fetch(`${baseUrl}/api/public/calendar/${projectId}/all/feed.ics?token=anything`);
     assert.equal(noTokenRes.status, 404, "the combined feed route must share the exact same token-auth as the per-entity route");
 
-    const wrongProjectRes = await fetch(`${baseUrl}/api/public/calendar/${randomUUID()}/all.ics?token=${feedToken}`);
+    const wrongProjectRes = await fetch(`${baseUrl}/api/public/calendar/${randomUUID()}/all/feed.ics?token=${feedToken}`);
     assert.equal(wrongProjectRes.status, 404);
   });
 });
 
 /**
  * Round 1247: confirms the route-registration-order fix actually works --
- * an entity genuinely named "Appointment" (not "all") must still be
- * reachable through its own per-entity URL even now that a literal
- * "/all.ics" route is registered first, proving the more specific
- * per-entity route isn't accidentally shadowed by the new one.
+ * an entity genuinely named "Appointment" must still be reachable through
+ * its own per-entity URL even now that the combined-feed route is
+ * registered first.
+ *
+ * Round 1250: the combined feed moved off the single-segment
+ * `/all.ics` path (which round 1250 found collides, case-insensitively,
+ * with any entity actually named "All") to the two-segment
+ * `/all/feed.ics` path below, so this coexistence check now matters for
+ * a different reason: proving the per-entity `:entityName.ics` route's
+ * own single-segment pattern never matches the combined route's
+ * two-segment one, in either direction. See the dedicated "All" entity
+ * test right after this one for the actual collision-elimination proof.
  */
-test("GET /public/calendar/:projectId/:entityName.ics still works for an ordinary entity after the new /all.ics route was added", async () => {
+test("GET /public/calendar/:projectId/:entityName.ics still works for an ordinary entity after the new /all/feed.ics route was added", async () => {
   await withServer(async (baseUrl, db) => {
     const email = `calendar-feed-coexist-${randomUUID()}@example.com`;
     const authToken = await signup(baseUrl, email);
@@ -17117,6 +17125,52 @@ test("GET /public/calendar/:projectId/:entityName.ics still works for an ordinar
     assert.equal(feedRes.status, 200);
     const ics = await feedRes.text();
     assert.match(ics, /SUMMARY:Checkup/, "the per-entity route's own SUMMARY must have no [EntityLabel] prefix -- that's the combined feed's own behavior only");
+  });
+});
+
+/**
+ * Round 1250: the actual collision-elimination proof. Before this round's
+ * fix, a project with a real entity literally named "All" (in any letter
+ * case) had its own per-entity feed permanently, silently shadowed by the
+ * project-wide combined-feed route, because Express's route matching is
+ * case-insensitive by default and the combined route used to live at the
+ * single-segment literal path `/all.ics` -- indistinguishable, to
+ * Express's router, from `:entityName.ics` matching the literal entity
+ * name "All" (or "all", or "ALL"). Moving the combined route to the
+ * two-segment `/all/feed.ics` path means this project's own
+ * `GET .../All.ics` can now only ever match the per-entity route, whose
+ * own SUMMARY has no `[EntityLabel]` prefix -- the combined feed's own
+ * distinguishing behavior -- proving the two routes are no longer
+ * conflated.
+ */
+test("an entity literally named \"All\" still reaches its own per-entity feed, not the combined one, now that the combined feed lives at a different path", async () => {
+  await withServer(async (baseUrl, db) => {
+    const email = `calendar-feed-all-entity-${randomUUID()}@example.com`;
+    const authToken = await signup(baseUrl, email);
+    const user = findUserByEmail(db, email)!;
+    const spec: ProductSpec = {
+      summary: "test",
+      personas: [],
+      roles: ["Admin"],
+      entities: [{ name: "All", fields: [{ name: "name", type: "text", required: true }, { name: "date", type: "date", required: true }] }],
+      screens: [],
+      assumptions: [],
+      openQuestions: [],
+    };
+    const projectId = randomUUID();
+    insertProject(db, { id: projectId, ownerId: user.id, name: "CRM", description: "test", spec });
+    diffAndMigrate(db, projectId, undefined, spec);
+    markProjectBuilt(db, projectId);
+    insertRecord(db, projectId, spec.entities[0], { name: "Everything", date: "2026-05-01" });
+
+    const tokenRes = await fetch(`${baseUrl}/api/projects/${projectId}/calendar-feed-token`, { headers: authHeaders(authToken) });
+    const { token: feedToken } = (await tokenRes.json()) as { token: string };
+
+    const feedRes = await fetch(`${baseUrl}/api/public/calendar/${projectId}/All.ics?token=${feedToken}`);
+    assert.equal(feedRes.status, 200);
+    const ics = await feedRes.text();
+    assert.match(ics, /SUMMARY:Everything/, "must reach the per-entity route's own unprefixed SUMMARY, not the combined feed's [All] Everything");
+    assert.doesNotMatch(ics, /\[All\]/, "the combined feed's own [EntityLabel] SUMMARY prefix must never appear here");
   });
 });
 

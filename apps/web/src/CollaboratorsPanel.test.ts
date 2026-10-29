@@ -1206,7 +1206,7 @@ test("CollaboratorsPanel's calendar-feed regenerate button calls the real endpoi
  * requireProjectAccess, not requireProjectOwner, the exact same access any
  * collaborator already has to EntityPanel.tsx's own per-entity button.
  */
-test("CollaboratorsPanel's \"Subscribe to combined calendar\" button is visible to a plain collaborator (not just the owner), and copies the real all.ics URL built from the real token", async () => {
+test("CollaboratorsPanel's \"Subscribe to combined calendar\" button is visible to a plain collaborator (not just the owner), and copies the real all/feed.ics URL built from the real token", async () => {
   await withJsdom(async () => {
     const originalFetch = globalThis.fetch;
     let tokenCalls = 0;
@@ -1243,7 +1243,7 @@ test("CollaboratorsPanel's \"Subscribe to combined calendar\" button is visible 
       await waitForCondition(() => tokenCalls === 1);
       await waitForCondition(() => writtenText !== null);
 
-      assert.equal(writtenText, `${window.location.origin}/api/public/calendar/proj1/all.ics?token=real-feed-token`);
+      assert.equal(writtenText, `${window.location.origin}/api/public/calendar/proj1/all/feed.ics?token=real-feed-token`);
     } finally {
       globalThis.fetch = originalFetch;
       delete (navigator as { clipboard?: unknown }).clipboard;

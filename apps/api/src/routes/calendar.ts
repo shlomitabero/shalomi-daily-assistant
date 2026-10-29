@@ -81,20 +81,38 @@ export function createCalendarFeedRouter(db: ForgeDatabase): Router {
    * today needing its own separate "Subscribe" URL with zero cross-entity
    * view once pasted into a real calendar app. This route merges every
    * date-bearing entity's records into ONE feed via
-   * buildCombinedCalendarFeedIcs. Registered BEFORE the per-entity route
-   * below on purpose: Express matches routes in registration order, and
-   * that route's own `:entityName.ics` segment would otherwise match
-   * "all.ics" too (treating "all" as a literal entity name) and shadow
-   * this one, since the more specific literal path never gets a chance to
-   * win just by being more specific -- only registration order decides.
-   * Shares the exact same token-auth and `calendarFeedRateLimiter` as the
-   * per-entity route (keyed by project+token together, so this route's
-   * own requests share the same budget as that one against the same
-   * project -- the right scope, since both are reads against the same
-   * underlying resource).
+   * buildCombinedCalendarFeedIcs.
+   *
+   * Round 1250: this used to live at the literal path
+   * `/public/calendar/:projectId/all.ics` -- registered before the
+   * per-entity route specifically to win a registration-order race
+   * against that route's own `:entityName.ics` segment for the literal
+   * string "all.ics". That only fixed the FIRST-registration half of the
+   * problem: Express's own `case sensitive routing` setting defaults to
+   * `false` (confirmed: app.ts's `express()` call never overrides it, and
+   * a direct Express repro confirms `/all.ics`, `/All.ics`, and
+   * `/ALL.ics` are all literally the SAME route to Express's router), so
+   * nothing stopped a project from having a real entity literally named
+   * "All" (EntitySchema only requires a non-empty string; the entity
+   * rename UI has no reserved-word check) and having ITS OWN per-entity
+   * subscribe URL permanently, silently shadowed by this route instead --
+   * a calendar app pasted-into would keep re-fetching the wrong
+   * (combined, every-entity) feed forever, with no error anywhere to
+   * reveal the mismatch. Moving this to a path with an EXTRA literal
+   * segment (`all/feed.ics`, two segments, vs. the per-entity route's own
+   * exactly-one-segment `:entityName.ics` pattern) removes the whole
+   * collision class outright: no single-segment entity name, in any
+   * letter case, can ever match a path requiring two segments, so this no
+   * longer depends on "all" being reserved or enforced anywhere at all.
+   * Still registered before the per-entity route (harmless now, but kept
+   * since there's no reason to move it) and still shares the exact same
+   * token-auth and `calendarFeedRateLimiter` as that route (keyed by
+   * project+token together, so this route's own requests share the same
+   * budget as that one against the same project -- the right scope,
+   * since both are reads against the same underlying resource).
    */
   router.get(
-    "/public/calendar/:projectId/all.ics",
+    "/public/calendar/:projectId/all/feed.ics",
     calendarFeedRateLimiter,
     asyncRoute((req, res) => {
       const { projectId } = req.params;
