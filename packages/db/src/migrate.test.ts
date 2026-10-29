@@ -2357,6 +2357,64 @@ test("diffAndMigrate recovers a reused column's last known type across a TEXT-bu
 });
 
 /**
+ * Round 1226: findLastKnownFieldType (checkpoints.ts) scanned checkpoint
+ * history for entity/field names with a plain exact-case `===` match --
+ * no fallback at all, unlike the physical-column lookup two lines above
+ * its own call site (migrate.ts), which already resolves a reused
+ * column's name case-insensitively since round 1108 itself. A field
+ * removed and later re-added under a DIFFERENT letter case (a cosmetic
+ * recase, round 988's own "never treat like a real drop" convention) is
+ * exactly the same "reused column" scenario this whole branch exists
+ * for -- but the exact-case lookup silently found nothing, returning
+ * undefined and skipping the type_changed detection entirely. Mirrors
+ * the test just above, but re-adds "lastContacted" as "Status" (capital
+ * S) with a different type, confirming the type lineage is still
+ * recovered.
+ */
+test("diffAndMigrate recovers a reused column's last known type even when the re-added field's name differs only in case", () => {
+  const db = openDatabase(":memory:");
+  ensureCheckpointsTable(db);
+
+  const baseSpec: ProductSpec = {
+    ...spec,
+    entities: [
+      { ...spec.entities[0], fields: [...spec.entities[0].fields, { name: "stage", type: "date", required: false }] },
+      spec.entities[1],
+    ],
+  };
+  applyMigrations(db, "proj1", baseSpec);
+  insertCheckpoint(db, { id: "cp1", projectId: "proj1", label: "Initial build", kind: "build", spec: baseSpec });
+
+  // Refine 1: drop "stage" entirely.
+  const spec1: ProductSpec = { ...spec };
+  diffAndMigrate(db, "proj1", baseSpec, spec1);
+  insertCheckpoint(db, { id: "cp2", projectId: "proj1", label: "Refine: drop stage", kind: "refine", spec: spec1 });
+
+  // Refine 2: re-add a field under a DIFFERENT letter case ("Stage", not
+  // "stage"), as "enum" this time. The physical column is still there,
+  // under its original lowercase name, and SQLite resolves "Stage" to
+  // it case-insensitively (migrate.ts's own physicalColumnName lookup) --
+  // so this is still a genuine reused-column case, just with a cosmetic
+  // name-case difference on top.
+  const spec2: ProductSpec = {
+    ...spec,
+    entities: [
+      {
+        ...spec.entities[0],
+        fields: [...spec.entities[0].fields, { name: "Stage", type: "enum", required: false, enumValues: ["Never", "Recently"] }],
+      },
+      spec.entities[1],
+    ],
+  };
+  const changes = diffAndMigrate(db, "proj1", spec1, spec2);
+
+  const reused = changes.find((c) => c.type === "type_changed" && c.column.toLowerCase() === "stage");
+  assert.ok(reused, "expected a type_changed entry recovering the field's true history, not silence, despite the case-only name difference");
+  assert.equal(reused!.fromType, "date", "fromType must be the actual historical type recovered from checkpoint history, matched case-insensitively");
+  assert.equal(reused!.toType, "enum");
+});
+
+/**
  * The companion "benign reuse" case for the fix above: a field removed and
  * re-added two+ refines later under the same name AND the same TEXT-bucket
  * type (text -> text) must stay silent, exactly like it always has for a

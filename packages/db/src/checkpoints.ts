@@ -275,9 +275,25 @@ export function findLastKnownFieldType(db: ForgeDatabase, projectId: string, ent
     }
     const entities = (parsed as { entities?: unknown })?.entities;
     if (!Array.isArray(entities)) continue;
-    const entity = entities.find((e) => (e as { name?: unknown })?.name === entityName) as { fields?: unknown } | undefined;
+    // Round 1226: exact-case first, falling back to case-insensitive --
+    // the same convention findField (routes/projects.ts) already uses --
+    // since the entity/field this is called with (migrate.ts's reused-
+    // column branch) is today's live declared name, which a cosmetic
+    // recase (round 988's own "never treat like a real drop" convention)
+    // can legitimately leave differing in case from how an OLDER
+    // checkpoint recorded it. An exact-case-only match silently returns
+    // undefined for a case-only-renamed reused field, defeating round
+    // 1108's own type-lineage recovery for exactly the field it was
+    // built for.
+    const entity = (entities.find((e) => (e as { name?: unknown })?.name === entityName) ??
+      entities.find((e) => typeof (e as { name?: unknown })?.name === "string" && ((e as { name: string }).name).toLowerCase() === entityName.toLowerCase())) as
+      | { fields?: unknown }
+      | undefined;
     if (!entity || !Array.isArray(entity.fields)) continue;
-    const field = entity.fields.find((f) => (f as { name?: unknown })?.name === fieldName) as { type?: unknown } | undefined;
+    const field = (entity.fields.find((f) => (f as { name?: unknown })?.name === fieldName) ??
+      entity.fields.find((f) => typeof (f as { name?: unknown })?.name === "string" && ((f as { name: string }).name).toLowerCase() === fieldName.toLowerCase())) as
+      | { type?: unknown }
+      | undefined;
     if (field && typeof field.type === "string") return field.type;
   }
   return undefined;
