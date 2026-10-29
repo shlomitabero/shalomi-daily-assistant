@@ -46,6 +46,7 @@ test("WhatsAppPanel's handleDisconnect resumes the background connected-poll aft
   const nextCursorRef = { current: null as string | null };
 
   const fn = new Function(
+    "mountedRef",
     "status",
     "setDisconnecting",
     "stopPolling",
@@ -63,6 +64,11 @@ test("WhatsAppPanel's handleDisconnect resumes the background connected-poll aft
     "projectId",
     `${code}\nreturn handleDisconnect;`,
   )(
+    // Round 1239: handleDisconnect's own catch branch now reads
+    // mountedRef.current too -- see this file's own round-1238 note on
+    // loadInitialStatus's identical injection. This test's own scenario
+    // keeps the panel mounted throughout, so `true`.
+    { current: true },
     { status: "connected" },
     () => {},
     () => {
@@ -161,6 +167,155 @@ test("WhatsAppPanel's handleDisconnect does not resume connected-polling after a
     "a genuinely successful disconnect must bump the version, the signal startPolling's own tick uses to discard a stale in-flight message fetch (round 530)",
   );
   assert.equal(nextCursorRef.current, null, "a disconnect must clear any stale pagination cursor from before the disconnect");
+});
+
+/**
+ * Round 1239: the same unmount leak round 1238 fixed in loadInitialStatus
+ * also reaches handleDisconnect's own catch branch -- if the panel is
+ * closed (unmounted) while a Disconnect request is still in flight and
+ * that request then fails, the old code would still call
+ * startConnectedPolling() unconditionally, arming a real setInterval for
+ * a component instance that's already gone (the unmount effect's own
+ * stopConnectedPolling() call already ran and found nothing to stop).
+ * Confirms it's skipped once mountedRef.current is false.
+ */
+test("WhatsAppPanel's handleDisconnect does not resume connected-polling after a failed disconnect if the panel already unmounted before that request resolved", async () => {
+  const handlerMatch = whatsAppPanelSrc.match(/ {2}async function handleDisconnect\(\) \{[\s\S]*?\n {2}\}\n/);
+  assert.ok(handlerMatch, "expected to find handleDisconnect in WhatsAppPanel.tsx");
+  const { code } = transformSync(handlerMatch![0], { loader: "ts" });
+
+  let startConnectedPollingCalls = 0;
+  const rejection = new Error("network error");
+  const messagesVersionRef = { current: 0 };
+  const nextCursorRef = { current: null as string | null };
+
+  const fn = new Function(
+    "mountedRef",
+    "status",
+    "setDisconnecting",
+    "stopPolling",
+    "stopConnectedPolling",
+    "disconnectWhatsApp",
+    "messagesVersionRef",
+    "setStatus",
+    "setMessages",
+    "setHasMoreMessages",
+    "nextCursorRef",
+    "setRetryError",
+    "setDeleteError",
+    "setLoadError",
+    "startConnectedPolling",
+    "projectId",
+    `${code}\nreturn handleDisconnect;`,
+  )(
+    { current: false },
+    { status: "connected" },
+    () => {},
+    () => {},
+    () => {},
+    async () => {
+      throw rejection;
+    },
+    messagesVersionRef,
+    () => {},
+    () => {},
+    () => {},
+    nextCursorRef,
+    () => {},
+    () => {},
+    () => {},
+    () => {
+      startConnectedPollingCalls += 1;
+    },
+    "proj1",
+  ) as () => Promise<void>;
+
+  await fn();
+
+  assert.equal(
+    startConnectedPollingCalls,
+    0,
+    "a failed disconnect must never resume connected-polling once the panel has already unmounted",
+  );
+});
+
+/**
+ * Round 1239: handleConnect has the identical gap loadInitialStatus had
+ * before round 1238 -- its own .then-equivalent (the code after `await
+ * connectWhatsApp(...)`) called startPolling() unconditionally, with no
+ * check at all for the panel having already closed while that request
+ * was still in flight. Confirms startPolling is skipped once
+ * mountedRef.current is false, and -- in the sibling test right after --
+ * still runs normally while the panel stays mounted, so the guard isn't
+ * silently disabling the feature outright.
+ */
+test("WhatsAppPanel's handleConnect does not start polling if the panel already unmounted before the connect request resolved", async () => {
+  const handlerMatch = whatsAppPanelSrc.match(/ {2}async function handleConnect\(\) \{[\s\S]*?\n {2}\}\n/);
+  assert.ok(handlerMatch, "expected to find handleConnect in WhatsAppPanel.tsx");
+  const { code } = transformSync(handlerMatch![0], { loader: "ts" });
+
+  let startPollingCalls = 0;
+  let capturedStatus: unknown;
+
+  const fn = new Function(
+    "mountedRef",
+    "setConnecting",
+    "setLoadError",
+    "connectWhatsApp",
+    "setStatus",
+    "startPolling",
+    "projectId",
+    `${code}\nreturn handleConnect;`,
+  )(
+    { current: false },
+    () => {},
+    () => {},
+    async () => ({ status: "connecting" }),
+    (next: unknown) => {
+      capturedStatus = next;
+    },
+    () => {
+      startPollingCalls += 1;
+    },
+    "proj1",
+  ) as () => Promise<void>;
+
+  await fn();
+
+  assert.deepEqual(capturedStatus, { status: "connecting" });
+  assert.equal(startPollingCalls, 0, "startPolling must never run once the panel has already unmounted");
+});
+
+test("WhatsAppPanel's handleConnect still starts polling normally while the panel stays mounted", async () => {
+  const handlerMatch = whatsAppPanelSrc.match(/ {2}async function handleConnect\(\) \{[\s\S]*?\n {2}\}\n/);
+  const { code } = transformSync(handlerMatch![0], { loader: "ts" });
+
+  let startPollingCalls = 0;
+
+  const fn = new Function(
+    "mountedRef",
+    "setConnecting",
+    "setLoadError",
+    "connectWhatsApp",
+    "setStatus",
+    "startPolling",
+    "projectId",
+    `${code}\nreturn handleConnect;`,
+  )(
+    { current: true },
+    () => {},
+    () => {},
+    async () => ({ status: "connecting" }),
+    () => {},
+    () => {
+      startPollingCalls += 1;
+    },
+    "proj1",
+  ) as () => Promise<void>;
+
+  await fn();
+
+  assert.equal(startPollingCalls, 1, "startPolling must still run normally while the panel is still mounted");
 });
 
 /**

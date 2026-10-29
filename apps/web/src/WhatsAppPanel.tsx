@@ -630,7 +630,15 @@ export function WhatsAppPanel({
     try {
       const next = await connectWhatsApp(projectId);
       setStatus(next);
-      startPolling();
+      // Round 1239: closing the panel (unmount) while this request was
+      // still in flight already ran the mount effect's own cleanup
+      // (stopPolling()/stopConnectedPolling()) before this line -- both
+      // were no-ops since nothing had started polling yet. Without this
+      // guard, startPolling() below would still arm a brand-new
+      // setInterval for a component instance that's already gone, which
+      // nothing will ever clear again (same gap, same fix, as
+      // loadInitialStatus's own round-1238 comment above).
+      if (mountedRef.current) startPolling();
     } catch (err) {
       setLoadError((err as Error).message);
     } finally {
@@ -669,7 +677,11 @@ export function WhatsAppPanel({
       // without resuming it here, a single failed disconnect attempt
       // silently leaves an otherwise-still-connected panel with no
       // monitoring at all until the user closes and reopens it.
-      if (wasConnected) startConnectedPolling();
+      // Round 1239: the same unmount gap as handleConnect's own fix above
+      // -- a disconnect request that fails after the panel already
+      // closed must not re-arm startConnectedPolling() for a component
+      // instance that's already gone.
+      if (wasConnected && mountedRef.current) startConnectedPolling();
     } finally {
       setDisconnecting(false);
     }
