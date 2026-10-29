@@ -1559,7 +1559,8 @@ tbody tr:hover {
   margin: 0 0 14px;
 }
 
-.csv-import-label {
+.csv-import-label,
+.json-import-label {
   display: inline-flex;
   align-items: center;
   padding: 8px 14px;
@@ -1572,12 +1573,14 @@ tbody tr:hover {
   cursor: pointer;
 }
 
-.csv-import-label:has(input:disabled) {
+.csv-import-label:has(input:disabled),
+.json-import-label:has(input:disabled) {
   opacity: 0.55;
   cursor: default;
 }
 
-.csv-import-label:hover {
+.csv-import-label:hover,
+.json-import-label:hover {
   background: var(--surface);
   border-color: var(--steel);
 }

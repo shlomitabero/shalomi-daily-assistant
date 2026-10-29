@@ -5114,6 +5114,162 @@ test("EntityPanel's CSV import updates an existing record by its id column inste
 });
 
 /**
+ * Round 1221: the write-back half of Export JSON (round 1217) -- real-DOM
+ * coverage for JSON import (handleImportJsonFile), mirroring the CSV
+ * import test above exactly but through the second ("Import JSON") file
+ * input, confirming a real uploaded JSON array genuinely reaches
+ * file.text() -> JSON.parse -> buildImportRecordsFromJson -> createRecord,
+ * and the table genuinely reflects it afterward.
+ */
+test("EntityPanel's JSON import creates a real record from an uploaded file and shows it in the table", async () => {
+  await withJsdom(async () => {
+    const store: EntityRecord[] = [];
+    let nextId = 1;
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = (async (input: string, init?: RequestInit) => {
+      const method = init?.method ?? "GET";
+      if (method === "GET" && input === "/api/projects/proj1/entities/Customer") {
+        return new Response(JSON.stringify({ records: store }), { status: 200, headers: { "content-type": "application/json" } });
+      }
+      if (method === "POST" && input === "/api/projects/proj1/entities/Customer") {
+        const data = JSON.parse(init!.body as string);
+        const record = { id: nextId++, ...data };
+        store.push(record);
+        return new Response(JSON.stringify({ record }), { status: 201, headers: { "content-type": "application/json" } });
+      }
+      throw new Error(`unexpected request ${method} ${input}`);
+    }) as typeof fetch;
+    try {
+      render(
+        React.createElement(
+          ThemeProvider,
+          null,
+          React.createElement(
+            LanguageProvider,
+            null,
+            React.createElement(EntityPanel, {
+              projectId: "proj1",
+              userId: "user1",
+              entity: CUSTOMER_IMPORT_ENTITY,
+              allEntities: [CUSTOMER_IMPORT_ENTITY],
+              onEntityRenamed: () => {},
+            }),
+          ),
+        ),
+      );
+      await waitForCondition(() => document.querySelector(".json-import-label") !== null);
+
+      const jsonText = JSON.stringify([{ name: "Dana", email: "dana@example.com" }]);
+      const file = new File([jsonText], "customers.json", { type: "application/json" });
+      const fileInput = document.querySelector('.json-import-label input[type="file"]') as HTMLInputElement;
+      Object.defineProperty(fileInput, "files", { value: [file], configurable: true });
+      fireEvent.change(fileInput);
+
+      await waitForCondition(() => document.querySelectorAll("tbody tr").length === 1);
+
+      assert.equal(document.querySelectorAll("tbody tr").length, 1, "the imported record must appear as a real row in the table");
+      assert.match(
+        document.querySelector("tbody tr")!.textContent ?? "",
+        /Dana/,
+        "the row must show the name actually parsed from the uploaded JSON file, not a placeholder",
+      );
+      assert.equal(store.length, 1, "the import must have actually POSTed the parsed row to the server, not just updated local state");
+      assert.equal(store[0].name, "Dana");
+      assert.equal(store[0].email, "dana@example.com");
+      assert.equal(document.querySelector("p.error") === null, true, "a successful import must not leave an error banner showing");
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+});
+
+/**
+ * Mirrors the CSV id-column test above, exactly, but through JSON import:
+ * a row carrying `id: 1` must PATCH the existing record (not duplicate
+ * it), a row with no `id` key must still POST a genuinely new record, and
+ * both writes must carry X-Suppress-Automations -- confirming
+ * buildImportRecordsFromJson's own `id` handling and
+ * writeImportedRecords' shared PATCH-vs-POST/suppressAutomations logic
+ * are wired correctly for this entry point too, not just handleImportFile's.
+ */
+test("EntityPanel's JSON import updates an existing record by its id key instead of duplicating it, while still creating a row with no id", async () => {
+  await withJsdom(async () => {
+    const store: EntityRecord[] = [{ id: 1, name: "Dana", email: "dana@old.example.com" }];
+    let nextId = 2;
+    const seenRequests: { method: string; input: string; headers: Headers }[] = [];
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = (async (input: string, init?: RequestInit) => {
+      const method = init?.method ?? "GET";
+      if (method === "GET" && input === "/api/projects/proj1/entities/Customer") {
+        return new Response(JSON.stringify({ records: store }), { status: 200, headers: { "content-type": "application/json" } });
+      }
+      seenRequests.push({ method, input, headers: new Headers(init!.headers) });
+      if (method === "POST" && input === "/api/projects/proj1/entities/Customer") {
+        const data = JSON.parse(init!.body as string);
+        const record = { id: nextId++, ...data };
+        store.push(record);
+        return new Response(JSON.stringify({ record }), { status: 201, headers: { "content-type": "application/json" } });
+      }
+      const patchMatch = /^\/api\/projects\/proj1\/entities\/Customer\/(\d+)$/.exec(input);
+      if (method === "PATCH" && patchMatch) {
+        const id = Number(patchMatch[1]);
+        const record = store.find((r) => r.id === id);
+        assert.ok(record, `mock PATCH target record ${id} must exist`);
+        Object.assign(record!, JSON.parse(init!.body as string));
+        return new Response(JSON.stringify({ record }), { status: 200, headers: { "content-type": "application/json" } });
+      }
+      throw new Error(`unexpected request ${method} ${input}`);
+    }) as typeof fetch;
+    try {
+      render(
+        React.createElement(
+          ThemeProvider,
+          null,
+          React.createElement(
+            LanguageProvider,
+            null,
+            React.createElement(EntityPanel, {
+              projectId: "proj1",
+              userId: "user1",
+              entity: CUSTOMER_IMPORT_ENTITY,
+              allEntities: [CUSTOMER_IMPORT_ENTITY],
+              onEntityRenamed: () => {},
+            }),
+          ),
+        ),
+      );
+      await waitForCondition(() => document.querySelector(".json-import-label") !== null);
+
+      const jsonText = JSON.stringify([
+        { id: 1, name: "Dana", email: "dana@new.example.com" },
+        { name: "Amit", email: "amit@example.com" },
+      ]);
+      const file = new File([jsonText], "customers.json", { type: "application/json" });
+      const fileInput = document.querySelector('.json-import-label input[type="file"]') as HTMLInputElement;
+      Object.defineProperty(fileInput, "files", { value: [file], configurable: true });
+      fireEvent.change(fileInput);
+
+      await waitForCondition(() => store.length === 2);
+
+      assert.equal(store[0].id, 1, "the id=1 row must have UPDATED the existing record, not appended a new one");
+      assert.equal(store[0].email, "dana@new.example.com", "the existing record's own field must reflect the imported row's new value");
+      assert.equal(store[1].name, "Amit", "the row with no id key must still have been created as a genuinely new record");
+
+      const patchReq = seenRequests.find((r) => r.method === "PATCH");
+      const postReq = seenRequests.find((r) => r.method === "POST");
+      assert.ok(patchReq, "the id=1 row must have actually PATCHed the server, not POSTed a duplicate");
+      assert.ok(postReq, "the row with no id key must have actually POSTed a new record");
+      assert.equal(patchReq!.headers.get("x-suppress-automations"), "true", "a JSON-imported update must also suppress automations");
+      assert.equal(postReq!.headers.get("x-suppress-automations"), "true", "a JSON-imported create must still suppress automations");
+
+      await waitForCondition(() => /updated 1 existing/i.test(document.body.textContent ?? ""));
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+});
+
+/**
  * New in this round: a per-row "Print" action fills the always-mounted
  * (but on-screen-hidden, via styles.css) `.print-record-sheet` with that
  * ONE record's fields and calls `window.print()` -- the sheet's own

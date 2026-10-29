@@ -6,6 +6,7 @@ import {
   badgeTone,
   buildCalendarMonth,
   buildImportRecords,
+  buildImportRecordsFromJson,
   calendarChipLabelField,
   calendarChipLabelValue,
   computeNextFocusedRowId,
@@ -2742,6 +2743,155 @@ test("buildImportRecords still trusts the \"id\" column once the header covers e
   const result = buildImportRecords(fields, rows);
   assert.deepEqual(result.errors, []);
   assert.deepEqual(result.records, [{ id: 7, name: "Dana", email: "dana@example.com" }]);
+});
+
+/**
+ * Round 1221: the JSON counterpart to round 1217's Export JSON -- a user
+ * who clicked "Export JSON" had no way back in, unlike CSV's full export/
+ * import round-trip. buildImportRecordsFromJson is dramatically simpler
+ * than buildImportRecords: recordsToJson's own output already carries
+ * every field's REAL typed value, so there's no display-text coercion to
+ * reverse, just validation. Runs the real round-trip end to end
+ * (recordsToJson -> JSON.parse -> buildImportRecordsFromJson) to confirm
+ * every field type's real stored value survives unchanged, including the
+ * raw enum VALUE (not its enumLabels display text) and a real boolean
+ * (not CSV's "TRUE"/"FALSE" string).
+ */
+test("a real record's own JSON export round-trips through recordsToJson -> buildImportRecordsFromJson back to the exact same typed values, including id", () => {
+  const fields: Field[] = [
+    { name: "title", label: "Title", type: "text", required: true },
+    { name: "amount", label: "Amount", type: "number", required: true },
+    { name: "done", label: "Done", type: "boolean", required: false },
+    { name: "status", label: "Status", type: "enum", required: true, enumValues: ["New", "Won"], enumLabels: { New: "New", Won: "Won!" } },
+    { name: "courierId", label: "Courier", type: "relation", required: true, relationTo: "Courier" },
+  ];
+  const couriers: EntityRecord[] = [{ id: 42, name: "Yossi Cohen" }];
+  const record: EntityRecord = { id: 7, title: "Order A", amount: 120.5, done: true, status: "Won", courierId: 42 };
+  const json = recordsToJson(fields, [record]);
+  const parsed = JSON.parse(json);
+  const result = buildImportRecordsFromJson(fields, parsed, [courierEntity], { Courier: couriers });
+  assert.deepEqual(result.errors, []);
+  assert.deepEqual(result.records, [{ id: 7, title: "Order A", amount: 120.5, done: true, status: "Won", courierId: 42 }]);
+  assert.strictEqual(result.records[0].done, true, "a boolean must round-trip as a real JS boolean, not a string");
+});
+
+test("buildImportRecordsFromJson skips a row missing a required field and reports which row and field", () => {
+  const fields: Field[] = [{ name: "title", label: "Title", type: "text", required: true }];
+  const rows = [{ title: "Order A" }, { title: null }];
+  const result = buildImportRecordsFromJson(fields, rows);
+  assert.deepEqual(result.records, [{ title: "Order A" }]);
+  assert.equal(result.errors.length, 1);
+  assert.match(result.errors[0], /Row 2/);
+  assert.match(result.errors[0], /Title/);
+});
+
+test("buildImportRecordsFromJson rejects a relation id that doesn't match any related record, instead of silently importing a dangling reference", () => {
+  const fields: Field[] = [
+    { name: "name", label: "Name", type: "text", required: true },
+    { name: "courierId", label: "Courier", type: "relation", required: false, relationTo: "Courier" },
+  ];
+  const couriers: EntityRecord[] = [{ id: 42, name: "Yossi Cohen" }];
+  const rows = [{ name: "Order A", courierId: 999 }];
+  const result = buildImportRecordsFromJson(fields, rows, [courierEntity], { Courier: couriers });
+  assert.deepEqual(result.records, []);
+  assert.equal(result.errors.length, 1);
+  assert.match(result.errors[0], /doesn't match any Courier record/);
+});
+
+test("buildImportRecordsFromJson ignores an optional relation field when its target entity's records weren't loaded, instead of failing on it", () => {
+  const fields: Field[] = [
+    { name: "name", label: "Name", type: "text", required: true },
+    { name: "courierId", label: "Courier", type: "relation", required: false, relationTo: "Courier" },
+  ];
+  const rows = [{ name: "Order A", courierId: 42 }];
+  const result = buildImportRecordsFromJson(fields, rows);
+  assert.deepEqual(result.errors, []);
+  assert.deepEqual(result.records, [{ name: "Order A" }]);
+});
+
+test("buildImportRecordsFromJson rejects an enum value not among the field's own declared enumValues, instead of silently storing a stray string", () => {
+  const fields: Field[] = [{ name: "status", label: "Status", type: "enum", required: true, enumValues: ["New", "Won"] }];
+  const rows = [{ status: "Lost" }];
+  const result = buildImportRecordsFromJson(fields, rows);
+  assert.deepEqual(result.records, []);
+  assert.equal(result.errors.length, 1);
+  assert.match(result.errors[0], /isn't a valid option/);
+});
+
+test("buildImportRecordsFromJson refuses the whole import for an entity with a required file field, since no JSON descriptor can supply a real uploaded file", () => {
+  const fields: Field[] = [
+    { name: "title", label: "Title", type: "text", required: true },
+    { name: "attachment", label: "Attachment", type: "file", required: true },
+  ];
+  const rows = [{ title: "Invoice", attachment: { url: "/api/uploads/proj1/Task/report.pdf", name: "report.pdf", size: 1, mimeType: "application/pdf" } }];
+  const result = buildImportRecordsFromJson(fields, rows);
+  assert.deepEqual(result.records, []);
+  assert.equal(result.errors.length, 1);
+  assert.match(result.errors[0], /required file field/);
+  assert.match(result.errors[0], /Attachment/);
+});
+
+test("buildImportRecordsFromJson ignores an optional file field's descriptor instead of attempting to attach it", () => {
+  const fields: Field[] = [
+    { name: "title", label: "Title", type: "text", required: true },
+    { name: "attachment", label: "Attachment", type: "file", required: false },
+  ];
+  const rows = [{ title: "Invoice", attachment: { url: "/api/uploads/proj1/Task/report.pdf", name: "report.pdf", size: 1, mimeType: "application/pdf" } }];
+  const result = buildImportRecordsFromJson(fields, rows);
+  assert.deepEqual(result.errors, []);
+  assert.deepEqual(result.records, [{ title: "Invoice" }]);
+});
+
+test("buildImportRecordsFromJson resolves a valid \"id\" key into each record's own `id`, leaving the field data unchanged", () => {
+  const fields: Field[] = [{ name: "name", label: "Name", type: "text", required: true }];
+  const rows = [{ id: 7, name: "Dana" }, { id: 12, name: "Noa" }];
+  const result = buildImportRecordsFromJson(fields, rows);
+  assert.deepEqual(result.errors, []);
+  assert.deepEqual(result.records, [{ id: 7, name: "Dana" }, { id: 12, name: "Noa" }]);
+});
+
+test("buildImportRecordsFromJson treats a missing/null \"id\" as a brand-new record (no `id` key at all), not an error", () => {
+  const fields: Field[] = [{ name: "name", label: "Name", type: "text", required: true }];
+  const rows = [{ id: 7, name: "Dana" }, { name: "Amit" }, { id: null, name: "Noa" }];
+  const result = buildImportRecordsFromJson(fields, rows);
+  assert.deepEqual(result.errors, []);
+  assert.deepEqual(result.records, [{ id: 7, name: "Dana" }, { name: "Amit" }, { name: "Noa" }]);
+});
+
+test("buildImportRecordsFromJson rejects every row after the first that reuses an already-seen id, the same CSV-import protection round 1042 added", () => {
+  const fields: Field[] = [{ name: "name", label: "Name", type: "text", required: true }];
+  const rows = [{ id: 7, name: "Dana" }, { id: 7, name: "Noa" }, { id: 12, name: "Amit" }];
+  const result = buildImportRecordsFromJson(fields, rows);
+  assert.deepEqual(result.records, [{ id: 7, name: "Dana" }, { id: 12, name: "Amit" }]);
+  assert.equal(result.errors.length, 1);
+  assert.match(result.errors[0], /Row 2/);
+  assert.match(result.errors[0], /7/);
+});
+
+test("buildImportRecordsFromJson ignores an extra JSON key with no matching field, instead of erroring on it", () => {
+  const fields: Field[] = [{ name: "name", label: "Name", type: "text", required: true }];
+  const rows = [{ name: "Dana", internalNotes: "vip, handle with care" }];
+  const result = buildImportRecordsFromJson(fields, rows);
+  assert.deepEqual(result.errors, []);
+  assert.deepEqual(result.records, [{ name: "Dana" }]);
+});
+
+test("buildImportRecordsFromJson reports a row error when a row isn't a JSON object at all, instead of crashing", () => {
+  const fields: Field[] = [{ name: "name", label: "Name", type: "text", required: true }];
+  const rows = ["not-an-object", 42, ["also-not-an-object"]];
+  const result = buildImportRecordsFromJson(fields, rows);
+  assert.deepEqual(result.records, []);
+  assert.equal(result.errors.length, 3);
+  assert.match(result.errors[0], /Row 1/);
+});
+
+test("buildImportRecordsFromJson rejects a number field's value when it isn't actually a JSON number, instead of silently coercing it", () => {
+  const fields: Field[] = [{ name: "amount", label: "Amount", type: "number", required: true }];
+  const rows = [{ amount: "120" }];
+  const result = buildImportRecordsFromJson(fields, rows);
+  assert.deepEqual(result.records, []);
+  assert.equal(result.errors.length, 1);
+  assert.match(result.errors[0], /isn't a number/);
 });
 
 test("uniqueEnumValues de-dupes while preserving first-occurrence order, and tolerates a missing array", () => {

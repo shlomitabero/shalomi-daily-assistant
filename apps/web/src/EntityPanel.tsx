@@ -31,6 +31,7 @@ import {
   badgeTone,
   buildCalendarMonth,
   buildImportRecords,
+  buildImportRecordsFromJson,
   calendarChipLabelField,
   calendarChipLabelValue,
   computeNextFocusedRowId,
@@ -3764,52 +3765,101 @@ export function EntityPanel({
       const text = await file.text();
       const rows = parseCsv(text);
       const { records: parsedRecords, errors: parseErrors } = buildImportRecords(entity.fields, rows, allEntities, relatedRecords, lang);
-
-      if (parsedRecords.length === 0) {
-        setImportErrors(parseErrors);
-        setImportMessage(
-          parseErrors.length > 0
-            ? t("entity.import.allFailed", { errorCount: parseErrors.length })
-            : t("entity.import.empty"),
-        );
-        return;
-      }
-
-      const results = await Promise.allSettled(
-        parsedRecords.map((record) => {
-          const { id, ...data } = record as { id?: number } & Record<string, unknown>;
-          return id != null
-            ? updateRecord(projectId, entity.name, id, data, { suppressAutomations: true })
-            : createRecord(projectId, entity.name, data, { suppressAutomations: true });
-        }),
-      );
-      const serverErrors = results
-        .filter((r): r is PromiseRejectedResult => r.status === "rejected")
-        .map((r) => (r.reason as Error).message);
-      let createdCount = 0;
-      let updatedCount = 0;
-      results.forEach((r, i) => {
-        if (r.status !== "fulfilled") return;
-        if ((parsedRecords[i] as { id?: number }).id != null) updatedCount += 1;
-        else createdCount += 1;
-      });
-      const allErrors = [...parseErrors, ...serverErrors];
-      setImportErrors(allErrors);
-      setImportMessage(
-        updatedCount === 0
-          ? allErrors.length === 0
-            ? t("entity.import.success", { count: createdCount })
-            : t("entity.import.successWithErrors", { count: createdCount, errorCount: allErrors.length })
-          : allErrors.length === 0
-            ? t("entity.import.successWithUpdates", { count: createdCount, updatedCount })
-            : t("entity.import.successWithUpdatesAndErrors", { count: createdCount, updatedCount, errorCount: allErrors.length }),
-      );
-      await refresh();
+      await writeImportedRecords(parsedRecords, parseErrors);
     } catch (err) {
       setError((err as Error).message);
     } finally {
       setImportBusy(false);
     }
+  }
+
+  /**
+   * The JSON counterpart to handleImportFile -- the write-back half of
+   * Export JSON (round 1217), letting a user re-import their own exported
+   * file (or a hand-edited copy) without CSV's string-coercion ambiguity.
+   * buildImportRecordsFromJson already validates everything per-row; the
+   * only thing specific to this entry point is confirming the uploaded
+   * file is actually valid JSON holding an array at all, surfaced through
+   * importMessage (the same place every other whole-file import problem
+   * already goes) rather than the panel's top-level `error` banner.
+   */
+  async function handleImportJsonFile(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0];
+    e.target.value = ""; // allow re-selecting the same file to retry
+    if (!file) return;
+    setImportBusy(true);
+    setImportMessage(null);
+    setImportErrors([]);
+    setShowImportErrors(false);
+    try {
+      const text = await file.text();
+      let parsed: unknown;
+      try {
+        parsed = JSON.parse(text);
+      } catch {
+        setImportMessage(t("entity.import.jsonParseError"));
+        return;
+      }
+      if (!Array.isArray(parsed)) {
+        setImportMessage(t("entity.import.jsonParseError"));
+        return;
+      }
+      const { records: parsedRecords, errors: parseErrors } = buildImportRecordsFromJson(entity.fields, parsed, allEntities, relatedRecords);
+      await writeImportedRecords(parsedRecords, parseErrors);
+    } catch (err) {
+      setError((err as Error).message);
+    } finally {
+      setImportBusy(false);
+    }
+  }
+
+  /**
+   * Shared by handleImportFile and handleImportJsonFile once each has its
+   * own format-specific parsing done -- both write the exact same way
+   * (Promise.allSettled, id present -> PATCH else POST, suppressAutomations
+   * on every write, same created/updated/error summary message), so this
+   * is the one place that shared tail lives rather than two copies of it
+   * silently drifting apart.
+   */
+  async function writeImportedRecords(parsedRecords: Record<string, unknown>[], parseErrors: string[]): Promise<void> {
+    if (parsedRecords.length === 0) {
+      setImportErrors(parseErrors);
+      setImportMessage(
+        parseErrors.length > 0 ? t("entity.import.allFailed", { errorCount: parseErrors.length }) : t("entity.import.empty"),
+      );
+      return;
+    }
+
+    const results = await Promise.allSettled(
+      parsedRecords.map((record) => {
+        const { id, ...data } = record as { id?: number } & Record<string, unknown>;
+        return id != null
+          ? updateRecord(projectId, entity.name, id, data, { suppressAutomations: true })
+          : createRecord(projectId, entity.name, data, { suppressAutomations: true });
+      }),
+    );
+    const serverErrors = results
+      .filter((r): r is PromiseRejectedResult => r.status === "rejected")
+      .map((r) => (r.reason as Error).message);
+    let createdCount = 0;
+    let updatedCount = 0;
+    results.forEach((r, i) => {
+      if (r.status !== "fulfilled") return;
+      if ((parsedRecords[i] as { id?: number }).id != null) updatedCount += 1;
+      else createdCount += 1;
+    });
+    const allErrors = [...parseErrors, ...serverErrors];
+    setImportErrors(allErrors);
+    setImportMessage(
+      updatedCount === 0
+        ? allErrors.length === 0
+          ? t("entity.import.success", { count: createdCount })
+          : t("entity.import.successWithErrors", { count: createdCount, errorCount: allErrors.length })
+        : allErrors.length === 0
+          ? t("entity.import.successWithUpdates", { count: createdCount, updatedCount })
+          : t("entity.import.successWithUpdatesAndErrors", { count: createdCount, updatedCount, errorCount: allErrors.length }),
+    );
+    await refresh();
   }
 
   async function handleMoveFields(id: number, fields: Record<string, string>) {
@@ -4298,6 +4348,10 @@ export function EntityPanel({
         <label className="csv-import-label">
           {importBusy ? t("entity.import.parsing") : t("entity.importCsv")}
           <input type="file" accept=".csv,text/csv" onChange={handleImportFile} disabled={importBusy} hidden />
+        </label>
+        <label className="json-import-label">
+          {importBusy ? t("entity.import.parsing") : t("entity.importJson")}
+          <input type="file" accept=".json,application/json" onChange={handleImportJsonFile} disabled={importBusy} hidden />
         </label>
         {importMessage && (
           <span className="muted small" role="status">

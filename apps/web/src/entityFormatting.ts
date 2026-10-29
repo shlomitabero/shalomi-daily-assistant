@@ -1925,6 +1925,170 @@ export function buildImportRecords(
 }
 
 /**
+ * The JSON counterpart to buildImportRecords -- round-trips a file this
+ * app exported via recordsToJson (round 1217), or a hand-edited copy of
+ * one. Dramatically simpler than the CSV version: recordsToJson's own
+ * output already carries every field's REAL typed value (a real
+ * number/boolean, the raw relation id, the raw enum value), so there's no
+ * display-text-to-value coercion to reverse at all -- just validation. A
+ * JSON key this function doesn't recognize (an extra field, one since
+ * removed from the entity) is simply ignored, the same "a file often
+ * carries extra data" tolerance buildImportRecords already has for an
+ * unmatched CSV column.
+ *
+ * A relation field's value must be the raw numeric id of a record already
+ * present in relatedRecords[field.relationTo] -- recordsToJson never
+ * emits anything else for a relation field, so a value that doesn't
+ * resolve this way means the file was hand-edited incorrectly or
+ * exported from a different project (there's no legitimate cross-project
+ * id to accept here). Same relationResolvable/required-relation-refusal
+ * shape as buildImportRecords when the target entity's records weren't
+ * loaded by the caller.
+ *
+ * File fields have the same "impossible to attach from an import cell"
+ * limitation CSV import already has, for a different reason: the
+ * exported descriptor only ever carries a URL to an already-uploaded
+ * file, never the file's own bytes, and accepting an arbitrary URL
+ * string straight into a record would reopen the exact cross-project
+ * file-reference injection round 1210 closed. A required file field
+ * refuses the whole import with one clear error (mirroring
+ * buildImportRecords); an optional one is simply ignored per row.
+ *
+ * `id` needs none of buildImportRecords' own "only trust the id column
+ * once every real field is also present" heuristic -- that defense exists
+ * specifically because a CSV header's plain text is ambiguous (an
+ * external spreadsheet can coincidentally have its own unrelated "ID"
+ * column), but `id` is a reserved field name no real field can ever
+ * claim (packages/shared's RESERVED_FIELD_NAMES), so a JSON object's own
+ * top-level `id` key is unambiguous on its own.
+ */
+export function buildImportRecordsFromJson(
+  fields: Field[],
+  rows: unknown[],
+  allEntities: Entity[] = [],
+  relatedRecords: RelatedRecordsByEntity = {},
+): ImportResult {
+  if (rows.length === 0) return { records: [], errors: [] };
+
+  const relationResolvable = (f: Field): boolean =>
+    !!f.relationTo && allEntities.some((e) => e.name.toLowerCase() === f.relationTo!.toLowerCase()) && !!relatedRecords[f.relationTo];
+
+  const requiredUnsupported = fields.find(
+    (f) => (f.type === "file" && f.required) || (f.type === "relation" && f.required && !relationResolvable(f)),
+  );
+  if (requiredUnsupported) {
+    return {
+      records: [],
+      errors: [
+        `JSON import isn't supported yet for entities with a required ${requiredUnsupported.type} field ("${requiredUnsupported.label ?? requiredUnsupported.name}").`,
+      ],
+    };
+  }
+
+  const records: Record<string, unknown>[] = [];
+  const errors: string[] = [];
+  const seenIds = new Set<number>();
+
+  rows.forEach((row, rowIndex) => {
+    if (typeof row !== "object" || row === null || Array.isArray(row)) {
+      errors.push(`Row ${rowIndex + 1}: expected a JSON object, got ${Array.isArray(row) ? "an array" : typeof row}.`);
+      return;
+    }
+    const data = row as Record<string, unknown>;
+    const record: Record<string, unknown> = {};
+    let rowError: string | null = null;
+
+    if (data.id !== undefined && data.id !== null) {
+      const parsedId = Number(data.id);
+      if (!Number.isInteger(parsedId) || parsedId <= 0) {
+        rowError = `Row ${rowIndex + 1}: "${data.id}" isn't a valid record id.`;
+      } else if (seenIds.has(parsedId)) {
+        rowError = `Row ${rowIndex + 1}: id ${parsedId} was already used by an earlier row in this file -- only one row per id is supported.`;
+      } else {
+        seenIds.add(parsedId);
+        record.id = parsedId;
+      }
+    }
+
+    for (const field of rowError ? [] : fields) {
+      const raw = data[field.name];
+
+      if (field.type === "file") continue; // no file to attach from a JSON cell
+
+      if (field.type === "relation") {
+        if (!relationResolvable(field)) continue; // see doc comment: no related records loaded, keep ignoring the field
+        if (raw === null || raw === undefined) {
+          if (field.required) {
+            rowError = `Row ${rowIndex + 1}: missing required field "${field.label ?? field.name}".`;
+            break;
+          }
+          record[field.name] = null;
+          continue;
+        }
+        const id = Number(raw);
+        const targetRecords = relatedRecords[field.relationTo!]!;
+        if (!Number.isInteger(id) || !targetRecords.some((r) => Number(r.id) === id)) {
+          const targetEntity = allEntities.find((e) => e.name.toLowerCase() === field.relationTo!.toLowerCase())!;
+          rowError = `Row ${rowIndex + 1}: "${raw}" doesn't match any ${targetEntity.label ?? targetEntity.name} record for field "${field.label ?? field.name}".`;
+          break;
+        }
+        record[field.name] = id;
+        continue;
+      }
+
+      if (raw === null || raw === undefined) {
+        if (field.required) {
+          rowError = `Row ${rowIndex + 1}: missing required field "${field.label ?? field.name}".`;
+          break;
+        }
+        record[field.name] = null;
+        continue;
+      }
+
+      if (field.type === "boolean") {
+        if (typeof raw !== "boolean") {
+          rowError = `Row ${rowIndex + 1}: "${raw}" isn't a true/false value for field "${field.label ?? field.name}".`;
+          break;
+        }
+        record[field.name] = raw;
+      } else if (field.type === "number") {
+        if (typeof raw !== "number" || !Number.isFinite(raw)) {
+          rowError = `Row ${rowIndex + 1}: "${raw}" isn't a number for field "${field.label ?? field.name}".`;
+          break;
+        }
+        record[field.name] = raw;
+      } else if (field.type === "enum") {
+        if (typeof raw !== "string" || !field.enumValues?.includes(raw)) {
+          rowError = `Row ${rowIndex + 1}: "${raw}" isn't a valid option for field "${field.label ?? field.name}".`;
+          break;
+        }
+        record[field.name] = raw;
+      } else if (field.type === "date") {
+        if (typeof raw !== "string" || !isValidDateString(raw)) {
+          rowError = `Row ${rowIndex + 1}: "${raw}" isn't a valid date (expected YYYY-MM-DD) for field "${field.label ?? field.name}".`;
+          break;
+        }
+        record[field.name] = raw;
+      } else {
+        if (typeof raw !== "string") {
+          rowError = `Row ${rowIndex + 1}: "${raw}" isn't valid text for field "${field.label ?? field.name}".`;
+          break;
+        }
+        record[field.name] = raw;
+      }
+    }
+
+    if (rowError) {
+      errors.push(rowError);
+    } else {
+      records.push(record);
+    }
+  });
+
+  return { records, errors };
+}
+
+/**
  * A search/filter narrowing the table down loses any sense of how many
  * records actually matched versus how many exist in total -- the count was
  * always computed (`visibleRecords.length` vs `records.length` in
