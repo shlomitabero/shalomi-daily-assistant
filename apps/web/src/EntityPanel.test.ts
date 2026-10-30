@@ -16831,3 +16831,28 @@ test("the board card's row-actions can wrap onto multiple lines instead of overf
     ".board-card .row-actions must allow its buttons to wrap onto multiple lines instead of overflowing the narrow board column",
   );
 });
+
+/**
+ * Round 1351: a live Playwright browser session at 375-414px viewports
+ * found the Calendar view's record row (chip + up to 4 action buttons:
+ * print/duplicate/delete/whatsapp, each flex-shrink: 0) overflowing the
+ * day cell's own narrow width, clipped by .calendar-day's overflow:
+ * hidden -- the chip shrank to an unreadable single-glyph blob and the
+ * duplicate/delete/whatsapp buttons were pushed fully outside the cell
+ * and unclickable. Confirmed via boundingBox() on both a ranged-date
+ * entity (Rental) and a plain single-date entity (Appointment), so this
+ * is not specific to ranged events. jsdom has no layout engine and can't
+ * detect real overflow/clipping (see this file's other CSS-only-bug
+ * tests above), so this reads styles.css's own source directly instead.
+ */
+test("the calendar view's record row lets its action buttons wrap onto a second line instead of overflowing the day cell", () => {
+  const stylesCss = readFileSync(new URL("./styles.css", import.meta.url), "utf8");
+
+  const calendarRecordRow = stylesCss.match(/\.calendar-record-row \{[\s\S]*?\}/)?.[0];
+  assert.ok(calendarRecordRow, "expected a .calendar-record-row rule in styles.css");
+  assert.match(
+    calendarRecordRow!,
+    /flex-wrap:\s*wrap/,
+    ".calendar-record-row must allow its action buttons to wrap onto a second line instead of overflowing the narrow day cell",
+  );
+});

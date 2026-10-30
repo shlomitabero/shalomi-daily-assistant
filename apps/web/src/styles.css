@@ -1960,9 +1960,25 @@ tbody tr:hover {
   gap: 3px;
 }
 
+/*
+ * Round 1351: a live Playwright browser session at 375-414px viewports
+ * found the record chip + its up-to-4 action buttons (print/duplicate/
+ * delete/whatsapp, each flex-shrink: 0) overflowing the day cell's own
+ * ~40-55px width, which .calendar-day's overflow: hidden then silently
+ * clipped -- the chip shrank to an unreadable single-glyph blob and the
+ * duplicate/delete/whatsapp buttons were pushed fully outside the cell
+ * and unclickable. Confirmed via boundingBox() on both a ranged-date
+ * entity (Rental) and a plain single-date entity (Appointment), so this
+ * is not specific to ranged events -- it affects any Calendar record row
+ * once the viewport is narrow. flex-wrap lets the action buttons drop to
+ * a second line inside the row instead of overflowing; .calendar-day has
+ * no fixed/max height (only min-height), so the cell grows to fit the
+ * wrapped content instead of clipping it.
+ */
 .calendar-record-row {
   display: flex;
   align-items: stretch;
+  flex-wrap: wrap;
   gap: 2px;
 }
 
