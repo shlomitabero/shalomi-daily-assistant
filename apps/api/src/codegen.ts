@@ -4240,7 +4240,7 @@ function buildCalendarIcs(entity, dateField, labelField, records, relatedRecords
 // shape every entity gets. Each day cell shows a chip per record landing on
 // that date (click to edit), with a "+N more" overflow instead of an
 // ever-growing cell.
-function CalendarView({ entity, dateField, endDateField, records, month, onPrevMonth, onNextMonth, onToday, onJumpToMonth, onEdit, onPrint, onDayClick, onReschedule, moveErrorId, bulkActionBusy }) {
+function CalendarView({ entity, dateField, endDateField, records, month, onPrevMonth, onNextMonth, onToday, onJumpToMonth, onEdit, onPrint, onDuplicate, onDelete, onDayClick, onReschedule, moveErrorId, bulkActionBusy }) {
   const year = month.getFullYear();
   const monthIndex = month.getMonth();
   const days = useMemo(() => buildCalendarMonth(records, dateField, year, monthIndex, endDateField), [records, dateField, endDateField, year, monthIndex]);
@@ -4397,6 +4397,30 @@ function CalendarView({ entity, dateField, endDateField, records, month, onPrevM
                     }}
                   >
                     Print
+                  </button>
+                  <button
+                    type="button"
+                    className="calendar-record-duplicate"
+                    aria-label="Duplicate"
+                    disabled={bulkActionBusy}
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      onDuplicate(record);
+                    }}
+                  >
+                    Duplicate
+                  </button>
+                  <button
+                    type="button"
+                    className="calendar-record-delete"
+                    aria-label="Delete"
+                    disabled={bulkActionBusy}
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      onDelete(record);
+                    }}
+                  >
+                    Delete
                   </button>
                 </div>
               ))}
@@ -7491,6 +7515,8 @@ export function EntityView({ entity, highlightRecordId, onHighlightHandled, onJu
               onJumpToMonth={(m) => setCalendarMonth(m)}
               onEdit={startEdit}
               onPrint={(record) => setRecordToPrint(record)}
+              onDuplicate={(record) => handleDuplicate(record.id)}
+              onDelete={(record) => handleDelete(record.id)}
               onDayClick={(date) => startCreateForDate(date, dateField)}
               onReschedule={(record, date, originDay) => handleCalendarDrop(record, dateField.name, date, originDay)}
               moveErrorId={moveErrorId}
@@ -9259,6 +9285,8 @@ nav button.active .tab-count { background: rgba(255, 255, 255, 0.25); color: inh
 .calendar-record-chip-move-error { background: var(--danger-soft); border-color: var(--danger); }
 .calendar-record-print { flex-shrink: 0; padding: 2px 4px; font-size: 10px; line-height: 1; background: none; border: 1px solid var(--border-soft); border-radius: 4px; cursor: pointer; color: var(--text); font: inherit; }
 .calendar-record-print:hover { background: var(--bg); }
+.calendar-record-duplicate, .calendar-record-delete { flex-shrink: 0; padding: 2px 4px; font-size: 10px; line-height: 1; background: none; border: 1px solid var(--border-soft); border-radius: 4px; cursor: pointer; color: var(--text); font: inherit; }
+.calendar-record-duplicate:hover:not(:disabled), .calendar-record-delete:hover:not(:disabled) { background: var(--bg); }
 .calendar-record-more { font-size: 11px; color: var(--muted); padding: 2px 5px; background: none; border: none; text-align: start; cursor: pointer; font: inherit; }
 .calendar-record-more:hover { color: var(--text); text-decoration: underline; }
 .csv-export-btn, .json-export-btn, .ics-export-btn, .ics-subscribe-btn, .copy-records-btn, .print-list-btn { flex-shrink: 0; padding: 8px 14px; font-size: 13px; border-radius: 8px; border: 1px solid var(--border); background: var(--surface); color: var(--text); cursor: pointer; font: inherit; }

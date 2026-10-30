@@ -713,6 +713,8 @@ function CalendarView({
   onJumpToMonth,
   onEdit,
   onPrint,
+  onDuplicate,
+  onDelete,
   onDayClick,
   onReschedule,
   moveErrorId,
@@ -738,6 +740,14 @@ function CalendarView({
    * a user viewing an entity in calendar view had no in-view way to print
    * one specific record -- they had to switch to Table view first. */
   onPrint: (record: EntityRecord) => void;
+  /** Round 1284: mirrors BoardCard's own onDuplicate/onDelete convention --
+   * Table view's row and BoardCard both already offer Duplicate and Delete
+   * next to Edit/Print, but CalendarView's record chip only ever got Edit
+   * (click) and Print (round 1272 above), leaving Duplicate/Delete as the
+   * one remaining way a user viewing calendar view had to switch to Table
+   * or Board view to duplicate or delete a specific record. */
+  onDuplicate: (record: EntityRecord) => void;
+  onDelete: (record: EntityRecord) => void;
   onDayClick: (date: Date) => void;
   onReschedule: (record: EntityRecord, date: Date, originDay?: string) => void;
   moveErrorId?: number | null;
@@ -957,6 +967,40 @@ function CalendarView({
                   >
                     🖨️
                   </button>
+                  {!readOnly && (
+                    <button
+                      type="button"
+                      className="calendar-record-duplicate"
+                      title={t("entity.duplicate")}
+                      aria-label={t("entity.duplicate")}
+                      disabled={bulkActionBusy}
+                      onClick={(e) => {
+                        // Mirrors the print button's own stopPropagation
+                        // just above -- same day-cell-onDayClick hazard.
+                        e.stopPropagation();
+                        onDuplicate(record);
+                      }}
+                    >
+                      📋
+                    </button>
+                  )}
+                  {!readOnly && (
+                    <button
+                      type="button"
+                      className="calendar-record-delete danger"
+                      title={t("entity.delete")}
+                      aria-label={t("entity.delete")}
+                      disabled={bulkActionBusy}
+                      onClick={(e) => {
+                        // Mirrors the print button's own stopPropagation
+                        // just above -- same day-cell-onDayClick hazard.
+                        e.stopPropagation();
+                        onDelete(record);
+                      }}
+                    >
+                      🗑️
+                    </button>
+                  )}
                 </div>
               ))}
               {day.records.length > 3 && (
@@ -4941,6 +4985,8 @@ export function EntityPanel({
               onJumpToMonth={(m) => setCalendarMonth(m)}
               onEdit={readOnly ? () => {} : startEdit}
               onPrint={(record) => setRecordToPrint(record)}
+              onDuplicate={readOnly ? () => {} : (record) => handleDuplicate(record.id as number)}
+              onDelete={readOnly ? () => {} : (record) => handleDelete(record.id as number)}
               onDayClick={readOnly ? () => {} : (date) => startCreateForDate(date, dateField)}
               onReschedule={readOnly ? () => {} : (record, date, originDay) => handleCalendarDrop(record, dateField.name, date, originDay)}
               moveErrorId={moveErrorId}

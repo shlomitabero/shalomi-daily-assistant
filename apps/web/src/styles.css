@@ -1881,6 +1881,29 @@ tbody tr:hover {
   box-shadow: none;
 }
 
+/* Round 1284: mirrors .calendar-record-print's own layout exactly -- the
+   Duplicate/Delete actions are the same shape of small icon button next to
+   the chip, just two more of them in the same row. */
+.calendar-record-duplicate,
+.calendar-record-delete {
+  flex-shrink: 0;
+  padding: 2px 4px;
+  font-size: 10px;
+  line-height: 1;
+  background: none;
+  border: 1px solid var(--border-soft);
+  border-radius: 4px;
+  box-shadow: none;
+  cursor: pointer;
+  transform: none;
+}
+
+.calendar-record-duplicate:hover:not(:disabled) {
+  background: var(--surface-raised);
+  transform: none;
+  box-shadow: none;
+}
+
 .calendar-record-chip:hover {
   background: var(--surface-raised);
   transform: none;

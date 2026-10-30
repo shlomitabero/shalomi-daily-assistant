@@ -3610,6 +3610,117 @@ test("EntityPanel's calendar view record chip has a Print action that opens the 
 });
 
 /**
+ * Round 1284: Table view's row and BoardCard both already offer Duplicate
+ * and Delete next to Edit/Print, but CalendarView's record chip only ever
+ * got Edit (click) and Print (round 1272 above) -- leaving no in-view way
+ * to duplicate or delete a specific record from calendar view at all,
+ * unlike every other view. Confirms the real, wired-up calendar chip now
+ * creates a real copy via the same createRecord call Table/Board already
+ * use.
+ */
+test("EntityPanel's calendar view record chip has a Duplicate action that creates a copy, matching Table/Board view", async () => {
+  await withJsdom(async () => {
+    const today = isoDateToday();
+    const store: EntityRecord[] = [{ id: 1, title: "Dentist", date: today }];
+    const originalFetch = globalThis.fetch;
+    const createdPayloads: unknown[] = [];
+    globalThis.fetch = (async (input: string, init?: RequestInit): Promise<Response> => {
+      const method = init?.method ?? "GET";
+      if (method === "GET" && input === "/api/projects/proj1/entities/Appointment") {
+        return new Response(JSON.stringify({ records: store }), { status: 200, headers: { "content-type": "application/json" } });
+      }
+      if (method === "POST" && input === "/api/projects/proj1/entities/Appointment") {
+        const body = JSON.parse(init!.body as string);
+        createdPayloads.push(body);
+        return new Response(JSON.stringify({ record: { id: 2, ...body } }), { status: 201, headers: { "content-type": "application/json" } });
+      }
+      throw new Error(`unexpected request ${method} ${input}`);
+    }) as typeof fetch;
+    try {
+      renderAppointmentPanel();
+      await waitForCondition(() => document.querySelector(".entity-toolbar") !== null);
+
+      const calendarToggle = document.querySelectorAll(".view-toggle-btn")[1] as HTMLButtonElement;
+      fireEvent.click(calendarToggle);
+      await waitForCondition(() => document.querySelectorAll(".calendar-record-chip").length === 1);
+
+      const duplicateBtn = document.querySelector(".calendar-record-duplicate") as HTMLButtonElement;
+      assert.ok(duplicateBtn, "expected a duplicate action next to the calendar record chip");
+      fireEvent.click(duplicateBtn);
+      await waitForCondition(() => createdPayloads.length === 1);
+      assert.deepEqual(createdPayloads[0], { title: "Dentist", date: today }, "the duplicate must copy the record's own field values, matching Table/Board view's own handleDuplicate");
+
+      // Mirrors the print test's own identical check just above -- clicking
+      // the chip's nested duplicate button must not also bubble into the
+      // day cell's own onDayClick.
+      const dateInput = document.querySelector('.record-form input[name="date"]') as HTMLInputElement | null;
+      assert.equal(dateInput?.value ?? "", "", "clicking duplicate must not also prefill the create form with the clicked day's date");
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+});
+
+/**
+ * Round 1284: the Delete half of the same gap -- confirms the calendar
+ * chip's Delete action goes through the exact same confirm-then-undo-window
+ * machinery (round 184) every other Delete button in this component already
+ * uses, removing the chip optimistically and then actually calling the real
+ * delete API once the undo window elapses without Undo being clicked.
+ */
+test("EntityPanel's calendar view record chip has a Delete action that removes the record, matching Table/Board view's own undo-window behavior", async (t) => {
+  await withJsdom(async () => {
+    const today = isoDateToday();
+    const store: EntityRecord[] = [{ id: 1, title: "Dentist", date: today }];
+    const originalFetch = globalThis.fetch;
+    const originalConfirm = globalThis.window.confirm;
+    let confirmCalled = false;
+    let deletedId: number | undefined;
+    globalThis.fetch = (async (input: string, init?: RequestInit): Promise<Response> => {
+      const method = init?.method ?? "GET";
+      if (method === "GET" && input === "/api/projects/proj1/entities/Appointment") {
+        return new Response(JSON.stringify({ records: store }), { status: 200, headers: { "content-type": "application/json" } });
+      }
+      if (method === "DELETE" && input === "/api/projects/proj1/entities/Appointment/1") {
+        deletedId = 1;
+        return new Response(null, { status: 204 });
+      }
+      throw new Error(`unexpected request ${method} ${input}`);
+    }) as typeof fetch;
+    globalThis.window.confirm = (() => {
+      confirmCalled = true;
+      return true;
+    }) as typeof window.confirm;
+    try {
+      renderAppointmentPanel();
+      await waitForCondition(() => document.querySelector(".entity-toolbar") !== null);
+
+      const calendarToggle = document.querySelectorAll(".view-toggle-btn")[1] as HTMLButtonElement;
+      fireEvent.click(calendarToggle);
+      await waitForCondition(() => document.querySelectorAll(".calendar-record-chip").length === 1);
+
+      t.mock.timers.enable({ apis: ["setTimeout"] });
+      const deleteBtn = document.querySelector(".calendar-record-delete") as HTMLButtonElement;
+      assert.ok(deleteBtn, "expected a delete action next to the calendar record chip");
+      fireEvent.click(deleteBtn);
+      assert.ok(confirmCalled, "the calendar chip's delete action must ask for confirmation first, matching Table/Board view");
+      await waitForCondition(() => document.querySelectorAll(".calendar-record-chip").length === 0);
+      assert.equal(deletedId, undefined, "must not have deleted for real yet -- the undo window must still be open");
+
+      act(() => {
+        t.mock.timers.tick(5000);
+      });
+      await new Promise((resolve) => setImmediate(resolve));
+      assert.equal(deletedId, 1, "once the undo window elapses with no Undo click, the real delete must actually fire");
+    } finally {
+      t.mock.timers.reset();
+      globalThis.fetch = originalFetch;
+      globalThis.window.confirm = originalConfirm;
+    }
+  });
+});
+
+/**
  * Round 778: for an entity with no name/title/text field (e.g. a
  * "CheckIn"/"Attendance"-shaped log entity with just a date and a
  * boolean), the calendar day-chip used to render the raw stored value

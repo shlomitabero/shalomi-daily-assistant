@@ -5827,12 +5827,12 @@ test("the exported CalendarView accepts an onPrint prop and renders a Print acti
 
   assert.match(
     entityViewJsx,
-    /function CalendarView\(\{ entity, dateField, endDateField, records, month, onPrevMonth, onNextMonth, onToday, onJumpToMonth, onEdit, onPrint, onDayClick, onReschedule, moveErrorId, bulkActionBusy \}\)/,
+    /function CalendarView\(\{ entity, dateField, endDateField, records, month, onPrevMonth, onNextMonth, onToday, onJumpToMonth, onEdit, onPrint, onDuplicate, onDelete, onDayClick, onReschedule, moveErrorId, bulkActionBusy \}\)/,
     "CalendarView must accept an onPrint prop",
   );
   assert.match(
     entityViewJsx,
-    /onEdit=\{startEdit\}\s*onPrint=\{\(record\) => setRecordToPrint\(record\)\}\s*onDayClick=/,
+    /onEdit=\{startEdit\}\s*onPrint=\{\(record\) => setRecordToPrint\(record\)\}\s*onDuplicate=\{\(record\) => handleDuplicate\(record\.id\)\}\s*onDelete=\{\(record\) => handleDelete\(record\.id\)\}\s*onDayClick=/,
     "the real call site must wire onPrint into the same setRecordToPrint state Table/Board view already share",
   );
 
@@ -5843,6 +5843,48 @@ test("the exported CalendarView accepts an onPrint prop and renders a Print acti
 
   const stylesCss = files.find((f) => f.path === "web/src/styles.css")!.content;
   assert.match(stylesCss, /\.calendar-record-print\s*\{/);
+});
+
+/**
+ * Round 1284: mirrors the live preview's own EntityPanel.tsx fix -- Table
+ * view's row and BoardCard both already offer Duplicate and Delete next to
+ * Edit/Print, but the exported app's CalendarView only ever got Edit
+ * (click) and Print (round 1272 above), leaving a user viewing an entity in
+ * calendar view in the exported standalone app with no in-view way to
+ * duplicate or delete a specific record either -- the identical gap the
+ * live preview had, since every exported app ships this same generated
+ * component.
+ */
+test("the exported CalendarView accepts onDuplicate/onDelete props and renders Duplicate/Delete actions beside each record chip, matching BoardCard", () => {
+  const files = generateExportFiles(project);
+  const entityViewJsx = files.find((f) => f.path === "web/src/components/EntityView.jsx")!.content;
+
+  const calendarViewSource = entityViewJsx.slice(entityViewJsx.indexOf("function CalendarView"), entityViewJsx.indexOf("function BoardCard"));
+
+  const duplicateButtonSrc = calendarViewSource.match(/<button\s+type="button"\s+className="calendar-record-duplicate"[\s\S]*?<\/button>/)?.[0];
+  assert.ok(duplicateButtonSrc, "expected a calendar-record-duplicate button beside the chip");
+  assert.match(
+    duplicateButtonSrc!,
+    /disabled=\{bulkActionBusy\}\s*onClick=\{\(e\) => \{\s*e\.stopPropagation\(\);\s*onDuplicate\(record\);/,
+    "clicking duplicate must call onDuplicate(record), stop the click from also bubbling into the day cell's or chip's own onClick, and respect the same bulkActionBusy gate Table/Board view already use",
+  );
+
+  const deleteButtonSrc = calendarViewSource.match(/<button\s+type="button"\s+className="calendar-record-delete"[\s\S]*?<\/button>/)?.[0];
+  assert.ok(deleteButtonSrc, "expected a calendar-record-delete button beside the chip");
+  assert.match(
+    deleteButtonSrc!,
+    /disabled=\{bulkActionBusy\}\s*onClick=\{\(e\) => \{\s*e\.stopPropagation\(\);\s*onDelete\(record\);/,
+    "clicking delete must call onDelete(record), stop the click from also bubbling into the day cell's or chip's own onClick, and respect the same bulkActionBusy gate Table/Board view already use",
+  );
+
+  assert.match(
+    entityViewJsx,
+    /onDuplicate=\{\(record\) => handleDuplicate\(record\.id\)\}\s*onDelete=\{\(record\) => handleDelete\(record\.id\)\}/,
+    "the real call site must wire onDuplicate/onDelete into the same handleDuplicate/handleDelete functions Table/Board view already share",
+  );
+
+  const stylesCss = files.find((f) => f.path === "web/src/styles.css")!.content;
+  assert.match(stylesCss, /\.calendar-record-duplicate,\s*\.calendar-record-delete\s*\{/);
 });
 
 test("the exported EntityView renders a real CSV export button backed by RFC-4180-correct CSV building", () => {
