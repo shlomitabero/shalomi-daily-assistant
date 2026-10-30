@@ -124,6 +124,7 @@ export interface BaileysIncomingMessage {
     viewOnceMessageV2?: { message?: BaileysIncomingMessage["message"] };
     viewOnceMessageV2Extension?: { message?: BaileysIncomingMessage["message"] };
     documentWithCaptionMessage?: { message?: BaileysIncomingMessage["message"] };
+    editedMessage?: { message?: BaileysIncomingMessage["message"] };
     protocolMessage?: { type?: number; editedMessage?: BaileysIncomingMessage["message"] };
     ephemeralMessage?: { message?: BaileysIncomingMessage["message"] };
   };
@@ -346,6 +347,10 @@ function describeIncomingMessage(message: BaileysIncomingMessage["message"]): st
       return inner ? `[Edited] ${inner}` : "[Edited]";
     }
     return null;
+  }
+  if (message.editedMessage) {
+    const inner = describeIncomingMessage(message.editedMessage.message);
+    return inner ? `[Edited] ${inner}` : "[Edited]";
   }
   return null;
 }

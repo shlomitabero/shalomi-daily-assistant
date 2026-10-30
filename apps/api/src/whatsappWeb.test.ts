@@ -1227,6 +1227,42 @@ test("incoming WhatsApp button taps and list selections are logged with a descri
   for (const m of messages) assert.equal(m.direction, "in", "every placeholder row must still be a real, matched-against incoming message, not metadata");
 });
 
+/**
+ * Round 1307: a sibling wrapper to the already-handled nested
+ * `protocolMessage.editedMessage` shape (round 1139) -- Baileys' own
+ * `normalizeMessageContent` (lib/Utils/messages.js's `getFutureProofMessage`
+ * helper) groups a top-level `message.editedMessage` field in the exact
+ * same transparent-envelope bucket as `ephemeralMessage`/
+ * `documentWithCaptionMessage`, both already unwrapped by this function --
+ * but this third sibling was never ported. Previously dropped with zero
+ * trace, the same gap every prior round in this family fixed for a
+ * different wrapper shape.
+ */
+test("an incoming WhatsApp message delivered via the top-level editedMessage wrapper is logged with its new content instead of being silently dropped", async () => {
+  const { manager, createdSockets, db } = setupManager();
+  insertProject(db, project);
+  applyMigrations(db, project.id, project.spec);
+  markProjectBuilt(db, project.id);
+
+  await manager.connect(project.id);
+  createdSockets[0].emitConnectionUpdate({ connection: "open" });
+
+  createdSockets[0].emitMessagesUpsert({
+    type: "notify",
+    messages: [
+      { key: { remoteJid: "972501234567@s.whatsapp.net", fromMe: false }, message: { editedMessage: { message: { conversation: "actually, 3 units please" } } } },
+      { key: { remoteJid: "972501234567@s.whatsapp.net", fromMe: false }, message: { editedMessage: {} } },
+    ],
+  });
+
+  // listWhatsAppMessages orders newest-first, the reverse of emission order.
+  const { messages } = listWhatsAppMessages(db, project.id);
+  assert.equal(messages.length, 2);
+  assert.equal(messages[0].body, "[Edited]", "a top-level editedMessage wrapper with no recoverable content must fall back to a plain placeholder, not print nothing or throw");
+  assert.equal(messages[1].body, "[Edited] actually, 3 units please", "a genuine text edit's own new content must still come through");
+  for (const m of messages) assert.equal(m.direction, "in", "every placeholder row must still be a real, matched-against incoming message, not metadata");
+});
+
 test("an incoming message of a completely unrecognized shape is still skipped, not guessed at", async () => {
   const { manager, createdSockets, db } = setupManager();
   insertProject(db, project);
