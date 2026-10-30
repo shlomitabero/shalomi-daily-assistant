@@ -472,21 +472,35 @@ export function createAuthRouter(
           : `We received a request to reset your password. Click the link below to choose a new one:\n\n${resetUrl}\n\nThis link expires in 1 hour. If you didn't request this, you can ignore this email -- your password won't change.`;
         try {
           await emailSender.send(record.email, subject, body);
+          // Round 1296: the DB write only happens once send() has actually
+          // succeeded, mirroring the login-code route's own established
+          // ordering above (see its own comment) -- previously this ran
+          // unconditionally after the catch below, so a transient send
+          // failure (e.g. a second forgot-password request, well within
+          // forgotPasswordRateLimiter's own cap, while the email provider
+          // has a brief blip) silently deleted a PRIOR token that HAD been
+          // delivered and replaced it with a new one that was never
+          // delivered -- leaving the account with zero working reset links
+          // and no way to tell the user, since the response below must
+          // stay identical either way (see the catch's own comment).
+          deletePasswordResetTokensForUser(db, record.id);
+          createPasswordResetToken(db, {
+            id: randomUUID(),
+            userId: record.id,
+            tokenHash: hashResetToken(token),
+            expiresAt: new Date(Date.now() + PASSWORD_RESET_TOKEN_TTL_MS).toISOString(),
+          });
         } catch {
           // Swallowed, deliberately -- unlike the login-code email (where a
           // failed send leaves the user visibly stuck mid-login and needs
           // to be reported), surfacing this one would mean "account exists
           // but the email failed" responds differently than "no such
           // account", which is itself an enumeration oracle. The response
-          // below stays identical either way.
+          // below stays identical either way. The DB write above is now
+          // skipped entirely on this path, leaving any pre-existing valid
+          // token (from an earlier successful request) untouched instead
+          // of replacing it with an undeliverable one.
         }
-        deletePasswordResetTokensForUser(db, record.id);
-        createPasswordResetToken(db, {
-          id: randomUUID(),
-          userId: record.id,
-          tokenHash: hashResetToken(token),
-          expiresAt: new Date(Date.now() + PASSWORD_RESET_TOKEN_TTL_MS).toISOString(),
-        });
       }
       res.json({ sent: true });
     } catch (err) {

@@ -38,7 +38,14 @@ import { WhatsAppWebManager, type BaileysConnectionUpdate, type BaileysMessagesU
  * two concurrent /auth/login calls racing each other's own network await.
  */
 function createFakeEmailSender(
-  opts?: { configured?: boolean; failWith?: Error; gateFirstSend?: boolean },
+  // Round 1296: `failFromCall` lets a test simulate a transient provider
+  // outage that only starts after one or more earlier calls already
+  // succeeded -- unlike the plain `failWith` (which fails every call from
+  // the first), this is the shape a real "the first reset email went out
+  // fine, then Resend blipped on the second request" scenario needs.
+  // 1-based: `failFromCall: 2` means the 1st call succeeds and every call
+  // from the 2nd onward throws.
+  opts?: { configured?: boolean; failWith?: Error; gateFirstSend?: boolean; failFromCall?: number },
 ): EmailSender & {
   sentTo: { to: string; subject: string; text: string }[];
   waitUntilFirstSendStarted: () => Promise<void>;
@@ -65,7 +72,9 @@ function createFakeEmailSender(
         signalFirstSendStarted();
         await firstSendGate;
       }
-      if (opts?.failWith) throw opts.failWith;
+      if (opts?.failWith && (opts.failFromCall === undefined || sendCallCount >= opts.failFromCall)) {
+        throw opts.failWith;
+      }
       sentTo.push({ to, subject, text });
     },
   };
@@ -1544,6 +1553,62 @@ test("requesting a fresh reset token invalidates the previous one for the same a
       });
       assert.equal(firstAttemptRes.status, 401, "the first (now-superseded) token must no longer work");
       assert.equal(((await firstAttemptRes.json()) as { code?: string }).code, "RESET_TOKEN_INVALID");
+    },
+    { emailSender },
+  );
+});
+
+/**
+ * Round 1296: regression test for a real bug -- deletePasswordResetTokensForUser
+ * + createPasswordResetToken ran unconditionally after the send()
+ * try/catch, regardless of whether the send actually succeeded. A second
+ * forgot-password request (well within forgotPasswordRateLimiter's own
+ * cap) whose own email send fails transiently used to delete the FIRST
+ * request's already-delivered, still-valid token and replace it with a
+ * new one that was never delivered -- leaving the account with zero
+ * working reset links and a response that still claimed success either
+ * way (by this route's own deliberate design, to avoid an account-
+ * enumeration oracle). The fix moves the DB write to only run once send()
+ * has resolved, mirroring the login-code route's own established
+ * ordering fix for the identical class of hazard (round 538).
+ */
+test("a transient send failure on a second forgot-password request does not invalidate the first request's already-delivered token", async () => {
+  const emailSender = createFakeEmailSender({ failWith: new Error("simulated provider outage"), failFromCall: 2 });
+  await withServer(
+    async (baseUrl) => {
+      const email = "dana@example.com";
+      await signup(baseUrl, email);
+
+      const firstRes = await fetch(`${baseUrl}/api/auth/forgot-password`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ email, lang: "en" }),
+      });
+      assert.equal(firstRes.status, 200);
+      const firstUrl = emailSender.sentTo[0]!.text.match(/https?:\/\/\S+/)![0];
+      const firstToken = new URL(firstUrl).searchParams.get("resetToken")!;
+
+      // The second request's own send() fails (simulated transient outage),
+      // but the response must still claim success -- same enumeration-
+      // avoidance contract as every other outcome of this route.
+      const secondRes = await fetch(`${baseUrl}/api/auth/forgot-password`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ email, lang: "en" }),
+      });
+      assert.equal(secondRes.status, 200);
+      assert.equal(emailSender.sentTo.length, 1, "the second, failed send must not have been recorded as delivered");
+
+      const firstAttemptRes = await fetch(`${baseUrl}/api/auth/reset-password`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ token: firstToken, newPassword: "whatever-password" }),
+      });
+      assert.equal(
+        firstAttemptRes.status,
+        204,
+        "the first request's own token, which WAS successfully delivered, must still work after a later request's send failed",
+      );
     },
     { emailSender },
   );
