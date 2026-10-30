@@ -1406,6 +1406,22 @@ test("resetting your password sends a real notification to your own address, whe
 
       assert.equal(emailSender.sentTo.length, 1, "exactly one notification must be sent");
       assert.equal(emailSender.sentTo[0].to, email, "the notification must go to the account's own address");
+      // Round 1311: this route's own notification used to be a verbatim
+      // copy of PATCH /auth/password's "someone else knew your previous
+      // password" text, which is wrong here -- this flow requires no
+      // current password at all, only a token from an emailed link, so a
+      // reset actually caused by a compromised email inbox must point the
+      // victim at securing their email, not at a leaked Forge AI password.
+      assert.match(
+        emailSender.sentTo[0].text,
+        /reset using a password-reset link/,
+        "the reset-password notification must describe how this route is actually reached (a reset link), not PATCH /auth/password's own current-password wording",
+      );
+      assert.doesNotMatch(
+        emailSender.sentTo[0].text,
+        /knew your previous password/,
+        "the reset-password notification must not claim a leaked password caused this reset, since no password was required to trigger it",
+      );
     },
     { emailSender },
   );

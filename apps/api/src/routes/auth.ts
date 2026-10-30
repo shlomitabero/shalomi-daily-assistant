@@ -559,12 +559,28 @@ export function createAuthRouter(
       // than someone who already knows the current password), yet round
       // 1252 only ever touched the PATCH route. Best-effort, same
       // swallowed-send contract as every sibling route in this file.
+      //
+      // Round 1311: that PATCH route's own body text was copy-pasted here
+      // verbatim through round 1265, but it's wrong for THIS route's own
+      // threat model -- this route's comment immediately above already
+      // says so ("reachable by anyone holding a leaked/intercepted reset
+      // link rather than someone who already knows the current password"),
+      // yet the email itself told the recipient "someone else knew your
+      // previous password." For the real attack this route is actually
+      // exposed to (an attacker with access to the victim's email inbox,
+      // using the forgot-password flow rather than any stolen Forge AI
+      // credential), that wording points the victim at the wrong fix --
+      // changing their Forge AI password again, which the attacker can
+      // just repeat -- instead of the real one: securing their email
+      // account. PATCH /auth/password's own identical-looking text just
+      // below is untouched; it's correct there, since that route genuinely
+      // does require the current password.
       if (emailSender.configured) {
         const isHebrew = parsed.data.lang !== "en";
         const subject = isHebrew ? "הסיסמה של חשבונך ב-Forge AI השתנתה" : "Your Forge AI account's password was changed";
         const body = isHebrew
-          ? `הסיסמה של חשבונך ב-Forge AI שונתה כעת.\n\nאם זו לא הייתם אתם, מישהו אחר ידע את הסיסמה הקודמת שלכם -- היכנסו לחשבון והחליפו אותה מיד.`
-          : `Your Forge AI account's password was just changed.\n\nIf this wasn't you, someone else knew your previous password -- sign in and change it immediately.`;
+          ? `הסיסמה של חשבונך ב-Forge AI אופסה כעת באמצעות קישור לאיפוס סיסמה שנשלח לכתובת האימייל הזו.\n\nאם זו לא הייתם אתם, מישהו הצליח לגשת לתיבת האימייל הזו או ליירט את קישור האיפוס -- אבטחו את חשבון האימייל שלכם, ולאחר מכן היכנסו ל-Forge AI והחליפו את הסיסמה מיד.`
+          : `Your Forge AI account's password was just reset using a password-reset link sent to this email address.\n\nIf this wasn't you, someone was able to access this email inbox or intercept the reset link -- secure your email account, then sign in to Forge AI and change your password immediately.`;
         try {
           await emailSender.send(user.email, subject, body);
         } catch {
