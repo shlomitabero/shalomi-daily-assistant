@@ -1171,8 +1171,23 @@ export async function fireRule(
   // relation fields), so both carry the identical raw {url,...} descriptor
   // for any file field; using the original avoids any accidental coupling
   // to a transform this lookup has nothing to do with.
-  const attachment = findTemplateFileAttachment(uploadsDir, project.id, entity, rule.messageTemplate, record) ?? undefined;
-  const result = await whatsapp.sendMessage(project.id, to, message, attachment);
+  //
+  // Round 1341: a single Baileys sendMessage call can only ever carry one
+  // media attachment -- unlike fireEmailAction's own round-1325 fix, which
+  // could simply collect every distinct referenced file field into one
+  // EmailAttachment[] for a single Resend call. A template referencing two
+  // or more file fields (e.g. "Here are {{invoice}} and {{receipt}}") used
+  // to silently send only whichever field matched first in placeholder
+  // order, with the rest dropped with no error, warning, or log -- the
+  // exact same silent-data-loss shape round 1325 closed for email, just
+  // still open here. The real message text goes out with the first
+  // attachment, exactly as before (so retrying a failed send behaves
+  // identically to today); any additional referenced files are delivered
+  // as their own follow-up, caption-less sends afterward, through the same
+  // per-project sendQueue (whatsappWeb.ts) that already serializes and
+  // paces every other send, so this doesn't introduce a new burst risk.
+  const attachments = findAllTemplateFileAttachments(uploadsDir, project.id, entity, rule.messageTemplate, record);
+  const result = await whatsapp.sendMessage(project.id, to, message, attachments[0]);
   // Same re-check-after-await hazard the manual send route already
   // documents (routes/projects.ts's POST .../whatsapp/send) -- sendMessage
   // above is a genuine await (a real network round-trip), during which
@@ -1204,6 +1219,33 @@ export async function fireRule(
     randomUUID(),
     isManualTest,
   );
+  // Round 1341: any attachment beyond the first (see this function's own
+  // comment above) goes out as its own follow-up, caption-less message --
+  // only once the primary send above has actually succeeded, the same
+  // "the real action already happened; a secondary step is best-effort"
+  // convention this file uses elsewhere (e.g. the collaborator/owner
+  // notification sends a few hundred lines up). A failure here is logged
+  // into this same WhatsApp message log (status: "failed") but never
+  // retried and never changes the automation run's own recorded outcome
+  // above -- recordAutomationRun already ran with the primary send's
+  // result, and there is no partial-progress tracking for this function
+  // (fireRule) to safely resume a follow-up-only retry from.
+  for (const extraAttachment of attachments.slice(1)) {
+    if (!result.ok) break;
+    const extraResult = await whatsapp.sendMessage(project.id, to, "", extraAttachment);
+    if (!getProject(db, project.id)) return;
+    insertWhatsAppMessage(db, {
+      projectId: project.id,
+      direction: "out",
+      fromNumber: status.phoneNumber ?? "",
+      toNumber: to,
+      body: "",
+      matchedEntityName: match?.entityName ?? null,
+      matchedRecordId: match?.recordId ?? null,
+      matchedLabel: match?.label ?? null,
+      status: extraResult.ok ? "sent" : "failed",
+    });
+  }
 }
 
 const WEEKDAY_SHORT_NAME_TO_INDEX: Record<string, number> = { Sun: 0, Mon: 1, Tue: 2, Wed: 3, Thu: 4, Fri: 5, Sat: 6 };

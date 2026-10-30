@@ -1110,6 +1110,69 @@ test("runAutomationsForRecordChange attaches every distinct referenced file fiel
 });
 
 /**
+ * Round 1341: unlike email's own round-1325 fix just above, fireRule's
+ * WhatsApp branch can't simply collect every distinct referenced file
+ * field into one call -- a single Baileys sendMessage call only ever
+ * carries one media attachment. A template referencing two or more file
+ * fields used to silently send only whichever field matched first in
+ * placeholder order, dropping the rest with no error, warning, or log.
+ * Confirms the real message text goes out with the FIRST referenced file
+ * (unchanged from before this fix), and every additional referenced file
+ * goes out as its own follow-up, caption-less send afterward -- as two
+ * separate real WhatsApp messages, not merged or dropped.
+ */
+test("fireRule's send_whatsapp action sends every distinct referenced file field, not just the first, as separate follow-up messages", async () => {
+  const entityWithTwoFiles: Entity = {
+    ...orderEntity,
+    fields: [
+      ...orderEntity.fields,
+      { name: "invoice", type: "file", required: false },
+      { name: "receipt", type: "file", required: false },
+    ],
+  };
+  const { db, project } = setupProject();
+  const rule = insertAutomationRule(db, {
+    projectId: project.id,
+    entityName: "Order",
+    trigger: "record_created",
+    actionType: "send_whatsapp",
+    toMode: "static",
+    toNumber: "972509999999",
+    messageTemplate: "Hi {{customerName}}, here's {{invoice}} and {{receipt}}.",
+  });
+  const { manager, sendCalls } = createFakeWhatsApp({ connected: true });
+
+  const uploadsDir = await mkdtemp(path.join(tmpdir(), "forge-automations-whatsapp-two-attachments-test-"));
+  try {
+    const invoiceFilename = "a1b2c3d4-e5f6-7890-abcd-ef1234567890.pdf";
+    const receiptFilename = "b2c3d4e5-f6a7-8901-bcde-f12345678901.pdf";
+    await mkdir(path.join(uploadsDir, project.id, "Order"), { recursive: true });
+    await writeFile(path.join(uploadsDir, project.id, "Order", invoiceFilename), "%PDF-fake-invoice-contents");
+    await writeFile(path.join(uploadsDir, project.id, "Order", receiptFilename), "%PDF-fake-receipt-contents");
+
+    const record = {
+      id: 1,
+      customerName: "Dana",
+      invoice: JSON.stringify({ url: `/api/uploads/${project.id}/Order/${invoiceFilename}`, name: "invoice-203.pdf", size: 27, mimeType: "application/pdf" }),
+      receipt: JSON.stringify({ url: `/api/uploads/${project.id}/Order/${receiptFilename}`, name: "receipt-203.pdf", size: 19, mimeType: "application/pdf" }),
+    };
+
+    await fireRule(db, manager, UNUSED_EMAIL_SENDER, project, entityWithTwoFiles, rule, record, uploadsDir, UNUSED_BASE_URL);
+
+    assert.equal(sendCalls.length, 2, "a template referencing two distinct file fields must send both, as two separate messages, not just the first");
+    assert.equal(sendCalls[0]!.body, "Hi Dana, here's invoice-203.pdf and receipt-203.pdf.", "the real message text must go out with the FIRST referenced file, unchanged from before this fix");
+    assert.equal(sendCalls[0]!.attachment?.fileName, "invoice-203.pdf");
+    assert.equal(sendCalls[1]!.body, "", "the follow-up send for the SECOND file must carry no caption/text of its own");
+    assert.equal(sendCalls[1]!.attachment?.fileName, "receipt-203.pdf", "the second file must still be delivered, not silently dropped");
+
+    const { messages } = listWhatsAppMessages(db, project.id);
+    assert.equal(messages.length, 2, "both the primary send and the follow-up send must each be logged as their own real outbound message");
+  } finally {
+    await rm(uploadsDir, { recursive: true, force: true });
+  }
+});
+
+/**
  * Round 850's finding: this function builds the identical kind of path
  * from the identical unrestricted entity.name string rounds 848/849
  * already found exploitable on the write (upload-destination) and delete
