@@ -5151,6 +5151,15 @@ export function EntityView({ entity, highlightRecordId, onHighlightHandled, onJu
   const pendingDeleteRef = useRef(null);
   const [relatedRecords, setRelatedRecords] = useState({});
   const [importBusy, setImportBusy] = useState(false);
+  // Round 1281: this exported app's own copy of the live Forge AI preview's
+  // EntityPanel.tsx writesInFlight (round 1260) -- bulkActionBusy and
+  // importBusy were two fully independent in-flight-write flags here too,
+  // with every bulk/single-record write handler below still only checking
+  // bulkActionBusy alone, so a CSV/JSON import running here could still
+  // race a bulk delete/duplicate/update on the exact same records (or vice
+  // versa) in every actually-deployed/downloaded Forge AI app, exactly as
+  // it could in the live preview before round 1260.
+  const writesInFlight = bulkActionBusy || importBusy;
   const [importMessage, setImportMessage] = useState(null);
   const [importErrors, setImportErrors] = useState([]);
   const [showImportErrors, setShowImportErrors] = useState(false);
@@ -5989,8 +5998,9 @@ export function EntityView({ entity, highlightRecordId, onHighlightHandled, onJu
     // form's own Save button was the one single-record write path never
     // gated against a bulk batch still in flight, unlike its sibling
     // Duplicate/Delete buttons in this exact same <form>. Mirrors the
-    // live preview's own identical fix.
-    if (bulkActionBusy) return;
+    // live preview's own identical fix. Round 1281: also an import
+    // (writesInFlight).
+    if (writesInFlight) return;
     setError(null);
     // Checked first, and worded specifically, because the generic
     // missingField message below ("is a required field") reads like a
@@ -6155,8 +6165,9 @@ export function EntityView({ entity, highlightRecordId, onHighlightHandled, onJu
     // Round 1118: see handleBulkDelete's own identical guard -- a single-
     // record delete can race a bulk update/duplicate/delete batch still
     // in flight on the same record just as easily as the bulk-action
-    // bar's own buttons could race each other.
-    if (bulkActionBusy) return false;
+    // bar's own buttons could race each other. Round 1281: also an import
+    // (writesInFlight).
+    if (writesInFlight) return false;
     const index = records.findIndex((r) => r.id === id);
     if (index === -1) return false;
     const record = records[index];
@@ -6219,7 +6230,8 @@ export function EntityView({ entity, highlightRecordId, onHighlightHandled, onJu
   // destroys data.
   async function handleDuplicate(id) {
     // Round 1118: see handleDelete's own identical guard just above.
-    if (bulkActionBusy) return;
+    // Round 1281: also an import (writesInFlight).
+    if (writesInFlight) return;
     const record = records.find((r) => r.id === id);
     if (!record) return;
     setError(null);
@@ -6287,7 +6299,8 @@ export function EntityView({ entity, highlightRecordId, onHighlightHandled, onJu
   async function handleBulkDelete() {
     // Round 1117: unlike handleBulkUpdate/handleBulkDuplicate, this had no
     // bulkActionBusy guard at all -- see EntityPanel.tsx's own identical fix.
-    if (bulkActionBusy) return;
+    // Round 1281: also an import (writesInFlight).
+    if (writesInFlight) return;
     const ids = [...selectedIds];
     if (ids.length === 0) return;
     if (!window.confirm(\`Delete \${ids.length} records? You can undo this for a few seconds after deleting.\`)) return;
@@ -6334,7 +6347,8 @@ export function EntityView({ entity, highlightRecordId, onHighlightHandled, onJu
   // same reason handleDuplicate has none: duplicating creates rather than
   // destroys.
   async function handleBulkDuplicate() {
-    if (bulkActionBusy) return;
+    // Round 1281: also an import (writesInFlight).
+    if (writesInFlight) return;
     const ids = [...selectedIds];
     if (ids.length === 0) return;
     // Same upfront refusal as handleDuplicate above -- a required "file"
@@ -6397,7 +6411,8 @@ export function EntityView({ entity, highlightRecordId, onHighlightHandled, onJu
   // field it's the chosen record's own id, the exact same value the
   // single-record add/edit form sends through this same updateRecord call.
   async function handleBulkUpdate() {
-    if (bulkActionBusy) return;
+    // Round 1281: also an import (writesInFlight).
+    if (writesInFlight) return;
     const ids = [...selectedIds];
     if (ids.length === 0 || !bulkEditField) return;
     // Mirrors the single-record add/edit form's own pre-submit required-field
@@ -6477,8 +6492,9 @@ export function EntityView({ entity, highlightRecordId, onHighlightHandled, onJu
   async function handleMoveFields(id, fields) {
     // Round 1118: covers handleMove (board dropdown) and both board/
     // calendar drag-and-drop handlers, which all funnel through here --
-    // see handleDelete's own identical guard above.
-    if (bulkActionBusy) return;
+    // see handleDelete's own identical guard above. Round 1281: also an
+    // import (writesInFlight).
+    if (writesInFlight) return;
     setError(null);
     try {
       await updateRecord(entity.name, id, fields);
@@ -6756,6 +6772,12 @@ export function EntityView({ entity, highlightRecordId, onHighlightHandled, onJu
     const file = e.target.files && e.target.files[0];
     e.target.value = "";
     if (!file) return;
+    // Round 1281: the reverse direction of writesInFlight's own guard --
+    // refuses to start an import while a bulk batch is still in flight on
+    // the exact same records, instead of firing a second independent set
+    // of concurrent writes on top of it. Mirrors the live preview's own
+    // identical fix (EntityPanel.tsx, round 1260).
+    if (bulkActionBusy) return;
     setImportBusy(true);
     setImportMessage(null);
     setImportErrors([]);
@@ -6820,6 +6842,8 @@ export function EntityView({ entity, highlightRecordId, onHighlightHandled, onJu
     const file = e.target.files && e.target.files[0];
     e.target.value = "";
     if (!file) return;
+    // Round 1281: see handleImportFile's own identical guard just above.
+    if (bulkActionBusy) return;
     setImportBusy(true);
     setImportMessage(null);
     setImportErrors([]);
@@ -6944,9 +6968,9 @@ export function EntityView({ entity, highlightRecordId, onHighlightHandled, onJu
       <td className="muted small created-at-cell">{formatRecordCreatedAt(r.createdAt)}</td>
       <td className="row-actions">
         <button onClick={() => startEdit(r)}>Edit</button>
-        <button disabled={bulkActionBusy} onClick={() => handleDuplicate(r.id)}>Duplicate</button>
+        <button disabled={writesInFlight} onClick={() => handleDuplicate(r.id)}>Duplicate</button>
         <button onClick={() => setRecordToPrint(r)}>Print</button>
-        <button disabled={bulkActionBusy} onClick={() => handleDelete(r.id)}>Delete</button>
+        <button disabled={writesInFlight} onClick={() => handleDelete(r.id)}>Delete</button>
       </td>
     </tr>
   );
@@ -7007,7 +7031,7 @@ export function EntityView({ entity, highlightRecordId, onHighlightHandled, onJu
           </p>
         )}
         <div>
-          <button type="submit" className="btn" disabled={!!recordHasNoRequiredFile || bulkActionBusy}>
+          <button type="submit" className="btn" disabled={!!recordHasNoRequiredFile || writesInFlight}>
             {editingId != null ? "Save" : "Add"}
           </button>
           {editingId != null && (
@@ -7027,14 +7051,14 @@ export function EntityView({ entity, highlightRecordId, onHighlightHandled, onJu
             </button>
           )}
           {editingId != null && (
-            <button type="button" disabled={bulkActionBusy} onClick={() => handleDuplicate(editingId)}>
+            <button type="button" disabled={writesInFlight} onClick={() => handleDuplicate(editingId)}>
               Duplicate
             </button>
           )}
           {editingId != null && (
             <button
               type="button"
-              disabled={bulkActionBusy}
+              disabled={writesInFlight}
               onClick={() => {
                 const id = editingId;
                 const deleted = handleDelete(id);
@@ -7076,11 +7100,11 @@ export function EntityView({ entity, highlightRecordId, onHighlightHandled, onJu
       <div className="csv-import-row">
         <label className="csv-import-label">
           {importBusy ? "Importing…" : "⬆️ Import CSV"}
-          <input type="file" accept=".csv,text/csv" onChange={handleImportFile} disabled={importBusy} hidden />
+          <input type="file" accept=".csv,text/csv" onChange={handleImportFile} disabled={writesInFlight} hidden />
         </label>
         <label className="json-import-label">
           {importBusy ? "Importing…" : "⬆️ Import JSON"}
-          <input type="file" accept=".json,application/json" onChange={handleImportJsonFile} disabled={importBusy} hidden />
+          <input type="file" accept=".json,application/json" onChange={handleImportJsonFile} disabled={writesInFlight} hidden />
         </label>
         {importMessage && <span className="muted small">{importMessage}</span>}
         {importErrors.length > 0 && (
@@ -7437,7 +7461,7 @@ export function EntityView({ entity, highlightRecordId, onHighlightHandled, onJu
                       onDelete={() => handleDelete(r.id)}
                       onPrint={() => setRecordToPrint(r)}
                       onJumpToRecord={onJumpToRecord}
-                      bulkActionBusy={bulkActionBusy}
+                      bulkActionBusy={writesInFlight}
                       onDragEnd={() => setDragOverColumn(null)}
                     />
                   ))}
@@ -7461,7 +7485,7 @@ export function EntityView({ entity, highlightRecordId, onHighlightHandled, onJu
               onDayClick={(date) => startCreateForDate(date, dateField)}
               onReschedule={(record, date, originDay) => handleCalendarDrop(record, dateField.name, date, originDay)}
               moveErrorId={moveErrorId}
-              bulkActionBusy={bulkActionBusy}
+              bulkActionBusy={writesInFlight}
             />
           ) : (
             <div className="table-scroll">
@@ -7491,14 +7515,14 @@ export function EntityView({ entity, highlightRecordId, onHighlightHandled, onJu
                     />
                   )}
                   {bulkEditField && (
-                    <button type="button" disabled={bulkActionBusy} onClick={handleBulkUpdate}>
+                    <button type="button" disabled={writesInFlight} onClick={handleBulkUpdate}>
                       {bulkActionBusy ? "Updating…" : \`Apply to \${selectedIds.size}\`}
                     </button>
                   )}
-                  <button type="button" disabled={bulkActionBusy} onClick={handleBulkDuplicate}>
+                  <button type="button" disabled={writesInFlight} onClick={handleBulkDuplicate}>
                     {bulkActionBusy ? "Duplicating…" : "📋 Duplicate selected"}
                   </button>
-                  <button type="button" disabled={bulkActionBusy} onClick={handleBulkDelete}>
+                  <button type="button" disabled={writesInFlight} onClick={handleBulkDelete}>
                     🗑️ Delete selected
                   </button>
                   <button type="button" onClick={() => setSelectedIds(new Set())}>

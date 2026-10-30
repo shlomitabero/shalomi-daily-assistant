@@ -3171,10 +3171,12 @@ test("the exported EntityView's handleSubmit saves only the field the user actua
     "createRecord",
     "refresh",
     "emptyForm",
-    // Round 1264: handleSubmit's own new guard (bulkActionBusy) is now a
-    // free variable it references -- false here, since this test exercises
-    // handleSubmit's own normal field-diffing behavior, not the guard.
-    "bulkActionBusy",
+    // Round 1264: handleSubmit's own new guard is now a free variable it
+    // references -- false here, since this test exercises handleSubmit's
+    // own normal field-diffing behavior, not the guard. Round 1281: the
+    // guard now reads writesInFlight (bulkActionBusy || importBusy), not
+    // bulkActionBusy directly.
+    "writesInFlight",
     `
     let form = {};
     let editingId = null;
@@ -7117,7 +7119,7 @@ test("the exported EntityView's handleBulkDuplicate and handleBulkUpdate keep on
     let refreshCalled = 0;
     const createdCopies: Record<string, unknown>[] = [];
     const fn = new Function(
-      "bulkActionBusy",
+      "writesInFlight",
       "requiredFileField",
       "entity",
       "records",
@@ -7179,7 +7181,7 @@ test("the exported EntityView's handleBulkDuplicate and handleBulkUpdate keep on
     (globalThis.window as unknown as { confirm: () => boolean }).confirm = () => true;
     try {
       const fn = new Function(
-        "bulkActionBusy",
+        "writesInFlight",
         "entity",
         "bulkEditField",
         "bulkEditValue",
@@ -7234,7 +7236,7 @@ test("the exported EntityView's handleBulkDuplicate and handleBulkUpdate keep on
     };
     try {
       const fn = new Function(
-        "bulkActionBusy",
+        "writesInFlight",
         "entity",
         "bulkEditField",
         "bulkEditValue",
@@ -7280,7 +7282,7 @@ test("the exported EntityView's handleBulkDuplicate and handleBulkUpdate keep on
     let updateRecordCalled = 0;
     let refreshCalled = 0;
     const fn = new Function(
-      "bulkActionBusy",
+      "writesInFlight",
       "entity",
       "bulkEditField",
       "bulkEditValue",
@@ -7329,7 +7331,7 @@ test("the exported EntityView's handleBulkDuplicate and handleBulkUpdate keep on
     };
     try {
       const fn = new Function(
-        "bulkActionBusy",
+        "writesInFlight",
         "entity",
         "bulkEditField",
         "bulkEditValue",
@@ -7381,7 +7383,7 @@ test("the exported EntityView's handleBulkDuplicate and handleBulkUpdate keep on
     };
     try {
       const fn = new Function(
-        "bulkActionBusy",
+        "writesInFlight",
         "entity",
         "bulkEditField",
         "bulkEditValue",
@@ -7423,7 +7425,7 @@ test("the exported EntityView's handleBulkDuplicate and handleBulkUpdate keep on
     (globalThis.window as unknown as { confirm: () => boolean }).confirm = () => true;
     try {
       const fn = new Function(
-        "bulkActionBusy",
+        "writesInFlight",
         "entity",
         "bulkEditField",
         "bulkEditValue",
@@ -7485,7 +7487,7 @@ test("the exported EntityView's handleBulkUpdate asks a distinct 'Clear' confirm
   };
   try {
     const fn = new Function(
-      "bulkActionBusy",
+      "writesInFlight",
       "entity",
       "bulkEditField",
       "bulkEditValue",
@@ -7546,7 +7548,7 @@ test("the exported EntityView's handleBulkUpdate refuses a non-numeric value for
   };
   try {
     const fn = new Function(
-      "bulkActionBusy",
+      "writesInFlight",
       "entity",
       "bulkEditField",
       "bulkEditValue",
@@ -7598,7 +7600,7 @@ test("the exported EntityView's generated handleBulkDuplicate never calls create
   let capturedSelectedIds: Set<number> | undefined;
   const createdCopies: Record<string, unknown>[] = [];
   const fn = new Function(
-    "bulkActionBusy",
+    "writesInFlight",
     "requiredFileField",
     "entity",
     "records",
@@ -7674,7 +7676,7 @@ test("the exported EntityView's generated handleBulkDuplicate refuses to start a
 
   function makeHandler() {
     return new Function(
-      "bulkActionBusy",
+      "writesInFlight",
       "requiredFileField",
       "entity",
       "records",
@@ -7766,7 +7768,7 @@ test("the exported EntityView's handleDuplicate/handleBulkDuplicate null out a '
   {
     let capturedCopy: Record<string, unknown> | undefined;
     const fn = new Function(
-      "bulkActionBusy",
+      "writesInFlight",
       "entity",
       "records",
       "setError",
@@ -7784,7 +7786,7 @@ test("the exported EntityView's handleDuplicate/handleBulkDuplicate null out a '
   {
     const createdCopies: Record<string, unknown>[] = [];
     const fn = new Function(
-      "bulkActionBusy",
+      "writesInFlight",
       "entity",
       "records",
       "selectedIds",
@@ -7826,7 +7828,7 @@ test("the exported EntityView's handleDuplicate/handleBulkDuplicate refuse outri
     let createCalled = false;
     let capturedError: string | undefined;
     const fn = new Function(
-      "bulkActionBusy",
+      "writesInFlight",
       "requiredFileField",
       "entity",
       "records",
@@ -7845,7 +7847,7 @@ test("the exported EntityView's handleDuplicate/handleBulkDuplicate refuse outri
   {
     let createCalled = false;
     const fn = new Function(
-      "bulkActionBusy",
+      "writesInFlight",
       "requiredFileField",
       "entity",
       "records",
@@ -7900,7 +7902,7 @@ test("the exported EntityView's handleDuplicate refuses upfront when a record's 
   let createCalled = false;
   let capturedError: string | undefined;
   const fn = new Function(
-    "bulkActionBusy",
+    "writesInFlight",
     "requiredFileField",
     "entity",
     "records",
@@ -7944,7 +7946,7 @@ test("the exported EntityView's handleBulkDuplicate refuses only the specific re
   let refreshCalled = 0;
   const createdCopies: Record<string, unknown>[] = [];
   const fn = new Function(
-    "bulkActionBusy",
+    "writesInFlight",
     "requiredFileField",
     "entity",
     "records",
@@ -8041,7 +8043,7 @@ test("the exported EntityView's handleDuplicate/handleMove surface a failed requ
   async function runHandler(handlerSrc: string, invoke: (fn: (...args: unknown[]) => Promise<void>) => Promise<void>) {
     let capturedError: string | undefined;
     const fn = new Function(
-      "bulkActionBusy",
+      "writesInFlight",
       "window",
       "requiredFileField",
       "entity",
@@ -12425,27 +12427,68 @@ test("the exported EntityView asks for confirmation before deleting a single rec
  * Round 1264: ports the live preview's own identical fix to this exported
  * app -- handleSubmit (the add/edit record form's own Save button) was the
  * one single-record write path never gated against bulkActionBusy, unlike
- * its sibling Duplicate button two lines away, which already is.
+ * its sibling Duplicate button two lines away, which already is. Round
+ * 1281: the guard (and the Save button's disabled check) now reads
+ * writesInFlight (bulkActionBusy || importBusy) -- see its own declaration
+ * for why a bare bulkActionBusy check was never enough here either.
  */
-test("the exported EntityView's handleSubmit refuses to run while bulkActionBusy is true, and its Save button is disabled too", () => {
+test("the exported EntityView's handleSubmit refuses to run while writesInFlight is true, and its Save button is disabled too", () => {
   const files = generateExportFiles(project);
   const entityViewJsx = files.find((f) => f.path === "web/src/components/EntityView.jsx")!.content;
   // Extracts handleSubmit's own body first (bounded to its own closing
   // brace), not a bare substring search across the whole file -- without
   // this, the guard regex below could falsely match handleDelete's own,
-  // unrelated "if (bulkActionBusy) return;" elsewhere in the file.
+  // unrelated "if (writesInFlight) return;" elsewhere in the file.
   const handleSubmitMatch = entityViewJsx.match(/async function handleSubmit\(e\) \{[\s\S]*?\n {2}\}\n/);
   assert.ok(handleSubmitMatch, "expected to find handleSubmit in the exported EntityView");
   assert.match(
     handleSubmitMatch![0],
-    /e\.preventDefault\(\);[\s\S]*?\n\s*if \(bulkActionBusy\) return;/,
-    "handleSubmit must refuse to run while a bulk batch is still in flight, exactly like handleDelete/handleDuplicate already do",
+    /e\.preventDefault\(\);[\s\S]*?\n\s*if \(writesInFlight\) return;/,
+    "handleSubmit must refuse to run while a bulk batch or an import is still in flight, exactly like handleDelete/handleDuplicate already do",
   );
   assert.match(
     entityViewJsx,
-    /<button type="submit" className="btn" disabled=\{!!recordHasNoRequiredFile \|\| bulkActionBusy\}>/,
-    "the Save button must be disabled while bulkActionBusy is true, exactly like its sibling Duplicate button",
+    /<button type="submit" className="btn" disabled=\{!!recordHasNoRequiredFile \|\| writesInFlight\}>/,
+    "the Save button must be disabled while writesInFlight is true, exactly like its sibling Duplicate button",
   );
+  assert.match(
+    entityViewJsx,
+    /const writesInFlight = bulkActionBusy \|\| importBusy;/,
+    "writesInFlight must be declared as the derived combination of both in-flight-write flags, mirroring the live preview's own round-1260 fix",
+  );
+});
+
+/**
+ * Round 1281: ports the live preview's own identical fix (EntityPanel.tsx,
+ * round 1260) to this exported app -- handleImportFile and
+ * handleImportJsonFile never checked bulkActionBusy before starting, so a
+ * CSV/JSON import here could fire its own independent batch of concurrent
+ * createRecord/updateRecord calls on top of a bulk update/duplicate/delete
+ * batch already running against the same selection, in every actually-
+ * deployed/downloaded Forge AI app (not just the live preview). Each is
+ * extracted and called with ONLY bulkActionBusy declared (mirroring the
+ * live preview's own equivalent test, and this file's own round-1118-style
+ * single-free-variable extraction tests elsewhere) -- if the guard were
+ * ever removed, the very next line each function reaches (setImportBusy)
+ * throws a ReferenceError instead of silently doing nothing, proving the
+ * guard itself is what's stopping execution.
+ */
+test("the exported EntityView's handleImportFile and handleImportJsonFile are each a no-op while a bulk batch is still in flight", async () => {
+  const entityViewJsx = generateExportFiles(project).find((f) => f.path === "web/src/components/EntityView.jsx")!.content;
+  for (const [name, signature] of [
+    ["handleImportFile", /async function handleImportFile\(e\) \{[\s\S]*?\n {2}\}\n/],
+    ["handleImportJsonFile", /async function handleImportJsonFile\(e\) \{[\s\S]*?\n {2}\}\n/],
+  ] as const) {
+    const handlerMatch = entityViewJsx.match(signature);
+    assert.ok(handlerMatch, `expected to find ${name} in generated output`);
+    const fn = new Function("bulkActionBusy", `${handlerMatch![0]}\nreturn ${name};`)(true) as (e: unknown) => Promise<void>;
+    // A real file must be present -- handleImportFile/handleImportJsonFile
+    // both bail out on a missing file BEFORE ever reaching the
+    // bulkActionBusy guard, so an empty FileList would trivially "pass"
+    // this test even with the guard removed.
+    const fakeEvent = { target: { files: [{}], value: "" } };
+    await fn(fakeEvent); // resolves cleanly only if the guard fires; a removed guard throws ReferenceError on setImportBusy
+  }
 });
 
 /**
@@ -18755,7 +18798,7 @@ test("the exported EntityView's Kanban column, calendar day, and table column-he
   );
   assert.match(
     entityViewJsx,
-    /onJumpToRecord=\{onJumpToRecord\}\s*\n\s*bulkActionBusy=\{bulkActionBusy\}\s*\n\s*onDragEnd=\{\(\) => setDragOverColumn\(null\)\}/,
+    /onJumpToRecord=\{onJumpToRecord\}\s*\n\s*bulkActionBusy=\{writesInFlight\}\s*\n\s*onDragEnd=\{\(\) => setDragOverColumn\(null\)\}/,
     "the <BoardCard> call site must pass onDragEnd clearing dragOverColumn",
   );
 
