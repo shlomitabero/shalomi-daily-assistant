@@ -840,13 +840,25 @@ async function fireWebhookAction(
     );
   } catch (err) {
     if (!getProject(db, project.id)) return;
+    // Round 1327: a timed-out request rejects with fetch/undici's own
+    // generic AbortError ("This operation was aborted" or similar), which
+    // tells a user debugging a failed webhook rule nothing about WHY it
+    // failed -- indistinguishable from a DNS failure, a connection refusal,
+    // or any other genuine network error. Special-cased the same way
+    // email.ts's ResendEmailSender.performSend already does for its own
+    // identical AbortController timeout, so this stays a single, stable,
+    // always-identical literal (the timeout itself is the fixed 10_000ms
+    // constant above, never configurable) that AUTOMATION_CONFIG_ERROR_CODES
+    // (apps/web/src/api.ts) can translate like every other whole-rule
+    // misconfiguration message.
+    const message = controller.signal.aborted ? "Webhook request timed out after 10000ms" : err instanceof Error ? err.message : "Webhook request failed";
     recordAutomationRun(
       db,
       project.id,
       rule.id,
       {
         status: "failed",
-        error: err instanceof Error ? err.message : "Webhook request failed",
+        error: message,
       },
       rule.actionType,
       record ? Number(record.id) : null,

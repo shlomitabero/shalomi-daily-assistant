@@ -1315,6 +1315,11 @@ export const AUTOMATION_CONFIG_ERROR_CODES: Record<string, string> = {
   "This rule has no destination email address configured": "AUTOMATION_NO_EMAIL_DESTINATION",
   "This rule has no destination phone number configured": "AUTOMATION_NO_PHONE_DESTINATION",
   "This record has no value in the configured phone-number field": "AUTOMATION_PHONE_FIELD_EMPTY",
+  // Round 1327: automations.ts's fireWebhookAction special-cases its own
+  // AbortController timeout (always this exact literal -- the 10s timeout
+  // itself is a fixed constant, never configurable) instead of letting
+  // fetch/undici's generic, untranslatable AbortError message through.
+  "Webhook request timed out after 10000ms": "AUTOMATION_WEBHOOK_TIMEOUT",
 };
 
 export interface WhatsAppAttachmentDescriptor {

@@ -2743,6 +2743,47 @@ test("runAutomationsForRecordChange records a failed outcome when the webhook re
   assert.match(after.lastError ?? "", /network down/);
 });
 
+/**
+ * Round 1327: unlike the "network down" test above, where fetch rejects
+ * immediately with its own real error, this one simulates a destination
+ * that simply never responds -- the real failure mode fireWebhookAction's
+ * own 10s AbortController timeout exists to bound. The fake fetch below
+ * never resolves on its own, only reacting to the signal being aborted
+ * (the same pattern email.test.ts's identical ResendEmailSender timeout
+ * test already uses), confirming the stored error is the clear, stable
+ * "Webhook request timed out after 10000ms" message fireWebhookAction's
+ * own catch block now special-cases -- not fetch/undici's generic,
+ * untranslatable AbortError text that used to leak straight through.
+ */
+test("runAutomationsForRecordChange records a clear 'timed out' message, not fetch's raw AbortError text, when the webhook destination hangs past its own timeout", async () => {
+  const { db, project } = setupProject();
+  const rule = insertAutomationRule(db, {
+    projectId: project.id,
+    entityName: "Order",
+    trigger: "record_created",
+    actionType: "webhook",
+    webhookUrl: "https://hooks.example.com/forge",
+    toMode: "static",
+    messageTemplate: "New order!",
+  });
+  const record = { id: 1, customerName: "Dana Levi", customerPhone: "972501234567", status: "New" };
+
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = ((_url: string, init?: RequestInit) =>
+    new Promise<Response>((_resolve, reject) => {
+      init?.signal?.addEventListener("abort", () => reject(new DOMException("The operation was aborted.", "AbortError")));
+    })) as typeof fetch;
+  try {
+    await runAutomationsForRecordChange(db, {} as WhatsAppWebManager, UNUSED_EMAIL_SENDER, project, orderEntity, "created", record, new Set(), UNUSED_UPLOADS_DIR, UNUSED_BASE_URL);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+
+  const after = getAutomationRule(db, project.id, rule.id)!;
+  assert.equal(after.lastStatus, "failed");
+  assert.equal(after.lastError, "Webhook request timed out after 10000ms");
+});
+
 test("runAutomationsForRecordChange rejects (records failed, never calls fetch) a webhook rule whose URL points at a blocked local/private host", async () => {
   const { db, project } = setupProject();
   // Bypasses the route-level isAllowedWebhookUrl check on purpose (direct DB
