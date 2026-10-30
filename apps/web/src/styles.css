@@ -3333,6 +3333,26 @@ button.sort-header:hover:not(:disabled) {
   cursor: pointer;
 }
 
+/* Round 1317: the small real button a row falls back to instead of its
+   own role="button"/tabIndex when its own text contains a real <a> --
+   see the doc comment on this button in GlobalSearchPanel.tsx. */
+.global-search-hit-jump {
+  margin-inline-end: 6px;
+  padding: 1px 5px;
+  font-size: 12px;
+  line-height: 1;
+  background: none;
+  border: 1px solid var(--border-soft);
+  border-radius: 4px;
+  cursor: pointer;
+  color: var(--muted);
+}
+
+.global-search-hit-jump:hover {
+  color: var(--accent);
+  border-color: var(--accent);
+}
+
 .whatsapp-panel {
   max-width: 560px;
 }

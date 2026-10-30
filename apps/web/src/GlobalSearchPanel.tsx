@@ -723,34 +723,59 @@ export function GlobalSearchPanel({
                     </button>
                   </div>
                   <ul className="global-search-hits">
-                    {displayed.map((record) => (
-                      <li key={String(record.id)}>
-                        {/* Round 1050: a role="button" div, not a native <button> --
-                            LinkifiedHighlighted below can render a real <a> for an
-                            embedded URL/email, and nesting <a> inside <button> is
-                            invalid HTML with broken click-target behavior. Mirrors
-                            EntityPanel.tsx's own calendar day-cell pattern (a
-                            clickable div containing its own nested interactive
-                            controls, each stopping propagation on its own click). */}
-                        <div
-                          role="button"
-                          tabIndex={0}
-                          className="link-button global-search-hit-button"
-                          onClick={() => onJumpToRecord(result.entityName, record.id as number)}
-                          onKeyDown={(e) => {
-                            if (e.target !== e.currentTarget) return;
-                            if (e.key !== "Enter" && e.key !== " ") return;
-                            e.preventDefault();
-                            onJumpToRecord(result.entityName, record.id as number);
-                          }}
-                        >
-                          <LinkifiedHighlighted
-                            text={recordPreview(entity, record)}
-                            query={highlightQuery}
-                          />
-                        </div>
-                      </li>
-                    ))}
+                    {displayed.map((record) => {
+                      const previewText = recordPreview(entity, record);
+                      // Round 1317: LinkifiedHighlighted below renders a real <a>
+                      // whenever previewText itself contains a URL/email (round
+                      // 1050's own motivating case: a Lead/Vendor entity whose
+                      // only display field is "website" or "email"). A div with
+                      // role="button" wrapping that real <a> is a WCAG 4.1.2 /
+                      // axe-core nested-interactive violation -- the same defect
+                      // class round 1315 fixed in CalendarView's day cell, here
+                      // with a real <a> instead of real <button>s. Only this case
+                      // needs the restructure: every other row (no embedded link)
+                      // keeps round 1050's simpler role="button" div unchanged.
+                      const hasLink = splitLinkSegments(previewText).some((seg) => seg.href);
+                      return (
+                        <li key={String(record.id)}>
+                          {hasLink ? (
+                            <div
+                              className="link-button global-search-hit-button"
+                              onClick={() => onJumpToRecord(result.entityName, record.id as number)}
+                            >
+                              <button
+                                type="button"
+                                className="global-search-hit-jump"
+                                title={t("search.jumpToRecord")}
+                                aria-label={t("search.jumpToRecord")}
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  onJumpToRecord(result.entityName, record.id as number);
+                                }}
+                              >
+                                ↗
+                              </button>
+                              <LinkifiedHighlighted text={previewText} query={highlightQuery} />
+                            </div>
+                          ) : (
+                            <div
+                              role="button"
+                              tabIndex={0}
+                              className="link-button global-search-hit-button"
+                              onClick={() => onJumpToRecord(result.entityName, record.id as number)}
+                              onKeyDown={(e) => {
+                                if (e.target !== e.currentTarget) return;
+                                if (e.key !== "Enter" && e.key !== " ") return;
+                                e.preventDefault();
+                                onJumpToRecord(result.entityName, record.id as number);
+                              }}
+                            >
+                              <LinkifiedHighlighted text={previewText} query={highlightQuery} />
+                            </div>
+                          )}
+                        </li>
+                      );
+                    })}
                   </ul>
                   {remaining > 0 && (
                     <button

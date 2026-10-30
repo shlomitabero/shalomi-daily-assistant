@@ -14434,6 +14434,94 @@ test("the exported GlobalSearch renders a URL embedded in a record's own fallbac
   }
 });
 
+/**
+ * Round 1317: mirrors the live preview's own round-1317 fix -- round
+ * 1050's row restructure (role="button" div instead of a native <button>)
+ * solved the <a>-inside-<button> HTML-validity problem but reopened a
+ * WCAG 4.1.2 / axe-core nested-interactive violation, since a real <a>
+ * (from LinkifiedHighlighted) now sits inside an element with its own
+ * role="button". Renders the real generated GlobalSearch.jsx end to end
+ * and confirms: when a row's own text contains a link, the row no longer
+ * carries role="button"/tabIndex itself, and instead exposes a separate
+ * real button for "jump to record" that still fires onJumpToRecord and
+ * never also opens the link (and vice versa).
+ */
+test("the exported GlobalSearch's result row no longer exposes role=button on itself when it contains a real link, exposing a separate real button instead", async () => {
+  const withLead: Project = {
+    ...project,
+    spec: {
+      ...project.spec,
+      entities: [
+        ...project.spec.entities,
+        {
+          name: "Lead",
+          fields: [{ name: "website", type: "text", required: false }],
+        },
+      ],
+    },
+  };
+  const files = generateExportFiles(withLead);
+  const dir = writeGeneratedWebComponent(files);
+  const leadRecords = [{ id: 1, website: "https://example.com/widget-page" }];
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = (async (input: string): Promise<Response> => {
+    if (input === "/api/Lead") {
+      return new Response(JSON.stringify({ records: leadRecords }), { status: 200, headers: { "content-type": "application/json" } });
+    }
+    if (input.startsWith("/api/")) {
+      return new Response(JSON.stringify({ records: [] }), { status: 200, headers: { "content-type": "application/json" } });
+    }
+    throw new Error(`unexpected request ${input}`);
+  }) as typeof fetch;
+
+  try {
+    await withRealLocalStorage(async () => {
+      const { GlobalSearch } = await import(path.join(dir, "web", "src", "components", "GlobalSearch.jsx"));
+      const recordJumps: [string, number][] = [];
+      const { container } = render(
+        React.createElement(GlobalSearch, {
+          entities: withLead.spec.entities,
+          onClose: () => {},
+          onJumpToEntity: () => {},
+          onJumpToRecord: (entityName: string, recordId: number) => recordJumps.push([entityName, recordId]),
+        }),
+      );
+
+      const input = container.querySelector(".global-search-input") as HTMLInputElement;
+      const form = container.querySelector("form.global-search-form") as HTMLFormElement;
+      await act(async () => {
+        fireEvent.change(input, { target: { value: "widget" } });
+        fireEvent.submit(form);
+      });
+      for (let i = 0; i < 40; i++) {
+        if (container.querySelector(".global-search-hit-button a")) break;
+        await act(async () => {
+          await new Promise((resolve) => setTimeout(resolve, 0));
+        });
+      }
+      const row = container.querySelector(".global-search-hit-button") as HTMLElement;
+      assert.ok(row, "expected a result row for the Lead record");
+      assert.equal(row.getAttribute("role"), null, "a row containing a real <a> must not also carry role=button on itself");
+      assert.equal(row.getAttribute("tabindex"), null, "a row containing a real <a> must not also be independently focusable via tabIndex");
+
+      const jumpButton = row.querySelector(".global-search-hit-jump") as HTMLButtonElement;
+      assert.ok(jumpButton, "expected a separate real button for jumping to the record");
+      assert.equal(jumpButton.tagName, "BUTTON", "the jump control must be a real <button>, not a div with role=button");
+
+      fireEvent.click(jumpButton);
+      assert.deepEqual(recordJumps, [["Lead", 1]], "clicking the jump button must fire onJumpToRecord with that record's own entity name and id");
+
+      const link = row.querySelector("a") as HTMLAnchorElement;
+      fireEvent.click(link);
+      assert.deepEqual(recordJumps, [["Lead", 1]], "clicking the link must never also fire onJumpToRecord a second time");
+    });
+  } finally {
+    globalThis.fetch = originalFetch;
+    cleanup();
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
 // Regression test: runSearch used to await a bare
 // Promise.all(entities.map(searchEntity)) -- one entity whose records
 // failed to load (a transient network blip, a cold-starting backend)

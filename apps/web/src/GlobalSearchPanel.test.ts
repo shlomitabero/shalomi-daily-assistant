@@ -1394,6 +1394,87 @@ test("GlobalSearchPanel renders a URL or email embedded in a record's own displa
 });
 
 /**
+ * Round 1317: round 1050's own row restructure (a role="button" div, not a
+ * native <button>, specifically to let LinkifiedHighlighted render a real
+ * <a> inside it) solved the HTML-validity problem but reopened a WCAG
+ * 4.1.2 / axe-core nested-interactive violation -- an element with
+ * role="button" must not itself contain another real interactive element,
+ * and a real <a> is exactly that. The same defect class round 1315 fixed
+ * in CalendarView's day cell (there with real <button>s nested inside a
+ * role="button" div instead of a real <a>). Confirms: when a row's own
+ * text contains a link, the row no longer carries role="button"/tabIndex
+ * itself, and instead exposes a separate, real, keyboard-focusable button
+ * for "jump to record" that still calls onJumpToRecord and still never
+ * also opens the link (and vice versa) -- while a row with NO embedded
+ * link is completely unaffected, keeping round 1050's original
+ * role="button" div unchanged (confirmed by the sibling test above).
+ */
+test("GlobalSearchPanel's result row no longer exposes role=button on itself when it contains a real link, exposing a separate real button instead", async () => {
+  await withJsdom(async () => {
+    const originalFetch = globalThis.fetch;
+    const leadEntity: Entity = {
+      name: "Lead",
+      label: "Lead",
+      fields: [{ name: "website", label: "Website", type: "text", required: false }],
+    };
+    const leadRecords: EntityRecord[] = [{ id: 1, website: "https://example.com/widget-page" }];
+    globalThis.fetch = (async (input: string): Promise<Response> => {
+      if (input === "/api/projects/proj1/entities/Lead") {
+        return new Response(JSON.stringify({ records: leadRecords }), { status: 200, headers: { "content-type": "application/json" } });
+      }
+      throw new Error(`unexpected request ${input}`);
+    }) as typeof fetch;
+    const recordJumps: [string, number][] = [];
+    try {
+      render(
+        React.createElement(
+          ThemeProvider,
+          null,
+          React.createElement(
+            LanguageProvider,
+            null,
+            React.createElement(GlobalSearchPanel, {
+              projectId: "proj1",
+              userId: "user1",
+              projectName: "Test Project",
+              entities: [leadEntity],
+              onClose: () => {},
+              onJumpToEntity: () => {},
+              onJumpToRecord: (entityName: string, recordId: number) => recordJumps.push([entityName, recordId]),
+            }),
+          ),
+        ),
+      );
+
+      const input = document.querySelector(".global-search-input") as HTMLInputElement;
+      fireEvent.change(input, { target: { value: "widget" } });
+      const form = document.querySelector("form.global-search-form")!;
+      fireEvent.submit(form);
+      await waitForCondition(() => document.querySelectorAll(".global-search-hit-button").length === 1);
+
+      const row = document.querySelector(".global-search-hit-button")!;
+      assert.equal(row.getAttribute("role"), null, "a row containing a real <a> must not also carry role=button on itself");
+      assert.equal(row.getAttribute("tabindex"), null, "a row containing a real <a> must not also be independently focusable via tabIndex");
+      assert.ok(row.querySelector("a.cell-link"), "expected the real link to still be present");
+
+      const jumpButton = row.querySelector(".global-search-hit-jump") as HTMLButtonElement;
+      assert.ok(jumpButton, "expected a separate real button for jumping to the record");
+      assert.equal(jumpButton.tagName, "BUTTON", "the jump control must be a real <button>, not a div with role=button");
+      assert.ok(jumpButton.getAttribute("aria-label"), "the jump button must have a real aria-label");
+
+      fireEvent.click(jumpButton);
+      assert.deepEqual(recordJumps, [["Lead", 1]], "clicking the jump button must fire onJumpToRecord with that record's own entity name and id");
+
+      const link = row.querySelector("a.cell-link") as HTMLAnchorElement;
+      fireEvent.click(link);
+      assert.deepEqual(recordJumps, [["Lead", 1]], "clicking the link must never also fire onJumpToRecord a second time");
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+});
+
+/**
  * Round 1122: a refine completing while this panel is still open (its own
  * BuildProgress renders inline on the preview screen, round 938's own
  * comment confirms it, never as a full-screen blocking overlay) is free to

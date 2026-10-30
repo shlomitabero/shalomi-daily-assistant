@@ -8439,32 +8439,55 @@ export function GlobalSearch({ entities, onClose, onJumpToEntity, onJumpToRecord
                     <button type="button" className="small" onClick={() => onJumpToEntity(result.entityName)}>Go to tab</button>
                   </div>
                   <ul className="global-search-hits">
-                    {displayed.map((record) => (
-                      <li key={record.id}>
-                        {/* Round 1050: mirrors the live preview's own GlobalSearchPanel.tsx fix --
-                            a role="button" div, not a native <button>, since LinkifiedHighlighted
-                            below can render a real <a> for a URL/email embedded in the record's
-                            own display-label field, and nesting <a> inside <button> is invalid
-                            HTML with broken click-target behavior. */}
-                        <div
-                          role="button"
-                          tabIndex={0}
-                          className="link-button global-search-hit-button"
-                          onClick={() => onJumpToRecord(result.entityName, record.id)}
-                          onKeyDown={(e) => {
-                            if (e.target !== e.currentTarget) return;
-                            if (e.key !== "Enter" && e.key !== " ") return;
-                            e.preventDefault();
-                            onJumpToRecord(result.entityName, record.id);
-                          }}
-                        >
-                          <LinkifiedHighlighted
-                            text={recordDisplayLabel(entities.find((e) => e.name === result.entityName), record)}
-                            query={highlightQuery}
-                          />
-                        </div>
-                      </li>
-                    ))}
+                    {displayed.map((record) => {
+                      const previewText = recordDisplayLabel(entities.find((e) => e.name === result.entityName), record);
+                      // Round 1317: mirrors the live preview's own GlobalSearchPanel.tsx fix --
+                      // LinkifiedHighlighted below renders a real <a> whenever previewText
+                      // contains a URL/email, and a role="button" div wrapping that real <a>
+                      // is a WCAG 4.1.2 / axe-core nested-interactive violation. Only this case
+                      // needs the restructure; every other row (no embedded link) keeps round
+                      // 1050's simpler role="button" div unchanged.
+                      const hasLink = splitLinkSegments(previewText).some((seg) => seg.href);
+                      return (
+                        <li key={record.id}>
+                          {hasLink ? (
+                            <div
+                              className="link-button global-search-hit-button"
+                              onClick={() => onJumpToRecord(result.entityName, record.id)}
+                            >
+                              <button
+                                type="button"
+                                className="global-search-hit-jump"
+                                title="Open this record"
+                                aria-label="Open this record"
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  onJumpToRecord(result.entityName, record.id);
+                                }}
+                              >
+                                ↗
+                              </button>
+                              <LinkifiedHighlighted text={previewText} query={highlightQuery} />
+                            </div>
+                          ) : (
+                            <div
+                              role="button"
+                              tabIndex={0}
+                              className="link-button global-search-hit-button"
+                              onClick={() => onJumpToRecord(result.entityName, record.id)}
+                              onKeyDown={(e) => {
+                                if (e.target !== e.currentTarget) return;
+                                if (e.key !== "Enter" && e.key !== " ") return;
+                                e.preventDefault();
+                                onJumpToRecord(result.entityName, record.id);
+                              }}
+                            >
+                              <LinkifiedHighlighted text={previewText} query={highlightQuery} />
+                            </div>
+                          )}
+                        </li>
+                      );
+                    })}
                   </ul>
                   {remaining > 0 && (
                     <button
@@ -9438,6 +9461,8 @@ nav button.active .tab-count { background: rgba(255, 255, 255, 0.25); color: inh
 .global-search-hits { margin: 10px 0 0; padding-inline-start: 20px; display: flex; flex-direction: column; gap: 6px; font-size: 14.5px; }
 .global-search-show-all { margin-top: 6px; font-size: 13px; }
 .global-search-hit-button { display: block; width: 100%; text-align: start; white-space: normal; cursor: pointer; }
+.global-search-hit-jump { margin-inline-end: 6px; padding: 1px 5px; font-size: 12px; line-height: 1; background: none; border: 1px solid var(--border-soft); border-radius: 4px; cursor: pointer; color: var(--muted); }
+.global-search-hit-jump:hover { color: var(--accent); border-color: var(--accent); }
 .record-row-highlighted, .record-row-highlighted:hover { background: var(--accent-soft); transition: background 1.5s ease; }
 .record-row-focused { outline: 2px solid var(--accent); outline-offset: -2px; }
 .record-row-move-error, .record-row-move-error:hover { background: var(--danger-soft); transition: background 2s ease; }
