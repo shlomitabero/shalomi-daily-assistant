@@ -283,6 +283,23 @@ test("asks about payments (recommending Stripe) for a restaurant-menu descriptio
   assert.equal(paymentQuestion!.recommendation, "Stripe");
 });
 
+test("asks about payments (recommending Stripe) for an insurance-claims description, even though it names none of PAYMENT_KEYWORDS", async () => {
+  // "insurance claims tracker"/"policyholder claims" match only the
+  // InsuranceClaim entity (whose own status enum includes "Paid" and whose
+  // claimAmount field is a real payout) and share no substring with
+  // "payment"/"billing"/"invoice"/"checkout"/"stripe"/"subscription" -- a
+  // filed claim is a payout-bearing transaction, so recommending "No
+  // payments" here would be actively wrong. Regression test for round
+  // 1346's finding that InsuranceClaim (like Rental/Property/MenuItem/
+  // WorkOrder before it) was never added to BILLING_ENTITY_NAMES.
+  const provider = new HeuristicSpecProvider();
+  const spec = await provider.generate("An insurance claims tracker for our agency to manage policyholder claims and payouts.");
+  assert.deepEqual(spec.entities.map((e) => e.name), ["InsuranceClaim"]);
+  const paymentQuestion = spec.openQuestions.find((q) => q.question.toLowerCase().includes("payment"));
+  assert.ok(paymentQuestion);
+  assert.equal(paymentQuestion!.recommendation, "Stripe");
+});
+
 test("asks about payments (recommending Stripe) for a field-service/repair description, even though it names none of PAYMENT_KEYWORDS", async () => {
   // "repair jobs"/"service calls"/"plumbing business" match the Service and
   // WorkOrder entities but share no substring with "payment"/"billing"/

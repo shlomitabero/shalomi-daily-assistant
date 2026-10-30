@@ -135,8 +135,29 @@ const PAYMENT_KEYWORDS: (string | RegExp)[] = [
  * job", "field service", "maintenance request") are specifically
  * commercial, the same narrow-trigger shape Rental/Property/MenuItem
  * already have. Added "WorkOrder" below.
+ *
+ * Round 1346: the exact same drift, for InsuranceClaim -- an insurance-
+ * agency description ("insurance claims tracker... to manage policyholder
+ * claims and payouts") matches only InsuranceClaim, which hits none of
+ * PAYMENT_KEYWORDS, and got recommended "No payments" even though the
+ * entity itself has a `claimAmount` field and a `status` enum whose values
+ * include "Paid" -- a filed claim is a payout-bearing transaction, the
+ * same shape as Rental/Property/MenuItem/WorkOrder. InsuranceClaim's own
+ * keywords ("insurance claim", "policyholder", "claims processing") are
+ * narrowly insurance-specific, not the bare-word ambiguity Service/Course
+ * were excluded for. Added "InsuranceClaim" below.
  */
-const BILLING_ENTITY_NAMES = new Set(["Invoice", "Order", "Donation", "Subscription", "Rental", "Property", "MenuItem", "WorkOrder"]);
+const BILLING_ENTITY_NAMES = new Set([
+  "Invoice",
+  "Order",
+  "Donation",
+  "Subscription",
+  "Rental",
+  "Property",
+  "MenuItem",
+  "WorkOrder",
+  "InsuranceClaim",
+]);
 
 interface HebrewLabels {
   labelHe: string;
