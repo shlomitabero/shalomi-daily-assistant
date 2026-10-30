@@ -2158,7 +2158,15 @@ export function buildImportRecordsFromJson(
         continue;
       }
 
-      if (raw === null || raw === undefined) {
+      // Round 1316: raw === "" must be treated as missing here too, same as
+      // null/undefined -- mirroring buildImportRecords' own round-1151 fix.
+      // Without this, a required text/longtext field with raw === "" fell
+      // through to the catch-all text branch below, which only checks
+      // `typeof raw !== "string"` -- true for "" too -- so it was accepted
+      // with zero validation error and silently written as an empty string,
+      // unlike every other field type here, where "" happens to fail that
+      // type's own typeof/format check anyway (if only incidentally).
+      if (raw === null || raw === undefined || raw === "") {
         if (field.required) {
           rowError = `Row ${rowIndex + 1}: missing required field "${field.label ?? field.name}".`;
           break;

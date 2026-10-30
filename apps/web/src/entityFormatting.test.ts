@@ -2921,6 +2921,38 @@ test("buildImportRecordsFromJson skips a row missing a required field and report
 });
 
 /**
+ * Round 1316: `raw === ""` fell through to the catch-all text branch below,
+ * which only checks `typeof raw !== "string"` -- true for "" too -- so a
+ * required text/longtext field with an empty-string value was accepted
+ * with zero validation error, unlike every other field type here, where ""
+ * happens to fail that type's own typeof/format check anyway. Reachable in
+ * practice via Export JSON -> re-import: a record whose required text
+ * field was already blank (e.g. the field was made required after the
+ * record was created, with no retroactive revalidation) round-trips
+ * through recordsToJson/buildImportRecordsFromJson as `""`, silently
+ * passing this function's own validation only to be rejected downstream
+ * by the server's real required-field check, with a worse error. Mirrors
+ * buildImportRecords' own round-1151 fix for the identical CSV-side gap.
+ */
+test("buildImportRecordsFromJson treats a required text field's empty string the same as null -- missing, not a silently-accepted blank value", () => {
+  const fields: Field[] = [{ name: "title", label: "Title", type: "text", required: true }];
+  const rows = [{ title: "Order A" }, { title: "" }];
+  const result = buildImportRecordsFromJson(fields, rows);
+  assert.deepEqual(result.records, [{ title: "Order A" }]);
+  assert.equal(result.errors.length, 1);
+  assert.match(result.errors[0], /Row 2/);
+  assert.match(result.errors[0], /Title/);
+});
+
+test("buildImportRecordsFromJson treats an optional text field's empty string as null, matching every other optional field type here", () => {
+  const fields: Field[] = [{ name: "notes", label: "Notes", type: "text", required: false }];
+  const rows = [{ notes: "" }];
+  const result = buildImportRecordsFromJson(fields, rows);
+  assert.deepEqual(result.errors, []);
+  assert.deepEqual(result.records, [{ notes: null }]);
+});
+
+/**
  * Round 1293: every other field-type branch (boolean/number/enum/date/
  * text) requires a specific typeof before accepting a value, but the top-
  * level `id` check was the one exception -- a bare Number(data.id) with no

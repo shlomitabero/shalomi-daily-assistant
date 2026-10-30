@@ -12159,6 +12159,32 @@ test("the exported EntityView's own generated buildImportRecordsFromJson rejects
 });
 
 /**
+ * Round 1316: an empty string fell through to the catch-all text branch,
+ * which only checks `typeof raw !== "string"` -- true for "" too -- so a
+ * required text field with raw === "" was accepted with zero validation
+ * error, unlike every other field type here, where "" happens to fail that
+ * type's own typeof/format check anyway. Mirrors the live preview's own
+ * round-1316 fix for the identical bug in entityFormatting.ts.
+ */
+test("the exported EntityView's own generated buildImportRecordsFromJson treats a required text field's empty string as missing, not a silently-accepted blank value", () => {
+  const files = generateExportFiles(project);
+  const entityViewJsx = files.find((f) => f.path === "web/src/components/EntityView.jsx")!.content;
+  const importJsonSrc = entityViewJsx.match(/function buildImportRecordsFromJson\(fields, rows, relatedRecords, entity, existingRecords\) \{[\s\S]*?\n\}\n/)?.[0];
+  const makeDuplicateWarningCheckerSrc = entityViewJsx.match(/function makeDuplicateWarningChecker\(entity, existingRecords\) \{[\s\S]*?\n\}\n/)?.[0];
+  assert.ok(importJsonSrc && makeDuplicateWarningCheckerSrc, "expected to find buildImportRecordsFromJson/makeDuplicateWarningChecker in the generated EntityView.jsx");
+
+  const allEntitiesDecl = "const ALL_ENTITIES = [];";
+  const buildImportRecordsFromJson = new Function(`${allEntitiesDecl}\n${makeDuplicateWarningCheckerSrc}\n${importJsonSrc}\nreturn buildImportRecordsFromJson;`)();
+
+  const fields = [{ name: "name", label: "Name", type: "text", required: true }];
+  const result = buildImportRecordsFromJson(fields, [{ name: "Dana" }, { name: "" }], {});
+  assert.deepEqual(result.records, [{ name: "Dana" }]);
+  assert.equal(result.errors.length, 1);
+  assert.match(result.errors[0], /Row 2/);
+  assert.match(result.errors[0], /missing required field/);
+});
+
+/**
  * Round 1293: the identical Number(true)/Number([5]) hazard also exists on
  * a relation field's own value (a few lines further down in this same
  * function), so a boolean relation value silently matched whichever
