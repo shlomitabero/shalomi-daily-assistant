@@ -3555,6 +3555,98 @@ test("the exported EntityView's record-form survives a different record's in-pro
 });
 
 /**
+ * Round 1338, ported from the live Forge AI preview's own round-1333 fix:
+ * EntityPanel.tsx's record-form warns before a tab close/refresh/navigation
+ * silently discards an in-progress create/edit draft, via a shared
+ * useBeforeUnloadWarning hook -- but the exported app's own EntityView, an
+ * exact structural mirror of that same form (same form/editingOriginalRef/
+ * emptyForm shape), had no such warning at all (grep for "beforeunload" in
+ * codegen.ts returned zero matches), since this generated app defines no
+ * custom hooks of its own to import a shared one from. Confirms the
+ * dirty-check is inlined directly into EntityView instead, covering both
+ * create and edit mode and the "starting an edit itself isn't dirty" edge
+ * case, same as the live preview's own test.
+ */
+test("the exported EntityView warns before a tab close/refresh discards an in-progress create/edit draft", async () => {
+  const files = generateExportFiles(project);
+  const dir = writeGeneratedWebComponent(files);
+  const store = [{ id: 1, name: "Acme Corp", status: "New" }];
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = (async (input: string, init?: RequestInit): Promise<Response> => {
+    const method = init?.method ?? "GET";
+    if (method === "GET" && input === "/api/Customer") {
+      return new Response(JSON.stringify({ records: store }), { status: 200, headers: { "content-type": "application/json" } });
+    }
+    if (method === "PATCH" && input === "/api/Customer/1") {
+      return new Response(JSON.stringify({ record: { id: 1, name: "Acme Corp EDITED", status: "New" } }), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      });
+    }
+    throw new Error(`unexpected request ${method} ${input}`);
+  }) as typeof fetch;
+
+  const dispatchBeforeUnload = () => {
+    const event = new window.Event("beforeunload", { cancelable: true });
+    window.dispatchEvent(event);
+    return event.defaultPrevented;
+  };
+
+  try {
+    await withRealLocalStorage(async () => {
+      const { EntityView } = await import(path.join(dir, "web", "src", "components", "EntityView.jsx"));
+      const customerEntity = project.spec.entities.find((e) => e.name === "Customer")!;
+      const props = {
+        entity: customerEntity,
+        highlightRecordId: null,
+        onHighlightHandled: () => {},
+        onJumpToRecord: () => {},
+        onRecordCountChange: () => {},
+      };
+
+      const { container } = render(React.createElement(EntityView, props));
+      for (let i = 0; i < 40; i++) {
+        if (container.querySelectorAll("tbody tr").length === 1) break;
+        await act(async () => {
+          await new Promise((resolve) => setTimeout(resolve, 0));
+        });
+      }
+      assert.equal(container.querySelectorAll("tbody tr").length, 1, "expected the record to have loaded");
+
+      const getNameInput = () => container.querySelector(".record-form input[type=text]") as HTMLInputElement;
+
+      assert.equal(dispatchBeforeUnload(), false, "a still-blank create form must not warn");
+
+      await act(async () => {
+        fireEvent.change(getNameInput(), { target: { value: "New customer" } });
+      });
+      assert.equal(dispatchBeforeUnload(), true, "typing into the blank create form must now warn before it's lost");
+
+      await act(async () => {
+        fireEvent.click((Array.from(container.querySelectorAll("table tbody button")) as HTMLButtonElement[]).find((b) => /edit/i.test(b.textContent ?? ""))!);
+      });
+      assert.equal(getNameInput().value, "Acme Corp");
+      assert.equal(dispatchBeforeUnload(), false, "starting an edit session alone (nothing changed yet) must not warn");
+
+      await act(async () => {
+        fireEvent.change(getNameInput(), { target: { value: "Acme Corp EDITED" } });
+      });
+      assert.equal(dispatchBeforeUnload(), true, "changing a field while editing must warn");
+
+      await act(async () => {
+        fireEvent.submit(container.querySelector(".record-form")!);
+        await new Promise((resolve) => setTimeout(resolve, 0));
+      });
+      assert.equal(dispatchBeforeUnload(), false, "a successful submit resets the form back to blank, clearing the warning again");
+    });
+  } finally {
+    globalThis.fetch = originalFetch;
+    cleanup();
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+/**
  * Round 1021 regression, ported from the live Forge AI preview's own
  * EntityPanel.tsx fix (round 1017): handleDelete is a single shared
  * function also called by the table row's own Delete button, the

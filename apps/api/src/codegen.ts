@@ -5144,6 +5144,28 @@ export function EntityView({ entity, highlightRecordId, onHighlightHandled, onJu
     formInstanceKeyRef.current += 1;
     setFormInstanceKey(formInstanceKeyRef.current);
   }
+  // Round 1338: mirrors the live Forge AI preview's own round-1333 fix --
+  // this form's own create/edit draft had no warning before a tab
+  // close/refresh/navigation silently discarded it. The live preview
+  // factors this into a shared useBeforeUnloadWarning hook, but this
+  // generated app defines no custom hooks of its own, so it's inlined
+  // directly here instead. Reuses handleSubmit's own changedOnly diff
+  // logic (same file, same editingOriginalRef) for edit mode, and
+  // emptyForm(entity) -- the exact baseline startCreateNew/the success
+  // path already reset to -- for create mode, rather than inventing a
+  // third comparison.
+  const formIsDirty = editingId != null
+    ? entity.fields.some((f) => form[f.name] !== editingOriginalRef.current?.[f.name])
+    : entity.fields.some((f) => form[f.name] !== emptyForm(entity)[f.name]);
+  useEffect(() => {
+    if (!formIsDirty) return;
+    function handleBeforeUnload(e) {
+      e.preventDefault();
+      e.returnValue = "";
+    }
+    window.addEventListener("beforeunload", handleBeforeUnload);
+    return () => window.removeEventListener("beforeunload", handleBeforeUnload);
+  }, [formIsDirty]);
   const [search, setSearch] = useState("");
   const [recentSearches, setRecentSearches] = useState(() => getEntityRecentSearches(entity.name));
   const [fieldFilters, setFieldFilters] = useState(() => sanitizeFieldFilters(getPersistedFieldFilters(entity.name), entity.fields));
