@@ -1170,7 +1170,10 @@ test("CollaboratorsPanel's calendar-feed regenerate button calls the real endpoi
       if (method === "GET" && input === "/api/projects/proj1/collaborators") {
         return new Response(JSON.stringify({ collaborators: [] }), { status: 200, headers: { "content-type": "application/json" } });
       }
-      if (method === "POST" && input === "/api/projects/proj1/calendar-feed-token/regenerate") {
+      // Round 1290: the client now appends ?lang=... (the server's own
+      // best-effort "your calendar subscription was reset" notification to
+      // every OTHER collaborator picks its language from this).
+      if (method === "POST" && input === "/api/projects/proj1/calendar-feed-token/regenerate?lang=en") {
         regenerateCalls += 1;
         return new Response(JSON.stringify({ token: "brand-new-token" }), { status: 200, headers: { "content-type": "application/json" } });
       }

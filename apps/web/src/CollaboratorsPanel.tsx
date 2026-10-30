@@ -289,7 +289,7 @@ export function CollaboratorsPanel({
     setError(null);
     setRegenerateFeedTokenInfo(null);
     try {
-      await regenerateCalendarFeedToken(projectId);
+      await regenerateCalendarFeedToken(projectId, lang);
       setRegenerateFeedTokenInfo(t("collab.calendarFeed.regenerate.success"));
     } catch (err) {
       setError((err as Error).message);

@@ -18103,6 +18103,98 @@ test("POST /projects/:id/calendar-feed-token/regenerate is owner-only, with the 
 });
 
 /**
+ * Round 1290: this route's own doc comment above had long acknowledged
+ * ("with no warning to them") that rotating the token silently breaks
+ * every OTHER collaborator's already-configured calendar subscription,
+ * but never actually notified anyone -- the one remaining silent
+ * collaborator-impacting action in this file, unlike invite (1253),
+ * role change (1254), removal (1254), ownership transfer (1255), project
+ * deletion (1256/1259), and self-leave (1277), which all already notify
+ * the affected party. Confirms the real EmailSender.send call reaches
+ * the OTHER collaborator (not the owner who triggered the rotation),
+ * naming the real project.
+ */
+test("regenerating the calendar feed token sends a real notification to every OTHER collaborator, naming the project, when email is configured", async () => {
+  const emailSender = createFakeEmailSender();
+  await withServer(
+    async (baseUrl, db) => {
+      const ownerEmail = `calendar-feed-regen-notify-owner-${randomUUID()}@example.com`;
+      const ownerToken = await signup(baseUrl, ownerEmail);
+      const collabEmail = `calendar-feed-regen-notify-collab-${randomUUID()}@example.com`;
+      await signup(baseUrl, collabEmail);
+      const owner = findUserByEmail(db, ownerEmail)!;
+      const spec: ProductSpec = {
+        summary: "test",
+        personas: [],
+        roles: ["Admin"],
+        entities: [{ name: "Appointment", fields: [{ name: "name", type: "text", required: true }, { name: "date", type: "date", required: true }] }],
+        screens: [],
+        assumptions: [],
+        openQuestions: [],
+      };
+      const projectId = randomUUID();
+      insertProject(db, { id: projectId, ownerId: owner.id, name: "Clinic Calendar", description: "test", spec });
+
+      await fetch(`${baseUrl}/api/projects/${projectId}/collaborators`, {
+        method: "POST",
+        headers: authHeaders(ownerToken),
+        body: JSON.stringify({ email: collabEmail }),
+      });
+      emailSender.sentTo.length = 0; // The invite itself (round 1253) also sends one -- only the regenerate send matters here.
+
+      const res = await fetch(`${baseUrl}/api/projects/${projectId}/calendar-feed-token/regenerate?lang=en`, {
+        method: "POST",
+        headers: authHeaders(ownerToken),
+      });
+      assert.equal(res.status, 200);
+
+      assert.equal(emailSender.sentTo.length, 1, "exactly one notification must be sent");
+      assert.equal(emailSender.sentTo[0].to, collabEmail, "the notification must go to the OTHER collaborator, not the owner who triggered the rotation");
+      assert.match(emailSender.sentTo[0].text, /Clinic Calendar/, "the body must name the real project");
+    },
+    { emailSender },
+  );
+});
+
+test("regenerating the calendar feed token itself still succeeds, with no notification attempted, when no email provider is configured", async () => {
+  const emailSender = createFakeEmailSender({ configured: false });
+  await withServer(
+    async (baseUrl, db) => {
+      const ownerEmail = `calendar-feed-regen-notify-unconfigured-${randomUUID()}@example.com`;
+      const ownerToken = await signup(baseUrl, ownerEmail);
+      const collabEmail = `calendar-feed-regen-notify-unconfigured-collab-${randomUUID()}@example.com`;
+      await signup(baseUrl, collabEmail);
+      const owner = findUserByEmail(db, ownerEmail)!;
+      const spec: ProductSpec = {
+        summary: "test",
+        personas: [],
+        roles: ["Admin"],
+        entities: [{ name: "Appointment", fields: [{ name: "name", type: "text", required: true }, { name: "date", type: "date", required: true }] }],
+        screens: [],
+        assumptions: [],
+        openQuestions: [],
+      };
+      const projectId = randomUUID();
+      insertProject(db, { id: projectId, ownerId: owner.id, name: "Clinic Calendar", description: "test", spec });
+
+      await fetch(`${baseUrl}/api/projects/${projectId}/collaborators`, {
+        method: "POST",
+        headers: authHeaders(ownerToken),
+        body: JSON.stringify({ email: collabEmail }),
+      });
+
+      const res = await fetch(`${baseUrl}/api/projects/${projectId}/calendar-feed-token/regenerate`, {
+        method: "POST",
+        headers: authHeaders(ownerToken),
+      });
+      assert.equal(res.status, 200, "the rotation itself must still succeed with no email provider configured");
+      assert.equal(emailSender.sentTo.length, 0, "no send should even be attempted when email isn't configured");
+    },
+    { emailSender },
+  );
+});
+
+/**
  * Round 1070: unlike every route expensiveReadRateLimiter covers (round
  * 1053), this public feed route has no req.userId to throttle against at
  * all -- anyone who was ever handed the subscribe URL can hit it directly,

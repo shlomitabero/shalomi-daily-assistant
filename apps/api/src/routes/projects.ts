@@ -1848,13 +1848,42 @@ export function createProjectsRouter(
    * subscription with no warning to them, so only the owner -- who
    * already decides who has access to the project at all -- can trigger
    * that tradeoff.
+   *
+   * Round 1290: this doc comment's own "with no warning to them" was an
+   * acknowledged, never-closed gap -- every other collaborator-impacting
+   * action in this file (invite, role change, removal, ownership
+   * transfer, project deletion, self-leave) already emails the affected
+   * party, but a token rotation silently broke every other
+   * collaborator's calendar app subscription with zero signal. The owner
+   * who triggered this already knows; only the OTHER collaborators need
+   * telling.
    */
   router.post(
     "/projects/:id/calendar-feed-token/regenerate",
     calendarFeedTokenRateLimiter,
     asyncRoute(async (req, res) => {
-      requireProjectOwner(db, req.params.id, req.userId!);
-      res.json({ token: regenerateCalendarFeedToken(db, req.params.id) });
+      const project = requireProjectOwner(db, req.params.id, req.userId!);
+      const token = regenerateCalendarFeedToken(db, req.params.id);
+      if (emailSender.configured) {
+        const isHebrew = req.query.lang !== "en";
+        const subject = isHebrew
+          ? `קישור הלוח שנה של "${project.name}" ב-Forge AI אופס`
+          : `The calendar link for "${project.name}" on Forge AI was reset`;
+        const body = isHebrew
+          ? `בעל/ת הפרויקט "${project.name}" ב-Forge AI אפס/ה את קישור הלוח שנה. ההרשמה הקיימת שלך בלוח השנה הפסיקה לעבוד -- יש להירשם מחדש מתוך הפרויקט.`
+          : `The owner of "${project.name}" on Forge AI reset the calendar subscription link. Your existing calendar subscription has stopped working -- you'll need to re-subscribe from within the project.`;
+        for (const collaborator of listCollaborators(db, project.id)) {
+          try {
+            await emailSender.send(collaborator.email, subject, body);
+          } catch {
+            // Swallowed, deliberately, same as this route family's own
+            // convention -- the rotation itself already succeeded and
+            // was already committed; a failed best-effort notification
+            // must never turn that into an error response.
+          }
+        }
+      }
+      res.json({ token });
     }),
   );
 

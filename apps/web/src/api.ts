@@ -931,9 +931,16 @@ export function getCalendarFeedToken(projectId: string): Promise<{ token: string
  * it to) stops working -- owner-only, since it also breaks every OTHER
  * collaborator's already-configured subscription with no warning to
  * them. See routes/projects.ts's own doc comment on this route.
+ *
+ * `lang` (round 1290) picks which language the server's own best-effort
+ * "your calendar subscription link was reset" notification to every
+ * other collaborator is written in. Optional since this is a bodyless
+ * POST with nowhere else to carry it, same convention as
+ * removeCollaborator's own `lang` query param below.
  */
-export function regenerateCalendarFeedToken(projectId: string): Promise<{ token: string }> {
-  return request(`/projects/${projectId}/calendar-feed-token/regenerate`, { method: "POST" });
+export function regenerateCalendarFeedToken(projectId: string, lang?: "he" | "en"): Promise<{ token: string }> {
+  const query = lang ? `?lang=${lang}` : "";
+  return request(`/projects/${projectId}/calendar-feed-token/regenerate${query}`, { method: "POST" });
 }
 
 export function listCheckpoints(projectId: string): Promise<{ checkpoints: Checkpoint[] }> {
