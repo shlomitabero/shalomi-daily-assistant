@@ -499,6 +499,30 @@ test("sendMessage refuses honestly when 'to' is a bare local-format number missi
 });
 
 /**
+ * Round 1295: the sibling shape to the bare-local-format test above --
+ * this app's own doc comment (whatsapp.ts's round-926 fix) already names
+ * "+972-050-1234567" as an entirely ordinary way for a business owner to
+ * type a familiar local number with the country code tacked on the front
+ * without remembering to drop the trunk zero. Unlike the bare-local-format
+ * case, this has ZERO leading zeros (the country code comes first), so the
+ * existing leadingZeros check never caught it, and normalizePhone's
+ * leading-zero strip can't reach the now-embedded zero either --
+ * previously this silently built a real-looking but wrong 13-digit JID
+ * ("9720501234567@s.whatsapp.net") instead of refusing honestly.
+ */
+test("sendMessage refuses honestly when 'to' is Israel's own country code with the local trunk zero still left in, instead of addressing a wrong/nonexistent 13-digit JID", async () => {
+  const { manager, createdSockets } = setupManager();
+  await manager.connect("proj1");
+  createdSockets[0].sock.user = { id: "972501234567:1@s.whatsapp.net" };
+  createdSockets[0].emitConnectionUpdate({ connection: "open" });
+
+  const result = await manager.sendMessage("proj1", "+972-050-1234567", "שלום!");
+  assert.equal(result.ok, false);
+  assert.equal(result.error, "missing_country_code");
+  assert.deepEqual(createdSockets[0].sendCalls, []);
+});
+
+/**
  * Round 765 regression test: the leading-zero classification only ever
  * checked for exactly 1 (reject) or exactly 2 (the "00" access code,
  * allow) -- 3 or more leading zeros fell through neither branch and was

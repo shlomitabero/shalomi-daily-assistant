@@ -762,6 +762,24 @@ export class WhatsAppWebManager {
     if (leadingZeros === 1 || leadingZeros >= 3) {
       return { ok: false, error: "missing_country_code" };
     }
+    // Round 926's own fix for this exact shape ("+972-050-1234567", the
+    // country code WITH the local trunk zero still left in after it) only
+    // ever applied to findMatchingRecord's inbound-message display
+    // labeling, which has a known second representation of the SAME
+    // number to compare against -- this function has no such reference
+    // for an arbitrary destination, so the general case stays the
+    // honest-refusal above (it only ever sees the leading zeros, and this
+    // shape has none: the country code comes first). But this app's own
+    // seed data/Hebrew templates are Israel-specific (see PHONES_HE in
+    // packages/db/src/seed.ts, and every "+972..." example throughout this
+    // codebase's own tests), and no real Israeli subscriber number starts
+    // with "0" in E.164 form -- so "972" immediately followed by "0" is
+    // never a legitimate destination, only ever this exact leftover-trunk-
+    // zero mistake, with zero realistic false-positive risk for this app's
+    // actual user base.
+    if (/^9720/.test(rawDigits)) {
+      return { ok: false, error: "missing_country_code" };
+    }
 
     // Everything above is pure validation with no socket interaction, so it
     // runs immediately rather than queueing -- only the actual Baileys send
