@@ -331,6 +331,37 @@ test("the Inventory & Products template's Supplier entity has contactPerson and 
 });
 
 /**
+ * Round 1289: the sixth and final curated template in the "curated template
+ * vs. its own matching domain rule" gap class (CRM's Task, round 1273;
+ * Volunteer's Volunteer, 1274; Project Tracker's Project, 1275;
+ * Appointments' Service/Appointment, 1282; Inventory's Supplier, 1288).
+ * domainEntities.ts's real Order domain rule (keywords /\border(s)?\b/,
+ * "הזמנה", "הזמנות") always also produces an `items` (longtext) field --
+ * this template's own summary text literally says "הזמנות"/"orders", so an
+ * equivalent from-scratch description would trigger this rule and get it.
+ * The Restaurant Management template's own Order entity never had it, with
+ * no way to record which dishes an order actually contains. The rule's own
+ * optional `courierId` relation is correctly NOT ported: a restaurant
+ * dine-in order has no courier/delivery concept at all.
+ */
+test("the Restaurant Management template's Order entity has an items field, matching domainEntities.ts's own matching Order domain rule", () => {
+  const restaurantTemplate = TEMPLATES.find((t) => t.id === "restaurant");
+  assert.ok(restaurantTemplate, "expected a \"restaurant\" template to exist");
+
+  const order = restaurantTemplate!.spec.entities.find((e) => e.name === "Order");
+  assert.ok(order, "expected the Restaurant Management template to have an Order entity");
+  const items = order!.fields.find((f) => f.name === "items");
+  assert.ok(items, "expected the Order entity to have an items field");
+  assert.equal(items!.type, "longtext");
+
+  const orderEn = restaurantTemplate!.specEn.entities.find((e) => e.name === "Order");
+  assert.ok(orderEn, "expected the Restaurant Management specEn to have an Order entity");
+  const itemsEn = orderEn!.fields.find((f) => f.name === "items");
+  assert.ok(itemsEn, "expected the Order specEn entity to have an items field");
+  assert.equal(itemsEn!.type, "longtext");
+});
+
+/**
  * Round 516's finding: the "Appointments & Clients" template's Hebrew
  * Appointment.status enum mapped "scheduled" to "קבוע" (meaning "fixed" /
  * "permanent" / "standing" in Hebrew), not "scheduled". This codebase
