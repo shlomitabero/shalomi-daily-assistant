@@ -3653,7 +3653,14 @@ function buildImportRecordsFromJson(fields, rows, relatedRecords, entity, existi
     let rowError = null;
 
     if (row.id !== undefined && row.id !== null) {
-      const parsedId = Number(row.id);
+      // Round 1293: every other field-type branch below this one requires
+      // a specific typeof before coercing (boolean/number/enum/date/text),
+      // but this bare Number(...) call had no such guard -- Number(true)
+      // is 1 and Number([5]) is 5, so a hand-edited JSON file with
+      // "id": true or "id": [5] silently resolved to a real record id
+      // instead of getting this feature's own "isn't a valid record id" error.
+      const idIsCoercible = typeof row.id === "number" || typeof row.id === "string";
+      const parsedId = idIsCoercible ? Number(row.id) : NaN;
       if (!Number.isInteger(parsedId) || parsedId <= 0) {
         rowError = \`Row \${rowIndex + 1}: "\${row.id}" isn't a valid record id.\`;
       } else if (seenIds.has(parsedId)) {
@@ -3679,7 +3686,11 @@ function buildImportRecordsFromJson(fields, rows, relatedRecords, entity, existi
           record[field.name] = null;
           continue;
         }
-        const id = Number(raw);
+        // Round 1293: same idIsCoercible guard as the top-level id check
+        // above, for the identical Number(true)/Number([5]) hazard on a
+        // relation field's own value.
+        const relationIdIsCoercible = typeof raw === "number" || typeof raw === "string";
+        const id = relationIdIsCoercible ? Number(raw) : NaN;
         const targetRecords = relatedRecords[field.relationTo];
         if (!Number.isInteger(id) || !targetRecords.some((r) => Number(r.id) === id)) {
           const targetEntity = ALL_ENTITIES.find((e) => e.name.toLowerCase() === field.relationTo.toLowerCase());

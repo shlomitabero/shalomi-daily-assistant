@@ -12038,6 +12038,101 @@ test("the exported EntityView's own generated buildImportRecordsFromJson round-t
 });
 
 /**
+ * Round 1293: every other field-type branch in this same generated
+ * buildImportRecordsFromJson (boolean/number/enum/date/text) requires a
+ * specific typeof before accepting a raw JSON value, but the top-level
+ * `id` check was the one exception -- a bare Number(row.id) with no typeof
+ * guard. Number(true) === 1, so a hand-edited JSON file with "id": true
+ * silently resolved to a real record id instead of getting this feature's
+ * own "isn't a valid record id" error. Mirrors the live preview's own
+ * entityFormatting.ts fix for the identical bug.
+ */
+test("the exported EntityView's own generated buildImportRecordsFromJson rejects a boolean \"id\" instead of silently coercing it to 1 or 0", () => {
+  const files = generateExportFiles(project);
+  const entityViewJsx = files.find((f) => f.path === "web/src/components/EntityView.jsx")!.content;
+  const importJsonSrc = entityViewJsx.match(/function buildImportRecordsFromJson\(fields, rows, relatedRecords, entity, existingRecords\) \{[\s\S]*?\n\}\n/)?.[0];
+  const makeDuplicateWarningCheckerSrc = entityViewJsx.match(/function makeDuplicateWarningChecker\(entity, existingRecords\) \{[\s\S]*?\n\}\n/)?.[0];
+  assert.ok(importJsonSrc && makeDuplicateWarningCheckerSrc, "expected to find buildImportRecordsFromJson/makeDuplicateWarningChecker in the generated EntityView.jsx");
+
+  const allEntitiesDecl = "const ALL_ENTITIES = [];";
+  const buildImportRecordsFromJson = new Function(`${allEntitiesDecl}\n${makeDuplicateWarningCheckerSrc}\n${importJsonSrc}\nreturn buildImportRecordsFromJson;`)();
+
+  const fields = [{ name: "name", label: "Name", type: "text", required: true }];
+  const result = buildImportRecordsFromJson(fields, [{ id: true, name: "Dana" }], {});
+  assert.deepEqual(result.records, []);
+  assert.equal(result.errors.length, 1);
+  assert.match(result.errors[0], /isn't a valid record id/);
+});
+
+/**
+ * Round 1293: same bug as above, but via Number()'s own array-to-string
+ * stringification -- Number([5]) === 5 (a single-element array stringifies
+ * to its lone element), so an array "id" silently resolved to a real
+ * record id too.
+ */
+test("the exported EntityView's own generated buildImportRecordsFromJson rejects an array \"id\" instead of silently coercing it via Number()'s own array-to-string stringification", () => {
+  const files = generateExportFiles(project);
+  const entityViewJsx = files.find((f) => f.path === "web/src/components/EntityView.jsx")!.content;
+  const importJsonSrc = entityViewJsx.match(/function buildImportRecordsFromJson\(fields, rows, relatedRecords, entity, existingRecords\) \{[\s\S]*?\n\}\n/)?.[0];
+  const makeDuplicateWarningCheckerSrc = entityViewJsx.match(/function makeDuplicateWarningChecker\(entity, existingRecords\) \{[\s\S]*?\n\}\n/)?.[0];
+  assert.ok(importJsonSrc && makeDuplicateWarningCheckerSrc, "expected to find buildImportRecordsFromJson/makeDuplicateWarningChecker in the generated EntityView.jsx");
+
+  const allEntitiesDecl = "const ALL_ENTITIES = [];";
+  const buildImportRecordsFromJson = new Function(`${allEntitiesDecl}\n${makeDuplicateWarningCheckerSrc}\n${importJsonSrc}\nreturn buildImportRecordsFromJson;`)();
+
+  const fields = [{ name: "name", label: "Name", type: "text", required: true }];
+  const result = buildImportRecordsFromJson(fields, [{ id: [5], name: "Dana" }], {});
+  assert.deepEqual(result.records, []);
+  assert.equal(result.errors.length, 1);
+  assert.match(result.errors[0], /isn't a valid record id/);
+});
+
+/**
+ * Round 1293: the identical Number(true)/Number([5]) hazard also exists on
+ * a relation field's own value (a few lines further down in this same
+ * function), so a boolean relation value silently matched whichever
+ * related record happened to have id 1 instead of being rejected.
+ */
+test("the exported EntityView's own generated buildImportRecordsFromJson rejects a boolean relation-field value instead of silently coercing it to a real record id", () => {
+  const withRelation: Project = {
+    ...project,
+    spec: {
+      ...project.spec,
+      entities: [
+        ...project.spec.entities,
+        { name: "Courier", label: "Courier", fields: [{ name: "name", label: "Name", type: "text", required: true }] },
+        {
+          name: "Order",
+          label: "Order",
+          fields: [
+            { name: "item", label: "Item", type: "text", required: true },
+            { name: "courierId", label: "Courier", type: "relation", required: false, relationTo: "Courier" },
+          ],
+        },
+      ],
+    },
+  };
+  const files = generateExportFiles(withRelation);
+  const entityViewJsx = files.find((f) => f.path === "web/src/components/EntityView.jsx")!.content;
+  const importJsonSrc = entityViewJsx.match(/function buildImportRecordsFromJson\(fields, rows, relatedRecords, entity, existingRecords\) \{[\s\S]*?\n\}\n/)?.[0];
+  const makeDuplicateWarningCheckerSrc = entityViewJsx.match(/function makeDuplicateWarningChecker\(entity, existingRecords\) \{[\s\S]*?\n\}\n/)?.[0];
+  const allEntitiesSrc = entityViewJsx.match(/const ALL_ENTITIES = [\s\S]*?;\n/)?.[0];
+  assert.ok(
+    importJsonSrc && makeDuplicateWarningCheckerSrc && allEntitiesSrc,
+    "expected to find buildImportRecordsFromJson/makeDuplicateWarningChecker/ALL_ENTITIES in the generated EntityView.jsx",
+  );
+
+  const buildImportRecordsFromJson = new Function(`${allEntitiesSrc}\n${makeDuplicateWarningCheckerSrc}\n${importJsonSrc}\nreturn buildImportRecordsFromJson;`)();
+
+  const orderFields = withRelation.spec.entities.find((e) => e.name === "Order")!.fields;
+  const couriers = [{ id: 1, name: "Yossi Cohen" }];
+  const result = buildImportRecordsFromJson(orderFields, [{ item: "Order A", courierId: true }], { Courier: couriers });
+  assert.deepEqual(result.records, []);
+  assert.equal(result.errors.length, 1);
+  assert.match(result.errors[0], /doesn't match any Courier record/);
+});
+
+/**
  * Round 1221's own "Import JSON" input mirrors "Import CSV" exactly:
  * routes through buildImportRecordsFromJson/the same write-and-summarize
  * shape as handleImportFile, and renders right alongside the existing

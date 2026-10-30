@@ -2920,6 +2920,45 @@ test("buildImportRecordsFromJson skips a row missing a required field and report
   assert.match(result.errors[0], /Title/);
 });
 
+/**
+ * Round 1293: every other field-type branch (boolean/number/enum/date/
+ * text) requires a specific typeof before accepting a value, but the top-
+ * level `id` check was the one exception -- a bare Number(data.id) with no
+ * typeof guard. Number(true) === 1, so a boolean id silently resolved to a
+ * real record id instead of getting this feature's own "isn't a valid
+ * record id" error.
+ */
+test("buildImportRecordsFromJson rejects a boolean \"id\" instead of silently coercing it to 1 or 0", () => {
+  const fields: Field[] = [{ name: "name", label: "Name", type: "text", required: true }];
+  const rows = [{ id: true, name: "Dana" }];
+  const result = buildImportRecordsFromJson(fields, rows);
+  assert.deepEqual(result.records, []);
+  assert.equal(result.errors.length, 1);
+  assert.match(result.errors[0], /isn't a valid record id/);
+});
+
+test("buildImportRecordsFromJson rejects an array \"id\" instead of silently coercing it via Number()'s own array-to-string stringification", () => {
+  const fields: Field[] = [{ name: "name", label: "Name", type: "text", required: true }];
+  const rows = [{ id: [5], name: "Dana" }];
+  const result = buildImportRecordsFromJson(fields, rows);
+  assert.deepEqual(result.records, []);
+  assert.equal(result.errors.length, 1);
+  assert.match(result.errors[0], /isn't a valid record id/);
+});
+
+test("buildImportRecordsFromJson rejects a boolean relation-field value instead of silently coercing it to a real record id", () => {
+  const fields: Field[] = [
+    { name: "name", label: "Name", type: "text", required: true },
+    { name: "courierId", label: "Courier", type: "relation", required: false, relationTo: "Courier" },
+  ];
+  const couriers: EntityRecord[] = [{ id: 1, name: "Yossi Cohen" }];
+  const rows = [{ name: "Order A", courierId: true }];
+  const result = buildImportRecordsFromJson(fields, rows, [courierEntity], { Courier: couriers });
+  assert.deepEqual(result.records, []);
+  assert.equal(result.errors.length, 1);
+  assert.match(result.errors[0], /doesn't match any Courier record/);
+});
+
 test("buildImportRecordsFromJson rejects a relation id that doesn't match any related record, instead of silently importing a dangling reference", () => {
   const fields: Field[] = [
     { name: "name", label: "Name", type: "text", required: true },
