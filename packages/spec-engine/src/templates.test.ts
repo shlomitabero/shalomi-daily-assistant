@@ -498,6 +498,45 @@ test("the Inventory template's PurchaseOrder entity has a notes field, matching 
 });
 
 /**
+ * Round 1304: the CRM template's own Customer entity (name/company/email/
+ * phone/notes) is missing a lead-stage status and a source field, unlike
+ * domainEntities.ts's generic Customer domain rule (name/email/phone/
+ * status enum New/Contacted/Qualified/Won/Lost, required/source/notes) --
+ * the exact same real-world entity this template's Customer represents.
+ * The only stage-like field anywhere in this template is Deal.stage, which
+ * only exists once a Deal record has actually been created for that
+ * customer; a brand-new prospect who hasn't been turned into a Deal yet
+ * has nowhere to record whether they're a new lead, already contacted, or
+ * qualified -- exactly the lifecycle a sales rep needs to track before a
+ * deal even exists, and a core purpose of a CRM template specifically.
+ */
+test("the CRM template's Customer entity has a status enum and a source field, matching domainEntities.ts's own Customer domain rule", () => {
+  const crmTemplate = TEMPLATES.find((t) => t.id === "crm");
+  assert.ok(crmTemplate, "expected a \"crm\" template to exist");
+
+  const customer = crmTemplate!.spec.entities.find((e) => e.name === "Customer");
+  assert.ok(customer, "expected the CRM template to have a Customer entity");
+  const status = customer!.fields.find((f) => f.name === "status");
+  assert.ok(status, "expected the Customer entity to have a status field");
+  assert.equal(status!.type, "enum");
+  assert.equal(status!.required, true);
+  assert.ok(status!.enumValues && status!.enumValues.length >= 2, "expected the status field to have at least 2 enum values");
+  const source = customer!.fields.find((f) => f.name === "source");
+  assert.ok(source, "expected the Customer entity to have a source field");
+  assert.equal(source!.type, "text");
+
+  const customerEn = crmTemplate!.specEn.entities.find((e) => e.name === "Customer");
+  assert.ok(customerEn, "expected the CRM specEn to have a Customer entity");
+  const statusEn = customerEn!.fields.find((f) => f.name === "status");
+  assert.ok(statusEn, "expected the CRM specEn Customer entity to have a status field");
+  assert.equal(statusEn!.type, "enum");
+  assert.equal(statusEn!.required, true);
+  const sourceEn = customerEn!.fields.find((f) => f.name === "source");
+  assert.ok(sourceEn, "expected the CRM specEn Customer entity to have a source field");
+  assert.equal(sourceEn!.type, "text");
+});
+
+/**
  * Round 516's finding: the "Appointments & Clients" template's Hebrew
  * Appointment.status enum mapped "scheduled" to "קבוע" (meaning "fixed" /
  * "permanent" / "standing" in Hebrew), not "scheduled". This codebase
