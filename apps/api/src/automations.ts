@@ -447,7 +447,17 @@ export function matchesTrigger(
     return event === "deleted";
   }
   if (rule.trigger === "record_updated") {
-    return event === "updated";
+    // Round 1340: unlike record_created/record_deleted (a POST/DELETE can
+    // never be a no-op), a PATCH genuinely can be -- EntityPanel.tsx's
+    // bulk-update "Apply to N" sends the same field/value to every
+    // selected record regardless of whether a given record already holds
+    // it, and routes/projects.ts's PATCH route still fires this trigger
+    // with event === "updated" either way. Without this check, a
+    // record_updated rule fired a real outbound WhatsApp/email/webhook for
+    // every record in a bulk-update batch, including the ones nothing
+    // actually changed on. Mirrors field_equals' own identical
+    // changedFields check a few lines below.
+    return event === "updated" && changedFields.size > 0;
   }
   // Round 1098: the doc comment above already claims "schedule, which
   // never matches any record event at all" -- but nothing below this

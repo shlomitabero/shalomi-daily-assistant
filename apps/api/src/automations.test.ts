@@ -449,6 +449,35 @@ test("matchesTrigger: record_updated matches the 'updated' event regardless of w
 });
 
 /**
+ * Round 1340: unlike record_created/record_deleted (a POST/DELETE can never
+ * be a no-op), a PATCH genuinely can be -- EntityPanel.tsx's bulk-update
+ * "Apply to N" sends the same field/value to every selected record
+ * regardless of whether a given record already holds it, and
+ * routes/projects.ts's PATCH route still calls runAutomationsForRecordChange
+ * with event === "updated" either way, with computeChangedFields correctly
+ * returning an empty Set for a record nothing actually changed on. Without
+ * this check, a record_updated rule fired a real outbound WhatsApp/email/
+ * webhook for every record in a bulk-update batch, including the no-op
+ * ones -- mirrors field_equals' own identical changedFields.has/size check.
+ */
+test("matchesTrigger: record_updated does NOT match an 'updated' event where nothing actually changed (an empty changedFields set)", () => {
+  const rule = insertAutomationRule(openDbForRuleOnly(), {
+    projectId: "p",
+    entityName: "Order",
+    trigger: "record_updated",
+    actionType: "send_whatsapp",
+    toMode: "static",
+    toNumber: "972500000000",
+    messageTemplate: "Order {{orderId}} was updated.",
+  });
+  assert.equal(
+    matchesTrigger(rule, "updated", { orderId: "A1", status: "Delivered" }, new Set(), orderEntity),
+    false,
+    "a PATCH that changed nothing on this record must not fire record_updated, the same way field_equals already requires its own field to have actually changed",
+  );
+});
+
+/**
  * Round 969: a "deleted" event must never match a field_equals rule, even
  * when the record's own value matches that rule's target -- a record
  * about to be deleted isn't "being set to" its own current field values,
