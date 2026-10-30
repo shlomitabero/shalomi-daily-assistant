@@ -236,6 +236,52 @@ export function findTemplateFileAttachment(
 }
 
 /**
+ * Round 1325: email has no such one-attachment limitation -- unlike the
+ * WhatsApp caller findTemplateFileAttachment above was written for,
+ * EmailAttachment[]/the Resend payload (email.ts) already support
+ * multiple attachments end-to-end. Reusing that function for
+ * fireEmailAction's own call site meant an email template referencing two
+ * or more distinct file fields (e.g. "{{invoice}} and {{receipt}}")
+ * silently attached only whichever field matched first in placeholder
+ * order, dropping the rest with no error, warning, or log -- the exact
+ * same field-resolution/path-validation logic as above, just collecting
+ * every distinct matching field instead of returning on the first one.
+ * Deduplicates by resolved field name so a placeholder repeated twice in
+ * the same template (e.g. in both the subject and the body) doesn't
+ * attach the same file twice.
+ */
+export function findAllTemplateFileAttachments(
+  uploadsDir: string,
+  projectId: string,
+  entity: Entity,
+  template: string,
+  record: EntityRecord,
+): WhatsAppAttachment[] {
+  const attachments: WhatsAppAttachment[] = [];
+  const seenFieldNames = new Set<string>();
+  for (const match of template.matchAll(/\{\{\s*([a-zA-Z0-9_]+)\s*\}\}/g)) {
+    const fieldName = resolveStoredFieldName(entity, match[1]);
+    if (seenFieldNames.has(fieldName)) continue;
+    const field = entity.fields.find((f) => f.name === fieldName && f.type === "file");
+    if (!field) continue;
+    seenFieldNames.add(fieldName);
+    const rawValue = record[fieldName];
+    if (typeof rawValue !== "string" || rawValue === "") continue;
+    let parsed: { url?: unknown; name?: unknown; mimeType?: unknown };
+    try {
+      parsed = JSON.parse(rawValue);
+    } catch {
+      continue;
+    }
+    if (typeof parsed.url !== "string" || typeof parsed.name !== "string" || typeof parsed.mimeType !== "string") continue;
+    const filePath = resolveUploadedFilePath(uploadsDir, projectId, entity.name, rawValue);
+    if (!filePath) continue;
+    attachments.push({ filePath, fileName: parsed.name, mimeType: parsed.mimeType });
+  }
+  return attachments;
+}
+
+/**
  * Interpolates {{fieldName}} placeholders in a message template from a
  * record's own field values, e.g. "Hi {{customerName}}, ..." -- an
  * unmatched placeholder (a typo'd field name, or one removed by a later
@@ -933,15 +979,25 @@ async function fireEmailAction(
       // 1013's own already-tested precedence (a body reference still wins
       // when both templates happen to reference a file field) while now
       // also catching a subject-only reference.
-      const attachment = findTemplateFileAttachment(uploadsDir, project.id, entity, `${bodyTemplate}\n${subjectTemplate}`, record);
-      // Same disk-error degradation fireRule's own WhatsApp branch already
-      // documents: the referenced upload may have been deleted/replaced
-      // since this rule last ran, or the uploads directory may not be
-      // readable for some other reason -- that degrades to a plain-text
-      // send with the file simply missing, never a reported send FAILURE.
-      const fileBuffer = attachment ? await readFile(attachment.filePath).catch(() => null) : null;
-      if (attachment && fileBuffer) {
-        attachments = [{ filename: attachment.fileName, content: fileBuffer.toString("base64") }];
+      // Round 1325: unlike fireRule's own WhatsApp branch just below (one
+      // attachment max, a real Baileys/WhatsApp limitation), email can
+      // carry every distinct file field the template references.
+      const templateAttachments = findAllTemplateFileAttachments(uploadsDir, project.id, entity, `${bodyTemplate}\n${subjectTemplate}`, record);
+      const resolved: EmailAttachment[] = [];
+      for (const attachment of templateAttachments) {
+        // Same disk-error degradation fireRule's own WhatsApp branch
+        // already documents: the referenced upload may have been
+        // deleted/replaced since this rule last ran, or the uploads
+        // directory may not be readable for some other reason -- that
+        // degrades to sending without that one file simply missing,
+        // never a reported send FAILURE.
+        const fileBuffer = await readFile(attachment.filePath).catch(() => null);
+        if (fileBuffer) {
+          resolved.push({ filename: attachment.fileName, content: fileBuffer.toString("base64") });
+        }
+      }
+      if (resolved.length > 0) {
+        attachments = resolved;
       }
     }
   }

@@ -27,6 +27,7 @@ import {
 import {
   fireRule,
   fireScheduledRule,
+  findAllTemplateFileAttachments,
   findTemplateFileAttachment,
   hasTooManyConsecutiveFailuresToday,
   interpolateTemplate,
@@ -931,6 +932,130 @@ test("findTemplateFileAttachment resolves the first file-type field referenced i
     fileName: "invoice-203.pdf",
     mimeType: "application/pdf",
   });
+});
+
+/**
+ * Round 1325: unlike findTemplateFileAttachment above (correctly scoped
+ * to WhatsApp's own real one-attachment-per-message limitation),
+ * findAllTemplateFileAttachments is email's own sibling -- email has no
+ * such limitation (EmailAttachment[]/the Resend payload already support
+ * multiple attachments end to end), so a template referencing two
+ * distinct file fields must resolve both, in placeholder order, not just
+ * the first. Also confirms the SAME field referenced twice in the
+ * template (once in a hypothetical subject, once in the body -- modeled
+ * here as two placeholders in one combined string, matching how
+ * fireEmailAction actually calls this function) is deduplicated to a
+ * single attachment, not sent twice.
+ */
+test("findAllTemplateFileAttachments resolves every distinct file-type field referenced in the template, not just the first, and never duplicates a field referenced twice", () => {
+  const entityWithTwoFiles: Entity = {
+    ...orderEntity,
+    fields: [
+      ...orderEntity.fields,
+      { name: "invoice", type: "file", required: false },
+      { name: "receipt", type: "file", required: false },
+    ],
+  };
+  const record = {
+    customerName: "Dana",
+    invoice: JSON.stringify({
+      url: "/api/uploads/proj1/Order/a1b2c3d4-e5f6-7890-abcd-ef1234567890.pdf",
+      name: "invoice-203.pdf",
+      size: 27,
+      mimeType: "application/pdf",
+    }),
+    receipt: JSON.stringify({
+      url: "/api/uploads/proj1/Order/b2c3d4e5-f6a7-8901-bcde-f12345678901.pdf",
+      name: "receipt-203.pdf",
+      size: 19,
+      mimeType: "application/pdf",
+    }),
+  };
+  const attachments = findAllTemplateFileAttachments(
+    "/uploads",
+    "proj1",
+    entityWithTwoFiles,
+    "Hi {{customerName}}, here's {{invoice}} and {{receipt}}, see {{invoice}} again",
+    record,
+  );
+  assert.deepEqual(attachments, [
+    { filePath: "/uploads/proj1/Order/a1b2c3d4-e5f6-7890-abcd-ef1234567890.pdf", fileName: "invoice-203.pdf", mimeType: "application/pdf" },
+    { filePath: "/uploads/proj1/Order/b2c3d4e5-f6a7-8901-bcde-f12345678901.pdf", fileName: "receipt-203.pdf", mimeType: "application/pdf" },
+  ]);
+});
+
+test("runAutomationsForRecordChange attaches every distinct referenced file field to a send_email rule, not just the first", async () => {
+  const entityWithTwoFiles: Entity = {
+    ...orderEntity,
+    fields: [
+      ...orderEntity.fields,
+      { name: "invoice", type: "file", required: false },
+      { name: "receipt", type: "file", required: false },
+    ],
+  };
+  const db = openDatabase(":memory:");
+  ensureProjectsTable(db);
+  ensureAutomationRulesTable(db);
+  ensureWhatsAppConnectionsTable(db);
+  ensureWhatsAppMessagesTable(db);
+  const project = {
+    ...insertProject(db, {
+      id: "proj1",
+      ownerId: "owner1",
+      name: "Orders",
+      description: "An order-tracking app",
+      spec: { ...projectSpec, entities: [entityWithTwoFiles] },
+    }),
+    status: "built" as const,
+  };
+  applyMigrations(db, project.id, project.spec);
+  markProjectBuilt(db, project.id);
+
+  insertAutomationRule(db, {
+    projectId: project.id,
+    entityName: "Order",
+    trigger: "field_equals",
+    fieldName: "status",
+    fieldValue: "Delivered",
+    actionType: "send_email",
+    toMode: "field",
+    toField: "customerEmail",
+    emailSubject: "Invoice attached: {{invoice}}",
+    messageTemplate: "Thanks for your order, {{customerName}}! Your receipt is {{receipt}}.",
+  });
+  const emailSender = createFakeEmailSender();
+  const manager = {} as WhatsAppWebManager;
+
+  const uploadsDir = await mkdtemp(path.join(tmpdir(), "forge-automations-email-two-attachments-test-"));
+  try {
+    const invoiceFilename = "a1b2c3d4-e5f6-7890-abcd-ef1234567890.pdf";
+    const receiptFilename = "b2c3d4e5-f6a7-8901-bcde-f12345678901.pdf";
+    await mkdir(path.join(uploadsDir, project.id, "Order"), { recursive: true });
+    await writeFile(path.join(uploadsDir, project.id, "Order", invoiceFilename), "%PDF-fake-invoice-contents");
+    await writeFile(path.join(uploadsDir, project.id, "Order", receiptFilename), "%PDF-fake-receipt-contents");
+
+    const record = {
+      id: 1,
+      customerName: "Dana",
+      customerEmail: "dana@example.com",
+      status: "Delivered",
+      invoice: JSON.stringify({ url: `/api/uploads/${project.id}/Order/${invoiceFilename}`, name: "invoice-203.pdf", size: 27, mimeType: "application/pdf" }),
+      receipt: JSON.stringify({ url: `/api/uploads/${project.id}/Order/${receiptFilename}`, name: "receipt-203.pdf", size: 19, mimeType: "application/pdf" }),
+    };
+
+    await runAutomationsForRecordChange(db, manager, emailSender, project, entityWithTwoFiles, "updated", record, new Set(["status"]), uploadsDir, UNUSED_BASE_URL);
+
+    assert.equal(emailSender.sentTo.length, 1);
+    assert.equal(
+      emailSender.sentTo[0]!.attachments?.length,
+      2,
+      "a template referencing two distinct file fields across subject and body must attach both, not just the first",
+    );
+    const attachmentNames = emailSender.sentTo[0]!.attachments!.map((a) => a.filename).sort();
+    assert.deepEqual(attachmentNames, ["invoice-203.pdf", "receipt-203.pdf"]);
+  } finally {
+    await rm(uploadsDir, { recursive: true, force: true });
+  }
 });
 
 /**
