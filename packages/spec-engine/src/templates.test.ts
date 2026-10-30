@@ -292,6 +292,45 @@ test("the Appointments & Clients template's Service entity has a description fie
 });
 
 /**
+ * Round 1288: the exact same "curated template vs. its own matching domain
+ * rule" gap class as the test above, for Inventory & Products' own Supplier
+ * entity. domainEntities.ts's real Vendor domain rule (keywords "vendor",
+ * "supplier", "suppliers", "procurement", "ספקים", "רכש") always also
+ * produces a `contactPerson` (text) field and a required `category` enum
+ * -- both generically meaningful for any supplier, with no semantic
+ * mismatch the way the Vendor rule's other sibling fields might have for a
+ * non-procurement "customer" concept. This template's own summary text
+ * literally says "ספקים"/"suppliers" and "רכש"/"procurement", so an
+ * equivalent from-scratch description would trigger this exact rule and
+ * get both fields. The Inventory & Products template's own Supplier entity
+ * never had either.
+ */
+test("the Inventory & Products template's Supplier entity has contactPerson and category fields, matching domainEntities.ts's own matching Vendor domain rule", () => {
+  const inventoryTemplate = TEMPLATES.find((t) => t.id === "inventory");
+  assert.ok(inventoryTemplate, "expected an \"inventory\" template to exist");
+
+  const supplier = inventoryTemplate!.spec.entities.find((e) => e.name === "Supplier");
+  assert.ok(supplier, "expected the Inventory & Products template to have a Supplier entity");
+  const contactPerson = supplier!.fields.find((f) => f.name === "contactPerson");
+  assert.ok(contactPerson, "expected the Supplier entity to have a contactPerson field");
+  assert.equal(contactPerson!.type, "text");
+  const category = supplier!.fields.find((f) => f.name === "category");
+  assert.ok(category, "expected the Supplier entity to have a category field");
+  assert.equal(category!.type, "enum");
+  assert.equal(category!.required, true);
+
+  const supplierEn = inventoryTemplate!.specEn.entities.find((e) => e.name === "Supplier");
+  assert.ok(supplierEn, "expected the Inventory & Products specEn to have a Supplier entity");
+  const contactPersonEn = supplierEn!.fields.find((f) => f.name === "contactPerson");
+  assert.ok(contactPersonEn, "expected the Supplier specEn entity to have a contactPerson field");
+  assert.equal(contactPersonEn!.type, "text");
+  const categoryEn = supplierEn!.fields.find((f) => f.name === "category");
+  assert.ok(categoryEn, "expected the Supplier specEn entity to have a category field");
+  assert.equal(categoryEn!.type, "enum");
+  assert.equal(categoryEn!.required, true);
+});
+
+/**
  * Round 516's finding: the "Appointments & Clients" template's Hebrew
  * Appointment.status enum mapped "scheduled" to "קבוע" (meaning "fixed" /
  * "permanent" / "standing" in Hebrew), not "scheduled". This codebase
