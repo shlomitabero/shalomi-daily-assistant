@@ -43,6 +43,30 @@ export function ensureCheckpointsTable(db: ForgeDatabase): void {
     db.exec(`UPDATE checkpoints SET kind = 'refine' WHERE label LIKE 'Refine:%' OR label LIKE 'שיפור:%'`);
   }
 
+  // Round 1312: renameCheckpoint's own doc-comment below says this feature
+  // exists so a user can give an important checkpoint a label that's still
+  // memorable "months later" -- but round 1291's retention prune (just
+  // below, in insertCheckpoint) deletes purely by recency, with no
+  // exemption for a checkpoint the user explicitly renamed. Once 100 newer
+  // build/refine checkpoints accumulate past a renamed one, it's pruned
+  // exactly like an ordinary auto-labeled one, silently defeating the
+  // rename feature's entire stated purpose. `renamed` is set directly by
+  // renameCheckpoint from here on (never re-derived from `label`, same
+  // discipline `kind` above already adopted and for the identical reason:
+  // a user could otherwise rename a checkpoint to text that happens to
+  // look auto-generated). For data written before this column existed,
+  // this one-time backfill marks a checkpoint as already-renamed when its
+  // label doesn't match either auto-generated shape -- the same kind of
+  // best-effort, admittedly-imperfect reconstruction the `kind` backfill
+  // above already does from the only signal that ever existed for it.
+  const hasRenamedColumn = (db.prepare("PRAGMA table_info(checkpoints)").all() as { name: string }[]).some((c) => c.name === "renamed");
+  if (!hasRenamedColumn) {
+    db.exec("ALTER TABLE checkpoints ADD COLUMN renamed INTEGER NOT NULL DEFAULT 0");
+    db.exec(
+      `UPDATE checkpoints SET renamed = 1 WHERE label NOT IN ('Initial build', 'בנייה ראשונית') AND label NOT LIKE 'Refine:%' AND label NOT LIKE 'שיפור:%'`,
+    );
+  }
+
   // A durable, append-only record of every entity name a project's spec has
   // ever contained -- written once at insertCheckpoint and never pruned by
   // deleteCheckpoint, unlike listAllCheckpointedEntityNames below, which
@@ -192,8 +216,16 @@ export function insertCheckpoint(
   // this table's own separate, deliberately-unpruned ledger, so pruning
   // here can never orphan a real data table the way deleting a checkpoint
   // alone once could before that ledger existed.
+  //
+  // Round 1312: `renamed = 0` treats an explicit rename (renameCheckpoint,
+  // below) as the user pinning that checkpoint -- exempting it from this
+  // prune entirely, regardless of age, instead of deleting it on exactly
+  // the same schedule as a never-looked-at auto-labeled one. A user would
+  // have to rename over 100 checkpoints in one project to make this table
+  // grow unbounded again; that's a deliberate, bounded action per row, not
+  // the unbounded-by-default growth round 1291 was guarding against.
   db.prepare(
-    `DELETE FROM checkpoints WHERE projectId = ? AND id NOT IN (
+    `DELETE FROM checkpoints WHERE projectId = ? AND renamed = 0 AND id NOT IN (
       SELECT id FROM checkpoints WHERE projectId = ? ORDER BY createdAt DESC, rowid DESC LIMIT ?
     )`,
   ).run(checkpoint.projectId, checkpoint.projectId, CHECKPOINTS_RETENTION_LIMIT);
@@ -361,14 +393,20 @@ export function getCheckpoint(db: ForgeDatabase, id: string): Checkpoint | undef
  * deleteWhatsAppMessage's own convention in whatsapp.ts), so a checkpoint
  * id belonging to a different project can never be renamed through this
  * call. Throws NotFoundError for an id that doesn't exist in this
- * project's own history. Deliberately touches only `label` -- `kind` is
- * set once at insertCheckpoint and never revisited here, so renaming a
- * checkpoint (even to text that happens to look like the other kind's own
- * default label) can never change how HistoryPanel's build/refine filter
- * classifies it.
+ * project's own history. Deliberately touches only `label` (and, as of
+ * round 1312, `renamed`) -- `kind` is set once at insertCheckpoint and
+ * never revisited here, so renaming a checkpoint (even to text that
+ * happens to look like the other kind's own default label) can never
+ * change how HistoryPanel's build/refine filter classifies it.
+ *
+ * Round 1312: also marks `renamed = 1`, exempting this checkpoint from
+ * insertCheckpoint's own retention prune (see that function's doc-comment)
+ * from now on -- without this, the exact scenario this doc-comment's
+ * "months later" promise describes used to be defeated the moment 100
+ * newer build/refine checkpoints piled up after it.
  */
 export function renameCheckpoint(db: ForgeDatabase, projectId: string, checkpointId: string, label: string): Checkpoint {
-  const result = db.prepare("UPDATE checkpoints SET label = ? WHERE id = ? AND projectId = ?").run(label, checkpointId, projectId);
+  const result = db.prepare("UPDATE checkpoints SET label = ?, renamed = 1 WHERE id = ? AND projectId = ?").run(label, checkpointId, projectId);
   if (result.changes === 0) {
     throw new NotFoundError(`Checkpoint ${checkpointId} not found in project ${projectId}`);
   }

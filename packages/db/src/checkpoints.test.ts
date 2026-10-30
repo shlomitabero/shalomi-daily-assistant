@@ -58,6 +58,40 @@ test("insertCheckpoint prunes the oldest checkpoints once a project passes the r
   );
 });
 
+/**
+ * Round 1312: renameCheckpoint's own doc-comment says this feature exists
+ * specifically so an important checkpoint stays memorable "months later"
+ * (its own example: "before the pricing overhaul") -- but round 1291's
+ * retention prune above deletes purely by recency, with zero exemption
+ * for a checkpoint the user explicitly renamed. This reproduces exactly
+ * that scenario: rename the OLDEST checkpoint, then push the project well
+ * past the retention limit the same way the test above does, and confirm
+ * the renamed one survives anyway while every un-renamed checkpoint still
+ * gets capped at the usual limit.
+ */
+test("insertCheckpoint never prunes a checkpoint the user has explicitly renamed, even once it ages past the retention limit", () => {
+  const db = openDatabase(":memory:");
+  ensureCheckpointsTable(db);
+  insertCheckpoint(db, { id: "cp0", projectId: "proj1", label: "checkpoint 0", kind: "build", spec: validSpec });
+  renameCheckpoint(db, "proj1", "cp0", "before the pricing overhaul");
+  for (let i = 1; i < CHECKPOINTS_RETENTION_LIMIT + 5; i++) {
+    insertCheckpoint(db, { id: `cp${i}`, projectId: "proj1", label: `checkpoint ${i}`, kind: "build", spec: validSpec });
+  }
+  const checkpoints = listCheckpoints(db, "proj1");
+  const renamed = checkpoints.find((c) => c.id === "cp0");
+  assert.ok(renamed, "the renamed checkpoint must survive pruning regardless of age, the exact 'months later' promise renameCheckpoint's own doc-comment makes");
+  assert.equal(renamed!.label, "before the pricing overhaul");
+  assert.equal(
+    checkpoints.length,
+    CHECKPOINTS_RETENTION_LIMIT + 1,
+    "every un-renamed checkpoint must still be capped at the usual retention limit, plus exactly the one checkpoint explicitly pinned by rename",
+  );
+  assert.ok(
+    checkpoints.some((c) => c.id === `cp${CHECKPOINTS_RETENTION_LIMIT + 4}`),
+    "the newest checkpoint must always survive pruning",
+  );
+});
+
 test("insertCheckpoint never prunes a DIFFERENT project's checkpoints when this project passes the retention limit", () => {
   const db = openDatabase(":memory:");
   ensureCheckpointsTable(db);
