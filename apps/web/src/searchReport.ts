@@ -37,11 +37,20 @@ export function formatSearchResults(
   }
 
   for (const result of results) {
+    // Round 1279: mirrors GlobalSearchPanel.tsx's own round-1122
+    // `if (!entity) return null;` guard -- a refine completing while the
+    // panel stays open can drop/rename an entity `results` already holds
+    // a group for, and the live panel already stops rendering that
+    // group entirely. Before this, the group survived here regardless
+    // (falling back to a bare `#<id>` per record), contradicting this
+    // function's own doc comment above, which promises the report "never
+    // disagrees with what's actually on screen."
     const entity = entities.find((e) => e.name === result.entityName);
+    if (!entity) continue;
     const displayed = expandedSamples[result.entityName] ?? result.sample;
     lines.push(`${result.entityLabel} — ${t("search.resultCount", { count: result.totalMatches })}`);
     for (const record of displayed) {
-      lines.push(`- ${entity ? recordDisplayLabel(entity, record, lang) : `#${record.id}`}`);
+      lines.push(`- ${recordDisplayLabel(entity, record, lang)}`);
     }
     const remaining = result.totalMatches - displayed.length;
     if (remaining > 0) {

@@ -101,6 +101,33 @@ test("formatSearchResults uses an expanded sample (from a real 'Show all' click)
   assert.doesNotMatch(report, /and \d+ more/, "once fully expanded, there must be no remaining-count line");
 });
 
+/**
+ * Round 1279: GlobalSearchPanel.tsx's own round-1122 fix skips rendering
+ * a result group whose entity vanished mid-session (a refine completing
+ * while the panel stays open can drop/rename an entity `results`
+ * already holds a group for) -- but formatSearchResults, used by both
+ * the panel's Download and Copy actions, had no equivalent skip: it
+ * fell back to a bare `#<id>` per record and still emitted the whole
+ * stale group, directly contradicting this function's own doc comment
+ * ("the copied/downloaded text never disagrees with what's actually on
+ * screen"). Confirms a result for an entity no longer in `entities` is
+ * dropped entirely, matching the live panel, while a result for a real,
+ * still-present entity is unaffected.
+ */
+test("formatSearchResults drops a result group for an entity that no longer exists, matching the live panel's own round-1122 fix", () => {
+  const t = (key: string, params?: Record<string, string | number>) => translate("en", key, params);
+  const results: EntitySearchResult[] = [
+    { entityName: "Customer", entityLabel: "Customers", totalMatches: 1, sample: [customerRecord(1, "Amy")] },
+    { entityName: "Vanished", entityLabel: "Vanished Entity", totalMatches: 1, sample: [{ id: 99 }] },
+  ];
+
+  const report = formatSearchResults(results, [CUSTOMER_ENTITY], {}, "a", "Flower Shop", "en", t);
+
+  assert.match(report, /Customers/);
+  assert.match(report, /Amy/);
+  assert.doesNotMatch(report, /Vanished/, "a group for an entity no longer present must never appear in the report at all");
+});
+
 test("formatSearchResults lists results from more than one entity, each under its own label", () => {
   const t = (key: string, params?: Record<string, string | number>) => translate("en", key, params);
   const results: EntitySearchResult[] = [
