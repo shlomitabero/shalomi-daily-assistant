@@ -516,6 +516,54 @@ test("runAutomationsForRecordChange sends a WhatsApp message when a matching rul
 });
 
 /**
+ * Round 1321: a toMode:"field" destination's toField can resolve to a
+ * field the AI spec generator typed "number" instead of "text" -- a phone
+ * number "looks numeric", and EntitySchema/FieldSchema impose no
+ * restriction tying a field's name to its type. repository.ts's
+ * rowToRecord returns a "number"-typed field's value as a real JS
+ * number, never a string, so this rule's own `typeof to !== "string"`
+ * check used to always fail with "no value in the configured
+ * phone-number field" -- even though the record plainly has a valid
+ * phone number -- and the message was never sent. Mirrors the identical
+ * fix already made for the same underlying defect in two other call
+ * sites: whatsapp.ts's findMatchingRecord (round 1278, inbound message ->
+ * record) and entityFormatting.ts's findRecordPhoneNumber (round 1286,
+ * the "Send WhatsApp" button's own visibility check) -- this is the third,
+ * distinct call site that never got it.
+ */
+test("runAutomationsForRecordChange sends a WhatsApp message when a toMode:\"field\" rule's toField resolves to a number-typed phone field", async () => {
+  const { db, project } = setupProject();
+  insertAutomationRule(db, {
+    projectId: project.id,
+    entityName: "Order",
+    trigger: "field_equals",
+    fieldName: "status",
+    fieldValue: "Delivered",
+    actionType: "send_whatsapp",
+    toMode: "field",
+    toField: "customerPhone",
+    messageTemplate: "Hi {{customerName}}, your order has been delivered!",
+  });
+  // customerPhone typed "number" instead of "text" -- the exact shape an
+  // AI spec generator could plausibly produce for a numeric-looking field.
+  const numberPhoneEntity: Entity = {
+    ...orderEntity,
+    fields: orderEntity.fields.map((f) => (f.name === "customerPhone" ? { ...f, type: "number" as const } : f)),
+  };
+  const { manager, sendCalls } = createFakeWhatsApp({ connected: true });
+  const record = { id: 1, customerName: "Dana", customerPhone: 972501234567, status: "Delivered" };
+
+  await runAutomationsForRecordChange(db, manager, UNUSED_EMAIL_SENDER, project, numberPhoneEntity, "updated", record, new Set(["status"]), UNUSED_UPLOADS_DIR, UNUSED_BASE_URL);
+
+  assert.equal(sendCalls.length, 1, "the message must actually be sent, not silently fail with 'no value in the configured phone-number field'");
+  assert.equal(sendCalls[0]!.to, "972501234567");
+  const { messages } = listWhatsAppMessages(db, project.id);
+  assert.equal(messages.length, 1);
+  assert.equal(messages[0]!.status, "sent");
+  assert.equal(messages[0]!.toNumber, "972501234567");
+});
+
+/**
  * Round 1188: packages/db/src/migrate.ts explicitly treats a case-only
  * field rename (type unchanged) as "the same field" and deliberately does
  * NOT disable a referencing rule for it (its own prevFieldByLowerName

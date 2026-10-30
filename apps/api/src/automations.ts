@@ -1032,7 +1032,19 @@ export async function fireRule(
   // Round 1188: resolve against the entity's current field casing -- see
   // resolveStoredFieldName's own doc comment.
   const resolvedToField = rule.toField ? resolveStoredFieldName(entity, rule.toField) : null;
-  const to = rule.toMode === "static" ? rule.toNumber : resolvedToField ? record[resolvedToField] : null;
+  const rawTo = rule.toMode === "static" ? rule.toNumber : resolvedToField ? record[resolvedToField] : null;
+  // Round 1321: a phone-like-named field can end up typed "number" (the AI
+  // spec generator has no way to know "phone" should be text, and a phone
+  // number "looks numeric"), in which case repository.ts stores and
+  // returns it as a real JS number, never a string -- so this rule's own
+  // toMode:"field" destination always failed with "no value in the
+  // configured phone-number field" for a perfectly valid number, even
+  // though the record plainly has one. Mirrors the identical fix already
+  // made for the same underlying defect in two other call sites:
+  // whatsapp.ts's findMatchingRecord (round 1278, inbound message ->
+  // record) and entityFormatting.ts's findRecordPhoneNumber (round 1286,
+  // the "Send WhatsApp" button's own visibility check).
+  const to = typeof rawTo === "number" ? String(rawTo) : rawTo;
   if (!to || typeof to !== "string" || !to.trim()) {
     recordAutomationRun(
       db,
