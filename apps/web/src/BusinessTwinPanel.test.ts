@@ -776,7 +776,7 @@ test("BusinessTwinPanel's Dashboard view renders a real bar chart from twin.dist
       const shippedBarWidth = parseFloat((rows[1]!.querySelector(".twin-chart-bar") as HTMLElement).style.width);
       assert.ok(pendingBarWidth > shippedBarWidth, `expected Pending's bar (${pendingBarWidth}%) to be wider than Shipped's (${shippedBarWidth}%)`);
 
-      const statTile = document.querySelector(".twin-stat-tile-static") as HTMLElement;
+      const statTile = document.querySelector(".twin-dashboard-stats .twin-stat-tile") as HTMLElement;
       assert.ok(statTile, "expected a stat tile for the numeric aggregate");
       assert.equal(statTile.querySelector(".twin-stat-value")!.textContent, "400");
 
@@ -927,14 +927,14 @@ test("BusinessTwinPanel's Dashboard view renders stat tiles from twin.overdueSta
       const dashboardButton = Array.from(document.querySelectorAll(".twin-view-toggle button")).find((b) => b.textContent?.includes("Dashboard"));
       fireEvent.click(dashboardButton!);
 
-      await waitForCondition(() => document.querySelectorAll(".twin-stat-tile-static").length === 2);
+      await waitForCondition(() => document.querySelectorAll(".twin-dashboard-stats .twin-stat-tile").length === 2);
       assert.equal(
         document.body.textContent?.includes("Not enough data yet for the dashboard view"),
         false,
         "the empty-state message must not show when overdue/due-soon stats exist",
       );
 
-      const tiles = Array.from(document.querySelectorAll(".twin-stat-tile-static"));
+      const tiles = Array.from(document.querySelectorAll(".twin-dashboard-stats .twin-stat-tile"));
       const overdueTile = tiles.find((el) => el.querySelector(".twin-stat-label")!.textContent?.includes("Due date"))!;
       assert.ok(overdueTile, "expected a stat tile for the overdue deadline fact");
       assert.equal(overdueTile.querySelector(".twin-stat-value")!.textContent, "2");
@@ -944,6 +944,102 @@ test("BusinessTwinPanel's Dashboard view renders stat tiles from twin.overdueSta
       assert.ok(dueSoonTile, "expected a stat tile for the due-soon deadline fact");
       assert.equal(dueSoonTile.querySelector(".twin-stat-value")!.textContent, "1");
       assert.match(dueSoonTile.querySelector(".twin-stat-percent")!.textContent ?? "", /5/);
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+});
+
+/**
+ * Round 1332: the Dashboard's numericStats/overdueStats/dueSoonStats tiles
+ * were rendered as plain inert <div className="twin-stat-tile-static">,
+ * unlike every sibling tile in this same panel (the per-entity record-count
+ * tiles above, and mostActiveObservation/jumpableObservations below) which
+ * are all real buttons wired to onJumpToEntity -- even though each of these
+ * stats already carries its own entityName (see twin.ts). Confirms all
+ * three families are now real clickable buttons that call onJumpToEntity
+ * with their own entityName, mirroring the test above for the per-entity
+ * record-count tiles.
+ */
+test("BusinessTwinPanel's numericStats/overdueStats/dueSoonStats dashboard tiles are clickable and call onJumpToEntity with their own entity name", async () => {
+  await withJsdom(async () => {
+    const numericStat = {
+      text: 'Total "Amount" in "Orders": 400 (average 100 across 4 records).',
+      entityName: "Order",
+      entityLabel: "Orders",
+      fieldName: "amount",
+      fieldLabel: "Amount",
+      sum: 400,
+      average: 100,
+      recordCount: 4,
+    };
+    const overdueStat = {
+      text: '"Due date" overdue in "Orders": 2 of 5.',
+      entityName: "Order",
+      entityLabel: "Orders",
+      fieldName: "dueDate",
+      fieldLabel: "Due date",
+      overdueCount: 2,
+      recordCount: 5,
+    };
+    const dueSoonStat = {
+      text: '"Renewal" coming up soon in "Customers": 1 of 5.',
+      entityName: "Customer",
+      entityLabel: "Customers",
+      fieldName: "renewal",
+      fieldLabel: "Renewal",
+      dueSoonCount: 1,
+      recordCount: 5,
+    };
+    const twinWithAllStats: BusinessTwin = {
+      ...TWIN,
+      jumpableObservations: [
+        { text: overdueStat.text, entityName: overdueStat.entityName },
+        { text: dueSoonStat.text, entityName: dueSoonStat.entityName },
+      ],
+      numericStats: [numericStat],
+      overdueStats: [overdueStat],
+      dueSoonStats: [dueSoonStat],
+    };
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = (async (input: string) => {
+      if (input === "/api/projects/proj1/twin") {
+        return new Response(JSON.stringify({ twin: twinWithAllStats }), { status: 200, headers: { "content-type": "application/json" } });
+      }
+      throw new Error(`unexpected request ${input}`);
+    }) as typeof fetch;
+    const jumps: string[] = [];
+    try {
+      renderTwinPanel((entityName) => jumps.push(entityName));
+      await waitForCondition(() => document.querySelector(".twin-view-toggle") !== null);
+
+      const dashboardButton = Array.from(document.querySelectorAll(".twin-view-toggle button")).find((b) => b.textContent?.includes("Dashboard"));
+      fireEvent.click(dashboardButton!);
+
+      await waitForCondition(() => document.querySelectorAll(".twin-dashboard-stats .twin-stat-tile").length === 3);
+      const tiles = Array.from(document.querySelectorAll(".twin-dashboard-stats .twin-stat-tile")) as HTMLButtonElement[];
+      for (const tile of tiles) {
+        assert.equal(tile.tagName, "BUTTON", "every dashboard stat tile must be a real clickable button, not an inert div");
+      }
+
+      const totalTile = tiles.find((el) => el.querySelector(".twin-stat-label")!.textContent?.includes("Amount"))!;
+      assert.ok(totalTile, "expected a numericStats tile");
+      fireEvent.click(totalTile);
+      assert.deepEqual(jumps, ["Order"], "clicking the numericStats tile must call onJumpToEntity with its own entityName");
+
+      const overdueTile = tiles.find((el) => el.querySelector(".twin-stat-label")!.textContent?.includes("Due date"))!;
+      assert.ok(overdueTile, "expected an overdueStats tile");
+      fireEvent.click(overdueTile);
+      assert.deepEqual(jumps, ["Order", "Order"], "clicking the overdueStats tile must call onJumpToEntity with its own entityName");
+
+      const dueSoonTile = tiles.find((el) => el.querySelector(".twin-stat-label")!.textContent?.includes("Renewal"))!;
+      assert.ok(dueSoonTile, "expected a dueSoonStats tile");
+      fireEvent.click(dueSoonTile);
+      assert.deepEqual(
+        jumps,
+        ["Order", "Order", "Customer"],
+        "clicking the dueSoonStats tile must call onJumpToEntity with ITS OWN entityName (Customer), not the previous tiles' Order",
+      );
     } finally {
       globalThis.fetch = originalFetch;
     }

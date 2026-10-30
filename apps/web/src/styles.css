@@ -3101,10 +3101,6 @@ button.sort-header:hover:not(:disabled) {
   opacity: 0.6;
 }
 
-.twin-stat-tile-static:hover {
-  border-color: var(--border);
-}
-
 .twin-view-toggle {
   margin: 14px 0 0;
 }

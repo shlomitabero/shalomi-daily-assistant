@@ -238,27 +238,45 @@ export function BusinessTwinPanel({
                   {(twin.numericStats.length > 0 || twin.overdueStats.length > 0 || twin.dueSoonStats.length > 0) && (
                     <div className="twin-dashboard-stats">
                       {twin.numericStats.map((s, i) => (
-                        <div key={`stat-${i}`} className="twin-stat-tile twin-stat-tile-static">
+                        <button
+                          key={`stat-${i}`}
+                          type="button"
+                          className="twin-stat-tile"
+                          aria-label={t("twin.stat.jumpTo", { entity: s.entityLabel })}
+                          onClick={() => onJumpToEntity(s.entityName)}
+                        >
                           <div className="twin-stat-value">{formatNumberValue(s.sum, lang)}</div>
                           <div className="twin-stat-label">{t("twin.dashboard.totalOf", { field: s.fieldLabel, entity: s.entityLabel })}</div>
                           <div className="twin-stat-percent">
                             {t("twin.dashboard.averageOf", { average: formatNumberValue(s.average, lang, { maximumFractionDigits: 1 }) })}
                           </div>
-                        </div>
+                        </button>
                       ))}
                       {twin.overdueStats.map((s, i) => (
-                        <div key={`overdue-${i}`} className="twin-stat-tile twin-stat-tile-static">
+                        <button
+                          key={`overdue-${i}`}
+                          type="button"
+                          className="twin-stat-tile"
+                          aria-label={t("twin.stat.jumpTo", { entity: s.entityLabel })}
+                          onClick={() => onJumpToEntity(s.entityName)}
+                        >
                           <div className="twin-stat-value">{formatNumberValue(s.overdueCount, lang)}</div>
                           <div className="twin-stat-label">{t("twin.dashboard.overdueOf", { field: s.fieldLabel, entity: s.entityLabel })}</div>
                           <div className="twin-stat-percent">{t("twin.dashboard.outOfRecords", { count: s.recordCount })}</div>
-                        </div>
+                        </button>
                       ))}
                       {twin.dueSoonStats.map((s, i) => (
-                        <div key={`duesoon-${i}`} className="twin-stat-tile twin-stat-tile-static">
+                        <button
+                          key={`duesoon-${i}`}
+                          type="button"
+                          className="twin-stat-tile"
+                          aria-label={t("twin.stat.jumpTo", { entity: s.entityLabel })}
+                          onClick={() => onJumpToEntity(s.entityName)}
+                        >
                           <div className="twin-stat-value">{formatNumberValue(s.dueSoonCount, lang)}</div>
                           <div className="twin-stat-label">{t("twin.dashboard.dueSoonOf", { field: s.fieldLabel, entity: s.entityLabel })}</div>
                           <div className="twin-stat-percent">{t("twin.dashboard.outOfRecords", { count: s.recordCount })}</div>
-                        </div>
+                        </button>
                       ))}
                     </div>
                   )}
