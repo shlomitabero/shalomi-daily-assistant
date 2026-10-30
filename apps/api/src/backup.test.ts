@@ -212,6 +212,29 @@ test("generateBackupZipEntries's column order falls back to an entity's declared
 });
 
 /**
+ * Round 1287: mirrors apps/web/src/columnOrder.ts's own round-985 fix. A
+ * live AI refine that merely recases an existing field ("status" ->
+ * "Status") is a no-op at the SQLite layer, so the entity's own real field
+ * is still "Status" while the persisted drag-order array still says
+ * "status" -- an exact-match lookup can't tell that apart from the field
+ * being removed outright, so it silently fell back to the entity's default
+ * declared order instead of honoring the user's own drag-reordering.
+ */
+test("generateBackupZipEntries's column order matches a persisted field name case-insensitively, surviving a case-only field rename", () => {
+  const db = createTestDb(project);
+  // The entity's own real field is lowercase "status" (see the fixture
+  // above); the persisted order below deliberately names it "Status" to
+  // simulate a case-only rename that happened after the order was saved.
+  const entries = generateBackupZipEntries(db, project, { Customer: ["Status", "name"] });
+  const customerCsv = entries.find((e) => e.path === "Customer.csv")!.content.replace(/^﻿/, "");
+  assert.equal(
+    customerCsv.split("\r\n")[0],
+    "סטטוס,שם",
+    "a persisted order entry must still match the entity's current field even when only its letter casing changed",
+  );
+});
+
+/**
  * The server has no request body on this plain GET download, so the
  * client's own column order arrives as a single JSON-encoded query param
  * -- malformed input must never throw or silently trust an unsafe shape,

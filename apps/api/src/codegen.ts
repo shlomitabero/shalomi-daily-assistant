@@ -992,20 +992,29 @@ function backupFieldDisplayValue(field, value, recordIndexByEntity) {
 // order mentions keeps its persisted relative position, and any field the
 // order doesn't mention (a newly added field, or an order saved before it
 // existed) is appended at the end in the entity's own declared order.
+//
+// Round 1287: matched case-insensitively when no exact name matches,
+// mirroring this same file's own applyColumnOrder (its round-985 fix) and
+// the live preview's own round-1287 port of the identical fix to its own
+// backup.ts -- without this, an order entry for a field whose casing a
+// refine later normalized (e.g. "status" -> "Status") was silently treated
+// as removed, reverting this entity's backup column order to its default.
 function orderedFieldsFor(entity, columnOrders) {
   const order = columnOrders[entity.name];
   if (!order || order.length === 0) return entity.fields;
   const byName = new Map(entity.fields.map((f) => [f.name, f]));
+  const byLowerName = new Map(entity.fields.map((f) => [f.name.toLowerCase(), f]));
   const ordered = [];
+  const used = new Set();
   for (const name of order) {
-    const field = byName.get(name);
-    if (field) {
+    const field = byName.get(name) ?? byLowerName.get(name.toLowerCase());
+    if (field && !used.has(field)) {
       ordered.push(field);
-      byName.delete(name);
+      used.add(field);
     }
   }
   for (const field of entity.fields) {
-    if (byName.has(field.name)) ordered.push(field);
+    if (!used.has(field)) ordered.push(field);
   }
   return ordered;
 }

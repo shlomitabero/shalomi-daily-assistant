@@ -224,21 +224,32 @@ function matchedEntityLabel(entityName: string, entities: Entity[]): string {
  * newly added field, or an order saved before this entity was ever
  * reordered) is appended at the end in the entity's own original order,
  * so every field still appears exactly once.
+ *
+ * Round 1287: an order entry is matched case-insensitively when no exact
+ * name matches, mirroring apps/web/src/columnOrder.ts's own round-985 fix
+ * for the identical hazard -- a live AI refine that merely recases an
+ * existing field ("status" -> "Status") is a no-op at the SQLite layer,
+ * but an exact-match lookup against the persisted order array couldn't
+ * tell that apart from the field being removed outright, silently
+ * reverting this entity's backup column order to its default declared
+ * order the instant such a refine completed.
  */
 function orderedFieldsFor(entity: Entity, columnOrders: Record<string, string[]>): Field[] {
   const order = columnOrders[entity.name];
   if (!order || order.length === 0) return entity.fields;
   const byName = new Map(entity.fields.map((f) => [f.name, f]));
+  const byLowerName = new Map(entity.fields.map((f) => [f.name.toLowerCase(), f]));
   const ordered: Field[] = [];
+  const used = new Set<Field>();
   for (const name of order) {
-    const field = byName.get(name);
-    if (field) {
+    const field = byName.get(name) ?? byLowerName.get(name.toLowerCase());
+    if (field && !used.has(field)) {
       ordered.push(field);
-      byName.delete(name);
+      used.add(field);
     }
   }
   for (const field of entity.fields) {
-    if (byName.has(field.name)) ordered.push(field);
+    if (!used.has(field)) ordered.push(field);
   }
   return ordered;
 }

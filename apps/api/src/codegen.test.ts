@@ -14982,6 +14982,41 @@ test("the generated server's /api/backup endpoint honors a columnOrders query pa
 });
 
 /**
+ * Round 1287: mirrors the live preview's own round-1287 fix to backup.ts's
+ * identical orderedFieldsFor, and this same generated file's own
+ * applyColumnOrder (round 985/986), which already matches case-
+ * insensitively for exactly this reason. A live AI refine that merely
+ * recases an existing field ("status" -> "Status") is a no-op at the
+ * SQLite layer, so the persisted columnOrders entry still says "status"
+ * while the entity's own current field is "Status" -- an exact-match
+ * lookup can't tell that apart from the field being removed outright, so
+ * it silently fell back to the entity's default declared order instead of
+ * honoring the user's own drag-reordering in the exported app's own
+ * "Backup all data" ZIP.
+ */
+test("the generated server.js's own orderedFieldsFor matches a persisted columnOrders field name case-insensitively, surviving a case-only field rename", () => {
+  const serverJs = generateExportFiles(project).find((f) => f.path === "server.js")!.content;
+  const orderedFieldsForSrc = serverJs.match(/function orderedFieldsFor\(entity, columnOrders\) \{[\s\S]*?\n\}\n/)?.[0];
+  assert.ok(orderedFieldsForSrc, "expected to find orderedFieldsFor in generated server.js");
+
+  const orderedFieldsFor = new Function(`${orderedFieldsForSrc}\nreturn orderedFieldsFor;`)() as (
+    entity: { name: string; fields: { name: string }[] },
+    columnOrders: Record<string, string[]>,
+  ) => { name: string }[];
+
+  // The entity's own real field is lowercase "status" (see the fixture
+  // above); the persisted order below deliberately names it "Status" to
+  // simulate a case-only rename that happened after the order was saved.
+  const customerEntity = project.spec.entities[0];
+  const ordered = orderedFieldsFor(customerEntity, { Customer: ["Status", "name"] });
+  assert.deepEqual(
+    ordered.map((f) => f.name),
+    ["status", "name"],
+    "a persisted order entry must still match the entity's current field even when only its letter casing changed",
+  );
+});
+
+/**
  * Round 836: the client's own column order arrives as a single
  * JSON-encoded query param (this is a plain GET download with no request
  * body) -- malformed input must never throw or silently trust an unsafe
