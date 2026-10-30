@@ -377,6 +377,31 @@ test("buildCombinedCalendarFeedIcs merges every date-bearing entity's records in
   assert.match(events[1], /SUMMARY:\[השכרה\] Projector/, "the Rental event's SUMMARY must be prefixed with its own entity's label");
 });
 
+/**
+ * Round 1280: PATCH /projects/:id/entities/:entityName/label accepts any
+ * non-unique label with no check against sibling entities, the same
+ * fact every other multi-entity export/report surface in this codebase
+ * already disambiguates against (backup.ts, automationsReport.ts,
+ * whatsappLog.ts, among others). Two different entities sharing the
+ * exact same label, both merged into the combined feed, must still be
+ * distinguishable in the SUMMARY prefix -- otherwise the whole point of
+ * this prefix (telling a viewer which real entity an event came from)
+ * is defeated for the one case it matters most (an actual collision).
+ */
+test("buildCombinedCalendarFeedIcs disambiguates two entities sharing the exact same label by appending each one's own entity name", () => {
+  const sameLabelRental: Entity = { ...rentalEntity, label: entity.label };
+  const ics = buildCombinedCalendarFeedIcs(
+    [entity, sameLabelRental],
+    { Appointment: [{ id: 1, appointmentDate: "2026-03-15", customerName: "Dana Levi" }], Rental: [{ id: 1, itemName: "Projector", startDate: "2026-04-01" }] },
+    "proj1",
+  );
+  assert.ok(ics);
+  const events = parseEvents(ics!);
+  assert.equal(events.length, 2);
+  assert.match(events[0], /SUMMARY:\[תור \(Appointment\)\] Dana Levi/, "a label collision must disambiguate with the entity's own name");
+  assert.match(events[1], /SUMMARY:\[תור \(Rental\)\] Projector/, "the other colliding entity must get the identical treatment");
+});
+
 test("buildCombinedCalendarFeedIcs skips an entity with no records for it in recordsByEntity, instead of throwing", () => {
   const ics = buildCombinedCalendarFeedIcs([entity, rentalEntity], { Appointment: [{ id: 1, appointmentDate: "2026-03-15", customerName: "Dana Levi" }] }, "proj1");
   assert.ok(ics);

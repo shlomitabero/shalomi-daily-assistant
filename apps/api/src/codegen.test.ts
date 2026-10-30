@@ -452,6 +452,93 @@ test("generated server.js's combined calendar feed 404s when NO entity in the pr
 });
 
 /**
+ * Round 1280: PATCH /projects/:id/entities/:entityName/label (the live
+ * backend's own route; this exported app has no such route since its
+ * entities are frozen at export time) never enforced label uniqueness
+ * against sibling entities, so a spec can legally end up with two
+ * different entities sharing the exact same display label. The combined
+ * feed's own SUMMARY prefix (the whole point of which is telling a
+ * viewer which real entity an event came from) must still disambiguate
+ * that collision, mirroring the live backend's own round-1280 fix
+ * (calendarFeed.ts's entityLabelOccurrences/entityDisplayLabel).
+ */
+test("generated server.js's combined calendar feed disambiguates two entities sharing the exact same label by appending each one's own entity name", async () => {
+  const dealEntity: Entity = {
+    name: "Deal",
+    label: "Events",
+    fields: [
+      { name: "title", label: "Title", type: "text", required: true },
+      { name: "eventDate", label: "Event Date", type: "date", required: true },
+    ],
+  };
+  const invoiceEntity: Entity = {
+    name: "Invoice",
+    label: "Events",
+    fields: [
+      { name: "number", label: "Number", type: "text", required: true },
+      { name: "dueDate", label: "Due Date", type: "date", required: true },
+    ],
+  };
+  const feedProject: Project = { ...project, spec: { ...project.spec, entities: [dealEntity, invoiceEntity] } };
+  const files = generateExportFiles(feedProject);
+  const serverJs = files.find((f) => f.path === "server.js")!.content;
+
+  const dir = mkdtempSync(path.join(tmpdir(), "codegen-combined-feed-samelabel-test-"));
+  const repoRoot = path.resolve(import.meta.dirname, "../../..");
+  symlinkSync(path.join(repoRoot, "node_modules"), path.join(dir, "node_modules"));
+  writeFileSync(path.join(dir, "server.js"), serverJs);
+
+  const port = 34000 + Math.floor(Math.random() * 5000);
+  const child = spawn(process.execPath, ["--experimental-sqlite", "server.js"], {
+    cwd: dir,
+    env: { ...process.env, PORT: String(port) },
+    stdio: ["ignore", "pipe", "pipe"],
+  });
+  let stderr = "";
+  child.stderr.on("data", (chunk) => {
+    stderr += chunk.toString();
+  });
+
+  try {
+    const deadline = Date.now() + 5000;
+    let lastErr: unknown;
+    while (Date.now() < deadline) {
+      if (child.exitCode !== null) {
+        throw new Error(`server.js exited early (code ${child.exitCode}):\n${stderr}`);
+      }
+      try {
+        const dealRes = await fetch(`http://localhost:${port}/api/Deal`, {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ title: "Trip to Eilat", eventDate: "2026-11-05" }),
+        });
+        assert.equal(dealRes.status, 201);
+        const invoiceRes = await fetch(`http://localhost:${port}/api/Invoice`, {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ number: "INV-1", dueDate: "2026-12-01" }),
+        });
+        assert.equal(invoiceRes.status, 201);
+
+        const feedRes = await fetch(`http://localhost:${port}/api/calendar/all/feed.ics`);
+        assert.equal(feedRes.status, 200);
+        const ics = await feedRes.text();
+        assert.match(ics, /SUMMARY:\[Events \(Deal\)\] Trip to Eilat/, "a label collision must disambiguate with the entity's own name");
+        assert.match(ics, /SUMMARY:\[Events \(Invoice\)\] INV-1/, "the other colliding entity must get the identical treatment");
+        return;
+      } catch (err) {
+        lastErr = err;
+        await new Promise((r) => setTimeout(r, 100));
+      }
+    }
+    throw lastErr instanceof Error ? lastErr : new Error(String(lastErr));
+  } finally {
+    child.kill();
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+/**
  * Round 1223: the exported app's own calendar feed route resolved
  * entityName exact-case only, unlike the live preview's identical route
  * (routes/calendar.ts, round 1185) and this very route's own

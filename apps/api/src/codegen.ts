@@ -1374,6 +1374,27 @@ function buildCalendarFeedIcs(entity, records, recordIndexByEntity) {
   return lines.join("\\r\\n");
 }
 
+// Round 1280: this server.js template's OWN copy of the identical pair
+// renderEntityViewJsx generates for its web/src/components/EntityView.jsx
+// (own entityLabelOccurrences/entityDisplayLabel, used there by Global
+// Search's result-group header) -- each generated file is a standalone
+// module with no cross-file imports between them, matching this
+// function's own doc comment just below on "duplicate the small pure
+// helper". An entity's own display label is never enforced unique
+// (only its name is), so two different entities can legally share one.
+function feedEntityLabelOccurrences(entities) {
+  const occurrences = {};
+  for (const e of entities) {
+    const label = e.label || e.name;
+    occurrences[label] = (occurrences[label] || 0) + 1;
+  }
+  return occurrences;
+}
+function feedEntityDisplayLabel(entity, occurrences) {
+  const label = entity.label || entity.name;
+  return (occurrences[label] || 0) > 1 ? label + " (" + entity.name + ")" : label;
+}
+
 // Round 1258: the project-wide counterpart to buildCalendarFeedIcs above --
 // ported from the live Forge AI backend's own round-1247 feature
 // (calendarFeed.ts's buildCombinedCalendarFeedIcs), never carried over to
@@ -1392,6 +1413,10 @@ function buildCombinedCalendarFeedIcs(entities, recordsByEntityName) {
   const dateBearingEntities = entities.filter((e) => findFeedDateField(e.fields) !== null);
   if (dateBearingEntities.length === 0) return null;
   const dtstamp = formatFeedIcsTimestamp(new Date());
+  // Round 1280: ported from the live backend's own round-1280 fix -- this
+  // combined feed is exactly the multi-entity case feedEntityDisplayLabel
+  // exists to disambiguate (see its own doc comment above).
+  const summaryLabelOccurrences = feedEntityLabelOccurrences(entities);
   // Covers every relation target ANY date-bearing entity's fields point
   // to, not just one entity's -- a combined feed's DESCRIPTION lines can
   // need to resolve a relation from any of the merged entities, not only
@@ -1420,7 +1445,7 @@ function buildCombinedCalendarFeedIcs(entities, recordsByEntityName) {
     }
     // Not pre-escaped here: feedIcsEscapeText(summary) below escapes the
     // whole prefix+label string exactly once.
-    const summaryPrefix = \`[\${entity.label || entity.name}] \`;
+    const summaryPrefix = \`[\${feedEntityDisplayLabel(entity, summaryLabelOccurrences)}] \`;
     for (const record of records) {
       const raw = record[dateField.name];
       if (raw === null || raw === undefined || raw === "") continue;

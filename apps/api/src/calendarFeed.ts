@@ -398,6 +398,34 @@ export function buildCalendarFeedIcs(
 }
 
 /**
+ * Round 1280: `PATCH /projects/:id/entities/:entityName/label`
+ * (routes/projects.ts) accepts any non-empty label with no uniqueness
+ * check against sibling entities -- two different entities can
+ * legitimately end up with the exact same display label. Every other
+ * multi-entity export/report surface in this codebase (backup.ts,
+ * automationsReport.ts, whatsappLog.ts, AutomationsPanel.tsx,
+ * checkpointDiff.ts/pipeline.ts) already duplicates this identical pair
+ * to disambiguate ("Label (entityName)") when that happens.
+ * buildCombinedCalendarFeedIcs below never got it, even though merging
+ * several entities into one VCALENDAR is exactly the multi-entity case
+ * this disambiguation exists for. Mirrors (rather than imports, per this
+ * file's own top comment) backup.ts's own identical pair.
+ */
+function entityLabelOccurrences(entities: Entity[]): Map<string, number> {
+  const occurrences = new Map<string, number>();
+  for (const e of entities) {
+    const label = e.label ?? e.name;
+    occurrences.set(label, (occurrences.get(label) ?? 0) + 1);
+  }
+  return occurrences;
+}
+
+function entityDisplayLabel(entity: Entity, occurrences: Map<string, number>): string {
+  const label = entity.label ?? entity.name;
+  return (occurrences.get(label) ?? 0) > 1 ? `${label} (${entity.name})` : label;
+}
+
+/**
  * Round 1247: the project-wide counterpart to buildCalendarFeedIcs above --
  * many real projects have more than one entity with its own independent
  * date field (a clinic's Appointment.date alongside its Invoice.dueDate, a
@@ -424,12 +452,17 @@ export function buildCombinedCalendarFeedIcs(
   const dateBearingEntities = entities.filter((e) => findDateField(e.fields) !== null);
   if (dateBearingEntities.length === 0) return null;
   const dtstamp = formatIcsTimestamp(now);
+  // Round 1280: computed once, over the FULL `entities` list (not just the
+  // date-bearing subset) -- a label collision between a date-bearing
+  // entity and a non-date-bearing sibling is exactly as ambiguous to a
+  // calendar app's viewer as one between two date-bearing entities.
+  const labelOccurrences = entityLabelOccurrences(entities);
   const eventLines: string[] = [];
   for (const entity of dateBearingEntities) {
     const records = recordsByEntity[entity.name] ?? [];
     // Not pre-escaped here: the shared loop's own icsEscapeText(summary)
     // call escapes the whole prefix+label string exactly once.
-    const summaryPrefix = `[${entity.label ?? entity.name}] `;
+    const summaryPrefix = `[${entityDisplayLabel(entity, labelOccurrences)}] `;
     eventLines.push(...buildVeventLinesForEntity(entity, records, projectId, dtstamp, allEntities, relatedRecords, lang, summaryPrefix));
   }
   const lines: string[] = [
