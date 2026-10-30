@@ -66,6 +66,7 @@ test("generateExportFiles produces a real multi-file React (Vite) + Express proj
     "web/public/manifest.json",
     "web/public/sw.js",
     "web/src/App.jsx",
+    "web/src/ErrorBoundary.jsx",
     "web/src/api.js",
     "web/src/components/EntityView.jsx",
     "web/src/components/GlobalSearch.jsx",
@@ -26131,6 +26132,70 @@ test("the exported EntityView's filter dropdowns, 'Group by' options, bulk-edit 
     });
   } finally {
     globalThis.fetch = originalFetch;
+    cleanup();
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+/**
+ * Round 1309: round 1299 added a top-level React ErrorBoundary to
+ * apps/web/src/main.tsx, wrapping <App/> so an uncaught render-time
+ * exception anywhere in the tree shows a recoverable fallback instead of
+ * unmounting to a blank page -- but that round never re-ran against
+ * apps/api (its own roadmap entry says so explicitly), so the exported
+ * standalone app's main.jsx kept the bare, unwrapped render and got none
+ * of this protection. Confirms main.jsx actually imports and wraps with
+ * the new ErrorBoundary, and that the generated ErrorBoundary.jsx itself
+ * behaves exactly like its apps/web source: a child that genuinely throws
+ * during render is caught and replaced with a recoverable fallback.
+ */
+test("the exported main.jsx wraps <App/> in the generated ErrorBoundary", () => {
+  const files = generateExportFiles(project);
+  const mainJsx = files.find((f) => f.path === "web/src/main.jsx")!.content;
+  assert.match(mainJsx, /import \{ ErrorBoundary \} from "\.\/ErrorBoundary\.jsx";/);
+  assert.match(
+    mainJsx,
+    /<ErrorBoundary>\s*<App \/>\s*<\/ErrorBoundary>/,
+    "expected <App/> to render inside the new <ErrorBoundary>, not bare",
+  );
+});
+
+test("the exported ErrorBoundary.jsx shows a recoverable fallback instead of a blank page when a child throws during render", async () => {
+  const files = generateExportFiles(project);
+  const dir = writeGeneratedWebComponent(files);
+  const originalConsoleError = console.error;
+  console.error = () => {};
+  try {
+    const { ErrorBoundary } = await import(path.join(dir, "web", "src", "ErrorBoundary.jsx"));
+    function Throws() {
+      throw new Error("deliberate render-time crash, for this test only");
+    }
+    const { container } = render(
+      React.createElement(ErrorBoundary, null, React.createElement(Throws)),
+    );
+    const banner = container.querySelector('[role="alert"]');
+    assert.ok(banner, "expected the fallback's error message to render instead of a blank page");
+    assert.match(banner!.textContent ?? "", /went wrong|השתבש/);
+    const reloadButton = container.querySelector("button");
+    assert.ok(reloadButton, "expected a reload button in the fallback");
+  } finally {
+    console.error = originalConsoleError;
+    cleanup();
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("the exported ErrorBoundary.jsx renders its children normally when nothing throws", async () => {
+  const files = generateExportFiles(project);
+  const dir = writeGeneratedWebComponent(files);
+  try {
+    const { ErrorBoundary } = await import(path.join(dir, "web", "src", "ErrorBoundary.jsx"));
+    const { container, getByText } = render(
+      React.createElement(ErrorBoundary, null, React.createElement("p", null, "all good")),
+    );
+    assert.ok(getByText("all good"));
+    assert.equal(container.querySelector('[role="alert"]'), null, "the fallback must not render when nothing crashed");
+  } finally {
     cleanup();
     rmSync(dir, { recursive: true, force: true });
   }

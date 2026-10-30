@@ -1672,11 +1672,14 @@ function renderMainJsx(): string {
   return `import { StrictMode } from "react";
 import { createRoot } from "react-dom/client";
 import App from "./App.jsx";
+import { ErrorBoundary } from "./ErrorBoundary.jsx";
 import "./styles.css";
 
 createRoot(document.getElementById("root")).render(
   <StrictMode>
-    <App />
+    <ErrorBoundary>
+      <App />
+    </ErrorBoundary>
   </StrictMode>,
 );
 
@@ -1689,6 +1692,48 @@ if ("serviceWorker" in navigator) {
   window.addEventListener("load", () => {
     navigator.serviceWorker.register("/sw.js").catch(() => {});
   });
+}
+`;
+}
+
+// Round 1309: ported from apps/web/src/ErrorBoundary.tsx, which the
+// exported standalone app never received -- an uncaught render-time
+// exception anywhere in its tree used to unmount straight to a blank white
+// page with no recovery path. Wraps <App/> from OUTSIDE StrictMode's own
+// child in main.jsx so a crash in App itself is still caught. No
+// TypeScript annotations (this file ships as plain .jsx), and no i18n
+// helper is reachable from a class component with no provider above it,
+// so the fallback text is hardcoded Hebrew+English together, same
+// deliberate exception as the live app's own version.
+function renderErrorBoundaryJsx(): string {
+  return `import { Component } from "react";
+
+export class ErrorBoundary extends Component {
+  state = { hasError: false };
+
+  static getDerivedStateFromError() {
+    return { hasError: true };
+  }
+
+  componentDidCatch(error, info) {
+    console.error("Uncaught error in the app's render tree:", error, info.componentStack);
+  }
+
+  render() {
+    if (!this.state.hasError) {
+      return this.props.children;
+    }
+    return (
+      <div className="app-crash-fallback">
+        <p className="error" role="alert">
+          משהו השתבש / Something went wrong.
+        </p>
+        <button type="button" onClick={() => window.location.reload()}>
+          רענון הדף / Reload the page
+        </button>
+      </div>
+    );
+  }
 }
 `;
 }
@@ -9409,6 +9454,7 @@ nav button.active .tab-count { background: rgba(255, 255, 255, 0.25); color: inh
   .print-record-sheet, .print-record-sheet *, .print-list-sheet, .print-list-sheet * { visibility: visible !important; }
   .print-record-sheet, .print-list-sheet { display: block !important; position: absolute; inset: 0; padding: 24px; }
 }
+.app-crash-fallback { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 16px; min-height: 100vh; padding: 24px; text-align: center; background: var(--bg); color: var(--text); }
 `;
 }
 
@@ -9434,6 +9480,7 @@ export function generateExportFiles(project: Project, exportedAt: Date = new Dat
     { path: "web/public/manifest.json", content: renderManifestJson(project) },
     { path: "web/public/icon.svg", content: renderIconSvg(project) },
     { path: "web/src/main.jsx", content: renderMainJsx() },
+    { path: "web/src/ErrorBoundary.jsx", content: renderErrorBoundaryJsx() },
     { path: "web/src/App.jsx", content: renderAppJsx(project) },
     { path: "web/src/api.js", content: renderApiJs() },
     { path: "web/src/theme.js", content: renderThemeJs() },
