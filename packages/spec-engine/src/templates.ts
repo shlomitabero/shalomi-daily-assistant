@@ -373,6 +373,7 @@ const CRM_ENTITIES: EntitySpec[] = [
     label: "משימה",
     fields: [
       { name: "title", label: "כותרת", type: "text", required: true },
+      { name: "assignee", label: "אחראי/ת", type: "text" },
       { name: "dueDate", label: "תאריך יעד", type: "date" },
       {
         name: "status",
@@ -442,6 +443,7 @@ const CRM_ENTITIES_EN: EntitySpec[] = [
     label: "Task",
     fields: [
       { name: "title", label: "Title", type: "text", required: true },
+      { name: "assignee", label: "Assignee", type: "text" },
       { name: "dueDate", label: "Due Date", type: "date" },
       {
         name: "status",

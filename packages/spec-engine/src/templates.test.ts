@@ -566,6 +566,34 @@ test("the Project Tracker template's Project entity has a client field, matching
 });
 
 /**
+ * Round 1308: the CRM template's own Task entity (title/dueDate/status/
+ * deal) is missing an `assignee` field, unlike domainEntities.ts's
+ * matching Task domain rule (title/assignee/status/dueDate). Round 1273
+ * already quoted this domain rule's full shape, including `assignee`,
+ * when fixing this same Task entity's status field -- but assignee was
+ * never added. CRM's own stated purpose names "follow-up tasks" for a
+ * multi-person sales team, so a task with no way to record who it's
+ * assigned to loses real workflow fidelity, the same gap round 1273's own
+ * analysis already flagged for status.
+ */
+test("the CRM template's Task entity has an assignee field, matching domainEntities.ts's own Task domain rule", () => {
+  const crmTemplate = TEMPLATES.find((t) => t.id === "crm");
+  assert.ok(crmTemplate, "expected a \"crm\" template to exist");
+
+  const task = crmTemplate!.spec.entities.find((e) => e.name === "Task");
+  assert.ok(task, "expected the CRM template to have a Task entity");
+  const assignee = task!.fields.find((f) => f.name === "assignee");
+  assert.ok(assignee, "expected the Task entity to have an assignee field");
+  assert.equal(assignee!.type, "text");
+
+  const taskEn = crmTemplate!.specEn.entities.find((e) => e.name === "Task");
+  assert.ok(taskEn, "expected the CRM specEn to have a Task entity");
+  const assigneeEn = taskEn!.fields.find((f) => f.name === "assignee");
+  assert.ok(assigneeEn, "expected the CRM specEn Task entity to have an assignee field");
+  assert.equal(assigneeEn!.type, "text");
+});
+
+/**
  * Round 516's finding: the "Appointments & Clients" template's Hebrew
  * Appointment.status enum mapped "scheduled" to "קבוע" (meaning "fixed" /
  * "permanent" / "standing" in Hebrew), not "scheduled". This codebase
