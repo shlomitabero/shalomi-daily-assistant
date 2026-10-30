@@ -1,5 +1,6 @@
 import "./jsdomWarmup.js";
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import { test } from "node:test";
 import { JSDOM } from "jsdom";
 import React from "react";
@@ -3970,4 +3971,44 @@ test("AddPersonaForm reports its own busy state up via onBusyChange while its ow
       globalThis.fetch = originalFetch;
     }
   });
+});
+
+/**
+ * Round 1347: found via a real browser session (Playwright/Chromium), not
+ * static reading -- jsdom has no layout engine and can't detect visual
+ * overlap, so this reads styles.css's own source directly, the same
+ * discipline App.test.ts/EntityPanel.test.ts already use for CSS-only
+ * regressions. PersonaItem's own JSX (above) was built "mirroring
+ * AssumptionItem exactly, down to the readOnly/rename/remove markup" --
+ * but the matching .persona-item/.persona-text/.persona-remove CSS never
+ * shipped, so .persona-remove fell through to the global button{} rule
+ * (11px/20px padding, 15px font) with no flex layout on its parent <li> to
+ * push it aside, rendering as a giant default button overlapping the
+ * persona's own label text in "Who uses this app."
+ */
+test("PersonaItem's own CSS classes (persona-item/persona-text/persona-remove) are actually styled in styles.css, not left to fall through to the giant default button{} rule", () => {
+  const stylesCss = readFileSync(new URL("./styles.css", import.meta.url), "utf8");
+
+  const personaItemRule = stylesCss.match(/\.persona-item\s*\{[\s\S]*?\}/)?.[0];
+  assert.ok(personaItemRule, "expected a .persona-item rule in styles.css");
+  assert.match(personaItemRule!, /display:\s*flex/, ".persona-item must be a flex row so its text and remove button lay out side by side, not overlapping");
+  assert.match(
+    personaItemRule!,
+    /justify-content:\s*space-between/,
+    ".persona-item must push its remove button to the end, the same layout AssumptionItem's own .assumption-item already uses",
+  );
+
+  assert.ok(stylesCss.match(/\.persona-text\s*\{/), "expected a .persona-text rule in styles.css");
+
+  // .persona-remove must be bounded to a small icon-button size, not left
+  // to fall through to the unstyled global button{} rule (11px/20px
+  // padding, 15px font) that caused the overlap in the first place -- the
+  // same shared-selector-group shape .assumption-remove/.chip-remove/
+  // .entity-summary-remove already use.
+  const removeButtonGroup = stylesCss.match(/\.chip-remove,\s*\n\.assumption-remove,\s*\n\.entity-summary-remove,\s*\n\.persona-remove\s*\{[\s\S]*?\}/)?.[0];
+  assert.ok(
+    removeButtonGroup,
+    "expected .persona-remove to join the shared small-icon-button selector group with .assumption-remove/.chip-remove/.entity-summary-remove",
+  );
+  assert.match(removeButtonGroup!, /width:\s*16px/, ".persona-remove must get the same bounded 16px icon-button size as its sibling remove buttons");
 });

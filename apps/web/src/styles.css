@@ -993,7 +993,8 @@ button.danger:hover:not(:disabled) {
 
 .chip-remove,
 .assumption-remove,
-.entity-summary-remove {
+.entity-summary-remove,
+.persona-remove {
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -1011,14 +1012,16 @@ button.danger:hover:not(:disabled) {
 
 .chip-remove:hover,
 .assumption-remove:hover,
-.entity-summary-remove:hover {
+.entity-summary-remove:hover,
+.persona-remove:hover {
   background: var(--surface-raised);
   color: var(--text);
 }
 
 .chip-remove:disabled,
 .assumption-remove:disabled,
-.entity-summary-remove:disabled {
+.entity-summary-remove:disabled,
+.persona-remove:disabled {
   cursor: default;
   opacity: 0.5;
 }
@@ -1047,6 +1050,46 @@ button.danger:hover:not(:disabled) {
 }
 
 .assumption-rename-edit input {
+  font: inherit;
+  padding: 2px 5px;
+  width: 100%;
+}
+
+/*
+ * Round 1347: PersonaItem (SpecListItemRemover.tsx) was built "mirroring
+ * AssumptionItem exactly, down to the readOnly/rename/remove markup" (its
+ * own comment), reusing the same <li>/text/remove-button shape with
+ * persona-* class names -- but the matching CSS for those persona-*
+ * classes never landed, so .persona-remove fell through to the global
+ * button{} rule (11px/20px padding, 15px font) with no flex layout on its
+ * parent <li> to push it aside, rendering as a giant default button
+ * overlapping the persona's own label text. Found via a real browser
+ * session (Playwright/Chromium), not static reading.
+ */
+.persona-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.persona-text {
+  cursor: pointer;
+  border-radius: var(--radius-sm);
+  padding: 1px 4px;
+  margin: -1px -4px;
+  transition: background 0.12s ease;
+}
+
+.persona-text:hover {
+  background: var(--surface-raised);
+}
+
+.persona-rename-edit {
+  align-items: flex-start;
+}
+
+.persona-rename-edit input {
   font: inherit;
   padding: 2px 5px;
   width: 100%;
