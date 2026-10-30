@@ -567,6 +567,21 @@ export function createAuthRouter(
    * exact request's own session alive) -- there is no prior session of
    * this request's own to preserve, so every existing session is revoked,
    * forcing a fresh login with the new password on every device.
+   *
+   * Round 1335: the same fetchWithWakeRetry lost-response risk round 1334
+   * fixed for verify-code, and round 1310 fixed for PATCH /auth/password --
+   * deletePasswordResetToken (the token is single-use) commits before the
+   * response is sent, so a dropped connection after a genuinely successful
+   * reset left a retry hitting `!pending` (the token row is already gone)
+   * and 401ing with RESET_TOKEN_INVALID, even though the password had
+   * already been changed and every session already revoked. Arguably
+   * worse than verify-code's version of this bug: a reset token is
+   * single-shot with no resend-with-the-same-token option, so a user
+   * seeing that false error has no way to tell whether their attempt
+   * actually worked short of trying to log in with the new password. Same
+   * userId-less scoping trick as signup/verify-code: no session exists
+   * (every session was just revoked) until long after this call started,
+   * so the idempotency key itself stands in for userId.
    */
   router.post("/auth/reset-password", resetPasswordRateLimiter, async (req, res, next) => {
     const parsed = ResetPasswordSchema.safeParse(req.body);
@@ -576,71 +591,73 @@ export function createAuthRouter(
     }
     try {
       const { token, newPassword } = parsed.data;
-      const pending = getPasswordResetTokenByHash(db, hashResetToken(token));
-      const expired = !pending || new Date(pending.expiresAt).getTime() < Date.now();
-      if (expired) {
-        if (pending) deletePasswordResetToken(db, pending.id);
-        next(new HttpError(401, "This reset link has expired or is invalid. Please request a new one.", "RESET_TOKEN_INVALID"));
-        return;
-      }
-      deletePasswordResetToken(db, pending.id);
-      const newHash = await hashPassword(newPassword);
-      // Round 1024: mirrors PATCH /auth/password's own round-539 fix --
-      // hashPassword above is a genuine await (offloaded to libuv's
-      // threadpool, see auth/password.ts's own comment), long enough for a
-      // concurrent DELETE /auth/account using this same account's still-
-      // valid session token to delete the user row entirely before this
-      // resolves. The existence check must happen AFTER that await, right
-      // before the writes -- checking before it (as this handler used to)
-      // leaves a stale result: updatePasswordHash/deleteAllSessionsForUser
-      // below would both silently affect zero rows, yet still report 204
-      // as if the reset had succeeded on an account that no longer exists.
-      const user = findUserById(db, pending.userId);
-      if (!user) {
-        next(new HttpError(401, "This account no longer exists", "USER_NOT_FOUND"));
-        return;
-      }
-      updatePasswordHash(db, user.id, newHash);
-      deleteAllSessionsForUser(db, user.id);
-      // Round 1265: mirrors PATCH /auth/password's own round-1252
-      // notification -- this route's own revocation is the MORE sensitive
-      // of the two (every session on the account, not just other ones, and
-      // reachable by anyone holding a leaked/intercepted reset link rather
-      // than someone who already knows the current password), yet round
-      // 1252 only ever touched the PATCH route. Best-effort, same
-      // swallowed-send contract as every sibling route in this file.
-      //
-      // Round 1311: that PATCH route's own body text was copy-pasted here
-      // verbatim through round 1265, but it's wrong for THIS route's own
-      // threat model -- this route's comment immediately above already
-      // says so ("reachable by anyone holding a leaked/intercepted reset
-      // link rather than someone who already knows the current password"),
-      // yet the email itself told the recipient "someone else knew your
-      // previous password." For the real attack this route is actually
-      // exposed to (an attacker with access to the victim's email inbox,
-      // using the forgot-password flow rather than any stolen Forge AI
-      // credential), that wording points the victim at the wrong fix --
-      // changing their Forge AI password again, which the attacker can
-      // just repeat -- instead of the real one: securing their email
-      // account. PATCH /auth/password's own identical-looking text just
-      // below is untouched; it's correct there, since that route genuinely
-      // does require the current password.
-      if (emailSender.configured) {
-        const isHebrew = parsed.data.lang !== "en";
-        const subject = isHebrew ? "הסיסמה של חשבונך ב-Forge AI השתנתה" : "Your Forge AI account's password was changed";
-        const body = isHebrew
-          ? `הסיסמה של חשבונך ב-Forge AI אופסה כעת באמצעות קישור לאיפוס סיסמה שנשלח לכתובת האימייל הזו.\n\nאם זו לא הייתם אתם, מישהו הצליח לגשת לתיבת האימייל הזו או ליירט את קישור האיפוס -- אבטחו את חשבון האימייל שלכם, ולאחר מכן היכנסו ל-Forge AI והחליפו את הסיסמה מיד.`
-          : `Your Forge AI account's password was just reset using a password-reset link sent to this email address.\n\nIf this wasn't you, someone was able to access this email inbox or intercept the reset link -- secure your email account, then sign in to Forge AI and change your password immediately.`;
-        try {
-          await emailSender.send(user.email, subject, body);
-        } catch {
-          // Swallowed, deliberately, same as PATCH /auth/password's own
-          // send above -- the reset itself already succeeded and was
-          // already committed to the database; a failed best-effort
-          // notification must never turn that into an error response.
+      const idempotencyKey = req.header("X-Idempotency-Key") || undefined;
+      const { status } = await withIdempotency(db, idempotencyKey, idempotencyKey ?? "", "POST /auth/reset-password", async () => {
+        const pending = getPasswordResetTokenByHash(db, hashResetToken(token));
+        const expired = !pending || new Date(pending.expiresAt).getTime() < Date.now();
+        if (expired) {
+          if (pending) deletePasswordResetToken(db, pending.id);
+          throw new HttpError(401, "This reset link has expired or is invalid. Please request a new one.", "RESET_TOKEN_INVALID");
         }
-      }
-      res.status(204).end();
+        deletePasswordResetToken(db, pending.id);
+        const newHash = await hashPassword(newPassword);
+        // Round 1024: mirrors PATCH /auth/password's own round-539 fix --
+        // hashPassword above is a genuine await (offloaded to libuv's
+        // threadpool, see auth/password.ts's own comment), long enough for a
+        // concurrent DELETE /auth/account using this same account's still-
+        // valid session token to delete the user row entirely before this
+        // resolves. The existence check must happen AFTER that await, right
+        // before the writes -- checking before it (as this handler used to)
+        // leaves a stale result: updatePasswordHash/deleteAllSessionsForUser
+        // below would both silently affect zero rows, yet still report 204
+        // as if the reset had succeeded on an account that no longer exists.
+        const user = findUserById(db, pending.userId);
+        if (!user) {
+          throw new HttpError(401, "This account no longer exists", "USER_NOT_FOUND");
+        }
+        updatePasswordHash(db, user.id, newHash);
+        deleteAllSessionsForUser(db, user.id);
+        // Round 1265: mirrors PATCH /auth/password's own round-1252
+        // notification -- this route's own revocation is the MORE sensitive
+        // of the two (every session on the account, not just other ones, and
+        // reachable by anyone holding a leaked/intercepted reset link rather
+        // than someone who already knows the current password), yet round
+        // 1252 only ever touched the PATCH route. Best-effort, same
+        // swallowed-send contract as every sibling route in this file.
+        //
+        // Round 1311: that PATCH route's own body text was copy-pasted here
+        // verbatim through round 1265, but it's wrong for THIS route's own
+        // threat model -- this route's comment immediately above already
+        // says so ("reachable by anyone holding a leaked/intercepted reset
+        // link rather than someone who already knows the current password"),
+        // yet the email itself told the recipient "someone else knew your
+        // previous password." For the real attack this route is actually
+        // exposed to (an attacker with access to the victim's email inbox,
+        // using the forgot-password flow rather than any stolen Forge AI
+        // credential), that wording points the victim at the wrong fix --
+        // changing their Forge AI password again, which the attacker can
+        // just repeat -- instead of the real one: securing their email
+        // account. PATCH /auth/password's own identical-looking text just
+        // below is untouched; it's correct there, since that route genuinely
+        // does require the current password.
+        if (emailSender.configured) {
+          const isHebrew = parsed.data.lang !== "en";
+          const subject = isHebrew ? "הסיסמה של חשבונך ב-Forge AI השתנתה" : "Your Forge AI account's password was changed";
+          const body = isHebrew
+            ? `הסיסמה של חשבונך ב-Forge AI אופסה כעת באמצעות קישור לאיפוס סיסמה שנשלח לכתובת האימייל הזו.\n\nאם זו לא הייתם אתם, מישהו הצליח לגשת לתיבת האימייל הזו או ליירט את קישור האיפוס -- אבטחו את חשבון האימייל שלכם, ולאחר מכן היכנסו ל-Forge AI והחליפו את הסיסמה מיד.`
+            : `Your Forge AI account's password was just reset using a password-reset link sent to this email address.\n\nIf this wasn't you, someone was able to access this email inbox or intercept the reset link -- secure your email account, then sign in to Forge AI and change your password immediately.`;
+          try {
+            await emailSender.send(user.email, subject, body);
+          } catch {
+            // Swallowed, deliberately, same as PATCH /auth/password's own
+            // send above -- the reset itself already succeeded and was
+            // already committed to the database; a failed best-effort
+            // notification must never turn that into an error response.
+          }
+        }
+        return { status: 204, body: null };
+      });
+      res.status(status).end();
     } catch (err) {
       next(err);
     }

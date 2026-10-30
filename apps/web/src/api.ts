@@ -333,9 +333,25 @@ export function forgotPassword(email: string, lang: "he" | "en"): Promise<{ sent
   return request("/auth/forgot-password", { method: "POST", body: JSON.stringify({ email, lang }) });
 }
 
-/** The second half of the flow above -- `token` is whatever AuthScreen.tsx read from the emailed link's own `?resetToken=` query param. */
+/**
+ * The second half of the flow above -- `token` is whatever AuthScreen.tsx
+ * read from the emailed link's own `?resetToken=` query param.
+ *
+ * Round 1335: same `x-idempotency-key` mechanism changePassword already
+ * sends (round 1310) -- this route's own success invalidates the exact
+ * precondition a retry re-checks (the reset token is single-use, deleted
+ * the moment it's consumed), so a response lost in transit after the
+ * server already changed the password made a retry fail with a false 401
+ * RESET_TOKEN_INVALID for a reset that already fully succeeded -- worse
+ * than most of this app's other idempotency gaps, since a reset link has
+ * no resend-with-the-same-token option.
+ */
 export function resetPassword(token: string, newPassword: string, lang?: "he" | "en"): Promise<void> {
-  return request("/auth/reset-password", { method: "POST", body: JSON.stringify({ token, newPassword, lang }) });
+  return request("/auth/reset-password", {
+    method: "POST",
+    headers: { "x-idempotency-key": crypto.randomUUID() },
+    body: JSON.stringify({ token, newPassword, lang }),
+  });
 }
 
 export function me(): Promise<{ user: User }> {

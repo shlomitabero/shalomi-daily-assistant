@@ -1491,6 +1491,61 @@ test("forgot-password emails a real reset link, and following it with a new pass
 });
 
 /**
+ * Round 1335: the exact same fetchWithWakeRetry lost-response risk rounds
+ * 1334/1310 fixed for verify-code/PATCH-password -- reset-password's own
+ * success (deletePasswordResetToken + updatePasswordHash +
+ * deleteAllSessionsForUser) invalidates the exact precondition a retry
+ * re-checks (the token row is already gone), so a response lost in
+ * transit after the server already completed the reset made a retry fail
+ * with a false 401 RESET_TOKEN_INVALID for a reset that, the new
+ * password working below proves, already fully succeeded. Worse than
+ * verify-code's version: a reset token has no resend-with-the-same-token
+ * option at all.
+ */
+test("POST /auth/reset-password retried with the same idempotency key after the first attempt already succeeded replays the original response, instead of 401ing with RESET_TOKEN_INVALID", async () => {
+  const emailSender = createFakeEmailSender();
+  await withServer(
+    async (baseUrl) => {
+      const email = `reset-idem-1-${Date.now()}@example.com`;
+      await signup(baseUrl, email);
+
+      const forgotRes = await fetch(`${baseUrl}/api/auth/forgot-password`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ email, lang: "en" }),
+      });
+      assert.equal(forgotRes.status, 200);
+      const resetUrl = emailSender.sentTo[0]!.text.match(/https?:\/\/\S+/)?.[0];
+      const resetToken = new URL(resetUrl!).searchParams.get("resetToken");
+
+      const headers = { "content-type": "application/json", "x-idempotency-key": "reset-password-repro-key" };
+      const body = JSON.stringify({ token: resetToken, newPassword: "brand-new-password" });
+
+      const firstRes = await fetch(`${baseUrl}/api/auth/reset-password`, { method: "POST", headers, body });
+      assert.equal(firstRes.status, 204);
+
+      const retryRes = await fetch(`${baseUrl}/api/auth/reset-password`, { method: "POST", headers, body });
+      assert.equal(
+        retryRes.status,
+        204,
+        "a retried reset-password with the same idempotency key must replay the original success, not 401 now that the token is already consumed",
+      );
+
+      // Exactly one reset must genuinely have happened: the new password
+      // still works, and the account wasn't somehow reset a second time
+      // with a DIFFERENT password by the retry actually re-running.
+      const loginRes = await fetch(`${baseUrl}/api/auth/login`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ email, password: "brand-new-password" }),
+      });
+      assert.equal(loginRes.status, 200);
+    },
+    { emailSender },
+  );
+});
+
+/**
  * Round 1265: this route used to send no notification anywhere once the
  * reset succeeded -- round 1252 closed the identical gap for PATCH
  * /auth/password but never touched this route, despite the risk being
