@@ -18932,3 +18932,53 @@ test("GET .../entity-counts is rate-limited per authenticated account: the 61st 
     assert.equal(otherRes.status, 200, "a different account must not be collaterally blocked by another account's own rate limit");
   });
 });
+
+test("GET .../entities/:entityName (listing an entity's records) is rate-limited per authenticated account: the 121st call is rejected with 429, while a different account is unaffected", async () => {
+  await withServer(async (baseUrl, db) => {
+    const email = `record-list-rate-limit-${randomUUID()}@example.com`;
+    const token = await signup(baseUrl, email);
+    const user = findUserByEmail(db, email)!;
+    const spec: ProductSpec = {
+      summary: "test",
+      personas: [],
+      roles: ["Admin"],
+      entities: [{ name: "Customer", fields: [{ name: "name", type: "text", required: true }] }],
+      screens: [],
+      assumptions: [],
+      openQuestions: [],
+    };
+    const projectId = randomUUID();
+    insertProject(db, { id: projectId, ownerId: user.id, name: "CRM", description: "test", spec });
+    diffAndMigrate(db, projectId, undefined, spec);
+    markProjectBuilt(db, projectId);
+
+    for (let i = 0; i < 120; i++) {
+      const res = await fetch(`${baseUrl}/api/projects/${projectId}/entities/Customer`, {
+        headers: authHeaders(token),
+      });
+      assert.notEqual(res.status, 429, `call ${i + 1} of 120 (within the limit) must not be rate-limited yet`);
+    }
+
+    const blocked = await fetch(`${baseUrl}/api/projects/${projectId}/entities/Customer`, {
+      headers: authHeaders(token),
+    });
+    assert.equal(blocked.status, 429);
+    assert.equal(((await blocked.json()) as { code?: string }).code, "RATE_LIMITED");
+
+    // A completely different account must get its own fresh allowance --
+    // keyed by user id, not IP, so one account exhausting its own budget
+    // must never collaterally block an unrelated account's own calls.
+    const otherEmail = `record-list-rate-limit-other-${randomUUID()}@example.com`;
+    const otherToken = await signup(baseUrl, otherEmail);
+    const otherUser = findUserByEmail(db, otherEmail)!;
+    const otherProjectId = randomUUID();
+    insertProject(db, { id: otherProjectId, ownerId: otherUser.id, name: "CRM 2", description: "test", spec });
+    diffAndMigrate(db, otherProjectId, undefined, spec);
+    markProjectBuilt(db, otherProjectId);
+
+    const otherRes = await fetch(`${baseUrl}/api/projects/${otherProjectId}/entities/Customer`, {
+      headers: authHeaders(otherToken),
+    });
+    assert.equal(otherRes.status, 200, "a different account must not be collaterally blocked by another account's own rate limit");
+  });
+});

@@ -1398,6 +1398,39 @@ export function createProjectsRouter(
   });
 
   /**
+   * Round 1342: `GET .../entities/:entityName` -- the route that lists every
+   * record of one entity -- had NO volumetric throttle at all, unlike its
+   * own write-side sibling (`POST .../entities/:entityName`, gated by
+   * recordWriteRateLimiter below) and its lighter read cousin
+   * (`GET .../entity-counts`, gated by entityCountsRateLimiter just above).
+   * `listRecords` (packages/db/src/repository.ts) is a fully synchronous
+   * better-sqlite3 `SELECT *` with no LIMIT at all, followed by a per-row
+   * `rowToRecord` JS-object construction for every column of every row --
+   * strictly heavier per call than entity-counts' own `SELECT COUNT(*)`
+   * this exact reasoning already justified a dedicated limiter for, and
+   * this route uses `requireProjectAccess`, not `requireProjectWriteAccess`,
+   * so a mere read-only viewer collaborator (free to be invited to, or to
+   * create their own project) can script a tight loop against it, stalling
+   * this app's one shared Node event loop (the same single-process hazard
+   * expensiveReadRateLimiter's own doc comment names) for every other
+   * user's and project's requests too.
+   *
+   * A dedicated limiter with a higher cap than entityCountsRateLimiter's 60,
+   * since legitimate traffic against this specific route is itself heavier:
+   * GlobalSearchPanel's own `runSearch` fires one call per entity on every
+   * search submission (not just once per project open the way entity-counts
+   * is), and EntityPanel's relation-field loader fires one more per distinct
+   * related entity a record references -- both genuinely routine, not
+   * abusive, usage this budget must comfortably absorb.
+   */
+  const recordListRateLimiter = createRateLimiter({
+    windowMs: 15 * 60 * 1000,
+    max: 120,
+    keyGenerator: (req) => req.userId ?? "unknown",
+    message: "Too many record list requests. Please try again later.",
+  });
+
+  /**
    * Round 1109: the entire pre-build spec-editing route family -- add/
    * remove/rename an entity or field, change a field's type/required flag,
    * and append/edit/remove a role, assumption, or persona -- had NO
@@ -3205,6 +3238,7 @@ export function createProjectsRouter(
 
   router.get(
     "/projects/:id/entities/:entityName",
+    recordListRateLimiter,
     asyncRoute(async (req, res) => {
       const project = requireProjectAccess(db, req.params.id, req.userId!);
       if (project.status !== "built") {
