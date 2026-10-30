@@ -1806,6 +1806,7 @@ tbody tr:hover {
 }
 
 .calendar-day {
+  position: relative;
   min-height: 76px;
   background: var(--surface);
   border: 1px solid var(--border-soft);
@@ -1815,6 +1816,35 @@ tbody tr:hover {
   flex-direction: column;
   gap: 4px;
   overflow: hidden;
+}
+
+/* Round 1315: a real, separately-focusable button for "add a record on
+   this day" -- see EntityPanel.tsx's own doc comment on this button for
+   why it replaced the day cell's former role="button"/tabIndex pairing. */
+.calendar-day-add {
+  position: absolute;
+  top: 4px;
+  inset-inline-end: 4px;
+  width: 16px;
+  height: 16px;
+  padding: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 12px;
+  line-height: 1;
+  color: var(--muted);
+  background: none;
+  border: 1px solid var(--border-soft);
+  border-radius: 50%;
+  box-shadow: none;
+  cursor: pointer;
+  transform: none;
+}
+
+.calendar-day-add:hover {
+  color: var(--accent);
+  border-color: var(--accent);
 }
 
 .calendar-day-outside {

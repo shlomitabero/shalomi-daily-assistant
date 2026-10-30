@@ -4721,20 +4721,25 @@ test("the exported EntityView's calendar has a real clickable day that pre-fills
 });
 
 /**
- * New in this round: mirrors the live preview's own fix -- the exported
- * calendar's day cell was a plain, non-focusable `<div onClick=...>`, the
- * ONLY way to reach onDayClick for a keyboard-only user. Confirms the
- * generated day cell carries real tabIndex/role/aria-label (structurally,
- * via regex, per this file's own established CalendarView-testing
- * convention), then extracts the actual generated onKeyDown expression
- * and executes it for real (not reimplemented) to prove: Enter and " "
- * both call onDayClick, every other key is ignored, and -- the same
- * bubbling hazard the record chip's own onClick already guards against
- * with stopPropagation -- a keydown whose e.target isn't the day cell
- * itself (i.e. bubbled up from a focused chip inside it) must never also
- * fire onDayClick.
+ * Round 1315: mirrors the live preview's own fix -- the exported
+ * calendar's day cell was a `<div role="button" tabIndex={0} aria-
+ * label=... onKeyDown={...}>` directly wrapping `.calendar-day-records`,
+ * a container holding several real `<button>` elements (chip, print,
+ * duplicate, delete, WhatsApp), violating WCAG 4.1.2 / axe-core's
+ * nested-interactive rule -- the same defect the live preview's
+ * EntityPanel.tsx had. Confirms (structurally, via regex, per this
+ * file's own established CalendarView-testing convention): the day div
+ * no longer carries tabIndex/role/aria-label itself, and a new real
+ * `.calendar-day-add` <button> exists instead, gated on
+ * `day.inCurrentMonth` exactly like the removed attributes were. Then
+ * extracts that button's actual generated onClick expression and
+ * executes it for real (not reimplemented) to prove it calls onDayClick
+ * with the day's own date AND calls stopPropagation -- the same
+ * bubbling guard the record chip's own onClick already has, needed here
+ * so the day div's own onClick (still present, for mouse clicks
+ * anywhere in the empty cell) doesn't also fire a second time.
  */
-test("the exported EntityView's calendar day cell is keyboard-focusable, and its real onKeyDown calls onDayClick only for Enter/Space targeted at the cell itself", () => {
+test("the exported EntityView's calendar day cell exposes a real, separately-focusable add button instead of role=button/tabIndex/onKeyDown on the cell itself", () => {
   const withDate: Project = {
     ...project,
     spec: {
@@ -4755,58 +4760,41 @@ test("the exported EntityView's calendar day cell is keyboard-focusable, and its
   const files = generateExportFiles(withDate);
   const entityViewJsx = files.find((f) => f.path === "web/src/components/EntityView.jsx")!.content;
 
-  assert.match(entityViewJsx, /tabIndex=\{day\.inCurrentMonth \? 0 : undefined\}/);
-  assert.match(entityViewJsx, /role=\{day\.inCurrentMonth \? "button" : undefined\}/);
-  assert.match(entityViewJsx, /aria-label=\{day\.inCurrentMonth \? "Add a record on this day" : undefined\}/);
+  assert.doesNotMatch(entityViewJsx, /tabIndex=\{day\.inCurrentMonth \? 0 : undefined\}/, "the day cell itself must no longer be focusable");
+  assert.doesNotMatch(entityViewJsx, /role=\{day\.inCurrentMonth \? "button" : undefined\}/, "the day cell itself must no longer expose role=button");
+  assert.doesNotMatch(
+    entityViewJsx,
+    /aria-label=\{day\.inCurrentMonth \? "Add a record on this day" : undefined\}/,
+    "the day cell itself must no longer carry the add-record aria-label",
+  );
+  assert.doesNotMatch(entityViewJsx, /onKeyDown=\{\s*day\.inCurrentMonth/, "the day cell itself must no longer have its own onKeyDown");
 
-  // The slice runs up to the start of the next attribute (onDragOver={),
-  // so it also picks up the closing "}" of onKeyDown's own JSX attribute
-  // brace -- strip exactly that trailing brace, not part of the expression.
-  const onKeyDownExpr = entityViewJsx
-    .slice(entityViewJsx.indexOf("onKeyDown={") + "onKeyDown={".length, entityViewJsx.indexOf("onDragOver={"))
-    .trim()
-    .replace(/\}\s*$/, "")
+  assert.match(entityViewJsx, /\{day\.inCurrentMonth && \(/, "expected the add button to be gated on day.inCurrentMonth");
+  assert.match(entityViewJsx, /className="calendar-day-add"/, "expected a real add-record button");
+  assert.match(
+    entityViewJsx,
+    /aria-label="Add a record on this day"[\s\S]{0,40}onClick=\{\(e\) => \{/,
+    "expected the add button's own aria-label and onClick",
+  );
+
+  const addButtonIdx = entityViewJsx.indexOf('className="calendar-day-add"');
+  const addButtonSrc = entityViewJsx.slice(addButtonIdx, entityViewJsx.indexOf("</button>", addButtonIdx));
+  const onClickExpr = addButtonSrc
+    .slice(addButtonSrc.indexOf("onClick={") + "onClick={".length, addButtonSrc.lastIndexOf("}}") + 1)
     .trim();
-  assert.match(onKeyDownExpr, /day\.inCurrentMonth/, "expected to find the real generated onKeyDown expression");
+  assert.match(onClickExpr, /onDayClick\(day\.date\)/, "expected to find the real generated onClick expression calling onDayClick");
 
-  const makeHandler = (day: { inCurrentMonth: boolean }, onDayClick: (date: unknown) => void) =>
-    new Function("day", "onDayClick", `return (${onKeyDownExpr});`)(day, onDayClick) as ((e: unknown) => void) | undefined;
-
+  const day = { date: "2026-09-15" };
   let calledWith: unknown;
   const onDayClick = (date: unknown) => {
     calledWith = date;
   };
-  const day = { inCurrentMonth: true, date: "2026-09-15" };
-  const handler = makeHandler(day, onDayClick);
-  assert.equal(typeof handler, "function", "a day cell inCurrentMonth must get a real onKeyDown function, not undefined");
+  const handler = new Function("day", "onDayClick", `return (${onClickExpr});`)(day, onDayClick) as (e: unknown) => void;
 
-  function fireKey(key: string, sameTarget: boolean) {
-    let prevented = false;
-    const cell = {};
-    handler!({ key, target: sameTarget ? cell : {}, currentTarget: cell, preventDefault: () => (prevented = true) });
-    return prevented;
-  }
-
-  assert.equal(fireKey("Enter", true), true, "Enter targeted at the cell itself must preventDefault");
-  assert.equal(calledWith, "2026-09-15", "Enter targeted at the cell itself must call onDayClick with that day's own date");
-
-  assert.equal(fireKey(" ", true), true, "Space targeted at the cell itself must preventDefault");
-  assert.equal(calledWith, "2026-09-15", "Space targeted at the cell itself must also call onDayClick");
-
-  calledWith = "untouched";
-  fireKey("Tab", true);
-  assert.equal(calledWith, "untouched", "any other key must never call onDayClick");
-
-  calledWith = "untouched";
-  fireKey("Enter", false);
-  assert.equal(
-    calledWith,
-    "untouched",
-    "Enter whose target is NOT the day cell itself (bubbled from a focused chip inside it) must never call onDayClick",
-  );
-
-  const outsideDay = { inCurrentMonth: false, date: "2026-09-16" };
-  assert.equal(makeHandler(outsideDay, onDayClick), undefined, "a day cell outside the current month must get no onKeyDown handler at all");
+  let stopped = false;
+  handler({ stopPropagation: () => (stopped = true) });
+  assert.equal(calledWith, "2026-09-15", "clicking the add button must call onDayClick with that day's own date");
+  assert.equal(stopped, true, "the add button's click must call stopPropagation, so the day div's own onClick doesn't also fire");
 });
 
 /**

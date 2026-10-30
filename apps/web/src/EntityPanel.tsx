@@ -882,22 +882,6 @@ function CalendarView({
             className={dayClasses.join(" ")}
             onClick={dayInteractive ? () => onDayClick(day.date) : undefined}
             title={dayInteractive ? t("entity.calendar.addOnDay") : undefined}
-            tabIndex={dayInteractive ? 0 : undefined}
-            role={dayInteractive ? "button" : undefined}
-            aria-label={dayInteractive ? t("entity.calendar.addOnDay") : undefined}
-            onKeyDown={
-              dayInteractive
-                ? (e) => {
-                    // Guard against a focused record-chip button's own Enter/Space
-                    // bubbling up here too -- keydown bubbles even though the
-                    // chip's own onClick already stopPropagation()s its CLICK.
-                    if (e.target !== e.currentTarget) return;
-                    if (e.key !== "Enter" && e.key !== " ") return;
-                    e.preventDefault();
-                    onDayClick(day.date);
-                  }
-                : undefined
-            }
             onDragOver={
               dayDropTarget
                 ? (e) => {
@@ -924,6 +908,39 @@ function CalendarView({
             }
           >
             <span className="calendar-day-number">{day.date.getDate()}</span>
+            {dayInteractive && (
+              // Round 1315: a real, separately-focusable <button> for the
+              // "add a record on this day" action, replacing the day
+              // cell's own role="button"/tabIndex/onKeyDown above. That
+              // div directly wraps .calendar-day-records below, which can
+              // hold several real <button> elements of its own (the chip,
+              // print, duplicate, delete, send-WhatsApp actions) -- an
+              // interactive element nested inside another element's own
+              // accessible-button role is exactly the "nested interactive
+              // controls" shape WCAG 4.1.2 and axe-core's own
+              // nested-interactive rule flag: a screen reader focusing the
+              // (former) role="button" div announced only its own
+              // aria-label as one atomic control, and reliably exposing
+              // the real buttons living inside that same accessible
+              // subtree is not guaranteed. The div above keeps its plain
+              // onClick for mouse users; this button gives keyboard/AT
+              // users a non-nested path to the identical action.
+              <button
+                type="button"
+                className="calendar-day-add"
+                title={t("entity.calendar.addOnDay")}
+                aria-label={t("entity.calendar.addOnDay")}
+                onClick={(e) => {
+                  // Mirrors every record-action button's own stopPropagation
+                  // in this same cell -- without it, this click would also
+                  // bubble into the day div's own onClick right above.
+                  e.stopPropagation();
+                  onDayClick(day.date);
+                }}
+              >
+                +
+              </button>
+            )}
             <div className="calendar-day-records">
               {(expandedDays.has(dayKey) ? day.records : day.records.slice(0, 3)).map((record) => (
                 <div className="calendar-record-row" key={record.id as number}>

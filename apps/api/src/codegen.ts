@@ -4402,19 +4402,6 @@ function CalendarView({ entity, dateField, endDateField, records, month, onPrevM
             className={dayClasses.join(" ")}
             onClick={day.inCurrentMonth ? () => onDayClick(day.date) : undefined}
             title={day.inCurrentMonth ? "Add a record on this day" : undefined}
-            tabIndex={day.inCurrentMonth ? 0 : undefined}
-            role={day.inCurrentMonth ? "button" : undefined}
-            aria-label={day.inCurrentMonth ? "Add a record on this day" : undefined}
-            onKeyDown={
-              day.inCurrentMonth
-                ? (e) => {
-                    if (e.target !== e.currentTarget) return;
-                    if (e.key !== "Enter" && e.key !== " ") return;
-                    e.preventDefault();
-                    onDayClick(day.date);
-                  }
-                : undefined
-            }
             onDragOver={
               dayDropTarget
                 ? (e) => {
@@ -4441,6 +4428,20 @@ function CalendarView({ entity, dateField, endDateField, records, month, onPrevM
             }
           >
             <span className="calendar-day-number">{day.date.getDate()}</span>
+            {day.inCurrentMonth && (
+              <button
+                type="button"
+                className="calendar-day-add"
+                title="Add a record on this day"
+                aria-label="Add a record on this day"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  onDayClick(day.date);
+                }}
+              >
+                +
+              </button>
+            )}
             <div className="calendar-day-records">
               {(expandedDays.has(dayKey) ? day.records : day.records.slice(0, 3)).map((record) => (
                 <div className="calendar-record-row" key={record.id}>
@@ -9358,7 +9359,9 @@ nav button.active .tab-count { background: rgba(255, 255, 255, 0.25); color: inh
 .calendar-month-input { min-width: 140px; text-align: center; font-weight: 600; }
 .calendar-grid { display: grid; grid-template-columns: repeat(7, 1fr); gap: 4px; }
 .calendar-weekday { text-align: center; color: var(--muted); font-size: 12px; text-transform: uppercase; letter-spacing: 0.04em; font-weight: 600; padding-bottom: 4px; }
-.calendar-day { min-height: 76px; background: var(--surface-muted); border: 1px solid var(--border-soft); border-radius: 8px; padding: 6px; display: flex; flex-direction: column; gap: 4px; overflow: hidden; }
+.calendar-day { position: relative; min-height: 76px; background: var(--surface-muted); border: 1px solid var(--border-soft); border-radius: 8px; padding: 6px; display: flex; flex-direction: column; gap: 4px; overflow: hidden; }
+.calendar-day-add { position: absolute; top: 4px; inset-inline-end: 4px; width: 16px; height: 16px; padding: 0; display: flex; align-items: center; justify-content: center; font-size: 12px; line-height: 1; color: var(--muted); background: none; border: 1px solid var(--border-soft); border-radius: 50%; cursor: pointer; }
+.calendar-day-add:hover { color: var(--accent); border-color: var(--accent); }
 .calendar-day-outside { opacity: 0.4; }
 .calendar-day-clickable { cursor: pointer; }
 .calendar-day-clickable:hover { border-color: var(--accent); background: var(--accent-soft); }

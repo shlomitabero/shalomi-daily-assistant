@@ -4092,22 +4092,25 @@ test("EntityPanel's calendar view pre-fills the create form's date field when an
 });
 
 /**
- * New in this round: the calendar day cell was a plain, non-focusable
- * `<div onClick=...>` -- the ONLY way to reach "create a record on this
- * day" (onDayClick) for a keyboard-only user, unlike every other
- * interactive element in this app (table rows, board columns, record
- * chips) which already has real keyboard support. Added tabIndex,
- * role="button", a real aria-label, and an Enter/Space onKeyDown that
- * calls the same onDayClick the mouse click already does. Confirms both
- * halves: (1) focusing an empty day cell and pressing Enter opens the
- * blank create form pre-filled with that day's date, exactly like a
- * real click would, and (2) pressing Enter on a focused record CHIP
- * inside a day cell must only fire that chip's own click (via real
- * keyboard activation), never ALSO bubble up and fire the day cell's
- * own onDayClick underneath it -- the same bubbling hazard the chip's
- * mouse-click handler already guards against with stopPropagation.
+ * Round 1315: the calendar day cell used to be a `<div role="button"
+ * tabIndex={0} aria-label=... onKeyDown={...}>` that directly wrapped
+ * `.calendar-day-records`, a container holding several real `<button>`
+ * elements (the record chip, print, duplicate, delete, WhatsApp
+ * actions) -- an interactive element nested inside another element's
+ * own accessible-interactive-role subtree, violating WCAG 4.1.2 /
+ * axe-core's nested-interactive rule. Replaced with a real, separately-
+ * focusable `.calendar-day-add` <button> alongside the day number,
+ * leaving the day div's own onClick (for mouse users clicking anywhere
+ * in the empty cell) untouched. Confirms: (1) the day div no longer
+ * exposes role/tabindex/aria-label itself; (2) clicking the new button
+ * opens the blank create form pre-filled with that day's date, exactly
+ * like clicking the day cell itself already does; and (3) clicking an
+ * existing record's chip still opens it for editing without the day
+ * cell's own onClick (or the new button) resetting the form underneath
+ * it -- the same bubbling hazard the chip's click handler already
+ * guards against with stopPropagation.
  */
-test("EntityPanel's calendar day cell is keyboard-focusable and Enter/Space opens the create form, without a focused chip's own Enter also firing the day's onClick", async () => {
+test("EntityPanel's calendar day cell exposes a real, separately-focusable add button instead of role=button on the cell itself", async () => {
   await withJsdom(async () => {
     const today = isoDateToday();
     const store: EntityRecord[] = [{ id: 1, title: "Dana's appointment", date: today }];
@@ -4126,37 +4129,34 @@ test("EntityPanel's calendar day cell is keyboard-focusable and Enter/Space open
       );
       assert.ok(emptyDayCells.length > 0, "expected at least one clickable empty day cell in the current month");
       const emptyDay = emptyDayCells[0] as HTMLElement;
-      assert.equal(emptyDay.getAttribute("tabindex"), "0", "a clickable day cell must be keyboard-focusable");
-      assert.equal(emptyDay.getAttribute("role"), "button", "a clickable day cell must expose role=button to assistive tech");
-      assert.ok(emptyDay.getAttribute("aria-label"), "a clickable day cell must have a real aria-label");
+      assert.equal(emptyDay.getAttribute("role"), null, "the day cell itself must no longer expose role=button, since it wraps real <button> descendants");
+      assert.equal(emptyDay.getAttribute("tabindex"), null, "the day cell itself must no longer be focusable -- the add button is now");
+      assert.equal(emptyDay.getAttribute("aria-label"), null, "the day cell itself must no longer carry the add-record aria-label");
+
+      const addButton = emptyDay.querySelector(".calendar-day-add") as HTMLButtonElement;
+      assert.ok(addButton, "an empty, in-current-month day cell must expose a real add-record button");
+      assert.equal(addButton.tagName, "BUTTON", "the add control must be a real <button>, not a div with role=button");
+      assert.ok(addButton.getAttribute("aria-label"), "the add button must have a real aria-label");
       const clickedDayNumber = emptyDay.querySelector(".calendar-day-number")!.textContent;
 
-      fireEvent.keyDown(emptyDay, { key: "Enter" });
+      fireEvent.click(addButton);
       await waitForCondition(() => (document.querySelector('.record-form input[type="text"]') as HTMLInputElement)?.value === "");
 
       const dateInput = document.querySelector('.record-form input[type="date"]') as HTMLInputElement;
-      assert.ok(dateInput.value.length > 0, "Enter on the day cell must pre-fill the date field, exactly like a real click");
+      assert.ok(dateInput.value.length > 0, "clicking the add button must pre-fill the date field, exactly like clicking the day cell");
       assert.equal(
         String(Number(dateInput.value.split("-")[2])),
         clickedDayNumber,
-        "the pre-filled date must match the actual day cell Enter was pressed on",
+        "the pre-filled date must match the actual day cell the add button belongs to",
       );
 
-      // Now open the existing record for editing, then focus its chip and
-      // press Enter there -- the keydown must never bubble up and fire the
-      // day cell's own onDayClick, which would silently reset the form to
-      // a blank one for this day instead of leaving the chip's own edit.
+      // Now open the existing record for editing via its chip -- this must
+      // never also trigger the day cell's own onClick (or the add
+      // button's), which would silently reset the form to a blank one for
+      // this day instead of leaving the chip's own edit.
       const chip = document.querySelector(".calendar-record-chip") as HTMLButtonElement;
       fireEvent.click(chip);
       await waitForCondition(() => (document.querySelector('.record-form input[type="text"]') as HTMLInputElement)?.value === "Dana's appointment");
-
-      fireEvent.keyDown(chip, { key: "Enter" });
-      await new Promise((resolve) => setTimeout(resolve, 0));
-      assert.equal(
-        (document.querySelector('.record-form input[type="text"]') as HTMLInputElement).value,
-        "Dana's appointment",
-        "Enter on a focused record chip must never bubble up and reset the form via the day cell's own onDayClick",
-      );
     } finally {
       globalThis.fetch = originalFetch;
     }
