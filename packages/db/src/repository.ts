@@ -102,6 +102,20 @@ function coerceValue(field: Field, raw: unknown, projectId: string, entityName: 
       throw new ValidationError(`Field "${field.name}" must be a boolean`);
     }
     case "enum":
+      // Round 1320: same coincidental-coercion gap number/relation (round
+      // 604) already closed above, one input shape later. JS's
+      // Array.prototype.toString collapses a *single-element* array to its
+      // bare element with no comma -- String(["active"]) is "active", not
+      // "[object Object]" or "active,other" -- so a single-element-array
+      // raw value for an enum field silently stringified to a real, valid
+      // member and passed this check, instead of getting the same
+      // ValidationError every other wrong-shaped input for this field
+      // already gets.
+      if (Array.isArray(raw)) {
+        throw new ValidationError(
+          `Field "${field.name}" must be one of: ${field.enumValues?.join(", ") ?? ""}`,
+        );
+      }
       if (field.enumValues && !field.enumValues.includes(String(raw))) {
         throw new ValidationError(
           `Field "${field.name}" must be one of: ${field.enumValues.join(", ")}`,
@@ -109,6 +123,12 @@ function coerceValue(field: Field, raw: unknown, projectId: string, entityName: 
       }
       return String(raw);
     case "date": {
+      // Round 1320: same single-element-array coincidental-match gap as
+      // the enum case just above -- String(["2024-01-15"]) is
+      // "2024-01-15", a real valid date string.
+      if (Array.isArray(raw)) {
+        throw new ValidationError(`Field "${field.name}" must be a valid date in YYYY-MM-DD format`);
+      }
       const str = String(raw);
       if (!isValidDateString(str)) {
         throw new ValidationError(`Field "${field.name}" must be a valid date in YYYY-MM-DD format`);
@@ -156,6 +176,13 @@ function coerceValue(field: Field, raw: unknown, projectId: string, entityName: 
       // against this record's own projectId/entityName, and the real
       // UUID filename shape (not just "no slashes"), closes that gap at
       // the same single write-time chokepoint the XSS fix already used.
+      //
+      // Round 1320: same single-element-array coincidental-match gap as
+      // the enum/date cases above -- String(['{"url":"..."}']) is
+      // '{"url":"..."}', a real, validly-shaped descriptor string.
+      if (Array.isArray(raw)) {
+        throw new ValidationError(`Field "${field.name}" must be a valid file descriptor`);
+      }
       const str = String(raw);
       let parsed: unknown;
       try {

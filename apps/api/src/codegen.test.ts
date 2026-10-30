@@ -1694,6 +1694,104 @@ test("generated server.js rejects a boolean value for a required number field", 
 });
 
 /**
+ * Regression test (round 1320): the same copy-pasted coerce() -- and its
+ * live-app twin, packages/db/src/repository.ts's coerceValue -- had an
+ * enum/date/file-shaped sibling to round 604's own array-value gap: JS's
+ * own Array.prototype.toString collapses a *single-element* array to its
+ * bare element with no comma (String(["New"]) is "New", not
+ * "[object Object]"), so a single-element-array value for an enum, date,
+ * or file field coincidentally stringified to a real, valid value and was
+ * silently accepted instead of rejected, unlike number/relation/boolean's
+ * own explicit Array.isArray guards right above these three branches.
+ * Reproduced here against a real spawned server, the same standard the
+ * array/boolean-number tests above already use for this exact function.
+ */
+test("generated server.js rejects an array value for enum, date, and file fields, even a single-element array that would coincidentally stringify to a valid value", async () => {
+  const applicantProject: Project = {
+    ...project,
+    spec: {
+      ...project.spec,
+      entities: [
+        {
+          name: "Applicant",
+          fields: [
+            { name: "name", type: "text", required: true },
+            { name: "status", type: "enum", required: false, enumValues: ["New", "Hired"] },
+            { name: "startDate", type: "date", required: false },
+            { name: "resume", type: "file", required: false },
+          ],
+        },
+      ],
+    },
+  };
+  const files = generateExportFiles(applicantProject);
+  const serverJs = files.find((f) => f.path === "server.js")!.content;
+
+  const dir = mkdtempSync(path.join(tmpdir(), "codegen-array-enum-date-file-test-"));
+  const repoRoot = path.resolve(import.meta.dirname, "../../..");
+  symlinkSync(path.join(repoRoot, "node_modules"), path.join(dir, "node_modules"));
+  writeFileSync(path.join(dir, "server.js"), serverJs);
+
+  const port = 44000 + Math.floor(Math.random() * 5000);
+  const child = spawn(process.execPath, ["--experimental-sqlite", "server.js"], {
+    cwd: dir,
+    env: { ...process.env, PORT: String(port) },
+    stdio: ["ignore", "pipe", "pipe"],
+  });
+  let stderr = "";
+  child.stderr.on("data", (chunk) => {
+    stderr += chunk.toString();
+  });
+
+  try {
+    const deadline = Date.now() + 5000;
+    let lastErr: unknown;
+    while (Date.now() < deadline) {
+      if (child.exitCode !== null) {
+        throw new Error(`server.js exited early (code ${child.exitCode}):\n${stderr}`);
+      }
+      try {
+        await fetch(`http://localhost:${port}/api/entities`);
+        break;
+      } catch (err) {
+        lastErr = err;
+        await new Promise((r) => setTimeout(r, 100));
+      }
+    }
+    if (child.exitCode !== null) throw lastErr instanceof Error ? lastErr : new Error(String(lastErr));
+
+    const validRes = await fetch(`http://localhost:${port}/api/Applicant`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ name: "Dana" }),
+    });
+    assert.equal(validRes.status, 201);
+
+    const descriptor = JSON.stringify({ url: "/api/uploads/proj1/Applicant/11111111-1111-1111-1111-111111111111.pdf" });
+    const cases: Record<string, unknown> = {
+      status: ["New"],
+      startDate: ["2026-03-15"],
+      resume: [descriptor],
+    };
+    for (const [field, bad] of Object.entries(cases)) {
+      const badRes = await fetch(`http://localhost:${port}/api/Applicant`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ name: "Dana", [field]: bad }),
+      });
+      assert.equal(
+        badRes.status,
+        400,
+        `expected a single-element array for "${field}" to be rejected, not coincidentally stringified to a valid value`,
+      );
+    }
+  } finally {
+    child.kill();
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+/**
  * Regression test (round 546): the exported standalone app's own coerce()
  * -- same copy-pasted logic as packages/db/src/repository.ts's
  * coerceValue -- had no rejection path at all for its boolean branch,

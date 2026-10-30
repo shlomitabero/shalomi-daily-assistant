@@ -461,12 +461,26 @@ function coerce(field, value) {
     throw new Error(\`Field "\${field.name}" must be a boolean\`);
   }
   if (field.type === "enum") {
+    // Round 1320: same coincidental-coercion gap number/relation already
+    // closed above, one input shape later. String(["active"]) is
+    // "active", not "active,other", since JS's Array.prototype.toString
+    // collapses a single-element array to its bare element with no
+    // comma -- so a single-element-array value silently stringified to a
+    // real, valid member and passed this check.
+    if (Array.isArray(value)) {
+      throw new Error(\`Field "\${field.name}" must be one of: \${field.enumValues?.join(", ") ?? ""}\`);
+    }
     if (field.enumValues && !field.enumValues.includes(String(value))) {
       throw new Error(\`Field "\${field.name}" must be one of: \${field.enumValues.join(", ")}\`);
     }
     return String(value);
   }
   if (field.type === "date") {
+    // Round 1320: same single-element-array coincidental-match gap as
+    // the enum case just above.
+    if (Array.isArray(value)) {
+      throw new Error(\`Field "\${field.name}" must be a valid date in YYYY-MM-DD format\`);
+    }
     const str = String(value);
     if (!isValidDate(str)) throw new Error(\`Field "\${field.name}" must be a valid date in YYYY-MM-DD format\`);
     return str;
@@ -485,6 +499,12 @@ function coerce(field, value) {
     // clickable link, so this isn't live XSS -- it's the same
     // data-integrity gap this function's own number/boolean/enum/date
     // branches above all exist to close for their own types.
+    //
+    // Round 1320: same single-element-array coincidental-match gap as
+    // the enum/date branches above.
+    if (Array.isArray(value)) {
+      throw new Error(\`Field "\${field.name}" must be a valid file descriptor\`);
+    }
     const str = String(value);
     let parsed;
     try {

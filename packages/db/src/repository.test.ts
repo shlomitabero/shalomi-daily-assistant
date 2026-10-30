@@ -807,3 +807,64 @@ test("insertRecord's self-reference guard never rejects a relation field pointin
   const created = insertRecord(db, "proj1", employee, { name: "Dana", departmentId: dept.id });
   assert.equal(created.departmentId, dept.id, "a relation to a different entity must never be rejected by the self-reference guard, regardless of numeric id overlap");
 });
+
+/**
+ * Regression test for round 1320: the same array-coercion quirk round 604
+ * closed for number/relation (and round 1303 for boolean) has an enum-
+ * shaped twin this function never guarded against. JS's own
+ * Array.prototype.toString collapses a *single-element* array to its bare
+ * element with no comma -- String(["New"]) is "New", not "New,other" or
+ * "[object Object]" -- so a single-element-array raw value for an enum
+ * field coincidentally stringified to a real, valid member and silently
+ * passed the enum-membership check, instead of the same ValidationError
+ * every other wrong-shaped input for this field already gets.
+ */
+test("insertRecord rejects an array value for an enum field, even a single-element array that would coincidentally stringify to a valid member", () => {
+  const db = setup();
+  assert.throws(
+    () => insertRecord(db, "proj1", customer, { name: "Alice", status: ["New"] }),
+    ValidationError,
+    "a single-element array must not be silently accepted just because String([\"New\"]) happens to equal \"New\"",
+  );
+  assert.throws(
+    () => insertRecord(db, "proj1", customer, { name: "Alice", status: ["New", "Won"] }),
+    ValidationError,
+  );
+});
+
+/**
+ * Regression test for round 1320: the identical single-element-array
+ * coincidental-match gap as the enum test above, this time for a date
+ * field -- String(["2026-03-15"]) is "2026-03-15", a real, validly-shaped
+ * date string, so it silently passed isValidDateString instead of being
+ * rejected as the wrong shape entirely.
+ */
+test("insertRecord rejects an array value for a date field, even a single-element array that would coincidentally stringify to a valid date", () => {
+  const db = setupAppointment();
+  assert.throws(
+    () => insertRecord(db, "proj1", appointment, { customerName: "Alice", date: ["2026-03-15"] }),
+    ValidationError,
+  );
+});
+
+/**
+ * Regression test for round 1320: the identical single-element-array
+ * coincidental-match gap as the enum/date tests above, this time for a
+ * file field -- String(['{"url":"..."}']) is '{"url":"..."}', a real,
+ * validly-shaped (and, for this test, validly-scoped) file descriptor
+ * string, so it would silently pass round 908/1210's own JSON.parse +
+ * url-prefix checks instead of being rejected as the wrong shape entirely.
+ */
+test("insertRecord rejects an array value for a file field, even a single-element array that would coincidentally stringify to a valid, correctly-scoped file descriptor", () => {
+  const applicant: Entity = {
+    name: "Applicant",
+    fields: [{ name: "resume", type: "file", required: false }],
+  };
+  const db = openDatabase(":memory:");
+  applyMigrations(db, "proj1", { ...spec, entities: [applicant] });
+  const descriptor = JSON.stringify({ url: "/api/uploads/proj1/Applicant/11111111-1111-1111-1111-111111111111.pdf" });
+  assert.throws(
+    () => insertRecord(db, "proj1", applicant, { resume: [descriptor] }),
+    ValidationError,
+  );
+});
