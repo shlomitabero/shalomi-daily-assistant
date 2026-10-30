@@ -75,10 +75,19 @@ function renderIconSvg(project: Project): string {
  */
 function renderManifestJson(project: Project): string {
   const name = project.name.trim() || "Forge App";
+  // Round 1283: mirrors appInitial's own `[...name]` code-point-aware
+  // iteration just above -- a raw `.slice(0, 13)` on the string operates on
+  // UTF-16 code units, not code points, so it can cut an astral-plane
+  // emoji's surrogate pair in half and emit a lone/unpaired surrogate in
+  // this manifest's own JSON. A project name has no charset restriction
+  // (RenameProjectSchema), so an emoji-led or emoji-containing name is an
+  // ordinary branding choice, not an edge case.
+  const nameCodePoints = [...name];
+  const shortName = nameCodePoints.length > 14 ? `${nameCodePoints.slice(0, 13).join("")}…` : name;
   return JSON.stringify(
     {
       name,
-      short_name: name.length > 14 ? `${name.slice(0, 13)}…` : name,
+      short_name: shortName,
       start_url: "/",
       display: "standalone",
       background_color: "#f6f2ea",

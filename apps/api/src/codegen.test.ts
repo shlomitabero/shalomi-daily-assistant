@@ -15692,6 +15692,32 @@ test("a very long project name gets a truncated short_name, so it doesn't get cu
   assert.ok(manifest.short_name.length <= 14, `short_name should be truncated, got "${manifest.short_name}"`);
 });
 
+/**
+ * Round 1283: mirrors appInitial's own code-point-safety fix (and its own
+ * dedicated Hebrew-icon regression test just below) -- the manifest's
+ * short_name truncation above used a raw `.slice(0, 13)` on the string,
+ * which operates on UTF-16 code units, not code points, and could cut an
+ * astral-plane emoji's surrogate pair in half, emitting a lone/unpaired
+ * surrogate into a real, user-facing manifest.json. A project name has no
+ * charset restriction (RenameProjectSchema is just a non-empty string), so
+ * an emoji-containing name is an ordinary branding choice. Each of the 7
+ * emoji code points below is itself a surrogate pair (2 UTF-16 code units),
+ * so a raw 13-code-unit slice lands mid-pair on the 7th emoji.
+ */
+test("a project name with 7 leading emoji (each its own surrogate pair) gets a short_name that doesn't split a surrogate pair into a lone/unpaired half", () => {
+  const emojiProject: Project = { ...project, name: "😀😀😀😀😀😀😀 Shop" };
+  const files = generateExportFiles(emojiProject);
+  const manifest = JSON.parse(files.find((f) => f.path === "web/public/manifest.json")!.content);
+  // A lone high surrogate not followed by a low surrogate, or a lone low
+  // surrogate not preceded by a high surrogate -- either shape is a real,
+  // malformed surrogate that a raw UTF-16 .slice() can produce.
+  assert.doesNotMatch(
+    manifest.short_name,
+    /[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?:^|[^\uD800-\uDBFF])[\uDC00-\uDFFF]/,
+    `short_name must never contain a lone/unpaired surrogate, got ${JSON.stringify(manifest.short_name)}`,
+  );
+});
+
 test("a Hebrew project name gets a Hebrew icon initial, not a mangled half-character from a raw UTF-16 index", () => {
   const hebrewProject: Project = { ...project, name: "מספרת יופי" };
   const files = generateExportFiles(hebrewProject);
