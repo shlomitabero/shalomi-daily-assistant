@@ -27,6 +27,7 @@ import { migrateCollapsedBoardColumnsFieldCase, setCollapsedBoardColumns as setC
 import { EntityLabelEditor } from "./EntityLabelEditor.js";
 import { FieldLabelEditor } from "./FieldLabelEditor.js";
 import { isAnyDialogOpen } from "./useDialogFocusTrap.js";
+import { useBeforeUnloadWarning } from "./useBeforeUnloadWarning.js";
 import {
   badgeTone,
   buildCalendarMonth,
@@ -1587,6 +1588,21 @@ export function EntityPanel({
     formInstanceKeyRef.current += 1;
     setFormInstanceKey(formInstanceKeyRef.current);
   }
+  // Round 1333: the record-form's own create/edit draft is this app's
+  // highest-traffic typed input of all, yet unlike the 6 dialogs
+  // useBeforeUnloadWarning.ts already covers (round 1331), it had no
+  // warning before a tab close/refresh/navigation silently discarded it --
+  // left open by that round specifically because this form has no existing
+  // named "is there a real draft" boolean to reuse (it's always mounted,
+  // not behind an open/closed toggle). Reuses handleSubmit's own
+  // `changedOnly` diff logic (same file, same editingOriginalRef) for edit
+  // mode, and emptyForm(entity) -- the exact baseline startCreateNew/the
+  // success path already reset to -- for create mode, rather than
+  // inventing a third comparison.
+  const formIsDirty = editingId != null
+    ? entity.fields.some((f) => form[f.name] !== editingOriginalRef.current?.[f.name])
+    : entity.fields.some((f) => form[f.name] !== emptyForm(entity)[f.name]);
+  useBeforeUnloadWarning(formIsDirty);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);

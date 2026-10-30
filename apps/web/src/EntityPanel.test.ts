@@ -16662,3 +16662,59 @@ test("EntityPanel never shows the inline-edit hover styling or tooltip on a tabl
     }
   });
 });
+
+/**
+ * Round 1333: the record-form -- this app's single highest-traffic typed
+ * input, since every entity's own create/edit goes through it -- had no
+ * warning before a tab close/refresh/navigation discarded an in-progress
+ * draft, unlike the 6 dialogs useBeforeUnloadWarning.ts already covers
+ * (round 1331). That round explicitly left this one open because, unlike
+ * those 6, the form has no open/closed toggle and so no existing named
+ * "is there a real draft" boolean to reuse -- it's always mounted, either
+ * as a blank create form (editingId===null) or an in-progress edit
+ * (editingId!=null). Confirms a real dirty-check now exists for both
+ * modes: typing into the blank create form or changing a field while
+ * editing an existing record both now trigger a real `beforeunload`
+ * warning, starting an edit session itself does NOT (nothing's changed
+ * yet), and a successful submit clears it again (the reset-to-blank path
+ * both modes already go through).
+ */
+test("EntityPanel's record-form warns before a tab close/refresh discards an in-progress create or edit draft, and clears the warning again once submitted", async () => {
+  await withJsdom(async () => {
+    const store: EntityRecord[] = [{ id: 1, name: "Acme Corp", status: "new" }];
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = mockRecordsFetch(store) as typeof fetch;
+    try {
+      renderEntityPanel();
+      await waitForCondition(() => document.querySelectorAll("table tbody tr").length === 1);
+
+      function dispatchBeforeUnload(): boolean {
+        const event = new window.Event("beforeunload", { cancelable: true });
+        window.dispatchEvent(event);
+        return event.defaultPrevented;
+      }
+
+      // Create mode: the blank form starts clean.
+      assert.equal(dispatchBeforeUnload(), false, "a still-blank create form must not warn");
+      const nameInput = document.querySelector('.record-form input[type="text"]') as HTMLInputElement;
+      fireEvent.change(nameInput, { target: { value: "Globex" } });
+      assert.equal(dispatchBeforeUnload(), true, "typing into the blank create form must now warn before it's lost");
+
+      // Edit mode: starting an edit alone (no change yet) must not warn,
+      // but a real change to a field the user is already editing must.
+      fireEvent.click(document.querySelector(".row-actions button") as HTMLButtonElement);
+      await waitForCondition(() => (document.querySelector('.record-form input[type="text"]') as HTMLInputElement)?.value === "Acme Corp");
+      assert.equal(dispatchBeforeUnload(), false, "starting an edit session alone, with nothing changed yet, must not warn");
+      const editInput = document.querySelector('.record-form input[type="text"]') as HTMLInputElement;
+      fireEvent.change(editInput, { target: { value: "Acme Corporation" } });
+      assert.equal(dispatchBeforeUnload(), true, "changing a field while editing must warn before the change is lost");
+
+      // Submitting successfully resets the form back to blank, clearing the warning again.
+      fireEvent.submit(document.querySelector(".record-form") as HTMLFormElement);
+      await waitForCondition(() => (document.querySelector('.record-form input[type="text"]') as HTMLInputElement)?.value === "");
+      assert.equal(dispatchBeforeUnload(), false, "the form must not warn right after a successful submit reset it back to blank");
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+});
