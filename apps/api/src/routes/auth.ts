@@ -22,6 +22,7 @@ import {
   getPasswordResetTokenByHash,
   getProject,
   incrementLoginCodeAttempts,
+  listCollaboratedProjectIds,
   listCollaborators,
   listOwnedProjectIds,
   removeAllCollaborationsForUser,
@@ -879,6 +880,43 @@ export function createAuthRouter(
                 // and must never block the rest of this account's own
                 // deletion either.
               }
+            }
+          }
+        }
+        // Round 1277: notify the owner of every OTHER project this user
+        // merely collaborated on (never owned) that this collaborator's
+        // account is gone -- mirrors the exact same "someone's access
+        // situation changed, tell the affected party" principle this file
+        // and routes/projects.ts already apply to every other
+        // collaborator-list-change direction (invite, role change,
+        // removal, ownership transfer, project deletion via the
+        // ownedProjectIds loop just above). The owner's own roster
+        // silently shrinking here was the one remaining case with zero
+        // signal. Must run BEFORE removeAllCollaborationsForUser below,
+        // which is the only record of which projects this user
+        // collaborated on -- once it runs, listCollaboratedProjectIds
+        // would find nothing.
+        const deletedUser = findUserById(db, req.userId!);
+        if (deletedUser && emailSender.configured) {
+          const collaboratedProjectIds = listCollaboratedProjectIds(db, req.userId!);
+          for (const projectId of collaboratedProjectIds) {
+            const collaboratedProject = getProject(db, projectId);
+            if (!collaboratedProject) continue;
+            const owner = findUserById(db, collaboratedProject.ownerId);
+            if (!owner) continue;
+            const subject = isHebrew
+              ? `${deletedUser.email} מחק/ה את החשבון ועזב/ה את הפרויקט "${collaboratedProject.name}" ב-Forge AI`
+              : `${deletedUser.email} deleted their account and left "${collaboratedProject.name}" on Forge AI`;
+            const body = isHebrew
+              ? `${deletedUser.email} מחק/ה את חשבון ה-Forge AI שלו/ה, ולכן הוא/היא אינו/ה יותר משתתף/ת בפרויקט "${collaboratedProject.name}".`
+              : `${deletedUser.email} deleted their Forge AI account and is no longer a collaborator on "${collaboratedProject.name}".`;
+            try {
+              await emailSender.send(owner.email, subject, body);
+            } catch {
+              // Swallowed, deliberately, same as this route's own
+              // established convention -- the account deletion itself
+              // must never be blocked or fail because a best-effort
+              // notification couldn't be sent.
             }
           }
         }

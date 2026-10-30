@@ -2289,6 +2289,20 @@ export function createProjectsRouter(
         // second, spurious "you were removed" email for a no-op removal.
         const wasCollaborator = !isSelf && getCollaboratorRole(db, project.id, req.params.userId) !== null;
         const removed = wasCollaborator ? findUserById(db, req.params.userId) : null;
+        // Round 1277: mirrors `wasCollaborator` just above (round 1269) for
+        // the self-leave path, as defense in depth -- in practice a
+        // genuine SECOND ordinary self-leave call (no idempotency-key
+        // replay involved) already 404s at requireProjectAccess above
+        // before ever reaching this line, since the caller lost their own
+        // access on the first call (round 1191's own doc comment). This
+        // guard only matters for a theoretical race between two in-flight
+        // requests reaching here before either commits. Naturally stays
+        // null for the owner calling this on their own id too:
+        // getCollaboratorRole always returns null for the owner (they're
+        // never a row in project_collaborators), so there's no
+        // self-notifying-self case either.
+        const wasSelfCollaborator = isSelf && getCollaboratorRole(db, project.id, req.params.userId) !== null;
+        const leaver = wasSelfCollaborator ? findUserById(db, req.userId!) : null;
         removeCollaborator(db, project.id, req.params.userId);
         if (removed && emailSender.configured) {
           const isHebrew = req.query.lang !== "en";
@@ -2303,6 +2317,32 @@ export function createProjectsRouter(
             // convention -- the removal itself already succeeded and was
             // already committed to the database; a failed best-effort
             // notification must never turn that into an error response.
+          }
+        }
+        // Round 1277: the owner previously got zero signal when a
+        // collaborator left on their own -- every OTHER direction of a
+        // collaborator-list change already notifies the affected party
+        // (invite, role change, owner-removes-collaborator just above,
+        // ownership transfer, project deleted), but a shrinking roster via
+        // self-leave was the one remaining silent case. `owner` can be null
+        // if the owner's own account was somehow since deleted (should-
+        // never-happen, same defensive style as getOwnerInfo above).
+        if (leaver && emailSender.configured) {
+          const owner = findUserById(db, project.ownerId);
+          if (owner) {
+            const isHebrew = req.query.lang !== "en";
+            const subject = isHebrew
+              ? `${leaver.email} עזב/ה את הפרויקט "${project.name}" ב-Forge AI`
+              : `${leaver.email} left "${project.name}" on Forge AI`;
+            const body = isHebrew
+              ? `${leaver.email} עזב/ה את הפרויקט "${project.name}" ב-Forge AI ואינו/ה יותר משתתף/ת בו.`
+              : `${leaver.email} left "${project.name}" on Forge AI and is no longer a collaborator on it.`;
+            try {
+              await emailSender.send(owner.email, subject, body);
+            } catch {
+              // Swallowed, deliberately, same as this route family's own
+              // convention.
+            }
           }
         }
         return { status: 204, body: null };

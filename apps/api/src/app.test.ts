@@ -4983,15 +4983,24 @@ test("the owner can remove a collaborator, which revokes their access again", as
  * collaborator was removed by the owner -- the same gap round 1254's own
  * role-change fix (above) just closed for a role change. Confirms the
  * real EmailSender.send call reaches the REMOVED collaborator, naming
- * the real project, and that the self-leave path (handleLeave's own
- * call site) never fires one -- notifying someone of the thing they
- * themselves just asked to do is pure noise, not a signal.
+ * the real project, and that the self-leave path never emails the
+ * LEAVER themselves -- notifying someone of the thing they themselves
+ * just asked to do is pure noise, not a signal.
+ *
+ * Round 1277: the self-leave path used to send no notification to
+ * anyone at all, including the project owner -- the one remaining
+ * silent direction of a collaborator-list change, unlike every other
+ * direction (invite, role change, owner-removes-collaborator just
+ * above, ownership transfer, project deletion), which already notifies
+ * the affected party. Confirms a self-leave now sends exactly one real
+ * notification, to the OWNER, naming both the project and the leaver.
  */
-test("removing a collaborator sends a real notification to the REMOVED collaborator naming the project, but a self-initiated 'leave' sends none", async () => {
+test("removing a collaborator sends a real notification to the REMOVED collaborator naming the project, and a self-initiated 'leave' notifies the OWNER instead", async () => {
   const emailSender = createFakeEmailSender();
   await withServer(
     async (baseUrl) => {
-      const ownerToken = await signup(baseUrl, `owner-remove-notify-${Date.now()}@example.com`);
+      const ownerEmail = `owner-remove-notify-${Date.now()}@example.com`;
+      const ownerToken = await signup(baseUrl, ownerEmail);
       const removedEmail = `collab-remove-notify-${Date.now()}@example.com`;
       await signup(baseUrl, removedEmail);
       const leaverEmail = `collab-leave-notify-${Date.now()}@example.com`;
@@ -5029,12 +5038,15 @@ test("removing a collaborator sends a real notification to the REMOVED collabora
       assert.equal(emailSender.sentTo[0].to, removedEmail, "the notification must go to the REMOVED collaborator");
       assert.match(emailSender.sentTo[0].text, new RegExp(project.name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")), "the body must name the real project");
 
-      const leaveRes = await fetch(`${baseUrl}/api/projects/${project.id}/collaborators/${leaverUserId}`, {
+      const leaveRes = await fetch(`${baseUrl}/api/projects/${project.id}/collaborators/${leaverUserId}?lang=en`, {
         method: "DELETE",
         headers: authHeaders(leaverToken),
       });
       assert.equal(leaveRes.status, 204);
-      assert.equal(emailSender.sentTo.length, 1, "a self-initiated leave must never send a notification to the leaver themselves");
+      assert.equal(emailSender.sentTo.length, 2, "a self-initiated leave must send exactly one new notification");
+      assert.equal(emailSender.sentTo[1].to, ownerEmail, "the self-leave's own notification must go to the project OWNER, not the leaver");
+      assert.match(emailSender.sentTo[1].text, new RegExp(project.name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")), "the body must name the real project");
+      assert.match(emailSender.sentTo[1].text, new RegExp(leaverEmail.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")), "the body must name the collaborator who left");
 
       // Round 1269: a second DELETE for the SAME already-removed
       // collaborator (e.g. two collaborator-panel tabs both showing the
@@ -5048,7 +5060,7 @@ test("removing a collaborator sends a real notification to the REMOVED collabora
         headers: authHeaders(ownerToken),
       });
       assert.equal(removeAgainRes.status, 204, "removing an already-removed collaborator again must still succeed as a no-op");
-      assert.equal(emailSender.sentTo.length, 1, "removing an already-removed collaborator again must never send a second notification");
+      assert.equal(emailSender.sentTo.length, 2, "removing an already-removed collaborator again must never send a second notification");
     },
     { emailSender },
   );
@@ -9700,6 +9712,57 @@ test("deleting your account sends a real notification to every remaining collabo
       for (const message of emailSender.sentTo) {
         assert.match(message.text, namePattern, "each notification's body must name the real project");
       }
+    },
+    { emailSender },
+  );
+});
+
+/**
+ * Round 1277: round 1259's own fix (just above) only ever notifies
+ * collaborators of a project THIS account OWNED, once it's deleted --
+ * removeAllCollaborationsForUser (packages/db/src/collaborators.ts),
+ * which silently strips this account from every OTHER project it merely
+ * collaborated on, never got the matching fix: that project's own OWNER
+ * had zero signal their roster just shrank. Confirms deleting an account
+ * that collaborates on someone else's project sends that project's
+ * owner a real notification naming the project and the deleted
+ * collaborator, and that the project itself (and its real owner's own
+ * access) is completely untouched -- this account was never more than a
+ * collaborator on it.
+ */
+test("deleting your account notifies the OWNER of every project you merely collaborated on (never owned), naming the project", async () => {
+  const emailSender = createFakeEmailSender();
+  await withServer(
+    async (baseUrl) => {
+      const otherOwnerEmail = `other-owner-acct-delete-notify-${Date.now()}@example.com`;
+      const otherOwnerToken = await signup(baseUrl, otherOwnerEmail);
+      const leavingEmail = `leaving-collab-acct-delete-notify-${Date.now()}@example.com`;
+      const leavingToken = await signup(baseUrl, leavingEmail);
+
+      const createRes = await fetch(`${baseUrl}/api/projects`, {
+        method: "POST",
+        headers: authHeaders(otherOwnerToken),
+        body: JSON.stringify({ description: "A CRM with customers and deals." }),
+      });
+      const { project } = (await createRes.json()) as { project: { id: string; name: string } };
+
+      await fetch(`${baseUrl}/api/projects/${project.id}/collaborators`, {
+        method: "POST",
+        headers: authHeaders(otherOwnerToken),
+        body: JSON.stringify({ email: leavingEmail }),
+      });
+      emailSender.sentTo.length = 0; // The invite itself (round 1253) also sends -- only the account-deletion's own send matters here.
+
+      const deleteRes = await fetch(`${baseUrl}/api/auth/account?lang=en`, { method: "DELETE", headers: authHeaders(leavingToken) });
+      assert.equal(deleteRes.status, 204);
+
+      assert.equal(emailSender.sentTo.length, 1, "exactly one notification must be sent, to the OTHER project's owner");
+      assert.equal(emailSender.sentTo[0].to, otherOwnerEmail, "the notification must go to the real owner, never the account being deleted");
+      assert.match(emailSender.sentTo[0].text, new RegExp(project.name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")), "the body must name the real project");
+      assert.match(emailSender.sentTo[0].text, new RegExp(leavingEmail.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")), "the body must name the collaborator whose account was deleted");
+
+      const getProjectRes = await fetch(`${baseUrl}/api/projects/${project.id}`, { headers: authHeaders(otherOwnerToken) });
+      assert.equal(getProjectRes.status, 200, "the project itself, owned by a DIFFERENT account, must survive completely untouched");
     },
     { emailSender },
   );
