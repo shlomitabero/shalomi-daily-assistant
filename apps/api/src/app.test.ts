@@ -805,6 +805,55 @@ test("changing your password with the correct current password works, and only t
   });
 });
 
+/**
+ * Round 1310: this route's own success invalidates the exact precondition
+ * (currentPassword verified against storedHash) a retry re-checks -- once
+ * the password changes, the caller's own unchanged request body no longer
+ * verifies against the new hash. Without idempotency protection, a
+ * response lost in transit after the server already committed the change
+ * made a retry fail with a false 401 INVALID_CURRENT_PASSWORD for a change
+ * that, the new password working below proves, already fully succeeded.
+ * Same shape as POST .../transfer-ownership's own round-1189 idempotency
+ * test further down this file.
+ */
+test("PATCH /auth/password retried with the same idempotency key after the first attempt already succeeded replays the original response, instead of 401ing with a stale currentPassword", async () => {
+  await withServer(async (baseUrl) => {
+    const email = `change-pw-idem-1-${Date.now()}@example.com`;
+    const signupRes = await fetch(`${baseUrl}/api/auth/signup`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ email, password: "original-password" }),
+    });
+    const { token } = (await signupRes.json()) as { token: string };
+
+    const headers = { ...authHeaders(token), "x-idempotency-key": "change-password-repro-key" };
+    const firstRes = await fetch(`${baseUrl}/api/auth/password`, {
+      method: "PATCH",
+      headers,
+      body: JSON.stringify({ currentPassword: "original-password", newPassword: "brand-new-password" }),
+    });
+    assert.equal(firstRes.status, 204);
+
+    const retryRes = await fetch(`${baseUrl}/api/auth/password`, {
+      method: "PATCH",
+      headers,
+      body: JSON.stringify({ currentPassword: "original-password", newPassword: "brand-new-password" }),
+    });
+    assert.equal(
+      retryRes.status,
+      204,
+      "a retried password change with the same idempotency key must replay the original success, not 401 now that currentPassword no longer matches the new hash",
+    );
+
+    const newLogin = await fetch(`${baseUrl}/api/auth/login`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ email, password: "brand-new-password" }),
+    });
+    assert.equal(newLogin.status, 200, "the password must genuinely have been changed exactly once, not twice or zero times");
+  });
+});
+
 test("changing your password with the wrong current password is rejected, and the password stays unchanged", async () => {
   await withServer(async (baseUrl) => {
     const email = `change-pw-2-${Date.now()}@example.com`;

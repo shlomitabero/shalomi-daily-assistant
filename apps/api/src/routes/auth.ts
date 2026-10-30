@@ -35,6 +35,7 @@ import { hashPassword, verifyPassword } from "../auth/password.js";
 import { extractBearerToken, requireAuth } from "../auth/middleware.js";
 import { createRateLimiter } from "../auth/rateLimit.js";
 import { formatValidationError, HttpError } from "../httpError.js";
+import { withIdempotency } from "../idempotency.js";
 import type { EmailSender } from "../email.js";
 import type { WhatsAppWebManager } from "../whatsappWeb.js";
 import { deleteProjectUploads } from "./projects.js";
@@ -622,6 +623,22 @@ export function createAuthRouter(
    * real owner out with zero visible signal. Best-effort, mirroring that
    * route's own swallowed-send contract: a failed send must never undo or
    * block an already-successful, already-committed password change.
+   *
+   * Round 1310: unlike PATCH /auth/email, this route's own success
+   * invalidates the exact precondition (`currentPassword` verified against
+   * `storedHash`) a retry re-checks -- once the hash is updated, the
+   * caller's own request body (unchanged, since fetchWithWakeRetry resends
+   * the identical body) no longer verifies against it. A response lost in
+   * transit after the server already committed the change (the risk window
+   * docs/wakeRetry-idempotency-design.md documents) made the retry fail
+   * with a false "Current password is incorrect" for a change that, the
+   * revoked sessions and sent notification prove, already fully succeeded
+   * -- the same class of bug round 1189/1191 already fixed for
+   * transfer-ownership/self-leave via withIdempotency(), just never
+   * extended to this route. `currentPassword` verification has to move
+   * INSIDE the withIdempotency callback for the identical reason those
+   * routes' own doc comments give: a genuine retry never reaches it, the
+   * wrap short-circuits first with the first attempt's own cached response.
    */
   router.patch("/auth/password", requireAuth(db), changePasswordRateLimiter, async (req, res, next) => {
     const parsed = ChangePasswordSchema.safeParse(req.body);
@@ -631,43 +648,45 @@ export function createAuthRouter(
     }
     try {
       const { currentPassword, newPassword, lang } = parsed.data;
-      const storedHash = getPasswordHash(db, req.userId!);
-      if (!storedHash || !(await verifyPassword(currentPassword, storedHash))) {
-        next(new HttpError(401, "Current password is incorrect", "INVALID_CURRENT_PASSWORD"));
-        return;
-      }
-      const newHash = await hashPassword(newPassword);
-      // Round 539: both scrypt calls above are genuine awaits (offloaded to
-      // libuv's threadpool -- see this file's own doc comment on
-      // hashPassword/verifyPassword), long enough for a concurrent DELETE
-      // /auth/account using this same still-valid token to run to
-      // completion and delete this user row entirely before either resolves.
-      // Without this re-check, the writes below would both silently affect
-      // zero rows and this handler would still report 204, as if the
-      // password change succeeded on an account that no longer exists.
-      const user = findUserById(db, req.userId!);
-      if (!user) {
-        next(new HttpError(401, "This account no longer exists", "USER_NOT_FOUND"));
-        return;
-      }
-      updatePasswordHash(db, req.userId!, newHash);
-      deleteOtherSessionsForUser(db, req.userId!, extractBearerToken(req)!);
-      if (emailSender.configured) {
-        const isHebrew = lang !== "en";
-        const subject = isHebrew ? "הסיסמה של חשבונך ב-Forge AI השתנתה" : "Your Forge AI account's password was changed";
-        const body = isHebrew
-          ? `הסיסמה של חשבונך ב-Forge AI שונתה כעת.\n\nאם זו לא הייתם אתם, מישהו אחר ידע את הסיסמה הקודמת שלכם -- היכנסו לחשבון והחליפו אותה מיד.`
-          : `Your Forge AI account's password was just changed.\n\nIf this wasn't you, someone else knew your previous password -- sign in and change it immediately.`;
-        try {
-          await emailSender.send(user.email, subject, body);
-        } catch {
-          // Swallowed, deliberately, same as PATCH /auth/email's own send
-          // above -- the password change itself already succeeded and was
-          // already committed to the database; a failed best-effort
-          // notification must never turn that into an error response.
+      const idempotencyKey = req.header("X-Idempotency-Key") || undefined;
+      const { status } = await withIdempotency(db, idempotencyKey, req.userId!, "PATCH /auth/password", async () => {
+        const storedHash = getPasswordHash(db, req.userId!);
+        if (!storedHash || !(await verifyPassword(currentPassword, storedHash))) {
+          throw new HttpError(401, "Current password is incorrect", "INVALID_CURRENT_PASSWORD");
         }
-      }
-      res.status(204).end();
+        const newHash = await hashPassword(newPassword);
+        // Round 539: both scrypt calls above are genuine awaits (offloaded to
+        // libuv's threadpool -- see this file's own doc comment on
+        // hashPassword/verifyPassword), long enough for a concurrent DELETE
+        // /auth/account using this same still-valid token to run to
+        // completion and delete this user row entirely before either resolves.
+        // Without this re-check, the writes below would both silently affect
+        // zero rows and this handler would still report 204, as if the
+        // password change succeeded on an account that no longer exists.
+        const user = findUserById(db, req.userId!);
+        if (!user) {
+          throw new HttpError(401, "This account no longer exists", "USER_NOT_FOUND");
+        }
+        updatePasswordHash(db, req.userId!, newHash);
+        deleteOtherSessionsForUser(db, req.userId!, extractBearerToken(req)!);
+        if (emailSender.configured) {
+          const isHebrew = lang !== "en";
+          const subject = isHebrew ? "הסיסמה של חשבונך ב-Forge AI השתנתה" : "Your Forge AI account's password was changed";
+          const body = isHebrew
+            ? `הסיסמה של חשבונך ב-Forge AI שונתה כעת.\n\nאם זו לא הייתם אתם, מישהו אחר ידע את הסיסמה הקודמת שלכם -- היכנסו לחשבון והחליפו אותה מיד.`
+            : `Your Forge AI account's password was just changed.\n\nIf this wasn't you, someone else knew your previous password -- sign in and change it immediately.`;
+          try {
+            await emailSender.send(user.email, subject, body);
+          } catch {
+            // Swallowed, deliberately, same as PATCH /auth/email's own send
+            // above -- the password change itself already succeeded and was
+            // already committed to the database; a failed best-effort
+            // notification must never turn that into an error response.
+          }
+        }
+        return { status: 204, body: null };
+      });
+      res.status(status).end();
     } catch (err) {
       next(err);
     }

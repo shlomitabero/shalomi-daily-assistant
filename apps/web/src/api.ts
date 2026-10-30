@@ -327,9 +327,22 @@ export async function logout(): Promise<void> {
  * `lang` (round 1252) picks which language the server's own
  * password-changed notification is written in, the same `changeEmail`
  * convention just below.
+ *
+ * Round 1310: same `x-idempotency-key` mechanism createProject already
+ * uses (see its own doc comment) -- here specifically because this
+ * route's own success invalidates the exact precondition
+ * (`currentPassword` verified against the stored hash) a
+ * fetchWithWakeRetry retry re-checks with the same, now-stale body, so a
+ * response lost in transit after the server already changed the password
+ * made the retry fail with a false "Current password is incorrect" for a
+ * change that already fully succeeded.
  */
 export function changePassword(currentPassword: string, newPassword: string, lang: "he" | "en"): Promise<void> {
-  return request("/auth/password", { method: "PATCH", body: JSON.stringify({ currentPassword, newPassword, lang }) });
+  return request("/auth/password", {
+    method: "PATCH",
+    headers: { "x-idempotency-key": crypto.randomUUID() },
+    body: JSON.stringify({ currentPassword, newPassword, lang }),
+  });
 }
 
 /**
