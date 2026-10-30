@@ -15971,6 +15971,29 @@ test("the exported service worker's fetch handler never intercepts /api/ request
 });
 
 /**
+ * Round 1300: before this fix, CACHE_NAME was the fixed literal
+ * "app-shell-v1" for every export, so the service worker's own activate
+ * handler's cache sweep (`keys.filter((key) => key !== CACHE_NAME)`) could
+ * never evict a prior deploy's stale cache -- the filter's one excluded key
+ * never changed across redeploys to the same host. CACHE_NAME must now be
+ * derived from the exported web/ content, so it changes exactly when a
+ * redeploy would actually change what Vite builds (and stays the same
+ * otherwise, so an unrelated export of the same project doesn't needlessly
+ * invalidate every visitor's cache).
+ */
+test("the exported service worker's CACHE_NAME changes when the project's generated content changes, and is stable when it doesn't", () => {
+  const extractCacheName = (swJs: string) => swJs.match(/CACHE_NAME = "([^"]+)"/)?.[1];
+
+  const swJsA = generateExportFiles(project).find((f) => f.path === "web/public/sw.js")!.content;
+  const swJsAAgain = generateExportFiles(project).find((f) => f.path === "web/public/sw.js")!.content;
+  assert.equal(extractCacheName(swJsA), extractCacheName(swJsAAgain), "the same project must produce the same CACHE_NAME");
+
+  const otherProject: Project = { ...project, spec: { ...project.spec, entities: [project.spec.entities[0]!] } };
+  const swJsB = generateExportFiles(otherProject).find((f) => f.path === "web/public/sw.js")!.content;
+  assert.notEqual(extractCacheName(swJsA), extractCacheName(swJsB), "different exported content must produce a different CACHE_NAME");
+});
+
+/**
  * The strongest proof this feature actually works: writes the FULL export
  * (not just server.js, like the tests above) to a real directory, runs a
  * real `vite build` (the exact command this export's own package.json

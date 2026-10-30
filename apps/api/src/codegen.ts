@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import type { Entity, Project } from "@forge/shared";
 
 /**
@@ -114,8 +115,8 @@ function renderManifestJson(project: Project): string {
  * date, so those must always hit the real network and surface a real
  * failure rather than quietly serving stale records.
  */
-function renderServiceWorkerJs(): string {
-  return `const CACHE_NAME = "app-shell-v1";
+function renderServiceWorkerJs(cacheToken: string): string {
+  return `const CACHE_NAME = "app-shell-${cacheToken}";
 
 self.addEventListener("install", (event) => {
   event.waitUntil(caches.open(CACHE_NAME).then((cache) => cache.addAll(["/"])));
@@ -9424,21 +9425,14 @@ export function generateExportFiles(project: Project, exportedAt: Date = new Dat
     content: renderEntityJsx(entity),
   }));
 
-  return [
-    { path: "package.json", content: renderPackageJson(project) },
-    { path: "README.md", content: renderReadme(project, exportedAt) },
-    { path: "render.yaml", content: renderRenderYaml(project) },
-    { path: "vite.config.js", content: renderViteConfig() },
-    { path: "server.js", content: renderServerJs(project) },
+  // Everything Vite actually builds into dist/ (so a content change here
+  // always changes the service worker's own CACHE_NAME below) -- deliberately
+  // excludes package.json/README.md/render.yaml/server.js/.gitignore (none
+  // feed the Vite build) and sw.js itself (self-reference).
+  const webFiles = [
     { path: "web/index.html", content: renderWebIndexHtml(project) },
-    // Under web/public/, not web/src/ -- Vite's default publicDir (relative
-    // to the "web" root vite.config.js declares) copies these verbatim into
-    // dist/ at build time, so they end up served at exactly the root paths
-    // (/manifest.json, /icon.svg, /sw.js) index.html/main.jsx reference,
-    // both in `vite dev` and after a real `vite build`.
     { path: "web/public/manifest.json", content: renderManifestJson(project) },
     { path: "web/public/icon.svg", content: renderIconSvg(project) },
-    { path: "web/public/sw.js", content: renderServiceWorkerJs() },
     { path: "web/src/main.jsx", content: renderMainJsx() },
     { path: "web/src/App.jsx", content: renderAppJsx(project) },
     { path: "web/src/api.js", content: renderApiJs() },
@@ -9448,6 +9442,30 @@ export function generateExportFiles(project: Project, exportedAt: Date = new Dat
     { path: "web/src/components/GlobalSearch.jsx", content: renderGlobalSearchJsx() },
     { path: "web/src/components/ShortcutsPanel.jsx", content: renderShortcutsPanelJsx() },
     ...entityFiles,
+  ];
+
+  // Deterministic per-content token -- so the service worker's activate
+  // handler's cache sweep (`keys.filter((key) => key !== CACHE_NAME)`)
+  // actually evicts a prior deploy's stale cache instead of being a permanent
+  // no-op against a fixed CACHE_NAME shared by every export.
+  const cacheToken = createHash("sha256")
+    .update(webFiles.map((file) => `${file.path}\n${file.content}`).join("\n"))
+    .digest("hex")
+    .slice(0, 12);
+
+  return [
+    { path: "package.json", content: renderPackageJson(project) },
+    { path: "README.md", content: renderReadme(project, exportedAt) },
+    { path: "render.yaml", content: renderRenderYaml(project) },
+    { path: "vite.config.js", content: renderViteConfig() },
+    { path: "server.js", content: renderServerJs(project) },
+    // Under web/public/, not web/src/ -- Vite's default publicDir (relative
+    // to the "web" root vite.config.js declares) copies these verbatim into
+    // dist/ at build time, so they end up served at exactly the root paths
+    // (/manifest.json, /icon.svg, /sw.js) index.html/main.jsx reference,
+    // both in `vite dev` and after a real `vite build`.
+    { path: "web/public/sw.js", content: renderServiceWorkerJs(cacheToken) },
+    ...webFiles,
     { path: ".gitignore", content: "node_modules/\ndist/\ndata.sqlite\n" },
   ];
 }
