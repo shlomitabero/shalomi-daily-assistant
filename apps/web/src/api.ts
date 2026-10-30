@@ -929,6 +929,25 @@ export interface BusinessTwin {
     average: number;
     recordCount: number;
   }[];
+  /** Round 1329: the structured sibling of overdue/due-soon deadline facts -- see twin.ts's own BusinessTwin interface for the full rationale. */
+  overdueStats: {
+    text: string;
+    entityName: string;
+    entityLabel: string;
+    fieldName: string;
+    fieldLabel: string;
+    overdueCount: number;
+    recordCount: number;
+  }[];
+  dueSoonStats: {
+    text: string;
+    entityName: string;
+    entityLabel: string;
+    fieldName: string;
+    fieldLabel: string;
+    dueSoonCount: number;
+    recordCount: number;
+  }[];
 }
 
 export function getBusinessTwin(projectId: string): Promise<{ twin: BusinessTwin }> {

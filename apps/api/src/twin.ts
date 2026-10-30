@@ -82,6 +82,37 @@ export interface BusinessTwin {
     average: number;
     recordCount: number;
   }[];
+  /**
+   * Round 1329: the structured sibling of computeOverdueObservations'/
+   * computeDueSoonObservations' own prose, for the same reason as
+   * `distributions`/`numericStats` above -- both functions already
+   * compute this exact shape internally to build their sentence, but
+   * before this round it was discarded the moment it was folded into the
+   * flat `jumpableObservations` array, so the Dashboard view (which only
+   * ever rendered `distributions`/`numericStats`) had no tile for
+   * overdue/due-soon deadlines at all, even though the fact itself was
+   * already computed on every request and shown as a bullet in the
+   * Report view. Each entry here already has a matching prose sentence
+   * in jumpableObservations; this is additive, not a replacement.
+   */
+  overdueStats: {
+    text: string;
+    entityName: string;
+    entityLabel: string;
+    fieldName: string;
+    fieldLabel: string;
+    overdueCount: number;
+    recordCount: number;
+  }[];
+  dueSoonStats: {
+    text: string;
+    entityName: string;
+    entityLabel: string;
+    fieldName: string;
+    fieldLabel: string;
+    dueSoonCount: number;
+    recordCount: number;
+  }[];
 }
 
 /**
@@ -919,6 +950,8 @@ export function computeBusinessTwin(db: ForgeDatabase, project: Project, today: 
   const jumpableObservations: { text: string; entityName: string }[] = [];
   const numericStats: ReturnType<typeof computeNumericAggregateObservations> = [];
   const distributions: ReturnType<typeof computeEnumDistributionObservations> = [];
+  const overdueStats: ReturnType<typeof computeOverdueObservations> = [];
+  const dueSoonStats: ReturnType<typeof computeDueSoonObservations> = [];
   let mostLinkedRecord: { text: string; entityName: string; recordId: number } | null = null;
   let mostActiveObservation: { text: string; entityName: string } | null = null;
   if (totalRecords === 0) {
@@ -955,12 +988,9 @@ export function computeBusinessTwin(db: ForgeDatabase, project: Project, today: 
     jumpableObservations.push(...computeDuplicateObservations(recordsByEntity, project, hebrew, entityLabels));
     numericStats.push(...computeNumericAggregateObservations(recordsByEntity, project, hebrew, entityLabels));
     distributions.push(...computeEnumDistributionObservations(recordsByEntity, project, hebrew, entityLabels));
-    jumpableObservations.push(
-      ...numericStats,
-      ...distributions,
-      ...computeOverdueObservations(recordsByEntity, project, hebrew, entityLabels, today),
-      ...computeDueSoonObservations(recordsByEntity, project, hebrew, entityLabels, today),
-    );
+    overdueStats.push(...computeOverdueObservations(recordsByEntity, project, hebrew, entityLabels, today));
+    dueSoonStats.push(...computeDueSoonObservations(recordsByEntity, project, hebrew, entityLabels, today));
+    jumpableObservations.push(...numericStats, ...distributions, ...overdueStats, ...dueSoonStats);
     const activity = computeActivityObservations(recordsByEntity, project, hebrew, entityLabels);
     observations.push(...activity.observations);
     jumpableObservations.push(...activity.jumpableObservations);
@@ -979,5 +1009,7 @@ export function computeBusinessTwin(db: ForgeDatabase, project: Project, today: 
     jumpableObservations,
     distributions,
     numericStats,
+    overdueStats,
+    dueSoonStats,
   };
 }

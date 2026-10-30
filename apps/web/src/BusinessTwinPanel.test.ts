@@ -69,6 +69,8 @@ const TWIN: BusinessTwin = {
   jumpableObservations: [],
   distributions: [],
   numericStats: [],
+  overdueStats: [],
+  dueSoonStats: [],
 };
 
 function mockTwinFetch() {
@@ -417,6 +419,8 @@ test("BusinessTwinPanel renders stat tiles sorted by real record count (busiest 
       jumpableObservations: [],
       distributions: [],
       numericStats: [],
+      overdueStats: [],
+      dueSoonStats: [],
     };
     const originalFetch = globalThis.fetch;
     globalThis.fetch = (async (input: string) => {
@@ -503,6 +507,8 @@ test("BusinessTwinPanel omits the percent line for a genuinely empty (0-record) 
       jumpableObservations: [],
       distributions: [],
       numericStats: [],
+      overdueStats: [],
+      dueSoonStats: [],
     };
     const originalFetch = globalThis.fetch;
     globalThis.fetch = (async (input: string) => {
@@ -856,6 +862,88 @@ test("BusinessTwinPanel's Dashboard view shows an empty-state message when there
 
       await waitForCondition(() => document.body.textContent?.includes("Not enough data yet for the dashboard view") ?? false);
       assert.equal(document.querySelector(".twin-chart"), null);
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+});
+
+/**
+ * Round 1329: before this round, a project whose only dashboard-worthy
+ * facts were overdue/due-soon deadlines (no numeric aggregates, no enum
+ * distributions) fell through to the empty-state message above even
+ * though computeBusinessTwin already computed and reported those facts
+ * in the Report view -- the data existed, it just had no Dashboard tile.
+ * This confirms the Dashboard now renders a real stat tile for each of
+ * twin.overdueStats/twin.dueSoonStats, and that the empty-state message
+ * no longer wrongly shows when only this data is present.
+ */
+test("BusinessTwinPanel's Dashboard view renders stat tiles from twin.overdueStats and twin.dueSoonStats", async () => {
+  await withJsdom(async () => {
+    const overdueStat = {
+      text: '"Due date" overdue in "Orders": 2 of 5.',
+      entityName: "Order",
+      entityLabel: "Orders",
+      fieldName: "dueDate",
+      fieldLabel: "Due date",
+      overdueCount: 2,
+      recordCount: 5,
+    };
+    const dueSoonStat = {
+      text: '"Renewal" coming up soon in "Orders": 1 of 5.',
+      entityName: "Order",
+      entityLabel: "Orders",
+      fieldName: "renewal",
+      fieldLabel: "Renewal",
+      dueSoonCount: 1,
+      recordCount: 5,
+    };
+    // Mirrors computeBusinessTwin's own additive contract (see twin.ts): every
+    // overdueStats/dueSoonStats entry also has a matching prose sentence in
+    // jumpableObservations -- which is what the view-toggle's own visibility
+    // gate (BusinessTwinPanel.tsx) actually checks, not overdueStats/dueSoonStats
+    // directly. A fixture with only overdueStats/dueSoonStats populated (and
+    // jumpableObservations left empty) could never occur from the real server.
+    const twinWithOnlyDeadlines: BusinessTwin = {
+      ...TWIN,
+      jumpableObservations: [
+        { text: overdueStat.text, entityName: overdueStat.entityName },
+        { text: dueSoonStat.text, entityName: dueSoonStat.entityName },
+      ],
+      overdueStats: [overdueStat],
+      dueSoonStats: [dueSoonStat],
+    };
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = (async (input: string) => {
+      if (input === "/api/projects/proj1/twin") {
+        return new Response(JSON.stringify({ twin: twinWithOnlyDeadlines }), { status: 200, headers: { "content-type": "application/json" } });
+      }
+      throw new Error(`unexpected request ${input}`);
+    }) as typeof fetch;
+    try {
+      renderTwinPanel(() => {});
+      await waitForCondition(() => document.querySelector(".twin-view-toggle") !== null);
+
+      const dashboardButton = Array.from(document.querySelectorAll(".twin-view-toggle button")).find((b) => b.textContent?.includes("Dashboard"));
+      fireEvent.click(dashboardButton!);
+
+      await waitForCondition(() => document.querySelectorAll(".twin-stat-tile-static").length === 2);
+      assert.equal(
+        document.body.textContent?.includes("Not enough data yet for the dashboard view"),
+        false,
+        "the empty-state message must not show when overdue/due-soon stats exist",
+      );
+
+      const tiles = Array.from(document.querySelectorAll(".twin-stat-tile-static"));
+      const overdueTile = tiles.find((el) => el.querySelector(".twin-stat-label")!.textContent?.includes("Due date"))!;
+      assert.ok(overdueTile, "expected a stat tile for the overdue deadline fact");
+      assert.equal(overdueTile.querySelector(".twin-stat-value")!.textContent, "2");
+      assert.match(overdueTile.querySelector(".twin-stat-percent")!.textContent ?? "", /5/);
+
+      const dueSoonTile = tiles.find((el) => el.querySelector(".twin-stat-label")!.textContent?.includes("Renewal"))!;
+      assert.ok(dueSoonTile, "expected a stat tile for the due-soon deadline fact");
+      assert.equal(dueSoonTile.querySelector(".twin-stat-value")!.textContent, "1");
+      assert.match(dueSoonTile.querySelector(".twin-stat-percent")!.textContent ?? "", /5/);
     } finally {
       globalThis.fetch = originalFetch;
     }

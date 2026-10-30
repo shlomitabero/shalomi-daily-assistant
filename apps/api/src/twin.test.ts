@@ -2037,3 +2037,83 @@ test("computeBusinessTwin phrases the due-soon observation in Hebrew for a Hebre
   const twin = computeBusinessTwin(db, orderProject, today);
   assert.ok(twin.jumpableObservations.some((o) => o.text.includes("תאריך יעד") && o.text.includes("מתקרבות לתאריך")));
 });
+
+/**
+ * Round 1329: overdue/due-soon facts already had a sentence in
+ * jumpableObservations (the tests above), but -- unlike
+ * numericStats/distributions right above them in this same file -- the
+ * structured numbers behind that sentence were discarded instead of also
+ * being exposed as their own top-level array, so the Dashboard view had no
+ * tile for them. This confirms twin.overdueStats/twin.dueSoonStats carry
+ * the real counts as numbers, mirroring the numericStats test above.
+ */
+test("computeBusinessTwin's twin.overdueStats carries the real counts as numbers, not just the prose", () => {
+  const orderProject: Project = {
+    ...project,
+    description: "An online store with orders",
+    spec: {
+      ...project.spec,
+      entities: [
+        {
+          name: "Order",
+          label: "Orders",
+          fields: [
+            { name: "customer", type: "text", required: true },
+            { name: "dueDate", label: "Due date", type: "date", required: false },
+          ],
+        },
+      ],
+    },
+  };
+  const db = openDatabase(":memory:");
+  applyMigrations(db, orderProject.id, orderProject.spec);
+  const order = orderProject.spec.entities[0];
+  const today = new Date(2026, 0, 15);
+  insertRecord(db, orderProject.id, order, { customer: "Dana", dueDate: "2026-01-01" }); // overdue
+  insertRecord(db, orderProject.id, order, { customer: "Yossi", dueDate: "2026-01-10" }); // overdue
+  insertRecord(db, orderProject.id, order, { customer: "Noa", dueDate: "2026-02-01" }); // not yet due
+
+  const twin = computeBusinessTwin(db, orderProject, today);
+  assert.equal(twin.overdueStats.length, 1);
+  const stats = twin.overdueStats[0]!;
+  assert.equal(stats.entityName, "Order");
+  assert.equal(stats.fieldName, "dueDate");
+  assert.equal(stats.overdueCount, 2);
+  assert.equal(stats.recordCount, 3);
+});
+
+test("computeBusinessTwin's twin.dueSoonStats carries the real counts as numbers, not just the prose", () => {
+  const orderProject: Project = {
+    ...project,
+    description: "An online store with orders",
+    spec: {
+      ...project.spec,
+      entities: [
+        {
+          name: "Order",
+          label: "Orders",
+          fields: [
+            { name: "customer", type: "text", required: true },
+            { name: "dueDate", label: "Due date", type: "date", required: false },
+          ],
+        },
+      ],
+    },
+  };
+  const db = openDatabase(":memory:");
+  applyMigrations(db, orderProject.id, orderProject.spec);
+  const order = orderProject.spec.entities[0];
+  const today = new Date(2026, 0, 15);
+  insertRecord(db, orderProject.id, order, { customer: "Dana", dueDate: "2026-01-15" }); // due today -- due soon
+  insertRecord(db, orderProject.id, order, { customer: "Yossi", dueDate: "2026-01-17" }); // due in 2 days -- due soon
+  insertRecord(db, orderProject.id, order, { customer: "Noa", dueDate: "2026-03-01" }); // not due soon
+  insertRecord(db, orderProject.id, order, { customer: "Avi", dueDate: "2026-01-01" }); // already overdue, not due soon
+
+  const twin = computeBusinessTwin(db, orderProject, today);
+  assert.equal(twin.dueSoonStats.length, 1);
+  const stats = twin.dueSoonStats[0]!;
+  assert.equal(stats.entityName, "Order");
+  assert.equal(stats.fieldName, "dueDate");
+  assert.equal(stats.dueSoonCount, 2);
+  assert.equal(stats.recordCount, 4);
+});

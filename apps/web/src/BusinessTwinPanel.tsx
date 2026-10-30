@@ -224,34 +224,51 @@ export function BusinessTwinPanel({
               </div>
             )}
 
-            {view === "dashboard" && (twin.distributions.length > 0 || twin.numericStats.length > 0) && (
-              <div className="twin-dashboard">
-                {twin.distributions.map((d, i) => (
-                  <TwinBarChart
-                    key={`dist-${i}`}
-                    title={t("twin.dashboard.distributionTitle", { field: d.fieldLabel, entity: d.entityLabel })}
-                    bars={d.breakdown.map((b) => ({ label: b.label, value: b.count }))}
-                    lang={lang}
-                  />
-                ))}
-                {twin.numericStats.length > 0 && (
-                  <div className="twin-dashboard-stats">
-                    {twin.numericStats.map((s, i) => (
-                      <div key={`stat-${i}`} className="twin-stat-tile twin-stat-tile-static">
-                        <div className="twin-stat-value">{formatNumberValue(s.sum, lang)}</div>
-                        <div className="twin-stat-label">{t("twin.dashboard.totalOf", { field: s.fieldLabel, entity: s.entityLabel })}</div>
-                        <div className="twin-stat-percent">
-                          {t("twin.dashboard.averageOf", { average: formatNumberValue(s.average, lang, { maximumFractionDigits: 1 }) })}
+            {view === "dashboard" &&
+              (twin.distributions.length > 0 || twin.numericStats.length > 0 || twin.overdueStats.length > 0 || twin.dueSoonStats.length > 0) && (
+                <div className="twin-dashboard">
+                  {twin.distributions.map((d, i) => (
+                    <TwinBarChart
+                      key={`dist-${i}`}
+                      title={t("twin.dashboard.distributionTitle", { field: d.fieldLabel, entity: d.entityLabel })}
+                      bars={d.breakdown.map((b) => ({ label: b.label, value: b.count }))}
+                      lang={lang}
+                    />
+                  ))}
+                  {(twin.numericStats.length > 0 || twin.overdueStats.length > 0 || twin.dueSoonStats.length > 0) && (
+                    <div className="twin-dashboard-stats">
+                      {twin.numericStats.map((s, i) => (
+                        <div key={`stat-${i}`} className="twin-stat-tile twin-stat-tile-static">
+                          <div className="twin-stat-value">{formatNumberValue(s.sum, lang)}</div>
+                          <div className="twin-stat-label">{t("twin.dashboard.totalOf", { field: s.fieldLabel, entity: s.entityLabel })}</div>
+                          <div className="twin-stat-percent">
+                            {t("twin.dashboard.averageOf", { average: formatNumberValue(s.average, lang, { maximumFractionDigits: 1 }) })}
+                          </div>
                         </div>
-                      </div>
-                    ))}
-                  </div>
-                )}
-              </div>
-            )}
-            {view === "dashboard" && twin.distributions.length === 0 && twin.numericStats.length === 0 && (
-              <p className="muted small">{t("twin.dashboard.empty")}</p>
-            )}
+                      ))}
+                      {twin.overdueStats.map((s, i) => (
+                        <div key={`overdue-${i}`} className="twin-stat-tile twin-stat-tile-static">
+                          <div className="twin-stat-value">{formatNumberValue(s.overdueCount, lang)}</div>
+                          <div className="twin-stat-label">{t("twin.dashboard.overdueOf", { field: s.fieldLabel, entity: s.entityLabel })}</div>
+                          <div className="twin-stat-percent">{t("twin.dashboard.outOfRecords", { count: s.recordCount })}</div>
+                        </div>
+                      ))}
+                      {twin.dueSoonStats.map((s, i) => (
+                        <div key={`duesoon-${i}`} className="twin-stat-tile twin-stat-tile-static">
+                          <div className="twin-stat-value">{formatNumberValue(s.dueSoonCount, lang)}</div>
+                          <div className="twin-stat-label">{t("twin.dashboard.dueSoonOf", { field: s.fieldLabel, entity: s.entityLabel })}</div>
+                          <div className="twin-stat-percent">{t("twin.dashboard.outOfRecords", { count: s.recordCount })}</div>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              )}
+            {view === "dashboard" &&
+              twin.distributions.length === 0 &&
+              twin.numericStats.length === 0 &&
+              twin.overdueStats.length === 0 &&
+              twin.dueSoonStats.length === 0 && <p className="muted small">{t("twin.dashboard.empty")}</p>}
 
             {view === "report" && (twin.observations.length > 0 ||
               twin.jumpableObservations.length > 0 ||
