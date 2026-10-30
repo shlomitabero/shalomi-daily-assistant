@@ -806,6 +806,77 @@ test("changing your password with the correct current password works, and only t
 });
 
 /**
+ * Round 1328: signup's own success invalidates the exact precondition a
+ * retry re-checks -- once the account exists, the caller's own unchanged
+ * request body (same email) no longer passes createUser's uniqueness
+ * check. Without idempotency protection, a response lost in transit after
+ * the server already created the account and issued a session made a
+ * retry fail with a false 409 EMAIL_TAKEN for a signup that, the original
+ * token matching below proves, already fully succeeded -- telling שלומי
+ * her own just-chosen email is "already registered" with no indication
+ * it's the account she just created. Same shape as PATCH /auth/password's
+ * own round-1310 idempotency test just below.
+ */
+test("POST /auth/signup retried with the same idempotency key after the first attempt already succeeded replays the original response, instead of 409ing with EMAIL_TAKEN", async () => {
+  await withServer(async (baseUrl) => {
+    const email = `signup-idem-1-${Date.now()}@example.com`;
+    const headers = { "content-type": "application/json", "x-idempotency-key": "signup-repro-key" };
+    const body = JSON.stringify({ email, password: "correct-horse-battery" });
+
+    const firstRes = await fetch(`${baseUrl}/api/auth/signup`, { method: "POST", headers, body });
+    assert.equal(firstRes.status, 201);
+    const first = (await firstRes.json()) as { user: { id: string }; token: string };
+
+    const retryRes = await fetch(`${baseUrl}/api/auth/signup`, { method: "POST", headers, body });
+    assert.equal(
+      retryRes.status,
+      201,
+      "a retried signup with the same idempotency key must replay the original success, not 409 now that the account already exists",
+    );
+    const retry = (await retryRes.json()) as { user: { id: string }; token: string };
+    assert.equal(retry.user.id, first.user.id, "the replayed response must be the exact same account, not a second one");
+    assert.equal(retry.token, first.token);
+
+    const loginRes = await fetch(`${baseUrl}/api/auth/login`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ email, password: "correct-horse-battery" }),
+    });
+    assert.equal(loginRes.status, 200, "exactly one account must genuinely have been created, not zero or two");
+  });
+});
+
+/**
+ * Round 1328: the exact counterpart to the test just above -- two SEPARATE
+ * signup attempts (no idempotency key at all, or two different keys) for
+ * the same email are two genuinely distinct requests, not a retry of one
+ * already-succeeded request, so the second must still be rejected as a
+ * real duplicate. This is the regression the fix above must never cause:
+ * confirms withIdempotency's own `if (!key) return run()` early return
+ * (and, with two distinct keys, two separate "done" rows) leaves this
+ * route's pre-existing duplicate-email behavior completely unchanged.
+ */
+test("POST /auth/signup with no idempotency key, or two different keys, for the same email still genuinely rejects the second attempt as a real duplicate", async () => {
+  await withServer(async (baseUrl) => {
+    const email = `signup-idem-2-${Date.now()}@example.com`;
+    const firstRes = await fetch(`${baseUrl}/api/auth/signup`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ email, password: "correct-horse-battery" }),
+    });
+    assert.equal(firstRes.status, 201);
+
+    const secondRes = await fetch(`${baseUrl}/api/auth/signup`, {
+      method: "POST",
+      headers: { "content-type": "application/json", "x-idempotency-key": "signup-no-key-repro-2" },
+      body: JSON.stringify({ email, password: "a-different-password" }),
+    });
+    assert.equal(secondRes.status, 409);
+    assert.equal(((await secondRes.json()) as { code?: string }).code, "EMAIL_TAKEN");
+  });
+});
+
+/**
  * Round 1310: this route's own success invalidates the exact precondition
  * (currentPassword verified against storedHash) a retry re-checks -- once
  * the password changes, the caller's own unchanged request body no longer

@@ -272,8 +272,21 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
   return (await res.json()) as T;
 }
 
+/**
+ * Round 1328: same `x-idempotency-key` mechanism every other mutating
+ * route already sends -- see routes/auth.ts's own doc comment on this
+ * route for why signup specifically needed it (fetchWithWakeRetry can
+ * retry this exact request after the server already created the account
+ * but the response was lost, and without a key the retry would 409
+ * EMAIL_TAKEN on the user's own just-created account instead of
+ * returning the same {user, token} it already produced).
+ */
 export function signup(email: string, password: string): Promise<{ user: User; token: string }> {
-  return request("/auth/signup", { method: "POST", body: JSON.stringify({ email, password }) });
+  return request("/auth/signup", {
+    method: "POST",
+    headers: { "x-idempotency-key": crypto.randomUUID() },
+    body: JSON.stringify({ email, password }),
+  });
 }
 
 /**

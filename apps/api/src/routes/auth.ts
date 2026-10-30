@@ -289,6 +289,36 @@ export function createAuthRouter(
     message: "Too many email change attempts. Please try again later.",
   });
 
+  /**
+   * Round 1328: fetchWithWakeRetry's own doc comment reasons retrying a
+   * thrown fetch is always safe because "a connection failure means the
+   * request was never received by the server at all" -- true for a
+   * connection that never opens, but not for one that drops after the
+   * server already committed the write and only the *response* was lost,
+   * which is exactly the risk every other mutating route in this app
+   * (createProject first, round 471; most recently PATCH /auth/password
+   * and the calendar-feed-token regenerate route, rounds 1310/1313) was
+   * given withIdempotency() protection against. Signup was the one
+   * resource-creating mutation left unguarded: a lost response here
+   * creates the real account, but the client (having received nothing)
+   * retries the identical signup a few seconds later and gets back
+   * EMAIL_TAKEN -- telling שלומי her own just-chosen email is "already
+   * registered" with no indication it's the account she just created,
+   * since AuthScreen.tsx's catch shows that message verbatim. Flagged as
+   * an explicitly unaudited gap by round 1310's own closing note; this is
+   * that audit.
+   *
+   * withIdempotency()'s `userId` parameter exists to stop one client-
+   * supplied key from replaying a DIFFERENT real user's cached response --
+   * meaningless here, since no user exists yet until this very call
+   * creates one. The idempotency key itself (already a fresh, unguessable
+   * UUID the client generates per attempt, like every other call site)
+   * is reused as that scoping identity: a row's own key and its stored
+   * "userId" are simply always the same string for this one route, so the
+   * cross-identity mismatch check in withIdempotency can never fire
+   * spuriously, while retry replay/in-progress-rejection still works
+   * exactly like every other guarded route.
+   */
   router.post("/auth/signup", signupRateLimiter, async (req, res, next) => {
     const parsed = CredentialsSchema.safeParse(req.body);
     if (!parsed.success) {
@@ -297,10 +327,14 @@ export function createAuthRouter(
     }
     try {
       const { email, password } = parsed.data;
-      const passwordHash = await hashPassword(password);
-      const user = createUser(db, { id: randomUUID(), email, passwordHash });
-      const token = issueSession(db, user.id);
-      res.status(201).json({ user, token });
+      const idempotencyKey = req.header("X-Idempotency-Key") || undefined;
+      const { status, body } = await withIdempotency(db, idempotencyKey, idempotencyKey ?? "", "POST /auth/signup", async () => {
+        const passwordHash = await hashPassword(password);
+        const user = createUser(db, { id: randomUUID(), email, passwordHash });
+        const token = issueSession(db, user.id);
+        return { status: 201, body: { user, token } };
+      });
+      res.status(status).json(body);
     } catch (err) {
       if (err instanceof DuplicateEmailError) {
         next(new HttpError(409, err.message, "EMAIL_TAKEN"));
