@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { db, __resetForTests, makeId } from '../db/store.js';
-import { createDigitalProduct, listOpportunities, getOpportunity, patchOpportunity } from './opportunities.js';
+import { createDigitalProduct, listOpportunities, getOpportunity, patchOpportunity, publishOpportunityRoute } from './opportunities.js';
 
 function makeRes() {
   const res = { statusCode: null, body: null };
@@ -138,6 +138,25 @@ test('patchOpportunity ignores fields outside the editable allow-list, e.g. stat
   assert.equal(res.body.opportunity.status, 'draft');
   assert.equal(res.body.opportunity.slug, null);
   assert.equal(res.body.opportunity.priceUSD, 29);
+});
+
+test('publishOpportunityRoute 404s for an id that does not exist', async () => {
+  __resetForTests();
+  const res = makeRes();
+  await publishOpportunityRoute({ params: { id: 'opp_missing' } }, res);
+  assert.equal(res.statusCode, 404);
+});
+
+test('publishOpportunityRoute rejects publishing an opportunity that is already published', async () => {
+  // A stray repeat request (or a next-day retry, once the per-day
+  // idempotency key no longer matches) must not sail through and write a
+  // confusing extra "success" entry to the audit log for a no-op.
+  __resetForTests();
+  const opp = insertOpportunity({ status: 'published', paddlePriceId: 'pri_123', slug: 'already-live' });
+  const res = makeRes();
+  await publishOpportunityRoute({ params: { id: opp.id } }, res);
+  assert.equal(res.statusCode, 409);
+  assert.equal(res.body.duplicate, true);
 });
 
 test('patchOpportunity merges a valid patch without dropping untouched fields', () => {

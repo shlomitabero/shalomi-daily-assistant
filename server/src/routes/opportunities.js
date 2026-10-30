@@ -112,6 +112,15 @@ export function patchOpportunity(req, res) {
 export async function publishOpportunityRoute(req, res) {
   const opportunity = db.opportunities.get(req.params.id);
   if (!opportunity) return res.status(404).json({ error: 'not found' });
+  // Without this, hitting publish again on an already-live opportunity (a
+  // stray repeat request, a retried script) would sail through the
+  // idempotency check — that key is scoped per day, so a next-day call
+  // slips past it — and write a fresh "publish_product: success" entry to
+  // the audit log even though nothing actually happened: perform() finds
+  // paddlePriceId/slug already set and just re-saves the same status.
+  if (opportunity.status === 'published') {
+    return res.status(409).json({ error: 'already published', duplicate: true });
+  }
   if (!isPaddleConfigured()) {
     logAction({ type: 'publish_product', detail: { opportunityId: opportunity.id }, result: 'blocked: Paddle is not configured yet' });
     return res.status(503).json({ error: 'Paddle is not configured yet — cannot open real checkout' });
