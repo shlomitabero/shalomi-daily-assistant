@@ -1000,13 +1000,29 @@ export async function fireRule(
   record: EntityRecord,
   uploadsDir: string,
   baseUrl: string,
+  // Round 1276: mirrors fireScheduledRule's own isManualTest (round 1261) --
+  // only routes/projects.ts's POST .../test route's non-schedule branch
+  // passes true. Unlike that schedule-rule case, there's no "already due
+  // today" concept for a record-triggered rule to protect, but the exact
+  // same false-positive-notification risk still applies: App.tsx's
+  // failing-automations badge/count and its "newly failing" desktop
+  // notification (round 1218) both key off rule.lastStatus === "failed",
+  // which recordAutomationRun below unconditionally updated for every
+  // Test click on a field_equals/record_created/record_deleted rule --
+  // a user deliberately testing against bad data (or simply triggering a
+  // real, unrelated failure) saw it reported as if production had just
+  // started failing. The manual Retry route (round 971/972, the other
+  // caller of this function) deliberately keeps isManualTest=false, since
+  // a successful retry SHOULD count as the rule's real last outcome.
+  isManualTest: boolean = false,
 ): Promise<void> {
+  const now = new Date();
   if (rule.actionType === "webhook") {
-    await fireWebhookAction(db, project, entity, rule, record, baseUrl);
+    await fireWebhookAction(db, project, entity, rule, record, baseUrl, now, isManualTest);
     return;
   }
   if (rule.actionType === "send_email") {
-    await fireEmailAction(db, emailSender, project, entity, rule, record, uploadsDir);
+    await fireEmailAction(db, emailSender, project, entity, rule, record, uploadsDir, now, isManualTest);
     return;
   }
   // Round 991: see AutomationRun.recordSnapshot's own doc comment --
@@ -1026,12 +1042,26 @@ export async function fireRule(
       rule.actionType,
       Number(record.id),
       recordSnapshot,
+      now,
+      randomUUID(),
+      isManualTest,
     );
     return;
   }
   const status = whatsapp.getStatus(project.id);
   if (status.status !== "connected") {
-    recordAutomationRun(db, project.id, rule.id, { status: "failed", error: WHATSAPP_NOT_CONNECTED_ERROR }, rule.actionType, Number(record.id), recordSnapshot);
+    recordAutomationRun(
+      db,
+      project.id,
+      rule.id,
+      { status: "failed", error: WHATSAPP_NOT_CONNECTED_ERROR },
+      rule.actionType,
+      Number(record.id),
+      recordSnapshot,
+      now,
+      randomUUID(),
+      isManualTest,
+    );
     return;
   }
   const lang: Lang = isHebrewText(project.description) ? "he" : "en";
@@ -1071,6 +1101,9 @@ export async function fireRule(
     rule.actionType,
     Number(record.id),
     recordSnapshot,
+    now,
+    randomUUID(),
+    isManualTest,
   );
 }
 

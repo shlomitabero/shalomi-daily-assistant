@@ -5096,7 +5096,11 @@ export function createProjectsRouter(
         req.userId!,
         `POST /projects/${project.id}/automations/${rule.id}/test`,
         async () => {
-          await fireRule(db, whatsapp, emailSender, project, entity, rule, record, uploadsDir, `${req.protocol}://${req.get("host")}`);
+          // Round 1276: isManualTest=true -- see fireRule's own doc comment
+          // on that parameter. Mirrors the schedule branch's identical
+          // isManualTest=true just above (round 1261), for the exact same
+          // false-positive-notification reason.
+          await fireRule(db, whatsapp, emailSender, project, entity, rule, record, uploadsDir, `${req.protocol}://${req.get("host")}`, true);
           const [latestRun] = listAutomationRuns(db, project.id, rule.id, 1);
           return { status: 200, body: { run: latestRun ?? null } };
         },

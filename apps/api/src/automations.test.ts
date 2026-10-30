@@ -25,6 +25,7 @@ import {
   updateAutomationRule,
 } from "@forge/db";
 import {
+  fireRule,
   fireScheduledRule,
   findTemplateFileAttachment,
   hasTooManyConsecutiveFailuresToday,
@@ -1031,6 +1032,66 @@ test("runAutomationsForRecordChange records the outcome on the rule itself (last
   // the lower-level recordAutomationRun function accepts it in isolation
   // (packages/db/src/automations.test.ts already covers that).
   assert.equal(after.lastActionType, "send_whatsapp");
+});
+
+/**
+ * Round 1276: routes/projects.ts's POST .../test route fires a
+ * record-triggered rule (field_equals/record_created/record_deleted)
+ * through fireRule directly, passing isManualTest=true -- mirroring
+ * fireScheduledRule's own round-1261 protection. Before this fix, a
+ * manual Test click unconditionally updated the rule's own
+ * lastTriggeredAt/lastStatus, which App.tsx's failing-automations badge
+ * and its round-1218 "newly failing" desktop notification both key off
+ * (lastStatus === "failed") -- so testing a rule against bad/unexpected
+ * data (or hitting any real, incidental failure while testing) falsely
+ * reported a working rule as newly broken in production monitoring.
+ * Confirms both halves: the rule's own summary columns stay untouched,
+ * AND the run still shows up in the rule's real history either way.
+ */
+test("fireRule called with isManualTest=true records a real run but leaves the rule's own lastTriggeredAt/lastStatus untouched", async () => {
+  const { db, project } = setupProject();
+  const rule = insertAutomationRule(db, {
+    projectId: project.id,
+    entityName: "Order",
+    trigger: "record_created",
+    actionType: "send_whatsapp",
+    toMode: "static",
+    toNumber: "972509999999",
+    messageTemplate: "New order!",
+  });
+  const { manager, sendCalls } = createFakeWhatsApp({ connected: true, sendResult: { ok: false, error: "recipient not found" } });
+  const record = { id: 4, customerName: "Yael", customerPhone: null, status: "New" };
+
+  await fireRule(db, manager, UNUSED_EMAIL_SENDER, project, orderEntity, rule, record, UNUSED_UPLOADS_DIR, UNUSED_BASE_URL, true);
+
+  assert.equal(sendCalls.length, 1, "a manual test must still genuinely attempt the real send, not a fake dry run");
+  const afterTest = getAutomationRule(db, project.id, rule.id)!;
+  assert.equal(afterTest.lastTriggeredAt, null, "a manual test must never update the rule's own lastTriggeredAt");
+  assert.equal(afterTest.lastStatus, null, "a manual test must never update the rule's own lastStatus");
+
+  const [run] = listAutomationRuns(db, project.id, rule.id);
+  assert.equal(run!.status, "failed", "the test's own outcome must still show up as a real run in the rule's history");
+});
+
+test("fireRule called with isManualTest omitted (the real triggers' own call shape) updates the rule's own lastTriggeredAt/lastStatus as before", async () => {
+  const { db, project } = setupProject();
+  const rule = insertAutomationRule(db, {
+    projectId: project.id,
+    entityName: "Order",
+    trigger: "record_created",
+    actionType: "send_whatsapp",
+    toMode: "static",
+    toNumber: "972509999999",
+    messageTemplate: "New order!",
+  });
+  const { manager } = createFakeWhatsApp({ connected: true });
+  const record = { id: 5, customerName: "Itay", customerPhone: null, status: "New" };
+
+  await fireRule(db, manager, UNUSED_EMAIL_SENDER, project, orderEntity, rule, record, UNUSED_UPLOADS_DIR, UNUSED_BASE_URL);
+
+  const after = getAutomationRule(db, project.id, rule.id)!;
+  assert.ok(after.lastTriggeredAt, "a real record-triggered fire (and the existing manual Retry route, round 971/972) must still update lastTriggeredAt, unchanged by this round's fix");
+  assert.equal(after.lastStatus, "sent");
 });
 
 test("runAutomationsForRecordChange never calls sendMessage and records a failure when WhatsApp is not connected", async () => {
