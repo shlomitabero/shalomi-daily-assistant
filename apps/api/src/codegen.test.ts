@@ -15901,6 +15901,10 @@ test("the exported index.html links the manifest and icon, and sets a real theme
   const html = generateExportFiles(project).find((f) => f.path === "web/index.html")!.content;
   assert.match(html, /<link rel="manifest" href="\/manifest\.json" \/>/);
   assert.match(html, /<meta name="theme-color" content="#d9622b" \/>/);
+  // Round 1297: a dark-mode counterpart, keyed off the OS media query, so
+  // an OS-dark device's install splash/status bar/task-switcher isn't
+  // stuck showing the light accent before React has even mounted.
+  assert.match(html, /<meta name="theme-color" content="#ef7d43" media="\(prefers-color-scheme: dark\)" \/>/);
   assert.match(html, /<link rel="apple-touch-icon" href="\/icon\.svg" \/>/);
 });
 
@@ -16243,6 +16247,56 @@ test("the exported app's theme ignores a live OS switch after the user explicitl
   } finally {
     globalThis.fetch = originalFetch;
     cleanup();
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+/**
+ * Round 1297: index.html's own static theme-color meta pair (one plain,
+ * one media="(prefers-color-scheme: dark)") only ever covers the pre-
+ * React-mount paint based on the OS's own preference. Once the user makes
+ * an EXPLICIT in-app choice via the theme-switch button, that choice can
+ * disagree with the OS media query -- this test starts the OS at light,
+ * toggles to dark in-app, and confirms BOTH meta tags get overwritten to
+ * the dark accent, so neither one's own media condition is left pointing
+ * at a color that no longer matches what's actually rendered.
+ */
+test("the exported app's theme-switch button also updates the real theme-color meta tags, not just data-theme", async () => {
+  const files = generateExportFiles(project);
+  const dir = writeGeneratedWebComponent(files);
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = (async () => new Response(JSON.stringify({ counts: {} }), { status: 200, headers: { "content-type": "application/json" } })) as typeof fetch;
+
+  // index.html's own two static tags, inserted directly since jsdom's test
+  // document never actually loads the generated index.html file.
+  const plainMeta = document.createElement("meta");
+  plainMeta.setAttribute("name", "theme-color");
+  plainMeta.setAttribute("content", "#d9622b");
+  const darkMeta = document.createElement("meta");
+  darkMeta.setAttribute("name", "theme-color");
+  darkMeta.setAttribute("content", "#ef7d43");
+  darkMeta.setAttribute("media", "(prefers-color-scheme: dark)");
+  document.head.appendChild(plainMeta);
+  document.head.appendChild(darkMeta);
+
+  try {
+    await withRealLocalStorage(async () => {
+      await withFakeMatchMedia(false, async () => {
+        const { default: App } = await import(path.join(dir, "web", "src", "App.jsx"));
+        const { container } = render(React.createElement(App));
+        assert.equal(plainMeta.getAttribute("content"), "#d9622b", "starts matching the light theme, same as data-theme");
+
+        fireEvent.click(container.querySelector(".theme-switch") as HTMLButtonElement);
+        assert.equal(document.documentElement.getAttribute("data-theme"), "dark");
+        assert.equal(plainMeta.getAttribute("content"), "#ef7d43", "the plain tag must be overwritten to the dark accent once the user explicitly toggles, regardless of its own media condition");
+        assert.equal(darkMeta.getAttribute("content"), "#ef7d43", "the dark-media tag stays correct too");
+      });
+    });
+  } finally {
+    globalThis.fetch = originalFetch;
+    cleanup();
+    document.head.removeChild(plainMeta);
+    document.head.removeChild(darkMeta);
     rmSync(dir, { recursive: true, force: true });
   }
 });

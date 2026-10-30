@@ -1642,6 +1642,15 @@ function renderWebIndexHtml(project: Project): string {
 <title>${title}</title>
 <link rel="manifest" href="/manifest.json" />
 <meta name="theme-color" content="#d9622b" />
+<!-- Round 1297: a dark-mode counterpart for the light theme-color above,
+     keyed off the OS media query, for the very first paint before React
+     has even mounted (let alone run the data-theme effect below) -- this
+     app's own dark palette (see renderStylesCss) is a different accent
+     color, and detectInitialTheme defaults a fresh visitor with no stored
+     choice straight to whatever the OS already prefers, so an OS-dark
+     device's install splash screen/status bar/task-switcher card used to
+     stay colored with the light accent the whole time regardless. -->
+<meta name="theme-color" content="#ef7d43" media="(prefers-color-scheme: dark)" />
 <link rel="icon" href="/icon.svg" type="image/svg+xml" />
 <!-- apple-touch-icon technically wants a raster PNG on iOS versions before
      16.4 (2023) -- an SVG here is a known, accepted gap rather than adding
@@ -8914,6 +8923,20 @@ export default function App() {
   // own onClick below, not here -- see hasExplicitChoiceRef's comment.
   useEffect(() => {
     document.documentElement.setAttribute("data-theme", theme);
+    // Round 1297: the static index.html <meta name="theme-color"> pair
+    // (one plain, one media="(prefers-color-scheme: dark)") only ever
+    // covers the pre-React-mount paint based on the OS's own preference --
+    // once the user makes an EXPLICIT in-app choice via the theme-switch
+    // button below, that choice can disagree with the OS media query
+    // (e.g. OS still light, user picked dark), which neither static tag's
+    // own media condition would then reflect. Overwriting both tags'
+    // content here to the one color that actually matches the now-
+    // rendered theme keeps the browser chrome honest regardless of which
+    // one the media query would otherwise have matched.
+    const themeColor = theme === "dark" ? "#ef7d43" : "#d9622b";
+    document.querySelectorAll('meta[name="theme-color"]').forEach((meta) => {
+      meta.setAttribute("content", themeColor);
+    });
   }, [theme]);
 
   // Follows the OS light/dark switch live, same as the live preview, but
