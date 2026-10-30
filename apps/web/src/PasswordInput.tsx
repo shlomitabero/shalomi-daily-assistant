@@ -25,6 +25,8 @@ export function PasswordInput({
   autoComplete,
   name,
   showStrength,
+  placeholder,
+  ariaLabel,
 }: {
   value: string;
   onChange: (value: string) => void;
@@ -33,6 +35,14 @@ export function PasswordInput({
   autoComplete?: string;
   name?: string;
   showStrength?: boolean;
+  // Round 1324: every existing call site (AuthScreen, ChangeEmailPanel/
+  // ChangePasswordPanel) names the field via a wrapping <label> instead,
+  // so this component never needed its own accessible name -- but
+  // AutomationsPanel's webhook secret field (the first non-auth caller)
+  // follows this file's own established bare-input convention of naming
+  // itself directly via aria-label/placeholder, with no wrapping <label>.
+  placeholder?: string;
+  ariaLabel?: string;
 }) {
   const { t } = useTranslation();
   const [visible, setVisible] = useState(false);
@@ -62,6 +72,8 @@ export function PasswordInput({
           minLength={minLength}
           autoComplete={autoComplete}
           name={name}
+          placeholder={placeholder}
+          aria-label={ariaLabel}
           value={value}
           onChange={(e) => onChange(e.target.value)}
           onKeyDown={checkCapsLock}

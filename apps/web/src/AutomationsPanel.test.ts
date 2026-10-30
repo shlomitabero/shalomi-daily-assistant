@@ -2279,6 +2279,52 @@ test("AutomationsPanel's webhook form has an optional secret field that's omitte
   });
 });
 
+/**
+ * Round 1324: webhookSecret is a real external credential (sent as
+ * "Authorization: Bearer <webhookSecret>" to a third-party endpoint --
+ * see automations.ts) -- unlike every other credential field in this app
+ * (login/signup/change-password), it used to be a plain type="text"
+ * input, so opening "Edit" on an existing webhook rule displayed the
+ * live secret in cleartext to anyone glancing at the screen. Confirms the
+ * field is now masked by default (type="password") and reveals its real
+ * value via the same show/hide toggle every auth form already uses.
+ */
+test("AutomationsPanel's webhook secret field is masked by default and reveals its real value via a show/hide toggle", async () => {
+  await withJsdom(async () => {
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = (async (input: string, init?: RequestInit) => {
+      const method = init?.method ?? "GET";
+      if (method === "GET" && input === "/api/projects/proj5/automations") {
+        return new Response(JSON.stringify({ rules: [] }), { status: 200, headers: { "content-type": "application/json" } });
+      }
+      throw new Error(`unexpected request ${method} ${input}`);
+    }) as typeof fetch;
+
+    try {
+      renderPanelWith(triggerFieldProject);
+      await waitForCondition(() => document.body.textContent?.includes("No automations yet") ?? false);
+
+      const actionSelect = Array.from(document.querySelectorAll("select")).find((s) =>
+        Array.from(s.options).some((o) => o.value === "webhook"),
+      ) as HTMLSelectElement;
+      fireEvent.change(actionSelect, { target: { value: "webhook" } });
+
+      const secretInput = document.querySelector('input[placeholder="Secret (optional)"]') as HTMLInputElement;
+      assert.ok(secretInput, "expected a secret input next to the webhook URL input");
+      assert.equal(secretInput.type, "password", "the secret must be masked by default, like every other credential field in the app");
+      fireEvent.change(secretInput, { target: { value: "s3cr3t-token" } });
+
+      const toggleButton = secretInput.closest(".password-input-wrap")!.querySelector(".password-toggle") as HTMLButtonElement;
+      assert.ok(toggleButton, "expected the same show/hide toggle button every auth form's PasswordInput already has");
+      fireEvent.click(toggleButton);
+      assert.equal(secretInput.type, "text", "clicking the toggle must reveal the real secret value");
+      assert.equal(secretInput.value, "s3cr3t-token", "the revealed value must be exactly what was typed");
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+});
+
 test("AutomationsPanel's rule list describes a webhook rule by its URL, not a WhatsApp destination", async () => {
   await withJsdom(async () => {
     const originalFetch = globalThis.fetch;

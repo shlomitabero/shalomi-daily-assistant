@@ -23,6 +23,7 @@ import { applyColumnOrder, getColumnOrder } from "./columnOrder.js";
 import { fieldDisplayLabel, fieldLabelOccurrences, isValidDateString, parseFieldDate, recordDisplayLabel, uniqueEnumValues, type RelatedRecordsByEntity } from "./entityFormatting.js";
 import { useTranslation } from "./i18n/LanguageContext.js";
 import { resolveErrorMessage } from "./i18n/language.js";
+import { PasswordInput } from "./PasswordInput.js";
 import { useDialogFocusTrap } from "./useDialogFocusTrap.js";
 
 const LOCALE: Record<string, string> = { he: "he-IL", en: "en-US" };
@@ -1366,12 +1367,20 @@ export function AutomationsPanel({
                 onChange={(e) => setWebhookUrl(e.target.value)}
               />
               <p className="muted small">{t("automations.webhookUrl.hint")}</p>
-              <input
-                type="text"
-                placeholder={t("automations.webhookSecret.placeholder")}
-                aria-label={t("automations.webhookSecret.placeholder")}
+              {/* Round 1324: webhookSecret is a real external credential
+                  (sent as "Authorization: Bearer <webhookSecret>" to a
+                  third-party endpoint, see automations.ts) -- unlike every
+                  other credential field in this app (login/signup/change-
+                  password), it was a plain type="text" input, so opening
+                  "Edit" on any existing webhook rule displayed the live
+                  secret in cleartext. Reuses the same show/hide
+                  PasswordInput every auth form already uses. */}
+              <PasswordInput
                 value={webhookSecret}
-                onChange={(e) => setWebhookSecret(e.target.value)}
+                onChange={setWebhookSecret}
+                autoComplete="off"
+                placeholder={t("automations.webhookSecret.placeholder")}
+                ariaLabel={t("automations.webhookSecret.placeholder")}
               />
               <p className="muted small">{t("automations.webhookSecret.hint")}</p>
             </>
