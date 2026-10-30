@@ -229,6 +229,47 @@ test("findMatchingRecord matches a phone field regardless of its name's casing",
   assert.equal(match!.label, "Tal Green");
 });
 
+/**
+ * Round 1278: nothing anywhere enforces that a phone-like-named field
+ * (PHONE_FIELD_NAME_HINTS) must be typed "text" -- an AI-generated spec
+ * or a pre-build field-retype can just as plausibly produce a "number"
+ * field (phone numbers "look numeric"). repository.ts's own
+ * coerceValue/rowToRecord store and return a "number"-typed field as a
+ * real JS number, not a string, and findMatchingRecord's old
+ * `typeof raw !== "string"` guard silently skipped every such field
+ * entirely -- so an inbound WhatsApp message from a real, existing
+ * contact never matched at all, with no error anywhere, whenever the
+ * entity's own phone field happened to be typed "number".
+ */
+test("findMatchingRecord matches a phone field even when it's typed \"number\" instead of \"text\"", () => {
+  const numericPhoneProject: Project = {
+    ...project,
+    spec: {
+      ...project.spec,
+      entities: [
+        {
+          name: "Customer",
+          label: "לקוחות",
+          fields: [
+            { name: "name", label: "שם", type: "text", required: true },
+            { name: "mobile", label: "נייד", type: "number", required: false },
+          ],
+        },
+      ],
+    },
+  };
+  const db = openDatabase(":memory:");
+  applyMigrations(db, numericPhoneProject.id, numericPhoneProject.spec);
+  const customer = numericPhoneProject.spec.entities[0];
+  const inserted = insertRecord(db, numericPhoneProject.id, customer, { name: "Noa Peretz", mobile: 501234567 });
+
+  const match = findMatchingRecord(db, numericPhoneProject, "972501234567");
+  assert.ok(match, "a number-typed phone field must still be matched, not silently skipped");
+  assert.equal(match!.entityName, "Customer");
+  assert.equal(match!.recordId, inserted.id);
+  assert.equal(match!.label, "Noa Peretz");
+});
+
 test("findMatchingRecord skips entities that have no phone field, rather than throwing", () => {
   const noPhone: Project = {
     ...project,

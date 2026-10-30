@@ -112,8 +112,24 @@ export function findMatchingRecord(db: ForgeDatabase, project: Project, fromNumb
     for (const record of records) {
       for (const phoneField of phoneFields) {
         const raw = record[phoneField.name];
-        if (typeof raw !== "string" || !raw) continue;
-        const normalizedStored = normalizePhone(raw);
+        // Round 1278: nothing in the spec-generation pipeline, the AI
+        // system prompt, or the pre-build field-retype route stops a
+        // phone-like-named field (PHONE_FIELD_NAME_HINTS) from ending up
+        // typed "number" -- a wholly plausible AI choice, since phone
+        // numbers "look numeric" -- and repository.ts's coerceValue/
+        // rowToRecord store and return a "number"-typed field as a real
+        // JS number, never a string. The old `typeof raw !== "string"`
+        // guard below silently `continue`d past every such field, so
+        // this entire feature (match an inbound WhatsApp message to its
+        // sender's record) never worked at all for that entity, with no
+        // error anywhere. Coercing here, not loosening the guard itself,
+        // mirrors this codebase's own established tolerance for a
+        // non-string stored value (entityFormatting.ts's own
+        // fieldDisplayValue, among others) -- normalizePhone below calls
+        // `.replace` and would otherwise throw on a real number.
+        const rawAsString = typeof raw === "number" ? String(raw) : raw;
+        if (typeof rawAsString !== "string" || !rawAsString) continue;
+        const normalizedStored = normalizePhone(rawAsString);
         if (!normalizedStored) continue;
         const shorter = normalizedStored.length <= normalizedFrom.length ? normalizedStored : normalizedFrom;
         const longer = normalizedStored.length <= normalizedFrom.length ? normalizedFrom : normalizedStored;
