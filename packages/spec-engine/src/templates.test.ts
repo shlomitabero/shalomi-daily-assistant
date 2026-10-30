@@ -362,6 +362,87 @@ test("the Restaurant Management template's Order entity has an items field, matc
 });
 
 /**
+ * Round 1294: the same "curated template entity is missing a field every
+ * sibling entity of the identical shape already has" pattern as rounds
+ * 1271-1289, found in three more places after those six templates were
+ * each independently closed. Inventory & Products' own PurchaseOrder
+ * entity (a "purchase placed with a party, tracked by status/total") is
+ * the exact same shape as the Restaurant template's own Order entity
+ * (fixed in round 1289) and domainEntities.ts's own generic Order rule --
+ * both of which already carry an `items` field -- but PurchaseOrder never
+ * had one, leaving no way to record which products or quantities a
+ * purchase order actually covers.
+ */
+test("the Inventory & Products template's PurchaseOrder entity has an items field, matching the Restaurant template's own Order entity and domainEntities.ts's generic Order rule", () => {
+  const inventoryTemplate = TEMPLATES.find((t) => t.id === "inventory");
+  assert.ok(inventoryTemplate, "expected an \"inventory\" template to exist");
+
+  const purchaseOrder = inventoryTemplate!.spec.entities.find((e) => e.name === "PurchaseOrder");
+  assert.ok(purchaseOrder, "expected the Inventory & Products template to have a PurchaseOrder entity");
+  const items = purchaseOrder!.fields.find((f) => f.name === "items");
+  assert.ok(items, "expected the PurchaseOrder entity to have an items field");
+  assert.equal(items!.type, "longtext");
+
+  const purchaseOrderEn = inventoryTemplate!.specEn.entities.find((e) => e.name === "PurchaseOrder");
+  assert.ok(purchaseOrderEn, "expected the Inventory & Products specEn to have a PurchaseOrder entity");
+  const itemsEn = purchaseOrderEn!.fields.find((f) => f.name === "items");
+  assert.ok(itemsEn, "expected the PurchaseOrder specEn entity to have an items field");
+  assert.equal(itemsEn!.type, "longtext");
+});
+
+/**
+ * Round 1294: Project Tracker's own Task entity (title/assignee/project/
+ * status/priority) is the one Task-shaped entity in this codebase missing
+ * `dueDate`. Both the CRM template's own Task entity (title/dueDate/
+ * status/deal) and domainEntities.ts's generic Task rule already carry
+ * it, and this same template's own sibling Milestone entity has it too --
+ * leaving the more granular, more deadline-driven Task as the sole
+ * exception, with no way to say when a task is due.
+ */
+test("the Project Tracker template's Task entity has a dueDate field, matching every other Task-shaped entity in this codebase", () => {
+  const projectTrackerTemplate = TEMPLATES.find((t) => t.id === "project-tracker");
+  assert.ok(projectTrackerTemplate, "expected a \"project-tracker\" template to exist");
+
+  const task = projectTrackerTemplate!.spec.entities.find((e) => e.name === "Task");
+  assert.ok(task, "expected the Project Tracker template to have a Task entity");
+  const dueDate = task!.fields.find((f) => f.name === "dueDate");
+  assert.ok(dueDate, "expected the Task entity to have a dueDate field");
+  assert.equal(dueDate!.type, "date");
+
+  const taskEn = projectTrackerTemplate!.specEn.entities.find((e) => e.name === "Task");
+  assert.ok(taskEn, "expected the Project Tracker specEn to have a Task entity");
+  const dueDateEn = taskEn!.fields.find((f) => f.name === "dueDate");
+  assert.ok(dueDateEn, "expected the Task specEn entity to have a dueDate field");
+  assert.equal(dueDateEn!.type, "date");
+});
+
+/**
+ * Round 1294: Project Tracker's own TeamMember entity (name/email/
+ * jobTitle) is the sole person-type entity across all 6 curated templates
+ * missing `phone` -- CRM's Customer/Contact, Appointments' Customer/
+ * Staff, Inventory's Supplier, and Volunteer's Volunteer all declare it,
+ * leaving this template as the one place with no way to call or text a
+ * team member even though every comparable person record elsewhere in
+ * the gallery can.
+ */
+test("the Project Tracker template's TeamMember entity has a phone field, matching every other person-type entity across the curated templates", () => {
+  const projectTrackerTemplate = TEMPLATES.find((t) => t.id === "project-tracker");
+  assert.ok(projectTrackerTemplate, "expected a \"project-tracker\" template to exist");
+
+  const teamMember = projectTrackerTemplate!.spec.entities.find((e) => e.name === "TeamMember");
+  assert.ok(teamMember, "expected the Project Tracker template to have a TeamMember entity");
+  const phone = teamMember!.fields.find((f) => f.name === "phone");
+  assert.ok(phone, "expected the TeamMember entity to have a phone field");
+  assert.equal(phone!.type, "text");
+
+  const teamMemberEn = projectTrackerTemplate!.specEn.entities.find((e) => e.name === "TeamMember");
+  assert.ok(teamMemberEn, "expected the Project Tracker specEn to have a TeamMember entity");
+  const phoneEn = teamMemberEn!.fields.find((f) => f.name === "phone");
+  assert.ok(phoneEn, "expected the TeamMember specEn entity to have a phone field");
+  assert.equal(phoneEn!.type, "text");
+});
+
+/**
  * Round 516's finding: the "Appointments & Clients" template's Hebrew
  * Appointment.status enum mapped "scheduled" to "קבוע" (meaning "fixed" /
  * "permanent" / "standing" in Hebrew), not "scheduled". This codebase

@@ -445,6 +445,7 @@ const PROJECT_TRACKER_ENTITIES: EntitySpec[] = [
     fields: [
       { name: "name", label: "שם", type: "text", required: true },
       { name: "email", label: "אימייל", type: "text" },
+      { name: "phone", label: "טלפון", type: "text" },
       { name: "jobTitle", label: "תפקיד", type: "text" },
     ],
   },
@@ -499,6 +500,7 @@ const PROJECT_TRACKER_ENTITIES: EntitySpec[] = [
         enumValues: ["low", "medium", "high"],
         enumLabels: { low: "נמוכה", medium: "בינונית", high: "גבוהה" },
       },
+      { name: "dueDate", label: "תאריך יעד", type: "date" },
     ],
   },
 ];
@@ -510,6 +512,7 @@ const PROJECT_TRACKER_ENTITIES_EN: EntitySpec[] = [
     fields: [
       { name: "name", label: "Name", type: "text", required: true },
       { name: "email", label: "Email", type: "text" },
+      { name: "phone", label: "Phone", type: "text" },
       { name: "jobTitle", label: "Job Title", type: "text" },
     ],
   },
@@ -564,6 +567,7 @@ const PROJECT_TRACKER_ENTITIES_EN: EntitySpec[] = [
         enumValues: ["low", "medium", "high"],
         enumLabels: { low: "Low", medium: "Medium", high: "High" },
       },
+      { name: "dueDate", label: "Due Date", type: "date" },
     ],
   },
 ];
@@ -809,6 +813,7 @@ const INVENTORY_ENTITIES: EntitySpec[] = [
       },
       { name: "orderDate", label: "תאריך הזמנה", type: "date" },
       { name: "total", label: "סכום כולל", type: "number" },
+      { name: "items", label: "פריטים", type: "longtext" },
     ],
   },
   {
@@ -884,6 +889,7 @@ const INVENTORY_ENTITIES_EN: EntitySpec[] = [
       },
       { name: "orderDate", label: "Order Date", type: "date" },
       { name: "total", label: "Total Amount", type: "number" },
+      { name: "items", label: "Items", type: "longtext" },
     ],
   },
   {
