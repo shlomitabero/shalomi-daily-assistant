@@ -83,7 +83,7 @@ function mockTwinFetch() {
 }
 
 function renderTwinPanel(
-  onJumpToEntity: (entityName: string, dateFilter?: { fieldName: string; value: "overdue" | "dueSoon" }) => void,
+  onJumpToEntity: (entityName: string, dateFilter?: { fieldName: string; value: string }) => void,
   onJumpToRecord: (entityName: string, recordId: number) => void = () => {},
 ) {
   return render(
@@ -791,6 +791,65 @@ test("BusinessTwinPanel's Dashboard view renders a real bar chart from twin.dist
 });
 
 /**
+ * Round 1343: a fresh survey found the distribution bar chart was the one
+ * remaining inert element in the Dashboard view -- every other tile
+ * (numericStats, overdueStats, dueSoonStats, mostActiveObservation,
+ * jumpableObservations) is already a real clickable button wired to
+ * onJumpToEntity (rounds 1332/1337), but a bar row was still a plain,
+ * non-interactive <div>. Each breakdown entry's own `value` (twin.ts's
+ * computeEnumDistributionObservations builds exactly this -- the raw
+ * stored enumValue, or "true"/"false" for a boolean field) is the exact
+ * same value EntityPanel.tsx's own field-filter already compares against,
+ * so clicking a bar now jumps to the entity with that value pre-applied
+ * as the matching toolbar filter, the same mechanism round 1337 built for
+ * the overdue/dueSoon stat tiles.
+ */
+test("BusinessTwinPanel's distribution bar rows are real clickable buttons that call onJumpToEntity with the field's raw breakdown value", async () => {
+  await withJsdom(async () => {
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = (async (input: string) => {
+      if (input === "/api/projects/proj1/twin") {
+        return new Response(JSON.stringify({ twin: TWIN_WITH_CHARTS }), { status: 200, headers: { "content-type": "application/json" } });
+      }
+      throw new Error(`unexpected request ${input}`);
+    }) as typeof fetch;
+    const jumps: Array<{ entityName: string; dateFilter?: { fieldName: string; value: string } }> = [];
+    try {
+      renderTwinPanel((entityName, dateFilter) => {
+        jumps.push({ entityName, dateFilter });
+      });
+      await waitForCondition(() => document.querySelector(".twin-view-toggle") !== null);
+
+      const dashboardButton = Array.from(document.querySelectorAll(".twin-view-toggle button")).find((b) => b.textContent?.includes("Dashboard"));
+      fireEvent.click(dashboardButton!);
+      await waitForCondition(() => document.querySelector(".twin-chart") !== null);
+
+      const rows = Array.from(document.querySelectorAll(".twin-chart-row")) as HTMLButtonElement[];
+      assert.equal(rows.length, 2, "one bar per breakdown value");
+      for (const row of rows) {
+        assert.equal(row.tagName, "BUTTON", "every distribution bar row must be a real clickable button, not an inert div");
+      }
+
+      fireEvent.click(rows[0]!);
+      assert.deepEqual(
+        jumps,
+        [{ entityName: "Order", dateFilter: { fieldName: "status", value: "Pending" } }],
+        "clicking the Pending bar must jump to Order with status=Pending pre-applied as the filter, using the breakdown's own raw value",
+      );
+
+      fireEvent.click(rows[1]!);
+      assert.deepEqual(
+        jumps[1],
+        { entityName: "Order", dateFilter: { fieldName: "status", value: "Shipped" } },
+        "clicking a different bar in the same chart must carry that bar's own raw value, not the first bar's",
+      );
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+});
+
+/**
  * Round 703: the Dashboard tab's bar-chart values and stat-tile sum/average
  * were the only numbers in the entire web app formatted with no explicit
  * locale at all (bare toLocaleString()), unlike every other number and date
@@ -1009,7 +1068,7 @@ test("BusinessTwinPanel's numericStats/overdueStats/dueSoonStats dashboard tiles
       throw new Error(`unexpected request ${input}`);
     }) as typeof fetch;
     const jumps: string[] = [];
-    const dateFilters: Array<{ fieldName: string; value: "overdue" | "dueSoon" } | undefined> = [];
+    const dateFilters: Array<{ fieldName: string; value: string } | undefined> = [];
     try {
       renderTwinPanel((entityName, dateFilter) => {
         jumps.push(entityName);

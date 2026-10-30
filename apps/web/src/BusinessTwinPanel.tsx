@@ -20,21 +20,55 @@ import { computeTwinStatPercent, downloadTwinReport, formatTwinReport, sortTwinS
  * A native `title` attribute on each row doubles as the hover tooltip,
  * the same lightweight convention EntityPanel.tsx's own longtext table
  * cells already use.
+ *
+ * Round 1343: each row is now a real `<button>` wired to `onJumpToEntity`
+ * with the field's exact raw breakdown value, so this chart follows the
+ * same clickable convention every other dashboard tile already does
+ * (round 1332's stat tiles, round 1337's overdue/dueSoon tiles) instead of
+ * being the one dashboard element a person could only look at. `rawValue`
+ * is carried separately from `count` (the bar's own magnitude) because
+ * `computeEnumDistributionObservations` (twin.ts) already builds this
+ * exact raw string for both enum fields (the stored `enumValue`) and
+ * boolean fields (literally `"true"`/`"false"`) -- byte-for-byte what
+ * EntityPanel.tsx's own generic field-filter fallback
+ * (`String(r[fieldName] ?? "") === value`) and boolean branch
+ * (`String(Boolean(r[fieldName])) === value`) already compare against, so
+ * no new filter-matching logic is needed on the receiving end.
  */
-function TwinBarChart({ title, bars, lang }: { title: string; bars: { label: string; value: number }[]; lang: Lang }) {
-  const max = Math.max(1, ...bars.map((b) => b.value));
+function TwinBarChart({
+  title,
+  bars,
+  lang,
+  entityName,
+  fieldName,
+  onJumpToEntity,
+}: {
+  title: string;
+  bars: { label: string; count: number; rawValue: string }[];
+  lang: Lang;
+  entityName: string;
+  fieldName: string;
+  onJumpToEntity: (entityName: string, dateFilter?: { fieldName: string; value: string }) => void;
+}) {
+  const max = Math.max(1, ...bars.map((b) => b.count));
   return (
     <div className="twin-chart">
       <h4 className="twin-chart-title">{title}</h4>
       <div className="twin-chart-bars">
         {bars.map((b, i) => (
-          <div key={`${b.label}-${i}`} className="twin-chart-row" title={`${b.label}: ${formatNumberValue(b.value, lang)}`}>
+          <button
+            key={`${b.label}-${i}`}
+            type="button"
+            className="twin-chart-row"
+            title={`${b.label}: ${formatNumberValue(b.count, lang)}`}
+            onClick={() => onJumpToEntity(entityName, { fieldName, value: b.rawValue })}
+          >
             <span className="twin-chart-row-label">{b.label}</span>
             <div className="twin-chart-track">
-              <div className="twin-chart-bar" style={{ width: `${Math.max(2, (b.value / max) * 100)}%` }} />
+              <div className="twin-chart-bar" style={{ width: `${Math.max(2, (b.count / max) * 100)}%` }} />
             </div>
-            <span className="twin-chart-row-value">{formatNumberValue(b.value, lang)}</span>
-          </div>
+            <span className="twin-chart-row-value">{formatNumberValue(b.count, lang)}</span>
+          </button>
         ))}
       </div>
     </div>
@@ -61,8 +95,17 @@ export function BusinessTwinPanel({
    * onJumpToEntity call site (the per-entity tiles, mostActiveObservation,
    * jumpableObservations) has no single field to filter by, so they omit
    * this argument entirely.
+   *
+   * Round 1343: `value`'s type widened from the literal `"overdue" |
+   * "dueSoon"` to a plain `string` so TwinBarChart's own distribution bars
+   * (below) can reuse this exact mechanism with an enum/boolean field's raw
+   * breakdown value -- EntityPanel.tsx's own `createDateFilter` effect was
+   * already fully generic (`setFieldFilters(prev => ({...prev,
+   * [field.name]: createDateFilter.value}))`, no logic specific to
+   * "overdue"/"dueSoon"), so widening the type is the only change needed
+   * to make it work for any field+value pair, not just deadline fields.
    */
-  onJumpToEntity: (entityName: string, dateFilter?: { fieldName: string; value: "overdue" | "dueSoon" }) => void;
+  onJumpToEntity: (entityName: string, dateFilter?: { fieldName: string; value: string }) => void;
   /**
    * computeRelationHubObservation (twin.ts) already resolves the
    * "most-linked record" insight down to a specific real entityName+id --
@@ -242,8 +285,11 @@ export function BusinessTwinPanel({
                     <TwinBarChart
                       key={`dist-${i}`}
                       title={t("twin.dashboard.distributionTitle", { field: d.fieldLabel, entity: d.entityLabel })}
-                      bars={d.breakdown.map((b) => ({ label: b.label, value: b.count }))}
+                      bars={d.breakdown.map((b) => ({ label: b.label, count: b.count, rawValue: b.value }))}
                       lang={lang}
+                      entityName={d.entityName}
+                      fieldName={d.fieldName}
+                      onJumpToEntity={onJumpToEntity}
                     />
                   ))}
                   {(twin.numericStats.length > 0 || twin.overdueStats.length > 0 || twin.dueSoonStats.length > 0) && (

@@ -1536,8 +1536,8 @@ export function EntityPanel({
   createPrefill?: { fieldName: string; value: string } | null;
   /** Called once the incoming createPrefill has actually been applied, so the caller can clear it and not re-trigger on the next render -- the same convention onHighlightHandled above already uses for highlightRecordId. */
   onCreatePrefillHandled?: () => void;
-  /** A single date field + "overdue"/"dueSoon" to apply as this entity's own toolbar filter once its tab is open, e.g. from Business Twin's own overdue/dueSoon stat tiles -- mirrors createPrefill's own shape and the exact same filter semantics the toolbar's per-field date-filter dropdown already offers. */
-  createDateFilter?: { fieldName: string; value: "overdue" | "dueSoon" } | null;
+  /** A single field + raw filter value to apply as this entity's own toolbar filter once its tab is open, e.g. from Business Twin's own overdue/dueSoon stat tiles or an enum/boolean distribution bar -- mirrors createPrefill's own shape. Round 1343: value widened from the literal "overdue"/"dueSoon" to a plain string since this effect was already fully generic (see its own body below) and distribution bars now reuse it with a field's raw breakdown value. */
+  createDateFilter?: { fieldName: string; value: string } | null;
   /** Called once the incoming createDateFilter has actually been applied, so the caller can clear it and not re-trigger on the next render -- the same convention onCreatePrefillHandled above uses for createPrefill. */
   onCreateDateFilterHandled?: () => void;
   /** Called when a relation cell's value (in the table or a board card) is clicked, so the caller can switch to the target entity's own tab and highlight that record there -- the same "jump to record" mechanism Global Search, WhatsApp log, and Business Twin already trigger from their own panels. */

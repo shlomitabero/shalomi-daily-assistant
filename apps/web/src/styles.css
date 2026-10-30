@@ -3130,6 +3130,20 @@ button.sort-header:hover:not(:disabled) {
   display: flex;
   align-items: center;
   gap: 8px;
+  width: 100%;
+  background: none;
+  border: none;
+  border-radius: var(--radius-sm, 4px);
+  padding: 2px 4px;
+  margin: 0;
+  font: inherit;
+  color: inherit;
+  text-align: inherit;
+  cursor: pointer;
+}
+
+.twin-chart-row:hover {
+  background: var(--surface-hover, var(--surface));
 }
 
 .twin-chart-row-label {

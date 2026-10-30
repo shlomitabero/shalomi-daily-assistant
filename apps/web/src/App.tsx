@@ -694,8 +694,11 @@ function AppContent() {
   // once loaded, then clears it" convention createPrefill/highlightRecordId
   // already use -- without this, clicking "3 Invoices overdue" landed on
   // the entity's full, unfiltered table instead of the filtered one the
-  // tile's own count was actually describing.
-  const [createDateFilter, setCreateDateFilter] = useState<{ fieldName: string; value: "overdue" | "dueSoon" } | null>(null);
+  // tile's own count was actually describing. Round 1343: value widened
+  // from the literal "overdue" | "dueSoon" to a plain string so the same
+  // mechanism also carries an enum/boolean distribution bar's raw
+  // breakdown value when clicked.
+  const [createDateFilter, setCreateDateFilter] = useState<{ fieldName: string; value: string } | null>(null);
   const [whatsappUnreadCount, setWhatsappUnreadCount] = useState(0);
   // Count of enabled automation rules whose lastStatus is "failed" -- a
   // standing problem (webhook endpoint down, WhatsApp disconnected, a stale
