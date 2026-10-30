@@ -619,7 +619,14 @@ function computeNumericAggregateObservations(
         entityName: entity.name,
         entityLabel,
         fieldName: field.name,
-        fieldLabel,
+        // Round 1336: bakes in the same disambiguating fieldSuffix the
+        // sentence above already applies -- the Dashboard view
+        // (BusinessTwinPanel.tsx) renders this value directly as a chart/
+        // tile title with no ambiguity check of its own, so two
+        // same-labeled number fields on this entity used to show as two
+        // identically-titled, indistinguishable stat tiles even though the
+        // Report view's prose already told them apart.
+        fieldLabel: fieldLabel + fieldSuffix,
         sum,
         average,
         recordCount: values.length,
@@ -717,7 +724,8 @@ function computeEnumDistributionObservations(
         entityName: entity.name,
         entityLabel,
         fieldName: field.name,
-        fieldLabel,
+        // Round 1336: same disambiguation fix as computeNumericAggregateObservations above.
+        fieldLabel: fieldLabel + fieldSuffix,
         breakdown,
       });
     }
@@ -820,7 +828,8 @@ function computeOverdueObservations(
         entityName: entity.name,
         entityLabel,
         fieldName: field.name,
-        fieldLabel,
+        // Round 1336: same disambiguation fix as computeNumericAggregateObservations above.
+        fieldLabel: fieldLabel + fieldSuffix,
         overdueCount,
         recordCount,
       });
@@ -895,7 +904,8 @@ function computeDueSoonObservations(
         entityName: entity.name,
         entityLabel,
         fieldName: field.name,
-        fieldLabel,
+        // Round 1336: same disambiguation fix as computeNumericAggregateObservations above.
+        fieldLabel: fieldLabel + fieldSuffix,
         dueSoonCount,
         recordCount,
       });

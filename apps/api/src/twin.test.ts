@@ -1182,6 +1182,19 @@ test("computeBusinessTwin's numeric-aggregate observations disambiguate two numb
   assert.ok(shippingObs, `expected the shipping field to be disambiguated by its own name, got: ${JSON.stringify(numericObservations)}`);
   assert.match(subtotalObs!.text, /800/, "subtotal's own total (500+300) must not be confused with shipping's");
   assert.match(shippingObs!.text, /30/, "shipping's own total (10+20) must not be confused with subtotal's");
+
+  // Round 1336: twin.numericStats is the structured sibling the Dashboard
+  // view (BusinessTwinPanel.tsx) actually renders chart/tile titles
+  // from -- unlike the prose .text just checked above, its own
+  // .fieldLabel used to be returned bare (no suffix), so two
+  // identically-labeled fields produced two identically-titled, visually
+  // indistinguishable stat tiles even though the Report view already
+  // told them apart.
+  assert.equal(twin.numericStats.length, 2);
+  const subtotalStat = twin.numericStats.find((s) => s.fieldName === "subtotal");
+  const shippingStat = twin.numericStats.find((s) => s.fieldName === "shipping");
+  assert.equal(subtotalStat?.fieldLabel, "Amount (subtotal)", "the structured fieldLabel must be disambiguated too, not just the prose text");
+  assert.equal(shippingStat?.fieldLabel, "Amount (shipping)", "the structured fieldLabel must be disambiguated too, not just the prose text");
 });
 
 /**
@@ -1538,6 +1551,16 @@ test("computeBusinessTwin's enum-distribution observations disambiguate two enum
   assert.ok(shippingObs, `expected the shippingStatus field to be disambiguated by its own name, got: ${JSON.stringify(statusObservations)}`);
   assert.match(paymentObs!.text, /"Paid".*"Unpaid"|"Unpaid".*"Paid"/, "payment status's own values must not be confused with shipping's");
   assert.match(shippingObs!.text, /"Shipped".*"Pending"|"Pending".*"Shipped"/, "shipping status's own values must not be confused with payment's");
+
+  // Round 1336: twin.distributions is the structured sibling the Dashboard
+  // view renders chart titles from -- its own .fieldLabel used to be
+  // returned bare, so two identically-labeled enum fields produced two
+  // identically-titled, indistinguishable chart cards.
+  assert.equal(twin.distributions.length, 2);
+  const paymentDist = twin.distributions.find((d) => d.fieldName === "paymentStatus");
+  const shippingDist = twin.distributions.find((d) => d.fieldName === "shippingStatus");
+  assert.equal(paymentDist?.fieldLabel, "Status (paymentStatus)", "the structured fieldLabel must be disambiguated too, not just the prose text");
+  assert.equal(shippingDist?.fieldLabel, "Status (shippingStatus)", "the structured fieldLabel must be disambiguated too, not just the prose text");
 });
 
 test("computeBusinessTwin stays silent about an enum field when every record shares the exact same single value", () => {
@@ -1842,6 +1865,16 @@ test("computeBusinessTwin's overdue-deadline observations disambiguate two deadl
   assert.equal(deadlineObservations.length, 2, `expected one observation per ambiguous deadline field, got: ${JSON.stringify(deadlineObservations)}`);
   assert.ok(deadlineObservations.some((o) => o.text.includes('"Deadline" (dueDate)')));
   assert.ok(deadlineObservations.some((o) => o.text.includes('"Deadline" (renewalDeadline)')));
+
+  // Round 1336: twin.overdueStats is the structured sibling the Dashboard
+  // view renders stat-tile titles from -- its own .fieldLabel used to be
+  // returned bare, so two identically-labeled deadline fields produced
+  // two identically-titled, indistinguishable stat tiles.
+  assert.equal(twin.overdueStats.length, 2);
+  const dueDateStat = twin.overdueStats.find((s) => s.fieldName === "dueDate");
+  const renewalStat = twin.overdueStats.find((s) => s.fieldName === "renewalDeadline");
+  assert.equal(dueDateStat?.fieldLabel, "Deadline (dueDate)", "the structured fieldLabel must be disambiguated too, not just the prose text");
+  assert.equal(renewalStat?.fieldLabel, "Deadline (renewalDeadline)", "the structured fieldLabel must be disambiguated too, not just the prose text");
 });
 
 test("computeBusinessTwin phrases the overdue-deadline observation in Hebrew for a Hebrew description", () => {
@@ -2008,6 +2041,16 @@ test("computeBusinessTwin's due-soon observations disambiguate two deadline fiel
   assert.equal(dueSoonObservations.length, 2, `expected one due-soon observation per ambiguous deadline field, got: ${JSON.stringify(dueSoonObservations)}`);
   assert.ok(dueSoonObservations.some((o) => o.text.includes('"Deadline" (dueDate)')));
   assert.ok(dueSoonObservations.some((o) => o.text.includes('"Deadline" (renewalDeadline)')));
+
+  // Round 1336: twin.dueSoonStats is the structured sibling the Dashboard
+  // view renders stat-tile titles from -- its own .fieldLabel used to be
+  // returned bare, so two identically-labeled deadline fields produced
+  // two identically-titled, indistinguishable stat tiles.
+  assert.equal(twin.dueSoonStats.length, 2);
+  const dueDateStat = twin.dueSoonStats.find((s) => s.fieldName === "dueDate");
+  const renewalStat = twin.dueSoonStats.find((s) => s.fieldName === "renewalDeadline");
+  assert.equal(dueDateStat?.fieldLabel, "Deadline (dueDate)", "the structured fieldLabel must be disambiguated too, not just the prose text");
+  assert.equal(renewalStat?.fieldLabel, "Deadline (renewalDeadline)", "the structured fieldLabel must be disambiguated too, not just the prose text");
 });
 
 test("computeBusinessTwin phrases the due-soon observation in Hebrew for a Hebrew description", () => {
