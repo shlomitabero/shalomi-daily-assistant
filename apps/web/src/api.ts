@@ -1257,13 +1257,19 @@ export interface WhatsAppSendResult {
 }
 
 /**
- * The three reasons WhatsAppWebManager.sendMessage can refuse honestly
- * before ever reaching Baileys (whatsappWeb.ts) -- a stable, machine-
- * readable snake_case code, unlike a genuine Baileys-internal send failure
- * caught in that same function's own catch block (an arbitrary message
- * with no fixed shape, so it can't be translated and is shown as-is).
- * Mapped to the same `error.<CODE>` translation convention every other
- * server error already uses, via resolveErrorMessage below.
+ * The reasons WhatsAppWebManager.sendMessage can refuse honestly before
+ * ever reaching Baileys (whatsappWeb.ts) -- a stable, machine-readable
+ * snake_case code, unlike a genuine Baileys-internal send failure caught
+ * in that same function's own catch block (an arbitrary message with no
+ * fixed shape, so it can't be translated and is shown as-is). Mapped to
+ * the same `error.<CODE>` translation convention every other server
+ * error already uses, via resolveErrorMessage below.
+ *
+ * Round 1326: "timeout" joins the original three -- performSend's own
+ * sendWithTimeout wrapper throws this exact stable code (not a raw,
+ * untranslatable sentence) when a real Baileys sendMessage() call hangs
+ * past its own fixed timeout, the same "stop waiting, let the queue
+ * advance" fix email.ts's ResendEmailSender got in round 1126.
  *
  * Exported so AutomationsPanel.tsx/automationsReport.ts (round 935) can
  * translate the identical raw codes a `send_whatsapp` automation's own
@@ -1272,7 +1278,7 @@ export interface WhatsAppSendResult {
  * same canonical list, instead of maintaining a second copy that could
  * drift out of sync with this one.
  */
-export const KNOWN_WHATSAPP_SEND_ERROR_CODES = new Set(["not_connected", "invalid_phone_number", "missing_country_code"]);
+export const KNOWN_WHATSAPP_SEND_ERROR_CODES = new Set(["not_connected", "invalid_phone_number", "missing_country_code", "timeout"]);
 
 /**
  * Round 1080: the send_email counterpart to KNOWN_WHATSAPP_SEND_ERROR_CODES

@@ -391,6 +391,22 @@ export interface WhatsAppWebManagerOptions {
    * createSocket/removeAuthDir are injectable above.
    */
   sendSpacingMs?: number;
+  /**
+   * Round 1326: the WhatsApp counterpart to ResendEmailSender's own
+   * requestTimeoutMs (round 1126, email.ts) -- a real Baileys
+   * sock.sendMessage() call can hang indefinitely (a stalled/half-open TCP
+   * session, a WhatsApp-server ack that never arrives), and since every
+   * send for a project is chained onto one shared sendQueue (see its own
+   * doc comment below), a single hung send would otherwise block every
+   * later automation/test send for that project forever, with no error
+   * and no way to recover short of restarting the whole process. Unlike
+   * email.ts's AbortController (fetch supports cancellation), Baileys'
+   * sendMessage takes no signal, so this can only stop WAITING on the
+   * hung call (see sendWithTimeout below), not actually cancel it --
+   * still enough to let the queue advance. Kept injectable (defaulting to
+   * a real 20000ms) for the same test-speed reason as sendSpacingMs above.
+   */
+  sendTimeoutMs?: number;
 }
 
 export class WhatsAppWebManager {
@@ -425,6 +441,7 @@ export class WhatsAppWebManager {
    */
   private readonly sendQueue = new Map<string, Promise<void>>();
   private readonly sendSpacingMs: number;
+  private readonly sendTimeoutMs: number;
 
   constructor(options: WhatsAppWebManagerOptions) {
     this.db = options.db;
@@ -433,10 +450,36 @@ export class WhatsAppWebManager {
     this.qrToDataUrl = options.qrToDataUrl ?? defaultQrToDataUrl;
     this.removeAuthDir = options.removeAuthDir ?? ((dir) => rm(dir, { recursive: true, force: true }));
     this.sendSpacingMs = options.sendSpacingMs ?? 1200;
+    this.sendTimeoutMs = options.sendTimeoutMs ?? 20_000;
   }
 
   private delay(ms: number): Promise<void> {
     return new Promise((resolve) => setTimeout(resolve, ms));
+  }
+
+  /**
+   * Races a real Baileys sendMessage() call against sendTimeoutMs -- see
+   * that option's own doc comment for why this can only stop WAITING on a
+   * hung call, not cancel it. The thrown "timeout" message is the same
+   * stable snake_case code convention performSend's other honest refusals
+   * (not_connected/invalid_phone_number/missing_country_code) already use,
+   * so apps/web/src/api.ts's KNOWN_WHATSAPP_SEND_ERROR_CODES can translate
+   * it the identical way, rather than leaking a raw, untranslatable message.
+   */
+  private sendWithTimeout<T>(sendPromise: Promise<T>): Promise<T> {
+    return new Promise((resolve, reject) => {
+      const timer = setTimeout(() => reject(new Error("timeout")), this.sendTimeoutMs);
+      sendPromise.then(
+        (value) => {
+          clearTimeout(timer);
+          resolve(value);
+        },
+        (err) => {
+          clearTimeout(timer);
+          reject(err);
+        },
+      );
+    });
   }
 
   private authDirFor(projectId: string): string {
@@ -859,9 +902,9 @@ export class WhatsAppWebManager {
         // the generic document shape, which is the correct choice for an
         // actual document (PDF, spreadsheet, etc.).
         if (attachment.mimeType.startsWith("image/")) {
-          await session.sock.sendMessage(jid, { image: fileBuffer, mimetype: attachment.mimeType, caption: body });
+          await this.sendWithTimeout(session.sock.sendMessage(jid, { image: fileBuffer, mimetype: attachment.mimeType, caption: body }));
         } else if (attachment.mimeType.startsWith("video/")) {
-          await session.sock.sendMessage(jid, { video: fileBuffer, mimetype: attachment.mimeType, caption: body });
+          await this.sendWithTimeout(session.sock.sendMessage(jid, { video: fileBuffer, mimetype: attachment.mimeType, caption: body }));
         } else if (attachment.mimeType.startsWith("audio/")) {
           // Round 966: same degradation round 965 fixed for image/video,
           // but Baileys' own real audio content shape (confirmed directly
@@ -902,13 +945,13 @@ export class WhatsAppWebManager {
           // risk (the audio succeeding and then the plain text failing) is
           // real too, just far rarer, since no file upload is involved in
           // that second step at all.
-          await session.sock.sendMessage(jid, { audio: fileBuffer, mimetype: attachment.mimeType, ptt: false });
-          await session.sock.sendMessage(jid, { text: body });
+          await this.sendWithTimeout(session.sock.sendMessage(jid, { audio: fileBuffer, mimetype: attachment.mimeType, ptt: false }));
+          await this.sendWithTimeout(session.sock.sendMessage(jid, { text: body }));
         } else {
-          await session.sock.sendMessage(jid, { document: fileBuffer, mimetype: attachment.mimeType, fileName: attachment.fileName, caption: body });
+          await this.sendWithTimeout(session.sock.sendMessage(jid, { document: fileBuffer, mimetype: attachment.mimeType, fileName: attachment.fileName, caption: body }));
         }
       } else {
-        await session.sock.sendMessage(jid, { text: body });
+        await this.sendWithTimeout(session.sock.sendMessage(jid, { text: body }));
       }
       return { ok: true };
     } catch (err) {

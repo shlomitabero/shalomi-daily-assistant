@@ -315,6 +315,58 @@ test("sendMessage serializes concurrent sends for the same project so the socket
 });
 
 /**
+ * Round 1326: a real Baileys sock.sendMessage() call can hang indefinitely
+ * (a stalled/half-open TCP session, a WhatsApp-server ack that never
+ * arrives) -- before this round, nothing bounded how long performSend
+ * would wait, and since every send for a project is chained onto one
+ * shared sendQueue (see its own doc comment above), a single hung call
+ * would block every later send for that project forever, with no error.
+ * This fake socket's sendMessage never resolves at all for its first call,
+ * the same way a real hung Baileys call never would -- proving both that
+ * the hung call itself times out with a stable "timeout" code, AND that a
+ * later queued send for the same project still goes through instead of
+ * waiting behind it forever.
+ */
+test("sendMessage times out a hung Baileys sendMessage() call instead of blocking every later send for the project forever", async () => {
+  const db = openDatabase(":memory:");
+  ensureProjectsTable(db);
+  ensureWhatsAppConnectionsTable(db);
+  ensureWhatsAppMessagesTable(db);
+
+  const fake = createFakeSocket();
+  const originalSendMessage = fake.sock.sendMessage.bind(fake.sock);
+  let hangNextCall = true;
+  fake.sock.sendMessage = (jid, content) => {
+    if (hangNextCall) {
+      hangNextCall = false;
+      return new Promise(() => {}); // never resolves/rejects, like a real hung Baileys call
+    }
+    return originalSendMessage(jid, content);
+  };
+
+  const manager = new WhatsAppWebManager({
+    db,
+    sessionsRootDir: "/tmp/forge-whatsapp-test-sessions-timeout",
+    createSocket: async () => ({ sock: fake.sock, saveCreds: async () => {} }),
+    qrToDataUrl: async (qr) => `data:image/png;base64,FAKE(${qr})`,
+    sendSpacingMs: 0,
+    sendTimeoutMs: 20,
+  });
+
+  await manager.connect("proj1");
+  fake.sock.user = { id: "972501234567:1@s.whatsapp.net" };
+  fake.emitConnectionUpdate({ connection: "open" });
+
+  const hungResult = await manager.sendMessage("proj1", "972501111111", "one");
+  assert.equal(hungResult.ok, false);
+  assert.equal(hungResult.error, "timeout");
+
+  const nextResult = await manager.sendMessage("proj1", "972502222222", "two");
+  assert.equal(nextResult.ok, true, "the queue must still advance to the next send instead of waiting behind the hung one forever");
+  assert.deepEqual(fake.sendCalls, [{ jid: "972502222222@s.whatsapp.net", text: "two" }]);
+});
+
+/**
  * Same mechanism, the other half: serializing sends for ONE project must
  * never block a completely unrelated project's own sends behind it --
  * sendQueue is keyed by projectId precisely so two projects' sockets stay
