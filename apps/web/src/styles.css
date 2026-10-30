@@ -860,6 +860,23 @@ button.danger:hover:not(:disabled) {
   margin-bottom: 16px;
 }
 
+/* Round 1299: ErrorBoundary.tsx's own fallback, rendered outside App's own
+   providers (ThemeProvider/LanguageProvider) -- kept self-contained here
+   rather than relying on any app-layout class, since the whole tree below
+   it just crashed. */
+.app-crash-fallback {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 16px;
+  min-height: 100vh;
+  padding: 24px;
+  text-align: center;
+  background: var(--bg);
+  color: var(--text);
+}
+
 .waking.banner {
   background: var(--accent-soft);
   border: 1px solid var(--accent);
