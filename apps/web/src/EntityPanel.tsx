@@ -715,6 +715,9 @@ function CalendarView({
   onPrint,
   onDuplicate,
   onDelete,
+  orderedFields,
+  phoneField,
+  onSendWhatsApp,
   onDayClick,
   onReschedule,
   moveErrorId,
@@ -748,6 +751,19 @@ function CalendarView({
    * or Board view to duplicate or delete a specific record. */
   onDuplicate: (record: EntityRecord) => void;
   onDelete: (record: EntityRecord) => void;
+  /** Round 1285: mirrors BoardCard's own orderedFields/phoneField/
+   * onSendWhatsApp convention -- Table view's row and BoardCard both
+   * already offer a Send WhatsApp action (gated on the entity actually
+   * having a phone field, a real caller-supplied handler, and this
+   * specific record actually having a usable phone number), but
+   * CalendarView never got it, leaving Send WhatsApp as the one remaining
+   * action a user viewing calendar view still had to switch to Table or
+   * Board view for. orderedFields (not just entity.fields) matches
+   * BoardCard's own choice, the same column-order the rest of this
+   * component already treats as the entity's own current field order. */
+  orderedFields: Field[];
+  phoneField?: Field | null;
+  onSendWhatsApp?: (phoneNumber: string) => void;
   onDayClick: (date: Date) => void;
   onReschedule: (record: EntityRecord, date: Date, originDay?: string) => void;
   moveErrorId?: number | null;
@@ -999,6 +1015,22 @@ function CalendarView({
                       }}
                     >
                       🗑️
+                    </button>
+                  )}
+                  {!readOnly && phoneField && onSendWhatsApp && findRecordPhoneNumber(orderedFields, record) && (
+                    <button
+                      type="button"
+                      className="calendar-record-whatsapp"
+                      title={t("entity.sendWhatsApp")}
+                      aria-label={t("entity.sendWhatsApp")}
+                      onClick={(e) => {
+                        // Mirrors the print button's own stopPropagation
+                        // just above -- same day-cell-onDayClick hazard.
+                        e.stopPropagation();
+                        onSendWhatsApp(findRecordPhoneNumber(orderedFields, record) as string);
+                      }}
+                    >
+                      💬
                     </button>
                   )}
                 </div>
@@ -4987,6 +5019,9 @@ export function EntityPanel({
               onPrint={(record) => setRecordToPrint(record)}
               onDuplicate={readOnly ? () => {} : (record) => handleDuplicate(record.id as number)}
               onDelete={readOnly ? () => {} : (record) => handleDelete(record.id as number)}
+              orderedFields={orderedFields}
+              phoneField={phoneField}
+              onSendWhatsApp={onSendWhatsApp}
               onDayClick={readOnly ? () => {} : (date) => startCreateForDate(date, dateField)}
               onReschedule={readOnly ? () => {} : (record, date, originDay) => handleCalendarDrop(record, dateField.name, date, originDay)}
               moveErrorId={moveErrorId}

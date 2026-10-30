@@ -3721,6 +3721,57 @@ test("EntityPanel's calendar view record chip has a Delete action that removes t
 });
 
 /**
+ * Round 1285: the last remaining action gap in the same family as rounds
+ * 1272/1284 above -- Table view's row and BoardCard both already offer a
+ * Send WhatsApp action (gated on the entity having a phone-like field, a
+ * real onSendWhatsApp handler, and this specific record actually having a
+ * usable phone number), but CalendarView's record chip never got it at
+ * all. Confirms the real, wired-up calendar chip now calls the same
+ * onSendWhatsApp handler Table/Board view already share, with the same
+ * record's own phone number resolved via findRecordPhoneNumber.
+ */
+test("EntityPanel's calendar view record chip has a Send WhatsApp action for a record with a phone number, matching Table/Board view", async () => {
+  await withJsdom(async () => {
+    const today = isoDateToday();
+    const phoneAppointment: Entity = {
+      ...APPOINTMENT_ENTITY,
+      fields: [...APPOINTMENT_ENTITY.fields, { name: "phone", label: "Phone", type: "text", required: false }],
+    };
+    const store: EntityRecord[] = [{ id: 1, title: "Dentist", date: today, phone: "0501234567" }];
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = mockListRecordsFetch(store) as typeof fetch;
+    const whatsappCalls: string[] = [];
+    try {
+      renderAppointmentPanel({
+        entity: phoneAppointment,
+        allEntities: [phoneAppointment],
+        onSendWhatsApp: (phoneNumber: string) => {
+          whatsappCalls.push(phoneNumber);
+        },
+      });
+      await waitForCondition(() => document.querySelector(".entity-toolbar") !== null);
+
+      const calendarToggle = document.querySelectorAll(".view-toggle-btn")[1] as HTMLButtonElement;
+      fireEvent.click(calendarToggle);
+      await waitForCondition(() => document.querySelectorAll(".calendar-record-chip").length === 1);
+
+      const whatsappBtn = document.querySelector(".calendar-record-whatsapp") as HTMLButtonElement;
+      assert.ok(whatsappBtn, "expected a Send WhatsApp action next to the calendar record chip for a record with a phone number");
+      fireEvent.click(whatsappBtn);
+      assert.deepEqual(whatsappCalls, ["0501234567"], "clicking it must call onSendWhatsApp with this record's own phone number");
+
+      // Mirrors the print/duplicate/delete tests' own identical check --
+      // clicking the chip's nested WhatsApp button must not also bubble
+      // into the day cell's own onDayClick.
+      const dateInput = document.querySelector('.record-form input[name="date"]') as HTMLInputElement | null;
+      assert.equal(dateInput?.value ?? "", "", "clicking Send WhatsApp must not also prefill the create form with the clicked day's date");
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+});
+
+/**
  * Round 778: for an entity with no name/title/text field (e.g. a
  * "CheckIn"/"Attendance"-shaped log entity with just a date and a
  * boolean), the calendar day-chip used to render the raw stored value

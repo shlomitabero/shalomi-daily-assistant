@@ -1904,6 +1904,28 @@ tbody tr:hover {
   box-shadow: none;
 }
 
+/* Round 1285: mirrors .calendar-record-print's own layout exactly -- the
+   Send WhatsApp action is the same shape of small icon button next to the
+   chip, conditionally rendered right alongside its siblings. */
+.calendar-record-whatsapp {
+  flex-shrink: 0;
+  padding: 2px 4px;
+  font-size: 10px;
+  line-height: 1;
+  background: none;
+  border: 1px solid var(--border-soft);
+  border-radius: 4px;
+  box-shadow: none;
+  cursor: pointer;
+  transform: none;
+}
+
+.calendar-record-whatsapp:hover {
+  background: var(--surface-raised);
+  transform: none;
+  box-shadow: none;
+}
+
 .calendar-record-chip:hover {
   background: var(--surface-raised);
   transform: none;
