@@ -443,6 +443,34 @@ test("the Project Tracker template's TeamMember entity has a phone field, matchi
 });
 
 /**
+ * Round 1301: the Appointments & Clients template's own Staff entity
+ * (name/specialty/phone) is the sole person-type entity across all 6
+ * curated templates missing `email` -- this same template's own sibling
+ * Customer entity has it, every other template's person-type entity
+ * (Restaurant's Customer, CRM's Customer/Contact, Project Tracker's
+ * TeamMember, Volunteer's Volunteer, Inventory's Supplier) has it, and
+ * domainEntities.ts's generic "Employee" rule -- the closest heuristic
+ * match for this exact real-world role -- has it too, leaving this
+ * template as the one place with no way to record a staff member's email.
+ */
+test("the Appointments template's Staff entity has an email field, matching every other person-type entity across the curated templates", () => {
+  const appointmentsTemplate = TEMPLATES.find((t) => t.id === "appointments");
+  assert.ok(appointmentsTemplate, "expected an \"appointments\" template to exist");
+
+  const staff = appointmentsTemplate!.spec.entities.find((e) => e.name === "Staff");
+  assert.ok(staff, "expected the Appointments template to have a Staff entity");
+  const email = staff!.fields.find((f) => f.name === "email");
+  assert.ok(email, "expected the Staff entity to have an email field");
+  assert.equal(email!.type, "text");
+
+  const staffEn = appointmentsTemplate!.specEn.entities.find((e) => e.name === "Staff");
+  assert.ok(staffEn, "expected the Appointments specEn to have a Staff entity");
+  const emailEn = staffEn!.fields.find((f) => f.name === "email");
+  assert.ok(emailEn, "expected the Staff specEn entity to have an email field");
+  assert.equal(emailEn!.type, "text");
+});
+
+/**
  * Round 516's finding: the "Appointments & Clients" template's Hebrew
  * Appointment.status enum mapped "scheduled" to "קבוע" (meaning "fixed" /
  * "permanent" / "standing" in Hebrew), not "scheduled". This codebase

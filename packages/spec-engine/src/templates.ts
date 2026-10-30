@@ -676,6 +676,7 @@ const APPOINTMENTS_ENTITIES: EntitySpec[] = [
       { name: "name", label: "שם", type: "text", required: true },
       { name: "specialty", label: "תחום התמחות", type: "text" },
       { name: "phone", label: "טלפון", type: "text" },
+      { name: "email", label: "אימייל", type: "text" },
     ],
   },
   {
@@ -727,6 +728,7 @@ const APPOINTMENTS_ENTITIES_EN: EntitySpec[] = [
       { name: "name", label: "Name", type: "text", required: true },
       { name: "specialty", label: "Specialty", type: "text" },
       { name: "phone", label: "Phone", type: "text" },
+      { name: "email", label: "Email", type: "text" },
     ],
   },
   {
