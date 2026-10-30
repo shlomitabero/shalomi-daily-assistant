@@ -421,6 +421,54 @@ test("login with an EmailSender configured sends an emailed code instead of a to
   );
 });
 
+/**
+ * Round 1334: the exact same fetchWithWakeRetry lost-response risk round
+ * 1328 fixed for signup -- verify-code's own success (deleteLoginCode +
+ * issueSession) invalidates the exact precondition a retry re-checks
+ * (`getLoginCode` now returns nothing, since the code is single-use), so a
+ * response lost in transit after the server already completed the login
+ * made a retry fail with a false 401 LOGIN_CODE_EXPIRED for a login that,
+ * the replayed token matching below proves, already fully succeeded.
+ */
+test("POST /auth/login/verify-code retried with the same idempotency key after the first attempt already succeeded replays the original response, instead of 401ing with LOGIN_CODE_EXPIRED", async () => {
+  const emailSender = createFakeEmailSender();
+  await withServer(
+    async (baseUrl) => {
+      const email = `verify-idem-1-${Date.now()}@example.com`;
+      await fetch(`${baseUrl}/api/auth/signup`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ email, password: "correct-horse-battery" }),
+      });
+      const loginRes = await fetch(`${baseUrl}/api/auth/login`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ email, password: "correct-horse-battery", lang: "en" }),
+      });
+      const { loginCodeId } = (await loginRes.json()) as { loginCodeId: string };
+      const code = emailSender.sentTo[0]!.text.match(/\d{6}/)?.[0];
+
+      const headers = { "content-type": "application/json", "x-idempotency-key": "verify-code-repro-key" };
+      const body = JSON.stringify({ loginCodeId, code });
+
+      const firstRes = await fetch(`${baseUrl}/api/auth/login/verify-code`, { method: "POST", headers, body });
+      assert.equal(firstRes.status, 200);
+      const first = (await firstRes.json()) as { user: { id: string }; token: string };
+
+      const retryRes = await fetch(`${baseUrl}/api/auth/login/verify-code`, { method: "POST", headers, body });
+      assert.equal(
+        retryRes.status,
+        200,
+        "a retried verify-code with the same idempotency key must replay the original success, not 401 now that the code is already consumed",
+      );
+      const retry = (await retryRes.json()) as { user: { id: string }; token: string };
+      assert.equal(retry.user.id, first.user.id, "the replayed response must be the exact same login, not a second one");
+      assert.equal(retry.token, first.token);
+    },
+    { emailSender },
+  );
+});
+
 test("verify-code rejects a wrong code without consuming it, locks it out after too many wrong attempts, and the right code still works right up until that lockout", async () => {
   const emailSender = createFakeEmailSender();
   await withServer(

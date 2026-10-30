@@ -418,6 +418,21 @@ export function createAuthRouter(
    * this is the one place that can actually complete a login once the code
    * step is active. See verifyLoginCodeRateLimiter's own comment above for
    * why this route needed the same volumetric throttle as its siblings.
+   *
+   * Round 1334: the same fetchWithWakeRetry lost-response risk round 1328
+   * fixed for signup -- deleteLoginCode (the code is single-use) and
+   * issueSession both commit before the response is sent, so a dropped
+   * connection after a genuinely correct code already completed the login
+   * left a retry of the identical request hitting `!pending` (the code row
+   * is already gone) and returning LOGIN_CODE_EXPIRED, even though the
+   * login had already succeeded. Same userId-less scoping trick as signup
+   * (round 1328's own comment): no session exists yet until this call
+   * creates one, so the idempotency key itself stands in for `userId`.
+   * The wrong-code/expired/lockout branches below are deliberately left
+   * OUTSIDE this guard-worthy concern -- those throw HttpError and are
+   * genuine duplicate-submission outcomes the existing reuse/lockout tests
+   * already cover unaffected (withIdempotency's own `if (!key) return
+   * run()` passthrough), not a lost-response case to replay.
    */
   router.post("/auth/login/verify-code", verifyLoginCodeRateLimiter, async (req, res, next) => {
     const parsed = VerifyLoginCodeSchema.safeParse(req.body);
@@ -427,26 +442,27 @@ export function createAuthRouter(
     }
     try {
       const { loginCodeId, code } = parsed.data;
-      const pending = getLoginCode(db, loginCodeId);
-      const expired = !pending || new Date(pending.expiresAt).getTime() < Date.now() || pending.attempts >= MAX_LOGIN_CODE_ATTEMPTS;
-      if (expired) {
-        if (pending) deleteLoginCode(db, loginCodeId);
-        next(new HttpError(401, "This login code has expired. Please log in again.", "LOGIN_CODE_EXPIRED"));
-        return;
-      }
-      if (!loginCodeMatches(code, pending.codeHash)) {
-        incrementLoginCodeAttempts(db, loginCodeId);
-        next(new HttpError(401, "Incorrect code. Please try again.", "INVALID_LOGIN_CODE"));
-        return;
-      }
-      deleteLoginCode(db, loginCodeId);
-      const user = findUserById(db, pending.userId);
-      if (!user) {
-        next(new HttpError(401, "This account no longer exists", "USER_NOT_FOUND"));
-        return;
-      }
-      const token = issueSession(db, user.id);
-      res.json({ user, token });
+      const idempotencyKey = req.header("X-Idempotency-Key") || undefined;
+      const { status, body } = await withIdempotency(db, idempotencyKey, idempotencyKey ?? "", "POST /auth/login/verify-code", async () => {
+        const pending = getLoginCode(db, loginCodeId);
+        const expired = !pending || new Date(pending.expiresAt).getTime() < Date.now() || pending.attempts >= MAX_LOGIN_CODE_ATTEMPTS;
+        if (expired) {
+          if (pending) deleteLoginCode(db, loginCodeId);
+          throw new HttpError(401, "This login code has expired. Please log in again.", "LOGIN_CODE_EXPIRED");
+        }
+        if (!loginCodeMatches(code, pending.codeHash)) {
+          incrementLoginCodeAttempts(db, loginCodeId);
+          throw new HttpError(401, "Incorrect code. Please try again.", "INVALID_LOGIN_CODE");
+        }
+        deleteLoginCode(db, loginCodeId);
+        const user = findUserById(db, pending.userId);
+        if (!user) {
+          throw new HttpError(401, "This account no longer exists", "USER_NOT_FOUND");
+        }
+        const token = issueSession(db, user.id);
+        return { status: 200, body: { user, token } };
+      });
+      res.status(status).json(body);
     } catch (err) {
       next(err);
     }

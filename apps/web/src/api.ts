@@ -306,8 +306,19 @@ export function login(
   return request("/auth/login", { method: "POST", body: JSON.stringify({ email, password, lang }) });
 }
 
+/**
+ * Round 1334: same `x-idempotency-key` mechanism signup already sends
+ * (round 1328) -- fetchWithWakeRetry can retry this exact request after
+ * the server already consumed the code and issued a session but the
+ * response was lost, and without a key the retry would 401
+ * LOGIN_CODE_EXPIRED on a login that already succeeded.
+ */
 export function verifyLoginCode(loginCodeId: string, code: string): Promise<{ user: User; token: string }> {
-  return request("/auth/login/verify-code", { method: "POST", body: JSON.stringify({ loginCodeId, code }) });
+  return request("/auth/login/verify-code", {
+    method: "POST",
+    headers: { "x-idempotency-key": crypto.randomUUID() },
+    body: JSON.stringify({ loginCodeId, code }),
+  });
 }
 
 /**
