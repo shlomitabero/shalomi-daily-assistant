@@ -88,7 +88,16 @@ const CreateProjectSchema = z.object({
   // neither this route nor errorMiddleware ever catches as anything but
   // a raw 500 -- confirmed live against the real running server.
   description: z.string().trim().min(1, "description is required"),
-  name: z.string().optional(),
+  // Round 1292: round 919's own fix above only covered `description` --
+  // `name` was left optional with no `.trim().min(1)` guard at all, unlike
+  // this exact field's own sibling schema (RenameProjectSchema, below)
+  // which already enforces it correctly. A caller-supplied "" or "   "
+  // passed through unchanged (name ?? deriveName(description) only falls
+  // back for null/undefined, never for an empty/whitespace string),
+  // storing a blank project name verbatim -- not reachable through
+  // today's web client (createProject never sends `name` at all), but a
+  // real server-side validation hole for any other caller.
+  name: z.string().trim().min(1).optional(),
 });
 
 const FromTemplateSchema = z.object({

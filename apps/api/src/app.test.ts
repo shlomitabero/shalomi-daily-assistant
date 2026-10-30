@@ -5811,6 +5811,36 @@ test("creating a project or enhancing an idea with a whitespace-only value is re
   });
 });
 
+/**
+ * Round 1292: round 919's own fix just above only covered `description` --
+ * CreateProjectSchema's `name` was left with no `.trim().min(1)` guard at
+ * all, unlike its own sibling RenameProjectSchema (the test near the top
+ * of this file for exactly that route). A caller-supplied "" or "   "
+ * passed `??`'s own fallback (name ?? deriveName(description), which only
+ * triggers for null/undefined) unchanged, storing a blank project name.
+ * Not reachable through today's web client (createProject never sends
+ * `name`), but a genuine server-side validation hole for any other caller.
+ */
+test("creating a project with a blank or whitespace-only custom name is rejected with a clean 400, not stored verbatim", async () => {
+  await withServer(async (baseUrl) => {
+    const token = await signup(baseUrl, "whitespace-create-name@example.com");
+
+    const emptyRes = await fetch(`${baseUrl}/api/projects`, {
+      method: "POST",
+      headers: authHeaders(token),
+      body: JSON.stringify({ description: "A CRM with customers and deals.", name: "" }),
+    });
+    assert.equal(emptyRes.status, 400, "an empty-string name must be rejected with a clean 400");
+
+    const whitespaceRes = await fetch(`${baseUrl}/api/projects`, {
+      method: "POST",
+      headers: authHeaders(token),
+      body: JSON.stringify({ description: "A CRM with customers and deals.", name: "   " }),
+    });
+    assert.equal(whitespaceRes.status, 400, "a whitespace-only name must be rejected with a clean 400");
+  });
+});
+
 test("editing a project's description on a project you have no access to still 404s, the same as any other project route", async () => {
   await withServer(async (baseUrl) => {
     const ownerToken = await signup(baseUrl, "desc-owner3@example.com");
