@@ -1790,6 +1790,23 @@ tbody tr:hover {
   margin-top: 4px;
 }
 
+/*
+ * Round 1348: `.row-actions` (shared with the table-row `<td>` usage, which
+ * must stay a single unwrapped line) is a plain `display: flex` with no
+ * wrap. Inside a 240px-wide `.board-column` with 12px padding and the
+ * `.board-card`'s own 10/12px padding, the usable inner width is only
+ * ~190px -- not enough to fit up to 5 default-sized buttons (edit/
+ * duplicate/send WhatsApp/print/delete) on one line, so they overflowed
+ * and clipped off the card. Found via a live Playwright browser session
+ * in round 1347, fixed the next round. Scoped to `.board-card .row-actions`
+ * only, so the table-row usage of the same `.row-actions` class is
+ * unaffected.
+ */
+.board-card .row-actions {
+  flex-wrap: wrap;
+  justify-content: flex-start;
+}
+
 .calendar-view {
   display: flex;
   flex-direction: column;

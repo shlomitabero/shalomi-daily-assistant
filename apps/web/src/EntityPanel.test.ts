@@ -16796,3 +16796,38 @@ test("EntityPanel's record-form warns before a tab close/refresh discards an in-
     }
   });
 });
+
+/**
+ * Round 1348: a live Playwright browser session (round 1347's survey)
+ * found that in Kanban Board view, `BoardCard`'s `.row-actions` button row
+ * (edit/duplicate/send WhatsApp/print/delete -- up to 5 plain buttons)
+ * overflows and clips off the card. `.row-actions` (styles.css) is a plain
+ * `display: flex` with no wrap, shared with the table-row `<td
+ * className="row-actions">` usage which must stay a single unwrapped
+ * line -- so the fix can't touch the shared rule itself, only a selector
+ * scoped to the board card. A 240px `.board-column` with 12px padding,
+ * minus the `.board-card`'s own 10/12px padding, leaves only ~190px of
+ * usable inner width, nowhere near enough for 5 default-sized buttons on
+ * one line. jsdom has no layout engine and can't detect real
+ * overflow/clipping (see this file's own print-sheet overflow-wrap test
+ * above), so this reads styles.css's own source directly instead.
+ */
+test("the board card's row-actions can wrap onto multiple lines instead of overflowing/clipping the card, without touching the shared table-row row-actions layout", () => {
+  const stylesCss = readFileSync(new URL("./styles.css", import.meta.url), "utf8");
+
+  const sharedRowActions = stylesCss.match(/(?<!\.board-card )\.row-actions \{[\s\S]*?\}/)?.[0];
+  assert.ok(sharedRowActions, "expected the shared .row-actions rule to still exist in styles.css");
+  assert.doesNotMatch(
+    sharedRowActions!,
+    /flex-wrap:\s*wrap/,
+    "the shared .row-actions rule (used by the table-row <td>) must NOT wrap -- only the board-card-scoped rule should",
+  );
+
+  const boardCardRowActions = stylesCss.match(/\.board-card \.row-actions \{[\s\S]*?\}/)?.[0];
+  assert.ok(boardCardRowActions, "expected a .board-card .row-actions rule in styles.css");
+  assert.match(
+    boardCardRowActions!,
+    /flex-wrap:\s*wrap/,
+    ".board-card .row-actions must allow its buttons to wrap onto multiple lines instead of overflowing the narrow board column",
+  );
+});
