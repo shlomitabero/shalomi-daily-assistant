@@ -482,6 +482,67 @@ test("generateBackupZipEntries includes a file field's real uploaded bytes as it
 });
 
 /**
+ * Round 1270: migrate.ts's own case-insensitive rename detection treats a
+ * case-only entity rename (e.g. "applicant" -> "Applicant") as a true
+ * no-op at the db layer -- but createUploadMiddleware wrote this file's
+ * real upload to a directory cased to match whatever was canonical AT
+ * UPLOAD TIME, and nothing ever moves or renames that directory on a
+ * later refine. Before resolveUploadedFilePath's own case-insensitive
+ * sibling-directory fallback (same round), this silently dropped the
+ * file from "Backup all data" even though it still physically exists.
+ */
+test("generateBackupZipEntries still finds a file field's real uploaded bytes after the entity's name was later changed by letter case only", () => {
+  const fileProject: Project = {
+    ...project,
+    spec: {
+      ...project.spec,
+      entities: [
+        {
+          name: "Applicant",
+          label: "מועמדים",
+          fields: [
+            { name: "name", label: "שם", type: "text", required: true },
+            { name: "resume", label: "קורות חיים", type: "file", required: false },
+          ],
+        },
+      ],
+    },
+  };
+  const db = createTestDb(fileProject);
+  const applicant = fileProject.spec.entities[0];
+  // The entity as it was named AT THE TIME OF THE ORIGINAL UPLOAD -- a
+  // real insert through this same, then-valid casing (round 1210's own
+  // coerceValue check requires the url's entity segment to match the
+  // entity object's own name at write time) -- before a later refine
+  // recased it to "Applicant".
+  const applicantAtUploadTime = { ...applicant, name: "applicant" };
+  const uploadsDir = mkdtempSync(path.join(tmpdir(), "forge-backup-test-"));
+  try {
+    const filename = `${randomUUID()}.pdf`;
+    // The real upload physically lives under the LOWERCASE directory --
+    // whatever "Applicant" was canonically cased as at the time this file
+    // was actually uploaded, before a later refine recased it.
+    mkdirSync(path.join(uploadsDir, fileProject.id, "applicant"), { recursive: true });
+    const realBytes = Buffer.from("%PDF-fake-resume-bytes");
+    writeFileSync(path.join(uploadsDir, fileProject.id, "applicant", filename), realBytes);
+    const { id } = insertRecord(db, fileProject.id, applicantAtUploadTime, {
+      name: "Dana Levi",
+      resume: JSON.stringify({ url: `/api/uploads/${fileProject.id}/applicant/${filename}`, name: "dana-resume.pdf", size: realBytes.length, mimeType: "application/pdf" }),
+    });
+
+    // generateBackupZipEntries reads fileProject.spec.entities, whose
+    // entity is named "Applicant" (the CURRENT, post-rename canonical
+    // name) -- the actual scenario this test exercises.
+    const entries = generateBackupZipEntries(db, fileProject, {}, uploadsDir);
+    const fileEntry = entries.find((e) => e.path === `Applicant/files/${id}-resume-dana-resume.pdf`);
+    assert.ok(fileEntry, "expected the real file entry despite the entity's CURRENT canonical casing not matching the upload directory's own casing on disk");
+    assert.deepEqual(fileEntry!.content, realBytes, "the ZIP entry's bytes must exactly match what was actually uploaded");
+  } finally {
+    rmSync(uploadsDir, { recursive: true, force: true });
+  }
+});
+
+/**
  * A file field pointing at an upload that's already been deleted (or was
  * never a real upload to begin with -- e.g. a case-mismatched or stale
  * descriptor) must never fail the whole backup; it's simply skipped,

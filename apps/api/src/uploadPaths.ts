@@ -1,3 +1,4 @@
+import { existsSync, readdirSync } from "node:fs";
 import { rm } from "node:fs/promises";
 import path from "node:path";
 
@@ -61,6 +62,18 @@ export const UPLOADED_FILENAME = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{
  * is what actually constrains the resolved target back inside uploadsDir.
  * Returns null for any value that doesn't resolve to a real, safely-
  * bounded upload -- never throws.
+ *
+ * Round 1270: a case-only entity rename is a true no-op at the db layer
+ * (migrate.ts's own case-insensitive rename detection, confirmed across
+ * rounds 617-620/954/1160 for exactly this reason) -- but the filesystem
+ * is case-sensitive, and createUploadMiddleware wrote this file under
+ * whatever casing was canonical AT UPLOAD TIME, which nothing ever moves
+ * or renames on a later refine. When the exact-case `entityName` directory
+ * has no such file, falls back to a case-insensitive sibling lookup under
+ * this same project's own upload root before giving up -- still bounded
+ * by `isPathInsideDir`, so this adds no new ability to escape uploadsDir.
+ * Every caller (deleteUploadedFile below, backup.ts's own ZIP export,
+ * automations.ts's findTemplateFileAttachment) inherits this for free.
  */
 export function resolveUploadedFilePath(uploadsDir: string, projectId: string, entityName: string, rawValue: unknown): string | null {
   if (typeof rawValue !== "string" || rawValue === "") return null;
@@ -76,6 +89,20 @@ export function resolveUploadedFilePath(uploadsDir: string, projectId: string, e
   if (!UPLOADED_FILENAME.test(filename)) return null;
   const target = path.join(uploadsDir, projectId, entityName, filename);
   if (!isPathInsideDir(target, uploadsDir)) return null;
+  if (existsSync(target)) return target;
+  const projectDir = path.join(uploadsDir, projectId);
+  try {
+    const sibling = readdirSync(projectDir).find((name) => name.toLowerCase() === entityName.toLowerCase() && name !== entityName);
+    if (sibling) {
+      const fallbackTarget = path.join(projectDir, sibling, filename);
+      if (isPathInsideDir(fallbackTarget, uploadsDir) && existsSync(fallbackTarget)) return fallbackTarget;
+    }
+  } catch {
+    // projectDir doesn't exist or isn't readable -- fall through to the
+    // original, exact-case target, matching this function's own prior
+    // "return the constructed path regardless of whether it exists"
+    // contract for a genuinely-missing file.
+  }
   return target;
 }
 

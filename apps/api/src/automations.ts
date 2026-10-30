@@ -1,7 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import { isIP } from "node:net";
-import path from "node:path";
 import { z } from "zod";
 import type { Entity, EntityRecord, Project } from "@forge/shared";
 import {
@@ -21,7 +20,7 @@ import {
 import { isHebrewText } from "@forge/spec-engine";
 import { recordDisplayLabel } from "./displayField.js";
 import type { EmailAttachment, EmailSender } from "./email.js";
-import { isPathInsideDir, UPLOADED_FILENAME } from "./uploadPaths.js";
+import { resolveUploadedFilePath } from "./uploadPaths.js";
 import { findMatchingRecord } from "./whatsapp.js";
 import type { WhatsAppAttachment, WhatsAppWebManager } from "./whatsappWeb.js";
 
@@ -223,10 +222,14 @@ export function findTemplateFileAttachment(
       continue;
     }
     if (typeof parsed.url !== "string" || typeof parsed.name !== "string" || typeof parsed.mimeType !== "string") continue;
-    const storedFilename = parsed.url.slice(parsed.url.lastIndexOf("/") + 1);
-    if (!storedFilename || !UPLOADED_FILENAME.test(storedFilename)) continue;
-    const filePath = path.join(uploadsDir, projectId, entity.name, storedFilename);
-    if (!isPathInsideDir(filePath, uploadsDir)) continue;
+    // Round 1270: delegates the path-building/validation this function's
+    // own doc comment already claimed to mirror, rather than actually
+    // re-duplicating it -- resolveUploadedFilePath's own case-insensitive
+    // sibling-directory fallback (same round) now also covers a file
+    // referenced by a WhatsApp automation whose entity was later renamed
+    // by letter case only, which this inline copy never would have.
+    const filePath = resolveUploadedFilePath(uploadsDir, projectId, entity.name, rawValue);
+    if (!filePath) continue;
     return { filePath, fileName: parsed.name, mimeType: parsed.mimeType };
   }
   return null;

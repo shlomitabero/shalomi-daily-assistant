@@ -938,6 +938,51 @@ test("findTemplateFileAttachment returns null when the stored filename doesn't m
   assert.equal(attachment, null, "a filename this server itself never actually generated must never be read and attached");
 });
 
+/**
+ * Round 1270: migrate.ts's own case-insensitive rename detection treats a
+ * case-only entity rename (e.g. "customer" -> "Customer") as a true no-op
+ * at the db layer -- but createUploadMiddleware wrote this file's real
+ * upload to a directory cased to match whatever was canonical AT UPLOAD
+ * TIME, and nothing ever moves or renames that directory on a later
+ * refine. Before resolveUploadedFilePath's own case-insensitive fallback
+ * (same round), this function rebuilt the path from the entity's CURRENT
+ * canonical name, which no longer matched the real, lowercase-cased
+ * directory still sitting on disk -- silently dropping the attachment
+ * from a WhatsApp automation message that should have included it.
+ */
+test("findTemplateFileAttachment still finds the real uploaded file after the entity's name was later changed by letter case only", async () => {
+  const entityWithInvoice: Entity = {
+    name: "Customer",
+    label: "Customer",
+    fields: [
+      { name: "name", type: "text", required: true },
+      { name: "invoice", type: "file", required: false },
+    ],
+  };
+  const uploadsDir = await mkdtemp(path.join(tmpdir(), "forge-automations-case-rename-attachment-test-"));
+  try {
+    const storedFilename = "a1b2c3d4-e5f6-7890-abcd-ef1234567890.pdf";
+    // The real upload physically lives under the LOWERCASE directory --
+    // whatever "Customer" was canonically cased as at the time this file
+    // was actually uploaded, before a later refine recased it.
+    await mkdir(path.join(uploadsDir, "proj1", "customer"), { recursive: true });
+    await writeFile(path.join(uploadsDir, "proj1", "customer", storedFilename), "%PDF-fake-invoice-contents");
+
+    const record = {
+      name: "Dana",
+      invoice: JSON.stringify({ url: `/api/uploads/proj1/customer/${storedFilename}`, name: "invoice-203.pdf", size: 27, mimeType: "application/pdf" }),
+    };
+    const attachment = findTemplateFileAttachment(uploadsDir, "proj1", entityWithInvoice, "Here's {{invoice}}", record);
+    assert.deepEqual(attachment, {
+      filePath: path.join(uploadsDir, "proj1", "customer", storedFilename),
+      fileName: "invoice-203.pdf",
+      mimeType: "application/pdf",
+    });
+  } finally {
+    await rm(uploadsDir, { recursive: true, force: true });
+  }
+});
+
 test("findTemplateFileAttachment returns null when the template references no file field, references one with no value, or the field isn't a 'file' type at all", () => {
   const entityWithInvoice: Entity = {
     ...orderEntity,
