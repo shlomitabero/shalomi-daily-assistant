@@ -950,10 +950,19 @@ export function getCalendarFeedToken(projectId: string): Promise<{ token: string
  * other collaborator is written in. Optional since this is a bodyless
  * POST with nowhere else to carry it, same convention as
  * removeCollaborator's own `lang` query param below.
+ *
+ * Round 1313: same `x-idempotency-key` mechanism createProject already
+ * uses (see its own doc comment) -- here specifically because a response
+ * lost in transit after the server already rotated the token made a
+ * fetchWithWakeRetry retry rotate it a SECOND time and re-send every
+ * collaborator a second, confusing "link was reset" email.
  */
 export function regenerateCalendarFeedToken(projectId: string, lang?: "he" | "en"): Promise<{ token: string }> {
   const query = lang ? `?lang=${lang}` : "";
-  return request(`/projects/${projectId}/calendar-feed-token/regenerate${query}`, { method: "POST" });
+  return request(`/projects/${projectId}/calendar-feed-token/regenerate${query}`, {
+    method: "POST",
+    headers: { "x-idempotency-key": crypto.randomUUID() },
+  });
 }
 
 export function listCheckpoints(projectId: string): Promise<{ checkpoints: Checkpoint[] }> {

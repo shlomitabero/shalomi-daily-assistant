@@ -18080,6 +18080,54 @@ test("POST /projects/:id/calendar-feed-token/regenerate invalidates the old toke
 });
 
 /**
+ * Round 1313: this route's own effect invalidates the exact token a retry
+ * would otherwise still expect -- a response lost in transit after the
+ * server already rotated the token used to make a retry with no
+ * idempotency protection rotate it AGAIN, silently discarding the first
+ * rotation's own token (and re-sending every collaborator a second,
+ * confusing "link was reset" email) before the caller ever even saw it.
+ * Same shape as PATCH .../role's own round-1262 idempotency protection.
+ */
+test("POST .../calendar-feed-token/regenerate retried with the same idempotency key after the first attempt already succeeded replays the original token, instead of rotating it again", async () => {
+  await withServer(async (baseUrl, db) => {
+    const email = `calendar-feed-regen-idem-${randomUUID()}@example.com`;
+    const authToken = await signup(baseUrl, email);
+    const user = findUserByEmail(db, email)!;
+    const spec: ProductSpec = {
+      summary: "test",
+      personas: [],
+      roles: ["Admin"],
+      entities: [{ name: "Appointment", fields: [{ name: "name", type: "text", required: true }] }],
+      screens: [],
+      assumptions: [],
+      openQuestions: [],
+    };
+    const projectId = randomUUID();
+    insertProject(db, { id: projectId, ownerId: user.id, name: "CRM", description: "test", spec });
+    diffAndMigrate(db, projectId, undefined, spec);
+    markProjectBuilt(db, projectId);
+
+    const headers = { ...authHeaders(authToken), "x-idempotency-key": "regen-token-repro-key" };
+    const firstRes = await fetch(`${baseUrl}/api/projects/${projectId}/calendar-feed-token/regenerate`, { method: "POST", headers });
+    assert.equal(firstRes.status, 200);
+    const { token: firstToken } = (await firstRes.json()) as { token: string };
+    assert.ok(firstToken && firstToken.length >= 32, "sanity check: the first attempt must have genuinely rotated the token");
+
+    const retryRes = await fetch(`${baseUrl}/api/projects/${projectId}/calendar-feed-token/regenerate`, { method: "POST", headers });
+    assert.equal(retryRes.status, 200);
+    const { token: retryToken } = (await retryRes.json()) as { token: string };
+    assert.equal(retryToken, firstToken, "a retried regenerate with the same idempotency key must replay the original token, not rotate it a second time");
+
+    const tokenResAfter = await fetch(`${baseUrl}/api/projects/${projectId}/calendar-feed-token`, { headers: authHeaders(authToken) });
+    assert.equal(
+      (await tokenResAfter.json() as { token: string }).token,
+      firstToken,
+      "the project's own stored token must still be the first attempt's own token, proving the retry never actually rotated it again",
+    );
+  });
+});
+
+/**
  * Round 1247: the project-wide counterpart to the per-entity feed route --
  * a project with more than one entity carrying its own independent date
  * field (Appointment.date and Invoice.dueDate here) can now subscribe to

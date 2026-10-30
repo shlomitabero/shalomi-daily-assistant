@@ -1866,33 +1866,52 @@ export function createProjectsRouter(
    * collaborator's calendar app subscription with zero signal. The owner
    * who triggered this already knows; only the OTHER collaborators need
    * telling.
+   *
+   * Round 1313: unlike every sibling owner-only mutation in this file
+   * (role change just below, removal, ownership transfer, project
+   * deletion, self-leave), this route never got the matching
+   * withIdempotency() wrap -- a response lost in transit after
+   * fetchWithWakeRetry's own documented risk window (the server already
+   * committed, but the reply never arrived) made its retry rotate the
+   * token a SECOND time and send every collaborator a second, confusing
+   * "your calendar subscription link was reset" email for what the owner
+   * experienced as one click -- and silently invalidated the very token
+   * from attempt 1 the owner never even got to see. requireProjectOwner
+   * moves inside the withIdempotency callback for the identical reason
+   * every sibling route's own doc comment already gives: a genuine retry
+   * never reaches it, since the wrap short-circuits first with the first
+   * attempt's own cached response.
    */
   router.post(
     "/projects/:id/calendar-feed-token/regenerate",
     calendarFeedTokenRateLimiter,
     asyncRoute(async (req, res) => {
-      const project = requireProjectOwner(db, req.params.id, req.userId!);
-      const token = regenerateCalendarFeedToken(db, req.params.id);
-      if (emailSender.configured) {
-        const isHebrew = req.query.lang !== "en";
-        const subject = isHebrew
-          ? `קישור הלוח שנה של "${project.name}" ב-Forge AI אופס`
-          : `The calendar link for "${project.name}" on Forge AI was reset`;
-        const body = isHebrew
-          ? `בעל/ת הפרויקט "${project.name}" ב-Forge AI אפס/ה את קישור הלוח שנה. ההרשמה הקיימת שלך בלוח השנה הפסיקה לעבוד -- יש להירשם מחדש מתוך הפרויקט.`
-          : `The owner of "${project.name}" on Forge AI reset the calendar subscription link. Your existing calendar subscription has stopped working -- you'll need to re-subscribe from within the project.`;
-        for (const collaborator of listCollaborators(db, project.id)) {
-          try {
-            await emailSender.send(collaborator.email, subject, body);
-          } catch {
-            // Swallowed, deliberately, same as this route family's own
-            // convention -- the rotation itself already succeeded and
-            // was already committed; a failed best-effort notification
-            // must never turn that into an error response.
+      const idempotencyKey = req.header("X-Idempotency-Key") || undefined;
+      const { body } = await withIdempotency(db, idempotencyKey, req.userId!, `POST /projects/${req.params.id}/calendar-feed-token/regenerate`, async () => {
+        const project = requireProjectOwner(db, req.params.id, req.userId!);
+        const token = regenerateCalendarFeedToken(db, req.params.id);
+        if (emailSender.configured) {
+          const isHebrew = req.query.lang !== "en";
+          const subject = isHebrew
+            ? `קישור הלוח שנה של "${project.name}" ב-Forge AI אופס`
+            : `The calendar link for "${project.name}" on Forge AI was reset`;
+          const emailBody = isHebrew
+            ? `בעל/ת הפרויקט "${project.name}" ב-Forge AI אפס/ה את קישור הלוח שנה. ההרשמה הקיימת שלך בלוח השנה הפסיקה לעבוד -- יש להירשם מחדש מתוך הפרויקט.`
+            : `The owner of "${project.name}" on Forge AI reset the calendar subscription link. Your existing calendar subscription has stopped working -- you'll need to re-subscribe from within the project.`;
+          for (const collaborator of listCollaborators(db, project.id)) {
+            try {
+              await emailSender.send(collaborator.email, subject, emailBody);
+            } catch {
+              // Swallowed, deliberately, same as this route family's own
+              // convention -- the rotation itself already succeeded and
+              // was already committed; a failed best-effort notification
+              // must never turn that into an error response.
+            }
           }
         }
-      }
-      res.json({ token });
+        return { status: 200, body: { token } };
+      });
+      res.json(body);
     }),
   );
 
