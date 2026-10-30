@@ -688,6 +688,14 @@ function AppContent() {
   // EntityPanel mount below as its createPrefill prop, the same way
   // highlightRecordId is carried through for "jump to record".
   const [createPrefill, setCreatePrefill] = useState<{ fieldName: string; value: string } | null>(null);
+  // Round 1337: set by BusinessTwinPanel's own overdue/dueSoon stat tiles,
+  // carried through to the single EntityPanel mount below as its
+  // createDateFilter prop, the same "stage it here, EntityPanel applies it
+  // once loaded, then clears it" convention createPrefill/highlightRecordId
+  // already use -- without this, clicking "3 Invoices overdue" landed on
+  // the entity's full, unfiltered table instead of the filtered one the
+  // tile's own count was actually describing.
+  const [createDateFilter, setCreateDateFilter] = useState<{ fieldName: string; value: "overdue" | "dueSoon" } | null>(null);
   const [whatsappUnreadCount, setWhatsappUnreadCount] = useState(0);
   // Count of enabled automation rules whose lastStatus is "failed" -- a
   // standing problem (webhook endpoint down, WhatsApp disconnected, a stale
@@ -949,6 +957,7 @@ function AppContent() {
     setWhatsappPrefillTo(null);
     setHighlightRecordId(null);
     setCreatePrefill(null);
+    setCreateDateFilter(null);
   }
 
   /**
@@ -3031,6 +3040,8 @@ function AppContent() {
                       onHighlightHandled={() => setHighlightRecordId(null)}
                       createPrefill={createPrefill}
                       onCreatePrefillHandled={() => setCreatePrefill(null)}
+                      createDateFilter={createDateFilter}
+                      onCreateDateFilterHandled={() => setCreateDateFilter(null)}
                       onJumpToRecord={(targetEntity, recordId) => {
                         setActiveEntity(targetEntity);
                         setHighlightRecordId(recordId);
@@ -3105,8 +3116,9 @@ function AppContent() {
               projectId={project.id}
               projectName={project.name}
               onClose={() => setShowTwin(false)}
-              onJumpToEntity={(entityName) => {
+              onJumpToEntity={(entityName, dateFilter) => {
                 setActiveEntity(entityName);
+                if (dateFilter) setCreateDateFilter(dateFilter);
                 setShowTwin(false);
               }}
               onJumpToRecord={(entityName, recordId) => {

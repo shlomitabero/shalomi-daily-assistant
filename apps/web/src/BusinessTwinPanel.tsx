@@ -51,7 +51,18 @@ export function BusinessTwinPanel({
   projectId: string;
   projectName: string;
   onClose: () => void;
-  onJumpToEntity: (entityName: string) => void;
+  /**
+   * Round 1337: the optional second argument lets the overdue/dueSoon
+   * stat tiles below carry the exact field+state the tile is already
+   * named for, so the caller (App.tsx) can pre-apply the matching
+   * toolbar filter on landing -- without it, a user clicking "3 Invoices
+   * overdue" lands on the entity's full, unfiltered table and has to
+   * manually find and set the same filter themselves. Every other
+   * onJumpToEntity call site (the per-entity tiles, mostActiveObservation,
+   * jumpableObservations) has no single field to filter by, so they omit
+   * this argument entirely.
+   */
+  onJumpToEntity: (entityName: string, dateFilter?: { fieldName: string; value: "overdue" | "dueSoon" }) => void;
   /**
    * computeRelationHubObservation (twin.ts) already resolves the
    * "most-linked record" insight down to a specific real entityName+id --
@@ -258,7 +269,7 @@ export function BusinessTwinPanel({
                           type="button"
                           className="twin-stat-tile"
                           aria-label={t("twin.stat.jumpTo", { entity: s.entityLabel })}
-                          onClick={() => onJumpToEntity(s.entityName)}
+                          onClick={() => onJumpToEntity(s.entityName, { fieldName: s.fieldName, value: "overdue" })}
                         >
                           <div className="twin-stat-value">{formatNumberValue(s.overdueCount, lang)}</div>
                           <div className="twin-stat-label">{t("twin.dashboard.overdueOf", { field: s.fieldLabel, entity: s.entityLabel })}</div>
@@ -271,7 +282,7 @@ export function BusinessTwinPanel({
                           type="button"
                           className="twin-stat-tile"
                           aria-label={t("twin.stat.jumpTo", { entity: s.entityLabel })}
-                          onClick={() => onJumpToEntity(s.entityName)}
+                          onClick={() => onJumpToEntity(s.entityName, { fieldName: s.fieldName, value: "dueSoon" })}
                         >
                           <div className="twin-stat-value">{formatNumberValue(s.dueSoonCount, lang)}</div>
                           <div className="twin-stat-label">{t("twin.dashboard.dueSoonOf", { field: s.fieldLabel, entity: s.entityLabel })}</div>

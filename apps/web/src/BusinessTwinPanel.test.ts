@@ -83,7 +83,7 @@ function mockTwinFetch() {
 }
 
 function renderTwinPanel(
-  onJumpToEntity: (entityName: string) => void,
+  onJumpToEntity: (entityName: string, dateFilter?: { fieldName: string; value: "overdue" | "dueSoon" }) => void,
   onJumpToRecord: (entityName: string, recordId: number) => void = () => {},
 ) {
   return render(
@@ -1009,8 +1009,12 @@ test("BusinessTwinPanel's numericStats/overdueStats/dueSoonStats dashboard tiles
       throw new Error(`unexpected request ${input}`);
     }) as typeof fetch;
     const jumps: string[] = [];
+    const dateFilters: Array<{ fieldName: string; value: "overdue" | "dueSoon" } | undefined> = [];
     try {
-      renderTwinPanel((entityName) => jumps.push(entityName));
+      renderTwinPanel((entityName, dateFilter) => {
+        jumps.push(entityName);
+        dateFilters.push(dateFilter);
+      });
       await waitForCondition(() => document.querySelector(".twin-view-toggle") !== null);
 
       const dashboardButton = Array.from(document.querySelectorAll(".twin-view-toggle button")).find((b) => b.textContent?.includes("Dashboard"));
@@ -1026,11 +1030,17 @@ test("BusinessTwinPanel's numericStats/overdueStats/dueSoonStats dashboard tiles
       assert.ok(totalTile, "expected a numericStats tile");
       fireEvent.click(totalTile);
       assert.deepEqual(jumps, ["Order"], "clicking the numericStats tile must call onJumpToEntity with its own entityName");
+      assert.equal(dateFilters[0], undefined, "the numericStats tile has no overdue/dueSoon classification, so it must not pass a dateFilter");
 
       const overdueTile = tiles.find((el) => el.querySelector(".twin-stat-label")!.textContent?.includes("Due date"))!;
       assert.ok(overdueTile, "expected an overdueStats tile");
       fireEvent.click(overdueTile);
       assert.deepEqual(jumps, ["Order", "Order"], "clicking the overdueStats tile must call onJumpToEntity with its own entityName");
+      assert.deepEqual(
+        dateFilters[1],
+        { fieldName: "dueDate", value: "overdue" },
+        "clicking the overdueStats tile must also pass its own fieldName and 'overdue' so the target entity opens pre-filtered",
+      );
 
       const dueSoonTile = tiles.find((el) => el.querySelector(".twin-stat-label")!.textContent?.includes("Renewal"))!;
       assert.ok(dueSoonTile, "expected a dueSoonStats tile");
@@ -1039,6 +1049,11 @@ test("BusinessTwinPanel's numericStats/overdueStats/dueSoonStats dashboard tiles
         jumps,
         ["Order", "Order", "Customer"],
         "clicking the dueSoonStats tile must call onJumpToEntity with ITS OWN entityName (Customer), not the previous tiles' Order",
+      );
+      assert.deepEqual(
+        dateFilters[2],
+        { fieldName: "renewal", value: "dueSoon" },
+        "clicking the dueSoonStats tile must also pass its own fieldName and 'dueSoon' so the target entity opens pre-filtered",
       );
     } finally {
       globalThis.fetch = originalFetch;

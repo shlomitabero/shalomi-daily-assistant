@@ -1514,6 +1514,8 @@ export function EntityPanel({
   onHighlightHandled,
   createPrefill,
   onCreatePrefillHandled,
+  createDateFilter,
+  onCreateDateFilterHandled,
   onJumpToRecord,
   onSendWhatsApp,
   onRecordCountChange,
@@ -1534,6 +1536,10 @@ export function EntityPanel({
   createPrefill?: { fieldName: string; value: string } | null;
   /** Called once the incoming createPrefill has actually been applied, so the caller can clear it and not re-trigger on the next render -- the same convention onHighlightHandled above already uses for highlightRecordId. */
   onCreatePrefillHandled?: () => void;
+  /** A single date field + "overdue"/"dueSoon" to apply as this entity's own toolbar filter once its tab is open, e.g. from Business Twin's own overdue/dueSoon stat tiles -- mirrors createPrefill's own shape and the exact same filter semantics the toolbar's per-field date-filter dropdown already offers. */
+  createDateFilter?: { fieldName: string; value: "overdue" | "dueSoon" } | null;
+  /** Called once the incoming createDateFilter has actually been applied, so the caller can clear it and not re-trigger on the next render -- the same convention onCreatePrefillHandled above uses for createPrefill. */
+  onCreateDateFilterHandled?: () => void;
   /** Called when a relation cell's value (in the table or a board card) is clicked, so the caller can switch to the target entity's own tab and highlight that record there -- the same "jump to record" mechanism Global Search, WhatsApp log, and Business Twin already trigger from their own panels. */
   onJumpToRecord?: (targetEntity: string, recordId: number) => void;
   /** Called with a record's raw phone-field value when the row's "Send WhatsApp" action is clicked, so the caller can open the WhatsApp panel with that number prefilled -- the reverse direction of onJumpToRecord, which already exists for an inbound WhatsApp message resolving to a record. */
@@ -2639,6 +2645,32 @@ export function EntityPanel({
     onCreatePrefillHandled?.();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [createPrefill, loading]);
+
+  /**
+   * Round 1337: applies an incoming createDateFilter (Business Twin's own
+   * overdue/dueSoon stat tiles, carrying the exact field+state the tile's
+   * own count was describing) once this entity's own tab is actually open
+   * and loaded -- mirrors the createPrefill effect just above, and reuses
+   * the toolbar's own filter <select> onChange body (setFieldFilters +
+   * setFieldFiltersPreference) rather than duplicating it, since applying
+   * one field's filter value is exactly what that control already does.
+   * Without this, clicking a stat tile landed on the entity's full,
+   * unfiltered table instead of the filtered one the tile's own count was
+   * actually about.
+   */
+  useEffect(() => {
+    if (!createDateFilter || loading) return;
+    const field = entity.fields.find((f) => f.name === createDateFilter.fieldName);
+    if (field) {
+      setFieldFilters((prev) => {
+        const next = { ...prev, [field.name]: createDateFilter.value };
+        setFieldFiltersPreference(projectId, entity.name, userId, next);
+        return next;
+      });
+    }
+    onCreateDateFilterHandled?.();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [createDateFilter, loading]);
 
   // Auto-fades the highlight a few seconds after it lands, so an old
   // "jump to record" doesn't stay visually marked forever if the user just

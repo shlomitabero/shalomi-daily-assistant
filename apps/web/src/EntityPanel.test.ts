@@ -15275,6 +15275,84 @@ test("EntityPanel's per-field filter offers a deadline-named date field too, nar
   });
 });
 
+/**
+ * Round 1337: Business Twin's own overdue/dueSoon stat tiles (round 1332)
+ * already jump to the entity by name, but until now carried no field --
+ * a user clicking "1 of 3 Tasks overdue" landed on this exact same
+ * unfiltered table, with no indication which field or which records the
+ * tile's own count was even about, and had to find and set this same
+ * filter dropdown themselves. Confirms createDateFilter (threaded from
+ * App.tsx's own staged state, the same convention createPrefill already
+ * uses) applies the matching filter once the entity's tab is actually
+ * open and loaded, reusing the exact toolbar <select> this file's own
+ * test just above already exercises by hand.
+ */
+test("EntityPanel applies an incoming createDateFilter by pre-applying the matching overdue/dueSoon toolbar filter", async () => {
+  await withJsdom(async () => {
+    function isoDateOffset(days: number): string {
+      const d = new Date();
+      d.setDate(d.getDate() + days);
+      const pad = (n: number) => String(n).padStart(2, "0");
+      return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+    }
+    const taskEntity: Entity = {
+      name: "Task",
+      label: "Task",
+      fields: [
+        { name: "title", label: "Title", type: "text", required: true },
+        { name: "dueDate", label: "Due", type: "date", required: false },
+      ],
+    };
+    const store: EntityRecord[] = [
+      { id: 1, title: "Overdue task", dueDate: isoDateOffset(-5) },
+      { id: 2, title: "Due soon task", dueDate: isoDateOffset(1) },
+      { id: 3, title: "Far future task", dueDate: isoDateOffset(30) },
+    ];
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = (async (input: string, init?: RequestInit) => {
+      const method = init?.method ?? "GET";
+      if (method === "GET" && input === "/api/projects/proj1/entities/Task") {
+        return new Response(JSON.stringify({ records: store }), { status: 200, headers: { "content-type": "application/json" } });
+      }
+      throw new Error(`unexpected request ${method} ${input}`);
+    }) as typeof fetch;
+    let handledCount = 0;
+    const onCreateDateFilterHandled = () => {
+      handledCount++;
+    };
+    try {
+      const view = render(
+        buildEntityPanelElement({ entity: taskEntity, allEntities: [taskEntity], onCreateDateFilterHandled }),
+      );
+      await waitForCondition(() => document.querySelectorAll("table tbody tr").length === 3);
+
+      view.rerender(
+        buildEntityPanelElement({
+          entity: taskEntity,
+          allEntities: [taskEntity],
+          createDateFilter: { fieldName: "dueDate", value: "overdue" },
+          onCreateDateFilterHandled,
+        }),
+      );
+
+      await waitForCondition(() => handledCount === 1);
+      await waitForCondition(() => document.querySelectorAll("table tbody tr").length === 1);
+      assert.match(
+        document.querySelector("table tbody tr")!.textContent ?? "",
+        /Overdue task/,
+        "an incoming createDateFilter must narrow the table to exactly the overdue record, not leave it unfiltered",
+      );
+      assert.equal(
+        (document.querySelector(".entity-status-filter") as HTMLSelectElement).value,
+        "overdue",
+        "the toolbar's own filter dropdown must visibly reflect the applied filter, not just the hidden record set",
+      );
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+});
+
 test("an ordinary (non-deadline-named) date field in the past is never flagged overdue, even decades back", async () => {
   await withJsdom(async () => {
     function isoDateOffset(days: number): string {

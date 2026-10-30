@@ -2833,6 +2833,7 @@ test("App's handleBackToHome resets view/project/selectedAnswers/additionalReque
     "setWhatsappPrefillTo",
     "setHighlightRecordId",
     "setCreatePrefill",
+    "setCreateDateFilter",
     `${code}\nreturn handleBackToHome;`,
   )(
     (v: string) => (state.view = v),
@@ -2853,6 +2854,7 @@ test("App's handleBackToHome resets view/project/selectedAnswers/additionalReque
     () => {},
     () => {},
     (v: string | null) => (state.whatsappPrefillTo = v),
+    () => {},
     () => {},
     () => {},
   ) as () => void;
@@ -2973,6 +2975,7 @@ test("App's handleGoHome resets view/project/selectedAnswers/additionalRequest A
     "setWhatsappPrefillTo",
     "setHighlightRecordId",
     "setCreatePrefill",
+    "setCreateDateFilter",
     `${code}\nreturn handleGoHome;`,
   )(
     (v: string) => (state.view = v),
@@ -2999,6 +3002,7 @@ test("App's handleGoHome resets view/project/selectedAnswers/additionalRequest A
     (v: string | null) => (state.whatsappPrefillTo = v),
     (v: number | null) => (state.highlightRecordId = v),
     (v: unknown) => (state.createPrefill = v),
+    () => {},
   ) as () => void;
 
   fn();
@@ -4475,6 +4479,7 @@ test("App's subscribeAuthExpired effect clears the token and resets user/project
     "setWhatsappPrefillTo",
     "setHighlightRecordId",
     "setCreatePrefill",
+    "setCreateDateFilter",
     `${code}`,
   ) as (
     useEffect: (effect: () => void, deps: unknown[]) => void,
@@ -4505,6 +4510,7 @@ test("App's subscribeAuthExpired effect clears the token and resets user/project
     setWhatsappPrefillTo: (v: unknown) => void,
     setHighlightRecordId: (v: unknown) => void,
     setCreatePrefill: (v: unknown) => void,
+    setCreateDateFilter: (v: unknown) => void,
   ) => void;
 
   fn(
@@ -4545,6 +4551,7 @@ test("App's subscribeAuthExpired effect clears the token and resets user/project
     (v) => (whatsappPrefillToSet = v),
     (v) => (highlightRecordIdSet = v),
     (v) => (createPrefillSet = v),
+    () => {},
   );
 
   assert.ok(subscribedListener, "the effect must call subscribeAuthExpired with a real listener");
