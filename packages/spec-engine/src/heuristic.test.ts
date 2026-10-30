@@ -283,6 +283,23 @@ test("asks about payments (recommending Stripe) for a restaurant-menu descriptio
   assert.equal(paymentQuestion!.recommendation, "Stripe");
 });
 
+test("asks about payments (recommending Stripe) for a field-service/repair description, even though it names none of PAYMENT_KEYWORDS", async () => {
+  // "repair jobs"/"service calls"/"plumbing business" match the Service and
+  // WorkOrder entities but share no substring with "payment"/"billing"/
+  // "invoice"/"checkout"/"stripe"/"subscription" -- a plumber/electrician/
+  // HVAC-tech business billing a customer for a repair call is plainly a
+  // paid transaction, so recommending "No payments" here would be actively
+  // wrong, not just an incomplete guess. Regression test for round 1345's
+  // finding that WorkOrder (like Rental/Property/MenuItem before it) was
+  // never added to BILLING_ENTITY_NAMES.
+  const provider = new HeuristicSpecProvider();
+  const spec = await provider.generate("An app for scheduling repair jobs and service calls for our plumbing business.");
+  assert.deepEqual(spec.entities.map((e) => e.name).sort(), ["Service", "WorkOrder"]);
+  const paymentQuestion = spec.openQuestions.find((q) => q.question.toLowerCase().includes("payment"));
+  assert.ok(paymentQuestion);
+  assert.equal(paymentQuestion!.recommendation, "Stripe");
+});
+
 /**
  * Round 893: an ordinary online-store/retail description matches only
  * Customer/Product -- neither of which is in BILLING_ENTITY_NAMES (Product

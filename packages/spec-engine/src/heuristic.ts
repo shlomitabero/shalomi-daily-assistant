@@ -122,8 +122,21 @@ const PAYMENT_KEYWORDS: (string | RegExp)[] = [
  * mentioning "our service" -- wrongly started recommending Stripe), proving
  * Service's entity match alone isn't a reliable "this app needs payments"
  * signal the way Rental/Property/MenuItem's narrower triggers are.
+ *
+ * Round 1345: the exact same drift, for WorkOrder -- a field-service/repair
+ * description ("scheduling repair jobs and service calls for our plumbing
+ * business") matches Service and WorkOrder, neither of which hits
+ * PAYMENT_KEYWORDS, and got recommended "No payments" even though
+ * WorkOrder's own description ("A scheduled repair or maintenance job
+ * performed for a customer") is as definitionally a billable transaction as
+ * Rental/Property/MenuItem already are -- a plumber/electrician/HVAC-tech
+ * business bills the customer for the repair call. Unlike Service's own
+ * bare-word ambiguity above, WorkOrder's keywords ("work order", "repair
+ * job", "field service", "maintenance request") are specifically
+ * commercial, the same narrow-trigger shape Rental/Property/MenuItem
+ * already have. Added "WorkOrder" below.
  */
-const BILLING_ENTITY_NAMES = new Set(["Invoice", "Order", "Donation", "Subscription", "Rental", "Property", "MenuItem"]);
+const BILLING_ENTITY_NAMES = new Set(["Invoice", "Order", "Donation", "Subscription", "Rental", "Property", "MenuItem", "WorkOrder"]);
 
 interface HebrewLabels {
   labelHe: string;
