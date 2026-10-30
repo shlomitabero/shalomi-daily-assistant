@@ -2636,3 +2636,35 @@ test("GlobalSearchPanel's Escape-to-clear still works when focus has moved from 
     }
   });
 });
+
+/**
+ * Round 1350: a live Playwright browser session at a 375px viewport found
+ * the Close button in .history-header-actions (shared by every dialog
+ * built on .history-panel, including this search panel) pushed off-screen
+ * once a search returns results and the header grows to 3 buttons (Copy
+ * results/Download results/Close). boundingBox() confirmed the Close
+ * button's right edge landing 46px past the viewport's right edge, with
+ * no visible scrollbar hinting it was still reachable. jsdom has no layout
+ * engine and can't detect real off-screen positioning (see this
+ * codebase's other CSS-only-bug tests, e.g. App.test.ts's hero3d-cube
+ * test), so this reads styles.css's own source directly instead.
+ */
+test("the shared .history-header and .history-header-actions wrap instead of pushing the Close button off-screen when the header grows to 3+ buttons on a narrow viewport", () => {
+  const stylesCss = readFileSync(new URL("./styles.css", import.meta.url), "utf8");
+
+  const historyHeader = stylesCss.match(/\.history-header \{[\s\S]*?\}/)?.[0];
+  assert.ok(historyHeader, "expected a .history-header rule in styles.css");
+  assert.match(
+    historyHeader!,
+    /flex-wrap:\s*wrap/,
+    ".history-header must wrap instead of overflowing when its title + action buttons exceed the dialog's width",
+  );
+
+  const historyHeaderActions = stylesCss.match(/\.history-header-actions \{[\s\S]*?\}/)?.[0];
+  assert.ok(historyHeaderActions, "expected a .history-header-actions rule in styles.css");
+  assert.match(
+    historyHeaderActions!,
+    /flex-wrap:\s*wrap/,
+    ".history-header-actions must wrap its buttons instead of overflowing past the dialog's edge, which would push the Close button off-screen",
+  );
+});

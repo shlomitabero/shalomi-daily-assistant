@@ -2839,10 +2839,27 @@ button.sort-header:hover:not(:disabled) {
   box-shadow: var(--shadow-md);
 }
 
+/*
+ * Round 1350: a live Playwright browser session at a 375px viewport found
+ * .history-header's Close button pushed off-screen once GlobalSearchPanel
+ * grows its .history-header-actions to 3 buttons (Copy results/Download
+ * results/Close, once a search has results) -- confirmed via boundingBox()
+ * showing the Close button's right edge 46px past the viewport edge, with
+ * no visible scrollbar hinting it's reachable by scrolling. Neither
+ * .history-header nor .history-header-actions wrapped, so once their
+ * combined content outgrew the dialog's width, the whole actions block
+ * (Close included) simply overflowed past the dialog's right edge instead
+ * of wrapping onto a second line. This shared header is reused by every
+ * dialog built on .history-panel (AutomationsPanel, WhatsAppPanel,
+ * CollaboratorsPanel, HistoryPanel, BusinessTwinPanel, etc.), so the fix
+ * is applied here rather than only in GlobalSearchPanel's own CSS.
+ */
 .history-header {
   display: flex;
   align-items: center;
   justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 8px;
   margin-bottom: 4px;
 }
 
@@ -2858,6 +2875,7 @@ button.sort-header:hover:not(:disabled) {
 .history-header-actions {
   display: flex;
   align-items: center;
+  flex-wrap: wrap;
   gap: 8px;
 }
 
