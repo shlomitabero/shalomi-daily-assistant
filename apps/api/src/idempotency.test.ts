@@ -105,6 +105,65 @@ test("withIdempotency clears the key's row when the guarded work throws, so a re
 });
 
 /**
+ * Round 1314: a single shared try/catch around run() AND
+ * completeIdempotencyRecord used to treat a failure in the latter -- which
+ * runs AFTER run() already resolved and the real side effect (an
+ * insertProject, a WhatsApp send, a written checkpoint, ...) already
+ * committed -- exactly like a failure in run() itself: it deleted the
+ * "in_progress" row and rethrew, turning an already-successful request
+ * into a 500 and discarding the one record that exists specifically to
+ * catch a client retry after a lost response (fetchWithWakeRetry's own
+ * documented risk, docs/wakeRetry-idempotency-design.md), letting that
+ * retry silently re-run the already-succeeded work a second time.
+ * Triggers a genuine failure in that persistence step -- not a mock --
+ * by returning a body JSON.stringify itself cannot serialize (a circular
+ * structure), the same real-world failure mode this fix guards against.
+ */
+test("withIdempotency does NOT delete the record (and still returns the real result) when persisting the outcome fails after the guarded work already succeeded", async () => {
+  const db = setup();
+  const circular: Record<string, unknown> = {};
+  circular.self = circular;
+  let calls = 0;
+  const originalConsoleError = console.error;
+  console.error = () => {};
+  try {
+    const result = await withIdempotency(db, "persist-fail-key", "user1", "POST /projects", async () => {
+      calls += 1;
+      return { status: 201, body: circular };
+    });
+    assert.equal(calls, 1, "the guarded work must have actually run and succeeded");
+    assert.equal(result.status, 201);
+    assert.equal(result.body, circular, "the real, already-succeeded result must still be returned to this exact caller");
+
+    const record = getIdempotencyRecord(db, "persist-fail-key");
+    assert.ok(record, "the row must NOT be deleted just because persisting the outcome failed -- the real work already committed");
+    assert.equal(
+      record!.status,
+      "in_progress",
+      "left in_progress (not deleted) so a future retry gets a safe, recoverable 409 instead of silently re-running the already-succeeded work",
+    );
+
+    let retryCalls = 0;
+    await assert.rejects(
+      () =>
+        withIdempotency(db, "persist-fail-key", "user1", "POST /projects", async () => {
+          retryCalls += 1;
+          return { status: 201, body: { ok: true } };
+        }),
+      (err: unknown) => {
+        assert.ok(err instanceof HttpError);
+        assert.equal(err.status, 409);
+        assert.equal(err.code, "DUPLICATE_REQUEST_IN_PROGRESS");
+        return true;
+      },
+    );
+    assert.equal(retryCalls, 0, "a retry with the same key must never re-run the already-succeeded work a second time");
+  } finally {
+    console.error = originalConsoleError;
+  }
+});
+
+/**
  * `userId`/`route` are stored on every row specifically to scope a key to
  * the one request it was chosen for (see packages/db/src/idempotency.ts's
  * own doc comment), but the lookup used to only ever filter by `key`. A

@@ -76,10 +76,9 @@ export async function withIdempotency<T>(
   }
 
   insertIdempotencyRecord(db, key, userId, route);
+  let result: { status: number; body: T };
   try {
-    const result = await run();
-    completeIdempotencyRecord(db, key, result.status, JSON.stringify(result.body));
-    return result;
+    result = await run();
   } catch (err) {
     // The attempt genuinely failed -- an "in_progress" row left behind
     // would reject every future retry with this same key forever, with no
@@ -88,4 +87,29 @@ export async function withIdempotency<T>(
     deleteIdempotencyRecord(db, key);
     throw err;
   }
+  // Round 1314: deliberately a SEPARATE try/catch from the one above, not
+  // folded into the same block run() itself is in -- `run()` having
+  // already resolved here means the real side effect (insertProject, a
+  // WhatsApp send, a written checkpoint, ...) already committed. A single
+  // shared catch used to treat a failure in THIS step (a transient SQLite
+  // write error, a body JSON.stringify can't serialize) exactly like a
+  // failure in run() itself: it deleted the row and rethrew, turning an
+  // already-successful request into a 500 for the caller, and -- far
+  // worse -- erasing the one record that exists specifically to catch
+  // fetchWithWakeRetry's own documented retry-after-success risk (see
+  // docs/wakeRetry-idempotency-design.md), so the client's retry with the
+  // same key saw nothing and reran the real work a second time: the exact
+  // duplicate-project/duplicate-send class every withIdempotency call site
+  // was added to prevent. A failure here is logged and swallowed instead;
+  // the row is left `in_progress`, which is safe (a future retry with
+  // this key gets a clear, recoverable 409 DUPLICATE_REQUEST_IN_PROGRESS
+  // instead of silently re-running the side effect), and the real,
+  // already-succeeded result is still returned to THIS caller either way.
+  try {
+    completeIdempotencyRecord(db, key, result.status, JSON.stringify(result.body));
+  } catch (err) {
+    // eslint-disable-next-line no-console
+    console.error(`Idempotency key ${key} (${route}): the guarded work succeeded, but persisting its outcome failed -- the row is left in_progress.`, err);
+  }
+  return result;
 }
