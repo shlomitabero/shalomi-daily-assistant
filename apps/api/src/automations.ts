@@ -426,6 +426,12 @@ function resolveRelationFieldsForTemplate(
  * field_equals rule asked for or would expect. A user who wants an
  * automation on deletion has an explicit "record_deleted" trigger for
  * exactly that, below.
+ *
+ * Round 1330: "record_updated" fires on every update regardless of which
+ * fields changed -- the generic counterpart to "field_equals"' single-
+ * field/single-value shape, for a rule that wants to know about ANY edit
+ * to a record (an audit-style notification), not just one specific field
+ * reaching one specific value.
  */
 export function matchesTrigger(
   rule: AutomationRule,
@@ -439,6 +445,9 @@ export function matchesTrigger(
   }
   if (rule.trigger === "record_deleted") {
     return event === "deleted";
+  }
+  if (rule.trigger === "record_updated") {
+    return event === "updated";
   }
   // Round 1098: the doc comment above already claims "schedule, which
   // never matches any record event at all" -- but nothing below this

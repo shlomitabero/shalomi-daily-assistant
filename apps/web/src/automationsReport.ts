@@ -151,6 +151,7 @@ function describeRule(
 ): string {
   if (rule.trigger === "record_created") return t("automations.rule.when.created", { entity: entityLabel(rule, entities) });
   if (rule.trigger === "record_deleted") return t("automations.rule.when.deleted", { entity: entityLabel(rule, entities) });
+  if (rule.trigger === "record_updated") return t("automations.rule.when.updated", { entity: entityLabel(rule, entities) });
   if (rule.trigger === "schedule") return describeSchedule(rule, lang, t);
   return t("automations.rule.when.fieldEquals", {
     field: fieldLabel(rule, rule.fieldName, entities),

@@ -200,7 +200,7 @@ const ScheduleTimezoneSchema = z
 
 const CreateAutomationRuleSchema = z
   .object({
-    trigger: z.enum(["record_created", "field_equals", "schedule", "record_deleted"]),
+    trigger: z.enum(["record_created", "field_equals", "schedule", "record_deleted", "record_updated"]),
     fieldName: z.string().min(1).optional(),
     fieldValue: z.string().min(1).optional(),
     scheduleTimeUtc: z.string().regex(SCHEDULE_TIME_UTC_PATTERN, "scheduleTimeUtc must be \"HH:MM\" in 24-hour UTC").optional(),
@@ -265,7 +265,7 @@ const CreateAutomationRuleSchema = z
   });
 
 const UpdateAutomationRuleSchema = z.object({
-  trigger: z.enum(["record_created", "field_equals", "schedule", "record_deleted"]).optional(),
+  trigger: z.enum(["record_created", "field_equals", "schedule", "record_deleted", "record_updated"]).optional(),
   fieldName: z.string().min(1).nullable().optional(),
   fieldValue: z.string().min(1).nullable().optional(),
   scheduleTimeUtc: z.string().regex(SCHEDULE_TIME_UTC_PATTERN, "scheduleTimeUtc must be \"HH:MM\" in 24-hour UTC").nullable().optional(),

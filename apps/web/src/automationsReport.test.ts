@@ -171,6 +171,22 @@ test("formatAutomationsReport describes a record_deleted rule with its own disti
 });
 
 /**
+ * Round 1330: same hand-duplicated describeRule sibling needed the new
+ * "record_updated" branch too (AutomationsPanel.tsx's own copy was fixed
+ * directly) -- without it, a record_updated rule would silently fall
+ * through to this function's own field_equals description.
+ */
+test("formatAutomationsReport describes a record_updated rule with its own distinct wording, not the field_equals fallback", () => {
+  const t = (key: string, params?: Record<string, string | number>) => translate("en", key, params);
+  const rule = makeRule({ trigger: "record_updated", fieldName: null, fieldValue: null });
+
+  const report = formatAutomationsReport([rule], [duplicateLabelOrderEntity], "Shop", "en", t);
+
+  assert.match(report, /updated/i);
+  assert.equal(report.includes("becomes"), false, "must not fall through to the field_equals description");
+});
+
+/**
  * Round 952 regression test: the entity-level counterpart of the round-772
  * test just above -- the exact same bug class round 864 fixed in
  * AutomationsPanel.tsx's own live rule list (entityLabelOccurrences/

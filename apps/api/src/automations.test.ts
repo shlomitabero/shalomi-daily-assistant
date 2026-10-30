@@ -427,6 +427,28 @@ test("matchesTrigger: record_deleted only matches the 'deleted' event, never 'cr
 });
 
 /**
+ * Round 1330: the new "record_updated" trigger -- the generic counterpart
+ * to field_equals' single-field/single-value shape, firing on EVERY update
+ * regardless of which field changed, mirroring record_created/
+ * record_deleted's own single-event matching exactly.
+ */
+test("matchesTrigger: record_updated matches the 'updated' event regardless of which field changed, never 'created' or 'deleted'", () => {
+  const rule = insertAutomationRule(openDbForRuleOnly(), {
+    projectId: "p",
+    entityName: "Order",
+    trigger: "record_updated",
+    actionType: "send_whatsapp",
+    toMode: "static",
+    toNumber: "972500000000",
+    messageTemplate: "Order {{orderId}} was updated.",
+  });
+  assert.equal(matchesTrigger(rule, "updated", { orderId: "A1", status: "Delivered" }, new Set(["status"]), orderEntity), true);
+  assert.equal(matchesTrigger(rule, "updated", { orderId: "A1", status: "Delivered" }, new Set(["customerPhone"]), orderEntity), true);
+  assert.equal(matchesTrigger(rule, "created", { orderId: "A1" }, new Set(), orderEntity), false);
+  assert.equal(matchesTrigger(rule, "deleted", { orderId: "A1" }, new Set(), orderEntity), false);
+});
+
+/**
  * Round 969: a "deleted" event must never match a field_equals rule, even
  * when the record's own value matches that rule's target -- a record
  * about to be deleted isn't "being set to" its own current field values,

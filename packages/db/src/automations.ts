@@ -21,7 +21,7 @@ import { NotFoundError } from "./repository.js";
  * only state a deleted row has left to interpolate a message or resolve
  * a toMode:"field" destination from.
  */
-export type AutomationTrigger = "record_created" | "field_equals" | "schedule" | "record_deleted";
+export type AutomationTrigger = "record_created" | "field_equals" | "schedule" | "record_deleted" | "record_updated";
 export type AutomationActionType = "send_whatsapp" | "webhook" | "send_email";
 export type AutomationToMode = "static" | "field";
 export type AutomationLastStatus = "sent" | "failed" | null;

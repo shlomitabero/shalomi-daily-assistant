@@ -1524,7 +1524,7 @@ export function deleteWhatsAppMessage(projectId: string, messageId: string): Pro
   });
 }
 
-export type AutomationTrigger = "record_created" | "field_equals" | "schedule" | "record_deleted";
+export type AutomationTrigger = "record_created" | "field_equals" | "schedule" | "record_deleted" | "record_updated";
 export type AutomationToMode = "static" | "field";
 export type AutomationActionType = "send_whatsapp" | "webhook" | "send_email";
 
