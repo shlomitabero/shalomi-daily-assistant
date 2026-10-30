@@ -3557,6 +3557,59 @@ test("EntityPanel's calendar view shows at most 3 record chips per day, with a '
 });
 
 /**
+ * Round 1272: Table view's row Print button and Board view's BoardCard
+ * both always render a Print action (unconditionally, even for a read-only
+ * viewer -- see BoardCard's own doc comment: "opening the form or printing
+ * doesn't itself write anything"), but CalendarView's prop list never
+ * accepted an `onPrint` prop at all, so its record chip had no print
+ * affordance anywhere. A user viewing an entity in calendar view who
+ * wanted to print one specific record's paper handout had no in-view way
+ * to do it -- they had to switch to Table view, find that same record,
+ * and print it there. Confirms the real, wired-up calendar chip now opens
+ * the same print sheet Table/Board view already do.
+ */
+test("EntityPanel's calendar view record chip has a Print action that opens the per-record print sheet, matching Table/Board view", async () => {
+  await withJsdom(async () => {
+    const today = isoDateToday();
+    const store: EntityRecord[] = [{ id: 1, title: "Dentist", date: today }];
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = mockListRecordsFetch(store) as typeof fetch;
+    const originalPrint = window.print;
+    let printCalls = 0;
+    window.print = () => {
+      printCalls += 1;
+    };
+    try {
+      renderAppointmentPanel();
+      await waitForCondition(() => document.querySelector(".entity-toolbar") !== null);
+
+      const calendarToggle = document.querySelectorAll(".view-toggle-btn")[1] as HTMLButtonElement;
+      fireEvent.click(calendarToggle);
+      await waitForCondition(() => document.querySelectorAll(".calendar-record-chip").length === 1);
+
+      const printBtn = document.querySelector(".calendar-record-print") as HTMLButtonElement;
+      assert.ok(printBtn, "expected a print action next to the calendar record chip");
+      fireEvent.click(printBtn);
+      await waitForCondition(() => printCalls === 1);
+      const sheetHeading = document.querySelector(".print-record-sheet h1");
+      assert.ok(sheetHeading, "expected the per-record print sheet to render after clicking the calendar chip's print action");
+
+      // Clicking the print action must never also trigger the day cell's
+      // own onDayClick, which would call startCreateForDate and prefill the
+      // always-present create/edit form's date input with the clicked day
+      // -- mirrors every other nested-button-inside-interactive-container
+      // stopPropagation convention already established elsewhere in this
+      // same component (e.g. the chip's own onClick just above it).
+      const dateInput = document.querySelector('.record-form input[name="date"]') as HTMLInputElement | null;
+      assert.equal(dateInput?.value ?? "", "", "clicking print must not also prefill the create form with the clicked day's date");
+    } finally {
+      globalThis.fetch = originalFetch;
+      window.print = originalPrint;
+    }
+  });
+});
+
+/**
  * Round 778: for an entity with no name/title/text field (e.g. a
  * "CheckIn"/"Attendance"-shaped log entity with just a date and a
  * boolean), the calendar day-chip used to render the raw stored value

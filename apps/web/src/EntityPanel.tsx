@@ -712,6 +712,7 @@ function CalendarView({
   onToday,
   onJumpToMonth,
   onEdit,
+  onPrint,
   onDayClick,
   onReschedule,
   moveErrorId,
@@ -730,6 +731,13 @@ function CalendarView({
   onToday: () => void;
   onJumpToMonth: (month: Date) => void;
   onEdit: (record: EntityRecord) => void;
+  /** Round 1272: mirrors BoardCard's own onPrint convention -- Table view's
+   * row Print button and BoardCard both always render a Print action,
+   * unconditionally even for a read-only viewer (opening the print sheet
+   * doesn't write anything), but CalendarView never had an equivalent, so
+   * a user viewing an entity in calendar view had no in-view way to print
+   * one specific record -- they had to switch to Table view first. */
+  onPrint: (record: EntityRecord) => void;
   onDayClick: (date: Date) => void;
   onReschedule: (record: EntityRecord, date: Date, originDay?: string) => void;
   moveErrorId?: number | null;
@@ -892,47 +900,64 @@ function CalendarView({
             <span className="calendar-day-number">{day.date.getDate()}</span>
             <div className="calendar-day-records">
               {(expandedDays.has(dayKey) ? day.records : day.records.slice(0, 3)).map((record) => (
-                <button
-                  type="button"
-                  key={record.id as number}
-                  className={
-                    record.id === moveErrorId
-                      ? "calendar-record-chip calendar-record-chip-move-error"
-                      : "calendar-record-chip"
-                  }
-                  draggable={!readOnly && !bulkActionBusy}
-                  disabled={readOnly}
-                  onDragStart={(e) => {
-                    if (readOnly || bulkActionBusy) return;
-                    // A drag that starts on the record chip must never also
-                    // bubble into the day cell's own onClick (Escape/no-drop
-                    // still fires a click on release in some browsers) --
-                    // stopping propagation here keeps the two interactions
-                    // (drag-to-reschedule vs. click-to-edit) from fighting.
-                    e.stopPropagation();
-                    // A ranged record (e.g. Rental's startDate/endDate) renders this
-                    // same chip identically on every day it spans (see
-                    // buildCalendarMonth) -- carrying this specific chip instance's
-                    // own dayKey lets handleCalendarDrop shift the range by the
-                    // days actually dragged, instead of always anchoring the
-                    // record's start field to the drop target regardless of which
-                    // day of the span was grabbed.
-                    e.dataTransfer.setData("text/plain", `${record.id}|${dayKey}`);
-                    e.dataTransfer.effectAllowed = "move";
-                  }}
-                  onDragEnd={() => setDragOverDay(null)}
-                  onClick={(e) => {
-                    // Clicking a record edits it -- without stopping the
-                    // click from bubbling, the day cell's own onDayClick
-                    // above would ALSO fire and silently blow away the
-                    // in-progress edit with a fresh empty-record form for
-                    // this same day.
-                    e.stopPropagation();
-                    onEdit(record);
-                  }}
-                >
-                  {calendarChipLabelValue(labelField, record, lang)}
-                </button>
+                <div className="calendar-record-row" key={record.id as number}>
+                  <button
+                    type="button"
+                    className={
+                      record.id === moveErrorId
+                        ? "calendar-record-chip calendar-record-chip-move-error"
+                        : "calendar-record-chip"
+                    }
+                    draggable={!readOnly && !bulkActionBusy}
+                    disabled={readOnly}
+                    onDragStart={(e) => {
+                      if (readOnly || bulkActionBusy) return;
+                      // A drag that starts on the record chip must never also
+                      // bubble into the day cell's own onClick (Escape/no-drop
+                      // still fires a click on release in some browsers) --
+                      // stopping propagation here keeps the two interactions
+                      // (drag-to-reschedule vs. click-to-edit) from fighting.
+                      e.stopPropagation();
+                      // A ranged record (e.g. Rental's startDate/endDate) renders this
+                      // same chip identically on every day it spans (see
+                      // buildCalendarMonth) -- carrying this specific chip instance's
+                      // own dayKey lets handleCalendarDrop shift the range by the
+                      // days actually dragged, instead of always anchoring the
+                      // record's start field to the drop target regardless of which
+                      // day of the span was grabbed.
+                      e.dataTransfer.setData("text/plain", `${record.id}|${dayKey}`);
+                      e.dataTransfer.effectAllowed = "move";
+                    }}
+                    onDragEnd={() => setDragOverDay(null)}
+                    onClick={(e) => {
+                      // Clicking a record edits it -- without stopping the
+                      // click from bubbling, the day cell's own onDayClick
+                      // above would ALSO fire and silently blow away the
+                      // in-progress edit with a fresh empty-record form for
+                      // this same day.
+                      e.stopPropagation();
+                      onEdit(record);
+                    }}
+                  >
+                    {calendarChipLabelValue(labelField, record, lang)}
+                  </button>
+                  <button
+                    type="button"
+                    className="calendar-record-print"
+                    title={t("entity.print")}
+                    aria-label={t("entity.print")}
+                    onClick={(e) => {
+                      // Mirrors the chip's own onClick above -- without
+                      // stopping propagation, this would also bubble into
+                      // the day cell's onDayClick (blank create-record form)
+                      // and the chip's own onClick sits right next to it.
+                      e.stopPropagation();
+                      onPrint(record);
+                    }}
+                  >
+                    🖨️
+                  </button>
+                </div>
               ))}
               {day.records.length > 3 && (
                 <button
@@ -4915,6 +4940,7 @@ export function EntityPanel({
               onToday={() => setCalendarMonth(new Date())}
               onJumpToMonth={(m) => setCalendarMonth(m)}
               onEdit={readOnly ? () => {} : startEdit}
+              onPrint={(record) => setRecordToPrint(record)}
               onDayClick={readOnly ? () => {} : (date) => startCreateForDate(date, dateField)}
               onReschedule={readOnly ? () => {} : (record, date, originDay) => handleCalendarDrop(record, dateField.name, date, originDay)}
               moveErrorId={moveErrorId}

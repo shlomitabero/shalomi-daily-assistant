@@ -1840,6 +1840,12 @@ tbody tr:hover {
   gap: 3px;
 }
 
+.calendar-record-row {
+  display: flex;
+  align-items: stretch;
+  gap: 2px;
+}
+
 .calendar-record-chip {
   background: var(--accent-soft, var(--surface-raised));
   border: 1px solid var(--border-soft);
@@ -1848,11 +1854,31 @@ tbody tr:hover {
   font-size: 11.5px;
   text-align: start;
   box-shadow: none;
-  align-self: stretch;
+  flex: 1;
+  min-width: 0;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
   cursor: grab;
+}
+
+.calendar-record-print {
+  flex-shrink: 0;
+  padding: 2px 4px;
+  font-size: 10px;
+  line-height: 1;
+  background: none;
+  border: 1px solid var(--border-soft);
+  border-radius: 4px;
+  box-shadow: none;
+  cursor: pointer;
+  transform: none;
+}
+
+.calendar-record-print:hover {
+  background: var(--surface-raised);
+  transform: none;
+  box-shadow: none;
 }
 
 .calendar-record-chip:hover {

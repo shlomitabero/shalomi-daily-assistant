@@ -5721,6 +5721,41 @@ test("the exported CalendarView's '+N more' overflow is a real button that revea
   assert.match(stylesCss, /\.calendar-record-more\s*\{[^}]*cursor: pointer/, "the overflow control must look clickable, not plain text");
 });
 
+/**
+ * Round 1272: mirrors the live preview's own EntityPanel.tsx fix -- Table
+ * view's row Print button and BoardCard both always render a Print action
+ * (this file's own `function BoardCard(... onPrint ...)` and its
+ * `<button onClick={onPrint}>Print</button>`), but the exported app's
+ * CalendarView never accepted an onPrint prop at all, so a user viewing an
+ * entity in calendar view in the exported standalone app had no in-view
+ * way to print one specific record either -- the identical gap the live
+ * preview had, since every exported app ships this same generated
+ * component.
+ */
+test("the exported CalendarView accepts an onPrint prop and renders a Print action beside each record chip, matching BoardCard", () => {
+  const files = generateExportFiles(project);
+  const entityViewJsx = files.find((f) => f.path === "web/src/components/EntityView.jsx")!.content;
+
+  assert.match(
+    entityViewJsx,
+    /function CalendarView\(\{ entity, dateField, endDateField, records, month, onPrevMonth, onNextMonth, onToday, onJumpToMonth, onEdit, onPrint, onDayClick, onReschedule, moveErrorId, bulkActionBusy \}\)/,
+    "CalendarView must accept an onPrint prop",
+  );
+  assert.match(
+    entityViewJsx,
+    /onEdit=\{startEdit\}\s*onPrint=\{\(record\) => setRecordToPrint\(record\)\}\s*onDayClick=/,
+    "the real call site must wire onPrint into the same setRecordToPrint state Table/Board view already share",
+  );
+
+  const calendarViewSource = entityViewJsx.slice(entityViewJsx.indexOf("function CalendarView"), entityViewJsx.indexOf("function BoardCard"));
+  const printButtonSrc = calendarViewSource.match(/<button\s+type="button"\s+className="calendar-record-print"[\s\S]*?<\/button>/)?.[0];
+  assert.ok(printButtonSrc, "expected a calendar-record-print button beside the chip");
+  assert.match(printButtonSrc!, /onClick=\{\(e\) => \{\s*e\.stopPropagation\(\);\s*onPrint\(record\);/, "clicking print must call onPrint(record) and stop the click from also bubbling into the day cell's or chip's own onClick");
+
+  const stylesCss = files.find((f) => f.path === "web/src/styles.css")!.content;
+  assert.match(stylesCss, /\.calendar-record-print\s*\{/);
+});
+
 test("the exported EntityView renders a real CSV export button backed by RFC-4180-correct CSV building", () => {
   const files = generateExportFiles(project);
   const entityViewJsx = files.find((f) => f.path === "web/src/components/EntityView.jsx")!.content;

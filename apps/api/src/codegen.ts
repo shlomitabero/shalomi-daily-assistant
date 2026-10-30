@@ -4206,7 +4206,7 @@ function buildCalendarIcs(entity, dateField, labelField, records, relatedRecords
 // shape every entity gets. Each day cell shows a chip per record landing on
 // that date (click to edit), with a "+N more" overflow instead of an
 // ever-growing cell.
-function CalendarView({ entity, dateField, endDateField, records, month, onPrevMonth, onNextMonth, onToday, onJumpToMonth, onEdit, onDayClick, onReschedule, moveErrorId, bulkActionBusy }) {
+function CalendarView({ entity, dateField, endDateField, records, month, onPrevMonth, onNextMonth, onToday, onJumpToMonth, onEdit, onPrint, onDayClick, onReschedule, moveErrorId, bulkActionBusy }) {
   const year = month.getFullYear();
   const monthIndex = month.getMonth();
   const days = useMemo(() => buildCalendarMonth(records, dateField, year, monthIndex, endDateField), [records, dateField, endDateField, year, monthIndex]);
@@ -4334,25 +4334,37 @@ function CalendarView({ entity, dateField, endDateField, records, month, onPrevM
             <span className="calendar-day-number">{day.date.getDate()}</span>
             <div className="calendar-day-records">
               {(expandedDays.has(dayKey) ? day.records : day.records.slice(0, 3)).map((record) => (
-                <button
-                  type="button"
-                  key={record.id}
-                  className={record.id === moveErrorId ? "calendar-record-chip calendar-record-chip-move-error" : "calendar-record-chip"}
-                  draggable={!bulkActionBusy}
-                  onDragStart={(e) => {
-                    if (bulkActionBusy) return;
-                    e.stopPropagation();
-                    e.dataTransfer.setData("text/plain", \`\${record.id}|\${dayKey}\`);
-                    e.dataTransfer.effectAllowed = "move";
-                  }}
-                  onDragEnd={() => setDragOverDay(null)}
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    onEdit(record);
-                  }}
-                >
-                  {calendarLabelValue(labelField, record)}
-                </button>
+                <div className="calendar-record-row" key={record.id}>
+                  <button
+                    type="button"
+                    className={record.id === moveErrorId ? "calendar-record-chip calendar-record-chip-move-error" : "calendar-record-chip"}
+                    draggable={!bulkActionBusy}
+                    onDragStart={(e) => {
+                      if (bulkActionBusy) return;
+                      e.stopPropagation();
+                      e.dataTransfer.setData("text/plain", \`\${record.id}|\${dayKey}\`);
+                      e.dataTransfer.effectAllowed = "move";
+                    }}
+                    onDragEnd={() => setDragOverDay(null)}
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      onEdit(record);
+                    }}
+                  >
+                    {calendarLabelValue(labelField, record)}
+                  </button>
+                  <button
+                    type="button"
+                    className="calendar-record-print"
+                    aria-label="Print"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      onPrint(record);
+                    }}
+                  >
+                    Print
+                  </button>
+                </div>
               ))}
               {day.records.length > 3 && (
                 <button
@@ -7420,6 +7432,7 @@ export function EntityView({ entity, highlightRecordId, onHighlightHandled, onJu
               onToday={() => setCalendarMonth(new Date())}
               onJumpToMonth={(m) => setCalendarMonth(m)}
               onEdit={startEdit}
+              onPrint={(record) => setRecordToPrint(record)}
               onDayClick={(date) => startCreateForDate(date, dateField)}
               onReschedule={(record, date, originDay) => handleCalendarDrop(record, dateField.name, date, originDay)}
               moveErrorId={moveErrorId}
@@ -9181,10 +9194,13 @@ nav button.active .tab-count { background: rgba(255, 255, 255, 0.25); color: inh
 .calendar-day-number { font-size: 12px; font-weight: 600; color: var(--muted); }
 .calendar-day-today .calendar-day-number { color: var(--accent); font-weight: 700; }
 .calendar-day-records { display: flex; flex-direction: column; gap: 3px; }
-.calendar-record-chip { background: var(--surface); border: 1px solid var(--border-soft); border-radius: 4px; padding: 2px 5px; font-size: 11.5px; text-align: start; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; cursor: grab; color: var(--text); }
+.calendar-record-row { display: flex; align-items: stretch; gap: 2px; }
+.calendar-record-chip { background: var(--surface); border: 1px solid var(--border-soft); border-radius: 4px; padding: 2px 5px; font-size: 11.5px; text-align: start; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; cursor: grab; color: var(--text); flex: 1; min-width: 0; }
 .calendar-record-chip:hover { background: var(--bg); }
 .calendar-record-chip:active { cursor: grabbing; }
 .calendar-record-chip-move-error { background: var(--danger-soft); border-color: var(--danger); }
+.calendar-record-print { flex-shrink: 0; padding: 2px 4px; font-size: 10px; line-height: 1; background: none; border: 1px solid var(--border-soft); border-radius: 4px; cursor: pointer; color: var(--text); font: inherit; }
+.calendar-record-print:hover { background: var(--bg); }
 .calendar-record-more { font-size: 11px; color: var(--muted); padding: 2px 5px; background: none; border: none; text-align: start; cursor: pointer; font: inherit; }
 .calendar-record-more:hover { color: var(--text); text-decoration: underline; }
 .csv-export-btn, .json-export-btn, .ics-export-btn, .ics-subscribe-btn, .copy-records-btn, .print-list-btn { flex-shrink: 0; padding: 8px 14px; font-size: 13px; border-radius: 8px; border: 1px solid var(--border); background: var(--surface); color: var(--text); cursor: pointer; font: inherit; }
