@@ -471,6 +471,33 @@ test("the Appointments template's Staff entity has an email field, matching ever
 });
 
 /**
+ * Round 1302: the Inventory & Products template's own PurchaseOrder entity
+ * (supplier/status/orderDate/total/items) is the one transactional,
+ * status-tracked entity across the curated templates missing `notes` --
+ * Restaurant's Order entity shares an almost identical status/total/items
+ * shape and has `notes`, and PurchaseOrder's own sibling StockMovement in
+ * this same template has `notes` too, leaving PurchaseOrder as the one
+ * place with no way to record ad-hoc context (a partial shipment, a
+ * cancellation reason) the way every comparable entity already can.
+ */
+test("the Inventory template's PurchaseOrder entity has a notes field, matching its own sibling StockMovement and Restaurant's Order entity", () => {
+  const inventoryTemplate = TEMPLATES.find((t) => t.id === "inventory");
+  assert.ok(inventoryTemplate, "expected an \"inventory\" template to exist");
+
+  const purchaseOrder = inventoryTemplate!.spec.entities.find((e) => e.name === "PurchaseOrder");
+  assert.ok(purchaseOrder, "expected the Inventory template to have a PurchaseOrder entity");
+  const notes = purchaseOrder!.fields.find((f) => f.name === "notes");
+  assert.ok(notes, "expected the PurchaseOrder entity to have a notes field");
+  assert.equal(notes!.type, "longtext");
+
+  const purchaseOrderEn = inventoryTemplate!.specEn.entities.find((e) => e.name === "PurchaseOrder");
+  assert.ok(purchaseOrderEn, "expected the Inventory specEn to have a PurchaseOrder entity");
+  const notesEn = purchaseOrderEn!.fields.find((f) => f.name === "notes");
+  assert.ok(notesEn, "expected the PurchaseOrder specEn entity to have a notes field");
+  assert.equal(notesEn!.type, "longtext");
+});
+
+/**
  * Round 516's finding: the "Appointments & Clients" template's Hebrew
  * Appointment.status enum mapped "scheduled" to "קבוע" (meaning "fixed" /
  * "permanent" / "standing" in Hebrew), not "scheduled". This codebase

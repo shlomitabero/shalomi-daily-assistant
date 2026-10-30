@@ -816,6 +816,7 @@ const INVENTORY_ENTITIES: EntitySpec[] = [
       { name: "orderDate", label: "תאריך הזמנה", type: "date" },
       { name: "total", label: "סכום כולל", type: "number" },
       { name: "items", label: "פריטים", type: "longtext" },
+      { name: "notes", label: "הערות", type: "longtext" },
     ],
   },
   {
@@ -892,6 +893,7 @@ const INVENTORY_ENTITIES_EN: EntitySpec[] = [
       { name: "orderDate", label: "Order Date", type: "date" },
       { name: "total", label: "Total Amount", type: "number" },
       { name: "items", label: "Items", type: "longtext" },
+      { name: "notes", label: "Notes", type: "longtext" },
     ],
   },
   {
