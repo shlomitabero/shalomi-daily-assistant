@@ -159,6 +159,20 @@ export function recordEntityHistory(db: ForgeDatabase, projectId: string, spec: 
   }
 }
 
+/**
+ * Mirrors automations.ts's own AUTOMATION_RUNS_RETENTION_LIMIT convention
+ * (round 951) for the identical unbounded-growth shape: every build/refine
+ * adds one checkpoint, forever, with no cap at all before this round --
+ * each row carries a full spec_json blob, a real unbounded storage cost
+ * for a long-lived project. Higher than automation_runs's own limit (20)
+ * since a checkpoint is added far less often (one per build/refine, not
+ * one per automation firing) and is the more valuable of the two to keep
+ * around longer. Exported so a future caller that needs to stay in sync
+ * with this exact number (the same reasoning AUTOMATION_RUNS_RETENTION_LIMIT's
+ * own doc comment gives) can read it rather than hard-coding its own copy.
+ */
+export const CHECKPOINTS_RETENTION_LIMIT = 100;
+
 export function insertCheckpoint(
   db: ForgeDatabase,
   checkpoint: { id: string; projectId: string; label: string; kind: "build" | "refine"; spec: ProductSpec },
@@ -168,6 +182,21 @@ export function insertCheckpoint(
     "INSERT INTO checkpoints (id, projectId, label, kind, spec_json, createdAt) VALUES (?, ?, ?, ?, ?, ?)",
   ).run(checkpoint.id, checkpoint.projectId, checkpoint.label, checkpoint.kind, JSON.stringify(checkpoint.spec), createdAt);
   recordEntityHistory(db, checkpoint.projectId, checkpoint.spec);
+  // Prunes the oldest checkpoints beyond the retention limit, mirroring
+  // recordAutomationRun's own exact DELETE...NOT IN (SELECT...ORDER BY...
+  // LIMIT ?) pattern. Safe even if the pruned set includes the checkpoint
+  // matching the project's current spec -- deleteCheckpoint's own doc
+  // comment already establishes that deleting that one is harmless, since
+  // the current spec lives on the project row itself, independent of this
+  // table. checkpoint_entity_history (recordEntityHistory, just above) is
+  // this table's own separate, deliberately-unpruned ledger, so pruning
+  // here can never orphan a real data table the way deleting a checkpoint
+  // alone once could before that ledger existed.
+  db.prepare(
+    `DELETE FROM checkpoints WHERE projectId = ? AND id NOT IN (
+      SELECT id FROM checkpoints WHERE projectId = ? ORDER BY createdAt DESC, rowid DESC LIMIT ?
+    )`,
+  ).run(checkpoint.projectId, checkpoint.projectId, CHECKPOINTS_RETENTION_LIMIT);
   return { ...checkpoint, createdAt };
 }
 

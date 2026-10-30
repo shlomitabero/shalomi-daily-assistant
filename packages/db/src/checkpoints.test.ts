@@ -3,6 +3,7 @@ import { test } from "node:test";
 import type { ProductSpec } from "@forge/shared";
 import { openDatabase } from "./connection.js";
 import {
+  CHECKPOINTS_RETENTION_LIMIT,
   deleteCheckpoint,
   deleteCheckpointsForProject,
   ensureCheckpointsTable,
@@ -33,6 +34,40 @@ test("insertCheckpoint stores a checkpoint and returns it with a createdAt times
   assert.equal(checkpoint.label, "before refine");
   assert.equal(checkpoint.kind, "refine");
   assert.ok(checkpoint.createdAt);
+});
+
+/**
+ * Round 1291: mirrors automations.ts's own AUTOMATION_RUNS_RETENTION_LIMIT
+ * pruning (round 951) for the identical unbounded-growth shape -- every
+ * build/refine added one checkpoint, forever, with no cap at all before
+ * this round, each row carrying a full spec_json blob.
+ */
+test("insertCheckpoint prunes the oldest checkpoints once a project passes the retention limit, keeping only the newest ones", () => {
+  const db = openDatabase(":memory:");
+  ensureCheckpointsTable(db);
+  for (let i = 0; i < CHECKPOINTS_RETENTION_LIMIT + 5; i++) {
+    insertCheckpoint(db, { id: `cp${i}`, projectId: "proj1", label: `checkpoint ${i}`, kind: "build", spec: validSpec });
+  }
+  const checkpoints = listCheckpoints(db, "proj1");
+  assert.equal(checkpoints.length, CHECKPOINTS_RETENTION_LIMIT, "the project's own checkpoint count must never exceed the retention limit");
+  assert.equal(checkpoints[0]!.id, `cp${CHECKPOINTS_RETENTION_LIMIT + 4}`, "the newest checkpoint must always survive pruning");
+  assert.equal(
+    checkpoints[checkpoints.length - 1]!.id,
+    "cp5",
+    "pruning must drop exactly the oldest checkpoints, keeping the most recent CHECKPOINTS_RETENTION_LIMIT",
+  );
+});
+
+test("insertCheckpoint never prunes a DIFFERENT project's checkpoints when this project passes the retention limit", () => {
+  const db = openDatabase(":memory:");
+  ensureCheckpointsTable(db);
+  insertCheckpoint(db, { id: "other-cp", projectId: "proj2", label: "other project's own checkpoint", kind: "build", spec: validSpec });
+  for (let i = 0; i < CHECKPOINTS_RETENTION_LIMIT + 5; i++) {
+    insertCheckpoint(db, { id: `cp${i}`, projectId: "proj1", label: `checkpoint ${i}`, kind: "build", spec: validSpec });
+  }
+  const otherProjectCheckpoints = listCheckpoints(db, "proj2");
+  assert.equal(otherProjectCheckpoints.length, 1, "a different project's own checkpoint must survive another project's pruning untouched");
+  assert.equal(otherProjectCheckpoints[0]!.id, "other-cp");
 });
 
 test("listCheckpoints returns a project's checkpoints newest first", () => {
