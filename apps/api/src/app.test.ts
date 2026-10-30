@@ -13505,6 +13505,76 @@ test("deleting your account requires a valid session, the same as any other auth
 });
 
 /**
+ * Round 1339: DELETE /auth/account's own first act is revoking every
+ * session for this account, including the very token this request is
+ * using -- so unlike this file's other idempotency-guarded routes, a
+ * fetchWithWakeRetry retry with the same idempotency key can no longer
+ * resolve a session at all by the time it arrives, and used to fail the
+ * session lookup itself (401 SESSION_EXPIRED) before ever reaching
+ * withIdempotency, reporting failure for a deletion that had already
+ * fully, irreversibly succeeded. Confirms the retry now replays the
+ * original 204 instead, and that a request with no idempotency key (or
+ * one that was never actually used) still gets a plain 401 once the
+ * session is genuinely gone -- the replay is scoped to a real, matching,
+ * already-completed record, not a blanket bypass.
+ */
+test("DELETE /auth/account replays the original 204 on a retry with the same idempotency key, even though the retry's own session is already gone", async () => {
+  await withServer(async (baseUrl) => {
+    const email = `account-delete-idempotent-${Math.random()}@example.com`;
+    const password = "correct-horse-battery";
+    const signupRes = await fetch(`${baseUrl}/api/auth/signup`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ email, password }),
+    });
+    const { token } = (await signupRes.json()) as { token: string };
+
+    const idempotencyKey = "round-1339-account-delete-key";
+    const firstRes = await fetch(`${baseUrl}/api/auth/account`, {
+      method: "DELETE",
+      headers: { ...authHeaders(token), "x-idempotency-key": idempotencyKey },
+    });
+    assert.equal(firstRes.status, 204, "the real first attempt must succeed");
+
+    // The account (and every session on it, this one included) is now
+    // genuinely gone -- confirmed by a plain re-login attempt, not assumed.
+    const reLoginRes = await fetch(`${baseUrl}/api/auth/login`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ email, password }),
+    });
+    assert.equal(reLoginRes.status, 401, "sanity check: the account must genuinely no longer exist");
+
+    const retryRes = await fetch(`${baseUrl}/api/auth/account`, {
+      method: "DELETE",
+      headers: { ...authHeaders(token), "x-idempotency-key": idempotencyKey },
+    });
+    assert.equal(
+      retryRes.status,
+      204,
+      "a retry with the same idempotency key must replay the original success, not report a false SESSION_EXPIRED for a deletion that already fully succeeded",
+    );
+
+    // A request using the SAME now-dead token but a DIFFERENT (never used)
+    // idempotency key must still get a plain 401 -- the replay path above
+    // is scoped to a real, matching, already-"done" record, not a blanket
+    // "any request with an idempotency key header succeeds" bypass.
+    const unmatchedKeyRes = await fetch(`${baseUrl}/api/auth/account`, {
+      method: "DELETE",
+      headers: { ...authHeaders(token), "x-idempotency-key": "a-completely-different-key-never-used-before" },
+    });
+    assert.equal(unmatchedKeyRes.status, 401, "a different, never-used idempotency key must not bypass the dead session");
+
+    // A request with no idempotency key at all must also still get a plain
+    // 401, the exact behavior the existing "requires a valid session" test
+    // above already covers for a session that was never valid in the first
+    // place.
+    const noKeyRes = await fetch(`${baseUrl}/api/auth/account`, { method: "DELETE", headers: authHeaders(token) });
+    assert.equal(noKeyRes.status, 401, "no idempotency key at all must not bypass the dead session either");
+  });
+});
+
+/**
  * New in this round (510): GET /projects (listProjectsForUser) silently
  * drops any project whose stored spec no longer parses against today's
  * ProductSpecSchema (a real, expected case for a project written by an

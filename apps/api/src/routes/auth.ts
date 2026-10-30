@@ -17,10 +17,12 @@ import {
   deleteProject,
   findUserByEmail,
   findUserById,
+  getIdempotencyRecord,
   getLoginCode,
   getPasswordHash,
   getPasswordResetTokenByHash,
   getProject,
+  getSessionUser,
   incrementLoginCodeAttempts,
   listCollaboratedProjectIds,
   listCollaborators,
@@ -897,151 +899,191 @@ export function createAuthRouter(
    * deleteAllSessionsForUser above, which only ever touches the account
    * being deleted) is the one who could otherwise race it.
    */
-  router.delete("/auth/account", requireAuth(db), async (req, res, next) => {
+  router.delete("/auth/account", async (req, res, next) => {
     try {
-      const ownedProjectIds = listOwnedProjectIds(db, req.userId!);
-      // Round 537: the per-project loop below is destructive and
-      // irreversible one project at a time -- checking activePipelines
-      // only as each project is reached (as round 535 originally did)
-      // meant a LATER project's in-flight pipeline aborted the whole
-      // handler (409) only after every EARLIER project in the loop had
-      // already been permanently deleted, while deleteAllSessionsForUser
-      // (below) had already logged the owner out everywhere and
-      // removeAllCollaborationsForUser/deleteUser never ran -- a
-      // non-atomic "partial delete reported as failure" with no recovery
-      // and no account actually removed. Checking every owned project's
-      // activePipelines status up front, then reserving all of them in
-      // the same synchronous pass (no await in between, so nothing else
-      // on this single-threaded process can interleave), makes the whole
-      // operation all-or-nothing: either every owned project is free to
-      // delete and gets reserved before anything destructive starts, or
-      // the request fails immediately with nothing touched at all --
-      // sessions still valid, every project still intact.
-      if (ownedProjectIds.some((id) => activePipelines.has(id))) {
-        throw new HttpError(409, "A build or refine is already running for one of your projects", "PIPELINE_IN_PROGRESS");
+      const idempotencyKey = req.header("X-Idempotency-Key") || undefined;
+      const token = extractBearerToken(req);
+      if (!token) {
+        throw new HttpError(401, "Missing Authorization header", "AUTH_REQUIRED");
       }
-      for (const id of ownedProjectIds) activePipelines.add(id);
-      try {
-        // Revokes every session -- including this very request's own token --
-        // as the first thing this handler does once the check above has
-        // passed, synchronously, before any of the real async I/O below.
-        // whatsapp.disconnect() awaits a genuine network round-trip
-        // (session.sock.logout(), see whatsappWeb.ts's own comment)
-        // whenever a project has a live WhatsApp connection, and that used
-        // to run while this account's token was still valid. Round 424:
-        // while suspended on that await, an unrelated POST /projects using
-        // the same still-valid token could create a brand-new project whose
-        // id was never in listOwnedProjectIds' own snapshot above (taken
-        // once, up front) -- and since projects.ownerId carries no
-        // foreign-key constraint to users.id, deleteUser further down still
-        // succeeded, permanently orphaning that project under a user id
-        // that no longer exists anywhere, reachable by no route ever again.
-        // Revoking first closes the window: any request racing this one
-        // now fails requireAuth before it can do anything, for the same
-        // reason the existing "the deleted user's own session token must
-        // stop working immediately" check below already expects.
-        deleteAllSessionsForUser(db, req.userId!);
-        // Round 1259: the isHebrew check mirrors every other no-body/no-
-        // session server-side text this file already uses `lang` for
-        // (change-password, change-email) -- DELETE has no body, so this
-        // reads req.query.lang the same way round 1254/1256's own
-        // bodyless-DELETE routes (routes/projects.ts) already do.
-        const isHebrew = req.query.lang !== "en";
-        for (const projectId of ownedProjectIds) {
-          // Round 535: same activePipelines guard DELETE /projects/:id
-          // (routes/projects.ts) already sets around this exact await, for
-          // the exact same reason -- this loop's own whatsapp.disconnect()
-          // is a genuine network round-trip whenever that project has a
-          // live WhatsApp Web connection, and every ordinary quick mutation
-          // route in routes/projects.ts only *checks* activePipelines, never
-          // sets it. A collaborator on this project (whose own session this
-          // route never touches -- deleteAllSessionsForUser above only ever
-          // revokes the ACCOUNT BEING DELETED's own sessions) could use
-          // their own still-valid token to read the still-present project
-          // row during this window, run an edit to completion, and get back
-          // a 200 for a change that deleteProject() below erases moments
-          // later with no error ever reaching them. Already reserved for
-          // every owned project id above, so this loop never needs to
-          // re-check or re-add/remove per iteration.
-          //
-          // Round 1259: this loop is a SECOND full-project-deletion code
-          // path, structurally separate from DELETE /projects/:id
-          // (routes/projects.ts) -- round 1256 added a "this project was
-          // deleted" notification to every remaining collaborator there,
-          // but never here, even though deleteProject's own cascade
-          // (packages/db) revokes every one of THIS project's
-          // collaborators' access the exact same way. Snapshots the
-          // project's own name and collaborator list BEFORE deleteProject
-          // erases both -- the cascade is what does that erasing.
-          const projectBeforeDelete = getProject(db, projectId);
-          const collaboratorsBeforeDelete = listCollaborators(db, projectId);
-          await whatsapp.disconnect(projectId).catch(() => {});
-          deleteProject(db, projectId);
-          await deleteProjectUploads(uploadsDir, projectId);
-          if (projectBeforeDelete && collaboratorsBeforeDelete.length > 0 && emailSender.configured) {
-            const subject = isHebrew
-              ? `הוסרת מהפרויקט "${projectBeforeDelete.name}" ב-Forge AI`
-              : `You were removed from "${projectBeforeDelete.name}" on Forge AI`;
-            const body = isHebrew
-              ? `הפרויקט "${projectBeforeDelete.name}" ב-Forge AI נמחק (הבעלים מחק/ה את החשבון), ואין לך יותר גישה אליו.`
-              : `"${projectBeforeDelete.name}" on Forge AI was deleted (its owner deleted their account), and you no longer have access to it.`;
-            for (const collaborator of collaboratorsBeforeDelete) {
-              try {
-                await emailSender.send(collaborator.email, subject, body);
-              } catch {
-                // Swallowed, deliberately, same as DELETE /projects/:id's
-                // own convention (round 1256) -- the delete itself already
-                // succeeded and was already committed; a failed best-effort
-                // notification must never turn that into an error response,
-                // and must never block the rest of this account's own
-                // deletion either.
+      const sessionUser = getSessionUser(db, token);
+      if (!sessionUser) {
+        // Round 1339: this route can't use requireAuth(db) as route
+        // middleware the way every other guarded mutation in this file
+        // does, because the very first thing the handler below does is
+        // deleteAllSessionsForUser -- so a genuinely successful deletion
+        // leaves THIS SAME bearer token unable to resolve a session ever
+        // again. requireAuth running before the handler would throw 401
+        // SESSION_EXPIRED on a fetchWithWakeRetry retry with the same
+        // idempotency key, reporting failure for an account deletion that
+        // in fact already fully succeeded -- the exact false-failure-
+        // after-real-success pattern this file's other sensitive mutations
+        // (PATCH /auth/password round 1310, POST .../reset-password round
+        // 1335, etc.) already close via withIdempotency, except here the
+        // auth check itself is the casualty, not just the mutation. The
+        // session lookup is done inline instead so a completed deletion's
+        // own idempotency record can still be found and replayed even once
+        // the session itself is gone -- the idempotency key is a client-
+        // chosen secret no different from the ones every sibling route
+        // already trusts (see withIdempotency's own doc comment), so
+        // replaying a "done" record for it here is no new risk.
+        if (idempotencyKey) {
+          const existing = getIdempotencyRecord(db, idempotencyKey);
+          if (existing?.route === "DELETE /auth/account" && existing.status === "done") {
+            res.status(existing.responseStatus!).end();
+            return;
+          }
+        }
+        throw new HttpError(401, "Invalid or expired session", "SESSION_EXPIRED");
+      }
+      req.userId = sessionUser.id;
+      req.user = sessionUser;
+      const { status } = await withIdempotency(db, idempotencyKey, sessionUser.id, "DELETE /auth/account", async () => {
+        const ownedProjectIds = listOwnedProjectIds(db, req.userId!);
+        // Round 537: the per-project loop below is destructive and
+        // irreversible one project at a time -- checking activePipelines
+        // only as each project is reached (as round 535 originally did)
+        // meant a LATER project's in-flight pipeline aborted the whole
+        // handler (409) only after every EARLIER project in the loop had
+        // already been permanently deleted, while deleteAllSessionsForUser
+        // (below) had already logged the owner out everywhere and
+        // removeAllCollaborationsForUser/deleteUser never ran -- a
+        // non-atomic "partial delete reported as failure" with no recovery
+        // and no account actually removed. Checking every owned project's
+        // activePipelines status up front, then reserving all of them in
+        // the same synchronous pass (no await in between, so nothing else
+        // on this single-threaded process can interleave), makes the whole
+        // operation all-or-nothing: either every owned project is free to
+        // delete and gets reserved before anything destructive starts, or
+        // the request fails immediately with nothing touched at all --
+        // sessions still valid, every project still intact.
+        if (ownedProjectIds.some((id) => activePipelines.has(id))) {
+          throw new HttpError(409, "A build or refine is already running for one of your projects", "PIPELINE_IN_PROGRESS");
+        }
+        for (const id of ownedProjectIds) activePipelines.add(id);
+        try {
+          // Revokes every session -- including this very request's own token --
+          // as the first thing this handler does once the check above has
+          // passed, synchronously, before any of the real async I/O below.
+          // whatsapp.disconnect() awaits a genuine network round-trip
+          // (session.sock.logout(), see whatsappWeb.ts's own comment)
+          // whenever a project has a live WhatsApp connection, and that used
+          // to run while this account's token was still valid. Round 424:
+          // while suspended on that await, an unrelated POST /projects using
+          // the same still-valid token could create a brand-new project whose
+          // id was never in listOwnedProjectIds' own snapshot above (taken
+          // once, up front) -- and since projects.ownerId carries no
+          // foreign-key constraint to users.id, deleteUser further down still
+          // succeeded, permanently orphaning that project under a user id
+          // that no longer exists anywhere, reachable by no route ever again.
+          // Revoking first closes the window: any request racing this one
+          // now fails the session lookup above before it can do anything, for
+          // the same reason the existing "the deleted user's own session
+          // token must stop working immediately" check below already expects.
+          deleteAllSessionsForUser(db, req.userId!);
+          // Round 1259: the isHebrew check mirrors every other no-body/no-
+          // session server-side text this file already uses `lang` for
+          // (change-password, change-email) -- DELETE has no body, so this
+          // reads req.query.lang the same way round 1254/1256's own
+          // bodyless-DELETE routes (routes/projects.ts) already do.
+          const isHebrew = req.query.lang !== "en";
+          for (const projectId of ownedProjectIds) {
+            // Round 535: same activePipelines guard DELETE /projects/:id
+            // (routes/projects.ts) already sets around this exact await, for
+            // the exact same reason -- this loop's own whatsapp.disconnect()
+            // is a genuine network round-trip whenever that project has a
+            // live WhatsApp Web connection, and every ordinary quick mutation
+            // route in routes/projects.ts only *checks* activePipelines, never
+            // sets it. A collaborator on this project (whose own session this
+            // route never touches -- deleteAllSessionsForUser above only ever
+            // revokes the ACCOUNT BEING DELETED's own sessions) could use
+            // their own still-valid token to read the still-present project
+            // row during this window, run an edit to completion, and get back
+            // a 200 for a change that deleteProject() below erases moments
+            // later with no error ever reaching them. Already reserved for
+            // every owned project id above, so this loop never needs to
+            // re-check or re-add/remove per iteration.
+            //
+            // Round 1259: this loop is a SECOND full-project-deletion code
+            // path, structurally separate from DELETE /projects/:id
+            // (routes/projects.ts) -- round 1256 added a "this project was
+            // deleted" notification to every remaining collaborator there,
+            // but never here, even though deleteProject's own cascade
+            // (packages/db) revokes every one of THIS project's
+            // collaborators' access the exact same way. Snapshots the
+            // project's own name and collaborator list BEFORE deleteProject
+            // erases both -- the cascade is what does that erasing.
+            const projectBeforeDelete = getProject(db, projectId);
+            const collaboratorsBeforeDelete = listCollaborators(db, projectId);
+            await whatsapp.disconnect(projectId).catch(() => {});
+            deleteProject(db, projectId);
+            await deleteProjectUploads(uploadsDir, projectId);
+            if (projectBeforeDelete && collaboratorsBeforeDelete.length > 0 && emailSender.configured) {
+              const subject = isHebrew
+                ? `הוסרת מהפרויקט "${projectBeforeDelete.name}" ב-Forge AI`
+                : `You were removed from "${projectBeforeDelete.name}" on Forge AI`;
+              const body = isHebrew
+                ? `הפרויקט "${projectBeforeDelete.name}" ב-Forge AI נמחק (הבעלים מחק/ה את החשבון), ואין לך יותר גישה אליו.`
+                : `"${projectBeforeDelete.name}" on Forge AI was deleted (its owner deleted their account), and you no longer have access to it.`;
+              for (const collaborator of collaboratorsBeforeDelete) {
+                try {
+                  await emailSender.send(collaborator.email, subject, body);
+                } catch {
+                  // Swallowed, deliberately, same as DELETE /projects/:id's
+                  // own convention (round 1256) -- the delete itself already
+                  // succeeded and was already committed; a failed best-effort
+                  // notification must never turn that into an error response,
+                  // and must never block the rest of this account's own
+                  // deletion either.
+                }
               }
             }
           }
-        }
-        // Round 1277: notify the owner of every OTHER project this user
-        // merely collaborated on (never owned) that this collaborator's
-        // account is gone -- mirrors the exact same "someone's access
-        // situation changed, tell the affected party" principle this file
-        // and routes/projects.ts already apply to every other
-        // collaborator-list-change direction (invite, role change,
-        // removal, ownership transfer, project deletion via the
-        // ownedProjectIds loop just above). The owner's own roster
-        // silently shrinking here was the one remaining case with zero
-        // signal. Must run BEFORE removeAllCollaborationsForUser below,
-        // which is the only record of which projects this user
-        // collaborated on -- once it runs, listCollaboratedProjectIds
-        // would find nothing.
-        const deletedUser = findUserById(db, req.userId!);
-        if (deletedUser && emailSender.configured) {
-          const collaboratedProjectIds = listCollaboratedProjectIds(db, req.userId!);
-          for (const projectId of collaboratedProjectIds) {
-            const collaboratedProject = getProject(db, projectId);
-            if (!collaboratedProject) continue;
-            const owner = findUserById(db, collaboratedProject.ownerId);
-            if (!owner) continue;
-            const subject = isHebrew
-              ? `${deletedUser.email} מחק/ה את החשבון ועזב/ה את הפרויקט "${collaboratedProject.name}" ב-Forge AI`
-              : `${deletedUser.email} deleted their account and left "${collaboratedProject.name}" on Forge AI`;
-            const body = isHebrew
-              ? `${deletedUser.email} מחק/ה את חשבון ה-Forge AI שלו/ה, ולכן הוא/היא אינו/ה יותר משתתף/ת בפרויקט "${collaboratedProject.name}".`
-              : `${deletedUser.email} deleted their Forge AI account and is no longer a collaborator on "${collaboratedProject.name}".`;
-            try {
-              await emailSender.send(owner.email, subject, body);
-            } catch {
-              // Swallowed, deliberately, same as this route's own
-              // established convention -- the account deletion itself
-              // must never be blocked or fail because a best-effort
-              // notification couldn't be sent.
+          // Round 1277: notify the owner of every OTHER project this user
+          // merely collaborated on (never owned) that this collaborator's
+          // account is gone -- mirrors the exact same "someone's access
+          // situation changed, tell the affected party" principle this file
+          // and routes/projects.ts already apply to every other
+          // collaborator-list-change direction (invite, role change,
+          // removal, ownership transfer, project deletion via the
+          // ownedProjectIds loop just above). The owner's own roster
+          // silently shrinking here was the one remaining case with zero
+          // signal. Must run BEFORE removeAllCollaborationsForUser below,
+          // which is the only record of which projects this user
+          // collaborated on -- once it runs, listCollaboratedProjectIds
+          // would find nothing.
+          const deletedUser = findUserById(db, req.userId!);
+          if (deletedUser && emailSender.configured) {
+            const collaboratedProjectIds = listCollaboratedProjectIds(db, req.userId!);
+            for (const projectId of collaboratedProjectIds) {
+              const collaboratedProject = getProject(db, projectId);
+              if (!collaboratedProject) continue;
+              const owner = findUserById(db, collaboratedProject.ownerId);
+              if (!owner) continue;
+              const subject = isHebrew
+                ? `${deletedUser.email} מחק/ה את החשבון ועזב/ה את הפרויקט "${collaboratedProject.name}" ב-Forge AI`
+                : `${deletedUser.email} deleted their account and left "${collaboratedProject.name}" on Forge AI`;
+              const body = isHebrew
+                ? `${deletedUser.email} מחק/ה את חשבון ה-Forge AI שלו/ה, ולכן הוא/היא אינו/ה יותר משתתף/ת בפרויקט "${collaboratedProject.name}".`
+                : `${deletedUser.email} deleted their Forge AI account and is no longer a collaborator on "${collaboratedProject.name}".`;
+              try {
+                await emailSender.send(owner.email, subject, body);
+              } catch {
+                // Swallowed, deliberately, same as this route's own
+                // established convention -- the account deletion itself
+                // must never be blocked or fail because a best-effort
+                // notification couldn't be sent.
+              }
             }
           }
+          removeAllCollaborationsForUser(db, req.userId!);
+          deleteUser(db, req.userId!);
+        } finally {
+          for (const id of ownedProjectIds) activePipelines.delete(id);
         }
-        removeAllCollaborationsForUser(db, req.userId!);
-        deleteUser(db, req.userId!);
-      } finally {
-        for (const id of ownedProjectIds) activePipelines.delete(id);
-      }
-      res.status(204).end();
+        return { status: 204, body: null };
+      });
+      res.status(status).end();
     } catch (err) {
       next(err);
     }

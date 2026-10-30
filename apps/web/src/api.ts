@@ -404,10 +404,17 @@ export function changeEmail(currentPassword: string, email: string, lang: "he" |
  * separately call clearToken -- the caller does that itself once this
  * succeeds, the same way logout() above pairs a server call with its own
  * local cleanup.
+ *
+ * Round 1339: same `x-idempotency-key` mechanism changePassword/resetPassword
+ * already send, for the single most destructive route in this file -- a
+ * response lost in transit after the server already deleted the account
+ * used to make a retry fail with a false 401 SESSION_EXPIRED (the very
+ * session this request's own first attempt just revoked), reporting
+ * failure for a deletion that had already fully, irreversibly succeeded.
  */
 export function deleteAccount(lang?: "he" | "en"): Promise<void> {
   const query = lang ? `?lang=${lang}` : "";
-  return request(`/auth/account${query}`, { method: "DELETE" });
+  return request(`/auth/account${query}`, { method: "DELETE", headers: { "x-idempotency-key": crypto.randomUUID() } });
 }
 
 /**
