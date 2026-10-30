@@ -128,6 +128,18 @@ export class AnthropicPromptEnhancer implements PromptEnhancer {
       throw new Error("Anthropic API refused to enhance this idea (stop_reason: refusal)");
     }
 
+    // Round 1319: the one sibling Anthropic-call site in this package that
+    // never got this check -- anthropic.ts's AnthropicSpecProvider,
+    // debug.ts's requestSpecFix, and eliteAgent.ts's generateEliteCodeResponse
+    // (round 1318) all throw on stop_reason === "max_tokens" instead of
+    // letting a response cut off mid-sentence look like a normal success.
+    // Without it, enhancePrompt's own catch-and-fall-back-to-heuristic logic
+    // (below) never gets a chance to run -- a truncated-but-non-empty string
+    // passes the "no text content" check right below just fine.
+    if (payload.stop_reason === "max_tokens") {
+      throw new Error("Anthropic API response was truncated (stop_reason: max_tokens) before completing the enhanced prompt");
+    }
+
     const text = payload.content?.find((block) => block.type === "text")?.text;
     if (!text || text.trim().length === 0) {
       throw new Error("Anthropic API response contained no text content");

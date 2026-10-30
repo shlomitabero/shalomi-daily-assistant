@@ -95,6 +95,45 @@ test("AnthropicPromptEnhancer throws a specific error on a safety refusal (stop_
   await assert.rejects(() => enhancer.enhance("x"), /refus/i);
 });
 
+/**
+ * Round 1319: the one sibling Anthropic-call site in this package that
+ * never got the max_tokens check anthropic.ts/debug.ts/eliteAgent.ts (round
+ * 1318) all already have. A response cut off by hitting max_tokens is still
+ * a non-empty string, so it passed the "no text content" check and was
+ * returned as a fully successful enhancement -- silently truncated,
+ * without ever giving enhancePrompt's own catch-and-fall-back-to-heuristic
+ * logic a chance to run. Uses a real cut-off-mid-sentence string, not a
+ * hypothetical, to prove the failure mode this closes.
+ */
+test("AnthropicPromptEnhancer throws a specific error when the response was truncated (stop_reason: max_tokens), instead of returning the cut-off text as a successful enhancement", async () => {
+  const fakeFetch = (async () =>
+    new Response(
+      JSON.stringify({
+        content: [{ type: "text", text: "A shop management app with customers, orders, and inventory tracking. The key workflows are" }],
+        stop_reason: "max_tokens",
+      }),
+      { status: 200 },
+    )) as unknown as typeof fetch;
+  const enhancer = new AnthropicPromptEnhancer({ apiKey: "test-key", fetchImpl: fakeFetch });
+  await assert.rejects(() => enhancer.enhance("x"), /truncated.*max_tokens/i);
+});
+
+test("enhancePrompt falls back to the heuristic enhancer when AnthropicPromptEnhancer's response was truncated, instead of surfacing the cut-off text", async () => {
+  const fakeFetch = (async () =>
+    new Response(
+      JSON.stringify({
+        content: [{ type: "text", text: "A shop management app with customers, orders, and inventory tracking. The key workflows are" }],
+        stop_reason: "max_tokens",
+      }),
+      { status: 200 },
+    )) as unknown as typeof fetch;
+  const enhancer = new AnthropicPromptEnhancer({ apiKey: "test-key", fetchImpl: fakeFetch });
+  const { enhanced, providerName } = await enhancePrompt("a shop with customers and orders", enhancer);
+  assert.equal(providerName, "anthropic-fallback");
+  assert.ok(enhanced.length > 0);
+  assert.doesNotMatch(enhanced, /key workflows are$/, "the truncated text must never be the one returned to the caller");
+});
+
 test("enhancePrompt returns providerName alongside the enhanced text", async () => {
   const { enhanced, providerName } = await enhancePrompt("a shop with customers and orders");
   assert.equal(providerName, "heuristic");
