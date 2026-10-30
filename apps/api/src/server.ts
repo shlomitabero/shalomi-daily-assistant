@@ -32,9 +32,33 @@ const emailSender = new ResendEmailSender();
 const app = createApp(db, undefined, webDistDir, whatsapp, emailSender, uploadsDir);
 // Deliberately started here, not inside createApp() -- see
 // startScheduledAutomationsLoop's own comment for why.
-startScheduledAutomationsLoop(db, whatsapp, emailSender);
+const stopAutomationsLoop = startScheduledAutomationsLoop(db, whatsapp, emailSender);
 
-app.listen(port, () => {
+const server = app.listen(port, () => {
   // eslint-disable-next-line no-console
   console.log(`Forge AI listening on http://localhost:${port} (db: ${dbPath})`);
 });
+
+// Round 1298: this deployment's own host (Render, see render.yaml) sends
+// SIGTERM on every redeploy, restart, and scale event -- an entirely
+// routine occurrence, not a crash -- and until now nothing here handled
+// it, so the process was killed immediately: any in-flight HTTP request,
+// WhatsApp send still queued in whatsappWeb.ts's own per-project
+// sendQueue, or automations tick already running were all cut off with
+// no drain. stopAutomationsLoop (returned above) is exactly the stop()
+// startScheduledAutomationsLoop's own doc comment already anticipated "a
+// future server shutdown handler" calling; server.close() stops accepting
+// new connections while letting already-open ones finish normally. The
+// timer is a last-resort safety net for a connection that never finishes
+// on its own (a stuck keep-alive, a hung request) -- it must never block
+// a deploy indefinitely, but the expected path is the close() callback
+// firing well before it.
+function shutdown(signal: string) {
+  // eslint-disable-next-line no-console
+  console.log(`${signal} received, shutting down gracefully...`);
+  stopAutomationsLoop();
+  server.close(() => process.exit(0));
+  setTimeout(() => process.exit(1), 10_000).unref();
+}
+process.on("SIGTERM", () => shutdown("SIGTERM"));
+process.on("SIGINT", () => shutdown("SIGINT"));
