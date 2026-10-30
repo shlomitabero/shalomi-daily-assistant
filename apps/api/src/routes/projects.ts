@@ -1617,6 +1617,39 @@ export function createProjectsRouter(
   });
 
   /**
+   * Round 1344: `GET .../integrations/whatsapp/messages` -- the route that
+   * lists a project's WhatsApp message log -- had NO volumetric throttle at
+   * all, unlike its own DELETE siblings on the same path (both already
+   * gated by whatsappHistoryRateLimiter just above). Lower severity than
+   * other gaps this series closed (`listWhatsAppMessages` is already
+   * keyset-paginated at `LIMIT 50` per call, bounding each call's own
+   * cost), but nothing stopped unbounded *call frequency* from any
+   * collaborator with mere read access (`requireProjectAccess`, not write).
+   *
+   * Deliberately NOT whatsappHistoryRateLimiter's own 30-per-15-min budget:
+   * that limiter is sized for occasional housekeeping (clear/delete), but
+   * WhatsAppPanel.tsx's own `startConnectedPolling` calls this exact route
+   * every `CONNECTED_POLL_INTERVAL_MS` (10 seconds) for as long as the
+   * panel sits open on a connected integration -- 6 calls/minute, 90 calls
+   * in any 15-minute window, from a single ordinary open panel doing
+   * nothing but sitting there. Applying the 30-per-window budget here would
+   * 429 a real user's own panel after roughly 5 minutes of normal use, not
+   * just an abusive scripted loop -- a regression, not a fix. This
+   * dedicated limiter's budget instead comfortably covers that baseline
+   * background-poll rate plus the initial load-on-mount fetch and manual
+   * "load older messages" pagination clicks, while still bounding a
+   * genuinely abusive loop (e.g. polling far faster than the UI ever does)
+   * well below what would meaningfully stall this process for every other
+   * project.
+   */
+  const whatsappMessagesReadRateLimiter = createRateLimiter({
+    windowMs: 15 * 60 * 1000,
+    max: 300,
+    keyGenerator: (req) => req.userId ?? "unknown",
+    message: "Too many WhatsApp message requests. Please try again later.",
+  });
+
+  /**
    * Round 1172: PATCH .../name and PATCH .../description had no volumetric
    * throttle at all -- the last two plain mutations left in this file
    * without one after round 1171's own sweep closed every other gap. Not
@@ -3129,6 +3162,7 @@ export function createProjectsRouter(
 
   router.get(
     "/projects/:id/integrations/whatsapp/messages",
+    whatsappMessagesReadRateLimiter,
     asyncRoute(async (req, res) => {
       const project = requireProjectAccess(db, req.params.id, req.userId!);
       // A conversation only ever grows, and listWhatsAppMessages always

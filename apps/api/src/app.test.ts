@@ -17591,6 +17591,67 @@ test("DELETE .../integrations/whatsapp/messages (bulk-clear) and .../messages/:m
 });
 
 /**
+ * Round 1344: GET .../integrations/whatsapp/messages (listing the message
+ * log) had no rate limiter at all, unlike its own DELETE siblings just
+ * above (whatsappHistoryRateLimiter). Deliberately NOT sharing that
+ * limiter's own 30-per-15-min budget: WhatsAppPanel.tsx's own
+ * startConnectedPolling calls this exact route every 10 seconds for as
+ * long as the panel sits open on a connected integration -- 90 calls in
+ * any 15-minute window from one ordinary open panel doing nothing but
+ * sitting there, which the DELETE siblings' own occasional-housekeeping
+ * budget would far undercount. A dedicated whatsappMessagesReadRateLimiter
+ * (300 per 15 min) comfortably covers that baseline plus manual pagination,
+ * while still bounding a genuinely abusive loop.
+ */
+test("GET .../integrations/whatsapp/messages is rate-limited per authenticated account on its own dedicated budget, separate from the DELETE siblings' whatsappHistoryRateLimiter", async () => {
+  await withServer(async (baseUrl) => {
+    const ownerToken = await signup(baseUrl, "rate-whatsapp-read1@example.com");
+    const createRes = await fetch(`${baseUrl}/api/projects`, {
+      method: "POST",
+      headers: authHeaders(ownerToken),
+      body: JSON.stringify({ description: "A CRM with customers and deals." }),
+    });
+    const { project } = (await createRes.json()) as { project: { id: string } };
+
+    for (let i = 0; i < 300; i++) {
+      const res = await fetch(`${baseUrl}/api/projects/${project.id}/integrations/whatsapp/messages`, {
+        headers: authHeaders(ownerToken),
+      });
+      assert.notEqual(res.status, 429, `GET ${i + 1} of 300 (within the limit) must not be rate-limited yet`);
+    }
+
+    const blocked = await fetch(`${baseUrl}/api/projects/${project.id}/integrations/whatsapp/messages`, {
+      headers: authHeaders(ownerToken),
+    });
+    assert.equal(blocked.status, 429);
+    assert.equal(((await blocked.json()) as { code?: string }).code, "RATE_LIMITED");
+
+    // The DELETE siblings' own, much smaller whatsappHistoryRateLimiter
+    // budget must still be fully intact -- this is a separate limiter, not
+    // a shared one, since 300 GETs would instantly exhaust a shared budget
+    // and make the sibling DELETE routes falsely look rate-limited too.
+    const deleteRes = await fetch(`${baseUrl}/api/projects/${project.id}/integrations/whatsapp/messages`, {
+      method: "DELETE",
+      headers: authHeaders(ownerToken),
+    });
+    assert.notEqual(deleteRes.status, 429, "the GET route's own exhausted budget must not bleed into the DELETE siblings' separate budget");
+
+    // A different account must get its own fresh allowance.
+    const otherOwnerToken = await signup(baseUrl, "rate-whatsapp-read1-other@example.com");
+    const otherCreateRes = await fetch(`${baseUrl}/api/projects`, {
+      method: "POST",
+      headers: authHeaders(otherOwnerToken),
+      body: JSON.stringify({ description: "A different CRM." }),
+    });
+    const { project: otherProject } = (await otherCreateRes.json()) as { project: { id: string } };
+    const otherRes = await fetch(`${baseUrl}/api/projects/${otherProject.id}/integrations/whatsapp/messages`, {
+      headers: authHeaders(otherOwnerToken),
+    });
+    assert.equal(otherRes.status, 200, "a different account must not be collaterally blocked by another account's own exhausted budget");
+  });
+});
+
+/**
  * Regression test for the same round-1171 finding: POST
  * .../calendar-feed-token/regenerate had no rate limiter at all, unlike
  * every sibling owner-only mutation this file already guards. Given its
