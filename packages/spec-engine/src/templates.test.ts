@@ -209,6 +209,45 @@ test("the Volunteer template's Volunteer entity has a real status enum, matching
 });
 
 /**
+ * Round 1275's finding: continuing the exact round 1273/1274 "curated
+ * template vs. its own matching domain rule" lead. The Project Tracker
+ * template's own Project entity (name/description/status/owner) was
+ * missing the `deadline` (date) and `budget` (number) fields that
+ * domainEntities.ts's real Project domain rule (keywords
+ * /\bproject(s)?\b/, "פרויקט"/"פרויקטים") always produces -- and this
+ * template's own summary text literally contains the matching phrase
+ * ("A project tracking system..."/"מערכת למעקב פרויקטים..."), so an
+ * equivalent from-scratch description would trigger the rule and get
+ * both fields. Unlike rounds 1273/1274 (a missing REQUIRED status enum),
+ * this template's `status` was already present and correctly shaped --
+ * the gap here is specifically the two missing optional fields, so a
+ * template literally named "Project Tracker" had no way to record a
+ * project's own deadline or budget at all.
+ */
+test("the Project Tracker template's Project entity has deadline and budget fields, matching domainEntities.ts's own matching domain rule", () => {
+  const projectTrackerTemplate = TEMPLATES.find((t) => t.id === "project-tracker");
+  assert.ok(projectTrackerTemplate, "expected a \"project-tracker\" template to exist");
+
+  const project = projectTrackerTemplate!.spec.entities.find((e) => e.name === "Project");
+  assert.ok(project, "expected the Project Tracker template to have a Project entity");
+  const deadline = project!.fields.find((f) => f.name === "deadline");
+  assert.ok(deadline, "expected the Project entity to have a deadline field");
+  assert.equal(deadline!.type, "date");
+  const budget = project!.fields.find((f) => f.name === "budget");
+  assert.ok(budget, "expected the Project entity to have a budget field");
+  assert.equal(budget!.type, "number");
+
+  const projectEn = projectTrackerTemplate!.specEn.entities.find((e) => e.name === "Project");
+  assert.ok(projectEn, "expected the Project Tracker specEn to have a Project entity");
+  const deadlineEn = projectEn!.fields.find((f) => f.name === "deadline");
+  assert.ok(deadlineEn, "expected the Project specEn entity to have a deadline field");
+  assert.equal(deadlineEn!.type, "date");
+  const budgetEn = projectEn!.fields.find((f) => f.name === "budget");
+  assert.ok(budgetEn, "expected the Project specEn entity to have a budget field");
+  assert.equal(budgetEn!.type, "number");
+});
+
+/**
  * Round 516's finding: the "Appointments & Clients" template's Hebrew
  * Appointment.status enum mapped "scheduled" to "קבוע" (meaning "fixed" /
  * "permanent" / "standing" in Hebrew), not "scheduled". This codebase
