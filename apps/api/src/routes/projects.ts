@@ -2279,7 +2279,16 @@ export function createProjectsRouter(
         if (project.ownerId !== req.userId! && !isSelf) {
           throw new HttpError(403, "Only the project owner can remove a different collaborator", "COLLABORATOR_CANNOT_REMOVE_OTHERS");
         }
-        const removed = isSelf ? null : findUserById(db, req.params.userId);
+        // Round 1269: mirrors the sibling PATCH-role route's own
+        // previousRole !== newRole check (round 1262) -- removeCollaborator
+        // is a plain DELETE with no "did this actually remove a row" signal,
+        // so without first confirming the target was still a real
+        // collaborator, a retried/duplicate DELETE (e.g. two collaborator-
+        // panel tabs both showing the same stale list, each removing the
+        // same person) found the target still existed as a USER and sent a
+        // second, spurious "you were removed" email for a no-op removal.
+        const wasCollaborator = !isSelf && getCollaboratorRole(db, project.id, req.params.userId) !== null;
+        const removed = wasCollaborator ? findUserById(db, req.params.userId) : null;
         removeCollaborator(db, project.id, req.params.userId);
         if (removed && emailSender.configured) {
           const isHebrew = req.query.lang !== "en";

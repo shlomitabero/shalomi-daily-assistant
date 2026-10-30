@@ -5035,6 +5035,20 @@ test("removing a collaborator sends a real notification to the REMOVED collabora
       });
       assert.equal(leaveRes.status, 204);
       assert.equal(emailSender.sentTo.length, 1, "a self-initiated leave must never send a notification to the leaver themselves");
+
+      // Round 1269: a second DELETE for the SAME already-removed
+      // collaborator (e.g. two collaborator-panel tabs both showing the
+      // same stale list) must still succeed as a no-op, but must never
+      // send a second "you were removed" email -- the target is still a
+      // real user (findUserById alone can't tell this apart from the
+      // first, genuine removal), but they were already removed from this
+      // project before this call even started.
+      const removeAgainRes = await fetch(`${baseUrl}/api/projects/${project.id}/collaborators/${removedUserId}?lang=en`, {
+        method: "DELETE",
+        headers: authHeaders(ownerToken),
+      });
+      assert.equal(removeAgainRes.status, 204, "removing an already-removed collaborator again must still succeed as a no-op");
+      assert.equal(emailSender.sentTo.length, 1, "removing an already-removed collaborator again must never send a second notification");
     },
     { emailSender },
   );
