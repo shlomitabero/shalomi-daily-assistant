@@ -173,6 +173,42 @@ test("the CRM template's Task entity has a real status enum, not just a boolean,
 });
 
 /**
+ * Round 1274's finding: the same "curated template vs. its own matching
+ * domain rule" gap round 1273 just fixed for CRM's Task entity, in a
+ * sibling template round 1273's own closing note explicitly left
+ * unaudited. The Volunteer & Shift Management template's Volunteer entity
+ * gave it only name/phone/email/skills -- no status at all -- unlike
+ * domainEntities.ts's real Volunteer domain rule (keywords include
+ * "volunteer management"/"מתנדבים", which this template's own summary
+ * text literally contains -- "A volunteer management system..."/"מערכת
+ * לניהול מתנדבים..." -- so an equivalent from-scratch description would
+ * trigger it), which always gives Volunteer a required status enum
+ * (Active/Inactive) plus role/joinedDate. Without a status field, a
+ * volunteer org can't distinguish active from inactive volunteers at all
+ * in the generated app -- no status filter, board view, or automation
+ * trigger is possible on a field that doesn't exist.
+ */
+test("the Volunteer template's Volunteer entity has a real status enum, matching domainEntities.ts's own matching domain rule", () => {
+  const volunteersTemplate = TEMPLATES.find((t) => t.id === "volunteers");
+  assert.ok(volunteersTemplate, "expected a \"volunteers\" template to exist");
+
+  const volunteer = volunteersTemplate!.spec.entities.find((e) => e.name === "Volunteer");
+  assert.ok(volunteer, "expected the Volunteer template to have a Volunteer entity");
+  const status = volunteer!.fields.find((f) => f.name === "status");
+  assert.ok(status, "expected the Volunteer entity to have a status field");
+  assert.equal(status!.type, "enum");
+  assert.equal(status!.required, true);
+  assert.ok(status!.enumValues && status!.enumValues.length >= 2, "expected the status field to have at least 2 enum values");
+
+  const volunteerEn = volunteersTemplate!.specEn.entities.find((e) => e.name === "Volunteer");
+  assert.ok(volunteerEn, "expected the Volunteer specEn to have a Volunteer entity");
+  const statusEn = volunteerEn!.fields.find((f) => f.name === "status");
+  assert.ok(statusEn, "expected the Volunteer specEn entity to have a status field");
+  assert.equal(statusEn!.type, "enum");
+  assert.equal(statusEn!.required, true);
+});
+
+/**
  * Round 516's finding: the "Appointments & Clients" template's Hebrew
  * Appointment.status enum mapped "scheduled" to "קבוע" (meaning "fixed" /
  * "permanent" / "standing" in Hebrew), not "scheduled". This codebase
