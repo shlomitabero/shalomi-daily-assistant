@@ -14,6 +14,7 @@ import { formatCollaboratorCount } from "./collaboratorCount.js";
 import { downloadCollaboratorsReport, formatCollaboratorsReport } from "./collaboratorsReport.js";
 import { useTranslation } from "./i18n/LanguageContext.js";
 import { useDialogFocusTrap } from "./useDialogFocusTrap.js";
+import { useBeforeUnloadWarning } from "./useBeforeUnloadWarning.js";
 
 const LOCALE: Record<string, string> = { he: "he-IL", en: "en-US" };
 
@@ -182,6 +183,9 @@ export function CollaboratorsPanel({
    * pristine (empty) email field still closes the dialog normally.
    */
   const hasUnsavedInviteDraft = email.trim() !== "";
+  // Round 1331: the far more common way this exact draft gets lost isn't
+  // Escape (guarded above) but a tab close/refresh/navigation away.
+  useBeforeUnloadWarning(hasUnsavedInviteDraft);
 
   function handleResetInviteForm() {
     setEmail("");

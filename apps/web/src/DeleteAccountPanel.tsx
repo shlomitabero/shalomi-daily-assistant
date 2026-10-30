@@ -3,6 +3,7 @@ import { deleteAccount, listMyProjectIds } from "./api.js";
 import { formatDeleteAccountSummary } from "./deleteAccountSummary.js";
 import { useTranslation } from "./i18n/LanguageContext.js";
 import { useDialogFocusTrap } from "./useDialogFocusTrap.js";
+import { useBeforeUnloadWarning } from "./useBeforeUnloadWarning.js";
 
 /**
  * Real, permanent self-service account deletion -- there was previously no
@@ -77,6 +78,9 @@ export function DeleteAccountPanel({
    * email isn't just visually cleared, it's destroyed.
    */
   const hasUnsavedDraft = confirmText.trim() !== "";
+  // Round 1331: the far more common way this exact draft gets lost isn't
+  // Escape (guarded above) but a tab close/refresh/navigation away.
+  useBeforeUnloadWarning(hasUnsavedDraft);
 
   function handleResetForm() {
     setConfirmText("");

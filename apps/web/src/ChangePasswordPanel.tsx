@@ -3,6 +3,7 @@ import { changePassword } from "./api.js";
 import { useTranslation } from "./i18n/LanguageContext.js";
 import { PasswordInput } from "./PasswordInput.js";
 import { useDialogFocusTrap } from "./useDialogFocusTrap.js";
+import { useBeforeUnloadWarning } from "./useBeforeUnloadWarning.js";
 
 /**
  * There was previously no way to change your account password once
@@ -34,6 +35,12 @@ export function ChangePasswordPanel({ onClose }: { onClose: () => void }) {
    * destroyed, not just visually cleared.
    */
   const hasUnsavedDraft = currentPassword.trim() !== "" || newPassword.trim() !== "" || confirmPassword.trim() !== "";
+  // Round 1331: the far more common way this exact draft gets lost isn't
+  // Escape (guarded above) but a tab close/refresh/navigation away.
+  // Excludes `done`, mirroring ChangeEmailPanel.tsx's own identical
+  // reasoning -- the fields stay filled after a successful change, with
+  // nothing left to warn about.
+  useBeforeUnloadWarning(!done && hasUnsavedDraft);
 
   function handleResetForm() {
     setCurrentPassword("");

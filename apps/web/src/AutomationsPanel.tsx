@@ -25,6 +25,7 @@ import { useTranslation } from "./i18n/LanguageContext.js";
 import { resolveErrorMessage } from "./i18n/language.js";
 import { PasswordInput } from "./PasswordInput.js";
 import { useDialogFocusTrap } from "./useDialogFocusTrap.js";
+import { useBeforeUnloadWarning } from "./useBeforeUnloadWarning.js";
 
 const LOCALE: Record<string, string> = { he: "he-IL", en: "en-US" };
 
@@ -544,6 +545,11 @@ export function AutomationsPanel({
     toNumber.trim() !== "" ||
     toEmail.trim() !== "" ||
     emailSubject.trim() !== "";
+  // Round 1331: the far more common way this exact draft gets lost isn't
+  // Escape (guarded above via data-escape-handled-locally) but a tab
+  // close, refresh, or navigation away -- reuses this same boolean rather
+  // than recomputing it, so the two protections can't drift apart.
+  useBeforeUnloadWarning(hasUnsavedDraft);
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();

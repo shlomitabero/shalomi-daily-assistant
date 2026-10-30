@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import type { Entity } from "@forge/shared";
 import { useTranslation } from "./i18n/LanguageContext.js";
 import { useDialogFocusTrap } from "./useDialogFocusTrap.js";
+import { useBeforeUnloadWarning } from "./useBeforeUnloadWarning.js";
 import {
   clearWhatsAppMessages,
   connectWhatsApp,
@@ -842,6 +843,9 @@ export function WhatsAppPanel({
    * same way round 979 already closed for the explicit "Remove" button.
    */
   const hasUnsavedTestDraft = testTo.trim() !== "" || testMessage.trim() !== "" || testAttachment !== null;
+  // Round 1331: the far more common way this exact draft gets lost isn't
+  // Escape (guarded above) but a tab close/refresh/navigation away.
+  useBeforeUnloadWarning(hasUnsavedTestDraft);
 
   function handleResetTestForm() {
     // Round 1119: see handleRemoveAttachment's own identical guard just

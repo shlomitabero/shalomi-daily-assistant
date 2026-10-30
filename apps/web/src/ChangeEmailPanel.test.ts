@@ -106,6 +106,49 @@ test("submitting a matching new email and confirmation calls the real changeEmai
   });
 });
 
+/**
+ * Round 1331: the far more common way this exact draft gets lost isn't
+ * Escape (round 1245's own test) but a tab close/refresh/navigation away.
+ * Also confirms the one subtlety this panel needs that ChangePasswordPanel's
+ * identical fix shares: the typed fields are deliberately left filled after
+ * a successful change (the success message replaces the form, but nothing
+ * resets `email`/`confirmEmail`/`currentPassword`) -- without excluding
+ * `done`, the warning would keep firing forever after a completed, already-
+ * saved change, which is exactly the false positive this test guards
+ * against.
+ */
+test("warns before a tab close/refresh while an email-change draft is in progress, but not once the change has actually succeeded", async () => {
+  await withJsdom(async () => {
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = (async () =>
+      new Response(
+        JSON.stringify({ user: { id: "u1", email: "dana.new@example.com", createdAt: "2024-01-01T00:00:00.000Z" } }),
+        { status: 200, headers: { "content-type": "application/json" } },
+      )) as typeof fetch;
+    try {
+      renderPanel();
+      fillForm("dana.new@example.com", "dana.new@example.com", "my-current-password");
+
+      const eventWhileDirty = new window.Event("beforeunload", { cancelable: true });
+      window.dispatchEvent(eventWhileDirty);
+      assert.equal(eventWhileDirty.defaultPrevented, true, "must warn while an email-change draft is in progress");
+
+      fireEvent.submit(document.querySelector("form")!);
+      await waitForCondition(() => document.querySelector(".success") !== null);
+
+      const eventAfterSuccess = new window.Event("beforeunload", { cancelable: true });
+      window.dispatchEvent(eventAfterSuccess);
+      assert.equal(
+        eventAfterSuccess.defaultPrevented,
+        false,
+        "must not warn once the change has actually succeeded, even though the typed fields are still technically non-empty",
+      );
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+});
+
 test("a mismatched confirmation never calls the API and shows a mismatch error instead", async () => {
   await withJsdom(async () => {
     const originalFetch = globalThis.fetch;

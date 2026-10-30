@@ -4,6 +4,7 @@ import { changeEmail } from "./api.js";
 import { useTranslation } from "./i18n/LanguageContext.js";
 import { PasswordInput } from "./PasswordInput.js";
 import { useDialogFocusTrap } from "./useDialogFocusTrap.js";
+import { useBeforeUnloadWarning } from "./useBeforeUnloadWarning.js";
 
 /**
  * There was previously no way to change your account's own login email --
@@ -44,6 +45,12 @@ export function ChangeEmailPanel({ currentEmail, onClose, onChanged }: { current
    * with it -- an untouched field must not count as a draft worth saving.
    */
   const hasUnsavedDraft = currentPassword.trim() !== "" || email.trim() !== currentEmail || confirmEmail.trim() !== currentEmail;
+  // Round 1331: the far more common way this exact draft gets lost isn't
+  // Escape (guarded above) but a tab close/refresh/navigation away.
+  // Excludes `done` -- the fields are deliberately left filled after a
+  // successful change (the success message replaces the form, but the
+  // state isn't reset), so there is nothing left to warn about by then.
+  useBeforeUnloadWarning(!done && hasUnsavedDraft);
 
   function handleResetForm() {
     setCurrentPassword("");

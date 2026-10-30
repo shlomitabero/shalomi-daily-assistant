@@ -200,6 +200,29 @@ test("Escape clears an in-progress password draft instead of closing the dialog,
   });
 });
 
+/**
+ * Round 1331: the far more common way this exact draft gets lost isn't
+ * Escape (the test above) but a tab close/refresh/navigation away.
+ * Confirms the real native prompt fires while the draft is non-empty, and
+ * does not once the fields are cleared again -- proving `hasUnsavedDraft`
+ * itself is wired to the warning, not just a hook that always fires.
+ */
+test("warns before a tab close/refresh while a password draft is in progress, and stops once it's cleared", async () => {
+  await withJsdom(async () => {
+    renderPanel();
+    fillForm("my-current-password", "", "");
+
+    const eventWhileDirty = new window.Event("beforeunload", { cancelable: true });
+    window.dispatchEvent(eventWhileDirty);
+    assert.equal(eventWhileDirty.defaultPrevented, true, "must warn while a password draft is in progress");
+
+    fillForm("", "", "");
+    const eventWhilePristine = new window.Event("beforeunload", { cancelable: true });
+    window.dispatchEvent(eventWhilePristine);
+    assert.equal(eventWhilePristine.defaultPrevented, false, "must not warn once the draft is cleared again");
+  });
+});
+
 test("clicking Close calls onClose", async () => {
   await withJsdom(async () => {
     let closed = 0;
