@@ -92,6 +92,15 @@ export function patchOpportunity(req, res) {
   if ('priceUSD' in patch && !(typeof patch.priceUSD === 'number' && Number.isFinite(patch.priceUSD) && patch.priceUSD > 0)) {
     return res.status(400).json({ error: 'priceUSD must be a positive number' });
   }
+  // Once published, priceUSD is baked into a real Paddle price object
+  // (publishing.js never updates an existing one — there's no API for
+  // that) — the live sales page and the actual checkout amount are fixed
+  // to whatever it was at publish time. Letting it be edited afterward
+  // would silently desync the dashboard's number from what a real
+  // customer is actually charged.
+  if ('priceUSD' in patch && opportunity.status === 'published') {
+    return res.status(400).json({ error: 'priceUSD cannot be changed after publishing — the live price is already fixed in Paddle' });
+  }
 
   const updated = db.opportunities.update(req.params.id, patch);
   res.json({ opportunity: withFeasibility(updated) });

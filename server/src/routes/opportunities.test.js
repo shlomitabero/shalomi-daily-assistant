@@ -107,6 +107,28 @@ test('patchOpportunity rejects a null or non-positive priceUSD — a product alw
   assert.equal(resZero.statusCode, 400);
 });
 
+test('patchOpportunity rejects changing priceUSD after publishing — the live Paddle price is already fixed', () => {
+  // publishing.js never updates an existing Paddle price (there's no API
+  // for that) — editing priceUSD post-publish would desync the dashboard's
+  // number from what a real customer is actually charged on the live
+  // sales page.
+  __resetForTests();
+  const opp = insertOpportunity({ status: 'published', paddlePriceId: 'pri_123', slug: 'already-live', priceUSD: 9 });
+  const res = makeRes();
+  patchOpportunity({ params: { id: opp.id }, body: { priceUSD: 29 } }, res);
+  assert.equal(res.statusCode, 400);
+  assert.equal(db.opportunities.get(opp.id).priceUSD, 9);
+});
+
+test('patchOpportunity still allows editing other fields (riskLevel, revenueEstimate) after publishing', () => {
+  __resetForTests();
+  const opp = insertOpportunity({ status: 'published', paddlePriceId: 'pri_123', slug: 'already-live' });
+  const res = makeRes();
+  patchOpportunity({ params: { id: opp.id }, body: { riskLevel: 'low' } }, res);
+  assert.equal(res.statusCode, 200);
+  assert.equal(res.body.opportunity.riskLevel, 'low');
+});
+
 test('patchOpportunity ignores fields outside the editable allow-list, e.g. status or slug', () => {
   __resetForTests();
   const opp = insertOpportunity({ status: 'draft', slug: null });

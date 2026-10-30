@@ -138,7 +138,17 @@ export default function OpportunityDetail() {
             </select>
           </label>
         </div>
-        <label>מחיר מוצר ($)<input type="number" value={form.priceUSD} onChange={(e) => setForm({ ...form, priceUSD: e.target.value })} /></label>
+        <label>
+          מחיר מוצר ($)
+          <input
+            type="number"
+            value={form.priceUSD}
+            onChange={(e) => setForm({ ...form, priceUSD: e.target.value })}
+            disabled={opp.status === 'published'}
+            title={opp.status === 'published' ? 'לא ניתן לשנות מחיר אחרי פרסום — המחיר כבר קבוע ב-Paddle' : undefined}
+          />
+        </label>
+        {opp.status === 'published' && <p className="hint" style={{ margin: '-4px 0 0' }}>המחיר נעול — הוא כבר קבוע בדף המכירה האמיתי ואי אפשר לשנות אותו בדיעבד.</p>}
         {error && <p className="form-error">{error}</p>}
         <button className="btn btn-ghost" type="submit" disabled={busy}>שמור הערכה</button>
       </form>
