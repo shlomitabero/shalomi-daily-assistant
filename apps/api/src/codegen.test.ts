@@ -1611,6 +1611,88 @@ test("generated server.js rejects an array value for a required number field", a
 });
 
 /**
+ * Regression test (round 1303): the same copy-pasted coerce() -- and its
+ * live-app twin, packages/db/src/repository.ts's coerceValue -- had a
+ * boolean-shaped sibling to round 604's own array-value gap just above:
+ * Number(true) is 1 and Number(false) is 0, both finite, so a boolean
+ * value sailed through Number.isFinite and was silently stored as a real
+ * number/foreign-key id instead of being rejected. Reproduced here against
+ * a real spawned server, mirroring round 604's own test exactly.
+ */
+test("generated server.js rejects a boolean value for a required number field", async () => {
+  const invoiceProject: Project = {
+    ...project,
+    spec: {
+      ...project.spec,
+      entities: [
+        {
+          name: "Invoice",
+          fields: [
+            { name: "client", type: "text", required: true },
+            { name: "amount", type: "number", required: true },
+          ],
+        },
+      ],
+    },
+  };
+  const files = generateExportFiles(invoiceProject);
+  const serverJs = files.find((f) => f.path === "server.js")!.content;
+
+  const dir = mkdtempSync(path.join(tmpdir(), "codegen-boolean-number-test-"));
+  const repoRoot = path.resolve(import.meta.dirname, "../../..");
+  symlinkSync(path.join(repoRoot, "node_modules"), path.join(dir, "node_modules"));
+  writeFileSync(path.join(dir, "server.js"), serverJs);
+
+  const port = 44000 + Math.floor(Math.random() * 5000);
+  const child = spawn(process.execPath, ["--experimental-sqlite", "server.js"], {
+    cwd: dir,
+    env: { ...process.env, PORT: String(port) },
+    stdio: ["ignore", "pipe", "pipe"],
+  });
+  let stderr = "";
+  child.stderr.on("data", (chunk) => {
+    stderr += chunk.toString();
+  });
+
+  try {
+    const deadline = Date.now() + 5000;
+    let lastErr: unknown;
+    while (Date.now() < deadline) {
+      if (child.exitCode !== null) {
+        throw new Error(`server.js exited early (code ${child.exitCode}):\n${stderr}`);
+      }
+      try {
+        await fetch(`http://localhost:${port}/api/entities`);
+        break;
+      } catch (err) {
+        lastErr = err;
+        await new Promise((r) => setTimeout(r, 100));
+      }
+    }
+    if (child.exitCode !== null) throw lastErr instanceof Error ? lastErr : new Error(String(lastErr));
+
+    const validRes = await fetch(`http://localhost:${port}/api/Invoice`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ client: "Gamma Inc", amount: 500 }),
+    });
+    assert.equal(validRes.status, 201);
+
+    for (const bad of [true, false]) {
+      const badRes = await fetch(`http://localhost:${port}/api/Invoice`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ client: "Acme Corp", amount: bad }),
+      });
+      assert.equal(badRes.status, 400, `expected ${JSON.stringify(bad)} to be rejected, not coerced via Number()`);
+    }
+  } finally {
+    child.kill();
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+/**
  * Regression test (round 546): the exported standalone app's own coerce()
  * -- same copy-pasted logic as packages/db/src/repository.ts's
  * coerceValue -- had no rejection path at all for its boolean branch,

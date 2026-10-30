@@ -68,7 +68,12 @@ function coerceValue(field: Field, raw: unknown, projectId: string, entityName: 
       // input already gets -- for a *required* field this also meant the
       // required-check above never fired, since isEmpty doesn't recognize
       // an array as "no real value" either.
-      if (Array.isArray(raw)) {
+      // Same quirk, boolean-shaped: Number(true) is 1 and Number(false) is
+      // 0, both finite, so a boolean raw value silently became a real
+      // stored number/foreign-key id instead of being rejected -- and for
+      // a required field, `raw === false` also bypassed the required-check
+      // above, since isEmpty doesn't recognize `false` as "no real value".
+      if (Array.isArray(raw) || typeof raw === "boolean") {
         throw new ValidationError(`Field "${field.name}" must be a number`);
       }
       const num = Number(raw);

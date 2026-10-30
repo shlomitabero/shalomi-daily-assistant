@@ -453,6 +453,78 @@ test("insertRecord rejects an array value for a required number field, instead o
 });
 
 /**
+ * Regression test for round 1303: the same array-coercion quirk fixed by
+ * round 604 above has a boolean-shaped twin this function never guarded
+ * against. Number(true) is 1 and Number(false) is 0, both finite, so a
+ * boolean raw value for a number/relation field silently became a real
+ * stored number/foreign-key id instead of being rejected -- and for a
+ * *required* field, `raw === false` also bypassed the required-check
+ * entirely, since isEmpty doesn't recognize `false` as "no real value"
+ * either (the same required-check-bypass shape round 604's own array fix
+ * already closed for arrays).
+ */
+test("insertRecord rejects a boolean value for a required number field, instead of silently coercing it via Number(true)/Number(false)", () => {
+  const invoice: Entity = {
+    name: "Invoice",
+    fields: [
+      { name: "label", type: "text", required: true },
+      { name: "amount", type: "number", required: true },
+    ],
+  };
+  const db = openDatabase(":memory:");
+  applyMigrations(db, "proj1", { ...spec, entities: [invoice] });
+
+  assert.throws(
+    () => insertRecord(db, "proj1", invoice, { label: "Rent", amount: true }),
+    ValidationError,
+    "expected true to be rejected, not coerced to 1",
+  );
+  assert.throws(
+    () => insertRecord(db, "proj1", invoice, { label: "Rent", amount: false }),
+    ValidationError,
+    "expected false to be rejected as missing a required value, not coerced to 0",
+  );
+
+  const created = insertRecord(db, "proj1", invoice, { label: "Rent", amount: 500 });
+  assert.equal(created.amount, 500);
+});
+
+/**
+ * Same bug, but for a required "relation" field: a boolean raw value must
+ * be rejected with a clean ValidationError, not silently coerced into a
+ * real foreign-key id (1 or 0) that may or may not point at an unrelated
+ * record -- the identical hazard round 604's own array-value test above
+ * already covers for arrays.
+ */
+test("insertRecord rejects a boolean value for a required relation field, instead of silently coercing it to foreign key 1 or 0", () => {
+  const customerEntity: Entity = { name: "Customer", fields: [{ name: "name", type: "text", required: true }] };
+  const order: Entity = {
+    name: "Order",
+    fields: [
+      { name: "total", type: "number", required: true },
+      { name: "customerId", type: "relation", required: true, relationTo: "Customer" },
+    ],
+  };
+  const db = openDatabase(":memory:");
+  applyMigrations(db, "proj1", { ...spec, entities: [customerEntity, order] });
+  const customer = insertRecord(db, "proj1", customerEntity, { name: "Dana" });
+
+  assert.throws(
+    () => insertRecord(db, "proj1", order, { total: 10, customerId: true }),
+    ValidationError,
+    "expected true to be rejected, not coerced to foreign key 1",
+  );
+  assert.throws(
+    () => insertRecord(db, "proj1", order, { total: 10, customerId: false }),
+    ValidationError,
+    "expected false to be rejected as missing a required value, not coerced to foreign key 0",
+  );
+
+  const created = insertRecord(db, "proj1", order, { total: 10, customerId: customer.id });
+  assert.equal(created.customerId, customer.id);
+});
+
+/**
  * Same bug, but for a required "relation" field: before the fix, a
  * whitespace-only value coerced to foreign key `0` and hit the real
  * `REFERENCES ... (id)` constraint (migrate.ts), throwing a bare SQLite
