@@ -75,13 +75,34 @@ const BILLING_ENTITY_NAMES = new Set(["Invoice", "Order", "Donation", "Subscript
  * entities are fixed data known at module-load time, so there's no
  * description text to scan for PAYMENT_KEYWORDS the way heuristic.ts's own
  * provider does; only the entity-name check applies here.
+ *
+ * Round 1271: the original round-1248 version early-returned `[]` when
+ * `needsPayments` was false, which this comment's own "exactly" claim
+ * never actually matched -- heuristic.ts's real buildOpenQuestions has no
+ * such early return; it unconditionally returns a 1-element array always,
+ * only varying the question text/recommendation by needsPayments. Since
+ * App.tsx gates the whole Open Questions section on `.length > 0`, that
+ * early return meant 5 of the 6 templates (every one but Restaurant)
+ * permanently lost the payment decision point -- now fixed to genuinely
+ * mirror buildOpenQuestions's always-one-question shape.
  */
 function paymentOpenQuestion(entities: EntitySpec[], isHebrew: boolean): OpenQuestion[] {
   const needsPayments = entities.some((e) => BILLING_ENTITY_NAMES.has(e.name));
-  if (!needsPayments) return [];
   return isHebrew
-    ? [{ question: "באיזה ספק תשלומים כדאי להשתמש?", options: ["Stripe", "PayPal", "בלי תשלומים", "תחליטו בשבילי"], recommendation: "Stripe" }]
-    : [{ question: "Which payment provider should this use?", options: ["Stripe", "PayPal", "No payments", "Decide for me"], recommendation: "Stripe" }];
+    ? [
+        {
+          question: needsPayments ? "באיזה ספק תשלומים כדאי להשתמש?" : "האם האפליקציה צריכה לקבל תשלומים?",
+          options: ["Stripe", "PayPal", "בלי תשלומים", "תחליטו בשבילי"],
+          recommendation: needsPayments ? "Stripe" : "בלי תשלומים",
+        },
+      ]
+    : [
+        {
+          question: needsPayments ? "Which payment provider should this use?" : "Does this application need to accept payments?",
+          options: ["Stripe", "PayPal", "No payments", "Decide for me"],
+          recommendation: needsPayments ? "Stripe" : "No payments",
+        },
+      ];
 }
 
 /**

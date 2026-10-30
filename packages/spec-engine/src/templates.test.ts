@@ -235,11 +235,34 @@ test("the Restaurant template (the one template with a billing entity -- MenuIte
   assert.equal(restaurant!.specEn.openQuestions[0].recommendation, "Stripe");
 });
 
-test("a template with no billing entity (e.g. the CRM/Project Tracker/Volunteer/Appointments/Inventory templates) still gets an empty openQuestions array, matching its pre-round-1248 behavior", () => {
+/**
+ * Round 1271's finding: round 1248's own paymentOpenQuestion early-returned
+ * `[]` for any template with no billing entity, but heuristic.ts's real
+ * buildOpenQuestions has no such early return -- it unconditionally
+ * returns a 1-element array always, just varying the question text/
+ * recommendation by needsPayments (confirmed by running
+ * HeuristicSpecProvider.generate() against description text matching
+ * these templates' own business shape). Since App.tsx gates the whole
+ * Open Questions section on `.length > 0`, these 5 templates permanently
+ * lost a real decision point (POST /projects/:id/answers genuinely
+ * re-generates the spec from an answer) that an equivalent from-scratch
+ * description always gets. This replaces the old "still gets an empty
+ * array" test above, which had itself only verified the BILLING_ENTITY_NAMES
+ * membership check, not whether buildOpenQuestions ever actually returns
+ * `[]` for any input (it doesn't).
+ */
+test("a template with no billing entity (e.g. the CRM/Project Tracker/Volunteer/Appointments/Inventory templates) still gets the same always-present payment open question heuristic.ts generates for an identical business shape, in both languages", () => {
   for (const template of TEMPLATES) {
     if (template.id === "restaurant") continue;
-    assert.deepEqual(template.spec.openQuestions, [], `template "${template.id}" has no billing entity and must keep an empty openQuestions array`);
-    assert.deepEqual(template.specEn.openQuestions, [], `template "${template.id}" has no billing entity and must keep an empty openQuestions array`);
+    assert.equal(template.spec.openQuestions.length, 1, `template "${template.id}" must get the always-present payment open question like a from-scratch description would`);
+    assert.equal(template.spec.openQuestions[0].question, "האם האפליקציה צריכה לקבל תשלומים?");
+    assert.deepEqual(template.spec.openQuestions[0].options, ["Stripe", "PayPal", "בלי תשלומים", "תחליטו בשבילי"]);
+    assert.equal(template.spec.openQuestions[0].recommendation, "בלי תשלומים");
+
+    assert.equal(template.specEn.openQuestions.length, 1, `template "${template.id}" must get the always-present payment open question like a from-scratch description would`);
+    assert.equal(template.specEn.openQuestions[0].question, "Does this application need to accept payments?");
+    assert.deepEqual(template.specEn.openQuestions[0].options, ["Stripe", "PayPal", "No payments", "Decide for me"]);
+    assert.equal(template.specEn.openQuestions[0].recommendation, "No payments");
   }
 });
 
