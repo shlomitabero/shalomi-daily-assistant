@@ -963,6 +963,27 @@ test("findRecordPhoneNumber returns null when every phone-like field is blank or
 });
 
 /**
+ * Round 1286: nothing in the spec-generation pipeline, the AI system prompt,
+ * or the pre-build field-retype route stops a phone-like-named field
+ * (PHONE_FIELD_NAME_HINTS) from ending up typed "number" instead of "text"
+ * -- round 1278 already fixed this exact hazard for whatsapp.ts's own
+ * findMatchingRecord (the opposite, inbound-message-to-record direction),
+ * but this per-record counterpart, its own doc comment's named "client-side
+ * counterpart", was never given the same coercion. Before this, any entity
+ * whose phone field got typed "number" lost the "Send WhatsApp" button
+ * entirely, on every record, with no error anywhere -- the number is right
+ * there, just stored as a JS number instead of a string.
+ */
+test("findRecordPhoneNumber coerces a number-typed phone field's value to a string instead of rejecting it", () => {
+  const fields: Field[] = [
+    { name: "name", type: "text", required: true },
+    { name: "phone", type: "number", required: false },
+  ];
+  const recordWithNumberPhone = { id: 1, name: "Dana Levi", phone: 505551234 };
+  assert.equal(findRecordPhoneNumber(fields, recordWithNumberPhone), "505551234");
+});
+
+/**
  * Round 921: findSinglePhoneFieldTarget is WhatsAppPanel's own "which
  * entity+field does an unmatched message's phone number belong in" lookup --
  * the client-side counterpart to findPhoneField above, but across the whole

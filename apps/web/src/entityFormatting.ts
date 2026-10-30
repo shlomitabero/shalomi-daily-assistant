@@ -947,7 +947,14 @@ export function findRecordPhoneNumber(fields: Field[], record: EntityRecord): st
   for (const field of fields) {
     if (!PHONE_FIELD_NAME_HINTS.includes(field.name.toLowerCase())) continue;
     const value = record[field.name];
-    if (typeof value === "string" && value) return value;
+    // Round 1286: a phone-like-named field can end up typed "number" (the
+    // AI spec generator has no way to know "phone" should be text, and a
+    // phone number "looks numeric"), in which case repository.ts stores
+    // and returns it as a real JS number, never a string. Coercing here
+    // mirrors whatsapp.ts's own round-1278 fix for the opposite (inbound
+    // message -> record) direction.
+    const asString = typeof value === "number" ? String(value) : value;
+    if (typeof asString === "string" && asString) return asString;
   }
   return null;
 }
