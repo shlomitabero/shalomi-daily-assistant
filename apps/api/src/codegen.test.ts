@@ -4117,7 +4117,7 @@ test("the exported EntityView's filter dropdown also covers a boolean field, ren
   );
   assert.match(
     entityViewJsx,
-    /return \[\.\.\.findFilterableEnumFields\(fields\), \.\.\.fields\.filter\(\(f\) => f\.type === "boolean"\), \.\.\.relationFields\];/,
+    /return \[\.\.\.findFilterableEnumFields\(fields\), \.\.\.fields\.filter\(\(f\) => f\.type === "boolean"\), \.\.\.relationFields, \.\.\.deadlineDateFields\];/,
   );
 });
 
@@ -24632,6 +24632,96 @@ test("the exported EntityView flags a deadline-named date field as overdue/due-s
       assert.ok(dueSoonRow.querySelector(".date-due-soon"), "a dueDate due tomorrow must be flagged due-soon");
       assert.equal(farRow.querySelector(".date-overdue"), null, "a dueDate a month out needs no overdue styling");
       assert.equal(farRow.querySelector(".date-due-soon"), null, "a dueDate a month out needs no due-soon styling either");
+    });
+  } finally {
+    globalThis.fetch = originalFetch;
+    cleanup();
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+/**
+ * Round 1323: ports the live preview's own new findFilterableFields fix
+ * (a deadline-named date field's overdue/due-soon classification, already
+ * used for the table cell's own red/amber styling right above, is now
+ * also offered as a toolbar filter) to the exported app's EntityView.jsx.
+ * Same Task/dueDate fixture as the styling test above, confirming the
+ * filter dropdown appears, narrows to exactly the matching record for
+ * each of "Overdue"/"Due soon", and clearing it restores the rest.
+ */
+test("the exported EntityView's per-field filter offers a deadline-named date field too, narrowing by overdue/due-soon classification", async () => {
+  const files = generateExportFiles(project);
+  const dir = writeGeneratedWebComponent(files);
+  const originalFetch = globalThis.fetch;
+
+  function isoDateOffset(days: number): string {
+    const d = new Date();
+    d.setDate(d.getDate() + days);
+    const pad = (n: number) => String(n).padStart(2, "0");
+    return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+  }
+
+  const taskEntity = {
+    name: "Task",
+    label: "Task",
+    fields: [
+      { name: "title", label: "Title", type: "text", required: true },
+      { name: "dueDate", label: "Due", type: "date", required: false },
+    ],
+  };
+  const records = [
+    { id: 1, title: "Overdue task", dueDate: isoDateOffset(-5) },
+    { id: 2, title: "Due soon task", dueDate: isoDateOffset(1) },
+    { id: 3, title: "Far future task", dueDate: isoDateOffset(30) },
+  ];
+  globalThis.fetch = (async (input: string, init?: RequestInit): Promise<Response> => {
+    const method = init?.method ?? "GET";
+    if (method === "GET" && input === "/api/Task") {
+      return new Response(JSON.stringify({ records }), { status: 200, headers: { "content-type": "application/json" } });
+    }
+    throw new Error(`unexpected request ${method} ${input}`);
+  }) as typeof fetch;
+
+  try {
+    await withRealLocalStorage(async () => {
+      const { EntityView } = await import(path.join(dir, "web", "src", "components", "EntityView.jsx"));
+      const props = {
+        entity: taskEntity,
+        highlightRecordId: null,
+        onHighlightHandled: () => {},
+        onJumpToRecord: () => {},
+        onRecordCountChange: () => {},
+      };
+
+      const { container } = render(React.createElement(EntityView, props));
+      for (let i = 0; i < 40; i++) {
+        if (container.querySelectorAll("tbody tr").length === 3) break;
+        await act(async () => {
+          await new Promise((resolve) => setTimeout(resolve, 0));
+        });
+      }
+
+      const filterSelect = container.querySelector(".entity-status-filter") as HTMLSelectElement;
+      assert.ok(filterSelect, "expected a filter dropdown for the deadline-named date field");
+      const optionLabels = Array.from(filterSelect.options).map((o) => o.textContent);
+      assert.deepEqual(optionLabels.slice(1), ["Overdue", "Due soon"], "options must be the same two urgency states the table cell already visually flags");
+
+      await act(async () => {
+        fireEvent.change(filterSelect, { target: { value: "overdue" } });
+      });
+      assert.equal(container.querySelectorAll("tbody tr").length, 1, "picking 'Overdue' must narrow to exactly one row");
+      assert.match(container.querySelector("tbody tr")!.textContent ?? "", /Overdue task/, "picking 'Overdue' must narrow to exactly the overdue record");
+
+      await act(async () => {
+        fireEvent.change(filterSelect, { target: { value: "dueSoon" } });
+      });
+      assert.equal(container.querySelectorAll("tbody tr").length, 1, "picking 'Due soon' must narrow to exactly one row");
+      assert.match(container.querySelector("tbody tr")!.textContent ?? "", /Due soon task/, "picking 'Due soon' must narrow to exactly the due-soon record");
+
+      await act(async () => {
+        fireEvent.change(filterSelect, { target: { value: "" } });
+      });
+      assert.equal(container.querySelectorAll("tbody tr").length, 3, "clearing the filter must restore every row");
     });
   } finally {
     globalThis.fetch = originalFetch;

@@ -749,7 +749,17 @@ export function findFilterableFields(fields: Field[], allEntities?: Entity[], re
   const relationFields = fields.filter(
     (f) => f.type === "relation" && f.relationTo && allEntities?.some((e) => e.name.toLowerCase() === f.relationTo!.toLowerCase()) && relatedRecords?.[f.relationTo],
   );
-  return [...findFilterableEnumFields(fields), ...fields.filter((f) => f.type === "boolean"), ...relationFields];
+  // Round 1323: a deadline-named date field (isDeadlineFieldName) already
+  // has a real, fixed value space -- EntityPanel.tsx's own table cell
+  // already classifies every value into exactly "overdue"/"dueSoon"/
+  // neither via getDateUrgency, and visually highlights the first two red/
+  // amber -- but that classification was never offered as a toolbar
+  // filter, unlike every other fixed-value-space field type (enum/
+  // boolean/relation) right above. A plain, non-deadline date field is
+  // deliberately still excluded: with an unbounded value space and no
+  // existing urgency classification, it has nothing comparable to offer.
+  const deadlineDateFields = fields.filter((f) => f.type === "date" && isDeadlineFieldName(f.name));
+  return [...findFilterableEnumFields(fields), ...fields.filter((f) => f.type === "boolean"), ...relationFields, ...deadlineDateFields];
 }
 
 /**

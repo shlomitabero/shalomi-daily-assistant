@@ -15211,6 +15211,70 @@ test("a date field named like a deadline is visually flagged overdue/due-soon in
   });
 });
 
+/**
+ * Round 1323: the table above already classifies and visually flags every
+ * deadline-named date field's value as overdue/due-soon/neither via
+ * getDateUrgency -- but that classification was never offered as a
+ * toolbar filter, the same way a fixed-value-space enum/boolean/relation
+ * field already is. Same Task/dueDate fixture as the styling test above,
+ * confirming the new filter dropdown narrows the table to exactly the
+ * overdue (or due-soon) record and clearing it restores the rest -- the
+ * same reversible-filter contract every other per-field filter already has.
+ */
+test("EntityPanel's per-field filter offers a deadline-named date field too, narrowing by overdue/due-soon classification", async () => {
+  await withJsdom(async () => {
+    function isoDateOffset(days: number): string {
+      const d = new Date();
+      d.setDate(d.getDate() + days);
+      const pad = (n: number) => String(n).padStart(2, "0");
+      return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+    }
+    const taskEntity: Entity = {
+      name: "Task",
+      label: "Task",
+      fields: [
+        { name: "title", label: "Title", type: "text", required: true },
+        { name: "dueDate", label: "Due", type: "date", required: false },
+      ],
+    };
+    const store: EntityRecord[] = [
+      { id: 1, title: "Overdue task", dueDate: isoDateOffset(-5) },
+      { id: 2, title: "Due soon task", dueDate: isoDateOffset(1) },
+      { id: 3, title: "Far future task", dueDate: isoDateOffset(30) },
+    ];
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = (async (input: string, init?: RequestInit) => {
+      const method = init?.method ?? "GET";
+      if (method === "GET" && input === "/api/projects/proj1/entities/Task") {
+        return new Response(JSON.stringify({ records: store }), { status: 200, headers: { "content-type": "application/json" } });
+      }
+      throw new Error(`unexpected request ${method} ${input}`);
+    }) as typeof fetch;
+    try {
+      renderEntityPanel({ entity: taskEntity, allEntities: [taskEntity] });
+      await waitForCondition(() => document.querySelectorAll("table tbody tr").length === 3);
+
+      const filterSelect = document.querySelector(".entity-status-filter") as HTMLSelectElement;
+      assert.ok(filterSelect, "expected a filter dropdown for the deadline-named date field");
+      const optionLabels = Array.from(filterSelect.options).map((o) => o.textContent);
+      assert.deepEqual(optionLabels.slice(1), ["Overdue", "Due soon"], "options must be the same two urgency states the table cell already visually flags");
+
+      fireEvent.change(filterSelect, { target: { value: "overdue" } });
+      await waitForCondition(() => document.querySelectorAll("table tbody tr").length === 1);
+      assert.match(document.querySelector("table tbody tr")!.textContent ?? "", /Overdue task/, "picking 'Overdue' must narrow to exactly the overdue record");
+
+      fireEvent.change(filterSelect, { target: { value: "dueSoon" } });
+      await waitForCondition(() => document.querySelectorAll("table tbody tr").length === 1);
+      assert.match(document.querySelector("table tbody tr")!.textContent ?? "", /Due soon task/, "picking 'Due soon' must narrow to exactly the due-soon record");
+
+      fireEvent.change(filterSelect, { target: { value: "" } });
+      await waitForCondition(() => document.querySelectorAll("table tbody tr").length === 3);
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+});
+
 test("an ordinary (non-deadline-named) date field in the past is never flagged overdue, even decades back", async () => {
   await withJsdom(async () => {
     function isoDateOffset(days: number): string {

@@ -2819,6 +2819,15 @@ export function EntityPanel({
         // first, exactly like that function's own falsy branch does.
         const field = entity.fields.find((f) => f.name === fieldName);
         if (field?.type === "boolean") return String(Boolean(r[fieldName])) === value;
+        // Round 1323: a deadline-named date field's filter offers
+        // "overdue"/"dueSoon", the same two states getDateUrgency already
+        // classifies the table cell's own red/amber styling by -- so this
+        // must match against that classification, not the raw stored
+        // "YYYY-MM-DD" string, which is what the generic fallback below
+        // would otherwise compare "overdue"/"dueSoon" against.
+        if (field?.type === "date" && isDeadlineFieldName(field.name)) {
+          return getDateUrgency(String(r[fieldName] ?? "")) === value;
+        }
         return String(r[fieldName] ?? "") === value;
       }),
     );
@@ -4704,6 +4713,11 @@ export function EntityPanel({
                     <>
                       <option value="true">{t("entity.groupBy.yes")}</option>
                       <option value="false">{t("entity.groupBy.no")}</option>
+                    </>
+                  ) : f.type === "date" ? (
+                    <>
+                      <option value="overdue">{t("entity.dateOverdue")}</option>
+                      <option value="dueSoon">{t("entity.dateDueSoon")}</option>
                     </>
                   ) : f.type === "relation" ? (
                     <>

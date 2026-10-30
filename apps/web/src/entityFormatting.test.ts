@@ -3491,7 +3491,10 @@ test("isGroupableField allows only enum and boolean fields", () => {
  * findFilterableFields returns a boolean field alongside a qualifying
  * enum field, in enum-then-boolean order, while still excluding a
  * too-large enum (same >8-value exclusion findFilterableEnumFields
- * itself already enforces) and a plain text/number/date field.
+ * itself already enforces) and a plain text/number field. A deadline-named
+ * date field ("dueDate") is deliberately included too, as of round 1323 --
+ * see the dedicated test below for that behavior; a plain, non-deadline
+ * date field ("shipDate") stays excluded.
  */
 test("findFilterableFields returns every qualifying enum field plus every boolean field, unlike enum-only findFilterableEnumFields", () => {
   const fields: Field[] = [
@@ -3500,11 +3503,37 @@ test("findFilterableFields returns every qualifying enum field plus every boolea
     { name: "isUrgent", type: "boolean", required: false },
     { name: "tooManyValues", type: "enum", required: false, enumValues: ["a", "b", "c", "d", "e", "f", "g", "h", "i"] },
     { name: "dueDate", type: "date", required: false },
+    { name: "shipDate", type: "date", required: false },
   ];
   assert.deepEqual(
     findFilterableFields(fields).map((f) => f.name),
-    ["status", "isUrgent"],
-    "must include the qualifying enum field and the boolean field, in that order, excluding text/date/too-large-enum",
+    ["status", "isUrgent", "dueDate"],
+    "must include the qualifying enum field, the boolean field, and the deadline-named date field, excluding text/too-large-enum/the plain non-deadline date field",
+  );
+});
+
+/**
+ * Round 1323: a deadline-named date field (isDeadlineFieldName -- "due" or
+ * "deadline" in the field's name) already has a real, fixed value space:
+ * EntityPanel.tsx's own table cell already classifies every value into
+ * "overdue"/"dueSoon"/neither via getDateUrgency, visually highlighting the
+ * first two red/amber -- but that classification was never offered as a
+ * toolbar filter, the one fixed-value-space field shape findFilterableFields
+ * didn't already cover. A plain, non-deadline date field must stay excluded:
+ * with an unbounded value space and no existing urgency classification, it
+ * has nothing comparable to offer, unlike enum/boolean/relation/deadline-date.
+ */
+test("findFilterableFields includes a deadline-named date field (matches isDeadlineFieldName), but excludes a plain date field", () => {
+  const fields: Field[] = [
+    { name: "name", type: "text", required: true },
+    { name: "dueDate", type: "date", required: false },
+    { name: "deadline", type: "date", required: false },
+    { name: "shipDate", type: "date", required: false },
+  ];
+  assert.deepEqual(
+    findFilterableFields(fields).map((f) => f.name),
+    ["dueDate", "deadline"],
+    "both deadline-named date fields must be included, in declaration order, while the plain 'shipDate' field stays excluded",
   );
 });
 

@@ -3864,7 +3864,16 @@ function findFilterableFields(fields, relatedRecords) {
       relatedRecords &&
       relatedRecords[f.relationTo],
   );
-  return [...findFilterableEnumFields(fields), ...fields.filter((f) => f.type === "boolean"), ...relationFields];
+  // Round 1323: mirrors the live preview's own entityFormatting.ts
+  // findFilterableFields fix -- a deadline-named date field already has a
+  // real, fixed value space (isDeadlineFieldName/getDateUrgency above
+  // already classify every value into "overdue"/"dueSoon"/neither for the
+  // table cell's own red/amber styling), so it belongs in the toolbar
+  // filter dropdown alongside enum/boolean/relation. A plain,
+  // non-deadline date field stays excluded -- it has no such
+  // classification to filter by.
+  const deadlineDateFields = fields.filter((f) => f.type === "date" && isDeadlineFieldName(f.name));
+  return [...findFilterableEnumFields(fields), ...fields.filter((f) => f.type === "boolean"), ...relationFields, ...deadlineDateFields];
 }
 
 // Picks the enum field an entity's records should be grouped into board
@@ -5857,6 +5866,14 @@ export function EntityView({ entity, highlightRecordId, onHighlightHandled, onJu
         // silently hiding a never-set record from both "Yes" and "No".
         const field = entity.fields.find((f) => f.name === fieldName);
         if (field && field.type === "boolean") return String(Boolean(r[fieldName])) === value;
+        // Round 1323: mirrors the live preview's own EntityPanel.tsx fix --
+        // a deadline-named date field's filter offers "overdue"/"dueSoon",
+        // the same two states getDateUrgency already classifies the table
+        // cell's own red/amber styling by, so this must match against that
+        // classification, not the raw stored "YYYY-MM-DD" string.
+        if (field && field.type === "date" && isDeadlineFieldName(field.name)) {
+          return getDateUrgency(String(r[fieldName] ?? "")) === value;
+        }
         return String(r[fieldName] ?? "") === value;
       }),
     );
@@ -7325,6 +7342,11 @@ export function EntityView({ entity, highlightRecordId, onHighlightHandled, onJu
                   <>
                     <option value="true">Yes</option>
                     <option value="false">No</option>
+                  </>
+                ) : f.type === "date" ? (
+                  <>
+                    <option value="overdue">Overdue</option>
+                    <option value="dueSoon">Due soon</option>
                   </>
                 ) : f.type === "relation" ? (
                   <>
