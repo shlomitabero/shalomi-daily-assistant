@@ -281,6 +281,19 @@ export async function generateEliteCodeResponse(prompt: string, options: EliteAg
     throw new Error("Anthropic API refused to generate code for this request (stop_reason: refusal)");
   }
 
+  // Round 1318: unlike anthropic.ts's own JSON.parse, parseAgentResponse's
+  // regex (ACTION_PATTERN) never throws on a truncated response -- it
+  // simply has no closing tag to match for whichever <file>/<patch>/<shell>
+  // block the model was still writing, so that last block (often the most
+  // important one, since the model streams them in order) silently
+  // vanishes from `actions` with no error and no truncation flag. Checked
+  // unconditionally, not just inside a catch block the way anthropic.ts
+  // does it, since here there is no parse failure to catch -- the data
+  // loss is silent by construction.
+  if (payload.stop_reason === "max_tokens") {
+    throw new Error("Anthropic API response was truncated (stop_reason: max_tokens) -- the generated code is incomplete");
+  }
+
   const text = payload.content?.find((block) => block.type === "text")?.text;
   if (!text) {
     throw new Error("Anthropic API response contained no text content");

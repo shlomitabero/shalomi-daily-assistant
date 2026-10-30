@@ -230,3 +230,30 @@ test("generateEliteCodeResponse throws when the model refuses the request", asyn
     /refused to generate code/,
   );
 });
+
+/**
+ * Round 1318: mirrors anthropic.ts's own max_tokens check (AnthropicSpecProvider),
+ * but unconditional rather than only inside a JSON.parse catch -- unlike that
+ * function, parseAgentResponse's regex never throws on a truncated response,
+ * it just silently has no closing tag to match for whichever <file>/<patch>/
+ * <shell> block the model was still writing when it got cut off, so that
+ * block vanishes from `actions` with no error at all. A real response cut off
+ * mid <file> block (no closing </file> tag) is used here, not a hypothetical,
+ * to prove the silent-data-loss failure mode this fix closes: without the
+ * fix, this exact response would resolve successfully with `actions`
+ * containing only the thought, silently missing the in-progress file.
+ */
+test("generateEliteCodeResponse throws when the response was truncated by hitting max_tokens, instead of silently dropping the in-progress file", async () => {
+  const fakeFetch: typeof fetch = async () =>
+    new Response(
+      JSON.stringify({
+        content: [{ type: "text", text: '<thought>Plan.</thought>\n<file path="src/components/Dashboard.tsx">export function Dashboard() {' }],
+        stop_reason: "max_tokens",
+      }),
+      { status: 200, headers: { "content-type": "application/json" } },
+    );
+  await assert.rejects(
+    () => generateEliteCodeResponse("Build me a dashboard", { apiKey: "test-key", fetchImpl: fakeFetch }),
+    /truncated \(stop_reason: max_tokens\)/,
+  );
+});
