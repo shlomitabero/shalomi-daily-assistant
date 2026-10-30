@@ -115,6 +115,10 @@ export interface BaileysIncomingMessage {
     pollCreationMessageV3?: { name?: string };
     pollCreationMessageV5?: { name?: string };
     reactionMessage?: { text?: string };
+    buttonsResponseMessage?: { selectedButtonId?: string; selectedDisplayText?: string };
+    listResponseMessage?: { title?: string; description?: string; singleSelectReply?: { selectedRowId?: string } };
+    templateButtonReplyMessage?: { selectedId?: string; selectedDisplayText?: string };
+    interactiveResponseMessage?: { body?: { text?: string }; nativeFlowResponseMessage?: { name?: string } };
     liveLocationMessage?: { caption?: string };
     viewOnceMessage?: { message?: BaileysIncomingMessage["message"] };
     viewOnceMessageV2?: { message?: BaileysIncomingMessage["message"] };
@@ -311,6 +315,22 @@ function describeIncomingMessage(message: BaileysIncomingMessage["message"]): st
     message.pollCreationMessage ?? message.pollCreationMessageV2 ?? message.pollCreationMessageV3 ?? message.pollCreationMessageV5;
   if (poll) return poll.name ? `[Poll] ${poll.name}` : "[Poll]";
   if (message.reactionMessage) return message.reactionMessage.text ? `[Reaction] ${message.reactionMessage.text}` : "[Reaction removed]";
+  if (message.buttonsResponseMessage) {
+    const b = message.buttonsResponseMessage;
+    return `[Button] ${b.selectedDisplayText ?? b.selectedButtonId ?? ""}`;
+  }
+  if (message.templateButtonReplyMessage) {
+    const t = message.templateButtonReplyMessage;
+    return `[Button] ${t.selectedDisplayText ?? t.selectedId ?? ""}`;
+  }
+  if (message.listResponseMessage) {
+    const l = message.listResponseMessage;
+    return `[List] ${l.title ?? l.description ?? l.singleSelectReply?.selectedRowId ?? ""}`;
+  }
+  if (message.interactiveResponseMessage) {
+    const i = message.interactiveResponseMessage;
+    return `[Button] ${i.body?.text ?? i.nativeFlowResponseMessage?.name ?? ""}`;
+  }
   const viewOnceInner =
     message.viewOnceMessageV2Extension?.message ?? message.viewOnceMessageV2?.message ?? message.viewOnceMessage?.message;
   if (viewOnceInner) {

@@ -1183,6 +1183,50 @@ test("an incoming WhatsApp live-location share is logged with a descriptive plac
   for (const m of messages) assert.equal(m.direction, "in", "every placeholder row must still be a real, matched-against incoming message, not metadata");
 });
 
+/**
+ * Round 1306: WhatsApp's own interactive-reply message kinds -- a customer
+ * tapping a quick-reply button (buttonsResponseMessage/
+ * templateButtonReplyMessage), picking an item from a list menu
+ * (listResponseMessage), or tapping a newer "native flow" button
+ * (interactiveResponseMessage) -- were previously dropped with zero trace,
+ * the same silent-vanish gap every prior round in this message-type-
+ * coverage family (1035/1051/1088/1106/1121/1139/1142/1152) fixed for a
+ * different message shape. All four fields are plaintext, exactly like
+ * the already-handled pollCreationMessage/reactionMessage.
+ */
+test("incoming WhatsApp button taps and list selections are logged with a descriptive placeholder instead of being silently dropped", async () => {
+  const { manager, createdSockets, db } = setupManager();
+  insertProject(db, project);
+  applyMigrations(db, project.id, project.spec);
+  markProjectBuilt(db, project.id);
+
+  await manager.connect(project.id);
+  createdSockets[0].emitConnectionUpdate({ connection: "open" });
+
+  createdSockets[0].emitMessagesUpsert({
+    type: "notify",
+    messages: [
+      { key: { remoteJid: "972501234567@s.whatsapp.net", fromMe: false }, message: { buttonsResponseMessage: { selectedButtonId: "yes", selectedDisplayText: "כן" } } },
+      { key: { remoteJid: "972501234567@s.whatsapp.net", fromMe: false }, message: { buttonsResponseMessage: { selectedButtonId: "yes" } } },
+      { key: { remoteJid: "972501234567@s.whatsapp.net", fromMe: false }, message: { listResponseMessage: { title: "פיצה משפחתית", singleSelectReply: { selectedRowId: "pizza_family" } } } },
+      { key: { remoteJid: "972501234567@s.whatsapp.net", fromMe: false }, message: { listResponseMessage: { singleSelectReply: { selectedRowId: "pizza_family" } } } },
+      { key: { remoteJid: "972501234567@s.whatsapp.net", fromMe: false }, message: { templateButtonReplyMessage: { selectedId: "confirm", selectedDisplayText: "אשר" } } },
+      { key: { remoteJid: "972501234567@s.whatsapp.net", fromMe: false }, message: { interactiveResponseMessage: { body: { text: "תור ליום שני" } } } },
+    ],
+  });
+
+  // listWhatsAppMessages orders newest-first, the reverse of emission order.
+  const { messages } = listWhatsAppMessages(db, project.id);
+  assert.equal(messages.length, 6);
+  assert.equal(messages[0].body, "[Button] תור ליום שני");
+  assert.equal(messages[1].body, "[Button] אשר");
+  assert.equal(messages[2].body, "[List] pizza_family", "a list reply with no title/description must fall back to the selected row id, not print nothing or throw");
+  assert.equal(messages[3].body, "[List] פיצה משפחתית", "the real list item title must be shown when present");
+  assert.equal(messages[4].body, "[Button] yes", "a button reply with no display text must fall back to the selected button id, not print nothing or throw");
+  assert.equal(messages[5].body, "[Button] כן", "the real button display text must be shown when present");
+  for (const m of messages) assert.equal(m.direction, "in", "every placeholder row must still be a real, matched-against incoming message, not metadata");
+});
+
 test("an incoming message of a completely unrecognized shape is still skipped, not guessed at", async () => {
   const { manager, createdSockets, db } = setupManager();
   insertProject(db, project);
