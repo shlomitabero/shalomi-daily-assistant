@@ -5065,6 +5065,31 @@ test("the decorative 3D hero cube's CSS uses real 3D transforms and respects pre
 });
 
 /**
+ * Round 1349: a live Playwright browser session found the bulk-select
+ * checkbox (.my-project-select) stamped directly on top of the project
+ * title's first character(s) on the "My Projects" home screen -- live
+ * DOM boundingBox() measurements showed identical top-left origins for
+ * the checkbox and the title text (a real overlap, not just tight
+ * spacing). .my-project-open already reserves padding-inline-end: 28px
+ * to clear the sibling .my-project-pin button on the other side, but had
+ * no matching padding-inline-start to clear the checkbox. jsdom has no
+ * layout engine and can't detect real overlap/clipping (see the
+ * hero3d-cube test just above), so this reads styles.css's own source
+ * directly instead.
+ */
+test("the My Projects home screen reserves room in the title button for the bulk-select checkbox, so it doesn't overlap the project name", () => {
+  const stylesCss = readFileSync(new URL("./styles.css", import.meta.url), "utf8");
+
+  const myProjectOpen = stylesCss.match(/\.my-project-open \{[\s\S]*?\}/)?.[0];
+  assert.ok(myProjectOpen, "expected a .my-project-open rule in styles.css");
+  assert.match(
+    myProjectOpen!,
+    /padding-inline-start:\s*\d/,
+    ".my-project-open must reserve left padding so the absolutely-positioned .my-project-select checkbox doesn't overlap the project title text",
+  );
+});
+
+/**
  * Regression test for round 560's finding: the topbar's WhatsApp
  * unread-badge poll (checkUnread, every WHATSAPP_UNREAD_POLL_INTERVAL_MS)
  * runs on its own independent schedule from WhatsAppPanel's own poll
