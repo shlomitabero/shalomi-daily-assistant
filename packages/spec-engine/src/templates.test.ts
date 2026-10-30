@@ -248,6 +248,50 @@ test("the Project Tracker template's Project entity has deadline and budget fiel
 });
 
 /**
+ * Round 1282's finding: round 1275's own closing note claimed it checked
+ * "Customer/Order/Service/Appointment/MenuItem/Product across Restaurant,
+ * Appointments, and Inventory" against their own matching domainEntities.ts
+ * domain rules and found no concretely-verified gap of this shape -- but
+ * that appears to have been an oversight for exactly this template's own
+ * Service and Appointment entities. domainEntities.ts's real Service domain
+ * rule (keywords /\bservice(s)?\b/, "שירות") always also produces a
+ * `description` (longtext) field, and its real Appointment domain rule
+ * (keywords "appointment", /\bbookings?\b/, "תורים") always also produces a
+ * `notes` (longtext) field -- both present in this template's own
+ * name/summary text, so an equivalent from-scratch description would
+ * trigger both rules and get both fields. The Appointments & Clients
+ * template's own Service/Appointment entities never had either.
+ */
+test("the Appointments & Clients template's Service entity has a description field, and its Appointment entity has a notes field, matching domainEntities.ts's own matching domain rules", () => {
+  const appointmentsTemplate = TEMPLATES.find((t) => t.id === "appointments");
+  assert.ok(appointmentsTemplate, "expected an \"appointments\" template to exist");
+
+  const service = appointmentsTemplate!.spec.entities.find((e) => e.name === "Service");
+  assert.ok(service, "expected the Appointments & Clients template to have a Service entity");
+  const description = service!.fields.find((f) => f.name === "description");
+  assert.ok(description, "expected the Service entity to have a description field");
+  assert.equal(description!.type, "longtext");
+
+  const appointment = appointmentsTemplate!.spec.entities.find((e) => e.name === "Appointment");
+  assert.ok(appointment, "expected the Appointments & Clients template to have an Appointment entity");
+  const notes = appointment!.fields.find((f) => f.name === "notes");
+  assert.ok(notes, "expected the Appointment entity to have a notes field");
+  assert.equal(notes!.type, "longtext");
+
+  const serviceEn = appointmentsTemplate!.specEn.entities.find((e) => e.name === "Service");
+  assert.ok(serviceEn, "expected the Appointments & Clients specEn to have a Service entity");
+  const descriptionEn = serviceEn!.fields.find((f) => f.name === "description");
+  assert.ok(descriptionEn, "expected the Service specEn entity to have a description field");
+  assert.equal(descriptionEn!.type, "longtext");
+
+  const appointmentEn = appointmentsTemplate!.specEn.entities.find((e) => e.name === "Appointment");
+  assert.ok(appointmentEn, "expected the Appointments & Clients specEn to have an Appointment entity");
+  const notesEn = appointmentEn!.fields.find((f) => f.name === "notes");
+  assert.ok(notesEn, "expected the Appointment specEn entity to have a notes field");
+  assert.equal(notesEn!.type, "longtext");
+});
+
+/**
  * Round 516's finding: the "Appointments & Clients" template's Hebrew
  * Appointment.status enum mapped "scheduled" to "קבוע" (meaning "fixed" /
  * "permanent" / "standing" in Hebrew), not "scheduled". This codebase

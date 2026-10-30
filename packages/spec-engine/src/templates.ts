@@ -679,6 +679,7 @@ const APPOINTMENTS_ENTITIES: EntitySpec[] = [
       { name: "name", label: "שם השירות", type: "text", required: true },
       { name: "durationMinutes", label: "משך בדקות", type: "number" },
       { name: "price", label: "מחיר", type: "number" },
+      { name: "description", label: "תיאור", type: "longtext" },
     ],
   },
   {
@@ -697,6 +698,7 @@ const APPOINTMENTS_ENTITIES: EntitySpec[] = [
         enumValues: ["scheduled", "completed", "cancelled", "noshow"],
         enumLabels: { scheduled: "מתוכנן", completed: "הושלם", cancelled: "בוטל", noshow: "לא הגיע" },
       },
+      { name: "notes", label: "הערות", type: "longtext" },
     ],
   },
 ];
@@ -728,6 +730,7 @@ const APPOINTMENTS_ENTITIES_EN: EntitySpec[] = [
       { name: "name", label: "Service Name", type: "text", required: true },
       { name: "durationMinutes", label: "Duration (minutes)", type: "number" },
       { name: "price", label: "Price", type: "number" },
+      { name: "description", label: "Description", type: "longtext" },
     ],
   },
   {
@@ -746,6 +749,7 @@ const APPOINTMENTS_ENTITIES_EN: EntitySpec[] = [
         enumValues: ["scheduled", "completed", "cancelled", "noshow"],
         enumLabels: { scheduled: "Scheduled", completed: "Completed", cancelled: "Cancelled", noshow: "No-show" },
       },
+      { name: "notes", label: "Notes", type: "longtext" },
     ],
   },
 ];
