@@ -512,13 +512,25 @@ export function runSecurityScan(projectId: string, spec: ProductSpec): { score: 
         warnings.push(`Field "${entity.name}.${field.name}" is a reserved SQL word.`);
       }
       const lowerName = field.name.toLowerCase();
+      // Round 1322: this used to only check text/longtext fields, but
+      // SENSITIVE_FIELD_HINTS's own hints ("ssn", "creditcard", "apikey",
+      // etc.) are all entirely plausible names for a field the spec
+      // generator typed "number" instead (a credit-card number or SSN
+      // "looks numeric"), or even "date"/"boolean"/"enum" -- a SQLite
+      // "number"/"date"/"boolean"/"enum" column is exactly as unencrypted
+      // as a "text" one, so a sensitive-sounding field typed anything but
+      // text/longtext escaped this warning entirely and reported a false
+      // 100 security score. Only "relation" (a foreign-key id, not a
+      // sensitive scalar itself) and "file" (a descriptor pointing at an
+      // uploaded file, not the secret value) are still excluded.
       if (
-        (field.type === "text" || field.type === "longtext") &&
+        field.type !== "relation" &&
+        field.type !== "file" &&
         SENSITIVE_FIELD_HINTS.some((hint) =>
           typeof hint === "string" ? lowerName.includes(hint) : hint.test(field.name),
         )
       ) {
-        warnings.push(`Field "${entity.name}.${field.name}" looks sensitive but is stored as plain text — do not put real secrets in it.`);
+        warnings.push(`Field "${entity.name}.${field.name}" looks sensitive but is not stored securely — do not put real secrets in it.`);
       }
     }
   }

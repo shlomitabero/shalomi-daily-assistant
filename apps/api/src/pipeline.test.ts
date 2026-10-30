@@ -1596,6 +1596,64 @@ test("Security scan's 'token' hint doesn't spuriously flag 'tokenizer'/'detokeni
 });
 
 /**
+ * Regression test for round 1322: SENSITIVE_FIELD_HINTS's own hints
+ * ("ssn", "creditcard", "apikey", etc.) are entirely plausible names for a
+ * field the spec generator typed "number" instead of "text" (an SSN or
+ * credit-card number "looks numeric") -- but the check used to run only
+ * for field.type === "text" || "longtext", so a sensitive-sounding field
+ * typed number/date/boolean/enum escaped the warning entirely and the
+ * build's Security step reported a false 100 score, even though a
+ * "number"/"date"/"boolean"/"enum" SQLite column is exactly as
+ * unencrypted as a "text" one. "relation" and "file" are deliberately
+ * still excluded: a relation field only ever holds a foreign-key id, and
+ * a file field only holds a descriptor pointing at an uploaded file --
+ * neither directly holds the sensitive scalar value itself.
+ */
+test("Security scan flags a sensitive-sounding field regardless of its type, except relation/file", () => {
+  const spec: ProductSpec = {
+    summary: "test",
+    personas: [],
+    roles: ["Admin"],
+    screens: [],
+    assumptions: [],
+    openQuestions: [],
+    entities: [
+      {
+        name: "Customer",
+        fields: [
+          { name: "name", type: "text", required: true },
+          { name: "ssn", type: "number", required: false },
+          { name: "creditCardNumber", type: "number", required: false },
+          { name: "passwordExpiryDate", type: "date", required: false },
+          { name: "hasApiKey", type: "boolean", required: false },
+          { name: "tokenStatus", type: "enum", required: false, enumValues: ["active", "revoked"] },
+          { name: "secretOwner", type: "relation", required: false, relationTo: "Customer" },
+          { name: "secretAttachment", type: "file", required: false },
+        ],
+      },
+    ],
+  };
+
+  const security = runSecurityScan("proj1", spec);
+
+  for (const name of ["ssn", "creditCardNumber", "passwordExpiryDate", "hasApiKey", "tokenStatus"]) {
+    assert.ok(
+      security.warnings.some((w) => w.includes(`"Customer.${name}"`)),
+      `"${name}" must be flagged even though it isn't typed text/longtext`,
+    );
+  }
+  assert.ok(
+    !security.warnings.some((w) => w.includes('"Customer.secretOwner"')),
+    "a relation field must never be flagged -- it only ever holds a foreign-key id, not the sensitive scalar itself",
+  );
+  assert.ok(
+    !security.warnings.some((w) => w.includes('"Customer.secretAttachment"')),
+    "a file field must never be flagged -- it only holds a descriptor pointing at an uploaded file, not the sensitive scalar itself",
+  );
+  assert.equal(security.warnings.length, 5, "exactly the 5 genuinely sensitive-sounding non-relation/file fields should be flagged");
+});
+
+/**
  * Real end-to-end proof of the same fix, run through the actual
  * runBuildPipeline a real build/refine uses (real migrations, real seed
  * data, every real agent step) rather than calling runSecurityScan in
