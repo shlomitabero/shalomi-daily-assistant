@@ -363,7 +363,14 @@ const CRM_ENTITIES: EntitySpec[] = [
     fields: [
       { name: "title", label: "כותרת", type: "text", required: true },
       { name: "dueDate", label: "תאריך יעד", type: "date" },
-      { name: "done", label: "בוצע", type: "boolean" },
+      {
+        name: "status",
+        label: "סטטוס",
+        type: "enum",
+        required: true,
+        enumValues: ["todo", "inprogress", "done"],
+        enumLabels: { todo: "לביצוע", inprogress: "בתהליך", done: "בוצע" },
+      },
       { name: "deal", label: "עסקה", type: "relation", relationTo: "Deal" },
     ],
   },
@@ -416,7 +423,14 @@ const CRM_ENTITIES_EN: EntitySpec[] = [
     fields: [
       { name: "title", label: "Title", type: "text", required: true },
       { name: "dueDate", label: "Due Date", type: "date" },
-      { name: "done", label: "Done", type: "boolean" },
+      {
+        name: "status",
+        label: "Status",
+        type: "enum",
+        required: true,
+        enumValues: ["todo", "inprogress", "done"],
+        enumLabels: { todo: "To Do", inprogress: "In Progress", done: "Done" },
+      },
       { name: "deal", label: "Deal", type: "relation", relationTo: "Deal" },
     ],
   },

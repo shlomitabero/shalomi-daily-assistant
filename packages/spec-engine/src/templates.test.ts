@@ -139,6 +139,40 @@ test("every relation field's relationTo names an entity that actually exists in 
 });
 
 /**
+ * Round 1273's finding: the CRM template's own Task entity gave it only a
+ * bare boolean "done" field, unlike (a) domainEntities.ts's real Task
+ * domain rule (keywords include "tasks"/"משימות", which the CRM template's
+ * own summary text literally contains -- "...follow-up tasks"/"משימות
+ * מעקב" -- so an equivalent from-scratch description would trigger it),
+ * which always gives Task a required status enum (Todo/InProgress/Done),
+ * and (b) this same templates.ts file's own Project Tracker template,
+ * whose Task entity already uses a required status enum (todo/inprogress/
+ * done) instead of a plain boolean. A "done" boolean can't represent "in
+ * progress," so a CRM Task genuinely lost workflow fidelity compared to
+ * both the heuristic/AI path and this codebase's own sibling template.
+ */
+test("the CRM template's Task entity has a real status enum, not just a boolean, matching the Project Tracker template's own established convention", () => {
+  const crmTemplate = TEMPLATES.find((t) => t.id === "crm");
+  assert.ok(crmTemplate, "expected a \"crm\" template to exist");
+
+  const task = crmTemplate!.spec.entities.find((e) => e.name === "Task");
+  assert.ok(task, "expected the CRM template to have a Task entity");
+  assert.equal(task!.fields.some((f) => f.name === "done" && f.type === "boolean"), false, "the CRM Task entity must no longer use a plain boolean \"done\" field");
+  const status = task!.fields.find((f) => f.name === "status");
+  assert.ok(status, "expected the CRM Task entity to have a status field");
+  assert.equal(status!.type, "enum");
+  assert.equal(status!.required, true);
+  assert.ok(status!.enumValues && status!.enumValues.length >= 2, "expected the status field to have at least 2 enum values");
+
+  const taskEn = crmTemplate!.specEn.entities.find((e) => e.name === "Task");
+  assert.ok(taskEn, "expected the CRM specEn to have a Task entity");
+  const statusEn = taskEn!.fields.find((f) => f.name === "status");
+  assert.ok(statusEn, "expected the CRM specEn Task entity to have a status field");
+  assert.equal(statusEn!.type, "enum");
+  assert.equal(statusEn!.required, true);
+});
+
+/**
  * Round 516's finding: the "Appointments & Clients" template's Hebrew
  * Appointment.status enum mapped "scheduled" to "קבוע" (meaning "fixed" /
  * "permanent" / "standing" in Hebrew), not "scheduled". This codebase
