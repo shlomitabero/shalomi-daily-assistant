@@ -537,6 +537,35 @@ test("the CRM template's Customer entity has a status enum and a source field, m
 });
 
 /**
+ * Round 1305: the Project Tracker template's own Project entity (name/
+ * description/status/deadline/budget/owner) is missing a `client` field,
+ * unlike domainEntities.ts's matching Project domain rule -- whose own
+ * description text literally says "Defined work the business performs for
+ * a client" and whose fieldLabelsHe explicitly carries `client: "לקוח"`.
+ * A user who free-text-describes a project-tracking business for clients
+ * gets a client field on every Project record; a user who instead picks
+ * this one-click template has no way to record which client a project is
+ * even for -- not even a plain text field, for the one field type (a
+ * project-tracking tool's own purpose) this template exists to serve.
+ */
+test("the Project Tracker template's Project entity has a client field, matching domainEntities.ts's own Project domain rule", () => {
+  const projectTrackerTemplate = TEMPLATES.find((t) => t.id === "project-tracker");
+  assert.ok(projectTrackerTemplate, "expected a \"project-tracker\" template to exist");
+
+  const project = projectTrackerTemplate!.spec.entities.find((e) => e.name === "Project");
+  assert.ok(project, "expected the Project Tracker template to have a Project entity");
+  const client = project!.fields.find((f) => f.name === "client");
+  assert.ok(client, "expected the Project entity to have a client field");
+  assert.equal(client!.type, "text");
+
+  const projectEn = projectTrackerTemplate!.specEn.entities.find((e) => e.name === "Project");
+  assert.ok(projectEn, "expected the Project Tracker specEn to have a Project entity");
+  const clientEn = projectEn!.fields.find((f) => f.name === "client");
+  assert.ok(clientEn, "expected the Project specEn entity to have a client field");
+  assert.equal(clientEn!.type, "text");
+});
+
+/**
  * Round 516's finding: the "Appointments & Clients" template's Hebrew
  * Appointment.status enum mapped "scheduled" to "קבוע" (meaning "fixed" /
  * "permanent" / "standing" in Hebrew), not "scheduled". This codebase

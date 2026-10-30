@@ -473,6 +473,7 @@ const PROJECT_TRACKER_ENTITIES: EntitySpec[] = [
     fields: [
       { name: "name", label: "שם הפרויקט", type: "text", required: true },
       { name: "description", label: "תיאור", type: "longtext" },
+      { name: "client", label: "לקוח", type: "text" },
       {
         name: "status",
         label: "סטטוס",
@@ -540,6 +541,7 @@ const PROJECT_TRACKER_ENTITIES_EN: EntitySpec[] = [
     fields: [
       { name: "name", label: "Project Name", type: "text", required: true },
       { name: "description", label: "Description", type: "longtext" },
+      { name: "client", label: "Client", type: "text" },
       {
         name: "status",
         label: "Status",
