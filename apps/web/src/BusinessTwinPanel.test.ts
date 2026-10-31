@@ -76,7 +76,9 @@ const TWIN: BusinessTwin = {
 
 function mockTwinFetch() {
   return async (input: string): Promise<Response> => {
-    if (input === "/api/projects/proj1/twin") {
+    // Round 1392: getBusinessTwin now appends ?timezone=<IANA zone>, so an
+    // exact-string match would break every one of this file's mocks.
+    if (input.startsWith("/api/projects/proj1/twin")) {
       return new Response(JSON.stringify({ twin: TWIN }), { status: 200, headers: { "content-type": "application/json" } });
     }
     throw new Error(`unexpected request ${input}`);
@@ -120,7 +122,7 @@ test("BusinessTwinPanel's Dashboard/Report toggle reports its selected state via
     const twinWithObservation: BusinessTwin = { ...TWIN, observations: ["Something worth noting"] };
     const originalFetch = globalThis.fetch;
     globalThis.fetch = (async (input: string) => {
-      if (input === "/api/projects/proj1/twin") {
+      if (input.startsWith("/api/projects/proj1/twin")) {
         return new Response(JSON.stringify({ twin: twinWithObservation }), { status: 200, headers: { "content-type": "application/json" } });
       }
       throw new Error(`unexpected request ${input}`);
@@ -193,7 +195,7 @@ test("BusinessTwinPanel's most-linked-record insight is a real clickable button 
     };
     const originalFetch = globalThis.fetch;
     globalThis.fetch = (async (input: string) => {
-      if (input === "/api/projects/proj1/twin") {
+      if (input.startsWith("/api/projects/proj1/twin")) {
         return new Response(JSON.stringify({ twin: twinWithHub }), { status: 200, headers: { "content-type": "application/json" } });
       }
       throw new Error(`unexpected request ${input}`);
@@ -241,7 +243,7 @@ test("BusinessTwinPanel's most-active-entity insight is a real clickable button 
     };
     const originalFetch = globalThis.fetch;
     globalThis.fetch = (async (input: string) => {
-      if (input === "/api/projects/proj1/twin") {
+      if (input.startsWith("/api/projects/proj1/twin")) {
         return new Response(JSON.stringify({ twin: twinWithMostActive }), { status: 200, headers: { "content-type": "application/json" } });
       }
       throw new Error(`unexpected request ${input}`);
@@ -291,7 +293,7 @@ test("BusinessTwinPanel's jumpable observations (relation-coverage, duplicates) 
     };
     const originalFetch = globalThis.fetch;
     globalThis.fetch = (async (input: string) => {
-      if (input === "/api/projects/proj1/twin") {
+      if (input.startsWith("/api/projects/proj1/twin")) {
         return new Response(JSON.stringify({ twin: twinWithJumpable }), { status: 200, headers: { "content-type": "application/json" } });
       }
       throw new Error(`unexpected request ${input}`);
@@ -377,7 +379,7 @@ test("BusinessTwinPanel renders no summary element at all when twin.summary is b
     const blankSummaryTwin: BusinessTwin = { ...TWIN, summary: "   " };
     const originalFetch = globalThis.fetch;
     globalThis.fetch = (async (input: string) => {
-      if (input === "/api/projects/proj1/twin") {
+      if (input.startsWith("/api/projects/proj1/twin")) {
         return new Response(JSON.stringify({ twin: blankSummaryTwin }), { status: 200, headers: { "content-type": "application/json" } });
       }
       throw new Error(`unexpected request ${input}`);
@@ -425,7 +427,7 @@ test("BusinessTwinPanel renders stat tiles sorted by real record count (busiest 
     };
     const originalFetch = globalThis.fetch;
     globalThis.fetch = (async (input: string) => {
-      if (input === "/api/projects/proj1/twin") {
+      if (input.startsWith("/api/projects/proj1/twin")) {
         return new Response(JSON.stringify({ twin: outOfOrderTwin }), { status: 200, headers: { "content-type": "application/json" } });
       }
       throw new Error(`unexpected request ${input}`);
@@ -513,7 +515,7 @@ test("BusinessTwinPanel omits the percent line for a genuinely empty (0-record) 
     };
     const originalFetch = globalThis.fetch;
     globalThis.fetch = (async (input: string) => {
-      if (input === "/api/projects/proj1/twin") {
+      if (input.startsWith("/api/projects/proj1/twin")) {
         return new Response(JSON.stringify({ twin: outOfOrderTwin }), { status: 200, headers: { "content-type": "application/json" } });
       }
       throw new Error(`unexpected request ${input}`);
@@ -570,7 +572,7 @@ test("BusinessTwinPanel's Retry button re-fetches after a failed load and recove
     const originalFetch = globalThis.fetch;
     let callCount = 0;
     globalThis.fetch = (async (input: string): Promise<Response> => {
-      if (input === "/api/projects/proj1/twin") {
+      if (input.startsWith("/api/projects/proj1/twin")) {
         callCount += 1;
         // A real HTTP error response (not a thrown/rejected fetch) --
         // request()'s own fetchWithWakeRetry only retries a genuine
@@ -746,7 +748,7 @@ test("BusinessTwinPanel's Dashboard view renders a real bar chart from twin.dist
   await withJsdom(async () => {
     const originalFetch = globalThis.fetch;
     globalThis.fetch = (async (input: string) => {
-      if (input === "/api/projects/proj1/twin") {
+      if (input.startsWith("/api/projects/proj1/twin")) {
         return new Response(JSON.stringify({ twin: TWIN_WITH_CHARTS }), { status: 200, headers: { "content-type": "application/json" } });
       }
       throw new Error(`unexpected request ${input}`);
@@ -809,7 +811,7 @@ test("BusinessTwinPanel's distribution bar rows are real clickable buttons that 
   await withJsdom(async () => {
     const originalFetch = globalThis.fetch;
     globalThis.fetch = (async (input: string) => {
-      if (input === "/api/projects/proj1/twin") {
+      if (input.startsWith("/api/projects/proj1/twin")) {
         return new Response(JSON.stringify({ twin: TWIN_WITH_CHARTS }), { status: 200, headers: { "content-type": "application/json" } });
       }
       throw new Error(`unexpected request ${input}`);
@@ -869,7 +871,7 @@ test("BusinessTwinPanel's Dashboard view formats its bar-chart and stat-tile num
   await withJsdom(async () => {
     const originalFetch = globalThis.fetch;
     globalThis.fetch = (async (input: string) => {
-      if (input === "/api/projects/proj1/twin") {
+      if (input.startsWith("/api/projects/proj1/twin")) {
         return new Response(JSON.stringify({ twin: TWIN_WITH_CHARTS }), { status: 200, headers: { "content-type": "application/json" } });
       }
       throw new Error(`unexpected request ${input}`);
@@ -908,7 +910,7 @@ test("BusinessTwinPanel's Dashboard view shows an empty-state message when there
     const twinWithOnlyObservations: BusinessTwin = { ...TWIN, observations: ["No real data has been entered yet."] };
     const originalFetch = globalThis.fetch;
     globalThis.fetch = (async (input: string) => {
-      if (input === "/api/projects/proj1/twin") {
+      if (input.startsWith("/api/projects/proj1/twin")) {
         return new Response(JSON.stringify({ twin: twinWithOnlyObservations }), { status: 200, headers: { "content-type": "application/json" } });
       }
       throw new Error(`unexpected request ${input}`);
@@ -975,7 +977,7 @@ test("BusinessTwinPanel's Dashboard view renders stat tiles from twin.overdueSta
     };
     const originalFetch = globalThis.fetch;
     globalThis.fetch = (async (input: string) => {
-      if (input === "/api/projects/proj1/twin") {
+      if (input.startsWith("/api/projects/proj1/twin")) {
         return new Response(JSON.stringify({ twin: twinWithOnlyDeadlines }), { status: 200, headers: { "content-type": "application/json" } });
       }
       throw new Error(`unexpected request ${input}`);
@@ -1063,7 +1065,7 @@ test("BusinessTwinPanel's numericStats/overdueStats/dueSoonStats dashboard tiles
     };
     const originalFetch = globalThis.fetch;
     globalThis.fetch = (async (input: string) => {
-      if (input === "/api/projects/proj1/twin") {
+      if (input.startsWith("/api/projects/proj1/twin")) {
         return new Response(JSON.stringify({ twin: twinWithAllStats }), { status: 200, headers: { "content-type": "application/json" } });
       }
       throw new Error(`unexpected request ${input}`);

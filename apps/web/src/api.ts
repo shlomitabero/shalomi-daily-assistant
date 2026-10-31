@@ -984,8 +984,18 @@ export interface BusinessTwin {
   }[];
 }
 
-export function getBusinessTwin(projectId: string): Promise<{ twin: BusinessTwin }> {
-  return request(`/projects/${projectId}/twin`);
+/**
+ * Round 1392: sends the browser's own IANA timezone so the server's
+ * overdue/due-soon classification uses the real business owner's
+ * calendar date, not the server process's own OS timezone (UTC on
+ * Render) -- mirrors AutomationsPanel's own scheduleTimezone detection
+ * (`Intl.DateTimeFormat().resolvedOptions().timeZone`). An absent or
+ * unrecognized value falls back to UTC server-side rather than failing
+ * the request.
+ */
+export function getBusinessTwin(projectId: string, timeZone?: string): Promise<{ twin: BusinessTwin }> {
+  const query = timeZone ? `?timezone=${encodeURIComponent(timeZone)}` : "";
+  return request(`/projects/${projectId}/twin${query}`);
 }
 
 export function getEntityCounts(projectId: string): Promise<{ counts: Record<string, number> }> {

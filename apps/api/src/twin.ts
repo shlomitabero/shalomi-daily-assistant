@@ -761,6 +761,35 @@ function isDeadlineFieldName(fieldName: string): boolean {
 }
 
 /**
+ * Round 1392: resolves `instant`'s own calendar date in `timeZone` via
+ * Intl, instead of the plain `Date.getFullYear()/getMonth()/getDate()`
+ * getters computeOverdueObservations/computeDueSoonObservations used to
+ * call directly -- those read the *server process's own* OS timezone
+ * (UTC on Render, where no TZ env var is set, same default this app's own
+ * CI/sandbox already runs under), not the real business owner's. The
+ * live table's own getDateUrgency (entityFormatting.ts) runs in the
+ * user's browser and therefore already gets this right by accident --
+ * so a deadline landing on the server's current UTC date, already
+ * "yesterday" or "tomorrow" in the owner's own local date, read as a
+ * different overdue/dueSoon classification in the Business Twin than in
+ * the live table describing the exact same record. Returns the resulting
+ * date as a local-constructed midnight `Date` (same representation
+ * parseFieldDate's own date-only values already use), so every existing
+ * `.getTime()` comparison below needs no further change -- only how
+ * "today" itself is derived.
+ */
+function startOfDayInTimeZone(instant: Date, timeZone: string): Date {
+  const parts = new Intl.DateTimeFormat("en-US", {
+    timeZone,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).formatToParts(instant);
+  const get = (type: string) => parts.find((p) => p.type === type)!.value;
+  return new Date(Number(get("year")), Number(get("month")) - 1, Number(get("day")));
+}
+
+/**
  * The `date` counterpart to computeNumericAggregateObservations/
  * computeEnumDistributionObservations above -- the same invisible-field-
  * type gap, for deadline fields instead of money or status. Every other
@@ -784,9 +813,10 @@ function computeOverdueObservations(
   hebrew: boolean,
   entityLabels: Map<string, number>,
   today: Date = new Date(),
+  timeZone: string = "UTC",
 ): { text: string; entityName: string; entityLabel: string; fieldName: string; fieldLabel: string; overdueCount: number; recordCount: number }[] {
   const observations: ReturnType<typeof computeOverdueObservations> = [];
-  const startOfToday = new Date(today.getFullYear(), today.getMonth(), today.getDate());
+  const startOfToday = startOfDayInTimeZone(today, timeZone);
   for (const entity of project.spec.entities) {
     const deadlineFields = entity.fields.filter((f) => f.type === "date" && isDeadlineFieldName(f.name));
     if (deadlineFields.length === 0) continue;
@@ -862,9 +892,10 @@ function computeDueSoonObservations(
   hebrew: boolean,
   entityLabels: Map<string, number>,
   today: Date = new Date(),
+  timeZone: string = "UTC",
 ): { text: string; entityName: string; entityLabel: string; fieldName: string; fieldLabel: string; dueSoonCount: number; recordCount: number }[] {
   const observations: ReturnType<typeof computeDueSoonObservations> = [];
-  const startOfToday = new Date(today.getFullYear(), today.getMonth(), today.getDate());
+  const startOfToday = startOfDayInTimeZone(today, timeZone);
   const dayMs = 24 * 60 * 60 * 1000;
   for (const entity of project.spec.entities) {
     const deadlineFields = entity.fields.filter((f) => f.type === "date" && isDeadlineFieldName(f.name));
@@ -914,7 +945,12 @@ function computeDueSoonObservations(
   return observations;
 }
 
-export function computeBusinessTwin(db: ForgeDatabase, project: Project, today: Date = new Date()): BusinessTwin {
+export function computeBusinessTwin(
+  db: ForgeDatabase,
+  project: Project,
+  today: Date = new Date(),
+  timeZone: string = "UTC",
+): BusinessTwin {
   const hebrew = isHebrewText(project.description);
 
   // Every observation below (relation coverage, the relation hub, duplicate
@@ -998,8 +1034,8 @@ export function computeBusinessTwin(db: ForgeDatabase, project: Project, today: 
     jumpableObservations.push(...computeDuplicateObservations(recordsByEntity, project, hebrew, entityLabels));
     numericStats.push(...computeNumericAggregateObservations(recordsByEntity, project, hebrew, entityLabels));
     distributions.push(...computeEnumDistributionObservations(recordsByEntity, project, hebrew, entityLabels));
-    overdueStats.push(...computeOverdueObservations(recordsByEntity, project, hebrew, entityLabels, today));
-    dueSoonStats.push(...computeDueSoonObservations(recordsByEntity, project, hebrew, entityLabels, today));
+    overdueStats.push(...computeOverdueObservations(recordsByEntity, project, hebrew, entityLabels, today, timeZone));
+    dueSoonStats.push(...computeDueSoonObservations(recordsByEntity, project, hebrew, entityLabels, today, timeZone));
     jumpableObservations.push(...numericStats, ...distributions, ...overdueStats, ...dueSoonStats);
     const activity = computeActivityObservations(recordsByEntity, project, hebrew, entityLabels);
     observations.push(...activity.observations);

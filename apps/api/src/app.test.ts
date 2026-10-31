@@ -10697,6 +10697,44 @@ test("business twin reports real counts and updates as records are added", async
   });
 });
 
+/**
+ * Round 1392: the route accepts an optional `?timezone=` query param (see
+ * routes/projects.ts's own `/projects/:id/twin` handler and twin.ts's
+ * computeBusinessTwin) so the overdue/due-soon classification in the real
+ * response uses the real business owner's own calendar date instead of
+ * the server's own OS timezone. A real IANA zone must not error, and
+ * -- since this is client-supplied, not server-trusted -- an invalid or
+ * garbage value must fall back to UTC rather than ever 500ing the request.
+ */
+test("business twin route accepts an optional ?timezone= query param, and falls back to UTC for an invalid one rather than erroring", async () => {
+  await withServer(async (baseUrl) => {
+    const token = await signup(baseUrl);
+    const createRes = await fetch(`${baseUrl}/api/projects`, {
+      method: "POST",
+      headers: authHeaders(token),
+      body: JSON.stringify({ description: "A CRM with customers and deals." }),
+    });
+    const { project } = (await createRes.json()) as { project: { id: string } };
+    const buildRes = await fetch(`${baseUrl}/api/projects/${project.id}/build`, {
+      method: "POST",
+      headers: authHeaders(token),
+    });
+    await collectSSE(buildRes);
+
+    const realZoneRes = await fetch(`${baseUrl}/api/projects/${project.id}/twin?timezone=Asia%2FJerusalem`, {
+      headers: authHeaders(token),
+    });
+    assert.equal(realZoneRes.status, 200);
+
+    const garbageZoneRes = await fetch(`${baseUrl}/api/projects/${project.id}/twin?timezone=not-a-real-timezone`, {
+      headers: authHeaders(token),
+    });
+    assert.equal(garbageZoneRes.status, 200, "an invalid timezone must fall back to UTC, never fail the request");
+    const { twin: garbageZoneTwin } = (await garbageZoneRes.json()) as { twin: { totalRecords: number } };
+    assert.ok(garbageZoneTwin.totalRecords > 0);
+  });
+});
+
 test("entity-counts reports a real per-entity count for every entity, and updates as records are added", async () => {
   await withServer(async (baseUrl) => {
     const token = await signup(baseUrl);

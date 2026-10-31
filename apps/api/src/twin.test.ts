@@ -2160,3 +2160,102 @@ test("computeBusinessTwin's twin.dueSoonStats carries the real counts as numbers
   assert.equal(stats.dueSoonCount, 2);
   assert.equal(stats.recordCount, 4);
 });
+
+/**
+ * Round 1392: computeOverdueObservations/computeDueSoonObservations used
+ * to derive "today" via plain `Date.getFullYear()/getMonth()/getDate()`
+ * getters on the passed-in instant -- i.e. the SERVER PROCESS's own OS
+ * timezone (UTC on Render, where no TZ env var is set), not the real
+ * business owner's. getDateUrgency (entityFormatting.ts), which drives the
+ * live table's own overdue/due-soon cell styling for the exact same
+ * record, runs in the user's browser and reads the browser's own local
+ * clock -- so a deadline landing on the server's current UTC date (already
+ * a different calendar day in the owner's own timezone) used to be
+ * classified differently by the Business Twin than by the live table
+ * describing that same record at that same moment, for roughly 2-3 hours
+ * every single day (the window between UTC midnight and the owner's own
+ * local midnight). Fixed by deriving "today" from the real IANA timeZone
+ * the server route now receives from the client (see routes/projects.ts's
+ * own `/projects/:id/twin` handler) via startOfDayInTimeZone's own Intl
+ * extraction, the same mechanism automations.ts's wallClockIn already
+ * uses for schedule-trigger evaluation.
+ *
+ * Fixed instant: 2026-11-01T23:30:00Z. Israel is on standard time (IST,
+ * UTC+2) by November, so this instant is 2026-11-02 01:30 local in
+ * Asia/Jerusalem -- already the next calendar day there, but still
+ * 2026-11-01 in UTC. A record whose own dueDate is exactly "2026-11-01"
+ * (the UTC server's own current date) is therefore still "due today" by
+ * a plain UTC classification, but already one full day overdue by the
+ * real business owner's own Jerusalem calendar -- the identical
+ * read-the-same-record, same-instant discrepancy this round's survey
+ * empirically reproduced against the real functions before this fix
+ * existed.
+ */
+test("computeBusinessTwin classifies an overdue/due-soon deadline by the real business-owner timezone passed in, not the server process's own OS timezone", () => {
+  const orderProject: Project = {
+    ...project,
+    description: "An online store with orders",
+    spec: {
+      ...project.spec,
+      entities: [
+        {
+          name: "Order",
+          label: "Orders",
+          fields: [
+            { name: "customer", type: "text", required: true },
+            { name: "dueDate", label: "Due date", type: "date", required: false },
+          ],
+        },
+      ],
+    },
+  };
+  const db = openDatabase(":memory:");
+  applyMigrations(db, orderProject.id, orderProject.spec);
+  const order = orderProject.spec.entities[0];
+  insertRecord(db, orderProject.id, order, { customer: "Dana", dueDate: "2026-11-01" });
+  const instant = new Date("2026-11-01T23:30:00Z");
+
+  const twinUtc = computeBusinessTwin(db, orderProject, instant, "UTC");
+  assert.equal(twinUtc.overdueStats.length, 0, "under UTC, today's own dueDate is not yet overdue");
+  assert.equal(twinUtc.dueSoonStats.length, 1, "under UTC, today's own dueDate reads as due soon");
+  assert.equal(twinUtc.dueSoonStats[0]!.dueSoonCount, 1);
+
+  const twinJerusalem = computeBusinessTwin(db, orderProject, instant, "Asia/Jerusalem");
+  assert.equal(
+    twinJerusalem.dueSoonStats.length,
+    0,
+    "under Asia/Jerusalem, the exact same record/instant must NOT read as merely due soon",
+  );
+  assert.equal(twinJerusalem.overdueStats.length, 1, "under Asia/Jerusalem, the real local date has already passed the deadline");
+  assert.equal(twinJerusalem.overdueStats[0]!.overdueCount, 1);
+});
+
+test("computeBusinessTwin defaults to UTC when no timeZone argument is given, matching every pre-round-1392 caller", () => {
+  const orderProject: Project = {
+    ...project,
+    description: "An online store with orders",
+    spec: {
+      ...project.spec,
+      entities: [
+        {
+          name: "Order",
+          label: "Orders",
+          fields: [
+            { name: "customer", type: "text", required: true },
+            { name: "dueDate", label: "Due date", type: "date", required: false },
+          ],
+        },
+      ],
+    },
+  };
+  const db = openDatabase(":memory:");
+  applyMigrations(db, orderProject.id, orderProject.spec);
+  const order = orderProject.spec.entities[0];
+  insertRecord(db, orderProject.id, order, { customer: "Dana", dueDate: "2026-11-01" });
+  const instant = new Date("2026-11-01T23:30:00Z");
+
+  const twinDefault = computeBusinessTwin(db, orderProject, instant);
+  const twinExplicitUtc = computeBusinessTwin(db, orderProject, instant, "UTC");
+  assert.deepEqual(twinDefault.overdueStats, twinExplicitUtc.overdueStats);
+  assert.deepEqual(twinDefault.dueSoonStats, twinExplicitUtc.dueSoonStats);
+});

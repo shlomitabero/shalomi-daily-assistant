@@ -3276,7 +3276,17 @@ export function createProjectsRouter(
       if (project.status !== "built") {
         throw new HttpError(409, "Build the project before viewing its Business Twin", "BUILD_REQUIRED");
       }
-      res.json({ twin: computeBusinessTwin(db, project) });
+      // Round 1392: the overdue/due-soon classification below needs the
+      // real business owner's own calendar date, not the server process's
+      // OS timezone (UTC on Render) -- see twin.ts's own startOfDayInTimeZone
+      // doc comment. Mirrors scheduleTimezone's own client-detected/
+      // server-validated pattern (isValidIanaTimeZone, just above); an
+      // absent or invalid value falls back to "UTC" rather than rejecting
+      // the request, the same default every schedule rule created before
+      // scheduleTimezone existed already gets.
+      const requestedTimeZone = typeof req.query.timezone === "string" ? req.query.timezone : "";
+      const timeZone = requestedTimeZone && isValidIanaTimeZone(requestedTimeZone) ? requestedTimeZone : "UTC";
+      res.json({ twin: computeBusinessTwin(db, project, new Date(), timeZone) });
     }),
   );
 

@@ -165,7 +165,7 @@ export function BusinessTwinPanel({
 
   function loadTwin() {
     setError(null);
-    getBusinessTwin(projectId)
+    getBusinessTwin(projectId, Intl.DateTimeFormat().resolvedOptions().timeZone)
       .then(({ twin }) => setTwin(twin))
       .catch((err) => setError((err as Error).message));
   }
