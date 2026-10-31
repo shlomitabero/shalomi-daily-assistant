@@ -3,6 +3,7 @@ import { getLedgerSummary, todayKey } from './ledger.js';
 import { buildDailyDigest } from '../engine/digest.js';
 import { rankOpportunities } from '../engine/ranking.js';
 import { computeNetProfit } from '../engine/feasibility.js';
+import { getSettings } from './settings.js';
 
 export function generateDailyDigest() {
   const today = todayKey();
@@ -19,7 +20,7 @@ export function generateDailyDigest() {
   const ranked = rankOpportunities(openOpportunities);
   const topOpportunity = ranked[0]?.netProfitMid != null ? ranked[0] : null;
 
-  const digest = buildDailyDigest({ ledgerSummary, actionsToday, failuresToday, topOpportunity });
+  const digest = buildDailyDigest({ ledgerSummary, actionsToday, failuresToday, topOpportunity, emergencyStop: getSettings().emergencyStop });
 
   // The owner can click "generate now" on the Digests page any number of
   // times in a day on top of the 7am cron run — without this, each click

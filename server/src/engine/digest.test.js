@@ -36,3 +36,13 @@ test('names the top opportunity when one exists', () => {
   const digest = buildDailyDigest({ ledgerSummary, topOpportunity: { title: 'מדריך דיגיטלי על X' } });
   assert.match(digest.text, /הפעולה המומלצת הבאה: מדריך דיגיטלי על X/);
 });
+
+test('calls out an active emergency stop, so "0 actions" is not mistaken for nothing worth doing', () => {
+  const digest = buildDailyDigest({ ledgerSummary, emergencyStop: true });
+  assert.match(digest.text, /עצירת חירום הייתה פעילה/);
+});
+
+test('says nothing about emergency stop when it was not active', () => {
+  const digest = buildDailyDigest({ ledgerSummary, emergencyStop: false });
+  assert.doesNotMatch(digest.text, /עצירת חירום/);
+});

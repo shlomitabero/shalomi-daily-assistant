@@ -2,6 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { db, __resetForTests } from '../db/store.js';
 import { generateDailyDigest } from './digest.js';
+import { updateSettings } from './settings.js';
 
 test('generateDailyDigest creates exactly one row for today on first run', () => {
   __resetForTests();
@@ -19,6 +20,13 @@ test('generating again the same day updates the existing row instead of duplicat
   const second = generateDailyDigest();
   assert.equal(db.digests.all().length, 1);
   assert.equal(second.id, first.id);
+});
+
+test('generateDailyDigest reflects a currently-active emergency stop in the text', () => {
+  __resetForTests();
+  updateSettings({ emergencyStop: true });
+  const digest = generateDailyDigest();
+  assert.match(digest.text, /עצירת חירום הייתה פעילה/);
 });
 
 test('a digest generated for a different day does not get merged with today\'s', () => {
