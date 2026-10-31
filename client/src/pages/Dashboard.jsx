@@ -77,6 +77,16 @@ export default function Dashboard() {
     <div className="page">
       <h1>היום</h1>
 
+      {settings.emergencyStop && (
+        <div className="card" style={{ borderColor: 'var(--accent)', background: 'rgba(220, 38, 38, 0.08)' }}>
+          <p style={{ margin: '0 0 6px', fontWeight: 700 }}>🛑 עצירת חירום פעילה</p>
+          <p className="hint" style={{ margin: '0 0 10px' }}>
+            שום פעולה אמיתית (פרסום, חיוב) לא מתבצעת כרגע, בלי קשר למצב הפעולה שנבחר למטה — העצירה חוסמת הכול.
+          </p>
+          <Link className="btn btn-primary" to="/settings">לביטול העצירה</Link>
+        </div>
+      )}
+
       <div className="card">
         <p style={{ margin: '0 0 6px', fontWeight: 700 }}>⚡ מה זה PROFIT AI</p>
         <p className="hint" style={{ margin: 0 }}>
