@@ -2042,11 +2042,19 @@ function replaceColumnWidths(entityName, widths) {
 
 // The actual drag math: how far the mouse has moved since the drag started,
 // added to the column's width at that moment, clamped to a sane range.
-// Unlike the live preview's own computeResizedWidth, there's no RTL case to
-// handle here -- the exported app has no lang/dir switching at all (see
-// round 200's own note that it's English-only).
-export function computeResizedWidth(startWidth, deltaX) {
-  return Math.max(MIN_COLUMN_WIDTH, Math.min(MAX_COLUMN_WIDTH, startWidth + deltaX));
+// Round 1373: round 200's own "no lang/dir switching" note (previously
+// cited right here) is stale -- renderWebIndexHtml sets a real dir="rtl" on
+// <html> whenever any entity label is Hebrew, and this file's own
+// .column-resize-handle CSS already uses inset-inline-end, genuinely
+// moving the handle to the column's visual LEFT edge under that RTL --
+// but this drag math never flipped sign to match, exactly the bug the live
+// preview's own identically-named computeResizedWidth (columnWidths.ts)
+// already fixed via its own dir parameter. Mirroring that fix here: this
+// standalone app has no per-request lang the live preview's dirFor()
+// reads, but it does have the dir baked into <html> when it was built.
+export function computeResizedWidth(startWidth, deltaX, dir) {
+  const signedDelta = dir === "rtl" ? -deltaX : deltaX;
+  return Math.max(MIN_COLUMN_WIDTH, Math.min(MAX_COLUMN_WIDTH, startWidth + signedDelta));
 }
 
 // A column's own drag-reordered position, persisted per entity (same
@@ -5831,7 +5839,8 @@ export function EntityView({ entity, highlightRecordId, onHighlightHandled, onJu
   useEffect(() => {
     if (!resizingField) return;
     function handleMove(e) {
-      const width = computeResizedWidth(resizingField.startWidth, e.clientX - resizingField.startX);
+      const dir = document.documentElement.dir === "rtl" ? "rtl" : "ltr";
+      const width = computeResizedWidth(resizingField.startWidth, e.clientX - resizingField.startX, dir);
       setColumnWidths((prev) => ({ ...prev, [resizingField.field]: width }));
     }
     function handleUp() {
@@ -5879,7 +5888,8 @@ export function EntityView({ entity, highlightRecordId, onHighlightHandled, onJu
     // width and the second press would be silently lost.
     setColumnWidths((prev) => {
       const startWidth = prev[fieldName] ?? th?.getBoundingClientRect().width ?? 150;
-      const width = computeResizedWidth(startWidth, delta);
+      const dir = document.documentElement.dir === "rtl" ? "rtl" : "ltr";
+      const width = computeResizedWidth(startWidth, delta, dir);
       setColumnWidth(entity.name, fieldName, width);
       return { ...prev, [fieldName]: width };
     });

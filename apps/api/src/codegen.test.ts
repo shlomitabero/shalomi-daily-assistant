@@ -16802,22 +16802,35 @@ test("the exported EntityView's badgeTone classifies 'NotWon'/'NotActive' as neg
  * localStorage). Ports the identical clamped drag-math. Executes the real
  * generated function (extracted from real codegen output, not
  * reimplemented), mirroring apps/web/src/columnWidths.test.ts's own
- * computeResizedWidth coverage -- minus the RTL direction parameter, since
- * the exported app has no lang/dir switching at all (round 200's own note).
+ * computeResizedWidth coverage, RTL direction parameter included (round
+ * 1373: round 200's own "no lang/dir switching" note this comment used to
+ * cite was stale -- renderWebIndexHtml sets a real dir="rtl" whenever any
+ * entity label is Hebrew, and the generated CSS's own
+ * .column-resize-handle already repositions for it via inset-inline-end;
+ * this function just never flipped its own drag-math sign to match).
  */
-test("the exported EntityView's computeResizedWidth clamps a dragged column between MIN_COLUMN_WIDTH and MAX_COLUMN_WIDTH", () => {
+test("the exported EntityView's computeResizedWidth clamps a dragged column between MIN_COLUMN_WIDTH and MAX_COLUMN_WIDTH, flipping direction under RTL", () => {
   const entityViewJsx = generateExportFiles(project).find((f) => f.path === "web/src/components/EntityView.jsx")!.content;
   const fnSrc = entityViewJsx
-    .match(/const MIN_COLUMN_WIDTH[\s\S]*?export function computeResizedWidth\(startWidth, deltaX\) \{[\s\S]*?\n\}\n/)?.[0]
-    ?.replace("export ", "");
+    .match(/const MIN_COLUMN_WIDTH[\s\S]*?export function computeResizedWidth\(startWidth, deltaX, dir\) \{[\s\S]*?\n\}\n/)?.[0]
+    // Round 1373: targets the exact "export function computeResizedWidth"
+    // substring rather than the bare word "export" -- a surrounding
+    // doc comment mentioning "export" in prose (e.g. "at export time")
+    // would otherwise get its own, earlier occurrence stripped instead of
+    // the real keyword, leaving the real "export function" intact and
+    // breaking new Function() below with "Unexpected token 'export'".
+    ?.replace("export function computeResizedWidth", "function computeResizedWidth");
   assert.ok(fnSrc, "expected to find computeResizedWidth (with its MIN/MAX constants) in generated output");
 
-  const computeResizedWidth = new Function(`${fnSrc}\nreturn computeResizedWidth;`)() as (startWidth: number, deltaX: number) => number;
+  const computeResizedWidth = new Function(`${fnSrc}\nreturn computeResizedWidth;`)() as (startWidth: number, deltaX: number, dir?: string) => number;
 
-  assert.equal(computeResizedWidth(150, 40), 190, "an ordinary drag must widen by exactly the mouse delta");
+  assert.equal(computeResizedWidth(150, 40), 190, "an ordinary LTR drag must widen by exactly the mouse delta");
   assert.equal(computeResizedWidth(150, -40), 110, "dragging the other way must narrow by exactly the mouse delta");
   assert.equal(computeResizedWidth(150, -1000), 60, "must clamp to MIN_COLUMN_WIDTH rather than going arbitrarily narrow");
   assert.equal(computeResizedWidth(150, 1000), 480, "must clamp to MAX_COLUMN_WIDTH rather than going arbitrarily wide");
+  assert.equal(computeResizedWidth(150, 40, "ltr"), 190, "an explicit ltr dir must behave identically to the default");
+  assert.equal(computeResizedWidth(150, 40, "rtl"), 110, "under RTL, the same rightward mouse movement must NARROW the column, not widen it");
+  assert.equal(computeResizedWidth(150, -40, "rtl"), 190, "under RTL, leftward mouse movement must widen the column");
 });
 
 test("the exported EntityView's table headers are drag-resizable, persisting per entity via a real localStorage round trip", () => {
@@ -16840,9 +16853,18 @@ test("the exported EntityView's table headers are drag-resizable, persisting per
   // mouseup (via setColumnWidth) -- not on every mousemove.
   assert.match(
     entityViewJsx,
-    /useEffect\(\(\) => \{\s*if \(!resizingField\) return;\s*function handleMove\(e\) \{\s*const width = computeResizedWidth\(resizingField\.startWidth, e\.clientX - resizingField\.startX\);\s*setColumnWidths\(\(prev\) => \(\{ \.\.\.prev, \[resizingField\.field\]: width \}\)\);\s*\}\s*function handleUp\(\) \{\s*setColumnWidths\(\(prev\) => \{\s*const width = prev\[resizingField\.field\];\s*if \(width != null\) setColumnWidth\(entity\.name, resizingField\.field, width\);\s*return prev;\s*\}\);\s*setResizingField\(null\);\s*\}/,
+    /useEffect\(\(\) => \{\s*if \(!resizingField\) return;\s*function handleMove\(e\) \{\s*const dir = document\.documentElement\.dir === "rtl" \? "rtl" : "ltr";\s*const width = computeResizedWidth\(resizingField\.startWidth, e\.clientX - resizingField\.startX, dir\);\s*setColumnWidths\(\(prev\) => \(\{ \.\.\.prev, \[resizingField\.field\]: width \}\)\);\s*\}\s*function handleUp\(\) \{\s*setColumnWidths\(\(prev\) => \{\s*const width = prev\[resizingField\.field\];\s*if \(width != null\) setColumnWidth\(entity\.name, resizingField\.field, width\);\s*return prev;\s*\}\);\s*setResizingField\(null\);\s*\}/,
   );
   assert.match(entityViewJsx, /onMouseDown=\{\(e\) => startResize\(e, f\.name\)\}/);
+  // Round 1373: the keyboard fallback (ArrowLeft/ArrowRight on the focused
+  // resize handle) must flip the same way the mouse-drag handler above
+  // does -- both funnel through the same computeResizedWidth, so this
+  // confirms the keyboard call site was also updated to pass dir, not
+  // just the mouse one.
+  assert.match(
+    entityViewJsx,
+    /const dir = document\.documentElement\.dir === "rtl" \? "rtl" : "ltr";\s*const width = computeResizedWidth\(startWidth, delta, dir\);/,
+  );
   // The reset-on-entity-switch effect must reload the new entity's own
   // widths -- the exact class of bug round 198 shipped and Playwright
   // caught (a stale reference to state that had been renamed/removed).
