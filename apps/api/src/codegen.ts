@@ -6607,7 +6607,7 @@ export function EntityView({ entity, highlightRecordId, onHighlightHandled, onJu
       });
     }, UNDO_WINDOW_MS);
 
-    setPendingDelete({ entries, message: \`Deleted \${entries.length} records. \`, timeoutId });
+    setPendingDelete({ entries, message: \`Deleted \${entries.length} \${entries.length === 1 ? "record" : "records"}. \`, timeoutId });
   }
 
   // Same Promise.allSettled resilience as handleBulkDelete above, and the

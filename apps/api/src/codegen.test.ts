@@ -13292,7 +13292,7 @@ test("the exported EntityView's handleBulkDelete is wired into the same batch pe
   );
   assert.match(
     entityViewJsx,
-    /setPendingDelete\(\{ entries, message: `Deleted \$\{entries\.length\} records\. `, timeoutId \}\);/,
+    /setPendingDelete\(\{ entries, message: `Deleted \$\{entries\.length\} \$\{entries\.length === 1 \? "record" : "records"\}\. `, timeoutId \}\);/,
     "the batch toast message must name the real entry count",
   );
 
@@ -13303,6 +13303,61 @@ test("the exported EntityView's handleBulkDelete is wired into the same batch pe
     /refresh\(\)/,
     "handleBulkDelete must no longer call refresh() directly -- it's now optimistic, same as handleDelete, and relies on the shared undo-window machinery instead",
   );
+});
+
+/**
+ * Round 1395: this file's exported handleBulkDelete had the same
+ * missing-singular-form bug just fixed in the live preview's
+ * EntityPanel.tsx/i18n -- "Deleted 1 records." regardless of count, since
+ * this exported app has no i18n layer and used a plain hardcoded-plural
+ * template literal. Runs the real extracted handleBulkDelete against a
+ * single selected id to confirm the actual produced message, not just a
+ * static-source assertion.
+ */
+test("the exported EntityView's handleBulkDelete uses the singular noun form in its Undo toast when exactly 1 record is deleted", async () => {
+  const entityViewJsx = generateExportFiles(project).find((f) => f.path === "web/src/components/EntityView.jsx")!.content;
+  const handleBulkDeleteSrc = entityViewJsx.match(/async function handleBulkDelete\(\) \{[\s\S]*?\n  \}\n/)?.[0];
+  assert.ok(handleBulkDeleteSrc, "expected to find handleBulkDelete in generated output");
+
+  let capturedMessage: string | undefined;
+  const records = [{ id: 1, name: "Acme Corp" }];
+  const fn = new Function(
+    "writesInFlight",
+    "window",
+    "selectedIds",
+    "records",
+    "pendingDeleteRef",
+    "editingId",
+    "setError",
+    "setRecords",
+    "setSelectedIds",
+    "setTimeout",
+    "setPendingDelete",
+    "clearTimeout",
+    "commitPendingDelete",
+    "UNDO_WINDOW_MS",
+    `${handleBulkDeleteSrc}\nreturn handleBulkDelete();`,
+  );
+  await fn(
+    false,
+    { confirm: () => true },
+    new Set([1]),
+    records,
+    { current: null },
+    null,
+    () => {},
+    () => {},
+    () => {},
+    () => 0,
+    (value: { message: string }) => {
+      capturedMessage = value.message;
+    },
+    () => {},
+    () => {},
+    5000,
+  );
+
+  assert.equal(capturedMessage, "Deleted 1 record. ", "exactly 1 deleted record must read 'Deleted 1 record.', not 'Deleted 1 records.'");
 });
 
 /**

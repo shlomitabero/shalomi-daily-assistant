@@ -3871,7 +3871,13 @@ export function EntityPanel({
       });
     }, UNDO_WINDOW_MS);
 
-    setPendingDelete({ entries, message: t("entity.bulk.deleteUndoToast", { count: entries.length }), timeoutId });
+    setPendingDelete({
+      entries,
+      message: t(entries.length === 1 ? "entity.bulk.deleteUndoToast.one" : "entity.bulk.deleteUndoToast.many", {
+        count: entries.length,
+      }),
+      timeoutId,
+    });
   }
 
   /**

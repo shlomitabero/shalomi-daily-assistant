@@ -861,6 +861,46 @@ test("EntityPanel's bulk delete removes every selected row immediately and shows
 });
 
 /**
+ * Round 1395: the bulk-delete Undo toast's own message used a single
+ * hardcoded-plural i18n key (entity.bulk.deleteUndoToast) with no singular
+ * form, so bulk-deleting exactly 1 selected record -- an ordinary outcome
+ * of filtering the table down to one match and clicking "Delete selected",
+ * not a contrived edge case -- read "1 records deleted." instead of "1
+ * record deleted."
+ */
+test("EntityPanel's bulk-delete Undo toast uses the singular noun form when exactly 1 record is selected", async (t) => {
+  await withJsdom(async () => {
+    const store: EntityRecord[] = [
+      { id: 1, name: "Acme Corp", status: "new" },
+      { id: 2, name: "Globex", status: "won" },
+    ];
+    const deletedIds: number[] = [];
+    const originalFetch = globalThis.fetch;
+    const originalConfirm = globalThis.window.confirm;
+    globalThis.fetch = mockRecordsFetch(store, (id) => deletedIds.push(id)) as typeof fetch;
+    globalThis.window.confirm = (() => true) as typeof window.confirm;
+    try {
+      renderEntityPanel();
+      await waitForCondition(() => document.querySelectorAll("table tbody tr").length === 2);
+
+      fireEvent.click(document.querySelector('td.select-col input[type="checkbox"]') as HTMLInputElement);
+      await waitForCondition(() => document.querySelector(".bulk-actions-bar") !== null);
+
+      t.mock.timers.enable({ apis: ["setTimeout"] });
+      fireEvent.click(document.querySelector(".bulk-actions-bar .danger") as HTMLButtonElement);
+
+      const toast = document.querySelector(".entity-undo-toast");
+      assert.ok(toast, "expected an Undo toast for the single deleted record");
+      assert.match(toast!.textContent ?? "", /\b1 record deleted\b/, "exactly 1 deleted record must use the singular noun form, not '1 records deleted'");
+    } finally {
+      t.mock.timers.reset();
+      globalThis.fetch = originalFetch;
+      globalThis.window.confirm = originalConfirm;
+    }
+  });
+});
+
+/**
  * Round 1117: "Delete selected" was the one bulk-action-bar button never
  * gated by bulkActionBusy -- "Apply to N" and "Duplicate selected" both
  * disable themselves (and refuse to re-enter) while their own
