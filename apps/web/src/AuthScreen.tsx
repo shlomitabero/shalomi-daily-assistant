@@ -79,6 +79,16 @@ export function AuthScreen({ onAuthenticated }: { onAuthenticated: (user: User) 
 
   async function handleForgotPasswordSubmit(e: React.FormEvent) {
     e.preventDefault();
+    // Round 1370: busy already disabled every one of this screen's buttons
+    // (including this form's own submit), but none of its six async
+    // handlers ever checked busy at their own top -- the same own-click
+    // reentrancy gap rounds 1363-1369 already closed across EntityPanel/
+    // AutomationsPanel/WhatsAppPanel/CollaboratorsPanel/useAddableSpecItem/
+    // ChangeEmailPanel/ChangePasswordPanel/App.tsx, just never checked
+    // here. See handleSubmit's own identical doc comment below for the
+    // concrete server-side consequence this has for a fast double-click
+    // on the main login path specifically.
+    if (busy) return;
     setError(null);
     setBusy(true);
     try {
@@ -92,6 +102,9 @@ export function AuthScreen({ onAuthenticated }: { onAuthenticated: (user: User) 
   }
 
   async function handleResendForgotPasswordEmail() {
+    // Round 1370: see handleForgotPasswordSubmit's own identical doc
+    // comment -- this handler never checked busy either.
+    if (busy) return;
     setError(null);
     setForgotPasswordResent(false);
     setBusy(true);
@@ -107,6 +120,9 @@ export function AuthScreen({ onAuthenticated }: { onAuthenticated: (user: User) 
 
   async function handleResetPasswordSubmit(e: React.FormEvent) {
     e.preventDefault();
+    // Round 1370: see handleForgotPasswordSubmit's own identical doc
+    // comment -- this handler never checked busy either.
+    if (busy) return;
     setError(null);
     // Mirrors handleSubmit's own signup confirm-check exactly -- caught
     // client-side, before it ever reaches the server.
@@ -138,6 +154,23 @@ export function AuthScreen({ onAuthenticated }: { onAuthenticated: (user: User) 
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
+    // Round 1370: busy already disabled this form's own submit button, but
+    // this handler never checked busy either -- the same own-click
+    // reentrancy gap rounds 1363-1369 already closed elsewhere (see
+    // handleForgotPasswordSubmit's own identical doc comment above). This
+    // is the highest-stakes instance in this file: login()'s own
+    // POST /auth/login route has no withIdempotency protection at all
+    // (unlike /auth/signup, /auth/login/verify-code, /auth/password,
+    // /auth/reset-password, and /auth/account, which all do), and its own
+    // round-538 doc comment only guarantees a single request's own insert
+    // and response stay internally consistent with each other, not that a
+    // second concurrent request can't come along afterward and delete that
+    // row via deleteLoginCodesForUser's own "at most one code is ever
+    // valid at a time per account" invariant. A fast double-click/double-
+    // Enter firing two concurrent logins can send two separate code emails
+    // for one click, with the account's own single-code invariant then
+    // discarding whichever one's DB write loses the race.
+    if (busy) return;
     setError(null);
     // Signup is the one place a typo would otherwise go unnoticed until the
     // very next login attempt -- round 716 added a real "forgot password"
@@ -174,6 +207,9 @@ export function AuthScreen({ onAuthenticated }: { onAuthenticated: (user: User) 
 
   async function handleVerifyCode(e: React.FormEvent) {
     e.preventDefault();
+    // Round 1370: see handleForgotPasswordSubmit's own identical doc
+    // comment -- this handler never checked busy either.
+    if (busy) return;
     setError(null);
     setCodeResent(false);
     setBusy(true);
@@ -189,6 +225,9 @@ export function AuthScreen({ onAuthenticated }: { onAuthenticated: (user: User) 
   }
 
   async function handleResendCode() {
+    // Round 1370: see handleForgotPasswordSubmit's own identical doc
+    // comment -- this handler never checked busy either.
+    if (busy) return;
     setError(null);
     setCodeResent(false);
     setBusy(true);

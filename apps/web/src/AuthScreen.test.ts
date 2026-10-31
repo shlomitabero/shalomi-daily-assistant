@@ -742,3 +742,78 @@ test("AuthScreen's reset-password form rejects a mismatched confirmation client-
     "http://localhost/?resetToken=abc123",
   );
 });
+
+/**
+ * Round 1370: handleSubmit had no guard against racing ITSELF -- the same
+ * own-click reentrancy gap rounds 1363-1369 closed for EntityPanel/
+ * AutomationsPanel/WhatsAppPanel/CollaboratorsPanel/useAddableSpecItem/
+ * ChangeEmailPanel/ChangePasswordPanel/App.tsx. POST /auth/login has no
+ * withIdempotency protection at all, unlike every other mutating auth
+ * route -- a fast double-click/double-Enter on the login button must only
+ * ever reach login() once, not fire two independent requests that could
+ * each mint their own login-code row and race each other's
+ * deleteLoginCodesForUser cleanup (see handleSubmit's own doc comment).
+ */
+test("AuthScreen's submit button guards against a fast double-click, so only one login request ever fires for one submission", async () => {
+  await withJsdom(async () => {
+    const originalFetch = globalThis.fetch;
+    const calls: { body: string }[] = [];
+    const pending: { resolveFirstLogin: (() => void) | null } = { resolveFirstLogin: null };
+    globalThis.fetch = (async (input: string, init?: RequestInit) => {
+      const url = String(input);
+      if (url.includes("/auth/login") && init?.method === "POST") {
+        calls.push({ body: init.body as string });
+        if (calls.length === 1) {
+          await new Promise<void>((resolve) => {
+            pending.resolveFirstLogin = resolve;
+          });
+        } else {
+          await new Promise(() => {});
+        }
+        return new Response(JSON.stringify({ user: { id: "u1", email: "dana@example.com" }, token: "tok" }), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        });
+      }
+      throw new Error(`unexpected request ${init?.method ?? "GET"} ${url}`);
+    }) as typeof fetch;
+
+    try {
+      let authenticatedUser: unknown;
+      renderAuthScreen((user) => {
+        authenticatedUser = user;
+      });
+
+      // switch to login mode
+      fireEvent.click(document.querySelector("button.link-button") as HTMLButtonElement);
+
+      const emailInput = document.querySelector('input[type="email"]') as HTMLInputElement;
+      const passwordInput = document.querySelector('input[name="password"]') as HTMLInputElement;
+      fireEvent.change(emailInput, { target: { value: "dana@example.com" } });
+      fireEvent.change(passwordInput, { target: { value: "correct-horse-battery" } });
+
+      const form = document.querySelector("form.auth-form")!;
+      fireEvent.submit(form);
+      fireEvent.submit(form);
+      await act(async () => {
+        await Promise.resolve();
+        await Promise.resolve();
+      });
+
+      assert.equal(
+        calls.length,
+        1,
+        "a fast double submit must only ever reach login() once -- the second click must be blocked by busy, not fire its own independent request",
+      );
+
+      await act(async () => {
+        pending.resolveFirstLogin?.();
+        await Promise.resolve();
+        await Promise.resolve();
+      });
+      assert.deepEqual(authenticatedUser, { id: "u1", email: "dana@example.com" });
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+});
