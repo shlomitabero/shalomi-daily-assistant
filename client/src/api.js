@@ -22,7 +22,13 @@ async function request(path, { method = 'GET', body } = {}) {
 
   const data = await res.json().catch(() => ({}));
   if (!res.ok) {
-    if (res.status === 401) {
+    // A 401 from /login itself just means "wrong password" — it says
+    // nothing about any previous session, and dispatching auth:expired here
+    // made AuthContext show "ההתחברות הקודמת פגה" (the previous login
+    // expired) on a fresh, failed login attempt where no session ever
+    // existed. Every other endpoint requires an existing token, so a 401
+    // there really does mean that token is now invalid/expired.
+    if (res.status === 401 && path !== '/login') {
       // Without this, an expired/invalid token leaves every page stuck
       // showing a raw "not authenticated" error forever — authed state in
       // AuthContext only ever changes on an explicit login()/logout() call,
