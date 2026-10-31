@@ -9566,19 +9566,19 @@ nav button.active .tab-count { background: rgba(255, 255, 255, 0.25); color: inh
 .record-row-highlighted, .record-row-highlighted:hover { background: var(--accent-soft); transition: background 1.5s ease; }
 .record-row-focused { outline: 2px solid var(--accent); outline-offset: -2px; }
 .record-row-move-error, .record-row-move-error:hover { background: var(--danger-soft); transition: background 2s ease; }
-.print-record-sheet, .print-list-sheet { display: none; }
+.print-record-sheet, .print-list-sheet { display: none; color: #1a1a1a; }
 .print-record-sheet h1, .print-list-sheet h1 { font-size: 20px; margin: 0 0 16px; }
 .print-record-sheet dl { margin: 0; }
-.print-field { display: flex; gap: 12px; padding: 8px 0; border-bottom: 1px solid var(--border-soft); }
-.print-field dt { flex: 0 0 160px; font-weight: 600; color: var(--muted); }
+.print-field { display: flex; gap: 12px; padding: 8px 0; border-bottom: 1px solid #ccc; }
+.print-field dt { flex: 0 0 160px; font-weight: 600; color: #444; }
 .print-field dd { margin: 0; flex: 1; min-width: 0; overflow-wrap: anywhere; }
-.print-record-footer { margin-top: 24px; font-size: 12px; color: var(--muted); }
+.print-record-footer { margin-top: 24px; font-size: 12px; color: #666; }
 .print-list-sheet table { width: 100%; border-collapse: collapse; }
-.print-list-sheet th, .print-list-sheet td { text-align: start; padding: 6px 10px; border-bottom: 1px solid var(--border-soft); font-size: 13px; overflow-wrap: anywhere; }
-.print-list-sheet th { font-weight: 600; color: var(--muted); }
-.print-list-totals-row td { font-weight: 700; border-top: 2px solid var(--border); }
-.print-list-group-header-row td { background: var(--surface-subtle); font-weight: 600; }
-.print-list-group-totals-row td { background: var(--surface-subtle); font-weight: 600; border-bottom: 1px solid var(--border); }
+.print-list-sheet th, .print-list-sheet td { text-align: start; padding: 6px 10px; border-bottom: 1px solid #ccc; font-size: 13px; overflow-wrap: anywhere; }
+.print-list-sheet th { font-weight: 600; color: #444; }
+.print-list-totals-row td { font-weight: 700; border-top: 2px solid #999; }
+.print-list-group-header-row td { background: #f1f1f1; font-weight: 600; }
+.print-list-group-totals-row td { background: #f1f1f1; font-weight: 600; border-bottom: 1px solid #999; }
 @media print {
   body * { visibility: hidden; }
   .print-record-sheet, .print-record-sheet *, .print-list-sheet, .print-list-sheet * { visibility: visible !important; }

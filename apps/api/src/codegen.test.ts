@@ -25979,6 +25979,26 @@ test("the exported EntityView's own panel heading, print-row sheet, and print-li
 });
 
 /**
+ * New in this round (1375): the exported app's print sheet, unlike the live
+ * preview's own version of the same stylesheet, left EVERY print-sheet color
+ * (border, label, footer, group background) as a CSS variable -- so under
+ * the exported app's own dark mode, the whole sheet, including the actual
+ * record/list values (h1/dd/td, which never had a color rule of their own
+ * at all), inherits dark, near-white-text styling onto what's always a
+ * physically light sheet of paper. jsdom can't detect this (it has no
+ * paint engine), so this reads the generated CSS's own source text, the
+ * same discipline this file already uses for other generated-style checks.
+ */
+test("the exported app's print sheet resets its own text color so dark mode's near-white body text can't leak onto a printed page", () => {
+  const files = generateExportFiles(project);
+  const stylesCss = files.find((f) => f.path === "web/src/styles.css")!.content;
+
+  const printSheetBase = stylesCss.match(/\.print-record-sheet, \.print-list-sheet \{[^}]*\}/)?.[0];
+  assert.ok(printSheetBase, "expected a .print-record-sheet, .print-list-sheet base rule in the generated styles.css");
+  assert.match(printSheetBase!, /color:\s*#1a1a1a/, "the print sheet must reset color itself, or its h1/dd/td inherit dark mode's near-white body text when printed");
+});
+
+/**
  * Round 670: round 615 ported the orderedFields fix (honoring the user's
  * drag-reordered column order) to Export CSV, Copy, and per-record Print
  * in the exported app, and round 621 ported it to the Columns menu -- but

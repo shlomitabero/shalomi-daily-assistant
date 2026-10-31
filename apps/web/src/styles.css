@@ -3767,6 +3767,12 @@ button.sort-header:hover:not(:disabled) {
 
 .print-record-sheet {
   display: none;
+  /* Round 1375: the border/label/footer colors below are already hardcoded
+     so this sheet reads correctly on white paper regardless of theme, but
+     nothing ever reset color itself -- h1/dd still inherited body's
+     color: var(--text), which resolves to a near-white color in dark mode
+     and renders invisible once actually printed. */
+  color: #1a1a1a;
 }
 
 .print-record-sheet h1 {
@@ -3806,6 +3812,7 @@ button.sort-header:hover:not(:disabled) {
 
 .print-list-sheet {
   display: none;
+  color: #1a1a1a;
 }
 
 .print-list-sheet h1 {

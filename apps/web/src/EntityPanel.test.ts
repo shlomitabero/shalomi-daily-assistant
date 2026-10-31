@@ -6731,6 +6731,32 @@ test("the print sheet's CSS lets a long, unbreakable field value wrap instead of
 });
 
 /**
+ * New in this round (1375): the print sheet's `dt`/border/footer colors
+ * were already hardcoded to fixed light values, specifically so printing
+ * reads correctly on white paper regardless of the app's own light/dark
+ * theme -- but nothing ever reset `color` on the sheet itself, so `h1` and
+ * `dd` (the actual record/list values being printed) still inherited
+ * `body`'s `color: var(--text)`, which resolves to a near-white color in
+ * dark mode (`--text: #f3ede2`). A dark-mode user who prints a record or a
+ * list gets an unreadable printout: near-white text on white paper. jsdom
+ * has no layout/paint engine and can't detect this (a mocked
+ * `window.print()` only ever asserts on `textContent`), so this reads
+ * styles.css's own source directly, the same discipline the test just
+ * above already uses for this exact file.
+ */
+test("the print sheet resets its own text color so dark mode's near-white body text can't leak onto a printed page", () => {
+  const stylesCss = readFileSync(new URL("./styles.css", import.meta.url), "utf8");
+
+  const printRecordSheet = stylesCss.match(/\.print-record-sheet \{[\s\S]*?\}/)?.[0];
+  assert.ok(printRecordSheet, "expected a .print-record-sheet base rule in styles.css");
+  assert.match(printRecordSheet!, /color:\s*#1a1a1a/, ".print-record-sheet must reset color itself, or its h1/dd inherit dark mode's near-white body text when printed");
+
+  const printListSheet = stylesCss.match(/\.print-list-sheet \{[\s\S]*?\}/)?.[0];
+  assert.ok(printListSheet, "expected a .print-list-sheet base rule in styles.css");
+  assert.match(printListSheet!, /color:\s*#1a1a1a/, ".print-list-sheet must reset color itself, or its h1/td inherit dark mode's near-white body text when printed");
+});
+
+/**
  * CSV sibling of the print-list test above: stubs URL.createObjectURL the
  * same way BuildProgress.test.ts's own download test does (jsdom has no
  * real Blob-URL machinery) to read back the actual generated CSV content,
