@@ -505,6 +505,7 @@ test("App's handleEnhanceAndBuild captures enhanceIdea's own providerName into e
       "description",
       "user",
       "busy",
+      "enhanceBusy",
       "templateBusy",
       "setEnhanceBusy",
       "setError",
@@ -522,6 +523,7 @@ test("App's handleEnhanceAndBuild captures enhanceIdea's own providerName into e
       state.description,
       { id: "user1" },
       opts.busy ?? false,
+      false,
       opts.templateBusy ?? null,
       (v: boolean) => (state.enhanceBusy = v),
       (v: string | null) => (state.error = v),
@@ -577,12 +579,13 @@ test("App's handleEnhanceAndBuild refuses to run while the Build submit button o
   assert.ok(handlerMatch, "expected to find handleEnhanceAndBuild in App.tsx");
   const { code } = transformSync(handlerMatch![0], { loader: "ts" });
 
-  function run(opts: { busy?: boolean; templateBusy?: string | null }) {
+  function run(opts: { busy?: boolean; enhanceBusy?: boolean; templateBusy?: string | null }) {
     const state = { enhanceIdeaCalled: false, createProjectCalled: false, enhanceBusySet: "untouched" as unknown };
     const fn = new Function(
       "description",
       "user",
       "busy",
+      "enhanceBusy",
       "templateBusy",
       "setEnhanceBusy",
       "setError",
@@ -600,6 +603,7 @@ test("App's handleEnhanceAndBuild refuses to run while the Build submit button o
       "a crm for my shop",
       { id: "user1" },
       opts.busy ?? false,
+      opts.enhanceBusy ?? false,
       opts.templateBusy ?? null,
       (v: boolean) => (state.enhanceBusySet = v),
       () => {},
@@ -632,6 +636,15 @@ test("App's handleEnhanceAndBuild refuses to run while the Build submit button o
   await fnWhileTemplateBusy();
   assert.equal(stateWhileTemplateBusy.enhanceIdeaCalled, false, "must never call enhanceIdea while a template card is already in flight");
   assert.equal(stateWhileTemplateBusy.createProjectCalled, false, "must never call createProject either");
+
+  // Round 1369: the own-click reentrancy gap round 1131's cross-gate never
+  // closed -- a fast double-click on "Enhance & Build" itself (before
+  // React disables the button) used to fire this handler twice, since it
+  // never checked its own enhanceBusy flag, only the two sibling ones.
+  const { fn: fnWhileEnhanceBusy, state: stateWhileEnhanceBusy } = run({ enhanceBusy: true });
+  await fnWhileEnhanceBusy();
+  assert.equal(stateWhileEnhanceBusy.enhanceIdeaCalled, false, "must never call enhanceIdea while this very handler's own enhanceBusy is already true");
+  assert.equal(stateWhileEnhanceBusy.createProjectCalled, false, "must never call createProject either");
 });
 
 /**
@@ -646,10 +659,11 @@ test("App's handleDescribe refuses to run while Enhance & Build or a template ca
   assert.ok(handlerMatch, "expected to find handleDescribe in App.tsx");
   const { code } = transformSync(handlerMatch![0], { loader: "ts" });
 
-  function run(opts: { enhanceBusy?: boolean; templateBusy?: string | null }) {
+  function run(opts: { busy?: boolean; enhanceBusy?: boolean; templateBusy?: string | null }) {
     const state = { createProjectCalled: false, busySet: "untouched" as unknown, viewSet: "untouched" as unknown, preventDefaultCalled: false };
     const fn = new Function(
       "description",
+      "busy",
       "enhanceBusy",
       "templateBusy",
       "setBusy",
@@ -663,6 +677,7 @@ test("App's handleDescribe refuses to run while Enhance & Build or a template ca
       `${code}\nreturn handleDescribe;`,
     )(
       "a crm for my shop",
+      opts.busy ?? false,
       opts.enhanceBusy ?? false,
       opts.templateBusy ?? null,
       (v: boolean) => (state.busySet = v),
@@ -691,6 +706,14 @@ test("App's handleDescribe refuses to run while Enhance & Build or a template ca
   await fnWhileTemplateBusy(fakeEvent);
   assert.equal(stateWhileTemplateBusy.createProjectCalled, false, "must never call createProject while a template card is already in flight");
 
+  // Round 1369: the own-click reentrancy gap round 1131's cross-gate never
+  // closed -- a fast double-click on the plain Build submit button itself
+  // (before React disables it) used to fire this handler twice, since it
+  // never checked its own busy flag, only the two sibling ones.
+  const { fn: fnWhileBuildBusy, state: stateWhileBuildBusy } = run({ busy: true });
+  await fnWhileBuildBusy(fakeEvent);
+  assert.equal(stateWhileBuildBusy.createProjectCalled, false, "must never call createProject while this very handler's own busy is already true");
+
   const { fn: fnNormally, state: stateNormally } = run({});
   await fnNormally(fakeEvent);
   assert.equal(stateNormally.createProjectCalled, true, "must still run normally when neither sibling flag is busy");
@@ -712,11 +735,12 @@ test("App's handleUseTemplate refuses to run while the Build submit button or En
   assert.ok(handlerMatch, "expected to find handleUseTemplate in App.tsx");
   const { code } = transformSync(handlerMatch![0], { loader: "ts" });
 
-  function run(opts: { busy?: boolean; enhanceBusy?: boolean }) {
+  function run(opts: { busy?: boolean; enhanceBusy?: boolean; templateBusy?: string | null }) {
     const state = { createProjectFromTemplateCalled: false, templateBusySet: "untouched" as unknown, viewSet: "untouched" as unknown };
     const fn = new Function(
       "busy",
       "enhanceBusy",
+      "templateBusy",
       "setTemplateBusy",
       "setError",
       "createProjectFromTemplate",
@@ -730,6 +754,7 @@ test("App's handleUseTemplate refuses to run while the Build submit button or En
     )(
       opts.busy ?? false,
       opts.enhanceBusy ?? false,
+      opts.templateBusy ?? null,
       (v: string | null) => (state.templateBusySet = v),
       () => {},
       async () => {
@@ -754,6 +779,14 @@ test("App's handleUseTemplate refuses to run while the Build submit button or En
   const { fn: fnWhileEnhanceBusy, state: stateWhileEnhanceBusy } = run({ enhanceBusy: true });
   await fnWhileEnhanceBusy("template-1");
   assert.equal(stateWhileEnhanceBusy.createProjectFromTemplateCalled, false, "must never call createProjectFromTemplate while Enhance & Build is already in flight");
+
+  // Round 1369: the own-click reentrancy gap round 1131's cross-gate never
+  // closed -- a fast double-click on the SAME template card itself (before
+  // React disables it) used to fire this handler twice, since it never
+  // checked its own templateBusy flag, only the two sibling ones.
+  const { fn: fnWhileTemplateBusy, state: stateWhileTemplateBusy } = run({ templateBusy: "template-1" });
+  await fnWhileTemplateBusy("template-1");
+  assert.equal(stateWhileTemplateBusy.createProjectFromTemplateCalled, false, "must never call createProjectFromTemplate while this very handler's own templateBusy is already set");
 
   const { fn: fnNormally, state: stateNormally } = run({});
   await fnNormally("template-1");

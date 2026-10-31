@@ -1702,7 +1702,16 @@ function AppContent() {
     // handleUseTemplate) -- see handleUseTemplate's own identical round-1131
     // doc comment for why all three must block each other, not just guard
     // their own re-entry.
-    if (enhanceBusy || templateBusy !== null) return;
+    // Round 1369: round 1131 guarded against the two SIBLING flags but
+    // never busy itself, despite busy being exactly what this handler sets
+    // below and exactly what the submit button's own disabled prop
+    // includes -- a fast double-click fired this twice before React
+    // disabled the button, creating two separate real projects for one
+    // click. The same own-click reentrancy gap rounds 1363-1368 already
+    // swept across EntityPanel/AutomationsPanel/WhatsAppPanel/
+    // CollaboratorsPanel/the shared useAddableSpecItem hook/
+    // ChangeEmailPanel/ChangePasswordPanel, just never checked here.
+    if (busy || enhanceBusy || templateBusy !== null) return;
     setBusy(true);
     setError(null);
     try {
@@ -1732,7 +1741,9 @@ function AppContent() {
   async function handleEnhanceAndBuild() {
     if (!description.trim() || !user) return;
     // Round 1131: see handleUseTemplate's own identical doc comment.
-    if (busy || templateBusy !== null) return;
+    // Round 1369: see handleDescribe's own identical doc comment -- this
+    // guard never checked enhanceBusy itself either.
+    if (busy || enhanceBusy || templateBusy !== null) return;
     setEnhanceBusy(true);
     setError(null);
     try {
@@ -1784,7 +1795,9 @@ function AppContent() {
    * (rounds 1041/1043).
    */
   async function handleUseTemplate(templateId: string) {
-    if (busy || enhanceBusy) return;
+    // Round 1369: see handleDescribe's own identical doc comment -- this
+    // guard never checked templateBusy itself either.
+    if (busy || enhanceBusy || templateBusy !== null) return;
     setTemplateBusy(templateId);
     setError(null);
     try {
