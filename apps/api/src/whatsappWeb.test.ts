@@ -1581,3 +1581,41 @@ test("a stale close event from a disconnected socket does not clobber a newer se
   assert.equal(state.status, "connected");
   assert.equal(state.phoneNumber, "972500000001");
 });
+
+/**
+ * Round 1379: a shared WhatsApp group invite, a product shared from the
+ * business's own WhatsApp Catalog, and a real order placed through
+ * WhatsApp Business's own built-in ordering flow were all previously
+ * dropped with zero trace, the same silent-vanish gap every prior round in
+ * this message-type-coverage family (1035/1051/1088/1106/1121/1139/1142/
+ * 1152/1306) fixed for a different message shape. All three are plaintext
+ * fields confirmed directly against the installed Baileys protobuf types.
+ */
+test("incoming WhatsApp group invites, catalog products, and orders are logged with a descriptive placeholder instead of being silently dropped", async () => {
+  const { manager, createdSockets, db } = setupManager();
+  insertProject(db, project);
+  applyMigrations(db, project.id, project.spec);
+  markProjectBuilt(db, project.id);
+
+  await manager.connect(project.id);
+  createdSockets[0].emitConnectionUpdate({ connection: "open" });
+
+  createdSockets[0].emitMessagesUpsert({
+    type: "notify",
+    messages: [
+      { key: { remoteJid: "972501234567@s.whatsapp.net", fromMe: false }, message: { groupInviteMessage: { groupName: "לקוחות VIP" } } },
+      { key: { remoteJid: "972501234567@s.whatsapp.net", fromMe: false }, message: { groupInviteMessage: {} } },
+      { key: { remoteJid: "972501234567@s.whatsapp.net", fromMe: false }, message: { productMessage: { product: { title: "נעל ריצה" } } } },
+      { key: { remoteJid: "972501234567@s.whatsapp.net", fromMe: false }, message: { orderMessage: { orderTitle: "הזמנה #42" } } },
+    ],
+  });
+
+  // listWhatsAppMessages orders newest-first, the reverse of emission order.
+  const { messages } = listWhatsAppMessages(db, project.id);
+  assert.equal(messages.length, 4);
+  assert.equal(messages[0].body, "[Order] הזמנה #42");
+  assert.equal(messages[1].body, "[Product] נעל ריצה");
+  assert.equal(messages[2].body, "[Group Invite]", "a group invite with no groupName must fall back to a plain placeholder, not print nothing or throw");
+  assert.equal(messages[3].body, "[Group Invite] לקוחות VIP");
+  for (const m of messages) assert.equal(m.direction, "in", "every placeholder row must still be a real, matched-against incoming message, not metadata");
+});

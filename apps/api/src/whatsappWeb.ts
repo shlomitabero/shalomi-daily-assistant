@@ -120,6 +120,9 @@ export interface BaileysIncomingMessage {
     templateButtonReplyMessage?: { selectedId?: string; selectedDisplayText?: string };
     interactiveResponseMessage?: { body?: { text?: string }; nativeFlowResponseMessage?: { name?: string } };
     liveLocationMessage?: { caption?: string };
+    groupInviteMessage?: { groupName?: string; caption?: string };
+    productMessage?: { product?: { title?: string; description?: string }; body?: string; footer?: string };
+    orderMessage?: { orderTitle?: string; message?: string };
     viewOnceMessage?: { message?: BaileysIncomingMessage["message"] };
     viewOnceMessageV2?: { message?: BaileysIncomingMessage["message"] };
     viewOnceMessageV2Extension?: { message?: BaileysIncomingMessage["message"] };
@@ -281,6 +284,19 @@ const CONNECTION_LOST_MESSAGE = "The WhatsApp connection was lost. Click Connect
  * `viewOnceMessageV2Extension` is WhatsApp's newer envelope for a
  * disappearing *video* specifically (the same role viewOnceMessageV2
  * already plays for images), so it joins that existing check instead.
+ *
+ * Round 1379: three more plaintext shapes join the list, confirmed against
+ * the installed @whiskeysockets/baileys library's own shipped protobuf
+ * types (WAProto/index.d.ts): a shared WhatsApp group invite
+ * (IGroupInviteMessage -- groupName/caption), a product shared from the
+ * business's own WhatsApp Catalog (IProductMessage -- product.title/
+ * description, body/footer), and a real order placed through WhatsApp
+ * Business's own built-in ordering flow (IOrderMessage -- orderTitle/
+ * message). None of these are encrypted -- same plaintext bar every prior
+ * round in this family used. orderMessage in particular is the single
+ * message shape most directly tied to this app's own commerce use case: a
+ * customer actually placing an order through the exact linked WhatsApp
+ * number this integration monitors previously vanished with zero trace.
  */
 function describeIncomingMessage(message: BaileysIncomingMessage["message"]): string | null {
   if (!message) return null;
@@ -303,6 +319,19 @@ function describeIncomingMessage(message: BaileysIncomingMessage["message"]): st
   }
   if (message.liveLocationMessage) {
     return message.liveLocationMessage.caption ? `[Live location] ${message.liveLocationMessage.caption}` : "[Live location]";
+  }
+  if (message.groupInviteMessage) {
+    const g = message.groupInviteMessage;
+    return g.groupName ? `[Group Invite] ${g.groupName}` : "[Group Invite]";
+  }
+  if (message.productMessage) {
+    const p = message.productMessage;
+    const detail = p.product?.title ?? p.body;
+    return detail ? `[Product] ${detail}` : "[Product]";
+  }
+  if (message.orderMessage) {
+    const o = message.orderMessage;
+    return o.orderTitle ?? o.message ? `[Order] ${o.orderTitle ?? o.message}` : "[Order]";
   }
   if (message.contactMessage) {
     const name = message.contactMessage.displayName;
