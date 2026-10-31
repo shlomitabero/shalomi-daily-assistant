@@ -2668,3 +2668,31 @@ test("the shared .history-header and .history-header-actions wrap instead of pus
     ".history-header-actions must wrap its buttons instead of overflowing past the dialog's edge, which would push the Close button off-screen",
   );
 });
+
+/**
+ * Round 1355: a live Playwright browser session at a 375px viewport found
+ * a result row (.global-search-hit-button, used by both the plain and
+ * the hasLink/LinkifiedHighlighted JSX branches) rendering a matched
+ * record's text past the search dialog's right edge when that text has
+ * no wrap points (no spaces or hyphens -- a long SKU, slug, or
+ * concatenated id). `white-space: normal` alone only wraps at existing
+ * break opportunities; it does nothing for one long unbroken token.
+ * Several sibling list-row components already guard against exactly
+ * this with `overflow-wrap: anywhere` (.my-project-open strong,
+ * .checkpoint-list li strong, .collab-list li strong,
+ * .whatsapp-log-body) -- this row was the one remaining gap. jsdom has
+ * no layout engine and can't detect real off-screen text overflow (see
+ * this file's own .history-header test above), so this reads
+ * styles.css's own source directly instead.
+ */
+test("a global search result row's text wraps mid-word instead of overflowing the dialog when it has no spaces or hyphens to break on", () => {
+  const stylesCss = readFileSync(new URL("./styles.css", import.meta.url), "utf8");
+
+  const hitButton = stylesCss.match(/\.global-search-hit-button \{[\s\S]*?\}/)?.[0];
+  assert.ok(hitButton, "expected a .global-search-hit-button rule in styles.css");
+  assert.match(
+    hitButton!,
+    /overflow-wrap:\s*anywhere/,
+    ".global-search-hit-button must allow a long unbreakable token (no spaces/hyphens) to wrap mid-word instead of overflowing the search dialog",
+  );
+});
