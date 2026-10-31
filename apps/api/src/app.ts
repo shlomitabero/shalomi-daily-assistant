@@ -49,7 +49,19 @@ export function createApp(
   // Render (and most single-service PaaS hosts) terminates TLS at a proxy
   // and forwards plain HTTP internally, so req.protocol would report
   // "http" here without this.
-  app.set("trust proxy", true);
+  //
+  // Round 1372: `true` trusts EVERY hop in X-Forwarded-For and takes the
+  // LEFT-MOST entry as req.ip -- that left-most entry is whatever the
+  // client itself put there, so any caller could spoof req.ip by sending
+  // its own X-Forwarded-For prefix (e.g. "X-Forwarded-For: 1.2.3.4, <real
+  // peer>"), silently defeating every IP-keyed rate limiter in auth.ts
+  // (signup/login/verify-code/reset-password all key off req.ip). Render
+  // is exactly one reverse-proxy hop, so `1` is the correct setting here:
+  // it still trusts that one hop's X-Forwarded-Proto for req.protocol
+  // (what the comment above this one relies on), but resolves req.ip to
+  // the address that hop itself appended, not any attacker-supplied value
+  // earlier in the header.
+  app.set("trust proxy", 1);
   app.use(cors());
   app.use(express.json());
 

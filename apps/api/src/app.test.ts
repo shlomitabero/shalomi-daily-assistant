@@ -281,6 +281,65 @@ test("health check responds ok", async () => {
   });
 });
 
+/**
+ * Round 1372: app.ts's `app.set("trust proxy", true)` trusted EVERY hop in
+ * X-Forwarded-For and took the LEFT-MOST entry as req.ip -- that left-most
+ * entry is whatever the client itself puts there, so any caller could spoof
+ * req.ip simply by sending its own X-Forwarded-For prefix. Four unauthenticated
+ * routes (signup/login/verify-code/reset-password) key their volumetric rate
+ * limiter directly off req.ip, so this silently let an attacker defeat all
+ * four by sending a different forged header value on every request. Render
+ * is exactly one real reverse-proxy hop, so the fix narrows this to
+ * `app.set("trust proxy", 1)`: Express then trusts exactly one hop's own
+ * X-Forwarded-For entry (the right-most one, appended by that one real
+ * proxy) and ignores anything a client prepends further left.
+ *
+ * This test proves the fix empirically against the real signup rate
+ * limiter (max 20 per window): fires 21 requests, each with a DIFFERENT
+ * spoofed left-most X-Forwarded-For entry (simulating 21 different
+ * "attacker" IPs) but the SAME right-most entry (simulating the one real
+ * proxy hop always appending the genuine, unchanging client address) --
+ * with the fix, Express collapses all 21 to that one real IP and the 21st
+ * request is rate-limited; before the fix, each spoofed left-most entry
+ * would have been taken as a distinct req.ip, so the limiter would never
+ * trip at all.
+ */
+test("the signup rate limiter cannot be bypassed by spoofing a forged left-most X-Forwarded-For entry: the 21st request from the same real client IP is still rejected with 429", async () => {
+  await withServer(async (baseUrl) => {
+    for (let i = 0; i < 20; i++) {
+      const res = await fetch(`${baseUrl}/api/auth/signup`, {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          // Round 1372: a different forged left-most entry on every single
+          // request, exactly as an attacker trying to defeat the limiter
+          // would send -- the shared "203.0.113.9" right-most entry is the
+          // one a real single-hop proxy (Render) would always append for
+          // this same underlying connection.
+          "x-forwarded-for": `198.51.100.${i}, 203.0.113.9`,
+        },
+        body: JSON.stringify({ email: `trust-proxy-${i}-${Math.random()}@example.com`, password: "correct-horse-battery" }),
+      });
+      assert.notEqual(res.status, 429, `signup call ${i + 1} of 20 (within the limit) must not be rate-limited yet`);
+    }
+
+    const blocked = await fetch(`${baseUrl}/api/auth/signup`, {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        "x-forwarded-for": "198.51.100.254, 203.0.113.9",
+      },
+      body: JSON.stringify({ email: `trust-proxy-blocked-${Math.random()}@example.com`, password: "correct-horse-battery" }),
+    });
+    assert.equal(
+      blocked.status,
+      429,
+      "the 21st signup from the same real client IP must be rate-limited even though its own forged left-most X-Forwarded-For entry is unique",
+    );
+    assert.equal(((await blocked.json()) as { code?: string }).code, "RATE_LIMITED");
+  });
+});
+
 test("signup rejects a duplicate email and login rejects a wrong password", async () => {
   await withServer(async (baseUrl) => {
     const email = "dana@example.com";
