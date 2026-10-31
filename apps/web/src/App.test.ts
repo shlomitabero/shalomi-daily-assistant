@@ -393,6 +393,35 @@ test("App.tsx's entity-tab record-count badge branches on entityCounts[entity.na
 });
 
 /**
+ * Round 1397: the WhatsApp-unread and failing-automations toolbar badges'
+ * own aria-labels each used a single hardcoded-plural i18n key with no
+ * singular form, so an ordinary single unread message or single failing
+ * rule read "1 unread WhatsApp messages"/"1 failing automations" instead
+ * of the singular form -- the same i18n gap already fixed for several
+ * siblings in rounds 1388-1395. Verified via regex extraction of the two
+ * JSX call sites (same convention as the entity-tab test just above).
+ */
+test("App.tsx's WhatsApp-unread and failing-automations badges each branch on their own count === 1 to pick the singular i18n key", () => {
+  const appSrc = readFileSync(new URL("./App.tsx", import.meta.url), "utf8");
+
+  const unreadMatch = appSrc.match(/<span\s+className="whatsapp-unread-badge"\s+aria-label=\{t\(\s*[\s\S]*?\)\}\s*>/);
+  assert.ok(unreadMatch, "expected to find the WhatsApp-unread badge span in App.tsx");
+  assert.match(
+    unreadMatch![0],
+    /whatsappUnreadCount === 1 \? "whatsapp\.unreadBadge\.one" : "whatsapp\.unreadBadge\.many"/,
+    "expected the WhatsApp-unread badge's aria-label to branch on a count of exactly 1, not hardcode the plural key alone",
+  );
+
+  const failingMatch = appSrc.match(/className="automations-failing-badge"\s+aria-label=\{t\(\s*[\s\S]*?\)\}/);
+  assert.ok(failingMatch, "expected to find the failing-automations badge's aria-label in App.tsx");
+  assert.match(
+    failingMatch![0],
+    /automationsFailingCount === 1 \? "automations\.failingBadge\.one" : "automations\.failingBadge\.many"/,
+    "expected the failing-automations badge's aria-label to branch on a count of exactly 1, not hardcode the plural key alone",
+  );
+});
+
+/**
  * New in this round: the "Draft" chip (round 149) marks a not-yet-built
  * project one card at a time, but with enough projects there was no way to
  * see only the drafts, or hide them entirely -- filterProjectsByStatus is

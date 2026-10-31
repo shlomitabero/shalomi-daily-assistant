@@ -2721,7 +2721,12 @@ function AppContent() {
               <button type="button" className="secondary" onClick={() => openPanel("whatsapp")}>
                 {t("preview.whatsapp")}
                 {whatsappUnreadCount > 0 && (
-                  <span className="whatsapp-unread-badge" aria-label={t("whatsapp.unreadBadge", { count: String(whatsappUnreadCount) })}>
+                  <span
+                    className="whatsapp-unread-badge"
+                    aria-label={t(whatsappUnreadCount === 1 ? "whatsapp.unreadBadge.one" : "whatsapp.unreadBadge.many", {
+                      count: String(whatsappUnreadCount),
+                    })}
+                  >
                     {whatsappUnreadCount}
                   </span>
                 )}
@@ -2731,7 +2736,10 @@ function AppContent() {
                 {automationsFailingCount > 0 && (
                   <span
                     className="automations-failing-badge"
-                    aria-label={t("automations.failingBadge", { count: String(automationsFailingCount) })}
+                    aria-label={t(
+                      automationsFailingCount === 1 ? "automations.failingBadge.one" : "automations.failingBadge.many",
+                      { count: String(automationsFailingCount) },
+                    )}
                   >
                     {automationsFailingCount}
                   </span>
