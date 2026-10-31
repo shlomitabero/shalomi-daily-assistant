@@ -40097,5 +40097,23 @@ Full suite run: only `apps/api` was touched this round. `npm run build` ran clea
 
 **Topic status**: a reminder that the overflow-wrap bug class has two distinct failure modes in this codebase -- a genuinely new gap in the live preview itself (rounds 1348, 1354, 1375, 1376), and a live-preview fix that was simply never ported to codegen.ts's parallel CSS (this round). Worth checking both angles in future surveys of this territory. No further candidate from this round's survey remains queued; `packages/db/src/migrate.ts`'s one-sided check remains the only other open, low-priority backup.
 
+### Round 1378: port the last unported fix in the same Global Search dialog (`.global-search-input` missing `min-width: 0`)
+
+A fresh survey, explicitly told round 1377 may have left more of this exact territory unmined, re-examined the Global Search dialog round 1377 had just worked on and found the one class round 1377's own pass missed: `.global-search-input`. The live preview's copy already has `min-width: 0` (from an earlier, unlogged round); `codegen.ts`'s copy never did.
+
+`.global-search-form` is `display: flex; gap: 8px`, with `.global-search-input` and the submit "Search" `<button>` as flex siblings -- the exact same shape round 1377 just fixed for two other classes in this same form. Per the Flexbox spec, a flex item's automatic minimum size defaults to its content-based min-content width unless `min-width: 0` overrides it. On a narrow/mobile viewport (the search panel is `width: 100%; max-width: 560px` inside a `padding: 60px 16px` overlay, leaving roughly 290px of usable width on a ~360px phone), a plain text input's browser-default minimum width plus the button's own width can exceed that available space -- without the override, the input can't shrink below its floor, pushing the "Search" button off-screen or forcing horizontal overflow. The button is the only way to trigger the search by click (Enter still works), so this is a real, if narrower, usability regression specifically on mobile.
+
+**Independent verification**: read `apps/web/src/styles.css:3386-3389` directly, confirming `.global-search-input { flex: 1; min-width: 0; }` is genuinely present there. Read `apps/api/src/codegen.ts:9552` directly (before this round's edit), confirming the matching rule there was just `.global-search-input { flex: 1; }`. Read `codegen.ts:8450-8478` directly, confirming `.global-search-form` really is `display: flex; gap: 8px` (line 9551) with the input and submit button as direct flex siblings -- the identical shape as round 1377's other three fixes in this same dialog.
+
+**The fix**: added `min-width: 0;` to `.global-search-input` in `codegen.ts`'s `renderStylesCss`, matching the live preview exactly.
+
+**Tests**: 1 new test added immediately after round 1377's own test in `codegen.test.ts`, following the same `generateExportFiles(project).find((f) => f.path === "web/src/styles.css")` convention, asserting `.global-search-input`'s generated rule matches `min-width:\s*0`.
+
+Fail-before/pass-after verified: backed up the fixed `codegen.ts`, restored the unfixed version from `HEAD`, ran the new test -- failed exactly as predicted (`.global-search-input { flex: 1; }`, no `min-width`). Restored the fixed copy and reran -- passed.
+
+Full suite run: only `apps/api` was touched this round. `npm run build` ran clean. The new test passed in targeted isolation both before (confirmed failing against the unfixed file) and after the fix. The full `apps/api` suite showed its one already-documented, pre-existing `codegen.test.ts` SIGKILL/OOM (967/968, same signature as rounds 1372-1377) -- confirmed unrelated since the new test already independently passed in its own targeted isolated run.
+
+**Topic status**: this closes the Global Search dialog's overflow-wrap/min-width parity gap in `codegen.ts` completely -- all four classes this dialog uses (`.global-search-entity-label`, `.global-search-hit-button` from round 1377, `.global-search-input` from this round, plus `.global-search-form` itself which was already correct) now match the live preview. A useful lesson for future CSS-parity sweeps: finishing a sweep of "the obvious offenders in one dialog/component" doesn't guarantee every class in that same component was checked -- worth a second, narrower pass over the same component rather than assuming the first pass was exhaustive. `packages/db/src/migrate.ts`'s one-sided check remains the only other open, low-priority backup, still not pursued without a concrete failing-test attempt.
+
 
 

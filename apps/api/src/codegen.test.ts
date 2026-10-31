@@ -26056,6 +26056,29 @@ test("the exported app's Board columns and Global Search results have the same o
 });
 
 /**
+ * New in this round (1378): a sibling parity gap to round 1377's own fix,
+ * in this exact same Global Search dialog. `.global-search-form` is
+ * `display: flex; gap: 8px`, with `.global-search-input` and the submit
+ * button as flex siblings. The live preview's copy of `.global-search-
+ * input` already has `min-width: 0`; codegen.ts's copy didn't. A flex
+ * item's automatic minimum size defaults to its content-based min-content
+ * width unless `min-width: 0` overrides it -- on a narrow/mobile viewport
+ * (the search panel is `width: 100%; max-width: 560px` inside a
+ * `padding: 60px 16px` overlay), the input's own default minimum width
+ * plus the button can exceed the available space, pushing the "Search"
+ * button off-screen/unreachable by click. Round 1377's own pass over this
+ * dialog ported two other classes but missed this one.
+ */
+test("the exported app's Global Search input can shrink below its default minimum width so the Search button stays reachable on narrow viewports", () => {
+  const files = generateExportFiles(project);
+  const stylesCss = files.find((f) => f.path === "web/src/styles.css")!.content;
+
+  const searchInput = stylesCss.match(/\.global-search-input \{[^}]*\}/)?.[0];
+  assert.ok(searchInput, "expected a .global-search-input rule in the generated styles.css");
+  assert.match(searchInput!, /min-width:\s*0/, ".global-search-input must have min-width: 0, or its default content-based minimum width can push the Search button off-screen on a narrow viewport");
+});
+
+/**
  * Round 670: round 615 ported the orderedFields fix (honoring the user's
  * drag-reordered column order) to Export CSV, Copy, and per-record Print
  * in the exported app, and round 621 ported it to the Columns menu -- but

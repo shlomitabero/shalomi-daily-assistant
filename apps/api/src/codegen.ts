@@ -9549,7 +9549,7 @@ nav button.active .tab-count { background: rgba(255, 255, 255, 0.25); color: inh
 .search-header h2 { margin: 0; font-size: 20px; }
 .search-header-actions { display: flex; align-items: center; gap: 8px; }
 .global-search-form { display: flex; gap: 8px; margin: 12px 0; }
-.global-search-input { flex: 1; }
+.global-search-input { flex: 1; min-width: 0; }
 .global-search-recent { margin-top: 10px; }
 .global-search-recent-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 6px; }
 .global-search-results { display: flex; flex-direction: column; gap: 16px; }
