@@ -26020,6 +26020,42 @@ test("the exported app's delete-undo toast can wrap onto multiple lines instead 
 });
 
 /**
+ * New in this round (1377): three live-preview overflow-wrap/min-width
+ * fixes (rounds 1355, 1356, 1360) were never ported to codegen.ts's own
+ * renderStylesCss, even though the exported app's own JSX actively
+ * renders every one of these classes -- not dead CSS. `.board-column`
+ * (Kanban board) sits inside a `display: flex` `.board-scroll` row with
+ * no `min-width: 0`, so an unbreakable field value in `.board-card-field`
+ * (also missing `overflow-wrap`) can balloon the column past its fixed
+ * 240px and push sibling stage columns off-screen -- the identical setup
+ * round 1356 already proved and fixed in the live preview. The exported
+ * app's own Global Search dialog has the same gap: `.global-search-entity-
+ * label` (round 1360) and `.global-search-hit-button` (round 1355) both
+ * lost their `overflow-wrap: anywhere`, so an unbreakable entity label or
+ * search-result value can overflow the search dialog there too.
+ */
+test("the exported app's Board columns and Global Search results have the same overflow-wrap/min-width guards the live preview already got (rounds 1355/1356/1360)", () => {
+  const files = generateExportFiles(project);
+  const stylesCss = files.find((f) => f.path === "web/src/styles.css")!.content;
+
+  const boardColumn = stylesCss.match(/\.board-column \{[^}]*\}/)?.[0];
+  assert.ok(boardColumn, "expected a .board-column rule in the generated styles.css");
+  assert.match(boardColumn!, /min-width:\s*0/, ".board-column must have min-width: 0, or an unbreakable field value can balloon it past its fixed 240px and push sibling columns off-screen");
+
+  const boardCardField = stylesCss.match(/\.board-card-field \{[^}]*\}/)?.[0];
+  assert.ok(boardCardField, "expected a .board-card-field rule in the generated styles.css");
+  assert.match(boardCardField!, /overflow-wrap:\s*anywhere/, ".board-card-field must allow an unbreakable field value to wrap instead of overflowing the board card");
+
+  const searchEntityLabel = stylesCss.match(/\.global-search-entity-label \{[^}]*\}/)?.[0];
+  assert.ok(searchEntityLabel, "expected a .global-search-entity-label rule in the generated styles.css");
+  assert.match(searchEntityLabel!, /overflow-wrap:\s*anywhere/, ".global-search-entity-label must allow an unbreakable entity label to wrap instead of overflowing the search dialog");
+
+  const searchHitButton = stylesCss.match(/\.global-search-hit-button \{[^}]*\}/)?.[0];
+  assert.ok(searchHitButton, "expected a .global-search-hit-button rule in the generated styles.css");
+  assert.match(searchHitButton!, /overflow-wrap:\s*anywhere/, ".global-search-hit-button must allow an unbreakable search-result value to wrap instead of overflowing the search dialog");
+});
+
+/**
  * Round 670: round 615 ported the orderedFields fix (honoring the user's
  * drag-reordered column order) to Export CSV, Copy, and per-record Print
  * in the exported app, and round 621 ported it to the Columns menu -- but
