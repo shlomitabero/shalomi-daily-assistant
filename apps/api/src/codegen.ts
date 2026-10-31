@@ -5313,6 +5313,14 @@ export function EntityView({ entity, highlightRecordId, onHighlightHandled, onJu
   const pendingDeleteRef = useRef(null);
   const [relatedRecords, setRelatedRecords] = useState({});
   const [importBusy, setImportBusy] = useState(false);
+  // Round 1363: this exported app's own copy of the live Forge AI preview's
+  // EntityPanel.tsx submitBusy (round 1363) -- handleSubmit's own
+  // createRecord/updateRecord await had nothing tracking it while in
+  // flight here either, so a fast double click on Save/Add fired it twice
+  // and created a duplicate record in every actually-deployed/downloaded
+  // Forge AI app, exactly as it could in the live preview before round
+  // 1363.
+  const [submitBusy, setSubmitBusy] = useState(false);
   // Round 1281: this exported app's own copy of the live Forge AI preview's
   // EntityPanel.tsx writesInFlight (round 1260) -- bulkActionBusy and
   // importBusy were two fully independent in-flight-write flags here too,
@@ -5320,8 +5328,9 @@ export function EntityView({ entity, highlightRecordId, onHighlightHandled, onJu
   // bulkActionBusy alone, so a CSV/JSON import running here could still
   // race a bulk delete/duplicate/update on the exact same records (or vice
   // versa) in every actually-deployed/downloaded Forge AI app, exactly as
-  // it could in the live preview before round 1260.
-  const writesInFlight = bulkActionBusy || importBusy;
+  // it could in the live preview before round 1260. Round 1363 folded
+  // submitBusy in alongside them for the same reason.
+  const writesInFlight = bulkActionBusy || importBusy || submitBusy;
   const [importMessage, setImportMessage] = useState(null);
   const [importErrors, setImportErrors] = useState([]);
   const [showImportErrors, setShowImportErrors] = useState(false);
@@ -6216,6 +6225,7 @@ export function EntityView({ entity, highlightRecordId, onHighlightHandled, onJu
     // success-path reset below is skipped once the form has moved on.
     // Mirrors the live Forge AI preview's own fix.
     const formInstanceAtSubmitTime = formInstanceKeyRef.current;
+    setSubmitBusy(true);
     try {
       if (editingId != null) {
         // \`form\` holds a value for EVERY field, including every one the
@@ -6251,6 +6261,8 @@ export function EntityView({ entity, highlightRecordId, onHighlightHandled, onJu
       await refresh();
     } catch (err) {
       setError(err.message);
+    } finally {
+      setSubmitBusy(false);
     }
   }
 

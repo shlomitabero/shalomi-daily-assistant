@@ -1075,8 +1075,8 @@ test("EntityPanel disables every single-record write affordance (table row, in-f
 test("EntityPanel combines bulkActionBusy and importBusy into one writesInFlight flag", () => {
   assert.match(
     entityPanelSrc,
-    /const writesInFlight = bulkActionBusy \|\| importBusy;/,
-    "expected a single writesInFlight flag ORing bulkActionBusy and importBusy together",
+    /const writesInFlight = bulkActionBusy \|\| importBusy \|\| submitBusy;/,
+    "expected a single writesInFlight flag ORing bulkActionBusy, importBusy, and (round 1363) submitBusy together",
   );
 });
 
@@ -1139,6 +1139,77 @@ test("EntityPanel's handleSubmit is a no-op while writesInFlight is true", async
 test("EntityPanel's in-form Save button is disabled while writesInFlight is true", () => {
   const saveButtonMatch = entityPanelSrc.match(/<button type="submit" disabled=\{writesInFlight\}>\s*\n\s*\{editingId != null \? t\("entity\.save"\) : t\("entity\.add"\)\}\s*\n\s*<\/button>/);
   assert.ok(saveButtonMatch, "expected the in-form Save button to be disabled={writesInFlight}");
+});
+
+/**
+ * Round 1363: unlike the bulk/import guard round 1264 added, nothing ever
+ * tracked handleSubmit's OWN createRecord/updateRecord await while it was
+ * in flight -- the round-1264 tests above only prove writesInFlight (which
+ * before this round never included submitBusy) gates the function, not
+ * that the function guards against racing ITSELF. A genuine fast
+ * double-click fires handleSubmit twice before the first network response
+ * returns, and since nothing disabled the Save button for that whole
+ * round trip, both calls reached createRecord -- two POSTs, two duplicate
+ * records, from what the user experienced as one click. This test proves
+ * the real, rendered form end-to-end: it fires the form's own submit
+ * event twice in immediate succession, before letting the mocked
+ * createRecord's own promise resolve, and asserts only ONE POST actually
+ * went out.
+ */
+test("EntityPanel's record-form guards its own Save button against a fast double-click, so only one POST ever fires for one submission", async () => {
+  await withJsdom(async () => {
+    const store: EntityRecord[] = [];
+    const postedBodies: Record<string, unknown>[] = [];
+    const pending: { resolveFirstPost: (() => void) | null } = { resolveFirstPost: null };
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = (async (input: string, init?: RequestInit): Promise<Response> => {
+      const method = init?.method ?? "GET";
+      if (method === "GET" && input === "/api/projects/proj1/entities/Deal") {
+        return new Response(JSON.stringify({ records: store }), { status: 200, headers: { "content-type": "application/json" } });
+      }
+      if (method === "POST" && input === "/api/projects/proj1/entities/Deal") {
+        const body = JSON.parse(init!.body as string);
+        postedBodies.push(body);
+        // Only the FIRST post is ever allowed to actually resolve, by
+        // design: if a second one somehow fires, it must never resolve
+        // on its own, so the test's own waitForCondition below (which
+        // only waits for the record to actually land in the table) can
+        // only ever be satisfied by that first, legitimate request.
+        if (postedBodies.length === 1) {
+          await new Promise<void>((resolve) => {
+            pending.resolveFirstPost = resolve;
+          });
+        } else {
+          await new Promise(() => {});
+        }
+        const record = { id: postedBodies.length, ...body };
+        store.push(record);
+        return new Response(JSON.stringify({ record }), { status: 201, headers: { "content-type": "application/json" } });
+      }
+      throw new Error(`unexpected request ${method} ${input}`);
+    }) as typeof fetch;
+    try {
+      renderEntityPanel();
+      await waitForCondition(() => document.querySelector(".record-form") !== null);
+
+      fireEvent.change(document.querySelector('.record-form input[type="text"]') as HTMLInputElement, { target: { value: "Race Condition Test" } });
+      fireEvent.change(document.querySelector(".record-form select") as HTMLSelectElement, { target: { value: "new" } });
+
+      const form = document.querySelector(".record-form") as HTMLFormElement;
+      fireEvent.submit(form);
+      fireEvent.submit(form);
+      await waitForCondition(() => postedBodies.length > 0);
+
+      assert.equal(postedBodies.length, 1, "a fast double submit must only ever reach createRecord once -- the second click must be blocked by submitBusy, not fire its own independent POST");
+
+      pending.resolveFirstPost?.();
+      await waitForCondition(() => document.querySelectorAll("table tbody tr").length === 1);
+
+      assert.equal(document.querySelectorAll("table tbody tr").length, 1, "exactly one record must have been created, not two");
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
 });
 
 /**
@@ -15611,8 +15682,8 @@ test("EntityPanel's record form submits on Ctrl+Enter or Cmd+Enter from a longte
       renderEntityPanel({ entity: leadEntity, allEntities: [leadEntity] });
       await waitForCondition(() => document.querySelector(".record-form") !== null);
 
-      const nameInput = document.querySelector('.record-form input[type="text"]') as HTMLInputElement;
-      const notesTextarea = document.querySelector(".record-form textarea") as HTMLTextAreaElement;
+      let nameInput = document.querySelector('.record-form input[type="text"]') as HTMLInputElement;
+      let notesTextarea = document.querySelector(".record-form textarea") as HTMLTextAreaElement;
 
       fireEvent.change(nameInput, { target: { value: "Dana" } });
       fireEvent.keyDown(notesTextarea, { key: "Enter" });
@@ -15620,8 +15691,20 @@ test("EntityPanel's record form submits on Ctrl+Enter or Cmd+Enter from a longte
       assert.equal(postCount, 0, "a bare Enter in the longtext textarea must never submit the form");
 
       fireEvent.keyDown(notesTextarea, { key: "Enter", ctrlKey: true });
-      await waitForCondition(() => postCount === 1);
+      // Round 1363: postCount alone only proves the mocked fetch was
+      // CALLED, not that handleSubmit's own submitBusy-guarded body has
+      // fully finished (its own setForm/bumpFormInstanceKey reset and the
+      // finally block's setSubmitBusy(false) still run afterward) -- the
+      // round-1363 double-submit guard now genuinely blocks a second
+      // Ctrl/Cmd+Enter fired in that narrow window, so this must wait for
+      // the real settle signal (the form resetting back to blank) before
+      // continuing. bumpFormInstanceKey also means the field row remounts
+      // with a new React key, so the old nameInput/notesTextarea
+      // references go stale -- re-query both afterward.
+      await waitForCondition(() => postCount === 1 && (document.querySelector('.record-form input[type="text"]') as HTMLInputElement)?.value === "");
       assert.equal(store[0]?.name, "Dana", "Ctrl+Enter must create the real record through the real API");
+      nameInput = document.querySelector('.record-form input[type="text"]') as HTMLInputElement;
+      notesTextarea = document.querySelector(".record-form textarea") as HTMLTextAreaElement;
 
       fireEvent.change(nameInput, { target: { value: "Lee" } });
       fireEvent.keyDown(notesTextarea, { key: "Enter", metaKey: true });

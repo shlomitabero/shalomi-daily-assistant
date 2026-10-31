@@ -1640,6 +1640,16 @@ export function EntityPanel({
   const [subscribeStatus, setSubscribeStatus] = useState<"idle" | "copied" | "failed">("idle");
   const [relatedRecords, setRelatedRecords] = useState<RelatedRecordsByEntity>({});
   const [importBusy, setImportBusy] = useState(false);
+  // Round 1363: the one write path in this whole writesInFlight family that
+  // never had ANY busy flag of its own -- handleSubmit's createRecord/
+  // updateRecord await had nothing tracking it while in flight, so its own
+  // Save/Add button stayed enabled for the whole round trip. A fast double
+  // click fired handleSubmit twice before the first network response came
+  // back (writesInFlight's bulk/import guard, added round 1264, does
+  // nothing here since neither a bulk batch nor an import is running) --
+  // two independent POSTs, two duplicate records, and a record_created
+  // automation (WhatsApp/email/webhook) firing twice for one click.
+  const [submitBusy, setSubmitBusy] = useState(false);
   // Round 1260: bulkActionBusy and importBusy were two fully independent
   // flags guarding the exact same hazard -- a batch of concurrent writes
   // (Promise.allSettled) still in flight racing some OTHER write to one of
@@ -1651,8 +1661,9 @@ export function EntityPanel({
   // removed, and the reverse (bulk delete racing an import's POST of a new
   // record) was just as possible. This single combined flag is read
   // everywhere bulkActionBusy used to guard/disable, so the two batches are
-  // now mutually exclusive with everything else that writes.
-  const writesInFlight = bulkActionBusy || importBusy;
+  // now mutually exclusive with everything else that writes. Round 1363
+  // folded submitBusy in alongside them for the same reason.
+  const writesInFlight = bulkActionBusy || importBusy || submitBusy;
   const [importMessage, setImportMessage] = useState<string | null>(null);
   const [importErrors, setImportErrors] = useState<string[]>([]);
   const [showImportErrors, setShowImportErrors] = useState(false);
@@ -3257,6 +3268,7 @@ export function EntityPanel({
     // gets the right PATCH/POST either way); only the UNCONDITIONAL
     // success-path reset below is skipped once the form has moved on.
     const formInstanceAtSubmitTime = formInstanceKeyRef.current;
+    setSubmitBusy(true);
     try {
       if (editingId != null) {
         // Round 644: `form` holds a value for EVERY field, including every
@@ -3296,6 +3308,8 @@ export function EntityPanel({
       await refresh();
     } catch (err) {
       setError((err as Error).message);
+    } finally {
+      setSubmitBusy(false);
     }
   }
 

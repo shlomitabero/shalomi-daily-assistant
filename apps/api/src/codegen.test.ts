@@ -3358,6 +3358,11 @@ test("the exported EntityView's handleSubmit saves only the field the user actua
     // guard now reads writesInFlight (bulkActionBusy || importBusy), not
     // bulkActionBusy directly.
     "writesInFlight",
+    // Round 1363: handleSubmit now also calls setSubmitBusy(true)/(false)
+    // around its own await, folded into writesInFlight alongside
+    // bulkActionBusy/importBusy -- a free variable it references just
+    // like every other setter above.
+    "setSubmitBusy",
     `
     let form = {};
     let editingId = null;
@@ -3400,6 +3405,7 @@ test("the exported EntityView's handleSubmit saves only the field the user actua
       return f;
     },
     false,
+    () => {},
   );
 
   const record = { id: 7, name: "Alice", status: "New" };
