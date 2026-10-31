@@ -1,5 +1,6 @@
 import "./jsdomWarmup.js";
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import { test } from "node:test";
 import { JSDOM } from "jsdom";
 import React from "react";
@@ -4305,4 +4306,33 @@ test("AutomationsPanel's 'Send to' option labels switch to email wording once Ac
       globalThis.fetch = originalFetch;
     }
   });
+});
+
+/*
+ * Round 1359: a live Playwright browser session found that a rule row's
+ * info column (.automations-rule-info, wrapping the condition summary,
+ * describeDestination's text, the optional email-subject line, the raw
+ * messageTemplate, and the last-run summary) had no overflow-wrap -- so a
+ * webhook rule's own raw, unbreakable webhookUrl (describeDestination's
+ * "calls webhook: <url>" text, AutomationsPanel.tsx line 804) overflowed
+ * the whole Automations dialog at narrow widths: confirmed live at 390px,
+ * the dialog's own scrollWidth (1296px) ballooned to over 3x its visible
+ * clientWidth (348px). This is the same missing-overflow-wrap-on-an-
+ * unbreakable-token gap already fixed for CollaboratorsPanel's own list
+ * rows (round 1352, .collab-list li strong) -- Automations never got the
+ * equivalent treatment. jsdom has no layout engine and can't detect real
+ * overflow (see this codebase's other CSS-only-bug tests, e.g.
+ * EntityPanel.test.ts's board-column test), so this reads styles.css's
+ * own source directly instead.
+ */
+test("a rule row's info column lets an unbreakable value (e.g. a long webhook URL) wrap mid-word instead of overflowing the Automations dialog", () => {
+  const stylesCss = readFileSync(new URL("./styles.css", import.meta.url), "utf8");
+
+  const ruleInfo = stylesCss.match(/\.automations-rule-info \{[\s\S]*?\}/)?.[0];
+  assert.ok(ruleInfo, "expected an .automations-rule-info rule in styles.css");
+  assert.match(
+    ruleInfo!,
+    /overflow-wrap:\s*anywhere/,
+    ".automations-rule-info must allow an unbreakable value (e.g. a webhook rule's own raw webhookUrl, rendered via describeDestination) to wrap mid-word instead of overflowing the Automations dialog",
+  );
 });

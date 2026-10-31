@@ -3125,6 +3125,7 @@ button.sort-header:hover:not(:disabled) {
   display: flex;
   flex-direction: column;
   gap: 2px;
+  overflow-wrap: anywhere;
 }
 
 .automations-rule-condition {
