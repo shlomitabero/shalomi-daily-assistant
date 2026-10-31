@@ -107,6 +107,65 @@ test("submitting a matching new email and confirmation calls the real changeEmai
 });
 
 /**
+ * Round 1367: handleSubmit had no guard against racing ITSELF -- the same
+ * own-click reentrancy gap rounds 1363-1366 closed for EntityPanel/
+ * AutomationsPanel/WhatsAppPanel/CollaboratorsPanel/useAddableSpecItem. A
+ * fast double-click on "Save" must only ever reach changeEmail once, not
+ * fire two independent PATCH requests -- changeEmail (api.ts) sends no
+ * x-idempotency-key at all, so a double-fire here isn't even
+ * idempotency-protected server-side the way changePassword/resetPassword
+ * already are.
+ */
+test("ChangeEmailPanel's submit button guards against a fast double-click, so only one PATCH ever fires for one submission", async () => {
+  await withJsdom(async () => {
+    const originalFetch = globalThis.fetch;
+    const calls: { body: string }[] = [];
+    const pending: { resolveFirstPatch: (() => void) | null } = { resolveFirstPatch: null };
+    globalThis.fetch = (async (input: string, init?: RequestInit) => {
+      if (init?.method === "PATCH" && input === "/api/auth/email") {
+        calls.push({ body: init.body as string });
+        if (calls.length === 1) {
+          await new Promise<void>((resolve) => {
+            pending.resolveFirstPatch = resolve;
+          });
+        } else {
+          await new Promise(() => {});
+        }
+        const updatedUser: User = { id: "u1", email: "dana.new@example.com", createdAt: "2024-01-01T00:00:00.000Z" };
+        return new Response(JSON.stringify({ user: updatedUser }), { status: 200, headers: { "content-type": "application/json" } });
+      }
+      throw new Error(`unexpected request ${init?.method ?? "GET"} ${input}`);
+    }) as typeof fetch;
+
+    try {
+      renderPanel();
+      fillForm("dana.new@example.com", "dana.new@example.com", "my-current-password");
+
+      const form = document.querySelector("form")!;
+      fireEvent.submit(form);
+      fireEvent.submit(form);
+      await waitForCondition(() => calls.length > 0);
+
+      assert.equal(
+        calls.length,
+        1,
+        "a fast double submit must only ever reach changeEmail once -- the second click must be blocked by busy, not fire its own independent PATCH",
+      );
+
+      pending.resolveFirstPatch?.();
+      // Let handleSubmit's own success path (onChanged/setDone) actually
+      // finish before restoring the real fetch -- otherwise that
+      // continuation keeps running after this test returns and risks
+      // bleeding into whichever test runs next (the same hazard round
+      // 1364 hit and fixed).
+      await waitForCondition(() => document.querySelector(".success") !== null);
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+});
+
+/**
  * Round 1331: the far more common way this exact draft gets lost isn't
  * Escape (round 1245's own test) but a tab close/refresh/navigation away.
  * Also confirms the one subtlety this panel needs that ChangePasswordPanel's

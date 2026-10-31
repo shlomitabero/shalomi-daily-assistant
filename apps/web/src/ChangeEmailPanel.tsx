@@ -61,6 +61,14 @@ export function ChangeEmailPanel({ currentEmail, onClose, onChanged }: { current
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
+    // Round 1367: busy already disabled the submit button, but
+    // handleSubmit itself never checked it -- the same own-click
+    // reentrancy gap rounds 1363-1366 closed elsewhere. Worse here than
+    // most of those: changeEmail (api.ts) sends no x-idempotency-key at
+    // all (unlike changePassword/resetPassword/deleteAccount), so a fast
+    // double-click firing two independent PATCH requests isn't even
+    // idempotency-protected server-side.
+    if (busy) return;
     setError(null);
     // Round 1205: mirrors CollaboratorsPanel's own email-comparison
     // convention (c.email.toLowerCase() === trimmed.toLowerCase()) and the
