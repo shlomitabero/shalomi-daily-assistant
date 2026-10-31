@@ -6205,6 +6205,48 @@ test("the exported CalendarView accepts onDuplicate/onDelete props and renders D
   assert.match(stylesCss, /\.calendar-record-duplicate,\s*\.calendar-record-delete\s*\{/);
 });
 
+/**
+ * Round 1385: mirrors the live preview's own round-1384 fix. The exported
+ * CalendarView's chip offered reschedule only via native HTML5
+ * drag-and-drop (draggable/onDragStart, wired to onReschedule via the day
+ * cell's own onDrop), which never fires from touch input on a phone or
+ * tablet with no polyfill anywhere in this codebase. Unlike the live
+ * preview, the exported app has no readOnly/collaborator-viewer concept at
+ * all (it's a standalone single-user app), so unlike EntityPanel.tsx's
+ * fix these buttons are not gated behind any readOnly check -- they render
+ * unconditionally, same as the existing Print/Duplicate/Delete buttons.
+ * onReschedule is already wired to handleCalendarDrop at the real call
+ * site (confirmed by the existing drag-shift tests above), so this test
+ * only needs to confirm the two new buttons exist and call it correctly --
+ * no new call-site wiring is needed, unlike onPrint/onDuplicate/onDelete
+ * above which were genuinely new props.
+ */
+test("the exported CalendarView renders tap-friendly move-earlier/move-later buttons beside each record chip, reusing the existing onReschedule wiring", () => {
+  const files = generateExportFiles(project);
+  const entityViewJsx = files.find((f) => f.path === "web/src/components/EntityView.jsx")!.content;
+
+  const calendarViewSource = entityViewJsx.slice(entityViewJsx.indexOf("function CalendarView"), entityViewJsx.indexOf("function BoardCard"));
+
+  const moveEarlierSrc = calendarViewSource.match(/<button\s+type="button"\s+className="calendar-record-move-earlier"[\s\S]*?<\/button>/)?.[0];
+  assert.ok(moveEarlierSrc, "expected a calendar-record-move-earlier button beside the chip");
+  assert.match(
+    moveEarlierSrc!,
+    /disabled=\{bulkActionBusy\}\s*onClick=\{\(e\) => \{\s*e\.stopPropagation\(\);\s*const target = new Date\(day\.date\);\s*target\.setDate\(target\.getDate\(\) - 1\);\s*onReschedule\(record, target, dayKey\);/,
+    "clicking move-earlier must shift the chip's own displayed day back by one day, stop the click from also bubbling into the day cell's or chip's own onClick, and respect the same bulkActionBusy gate Table/Board view already use",
+  );
+
+  const moveLaterSrc = calendarViewSource.match(/<button\s+type="button"\s+className="calendar-record-move-later"[\s\S]*?<\/button>/)?.[0];
+  assert.ok(moveLaterSrc, "expected a calendar-record-move-later button beside the chip");
+  assert.match(
+    moveLaterSrc!,
+    /disabled=\{bulkActionBusy\}\s*onClick=\{\(e\) => \{\s*e\.stopPropagation\(\);\s*const target = new Date\(day\.date\);\s*target\.setDate\(target\.getDate\(\) \+ 1\);\s*onReschedule\(record, target, dayKey\);/,
+    "clicking move-later must shift the chip's own displayed day forward by one day, stop the click from also bubbling into the day cell's or chip's own onClick, and respect the same bulkActionBusy gate Table/Board view already use",
+  );
+
+  const stylesCss = files.find((f) => f.path === "web/src/styles.css")!.content;
+  assert.match(stylesCss, /\.calendar-record-move-earlier,\s*\.calendar-record-move-later\s*\{/);
+});
+
 test("the exported EntityView renders a real CSV export button backed by RFC-4180-correct CSV building", () => {
   const files = generateExportFiles(project);
   const entityViewJsx = files.find((f) => f.path === "web/src/components/EntityView.jsx")!.content;

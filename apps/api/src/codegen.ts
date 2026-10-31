@@ -4518,6 +4518,34 @@ function CalendarView({ entity, dateField, endDateField, records, month, onPrevM
                   </button>
                   <button
                     type="button"
+                    className="calendar-record-move-earlier"
+                    aria-label="Move this record one day earlier"
+                    disabled={bulkActionBusy}
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      const target = new Date(day.date);
+                      target.setDate(target.getDate() - 1);
+                      onReschedule(record, target, dayKey);
+                    }}
+                  >
+                    ⏪
+                  </button>
+                  <button
+                    type="button"
+                    className="calendar-record-move-later"
+                    aria-label="Move this record one day later"
+                    disabled={bulkActionBusy}
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      const target = new Date(day.date);
+                      target.setDate(target.getDate() + 1);
+                      onReschedule(record, target, dayKey);
+                    }}
+                  >
+                    ⏩
+                  </button>
+                  <button
+                    type="button"
                     className="calendar-record-print"
                     aria-label="Print"
                     onClick={(e) => {
@@ -9500,6 +9528,8 @@ nav button.active .tab-count { background: rgba(255, 255, 255, 0.25); color: inh
 .calendar-record-chip:hover { background: var(--bg); }
 .calendar-record-chip:active { cursor: grabbing; }
 .calendar-record-chip-move-error { background: var(--danger-soft); border-color: var(--danger); }
+.calendar-record-move-earlier, .calendar-record-move-later { flex-shrink: 0; padding: 2px 4px; font-size: 10px; line-height: 1; background: none; border: 1px solid var(--border-soft); border-radius: 4px; cursor: pointer; color: var(--text); font: inherit; }
+.calendar-record-move-earlier:hover:not(:disabled), .calendar-record-move-later:hover:not(:disabled) { background: var(--bg); }
 .calendar-record-print { flex-shrink: 0; padding: 2px 4px; font-size: 10px; line-height: 1; background: none; border: 1px solid var(--border-soft); border-radius: 4px; cursor: pointer; color: var(--text); font: inherit; }
 .calendar-record-print:hover { background: var(--bg); }
 .calendar-record-duplicate, .calendar-record-delete { flex-shrink: 0; padding: 2px 4px; font-size: 10px; line-height: 1; background: none; border: 1px solid var(--border-soft); border-radius: 4px; cursor: pointer; color: var(--text); font: inherit; }
