@@ -110,6 +110,66 @@ test("submitting matching passwords calls the real changePassword API with the e
   });
 });
 
+/**
+ * Round 1368: handleSubmit had no guard against racing ITSELF -- the same
+ * own-click reentrancy gap rounds 1363-1367 closed for EntityPanel/
+ * AutomationsPanel/WhatsAppPanel/CollaboratorsPanel/useAddableSpecItem/
+ * ChangeEmailPanel. A fast double-click on "Save" must only ever reach
+ * changePassword once, not fire two independent PATCH requests -- the
+ * second, if it ever fired, would race the first's own idempotency key
+ * (changePassword mints a fresh UUID per call, so it doesn't actually
+ * dedupe two independent clicks) and would likely fail against the
+ * already-changed password with a confusing error right after the user
+ * saw success.
+ */
+test("ChangePasswordPanel's submit button guards against a fast double-click, so only one PATCH ever fires for one submission", async () => {
+  await withJsdom(async () => {
+    const originalFetch = globalThis.fetch;
+    const calls: { body: string }[] = [];
+    const pending: { resolveFirstPatch: (() => void) | null } = { resolveFirstPatch: null };
+    globalThis.fetch = (async (input: string, init?: RequestInit) => {
+      if (init?.method === "PATCH" && input === "/api/auth/password") {
+        calls.push({ body: init.body as string });
+        if (calls.length === 1) {
+          await new Promise<void>((resolve) => {
+            pending.resolveFirstPatch = resolve;
+          });
+        } else {
+          await new Promise(() => {});
+        }
+        return new Response(null, { status: 204 });
+      }
+      throw new Error(`unexpected request ${init?.method ?? "GET"} ${input}`);
+    }) as typeof fetch;
+
+    try {
+      renderPanel();
+      fillForm("my-current-password", "my-new-password", "my-new-password");
+
+      const form = document.querySelector("form")!;
+      fireEvent.submit(form);
+      fireEvent.submit(form);
+      await waitForCondition(() => calls.length > 0);
+
+      assert.equal(
+        calls.length,
+        1,
+        "a fast double submit must only ever reach changePassword once -- the second click must be blocked by busy, not fire its own independent PATCH",
+      );
+
+      pending.resolveFirstPatch?.();
+      // Let handleSubmit's own success path (setDone) actually finish
+      // before restoring the real fetch -- otherwise that continuation
+      // keeps running after this test returns and risks bleeding into
+      // whichever test runs next (the same hazard round 1364 hit and
+      // fixed).
+      await waitForCondition(() => document.querySelector(".success") !== null);
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+});
+
 test("a mismatched confirmation never calls the API and shows a mismatch error instead", async () => {
   await withJsdom(async () => {
     const originalFetch = globalThis.fetch;

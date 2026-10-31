@@ -51,6 +51,17 @@ export function ChangePasswordPanel({ onClose }: { onClose: () => void }) {
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
+    // Round 1368: busy already disabled the submit button, but
+    // handleSubmit itself never checked it -- the same own-click
+    // reentrancy gap rounds 1363-1367 closed elsewhere, closing this
+    // sweep's last queued candidate. changePassword (api.ts) does send an
+    // x-idempotency-key, unlike changeEmail (round 1367), but mints a
+    // fresh UUID per call the same way createRecord does -- it would not
+    // have actually deduped a fast double-click, just left the second
+    // concurrent request to fail against the already-changed password
+    // with a confusing "current password incorrect" error right after the
+    // user saw success.
+    if (busy) return;
     setError(null);
     if (newPassword !== confirmPassword) {
       setError(t("changePassword.mismatch"));

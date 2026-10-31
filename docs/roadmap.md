@@ -39917,5 +39917,23 @@ Full suite run: only `apps/web` was touched this round. `tsc -b` ran clean. The 
 
 **Topic status**: the own-click reentrancy sweep now covers `EntityPanel.tsx`, `AutomationsPanel.tsx`, `WhatsAppPanel.tsx`, `CollaboratorsPanel.tsx`, `AddEntityForm`/`AddRoleForm`/`AddAssumptionForm`/`AddPersonaForm` (via the shared hook), and `ChangeEmailPanel.tsx`. One backup candidate remains open from round 1365's survey: `ChangePasswordPanel.tsx`'s `handleSubmit` (lower severity than this round's fix, since `changePassword()` does send an idempotency key, even though it mints a fresh UUID per call the same way `createRecord` does and so doesn't actually dedupe two independent clicks either).
 
+### Round 1368: ChangePasswordPanel's own-click reentrancy gap -- the last queued backup candidate from round 1365's survey, closing this sweep
+
+This round implements the third and final backup candidate round 1365's survey found, closing the own-click reentrancy sweep rounds 1363-1368 have now worked through. `ChangePasswordPanel.tsx`'s `handleSubmit` had the identical gap: `busy` already disabled the submit button, but the handler itself never checked it, so a fast double-click fired two independent `PATCH /auth/password` requests before React re-rendered the disabled button.
+
+Lower severity than round 1367's `ChangeEmailPanel` fix: `changePassword` (`api.ts`) does send an `x-idempotency-key`, unlike `changeEmail`, but mints a fresh `crypto.randomUUID()` per call the same way `createRecord` does (round 1363's own documented caveat) -- so it never actually deduped two independent clicks either. The real-world consequence here is milder than a duplicate row but still a genuine rough edge: the first request changes the password and the second, now racing against the already-changed password, would fail with a confusing "current password incorrect" error landing right after the user saw a success message for the very same submission.
+
+**Independent verification**: read `ChangePasswordPanel.tsx`'s `handleSubmit` directly, confirming `busy`'s declaration, its total absence from the top of the handler, and its presence in the submit button's `disabled` prop -- the same shape independently confirmed in every prior round of this sweep.
+
+**The fix**: added `if (busy) return;` as the first line of `handleSubmit`, the same established pattern used throughout rounds 1363-1367.
+
+**Tests**: 1 new test, mirroring the established double-submit pattern: mocks `PATCH /api/auth/password` so only the first call's promise is ever allowed to resolve, fires two real submit events before letting anything resolve, and asserts the tracked array of PATCH bodies has length 1. Waits for the real `.success` element to appear (confirming `handleSubmit`'s own `setDone` success path has fully run) before restoring the real `fetch`, following the convention this sweep settled on from round 1364 onward.
+
+Fail-before/pass-after verified: backed up the fixed `ChangePasswordPanel.tsx`, restored the unfixed version from `HEAD`, ran the new test -- failed exactly as predicted (`2 !== 1`). Restored the fixed copy and reran -- passed.
+
+Full suite run: only `apps/web` was touched this round. `tsc -b` ran clean. The full `ChangePasswordPanel.test.ts` file: 7/7 passed, zero regressions. The full `apps/web` suite was then run as a background command correctly using only `run_in_background: true` with no `nohup`/`&` wrapping: the first run showed 1667/1668 passing, with the one failure again being `BuildProgress.test.ts`'s own already-documented recurring flake (a *different* test within that same file than round 1367 hit, confirming this is the file's own general instability rather than any single flaky assertion -- `BuildProgress.test.ts` was not touched this round either, and re-running it alone immediately afterward passed cleanly, 35/35); a full re-run of the whole suite afterward confirmed 1668/1668 clean.
+
+**Topic status**: the own-click reentrancy sweep started in round 1363 is now fully closed -- `EntityPanel.tsx`, `AutomationsPanel.tsx`, `WhatsAppPanel.tsx`, `CollaboratorsPanel.tsx`, `AddEntityForm`/`AddRoleForm`/`AddAssumptionForm`/`AddPersonaForm` (via the shared `useAddableSpecItem` hook), `ChangeEmailPanel.tsx`, and `ChangePasswordPanel.tsx` all now guard their own submit handler against a fast double-click. No backup candidate remains open going into round 1369 -- the next round's survey should either look for further instances of this same pattern in components not yet checked, or diversify to a different bug/feature class entirely, consistent with the standing guidance not to fixate on one feature for more than 3-4 rounds running (this sweep has now run 6: rounds 1363-1368).
+
 
 
