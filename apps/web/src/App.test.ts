@@ -368,6 +368,31 @@ test("formatMyProjectsCount uses the correct singular noun form for exactly one 
 });
 
 /**
+ * Round 1393: the entity-tab record-count badge's own aria-label renders
+ * unconditionally once entityCounts[entity.name] has loaded at all
+ * (`entityCounts[entity.name] != null`, not gated by any higher
+ * threshold) -- so the very first record ever added to any entity hits
+ * this exact "1 records"/"1 רשומות" plural-for-singular defect, the same
+ * i18n gap rounds 1388-1391 already fixed for formatCheckpointCount/
+ * formatMyProjectsCount/formatWhatsAppMessageCount/the CSV-import
+ * messages. Verified via a regex extraction of the JSX call site itself
+ * (App.tsx has no full-render harness for the entity-tabs screen in this
+ * file's own test suite -- every other App.tsx-area test here uses this
+ * same source-extraction convention), mirroring the "renders RoleChip"
+ * test above rather than instantiating the full component tree.
+ */
+test("App.tsx's entity-tab record-count badge branches on entityCounts[entity.name] === 1 to pick the singular i18n key, not just the plural one", () => {
+  const appSrc = readFileSync(new URL("./App.tsx", import.meta.url), "utf8");
+  const tabCountMatch = appSrc.match(/<span\s+className="tab-count"\s+aria-label=\{t\(\s*[\s\S]*?\)\}\s*>/);
+  assert.ok(tabCountMatch, "expected to find the entity-tab's own tab-count span in App.tsx");
+  assert.match(
+    tabCountMatch![0],
+    /entityCounts\[entity\.name\] === 1 \? "entity\.tab\.recordCount\.one" : "entity\.tab\.recordCount\.many"/,
+    "expected the aria-label to branch on a count of exactly 1 and pick the singular key, not hardcode the plural key alone",
+  );
+});
+
+/**
  * New in this round: the "Draft" chip (round 149) marks a not-yet-built
  * project one card at a time, but with enough projects there was no way to
  * see only the drafts, or hide them entirely -- filterProjectsByStatus is

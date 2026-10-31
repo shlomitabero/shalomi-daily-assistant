@@ -3021,7 +3021,13 @@ function AppContent() {
                     >
                       {entityDisplayLabel(entity, entityTabLabelOccurrences)}
                       {entityCounts[entity.name] != null && (
-                        <span className="tab-count" aria-label={t("entity.tab.recordCount", { count: String(entityCounts[entity.name]) })}>
+                        <span
+                          className="tab-count"
+                          aria-label={t(
+                            entityCounts[entity.name] === 1 ? "entity.tab.recordCount.one" : "entity.tab.recordCount.many",
+                            { count: String(entityCounts[entity.name]) },
+                          )}
+                        >
                           {entityCounts[entity.name]}
                         </span>
                       )}
