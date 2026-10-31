@@ -19174,6 +19174,65 @@ test("POST /public/webhook-in/:projectId/:entityName 404s for a missing, wrong, 
   });
 });
 
+/**
+ * Round 1407: this route originally used requireProjectAccess (admits
+ * viewers), reasoning that it mirrored the calendar-feed-token GET route's
+ * own "no new exposure" logic. That premise is false here: a viewer
+ * categorically cannot create a record anywhere else in this app (every
+ * record-mutating route uses requireProjectWriteAccess precisely to
+ * enforce that), but this token, once issued, lets its holder create
+ * records -- and fire the resulting automation fan-out -- through the
+ * fully unauthenticated public route with no further check. Confirms a
+ * viewer now gets a real 403, matching every other write-adjacent route,
+ * while an editor (who the app already treats as having full write
+ * access) keeps working exactly as before.
+ */
+test("GET /projects/:id/inbound-webhook-token is denied to a viewer collaborator with 403 (it would hand them a durable write capability they have nowhere else), while an editor collaborator keeps access", async () => {
+  await withServer(async (baseUrl, db) => {
+    const ownerEmail = `webhook-in-rbac-owner-${randomUUID()}@example.com`;
+    const ownerToken = await signup(baseUrl, ownerEmail);
+    const viewerEmail = `webhook-in-rbac-viewer-${randomUUID()}@example.com`;
+    const viewerToken = await signup(baseUrl, viewerEmail);
+    const editorEmail = `webhook-in-rbac-editor-${randomUUID()}@example.com`;
+    const editorToken = await signup(baseUrl, editorEmail);
+    const owner = findUserByEmail(db, ownerEmail)!;
+    const spec: ProductSpec = {
+      summary: "test",
+      personas: [],
+      roles: ["Admin"],
+      entities: [{ name: "Lead", fields: [{ name: "name", type: "text", required: true }] }],
+      screens: [],
+      assumptions: [],
+      openQuestions: [],
+    };
+    const projectId = randomUUID();
+    insertProject(db, { id: projectId, ownerId: owner.id, name: "CRM", description: "test", spec });
+    diffAndMigrate(db, projectId, undefined, spec);
+    markProjectBuilt(db, projectId);
+
+    await fetch(`${baseUrl}/api/projects/${projectId}/collaborators`, {
+      method: "POST",
+      headers: authHeaders(ownerToken),
+      body: JSON.stringify({ email: viewerEmail, role: "viewer" }),
+    });
+    await fetch(`${baseUrl}/api/projects/${projectId}/collaborators`, {
+      method: "POST",
+      headers: authHeaders(ownerToken),
+      body: JSON.stringify({ email: editorEmail, role: "editor" }),
+    });
+
+    const asViewer = await fetch(`${baseUrl}/api/projects/${projectId}/inbound-webhook-token`, { headers: authHeaders(viewerToken) });
+    assert.equal(asViewer.status, 403, "a read-only viewer must never be handed a token that grants real write access through the public ingestion route");
+    assert.equal(((await asViewer.json()) as { code?: string }).code, "VIEWER_READ_ONLY");
+
+    const asEditor = await fetch(`${baseUrl}/api/projects/${projectId}/inbound-webhook-token`, { headers: authHeaders(editorToken) });
+    assert.equal(asEditor.status, 200, "an editor collaborator, who already has full write access, must keep working exactly as before");
+
+    const asOwner = await fetch(`${baseUrl}/api/projects/${projectId}/inbound-webhook-token`, { headers: authHeaders(ownerToken) });
+    assert.equal(asOwner.status, 200, "the owner must keep working exactly as before");
+  });
+});
+
 test("POST /projects/:id/inbound-webhook-token/regenerate invalidates the old token so the public ingestion route stops accepting it, while the new one keeps working; owner-only", async () => {
   await withServer(async (baseUrl, db) => {
     const ownerEmail = `webhook-in-regen-owner-${randomUUID()}@example.com`;

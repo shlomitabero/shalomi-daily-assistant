@@ -2063,21 +2063,28 @@ export function createProjectsRouter(
   );
 
   /**
-   * Round 1405: hands the client the token it needs to build a public
-   * inbound-webhook URL -- see getOrCreateInboundWebhookToken's own doc
-   * comment, and the public, unauthenticated ingestion route itself
-   * (routes/webhookIn.ts). requireProjectAccess, not
-   * requireProjectWriteAccess, mirroring the calendar-feed-token GET
-   * route's own reasoning: a read-only viewer configuring an external
-   * integration still only ever creates records this app's own UI would
-   * already let any collaborator create by hand, so handing them this
-   * URL is no new write capability beyond what the live app's record-
-   * create route already grants every collaborator.
+   * Round 1405 originally gated this with requireProjectAccess, reasoning
+   * (incorrectly) that it mirrored the calendar-feed-token GET route's own
+   * "no new exposure" logic. That logic only holds for a READ capability:
+   * the calendar feed only ever exposes records a viewer can already see
+   * through the live app. This route hands out the opposite -- a durable
+   * token that lets its holder create records (and fire the resulting
+   * automation fan-out: WhatsApp/email/outbound-webhook sends) through the
+   * fully unauthenticated public route (routes/webhookIn.ts), with no
+   * further access check once issued. A "viewer" collaborator categorically
+   * cannot create a record anywhere else in this app -- every record-
+   * mutating route uses requireProjectWriteAccess precisely to enforce that
+   * (see requireProjectWriteAccess's own doc comment above) -- so handing
+   * them this token was a real privilege escalation: round 1406 round-tripped
+   * through this exact file without catching it, since it only touched
+   * app.ts's body-parsing middleware, not this route's own access check.
+   * requireProjectWriteAccess here closes it, matching every other route
+   * that can lead to a new record being created.
    */
   router.get(
     "/projects/:id/inbound-webhook-token",
     asyncRoute(async (req, res) => {
-      requireProjectAccess(db, req.params.id, req.userId!);
+      requireProjectWriteAccess(db, req.params.id, req.userId!);
       res.json({ token: getOrCreateInboundWebhookToken(db, req.params.id) });
     }),
   );
