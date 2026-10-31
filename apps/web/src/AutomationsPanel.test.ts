@@ -882,6 +882,78 @@ test("AutomationsPanel's 'send to a field' dropdown only offers text/longtext fi
   });
 });
 
+/**
+ * Round 1362: among the eligible text/longtext candidates, the "send to a
+ * field" dropdown must prefer a name-hinted phone field (findPhoneField,
+ * entityFormatting.ts -- the same helper EntityPanel.tsx's own "Send
+ * WhatsApp" row action already uses) over whichever eligible field merely
+ * happens to be declared first. Before this fix, a Customer entity with
+ * "name" declared before "phone" silently defaulted toField to "name",
+ * which the server accepts (it only checks type, never name) and which
+ * then fails at send time when whatsappWeb.ts tries to treat a literal
+ * customer name as a phone number.
+ */
+const nameBeforePhoneProject: Project = {
+  id: "proj4",
+  ownerId: "owner1",
+  name: "Restaurant",
+  description: "A restaurant app",
+  status: "built",
+  createdAt: new Date().toISOString(),
+  spec: {
+    summary: "A restaurant app",
+    personas: [],
+    roles: ["Admin"],
+    entities: [
+      {
+        name: "Customer",
+        label: "Customer",
+        fields: [
+          { name: "name", label: "Name", type: "text", required: true },
+          { name: "email", label: "Email", type: "text", required: false },
+          { name: "phone", label: "Phone", type: "text", required: false },
+          { name: "notes", label: "Notes", type: "longtext", required: false },
+        ],
+      },
+    ],
+    screens: [],
+    assumptions: [],
+    openQuestions: [],
+  },
+};
+
+test("AutomationsPanel's 'send to a field' dropdown defaults to a name-hinted phone field, not whichever eligible text field is merely declared first", async () => {
+  await withJsdom(async () => {
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = (async (input: string) => {
+      if (input === "/api/projects/proj4/automations") {
+        return new Response(JSON.stringify({ rules: [] }), { status: 200, headers: { "content-type": "application/json" } });
+      }
+      throw new Error(`unexpected request ${input}`);
+    }) as typeof fetch;
+
+    try {
+      renderPanelWith(nameBeforePhoneProject);
+      await waitForCondition(() => document.body.textContent?.includes("No automations yet") ?? false);
+
+      const toFieldSelect = document.querySelector('select[aria-label="Choose a phone field"]') as HTMLSelectElement;
+      assert.ok(toFieldSelect, "the toField select must be rendered since the entity has eligible text fields");
+      assert.deepEqual(
+        Array.from(toFieldSelect.options).map((o) => o.value),
+        ["name", "email", "phone", "notes"],
+        "all four eligible text/longtext fields must still be offered as options, in their declared order",
+      );
+      assert.equal(
+        toFieldSelect.value,
+        "phone",
+        "the default must prefer the name-hinted 'phone' field over 'name', even though 'name' is declared first",
+      );
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+});
+
 test("AutomationsPanel shows a message instead of an invalid dropdown when the entity has no text field at all", async () => {
   await withJsdom(async () => {
     const noTextProject: Project = {

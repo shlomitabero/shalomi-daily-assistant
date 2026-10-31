@@ -20,7 +20,7 @@ import {
 } from "./api.js";
 import { downloadAutomationsReport, formatAutomationsReport } from "./automationsReport.js";
 import { applyColumnOrder, getColumnOrder } from "./columnOrder.js";
-import { fieldDisplayLabel, fieldLabelOccurrences, isValidDateString, parseFieldDate, recordDisplayLabel, uniqueEnumValues, type RelatedRecordsByEntity } from "./entityFormatting.js";
+import { fieldDisplayLabel, fieldLabelOccurrences, findPhoneField, isValidDateString, parseFieldDate, recordDisplayLabel, uniqueEnumValues, type RelatedRecordsByEntity } from "./entityFormatting.js";
 import { useTranslation } from "./i18n/LanguageContext.js";
 import { resolveErrorMessage } from "./i18n/language.js";
 import { PasswordInput } from "./PasswordInput.js";
@@ -239,7 +239,7 @@ export function AutomationsPanel({
       setFieldName(triggerableFields[0]?.name ?? "");
     }
     if (!phoneFields.some((f) => f.name === toField)) {
-      setToField(phoneFields[0]?.name ?? "");
+      setToField(findPhoneField(phoneFields)?.name ?? phoneFields[0]?.name ?? "");
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [entityName, fieldTypesKey]);
@@ -386,7 +386,8 @@ export function AutomationsPanel({
   // reading them here would seed fieldName/toField from the wrong entity.
   function resetToCreateMode() {
     const firstEntity = entities[0];
-    const firstPhoneField = firstEntity?.fields.find((f) => f.type === "text" || f.type === "longtext");
+    const firstEntityPhoneFields = firstEntity?.fields.filter((f) => f.type === "text" || f.type === "longtext") ?? [];
+    const firstPhoneField = findPhoneField(firstEntityPhoneFields) ?? firstEntityPhoneFields[0];
     const firstTriggerableField = firstEntity?.fields.find((f) => f.type !== "file");
     setEditingRuleId(null);
     setEntityName(firstEntity?.name ?? "");
@@ -459,7 +460,11 @@ export function AutomationsPanel({
     setScheduleTimezone(rule.scheduleTimezone ?? "UTC");
     setActionType(rule.actionType);
     setToMode(rule.toMode);
-    setToField(rulePhoneFields.some((f) => f.name === rule.toField) ? rule.toField ?? "" : rulePhoneFields[0]?.name ?? "");
+    setToField(
+      rulePhoneFields.some((f) => f.name === rule.toField)
+        ? rule.toField ?? ""
+        : findPhoneField(rulePhoneFields)?.name ?? rulePhoneFields[0]?.name ?? "",
+    );
     setToNumber(rule.toNumber ?? "");
     setWebhookUrl(rule.webhookUrl ?? "");
     setWebhookSecret(rule.webhookSecret ?? "");
