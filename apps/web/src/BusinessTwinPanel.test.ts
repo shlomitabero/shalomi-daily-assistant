@@ -1,5 +1,6 @@
 import "./jsdomWarmup.js";
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import { test } from "node:test";
 import { JSDOM } from "jsdom";
 import React from "react";
@@ -1117,5 +1118,21 @@ test("BusinessTwinPanel's numericStats/overdueStats/dueSoonStats dashboard tiles
     } finally {
       globalThis.fetch = originalFetch;
     }
+  });
+
+  test("the Business Twin panel's summary paragraph and observations list wrap mid-word instead of overflowing the dialog when the generated text has no spaces or hyphens to break on", () => {
+    const css = readFileSync(new URL("./styles.css", import.meta.url), "utf8");
+    const summaryRule = css.match(/\.twin-summary\s*\{[^}]*\}/)?.[0] ?? "";
+    assert.match(
+      summaryRule,
+      /overflow-wrap:\s*anywhere/,
+      "the Business Twin summary (which embeds the project's raw user-typed description verbatim) must declare overflow-wrap: anywhere so an unbroken long word doesn't bleed outside the dialog",
+    );
+    const observationsRule = css.match(/\.twin-observations ul\s*\{[^}]*\}/)?.[0] ?? "";
+    assert.match(
+      observationsRule,
+      /overflow-wrap:\s*anywhere/,
+      "the Business Twin observations list (which can embed arbitrary entity/record labels) must declare overflow-wrap: anywhere for the same reason",
+    );
   });
 });

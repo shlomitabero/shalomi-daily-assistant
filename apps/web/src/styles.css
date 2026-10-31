@@ -3189,6 +3189,7 @@ button.sort-header:hover:not(:disabled) {
 .twin-summary {
   margin: 10px 0 0;
   font-weight: 600;
+  overflow-wrap: anywhere;
 }
 
 .twin-total {
@@ -3362,6 +3363,7 @@ button.sort-header:hover:not(:disabled) {
   flex-direction: column;
   gap: 8px;
   font-size: 14.5px;
+  overflow-wrap: anywhere;
 }
 
 .search-panel {
