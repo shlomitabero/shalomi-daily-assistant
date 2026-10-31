@@ -156,9 +156,26 @@ const AnswerQuestionsSchema = z.object({
  * this project's own attachment upload created before ever resolving it
  * to a filesystem path -- see its own comment there.
  */
+/*
+ * Round 1404: `to`/`message` had a `.min(1)` floor but no `.max()`
+ * ceiling, the same gap round 1403 just closed for the sibling automation
+ * rule schemas in this file. whatsappRateLimiter below bounds CALL COUNT
+ * (30/15min, shared with connect/disconnect) but not payload SIZE -- an
+ * owner or editor (requireProjectWriteAccess grants both identical access
+ * to this route) could send a handful of near-100KB messages (Express's
+ * own default json() body limit) through the project's real, linked
+ * WhatsApp account, directly risking the automated-behavior ban/abuse-
+ * detection outcome round 862's own doc comment on whatsappRateLimiter
+ * already names as a real-world harm -- just reachable with far fewer,
+ * larger calls instead of many small ones. `attachment.url`/`name`/
+ * `mimeType` don't need the same treatment: the route re-validates them
+ * against this project's own upload records before ever using them, so
+ * an oversized value there already fails downstream regardless of this
+ * schema's own `.min(1)`-only declaration.
+ */
 const WhatsAppSendSchema = z.object({
-  to: z.string().min(1, "to is required"),
-  message: z.string().min(1, "message is required"),
+  to: z.string().min(1, "to is required").max(50),
+  message: z.string().min(1, "message is required").max(4096),
   attachment: z
     .object({
       url: z.string().min(1),

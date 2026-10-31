@@ -1285,6 +1285,7 @@ export function WhatsAppPanel({
                 onChange={(e) => setTestMessage(e.target.value)}
                 placeholder={t("whatsapp.test.message.placeholder")}
                 required
+                maxLength={4096}
               />
             </label>
             <div className="whatsapp-attachment-field">

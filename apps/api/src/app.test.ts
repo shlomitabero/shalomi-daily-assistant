@@ -11332,6 +11332,61 @@ test("WhatsApp send refuses with 409 before connecting", async () => {
   );
 });
 
+/**
+ * Round 1404: WhatsAppSendSchema's `to`/`message` had a `.min(1)` floor
+ * but no `.max()` ceiling, the same gap round 1403 closed for the
+ * sibling automation rule schemas in this same file. whatsappRateLimiter
+ * bounds CALL COUNT (30/15min) but not payload SIZE -- an owner or editor
+ * could send a handful of near-100KB messages through the project's
+ * real, linked WhatsApp account, risking the automated-behavior ban/
+ * abuse-detection outcome round 862's own doc comment already names as a
+ * real-world harm. Validation runs before the connection-status check
+ * (confirmed by the sibling "refuses with 409 before connecting" test
+ * just above), so this doesn't need an actual connected WhatsApp session
+ * to exercise.
+ */
+test("WhatsApp send is rejected with 400 past a generous but real length cap on `to`/`message`, before ever reaching the connection-status check", async () => {
+  await withServer(
+    async (baseUrl) => {
+      const token = await signup(baseUrl, "whatsapp-send-length-cap@example.com");
+      const createRes = await fetch(`${baseUrl}/api/projects`, {
+        method: "POST",
+        headers: authHeaders(token),
+        body: JSON.stringify({ description: "A CRM with customers and deals." }),
+      });
+      const { project } = (await createRes.json()) as { project: { id: string } };
+
+      const oversizedMessageRes = await fetch(`${baseUrl}/api/projects/${project.id}/integrations/whatsapp/send`, {
+        method: "POST",
+        headers: authHeaders(token),
+        body: JSON.stringify({ to: "972501234567", message: "x".repeat(5000) }),
+      });
+      assert.equal(oversizedMessageRes.status, 400, "a 5000-character message must be rejected, not silently sent as a real amplification vector");
+      assert.equal(((await oversizedMessageRes.json()) as { code?: string }).code, "VALIDATION_ERROR");
+
+      const oversizedToRes = await fetch(`${baseUrl}/api/projects/${project.id}/integrations/whatsapp/send`, {
+        method: "POST",
+        headers: authHeaders(token),
+        body: JSON.stringify({ to: "9".repeat(100), message: "hi" }),
+      });
+      assert.equal(oversizedToRes.status, 400);
+      assert.equal(((await oversizedToRes.json()) as { code?: string }).code, "VALIDATION_ERROR");
+
+      // A comfortably-sized, realistic message must still be accepted --
+      // the cap must not be too tight. Not connected, so this still 409s,
+      // but that's AFTER schema validation passes, proving the cap itself
+      // didn't reject it.
+      const goodRes = await fetch(`${baseUrl}/api/projects/${project.id}/integrations/whatsapp/send`, {
+        method: "POST",
+        headers: authHeaders(token),
+        body: JSON.stringify({ to: "972501234567", message: "A perfectly normal, realistic message a real user would actually send." }),
+      });
+      assert.equal(goodRes.status, 409, "a realistic message must pass validation and reach the connection-status check, not be rejected by the cap");
+    },
+    { whatsapp: (db) => createTestWhatsAppManager(db).manager },
+  );
+});
+
 test("WhatsApp send succeeds once connected, is logged as an outgoing message, and disconnect via HTTP tears the session down", async () => {
   let createdSockets: ReturnType<typeof createFakeWhatsAppSocket>[] = [];
   await withServer(
