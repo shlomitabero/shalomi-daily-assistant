@@ -2351,6 +2351,83 @@ test("AutomationsPanel's 'webhook' action shows a URL input instead of the Whats
 });
 
 /**
+ * Round 1364: the exact same bug class round 1363 closed for
+ * EntityPanel.tsx's record-form Save button -- handleSubmit here had no
+ * guard against racing ITSELF (every other action in this panel already
+ * guards against a DIFFERENT sibling action via testingRuleId/
+ * retryingRunId, round 1060/1149, but never against its own button
+ * firing twice). createAutomationRule mints a fresh idempotency key per
+ * call, so the server's own retry-dedup can't catch two independent
+ * calls from one fast double-click. Confirms a real double-submit
+ * (fired before the first POST's own response resolves) only ever
+ * reaches the API once.
+ */
+test("AutomationsPanel's create-rule Save button guards against a fast double-click, so only one POST ever fires for one submission", async () => {
+  await withJsdom(async () => {
+    const originalFetch = globalThis.fetch;
+    const createBodies: Record<string, unknown>[] = [];
+    const pending: { resolveFirstPost: (() => void) | null } = { resolveFirstPost: null };
+    globalThis.fetch = (async (input: string, init?: RequestInit) => {
+      const method = init?.method ?? "GET";
+      if (method === "GET" && input === "/api/projects/proj5/automations") {
+        return new Response(JSON.stringify({ rules: [] }), { status: 200, headers: { "content-type": "application/json" } });
+      }
+      if (method === "POST" && input === "/api/projects/proj5/entities/Ticket/automations") {
+        const body = JSON.parse(init!.body as string) as Record<string, unknown>;
+        createBodies.push(body);
+        if (createBodies.length === 1) {
+          await new Promise<void>((resolve) => {
+            pending.resolveFirstPost = resolve;
+          });
+        } else {
+          await new Promise(() => {});
+        }
+        return new Response(JSON.stringify({ rule: makeRule({ id: "rule12", ...body }) }), {
+          status: 201,
+          headers: { "content-type": "application/json" },
+        });
+      }
+      throw new Error(`unexpected request ${method} ${input}`);
+    }) as typeof fetch;
+
+    try {
+      renderPanelWith(triggerFieldProject);
+      await waitForCondition(() => document.body.textContent?.includes("No automations yet") ?? false);
+
+      const actionSelect = Array.from(document.querySelectorAll("select")).find((s) =>
+        Array.from(s.options).some((o) => o.value === "webhook"),
+      ) as HTMLSelectElement;
+      fireEvent.change(actionSelect, { target: { value: "webhook" } });
+
+      const urlInput = document.querySelector('input[type="url"]') as HTMLInputElement;
+      fireEvent.change(urlInput, { target: { value: "https://hooks.example.com/forge" } });
+      const messageField = document.querySelector(".automations-create-form textarea") as HTMLTextAreaElement;
+      fireEvent.change(messageField, { target: { value: "Race condition test" } });
+
+      const form = document.querySelector(".automations-create-form") as HTMLFormElement;
+      fireEvent.submit(form);
+      fireEvent.submit(form);
+      await waitForCondition(() => createBodies.length > 0);
+
+      assert.equal(
+        createBodies.length,
+        1,
+        "a fast double submit must only ever reach createAutomationRule once -- the second click must be blocked by createBusy, not fire its own independent POST",
+      );
+
+      pending.resolveFirstPost?.();
+      // Let handleSubmit's own success path (setRules/setWebhookUrl(""))
+      // actually finish before restoring the real fetch -- otherwise that
+      // continuation keeps running after this test returns and bleeds into
+      // whichever test runs next (round 1364 follow-up fix).
+      await waitForCondition(() => document.querySelectorAll(".automations-rule-row").length === 1);
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+});
+
+/**
  * Round 974: webhookSecret is a plain optional input next to the URL --
  * confirms it's not sent at all when left blank (undefined, not an empty
  * string -- the server's own zod schema would otherwise reject
@@ -2394,6 +2471,13 @@ test("AutomationsPanel's webhook form has an optional secret field that's omitte
       fireEvent.submit(document.querySelector(".automations-create-form")!);
       await waitForCondition(() => createBodies.length === 1);
       assert.equal(createBodies[0]!.webhookSecret, undefined, "an empty secret field must not be sent at all");
+      // Wait for the first submit's own handleSubmit to actually finish
+      // (createBusy cleared back to false) before firing the second real
+      // submit below -- otherwise round 1364's own-click guard on Save
+      // legitimately blocks it, since createBodies.length flips to 1 the
+      // instant the mocked fetch is called, well before handleSubmit's
+      // `finally { setCreateBusy(false); }` has run.
+      await waitForCondition(() => document.querySelectorAll(".automations-rule-row").length === 1);
 
       const secretInput = document.querySelector('input[placeholder="Secret (optional)"]') as HTMLInputElement;
       assert.ok(secretInput, "expected a secret input next to the webhook URL input");

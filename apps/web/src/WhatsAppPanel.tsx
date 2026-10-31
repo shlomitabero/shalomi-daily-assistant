@@ -701,6 +701,14 @@ export function WhatsAppPanel({
 
   async function handleSendTest(e: React.FormEvent) {
     e.preventDefault();
+    // Round 1364: every other handler in this file already guards
+    // against racing itself this exact way (handleRemoveAttachment,
+    // handleResetTestForm, handleReplyToMessage all start with this same
+    // `if (sending) return;`) -- this was the one write path that never
+    // got it, so a fast double-click on the test-send button fired this
+    // twice before the first sendWhatsAppMessage call's own await
+    // returned, sending the same message twice to a real recipient.
+    if (sending) return;
     setSending(true);
     setSendResult(null);
     setRecentNumbers(addRecentWhatsAppNumber(projectId, userId, testTo));

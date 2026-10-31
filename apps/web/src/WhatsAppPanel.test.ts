@@ -1302,6 +1302,84 @@ test("WhatsAppPanel sends the exact typed recipient/message and refreshes the me
 });
 
 /**
+ * Round 1364: the exact same bug class round 1363 closed for
+ * EntityPanel.tsx's record-form Save button -- handleSendTest had no
+ * guard against racing ITSELF, unlike handleRemoveAttachment/
+ * handleResetTestForm/handleReplyToMessage in this same file, which all
+ * already start with `if (sending) return;`. A fast double-click on the
+ * test-send button fired this twice before the first sendWhatsAppMessage
+ * call's own await returned, sending the same message twice to a real
+ * recipient. Confirms a real double-submit only ever reaches the API
+ * once.
+ */
+test("WhatsAppPanel's test-send button guards against a fast double-click, so only one send request ever fires for one submission", async () => {
+  await withJsdom(async () => {
+    const originalFetch = globalThis.fetch;
+    const sendBodies: string[] = [];
+    const pending: { resolveFirstSend: (() => void) | null } = { resolveFirstSend: null };
+    globalThis.fetch = (async (input: string, init?: RequestInit): Promise<Response> => {
+      const method = init?.method ?? "GET";
+      if (method === "GET" && input === "/api/projects/proj1/integrations/whatsapp/status") {
+        return new Response(
+          JSON.stringify({ status: "connected", phoneNumber: "972501234567", qrDataUrl: null, error: null }),
+          { status: 200, headers: { "content-type": "application/json" } },
+        );
+      }
+      if (method === "GET" && input === "/api/projects/proj1/integrations/whatsapp/messages") {
+        return new Response(JSON.stringify({ messages: [] }), { status: 200, headers: { "content-type": "application/json" } });
+      }
+      if (method === "POST" && input === "/api/projects/proj1/integrations/whatsapp/send") {
+        sendBodies.push(init!.body as string);
+        if (sendBodies.length === 1) {
+          await new Promise<void>((resolve) => {
+            pending.resolveFirstSend = resolve;
+          });
+        } else {
+          await new Promise(() => {});
+        }
+        return new Response(JSON.stringify({ ok: true }), { status: 200, headers: { "content-type": "application/json" } });
+      }
+      throw new Error(`unexpected request ${method} ${input}`);
+    }) as typeof fetch;
+    try {
+      render(
+        React.createElement(
+          ThemeProvider,
+          null,
+          React.createElement(LanguageProvider, null, React.createElement(WhatsAppPanel, { projectId: "proj1", userId: "user1", projectName: "Test Project", onClose: () => {}, onJumpToEntity: () => {}, onJumpToRecord: () => {}, entities: [], onCreateRecordFromMessage: () => {} })),
+        ),
+      );
+      await waitForCondition(() => document.querySelector(".whatsapp-test-form") !== null);
+
+      const inputs = document.querySelectorAll('.whatsapp-test-form input[type="text"]');
+      fireEvent.change(inputs[0] as HTMLInputElement, { target: { value: "972521112233" } });
+      fireEvent.change(inputs[1] as HTMLInputElement, { target: { value: "Race condition test" } });
+
+      const form = document.querySelector("form.whatsapp-test-form")!;
+      fireEvent.submit(form);
+      fireEvent.submit(form);
+      await waitForCondition(() => sendBodies.length > 0);
+
+      assert.equal(
+        sendBodies.length,
+        1,
+        "a fast double submit must only ever reach sendWhatsAppMessage once -- the second click must be blocked by sending, not fire its own independent request",
+      );
+
+      pending.resolveFirstSend?.();
+      // Let handleSendTest's own success path (setSendResult) actually
+      // finish before restoring the real fetch -- otherwise that
+      // continuation keeps running after this test returns and risks
+      // bleeding into whichever test runs next (round 1364 follow-up fix,
+      // same hazard the AutomationsPanel equivalent test hit).
+      await waitForCondition(() => document.body.textContent?.includes("Message sent successfully.") ?? false);
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+});
+
+/**
  * Round 973: confirms the new attachment picker actually uploads the
  * chosen file through the new .../attachments/upload route, shows the
  * returned descriptor instead of the raw file input once upload succeeds,

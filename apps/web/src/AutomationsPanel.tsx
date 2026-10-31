@@ -558,6 +558,17 @@ export function AutomationsPanel({
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
+    // Round 1364: this was the one single-write-path handler in this
+    // panel with no guard against racing ITSELF -- every other action
+    // here (testingRuleId/retryingRunId/busyRuleId, round 1060/1149) is
+    // already cross-gated against a sibling action, but a fast
+    // double-click on Save/Create fired this twice before the first
+    // POST's own createAutomationRule await returned (which mints a
+    // fresh idempotency key per call, so the server's own dedup never
+    // catches it), creating two duplicate rule rows from one click --
+    // the exact bug class round 1363 closed for EntityPanel.tsx's record
+    // form Save button.
+    if (createBusy) return;
     if (formIncomplete || !selectedEntity) return;
     setCreateBusy(true);
     setError(null);
