@@ -231,3 +231,18 @@ test("formatWhatsAppMessageCount reports 'N+' instead of falsely claiming 'all' 
   assert.equal(formatWhatsAppMessageCount(50, 50, tr, true), "50+ messages");
   assert.equal(formatWhatsAppMessageCount(50, 50, tr, false), "50 messages", "sanity check: hasMore=false keeps the old plain phrasing");
 });
+
+/**
+ * Round 1390: a count of exactly 1 is this log's own default first-use
+ * state -- the very first WhatsApp message ever logged for a project --
+ * yet the plural noun form rendered "1 messages" (en) and the
+ * grammatically wrong plural "הודעות" (he) for it. Mirrors the identical
+ * .one/.many split rounds 1388/1389 already used for
+ * formatCheckpointCount/formatMyProjectsCount.
+ */
+test("formatWhatsAppMessageCount uses the correct singular noun form for exactly one message, in both languages", () => {
+  const trEn = (key: string, params?: Record<string, string | number>) => translate("en", key, params);
+  assert.equal(formatWhatsAppMessageCount(1, 1, trEn), "1 message");
+  const trHe = (key: string, params?: Record<string, string | number>) => translate("he", key, params);
+  assert.equal(formatWhatsAppMessageCount(1, 1, trHe), "1 הודעה");
+});

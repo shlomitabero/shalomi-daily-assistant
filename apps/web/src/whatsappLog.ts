@@ -124,7 +124,18 @@ export function formatWhatsAppMessageCount(
   hasMore = false,
 ): string {
   if (shown !== total) return t("whatsapp.log.count.filtered", { shown, total });
-  return hasMore ? t("whatsapp.log.count.hasMore", { count: total }) : t("whatsapp.log.count.all", { count: total });
+  if (hasMore) return t("whatsapp.log.count.hasMore", { count: total });
+  // A count of exactly 1 is this log's own default first-use state --
+  // the very first WhatsApp message ever sent/received for a project --
+  // not a rare edge case, so "1 messages"/"1 הודעות" was wrong from day
+  // one. Only this branch needs the singular split: listWhatsAppMessages
+  // (packages/db/src/whatsapp.ts) always requests a full page (50) at a
+  // time, and `hasMore` is only ever true when that full page came back,
+  // so `hasMore && total === 1` can never happen -- "1+ messages" is
+  // unreachable, confirmed by reading the pagination query directly.
+  // Mirrors the identical .one/.many split rounds 1388/1389 used for
+  // formatCheckpointCount/formatMyProjectsCount.
+  return total === 1 ? t("whatsapp.log.count.all.one", { count: total }) : t("whatsapp.log.count.all.many", { count: total });
 }
 
 export type WhatsAppLogFilter = "all" | "in" | "out" | "failed";
