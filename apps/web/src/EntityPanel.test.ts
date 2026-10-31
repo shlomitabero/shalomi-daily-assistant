@@ -4945,6 +4945,105 @@ test("EntityPanel's calendar view shifts a ranged record by the days actually dr
 });
 
 /**
+ * Round 1384: the calendar chip's own drag-to-reschedule (confirmed working
+ * by the test above) is native HTML5 drag-and-drop -- draggable/onDragStart/
+ * onDragOver/onDrop -- which a live Playwright session confirmed never fires
+ * from touch input on any phone or tablet, with no polyfill anywhere in this
+ * codebase. Unlike the Kanban board's own drag, which already ships a
+ * working <select> fallback for changing a record's status without
+ * dragging, the calendar chip had no touch-usable way to reschedule at all
+ * short of opening the full edit form and retyping both dates by hand. The
+ * fix adds two small icon buttons (.calendar-record-move-earlier/-later) to
+ * every chip that call the exact same onReschedule the chip's own drag
+ * already uses, shifted by exactly one day from the chip's own displayed
+ * day. Confirms clicking either button on a ranged record's chip shifts
+ * BOTH startDate and endDate by that one day, with no click-through to the
+ * day cell underneath (e.stopPropagation()).
+ */
+test("EntityPanel's calendar view lets a ranged record be rescheduled by one day via tap-friendly buttons, not just drag", async () => {
+  await withJsdom(async () => {
+    const addDays = (n: number) => {
+      const d = new Date();
+      d.setDate(10 + n);
+      const pad = (v: number) => String(v).padStart(2, "0");
+      return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+    };
+    const dayNumber = (n: number) => {
+      const d = new Date();
+      d.setDate(10 + n);
+      return String(d.getDate());
+    };
+    // A 3-night stay: the anchor day (start) through anchor+2 (end/last night).
+    const store: EntityRecord[] = [{ id: 1, title: "Dana's stay", startDate: addDays(0), endDate: addDays(2) }];
+    let lastPatchBody: Record<string, unknown> | null = null;
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = (async (input: string, init?: RequestInit) => {
+      const method = init?.method ?? "GET";
+      if (method === "GET" && input === "/api/projects/proj1/entities/Rental") {
+        return new Response(JSON.stringify({ records: store }), { status: 200, headers: { "content-type": "application/json" } });
+      }
+      const patchMatch = /^\/api\/projects\/proj1\/entities\/Rental\/(\d+)$/.exec(input);
+      if (method === "PATCH" && patchMatch) {
+        const id = Number(patchMatch[1]);
+        const record = store.find((r) => r.id === id)!;
+        lastPatchBody = JSON.parse(init!.body as string);
+        Object.assign(record, lastPatchBody);
+        return new Response(JSON.stringify({ record }), { status: 200, headers: { "content-type": "application/json" } });
+      }
+      throw new Error(`unexpected request ${method} ${input}`);
+    }) as typeof fetch;
+    try {
+      renderRentalPanel();
+      await waitForCondition(() => document.querySelector(".entity-toolbar") !== null);
+
+      const calendarToggle = document.querySelectorAll(".view-toggle-btn")[1] as HTMLButtonElement;
+      fireEvent.click(calendarToggle);
+      await waitForCondition(() => document.querySelectorAll(".calendar-record-chip").length === 3);
+
+      function dayCellFor(n: number): HTMLElement {
+        const target = dayNumber(n);
+        return Array.from(document.querySelectorAll(".calendar-day")).find(
+          (el) => el.querySelector(".calendar-day-number")?.textContent === target && el.querySelector(".calendar-record-chip"),
+        ) as HTMLElement;
+      }
+
+      // Tap "move later" on the stay's own start-day chip instance.
+      const startDayCell = dayCellFor(0);
+      const moveLaterBtn = startDayCell.querySelector(".calendar-record-move-later") as HTMLButtonElement;
+      assert.ok(moveLaterBtn, "expected a move-later button on the ranged record's chip");
+      fireEvent.click(moveLaterBtn);
+
+      await waitForCondition(() => lastPatchBody !== null);
+      assert.deepEqual(
+        lastPatchBody,
+        { startDate: addDays(1), endDate: addDays(3) },
+        "tapping move-later on the start day's chip must shift the whole range forward by one day (start and end both +1)",
+      );
+
+      // Tap "move earlier" on the (now-shifted) stay's end-day chip instance.
+      // The chip's own re-render onto its new days happens asynchronously
+      // after the PATCH resolves, so wait for day 3's cell to actually have
+      // a chip before querying inside it.
+      lastPatchBody = null;
+      await waitForCondition(() => dayCellFor(3) !== undefined);
+      const endDayCell = dayCellFor(3);
+      const moveEarlierBtn = endDayCell.querySelector(".calendar-record-move-earlier") as HTMLButtonElement;
+      assert.ok(moveEarlierBtn, "expected a move-earlier button on the ranged record's chip");
+      fireEvent.click(moveEarlierBtn);
+
+      await waitForCondition(() => lastPatchBody !== null);
+      assert.deepEqual(
+        lastPatchBody,
+        { startDate: addDays(0), endDate: addDays(2) },
+        "tapping move-earlier on the end day's chip must shift the whole range back by one day (start and end both -1)",
+      );
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+});
+
+/**
  * Round 1201: buildCalendarMonth deliberately renders a full 6-week grid,
  * including the real, correctly-dated leading/trailing days of adjacent
  * months (confirmed in round 1200's own investigation) -- but the day

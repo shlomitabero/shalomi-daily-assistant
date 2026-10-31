@@ -985,6 +985,58 @@ function CalendarView({
                   >
                     {calendarChipLabelValue(labelField, record, lang)}
                   </button>
+                  {!readOnly && (
+                    // Round 1384: a live Playwright session found that the chip's
+                    // drag-to-reschedule above is the ONLY way to move a record to a
+                    // different day -- and native HTML5 drag-and-drop (draggable/
+                    // onDragStart, same mechanism this whole file's other drag
+                    // interactions use) never fires from touch input on any phone or
+                    // tablet, with no polyfill anywhere in this codebase. Unlike the
+                    // Kanban board's own drag, which already ships a working <select>
+                    // fallback for changing a record's status without dragging, the
+                    // calendar chip had no touch-usable way to reschedule at all short
+                    // of opening the full edit form and retyping both dates by hand.
+                    // These two buttons call the exact same onReschedule the chip's
+                    // own drag already uses, just shifted by one calendar day from
+                    // this chip's own displayed day (dayKey) -- handleCalendarDrop's
+                    // existing delta-shift logic (see its own doc comment) already
+                    // moves a ranged record's whole span by the days actually
+                    // "dragged," so passing dayKey as both the record's current
+                    // anchor and the origin reuses that same tested math verbatim,
+                    // with no new date arithmetic duplicated here.
+                    <>
+                      <button
+                        type="button"
+                        className="calendar-record-move-earlier"
+                        title={t("entity.calendar.moveEarlier")}
+                        aria-label={t("entity.calendar.moveEarlier")}
+                        disabled={bulkActionBusy}
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          const target = new Date(day.date);
+                          target.setDate(target.getDate() - 1);
+                          onReschedule(record, target, dayKey);
+                        }}
+                      >
+                        ⏪
+                      </button>
+                      <button
+                        type="button"
+                        className="calendar-record-move-later"
+                        title={t("entity.calendar.moveLater")}
+                        aria-label={t("entity.calendar.moveLater")}
+                        disabled={bulkActionBusy}
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          const target = new Date(day.date);
+                          target.setDate(target.getDate() + 1);
+                          onReschedule(record, target, dayKey);
+                        }}
+                      >
+                        ⏩
+                      </button>
+                    </>
+                  )}
                   <button
                     type="button"
                     className="calendar-record-print"

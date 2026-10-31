@@ -2028,6 +2028,31 @@ tbody tr:hover {
   box-shadow: none;
 }
 
+/* Round 1384: mirrors .calendar-record-print's own layout exactly -- the
+   touch-usable move-by-1-day actions are the same shape of small icon
+   button next to the chip, since dragging the chip (the only other way to
+   reschedule) never fires on touch input at all. */
+.calendar-record-move-earlier,
+.calendar-record-move-later {
+  flex-shrink: 0;
+  padding: 2px 4px;
+  font-size: 10px;
+  line-height: 1;
+  background: none;
+  border: 1px solid var(--border-soft);
+  border-radius: 4px;
+  box-shadow: none;
+  cursor: pointer;
+  transform: none;
+}
+
+.calendar-record-move-earlier:hover:not(:disabled),
+.calendar-record-move-later:hover:not(:disabled) {
+  background: var(--surface-raised);
+  transform: none;
+  box-shadow: none;
+}
+
 /* Round 1284: mirrors .calendar-record-print's own layout exactly -- the
    Duplicate/Delete actions are the same shape of small icon button next to
    the chip, just two more of them in the same row. */
