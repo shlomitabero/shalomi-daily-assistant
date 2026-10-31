@@ -139,6 +139,12 @@ export default function ProductPage() {
         <div className="demo-banner" style={{ background: 'var(--positive-bg, #e6f4ea)', color: 'var(--positive, #1a7f37)' }}>
           התשלום אומת — הנה המדריך שלך
         </div>
+        {/* data.sandbox means Paddle's test environment — no real money
+            moved. Without this, a sandbox purchase (e.g. while the owner is
+            testing the flow) would show the exact same "payment verified"
+            confirmation as a real sale, which is the one thing this build
+            promises never to blur. */}
+        {data.sandbox && <p className="hint">(מצב בדיקה של Paddle — לא בוצע תשלום אמיתי)</p>}
         <h1>{product.salesHeadline}</h1>
         <p className="guide-preview" style={{ maxHeight: 'none' }}>{guide}</p>
       </div>
