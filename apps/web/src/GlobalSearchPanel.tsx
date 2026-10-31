@@ -717,7 +717,11 @@ export function GlobalSearchPanel({
                 >
                   <div className="global-search-group-header">
                     <span className="global-search-entity-label">{result.entityLabel}</span>
-                    <span className="muted small">{t("search.resultCount", { count: result.totalMatches })}</span>
+                    <span className="muted small">
+                      {t(result.totalMatches === 1 ? "search.resultCount.one" : "search.resultCount.many", {
+                        count: result.totalMatches,
+                      })}
+                    </span>
                     <button type="button" className="secondary small" onClick={() => onJumpToEntity(result.entityName)}>
                       {t("search.jumpTo")}
                     </button>

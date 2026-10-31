@@ -1013,6 +1013,38 @@ test("GlobalSearchPanel's 'no matching results' message has role=status, so a sc
 });
 
 /**
+ * Round 1394: each entity group's own match-count span used a single
+ * hardcoded-plural i18n key (search.resultCount) with no singular form, so
+ * a search that happens to match exactly one record in an entity -- an
+ * everyday outcome for a query like a specific name or phone number, not a
+ * rare edge case -- rendered "1 results" / "1 תוצאות" instead of "1
+ * result"/"1 תוצאה". mockGlobalSearchFetch's own fixture data has exactly
+ * one Customer record and one Order record, both matching "widget", so
+ * this is real-DOM coverage of the actual singular case via the panel's
+ * normal search flow, not a contrived count.
+ */
+test("GlobalSearchPanel's per-entity match-count text uses the singular form when a search matches exactly 1 record", async () => {
+  await withJsdom(async () => {
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = mockGlobalSearchFetch() as typeof fetch;
+    try {
+      renderGlobalSearchPanel(() => {});
+
+      const input = document.querySelector(".global-search-input") as HTMLInputElement;
+      fireEvent.change(input, { target: { value: "widget" } });
+      fireEvent.submit(document.querySelector("form.global-search-form")!);
+
+      await waitForCondition(() => document.querySelectorAll(".global-search-group").length === 2);
+
+      const counts = Array.from(document.querySelectorAll(".global-search-group-header .muted.small")).map((el) => el.textContent);
+      assert.deepEqual(counts, ["1 result", "1 result"], "a single match in each entity group must read '1 result', not '1 results'");
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+});
+
+/**
  * Real-DOM coverage for the one piece of GlobalSearchPanel that was never
  * tested at all, not even via function extraction: handleInputKeyDown's
  * ArrowDown/ArrowUp/Enter keyboard navigation across result groups. A real

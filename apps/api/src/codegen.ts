@@ -8087,7 +8087,7 @@ function formatGlobalSearchReport(results, entities, expandedSamples, query) {
   for (const result of results) {
     const entity = entities.find((e) => e.name === result.entityName);
     const displayed = expandedSamples[result.entityName] ?? result.sample;
-    lines.push(\`\${result.entityLabel} — \${result.totalMatches} results\`);
+    lines.push(\`\${result.entityLabel} — \${result.totalMatches} \${result.totalMatches === 1 ? "result" : "results"}\`);
     for (const record of displayed) {
       lines.push(\`- \${entity ? recordDisplayLabel(entity, record) : "#" + record.id}\`);
     }
@@ -8599,7 +8599,7 @@ export function GlobalSearch({ entities, onClose, onJumpToEntity, onJumpToRecord
                 <div key={result.entityName} data-group-index={i} className={i === selectedIndex ? "global-search-group global-search-group-selected" : "global-search-group"}>
                   <div className="global-search-group-header">
                     <span className="global-search-entity-label">{result.entityLabel}</span>
-                    <span className="muted small">{result.totalMatches} results</span>
+                    <span className="muted small">{result.totalMatches} {result.totalMatches === 1 ? "result" : "results"}</span>
                     <button type="button" className="small" onClick={() => onJumpToEntity(result.entityName)}>Go to tab</button>
                   </div>
                   <ul className="global-search-hits">

@@ -15012,6 +15012,51 @@ test("the exported GlobalSearch's runSearch orders entity groups by totalMatches
 });
 
 /**
+ * Round 1394: the exported app's own GlobalSearch.jsx had the same
+ * missing-singular-form bug just fixed in the live preview's
+ * GlobalSearchPanel.tsx/searchReport.ts -- both the rendered per-entity
+ * count span and formatGlobalSearchReport's own copy/download text
+ * hardcoded "results" regardless of count, so a single match read "1
+ * results". This file has no i18n layer at all (plain hardcoded English
+ * strings), so the fix is a plain singular/plural ternary rather than a
+ * split translation key. Covers both sites in the same generated file.
+ */
+test("the exported GlobalSearch's rendered count span and its own copy/download report both use the singular 'result' when totalMatches is exactly 1", () => {
+  const files = generateExportFiles(project);
+  const globalSearchJsx = files.find((f) => f.path === "web/src/components/GlobalSearch.jsx")!.content;
+
+  assert.match(
+    globalSearchJsx,
+    /\{result\.totalMatches\} \{result\.totalMatches === 1 \? "result" : "results"\}/,
+    "the rendered per-entity count span must branch on totalMatches === 1 instead of hardcoding 'results'",
+  );
+
+  const entityViewJsx = files.find((f) => f.path === "web/src/components/EntityView.jsx")!.content;
+  const displayFieldHintsSrc = entityViewJsx.match(/const DISPLAY_FIELD_NAME_HINTS = .*;\n/)?.[0];
+  const pickDisplayFieldSrc = entityViewJsx.match(/export function pickDisplayField\([\s\S]*?\n\}\n/)?.[0]?.replace("export ", "");
+  const recordDisplayLabelSrc = entityViewJsx.match(/export function recordDisplayLabel\(entity, record\) \{[\s\S]*?\n\}\n/)?.[0]?.replace("export ", "");
+  const formatReportSrc = globalSearchJsx.match(/function formatGlobalSearchReport\([\s\S]*?\n\}\n/)?.[0];
+  assert.ok(
+    displayFieldHintsSrc && pickDisplayFieldSrc && recordDisplayLabelSrc && formatReportSrc,
+    "expected to find DISPLAY_FIELD_NAME_HINTS/pickDisplayField/recordDisplayLabel/formatGlobalSearchReport in generated output",
+  );
+  const fn = new Function(
+    `${displayFieldHintsSrc}\n${pickDisplayFieldSrc}\n${recordDisplayLabelSrc}\n${formatReportSrc}\nreturn formatGlobalSearchReport;`,
+  )() as (results: unknown[], entities: unknown[], expandedSamples: Record<string, unknown>, query: string) => string;
+
+  const entity = { name: "Customer", label: "Customer", fields: [{ name: "name", label: "Name", type: "text" }] };
+  const report = fn(
+    [{ entityName: "Customer", entityLabel: "Customer", totalMatches: 1, sample: [{ id: 1, name: "Amy" }] }],
+    [entity],
+    {},
+    "amy",
+  );
+
+  assert.match(report, /Customer — 1 result\b/);
+  assert.doesNotMatch(report, /1 results/);
+});
+
+/**
  * Round 790: the exported app's own GlobalSearch.jsx is a deliberate
  * duplicate of the live-preview GlobalSearchPanel.tsx's handleShowAll,
  * and it had the exact same staleness gap -- handleShowAll re-fetches one

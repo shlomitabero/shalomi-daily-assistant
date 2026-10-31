@@ -48,7 +48,9 @@ export function formatSearchResults(
     const entity = entities.find((e) => e.name === result.entityName);
     if (!entity) continue;
     const displayed = expandedSamples[result.entityName] ?? result.sample;
-    lines.push(`${result.entityLabel} — ${t("search.resultCount", { count: result.totalMatches })}`);
+    lines.push(
+      `${result.entityLabel} — ${t(result.totalMatches === 1 ? "search.resultCount.one" : "search.resultCount.many", { count: result.totalMatches })}`,
+    );
     for (const record of displayed) {
       lines.push(`- ${recordDisplayLabel(entity, record, lang)}`);
     }

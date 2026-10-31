@@ -51,6 +51,24 @@ test("formatSearchResults renders in English when given the English translator",
   assert.match(report, /Amy/);
 });
 
+/**
+ * Round 1394: formatSearchResults' own per-entity count line used the same
+ * hardcoded-plural search.resultCount key as the live panel's header span
+ * -- "Search everything -> 1 results" for a single match, the copy/
+ * download report's equivalent of the live panel's own singular-form bug.
+ */
+test("formatSearchResults uses the singular form in its per-entity count line when totalMatches is exactly 1", () => {
+  const t = (key: string, params?: Record<string, string | number>) => translate("en", key, params);
+  const results: EntitySearchResult[] = [
+    { entityName: "Customer", entityLabel: "Customers", totalMatches: 1, sample: [customerRecord(1, "Amy")] },
+  ];
+
+  const report = formatSearchResults(results, [CUSTOMER_ENTITY], {}, "amy", "Flower Shop", "en", t);
+
+  assert.match(report, /Customers — 1 result\b/);
+  assert.doesNotMatch(report, /1 results/);
+});
+
 test("formatSearchResults shows a real no-results message instead of an empty report when nothing matched", () => {
   const t = (key: string, params?: Record<string, string | number>) => translate("en", key, params);
   const report = formatSearchResults([], [CUSTOMER_ENTITY], {}, "nonexistent", "Flower Shop", "en", t);
