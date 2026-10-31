@@ -1314,7 +1314,9 @@ button.danger:hover:not(:disabled) {
 }
 
 .form-actions {
+  grid-column: 1 / -1;
   display: flex;
+  flex-wrap: wrap;
   gap: 8px;
   align-items: center;
 }

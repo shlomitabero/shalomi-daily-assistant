@@ -16856,3 +16856,36 @@ test("the calendar view's record row lets its action buttons wrap onto a second 
     ".calendar-record-row must allow its action buttons to wrap onto a second line instead of overflowing the narrow day cell",
   );
 });
+
+/*
+ * Round 1354: .record-form is a CSS grid (`grid-template-columns:
+ * repeat(auto-fill, minmax(140px, 1fr))`), and .form-actions used to be
+ * just another implicit grid item -- landing in whatever single
+ * ~140-166px column auto-flow placed it in, instead of spanning the
+ * form's full width. The create form only ever renders one button there
+ * ("Add"), which fits a narrow cell fine, so this never showed up. The
+ * edit form renders four (Save/Cancel/Duplicate/Delete) in that same
+ * flex row with no flex-wrap, so at phone widths they overflowed straight
+ * past the form and the page's right edge -- and since html/body both
+ * have overflow-x: hidden, Delete ended up fully off-screen and
+ * unclickable, confirmed via getBoundingClientRect() at 375-390px
+ * viewports. jsdom has no layout engine and can't detect real
+ * overflow/clipping (see this file's other CSS-only-bug tests above), so
+ * this reads styles.css's own source directly instead.
+ */
+test("the record form's action-button row spans the full form width and wraps, instead of being confined to one grid column and overflowing off-screen", () => {
+  const stylesCss = readFileSync(new URL("./styles.css", import.meta.url), "utf8");
+
+  const formActions = stylesCss.match(/\.form-actions \{[\s\S]*?\}/)?.[0];
+  assert.ok(formActions, "expected a .form-actions rule in styles.css");
+  assert.match(
+    formActions!,
+    /grid-column:\s*1\s*\/\s*-1/,
+    ".form-actions must span the full width of .record-form's grid, instead of landing in a single ~140px auto-fill column",
+  );
+  assert.match(
+    formActions!,
+    /flex-wrap:\s*wrap/,
+    ".form-actions must allow its buttons (up to 4 in the edit form: Save/Cancel/Duplicate/Delete) to wrap onto a second line instead of overflowing off-screen",
+  );
+});
