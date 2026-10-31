@@ -13282,8 +13282,13 @@ test("the exported EntityView's handleBulkDelete is wired into the same batch pe
   assert.match(entityViewJsx, /async function handleBulkDelete\(\) \{/);
   assert.match(
     entityViewJsx,
-    /if \(pendingDeleteRef\.current\) \{\s*clearTimeout\(pendingDeleteRef\.current\.timeoutId\);\s*commitPendingDelete\(pendingDeleteRef\.current\);\s*\}\s*\n\s*setError\(null\);\s*const idSet = new Set\(ids\);/,
+    /if \(pendingDeleteRef\.current\) \{\s*clearTimeout\(pendingDeleteRef\.current\.timeoutId\);\s*commitPendingDelete\(pendingDeleteRef\.current\);\s*\}/,
     "handleBulkDelete must commit any still-pending delete for real first, same as handleDelete",
+  );
+  assert.match(
+    entityViewJsx,
+    /setError\(null\);\s*const idSet = new Set\(ids\);/,
+    "handleBulkDelete must clear any prior error and build the real id set before touching records",
   );
   assert.match(
     entityViewJsx,
