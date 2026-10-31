@@ -2696,3 +2696,29 @@ test("a global search result row's text wraps mid-word instead of overflowing th
     ".global-search-hit-button must allow a long unbreakable token (no spaces/hyphens) to wrap mid-word instead of overflowing the search dialog",
   );
 });
+
+/**
+ * Round 1360: round 1355 fixed overflow on the per-record result ROW
+ * (.global-search-hit-button) for an unbreakable token, but the group
+ * HEADER right above it -- the entity's own display label, rendered in
+ * .global-search-entity-label (GlobalSearchPanel.tsx line 719) -- never
+ * got the same guard. A live Playwright session found that renaming an
+ * entity to a 90-char unbreakable string made that header span run past
+ * the dialog's own right edge: boundingBox() measured the span's right
+ * edge 169px past the dialog's own right edge at a 375px-ish viewport,
+ * with getComputedStyle confirming overflowWrap: "normal". jsdom has no
+ * layout engine and can't detect this (see this file's own
+ * .global-search-hit-button test above), so this reads styles.css's own
+ * source directly instead.
+ */
+test("a global search group header's entity-label text wraps mid-word instead of overflowing the dialog when the entity's own display name has no spaces or hyphens to break on", () => {
+  const stylesCss = readFileSync(new URL("./styles.css", import.meta.url), "utf8");
+
+  const entityLabel = stylesCss.match(/\.global-search-entity-label \{[\s\S]*?\}/)?.[0];
+  assert.ok(entityLabel, "expected a .global-search-entity-label rule in styles.css");
+  assert.match(
+    entityLabel!,
+    /overflow-wrap:\s*anywhere/,
+    ".global-search-entity-label must allow a long unbreakable entity name to wrap mid-word instead of overflowing the search dialog",
+  );
+});

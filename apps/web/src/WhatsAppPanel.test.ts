@@ -6051,3 +6051,31 @@ test("WhatsAppPanel's Retry button resends immediately with no confirm prompt wh
     }
   });
 });
+
+/**
+ * Round 1360: following up on the same fix just applied to
+ * GlobalSearchPanel's own group-header entity label, this message log row
+ * had an identical gap -- `.whatsapp-log-who` (the sender display, used by
+ * both the plain span and the "jump to record" button variant, since both
+ * share this class) had `flex-shrink: 0` but no `overflow-wrap`, unlike
+ * the sibling `.whatsapp-log-body` rule right below it, which already got
+ * `overflow-wrap: anywhere` back when the message BODY text was fixed
+ * (round 1049-adjacent work). `matchedLabel` is a record's own display
+ * label stored verbatim on the message row, so it can be an arbitrary
+ * unbreakable string, not just a phone number -- the same flex-shrink:0 +
+ * no-overflow-wrap shape rounds 1347-1359 have repeatedly found causing a
+ * flex child to blow out its row's own width. jsdom has no layout engine
+ * and can't detect real overflow (see this codebase's other CSS-only-bug
+ * tests), so this reads styles.css's own source directly instead.
+ */
+test("the WhatsApp message log's sender display wraps mid-word instead of overflowing its row when the matched record's own label has no spaces or hyphens to break on", () => {
+  const stylesCss = readFileSync(new URL("./styles.css", import.meta.url), "utf8");
+
+  const whoRule = stylesCss.match(/\.whatsapp-log-who \{[\s\S]*?\}/)?.[0];
+  assert.ok(whoRule, "expected a .whatsapp-log-who rule in styles.css");
+  assert.match(
+    whoRule!,
+    /overflow-wrap:\s*anywhere/,
+    ".whatsapp-log-who must allow an unbreakable matchedLabel value to wrap mid-word instead of overflowing its message-log row",
+  );
+});

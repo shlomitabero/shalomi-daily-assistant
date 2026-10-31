@@ -3445,6 +3445,7 @@ button.sort-header:hover:not(:disabled) {
 .global-search-entity-label {
   font-weight: 700;
   color: var(--text);
+  overflow-wrap: anywhere;
 }
 
 .global-search-group-header button.small {
@@ -3627,6 +3628,7 @@ button.sort-header:hover:not(:disabled) {
 .whatsapp-log-who {
   font-weight: 700;
   flex-shrink: 0;
+  overflow-wrap: anywhere;
 }
 
 .whatsapp-log-who-link {
