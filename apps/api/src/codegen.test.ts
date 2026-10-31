@@ -25999,6 +25999,27 @@ test("the exported app's print sheet resets its own text color so dark mode's ne
 });
 
 /**
+ * New in this round (1376): the exported app's `.entity-undo-toast` is
+ * `display: flex` with the delete-undo message text and the "Undo" button
+ * as direct flex children, and had no `flex-wrap`/`overflow-wrap` of its
+ * own. The message embeds a record's own display-field value verbatim --
+ * an ordinary user-typed value (a SKU, slug, URL) with no length cap --
+ * so one long unbroken token could force this row past its container and
+ * push "Undo" (the only way to recover from a delete during its one
+ * 5-second window) off-screen along with it. Same defect class this file
+ * already has other CSS-source-text checks for; jsdom can't paint CSS.
+ */
+test("the exported app's delete-undo toast can wrap onto multiple lines instead of letting a long record label push the Undo button off-screen", () => {
+  const files = generateExportFiles(project);
+  const stylesCss = files.find((f) => f.path === "web/src/styles.css")!.content;
+
+  const undoToast = stylesCss.match(/\.entity-undo-toast \{[^}]*\}/)?.[0];
+  assert.ok(undoToast, "expected a .entity-undo-toast rule in the generated styles.css");
+  assert.match(undoToast!, /flex-wrap:\s*wrap/, ".entity-undo-toast must wrap so the Undo button can drop to its own line instead of being pushed off by an unbreakable message");
+  assert.match(undoToast!, /overflow-wrap:\s*anywhere/, ".entity-undo-toast must allow a long unbreakable record label to wrap instead of overflowing the toast");
+});
+
+/**
  * Round 670: round 615 ported the orderedFields fix (honoring the user's
  * drag-reordered column order) to Export CSV, Copy, and per-record Print
  * in the exported app, and round 621 ported it to the Columns menu -- but

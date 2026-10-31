@@ -6757,6 +6757,31 @@ test("the print sheet resets its own text color so dark mode's near-white body t
 });
 
 /**
+ * New in this round (1376): `.entity-undo-toast` is `display: flex` with
+ * the message text and the "Undo" button as direct flex children, and had
+ * no `flex-wrap`/`overflow-wrap` of its own at all. The message embeds a
+ * record's own display-field value verbatim (`recordDisplayLabel`, via
+ * `t("entity.delete.undoToast", { label })`) -- an ordinary user-typed
+ * value (a SKU, slug, URL, any single long word) with no length cap. One
+ * long unbroken token forces this row's min-content width past its
+ * container, and with no wrap guard, the "Undo" button -- the only way to
+ * recover from a delete during its one 5-second window -- can be squeezed
+ * or pushed off-screen along with it. This is the same defect class this
+ * routine already fixed for `.board-card-field`/`.row-actions`/etc; jsdom
+ * has no layout engine and can't detect the real overflow (see this
+ * file's own print-sheet tests above), so this reads styles.css's own
+ * source directly.
+ */
+test("the delete-undo toast can wrap onto multiple lines instead of letting a long record label push the Undo button off-screen", () => {
+  const stylesCss = readFileSync(new URL("./styles.css", import.meta.url), "utf8");
+
+  const undoToast = stylesCss.match(/\.entity-undo-toast \{[\s\S]*?\}/)?.[0];
+  assert.ok(undoToast, "expected a .entity-undo-toast rule in styles.css");
+  assert.match(undoToast!, /flex-wrap:\s*wrap/, ".entity-undo-toast must wrap so the Undo button can drop to its own line instead of being pushed off by an unbreakable message");
+  assert.match(undoToast!, /overflow-wrap:\s*anywhere/, ".entity-undo-toast must allow a long unbreakable record label to wrap instead of overflowing the toast");
+});
+
+/**
  * CSV sibling of the print-list test above: stubs URL.createObjectURL the
  * same way BuildProgress.test.ts's own download test does (jsdom has no
  * real Blob-URL machinery) to read back the actual generated CSV content,

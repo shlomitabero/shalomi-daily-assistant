@@ -9400,7 +9400,7 @@ th, td { text-align: start; padding: 8px 10px; border-bottom: 1px solid var(--bo
 .error-retry-row { display: flex; align-items: center; gap: 10px; }
 .error-retry-row .error { margin: 0; }
 .error-retry-row button { padding: 5px 14px; border-radius: 6px; border: 1px solid var(--border); background: var(--surface); color: var(--text); cursor: pointer; font: inherit; }
-.entity-undo-toast { display: flex; align-items: center; gap: 10px; background: var(--accent-soft); border: 1px solid var(--accent); color: var(--text); padding: 8px 14px; border-radius: 8px; margin: 0 0 16px; }
+.entity-undo-toast { display: flex; align-items: center; flex-wrap: wrap; overflow-wrap: anywhere; gap: 10px; background: var(--accent-soft); border: 1px solid var(--accent); color: var(--text); padding: 8px 14px; border-radius: 8px; margin: 0 0 16px; }
 .link-button { background: none; border: none; color: var(--accent); padding: 0; text-decoration: underline; font: inherit; font-weight: 600; cursor: pointer; }
 .cell-link { color: var(--accent); text-decoration: underline; }
 .file-cell-link { display: inline-flex; align-items: center; }

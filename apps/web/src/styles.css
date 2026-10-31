@@ -902,6 +902,13 @@ button.danger:hover:not(:disabled) {
 .entity-undo-toast {
   display: flex;
   align-items: center;
+  /* Round 1376: the message text and the Undo button are direct flex
+     children with no wrap guard -- a record whose display-field value is
+     one long unbroken token (a SKU, slug, URL) forced this row wider than
+     intended and could push Undo itself off-screen during its one
+     5-second undo window. */
+  flex-wrap: wrap;
+  overflow-wrap: anywhere;
   gap: 10px;
   background: var(--accent-soft);
   border: 1px solid var(--accent);
