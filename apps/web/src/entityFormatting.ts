@@ -2269,7 +2269,9 @@ export function formatEntityRecordCount(
   total: number,
   t: (key: string, params?: Record<string, string | number>) => string,
 ): string {
-  return shown === total ? t("entity.recordCount.all", { count: total }) : t("entity.recordCount.filtered", { shown, total });
+  return shown === total
+    ? t(total === 1 ? "entity.recordCount.all.one" : "entity.recordCount.all.many", { count: total })
+    : t(total === 1 ? "entity.recordCount.filtered.one" : "entity.recordCount.filtered.many", { shown, total });
 }
 
 /**

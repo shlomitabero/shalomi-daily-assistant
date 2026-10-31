@@ -1096,6 +1096,28 @@ test("the exported EntityView wires up a calendar 'Subscribe' button next to the
 });
 
 /**
+ * Round 1398: the exported app's own formatEntityRecordCount (no i18n here,
+ * so the English phrasing is hardcoded, mirroring the live preview's
+ * entity.recordCount.all/.filtered strings) always said "records" even for
+ * a total of exactly 1 -- "1 records" / "0 of 1 records". Both the
+ * unfiltered and filtered phrasings need their own singular branch.
+ */
+test("the exported EntityView's formatEntityRecordCount uses the singular form when the total is exactly 1", () => {
+  const entityViewJsx = generateExportFiles(project).find((f) => f.path === "web/src/components/EntityView.jsx")!.content;
+  const formatEntityRecordCountSrc = entityViewJsx.match(/function formatEntityRecordCount\(shown, total\) \{[\s\S]*?\n\}\n/)?.[0];
+  assert.ok(formatEntityRecordCountSrc, "expected to find formatEntityRecordCount in the generated EntityView.jsx");
+
+  const formatEntityRecordCount = new Function(`${formatEntityRecordCountSrc}\nreturn formatEntityRecordCount;`)() as (
+    shown: number,
+    total: number,
+  ) => string;
+  assert.equal(formatEntityRecordCount(12, 12), "12 records");
+  assert.equal(formatEntityRecordCount(3, 12), "3 of 12 records");
+  assert.equal(formatEntityRecordCount(1, 1), "1 record", "an unfiltered total of exactly 1 must read 'record', not 'records'");
+  assert.equal(formatEntityRecordCount(0, 1), "0 of 1 record", "a filtered-to-zero total of exactly 1 must read 'record', not 'records'");
+});
+
+/**
  * Round 1258: the client-side half of the combined-feed port -- confirms
  * the generated App.jsx actually wires up an app-header "Subscribe (all
  * calendars)" button, next to the existing "Backup All Data" link, that

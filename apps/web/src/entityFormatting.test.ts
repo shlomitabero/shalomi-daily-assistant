@@ -3282,6 +3282,28 @@ test("formatEntityRecordCount renders in Hebrew when given the Hebrew translator
 });
 
 /**
+ * New in this round: a project with exactly one record (a brand-new entity,
+ * or one filtered down to a single match) read as "1 records"/"1 מתוך 1
+ * רשומות" -- the plural form unconditionally, same missing-singular-form
+ * bug already fixed across search/bulk-delete/badge counters elsewhere in
+ * the app. Both the "all" and "filtered" phrasings need their own singular
+ * branch on total === 1, not just the already-correct shown === total gate.
+ */
+test("formatEntityRecordCount uses the singular form when the total is exactly 1 (unfiltered)", () => {
+  const en = (key: string, params?: Record<string, string | number>) => translate("en", key, params);
+  const he = (key: string, params?: Record<string, string | number>) => translate("he", key, params);
+  assert.equal(formatEntityRecordCount(1, 1, en), "1 record");
+  assert.equal(formatEntityRecordCount(1, 1, he), "1 רשומה");
+});
+
+test("formatEntityRecordCount uses the singular form when the total is exactly 1 (filtered down to zero)", () => {
+  const en = (key: string, params?: Record<string, string | number>) => translate("en", key, params);
+  const he = (key: string, params?: Record<string, string | number>) => translate("he", key, params);
+  assert.equal(formatEntityRecordCount(0, 1, en), "0 of 1 record");
+  assert.equal(formatEntityRecordCount(0, 1, he), "0 מתוך 1 רשומה");
+});
+
+/**
  * New in this round: clicking a calendar day now pre-fills the create form
  * with that day's own date. Must round-trip through LOCAL date parts
  * (matching parseFieldDate's own construction in buildCalendarMonth above),

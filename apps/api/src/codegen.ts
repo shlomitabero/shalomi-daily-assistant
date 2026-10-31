@@ -1855,7 +1855,9 @@ function uniqueEnumValues(values) {
 // no translator here since this exported app has no i18n, so the English
 // phrasing is hardcoded, matching entity.recordCount.all/.filtered's EN strings.
 function formatEntityRecordCount(shown, total) {
-  return shown === total ? \`\${total} records\` : \`\${shown} of \${total} records\`;
+  return shown === total
+    ? \`\${total} \${total === 1 ? "record" : "records"}\`
+    : \`\${shown} of \${total} \${total === 1 ? "record" : "records"}\`;
 }
 
 function emptyForm(entity) {
