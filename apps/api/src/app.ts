@@ -65,6 +65,26 @@ export function createApp(
   app.set("trust proxy", 1);
   app.use(cors());
   app.use(express.json());
+  /**
+   * Round 1406: without this, `express.json()` above silently leaves
+   * `req.body` as `{}` -- no error, nothing logged -- for any request whose
+   * Content-Type isn't exactly `application/json`. A plain HTML
+   * `<form method="POST">`, submitted natively with no JavaScript, sends
+   * `application/x-www-form-urlencoded` by default -- which is exactly the
+   * "a website's own form handler" integration routes/webhookIn.ts's own
+   * doc comment names as a target consumer of the round-1405 inbound
+   * webhook feature. Before this, that exact use case either 400'd with a
+   * confusing "field X is required" error for data that genuinely was
+   * submitted (if the entity has any required field), or silently created
+   * a completely blank record and fired its automation fan-out with every
+   * field empty (if it doesn't) -- both for a real, non-malicious
+   * integration doing exactly what the feature advertises it supports.
+   * Purely additive: it only ever populates `req.body` for a request whose
+   * Content-Type actually is form-urlencoded, which previously produced an
+   * empty object regardless -- no existing route's behavior for a JSON (or
+   * any other) body changes.
+   */
+  app.use(express.urlencoded({ extended: true }));
 
   const whatsappManager =
     whatsapp ?? new WhatsAppWebManager({ db, sessionsRootDir: path.join(os.tmpdir(), "forge-whatsapp-sessions") });

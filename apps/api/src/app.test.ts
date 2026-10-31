@@ -19077,6 +19077,56 @@ test("GET /projects/:id/inbound-webhook-token returns a real, persisted token th
   );
 });
 
+/**
+ * Round 1406: before `express.urlencoded()` was registered in app.ts,
+ * `express.json()` alone silently left `req.body` as `{}` -- no error --
+ * for any request whose Content-Type wasn't exactly `application/json`.
+ * A plain HTML `<form method="POST">`, submitted natively with no
+ * JavaScript, sends `application/x-www-form-urlencoded` by default --
+ * exactly the "a website's own form handler" integration this route's own
+ * doc comment names as a target consumer. Confirms the real submitted
+ * field actually reaches the created record, not just that the call
+ * returns 201.
+ */
+test("POST /public/webhook-in/:projectId/:entityName accepts a plain HTML form's application/x-www-form-urlencoded submission, not just JSON", async () => {
+  await withServer(async (baseUrl, db) => {
+    const email = `webhook-in-urlencoded-${randomUUID()}@example.com`;
+    const authToken = await signup(baseUrl, email);
+    const user = findUserByEmail(db, email)!;
+    const spec: ProductSpec = {
+      summary: "test",
+      personas: [],
+      roles: ["Admin"],
+      entities: [{ name: "Lead", fields: [{ name: "name", type: "text", required: true }, { name: "phone", type: "text" }] }],
+      screens: [],
+      assumptions: [],
+      openQuestions: [],
+    };
+    const projectId = randomUUID();
+    insertProject(db, { id: projectId, ownerId: user.id, name: "CRM", description: "test", spec });
+    diffAndMigrate(db, projectId, undefined, spec);
+    markProjectBuilt(db, projectId);
+
+    const tokenRes = await fetch(`${baseUrl}/api/projects/${projectId}/inbound-webhook-token`, { headers: authHeaders(authToken) });
+    const { token: webhookToken } = (await tokenRes.json()) as { token: string };
+
+    const webhookRes = await fetch(`${baseUrl}/api/public/webhook-in/${projectId}/Lead?token=${webhookToken}`, {
+      method: "POST",
+      headers: { "Content-Type": "application/x-www-form-urlencoded" },
+      body: "name=Dana&phone=972500000001",
+    });
+    assert.equal(webhookRes.status, 201, "a real HTML form submission must not be rejected as if no required field was sent");
+    const { id: recordId } = (await webhookRes.json()) as { id: string };
+
+    const listRes = await fetch(`${baseUrl}/api/projects/${projectId}/entities/Lead`, { headers: authHeaders(authToken) });
+    const { records } = (await listRes.json()) as { records: { id: string; name: string; phone: string }[] };
+    const created = records.find((r) => r.id === recordId);
+    assert.ok(created, "expected the record the route reported creating to actually exist");
+    assert.equal(created!.name, "Dana", "the real form-submitted field value must actually reach the created record, not be silently dropped");
+    assert.equal(created!.phone, "972500000001");
+  });
+});
+
 test("POST /public/webhook-in/:projectId/:entityName 404s for a missing, wrong, or never-requested token, a nonexistent entity, or a nonexistent project -- the token itself is the only authentication", async () => {
   await withServer(async (baseUrl, db) => {
     const email = `webhook-in-bad-${randomUUID()}@example.com`;
