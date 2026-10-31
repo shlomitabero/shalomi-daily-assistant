@@ -962,6 +962,16 @@ export function WhatsAppPanel({
   }
 
   async function handleRetry(m: WhatsAppMessageLogEntry) {
+    // Round 1401: mirrors handleSendTest's own round-1364 fix -- the
+    // disabled={retryingId !== null} prop on the Retry button only takes
+    // effect after a render commits, not synchronously on click, so a
+    // fast double-click (especially on a plain-text message, which has no
+    // blocking window.confirm() to slow the second click down) fires this
+    // function twice before the first setRetryingId(m.id) below has had a
+    // chance to re-render. Each call mints its own fresh idempotency key
+    // (api.ts's sendWhatsAppMessage), so nothing server-side dedupes them
+    // either -- the real recipient got the message sent twice.
+    if (retryingId !== null) return;
     // Round 1101: the original attachment file is already gone by the
     // time this row even exists (the send route deletes it right after
     // whatsapp.sendMessage() resolves, win or lose, round 979) -- so

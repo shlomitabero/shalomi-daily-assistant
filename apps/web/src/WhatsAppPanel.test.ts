@@ -6131,6 +6131,33 @@ test("WhatsAppPanel's Retry button resends immediately with no confirm prompt wh
 });
 
 /**
+ * Round 1401: the same bug class rounds 1363/1364 closed elsewhere in this
+ * file (handleRemoveAttachment/handleResetTestForm/handleReplyToMessage/
+ * handleSendTest) -- handleRetry had no guard against racing ITSELF. The
+ * button's own `disabled={retryingId !== null}` prop is a real guard
+ * against a SECOND test-harness click (jsdom's fireEvent.click respects
+ * the disabled attribute, and React's act()-wrapped re-render already
+ * applies it before a second synchronous fireEvent.click would fire) --
+ * but a genuinely fast real double-click can still land both native click
+ * events before the browser's own next paint commits that attribute, and
+ * for a plain-text message there's no blocking window.confirm() to slow
+ * the second one down either. Extracted and called with ONLY `retryingId`
+ * declared, mirroring this file's own established pattern just above
+ * (handleRemoveAttachment/handleResetTestForm/handleReplyToMessage) and
+ * round 1013/1118's identical technique elsewhere -- if the guard were
+ * ever removed, the very next line reached (`setRetryingId`) throws a
+ * ReferenceError instead of silently doing nothing, proving the guard
+ * itself is what's stopping execution.
+ */
+test("WhatsAppPanel's handleRetry is a no-op while retryingId is already set", async () => {
+  const handlerMatch = whatsAppPanelSrc.match(/ {2}async function handleRetry\(m: WhatsAppMessageLogEntry\) \{[\s\S]*?\n {2}\}\n/);
+  assert.ok(handlerMatch, "expected to find handleRetry in WhatsAppPanel.tsx");
+  const { code } = transformSync(handlerMatch![0], { loader: "ts" });
+  const fn = new Function("retryingId", `${code}\nreturn handleRetry;`)("m0") as (m: unknown) => Promise<void>;
+  await fn({ id: "m1", hadAttachment: false, toNumber: "972521112233", body: "hello" });
+});
+
+/**
  * Round 1360: following up on the same fix just applied to
  * GlobalSearchPanel's own group-header entity label, this message log row
  * had an identical gap -- `.whatsapp-log-who` (the sender display, used by
