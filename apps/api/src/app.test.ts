@@ -2684,6 +2684,85 @@ test("creating or updating a field_equals automation rule with a fieldValue that
 });
 
 /**
+ * Round 1403: CreateAutomationRuleSchema/UpdateAutomationRuleSchema's
+ * free-text fields (messageTemplate/webhookUrl/webhookSecret/toEmail/
+ * emailSubject/toNumber/toField/fieldName/fieldValue) had a `.min(1)`
+ * floor but no `.max()` ceiling -- only Express's own default 100KB JSON
+ * body limit bounded them. A rule is saved once, cheaply, then fires on
+ * every matching record create/update/delete (recordWriteRateLimiter
+ * alone permits 500/15min per account), so an oversized messageTemplate
+ * turned one ~100KB rule-creation request into tens of megabytes of real
+ * outbound WhatsApp/email/webhook traffic per 15-minute window, sustained
+ * indefinitely by scripting ordinary record creation against an
+ * already-saved rule. Confirms an oversized messageTemplate/webhookUrl is
+ * rejected with a clean 400 on both create and update, and a
+ * comfortably-sized one is still accepted (the cap must not be so tight
+ * it rejects a genuine, realistic message).
+ */
+test("an automation rule's free-text fields (messageTemplate, webhookUrl) are rejected with 400 past a generous but real length cap, on both create and update", async () => {
+  await withServer(async (baseUrl) => {
+    const token = await signup(baseUrl, "automation-field-length-cap@example.com");
+    const createRes = await fetch(`${baseUrl}/api/projects`, {
+      method: "POST",
+      headers: authHeaders(token),
+      body: JSON.stringify({ description: "A CRM with customers and deals." }),
+    });
+    const { project } = (await createRes.json()) as { project: { id: string; spec: { entities: { name: string }[] } } };
+    const entityName = project.spec.entities[0]!.name;
+
+    const oversizedTemplateRes = await fetch(`${baseUrl}/api/projects/${project.id}/entities/${entityName}/automations`, {
+      method: "POST",
+      headers: authHeaders(token),
+      body: JSON.stringify({
+        trigger: "record_created",
+        actionType: "send_whatsapp",
+        toMode: "static",
+        toNumber: "972500000000",
+        messageTemplate: "x".repeat(5000),
+      }),
+    });
+    assert.equal(oversizedTemplateRes.status, 400, "a 5000-character messageTemplate must be rejected, not silently saved as a real amplification vector");
+    assert.equal(((await oversizedTemplateRes.json()) as { code?: string }).code, "VALIDATION_ERROR");
+
+    const oversizedWebhookUrlRes = await fetch(`${baseUrl}/api/projects/${project.id}/entities/${entityName}/automations`, {
+      method: "POST",
+      headers: authHeaders(token),
+      body: JSON.stringify({
+        trigger: "record_created",
+        actionType: "webhook",
+        toMode: "static",
+        webhookUrl: `https://example.com/${"a".repeat(3000)}`,
+        messageTemplate: "hi",
+      }),
+    });
+    assert.equal(oversizedWebhookUrlRes.status, 400);
+    assert.equal(((await oversizedWebhookUrlRes.json()) as { code?: string }).code, "VALIDATION_ERROR");
+
+    const goodRes = await fetch(`${baseUrl}/api/projects/${project.id}/entities/${entityName}/automations`, {
+      method: "POST",
+      headers: authHeaders(token),
+      body: JSON.stringify({
+        trigger: "record_created",
+        actionType: "send_whatsapp",
+        toMode: "static",
+        toNumber: "972500000000",
+        messageTemplate: "A perfectly normal, realistic message a real user would actually write.",
+      }),
+    });
+    assert.equal(goodRes.status, 201, "a comfortably-sized, realistic messageTemplate must still be accepted -- the cap must not be too tight");
+    const { rule } = (await goodRes.json()) as { rule: { id: string } };
+
+    const patchRes = await fetch(`${baseUrl}/api/projects/${project.id}/automations/${rule.id}`, {
+      method: "PATCH",
+      headers: authHeaders(token),
+      body: JSON.stringify({ messageTemplate: "x".repeat(5000) }),
+    });
+    assert.equal(patchRes.status, 400, "the same cap must apply to PATCH, not just the original creation");
+    assert.equal(((await patchRes.json()) as { code?: string }).code, "VALIDATION_ERROR");
+  });
+});
+
+/**
  * Round 748: validateAutomationFieldValue had branches for boolean/enum/
  * date/number/relation (the same gap round 595/607/613 each closed one
  * field type at a time) but never one for "file" -- a file field's real

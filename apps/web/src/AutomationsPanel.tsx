@@ -1461,6 +1461,7 @@ export function AutomationsPanel({
                   aria-label={t("automations.fieldValue.placeholder")}
                   value={fieldValue}
                   onChange={(e) => setFieldValue(e.target.value)}
+                  maxLength={2000}
                 />
               )}
             </>
@@ -1483,6 +1484,7 @@ export function AutomationsPanel({
                 aria-label={t("automations.webhookUrl.placeholder")}
                 value={webhookUrl}
                 onChange={(e) => setWebhookUrl(e.target.value)}
+                maxLength={2000}
               />
               <p className="muted small">{t("automations.webhookUrl.hint")}</p>
               {/* Round 1324: webhookSecret is a real external credential
@@ -1542,6 +1544,7 @@ export function AutomationsPanel({
                   aria-label={t("automations.toEmail.placeholder")}
                   value={toEmail}
                   onChange={(e) => setToEmail(e.target.value)}
+                  maxLength={320}
                 />
               ) : (
                 <input
@@ -1550,6 +1553,7 @@ export function AutomationsPanel({
                   aria-label={t("automations.toNumber.placeholder")}
                   value={toNumber}
                   onChange={(e) => setToNumber(e.target.value)}
+                  maxLength={50}
                 />
               )}
 
@@ -1561,6 +1565,7 @@ export function AutomationsPanel({
                     aria-label={t(trigger === "schedule" ? "automations.emailSubject.placeholder.schedule" : "automations.emailSubject.placeholder")}
                     value={emailSubject}
                     onChange={(e) => setEmailSubject(e.target.value)}
+                    maxLength={500}
                   />
                   {/* Round 1399: mirrors round 868's own fix for the sibling
                       Message field just below -- fireScheduledRule (automations.ts)
@@ -1582,6 +1587,7 @@ export function AutomationsPanel({
               placeholder={t(trigger === "schedule" ? "automations.messageTemplate.placeholder.schedule" : "automations.messageTemplate.placeholder")}
               value={messageTemplate}
               onChange={(e) => setMessageTemplate(e.target.value)}
+              maxLength={4000}
             />
           </label>
           {/* Round 868: a schedule rule has no triggering record at all --

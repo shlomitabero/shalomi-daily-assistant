@@ -198,11 +198,25 @@ const ScheduleTimezoneSchema = z
   .min(1)
   .refine(isValidIanaTimeZone, "scheduleTimezone must be a real IANA time zone name (e.g. \"Asia/Jerusalem\")");
 
+/*
+ * Round 1403: every one of this schema's (and UpdateAutomationRuleSchema's
+ * below) free-text fields had a `.min(1)` floor but no `.max()` ceiling --
+ * only Express's own default 100KB JSON body limit (app.ts's
+ * `express.json()` sets no `limit`) bounded them. A rule is created once,
+ * cheaply, and then fires on every matching record create/update/delete
+ * (recordWriteRateLimiter alone permits 500/15min per account) -- so an
+ * oversized `messageTemplate`/`webhookUrl` turns one ~100KB rule-creation
+ * request into tens of megabytes of real outbound WhatsApp/email/webhook
+ * traffic per 15-minute window, sustained indefinitely by scripting
+ * ordinary record creation against a rule already saved. These caps are
+ * generous for any real message/URL/secret but far below the body limit,
+ * closing the amplification without touching legitimate use.
+ */
 const CreateAutomationRuleSchema = z
   .object({
     trigger: z.enum(["record_created", "field_equals", "schedule", "record_deleted", "record_updated"]),
-    fieldName: z.string().min(1).optional(),
-    fieldValue: z.string().min(1).optional(),
+    fieldName: z.string().min(1).max(200).optional(),
+    fieldValue: z.string().min(1).max(2000).optional(),
     scheduleTimeUtc: z.string().regex(SCHEDULE_TIME_UTC_PATTERN, "scheduleTimeUtc must be \"HH:MM\" in 24-hour UTC").optional(),
     scheduleDaysOfWeek: z
       .string()
@@ -211,13 +225,13 @@ const CreateAutomationRuleSchema = z
     scheduleTimezone: ScheduleTimezoneSchema.optional(),
     actionType: z.enum(["send_whatsapp", "webhook", "send_email"]),
     toMode: z.enum(["static", "field"]),
-    toNumber: z.string().min(1).optional(),
-    toField: z.string().min(1).optional(),
-    webhookUrl: z.string().min(1).optional(),
-    webhookSecret: z.string().min(1).optional(),
-    toEmail: z.string().email("toEmail must be a valid email address").optional(),
-    emailSubject: z.string().min(1).optional(),
-    messageTemplate: z.string().min(1, "messageTemplate is required"),
+    toNumber: z.string().min(1).max(50).optional(),
+    toField: z.string().min(1).max(200).optional(),
+    webhookUrl: z.string().min(1).max(2000).optional(),
+    webhookSecret: z.string().min(1).max(500).optional(),
+    toEmail: z.string().email("toEmail must be a valid email address").max(320).optional(),
+    emailSubject: z.string().min(1).max(500).optional(),
+    messageTemplate: z.string().min(1, "messageTemplate is required").max(4000),
   })
   .refine((data) => data.trigger !== "field_equals" || (!!data.fieldName && !!data.fieldValue), {
     message: "fieldName and fieldValue are required when trigger is field_equals",
@@ -266,8 +280,8 @@ const CreateAutomationRuleSchema = z
 
 const UpdateAutomationRuleSchema = z.object({
   trigger: z.enum(["record_created", "field_equals", "schedule", "record_deleted", "record_updated"]).optional(),
-  fieldName: z.string().min(1).nullable().optional(),
-  fieldValue: z.string().min(1).nullable().optional(),
+  fieldName: z.string().min(1).max(200).nullable().optional(),
+  fieldValue: z.string().min(1).max(2000).nullable().optional(),
   scheduleTimeUtc: z.string().regex(SCHEDULE_TIME_UTC_PATTERN, "scheduleTimeUtc must be \"HH:MM\" in 24-hour UTC").nullable().optional(),
   scheduleDaysOfWeek: z
     .string()
@@ -277,13 +291,13 @@ const UpdateAutomationRuleSchema = z.object({
   scheduleTimezone: ScheduleTimezoneSchema.nullable().optional(),
   actionType: z.enum(["send_whatsapp", "webhook", "send_email"]).optional(),
   toMode: z.enum(["static", "field"]).optional(),
-  toNumber: z.string().min(1).nullable().optional(),
-  toField: z.string().min(1).nullable().optional(),
-  webhookUrl: z.string().min(1).nullable().optional(),
-  webhookSecret: z.string().min(1).nullable().optional(),
-  toEmail: z.string().email("toEmail must be a valid email address").nullable().optional(),
-  emailSubject: z.string().min(1).nullable().optional(),
-  messageTemplate: z.string().min(1).optional(),
+  toNumber: z.string().min(1).max(50).nullable().optional(),
+  toField: z.string().min(1).max(200).nullable().optional(),
+  webhookUrl: z.string().min(1).max(2000).nullable().optional(),
+  webhookSecret: z.string().min(1).max(500).nullable().optional(),
+  toEmail: z.string().email("toEmail must be a valid email address").max(320).nullable().optional(),
+  emailSubject: z.string().min(1).max(500).nullable().optional(),
+  messageTemplate: z.string().min(1).max(4000).optional(),
   enabled: z.boolean().optional(),
 });
 
