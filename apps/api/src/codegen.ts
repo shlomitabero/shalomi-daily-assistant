@@ -5466,6 +5466,7 @@ export function EntityView({ entity, highlightRecordId, onHighlightHandled, onJu
     // EntityPanel.tsx relationTargets fix (round 1178).
     return [...new Set(names)].filter((name) => ALL_ENTITIES.some((e) => e.name.toLowerCase() === name.toLowerCase()));
   }, [entity.fields]);
+  const fieldNamesKey = useMemo(() => entity.fields.map((f) => f.name).join(","), [entity.fields]);
 
   useEffect(() => {
     let cancelled = false;
@@ -5624,6 +5625,41 @@ export function EntityView({ entity, highlightRecordId, onHighlightHandled, onJu
     refresh();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [entity.name]);
+
+  // Round 1387: mirrors the live Forge AI preview's own EntityPanel.tsx fix
+  // for the exact same gap -- App.tsx keys this panel by entity.name alone,
+  // so a Time Machine restore (or a refine) that brings a field back onto
+  // the entity currently open re-renders this SAME mounted instance with a
+  // new \`entity\` object instead of remounting it. The reset effect just
+  // above only ever depended on [entity.name], so it never refetched for
+  // that case, leaving \`records\` holding whatever rowToRecord returned
+  // BEFORE the field existed again -- which never had that field's own key
+  // at all. The restored column then rendered blank for every row even
+  // though the real data was never touched (switching entity tabs and back
+  // immediately showed the real values, since that remounts).
+  //
+  // Only a field NAME that's genuinely new relative to the last fetch needs
+  // a refetch; a field being REMOVED doesn't (the already-fetched records
+  // just keep one extra, now-ignored key, which is harmless), so this is
+  // its own dedicated effect rather than added to the reset effect above --
+  // that effect's own setFieldFilters/setSortKeys/etc. calls are safe to
+  // repeat on any field-list change, but refresh()'s \`loading\` flip isn't
+  // worth paying for a pure removal. isSameEntity guards against this
+  // effect ALSO firing its own refresh() on mount/entity-switch, which the
+  // reset effect above already covers unconditionally -- without it, both
+  // effects would call refresh() together on every mount, double-fetching.
+  const seenFieldNamesRef = useRef(null);
+  const lastWatchedEntityNameRef = useRef(null);
+  useEffect(() => {
+    const currentFieldNames = entity.fields.map((f) => f.name);
+    const isSameEntity = lastWatchedEntityNameRef.current === entity.name;
+    lastWatchedEntityNameRef.current = entity.name;
+    const hasNewField = isSameEntity && seenFieldNamesRef.current !== null && currentFieldNames.some((name) => !seenFieldNamesRef.current.has(name));
+    seenFieldNamesRef.current = new Set(currentFieldNames);
+    if (!isSameEntity || !hasNewField) return;
+    refresh();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [entity.name, fieldNamesKey]);
 
   // Multi-row selection is only ever settable from Table view -- Board's
   // own card and the calendar day cells have no selection checkbox at all

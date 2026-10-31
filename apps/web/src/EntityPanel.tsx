@@ -1862,6 +1862,12 @@ export function EntityPanel({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [entity.name, records.length]);
 
+  // Moved above the refresh/reset effect below (round 1387) so that effect
+  // can depend on it too -- see that effect's own comment. Still read by
+  // the hiddenFields/sortKeys effects further down this file, same as
+  // before.
+  const fieldNamesKey = useMemo(() => entity.fields.map((f) => f.name).join(","), [entity.fields]);
+
   /**
    * A record mid-undo-window (handleDelete/handleBulkDelete's own
    * pendingDeleteRef) still genuinely exists server-side -- its real
@@ -1930,7 +1936,44 @@ export function EntityPanel({
     }
   }
 
+  // Round 1387: a Time Machine restore or a Refine can change which fields
+  // exist on the CURRENTLY ACTIVE entity without changing its name (e.g.
+  // restoring a checkpoint that brings a dropped field back) -- App.tsx
+  // keys this panel's own React element by entity.name alone (see its own
+  // `key={entity.name}`), so React re-renders the SAME mounted instance
+  // with a new `entity` object rather than remounting it. This effect used
+  // to depend on [entity.name] only, so it never re-ran refresh() for that
+  // case, leaving `records` holding whatever rowToRecord (repository.ts)
+  // returned BEFORE the field existed again -- which never had that
+  // field's own key at all, since rowToRecord only emits keys for fields
+  // present in the CURRENT spec at fetch time. The already-rendered table
+  // then showed every row's restored column as blank, even though the
+  // real column data was never touched server-side (a plain tab switch,
+  // which does remount, immediately showed the real values again) --
+  // directly undercutting Time Machine's own "nothing here deletes
+  // existing data" promise right after a successful restore.
+  //
+  // Only a field NAME that genuinely wasn't present before now (added by a
+  // refine, or a dropped field reappearing via restore) needs this -- a
+  // field being REMOVED never does: the already-fetched `records` simply
+  // keep one extra, now-ignored key, which is harmless (this is the same
+  // "removal alone needs no correction" reasoning columnWidths/sortKeys'
+  // own fieldNamesKey-keyed effects below already rely on, just applied to
+  // a refetch instead of a persisted-preference filter). Without this
+  // narrower check, EVERY field-list change -- including a pure removal --
+  // would re-run refresh() and its own `loading` flip, which replaces the
+  // whole table with a loading state for a moment (see the `loading ? ...`
+  // branch below) for no reason: nothing was ever stale in the
+  // removal-only case. seenFieldNamesRef starts at `null` so the very
+  // first render (mount) always treats every field as "new" and refreshes,
+  // matching this effect's original always-fetch-on-mount behavior.
+  const seenFieldNamesRef = useRef<Set<string> | null>(null);
   useEffect(() => {
+    const currentFieldNames = entity.fields.map((f) => f.name);
+    const hasNewField = seenFieldNamesRef.current === null || currentFieldNames.some((name) => !seenFieldNamesRef.current!.has(name));
+    seenFieldNamesRef.current = new Set(currentFieldNames);
+    if (!hasNewField) return;
+
     setForm(emptyForm(entity));
     setEditingId(null);
     setSearch("");
@@ -1943,7 +1986,7 @@ export function EntityPanel({
     setEditingCell(null);
     void refresh();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [entity.name]);
+  }, [entity.name, fieldNamesKey]);
 
   // Same reasoning as hiddenFields' own effect just above -- this entity's
   // recent search history is scoped per project+entity too.
@@ -2163,7 +2206,8 @@ export function EntityPanel({
   // visible with nothing to clear, and a surviving second sort key kept
   // its stale array index, misnumbering its own priority badge and
   // reporting the wrong column via aria-sort.
-  const fieldNamesKey = useMemo(() => entity.fields.map((f) => f.name).join(","), [entity.fields]);
+  // (fieldNamesKey itself is now defined earlier in this component, above
+  // the refresh/reset effect -- see round 1387's comment there.)
   // Only read by the fieldFilters effect just below, not this one --
   // sorting by a retyped field's own raw value is harmless (visually odd
   // at worst), unlike a filter whose stored value's shape can stop

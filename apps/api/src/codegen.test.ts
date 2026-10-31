@@ -21461,6 +21461,103 @@ test("the exported EntityView's view-mode choice actually survives an unmount+re
 });
 
 /**
+ * Round 1387: mirrors the live Forge AI preview's own EntityPanel.tsx fix
+ * for the exact same gap. App.jsx keys this component by entity.name alone,
+ * so a Time Machine restore (or a refine) that brings a field back onto the
+ * entity currently open re-renders this SAME mounted EntityView instance
+ * with a new `entity` object instead of remounting it -- a live prop
+ * update, not a reload, which is why this is a `.rerender()` test rather
+ * than the unmount+remount pattern the tests just above use. Before this
+ * fix, the reset effect only ever depended on [entity.name], so it never
+ * refetched for that case, leaving `records` holding whatever the server
+ * returned BEFORE the field existed again -- which never had that field's
+ * own key at all (mirrors packages/db/src/repository.ts's rowToRecord,
+ * which only emits a key for a field present in the CURRENT spec at fetch
+ * time). The restored column then rendered every row's own cell as the
+ * generated Cell component's blank-value placeholder ("--") forever, even
+ * though the real data was never touched server-side.
+ */
+test("the exported EntityView refetches records when the active entity's own field list changes without the panel remounting, instead of rendering already-restored data as blank", async () => {
+  const files = generateExportFiles(project);
+  const dir = writeGeneratedWebComponent(files);
+  const originalFetch = globalThis.fetch;
+  const customerEntity = project.spec.entities.find((e) => e.name === "Customer")!;
+  const entityWithCompany: Entity = {
+    ...customerEntity,
+    fields: [...customerEntity.fields, { name: "company", label: "Company", type: "text", required: false }],
+  };
+
+  let fetchCount = 0;
+  globalThis.fetch = (async () => {
+    fetchCount += 1;
+    // First fetch mirrors rowToRecord's own real behavior: a record fetched
+    // while "company" didn't yet exist on the entity's spec never had that
+    // key at all, not an empty one.
+    if (fetchCount === 1) {
+      return { ok: true, status: 200, json: async () => ({ records: [{ id: 1, name: "Alice", status: "New" }] }) };
+    }
+    return {
+      ok: true,
+      status: 200,
+      json: async () => ({ records: [{ id: 1, name: "Alice", status: "New", company: "Raw Materials Ltd." }] }),
+    };
+  }) as typeof fetch;
+
+  async function waitForCondition(predicate: () => boolean, message: string): Promise<void> {
+    for (let i = 0; i < 40; i++) {
+      if (predicate()) return;
+      await act(async () => {
+        await new Promise((resolve) => setTimeout(resolve, 0));
+      });
+    }
+    throw new Error(message);
+  }
+
+  try {
+    await withRealLocalStorage(async () => {
+      const { EntityView } = await import(path.join(dir, "web", "src", "components", "EntityView.jsx"));
+      const props = {
+        entity: customerEntity,
+        highlightRecordId: null,
+        onHighlightHandled: () => {},
+        onJumpToRecord: () => {},
+        onRecordCountChange: () => {},
+      };
+
+      const view = render(React.createElement(EntityView, props));
+      await waitForCondition(
+        () => fetchCount === 1 && (view.container.textContent || "").includes("Alice"),
+        "the first fetch for the entity without the 'company' field never completed",
+      );
+      assert.ok(
+        !(view.container.textContent || "").includes("Raw Materials Ltd."),
+        "sanity check: the restored company value must not be visible before the field exists on the entity",
+      );
+
+      // Same entity.name, a field list that now includes "company" -- the
+      // exact shape of a live Time Machine restore or refine re-rendering
+      // this already-mounted instance, never a remount.
+      view.rerender(React.createElement(EntityView, { ...props, entity: entityWithCompany }));
+
+      await waitForCondition(
+        () => fetchCount === 2,
+        "EntityView never refetched after its own field list gained a field without the component remounting",
+      );
+      await waitForCondition(
+        () => (view.container.textContent || "").includes("Raw Materials Ltd."),
+        "the restored company value never rendered -- EntityView kept showing the stale pre-restore record forever",
+      );
+
+      view.unmount();
+    });
+  } finally {
+    globalThis.fetch = originalFetch;
+    cleanup();
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+/**
  * Real-DOM companion to the field-filters assertions folded into the
  * pure-function store test above (round 339): proves the actual generated
  * EntityView component -- not just its store helpers in isolation --

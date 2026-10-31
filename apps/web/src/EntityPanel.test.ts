@@ -8598,6 +8598,73 @@ test("EntityPanel drops a persisted column width when a live refine REMOVES that
 });
 
 /**
+ * Round 1387: found via a live Playwright session against the production
+ * build. A Time Machine restore (or a refine) can bring a previously
+ * dropped field back onto the CURRENTLY ACTIVE entity without changing its
+ * name -- App.tsx keys this panel by entity.name alone, so React re-renders
+ * the SAME mounted instance with a new `entity` object rather than
+ * remounting it (the same no-remount precondition rounds 882/892/985/1073
+ * already rely on). The refresh/reset effect used to depend on
+ * [entity.name] only, so it never re-ran refresh() for this case -- the
+ * already-fetched `records` state (captured BEFORE the field existed
+ * again) stayed exactly as it was, and since repository.ts's own
+ * rowToRecord only ever emits a key for a field present in the CURRENT
+ * spec at fetch time, those cached records never had the restored field's
+ * key at all. The table then rendered every row's restored column as
+ * blank, even though the real column data was never touched server-side
+ * (a plain tab switch away and back, which DOES remount, immediately
+ * showed the real values again) -- directly undercutting Time Machine's
+ * own "nothing here deletes existing data" promise right after a
+ * successful restore.
+ */
+test("EntityPanel refetches records when the active entity's own field list changes without the panel remounting, instead of rendering already-restored data as blank", async () => {
+  await withJsdom(async () => {
+    const dealWithoutCompany: Entity = {
+      name: "Deal",
+      label: "Deal",
+      fields: [{ name: "name", label: "Name", type: "text", required: true }],
+    };
+    const dealWithCompany: Entity = {
+      name: "Deal",
+      label: "Deal",
+      fields: [
+        { name: "name", label: "Name", type: "text", required: true },
+        { name: "company", label: "Company", type: "text", required: false },
+      ],
+    };
+    let fetchCount = 0;
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = (async (input: string) => {
+      if (input === "/api/projects/proj1/entities/Deal") {
+        fetchCount += 1;
+        // Mirrors repository.ts's own rowToRecord: the server only ever
+        // emits a key for a field present in the CURRENT spec at fetch
+        // time -- the first fetch (while "company" is dropped) genuinely
+        // never had that key at all, even though the real column data was
+        // never touched.
+        const record = fetchCount === 1 ? { id: 1, name: "Acme Corp" } : { id: 1, name: "Acme Corp", company: "Raw Materials Ltd." };
+        return new Response(JSON.stringify({ records: [record] }), { status: 200, headers: { "content-type": "application/json" } });
+      }
+      throw new Error(`unexpected request ${input}`);
+    }) as typeof fetch;
+    try {
+      const view = renderEntityPanel({ entity: dealWithoutCompany, allEntities: [dealWithoutCompany] });
+      await waitForCondition(() => document.querySelectorAll("table tbody tr").length === 1);
+      assert.equal(fetchCount, 1, "sanity check: exactly one fetch so far");
+
+      // Simulate a Time Machine restore bringing "company" back onto this
+      // exact entity.name ("Deal") without the panel remounting.
+      view.rerender(buildEntityPanelElement({ entity: dealWithCompany, allEntities: [dealWithCompany] }));
+
+      await waitForCondition(() => fetchCount === 2, 80);
+      await waitForCondition(() => document.querySelector("table tbody tr")?.textContent?.includes("Raw Materials Ltd.") === true, 80);
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+});
+
+/**
  * Round 985: a fresh Explore survey traced an established bug class this
  * routine already closed for a field genuinely REMOVED by a live refine
  * (sortKeys round 509, columnWidths round 897, fieldFilters round 751,
@@ -17091,7 +17158,16 @@ test("EntityPanel's record-form warns before a tab close/refresh discards an in-
       // Submitting successfully resets the form back to blank, clearing the warning again.
       fireEvent.submit(document.querySelector(".record-form") as HTMLFormElement);
       await waitForCondition(() => (document.querySelector('.record-form input[type="text"]') as HTMLInputElement)?.value === "");
-      assert.equal(dispatchBeforeUnload(), false, "the form must not warn right after a successful submit reset it back to blank");
+      // handleSubmit's own success path resets form/editingId/editingOriginalRef
+      // together in one state update, but a single immediate check here raced
+      // the DOM commit that reset the <input>'s own value against whichever
+      // render actually clears editingId -- rare, but real (reproduced directly,
+      // independent of any particular EntityPanel.tsx change, by rerunning this
+      // exact test in isolation many times in a row). Polling the same way
+      // every other async assertion in this file already does closes the gap
+      // without masking a genuine regression: if formIsDirty never actually
+      // settles back to false, this still times out and fails.
+      await waitForCondition(() => dispatchBeforeUnload() === false);
     } finally {
       globalThis.fetch = originalFetch;
     }
