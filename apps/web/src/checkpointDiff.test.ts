@@ -889,6 +889,23 @@ test("formatCheckpointCount reports 'shown of total' once a search has narrowed 
 });
 
 /**
+ * Round 1388: a count of exactly 1 is this panel's own default first-use
+ * state (every /build call inserts exactly one checkpoint, pipeline.ts's
+ * own `kind: "build"` entry) -- not a rare edge case -- yet the plural
+ * noun form rendered "1 checkpoint**s**" (en) and the grammatically wrong
+ * plural "נקודות שמירה" (he) for it. Flagged but left open as a
+ * lower-priority copy/grammar nit by round 1350's own backup-candidate
+ * note; closed here with the same .one/.many split App.tsx's WhatsApp/
+ * automations notification titles already use.
+ */
+test("formatCheckpointCount uses the correct singular noun form for exactly one checkpoint, in both languages", () => {
+  const trEn = (key: string, params?: Record<string, string | number>) => translate("en", key, params);
+  assert.equal(formatCheckpointCount(1, 1, trEn), "1 checkpoint");
+  const trHe = (key: string, params?: Record<string, string | number>) => translate("he", key, params);
+  assert.equal(formatCheckpointCount(1, 1, trHe), "1 נקודת שמירה");
+});
+
+/**
  * New in this round: a project's checkpoint history only ever grows (no
  * cap, no delete), so this is the only way to keep a permanent record of
  * it outside the app -- the same gap Business Twin (round 129) and the

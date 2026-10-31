@@ -476,9 +476,19 @@ export function formatCheckpointCount(
   total: number,
   t: (key: string, params?: Record<string, string | number>) => string,
 ): string {
-  return shown === total
-    ? t("history.count.all", { count: total })
-    : t("history.count.filtered", { shown, total });
+  if (shown === total) {
+    // Every single `/build` call inserts exactly one checkpoint
+    // unconditionally (pipeline.ts's own `kind: "build"` entry), so a
+    // count of 1 is this panel's own default first-use state, not a rare
+    // edge case -- "1 checkpoints" ("1 נקודות שמירה") was wrong every
+    // single time a brand-new project's owner opened this panel. Flagged
+    // but deliberately left open as a copy/grammar nit by round 1350's
+    // own backup-candidate note; closing it now. Mirrors the .one/.many
+    // split App.tsx's WhatsApp/automations desktop-notification titles
+    // already use for this exact class of problem.
+    return total === 1 ? t("history.count.all.one", { count: total }) : t("history.count.all.many", { count: total });
+  }
+  return t("history.count.filtered", { shown, total });
 }
 
 /**
