@@ -4027,6 +4027,57 @@ test("generated web/index.html sets RTL when entity labels are Hebrew", () => {
   assert.match(html, /lang="he"/);
 });
 
+/**
+ * Round 1374: renderWebIndexHtml's own RTL/lang detection only ever checked
+ * each entity's own label, never its fields' -- but nothing enforces
+ * consistent-language labeling across an entity's name vs. its fields
+ * (round 1280's own PATCH-entity-label comment: "accepts any non-empty
+ * label with no uniqueness check"). An entity left with an English/ASCII
+ * label but Hebrew field labels -- every column header, form label, and
+ * filter/sort picker in the exported app is still genuinely Hebrew -- used
+ * to ship with dir="ltr" lang="en" anyway. Mirrors seed.ts's own identical
+ * entityName-or-fieldLabel convention (seedValueFor's isHebrew check).
+ */
+test("generated web/index.html sets RTL when an entity's OWN label is English/ASCII but one of its FIELD labels is Hebrew", () => {
+  const mixedLabelProject: Project = {
+    ...project,
+    spec: {
+      ...project.spec,
+      entities: [
+        {
+          name: "Order",
+          label: "Order",
+          fields: [{ name: "status", label: "סטטוס", type: "text", required: true }],
+        },
+      ],
+    },
+  };
+  const files = generateExportFiles(mixedLabelProject);
+  const html = files.find((f) => f.path === "web/index.html")!.content;
+  assert.match(html, /dir="rtl"/, "a Hebrew field label alone must still trigger RTL, even with an all-English entity label");
+  assert.match(html, /lang="he"/);
+});
+
+test("generated web/index.html stays LTR/English when neither entity labels nor field labels are Hebrew", () => {
+  const allEnglishProject: Project = {
+    ...project,
+    spec: {
+      ...project.spec,
+      entities: [
+        {
+          name: "Order",
+          label: "Order",
+          fields: [{ name: "status", label: "Status", type: "text", required: true }],
+        },
+      ],
+    },
+  };
+  const files = generateExportFiles(allEnglishProject);
+  const html = files.find((f) => f.path === "web/index.html")!.content;
+  assert.match(html, /dir="ltr"/, "the fix must not make the RTL check over-eager and fire for an all-English project");
+  assert.match(html, /lang="en"/);
+});
+
 test("refuses to export an unsafe entity/field name rather than emitting broken SQL or JS", () => {
   const malicious: Project = {
     ...project,

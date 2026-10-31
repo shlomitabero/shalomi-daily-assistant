@@ -1650,7 +1650,21 @@ export default defineConfig({
 }
 
 function renderWebIndexHtml(project: Project): string {
-  const hebrew = project.spec.entities.some((e) => isHebrew(e.label ?? ""));
+  // Round 1374: used to check only each entity's own label, never its
+  // fields' -- but nothing enforces consistent-language labeling across
+  // an entity's name vs. its fields (round 1280's own PATCH-entity-label
+  // comment: "accepts any non-empty label with no uniqueness check"), so
+  // an entity left with an English/ASCII label but Hebrew field labels
+  // (column headers, form labels, filter/sort pickers -- all genuinely
+  // Hebrew in the generated UI) shipped with dir="ltr" lang="en" anyway.
+  // Round 1373 already proved dir isn't cosmetic here -- both the CSS and
+  // the column-resize drag math branch on it. Mirrors seed.ts's own
+  // identical entityName-or-fieldLabel convention (seedValueFor's isHebrew
+  // check), the only other place in this codebase that needed the same
+  // "is this entity/field content Hebrew" question.
+  const hebrew = project.spec.entities.some(
+    (e) => isHebrew(e.label ?? "") || e.fields.some((f) => isHebrew(f.label ?? "")),
+  );
   const dir = hebrew ? "rtl" : "ltr";
   const lang = hebrew ? "he" : "en";
   const title = project.name.replace(/</g, "&lt;");
