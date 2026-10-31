@@ -1,5 +1,6 @@
 import "./jsdomWarmup.js";
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import { test } from "node:test";
 import { JSDOM } from "jsdom";
 import React from "react";
@@ -1639,4 +1640,29 @@ test("CollaboratorsPanel's Download button downloads the real list as a named fi
       anchorProto.click = originalAnchorClick;
     }
   });
+});
+
+/**
+ * Round 1352: a live Playwright browser session found a non-owner
+ * collaborator's row collapsing its email <div> to a computed width of
+ * 0px -- the role select plus up to two flex-shrink: 0 buttons (Remove,
+ * Transfer ownership) already exceed the row's own width with no
+ * flex-wrap, so the div (the only shrinkable child, flex: 1;
+ * min-width: 0) gets squeezed all the way to 0 instead of any sibling
+ * budging, forcing the email text to wrap one character per line and
+ * ballooning the row's height. jsdom has no layout engine and can't
+ * detect this real collapse (see this codebase's other CSS-only-bug
+ * tests, e.g. App.test.ts's hero3d-cube test), so this reads
+ * styles.css's own source directly instead.
+ */
+test("the collaborators list row lets its action buttons wrap onto a second line instead of squeezing the email column to zero width", () => {
+  const stylesCss = readFileSync(new URL("./styles.css", import.meta.url), "utf8");
+
+  const collabListLi = stylesCss.match(/\.collab-list li \{[\s\S]*?\}/)?.[0];
+  assert.ok(collabListLi, "expected a .collab-list li rule in styles.css");
+  assert.match(
+    collabListLi!,
+    /flex-wrap:\s*wrap/,
+    ".collab-list li must allow its role select/action buttons to wrap onto a second line instead of squeezing the email <div> to zero width",
+  );
 });

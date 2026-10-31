@@ -3005,10 +3005,28 @@ button.sort-header:hover:not(:disabled) {
   gap: 10px;
 }
 
+/*
+ * Round 1352: a live Playwright browser session found a non-owner
+ * collaborator's row collapsing its email <div> to a computed width of
+ * 0px, forcing the email text to wrap one character per line and
+ * ballooning the row's height to ~789px -- confirmed via boundingBox()
+ * and getComputedStyle() showing the div at width:0 while
+ * li.scrollWidth nearly doubled li.clientWidth. Root cause: with no
+ * flex-wrap, the row (email div flex:1/min-width:0, plus a role
+ * select and up to two flex-shrink:0 buttons) has no room left for the
+ * div once the select+buttons' own combined content width already
+ * exceeds the row, so the div -- the only shrinkable child -- is
+ * squeezed all the way to 0 instead of any sibling budging. Reproduces
+ * at any viewport width, not just narrow ones, since the dialog itself
+ * has a capped width regardless of the browser window. flex-wrap lets
+ * a button that doesn't fit drop to its own line instead, so the email
+ * div still gets a real share of the remaining width on its own line.
+ */
 .collab-list li {
   display: flex;
   align-items: center;
   justify-content: space-between;
+  flex-wrap: wrap;
   gap: 12px;
   border: 1px solid var(--border);
   border-radius: var(--radius-md);
