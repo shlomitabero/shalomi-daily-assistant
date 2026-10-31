@@ -565,3 +565,57 @@ test("Escape clears an in-progress delete-confirmation draft instead of closing 
     }
   });
 });
+
+/**
+ * Round 1371: handleSubmit had no guard against racing ITSELF -- the same
+ * own-click reentrancy gap rounds 1363-1370 closed for EntityPanel/
+ * AutomationsPanel/WhatsAppPanel/CollaboratorsPanel/useAddableSpecItem/
+ * ChangeEmailPanel/ChangePasswordPanel/App.tsx/AuthScreen.tsx. A fast
+ * double-click on this screen's single most irreversible action must only
+ * ever reach deleteAccount() once, not fire two independent DELETE
+ * requests.
+ */
+test("DeleteAccountPanel's submit button guards against a fast double-click, so only one DELETE /auth/account request ever fires for one submission", async () => {
+  await withJsdom(async () => {
+    const originalFetch = globalThis.fetch;
+    const calls: unknown[] = [];
+    const pending: { resolveFirstDelete: (() => void) | null } = { resolveFirstDelete: null };
+    globalThis.fetch = withListProjectsStub([], async (input: string, init?: RequestInit) => {
+      if (init?.method === "DELETE" && input === "/api/auth/account?lang=en") {
+        calls.push(null);
+        if (calls.length === 1) {
+          await new Promise<void>((resolve) => {
+            pending.resolveFirstDelete = resolve;
+          });
+        } else {
+          await new Promise(() => {});
+        }
+        return new Response(null, { status: 204 });
+      }
+      throw new Error(`unexpected request ${init?.method ?? "GET"} ${input}`);
+    });
+
+    let deletedCount = 0;
+    try {
+      renderPanel({ onDeleted: () => (deletedCount += 1) });
+      typeConfirmation("dana@example.com");
+      await waitForCondition(() => !submitButton().disabled);
+
+      const form = document.querySelector("form")!;
+      fireEvent.submit(form);
+      fireEvent.submit(form);
+      await waitForCondition(() => calls.length > 0);
+
+      assert.equal(
+        calls.length,
+        1,
+        "a fast double submit must only ever reach deleteAccount() once -- the second click must be blocked by busy, not fire its own independent request",
+      );
+
+      pending.resolveFirstDelete?.();
+      await waitForCondition(() => deletedCount === 1);
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+});

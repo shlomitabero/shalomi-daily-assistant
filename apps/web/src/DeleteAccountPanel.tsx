@@ -114,6 +114,18 @@ export function DeleteAccountPanel({
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
+    // Round 1371: busy already disabled the submit button, but this
+    // handler never checked busy either -- the same own-click reentrancy
+    // gap rounds 1363-1370 already closed elsewhere (see AuthScreen.tsx's
+    // round-1370 doc comment for the family this belongs to). deleteAccount
+    // (api.ts) mints a fresh idempotency key per call the same way
+    // createRecord does, so it wouldn't actually dedupe two independent
+    // clicks -- but DELETE /auth/account's own route revokes every session
+    // for this account, including the caller's own current bearer token,
+    // synchronously and first, before any await, inside its withIdempotency
+    // callback, so a second concurrent request from a double-click fails
+    // cleanly with 401 SESSION_EXPIRED rather than corrupting anything.
+    if (busy) return;
     if (!canSubmit || !idsFetchSettled) return;
     setBusy(true);
     setError(null);

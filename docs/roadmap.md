@@ -39971,5 +39971,23 @@ Full suite run: only `apps/web` was touched this round. `tsc -b` ran clean. The 
 
 **Topic status**: the own-click reentrancy pattern now also covers `AuthScreen.tsx`'s six handlers. A second candidate from round 1370's own survey remains open and ready for a future round: `DeleteAccountPanel.tsx`'s `handleSubmit`, confirmed via direct code reading to have the identical gap (`busy` declared, gates the submit button's `disabled` prop, never checked in the handler itself), though its real-world severity is more contained than AuthScreen's -- `DELETE /auth/account`'s own route revokes all sessions, including the caller's own current bearer token, synchronously and first inside its `withIdempotency` callback, so a second concurrent request from a double-click fails cleanly with `401 SESSION_EXPIRED` rather than causing any double-deletion or data corruption.
 
+### Round 1371: DeleteAccountPanel.tsx's own-click reentrancy gap -- the last queued candidate from round 1370's survey
+
+This round implements round 1370's queued backup candidate, the last of this component-by-component sweep's currently-known instances. `DeleteAccountPanel.tsx`'s `handleSubmit` checked `canSubmit`/`idsFetchSettled` but never `busy`, despite `busy` already gating the submit button's `disabled` prop -- the same gap closed everywhere else in rounds 1363-1370. A fast double-click on this screen's single most irreversible action (permanent account deletion) could fire two independent `DELETE /auth/account` requests from one click.
+
+As already noted when this candidate was queued, the real-world severity here is the most contained of this entire sweep: `deleteAccount()` (`api.ts`) mints a fresh idempotency key per call (same pattern as `createRecord`, so it wouldn't dedupe two independent clicks on its own), but `DELETE /auth/account`'s own route revokes every session for the account -- including the caller's own current bearer token -- synchronously and first, before any `await`, inside its `withIdempotency` callback. A second concurrent request from a double-click therefore fails cleanly with `401 SESSION_EXPIRED` rather than corrupting anything; the fix closes the gap on principle (matching the pattern everywhere else) rather than because this specific instance was otherwise exploitable.
+
+**Independent verification**: read `handleSubmit`'s full body directly, confirming `busy`'s declaration, its total absence from the top of the handler, and its presence in the submit button's `disabled` prop -- the same shape independently confirmed in every prior round of this sweep.
+
+**The fix**: added `if (busy) return;` as the first line of `handleSubmit`, before the existing `canSubmit`/`idsFetchSettled` check.
+
+**Tests**: 1 new test, mirroring the established double-submit pattern: mocks `DELETE /auth/account` so only the first call's promise is ever allowed to resolve, waits for the submit button to actually become enabled (the same `canSubmit`/`idsFetchSettled` signal a real user waits on, matching this file's own existing convention), fires two real submit events, and asserts the tracked call count has length 1. Waits for `onDeleted` to actually fire (confirming `handleSubmit`'s own success-path continuation has fully run) before restoring the real `fetch`, following the convention this sweep settled on from round 1364 onward.
+
+Fail-before/pass-after verified: backed up the fixed `DeleteAccountPanel.tsx`, restored the unfixed version from `HEAD`, ran the new test -- failed exactly as predicted (`2 !== 1`). Restored the fixed copy and reran -- passed.
+
+Full suite run: only `apps/web` was touched this round. `tsc -b` ran clean. The full `DeleteAccountPanel.test.ts` file: 12/12 passed, zero regressions. The full `apps/web` suite was then run as a background command correctly using only `run_in_background: true` with no `nohup`/`&` wrapping: 1670/1670 passed, zero regressions.
+
+**Topic status**: every own-click reentrancy candidate found across rounds 1363-1371 is now closed -- `EntityPanel.tsx`, `AutomationsPanel.tsx`, `WhatsAppPanel.tsx`, `CollaboratorsPanel.tsx`, `AddEntityForm`/`AddRoleForm`/`AddAssumptionForm`/`AddPersonaForm` (via `useAddableSpecItem`), `ChangeEmailPanel.tsx`, `ChangePasswordPanel.tsx`, `App.tsx`'s three home-screen entry points, `AuthScreen.tsx`'s six handlers, and now `DeleteAccountPanel.tsx`. No backup candidate remains queued going into round 1372 -- the next round's survey should run fresh across a different bug/feature class entirely, consistent with the standing guidance against fixating on one pattern for too long (this sweep has now run 9 rounds: 1363-1371).
+
 
 
