@@ -27,7 +27,14 @@ const DEMO_IDEAS = [
 ];
 
 function demoTopicIdea(avoidTitles) {
-  const unused = DEMO_IDEAS.find((i) => !avoidTitles.includes(i.topic)) ?? DEMO_IDEAS[0];
+  // avoidTitles holds full opportunity titles, not bare topics — the real
+  // autonomousScan.js caller passes db.opportunities' stored titles, and a
+  // demo opportunity's title is "[דמו] מדריך: <topic>" (productDraft.js's
+  // demoDraft()), never the bare topic itself. An exact-match .includes(topic)
+  // against that never hits, so this always picked DEMO_IDEAS[0] no matter
+  // what was already tried — a substring check still finds the topic
+  // embedded in the full title, so demo mode actually cycles through all 4.
+  const unused = DEMO_IDEAS.find((i) => !avoidTitles.some((title) => title.includes(i.topic))) ?? DEMO_IDEAS[0];
   return { ...unused, demo: true };
 }
 

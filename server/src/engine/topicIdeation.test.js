@@ -88,6 +88,21 @@ test('generateTopicIdea times out instead of hanging for the SDK default of ~10 
   }
 });
 
+test('generateTopicIdea avoids a demo topic given the full stored opportunity title, not just the bare topic', async () => {
+  // The real caller (autonomousScan.js) passes db.opportunities' stored
+  // titles, and a demo opportunity's title is "[דמו] מדריך: <topic>"
+  // (productDraft.js's demoDraft()) — never the bare topic string alone.
+  const original = process.env.ANTHROPIC_API_KEY;
+  delete process.env.ANTHROPIC_API_KEY;
+  try {
+    const first = await generateTopicIdea({});
+    const second = await generateTopicIdea({ avoidTitles: [`[דמו] מדריך: ${first.topic}`] });
+    assert.notEqual(second.topic, first.topic);
+  } finally {
+    if (original !== undefined) process.env.ANTHROPIC_API_KEY = original;
+  }
+});
+
 test('generateTopicIdea cycles back to the first demo idea once all are avoided', async () => {
   const original = process.env.ANTHROPIC_API_KEY;
   delete process.env.ANTHROPIC_API_KEY;
