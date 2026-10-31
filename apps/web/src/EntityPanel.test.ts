@@ -5477,6 +5477,15 @@ test("EntityPanel's CSV import creates a real record from an uploaded file and s
       assert.equal(store[0].name, "Dana");
       assert.equal(store[0].email, "dana@example.com");
       assert.equal(document.querySelector("p.error") === null, true, "a successful import must not leave an error banner showing");
+      // Round 1391: importing exactly 1 record is this feature's own
+      // default first-use case -- the same "1 X" vs "1 Xs" i18n gap
+      // rounds 1388/1389/1390 already fixed for formatCheckpointCount/
+      // formatMyProjectsCount/formatWhatsAppMessageCount.
+      assert.equal(
+        document.querySelector(".csv-import-row .muted.small")?.textContent,
+        "Imported 1 record successfully.",
+        "a single imported record must use the singular noun form, not '1 records'",
+      );
     } finally {
       globalThis.fetch = originalFetch;
     }
@@ -5548,6 +5557,9 @@ test("EntityPanel's CSV import surfaces a possible-duplicate warning for a new r
       const warningButton = buttons.find((b) => /possible duplicate/i.test(b.textContent ?? ""));
       assert.ok(warningButton, "a 'Show N possible duplicates' toggle must appear once a new row's name coincides with an existing record");
       assert.match(warningButton!.textContent ?? "", /\b1\b/, "the toggle must report exactly 1 possible duplicate");
+      // Round 1391: exactly 1 duplicate must use the singular noun form,
+      // not "1 possible duplicates" -- same i18n gap as rounds 1388-1390.
+      assert.equal(warningButton!.textContent, "Show 1 possible duplicate", "a single duplicate must use the singular form");
 
       fireEvent.click(warningButton!);
       await waitForCondition(() => document.querySelector(".csv-import-warnings") !== null);
@@ -5555,6 +5567,79 @@ test("EntityPanel's CSV import surfaces a possible-duplicate warning for a new r
         document.querySelector(".csv-import-warnings")!.textContent ?? "",
         /Dana/,
         "the revealed warning text must name the actual duplicated value",
+      );
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+});
+
+/**
+ * Round 1391: `writeImportedRecords`' all-failed branch (buildImportRecords
+ * returning zero parsed rows, e.g. a required file field CSV import can't
+ * support) hardcoded the plural "{errorCount} errors" with no singular
+ * form -- the same i18n gap rounds 1388-1390 already fixed for
+ * formatCheckpointCount/formatMyProjectsCount/formatWhatsAppMessageCount
+ * and this same round's "Imported 1 record"/"Show 1 possible duplicate"
+ * fixes above. A required file field is exactly one error, unconditionally
+ * (buildImportRecords' own `requiredUnsupported` check short-circuits
+ * before any row is even parsed), so this is reliably reachable, not a
+ * contrived edge case.
+ */
+test("EntityPanel's CSV import 'all failed' message uses the singular noun form for exactly 1 error", async () => {
+  await withJsdom(async () => {
+    const entityWithRequiredFile: Entity = {
+      name: "Customer",
+      label: "Customer",
+      fields: [
+        { name: "name", label: "Name", type: "text", required: true },
+        { name: "attachment", label: "Attachment", type: "file", required: true },
+      ],
+    };
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = (async (input: string, init?: RequestInit) => {
+      const method = init?.method ?? "GET";
+      if (method === "GET" && input === "/api/projects/proj1/entities/Customer") {
+        return new Response(JSON.stringify({ records: [] }), { status: 200, headers: { "content-type": "application/json" } });
+      }
+      throw new Error(`unexpected request ${method} ${input}`);
+    }) as typeof fetch;
+    try {
+      render(
+        React.createElement(
+          ThemeProvider,
+          null,
+          React.createElement(
+            LanguageProvider,
+            null,
+            React.createElement(EntityPanel, {
+              projectId: "proj1",
+              userId: "user1",
+              entity: entityWithRequiredFile,
+              allEntities: [entityWithRequiredFile],
+              onEntityRenamed: () => {},
+            }),
+          ),
+        ),
+      );
+      await waitForCondition(() => document.querySelector(".csv-import-row") !== null);
+
+      const csvText = "name\nDana\n";
+      const file = new File([csvText], "customers.csv", { type: "text/csv" });
+      // Scoped to .csv-import-row -- the entity's own required "attachment"
+      // file field gives the create-record form its own earlier
+      // input[type="file"] in DOM order, which an unscoped selector would
+      // grab instead of the CSV importer's.
+      const fileInput = document.querySelector('.csv-import-row input[type="file"]') as HTMLInputElement;
+      Object.defineProperty(fileInput, "files", { value: [file], configurable: true });
+      fireEvent.change(fileInput);
+
+      await waitForCondition(() => document.querySelector(".csv-import-row .muted.small") !== null);
+
+      assert.equal(
+        document.querySelector(".csv-import-row .muted.small")?.textContent,
+        "Import failed: 1 error. No records were created.",
+        "exactly 1 unsupported-field error must use the singular noun form, not '1 errors'",
       );
     } finally {
       globalThis.fetch = originalFetch;

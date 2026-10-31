@@ -4221,7 +4221,9 @@ export function EntityPanel({
     if (parsedRecords.length === 0) {
       setImportErrors(parseErrors);
       setImportMessage(
-        parseErrors.length > 0 ? t("entity.import.allFailed", { errorCount: parseErrors.length }) : t("entity.import.empty"),
+        parseErrors.length > 0
+          ? t(parseErrors.length === 1 ? "entity.import.allFailed.one" : "entity.import.allFailed.many", { errorCount: parseErrors.length })
+          : t("entity.import.empty"),
       );
       return;
     }
@@ -4249,7 +4251,7 @@ export function EntityPanel({
     setImportMessage(
       updatedCount === 0
         ? allErrors.length === 0
-          ? t("entity.import.success", { count: createdCount })
+          ? t(createdCount === 1 ? "entity.import.success.one" : "entity.import.success.many", { count: createdCount })
           : t("entity.import.successWithErrors", { count: createdCount, errorCount: allErrors.length })
         : allErrors.length === 0
           ? t("entity.import.successWithUpdates", { count: createdCount, updatedCount })
@@ -4775,7 +4777,9 @@ export function EntityPanel({
           <button type="button" className="secondary small" onClick={() => setShowImportWarnings((v) => !v)}>
             {showImportWarnings
               ? t("entity.import.hideWarnings")
-              : t("entity.import.showWarnings", { count: importWarnings.length })}
+              : t(importWarnings.length === 1 ? "entity.import.showWarnings.one" : "entity.import.showWarnings.many", {
+                  count: importWarnings.length,
+                })}
           </button>
         )}
       </div>
