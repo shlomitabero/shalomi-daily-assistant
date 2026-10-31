@@ -16889,3 +16889,43 @@ test("the record form's action-button row spans the full form width and wraps, i
     ".form-actions must allow its buttons (up to 4 in the edit form: Save/Cancel/Duplicate/Delete) to wrap onto a second line instead of overflowing off-screen",
   );
 });
+
+/*
+ * Round 1356: .board-column has a fixed `flex: 0 0 240px` inside the
+ * row-direction `.board-scroll` flex container, but without `min-width:
+ * 0` a flex item's *automatic* minimum size defaults to its content's
+ * min-content size -- so a board card holding an unbreakable text-field
+ * value (no spaces/hyphens) grew the whole column past its 240px
+ * flex-basis instead of the browser honoring it, pushing every other
+ * stage column off-screen too (not just the one row). Confirmed live:
+ * the "Lead" column's computed width measured 826px against its own
+ * 240px flex-basis, while every other column still measured exactly
+ * 240px. `.board-card-field` (the field-value wrapper) also had no
+ * `overflow-wrap`, so even with `min-width: 0` alone the text would
+ * just overflow/clip inside the correctly-sized column instead of
+ * wrapping -- both gaps have to close together, mirroring the same
+ * min-width:0 + overflow-wrap:anywhere pairing already used by
+ * `.collab-list li > div`/`.collab-list li strong` (round 1352). jsdom
+ * has no layout engine and can't detect real column-blowout sizing (see
+ * this file's other CSS-only-bug tests above), so this reads
+ * styles.css's own source directly instead.
+ */
+test("the board view's column has a fixed min-width and its card field wraps, instead of an unbreakable field value blowing out the whole column's width", () => {
+  const stylesCss = readFileSync(new URL("./styles.css", import.meta.url), "utf8");
+
+  const boardColumn = stylesCss.match(/\.board-column \{[\s\S]*?\}/)?.[0];
+  assert.ok(boardColumn, "expected a .board-column rule in styles.css");
+  assert.match(
+    boardColumn!,
+    /min-width:\s*0/,
+    ".board-column must set min-width: 0 so its fixed flex-basis (240px) is honored instead of growing to fit an unbreakable child's min-content width",
+  );
+
+  const boardCardField = stylesCss.match(/\.board-card-field \{[\s\S]*?\}/)?.[0];
+  assert.ok(boardCardField, "expected a .board-card-field rule in styles.css");
+  assert.match(
+    boardCardField!,
+    /overflow-wrap:\s*anywhere/,
+    ".board-card-field must allow an unbreakable field value to wrap mid-word once the column itself is correctly sized, instead of overflowing/clipping inside it",
+  );
+});

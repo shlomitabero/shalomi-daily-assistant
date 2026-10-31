@@ -1715,6 +1715,7 @@ tbody tr:hover {
 
 .board-column {
   flex: 0 0 240px;
+  min-width: 0;
   background: var(--surface);
   border: 1px solid var(--border-soft);
   border-radius: var(--radius-md);
@@ -1799,6 +1800,7 @@ tbody tr:hover {
   flex-direction: column;
   gap: 1px;
   font-size: 13.5px;
+  overflow-wrap: anywhere;
 }
 
 .board-card-move {
