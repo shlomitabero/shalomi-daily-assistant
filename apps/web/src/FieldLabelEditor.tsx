@@ -116,41 +116,42 @@ export function FieldLabelEditor({
 
   return (
     <span className="field-label-edit" onClick={(e) => e.stopPropagation()}>
-      <form
-        onSubmit={(e) => {
-          e.preventDefault();
-          e.stopPropagation();
-          save();
+      <input
+        type="text"
+        aria-label={t("entity.renameFieldLabel")}
+        value={draft}
+        autoFocus
+        disabled={busy}
+        onChange={(e) => setDraft(e.target.value)}
+        onBlur={save}
+        onClick={(e) => e.stopPropagation()}
+        onKeyDown={(e) => {
+          // Round 1358: this input used to live inside its own nested
+          // <form>, itself nested inside EntityPanel.tsx's own record
+          // <form> -- invalid HTML (a <form> cannot be a descendant of
+          // another <form>) that made Enter here trigger a genuine native
+          // page reload instead of React's onSubmit handler, discarding
+          // the whole in-progress record edit. Confirmed live via
+          // Playwright: the nested-form submit reached the browser's
+          // default navigation before React's synthetic onSubmit's own
+          // preventDefault() could run. Removing the inner <form> and
+          // handling Enter directly here (same preventDefault+
+          // stopPropagation pattern Escape already used below, for the
+          // same reason: this input is still a descendant of the outer
+          // record-form, whose own single-line inputs intentionally let
+          // Enter submit the record -- see that form's onKeyDown comment)
+          // fixes both: no more invalid nesting, and Enter now only
+          // confirms this rename instead of submitting the whole record.
+          if (e.key === "Escape") {
+            e.stopPropagation();
+            cancelEditing();
+          } else if (e.key === "Enter") {
+            e.preventDefault();
+            e.stopPropagation();
+            save();
+          }
         }}
-      >
-        <input
-          type="text"
-          aria-label={t("entity.renameFieldLabel")}
-          value={draft}
-          autoFocus
-          disabled={busy}
-          onChange={(e) => setDraft(e.target.value)}
-          onBlur={save}
-          onClick={(e) => e.stopPropagation()}
-          onKeyDown={(e) => {
-            // stopPropagation matters here, unlike the native-listener case
-            // useDialogFocusTrap.ts guards with data-escape-handled-locally:
-            // this input lives inside EntityPanel.tsx's own record <form>,
-            // which has its own plain React onKeyDown that discards the
-            // whole in-progress record edit on Escape. Both handlers are
-            // React synthetic onKeyDown (no native addEventListener
-            // involved), so React's own simulated bubbling -- unlike real
-            // DOM bubbling intercepted by a native listener higher up --
-            // does respect stopPropagation and skips the form's handler.
-            // Without it, pressing Escape to back out of a quick label
-            // rename silently wiped every other field's unsaved value too.
-            if (e.key === "Escape") {
-              e.stopPropagation();
-              cancelEditing();
-            }
-          }}
-        />
-      </form>
+      />
       {error && (
         <span className="error small" role="alert">
           {error}

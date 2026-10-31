@@ -237,6 +237,65 @@ test("renaming a field label, cancelling with Escape, then renaming it again for
   });
 });
 
+/**
+ * Round 1358: a live Playwright browser session found that this input used
+ * to live inside its own <form>, itself nested inside EntityPanel.tsx's
+ * own record <form> -- invalid HTML (a <form> cannot be a descendant of
+ * another <form>) that made the browser treat pressing Enter here as a
+ * genuine native page submission/reload instead of ever reaching React's
+ * onSubmit handler, discarding the whole in-progress record edit and never
+ * saving the rename either. jsdom's own fireEvent.submit/keyDown can't
+ * reproduce that native-browser-only nested-form quirk (confirmed
+ * separately via Playwright against real Chromium), so this test instead
+ * confirms the two things that are testable here: no <form> is rendered at
+ * all (the actual structural fix -- it can no longer be invalidly nested
+ * inside anything), and pressing Enter saves the rename exactly the way
+ * Escape already cancels it.
+ */
+test("pressing Enter while editing saves the rename, and no nested <form> is rendered at all", async () => {
+  await withJsdom(async () => {
+    const originalFetch = globalThis.fetch;
+    let renameCalls = 0;
+    globalThis.fetch = (async (input: string, init?: RequestInit) => {
+      if (init?.method === "PATCH" && input === "/api/projects/proj1/entities/Customer/fields/phone/label") {
+        renameCalls += 1;
+        const body = JSON.parse(init.body as string) as { label: string };
+        const renamedField = { ...field, label: body.label };
+        return new Response(
+          JSON.stringify({
+            project: {
+              ...project,
+              spec: { ...project.spec, entities: [{ ...project.spec.entities[0], fields: [renamedField] }] },
+            },
+          }),
+          { status: 200, headers: { "content-type": "application/json" } },
+        );
+      }
+      throw new Error(`unexpected request ${init?.method ?? "GET"} ${input}`);
+    }) as typeof fetch;
+
+    try {
+      const renamedProjects: Project[] = [];
+      renderEditor((p) => renamedProjects.push(p));
+
+      fireEvent.click(document.querySelector(".field-label-edit-btn") as HTMLElement);
+      await waitForCondition(() => document.querySelector(".field-label-edit input") !== null);
+      const input = document.querySelector(".field-label-edit input") as HTMLInputElement;
+
+      assert.equal(document.querySelector(".field-label-edit form"), null, "the rename editor must never render its own nested <form>");
+
+      fireEvent.change(input, { target: { value: "Renamed Via Enter" } });
+      fireEvent.keyDown(input, { key: "Enter" });
+
+      await waitForCondition(() => renamedProjects.length === 1);
+      assert.equal(renameCalls, 1);
+      assert.equal(renamedProjects[0].spec.entities[0].fields[0].label, "Renamed Via Enter");
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+});
+
 test("the edit button click does not bubble into the surrounding <label>'s default click-forwarding behavior", async () => {
   await withJsdom(async () => {
     try {

@@ -12141,6 +12141,74 @@ test("Escape while renaming a field's label cancels only that rename, never the 
 });
 
 /**
+ * Round 1358: a live Playwright browser session found that FieldLabelEditor
+ * used to render its own nested <form> inside this exact .record-form --
+ * invalid HTML (a <form> cannot be a descendant of another <form>) that
+ * made pressing Enter while renaming a field's label trigger a genuine
+ * native page reload instead of React's handlers, discarding the whole
+ * in-progress record edit (confirmed live: every other field's unsaved
+ * value was lost, the page navigated back to the project list, and the
+ * rename itself was never even saved). jsdom can't reproduce that
+ * native-browser-only quirk, so this confirms the two testable halves of
+ * the fix: no nested <form> exists anywhere inside .record-form (the
+ * structural fix itself), and pressing Enter now saves the rename and
+ * leaves the surrounding record edit untouched, exactly like Escape
+ * already cancels it without disturbing the record edit (tested just
+ * above).
+ */
+test("Enter while renaming a field's label saves only that rename, never submits or disturbs the surrounding in-progress record edit, and no form is ever nested inside .record-form", async () => {
+  await withJsdom(async () => {
+    const store: EntityRecord[] = [{ id: 1, name: "Acme Corp", status: "new" }];
+    const originalFetch = globalThis.fetch;
+    let renameCalls = 0;
+    globalThis.fetch = (async (input: string, init?: RequestInit): Promise<Response> => {
+      if (init?.method === "PATCH" && /\/fields\/.+\/label$/.test(input)) {
+        renameCalls += 1;
+        const body = JSON.parse(init.body as string) as { label: string };
+        return new Response(JSON.stringify({ project: { spec: { entities: [] } }, label: body.label }), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        });
+      }
+      return mockRecordsFetch(store)(input, init);
+    }) as typeof fetch;
+    try {
+      renderEntityPanel();
+      await waitForCondition(() => document.querySelectorAll("table tbody tr").length === 1);
+
+      fireEvent.click(document.querySelector(".row-actions button") as HTMLButtonElement);
+      await waitForCondition(() => (document.querySelector('.record-form input[type="text"]') as HTMLInputElement)?.value === "Acme Corp");
+
+      assert.equal(document.querySelector(".record-form form"), null, "no <form> must ever be nested inside .record-form, not even transiently before the rename editor opens");
+
+      fireEvent.click(document.querySelector(".field-label-edit-btn") as HTMLElement);
+      await waitForCondition(() => document.querySelector(".field-label-edit input") !== null);
+
+      assert.equal(document.querySelector(".record-form form"), null, "no <form> must be nested inside .record-form while the field-label rename editor is open");
+
+      const renameInput = document.querySelector(".field-label-edit input") as HTMLInputElement;
+      fireEvent.change(renameInput, { target: { value: "Company Name" } });
+      fireEvent.keyDown(renameInput, { key: "Enter" });
+
+      await waitForCondition(() => document.querySelector(".field-label-edit") === null);
+      assert.equal(renameCalls, 1);
+      assert.equal(
+        (document.querySelector('.record-form input[type="text"]') as HTMLInputElement)?.value,
+        "Acme Corp",
+        "the record edit itself must still be open with its real value, not wiped by the rename's own Enter keystroke",
+      );
+      assert.ok(
+        document.querySelector(".form-actions button.secondary"),
+        "the Cancel button must still be present -- editingId must not have been cleared by the rename's Enter",
+      );
+      assert.equal(store[0].name, "Acme Corp", "the mock server's own record must be untouched -- Enter must save only the label rename, never submit the whole record form");
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+});
+
+/**
  * New in this round (440): a long-standing, known-but-deprioritized gap
  * from round 375's own notes, confirmed still present in the current code.
  * relatedRecords is only ever populated by loadRelated's own useEffect --
