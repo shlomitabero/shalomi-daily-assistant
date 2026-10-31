@@ -4383,7 +4383,13 @@ export function EntityPanel({
    * board field specifically.
    */
   function startInlineEdit(record: EntityRecord, field: Field) {
-    if (readOnly || !isInlineEditableField(field)) return;
+    // Round 1400: mirrors every other write path's own writesInFlight
+    // guard (handleMoveFields, handleDelete, handleBulkUpdate/Duplicate/
+    // Delete, handleImportFile/handleImportJsonFile) -- inline cell edit
+    // was the one write path never wired into that mutual-exclusion
+    // network, letting a double-click PATCH race a concurrent bulk
+    // batch or import on the same record.
+    if (readOnly || writesInFlight || !isInlineEditableField(field)) return;
     setEditingCell({ recordId: record.id as number, field: field.name });
     setCellDraft(record[field.name]);
   }
@@ -4398,6 +4404,12 @@ export function EntityPanel({
   // landing in the gap between the two requests (round 545).
   async function commitInlineEdit() {
     if (!editingCell) return;
+    // Round 1400: defensive guard for the case editingCell was already
+    // open (double-clicked, not yet committed) when a bulk action/import
+    // started -- same writesInFlight check startInlineEdit's own early
+    // return now applies, mirroring handleMoveFields's identical guard.
+    // Enter/blur must not fire a stray PATCH once a batch is running.
+    if (writesInFlight) return;
     const { recordId, field } = editingCell;
     const value = cellDraft;
     // Mirrors the single-record add/edit form's own missingField guard and
@@ -4486,16 +4498,18 @@ export function EntityPanel({
         {visibleFields.map((f) => {
           const isEditingThisCell =
             editingCell != null && editingCell.recordId === (record.id as number) && editingCell.field === f.name;
-          // Mirrors startInlineEdit's own readOnly check above -- without
-          // this, a read-only viewer still gets the "cell-inline-editable"
-          // hover/cursor styling and the "Double-click to edit quickly"
-          // tooltip on every cell, then double-clicking one silently does
-          // nothing (startInlineEdit's own check rejects it with no
-          // feedback). Every other read-only affordance in this file (the
-          // row-select checkbox, BoardCard's drag/Edit/Delete, the bulk-
-          // actions bar) gates the control's own look, not just its
-          // callback -- this was the one place only the callback was gated.
-          const editable = !readOnly && isInlineEditableField(f);
+          // Mirrors startInlineEdit's own readOnly/writesInFlight check
+          // above -- without this, the cell still gets the
+          // "cell-inline-editable" hover/cursor styling and the
+          // "Double-click to edit quickly" tooltip even while a bulk
+          // action or import is running, then double-clicking one
+          // silently does nothing (startInlineEdit's own check rejects it
+          // with no feedback). Every other read-only/busy affordance in
+          // this file (the row-select checkbox, BoardCard's drag/Edit/
+          // Delete, the bulk-actions bar) gates the control's own look,
+          // not just its callback -- this was the one place only the
+          // callback was gated (round 1400).
+          const editable = !readOnly && !writesInFlight && isInlineEditableField(f);
           return (
             <td
               key={f.name}

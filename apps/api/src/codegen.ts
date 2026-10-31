@@ -6787,7 +6787,11 @@ export function EntityView({ entity, highlightRecordId, onHighlightHandled, onJu
   // single-value change. Mirrors the live preview's own EntityPanel.tsx
   // (round 206).
   function startInlineEdit(record, field) {
-    if (!isInlineEditableField(field)) return;
+    // Round 1400: mirrors every other write path's own writesInFlight
+    // guard (handleDelete, handleBulkUpdate/Duplicate/Delete, import) --
+    // inline cell edit was the one write path never wired into that
+    // mutual-exclusion network. Mirrors the live preview's own fix.
+    if (writesInFlight || !isInlineEditableField(field)) return;
     setEditingCell({ recordId: record.id, field: field.name });
     setCellDraft(record[field.name]);
   }
@@ -6797,6 +6801,10 @@ export function EntityView({ entity, highlightRecordId, onHighlightHandled, onJu
   // otherwise fire a second real commitInlineEdit() for the same value.
   async function commitInlineEdit() {
     if (!editingCell) return;
+    // Round 1400: defensive guard for the case editingCell was already
+    // open when a bulk action/import started -- mirrors startInlineEdit's
+    // own writesInFlight check just above.
+    if (writesInFlight) return;
     const { recordId, field } = editingCell;
     const value = cellDraft;
     // Mirrors handleBulkUpdate's own identical check above -- without it,
@@ -7190,7 +7198,10 @@ export function EntityView({ entity, highlightRecordId, onHighlightHandled, onJu
       </td>
       {visibleFields.map((f) => {
         const isEditingThisCell = editingCell != null && editingCell.recordId === r.id && editingCell.field === f.name;
-        const editable = isInlineEditableField(f);
+        // Round 1400: mirrors startInlineEdit's own writesInFlight check --
+        // without this, the cell still gets the editable styling/tooltip
+        // while a bulk action or import is running.
+        const editable = !writesInFlight && isInlineEditableField(f);
         return (
           <td
             key={f.name}

@@ -17914,7 +17914,9 @@ test("the exported EntityView supports double-click inline cell editing, ported 
 
   const startSrc = entityViewJsx.match(/function startInlineEdit\(record, field\) \{[\s\S]*?\n {2}\}\n/)?.[0];
   assert.ok(startSrc, "expected to find startInlineEdit in generated output");
-  assert.match(startSrc!, /if \(!isInlineEditableField\(field\)\) return;/);
+  // Round 1400: also cross-gated against writesInFlight, mirroring every
+  // other write path's own guard -- see this file's dedicated test below.
+  assert.match(startSrc!, /if \(writesInFlight \|\| !isInlineEditableField\(field\)\) return;/);
 
   const commitSrc = entityViewJsx.match(/async function commitInlineEdit\(\) \{[\s\S]*?\n {2}\}\n/)?.[0];
   assert.ok(commitSrc, "expected to find commitInlineEdit in generated output");
@@ -17936,6 +17938,43 @@ test("the exported EntityView supports double-click inline cell editing, ported 
   const stylesCss = files.find((f) => f.path === "web/src/styles.css")!.content;
   assert.match(stylesCss, /\.cell-inline-editable/);
   assert.match(stylesCss, /\.cell-editing input, \.cell-editing select, \.cell-editing textarea/);
+});
+
+/**
+ * Round 1400: ports the live preview's own fix -- startInlineEdit/
+ * commitInlineEdit (the exported app's inline table-cell editor) were the
+ * one write path never cross-gated against writesInFlight (already wired
+ * into every other write path here, per the many `if (writesInFlight)
+ * return;` guards elsewhere in this generated output), letting a
+ * double-click PATCH race a concurrent bulk update/duplicate/delete batch
+ * or CSV/JSON import on the exact same record.
+ */
+test("the exported EntityView's inline-cell-edit functions and styling are all cross-gated against writesInFlight", async () => {
+  const entityViewJsx = generateExportFiles(project).find((f) => f.path === "web/src/components/EntityView.jsx")!.content;
+
+  const startSrc = entityViewJsx.match(/function startInlineEdit\(record, field\) \{[\s\S]*?\n {2}\}\n/)?.[0];
+  assert.ok(startSrc, "expected to find startInlineEdit in generated output");
+  const startFn = new Function("writesInFlight", `${startSrc}\nreturn startInlineEdit;`)(true) as (...args: unknown[]) => unknown;
+  assert.equal(
+    startFn({ id: 1 }, { name: "amount" }),
+    undefined,
+    "startInlineEdit must be a no-op while writesInFlight is true, not throw trying to reach setEditingCell",
+  );
+
+  const commitSrc = entityViewJsx.match(/async function commitInlineEdit\(\) \{[\s\S]*?\n {2}\}\n/)?.[0];
+  assert.ok(commitSrc, "expected to find commitInlineEdit in generated output");
+  assert.match(commitSrc!, /if \(writesInFlight\) return;/, "commitInlineEdit must also refuse to commit while writesInFlight is true");
+  const commitFn = new Function("editingCell", "writesInFlight", `${commitSrc}\nreturn commitInlineEdit;`)(
+    { recordId: 1, field: "amount" },
+    true,
+  ) as () => Promise<void>;
+  await commitFn();
+
+  assert.match(
+    entityViewJsx,
+    /const editable = !writesInFlight && isInlineEditableField\(f\);/,
+    "the cell's own editable flag must check writesInFlight too, matching startInlineEdit's own guard",
+  );
 });
 
 /**

@@ -1121,6 +1121,62 @@ test("EntityPanel combines bulkActionBusy and importBusy into one writesInFlight
 });
 
 /**
+ * Round 1400: inline table-cell editing (double-click a cell to edit it in
+ * place) was the one write path in this whole writesInFlight family never
+ * cross-gated against it -- unlike handleDelete/handleDuplicate/
+ * handleMoveFields (round 1118) and handleImportFile/handleImportJsonFile
+ * (round 1260) just above, startInlineEdit/commitInlineEdit let a
+ * double-click PATCH fire concurrently with a bulk update/duplicate/delete
+ * batch or CSV/JSON import still running against the same record.
+ * Extracted and called with ONLY writesInFlight (and, for commitInlineEdit,
+ * a non-null editingCell) declared, mirroring round 1013's own pattern --
+ * if either guard were ever removed, the very next line each function
+ * reaches (setEditingCell / cellDraft) throws a ReferenceError instead of
+ * silently doing nothing, proving the guard itself is what's stopping
+ * execution.
+ */
+test("EntityPanel's startInlineEdit and commitInlineEdit are each a no-op while writesInFlight is true", async () => {
+  const startMatch = entityPanelSrc.match(/ {2}function startInlineEdit\(record: EntityRecord, field: Field\) \{[\s\S]*?\n {2}\}\n/);
+  assert.ok(startMatch, "expected to find startInlineEdit in EntityPanel.tsx");
+  const startCode = transformSync(startMatch![0], { loader: "ts" }).code;
+  const startFn = new Function("readOnly", "writesInFlight", `${startCode}\nreturn startInlineEdit;`)(false, true) as (
+    record: unknown,
+    field: unknown,
+  ) => unknown;
+  assert.equal(
+    startFn({ id: 1 }, { name: "amount" }),
+    undefined,
+    "startInlineEdit must be a no-op while writesInFlight is true, not throw trying to reach setEditingCell",
+  );
+
+  const commitMatch = entityPanelSrc.match(/ {2}async function commitInlineEdit\(\) \{[\s\S]*?\n {2}\}\n/);
+  assert.ok(commitMatch, "expected to find commitInlineEdit in EntityPanel.tsx");
+  const commitCode = transformSync(commitMatch![0], { loader: "ts" }).code;
+  const commitFn = new Function("editingCell", "writesInFlight", `${commitCode}\nreturn commitInlineEdit;`)(
+    { recordId: 1, field: "amount" },
+    true,
+  ) as () => Promise<void>;
+  await commitFn();
+});
+
+/**
+ * Round 1400: the JSX side of the same fix -- the cell's own "editable"
+ * computation (which drives the "cell-inline-editable" hover/cursor
+ * styling, the "Double-click to edit quickly" tooltip, and the
+ * onDoubleClick handler itself) must also check writesInFlight, mirroring
+ * round 695's own identical fix for readOnly (every other busy/read-only
+ * affordance in this file gates the control's own look, not just its
+ * callback).
+ */
+test("EntityPanel's inline-edit cell styling/tooltip/handler all check writesInFlight, not just readOnly", () => {
+  assert.match(
+    entityPanelSrc,
+    /const editable = !readOnly && !writesInFlight && isInlineEditableField\(f\);/,
+    "the cell's own editable flag must check writesInFlight as well as readOnly",
+  );
+});
+
+/**
  * Round 1260: the reverse direction of the same gap -- handleImportFile and
  * handleImportJsonFile never checked bulkActionBusy before starting, so a
  * CSV/JSON import could fire its own independent batch of concurrent
@@ -12247,6 +12303,9 @@ test("EntityPanel's inline cell editor suppresses a stale post-commit blur inste
       "refresh",
       "setError",
       "setMoveErrorId",
+      // Round 1400: commitInlineEdit now also checks writesInFlight -- not
+      // under test here, so false, matching the real app's own default.
+      "writesInFlight",
       `${code}\nreturn { commitInlineEdit, handleCellBlur };`,
     )(
       state.editingCell,
@@ -12263,6 +12322,7 @@ test("EntityPanel's inline cell editor suppresses a stale post-commit blur inste
       },
       () => {},
       () => {},
+      false,
     ) as { commitInlineEdit: () => Promise<void>; handleCellBlur: () => void };
   }
 
