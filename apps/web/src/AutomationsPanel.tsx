@@ -1398,8 +1398,12 @@ export function AutomationsPanel({
                 <label>
                   {t("automations.toMode.label")}
                   <select value={toMode} onChange={(e) => setToMode(e.target.value as AutomationToMode)}>
-                    <option value="field">{t("automations.toMode.field")}</option>
-                    <option value="static">{t("automations.toMode.static")}</option>
+                    <option value="field">
+                      {actionType === "send_email" ? t("automations.toMode.field.email") : t("automations.toMode.field")}
+                    </option>
+                    <option value="static">
+                      {actionType === "send_email" ? t("automations.toMode.static.email") : t("automations.toMode.static")}
+                    </option>
                   </select>
                 </label>
               )}

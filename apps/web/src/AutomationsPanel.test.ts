@@ -4248,3 +4248,61 @@ test("AutomationsPanel resets a stale field_equals value to empty when switching
     }
   });
 });
+
+/**
+ * Round 1353: a live Playwright browser session found the "Send to"
+ * selector's two option labels ("Phone number from a field on the
+ * record" / "A fixed phone number") stayed phone-worded even after
+ * switching Action to "Send an email" -- a visibly contradictory
+ * combination with the "Email subject" field rendered right below it.
+ * The destination input itself (email vs. text, round 996) and the
+ * field-value picker already branch correctly on actionType; only
+ * these two enum-option labels were left phone-only.
+ */
+test("AutomationsPanel's 'Send to' option labels switch to email wording once Action is 'Send an email', instead of staying phone-worded", async () => {
+  await withJsdom(async () => {
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = (async (input: string, init?: RequestInit) => {
+      const method = init?.method ?? "GET";
+      if (method === "GET" && input === "/api/projects/proj5/automations") {
+        return new Response(JSON.stringify({ rules: [] }), { status: 200, headers: { "content-type": "application/json" } });
+      }
+      throw new Error(`unexpected request ${method} ${input}`);
+    }) as typeof fetch;
+
+    try {
+      renderPanelWith(triggerFieldProject);
+      await waitForCondition(() => document.body.textContent?.includes("No automations yet") ?? false);
+
+      const toModeSelectBefore = Array.from(document.querySelectorAll("select")).find((s) =>
+        Array.from(s.options).some((o) => o.value === "field"),
+      ) as HTMLSelectElement;
+      assert.equal(
+        toModeSelectBefore.options[0].textContent,
+        "Phone number from a field on the record",
+        "with the default 'Send a WhatsApp message' action, the field option must read phone-worded",
+      );
+
+      const actionSelect = Array.from(document.querySelectorAll("select")).find((s) =>
+        Array.from(s.options).some((o) => o.value === "send_email"),
+      ) as HTMLSelectElement;
+      fireEvent.change(actionSelect, { target: { value: "send_email" } });
+
+      const toModeSelectAfter = Array.from(document.querySelectorAll("select")).find((s) =>
+        Array.from(s.options).some((o) => o.value === "field"),
+      ) as HTMLSelectElement;
+      assert.equal(
+        toModeSelectAfter.options[0].textContent,
+        "Email address from a field on the record",
+        "once Action is 'Send an email', the field option must switch to email wording, not stay phone-worded",
+      );
+      assert.equal(
+        toModeSelectAfter.options[1].textContent,
+        "A fixed email address",
+        "once Action is 'Send an email', the static option must also switch to email wording, not stay 'A fixed phone number'",
+      );
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+});
