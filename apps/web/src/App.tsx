@@ -254,9 +254,16 @@ export function formatMyProjectsCount(
   total: number,
   t: (key: string, params?: Record<string, string | number>) => string,
 ): string {
-  return shown === total
-    ? t("home.myProjects.count.all", { count: total })
-    : t("home.myProjects.count.filtered", { shown, total });
+  if (shown === total) {
+    // A count of exactly 1 is the very first thing any brand-new account
+    // sees on its home screen -- the first project it ever creates --
+    // not a rare edge case, so "1 projects"/"1 פרויקטים" was wrong from
+    // day one for every account. Same .one/.many split round 1388 used
+    // to close the identical gap in formatCheckpointCount, which in turn
+    // mirrors App.tsx's own WhatsApp/automations notification titles.
+    return total === 1 ? t("home.myProjects.count.all.one", { count: total }) : t("home.myProjects.count.all.many", { count: total });
+  }
+  return t("home.myProjects.count.filtered", { shown, total });
 }
 
 /**

@@ -352,6 +352,22 @@ test("formatMyProjectsCount reports 'shown of total' once a search has narrowed 
 });
 
 /**
+ * Round 1389: a count of exactly 1 is the very first thing any brand-new
+ * account sees on its home screen -- the count span renders unconditionally
+ * once myProjects.length > 0 (App.tsx), not gated by the >5 search
+ * threshold -- yet the plural noun form rendered "1 projects" (en) and the
+ * grammatically wrong plural "פרויקטים" (he) for it. Closed with the same
+ * .one/.many split round 1388 used for the identical gap in
+ * formatCheckpointCount.
+ */
+test("formatMyProjectsCount uses the correct singular noun form for exactly one project, in both languages", () => {
+  const trEn = (key: string, params?: Record<string, string | number>) => translate("en", key, params);
+  assert.equal(formatMyProjectsCount(1, 1, trEn), "1 project");
+  const trHe = (key: string, params?: Record<string, string | number>) => translate("he", key, params);
+  assert.equal(formatMyProjectsCount(1, 1, trHe), "1 פרויקט");
+});
+
+/**
  * New in this round: the "Draft" chip (round 149) marks a not-yet-built
  * project one card at a time, but with enough projects there was no way to
  * see only the drafts, or hide them entirely -- filterProjectsByStatus is
