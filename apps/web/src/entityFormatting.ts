@@ -935,6 +935,32 @@ export function findPhoneField(fields: Field[]): Field | null {
   return fields.find((f) => PHONE_FIELD_NAME_HINTS.includes(f.name.toLowerCase())) ?? null;
 }
 
+/** Whether `name` matches the same phone-field name-hint convention findPhoneField uses, for a single field in isolation. */
+export function isPhoneFieldName(name: string): boolean {
+  return PHONE_FIELD_NAME_HINTS.includes(name.toLowerCase());
+}
+
+// Round 1380: AutomationsPanel's "Send an email" action reused this exact
+// toField defaulting logic with findPhoneField, the only such helper that
+// existed -- round 1362 added the phone preference for "Send WhatsApp" but
+// its own roadmap entry flagged that "Send an email" shares the identical
+// code path with no email-equivalent helper, left open for a future round.
+const EMAIL_FIELD_NAME_HINTS = ["email", "emailaddress", "mail"];
+
+/**
+ * Picks the field a "Send an email" automation action should read a
+ * record's address from, if the entity has one -- the email-destination
+ * counterpart to findPhoneField above.
+ */
+export function findEmailField(fields: Field[]): Field | null {
+  return fields.find((f) => EMAIL_FIELD_NAME_HINTS.includes(f.name.toLowerCase())) ?? null;
+}
+
+/** Whether `name` matches the same email-field name-hint convention findEmailField uses, for a single field in isolation. */
+export function isEmailFieldName(name: string): boolean {
+  return EMAIL_FIELD_NAME_HINTS.includes(name.toLowerCase());
+}
+
 /**
  * Picks the actual phone NUMBER a "Send WhatsApp" row action should use for
  * one specific record -- unlike findPhoneField above (which names a single

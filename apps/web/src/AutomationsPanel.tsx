@@ -20,7 +20,7 @@ import {
 } from "./api.js";
 import { downloadAutomationsReport, formatAutomationsReport } from "./automationsReport.js";
 import { applyColumnOrder, getColumnOrder } from "./columnOrder.js";
-import { fieldDisplayLabel, fieldLabelOccurrences, findPhoneField, isValidDateString, parseFieldDate, recordDisplayLabel, uniqueEnumValues, type RelatedRecordsByEntity } from "./entityFormatting.js";
+import { fieldDisplayLabel, fieldLabelOccurrences, findEmailField, findPhoneField, isEmailFieldName, isPhoneFieldName, isValidDateString, parseFieldDate, recordDisplayLabel, uniqueEnumValues, type RelatedRecordsByEntity } from "./entityFormatting.js";
 import { useTranslation } from "./i18n/LanguageContext.js";
 import { resolveErrorMessage } from "./i18n/language.js";
 import { PasswordInput } from "./PasswordInput.js";
@@ -233,16 +233,34 @@ export function AutomationsPanel({
   // on the newly-chosen entity. fieldName is further restricted to
   // triggerableFields and toField to phoneFields, since the server rejects
   // any other field type outright in each case.
+  //
+  // Round 1380: also reruns when actionType changes. toField's shared text/
+  // longtext filter (phoneFields) makes a phone-like field just as "valid"
+  // a selection as an email-like one for either action type, so switching
+  // the actionType <select> from "Send WhatsApp" to "Send an email" left
+  // toField silently still pointed at whatever phone field it last
+  // defaulted to. That saved cleanly (the server only checks field TYPE,
+  // never name) and only failed/misbehaved later at actual send time, with
+  // no indication the form had ever pointed at the wrong field. The second
+  // branch below only fires when the CURRENT toField is specifically named
+  // like the other action's destination (e.g. still "phone" right after
+  // switching to "Send an email") -- an arbitrary field name the user
+  // deliberately chose (matching neither hint list) is left untouched,
+  // same as it already was for entity/fieldType changes above.
   useEffect(() => {
     if (!selectedEntity) return;
     if (!triggerableFields.some((f) => f.name === fieldName)) {
       setFieldName(triggerableFields[0]?.name ?? "");
     }
     if (!phoneFields.some((f) => f.name === toField)) {
-      setToField(findPhoneField(phoneFields)?.name ?? phoneFields[0]?.name ?? "");
+      const preferred = actionType === "send_email" ? findEmailField(phoneFields) : findPhoneField(phoneFields);
+      setToField(preferred?.name ?? phoneFields[0]?.name ?? "");
+    } else if (actionType === "send_email" ? isPhoneFieldName(toField) : isEmailFieldName(toField)) {
+      const preferred = actionType === "send_email" ? findEmailField(phoneFields) : findPhoneField(phoneFields);
+      if (preferred) setToField(preferred.name);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [entityName, fieldTypesKey]);
+  }, [entityName, fieldTypesKey, actionType]);
 
   // The "Value" control below renders a checkbox for a boolean field and a
   // <select> of enumValues for an enum field -- the same type-aware
@@ -463,7 +481,9 @@ export function AutomationsPanel({
     setToField(
       rulePhoneFields.some((f) => f.name === rule.toField)
         ? rule.toField ?? ""
-        : findPhoneField(rulePhoneFields)?.name ?? rulePhoneFields[0]?.name ?? "",
+        : (rule.actionType === "send_email" ? findEmailField(rulePhoneFields) : findPhoneField(rulePhoneFields))?.name ??
+          rulePhoneFields[0]?.name ??
+          "",
     );
     setToNumber(rule.toNumber ?? "");
     setWebhookUrl(rule.webhookUrl ?? "");

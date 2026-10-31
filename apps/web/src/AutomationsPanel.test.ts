@@ -954,6 +954,50 @@ test("AutomationsPanel's 'send to a field' dropdown defaults to a name-hinted ph
   });
 });
 
+/**
+ * Round 1380: switching Action from "Send WhatsApp" to "Send an email"
+ * left toField still pointed at the name-hinted phone field round 1362
+ * defaulted it to -- toField's own filter (text/longtext) makes a phone
+ * field just as "valid" a pick as an email field for either action type,
+ * so nothing in the old defaulting effect ever re-ran it. That saved
+ * cleanly (the server only checks field TYPE, never name) and only broke
+ * at actual send time, with the form never showing it was wrong.
+ */
+test("AutomationsPanel's 'send to a field' dropdown re-defaults from the phone field to the email field when Action is switched to 'Send an email'", async () => {
+  await withJsdom(async () => {
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = (async (input: string) => {
+      if (input === "/api/projects/proj4/automations") {
+        return new Response(JSON.stringify({ rules: [] }), { status: 200, headers: { "content-type": "application/json" } });
+      }
+      throw new Error(`unexpected request ${input}`);
+    }) as typeof fetch;
+
+    try {
+      renderPanelWith(nameBeforePhoneProject);
+      await waitForCondition(() => document.body.textContent?.includes("No automations yet") ?? false);
+
+      const toFieldSelectBefore = document.querySelector('select[aria-label="Choose a phone field"]') as HTMLSelectElement;
+      assert.equal(toFieldSelectBefore.value, "phone", "before switching actionType, toField must still default to the name-hinted phone field (round 1362)");
+
+      const actionSelect = Array.from(document.querySelectorAll("select")).find((s) =>
+        Array.from(s.options).some((o) => o.value === "send_email"),
+      ) as HTMLSelectElement;
+      fireEvent.change(actionSelect, { target: { value: "send_email" } });
+
+      const toFieldSelectAfter = document.querySelector('select[aria-label="Choose a phone field"]') as HTMLSelectElement;
+      assert.ok(toFieldSelectAfter, "the toField select must still be rendered");
+      assert.equal(
+        toFieldSelectAfter.value,
+        "email",
+        "switching Action to 'Send an email' must re-default toField to the name-hinted email field, not leave it pointed at the stale phone field",
+      );
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+});
+
 test("AutomationsPanel shows a message instead of an invalid dropdown when the entity has no text field at all", async () => {
   await withJsdom(async () => {
     const noTextProject: Project = {
