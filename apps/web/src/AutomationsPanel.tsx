@@ -1544,13 +1544,23 @@ export function AutomationsPanel({
               )}
 
               {actionType === "send_email" && (
-                <input
-                  type="text"
-                  placeholder={t("automations.emailSubject.placeholder")}
-                  aria-label={t("automations.emailSubject.placeholder")}
-                  value={emailSubject}
-                  onChange={(e) => setEmailSubject(e.target.value)}
-                />
+                <>
+                  <input
+                    type="text"
+                    placeholder={t(trigger === "schedule" ? "automations.emailSubject.placeholder.schedule" : "automations.emailSubject.placeholder")}
+                    aria-label={t(trigger === "schedule" ? "automations.emailSubject.placeholder.schedule" : "automations.emailSubject.placeholder")}
+                    value={emailSubject}
+                    onChange={(e) => setEmailSubject(e.target.value)}
+                  />
+                  {/* Round 1399: mirrors round 868's own fix for the sibling
+                      Message field just below -- fireScheduledRule (automations.ts)
+                      calls fireEmailAction with entity/record both null, so subject
+                      is never passed through interpolateTemplate for a schedule
+                      rule and reaches the recipient with any {{fieldName}} left
+                      completely literal, same hazard round 868 already fixed for
+                      the Message field but never ported to this newer sibling. */}
+                  <p className="muted small">{t(trigger === "schedule" ? "automations.emailSubject.hint.schedule" : "automations.emailSubject.hint")}</p>
+                </>
               )}
             </>
           )}

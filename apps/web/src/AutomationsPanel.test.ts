@@ -2419,6 +2419,75 @@ test("AutomationsPanel swaps the message-template hint/placeholder for a schedul
 });
 
 /**
+ * Round 1399: the same gap round 868 fixed for the message-template field,
+ * but for its newer sibling, the send_email action's own emailSubject
+ * field -- added in round 996, well after round 868, and never given the
+ * same schedule-specific hint/placeholder treatment. automations.ts's
+ * fireScheduledRule calls fireEmailAction with entity/record both null, so
+ * subject is never passed through interpolateTemplate for a schedule rule
+ * either (automations.ts:988-991/1379) -- a user who wrote
+ * "{{customerName}}" into a schedule rule's email subject got that literal,
+ * unsubstituted text emailed to a real recipient, with nothing in the
+ * product warning this would happen, exactly the same hazard as round 868's
+ * own finding for Message.
+ */
+test("AutomationsPanel swaps the email-subject hint/placeholder for a schedule-specific pair that never mentions {{fieldName}}, since a schedule rule is never interpolated", async () => {
+  await withJsdom(async () => {
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = (async (input: string) => {
+      if (input === "/api/projects/proj5/automations") {
+        return new Response(JSON.stringify({ rules: [] }), { status: 200, headers: { "content-type": "application/json" } });
+      }
+      throw new Error(`unexpected request ${input}`);
+    }) as typeof fetch;
+
+    try {
+      renderPanelWith(triggerFieldProject);
+      await waitForCondition(() => document.body.textContent?.includes("No automations yet") ?? false);
+
+      const actionSelect = Array.from(document.querySelectorAll("select")).find((s) =>
+        Array.from(s.options).some((o) => o.value === "send_email"),
+      ) as HTMLSelectElement;
+      fireEvent.change(actionSelect, { target: { value: "send_email" } });
+
+      const subjectField = document.querySelector('.automations-create-form input[type="text"]') as HTMLInputElement;
+      assert.match(subjectField.placeholder, /\{\{customerName\}\}/, "the default (non-schedule) subject placeholder must advertise {{fieldName}} interpolation");
+      assert.match(
+        document.body.textContent ?? "",
+        /Use \{\{fieldName\}\}/,
+        "the default (non-schedule) subject hint must advertise {{fieldName}} interpolation",
+      );
+
+      const triggerSelect = Array.from(document.querySelectorAll("select")).find((s) =>
+        Array.from(s.options).some((o) => o.value === "schedule"),
+      ) as HTMLSelectElement;
+      fireEvent.change(triggerSelect, { target: { value: "schedule" } });
+
+      await waitForCondition(() => !subjectField.placeholder.includes("{{"));
+      assert.doesNotMatch(subjectField.placeholder, /\{\{/, "a schedule rule's own subject placeholder must never show {{fieldName}} syntax that will never be interpolated");
+      assert.doesNotMatch(
+        document.body.textContent ?? "",
+        /Use \{\{fieldName\}\}/,
+        "a schedule rule's own subject hint must not advertise interpolation that fireScheduledRule never performs",
+      );
+      assert.match(
+        document.body.textContent ?? "",
+        /sent exactly as written/,
+        "a schedule rule's own subject hint must explain the subject is sent verbatim instead",
+      );
+
+      // Switching back to a non-schedule trigger must restore the original pair.
+      fireEvent.change(triggerSelect, { target: { value: "record_created" } });
+      await waitForCondition(() => subjectField.placeholder.includes("{{"));
+      assert.match(subjectField.placeholder, /\{\{customerName\}\}/, "switching away from 'schedule' must restore the field-interpolation subject placeholder");
+      assert.match(document.body.textContent ?? "", /Use \{\{fieldName\}\}/, "switching away from 'schedule' must restore the field-interpolation subject hint");
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+});
+
+/**
  * New: the "webhook" action type -- choosing it must swap out the
  * WhatsApp-specific toMode/destination controls for a plain URL input,
  * and the submitted request must carry actionType/webhookUrl with no
