@@ -1340,6 +1340,17 @@ function useAddableSpecItem(add: (value: string) => Promise<{ project: Project }
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
+    // Round 1366: busy already gates every caller's own submit button
+    // (AddEntityForm/AddRoleForm/AddAssumptionForm/AddPersonaForm's own
+    // `formDisabled = busy || disabled`), but handleSubmit itself never
+    // checked it -- the same own-click reentrancy gap rounds 1363-1365
+    // closed for EntityPanel/AutomationsPanel/WhatsAppPanel/
+    // CollaboratorsPanel. AddFieldForm in this same file, which does NOT
+    // use this shared hook, already guards itself this way -- confirming
+    // the omission here was a gap, not a deliberate difference. A fast
+    // double-click fired this twice before React disabled the button,
+    // creating a duplicate entity/role/assumption/persona for one click.
+    if (busy) return;
     const trimmed = value.trim();
     if (!trimmed) return;
     setBusy(true);

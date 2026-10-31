@@ -1237,6 +1237,69 @@ test("submitting the add-entity form calls the real POST endpoint with the trimm
   });
 });
 
+/**
+ * Round 1366: useAddableSpecItem's handleSubmit (shared by AddEntityForm,
+ * AddRoleForm, AddAssumptionForm, AddPersonaForm) had no guard against
+ * racing ITSELF -- the same own-click reentrancy gap rounds 1363-1365
+ * closed for EntityPanel/AutomationsPanel/WhatsAppPanel/CollaboratorsPanel.
+ * A fast double-click on "Add" must only ever reach the POST endpoint once,
+ * not fire two independent requests (which would create two duplicate
+ * entities for one click). Exercised here via AddEntityForm; the fix lives
+ * in the shared hook itself, so it covers all four forms at once.
+ */
+test("AddEntityForm's submit button guards against a fast double-click, so only one POST ever fires for one submission", async () => {
+  await withJsdom(async () => {
+    const originalFetch = globalThis.fetch;
+    const postedLabels: string[] = [];
+    const pending: { resolveFirstPost: (() => void) | null } = { resolveFirstPost: null };
+    globalThis.fetch = (async (input: string, init?: RequestInit) => {
+      if (init?.method === "POST" && input === "/api/projects/proj1/entities") {
+        const label = (JSON.parse(init.body as string) as { label: string }).label;
+        postedLabels.push(label);
+        if (postedLabels.length === 1) {
+          await new Promise<void>((resolve) => {
+            pending.resolveFirstPost = resolve;
+          });
+        } else {
+          await new Promise(() => {});
+        }
+        const newEntity = { name: "Payment", label, fields: [{ name: "name", type: "text", required: true }] };
+        const withNewEntity = { ...baseProject, spec: { ...baseProject.spec, entities: [...baseProject.spec.entities, newEntity] } };
+        return new Response(JSON.stringify({ project: withNewEntity }), { status: 200, headers: { "content-type": "application/json" } });
+      }
+      throw new Error(`unexpected request ${init?.method ?? "GET"} ${input}`);
+    }) as typeof fetch;
+
+    try {
+      const addedProjects: Project[] = [];
+      renderAddEntityForm((p) => addedProjects.push(p));
+
+      const input = document.querySelector(".spec-add-item-form input") as HTMLInputElement;
+      fireEvent.change(input, { target: { value: "Payment" } });
+
+      const form = document.querySelector(".spec-add-item-form") as HTMLFormElement;
+      fireEvent.submit(form);
+      fireEvent.submit(form);
+      await waitForCondition(() => postedLabels.length > 0);
+
+      assert.equal(
+        postedLabels.length,
+        1,
+        "a fast double submit must only ever reach the add POST once -- the second click must be blocked by busy, not fire its own independent request",
+      );
+
+      pending.resolveFirstPost?.();
+      // Let handleSubmit's own success path (onAdded) actually finish
+      // before restoring the real fetch -- otherwise that continuation
+      // keeps running after this test returns and risks bleeding into
+      // whichever test runs next (the same hazard round 1364 hit and fixed).
+      await waitForCondition(() => addedProjects.length === 1);
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+});
+
 test("the add-entity form surfaces a real error instead of silently doing nothing, and never fires onAdded", async () => {
   await withJsdom(async () => {
     const originalFetch = globalThis.fetch;
