@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import type { Entity, EntityRecord, Project } from "@forge/shared";
 import {
   createAutomationRule,
@@ -116,6 +116,17 @@ export function AutomationsPanel({
   const [fieldValue, setFieldValue] = useState("");
   const [toMode, setToMode] = useState<AutomationToMode>("field");
   const [toField, setToField] = useState("");
+  // Round 1382: true right after the Entity <select> itself is switched,
+  // so the toField-defaulting effect below knows the CURRENT toField was
+  // never a deliberate pick for the entity now in effect (it's whatever
+  // survived from the previous entity) and is free to re-pick the best
+  // field for the new one -- see that effect's own comment for why this
+  // is needed at all. Cleared back to false the moment the user manually
+  // reselects toField themselves (a deliberate pick for THIS entity must
+  // survive future unrelated re-renders), and left false by
+  // resetToCreateMode/applyRuleToForm (their own initial toField is the
+  // right baseline to respect, not something to immediately override).
+  const toFieldEligibleForUpgradeRef = useRef(false);
   const [toNumber, setToNumber] = useState("");
   const [messageTemplate, setMessageTemplate] = useState("");
   const [createBusy, setCreateBusy] = useState(false);
@@ -226,6 +237,36 @@ export function AutomationsPanel({
   const triggerableFields = orderedSelectedEntityFields.filter((f) => f.type !== "file");
 
   const selectedField = selectedEntity?.fields.find((f) => f.name === fieldName);
+
+  // Round 1382: a live Playwright session found that switching the Entity
+  // <select> (only possible in create mode -- editingRuleId disables it)
+  // leaves toField on a stale field whenever that field's NAME happens to
+  // also exist on the newly-chosen entity -- which is common, since most
+  // templates key an entity's primary identifying field "name" regardless
+  // of its display label. The effect below (round 1362/1380) already
+  // treats "still exists on the new entity" as proof the selection is
+  // still valid, which is correct for a field the user genuinely picked,
+  // but wrong for a field that was only ever THIS entity's own auto-
+  // fallback default -- e.g. Menu Item (no phone field) defaults toField
+  // to "Dish Name" (key "name"); switching Entity to Customer (which DOES
+  // have a Phone field) leaves toField on "Name" instead of re-defaulting
+  // to "Phone", because Customer also happens to have a field keyed
+  // "name". A rule saved this way fails silently at actual send time
+  // (apps/api/src/automations.ts's fireWhatsAppAction reads record[toField]
+  // literally), the same severity class rounds 1362/1380 already fixed
+  // for a different trigger. toFieldEligibleForUpgradeRef (see its own
+  // declaration) distinguishes this case precisely: it's only true
+  // immediately after the Entity select itself changes, so this effect
+  // only overrides a field that was never deliberately chosen FOR the
+  // entity now in effect.
+  useEffect(() => {
+    if (!toFieldEligibleForUpgradeRef.current) return;
+    toFieldEligibleForUpgradeRef.current = false;
+    if (!selectedEntity) return;
+    const preferred = actionType === "send_email" ? findEmailField(phoneFields) : findPhoneField(phoneFields);
+    setToField(preferred?.name ?? phoneFields[0]?.name ?? "");
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [entityName]);
 
   // Keep the field/toField selects pointed at a real field whenever the
   // chosen entity changes (including on first render) -- an empty/stale
@@ -1303,7 +1344,14 @@ export function AutomationsPanel({
         >
           <label>
             {t("automations.entity.label")}
-            <select value={entityName} onChange={(e) => setEntityName(e.target.value)} disabled={editingRuleId !== null}>
+            <select
+              value={entityName}
+              onChange={(e) => {
+                toFieldEligibleForUpgradeRef.current = true;
+                setEntityName(e.target.value);
+              }}
+              disabled={editingRuleId !== null}
+            >
               {entities.map((e) => (
                 <option key={e.name} value={e.name}>
                   {entityDisplayLabel(e, entityOccurrences)}
@@ -1461,7 +1509,14 @@ export function AutomationsPanel({
               )}
 
               {toMode === "field" && selectedEntity && phoneFields.length > 0 ? (
-                <select value={toField} onChange={(e) => setToField(e.target.value)} aria-label={t("automations.toField.placeholder")}>
+                <select
+                  value={toField}
+                  onChange={(e) => {
+                    toFieldEligibleForUpgradeRef.current = false;
+                    setToField(e.target.value);
+                  }}
+                  aria-label={t("automations.toField.placeholder")}
+                >
                   {phoneFields.map((f) => (
                     <option key={f.name} value={f.name}>
                       {fieldDisplayLabel(f, selectedEntityFieldOccurrences)}

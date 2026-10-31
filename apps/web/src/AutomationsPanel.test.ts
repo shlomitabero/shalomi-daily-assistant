@@ -998,6 +998,88 @@ test("AutomationsPanel's 'send to a field' dropdown re-defaults from the phone f
   });
 });
 
+/**
+ * Round 1382: a live Playwright session found that switching the Entity
+ * dropdown (only possible in create mode) leaves toField on a stale field
+ * whenever that field's NAME happens to also exist on the newly-chosen
+ * entity -- common, since most templates key an entity's primary
+ * identifying field "name" regardless of its display label. Menu Item (no
+ * phone-like field) falls back to its own "name"-keyed field as toField;
+ * switching Entity to Customer (which has a real phone field) must
+ * re-default toField to "phone", not leave it on "name" just because
+ * Customer also happens to have a field keyed "name".
+ */
+const entitySwitchKeyCollisionProject: Project = {
+  id: "proj6",
+  ownerId: "owner1",
+  name: "Restaurant",
+  description: "A restaurant app",
+  status: "built",
+  createdAt: new Date().toISOString(),
+  spec: {
+    summary: "A restaurant app",
+    personas: [],
+    roles: ["Admin"],
+    entities: [
+      {
+        name: "MenuItem",
+        label: "Menu Item",
+        fields: [
+          { name: "name", label: "Dish Name", type: "text", required: true },
+          { name: "price", label: "Price", type: "number", required: false },
+        ],
+      },
+      {
+        name: "Customer",
+        label: "Customer",
+        fields: [
+          { name: "name", label: "Name", type: "text", required: true },
+          { name: "phone", label: "Phone", type: "text", required: false },
+          { name: "email", label: "Email", type: "text", required: false },
+        ],
+      },
+    ],
+    screens: [],
+    assumptions: [],
+    openQuestions: [],
+  },
+};
+
+test("AutomationsPanel's 'send to a field' dropdown re-defaults from a stale same-key field to the new entity's own hinted phone field when the Entity dropdown is switched", async () => {
+  await withJsdom(async () => {
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = (async (input: string) => {
+      if (input === "/api/projects/proj6/automations") {
+        return new Response(JSON.stringify({ rules: [] }), { status: 200, headers: { "content-type": "application/json" } });
+      }
+      throw new Error(`unexpected request ${input}`);
+    }) as typeof fetch;
+
+    try {
+      renderPanelWith(entitySwitchKeyCollisionProject);
+      await waitForCondition(() => document.body.textContent?.includes("No automations yet") ?? false);
+
+      const toFieldSelectBefore = document.querySelector('select[aria-label="Choose a phone field"]') as HTMLSelectElement;
+      assert.equal(toFieldSelectBefore.value, "name", "Menu Item has no phone-like field, so toField must fall back to its only eligible field, 'name'");
+
+      const entitySelect = Array.from(document.querySelectorAll("select")).find((s) =>
+        Array.from(s.options).some((o) => o.value === "Customer"),
+      ) as HTMLSelectElement;
+      fireEvent.change(entitySelect, { target: { value: "Customer" } });
+
+      const toFieldSelectAfter = document.querySelector('select[aria-label="Choose a phone field"]') as HTMLSelectElement;
+      assert.ok(toFieldSelectAfter, "the toField select must still be rendered for Customer");
+      assert.equal(
+        toFieldSelectAfter.value,
+        "phone",
+        "switching Entity to Customer must re-default toField to the name-hinted phone field, not leave it on 'name' just because Customer also has a field keyed 'name'",
+      );
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+});
+
 test("AutomationsPanel shows a message instead of an invalid dropdown when the entity has no text field at all", async () => {
   await withJsdom(async () => {
     const noTextProject: Project = {
