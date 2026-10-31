@@ -284,6 +284,41 @@ test("formatAutomationsReport translates a send_whatsapp rule's WhatsApp-not-con
 });
 
 /**
+ * Round 1381: mirrors AutomationsPanel.tsx's own identical fix (see its own
+ * comment) -- round 1166 above only ever covered AUTOMATION_CONFIG_ERROR_CODES'
+ * fixed literal sentences; a webhook rule's own two dynamic failure shapes
+ * (fireWebhookAction's non-2xx-response message and its catch-all
+ * network-error message, apps/api/src/automations.ts) were never covered
+ * and leaked raw English straight into the downloaded/copied report.
+ */
+test("formatAutomationsReport translates a webhook rule's HTTP-status failure and its network-error failure instead of showing the bare English sentence", () => {
+  const t = (key: string, params?: Record<string, string | number>) => translate("en", key, params);
+  const httpErrorRule = makeRule({
+    id: "http-error-rule",
+    actionType: "webhook",
+    webhookUrl: "https://hooks.example.com/forge",
+    lastTriggeredAt: "2026-03-15T09:00:00Z",
+    lastStatus: "failed",
+    lastError: "Webhook responded with status 500",
+  });
+  const networkErrorRule = makeRule({
+    id: "network-error-rule",
+    actionType: "webhook",
+    webhookUrl: "https://hooks.example.com/forge",
+    lastTriggeredAt: "2026-03-15T09:00:00Z",
+    lastStatus: "failed",
+    lastError: "fetch failed",
+  });
+
+  const report = formatAutomationsReport([httpErrorRule, networkErrorRule], [], "Shop", "en", t);
+
+  assert.match(report, /status 500/, "the report must still surface the actual status code for the HTTP-status failure");
+  assert.equal(report.includes("Webhook responded with status 500"), false, "the bare raw HTTP-status sentence must never leak into the report");
+  assert.match(report, /network error/i, "the report must show a translated network-error message for the catch-all failure");
+  assert.equal(report.includes("fetch failed"), false, "the bare raw network-error text must never leak into the report");
+});
+
+/**
  * Round 948: same fix as AutomationsPanel.tsx's own identical regression
  * (see its own comment) -- editing a rule's actionType never
  * retroactively clears/updates its own already-stored lastError

@@ -22,7 +22,7 @@ import { downloadAutomationsReport, formatAutomationsReport } from "./automation
 import { applyColumnOrder, getColumnOrder } from "./columnOrder.js";
 import { fieldDisplayLabel, fieldLabelOccurrences, findEmailField, findPhoneField, isEmailFieldName, isPhoneFieldName, isValidDateString, parseFieldDate, recordDisplayLabel, uniqueEnumValues, type RelatedRecordsByEntity } from "./entityFormatting.js";
 import { useTranslation } from "./i18n/LanguageContext.js";
-import { resolveErrorMessage } from "./i18n/language.js";
+import { resolveErrorMessage, translate } from "./i18n/language.js";
 import { PasswordInput } from "./PasswordInput.js";
 import { useDialogFocusTrap } from "./useDialogFocusTrap.js";
 import { useBeforeUnloadWarning } from "./useBeforeUnloadWarning.js";
@@ -881,6 +881,22 @@ export function AutomationsPanel({
     const configCode = AUTOMATION_CONFIG_ERROR_CODES[error];
     if (configCode) {
       return resolveErrorMessage(lang, { code: configCode, error });
+    }
+    // Round 1381: a webhook rule's own two remaining failure shapes --
+    // fireWebhookAction's (apps/api/src/automations.ts) non-2xx-response
+    // message and its catch-all network-error message -- were never
+    // covered by AUTOMATION_CONFIG_ERROR_CODES above (that map only knows
+    // fixed literal sentences, not these two dynamic ones), leaking raw
+    // English into this Hebrew-primary app's run history and reports. The
+    // HTTP-status message is a single always-identical "<fixed prefix> N"
+    // shape that can be parsed and re-interpolated losslessly; anything
+    // else reaching here for a webhook rule's own failed run, after every
+    // KNOWN whole-rule misconfiguration above has already been ruled out,
+    // is necessarily some other network-level failure.
+    if (actionType === "webhook") {
+      const statusMatch = /^Webhook responded with status (\d+)$/.exec(error);
+      if (statusMatch) return translate(lang, "error.AUTOMATION_WEBHOOK_HTTP_ERROR", { status: statusMatch[1] });
+      if (error) return translate(lang, "error.AUTOMATION_WEBHOOK_NETWORK_ERROR");
     }
     return error;
   }

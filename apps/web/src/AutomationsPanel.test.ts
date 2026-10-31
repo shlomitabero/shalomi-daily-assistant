@@ -3881,6 +3881,69 @@ test("AutomationsPanel translates whole-rule misconfiguration errors (a webhook 
 });
 
 /**
+ * Round 1381: round 1166 above translated every whole-rule misconfiguration
+ * error AUTOMATION_CONFIG_ERROR_CODES knows about, but a webhook rule's own
+ * two dynamic failure shapes -- fireWebhookAction's (apps/api/src/
+ * automations.ts) non-2xx-response message ("Webhook responded with status
+ * 404") and its catch-all network-error message (any raw fetch/undici
+ * error text, e.g. "fetch failed") -- were never covered, since that map
+ * only knows fixed literal sentences, not these two dynamic ones. Before
+ * this round these leaked raw English straight into this Hebrew-primary
+ * app's rule summary and run-history list.
+ */
+test("AutomationsPanel translates a webhook rule's HTTP-status failure and its network-error failure, instead of showing the bare English sentence", async () => {
+  await withJsdom(async () => {
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = (async (input: string) => {
+      if (input === "/api/projects/proj1/automations") {
+        return new Response(
+          JSON.stringify({
+            rules: [
+              makeRule({
+                actionType: "webhook",
+                webhookUrl: "https://hooks.example.com/forge",
+                lastTriggeredAt: new Date("2026-03-15T09:00:00Z").toISOString(),
+                lastStatus: "failed",
+                lastError: "Webhook responded with status 404",
+              }),
+            ],
+          }),
+          { status: 200, headers: { "content-type": "application/json" } },
+        );
+      }
+      if (input === "/api/projects/proj1/automations/rule1/runs") {
+        return new Response(
+          JSON.stringify({
+            runs: [{ id: "run1", ruleId: "rule1", status: "failed", error: "fetch failed", triggeredAt: new Date("2026-03-15T09:00:00Z").toISOString() }],
+          }),
+          { status: 200, headers: { "content-type": "application/json" } },
+        );
+      }
+      throw new Error(`unexpected request ${input}`);
+    }) as typeof fetch;
+
+    try {
+      renderPanel();
+      await waitForCondition(() => document.querySelectorAll(".automations-rule-row").length === 1);
+
+      const row = document.querySelector(".automations-rule-row") as HTMLElement;
+      assert.equal((row.textContent ?? "").includes("Webhook responded with status 404"), false, "the bare raw English sentence must never leak into the rule row");
+      assert.match(row.textContent ?? "", /404/, "the translated message must still surface the actual status code, not a generic one");
+
+      const historyButton = Array.from(document.querySelectorAll("button")).find((b) => b.textContent === "History") as HTMLButtonElement;
+      fireEvent.click(historyButton);
+      await waitForCondition(() => document.querySelectorAll(".automations-rule-history-list li").length === 1);
+
+      const historyText = document.querySelector(".automations-rule-history-list")?.textContent ?? "";
+      assert.equal(historyText.includes("fetch failed"), false, "the bare raw network-error text must never leak into the run-history list either");
+      assert.match(historyText, /network/i, "the run-history list must show a translated network-error message instead");
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+});
+
+/**
  * Round 948: editing a rule's actionType (switching it between
  * send_whatsapp and webhook) never clears/retroactively updates its own
  * already-stored lastError/run history -- a rule's CURRENT actionType is

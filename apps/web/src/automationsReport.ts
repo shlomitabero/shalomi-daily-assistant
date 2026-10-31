@@ -9,7 +9,7 @@ import {
   type AutomationRunView,
 } from "./api.js";
 import { fieldDisplayLabel, fieldLabelOccurrences, parseFieldDate, recordDisplayLabel, type RelatedRecordsByEntity } from "./entityFormatting.js";
-import { resolveErrorMessage, type Lang } from "./i18n/language.js";
+import { resolveErrorMessage, translate, type Lang } from "./i18n/language.js";
 
 const LOCALE: Record<Lang, string> = { he: "he-IL", en: "en-US" };
 
@@ -222,6 +222,15 @@ function translateAutomationError(actionType: AutomationActionType | null, error
   const configCode = AUTOMATION_CONFIG_ERROR_CODES[error];
   if (configCode) {
     return resolveErrorMessage(lang, { code: configCode, error });
+  }
+  // Round 1381: mirrors AutomationsPanel.tsx's own identical fix (see its
+  // comment) -- a webhook rule's non-2xx-response message and catch-all
+  // network-error message were never covered by AUTOMATION_CONFIG_ERROR_CODES
+  // above, since that map only knows fixed literal sentences.
+  if (actionType === "webhook") {
+    const statusMatch = /^Webhook responded with status (\d+)$/.exec(error);
+    if (statusMatch) return translate(lang, "error.AUTOMATION_WEBHOOK_HTTP_ERROR", { status: statusMatch[1] });
+    if (error) return translate(lang, "error.AUTOMATION_WEBHOOK_NETWORK_ERROR");
   }
   return error;
 }
