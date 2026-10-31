@@ -8,6 +8,7 @@ import type { SpecProvider } from "@forge/spec-engine";
 import { createProjectsRouter } from "./routes/projects.js";
 import { createAuthRouter } from "./routes/auth.js";
 import { createCalendarFeedRouter } from "./routes/calendar.js";
+import { createInboundWebhookRouter } from "./routes/webhookIn.js";
 import { WhatsAppWebManager } from "./whatsappWeb.js";
 import { HttpError } from "./httpError.js";
 import { ResendEmailSender, type EmailSender } from "./email.js";
@@ -124,6 +125,10 @@ export function createApp(
   // see createCalendarFeedRouter's own doc comment for why this route can
   // never go through requireAuth.
   app.use("/api", createCalendarFeedRouter(db));
+  // Round 1405: same placement/reasoning as createCalendarFeedRouter just
+  // above -- see createInboundWebhookRouter's own doc comment for why this
+  // route can never go through requireAuth either.
+  app.use("/api", createInboundWebhookRouter(db, whatsappManager, resolvedEmailSender, uploadsDir));
   app.use("/api", createAuthRouter(db, whatsappManager, resolvedEmailSender, activePipelines, uploadsDir));
   app.use("/api", createProjectsRouter(db, provider, whatsappManager, resolvedEmailSender, activePipelines, uploadsDir));
 

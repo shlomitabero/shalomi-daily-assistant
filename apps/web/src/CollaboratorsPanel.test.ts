@@ -1274,6 +1274,117 @@ test("CollaboratorsPanel's calendar-feed regenerate button calls the real endpoi
 });
 
 /**
+ * Round 1405: mirrors the calendar-feed regenerate button's own owner-only
+ * test just above -- GET .../inbound-webhook-token/regenerate (which this
+ * calls) is requireProjectOwner server-side too, so a plain collaborator
+ * must never be shown a button that would just 404.
+ */
+test("CollaboratorsPanel's inbound-webhook regenerate button only renders for the owner", async () => {
+  await withJsdom(async () => {
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = (async (input: string, init?: RequestInit) => {
+      const method = init?.method ?? "GET";
+      if (method === "GET" && input === "/api/projects/proj1/collaborators") {
+        return new Response(JSON.stringify({ collaborators: [] }), { status: 200, headers: { "content-type": "application/json" } });
+      }
+      throw new Error(`unexpected request ${method} ${input}`);
+    }) as typeof fetch;
+
+    try {
+      renderPanel(true);
+      await waitForCondition(() => document.querySelector(".collab-webhook-in-section") !== null);
+      cleanup();
+
+      renderPanel(false);
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      assert.equal(
+        document.querySelector(".collab-webhook-in-section"),
+        null,
+        "a plain collaborator (not the owner) must never see the regenerate affordance at all",
+      );
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+});
+
+test("CollaboratorsPanel's inbound-webhook regenerate button asks for confirmation, and declining never calls the real endpoint", async () => {
+  await withJsdom(async () => {
+    const originalFetch = globalThis.fetch;
+    const originalConfirm = globalThis.window.confirm;
+    let regenerateCalls = 0;
+
+    globalThis.fetch = (async (input: string, init?: RequestInit) => {
+      const method = init?.method ?? "GET";
+      if (method === "GET" && input === "/api/projects/proj1/collaborators") {
+        return new Response(JSON.stringify({ collaborators: [] }), { status: 200, headers: { "content-type": "application/json" } });
+      }
+      if (method === "POST" && input === "/api/projects/proj1/inbound-webhook-token/regenerate") {
+        regenerateCalls += 1;
+        return new Response(JSON.stringify({ token: "brand-new-token" }), { status: 200, headers: { "content-type": "application/json" } });
+      }
+      throw new Error(`unexpected request ${method} ${input}`);
+    }) as typeof fetch;
+    globalThis.window.confirm = (() => false) as typeof window.confirm;
+
+    try {
+      renderPanel(true);
+      await waitForCondition(() => document.querySelector(".collab-webhook-in-section") !== null);
+
+      fireEvent.click(document.querySelector(".collab-webhook-in-section button") as HTMLButtonElement);
+      await new Promise((resolve) => setTimeout(resolve, 0));
+
+      assert.equal(regenerateCalls, 0, "declining the confirm must never call the real regenerate endpoint");
+    } finally {
+      globalThis.fetch = originalFetch;
+      globalThis.window.confirm = originalConfirm;
+    }
+  });
+});
+
+test("CollaboratorsPanel's inbound-webhook regenerate button calls the real endpoint and shows a success message once confirmed", async () => {
+  await withJsdom(async () => {
+    const originalFetch = globalThis.fetch;
+    const originalConfirm = globalThis.window.confirm;
+    let regenerateCalls = 0;
+
+    globalThis.fetch = (async (input: string, init?: RequestInit) => {
+      const method = init?.method ?? "GET";
+      if (method === "GET" && input === "/api/projects/proj1/collaborators") {
+        return new Response(JSON.stringify({ collaborators: [] }), { status: 200, headers: { "content-type": "application/json" } });
+      }
+      // Unlike the calendar-feed regenerate above, this never appends
+      // ?lang=... -- there's no "your webhook was reset" notification
+      // email to other collaborators (see handleRegenerateInboundWebhookToken's
+      // own doc comment for why: this token only ever configures the
+      // OWNER's own external integration, not anything of a collaborator's).
+      if (method === "POST" && input === "/api/projects/proj1/inbound-webhook-token/regenerate") {
+        regenerateCalls += 1;
+        return new Response(JSON.stringify({ token: "brand-new-token" }), { status: 200, headers: { "content-type": "application/json" } });
+      }
+      throw new Error(`unexpected request ${method} ${input}`);
+    }) as typeof fetch;
+    globalThis.window.confirm = (() => true) as typeof window.confirm;
+
+    try {
+      renderPanel(true);
+      await waitForCondition(() => document.querySelector(".collab-webhook-in-section") !== null);
+
+      const button = document.querySelector(".collab-webhook-in-section button") as HTMLButtonElement;
+      fireEvent.click(button);
+      await waitForCondition(() => regenerateCalls === 1);
+      await waitForCondition(() => document.querySelector(".collab-webhook-in-section [role='status']") !== null);
+
+      assert.equal(regenerateCalls, 1, "confirming must call the real regenerate endpoint exactly once");
+      assert.equal(button.disabled, false, "the button must re-enable itself once the request settles");
+    } finally {
+      globalThis.fetch = originalFetch;
+      globalThis.window.confirm = originalConfirm;
+    }
+  });
+});
+
+/**
  * Round 1247: the "Subscribe to a combined calendar" button, the
  * project-wide counterpart to EntityPanel.tsx's own per-entity subscribe
  * button. Unlike the regenerate section just above (owner-only, since

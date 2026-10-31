@@ -1041,6 +1041,33 @@ export function regenerateCalendarFeedToken(projectId: string, lang?: "he" | "en
   });
 }
 
+/**
+ * Round 1405: backs EntityPanel.tsx's own "Copy webhook URL" affordance --
+ * the token used to build a public URL an external service (Stripe,
+ * Typeform, a website's own form handler) can POST to in order to create
+ * a record in this entity. See apps/api/src/routes/webhookIn.ts and
+ * getOrCreateInboundWebhookToken (packages/db) for why this is a real
+ * persisted secret, mirroring getCalendarFeedToken's own exact shape.
+ */
+export function getInboundWebhookToken(projectId: string): Promise<{ token: string }> {
+  return request(`/projects/${projectId}/inbound-webhook-token`);
+}
+
+/**
+ * Round 1405: rotates the webhook token so any previously-copied URL (one
+ * pasted into an external service that's since been removed, or one that
+ * leaked) stops working -- owner-only, mirroring
+ * regenerateCalendarFeedToken's own exact reasoning and idempotency-key
+ * mechanism (a response lost in transit must never rotate the token
+ * twice).
+ */
+export function regenerateInboundWebhookToken(projectId: string): Promise<{ token: string }> {
+  return request(`/projects/${projectId}/inbound-webhook-token/regenerate`, {
+    method: "POST",
+    headers: { "x-idempotency-key": crypto.randomUUID() },
+  });
+}
+
 export function listCheckpoints(projectId: string): Promise<{ checkpoints: Checkpoint[] }> {
   return request(`/projects/${projectId}/checkpoints`);
 }

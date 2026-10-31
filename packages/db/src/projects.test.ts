@@ -31,6 +31,9 @@ import {
   getOrCreateCalendarFeedToken,
   getCalendarFeedToken,
   regenerateCalendarFeedToken,
+  getOrCreateInboundWebhookToken,
+  getInboundWebhookToken,
+  regenerateInboundWebhookToken,
 } from "./projects.js";
 
 const validSpec: ProductSpec = {
@@ -919,4 +922,56 @@ test("regenerateCalendarFeedToken overwrites an already-set token with a real, d
   assert.equal(getCalendarFeedToken(db, "proj1"), regenerated, "the new token must actually be persisted, not just returned");
 
   assert.equal(regenerateCalendarFeedToken(db, "does-not-exist"), undefined);
+});
+
+/**
+ * Round 1405: mirrors getOrCreateCalendarFeedToken's own test just above --
+ * backs the inbound webhook feature, a real token lazily generated on
+ * first request that's then persisted, not a fresh random one every call.
+ */
+test("getOrCreateInboundWebhookToken generates a real token once, persists it, and returns the same one on every later call", () => {
+  const db = openDatabase(":memory:");
+  ensureProjectsTable(db);
+  insertProject(db, { id: "proj1", ownerId: "owner1", name: "P1", description: "", spec: validSpec });
+  insertProject(db, { id: "proj2", ownerId: "owner1", name: "P2", description: "", spec: validSpec });
+
+  assert.equal(getInboundWebhookToken(db, "proj1"), undefined, "no token exists until the webhook is actually requested");
+
+  const first = getOrCreateInboundWebhookToken(db, "proj1");
+  assert.ok(first && first.length >= 32, "expected a real, long random token, not a short/empty placeholder");
+  assert.equal(getInboundWebhookToken(db, "proj1"), first, "the generated token must actually be persisted, not just returned");
+
+  const second = getOrCreateInboundWebhookToken(db, "proj1");
+  assert.equal(second, first, "calling it again must return the SAME token, not generate a new one each time");
+
+  const otherProjectToken = getOrCreateInboundWebhookToken(db, "proj2");
+  assert.notEqual(otherProjectToken, first, "two different projects must never share the same token");
+});
+
+test("getOrCreateInboundWebhookToken and getInboundWebhookToken both return undefined for a project that doesn't exist", () => {
+  const db = openDatabase(":memory:");
+  ensureProjectsTable(db);
+  assert.equal(getOrCreateInboundWebhookToken(db, "does-not-exist"), undefined);
+  assert.equal(getInboundWebhookToken(db, "does-not-exist"), undefined);
+});
+
+/**
+ * Round 1405: mirrors regenerateCalendarFeedToken's own test just above --
+ * once a token has been configured into an external service, it must be
+ * possible to invalidate it.
+ */
+test("regenerateInboundWebhookToken overwrites an already-set token with a real, different one, and returns undefined for a project that doesn't exist", () => {
+  const db = openDatabase(":memory:");
+  ensureProjectsTable(db);
+  insertProject(db, { id: "proj1", ownerId: "owner1", name: "P1", description: "", spec: validSpec });
+
+  const original = getOrCreateInboundWebhookToken(db, "proj1");
+  assert.ok(original);
+
+  const regenerated = regenerateInboundWebhookToken(db, "proj1");
+  assert.ok(regenerated && regenerated.length >= 32, "expected a real, long random token");
+  assert.notEqual(regenerated, original, "regenerating must actually produce a different token, not return the existing one");
+  assert.equal(getInboundWebhookToken(db, "proj1"), regenerated, "the new token must actually be persisted, not just returned");
+
+  assert.equal(regenerateInboundWebhookToken(db, "does-not-exist"), undefined);
 });

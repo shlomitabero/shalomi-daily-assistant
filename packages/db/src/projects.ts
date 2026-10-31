@@ -28,6 +28,12 @@ export function ensureProjectsTable(db: ForgeDatabase): void {
   if (!columns.includes("calendarFeedToken")) {
     db.exec("ALTER TABLE projects ADD COLUMN calendarFeedToken TEXT");
   }
+  // Round 1405: see getOrCreateInboundWebhookToken's own doc comment.
+  // Mirrors calendarFeedToken's own additive-only, lazily-generated shape
+  // exactly.
+  if (!columns.includes("inboundWebhookToken")) {
+    db.exec("ALTER TABLE projects ADD COLUMN inboundWebhookToken TEXT");
+  }
 }
 
 function rowToProject(row: Record<string, unknown>): Project {
@@ -399,4 +405,61 @@ export function getCalendarFeedToken(db: ForgeDatabase, projectId: string): stri
     | { calendarFeedToken: string | null }
     | undefined;
   return row?.calendarFeedToken ?? undefined;
+}
+
+/**
+ * Round 1405: every automation trigger today (record_created, field_equals,
+ * record_updated, record_deleted, schedule) fires from something that
+ * happens INSIDE this app -- there was no way for an external event (a
+ * Stripe payment, a Typeform/website form submission) to create a record
+ * here at all, short of a human re-typing the data in or a manual CSV
+ * import. Outbound webhooks (automation_rules' own webhookUrl/
+ * webhookSecret, round 974) are fully built, with no inbound counterpart.
+ *
+ * Mirrors getOrCreateCalendarFeedToken's own token shape and reasoning
+ * exactly: a real 256-bit random value, lazily generated on first request,
+ * that IS the whole authentication for a caller (a third-party webhook
+ * sender) with no session/cookie of its own -- see routes/webhookIn.ts's
+ * own module comment for the public ingestion route this backs.
+ */
+export function getOrCreateInboundWebhookToken(db: ForgeDatabase, projectId: string): string | undefined {
+  const row = db.prepare("SELECT inboundWebhookToken FROM projects WHERE id = ?").get(projectId) as
+    | { inboundWebhookToken: string | null }
+    | undefined;
+  if (!row) return undefined;
+  if (row.inboundWebhookToken) return row.inboundWebhookToken;
+  const token = randomBytes(32).toString("hex");
+  db.prepare("UPDATE projects SET inboundWebhookToken = ? WHERE id = ?").run(token, projectId);
+  return token;
+}
+
+/**
+ * Mirrors regenerateCalendarFeedToken's own reasoning exactly: once a
+ * token has been configured into an external service (Stripe, Typeform,
+ * a website's own form handler), there was otherwise no way to invalidate
+ * it -- not even the project owner could, since nothing else ever
+ * overwrites an already-set inboundWebhookToken. Unconditionally
+ * overwrites rather than returning an existing value, the whole point
+ * being to make the old one stop matching.
+ */
+export function regenerateInboundWebhookToken(db: ForgeDatabase, projectId: string): string | undefined {
+  const project = db.prepare("SELECT id FROM projects WHERE id = ?").get(projectId) as { id: string } | undefined;
+  if (!project) return undefined;
+  const token = randomBytes(32).toString("hex");
+  db.prepare("UPDATE projects SET inboundWebhookToken = ? WHERE id = ?").run(token, projectId);
+  return token;
+}
+
+/**
+ * The public ingestion route's own lookup direction: given a project id
+ * and the token an external caller presented, finds whether it actually
+ * matches. Mirrors getCalendarFeedToken's own undifferentiated-undefined
+ * shape exactly, for the identical reason (the caller treats "no token
+ * generated yet" and "project doesn't exist" the same, a plain 404).
+ */
+export function getInboundWebhookToken(db: ForgeDatabase, projectId: string): string | undefined {
+  const row = db.prepare("SELECT inboundWebhookToken FROM projects WHERE id = ?").get(projectId) as
+    | { inboundWebhookToken: string | null }
+    | undefined;
+  return row?.inboundWebhookToken ?? undefined;
 }

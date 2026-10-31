@@ -5,6 +5,7 @@ import {
   getCalendarFeedToken,
   listCollaborators,
   regenerateCalendarFeedToken,
+  regenerateInboundWebhookToken,
   removeCollaborator,
   transferProjectOwnership,
   updateCollaboratorRole,
@@ -94,6 +95,8 @@ export function CollaboratorsPanel({
   const [transferInfo, setTransferInfo] = useState<string | null>(null);
   const [regeneratingFeedToken, setRegeneratingFeedToken] = useState(false);
   const [regenerateFeedTokenInfo, setRegenerateFeedTokenInfo] = useState<string | null>(null);
+  const [regeneratingWebhookToken, setRegeneratingWebhookToken] = useState(false);
+  const [regenerateWebhookTokenInfo, setRegenerateWebhookTokenInfo] = useState<string | null>(null);
   const [copyStatus, setCopyStatus] = useState<"idle" | "copied" | "failed">("idle");
   const [subscribeAllStatus, setSubscribeAllStatus] = useState<"idle" | "copied" | "failed">("idle");
   const dialogRef = useDialogFocusTrap<HTMLDivElement>(onClose);
@@ -309,6 +312,38 @@ export function CollaboratorsPanel({
       setError((err as Error).message);
     } finally {
       setRegeneratingFeedToken(false);
+    }
+  }
+
+  /**
+   * Round 1405: owner-only, same confirm-dialog convention as
+   * handleRegenerateCalendarFeedToken just above -- rotating this token
+   * also breaks every external integration (Stripe, Typeform, a website's
+   * own form handler) already configured with the old URL.
+   *
+   * Deliberately does NOT notify the other collaborators the way
+   * handleRegenerateCalendarFeedToken's own round-1290 behavior does: that
+   * notification exists because regenerating the CALENDAR feed token
+   * silently breaks every OTHER collaborator's own already-configured
+   * calendar subscription too (each of them can click EntityPanel's own
+   * Subscribe button and set one up independently). This token has no such
+   * per-collaborator usage -- it only ever configures the OWNER's own
+   * external integration dashboard (Stripe/Typeform/etc), so rotating it
+   * has no equivalent "this silently broke something of yours" harm to
+   * warn any other collaborator about.
+   */
+  async function handleRegenerateInboundWebhookToken() {
+    if (!window.confirm(t("collab.webhookIn.regenerate.confirm"))) return;
+    setRegeneratingWebhookToken(true);
+    setError(null);
+    setRegenerateWebhookTokenInfo(null);
+    try {
+      await regenerateInboundWebhookToken(projectId);
+      setRegenerateWebhookTokenInfo(t("collab.webhookIn.regenerate.success"));
+    } catch (err) {
+      setError((err as Error).message);
+    } finally {
+      setRegeneratingWebhookToken(false);
     }
   }
 
@@ -616,6 +651,21 @@ export function CollaboratorsPanel({
             {regenerateFeedTokenInfo && (
               <p className="muted small" role="status">
                 {regenerateFeedTokenInfo}
+              </p>
+            )}
+          </div>
+        )}
+
+        {isOwner && (
+          <div className="collab-webhook-in-section">
+            <h3>{t("collab.webhookIn.heading")}</h3>
+            <p className="muted small">{t("collab.webhookIn.description")}</p>
+            <button type="button" className="secondary" onClick={handleRegenerateInboundWebhookToken} disabled={regeneratingWebhookToken}>
+              {regeneratingWebhookToken ? t("collab.webhookIn.regenerate.busy") : t("collab.webhookIn.regenerate")}
+            </button>
+            {regenerateWebhookTokenInfo && (
+              <p className="muted small" role="status">
+                {regenerateWebhookTokenInfo}
               </p>
             )}
           </div>

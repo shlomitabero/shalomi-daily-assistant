@@ -9,6 +9,7 @@ import {
   diffAndMigrate,
   findUserByEmail,
   getCalendarFeedToken,
+  getInboundWebhookToken,
   insertAutomationRule,
   insertCheckpoint,
   insertProject,
@@ -18991,6 +18992,289 @@ test("GET /public/calendar/:projectId/:entityName.ics is rate-limited per projec
     const { token: otherFeedToken } = (await otherTokenRes.json()) as { token: string };
     const otherRes = await fetch(`${baseUrl}/api/public/calendar/${otherProjectId}/Appointment.ics?token=${otherFeedToken}`);
     assert.equal(otherRes.status, 200, "a different project's own feed must not be collaterally blocked by another project's exhausted rate limit");
+  });
+});
+
+/**
+ * Round 1405: the inbound webhook feature -- a public, token-authenticated
+ * route an external service (Stripe, Typeform, a website's own form
+ * handler) can POST to in order to create a record here, which then fires
+ * the exact same automation fan-out a record created through the live app
+ * would. Mirrors the calendar-feed-token test block just above in shape:
+ * GET returns a real persisted token, the public route accepts it and
+ * actually creates the record, and the record_created automation fires
+ * for it exactly like an ordinary create would.
+ */
+test("GET /projects/:id/inbound-webhook-token returns a real, persisted token that the public ingestion route then accepts, creating a real record that fires its record_created automation", async () => {
+  let createdSockets: ReturnType<typeof createFakeWhatsAppSocket>[] = [];
+  await withServer(
+    async (baseUrl, db) => {
+      const email = `webhook-in-${randomUUID()}@example.com`;
+      const authToken = await signup(baseUrl, email);
+      const user = findUserByEmail(db, email)!;
+      const spec: ProductSpec = {
+        summary: "test",
+        personas: [],
+        roles: ["Admin"],
+        entities: [{ name: "Lead", fields: [{ name: "name", type: "text", required: true }, { name: "phone", type: "text" }] }],
+        screens: [],
+        assumptions: [],
+        openQuestions: [],
+      };
+      const projectId = randomUUID();
+      insertProject(db, { id: projectId, ownerId: user.id, name: "CRM", description: "test", spec });
+      diffAndMigrate(db, projectId, undefined, spec);
+      markProjectBuilt(db, projectId);
+
+      await fetch(`${baseUrl}/api/projects/${projectId}/integrations/whatsapp/connect`, { method: "POST", headers: authHeaders(authToken) });
+      createdSockets[0].sock.user = { id: "15550009999:1@s.whatsapp.net" };
+      createdSockets[0].emitConnectionUpdate({ connection: "open" });
+      await fetch(`${baseUrl}/api/projects/${projectId}/entities/Lead/automations`, {
+        method: "POST",
+        headers: authHeaders(authToken),
+        body: JSON.stringify({ trigger: "record_created", actionType: "send_whatsapp", toMode: "field", toField: "phone", messageTemplate: "New lead!" }),
+      });
+
+      const tokenRes = await fetch(`${baseUrl}/api/projects/${projectId}/inbound-webhook-token`, { headers: authHeaders(authToken) });
+      assert.equal(tokenRes.status, 200);
+      const { token: webhookToken } = (await tokenRes.json()) as { token: string };
+      assert.ok(webhookToken && webhookToken.length >= 32, "expected a real, long random token");
+      assert.equal(getInboundWebhookToken(db, projectId), webhookToken, "the token the route returned must be the one actually persisted");
+
+      // Repeated calls return the SAME token, not a fresh one each time --
+      // an external service configured with the old URL would otherwise
+      // break on the very next request.
+      const tokenRes2 = await fetch(`${baseUrl}/api/projects/${projectId}/inbound-webhook-token`, { headers: authHeaders(authToken) });
+      assert.equal((await tokenRes2.json() as { token: string }).token, webhookToken);
+
+      const webhookRes = await fetch(`${baseUrl}/api/public/webhook-in/${projectId}/Lead?token=${webhookToken}`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ name: "Dana", phone: "972500000001" }),
+      });
+      assert.equal(webhookRes.status, 201);
+      const { id: recordId } = (await webhookRes.json()) as { id: string };
+      assert.ok(recordId, "expected the route to hand back the id of the real record it created");
+
+      const listRes = await fetch(`${baseUrl}/api/projects/${projectId}/entities/Lead`, { headers: authHeaders(authToken) });
+      const { records } = (await listRes.json()) as { records: { id: string; name: string }[] };
+      assert.ok(records.some((r) => r.id === recordId && r.name === "Dana"), "the record the public route reported creating must actually exist, with the real submitted field values");
+
+      // The not-awaited automation fire (see routes/webhookIn.ts's own
+      // comment on this) needs a tick to actually run before asserting on it.
+      for (let i = 0; i < 40 && createdSockets[0].sendCalls.length === 0; i++) {
+        await new Promise((resolve) => setTimeout(resolve, 0));
+      }
+      assert.equal(createdSockets[0].sendCalls.length, 1, "a record created via the inbound webhook must fire its record_created automation exactly like a record created through the live app");
+    },
+    {
+      whatsapp: (db) => {
+        const { manager, createdSockets: sockets } = createTestWhatsAppManager(db);
+        createdSockets = sockets;
+        return manager;
+      },
+    },
+  );
+});
+
+test("POST /public/webhook-in/:projectId/:entityName 404s for a missing, wrong, or never-requested token, a nonexistent entity, or a nonexistent project -- the token itself is the only authentication", async () => {
+  await withServer(async (baseUrl, db) => {
+    const email = `webhook-in-bad-${randomUUID()}@example.com`;
+    const authToken = await signup(baseUrl, email);
+    const user = findUserByEmail(db, email)!;
+    const spec: ProductSpec = {
+      summary: "test",
+      personas: [],
+      roles: ["Admin"],
+      entities: [{ name: "Lead", fields: [{ name: "name", type: "text", required: true }] }],
+      screens: [],
+      assumptions: [],
+      openQuestions: [],
+    };
+    const projectId = randomUUID();
+    insertProject(db, { id: projectId, ownerId: user.id, name: "CRM", description: "test", spec });
+    diffAndMigrate(db, projectId, undefined, spec);
+    markProjectBuilt(db, projectId);
+
+    // No token ever requested yet.
+    const neverRequestedRes = await fetch(`${baseUrl}/api/public/webhook-in/${projectId}/Lead?token=anything`, { method: "POST", body: "{}" });
+    assert.equal(neverRequestedRes.status, 404);
+
+    const tokenRes = await fetch(`${baseUrl}/api/projects/${projectId}/inbound-webhook-token`, { headers: authHeaders(authToken) });
+    const { token: realToken } = (await tokenRes.json()) as { token: string };
+
+    const wrongTokenRes = await fetch(`${baseUrl}/api/public/webhook-in/${projectId}/Lead?token=${realToken}x`, { method: "POST", body: "{}" });
+    assert.equal(wrongTokenRes.status, 404);
+
+    const missingTokenRes = await fetch(`${baseUrl}/api/public/webhook-in/${projectId}/Lead`, { method: "POST", body: "{}" });
+    assert.equal(missingTokenRes.status, 404);
+
+    const badEntityRes = await fetch(`${baseUrl}/api/public/webhook-in/${projectId}/NoSuchEntity?token=${realToken}`, { method: "POST", body: "{}" });
+    assert.equal(badEntityRes.status, 404);
+
+    const badProjectRes = await fetch(`${baseUrl}/api/public/webhook-in/${randomUUID()}/Lead?token=${realToken}`, { method: "POST", body: "{}" });
+    assert.equal(badProjectRes.status, 404);
+
+    const goodRes = await fetch(`${baseUrl}/api/public/webhook-in/${projectId}/Lead?token=${realToken}`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ name: "Sanity check" }),
+    });
+    assert.equal(goodRes.status, 201, "sanity check: the real token against the real project/entity must actually work");
+  });
+});
+
+test("POST /projects/:id/inbound-webhook-token/regenerate invalidates the old token so the public ingestion route stops accepting it, while the new one keeps working; owner-only", async () => {
+  await withServer(async (baseUrl, db) => {
+    const ownerEmail = `webhook-in-regen-owner-${randomUUID()}@example.com`;
+    const ownerToken = await signup(baseUrl, ownerEmail);
+    const collabEmail = `webhook-in-regen-collab-${randomUUID()}@example.com`;
+    const collabToken = await signup(baseUrl, collabEmail);
+    const owner = findUserByEmail(db, ownerEmail)!;
+    const spec: ProductSpec = {
+      summary: "test",
+      personas: [],
+      roles: ["Admin"],
+      entities: [{ name: "Lead", fields: [{ name: "name", type: "text", required: true }] }],
+      screens: [],
+      assumptions: [],
+      openQuestions: [],
+    };
+    const projectId = randomUUID();
+    insertProject(db, { id: projectId, ownerId: owner.id, name: "CRM", description: "test", spec });
+    diffAndMigrate(db, projectId, undefined, spec);
+    markProjectBuilt(db, projectId);
+    await fetch(`${baseUrl}/api/projects/${projectId}/collaborators`, {
+      method: "POST",
+      headers: authHeaders(ownerToken),
+      body: JSON.stringify({ email: collabEmail }),
+    });
+
+    const tokenRes = await fetch(`${baseUrl}/api/projects/${projectId}/inbound-webhook-token`, { headers: authHeaders(ownerToken) });
+    const { token: oldToken } = (await tokenRes.json()) as { token: string };
+
+    const asCollaborator = await fetch(`${baseUrl}/api/projects/${projectId}/inbound-webhook-token/regenerate`, {
+      method: "POST",
+      headers: authHeaders(collabToken),
+    });
+    assert.equal(asCollaborator.status, 404, "a non-owner collaborator must never be able to rotate the token out from under everyone else's configured integration");
+
+    const oldWebhookRes = await fetch(`${baseUrl}/api/public/webhook-in/${projectId}/Lead?token=${oldToken}`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ name: "Before regenerate" }),
+    });
+    assert.equal(oldWebhookRes.status, 201, "sanity check: the original token must actually work before regenerating");
+
+    const regenRes = await fetch(`${baseUrl}/api/projects/${projectId}/inbound-webhook-token/regenerate`, {
+      method: "POST",
+      headers: authHeaders(ownerToken),
+    });
+    assert.equal(regenRes.status, 200, "the real owner must still be able to regenerate it");
+    const { token: newToken } = (await regenRes.json()) as { token: string };
+    assert.ok(newToken && newToken.length >= 32, "expected a real, long random token");
+    assert.notEqual(newToken, oldToken, "regenerating must actually produce a different token, not return the same one");
+
+    const oldWebhookAfterRegenRes = await fetch(`${baseUrl}/api/public/webhook-in/${projectId}/Lead?token=${oldToken}`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ name: "After regenerate, old token" }),
+    });
+    assert.equal(oldWebhookAfterRegenRes.status, 404, "the OLD token must stop working -- this is the whole point of regenerating");
+
+    const newWebhookRes = await fetch(`${baseUrl}/api/public/webhook-in/${projectId}/Lead?token=${newToken}`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ name: "After regenerate, new token" }),
+    });
+    assert.equal(newWebhookRes.status, 201, "the NEW token must work against the real ingestion route");
+  });
+});
+
+/**
+ * Round 1405: mirrors insertRecord's own round-1231 self-referencing
+ * relation guard and the ordinary authenticated record-create route's own
+ * FK-constraint-to-400 mapping -- confirms the public ingestion route maps
+ * the same underlying SQLite FK failure the same way, rather than letting
+ * it surface as an uncaught 500.
+ */
+test("POST /public/webhook-in/:projectId/:entityName rejects a record referencing a nonexistent related record with 400, not a raw 500", async () => {
+  await withServer(async (baseUrl, db) => {
+    const email = `webhook-in-fk-${randomUUID()}@example.com`;
+    const authToken = await signup(baseUrl, email);
+    const user = findUserByEmail(db, email)!;
+    const spec: ProductSpec = {
+      summary: "test",
+      personas: [],
+      roles: ["Admin"],
+      entities: [
+        { name: "Customer", fields: [{ name: "name", type: "text", required: true }] },
+        { name: "Lead", fields: [{ name: "name", type: "text", required: true }, { name: "customer", type: "relation", relationTo: "Customer" }] },
+      ],
+      screens: [],
+      assumptions: [],
+      openQuestions: [],
+    };
+    const projectId = randomUUID();
+    insertProject(db, { id: projectId, ownerId: user.id, name: "CRM", description: "test", spec });
+    diffAndMigrate(db, projectId, undefined, spec);
+    markProjectBuilt(db, projectId);
+
+    const tokenRes = await fetch(`${baseUrl}/api/projects/${projectId}/inbound-webhook-token`, { headers: authHeaders(authToken) });
+    const { token } = (await tokenRes.json()) as { token: string };
+
+    const res = await fetch(`${baseUrl}/api/public/webhook-in/${projectId}/Lead?token=${token}`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ name: "Dangling", customer: 999999 }),
+    });
+    assert.equal(res.status, 400);
+    assert.equal(((await res.json()) as { code?: string }).code, "INVALID_RELATION_TARGET");
+  });
+});
+
+test("POST /projects/:id/inbound-webhook-token/regenerate is rate-limited per authenticated account: the 31st regenerate is rejected with 429, while a different account is unaffected", async () => {
+  await withServer(async (baseUrl, db) => {
+    const email = `webhook-in-rate-limit-${randomUUID()}@example.com`;
+    const token = await signup(baseUrl, email);
+    const user = findUserByEmail(db, email)!;
+    const spec: ProductSpec = {
+      summary: "test",
+      personas: [],
+      roles: ["Admin"],
+      entities: [{ name: "Lead", fields: [{ name: "name", type: "text", required: true }] }],
+      screens: [],
+      assumptions: [],
+      openQuestions: [],
+    };
+    const projectId = randomUUID();
+    insertProject(db, { id: projectId, ownerId: user.id, name: "CRM", description: "test", spec });
+
+    for (let i = 0; i < 30; i++) {
+      const res = await fetch(`${baseUrl}/api/projects/${projectId}/inbound-webhook-token/regenerate`, {
+        method: "POST",
+        headers: { ...authHeaders(token), "x-idempotency-key": randomUUID() },
+      });
+      assert.notEqual(res.status, 429, `call ${i + 1} of 30 (within the limit) must not be rate-limited yet`);
+    }
+
+    const blocked = await fetch(`${baseUrl}/api/projects/${projectId}/inbound-webhook-token/regenerate`, {
+      method: "POST",
+      headers: { ...authHeaders(token), "x-idempotency-key": randomUUID() },
+    });
+    assert.equal(blocked.status, 429);
+    assert.equal(((await blocked.json()) as { code?: string }).code, "RATE_LIMITED");
+
+    const otherEmail = `webhook-in-rate-limit-other-${randomUUID()}@example.com`;
+    const otherToken = await signup(baseUrl, otherEmail);
+    const otherUser = findUserByEmail(db, otherEmail)!;
+    const otherProjectId = randomUUID();
+    insertProject(db, { id: otherProjectId, ownerId: otherUser.id, name: "CRM 2", description: "test", spec });
+    const otherRes = await fetch(`${baseUrl}/api/projects/${otherProjectId}/inbound-webhook-token/regenerate`, {
+      method: "POST",
+      headers: { ...authHeaders(otherToken), "x-idempotency-key": randomUUID() },
+    });
+    assert.equal(otherRes.status, 200, "a different account must not be collaterally blocked by another account's own rate limit");
   });
 });
 

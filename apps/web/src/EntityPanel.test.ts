@@ -4789,6 +4789,95 @@ test("EntityPanel's calendar Subscribe button only appears in calendar view, fet
 });
 
 /**
+ * Round 1405: the inbound-webhook counterpart of the calendar Subscribe
+ * button just above -- mirrors its exact test shape (real token fetched
+ * from the server, real URL copied to the clipboard, "Copied!"
+ * confirmation that reverts after a delay), except this button is NOT
+ * gated to calendar view (it isn't calendar-specific) and IS gated by
+ * `!readOnly` (it exposes a write-capable URL, unlike the read-only
+ * calendar subscription).
+ */
+test("EntityPanel's webhook-URL button renders in any view but not for a read-only viewer, fetches the real webhook token, and copies the real webhook URL to the clipboard", async (t) => {
+  await withJsdom(async () => {
+    const store: EntityRecord[] = [{ id: 1, title: "Dana's appointment", date: isoDateToday() }];
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = (async (input: string, init?: RequestInit): Promise<Response> => {
+      const method = init?.method ?? "GET";
+      if (method === "GET" && input === "/api/projects/proj1/entities/Appointment") {
+        return new Response(JSON.stringify({ records: store }), { status: 200, headers: { "content-type": "application/json" } });
+      }
+      if (method === "GET" && input === "/api/projects/proj1/inbound-webhook-token") {
+        return new Response(JSON.stringify({ token: "real-webhook-token-abc" }), { status: 200, headers: { "content-type": "application/json" } });
+      }
+      throw new Error(`unexpected request ${method} ${input}`);
+    }) as typeof fetch;
+
+    let writtenText: string | undefined;
+    Object.defineProperty(navigator, "clipboard", {
+      value: { writeText: async (text: string) => void (writtenText = text) },
+      configurable: true,
+    });
+
+    try {
+      renderAppointmentPanel();
+      await waitForCondition(() => document.querySelector(".entity-toolbar") !== null);
+
+      t.mock.timers.enable({ apis: ["setTimeout"] });
+
+      const webhookBtn = document.querySelector(".webhook-in-copy-btn") as HTMLButtonElement;
+      assert.ok(webhookBtn, "expected a real webhook-URL button in table view too -- this isn't calendar-specific");
+      assert.equal(webhookBtn.textContent, "🔗 Copy inbound webhook URL");
+
+      await act(async () => {
+        fireEvent.click(webhookBtn);
+        await Promise.resolve();
+        await Promise.resolve();
+        await Promise.resolve();
+      });
+
+      assert.equal(typeof writtenText, "string", "clicking the button must actually call navigator.clipboard.writeText");
+      assert.match(
+        writtenText!,
+        /\/api\/public\/webhook-in\/proj1\/Appointment\?token=real-webhook-token-abc/,
+        "the copied URL must carry the real project id, entity name, and the real token the server returned",
+      );
+      assert.equal(webhookBtn.textContent, "✅ Webhook URL copied!");
+
+      act(() => {
+        t.mock.timers.tick(2000);
+      });
+      assert.equal(webhookBtn.textContent, "🔗 Copy inbound webhook URL", "must revert to the normal label once the delay elapses");
+    } finally {
+      t.mock.timers.reset();
+      globalThis.fetch = originalFetch;
+      delete (navigator as { clipboard?: unknown }).clipboard;
+    }
+  });
+});
+
+test("EntityPanel's webhook-URL button is hidden from a read-only collaborator", async () => {
+  await withJsdom(async () => {
+    const store: EntityRecord[] = [{ id: 1, title: "Dana's appointment", date: isoDateToday() }];
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = (async (input: string, init?: RequestInit): Promise<Response> => {
+      const method = init?.method ?? "GET";
+      if (method === "GET" && input === "/api/projects/proj1/entities/Appointment") {
+        return new Response(JSON.stringify({ records: store }), { status: 200, headers: { "content-type": "application/json" } });
+      }
+      throw new Error(`unexpected request ${method} ${input}`);
+    }) as typeof fetch;
+
+    try {
+      renderAppointmentPanel({ readOnly: true });
+      await waitForCondition(() => document.querySelector(".entity-toolbar") !== null);
+      assert.equal(document.querySelector(".webhook-in-copy-btn"), null, "a read-only viewer must never see a button that hands out a write-capable URL");
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+});
+
+/**
  * Round 937: this button's own text used to be a flat "Export to
  * Calendar (ICS)" with zero indication that it only ever exports the
  * calendar grid's CURRENTLY-SHOWN month -- unlike its sibling Export CSV

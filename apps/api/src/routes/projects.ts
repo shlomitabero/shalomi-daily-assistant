@@ -53,6 +53,8 @@ import {
   disableAutomationRulesForField,
   getOrCreateCalendarFeedToken,
   regenerateCalendarFeedToken,
+  getOrCreateInboundWebhookToken,
+  regenerateInboundWebhookToken,
   isValidDateString,
   NotFoundError,
   type ForgeDatabase,
@@ -1661,6 +1663,21 @@ export function createProjectsRouter(
   });
 
   /**
+   * Round 1405: mirrors calendarFeedTokenRateLimiter's own reasoning
+   * exactly, for the new inbound-webhook-token regenerate route below --
+   * a single authenticated account looping this call griefs its own (or,
+   * for a shared project, every collaborator's) already-configured
+   * external integration (Stripe, Typeform) repeatedly, with nothing
+   * server-side slowing it down otherwise.
+   */
+  const inboundWebhookTokenRateLimiter = createRateLimiter({
+    windowMs: 15 * 60 * 1000,
+    max: 30,
+    keyGenerator: (req) => req.userId ?? "unknown",
+    message: "Too many webhook token requests. Please try again later.",
+  });
+
+  /**
    * Round 1171: DELETE .../integrations/whatsapp/messages (bulk-clear, a
    * single unbounded DELETE over the whole message-history table for this
    * project) and its sibling .../messages/:messageId (one row at a time)
@@ -2039,6 +2056,52 @@ export function createProjectsRouter(
             }
           }
         }
+        return { status: 200, body: { token } };
+      });
+      res.json(body);
+    }),
+  );
+
+  /**
+   * Round 1405: hands the client the token it needs to build a public
+   * inbound-webhook URL -- see getOrCreateInboundWebhookToken's own doc
+   * comment, and the public, unauthenticated ingestion route itself
+   * (routes/webhookIn.ts). requireProjectAccess, not
+   * requireProjectWriteAccess, mirroring the calendar-feed-token GET
+   * route's own reasoning: a read-only viewer configuring an external
+   * integration still only ever creates records this app's own UI would
+   * already let any collaborator create by hand, so handing them this
+   * URL is no new write capability beyond what the live app's record-
+   * create route already grants every collaborator.
+   */
+  router.get(
+    "/projects/:id/inbound-webhook-token",
+    asyncRoute(async (req, res) => {
+      requireProjectAccess(db, req.params.id, req.userId!);
+      res.json({ token: getOrCreateInboundWebhookToken(db, req.params.id) });
+    }),
+  );
+
+  /**
+   * Round 1405: once any collaborator has fetched the token above and
+   * configured it into an external service (Stripe, Typeform), there
+   * must be a way to invalidate it -- mirrors the calendar-feed-token
+   * regenerate route's own shape exactly: requireProjectOwner (rotating
+   * this also breaks every other collaborator's already-configured
+   * external integration with no other warning, the identical tradeoff
+   * that route's own doc comment already names), rate-limited, and
+   * wrapped in withIdempotency with requireProjectOwner moved inside the
+   * callback, for the identical "a retry must never rotate twice" reason
+   * that route's own round-1313 fix gives.
+   */
+  router.post(
+    "/projects/:id/inbound-webhook-token/regenerate",
+    inboundWebhookTokenRateLimiter,
+    asyncRoute(async (req, res) => {
+      const idempotencyKey = req.header("X-Idempotency-Key") || undefined;
+      const { body } = await withIdempotency(db, idempotencyKey, req.userId!, `POST /projects/${req.params.id}/inbound-webhook-token/regenerate`, async () => {
+        requireProjectOwner(db, req.params.id, req.userId!);
+        const token = regenerateInboundWebhookToken(db, req.params.id);
         return { status: 200, body: { token } };
       });
       res.json(body);
