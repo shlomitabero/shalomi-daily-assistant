@@ -19102,3 +19102,81 @@ test("GET .../entities/:entityName (listing an entity's records) is rate-limited
     assert.equal(otherRes.status, 200, "a different account must not be collaterally blocked by another account's own rate limit");
   });
 });
+
+/**
+ * Round 1383: unlike every mutating automation route (automationRuleRateLimiter)
+ * and every other repeatable read route in this file (entityCountsRateLimiter,
+ * the record-list limiter just above), GET .../automations (the rule list) and
+ * GET .../automations/:ruleId/runs (one rule's run history) had NO volumetric
+ * throttle at all -- reachable by any collaborator with mere read access, and
+ * the rule-list handler does real per-schedule-rule DB work
+ * (hasTooManyConsecutiveFailuresToday). Both routes deliberately share one
+ * limiter (automationsReadRateLimiter): the test below spends most of the
+ * budget on the rule list, then confirms the SAME shared budget also governs
+ * the runs route, proving they aren't each silently getting their own
+ * separate allowance.
+ */
+test("GET .../automations and GET .../automations/:ruleId/runs share one rate limit per authenticated account: the 121st call across both routes is rejected with 429, while a different account is unaffected", async () => {
+  await withServer(async (baseUrl, db) => {
+    const email = `automations-read-rate-limit-${randomUUID()}@example.com`;
+    const token = await signup(baseUrl, email);
+    const user = findUserByEmail(db, email)!;
+    const spec: ProductSpec = {
+      summary: "test",
+      personas: [],
+      roles: ["Admin"],
+      entities: [{ name: "Customer", fields: [{ name: "name", type: "text", required: true }] }],
+      screens: [],
+      assumptions: [],
+      openQuestions: [],
+    };
+    const projectId = randomUUID();
+    insertProject(db, { id: projectId, ownerId: user.id, name: "CRM", description: "test", spec });
+    diffAndMigrate(db, projectId, undefined, spec);
+    markProjectBuilt(db, projectId);
+    const rule = insertAutomationRule(db, {
+      projectId,
+      entityName: "Customer",
+      trigger: "record_created",
+      actionType: "send_whatsapp",
+      toMode: "static",
+      toNumber: "972501234567",
+      messageTemplate: "New customer!",
+    });
+
+    for (let i = 0; i < 119; i++) {
+      const res = await fetch(`${baseUrl}/api/projects/${projectId}/automations`, {
+        headers: authHeaders(token),
+      });
+      assert.notEqual(res.status, 429, `call ${i + 1} of 120 (within the limit) must not be rate-limited yet`);
+    }
+    // The 120th call, still within budget, hits the OTHER route -- proving
+    // both routes draw from the one shared allowance, not two separate ones.
+    const lastAllowed = await fetch(`${baseUrl}/api/projects/${projectId}/automations/${rule.id}/runs`, {
+      headers: authHeaders(token),
+    });
+    assert.notEqual(lastAllowed.status, 429, "the 120th call, on the sibling route, must still be within the shared budget");
+
+    const blocked = await fetch(`${baseUrl}/api/projects/${projectId}/automations`, {
+      headers: authHeaders(token),
+    });
+    assert.equal(blocked.status, 429);
+    assert.equal(((await blocked.json()) as { code?: string }).code, "RATE_LIMITED");
+
+    // A completely different account must get its own fresh allowance --
+    // keyed by user id, not IP, so one account exhausting its own budget
+    // must never collaterally block an unrelated account's own calls.
+    const otherEmail = `automations-read-rate-limit-other-${randomUUID()}@example.com`;
+    const otherToken = await signup(baseUrl, otherEmail);
+    const otherUser = findUserByEmail(db, otherEmail)!;
+    const otherProjectId = randomUUID();
+    insertProject(db, { id: otherProjectId, ownerId: otherUser.id, name: "CRM 2", description: "test", spec });
+    diffAndMigrate(db, otherProjectId, undefined, spec);
+    markProjectBuilt(db, otherProjectId);
+
+    const otherRes = await fetch(`${baseUrl}/api/projects/${otherProjectId}/automations`, {
+      headers: authHeaders(otherToken),
+    });
+    assert.equal(otherRes.status, 200, "a different account must not be collaterally blocked by another account's own rate limit");
+  });
+});

@@ -1579,6 +1579,39 @@ export function createProjectsRouter(
   });
 
   /**
+   * Round 1383: `GET .../automations` (the rule list) and `GET
+   * .../automations/:ruleId/runs` (one rule's run history) had NO volumetric
+   * throttle at all -- unlike every other mutating automation route just
+   * above (automationRuleRateLimiter) and every other repeatable,
+   * server-cost-bearing GET sibling in this file (entityCountsRateLimiter,
+   * recordListRateLimiter, whatsappMessagesReadRateLimiter). Both are real
+   * synchronous DB work, not O(1): the rule list's own handler calls
+   * hasTooManyConsecutiveFailuresToday (apps/api/src/automations.ts) for
+   * every enabled schedule-trigger rule, each of which runs its own
+   * listAutomationRuns query fetching up to 60 rows -- genuine N+1 cost per
+   * call. Gated only by requireProjectAccess, so any collaborator with mere
+   * read access (a viewer, not just the owner) can hit either route.
+   *
+   * Same reasoning as round 1344's whatsappMessagesReadRateLimiter: this
+   * isn't a theoretical abuse surface -- App.tsx's own checkFailingAutomations
+   * already polls the rule list route every AUTOMATIONS_FAILING_POLL_INTERVAL_MS
+   * (30 seconds) for as long as a built project sits open, before counting
+   * any manual AutomationsPanel open or "History" expansion (which hits the
+   * second route). A budget sized only for occasional, one-click actions
+   * (automationRuleRateLimiter's own 60-per-15-min) would 429 that ordinary
+   * background poll within roughly 15 minutes of a project just sitting
+   * open -- a regression, not a fix -- so this gets its own, more generous
+   * budget instead, shared by both GET routes since neither is meaningfully
+   * more expensive than the other.
+   */
+  const automationsReadRateLimiter = createRateLimiter({
+    windowMs: 15 * 60 * 1000,
+    max: 120,
+    keyGenerator: (req) => req.userId ?? "unknown",
+    message: "Too many automation read requests. Please try again later.",
+  });
+
+  /**
    * Round 1171: POST .../calendar-feed-token/regenerate had no volumetric
    * throttle at all, unlike every sibling owner-only mutation this file
    * already guards. Lower severity than an unbounded-disk-growth hazard
@@ -5000,6 +5033,7 @@ export function createProjectsRouter(
    */
   router.get(
     "/projects/:id/automations",
+    automationsReadRateLimiter,
     asyncRoute(async (req, res) => {
       const project = requireProjectAccess(db, req.params.id, req.userId!);
       const isViewer = project.ownerId !== req.userId && getCollaboratorRole(db, project.id, req.userId!) === "viewer";
@@ -5031,6 +5065,7 @@ export function createProjectsRouter(
    */
   router.get(
     "/projects/:id/automations/:ruleId/runs",
+    automationsReadRateLimiter,
     asyncRoute(async (req, res) => {
       const project = requireProjectAccess(db, req.params.id, req.userId!);
       const rule = getAutomationRule(db, project.id, req.params.ruleId);
