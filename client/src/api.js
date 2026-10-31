@@ -82,4 +82,5 @@ export const api = {
   generateDigest: () => request('/digests/generate', { method: 'POST' }),
 
   getProduct: (slug) => request(`/products/${slug}`),
+  getProductGuide: (slug, transactionId) => request(`/products/${slug}/guide?transactionId=${encodeURIComponent(transactionId)}`),
 };

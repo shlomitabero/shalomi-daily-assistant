@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { db, __resetForTests, makeId } from '../db/store.js';
-import { getProductBySlug } from './products.js';
+import { getProductBySlug, getProductGuide } from './products.js';
 
 function makeRes() {
   const res = { statusCode: null, body: null };
@@ -15,7 +15,7 @@ function insertOpportunity(overrides = {}) {
     id: makeId('opp'), slug: 'time-management-guide', status: 'published', priceUSD: 19,
     paddlePriceId: 'pri_123', productDraft: {
       title: 'מדריך ניהול זמן', salesHeadline: 'תפסיק לדחות', salesBullets: ['טיפ 1'],
-      salesParagraph: 'פסקה', demo: false,
+      salesParagraph: 'פסקה', guide: 'תוכן המדריך המלא — זה מה שהלקוח קנה', demo: false,
     }, ...overrides,
   };
   db.opportunities.insert(opportunity);
@@ -58,4 +58,58 @@ test('getProductBySlug always coerces demo to a real boolean, never a truthy/fal
   const res = makeRes();
   getProductBySlug({ params: { slug: 'time-management-guide' } }, res);
   assert.equal(res.body.product.demo, false);
+});
+
+test('getProductGuide 400s without a transactionId — never guesses which sale to trust', () => {
+  __resetForTests();
+  insertOpportunity();
+  const res = makeRes();
+  getProductGuide({ params: { slug: 'time-management-guide' }, query: {} }, res);
+  assert.equal(res.statusCode, 400);
+});
+
+test('getProductGuide 404s for a slug that does not exist', () => {
+  __resetForTests();
+  const res = makeRes();
+  getProductGuide({ params: { slug: 'does-not-exist' }, query: { transactionId: 'txn_1' } }, res);
+  assert.equal(res.statusCode, 404);
+});
+
+test('getProductGuide refuses to release the paid content without a verified ledger entry for that transaction', () => {
+  // The whole point: a client-side "checkout completed" event alone must
+  // never be enough to unlock the guide — only a real, webhook-recorded sale.
+  __resetForTests();
+  insertOpportunity();
+  const res = makeRes();
+  getProductGuide({ params: { slug: 'time-management-guide' }, query: { transactionId: 'txn_not_recorded' } }, res);
+  assert.equal(res.statusCode, 402);
+});
+
+test('getProductGuide releases the real guide once a matching verified revenue entry exists', () => {
+  __resetForTests();
+  const opp = insertOpportunity();
+  db.ledger.insert({ id: makeId('led'), type: 'revenue', amount: 19, verified: true, opportunityId: opp.id, externalId: 'txn_1', date: '2026-01-01', createdAt: '2026-01-01T00:00:00.000Z' });
+  const res = makeRes();
+  getProductGuide({ params: { slug: 'time-management-guide' }, query: { transactionId: 'txn_1' } }, res);
+  assert.equal(res.statusCode, 200);
+  assert.equal(res.body.guide, 'תוכן המדריך המלא — זה מה שהלקוח קנה');
+});
+
+test('getProductGuide does not release the guide for an unverified (pending) ledger entry', () => {
+  __resetForTests();
+  const opp = insertOpportunity();
+  db.ledger.insert({ id: makeId('led'), type: 'revenue', amount: 19, verified: false, opportunityId: opp.id, externalId: 'txn_1', date: '2026-01-01', createdAt: '2026-01-01T00:00:00.000Z' });
+  const res = makeRes();
+  getProductGuide({ params: { slug: 'time-management-guide' }, query: { transactionId: 'txn_1' } }, res);
+  assert.equal(res.statusCode, 402);
+});
+
+test('getProductGuide does not release a different opportunity\'s guide for a mismatched transaction', () => {
+  __resetForTests();
+  insertOpportunity();
+  const otherOpp = insertOpportunity({ id: makeId('opp'), slug: 'other-slug' });
+  db.ledger.insert({ id: makeId('led'), type: 'revenue', amount: 19, verified: true, opportunityId: otherOpp.id, externalId: 'txn_1', date: '2026-01-01', createdAt: '2026-01-01T00:00:00.000Z' });
+  const res = makeRes();
+  getProductGuide({ params: { slug: 'time-management-guide' }, query: { transactionId: 'txn_1' } }, res);
+  assert.equal(res.statusCode, 402);
 });
