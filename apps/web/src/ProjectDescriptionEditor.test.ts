@@ -1,5 +1,6 @@
 import "./jsdomWarmup.js";
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import { test } from "node:test";
 import { JSDOM } from "jsdom";
 import React from "react";
@@ -277,4 +278,28 @@ test("a failed description edit shows its error with role=alert, so a screen rea
       globalThis.fetch = originalFetch;
     }
   });
+});
+
+/*
+ * Round 1357: a live Playwright browser session found that a project
+ * description with one long unbroken token (no spaces/hyphens) overflowed
+ * the spec-review screen's edge at narrow widths. styles.css had no
+ * `.project-description` rule at all -- confirmed by grep before this
+ * fix -- so the element rendered with the browser's default
+ * `overflow-wrap: normal`. Confirmed live via Range.getBoundingClientRect()
+ * on the text node: its right edge landed well past a 390px viewport.
+ * jsdom has no layout engine and can't detect this (see this codebase's
+ * other CSS-only-bug tests), so this reads styles.css's own source
+ * directly instead.
+ */
+test("the project description's CSS lets a long unbroken value wrap mid-word instead of overflowing the spec-review screen", () => {
+  const stylesCss = readFileSync(new URL("./styles.css", import.meta.url), "utf8");
+
+  const projectDescription = stylesCss.match(/\.project-description[\s\S]*?\{[\s\S]*?\}/)?.[0];
+  assert.ok(projectDescription, "expected a .project-description rule in styles.css");
+  assert.match(
+    projectDescription!,
+    /overflow-wrap:\s*anywhere/,
+    ".project-description must allow an unbroken description value to wrap mid-word instead of overflowing the spec-review screen",
+  );
 });

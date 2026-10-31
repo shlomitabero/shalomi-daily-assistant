@@ -1,5 +1,6 @@
 import "./jsdomWarmup.js";
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import { test } from "node:test";
 import { JSDOM } from "jsdom";
 import React from "react";
@@ -271,4 +272,30 @@ test("a failed rename shows its error with role=alert, so a screen reader announ
       globalThis.fetch = originalFetch;
     }
   });
+});
+
+/*
+ * Round 1357: a live Playwright browser session found that a project name
+ * with one long unbroken token (no spaces/hyphens -- plausible real input,
+ * e.g. a compound phrase typed without spaces) blew the whole page into
+ * horizontal scroll at narrow widths. `.project-name` (the <h1> this
+ * component renders) is also a flex item of `.preview-header`, so with no
+ * `overflow-wrap`, its default min-content width (the full unbroken word)
+ * forced the box -- and the page -- to grow past the viewport: confirmed
+ * live via getBoundingClientRect(), the element's own width measured
+ * 967.86px against a 375px viewport. jsdom has no layout engine and can't
+ * detect this (see this codebase's other CSS-only-bug tests, e.g.
+ * EntityPanel.test.ts's board-column test), so this reads styles.css's own
+ * source directly instead.
+ */
+test("the project name's CSS lets a long unbroken value wrap mid-word instead of blowing out the header's width", () => {
+  const stylesCss = readFileSync(new URL("./styles.css", import.meta.url), "utf8");
+
+  const projectName = stylesCss.match(/\.project-name \{[\s\S]*?\}/)?.[0];
+  assert.ok(projectName, "expected a .project-name rule in styles.css");
+  assert.match(
+    projectName!,
+    /overflow-wrap:\s*anywhere/,
+    ".project-name must allow an unbroken project name to wrap mid-word instead of forcing the preview header (and the page) into horizontal overflow",
+  );
 });

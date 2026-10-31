@@ -5628,3 +5628,33 @@ test("App.tsx's viewer-readonly-banner carries role=\"status\", since myRole can
     "a screen-reader user must be told when they are downgraded to read-only mid-session, not left in total silence while sighted users see the banner appear",
   );
 });
+
+/**
+ * Round 1357: a live Playwright browser session found that the spec-review
+ * screen's summary paragraph (project.spec.summary) overflowed the page's
+ * right edge at narrow widths when the AI-generated summary contained one
+ * long unbroken token -- confirmed via Range.getBoundingClientRect() on the
+ * text node landing past the viewport's edge. This `<p>` previously had no
+ * className at all, so it had no CSS rule of its own to guard against it,
+ * unlike every other long-text display this codebase has already fixed
+ * (project name, project description, GlobalSearchPanel result rows,
+ * board-card field values). Gave it a dedicated `spec-summary` class with
+ * its own `overflow-wrap: anywhere` rule in styles.css.
+ */
+test("App.tsx's spec-review summary paragraph carries the spec-summary class, so styles.css's overflow-wrap guard against unbroken AI-generated text actually applies", () => {
+  const appSrc = readFileSync(new URL("./App.tsx", import.meta.url), "utf8");
+  assert.match(
+    appSrc,
+    /<p className="spec-summary">\{project\.spec\.summary\}<\/p>/,
+    "the spec-review screen's summary paragraph must carry the spec-summary class so it gets the overflow-wrap guard, instead of rendering raw AI-generated text with no wrap protection",
+  );
+
+  const stylesCss = readFileSync(new URL("./styles.css", import.meta.url), "utf8");
+  const specSummaryRule = stylesCss.match(/\.spec-summary[\s\S]*?\{[\s\S]*?\}/)?.[0];
+  assert.ok(specSummaryRule, "expected a .spec-summary rule in styles.css");
+  assert.match(
+    specSummaryRule!,
+    /overflow-wrap:\s*anywhere/,
+    ".spec-summary must allow an unbroken AI-generated summary to wrap mid-word instead of overflowing the spec-review screen",
+  );
+});

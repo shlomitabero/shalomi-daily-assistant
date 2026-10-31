@@ -2367,6 +2367,12 @@ button.sort-header:hover:not(:disabled) {
   padding: 4px 8px;
   margin: -4px -8px;
   transition: background 0.12s ease;
+  overflow-wrap: anywhere;
+}
+
+.project-description,
+.spec-summary {
+  overflow-wrap: anywhere;
 }
 
 .project-name:hover {
