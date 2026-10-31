@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { extractTransactionAmount } from './paddleTransaction.js';
+import { extractTransactionAmount, extractTransactionFee } from './paddleTransaction.js';
 
 test('converts minor units (cents) to a major-unit amount', () => {
   assert.equal(extractTransactionAmount({ details: { totals: { total: '2900' } } }), 29);
@@ -21,4 +21,18 @@ test('an empty-string total throws rather than silently resolving to zero', () =
   // Number('') is 0, which would hide a malformed payload as a real
   // zero-amount sale instead of surfacing the problem.
   assert.throws(() => extractTransactionAmount({ details: { totals: { total: '' } } }), /not a valid number/);
+});
+
+test('extractTransactionFee converts minor units (cents) to a major-unit amount', () => {
+  assert.equal(extractTransactionFee({ details: { totals: { fee: '825' } } }), 8.25);
+});
+
+test('extractTransactionFee defaults to zero when null — normal before a transaction completes', () => {
+  assert.equal(extractTransactionFee({ details: { totals: { fee: null } } }), 0);
+  assert.equal(extractTransactionFee({ details: { totals: {} } }), 0);
+  assert.equal(extractTransactionFee({}), 0);
+});
+
+test('extractTransactionFee throws instead of silently becoming NaN', () => {
+  assert.throws(() => extractTransactionFee({ details: { totals: { fee: 'N/A' } } }), /not a valid number/);
 });

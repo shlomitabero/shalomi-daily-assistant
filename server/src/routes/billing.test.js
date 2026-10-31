@@ -39,10 +39,10 @@ function makeRes() {
   return res;
 }
 
-function completedTxn({ id = 'txn_1', opportunityId, totalCents = '900' } = {}) {
+function completedTxn({ id = 'txn_1', opportunityId, totalCents = '900', feeCents } = {}) {
   return {
     event_type: 'transaction.completed',
-    data: { id, custom_data: { opportunityId }, details: { totals: { total: totalCents } } },
+    data: { id, custom_data: { opportunityId }, details: { totals: { total: totalCents, fee: feeCents } } },
   };
 }
 
@@ -86,6 +86,51 @@ test('the same Paddle transaction id replayed is never recorded twice', () => {
 
     assert.equal(db.ledger.where((e) => e.externalId === 'txn_1').length, 1);
     assert.equal(db.opportunities.get(opportunity.id).salesCount, 1);
+  });
+});
+
+test('a verified transaction.completed with a real Paddle fee records it as a cost and backfills the opportunity', () => {
+  __resetForTests();
+  withEnv({ PADDLE_WEBHOOK_SECRET: 'whsec_real' }, () => {
+    const opportunity = db.opportunities.insert({ id: makeId('opp'), title: 'מדריך', salesCount: 0, costs: { aiUsage: 0.05, paymentProcessing: null } });
+    const req = makeReq(completedTxn({ id: 'txn_1', opportunityId: opportunity.id, totalCents: '900', feeCents: '83' }), 'whsec_real');
+    paddleWebhookHandler(req, makeRes());
+
+    const feeEntries = db.ledger.where((e) => e.externalId === 'txn_1:fee');
+    assert.equal(feeEntries.length, 1);
+    assert.equal(feeEntries[0].type, 'cost');
+    assert.equal(feeEntries[0].amount, 0.83);
+    assert.equal(feeEntries[0].verified, true);
+
+    const updated = db.opportunities.get(opportunity.id);
+    // The real fee replaces the null "unknown" placeholder — aiUsage must
+    // stay untouched, this isn't a full overwrite of costs.
+    assert.equal(updated.costs.paymentProcessing, 0.83);
+    assert.equal(updated.costs.aiUsage, 0.05);
+  });
+});
+
+test('a transaction.completed with no fee reported records revenue only, exactly as before', () => {
+  __resetForTests();
+  withEnv({ PADDLE_WEBHOOK_SECRET: 'whsec_real' }, () => {
+    const opportunity = db.opportunities.insert({ id: makeId('opp'), title: 'מדריך', salesCount: 0, costs: { paymentProcessing: null } });
+    const req = makeReq(completedTxn({ id: 'txn_1', opportunityId: opportunity.id, totalCents: '900' }), 'whsec_real');
+    paddleWebhookHandler(req, makeRes());
+
+    assert.equal(db.ledger.where((e) => e.type === 'cost').length, 0);
+    assert.equal(db.opportunities.get(opportunity.id).costs.paymentProcessing, null);
+  });
+});
+
+test('replaying the same transaction never double-records its fee either', () => {
+  __resetForTests();
+  withEnv({ PADDLE_WEBHOOK_SECRET: 'whsec_real' }, () => {
+    const opportunity = db.opportunities.insert({ id: makeId('opp'), title: 'מדריך', salesCount: 0 });
+    const txn = completedTxn({ id: 'txn_1', opportunityId: opportunity.id, totalCents: '900', feeCents: '83' });
+    paddleWebhookHandler(makeReq(txn, 'whsec_real'), makeRes());
+    paddleWebhookHandler(makeReq(txn, 'whsec_real'), makeRes());
+
+    assert.equal(db.ledger.where((e) => e.externalId === 'txn_1:fee').length, 1);
   });
 });
 

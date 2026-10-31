@@ -1,7 +1,7 @@
 import { Router } from 'express';
 import { db, makeId } from '../db/store.js';
 import { verifyPaddleSignature } from '../engine/paddleSignature.js';
-import { extractTransactionAmount } from '../engine/paddleTransaction.js';
+import { extractTransactionAmount, extractTransactionFee } from '../engine/paddleTransaction.js';
 import { logAction } from '../services/execution.js';
 import { isPaddleConfigured, paddleClientConfig } from '../services/paddle.js';
 
@@ -37,9 +37,10 @@ export function paddleWebhookHandler(req, res) {
       const alreadyRecorded = opportunityId && db.ledger.where((e) => e.externalId === txn.id).length > 0;
 
       if (opportunityId && !alreadyRecorded) {
-        let amount;
+        let amount, fee;
         try {
           amount = extractTransactionAmount(txn);
+          fee = extractTransactionFee(txn);
         } catch (err) {
           // Never write a NaN/invalid amount to the ledger — every future
           // totalSpentSoFar()/summarizeLedger() sum would then be
@@ -49,6 +50,8 @@ export function paddleWebhookHandler(req, res) {
           res.json({ received: true });
           return;
         }
+        const today = new Date().toISOString().slice(0, 10);
+        const now = new Date().toISOString();
         db.ledger.insert({
           id: makeId('led'),
           type: 'revenue',
@@ -57,12 +60,37 @@ export function paddleWebhookHandler(req, res) {
           description: `מכירת מוצר (Paddle transaction ${txn.id})`,
           opportunityId,
           externalId: txn.id,
-          date: new Date().toISOString().slice(0, 10),
-          createdAt: new Date().toISOString(),
+          date: today,
+          createdAt: now,
         });
+        // Paddle's real platform fee for this sale — until now,
+        // costs.paymentProcessing stayed null forever (an honest "unknown
+        // until a real sale happens", per createDigitalProductOpportunity),
+        // so totalSpentSoFar()/the budget gate only ever saw gross revenue
+        // and the owner had to guess a number before feasibility math would
+        // run at all. A separate externalId (":fee") keeps this from ever
+        // being mistaken for the revenue entry by the replay-guard above.
+        if (fee > 0) {
+          db.ledger.insert({
+            id: makeId('led'),
+            type: 'cost',
+            amount: fee,
+            verified: true,
+            description: `עמלת Paddle (Paddle transaction ${txn.id})`,
+            opportunityId,
+            externalId: `${txn.id}:fee`,
+            date: today,
+            createdAt: now,
+          });
+        }
         const opportunity = db.opportunities.get(opportunityId);
-        if (opportunity) db.opportunities.update(opportunityId, { salesCount: (opportunity.salesCount ?? 0) + 1 });
-        logAction({ type: 'sale_confirmed', detail: { opportunityId, amount, transactionId: txn.id }, result: 'success' });
+        if (opportunity) {
+          db.opportunities.update(opportunityId, {
+            salesCount: (opportunity.salesCount ?? 0) + 1,
+            costs: fee > 0 ? { ...opportunity.costs, paymentProcessing: fee } : opportunity.costs,
+          });
+        }
+        logAction({ type: 'sale_confirmed', detail: { opportunityId, amount, fee, transactionId: txn.id }, result: 'success' });
       }
     }
 
