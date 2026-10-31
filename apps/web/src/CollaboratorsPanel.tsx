@@ -115,6 +115,16 @@ export function CollaboratorsPanel({
 
   async function handleInvite(e: React.FormEvent) {
     e.preventDefault();
+    // Round 1365: inviteBusy already disabled the submit button, but
+    // handleInvite itself never checked it -- the same own-click
+    // reentrancy gap round 1363/1364 closed for EntityPanel/
+    // AutomationsPanel/WhatsAppPanel. Here a fast double-click fires two
+    // independent POST .../collaborators calls before React disables the
+    // button, and unlike those earlier cases this one is externally
+    // visible: the server best-effort-sends a real invite email to the
+    // invitee, so a double-fire risks a duplicate invite email landing in
+    // a third party's inbox for one click.
+    if (inviteBusy) return;
     const trimmed = email.trim();
     if (!trimmed) return;
     setInviteBusy(true);

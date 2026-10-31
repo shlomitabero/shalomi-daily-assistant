@@ -465,6 +465,79 @@ test("CollaboratorsPanel tells the owner when the invited email already has acce
 });
 
 /**
+ * Round 1365: handleInvite had no guard against racing ITSELF -- the same
+ * own-click reentrancy gap round 1363/1364 closed for EntityPanel/
+ * AutomationsPanel/WhatsAppPanel's own submit handlers. A fast double-click
+ * on "Invite" must only ever reach addCollaborator once, not fire two
+ * independent POSTs (which, for a genuinely new invitee, would risk the
+ * server best-effort-sending a real invite email twice for one click).
+ */
+test("CollaboratorsPanel's invite button guards against a fast double-click, so only one POST ever fires for one submission", async () => {
+  await withJsdom(async () => {
+    const originalFetch = globalThis.fetch;
+    const dana = makeCollaborator("u1", "dana@example.com");
+    const postedEmails: string[] = [];
+    const pending: { resolveFirstPost: (() => void) | null } = { resolveFirstPost: null };
+
+    globalThis.fetch = (async (input: string, init?: RequestInit) => {
+      const method = init?.method ?? "GET";
+      if (method === "GET" && input === "/api/projects/proj1/collaborators") {
+        return new Response(JSON.stringify({ collaborators: [dana], owner: { userId: "owner1", email: "amit@example.com" } }), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        });
+      }
+      if (method === "POST" && input === "/api/projects/proj1/collaborators") {
+        const body = JSON.parse(init!.body as string) as { email: string };
+        postedEmails.push(body.email);
+        if (postedEmails.length === 1) {
+          await new Promise<void>((resolve) => {
+            pending.resolveFirstPost = resolve;
+          });
+        } else {
+          await new Promise(() => {});
+        }
+        const yael = makeCollaborator("u2", "yael@example.com");
+        return new Response(JSON.stringify({ collaborators: [dana, yael], owner: { userId: "owner1", email: "amit@example.com" } }), {
+          status: 201,
+          headers: { "content-type": "application/json" },
+        });
+      }
+      throw new Error(`unexpected request ${method} ${input}`);
+    }) as typeof fetch;
+
+    try {
+      renderPanel(true);
+      await waitForCondition(() => document.querySelectorAll(".collab-list li").length === 2);
+
+      const emailInput = document.querySelector('.collab-invite-form input[type="email"]') as HTMLInputElement;
+      fireEvent.change(emailInput, { target: { value: "yael@example.com" } });
+
+      const form = document.querySelector(".collab-invite-form")!;
+      fireEvent.submit(form);
+      fireEvent.submit(form);
+      await waitForCondition(() => postedEmails.length > 0);
+
+      assert.equal(
+        postedEmails.length,
+        1,
+        "a fast double submit must only ever reach addCollaborator once -- the second click must be blocked by inviteBusy, not fire its own independent POST (risking a duplicate invite email to a real third party)",
+      );
+
+      pending.resolveFirstPost?.();
+      // Let handleInvite's own success path (setCollaborators) actually
+      // finish before restoring the real fetch -- otherwise that
+      // continuation keeps running after this test returns and risks
+      // bleeding into whichever test runs next (the same hazard round
+      // 1364's own new tests hit and fixed).
+      await waitForCondition(() => document.querySelectorAll(".collab-list li").length === 3);
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+});
+
+/**
  * New in this round: re-inviting an existing collaborator while the role
  * dropdown is set to a DIFFERENT role than the one they already have must
  * say so explicitly -- addCollaborator (packages/db/src/collaborators.ts)
