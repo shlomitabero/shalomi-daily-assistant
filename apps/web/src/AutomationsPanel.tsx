@@ -1014,6 +1014,16 @@ export function AutomationsPanel({
    * runsByRuleId by hand.
    */
   function handleRetryRun(rule: AutomationRuleView, run: AutomationRunView) {
+    // Round 1402: own-click reentrancy guard -- mirrors WhatsAppPanel's
+    // handleRetry fix (round 1401) and handleSubmit's createBusy guard
+    // (round 1364). The Retry button's own disabled={retryingRunId ===
+    // run.id || ...} only takes effect after React's next render commits,
+    // so a fast double-click on the same button fires this function twice
+    // before that happens. retryAutomationRun (api.ts) mints a fresh
+    // crypto.randomUUID() idempotency key on every call, so nothing
+    // server-side dedupes the second call -- it would re-fire the rule for
+    // real a second time (duplicate WhatsApp/email/webhook send).
+    if (retryingRunId !== null) return;
     setRetryingRunId(run.id);
     setRetryErrorByRunId((prev) => {
       if (!(run.id in prev)) return prev;

@@ -2,6 +2,7 @@ import "./jsdomWarmup.js";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { test } from "node:test";
+import { transformSync } from "esbuild";
 import { JSDOM } from "jsdom";
 import React from "react";
 import { act, cleanup, fireEvent, render } from "@testing-library/react";
@@ -46,6 +47,8 @@ async function withJsdom<T>(fn: () => Promise<T> | T): Promise<T> {
     }
   }
 }
+
+const automationsPanelSrc = readFileSync(new URL("./AutomationsPanel.tsx", import.meta.url), "utf8");
 
 async function waitForCondition(check: () => boolean, maxTicks = 40): Promise<void> {
   for (let i = 0; i < maxTicks; i++) {
@@ -4749,4 +4752,41 @@ test("a rule row's info column lets an unbreakable value (e.g. a long webhook UR
     /overflow-wrap:\s*anywhere/,
     ".automations-rule-info must allow an unbreakable value (e.g. a webhook rule's own raw webhookUrl, rendered via describeDestination) to wrap mid-word instead of overflowing the Automations dialog",
   );
+});
+
+/**
+ * Round 1402: handleRetryRun (round 971) never had its own self-reentrancy
+ * guard -- round 1149's retryingRunId cross-gate only disabled every OTHER
+ * rule-level button while a retry is in flight; it never stopped the Retry
+ * button from racing ITSELF. That button's own disabled={retryingRunId ===
+ * run.id || ...} only takes effect once React's next render commits, so a
+ * fast double-click fires handleRetryRun twice before that happens.
+ * retryAutomationRun (api.ts) mints a fresh crypto.randomUUID() idempotency
+ * key per call, so nothing server-side dedupes the second call -- it would
+ * re-fire the rule for real a second time (duplicate WhatsApp/email/webhook
+ * send), the identical mechanism WhatsAppPanel's handleRetry had before
+ * round 1401 fixed it.
+ *
+ * The Retry button is a bare <button>, not inside a <form> -- so, per round
+ * 1401's own methodology correction, a full-render test firing two
+ * fireEvent.click() calls on it would falsely pass even with no guard at
+ * all: testing-library's fireEvent.click respects the disabled attribute,
+ * and React's act()-wrapped re-render after the first click already applies
+ * disabled before a second synchronous click can land, regardless of any
+ * code-level guard. Extracted and called with ONLY `retryingRunId`
+ * declared instead: if the guard were ever removed, the very next line
+ * reached (`setRetryingRunId`) throws a ReferenceError instead of silently
+ * doing nothing, proving the guard itself is what's stopping execution.
+ */
+test("AutomationsPanel's handleRetryRun is a no-op while retryingRunId is already set", () => {
+  const handlerMatch = automationsPanelSrc.match(
+    / {2}function handleRetryRun\(rule: AutomationRuleView, run: AutomationRunView\) \{[\s\S]*?\n {2}\}\n/,
+  );
+  assert.ok(handlerMatch, "expected to find handleRetryRun in AutomationsPanel.tsx");
+  const { code } = transformSync(handlerMatch![0], { loader: "ts" });
+  const fn = new Function("retryingRunId", `${code}\nreturn handleRetryRun;`)("run0") as (
+    rule: unknown,
+    run: unknown,
+  ) => void;
+  fn({ id: "rule1" }, { id: "run1" });
 });
