@@ -10995,6 +10995,56 @@ test("answering an open question (free text, not just a suggested option) actual
 });
 
 /**
+ * Round 1409: `RefineSchema.instruction` and `AnswerQuestionsSchema`'s
+ * `answers[].question`/`.answer`/`additionalRequest` had no `.max()` --
+ * each is concatenated into combinedDescription and sent straight to the
+ * real Anthropic Messages API (generateSpec) on this same request, the
+ * same direct-cost gap round 1409 closed for `idea` above.
+ */
+test("refine and answers reject an instruction/answer/additionalRequest past a generous but real length cap, instead of accepting an unbounded string", async () => {
+  await withServer(async (baseUrl) => {
+    const token = await signup(baseUrl);
+    const createRes = await fetch(`${baseUrl}/api/projects`, {
+      method: "POST",
+      headers: authHeaders(token),
+      body: JSON.stringify({ description: "A CRM with customers and deals." }),
+    });
+    const { project } = (await createRes.json()) as { project: { id: string } };
+
+    const buildRes = await fetch(`${baseUrl}/api/projects/${project.id}/build`, {
+      method: "POST",
+      headers: authHeaders(token),
+    });
+    assert.equal(buildRes.status, 200);
+    await collectSSE(buildRes);
+
+    const oversizedRefineRes = await fetch(`${baseUrl}/api/projects/${project.id}/refine`, {
+      method: "POST",
+      headers: authHeaders(token),
+      body: JSON.stringify({ instruction: "x".repeat(2001) }),
+    });
+    assert.equal(oversizedRefineRes.status, 400);
+    assert.equal(((await oversizedRefineRes.json()) as { code?: string }).code, "VALIDATION_ERROR");
+
+    const oversizedAnswerRes = await fetch(`${baseUrl}/api/projects/${project.id}/answers`, {
+      method: "POST",
+      headers: authHeaders(token),
+      body: JSON.stringify({ answers: [{ question: "q", answer: "x".repeat(2001) }] }),
+    });
+    assert.equal(oversizedAnswerRes.status, 400);
+    assert.equal(((await oversizedAnswerRes.json()) as { code?: string }).code, "VALIDATION_ERROR");
+
+    const oversizedAdditionalRequestRes = await fetch(`${baseUrl}/api/projects/${project.id}/answers`, {
+      method: "POST",
+      headers: authHeaders(token),
+      body: JSON.stringify({ additionalRequest: "x".repeat(2001) }),
+    });
+    assert.equal(oversizedAdditionalRequestRes.status, 400);
+    assert.equal(((await oversizedAdditionalRequestRes.json()) as { code?: string }).code, "VALIDATION_ERROR");
+  });
+});
+
+/**
  * Round 776: `answers` used to be a flat `Record<string,string>` keyed by
  * question text -- so two open questions sharing identical wording
  * (OpenQuestionSchema carries no uniqueness constraint, unlike entity
@@ -12526,6 +12576,35 @@ test("the idea-enhance endpoint requires auth, rejects an empty idea, and expand
     assert.equal(createRes.status, 201);
     const { project } = (await createRes.json()) as { project: { spec: { entities: { name: string }[] } } };
     assert.ok(project.spec.entities.some((e) => e.name === "Customer"));
+  });
+});
+
+/**
+ * Round 1409: `idea` had a `.min(1)` floor but no `.max()` ceiling -- unlike
+ * CreateProjectSchema's `description`, which round 1408 just capped, `idea`
+ * reaches the real Anthropic provider (when configured) directly and
+ * synchronously on THIS request, not a later fan-out, so this is the most
+ * direct cost-amplification instance of the "unbounded free-text field"
+ * class yet.
+ */
+test("the idea-enhance endpoint rejects an idea past a generous but real length cap, instead of accepting an unbounded string", async () => {
+  await withServer(async (baseUrl) => {
+    const token = await signup(baseUrl);
+
+    const oversizedRes = await fetch(`${baseUrl}/api/ideas/enhance`, {
+      method: "POST",
+      headers: authHeaders(token),
+      body: JSON.stringify({ idea: "x".repeat(5001) }),
+    });
+    assert.equal(oversizedRes.status, 400);
+    assert.equal(((await oversizedRes.json()) as { code?: string }).code, "VALIDATION_ERROR");
+
+    const goodRes = await fetch(`${baseUrl}/api/ideas/enhance`, {
+      method: "POST",
+      headers: authHeaders(token),
+      body: JSON.stringify({ idea: "a booking app for a hair salon with customers and appointments" }),
+    });
+    assert.equal(goodRes.status, 200);
   });
 });
 

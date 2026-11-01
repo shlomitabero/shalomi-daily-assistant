@@ -123,7 +123,14 @@ const EnhanceIdeaSchema = z.object({
   // just above had -- a whitespace-only `idea` reaches
   // HeuristicPromptEnhancer.enhance's own "must not be empty" guard,
   // surfacing as a raw 500 instead of this schema's own clean 400.
-  idea: z.string().trim().min(1, "idea is required"),
+  // Round 1409: no `.max()` either -- unlike every other free-text schema
+  // in this file capped by rounds 1403/1404/1408, `idea` reaches a real,
+  // billed Anthropic API call (AnthropicPromptEnhancer.enhance, see
+  // promptEnhancer.ts) directly and synchronously on THIS request, not a
+  // later fan-out -- the most direct cost-amplification instance of this
+  // bug class yet. Capped at the same 5000 as `description`, since this is
+  // the same kind of free-form idea text (often the literal same input).
+  idea: z.string().trim().min(1, "idea is required").max(5000, "idea must be 5000 characters or fewer"),
 });
 
 const RefineSchema = z.object({
@@ -133,7 +140,13 @@ const RefineSchema = z.object({
   // stray leading/trailing space the client sent reached this route's
   // own permanent checkpoint changeLabel (`Refine: ${instruction}`)
   // verbatim, stored forever in the Time Machine history.
-  instruction: z.string().trim().min(1, "instruction is required"),
+  // Round 1409: also had no `.max()` -- `instruction` is concatenated onto
+  // project.description and sent straight to the real Anthropic
+  // Messages API (generateSpec, see anthropic.ts) on this same request.
+  // Capped lower than `description`'s 5000: a refine instruction is a
+  // short, targeted change request ("remove deals tracking, focus on
+  // invoices"), not a full project description.
+  instruction: z.string().trim().min(1, "instruction is required").max(2000, "instruction must be 2000 characters or fewer"),
 });
 
 /**
@@ -155,8 +168,19 @@ const RefineSchema = z.object({
  * (see App.tsx's own selectedAnswers comment) rather than by text.
  */
 const AnswerQuestionsSchema = z.object({
-  answers: z.array(z.object({ question: z.string(), answer: z.string() })).optional().default([]),
-  additionalRequest: z.string().optional(),
+  // Round 1409: none of these four string fields had a `.max()` -- each is
+  // concatenated into combinedDescription and sent straight to the real,
+  // billed Anthropic Messages API (generateSpec) on this same request, the
+  // same direct-cost-on-this-request gap EnhanceIdeaSchema/RefineSchema
+  // just above were found to have. `question` is normally server-generated
+  // (an open question's own text echoed back by the client) but capped
+  // defensively like `answer`, since nothing here re-derives it from the
+  // stored spec to confirm it matches.
+  answers: z
+    .array(z.object({ question: z.string().max(2000), answer: z.string().max(2000) }))
+    .optional()
+    .default([]),
+  additionalRequest: z.string().max(2000).optional(),
 });
 
 /**

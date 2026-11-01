@@ -2409,6 +2409,7 @@ function AppContent() {
               rows={5}
               placeholder={t("home.placeholder")}
               value={description}
+              maxLength={5000}
               onChange={(e) => {
                 setDescription(e.target.value);
                 saveIdeaDraft(user.id, e.target.value);
@@ -2635,6 +2636,7 @@ function AppContent() {
                     className="answer-input"
                     placeholder={t("spec.answerInput.placeholder")}
                     value={selectedAnswers[String(i)] ?? ""}
+                    maxLength={2000}
                     onChange={(e) => setSelectedAnswers((prev) => ({ ...prev, [String(i)]: e.target.value }))}
                   />
                   {q.recommendation && (
@@ -2655,6 +2657,7 @@ function AppContent() {
               rows={3}
               placeholder={t("spec.additionalRequest.placeholder")}
               value={additionalRequest}
+              maxLength={2000}
               onChange={(e) => setAdditionalRequest(e.target.value)}
             />
           </section>
@@ -2910,6 +2913,7 @@ function AppContent() {
                     placeholder={t("preview.refine.placeholder")}
                     aria-label={t("preview.refine.placeholder")}
                     value={refineText}
+                    maxLength={2000}
                     onChange={(e) => setRefineText(e.target.value)}
                   />
                   <button type="submit" disabled={!refineText.trim()}>
