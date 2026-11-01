@@ -4744,7 +4744,7 @@ test("the exported app's entity-tabs nav shows a live record-count badge per tab
   const entityViewJsx = files.find((f) => f.path === "web/src/components/EntityView.jsx")!.content;
   assert.match(
     entityViewJsx,
-    /export function EntityView\(\{ entity, highlightRecordId, onHighlightHandled, onJumpToRecord, onRecordCountChange \}\)/,
+    /export function EntityView\(\{ entity, highlightRecordId, onHighlightHandled, onJumpToRecord, onRecordCountChange, onViewModeChange \}\)/,
   );
   assert.match(entityViewJsx, /if \(onRecordCountChange\) onRecordCountChange\(entity\.name, records\.length\);/);
 
@@ -4755,7 +4755,7 @@ test("the exported app's entity-tabs nav shows a live record-count badge per tab
   const customerEntityJsx = files.find((f) => f.path === "web/src/entities/Customer.jsx")!.content;
   assert.match(
     customerEntityJsx,
-    /export default function View\(\{ highlightRecordId, onHighlightHandled, onJumpToRecord, onRecordCountChange \}\)/,
+    /export default function View\(\{ highlightRecordId, onHighlightHandled, onJumpToRecord, onRecordCountChange, onViewModeChange \}\)/,
   );
   assert.match(customerEntityJsx, /onRecordCountChange=\{onRecordCountChange\}/);
 
@@ -12007,10 +12007,10 @@ test("the exported EntityView's relation cells jump to the related record via th
     /function BoardCard\(\{ orderedFields, boardField, record, relatedRecords, highlightQuery, hasMoveError, onMove, onEdit, onDuplicate, onDelete, onPrint, onJumpToRecord, bulkActionBusy, onDragEnd \}\)/,
   );
   assert.match(entityViewJsx, /<Cell\s+field=\{f\}\s+value=\{record\[f\.name\]\}\s+relationLabel=\{[^}]+\}\s+highlightQuery=\{highlightQuery\}\s+onJumpToRecord=\{onJumpToRecord\}/);
-  assert.match(entityViewJsx, /export function EntityView\(\{ entity, highlightRecordId, onHighlightHandled, onJumpToRecord, onRecordCountChange \}\)/);
+  assert.match(entityViewJsx, /export function EntityView\(\{ entity, highlightRecordId, onHighlightHandled, onJumpToRecord, onRecordCountChange, onViewModeChange \}\)/);
 
   const orderJsx = files.find((f) => f.path === "web/src/entities/Order.jsx")!.content;
-  assert.match(orderJsx, /export default function View\(\{ highlightRecordId, onHighlightHandled, onJumpToRecord, onRecordCountChange \}\)/);
+  assert.match(orderJsx, /export default function View\(\{ highlightRecordId, onHighlightHandled, onJumpToRecord, onRecordCountChange, onViewModeChange \}\)/);
   assert.match(orderJsx, /onJumpToRecord=\{onJumpToRecord\}/);
 
   const appJsx = files.find((f) => f.path === "web/src/App.jsx")!.content;
@@ -14832,7 +14832,7 @@ test("the exported app's Global Search can jump to an individual matched record,
   // it (clearing search, switching to table view) once records have
   // loaded, fades it out after a few seconds, and marks + scrolls to the
   // real highlighted row via a real data-record-id attribute.
-  assert.match(entityViewJsx, /export function EntityView\(\{ entity, highlightRecordId, onHighlightHandled, onJumpToRecord, onRecordCountChange \}\)/);
+  assert.match(entityViewJsx, /export function EntityView\(\{ entity, highlightRecordId, onHighlightHandled, onJumpToRecord, onRecordCountChange, onViewModeChange \}\)/);
   assert.match(entityViewJsx, /if \(highlightRecordId == null \|\| loading\) return;/);
   assert.match(entityViewJsx, /setHighlightedRecordId\(highlightRecordId\);/);
   assert.match(entityViewJsx, /onHighlightHandled\?\.\(\);/);
@@ -14854,7 +14854,7 @@ test("the exported app's Global Search can jump to an individual matched record,
   // entities/Customer.jsx's own View forwards the new props through to
   // EntityView rather than swallowing them.
   const customerJsx = files.find((f) => f.path === "web/src/entities/Customer.jsx")!.content;
-  assert.match(customerJsx, /export default function View\(\{ highlightRecordId, onHighlightHandled, onJumpToRecord, onRecordCountChange \}\)/);
+  assert.match(customerJsx, /export default function View\(\{ highlightRecordId, onHighlightHandled, onJumpToRecord, onRecordCountChange, onViewModeChange \}\)/);
   assert.match(customerJsx, /highlightRecordId=\{highlightRecordId\}\s+onHighlightHandled=\{onHighlightHandled\}/);
 
   assert.match(stylesCss, /\.record-row-highlighted, \.record-row-highlighted:hover \{ background: var\(--accent-soft\)/);
@@ -20279,6 +20279,62 @@ test("the exported ShortcutsPanel renders every one of the live preview's own 14
       Array.from(container.querySelectorAll(".shortcuts-keys kbd")).some((k) => k.textContent === "Backspace"),
       "expected Backspace to be listed alongside Delete -- the generated EntityView.jsx's own keydown handler treats them as equivalent for deleting the focused row, the same dual-key convention the j/k row already follows",
     );
+  } finally {
+    cleanup();
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+/**
+ * Round 1451: EntityView.jsx's own window keydown handler for row
+ * navigation (j/k), edit (Enter), toggle-select (x), delete
+ * (Delete/Backspace), and duplicate (d) starts with
+ * `if (viewMode !== "table") return;` -- the whole handler is a no-op in
+ * Board/Calendar view. Before this round, the generated ShortcutsPanel
+ * listed every one of these rows as active regardless of the current
+ * view mode, misleading a real end user of the exported app (who has no
+ * way back to the Forge AI platform or its docs) into thinking a key
+ * wasn't working for some other reason. Mirrors the live preview's own
+ * round-1446 fix and its own ShortcutsPanel.test.ts.
+ */
+test("the exported ShortcutsPanel hides the 7 table-only row shortcuts when viewMode is board or calendar", async () => {
+  const files = generateExportFiles(project);
+  const dir = writeGeneratedWebComponent(files);
+
+  try {
+    const { ShortcutsPanel } = await import(path.join(dir, "web", "src", "components", "ShortcutsPanel.jsx"));
+
+    for (const viewMode of ["board", "calendar"]) {
+      const { container, unmount } = render(React.createElement(ShortcutsPanel, { onClose: () => {}, viewMode }));
+
+      const rows = Array.from(container.querySelectorAll(".shortcuts-row"));
+      // The 14-row full list minus the 7 table-only rows (j/k row nav, Enter
+      // row-edit, x toggle-select, Delete/Backspace row-delete, d duplicate,
+      // the clear-selection Esc) = 7.
+      assert.equal(rows.length, 7, `expected only the 7 shortcuts that still work outside table view for viewMode=${viewMode}, got ${rows.length}`);
+      const descriptions = rows.map((r) => r.textContent ?? "");
+      for (const deadRow of [
+        "Move to the next table row",
+        "Move to the previous table row",
+        "Edit the focused table row",
+        "Select/deselect the focused row",
+        "Delete the focused table row",
+        "Duplicate the focused table row",
+        "Clear the table's multi-row selection",
+      ]) {
+        assert.ok(!descriptions.some((d) => d.includes(deadRow)), `"${deadRow}" is dead in ${viewMode} view and must not be listed`);
+      }
+      for (const liveRow of ["Open search across the whole app", "Show this shortcuts list", "Close the open panel", "Jump to the add-record form", "Undo the last delete", "Submit the form"]) {
+        assert.ok(descriptions.some((d) => d.includes(liveRow)), `"${liveRow}" has no viewMode guard and must remain listed in ${viewMode} view`);
+      }
+
+      unmount();
+    }
+
+    // Table view (the default) must still show all 14 rows -- confirms
+    // this round's filter didn't regress the existing full-list case.
+    const { container: tableContainer } = render(React.createElement(ShortcutsPanel, { onClose: () => {} }));
+    assert.equal(tableContainer.querySelectorAll(".shortcuts-row").length, 14, "expected all 14 rows when viewMode is omitted (defaults to table)");
   } finally {
     cleanup();
     rmSync(dir, { recursive: true, force: true });

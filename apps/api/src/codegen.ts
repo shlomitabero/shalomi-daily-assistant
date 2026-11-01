@@ -5205,7 +5205,7 @@ export function hideDialogBackgroundFromAssistiveTech(dialogElement) {
 }
 
 /** Shared list + form UI used by every entity's own component file. */
-export function EntityView({ entity, highlightRecordId, onHighlightHandled, onJumpToRecord, onRecordCountChange }) {
+export function EntityView({ entity, highlightRecordId, onHighlightHandled, onJumpToRecord, onRecordCountChange, onViewModeChange }) {
   const [records, setRecords] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
@@ -5589,6 +5589,19 @@ export function EntityView({ entity, highlightRecordId, onHighlightHandled, onJu
     if (onRecordCountChange) onRecordCountChange(entity.name, records.length);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [entity.name, records.length]);
+
+  // Round 1451: reports this entity's own view mode up to App -- see
+  // ShortcutsPanel.jsx's own TABLE_ONLY_DESCRIPTIONS doc comment for why.
+  // Fires on mount with whatever viewMode initializes/hydrates to, and
+  // again on every later switch, so ShortcutsPanel's own list is never
+  // stale. Mirrors the live Forge AI preview's own EntityPanel.tsx
+  // (round 1446) -- only one EntityView is ever mounted at a time (the
+  // active tab), so this needs no entity name, unlike onRecordCountChange
+  // just above, which must keep every tab's own last-known count alive
+  // in App state across tab switches.
+  useEffect(() => {
+    if (onViewModeChange) onViewModeChange(viewMode);
+  }, [viewMode, onViewModeChange]);
 
   // Fires window.print() right after recordToPrint/showPrintList is set --
   // on the next tick (setTimeout 0) so the sheet has already rendered with
@@ -8765,7 +8778,31 @@ const SHORTCUTS = [
   { keys: ["Esc"], description: "Clear the table's multi-row selection" },
 ];
 
-export function ShortcutsPanel({ onClose }) {
+/**
+ * Round 1451: EntityView.jsx's own window keydown handler that implements
+ * every one of these rows (j/k row navigation, Enter-to-edit, x
+ * toggle-select, Delete/Backspace, d duplicate, Escape-clears-selection)
+ * starts with \`if (viewMode !== "table") return;\` -- a real no-op in
+ * Board or Calendar view, which have no keyboard row-focus equivalent at
+ * all. Mirrors the live Forge AI preview's own round-1446 fix
+ * (ShortcutsPanel.tsx's TABLE_ONLY_KEYS) -- this panel listed every one of
+ * these rows as active regardless of which view was open, misleading a
+ * real end user of the exported app (who has no way back to the Forge AI
+ * platform or its docs) into thinking a key wasn't working for some other
+ * reason.
+ */
+const TABLE_ONLY_DESCRIPTIONS = new Set([
+  "Move to the next table row",
+  "Move to the previous table row",
+  "Edit the focused table row",
+  "Select/deselect the focused row",
+  "Delete the focused table row",
+  "Duplicate the focused table row",
+  "Clear the table's multi-row selection",
+]);
+
+export function ShortcutsPanel({ onClose, viewMode = "table" }) {
+  const visibleShortcuts = SHORTCUTS.filter((row) => !(viewMode !== "table" && TABLE_ONLY_DESCRIPTIONS.has(row.description)));
   const dialogRef = useRef(null);
   // Captured during render, not inside the effect below: an effect runs
   // after React has already committed this render's DOM. By the time an
@@ -8846,7 +8883,7 @@ export function ShortcutsPanel({ onClose }) {
           <button type="button" onClick={onClose}>Close</button>
         </div>
         <ul className="shortcuts-list">
-          {SHORTCUTS.map((row, i) => (
+          {visibleShortcuts.map((row, i) => (
             <li key={i} className="shortcuts-row">
               <span className="shortcuts-keys">
                 {row.keys.map((key, j) => (
@@ -8890,7 +8927,7 @@ export const entity = {
   fields: ${fieldsJson},
 };
 
-export default function View({ highlightRecordId, onHighlightHandled, onJumpToRecord, onRecordCountChange }) {
+export default function View({ highlightRecordId, onHighlightHandled, onJumpToRecord, onRecordCountChange, onViewModeChange }) {
   return (
     <EntityView
       entity={entity}
@@ -8898,6 +8935,7 @@ export default function View({ highlightRecordId, onHighlightHandled, onJumpToRe
       onHighlightHandled={onHighlightHandled}
       onJumpToRecord={onJumpToRecord}
       onRecordCountChange={onRecordCountChange}
+      onViewModeChange={onViewModeChange}
     />
   );
 }
@@ -9071,6 +9109,11 @@ export default function App() {
   const [active, setActive] = useState(ENTITIES[0]?.name ?? null);
   const [showSearch, setShowSearch] = useState(false);
   const [showShortcuts, setShowShortcuts] = useState(false);
+  // Round 1451: the active entity tab's own current view mode, reported
+  // up by EntityView's onViewModeChange (see that effect's own doc
+  // comment) -- feeds ShortcutsPanel's viewMode prop below, mirroring the
+  // live Forge AI preview's own App.tsx (round 1446).
+  const [activeEntityViewMode, setActiveEntityViewMode] = useState("table");
   const [highlightRecordId, setHighlightRecordId] = useState(null);
   const storedTheme = readStoredTheme();
   const [theme, setTheme] = useState(() => detectInitialTheme(storedTheme, prefersDarkFromSystem()));
@@ -9378,6 +9421,7 @@ export default function App() {
             onRecordCountChange={(name, count) =>
               setEntityCounts((prev) => (prev[name] === count ? prev : { ...prev, [name]: count }))
             }
+            onViewModeChange={setActiveEntityViewMode}
           />
         </div>
       )}
@@ -9399,7 +9443,7 @@ export default function App() {
           }}
         />
       )}
-      {showShortcuts && <ShortcutsPanel onClose={() => setShowShortcuts(false)} />}
+      {showShortcuts && <ShortcutsPanel onClose={() => setShowShortcuts(false)} viewMode={activeEntityViewMode} />}
     </div>
   );
 }
