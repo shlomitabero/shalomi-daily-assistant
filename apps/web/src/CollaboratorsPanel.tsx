@@ -105,6 +105,11 @@ export function CollaboratorsPanel({
   // checked yet" apart from "checked, and there's genuinely nothing"
   // without a third boolean.
   const [lastInboundWebhookAt, setLastInboundWebhookAt] = useState<string | null | undefined>(undefined);
+  // Round 1471: same three-state shape as lastInboundWebhookAt just above,
+  // fetched and reset together with it (see handleCheckLastInboundWebhook/
+  // handleRegenerateInboundWebhookToken) -- independent of it, since a
+  // project can have both a recent success and a recent failure at once.
+  const [lastInboundWebhookFailure, setLastInboundWebhookFailure] = useState<{ at: string; reason: string } | null | undefined>(undefined);
   const [checkingLastInboundWebhook, setCheckingLastInboundWebhook] = useState(false);
   const [copyStatus, setCopyStatus] = useState<"idle" | "copied" | "failed">("idle");
   const [subscribeAllStatus, setSubscribeAllStatus] = useState<"idle" | "copied" | "failed">("idle");
@@ -142,8 +147,9 @@ export function CollaboratorsPanel({
     if (regeneratingWebhookToken) return;
     setCheckingLastInboundWebhook(true);
     try {
-      const { lastInboundWebhookAt } = await getInboundWebhookToken(projectId);
+      const { lastInboundWebhookAt, lastInboundWebhookFailure } = await getInboundWebhookToken(projectId);
       setLastInboundWebhookAt(lastInboundWebhookAt ?? null);
+      setLastInboundWebhookFailure(lastInboundWebhookFailure ?? null);
     } catch (err) {
       setError((err as Error).message);
     } finally {
@@ -387,6 +393,10 @@ export function CollaboratorsPanel({
       // under the OLD token doesn't linger on screen looking like it still
       // applies to the one just generated.
       setLastInboundWebhookAt(undefined);
+      // Round 1471: same reset, same reason -- a failure recorded under
+      // the OLD token would otherwise linger looking like it still
+      // applies to the one just generated.
+      setLastInboundWebhookFailure(undefined);
     } catch (err) {
       setError((err as Error).message);
     } finally {
@@ -743,6 +753,20 @@ export function CollaboratorsPanel({
                 {lastInboundWebhookAt
                   ? t("collab.webhookIn.lastReceived.some", { time: new Date(lastInboundWebhookAt).toLocaleString(LOCALE[lang]) })
                   : t("collab.webhookIn.lastReceived.never")}
+              </p>
+            )}
+            {/*
+              Round 1471: the failure-side counterpart to the success line
+              just above -- only rendered once lastInboundWebhookFailure
+              itself is non-null (a genuine recorded failure), so a project
+              with no failure history shows nothing extra here at all.
+            */}
+            {lastInboundWebhookFailure != null && (
+              <p className="muted small" role="status">
+                {t("collab.webhookIn.lastFailure.some", {
+                  time: new Date(lastInboundWebhookFailure.at).toLocaleString(LOCALE[lang]),
+                  reason: lastInboundWebhookFailure.reason,
+                })}
               </p>
             )}
           </div>

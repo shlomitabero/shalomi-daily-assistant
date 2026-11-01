@@ -57,6 +57,7 @@ import {
   getOrCreateInboundWebhookToken,
   regenerateInboundWebhookToken,
   getLastInboundWebhookAt,
+  getLastInboundWebhookFailure,
   isValidDateString,
   NotFoundError,
   type ForgeDatabase,
@@ -2201,7 +2202,14 @@ export function createProjectsRouter(
     "/projects/:id/inbound-webhook-token",
     asyncRoute(async (req, res) => {
       requireProjectWriteAccess(db, req.params.id, req.userId!);
-      res.json({ token: getOrCreateInboundWebhookToken(db, req.params.id), lastInboundWebhookAt: getLastInboundWebhookAt(db, req.params.id) });
+      res.json({
+        token: getOrCreateInboundWebhookToken(db, req.params.id),
+        lastInboundWebhookAt: getLastInboundWebhookAt(db, req.params.id),
+        // Round 1471: see recordInboundWebhookFailure's own doc comment
+        // (packages/db) -- the failure-side counterpart to
+        // lastInboundWebhookAt just above.
+        lastInboundWebhookFailure: getLastInboundWebhookFailure(db, req.params.id),
+      });
     }),
   );
 

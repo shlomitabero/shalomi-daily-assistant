@@ -37,6 +37,8 @@ import {
   regenerateInboundWebhookToken,
   recordInboundWebhookDelivery,
   getLastInboundWebhookAt,
+  recordInboundWebhookFailure,
+  getLastInboundWebhookFailure,
 } from "./projects.js";
 
 const validSpec: ProductSpec = {
@@ -1027,6 +1029,28 @@ test("regenerateInboundWebhookToken also clears lastInboundWebhookAt back to und
 });
 
 /**
+ * Round 1471: the failure-side mirror of the test just above -- a stale
+ * failure recorded under token A must not keep looking like "the new
+ * token/integration is already broken" once the owner rotates to token B.
+ */
+test("regenerateInboundWebhookToken also clears lastInboundWebhookFailureAt/Reason back to undefined", () => {
+  const db = openDatabase(":memory:");
+  ensureProjectsTable(db);
+  insertProject(db, { id: "proj1", ownerId: "owner1", name: "P1", description: "", spec: validSpec });
+
+  getOrCreateInboundWebhookToken(db, "proj1");
+  recordInboundWebhookFailure(db, "proj1", "This record references another record that doesn't exist");
+  assert.ok(getLastInboundWebhookFailure(db, "proj1"), "sanity check: a failure was actually recorded under the original token");
+
+  regenerateInboundWebhookToken(db, "proj1");
+  assert.equal(
+    getLastInboundWebhookFailure(db, "proj1"),
+    undefined,
+    "rotating the token must clear the old failure -- it belongs to a token that no longer works",
+  );
+});
+
+/**
  * Round 1456: until now a real delivery through this token left no trace
  * anywhere -- this is the read/write pair that closes that gap, mirroring
  * getOrCreateInboundWebhookToken's own lazy-column shape (undefined until
@@ -1066,4 +1090,53 @@ test("recordInboundWebhookDelivery overwrites the previous timestamp with a newe
   // so a project deleted in the meantime has nothing left to roll back.
   recordInboundWebhookDelivery(db, "does-not-exist");
   assert.equal(getLastInboundWebhookAt(db, "does-not-exist"), undefined);
+});
+
+/**
+ * Round 1471: the failure-side counterpart to recordInboundWebhookDelivery
+ * just above -- a delivery that reaches a real entity under a valid token
+ * but whose payload is rejected left no trace anywhere, the same blind
+ * spot round 1456 closed for a successful delivery.
+ */
+test("recordInboundWebhookFailure stamps a real, current timestamp + the given reason that getLastInboundWebhookFailure then returns; absent until the first call", () => {
+  const db = openDatabase(":memory:");
+  ensureProjectsTable(db);
+  insertProject(db, { id: "proj1", ownerId: "owner1", name: "P1", description: "", spec: validSpec });
+
+  assert.equal(getLastInboundWebhookFailure(db, "proj1"), undefined, "no failure has ever happened yet");
+
+  const before = Date.now();
+  recordInboundWebhookFailure(db, "proj1", "This record references another record that doesn't exist");
+  const after = Date.now();
+
+  const failure = getLastInboundWebhookFailure(db, "proj1");
+  assert.ok(failure, "expected a real failure record to be persisted");
+  const stampedMs = new Date(failure!.at).getTime();
+  assert.ok(stampedMs >= before && stampedMs <= after, "the stamped value must actually reflect when this call ran, not an unrelated/stale value");
+  assert.equal(failure!.reason, "This record references another record that doesn't exist");
+});
+
+test("recordInboundWebhookFailure overwrites the previous failure with a newer one on a second call, is independent of lastInboundWebhookAt, and is a silent no-op for a project that doesn't exist", () => {
+  const db = openDatabase(":memory:");
+  ensureProjectsTable(db);
+  insertProject(db, { id: "proj1", ownerId: "owner1", name: "P1", description: "", spec: validSpec });
+
+  recordInboundWebhookFailure(db, "proj1", "first reason");
+  const first = getLastInboundWebhookFailure(db, "proj1");
+
+  recordInboundWebhookFailure(db, "proj1", "second reason");
+  const second = getLastInboundWebhookFailure(db, "proj1");
+  assert.ok(new Date(second!.at).getTime() >= new Date(first!.at).getTime(), "a later failure must advance the stamp, never move it backwards");
+  assert.equal(second!.reason, "second reason");
+
+  // A recorded failure must not fabricate a success, and a later success
+  // must not erase the failure history -- the two columns are tracked
+  // independently (see recordInboundWebhookFailure's own doc comment).
+  assert.equal(getLastInboundWebhookAt(db, "proj1"), undefined, "a failure must never be mistaken for a successful delivery");
+  recordInboundWebhookDelivery(db, "proj1");
+  assert.ok(getLastInboundWebhookAt(db, "proj1"), "a subsequent success must still be recorded");
+  assert.ok(getLastInboundWebhookFailure(db, "proj1"), "a subsequent success must not erase the prior failure history");
+
+  recordInboundWebhookFailure(db, "does-not-exist", "irrelevant");
+  assert.equal(getLastInboundWebhookFailure(db, "does-not-exist"), undefined);
 });

@@ -20224,6 +20224,78 @@ test("POST /public/webhook-in/:projectId/:entityName rejects a record referencin
 });
 
 /**
+ * Round 1471: until now a rejected delivery like the one above left no
+ * trace anywhere -- GET .../inbound-webhook-token only ever reported
+ * lastInboundWebhookAt (round 1456), which stays null forever for a
+ * misconfigured integration that keeps failing, indistinguishable from
+ * one that's never been hit at all. This proves the new
+ * lastInboundWebhookFailure field surfaces the rejection's own reason,
+ * and that a later successful delivery records its own success without
+ * erasing the prior failure history.
+ */
+test("a rejected webhook-in delivery is surfaced via GET .../inbound-webhook-token's lastInboundWebhookFailure, independently of lastInboundWebhookAt", async () => {
+  await withServer(async (baseUrl, db) => {
+    const email = `webhook-in-failure-visibility-${randomUUID()}@example.com`;
+    const authToken = await signup(baseUrl, email);
+    const user = findUserByEmail(db, email)!;
+    const spec: ProductSpec = {
+      summary: "test",
+      personas: [],
+      roles: ["Admin"],
+      entities: [
+        { name: "Customer", fields: [{ name: "name", type: "text", required: true }] },
+        { name: "Lead", fields: [{ name: "name", type: "text", required: true }, { name: "customer", type: "relation", relationTo: "Customer" }] },
+      ],
+      screens: [],
+      assumptions: [],
+      openQuestions: [],
+    };
+    const projectId = randomUUID();
+    insertProject(db, { id: projectId, ownerId: user.id, name: "CRM", description: "test", spec });
+    diffAndMigrate(db, projectId, undefined, spec);
+    markProjectBuilt(db, projectId);
+
+    const tokenRes = await fetch(`${baseUrl}/api/projects/${projectId}/inbound-webhook-token`, { headers: authHeaders(authToken) });
+    const { token } = (await tokenRes.json()) as { token: string };
+
+    const beforeRes = await fetch(`${baseUrl}/api/projects/${projectId}/inbound-webhook-token`, { headers: authHeaders(authToken) });
+    const before = (await beforeRes.json()) as { lastInboundWebhookFailure?: { at: string; reason: string } };
+    assert.equal(before.lastInboundWebhookFailure, undefined, "no failure has ever happened yet");
+
+    const failRes = await fetch(`${baseUrl}/api/public/webhook-in/${projectId}/Lead?token=${token}`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ name: "Dangling", customer: 999999 }),
+    });
+    assert.equal(failRes.status, 400);
+
+    const afterFailureRes = await fetch(`${baseUrl}/api/projects/${projectId}/inbound-webhook-token`, { headers: authHeaders(authToken) });
+    const afterFailure = (await afterFailureRes.json()) as {
+      lastInboundWebhookAt?: string;
+      lastInboundWebhookFailure?: { at: string; reason: string };
+    };
+    assert.ok(afterFailure.lastInboundWebhookFailure, "the rejected delivery must now be recorded");
+    assert.equal(afterFailure.lastInboundWebhookFailure!.reason, "This record references another record that doesn't exist");
+    assert.equal(afterFailure.lastInboundWebhookAt, undefined, "a failed delivery must never be mistaken for a successful one");
+
+    const succeedRes = await fetch(`${baseUrl}/api/public/webhook-in/${projectId}/Lead?token=${token}`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ name: "Real Lead" }),
+    });
+    assert.equal(succeedRes.status, 201);
+
+    const afterSuccessRes = await fetch(`${baseUrl}/api/projects/${projectId}/inbound-webhook-token`, { headers: authHeaders(authToken) });
+    const afterSuccess = (await afterSuccessRes.json()) as {
+      lastInboundWebhookAt?: string;
+      lastInboundWebhookFailure?: { at: string; reason: string };
+    };
+    assert.ok(afterSuccess.lastInboundWebhookAt, "the subsequent successful delivery must be recorded");
+    assert.ok(afterSuccess.lastInboundWebhookFailure, "the prior failure history must not be erased by a later success");
+  });
+});
+
+/**
  * Round 1418: a real third-party sender (Stripe, Typeform) retries a
  * delivery on any non-2xx response or a dropped ack, which is normal,
  * documented behavior -- until now this route had no dedup at all, unlike

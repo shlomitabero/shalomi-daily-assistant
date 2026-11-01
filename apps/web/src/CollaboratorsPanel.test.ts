@@ -1460,6 +1460,48 @@ test("CollaboratorsPanel's \"Check last delivery\" button shows the real, format
 });
 
 /**
+ * Round 1471: the failure-side counterpart to the test just above -- a
+ * rejected delivery (bad payload, not a bad token/project/entity) is now
+ * tracked separately from lastInboundWebhookAt, and this proves the new
+ * line renders the server's own reason text once one is returned.
+ */
+test("CollaboratorsPanel's \"Check last delivery\" button also shows the last rejected delivery's reason, independently of a successful lastInboundWebhookAt", async () => {
+  await withJsdom(async () => {
+    const originalFetch = globalThis.fetch;
+    const failedAt = new Date("2026-01-16T09:00:00Z").toISOString();
+    globalThis.fetch = (async (input: string, init?: RequestInit) => {
+      const method = init?.method ?? "GET";
+      if (method === "GET" && input === "/api/projects/proj1/collaborators") {
+        return new Response(JSON.stringify({ collaborators: [] }), { status: 200, headers: { "content-type": "application/json" } });
+      }
+      if (method === "GET" && input === "/api/projects/proj1/inbound-webhook-token") {
+        return new Response(
+          JSON.stringify({ token: "abc", lastInboundWebhookFailure: { at: failedAt, reason: "This record references another record that doesn't exist" } }),
+          { status: 200, headers: { "content-type": "application/json" } },
+        );
+      }
+      throw new Error(`unexpected request ${method} ${input}`);
+    }) as typeof fetch;
+
+    try {
+      renderPanel(true);
+      await waitForCondition(() => document.querySelector(".collab-webhook-in-section") !== null);
+
+      const checkButton = document.querySelectorAll(".collab-webhook-in-section button")[1] as HTMLButtonElement;
+      fireEvent.click(checkButton);
+      await waitForCondition(() =>
+        (document.querySelector(".collab-webhook-in-section") as HTMLElement).textContent!.includes("This record references another record that doesn't exist"),
+      );
+      // No successful delivery was ever returned, so the success line must
+      // not render at all -- the two are tracked and shown independently.
+      assert.ok(!(document.querySelector(".collab-webhook-in-section") as HTMLElement).textContent!.includes("Last delivery received"));
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+});
+
+/**
  * Round 1457: a delivery checked under the OLD token must not keep
  * showing on screen as if it still applies once the owner regenerates --
  * the server itself clears lastInboundWebhookAt on rotation (see

@@ -1054,8 +1054,18 @@ export function regenerateCalendarFeedToken(projectId: string, lang?: "he" | "en
  * webhook built from this token, or undefined if none has landed yet --
  * backs CollaboratorsPanel.tsx's own delivery-visibility line, mirroring
  * AutomationsPanel.tsx's lastTriggeredAt convention for an OUTBOUND rule.
+ *
+ * `lastInboundWebhookFailure` (round 1471): the failure-side counterpart
+ * -- the timestamp and reason of the most recent delivery that reached a
+ * real entity under a valid token but whose own payload was rejected
+ * (a missing required field, a relation id that doesn't exist), or
+ * undefined if no such failure has ever happened. Independent of
+ * `lastInboundWebhookAt` -- a project can have both a recent success and
+ * a recent failure at once.
  */
-export function getInboundWebhookToken(projectId: string): Promise<{ token: string; lastInboundWebhookAt?: string }> {
+export function getInboundWebhookToken(
+  projectId: string,
+): Promise<{ token: string; lastInboundWebhookAt?: string; lastInboundWebhookFailure?: { at: string; reason: string } }> {
   return request(`/projects/${projectId}/inbound-webhook-token`);
 }
 

@@ -41,6 +41,16 @@ export function ensureProjectsTable(db: ForgeDatabase): void {
   if (!columns.includes("lastInboundWebhookAt")) {
     db.exec("ALTER TABLE projects ADD COLUMN lastInboundWebhookAt TEXT");
   }
+  // Round 1471: see recordInboundWebhookFailure's own doc comment. Same
+  // additive-only shape as lastInboundWebhookAt just above, but tracking
+  // the opposite outcome -- a project that's never had a failed delivery
+  // simply has null in both columns until the first one happens.
+  if (!columns.includes("lastInboundWebhookFailureAt")) {
+    db.exec("ALTER TABLE projects ADD COLUMN lastInboundWebhookFailureAt TEXT");
+  }
+  if (!columns.includes("lastInboundWebhookFailureReason")) {
+    db.exec("ALTER TABLE projects ADD COLUMN lastInboundWebhookFailureReason TEXT");
+  }
 }
 
 function rowToProject(row: Record<string, unknown>): Project {
@@ -478,12 +488,19 @@ export function getOrCreateInboundWebhookToken(db: ForgeDatabase, projectId: str
  * service has been reconfigured and sent anything new would otherwise
  * see stale, misleading confirmation that their rotated integration is
  * already working.
+ *
+ * Round 1471: clears lastInboundWebhookFailureAt/Reason for the identical
+ * reason, just in the opposite direction -- a stale failure recorded
+ * under the OLD token could otherwise look like the NEW token/integration
+ * is already broken before it's even been configured anywhere.
  */
 export function regenerateInboundWebhookToken(db: ForgeDatabase, projectId: string): string | undefined {
   const project = db.prepare("SELECT id FROM projects WHERE id = ?").get(projectId) as { id: string } | undefined;
   if (!project) return undefined;
   const token = randomBytes(32).toString("hex");
-  db.prepare("UPDATE projects SET inboundWebhookToken = ?, lastInboundWebhookAt = NULL WHERE id = ?").run(token, projectId);
+  db.prepare(
+    "UPDATE projects SET inboundWebhookToken = ?, lastInboundWebhookAt = NULL, lastInboundWebhookFailureAt = NULL, lastInboundWebhookFailureReason = NULL WHERE id = ?",
+  ).run(token, projectId);
   return token;
 }
 
@@ -537,4 +554,54 @@ export function getLastInboundWebhookAt(db: ForgeDatabase, projectId: string): s
     | { lastInboundWebhookAt: string | null }
     | undefined;
   return row?.lastInboundWebhookAt ?? undefined;
+}
+
+/**
+ * Round 1471: recordInboundWebhookDelivery just above only ever fires on
+ * success -- a delivery that reaches webhookIn.ts with a valid token and a
+ * real entity, but whose body itself is bad (a required field missing, a
+ * relation id that doesn't exist), left no trace anywhere either, the
+ * exact same blind spot round 1456 closed for successful deliveries. The
+ * owner of a misconfigured Stripe/Typeform integration had no way to tell
+ * "nothing has ever hit this URL" apart from "something keeps hitting it
+ * and failing" -- both looked identical (lastInboundWebhookAt staying
+ * null forever).
+ *
+ * A separate pair of columns from lastInboundWebhookAt, not a shared
+ * status/error/timestamp triple the way automation_rules' own
+ * lastTriggeredAt/lastStatus/lastError tracks its single repeated
+ * operation -- because here "last success" and "last failure" are two
+ * independent facts the owner wants to see at once (e.g. "it's receiving
+ * data fine AND also rejected one bad payload yesterday"), not one
+ * most-recent-outcome overwriting the other.
+ *
+ * Deliberately only called for a failure webhookIn.ts's own code treats as
+ * the sender's payload being wrong (a FOREIGN KEY constraint failure or
+ * any other insertRecord error, mirroring the catch block's own two
+ * branches) -- never for the 404 branches (bad token, project/entity not
+ * found), which this route's own top-of-file comment already documents as
+ * indistinguishable-from-probing by design; recording those would turn
+ * this into exactly the enumeration oracle that uniform-404 convention
+ * exists to prevent.
+ */
+export function recordInboundWebhookFailure(db: ForgeDatabase, projectId: string, reason: string): void {
+  db.prepare("UPDATE projects SET lastInboundWebhookFailureAt = ?, lastInboundWebhookFailureReason = ? WHERE id = ?").run(
+    new Date().toISOString(),
+    reason,
+    projectId,
+  );
+}
+
+/**
+ * The read side of recordInboundWebhookFailure just above -- undefined for
+ * both "project doesn't exist" and "no failure has ever happened",
+ * mirroring getLastInboundWebhookAt's own undifferentiated-undefined shape
+ * on this same table for the identical reason.
+ */
+export function getLastInboundWebhookFailure(db: ForgeDatabase, projectId: string): { at: string; reason: string } | undefined {
+  const row = db.prepare("SELECT lastInboundWebhookFailureAt, lastInboundWebhookFailureReason FROM projects WHERE id = ?").get(projectId) as
+    | { lastInboundWebhookFailureAt: string | null; lastInboundWebhookFailureReason: string | null }
+    | undefined;
+  if (!row?.lastInboundWebhookFailureAt) return undefined;
+  return { at: row.lastInboundWebhookFailureAt, reason: row.lastInboundWebhookFailureReason ?? "" };
 }

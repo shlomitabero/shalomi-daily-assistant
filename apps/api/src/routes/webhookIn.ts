@@ -1,7 +1,7 @@
 import { timingSafeEqual } from "node:crypto";
 import { Router, type Request, type Response } from "express";
 import type { ForgeDatabase } from "@forge/db";
-import { getInboundWebhookToken, insertRecord, recordInboundWebhookDelivery } from "@forge/db";
+import { getInboundWebhookToken, insertRecord, recordInboundWebhookDelivery, recordInboundWebhookFailure } from "@forge/db";
 import { ProductSpecSchema, type Project } from "@forge/shared";
 import type { WhatsAppWebManager } from "../whatsappWeb.js";
 import type { EmailSender } from "../email.js";
@@ -156,8 +156,19 @@ export function createInboundWebhookRouter(db: ForgeDatabase, whatsapp: WhatsApp
           try {
             record = insertRecord(db, projectId, entity, req.body ?? {});
           } catch (err) {
+            // Round 1471: see recordInboundWebhookFailure's own doc comment
+            // (packages/db) for why this is recorded here specifically --
+            // the sender presented a valid token and hit a real entity, so
+            // unlike the 404 branches above, this really is "a configured
+            // integration whose payload needs fixing," the case the
+            // project owner can actually act on.
             if (err instanceof Error && err.message === "FOREIGN KEY constraint failed") {
-              throw new HttpError(400, "This record references another record that doesn't exist", "INVALID_RELATION_TARGET");
+              const reason = "This record references another record that doesn't exist";
+              recordInboundWebhookFailure(db, projectId, reason);
+              throw new HttpError(400, reason, "INVALID_RELATION_TARGET");
+            }
+            if (err instanceof Error) {
+              recordInboundWebhookFailure(db, projectId, err.message);
             }
             throw err;
           }
