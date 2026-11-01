@@ -541,6 +541,39 @@ test("sendMessage falls back to a plain text send when the attachment's file no 
 });
 
 /**
+ * Round 1441: a real bug the survey found -- the exact same class round
+ * 1420 already fixed for the audio branch, but on this function's OTHER
+ * fallback: automations.ts's own round-1341 multi-attachment follow-up
+ * sends every attachment after the first via this exact function with
+ * body hardcoded to "" (deliberately caption-less). When that SECOND (or
+ * later) attachment's file has been deleted/replaced since the rule last
+ * ran (the exact scenario the round-786 test above covers with a real
+ * body), the round-786 fallback used to send `{ text: "" }` unconditionally
+ * -- a real, visible, blank WhatsApp message to the actual customer, with
+ * the run still logged as a successful send. Confirms an empty body now
+ * suppresses the fallback text send entirely, matching round 1420's own
+ * "silently absent, not an extra blank message" precedent.
+ */
+test("sendMessage sends nothing at all, not a blank text message, when a load-failed attachment's body is empty (round-1341's caption-less multi-attachment follow-up)", async () => {
+  const { manager, createdSockets } = setupManager();
+  await manager.connect("proj1");
+  createdSockets[0].sock.user = { id: "972501234567:1@s.whatsapp.net" };
+  createdSockets[0].emitConnectionUpdate({ connection: "open" });
+
+  const result = await manager.sendMessage("proj1", "972509998888", "", {
+    filePath: "/tmp/forge-whatsapp-attachment-test-does-not-exist/invoice.pdf",
+    fileName: "invoice-203.pdf",
+    mimeType: "application/pdf",
+  });
+  assert.equal(result.ok, true);
+  assert.deepEqual(
+    createdSockets[0].sendCalls,
+    [],
+    "an empty body against a load-failed attachment must never produce a blank WhatsApp text message",
+  );
+});
+
+/**
  * Round 966's own audio branch has no `caption` field to pass through (see
  * performSend's own doc comment there), so it sends the caption text and
  * the audio clip as two independent Baileys calls -- this confirms the

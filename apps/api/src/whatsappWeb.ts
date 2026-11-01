@@ -1056,6 +1056,25 @@ export class WhatsAppWebManager {
         } else {
           await this.sendWithTimeout(session.sock.sendMessage(jid, { document: fileBuffer, mimetype: attachment.mimeType, fileName: attachment.fileName, caption: body }));
         }
+      } else if (attachment) {
+        // Round 1441: an attachment was requested but its file couldn't be
+        // read (deleted/replaced on disk since the automation rule last
+        // ran -- see this function's own comment above `fileBuffer`).
+        // automations.ts's round-1341 multi-attachment follow-up always
+        // passes body: "" here (deliberately caption-less, same as every
+        // other attachment type's own empty `caption` field above) -- but
+        // unlike those, which no-op an empty caption on a single Baileys
+        // call that still carries the real media, this fallback's text
+        // send is the ONLY content once the file is gone. Sending it
+        // unconditionally would deliver a real, visible blank WhatsApp
+        // message to the customer. Guarding on body here makes a missing
+        // attachment behave the same "silently absent, not an extra blank
+        // message" way round 1420 already fixed for the audio branch --
+        // the plain "no attachment was ever requested" case below stays
+        // unconditional, since its body is always real message text.
+        if (body) {
+          await this.sendWithTimeout(session.sock.sendMessage(jid, { text: body }));
+        }
       } else {
         await this.sendWithTimeout(session.sock.sendMessage(jid, { text: body }));
       }
