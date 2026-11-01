@@ -135,6 +135,11 @@ export function CollaboratorsPanel({
    * app, for a value almost nobody checks on every open.
    */
   async function handleCheckLastInboundWebhook() {
+    // Round 1466: see handleRegenerateInboundWebhookToken's own matching
+    // guard -- the mirror-image half of the same cross-gate, so a Check
+    // can't start reading the token that's about to be rotated out from
+    // under it either.
+    if (regeneratingWebhookToken) return;
     setCheckingLastInboundWebhook(true);
     try {
       const { lastInboundWebhookAt } = await getInboundWebhookToken(projectId);
@@ -359,6 +364,15 @@ export function CollaboratorsPanel({
    * independently configure their own external service with this token.
    */
   async function handleRegenerateInboundWebhookToken() {
+    // Round 1466: cross-gate against handleCheckLastInboundWebhook (see its
+    // own matching guard below) -- without this, a Check already in
+    // flight against the OLD token can resolve after this regenerate call
+    // resets lastInboundWebhookAt back to "haven't checked yet", silently
+    // overwriting that reset with the stale pre-rotation value. The exact
+    // same "looks like it still belongs to the new token" bug round 1457
+    // already closed for the simple sequential case, just reopened here
+    // via a race between the two buttons.
+    if (checkingLastInboundWebhook) return;
     if (!window.confirm(t("collab.webhookIn.regenerate.confirm"))) return;
     setRegeneratingWebhookToken(true);
     setError(null);
@@ -694,7 +708,12 @@ export function CollaboratorsPanel({
           <div className="collab-webhook-in-section">
             <h3>{t("collab.webhookIn.heading")}</h3>
             <p className="muted small">{t("collab.webhookIn.description")}</p>
-            <button type="button" className="secondary" onClick={handleRegenerateInboundWebhookToken} disabled={regeneratingWebhookToken}>
+            <button
+              type="button"
+              className="secondary"
+              onClick={handleRegenerateInboundWebhookToken}
+              disabled={regeneratingWebhookToken || checkingLastInboundWebhook}
+            >
               {regeneratingWebhookToken ? t("collab.webhookIn.regenerate.busy") : t("collab.webhookIn.regenerate")}
             </button>
             {regenerateWebhookTokenInfo && (
@@ -711,7 +730,12 @@ export function CollaboratorsPanel({
               `.collab-webhook-in-section button` lookup (this file's own
               regenerate tests) still finding the regenerate button first.
             */}
-            <button type="button" className="secondary" onClick={handleCheckLastInboundWebhook} disabled={checkingLastInboundWebhook}>
+            <button
+              type="button"
+              className="secondary"
+              onClick={handleCheckLastInboundWebhook}
+              disabled={checkingLastInboundWebhook || regeneratingWebhookToken}
+            >
               {checkingLastInboundWebhook ? t("collab.webhookIn.checkLastReceived.busy") : t("collab.webhookIn.checkLastReceived")}
             </button>
             {lastInboundWebhookAt !== undefined && (

@@ -1509,6 +1509,97 @@ test("CollaboratorsPanel clears its own displayed \"Last delivery received\" lin
 });
 
 /**
+ * Round 1466: round 1457 (just above) only closed the SEQUENTIAL version
+ * of this bug -- regenerate-then-stale-check-display. Neither button was
+ * ever disabled by the other's own busy flag, so a Check started against
+ * the OLD token, left in flight while the owner clicks Regenerate before
+ * it resolves, can still land afterward and overwrite the fresh
+ * `undefined` reset with a timestamp that no longer belongs to the live
+ * token -- the exact same "looks like it still applies" bug, just reached
+ * via a race between the two buttons instead of simple sequencing. Mirrors
+ * this file's own established cross-gate pattern for invite vs.
+ * role-update/remove (round 1365, the test just above this file's own
+ * calendar-feed section) in both directions.
+ */
+test("CollaboratorsPanel cross-gates \"Check last delivery\" against \"Regenerate\" the inbound-webhook token, in both directions", async () => {
+  await withJsdom(async () => {
+    const originalFetch = globalThis.fetch;
+    const originalConfirm = globalThis.window.confirm;
+    const deliveredAt = new Date("2026-01-15T10:00:00Z").toISOString();
+    let resolveCheck: (() => void) | undefined;
+    let checkPromise = new Promise<void>((resolve) => {
+      resolveCheck = resolve;
+    });
+    let resolveRegenerate: (() => void) | undefined;
+    const regeneratePromise = new Promise<void>((resolve) => {
+      resolveRegenerate = resolve;
+    });
+    let checkCalls = 0;
+    let regenerateCalls = 0;
+    globalThis.fetch = (async (input: string, init?: RequestInit) => {
+      const method = init?.method ?? "GET";
+      if (method === "GET" && input === "/api/projects/proj1/collaborators") {
+        return new Response(JSON.stringify({ collaborators: [] }), { status: 200, headers: { "content-type": "application/json" } });
+      }
+      if (method === "GET" && input === "/api/projects/proj1/inbound-webhook-token") {
+        checkCalls += 1;
+        await checkPromise;
+        return new Response(JSON.stringify({ token: "abc", lastInboundWebhookAt: deliveredAt }), { status: 200, headers: { "content-type": "application/json" } });
+      }
+      if (method === "POST" && input === "/api/projects/proj1/inbound-webhook-token/regenerate?lang=en") {
+        regenerateCalls += 1;
+        await regeneratePromise;
+        return new Response(JSON.stringify({ token: "brand-new-token" }), { status: 200, headers: { "content-type": "application/json" } });
+      }
+      throw new Error(`unexpected request ${method} ${input}`);
+    }) as typeof fetch;
+    globalThis.window.confirm = (() => true) as typeof window.confirm;
+
+    try {
+      renderPanel(true);
+      await waitForCondition(() => document.querySelector(".collab-webhook-in-section") !== null);
+      const [regenerateButton, checkButton] = Array.from(document.querySelectorAll(".collab-webhook-in-section button")) as HTMLButtonElement[];
+
+      // Direction 1: a Check in flight (against the token about to be rotated out)
+      // must disable Regenerate -- otherwise the owner could rotate the token while
+      // that stale read is still outstanding, letting it land afterward.
+      fireEvent.click(checkButton);
+      assert.equal(regenerateButton.disabled, true, "Regenerate must be disabled while a Check is in flight");
+      fireEvent.click(regenerateButton);
+      assert.equal(regenerateCalls, 0, "clicking a disabled Regenerate button while a Check is in flight must never call the regenerate endpoint");
+
+      resolveCheck!();
+      await waitForCondition(() => (document.querySelector(".collab-webhook-in-section") as HTMLElement).textContent!.includes("Last delivery received"));
+      await waitForCondition(() => regenerateButton.disabled === false);
+      assert.equal(checkCalls, 1, "exactly one check request must have fired");
+
+      // Direction 2: a Regenerate in flight must disable Check -- otherwise a Check
+      // started right after could still read the soon-to-be-dead old token and
+      // land its stale timestamp after regenerate's own reset to "haven't checked yet".
+      checkPromise = new Promise<void>((resolve) => {
+        resolveCheck = resolve;
+      });
+      fireEvent.click(regenerateButton);
+      assert.equal(checkButton.disabled, true, "Check must be disabled while a Regenerate is in flight");
+      fireEvent.click(checkButton);
+      assert.equal(checkCalls, 1, "clicking a disabled Check button while a Regenerate is in flight must never call the token endpoint again");
+
+      resolveRegenerate!();
+      await waitForCondition(() => (document.querySelector(".collab-webhook-in-section") as HTMLElement).textContent!.includes("invalidated"));
+      await waitForCondition(() => checkButton.disabled === false);
+      assert.equal(regenerateCalls, 1, "exactly one regenerate request must have fired");
+      assert.ok(
+        !(document.querySelector(".collab-webhook-in-section") as HTMLElement).textContent!.includes("Last delivery received"),
+        "the stale delivery timestamp must stay cleared -- no in-flight Check against the old token was left able to overwrite it",
+      );
+    } finally {
+      globalThis.fetch = originalFetch;
+      globalThis.window.confirm = originalConfirm;
+    }
+  });
+});
+
+/**
  * Round 1247: the "Subscribe to a combined calendar" button, the
  * project-wide counterpart to EntityPanel.tsx's own per-entity subscribe
  * button. Unlike the regenerate section just above (owner-only, since
