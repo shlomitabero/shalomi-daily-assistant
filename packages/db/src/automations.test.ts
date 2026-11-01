@@ -657,6 +657,57 @@ test("recordAutomationRun's retention prune keeps the newest 20 genuine-failure 
   assert.equal(testCount, AUTOMATION_RUNS_RETENTION_LIMIT, "the Test rows must still be capped at the normal retention limit, just in their own independent bucket");
 });
 
+/**
+ * Round 1425: round 1416 gave isTest rows their own bucket for the
+ * catch-all "everything else" prune, but never revisited the two older
+ * WHATSAPP_NOT_CONNECTED_ERROR/EMAIL_NOT_CONFIGURED_ERROR buckets
+ * (rounds 951/1032), which still pruned purely on `error = ?` with no
+ * isTest awareness at all. A Test click against a rule while WhatsApp
+ * happens to be disconnected inserts this exact error with isTest=1, so
+ * a debugging session's Test-button flood could evict a genuine
+ * disconnect row from this bucket the same way a Test flood once could
+ * evict a genuine row from the catch-all bucket.
+ */
+test("recordAutomationRun's WhatsApp-disconnect retention bucket keeps genuine disconnect rows and Test-triggered disconnect rows independently, so a flood of Test clicks can never evict a real disconnect failure", () => {
+  const db = openDatabase(":memory:");
+  ensureAutomationRulesTable(db);
+  const rule = insertAutomationRule(db, baseRule());
+
+  // One genuine disconnect failure first...
+  recordAutomationRun(db, "proj1", rule.id, { status: "failed", error: WHATSAPP_NOT_CONNECTED_ERROR });
+  // ...then a flood of Test clicks against the same disconnect error, far
+  // past the old shared-bucket cap of 20. Under the pre-fix shared-bucket
+  // prune, this alone would have evicted the genuine disconnect row above.
+  for (let i = 0; i < 30; i++) {
+    recordAutomationRun(
+      db,
+      "proj1",
+      rule.id,
+      { status: "failed", error: WHATSAPP_NOT_CONNECTED_ERROR },
+      null,
+      null,
+      null,
+      new Date(),
+      randomUUID(),
+      true,
+    );
+  }
+
+  const genuineCount = (
+    db
+      .prepare("SELECT COUNT(*) AS c FROM automation_runs WHERE projectId = ? AND ruleId = ? AND error = ? AND (isTest IS NULL OR isTest = 0)")
+      .get("proj1", rule.id, WHATSAPP_NOT_CONNECTED_ERROR) as { c: number }
+  ).c;
+  assert.equal(genuineCount, 1, "the one genuine disconnect failure must survive a Test-click flood of any length, not just a short one");
+
+  const testCount = (
+    db
+      .prepare("SELECT COUNT(*) AS c FROM automation_runs WHERE projectId = ? AND ruleId = ? AND error = ? AND isTest = 1")
+      .get("proj1", rule.id, WHATSAPP_NOT_CONNECTED_ERROR) as { c: number }
+  ).c;
+  assert.equal(testCount, AUTOMATION_RUNS_RETENTION_LIMIT, "the Test-triggered disconnect rows must still be capped at the normal retention limit, just in their own independent bucket");
+});
+
 test("deleteAutomationRule also wipes that rule's own run history", () => {
   const db = openDatabase(":memory:");
   ensureAutomationRulesTable(db);

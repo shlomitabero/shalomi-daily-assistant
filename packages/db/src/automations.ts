@@ -703,9 +703,17 @@ export function recordAutomationRun(
   // any length can never evict a real row (and vice versa), so those real
   // rows are always still there for that function's own widened lookback
   // (see its own updated doc comment) to find.
+  // Round 1425: this bucket had no isTest awareness, the same gap round
+  // 1416 already closed for the catch-all bucket below but never revisited
+  // here -- a Test click against a rule while WhatsApp happens to be
+  // disconnected inserts this exact error with isTest=1, so a debugging
+  // session's Test-button floods could evict a genuine disconnect row from
+  // this bucket the same way a flood once could from the catch-all one.
+  // Excluded isTest rows fall through to the isTest-only bucket at the
+  // bottom of this function, which has no error filter of its own.
   db.prepare(
-    `DELETE FROM automation_runs WHERE projectId = ? AND ruleId = ? AND error = ? AND id NOT IN (
-      SELECT id FROM automation_runs WHERE projectId = ? AND ruleId = ? AND error = ? ORDER BY triggeredAt DESC, rowid DESC LIMIT ?
+    `DELETE FROM automation_runs WHERE projectId = ? AND ruleId = ? AND error = ? AND (isTest IS NULL OR isTest = 0) AND id NOT IN (
+      SELECT id FROM automation_runs WHERE projectId = ? AND ruleId = ? AND error = ? AND (isTest IS NULL OR isTest = 0) ORDER BY triggeredAt DESC, rowid DESC LIMIT ?
     )`,
   ).run(projectId, id, WHATSAPP_NOT_CONNECTED_ERROR, projectId, id, WHATSAPP_NOT_CONNECTED_ERROR, AUTOMATION_RUNS_RETENTION_LIMIT);
   // Round 1032: mirrors the WhatsApp bucket just above, for
@@ -716,9 +724,11 @@ export function recordAutomationRun(
   // fell into the catch-all "everything else" prune just below and could
   // evict a genuine failure the same way the pre-round-951 single bucket
   // once let a WhatsApp outage do.
+  // Round 1425: same isTest gap as the WhatsApp bucket just above -- see
+  // its own comment.
   db.prepare(
-    `DELETE FROM automation_runs WHERE projectId = ? AND ruleId = ? AND error = ? AND id NOT IN (
-      SELECT id FROM automation_runs WHERE projectId = ? AND ruleId = ? AND error = ? ORDER BY triggeredAt DESC, rowid DESC LIMIT ?
+    `DELETE FROM automation_runs WHERE projectId = ? AND ruleId = ? AND error = ? AND (isTest IS NULL OR isTest = 0) AND id NOT IN (
+      SELECT id FROM automation_runs WHERE projectId = ? AND ruleId = ? AND error = ? AND (isTest IS NULL OR isTest = 0) ORDER BY triggeredAt DESC, rowid DESC LIMIT ?
     )`,
   ).run(projectId, id, EMAIL_NOT_CONFIGURED_ERROR, projectId, id, EMAIL_NOT_CONFIGURED_ERROR, AUTOMATION_RUNS_RETENTION_LIMIT);
   // Round 1416: this catch-all bucket had no isTest awareness at all --
