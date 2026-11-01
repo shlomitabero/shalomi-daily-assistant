@@ -2592,6 +2592,61 @@ test("App's toggleSelectAllOwnedProjects only ever selects the signed-in user's 
   assert.deepEqual([...second.getSelected()], [], "toggling again with everything owned already selected must deselect all of them");
 });
 
+/**
+ * Round 1465: projectStatusFilter is a persisted (round 1057) localStorage
+ * value that survives independently of how many projects "Your projects"
+ * currently has, but the <select> that lets a person change it back to
+ * "all" (and the sort-mode toggle right beside it) is only rendered while
+ * myProjects.length > 1. Applying the persisted filter unconditionally
+ * meant a stale "built" (or "draft") choice from a previous, larger
+ * project list could silently hide the person's one remaining project
+ * once they deleted/finished their way down to a single one, with no
+ * control left on screen to discover or reset it -- the same "stale
+ * persisted filter traps the view" bug class already fixed for
+ * WhatsAppPanel.tsx's own directionFilter (round 1464) and EntityPanel.tsx's
+ * fieldFilters/viewMode/sortKeys/hiddenFields (rounds 490/493/500/509).
+ * Extracts the real `effectiveProjectStatusFilter` expression straight out
+ * of App.tsx (not a reimplementation) and feeds it into the real, already-
+ * imported filterProjectsByStatus, mirroring toggleSelectAllOwnedProjects's
+ * own extraction technique just above -- App.tsx's home screen needs a
+ * real auth/routing harness this test file doesn't set up.
+ */
+test("App's effectiveProjectStatusFilter falls back to 'all' once myProjects.length drops to the status filter <select>'s own hidden threshold, so a stale non-'all' choice can't hide the one remaining project", () => {
+  const appSrc = readFileSync(new URL("./App.tsx", import.meta.url), "utf8");
+  const exprMatch = appSrc.match(/const effectiveProjectStatusFilter = ([^;\n]+);/);
+  assert.ok(exprMatch, "expected to find effectiveProjectStatusFilter's own expression in App.tsx");
+
+  function computeEffectiveFilter(myProjectsLength: number, projectStatusFilter: "all" | "built" | "draft") {
+    const fn = new Function("myProjects", "projectStatusFilter", `return ${exprMatch![1]};`) as (
+      myProjects: { length: number },
+      projectStatusFilter: string,
+    ) => string;
+    return fn({ length: myProjectsLength }, projectStatusFilter);
+  }
+
+  // Sanity check: with the <select> visible (more than 1 project), the real choice is honored.
+  assert.equal(computeEffectiveFilter(2, "built"), "built", "the persisted choice must still apply while its own reset control is visible");
+
+  // The bug scenario: only 1 project left (the <select> is hidden), but a stale "built" choice
+  // was persisted from a previous, larger project list -- it must fall back to "all".
+  assert.equal(
+    computeEffectiveFilter(1, "built"),
+    "all",
+    "a stale non-'all' filter must not apply once the project count drops to the <select>'s own hidden threshold",
+  );
+  assert.equal(computeEffectiveFilter(0, "draft"), "all", "same fallback with zero projects");
+
+  // End-to-end: the one remaining draft project must still render despite the stale "built" filter.
+  const onlyProject = makeProject([makeEntity("Customer")]);
+  onlyProject.status = "draft";
+  const effective = computeEffectiveFilter(1, "built") as "all" | "built" | "draft";
+  assert.deepEqual(
+    filterProjectsByStatus([onlyProject], effective),
+    [onlyProject],
+    "the one remaining project must still be visible, not silently hidden by the stale persisted filter",
+  );
+});
+
 function makeEntity(name: string): Entity {
   return { name, fields: [{ name: "name", type: "text", required: true }] };
 }

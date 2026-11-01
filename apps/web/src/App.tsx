@@ -893,9 +893,24 @@ function AppContent() {
     setEntityTabOrderState(setEntityTabOrder(project.id, user.id, next));
   }
 
+  // Round 1465: projectStatusFilter is a lazy-loaded localStorage value
+  // (round 1057) that survives independently of how many projects "Your
+  // projects" currently has, but the <select> that lets a person change it
+  // back to "all" (just below) is only rendered once myProjects.length > 1.
+  // Applying the persisted filter unconditionally meant a stale "built"
+  // (or "draft") choice from a previous, larger project list could silently
+  // hide the person's one remaining project after they deleted/finished
+  // their way down to a single one -- the same "stale persisted filter
+  // traps the view with no visible recovery" bug class already fixed for
+  // WhatsAppPanel.tsx's own directionFilter (round 1464) and EntityPanel.tsx's
+  // fieldFilters/viewMode/sortKeys/hiddenFields (rounds 490/493/500/509).
+  // Falling back to "all" below the threshold mirrors the control's own
+  // visibility exactly, so the preference still re-applies correctly once
+  // the project count grows past it again.
+  const effectiveProjectStatusFilter = myProjects.length > 1 ? projectStatusFilter : "all";
   const visibleMyProjects = useMemo(
-    () => filterAndSortProjects(filterProjectsByStatus(myProjects, projectStatusFilter), projectSearch, pinnedIds, projectSortMode),
-    [myProjects, projectStatusFilter, projectSearch, pinnedIds, projectSortMode],
+    () => filterAndSortProjects(filterProjectsByStatus(myProjects, effectiveProjectStatusFilter), projectSearch, pinnedIds, projectSortMode),
+    [myProjects, effectiveProjectStatusFilter, projectSearch, pinnedIds, projectSortMode],
   );
 
   /**
