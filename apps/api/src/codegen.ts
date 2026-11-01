@@ -1407,6 +1407,15 @@ function buildCalendarFeedIcs(entity, records, recordIndexByEntity) {
     if (descriptionLines.length > 0) {
       lines.push(foldFeedIcsLine(\`DESCRIPTION:\${feedIcsEscapeText(descriptionLines.join("\\n"))}\`));
     }
+    // Mirrors the live preview's own calendarFeed.ts/calendarIcs.ts fix --
+    // without a VALARM, a subscribing calendar app never reminds for these
+    // events, since its own "default reminder" setting doesn't apply
+    // retroactively to an imported/subscribed VEVENT.
+    lines.push("BEGIN:VALARM");
+    lines.push("ACTION:DISPLAY");
+    lines.push("DESCRIPTION:Reminder");
+    lines.push("TRIGGER:-P1D");
+    lines.push("END:VALARM");
     lines.push("END:VEVENT");
   }
   lines.push("END:VCALENDAR");
@@ -1532,6 +1541,12 @@ function buildCombinedCalendarFeedIcs(entities, recordsByEntityName) {
       if (descriptionLines.length > 0) {
         lines.push(foldFeedIcsLine(\`DESCRIPTION:\${feedIcsEscapeText(descriptionLines.join("\\n"))}\`));
       }
+      // See the per-entity feed builder above for why this VALARM is needed.
+      lines.push("BEGIN:VALARM");
+      lines.push("ACTION:DISPLAY");
+      lines.push("DESCRIPTION:Reminder");
+      lines.push("TRIGGER:-P1D");
+      lines.push("END:VALARM");
       lines.push("END:VEVENT");
     }
   }
@@ -4385,6 +4400,15 @@ function buildCalendarIcs(entity, dateField, labelField, records, relatedRecords
     if (descriptionLines.length > 0) {
       lines.push(foldIcsLine(\`DESCRIPTION:\${icsEscapeText(descriptionLines.join("\\n"))}\`));
     }
+    // Mirrors the live preview's own calendarIcs.ts fix -- without a
+    // VALARM, a subscribing calendar app never reminds for these events,
+    // since its own "default reminder" setting doesn't apply
+    // retroactively to an imported VEVENT.
+    lines.push("BEGIN:VALARM");
+    lines.push("ACTION:DISPLAY");
+    lines.push("DESCRIPTION:Reminder");
+    lines.push("TRIGGER:-P1D");
+    lines.push("END:VALARM");
     lines.push("END:VEVENT");
   }
   lines.push("END:VCALENDAR");

@@ -273,6 +273,12 @@ test("generated server.js serves a real, working calendar subscription feed for 
         assert.match(ics, /BEGIN:VEVENT/);
         assert.match(ics, /DTSTART;VALUE=DATE:20261105/);
         assert.match(ics, /SUMMARY:Trip to Eilat/);
+        // Round 1438: without a VALARM, RFC 5545's only mechanism for an
+        // .ics file itself to request a reminder, a subscribing calendar
+        // app's own "default reminder" setting never applies
+        // retroactively to this imported VEVENT -- mirrors the live
+        // preview's own calendarFeed.ts/calendarIcs.ts fix.
+        assert.match(ics, /BEGIN:VALARM\r\nACTION:DISPLAY\r\nDESCRIPTION:Reminder\r\nTRIGGER:-P1D\r\nEND:VALARM\r\nEND:VEVENT/);
         assert.match(ics, /END:VCALENDAR/);
 
         const noDateFeedRes = await fetch(`http://localhost:${port}/api/calendar/Note.ics`);
@@ -384,6 +390,10 @@ test("generated server.js serves a real combined calendar feed merging every dat
         assert.doesNotMatch(ics, /A note with no date at all/, "an entity with no date field must contribute nothing to the merged feed");
         assert.match(ics, /DTSTART;VALUE=DATE:20261105/);
         assert.match(ics, /DTSTART;VALUE=DATE:20261201/);
+        // Round 1438: see the per-entity feed test's own identical comment
+        // above -- this combined feed shares the same gap (and now the
+        // same fix) in its own separate VEVENT-building loop.
+        assert.match(ics, /BEGIN:VALARM\r\nACTION:DISPLAY\r\nDESCRIPTION:Reminder\r\nTRIGGER:-P1D\r\nEND:VALARM\r\nEND:VEVENT/);
         assert.match(ics, /END:VCALENDAR/);
         return;
       } catch (err) {
@@ -6354,6 +6364,11 @@ test("the exported EntityView renders a real 'Export to Calendar (ICS)' button b
   assert.match(entityViewJsx, /function buildCalendarIcs/);
   assert.match(entityViewJsx, /function handleExportIcs/);
   assert.match(entityViewJsx, /ics-export-btn/);
+  // Round 1438: without a VALARM, RFC 5545's only mechanism for an .ics
+  // file itself to request a reminder, a subscribing calendar app's own
+  // "default reminder" setting never applies retroactively to an
+  // imported VEVENT -- mirrors the live preview's own calendarIcs.ts fix.
+  assert.match(entityViewJsx, /BEGIN:VALARM.*ACTION:DISPLAY.*DESCRIPTION:Reminder.*TRIGGER:-P1D.*END:VALARM/s);
   // Round 937: the button's own label now states which month it exports
   // (unlike before, when it silently exported only the calendar grid's
   // currently-shown month with zero indication of that scope) -- the

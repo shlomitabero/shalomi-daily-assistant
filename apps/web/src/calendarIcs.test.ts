@@ -45,6 +45,26 @@ test("buildCalendarIcs emits one all-day VEVENT per record with correct DTSTART/
   assert.match(events[0], /DTEND;VALUE=DATE:20260316/, "an all-day single-day event's DTEND must be the next day (RFC 5545 exclusive end), not the same day");
 });
 
+/**
+ * Round 1438: without a VALARM, RFC 5545's only mechanism for an .ics file
+ * itself to request a reminder, a subscribing calendar app's own "default
+ * reminder for new events" setting never applies retroactively to an
+ * imported/subscribed VEVENT -- every event from this export silently
+ * never reminded the user, unlike every manually-created event in the
+ * same calendar app.
+ */
+test("buildCalendarIcs's VEVENT includes a VALARM reminder, not just the bare event", () => {
+  const records: EntityRecord[] = [
+    { id: 1, appointmentDate: "2026-03-15", customerName: "Dana Levi", notes: null, courierId: null },
+  ];
+  const ics = buildCalendarIcs(entity, dateField, nameField, records, [], {});
+  const events = parseEvents(ics);
+  assert.equal(events.length, 1);
+  assert.match(events[0], /BEGIN:VALARM\r\nACTION:DISPLAY\r\nDESCRIPTION:Reminder\r\nTRIGGER:-P1D\r\nEND:VALARM/);
+  // The VALARM must be nested inside VEVENT, not appended after it.
+  assert.match(events[0], /BEGIN:VALARM[\s\S]*END:VALARM\r\nEND:VEVENT$/);
+});
+
 test("buildCalendarIcs's SUMMARY uses the label field's value, and UID is unique per entity+record id", () => {
   const records: EntityRecord[] = [
     { id: 7, appointmentDate: "2026-01-01", customerName: "Yossi Cohen", notes: null, courierId: null },

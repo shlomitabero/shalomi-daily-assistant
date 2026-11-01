@@ -359,6 +359,15 @@ function buildVeventLinesForEntity(
     if (descriptionLines.length > 0) {
       lines.push(foldIcsLine(`DESCRIPTION:${icsEscapeText(descriptionLines.join("\n"))}`));
     }
+    // See the live preview's own calendarIcs.ts for why this is needed:
+    // without a VALARM, a subscribing calendar app never reminds for these
+    // events at all, since its own "default reminder" setting doesn't
+    // retroactively apply to an imported/subscribed VEVENT.
+    lines.push("BEGIN:VALARM");
+    lines.push("ACTION:DISPLAY");
+    lines.push("DESCRIPTION:Reminder");
+    lines.push("TRIGGER:-P1D");
+    lines.push("END:VALARM");
     lines.push("END:VEVENT");
   }
   return lines;

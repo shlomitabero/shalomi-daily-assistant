@@ -339,6 +339,18 @@ export function buildCalendarIcs(
     if (descriptionLines.length > 0) {
       lines.push(foldIcsLine(`DESCRIPTION:${icsEscapeText(descriptionLines.join("\n"))}`));
     }
+    // RFC 5545's VALARM is the only way an .ics file itself can request a
+    // reminder -- a subscribing calendar app's own "default reminder for
+    // new events" setting never applies retroactively to an event it
+    // imported/subscribed to, so without this every exported/subscribed
+    // event here silently never reminds, unlike a manually-created one in
+    // the same calendar app. A 1-day-before display alarm matches this
+    // VEVENT's own all-day (DTSTART;VALUE=DATE) shape.
+    lines.push("BEGIN:VALARM");
+    lines.push("ACTION:DISPLAY");
+    lines.push("DESCRIPTION:Reminder");
+    lines.push("TRIGGER:-P1D");
+    lines.push("END:VALARM");
     lines.push("END:VEVENT");
   }
   lines.push("END:VCALENDAR");

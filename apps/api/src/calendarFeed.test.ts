@@ -51,6 +51,23 @@ test("buildCalendarFeedIcs wraps output in a real VCALENDAR with VERSION/PRODID/
 });
 
 /**
+ * Round 1438: without a VALARM, RFC 5545's only mechanism for an .ics file
+ * itself to request a reminder, a subscribing calendar app's own "default
+ * reminder for new events" setting never applies retroactively to an
+ * imported/subscribed VEVENT -- every event from this live feed silently
+ * never reminded the user, unlike every manually-created event in the
+ * same calendar app. Mirrors calendarIcs.ts's own identical fix.
+ */
+test("buildCalendarFeedIcs's VEVENT includes a VALARM reminder, not just the bare event", () => {
+  const records: EntityRecord[] = [{ id: 1, appointmentDate: "2026-03-15", customerName: "Dana Levi", confirmed: true }];
+  const ics = buildCalendarFeedIcs(entity, records, "proj1");
+  const events = parseEvents(ics!);
+  assert.equal(events.length, 1);
+  assert.match(events[0], /BEGIN:VALARM\r\nACTION:DISPLAY\r\nDESCRIPTION:Reminder\r\nTRIGGER:-P1D\r\nEND:VALARM/);
+  assert.match(events[0], /BEGIN:VALARM[\s\S]*END:VALARM\r\nEND:VEVENT$/, "the VALARM must be nested inside VEVENT, not appended after it");
+});
+
+/**
  * Round 1022: the live preview's own identical computation (calendarIcs.ts,
  * the one-shot "Export ICS" button) used `??`, which only falls through on
  * null/undefined, never a genuinely blank string -- so a blank display
@@ -326,7 +343,11 @@ test("buildCalendarFeedIcs omits DESCRIPTION entirely when every non-date/label 
   const records: EntityRecord[] = [{ id: 1, appointmentDate: "2026-03-15", customerName: "Dana Levi", notes: null }];
   const ics = buildCalendarFeedIcs(noNotesEntity, records, "proj1");
   const events = parseEvents(ics!);
-  assert.doesNotMatch(events[0], /DESCRIPTION:/, "an entity whose only other field is blank/null must produce no DESCRIPTION line at all");
+  // Round 1438 added a VALARM block to every VEVENT, which has its own
+  // required DESCRIPTION field ("Reminder") unrelated to this test's
+  // concern -- strip it before checking the VEVENT's own DESCRIPTION line.
+  const veventWithoutAlarm = events[0].replace(/BEGIN:VALARM[\s\S]*?END:VALARM\r\n/, "");
+  assert.doesNotMatch(veventWithoutAlarm, /DESCRIPTION:/, "an entity whose only other field is blank/null must produce no DESCRIPTION line at all");
 });
 
 test("buildCalendarFeedIcs's DESCRIPTION date/number formatting honors the lang parameter, matching calendarIcs.ts's own he/en locale split", () => {
