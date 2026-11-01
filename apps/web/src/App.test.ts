@@ -5883,3 +5883,39 @@ test("App.tsx's spec-review summary paragraph carries the spec-summary class, so
     ".spec-summary must allow an unbroken AI-generated summary to wrap mid-word instead of overflowing the spec-review screen",
   );
 });
+
+/**
+ * Round 1475: App.tsx's open-question answers and "Additional request"
+ * field (spec-review screen, up to 2000 chars each) and the post-build
+ * Refine box (same cap) are this app's longest, most effort-intensive
+ * free-text inputs -- yet unlike the 7 existing useBeforeUnloadWarning
+ * call sites (AutomationsPanel.tsx, ChangeEmailPanel.tsx,
+ * ChangePasswordPanel.tsx, CollaboratorsPanel.tsx, DeleteAccountPanel.tsx,
+ * EntityPanel.tsx, WhatsAppPanel.tsx), App.tsx itself was never covered by
+ * this convention, and neither field persists to localStorage the way the
+ * home screen's idea textarea (ideaDraft.ts) already does. A tab close,
+ * refresh, or navigation away silently discarded everything typed, with
+ * no warning at all. App.tsx is never fully mounted in this test file
+ * (no auth/project/fetch harness exists for it) -- every other test here
+ * either extracts a handler via esbuild or, for a module-level wiring
+ * check like this one, asserts on the source text directly (see the
+ * spec-summary test just above for the established precedent).
+ */
+test("App.tsx warns via useBeforeUnloadWarning before a tab close/refresh/navigation discards in-progress spec-review answers or an additional-request draft", () => {
+  const appSrc = readFileSync(new URL("./App.tsx", import.meta.url), "utf8");
+  assert.match(appSrc, /import \{ useBeforeUnloadWarning \} from "\.\/useBeforeUnloadWarning\.js";/, "App.tsx must import useBeforeUnloadWarning");
+  assert.match(
+    appSrc,
+    /useBeforeUnloadWarning\(\s*additionalRequest\.trim\(\) !== "" \|\| Object\.values\(selectedAnswers\)\.some\(\(a\) => a\.trim\(\) !== ""\),?\s*\);/,
+    "expected a useBeforeUnloadWarning call guarding the spec-review screen's open-question answers and additional-request text",
+  );
+});
+
+test("App.tsx warns via useBeforeUnloadWarning before a tab close/refresh/navigation discards an in-progress post-build Refine instruction", () => {
+  const appSrc = readFileSync(new URL("./App.tsx", import.meta.url), "utf8");
+  assert.match(
+    appSrc,
+    /useBeforeUnloadWarning\(refineText\.trim\(\) !== ""\);/,
+    "expected a useBeforeUnloadWarning call guarding the post-build Refine box's in-progress instruction",
+  );
+});

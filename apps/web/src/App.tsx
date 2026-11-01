@@ -48,6 +48,7 @@ import { ProjectNameEditor } from "./ProjectNameEditor.js";
 import { ProjectDescriptionEditor } from "./ProjectDescriptionEditor.js";
 import { ShortcutsPanel } from "./ShortcutsPanel.js";
 import { isAnyDialogOpen } from "./useDialogFocusTrap.js";
+import { useBeforeUnloadWarning } from "./useBeforeUnloadWarning.js";
 import {
   AddAssumptionForm,
   AddEntityForm,
@@ -643,6 +644,22 @@ function AppContent() {
   const [selectedAnswers, setSelectedAnswers] = useState<Record<string, string>>({});
   const [additionalRequest, setAdditionalRequest] = useState("");
   const [refineText, setRefineText] = useState("");
+  // Round 1475: the Spec Review screen's open-question answers and
+  // "Additional request" field (up to 2000 chars each) and the post-build
+  // Refine box (same 2000-char cap) are this app's longest, most
+  // effort-intensive free-text inputs -- yet unlike the 7 existing
+  // useBeforeUnloadWarning call sites (AutomationsPanel.tsx,
+  // ChangeEmailPanel.tsx, ChangePasswordPanel.tsx, CollaboratorsPanel.tsx,
+  // DeleteAccountPanel.tsx, EntityPanel.tsx, WhatsAppPanel.tsx), App.tsx
+  // itself was never covered by this convention. Neither of these fields
+  // persists to localStorage (unlike the home screen's idea textarea,
+  // which ideaDraft.ts already saves on every keystroke), so an
+  // accidental tab close/refresh/navigation silently discarded everything
+  // typed, with no warning at all.
+  useBeforeUnloadWarning(
+    additionalRequest.trim() !== "" || Object.values(selectedAnswers).some((a) => a.trim() !== ""),
+  );
+  useBeforeUnloadWarning(refineText.trim() !== "");
   const [showHistory, setShowHistory] = useState(false);
   const [showSearch, setShowSearch] = useState(false);
   const [exportBusy, setExportBusy] = useState(false);
