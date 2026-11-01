@@ -2026,6 +2026,99 @@ test("generated server.js rejects an object or array value for a text field, ins
 });
 
 /**
+ * Regression test (round 1479): mirrors the live preview's own
+ * repository.ts fix -- a text/longtext record field value had no length
+ * ceiling anywhere in this generated server's own coerce() either, unlike
+ * every spec-config free-text field this codebase has already capped.
+ * Reproduced here against a real spawned server, same standard as the
+ * round-855 test just above.
+ */
+test("generated server.js rejects a text field value over 5000 characters and a longtext field value over 20000, but accepts exactly those limits", async () => {
+  const notesProject: Project = {
+    ...project,
+    spec: {
+      ...project.spec,
+      entities: [
+        {
+          name: "Customer",
+          fields: [
+            { name: "name", type: "text", required: true },
+            { name: "notes", type: "longtext", required: false },
+          ],
+        },
+      ],
+    },
+  };
+  const files = generateExportFiles(notesProject);
+  const serverJs = files.find((f) => f.path === "server.js")!.content;
+
+  const dir = mkdtempSync(path.join(tmpdir(), "codegen-length-coerce-test-"));
+  const repoRoot = path.resolve(import.meta.dirname, "../../..");
+  symlinkSync(path.join(repoRoot, "node_modules"), path.join(dir, "node_modules"));
+  writeFileSync(path.join(dir, "server.js"), serverJs);
+
+  const port = 44000 + Math.floor(Math.random() * 5000);
+  const child = spawn(process.execPath, ["--experimental-sqlite", "server.js"], {
+    cwd: dir,
+    env: { ...process.env, PORT: String(port) },
+    stdio: ["ignore", "pipe", "pipe"],
+  });
+  let stderr = "";
+  child.stderr.on("data", (chunk) => {
+    stderr += chunk.toString();
+  });
+
+  try {
+    const deadline = Date.now() + 5000;
+    let lastErr: unknown;
+    while (Date.now() < deadline) {
+      if (child.exitCode !== null) {
+        throw new Error(`server.js exited early (code ${child.exitCode}):\n${stderr}`);
+      }
+      try {
+        await fetch(`http://localhost:${port}/api/entities`);
+        break;
+      } catch (err) {
+        lastErr = err;
+        await new Promise((r) => setTimeout(r, 100));
+      }
+    }
+    if (child.exitCode !== null) throw lastErr instanceof Error ? lastErr : new Error(String(lastErr));
+
+    const tooLongTextRes = await fetch(`http://localhost:${port}/api/Customer`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ name: "a".repeat(5001) }),
+    });
+    assert.equal(tooLongTextRes.status, 400, "a 5001-character text value must be rejected");
+
+    const okTextRes = await fetch(`http://localhost:${port}/api/Customer`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ name: "a".repeat(5000) }),
+    });
+    assert.equal(okTextRes.status, 201, "exactly 5000 characters must still be accepted");
+
+    const tooLongLongtextRes = await fetch(`http://localhost:${port}/api/Customer`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ name: "Alice", notes: "a".repeat(20001) }),
+    });
+    assert.equal(tooLongLongtextRes.status, 400, "a 20001-character longtext value must be rejected");
+
+    const okLongtextRes = await fetch(`http://localhost:${port}/api/Customer`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ name: "Alice", notes: "a".repeat(20000) }),
+    });
+    assert.equal(okLongtextRes.status, 201, "exactly 20000 characters must still be accepted");
+  } finally {
+    child.kill();
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+/**
  * Regression test (round 910): the exported standalone app's own
  * coerce() never got round 908's "file" field write-time validation --
  * round 908's own writeup explicitly flagged this as left open (no

@@ -160,6 +160,47 @@ test("insertRecord rejects an object or array value for a text field, instead of
   }
 });
 
+/**
+ * Round 1479's finding: unlike every spec-config free-text field this
+ * codebase has already capped (project name/description, automation rule
+ * fields, entity/field labels, AI-generation input), a record's own
+ * text/longtext field VALUE -- the single highest-volume input in the
+ * whole app, reachable through a direct create/update call, CSV import,
+ * and the public per-project inbound-webhook token alike -- had no length
+ * ceiling anywhere. A stored oversized value is later substituted
+ * verbatim into a real outbound WhatsApp message or email body
+ * (automations.ts's interpolateTemplate) or an entire webhook-action
+ * JSON.stringify(record) payload, turning one oversized field into real
+ * outbound spam risk every time a matching automation rule fires.
+ */
+test("insertRecord rejects a text field value over 5000 characters, but accepts exactly 5000", () => {
+  const db = setup();
+  assert.throws(
+    () => insertRecord(db, "proj1", customer, { name: "a".repeat(5001), status: "New" }),
+    ValidationError,
+    "expected a 5001-character text value to be rejected",
+  );
+  const created = insertRecord(db, "proj1", customer, { name: "a".repeat(5000), status: "New" });
+  assert.equal((created.name as string).length, 5000, "exactly 5000 characters must still be accepted");
+});
+
+test("insertRecord rejects a longtext field value over 20000 characters, but accepts exactly 20000", () => {
+  const note: Entity = {
+    name: "Note",
+    fields: [{ name: "body", type: "longtext", required: true }],
+  };
+  const db = openDatabase(":memory:");
+  applyMigrations(db, "proj1", { ...spec, entities: [note] });
+
+  assert.throws(
+    () => insertRecord(db, "proj1", note, { body: "a".repeat(20001) }),
+    ValidationError,
+    "expected a 20001-character longtext value to be rejected",
+  );
+  const created = insertRecord(db, "proj1", note, { body: "a".repeat(20000) });
+  assert.equal((created.body as string).length, 20000, "exactly 20000 characters must still be accepted");
+});
+
 const appointment: Entity = {
   name: "Appointment",
   fields: [

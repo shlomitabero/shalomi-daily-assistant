@@ -520,7 +520,15 @@ function coerce(field, value) {
   if (typeof value !== "string" && typeof value !== "number" && typeof value !== "boolean") {
     throw new Error(\`Field "\${field.name}" must be a string\`);
   }
-  return String(value);
+  // Round 1479: mirrors the live preview's own repository.ts fix -- a
+  // text/longtext record field value had no length ceiling anywhere in
+  // this generated server either.
+  const strValue = String(value);
+  const maxLen = field.type === "longtext" ? 20000 : 5000;
+  if (strValue.length > maxLen) {
+    throw new Error(\`Field "\${field.name}" must be \${maxLen} characters or fewer\`);
+  }
+  return strValue;
 }
 
 // Round 1092: mirrors repository.ts's own getRowValue exactly. A row
@@ -5038,7 +5046,7 @@ function FieldInput({ entity, field, value, onChange, relatedEntity, relatedEnti
     );
   }
   if (field.type === "longtext") {
-    return <textarea id={id} required={field.required} rows={2} value={value ?? ""} onChange={(e) => onChange(e.target.value)} autoFocus={autoFocus} onBlur={onBlur} onKeyDown={onKeyDown} />;
+    return <textarea id={id} required={field.required} rows={2} maxLength={20000} value={value ?? ""} onChange={(e) => onChange(e.target.value)} autoFocus={autoFocus} onBlur={onBlur} onKeyDown={onKeyDown} />;
   }
   if (field.type === "date") {
     return <input id={id} type="date" required={field.required} value={value ?? ""} onChange={(e) => onChange(e.target.value)} autoFocus={autoFocus} onBlur={onBlur} onKeyDown={onKeyDown} />;
@@ -5094,7 +5102,7 @@ function FieldInput({ entity, field, value, onChange, relatedEntity, relatedEnti
       </div>
     );
   }
-  return <input id={id} type="text" required={field.required} value={value ?? ""} onChange={(e) => onChange(e.target.value)} autoFocus={autoFocus} onBlur={onBlur} onKeyDown={onKeyDown} />;
+  return <input id={id} type="text" required={field.required} maxLength={5000} value={value ?? ""} onChange={(e) => onChange(e.target.value)} autoFocus={autoFocus} onBlur={onBlur} onKeyDown={onKeyDown} />;
 }
 
 // How long a deleted record stays undoable before the delete actually

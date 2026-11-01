@@ -1416,6 +1416,7 @@ function FieldInput({
         value={String(value ?? "")}
         onChange={(e) => onChange(e.target.value)}
         rows={2}
+        maxLength={20000}
         autoFocus={autoFocus}
         onBlur={onBlur}
         onKeyDown={onKeyDown}
@@ -1560,6 +1561,7 @@ function FieldInput({
       required={field.required}
       value={String(value ?? "")}
       onChange={(e) => onChange(e.target.value)}
+      maxLength={5000}
       autoFocus={autoFocus}
       onBlur={onBlur}
       onKeyDown={onKeyDown}

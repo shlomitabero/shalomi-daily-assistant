@@ -42,6 +42,29 @@ export function isValidDateString(value: string): boolean {
 // elsewhere (codegen.ts's own duplicated copies of live-app logic).
 const UPLOADED_FILENAME = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}(\.[a-z0-9]{1,10})?$/;
 
+/**
+ * Round 1479: unlike every spec-config free-text field this codebase has
+ * already capped (project name/description, automation rule fields,
+ * entity/field labels, AI-generation input -- rounds 1403/1404/1408/1409/
+ * 1410/1411/1414/1423/1426), an actual record's own text/longtext field
+ * VALUE -- the single highest-volume input in the whole app, and the one
+ * reachable through three independent paths (a direct create/update call,
+ * CSV import, and the public per-project inbound-webhook token, none of
+ * which impose any cap of their own) -- had no ceiling anywhere. Express's
+ * default ~100KB JSON body limit was the only bound. A stored oversized
+ * value is later substituted verbatim into a real outbound WhatsApp
+ * message or email body (automations.ts's interpolateTemplate), an entire
+ * webhook-action JSON.stringify(record) payload, and the calendar ICS
+ * feed/Business Twin report/CSV export -- turning one oversized field into
+ * real outbound spam risk every time a record_created/record_updated rule
+ * fires, the exact abuse vector round 862's own WhatsApp-ban doc comment
+ * already names. `longtext` is explicitly meant for real multi-paragraph
+ * notes, so it gets a much larger ceiling than the single-field `text`
+ * type.
+ */
+const TEXT_FIELD_VALUE_MAX_LENGTH = 5000;
+const LONGTEXT_FIELD_VALUE_MAX_LENGTH = 20000;
+
 function coerceValue(field: Field, raw: unknown, projectId: string, entityName: string): string | number | null {
   // A whitespace-only string (" ", "\t\n", …) is not caught by `raw === ""`,
   // so it used to fall straight through to the type-specific coercion below
@@ -209,7 +232,12 @@ function coerceValue(field: Field, raw: unknown, projectId: string, entityName: 
       if (typeof raw !== "string" && typeof raw !== "number" && typeof raw !== "boolean") {
         throw new ValidationError(`Field "${field.name}" must be a string`);
       }
-      return String(raw);
+      const str = String(raw);
+      const maxLength = field.type === "longtext" ? LONGTEXT_FIELD_VALUE_MAX_LENGTH : TEXT_FIELD_VALUE_MAX_LENGTH;
+      if (str.length > maxLength) {
+        throw new ValidationError(`Field "${field.name}" must be ${maxLength} characters or fewer`);
+      }
+      return str;
     }
   }
 }
