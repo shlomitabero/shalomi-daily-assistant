@@ -985,6 +985,29 @@ test("POST /auth/signup with no idempotency key, or two different keys, for the 
 });
 
 /**
+ * Round 1423: z.string().email() (zod's own validator) has no length limit
+ * of its own, and this stored value is re-sent on every /auth/me call and
+ * re-rendered in every GET .../collaborators response for every project
+ * this account ever joins -- the same unbounded-free-text amplification
+ * shape rounds 1408-1414 already closed for project name/description,
+ * entity/field/checkpoint labels, and enumValues, just never applied to
+ * the single most-echoed piece of free text in the app. Mirrors the
+ * automation rule's own toEmail field, which already carries this exact
+ * cap (routes/projects.ts, `toEmail: z.string().email(...).max(320)`).
+ */
+test("POST /auth/signup rejects an email longer than 320 characters instead of persisting an unbounded value that gets re-sent on every future response", async () => {
+  await withServer(async (baseUrl) => {
+    const oversizedLocalPart = "a".repeat(315);
+    const res = await fetch(`${baseUrl}/api/auth/signup`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ email: `${oversizedLocalPart}@example.com`, password: "correct-horse-battery" }),
+    });
+    assert.equal(res.status, 400, "a 320+ character email must be rejected, not silently accepted and stored");
+  });
+});
+
+/**
  * Round 1310: this route's own success invalidates the exact precondition
  * (currentPassword verified against storedHash) a retry re-checks -- once
  * the password changes, the caller's own unchanged request body no longer
@@ -5823,6 +5846,33 @@ test("GET and POST /collaborators both return the real project owner's id and em
     assert.ok(ownerFromInvite, "POST /collaborators must also return an owner object");
     assert.equal(ownerFromInvite!.userId, project.ownerId);
     assert.equal(ownerFromInvite!.email, "owner-collab-info1@example.com");
+  });
+});
+
+/**
+ * Round 1423: AddCollaboratorSchema's own email field had the same gap as
+ * auth.ts's signup/login/change-email schemas -- no length cap at all.
+ * This value only ever gets looked up (findUserByEmail), never stored, so
+ * the blast radius here is smaller than signup's, but it's the same
+ * unbounded z.string().email() input this round is closing everywhere.
+ */
+test("POST .../collaborators rejects an email longer than 320 characters instead of passing it through to a lookup", async () => {
+  await withServer(async (baseUrl) => {
+    const ownerToken = await signup(baseUrl, "owner-collab-maxlen@example.com");
+    const createRes = await fetch(`${baseUrl}/api/projects`, {
+      method: "POST",
+      headers: authHeaders(ownerToken),
+      body: JSON.stringify({ description: "A CRM with customers and deals." }),
+    });
+    const { project } = (await createRes.json()) as { project: { id: string } };
+
+    const oversizedLocalPart = "a".repeat(315);
+    const inviteRes = await fetch(`${baseUrl}/api/projects/${project.id}/collaborators`, {
+      method: "POST",
+      headers: authHeaders(ownerToken),
+      body: JSON.stringify({ email: `${oversizedLocalPart}@example.com` }),
+    });
+    assert.equal(inviteRes.status, 400, "a 320+ character email must be rejected by validation, not passed through to the lookup");
   });
 });
 

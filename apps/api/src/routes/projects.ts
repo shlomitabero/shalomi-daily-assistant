@@ -442,7 +442,10 @@ const AddCollaboratorSchema = z.object({
   // email's capitalization differs at all (mobile auto-capitalize, pasting
   // from a signature, "John.Doe@Company.com") -- findUserByEmail's `WHERE
   // email = ?` is a plain case-sensitive SQLite comparison.
-  email: z.string().email("a valid email is required").transform((email) => email.toLowerCase()),
+  // Round 1423: same length cap as auth.ts's CredentialsSchema's own email
+  // field -- z.string().email() has no limit of its own, and this email is
+  // re-sent on every GET .../collaborators call to every other collaborator.
+  email: z.string().email("a valid email is required").max(320, "email must be 320 characters or fewer").transform((email) => email.toLowerCase()),
   // Optional and defaulted to "editor" so every existing caller (the web
   // UI before this round, any script/integration already using this
   // route) keeps behaving exactly as before -- full access, same as today.

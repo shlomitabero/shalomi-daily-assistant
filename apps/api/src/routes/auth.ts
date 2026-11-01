@@ -48,7 +48,12 @@ const CredentialsSchema = z.object({
   // way) -- normalizing here, at the one point every signup/login goes
   // through, keeps uniqueness checks and later logins consistent no matter
   // which casing someone happens to type.
-  email: z.string().email().transform((email) => email.toLowerCase()),
+  // Round 1423: z.string().email() has no length limit of its own, and this
+  // stored value is re-sent on every /auth/me and re-rendered in every
+  // collaborator list this account ever appears in -- capped at 320
+  // (RFC 5321's real max email length), the same convention already used
+  // for the automation rule's own toEmail field.
+  email: z.string().email().max(320, "email must be 320 characters or fewer").transform((email) => email.toLowerCase()),
   password: z.string().min(8, "password must be at least 8 characters"),
   // Client-supplied, same convention as POST /projects/from-template's own
   // `lang` param (round 492) -- the server has no other way to know which
@@ -72,7 +77,8 @@ const ChangeEmailSchema = z.object({
   // Same case-insensitive normalization as CredentialsSchema's own email
   // field above -- keeps the uniqueness check and every future login
   // consistent no matter which casing someone types.
-  email: z.string().email().transform((email) => email.toLowerCase()),
+  // Round 1423: same length cap as CredentialsSchema's own email field above.
+  email: z.string().email().max(320, "email must be 320 characters or fewer").transform((email) => email.toLowerCase()),
   // Round 1206: same optional client-language hint CredentialsSchema/
   // ForgotPasswordSchema already carry, for the notification email this
   // route now sends to the OLD address.
@@ -88,7 +94,8 @@ const LOGIN_CODE_TTL_MS = 10 * 60 * 1000; // 10 minutes
 const MAX_LOGIN_CODE_ATTEMPTS = 5;
 
 const ForgotPasswordSchema = z.object({
-  email: z.string().email().transform((email) => email.toLowerCase()),
+  // Round 1423: same length cap as CredentialsSchema's own email field.
+  email: z.string().email().max(320, "email must be 320 characters or fewer").transform((email) => email.toLowerCase()),
   lang: z.enum(["he", "en"]).optional(),
 });
 
