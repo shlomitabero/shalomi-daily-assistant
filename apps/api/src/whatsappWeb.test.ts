@@ -1365,6 +1365,48 @@ test("an incoming WhatsApp 'View once' video via its newer wrapper field, and a 
 });
 
 /**
+ * Round 1445: `associatedChildMessage`, `groupStatusMessage`, and
+ * `groupStatusMessageV2` are three more fully transparent wrappers this
+ * file had never ported -- confirmed against the installed
+ * @whiskeysockets/baileys library's own normalizeMessageContent
+ * (lib/Utils/messages.js), whose getFutureProofMessage helper lists all
+ * nine wrapper fields (ephemeralMessage/viewOnceMessage/
+ * documentWithCaptionMessage/viewOnceMessageV2/
+ * viewOnceMessageV2Extension/editedMessage/associatedChildMessage/
+ * groupStatusMessage/groupStatusMessageV2) in the exact same bucket; this
+ * file had only ever ported six of the nine. A message carrying any of
+ * these three previously fell through every branch and was silently
+ * dropped with zero trace, the same gap every other still-unrecognized
+ * shape in this family fell into before its own fix.
+ */
+test("an incoming WhatsApp message wrapped in associatedChildMessage, groupStatusMessage, or groupStatusMessageV2 is logged instead of being silently dropped", async () => {
+  const { manager, createdSockets, db } = setupManager();
+  insertProject(db, project);
+  applyMigrations(db, project.id, project.spec);
+  markProjectBuilt(db, project.id);
+
+  await manager.connect(project.id);
+  createdSockets[0].emitConnectionUpdate({ connection: "open" });
+
+  createdSockets[0].emitMessagesUpsert({
+    type: "notify",
+    messages: [
+      { key: { remoteJid: "972501234567@s.whatsapp.net", fromMe: false }, message: { associatedChildMessage: { message: { conversation: "הודעה מקושרת" } } } },
+      { key: { remoteJid: "972501234567@s.whatsapp.net", fromMe: false }, message: { groupStatusMessage: { message: { conversation: "סטטוס קבוצה" } } } },
+      { key: { remoteJid: "972501234567@s.whatsapp.net", fromMe: false }, message: { groupStatusMessageV2: { message: { conversation: "סטטוס קבוצה V2" } } } },
+    ],
+  });
+
+  // listWhatsAppMessages orders newest-first, the reverse of emission order.
+  const { messages } = listWhatsAppMessages(db, project.id);
+  assert.equal(messages.length, 3);
+  assert.equal(messages[0].body, "סטטוס קבוצה V2", "groupStatusMessageV2 must unwrap transparently, with no added placeholder prefix");
+  assert.equal(messages[1].body, "סטטוס קבוצה", "groupStatusMessage must unwrap transparently, with no added placeholder prefix");
+  assert.equal(messages[2].body, "הודעה מקושרת", "associatedChildMessage must unwrap transparently, with no added placeholder prefix");
+  for (const m of messages) assert.equal(m.direction, "in", "every placeholder row must still be a real, matched-against incoming message, not metadata");
+});
+
+/**
  * Round 1121: a live-location share (WhatsApp's continuous-sharing mode,
  * started from the attachment picker) is a distinct field from the
  * already-handled locationMessage (a single pinned location, round 1035)

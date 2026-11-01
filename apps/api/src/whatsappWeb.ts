@@ -137,6 +137,9 @@ export interface BaileysIncomingMessage {
     editedMessage?: { message?: BaileysIncomingMessage["message"] };
     protocolMessage?: { type?: number; editedMessage?: BaileysIncomingMessage["message"] };
     ephemeralMessage?: { message?: BaileysIncomingMessage["message"] };
+    associatedChildMessage?: { message?: BaileysIncomingMessage["message"] };
+    groupStatusMessage?: { message?: BaileysIncomingMessage["message"] };
+    groupStatusMessageV2?: { message?: BaileysIncomingMessage["message"] };
   };
 }
 
@@ -329,11 +332,27 @@ const CONNECTION_LOST_MESSAGE = "The WhatsApp connection was lost. Click Connect
  * message shape most directly tied to this app's own commerce use case: a
  * customer actually placing an order through the exact linked WhatsApp
  * number this integration monitors previously vanished with zero trace.
+ *
+ * Round 1445: `associatedChildMessage`, `groupStatusMessage`, and
+ * `groupStatusMessageV2` join the transparent-unwrap list too --
+ * confirmed against the installed @whiskeysockets/baileys library's own
+ * `normalizeMessageContent` (lib/Utils/messages.js), whose
+ * `getFutureProofMessage` helper lists NINE wrapper fields in the exact
+ * same bucket as `ephemeralMessage`/`viewOnceMessage`/
+ * `documentWithCaptionMessage` -- this file had only ever ported six of
+ * them (rounds 1121/1139/1142/1152), missing these three. All three are
+ * typed `IFutureProofMessage` in Baileys' own shipped protobuf types
+ * (WAProto/index.d.ts), identical to `ephemeralMessage`'s `{ message?:
+ * IMessage }` shape, so they get the same plain recursive unwrap with no
+ * added placeholder.
  */
 function describeIncomingMessage(message: BaileysIncomingMessage["message"]): string | null {
   if (!message) return null;
   if (message.ephemeralMessage?.message) return describeIncomingMessage(message.ephemeralMessage.message);
   if (message.documentWithCaptionMessage?.message) return describeIncomingMessage(message.documentWithCaptionMessage.message);
+  if (message.associatedChildMessage?.message) return describeIncomingMessage(message.associatedChildMessage.message);
+  if (message.groupStatusMessage?.message) return describeIncomingMessage(message.groupStatusMessage.message);
+  if (message.groupStatusMessageV2?.message) return describeIncomingMessage(message.groupStatusMessageV2.message);
   const text = message.conversation ?? message.extendedTextMessage?.text;
   if (text) return text;
   if (message.imageMessage) return message.imageMessage.caption ? `[Photo] ${message.imageMessage.caption}` : "[Photo]";
