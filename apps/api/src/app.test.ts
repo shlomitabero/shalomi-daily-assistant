@@ -6058,7 +6058,7 @@ test("cloning a project whose name is already near the 200-char cap truncates th
  * role/persona/assumption) is re-fetched on every GET /projects/:id --
  * every page load, by every collaborator -- so this is not a one-shot cost.
  */
-test("every entity/field/checkpoint label and role/assumption/persona rejects an oversized value with 400, instead of accepting an unbounded string", async () => {
+test("every entity/field/checkpoint label, role/assumption/persona, and (round 1414) enumValues rejects an oversized value with 400, instead of accepting an unbounded string", async () => {
   await withServer(async (baseUrl) => {
     const token = await signup(baseUrl, "spec-maxlen-owner@example.com");
     const createRes = await fetch(`${baseUrl}/api/projects`, {
@@ -6103,6 +6103,48 @@ test("every entity/field/checkpoint label and role/assumption/persona rejects an
     });
     assert.equal(oversizedAddFieldRes.status, 400);
     assert.equal(((await oversizedAddFieldRes.json()) as { code?: string }).code, "VALIDATION_ERROR");
+
+    // Round 1414: enumValues (AddFieldSchema/SetFieldTypeSchema) was the one
+    // free-text field in this route family this test's own earlier rounds
+    // missed -- it's a raw comma-separated string, unlike every other field
+    // checked above, so it gets its own oversized-string construction
+    // rather than reusing "x".repeat(...).
+    const oversizedEnumValues = Array.from({ length: 300 }, (_, i) => `v${i}`).join(",");
+    assert.ok(oversizedEnumValues.length > 500, "the test fixture itself must exceed the cap it's probing");
+
+    const oversizedAddFieldEnumRes = await fetch(`${baseUrl}/api/projects/${project.id}/entities/${entityName}/fields`, {
+      method: "POST",
+      headers: authHeaders(token),
+      body: JSON.stringify({ label: "Status", type: "enum", enumValues: oversizedEnumValues }),
+    });
+    assert.equal(oversizedAddFieldEnumRes.status, 400);
+    assert.equal(((await oversizedAddFieldEnumRes.json()) as { code?: string }).code, "VALIDATION_ERROR");
+
+    const oversizedSetFieldTypeEnumRes = await fetch(`${baseUrl}/api/projects/${project.id}/entities/${entityName}/fields/${fieldName}/type`, {
+      method: "PATCH",
+      headers: authHeaders(token),
+      body: JSON.stringify({ type: "enum", enumValues: oversizedEnumValues }),
+    });
+    assert.equal(oversizedSetFieldTypeEnumRes.status, 400);
+    assert.equal(((await oversizedSetFieldTypeEnumRes.json()) as { code?: string }).code, "VALIDATION_ERROR");
+
+    // Neither oversized enumValues attempt above should have touched the
+    // stored spec: no new field from the rejected add, and the existing
+    // field's type still whatever it was before the rejected type-change.
+    const unchangedAfterEnumRes = await fetch(`${baseUrl}/api/projects/${project.id}`, { headers: authHeaders(token) });
+    const { project: unchangedAfterEnum } = (await unchangedAfterEnumRes.json()) as {
+      project: { spec: { entities: { fields: { name: string; type: string }[] }[] } };
+    };
+    assert.equal(
+      unchangedAfterEnum.spec.entities[0].fields.length,
+      project.spec.entities[0].fields.length,
+      "the oversized add-field (with enumValues) attempt must not have been persisted",
+    );
+    assert.notEqual(
+      unchangedAfterEnum.spec.entities[0].fields.find((f) => f.name === fieldName)!.type,
+      "enum",
+      "the oversized set-field-type (with enumValues) attempt must not have been persisted",
+    );
 
     const oversizedRoleRes = await fetch(`${baseUrl}/api/projects/${project.id}/roles`, {
       method: "POST",

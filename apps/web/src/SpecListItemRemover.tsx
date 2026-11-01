@@ -1253,6 +1253,7 @@ export function FieldChip({
             placeholder={t("spec.fields.enumValues.placeholder")}
             aria-label={t("spec.fields.enumValues.placeholder")}
             disabled={fieldChipBusy}
+            maxLength={500}
             autoFocus
             // Every structurally-identical sibling editor in this file
             // (RoleChip, AssumptionItem, PersonaItem, EntitySummaryItem's
@@ -1642,6 +1643,7 @@ export function AddFieldForm({
           placeholder={t("spec.fields.enumValues.placeholder")}
           aria-label={t("spec.fields.enumValues.placeholder")}
           disabled={formDisabled}
+          maxLength={500}
         />
       )}
       {type === "relation" && (

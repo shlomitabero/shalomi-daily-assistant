@@ -566,8 +566,15 @@ const AddFieldSchema = z
     // input sends) rather than a JSON array, trimmed and with blanks
     // dropped -- mirrors how a user would naturally type "New, In
     // Progress, Done" without needing to know this becomes an array.
+    // Round 1414: capped at SPEC_PHRASE_MAX_LENGTH BEFORE the split/trim --
+    // the one free-text field this route family's own round-1403/1408-1411
+    // sweep missed, the only field here (besides `label`, already capped
+    // two lines up) an AI-generated or hand-typed spec can grow without
+    // bound, re-embedded in the spec on every GET /projects/:id the same
+    // way label/role/assumption/persona already are.
     enumValues: z
       .string()
+      .max(SPEC_PHRASE_MAX_LENGTH, "enum values must be 500 characters or fewer")
       .optional()
       .transform((raw) => (raw ? raw.split(",").map((v) => v.trim()).filter((v) => v.length > 0) : undefined)),
     relationTo: z.string().trim().optional(),
@@ -592,8 +599,11 @@ const AddFieldSchema = z
 const SetFieldTypeSchema = z
   .object({
     type: z.enum(FIELD_TYPES),
+    // Round 1414: same enumValues cap as AddFieldSchema above -- see its
+    // own comment.
     enumValues: z
       .string()
+      .max(SPEC_PHRASE_MAX_LENGTH, "enum values must be 500 characters or fewer")
       .optional()
       .transform((raw) => (raw ? raw.split(",").map((v) => v.trim()).filter((v) => v.length > 0) : undefined)),
     relationTo: z.string().trim().optional(),
