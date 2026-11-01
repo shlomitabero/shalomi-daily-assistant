@@ -1992,8 +1992,53 @@ test("startScheduledAutomationsLoop never starts a new tick while the previous t
     releaseSend?.();
     await new Promise((resolve) => setTimeout(resolve, 40));
   } finally {
-    stop();
+    await stop();
   }
+});
+
+/**
+ * Round 1417: server.ts's own SIGTERM/SIGINT handler (round 1298) calls
+ * this exact stop() and, until now, moved straight on to server.close()
+ * without ever waiting for a tick already in flight -- see this
+ * function's own updated doc comment for why that's a real duplicate-send
+ * risk on a Render redeploy landing mid-tick, not just the two-ticks-
+ * racing-each-other shape the test above already covers. Confirms stop()
+ * itself now actually waits: calls it while the very first send is still
+ * held open, and asserts the returned promise does not resolve until
+ * after the test releases that send.
+ */
+test("startScheduledAutomationsLoop's stop() waits for a tick already in flight to finish, instead of abandoning it mid-send", async () => {
+  const { db } = setupProject();
+  insertAutomationRule(db, scheduleRuleBase({ scheduleTimeUtc: "00:00", toNumber: "972501234567" }));
+
+  let releaseSend: (() => void) | undefined;
+  const manager = {
+    getStatus(): WhatsAppConnectionState {
+      return { status: "connected", qrDataUrl: null, phoneNumber: "972500000000", error: null };
+    },
+    async sendMessage(): Promise<WhatsAppSendResult> {
+      await new Promise<void>((resolve) => {
+        releaseSend = resolve;
+      });
+      return { ok: true };
+    },
+  } as unknown as WhatsAppWebManager;
+
+  const stop = startScheduledAutomationsLoop(db, manager, UNUSED_EMAIL_SENDER, 20);
+  // Let the first tick actually start and reach the held-open send.
+  await new Promise((resolve) => setTimeout(resolve, 30));
+  assert.ok(releaseSend, "the first tick's send must already be in flight before stop() is called");
+
+  let stopResolved = false;
+  const stopPromise = stop().then(() => {
+    stopResolved = true;
+  });
+  await new Promise((resolve) => setTimeout(resolve, 50));
+  assert.equal(stopResolved, false, "stop() must not resolve while the tick it caught mid-flight is still awaiting its send");
+
+  releaseSend?.();
+  await stopPromise;
+  assert.equal(stopResolved, true, "stop() must resolve once the in-flight tick actually finishes");
 });
 
 /**

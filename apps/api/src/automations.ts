@@ -1609,13 +1609,31 @@ export async function runScheduledAutomationsCheck(
  * starting it there would leak a live setInterval per test across
  * hundreds of tests. Returns a stop() so a caller that DOES want to tear
  * this down (a future server shutdown handler) can.
+ *
+ * Round 1417: stop() now returns a Promise that resolves once a tick
+ * already in flight at the moment it's called has actually finished, not
+ * just once clearInterval has stopped any FUTURE tick from starting.
+ * server.ts's own SIGTERM/SIGINT handler (round 1298) called the old
+ * synchronous stop() and immediately moved on to server.close() -- but
+ * Render (this deployment's own host, per render.yaml) sends SIGTERM on
+ * every redeploy/restart/scale event, and a tick that's mid-flight when
+ * one arrives (this file's own round-989 doc comment above already
+ * establishes a tick can genuinely run past the 60s interval) was simply
+ * abandoned: fireScheduledRule awaits whatsapp.sendMessage/the webhook
+ * call BEFORE recordAutomationRun ever writes lastTriggeredAt/lastStatus,
+ * so a process killed in that exact window has already sent the real
+ * message but never recorded it -- the next tick after restart sees the
+ * rule as not-yet-sent-today and fires it again, a real duplicate send to
+ * a real recipient. The same shape of bug round 989 itself closed for two
+ * ticks racing each other concurrently, just reopened here via a restart
+ * instead of a slow concurrent tick.
  */
 export function startScheduledAutomationsLoop(
   db: ForgeDatabase,
   whatsapp: WhatsAppWebManager,
   emailSender: EmailSender,
   intervalMs = 60_000,
-): () => void {
+): () => Promise<void> {
   // isScheduledRuleDue's own "already sent today" guard reads
   // rule.lastTriggeredAt/lastStatus, which recordAutomationRun only
   // writes once fireScheduledRule's own send/webhook call resolves --
@@ -1640,12 +1658,20 @@ export function startScheduledAutomationsLoop(
   // module-level flag, so direct test calls to runScheduledAutomationsCheck
   // itself are never affected by it.
   let tickInFlight = false;
+  // Round 1417: tracks the currently-running (or most recently finished)
+  // tick's own promise so the returned stop() below can await it --
+  // starts pre-resolved so a stop() called before the very first tick
+  // ever fires (or while none is in flight) resolves immediately.
+  let currentTick: Promise<void> = Promise.resolve();
   const timer = setInterval(() => {
     if (tickInFlight) return;
     tickInFlight = true;
-    void runScheduledAutomationsCheck(db, whatsapp, emailSender).finally(() => {
+    currentTick = runScheduledAutomationsCheck(db, whatsapp, emailSender).finally(() => {
       tickInFlight = false;
     });
   }, intervalMs);
-  return () => clearInterval(timer);
+  return async () => {
+    clearInterval(timer);
+    await currentTick;
+  };
 }

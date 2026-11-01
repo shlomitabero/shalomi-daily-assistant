@@ -53,12 +53,26 @@ const server = app.listen(port, () => {
 // on its own (a stuck keep-alive, a hung request) -- it must never block
 // a deploy indefinitely, but the expected path is the close() callback
 // firing well before it.
+//
+// Round 1417: stopAutomationsLoop() now returns a promise that only
+// resolves once a tick already in flight has actually finished (see its
+// own doc comment) -- this used to be called and immediately forgotten,
+// so a redeploy landing mid-tick could kill the process after
+// whatsapp.sendMessage/the webhook call already went out for real but
+// before recordAutomationRun ever wrote that down, making the next tick
+// after restart send the exact same scheduled message again. Awaited
+// here, in parallel with server.close()'s own drain, so neither one
+// blocks the other, and process.exit(0) only fires once both are done.
+// The 10s safety-net timer is started first and unaffected either way --
+// a stuck tick (same as a stuck connection already) still can't block a
+// deploy forever.
 function shutdown(signal: string) {
   // eslint-disable-next-line no-console
   console.log(`${signal} received, shutting down gracefully...`);
-  stopAutomationsLoop();
-  server.close(() => process.exit(0));
   setTimeout(() => process.exit(1), 10_000).unref();
+  const tickDrained = stopAutomationsLoop();
+  const serverClosed = new Promise<void>((resolve) => server.close(() => resolve()));
+  void Promise.all([tickDrained, serverClosed]).then(() => process.exit(0));
 }
 process.on("SIGTERM", () => shutdown("SIGTERM"));
 process.on("SIGINT", () => shutdown("SIGINT"));
