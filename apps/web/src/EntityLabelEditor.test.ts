@@ -287,3 +287,61 @@ test("a failed label rename shows its error with role=alert, so a screen reader 
     }
   });
 });
+
+/**
+ * Round 1432: see ProjectNameEditor.test.ts's own comment on this exact
+ * bug -- pressing Enter submits the form and calls save(), which sets busy
+ * true and re-renders the still-focused input with disabled={true}. A real
+ * browser forces a focused control to blur the instant it becomes
+ * disabled, and this input's onBlur is still this same save() -- so
+ * without a reentrancy guard, every Enter-confirmed save fired the rename
+ * request twice. jsdom doesn't reproduce that forced blur-on-disable
+ * quirk, so this waits for the real, observable precondition -- the input
+ * actually becoming disabled -- then manually fires blur.
+ */
+test("pressing Enter to save an entity label does not fire the rename request twice, even though disabling the input forces a real browser to blur it mid-flight", async () => {
+  await withJsdom(async () => {
+    const originalFetch = globalThis.fetch;
+    let renameCalls = 0;
+    const pendingResolvers: Array<() => void> = [];
+    globalThis.fetch = (async (input: string, init?: RequestInit) => {
+      if (init?.method === "PATCH" && input === "/api/projects/proj1/entities/Customer/label") {
+        renameCalls += 1;
+        const body = JSON.parse(init.body as string) as { label: string };
+        const renamedEntity = { ...entity, label: body.label };
+        await new Promise<void>((resolve) => pendingResolvers.push(resolve));
+        return new Response(
+          JSON.stringify({ project: { ...project, spec: { ...project.spec, entities: [renamedEntity] } } }),
+          { status: 200, headers: { "content-type": "application/json" } },
+        );
+      }
+      throw new Error(`unexpected request ${init?.method ?? "GET"} ${input}`);
+    }) as typeof fetch;
+
+    try {
+      const renamedProjects: Project[] = [];
+      renderEditor((p) => renamedProjects.push(p));
+
+      fireEvent.click(document.querySelector(".entity-label") as HTMLElement);
+      await waitForCondition(() => document.querySelector(".entity-label-edit input") !== null);
+      const input = document.querySelector(".entity-label-edit input") as HTMLInputElement;
+      const form = document.querySelector("form.entity-label-edit") as HTMLFormElement;
+
+      fireEvent.change(input, { target: { value: "A Much Better Label" } });
+      fireEvent.submit(form);
+
+      await waitForCondition(() => input.disabled === true);
+      fireEvent.blur(input);
+
+      assert.equal(renameCalls, 1, "the forced blur while busy must not fire a second rename request");
+
+      for (const resolve of pendingResolvers) resolve();
+      await waitForCondition(() => renamedProjects.length === 1);
+      assert.equal(renameCalls, 1);
+      assert.equal(renamedProjects[0].spec.entities[0].label, "A Much Better Label");
+    } finally {
+      for (const resolve of pendingResolvers) resolve();
+      globalThis.fetch = originalFetch;
+    }
+  });
+});

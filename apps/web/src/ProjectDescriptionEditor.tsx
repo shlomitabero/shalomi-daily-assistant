@@ -57,6 +57,11 @@ export function ProjectDescriptionEditor({
   }
 
   async function save() {
+    // See ProjectNameEditor.tsx's own comment on this exact guard: a
+    // browser forces this still-focused textarea to blur the instant it
+    // becomes disabled (which setBusy(true) below triggers), and that
+    // blur re-invokes this same save() a second time without it.
+    if (busy) return;
     if (cancelling.current) {
       cancelling.current = false;
       return;

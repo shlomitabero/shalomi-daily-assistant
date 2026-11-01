@@ -299,3 +299,73 @@ test("the project name's CSS lets a long unbroken value wrap mid-word instead of
     ".project-name must allow an unbroken project name to wrap mid-word instead of forcing the preview header (and the page) into horizontal overflow",
   );
 });
+
+/**
+ * Round 1432: pressing Enter submits the form and calls save(), which sets
+ * busy true and re-renders the still-focused input with disabled={true}.
+ * A real browser forces a focused control to blur the instant it becomes
+ * disabled, and this input's onBlur is still this same save() -- so
+ * without a reentrancy guard, every Enter-confirmed save fired the rename
+ * request twice. jsdom doesn't reproduce that forced blur-on-disable
+ * quirk (same platform divergence as the blur-on-unmount case documented
+ * above), so this waits for the real, observable precondition -- the
+ * input actually becoming disabled -- then manually fires blur, exactly
+ * what a real browser does the instant it commits disabled={true}.
+ */
+test("pressing Enter to save does not fire the rename request twice, even though disabling the input forces a real browser to blur it mid-flight", async () => {
+  await withJsdom(async () => {
+    const originalFetch = globalThis.fetch;
+    let renameCalls = 0;
+    // An array, not a single variable: if this test runs against the
+    // pre-fix code, a second, unguarded save() call makes a second real
+    // request here, and only resolving the LAST one (via a single
+    // reassigned variable) would leave the first's promise permanently
+    // pending -- which, through fetchApi's own real AbortController
+    // timeout (api.ts), keeps a genuine ~220s timer alive and hangs the
+    // test process well past any reasonable timeout instead of failing
+    // fast. Resolving every pending one in the `finally` below, on every
+    // code path, avoids that regardless of which assertion fires first.
+    const pendingResolvers: Array<() => void> = [];
+    globalThis.fetch = (async (input: string, init?: RequestInit) => {
+      if (init?.method === "PATCH" && input === "/api/projects/proj1/name") {
+        renameCalls += 1;
+        const body = JSON.parse(init.body as string) as { name: string };
+        await new Promise<void>((resolve) => pendingResolvers.push(resolve));
+        return new Response(JSON.stringify({ project: { ...project, name: body.name } }), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        });
+      }
+      throw new Error(`unexpected request ${init?.method ?? "GET"} ${input}`);
+    }) as typeof fetch;
+
+    try {
+      const renamedProjects: Project[] = [];
+      renderEditor((p) => renamedProjects.push(p));
+
+      fireEvent.click(document.querySelector(".project-name") as HTMLElement);
+      await waitForCondition(() => document.querySelector(".project-name-edit input") !== null);
+      const input = document.querySelector(".project-name-edit input") as HTMLInputElement;
+      const form = document.querySelector("form.project-name-edit") as HTMLFormElement;
+
+      fireEvent.change(input, { target: { value: "A Much Better Name" } });
+      fireEvent.submit(form);
+
+      // Confirms the real-browser precondition actually holds here: the
+      // first save() call's setBusy(true) has committed and the input is
+      // genuinely disabled, with the rename request still in flight.
+      await waitForCondition(() => input.disabled === true);
+      fireEvent.blur(input);
+
+      assert.equal(renameCalls, 1, "the forced blur while busy must not fire a second rename request");
+
+      for (const resolve of pendingResolvers) resolve();
+      await waitForCondition(() => renamedProjects.length === 1);
+      assert.equal(renameCalls, 1);
+      assert.equal(renamedProjects[0].name, "A Much Better Name");
+    } finally {
+      for (const resolve of pendingResolvers) resolve();
+      globalThis.fetch = originalFetch;
+    }
+  });
+});

@@ -63,6 +63,13 @@ export function ProjectNameEditor({
   }
 
   async function save() {
+    // Pressing Enter submits the form and calls save(), which sets busy
+    // true and re-renders the still-focused input with disabled={true}. A
+    // browser forces a focused control to blur the instant it becomes
+    // disabled, and this input's onBlur is still this same save() -- so
+    // without this guard, every Enter-confirmed save fired the rename
+    // request twice.
+    if (busy) return;
     if (cancelling.current) {
       cancelling.current = false;
       return;

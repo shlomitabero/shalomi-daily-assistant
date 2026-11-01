@@ -303,3 +303,60 @@ test("the project description's CSS lets a long unbroken value wrap mid-word ins
     ".project-description must allow an unbroken description value to wrap mid-word instead of overflowing the spec-review screen",
   );
 });
+
+/**
+ * Round 1432: see ProjectNameEditor.test.ts's own comment on this exact
+ * bug -- pressing Enter submits the form and calls save(), which sets busy
+ * true and re-renders the still-focused textarea with disabled={true}. A
+ * real browser forces a focused control to blur the instant it becomes
+ * disabled, and this textarea's onBlur is still this same save() -- so
+ * without a reentrancy guard, every Enter-confirmed save fired the edit
+ * request twice. jsdom doesn't reproduce that forced blur-on-disable
+ * quirk, so this waits for the real, observable precondition -- the
+ * textarea actually becoming disabled -- then manually fires blur.
+ */
+test("pressing Enter to save the description does not fire the edit request twice, even though disabling the textarea forces a real browser to blur it mid-flight", async () => {
+  await withJsdom(async () => {
+    const originalFetch = globalThis.fetch;
+    let editCalls = 0;
+    const pendingResolvers: Array<() => void> = [];
+    globalThis.fetch = (async (input: string, init?: RequestInit) => {
+      if (init?.method === "PATCH" && input === "/api/projects/proj1/description") {
+        editCalls += 1;
+        const body = JSON.parse(init.body as string) as { description: string };
+        await new Promise<void>((resolve) => pendingResolvers.push(resolve));
+        return new Response(JSON.stringify({ project: { ...project, description: body.description } }), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        });
+      }
+      throw new Error(`unexpected request ${init?.method ?? "GET"} ${input}`);
+    }) as typeof fetch;
+
+    try {
+      const changedProjects: Project[] = [];
+      renderEditor((p) => changedProjects.push(p));
+
+      fireEvent.click(document.querySelector(".project-description") as HTMLElement);
+      await waitForCondition(() => document.querySelector(".project-description-edit textarea") !== null);
+      const textarea = document.querySelector(".project-description-edit textarea") as HTMLTextAreaElement;
+      const form = document.querySelector("form.project-description-edit") as HTMLFormElement;
+
+      fireEvent.change(textarea, { target: { value: "A CRM with customers and deals, with payments." } });
+      fireEvent.submit(form);
+
+      await waitForCondition(() => textarea.disabled === true);
+      fireEvent.blur(textarea);
+
+      assert.equal(editCalls, 1, "the forced blur while busy must not fire a second edit request");
+
+      for (const resolve of pendingResolvers) resolve();
+      await waitForCondition(() => changedProjects.length === 1);
+      assert.equal(editCalls, 1);
+      assert.equal(changedProjects[0].description, "A CRM with customers and deals, with payments.");
+    } finally {
+      for (const resolve of pendingResolvers) resolve();
+      globalThis.fetch = originalFetch;
+    }
+  });
+});
