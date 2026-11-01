@@ -19,14 +19,28 @@ real threats to a smaller, concrete list:
   real password-reset flow exists (`POST /api/auth/forgot-password` /
   `POST /api/auth/reset-password`, `apps/api/src/routes/auth.ts`) — a
   hashed, time-limited token, enumeration-safe (the same response whether
-  or not the email exists), rate-limited (see below). Email verification is
-  still genuinely absent — see "Before any real deployment" below.
+  or not the email exists), rate-limited (see "Rate limiting" below).
+  Email verification is still genuinely absent — see "Before any real
+  deployment" below.
 - **Authorization / multi-tenancy.** Every project has an `ownerId`.
   `requireProjectAccess` returns 404 — not 403 — for a project that doesn't
   exist, belongs to someone else, *and* isn't shared with the requesting
   user, so the API never confirms a project ID's existence to anyone
   without access to it. Covered by an explicit cross-user test in
   `apps/api/src/app.test.ts`.
+- **Rate limiting.** The auth endpoints (signup, login, forgot-password)
+  are rate-limited (`apps/api/src/auth/rateLimit.ts`). The LLM-calling
+  project endpoints -- `POST /ideas/enhance`, `POST /projects`,
+  `POST /projects/:id/answers`, `POST /projects/:id/refine` -- are rate-
+  limited by `aiGenerationRateLimiter` (round 858; 30 requests/15min per
+  user), and `POST /projects/from-template`/`POST /projects/:id/clone` by a
+  separate `projectCreationRateLimiter` (round 1163) against unbounded free
+  project-row creation (both in `apps/api/src/routes/projects.ts`). Rate
+  limiting has since been extended to most other mutating routes in that
+  file too (collaborator invites, record CRUD, automation-rule CRUD,
+  WhatsApp connect/send, exports/backups, the public calendar feed, etc.)
+  -- see `docs/roadmap.md` for the full history; this bullet only tracks
+  the two routes this document used to claim were still unprotected.
 - **Project sharing (collaborators) with real RBAC.** An owner can invite
   another existing user as a collaborator with one of two roles —
   `"editor"` (identical access to the owner, except managing who else has
@@ -70,11 +84,6 @@ real threats to a smaller, concrete list:
 
 ### Explicitly not addressed yet (do not assume these exist)
 
-- **No rate limiting on the LLM-calling project endpoints.**
-  `POST /api/projects` and `POST /api/projects/:id/refine` call a real LLM
-  API when configured; nothing currently stops abuse of either endpoint.
-  (The auth endpoints — signup, login, forgot-password — *are* now
-  rate-limited; see "Project sharing" above and `apps/api/src/auth/rateLimit.ts`.)
 - **No organizations / workspaces.** A project can be shared with other
   individual users with a real editor/viewer role each (see "Project
   sharing" above), but there is still no `Workspace`/`WorkspaceMember`
@@ -107,13 +116,10 @@ real threats to a smaller, concrete list:
 ## Before any real deployment
 
 1. Restrict CORS to the actual frontend origin.
-2. Add rate limiting on `POST /api/projects` and
-   `POST /api/projects/:id/refine` (the endpoints that spend real money) —
-   the auth endpoints (signup, login, forgot-password) are already covered.
-3. Add email verification before treating accounts as real user identities
+2. Add email verification before treating accounts as real user identities
    rather than a demo login (password reset is already covered — see
    "Authentication" above).
-4. Move `DB_PATH` to a persistent, backed-up volume.
-5. Add a session-revocation UI ("log out everywhere") — `deleteSession`
+3. Move `DB_PATH` to a persistent, backed-up volume.
+4. Add a session-revocation UI ("log out everywhere") — `deleteSession`
    exists in `packages/db` but is only wired to the current session's own
    logout today.
