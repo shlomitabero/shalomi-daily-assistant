@@ -134,6 +134,25 @@ export function getProject(db: ForgeDatabase, id: string): Project | undefined {
   return row ? rowToProject(row) : undefined;
 }
 
+/**
+ * Round 1428: the single-id counterpart to listProjectsForOwner/
+ * listProjectsForUser's own tryRowToProject usage above -- same lenient
+ * contract (undefined, not a thrown ZodError, for a stored spec that no
+ * longer parses against today's ProductSpecSchema), just for a caller that
+ * has one id rather than a whole list. Unlike getProjectLenient below,
+ * this does NOT skip schema validation: it still runs the real
+ * ProductSpecSchema.parse and only swallows the failure, so a caller that
+ * actually reads project.spec (not just name/status) gets either a fully
+ * validated Project or undefined -- never a Project whose spec might not
+ * match the shape the schema promises.
+ */
+export function tryGetProject(db: ForgeDatabase, id: string): Project | undefined {
+  const row = db.prepare("SELECT * FROM projects WHERE id = ?").get(id) as
+    | Record<string, unknown>
+    | undefined;
+  return row ? tryRowToProject(row) : undefined;
+}
+
 export function listProjectsForOwner(db: ForgeDatabase, ownerId: string): Project[] {
   // createdAt has only millisecond resolution, so two projects created in
   // quick succession can share the same value; ORDER BY createdAt DESC

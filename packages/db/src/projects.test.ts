@@ -19,6 +19,7 @@ import {
   ensureProjectsTable,
   deleteProject,
   getProject,
+  tryGetProject,
   insertProject,
   listOwnedProjectIds,
   listProjectsForOwner,
@@ -91,6 +92,28 @@ test("getProject still throws clearly for a single project whose stored spec no 
   ).run("stale", "owner1", "Stale project", "test", JSON.stringify({ summary: "old spec, missing fields" }), "built", new Date().toISOString());
 
   assert.throws(() => getProject(db, "stale"));
+});
+
+test("tryGetProject returns undefined, instead of throwing, for a project whose stored spec no longer matches the current schema", () => {
+  // Round 1428: the single-id counterpart to listProjectsForOwner's own
+  // tryRowToProject usage above -- a caller (runScheduledAutomationsCheck)
+  // that sits above its own try/catch needs the same "skip, don't throw"
+  // contract a bulk listing already gets.
+  const db = openDatabase(":memory:");
+  ensureProjectsTable(db);
+  db.prepare(
+    "INSERT INTO projects (id, ownerId, name, description, spec_json, status, createdAt) VALUES (?, ?, ?, ?, ?, ?, ?)",
+  ).run("stale", "owner1", "Stale project", "test", JSON.stringify({ summary: "old spec, missing fields" }), "built", new Date().toISOString());
+
+  assert.equal(tryGetProject(db, "stale"), undefined);
+});
+
+test("tryGetProject returns the real, fully-validated Project for an ordinary project", () => {
+  const db = openDatabase(":memory:");
+  ensureProjectsTable(db);
+  const project = insertProject(db, { id: "good", ownerId: "owner1", name: "Good project", description: "test", spec: validSpec });
+
+  assert.deepEqual(tryGetProject(db, project.id), project);
 });
 
 test("listProjectsForOwner returns projects newest first even when two share the exact same createdAt millisecond", () => {

@@ -6,6 +6,7 @@ import type { Entity, EntityRecord, Project } from "@forge/shared";
 import {
   AUTOMATION_RUNS_RETENTION_LIMIT,
   getProject,
+  tryGetProject,
   getRecord,
   insertWhatsAppMessage,
   listAutomationRuns,
@@ -1623,7 +1624,15 @@ export async function runScheduledAutomationsCheck(
   for (const rule of rules) {
     if (!isScheduledRuleDue(rule, now)) continue;
     if (hasTooManyConsecutiveFailuresToday(db, rule, now)) continue;
-    const project = getProject(db, rule.projectId);
+    // Round 1428: tryGetProject, not getProject -- this call sits above the
+    // try/catch below, so a project whose stored spec no longer parses
+    // against today's ProductSpecSchema (the same real, expected case
+    // getCheckpoint/tryGetCheckpoint already handles, round 1427) would
+    // otherwise throw an uncaught ZodError straight out of a bare
+    // setInterval tick with no unhandledRejection handler anywhere in
+    // server.ts -- crashing the whole process, every project's automations
+    // included, not just this one rule's.
+    const project = tryGetProject(db, rule.projectId);
     if (!project) continue;
     try {
       await fireScheduledRule(db, whatsapp, emailSender, project, rule, now);

@@ -21,6 +21,7 @@ export {
   ensureProjectsTable,
   insertProject,
   getProject,
+  tryGetProject,
   listProjectsForOwner,
   listProjectsForUser,
   listOwnedProjectIds,

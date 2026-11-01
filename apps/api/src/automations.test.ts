@@ -2023,6 +2023,42 @@ test("runScheduledAutomationsCheck fires exactly the rules that are due right no
   assert.equal(getAutomationRule(db, "proj1", disabledDue.id)!.lastStatus, null, "disabled -- must never be considered even though its time has passed");
 });
 
+test("runScheduledAutomationsCheck skips a project whose stored spec no longer matches the current schema, instead of throwing and starving every other project's due rule in the same tick", async () => {
+  // Round 1428: getProject's own strict ProductSpecSchema.parse throws for
+  // this real, expected case (see packages/db's own tryRowToProject doc
+  // comment) -- and unlike every other getProject call in this file, this
+  // one call sits above runScheduledAutomationsCheck's own try/catch, with
+  // nothing above IT either (startScheduledAutomationsLoop's bare
+  // setInterval, no unhandledRejection handler anywhere in server.ts). A
+  // thrown ZodError here would crash the whole process -- taking down
+  // proj2's own due rule in the very same tick, not just proj1's.
+  const db = openDatabase(":memory:");
+  ensureProjectsTable(db);
+  ensureAutomationRulesTable(db);
+  ensureWhatsAppConnectionsTable(db);
+  ensureWhatsAppMessagesTable(db);
+  db.prepare(
+    "INSERT INTO projects (id, ownerId, name, description, spec_json, status, createdAt) VALUES (?, ?, ?, ?, ?, ?, ?)",
+  ).run("proj1", "owner1", "Stale project", "test", JSON.stringify({ summary: "old spec, missing fields" }), "built", new Date().toISOString());
+  const spec = { summary: "test", entities: [orderEntity], roles: ["Admin"], screens: [], openQuestions: [] };
+  const proj2 = insertProject(db, { id: "proj2", ownerId: "owner1", name: "proj2", description: "test", spec });
+  applyMigrations(db, proj2.id, proj2.spec);
+  markProjectBuilt(db, proj2.id);
+
+  insertAutomationRule(db, scheduleRuleBase({ projectId: "proj1", scheduleTimeUtc: "09:00", toNumber: "111" }));
+  const stillDue = insertAutomationRule(db, scheduleRuleBase({ projectId: "proj2", scheduleTimeUtc: "09:00", toNumber: "222" }));
+
+  const { manager, sendCalls } = createFakeWhatsApp({ connected: true });
+  await assert.doesNotReject(
+    () => runScheduledAutomationsCheck(db, manager, UNUSED_EMAIL_SENDER, new Date("2026-03-15T09:00:00.000Z")),
+    "a stale-schema project must be skipped, not crash the whole tick",
+  );
+
+  assert.equal(sendCalls.length, 1, "proj2's own due rule must still fire even though proj1 is unparseable");
+  assert.equal(sendCalls[0]!.to, "222");
+  assert.equal(getAutomationRule(db, "proj2", stillDue.id)!.lastStatus, "sent");
+});
+
 /**
  * Round 989: isScheduledRuleDue's own "already sent today" guard
  * (lastTriggeredAt/lastStatus) only becomes true once recordAutomationRun
