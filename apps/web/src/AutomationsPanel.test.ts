@@ -3969,6 +3969,60 @@ test("AutomationsPanel translates a send_whatsapp rule's known raw error code (e
 });
 
 /**
+ * Round 1474 regression test: the same bug class round 935 closed above,
+ * for a code that existed since round 1443 but was never added to
+ * KNOWN_WHATSAPP_SEND_ERROR_CODES (api.ts) -- performSend (whatsappWeb.ts)
+ * returns "attachment_unavailable" when a multi-attachment automation
+ * follow-up's file is missing from disk and has no caption, so unlike the
+ * other 4 known send_whatsapp codes, this one fell through
+ * translateAutomationError's final untranslated `return error;` (this
+ * action type has no generic fallback branch, unlike webhook/send_email).
+ */
+test("AutomationsPanel translates a send_whatsapp rule's known raw error code (attachment_unavailable) in both its rule-row summary and its run-history list, instead of showing the bare code", async () => {
+  await withJsdom(async () => {
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = (async (input: string) => {
+      if (input === "/api/projects/proj1/automations") {
+        return new Response(
+          JSON.stringify({
+            rules: [makeRule({ lastTriggeredAt: new Date("2026-03-15T09:00:00Z").toISOString(), lastStatus: "failed", lastError: "attachment_unavailable" })],
+          }),
+          { status: 200, headers: { "content-type": "application/json" } },
+        );
+      }
+      if (input === "/api/projects/proj1/automations/rule1/runs") {
+        return new Response(
+          JSON.stringify({
+            runs: [{ id: "run1", ruleId: "rule1", status: "failed", error: "attachment_unavailable", triggeredAt: new Date("2026-03-15T09:00:00Z").toISOString() }],
+          }),
+          { status: 200, headers: { "content-type": "application/json" } },
+        );
+      }
+      throw new Error(`unexpected request ${input}`);
+    }) as typeof fetch;
+
+    try {
+      renderPanel();
+      await waitForCondition(() => document.querySelectorAll(".automations-rule-row").length === 1);
+
+      const row = document.querySelector(".automations-rule-row") as HTMLElement;
+      assert.match(row.textContent ?? "", /couldn't be found/, "the rule row's own last-run summary must show the translated message");
+      assert.equal(row.textContent?.includes("attachment_unavailable") ?? true, false, "the bare raw error code must never leak into the rule row");
+
+      const historyButton = Array.from(document.querySelectorAll("button")).find((b) => b.textContent === "History") as HTMLButtonElement;
+      fireEvent.click(historyButton);
+      await waitForCondition(() => document.querySelectorAll(".automations-rule-history-list li").length === 1);
+
+      const historyText = document.querySelector(".automations-rule-history-list")?.textContent ?? "";
+      assert.match(historyText, /couldn't be found/, "the run-history list must also show the translated message");
+      assert.equal(historyText.includes("attachment_unavailable"), false, "the bare raw error code must never leak into the run-history list either");
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+});
+
+/**
  * Round 1080: the send_email counterpart to the round-935 test above --
  * apps/api/src/automations.ts's fireEmailAction now records this exact
  * stable snake_case code when a toMode:"field" rule's resolved destination

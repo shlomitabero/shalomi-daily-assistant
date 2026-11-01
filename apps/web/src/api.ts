@@ -1399,6 +1399,17 @@ export interface WhatsAppSendResult {
  * past its own fixed timeout, the same "stop waiting, let the queue
  * advance" fix email.ts's ResendEmailSender got in round 1126.
  *
+ * Round 1474: "attachment_unavailable" joins the set -- performSend's own
+ * round-1443 guard (whatsappWeb.ts) returns this exact stable code when a
+ * multi-attachment automation follow-up's file is missing from disk and
+ * has no caption text, so zero Baileys calls happen at all. This code
+ * existed since round 1443 but was never added here, so it fell through
+ * AutomationsPanel.tsx's/automationsReport.ts's translateAutomationError
+ * (neither has a generic send_whatsapp fallback branch, unlike webhook/
+ * send_email) all the way to the final untranslated `return error;`,
+ * leaking the bare snake_case code into this Hebrew-primary app's rule
+ * list, run history, and reports.
+ *
  * Exported so AutomationsPanel.tsx/automationsReport.ts (round 935) can
  * translate the identical raw codes a `send_whatsapp` automation's own
  * failed run stores verbatim (apps/api/src/automations.ts never
@@ -1406,7 +1417,13 @@ export interface WhatsAppSendResult {
  * same canonical list, instead of maintaining a second copy that could
  * drift out of sync with this one.
  */
-export const KNOWN_WHATSAPP_SEND_ERROR_CODES = new Set(["not_connected", "invalid_phone_number", "missing_country_code", "timeout"]);
+export const KNOWN_WHATSAPP_SEND_ERROR_CODES = new Set([
+  "not_connected",
+  "invalid_phone_number",
+  "missing_country_code",
+  "timeout",
+  "attachment_unavailable",
+]);
 
 /**
  * Round 1080: the send_email counterpart to KNOWN_WHATSAPP_SEND_ERROR_CODES

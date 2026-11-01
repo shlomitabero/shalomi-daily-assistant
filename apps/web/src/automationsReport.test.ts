@@ -255,6 +255,26 @@ test("formatAutomationsReport translates a send_whatsapp rule's known raw error 
 });
 
 /**
+ * Round 1474 regression test: the same bug class round 935 closed above,
+ * for a code that existed since round 1443 but was never added to
+ * KNOWN_WHATSAPP_SEND_ERROR_CODES (api.ts) -- performSend (whatsappWeb.ts)
+ * returns "attachment_unavailable" when a multi-attachment automation
+ * follow-up's file is missing from disk and has no caption. This module's
+ * own describeLastRun is a hand-duplicated sibling of
+ * AutomationsPanel.tsx's translateAutomationError and needed the
+ * identical fix.
+ */
+test("formatAutomationsReport translates a send_whatsapp rule's known raw error code (attachment_unavailable) instead of showing the bare code", () => {
+  const t = (key: string, params?: Record<string, string | number>) => translate("en", key, params);
+  const rule = makeRule({ lastTriggeredAt: "2026-03-15T09:00:00Z", lastStatus: "failed", lastError: "attachment_unavailable" });
+
+  const report = formatAutomationsReport([rule], [], "Shop", "en", t);
+
+  assert.match(report, /couldn't be found/, "the report must show the translated message");
+  assert.equal(report.includes("attachment_unavailable"), false, "the bare raw error code must never leak into the report");
+});
+
+/**
  * Round 1080: the send_email counterpart to the round-935 test above --
  * apps/api/src/automations.ts's fireEmailAction now records this exact
  * stable snake_case code when a toMode:"field" rule's resolved destination
