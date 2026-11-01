@@ -1120,6 +1120,12 @@ function CalendarView({
                 <button
                   type="button"
                   className="calendar-record-more"
+                  // Round 1482: a real disclosure toggle (reveals/hides the
+                  // 4th+ record chips) missing aria-expanded, the same gap
+                  // round 1467 already fixed for 3 other toggles in this
+                  // app -- this one lives inside CalendarView, not one of
+                  // the files that round touched.
+                  aria-expanded={expandedDays.has(dayKey)}
                   onClick={(e) => {
                     // Without stopping propagation this would also trigger
                     // the day cell's own onDayClick and pop open a blank

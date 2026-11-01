@@ -3901,6 +3901,54 @@ test("EntityPanel's calendar view shows at most 3 record chips per day, with a '
 });
 
 /**
+ * Round 1482: the calendar view's "+N more" overflow button (just tested
+ * above) is a real disclosure toggle -- clicking it reveals/hides the
+ * 4th+ record chips, toggling the same `expandedDays` Set the columns-menu
+ * toggle, collapsed-group toggle, and collapsed-board-column toggle all
+ * already report via aria-expanded (round 1467's own fix for 3 other
+ * disclosure toggles in this app). This one was missed since it lives
+ * inside CalendarView, not one of the files round 1467 touched -- a
+ * screen reader only hears the button's text flip between "+N more" and
+ * "Show less", with no programmatic signal that it's a disclosure control.
+ */
+test("EntityPanel's calendar '+N more' button reports its own expand/collapse state via aria-expanded", async () => {
+  await withJsdom(async () => {
+    const today = isoDateToday();
+    const store: EntityRecord[] = [
+      { id: 1, title: "A", date: today },
+      { id: 2, title: "B", date: today },
+      { id: 3, title: "C", date: today },
+      { id: 4, title: "D", date: today },
+    ];
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = mockListRecordsFetch(store) as typeof fetch;
+    try {
+      renderAppointmentPanel();
+      await waitForCondition(() => document.querySelector(".entity-toolbar") !== null);
+
+      const calendarToggle = document.querySelectorAll(".view-toggle-btn")[1] as HTMLButtonElement;
+      fireEvent.click(calendarToggle);
+      await waitForCondition(() => document.querySelectorAll(".calendar-record-chip").length > 0);
+
+      const todayDayNumber = String(new Date().getDate());
+      const dayCell = [...document.querySelectorAll(".calendar-day:not(.calendar-day-outside)")].find(
+        (cell) => cell.querySelector(".calendar-day-number")?.textContent === todayDayNumber,
+      );
+      const more = dayCell!.querySelector(".calendar-record-more") as HTMLButtonElement;
+      assert.equal(more.getAttribute("aria-expanded"), "false", "collapsed before any click");
+
+      fireEvent.click(more);
+      assert.equal(more.getAttribute("aria-expanded"), "true", "must report aria-expanded=true once expanded");
+
+      fireEvent.click(more);
+      assert.equal(more.getAttribute("aria-expanded"), "false", "must flip back to aria-expanded=false once collapsed again");
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+});
+
+/**
  * Round 1272: Table view's row Print button and Board view's BoardCard
  * both always render a Print action (unconditionally, even for a read-only
  * viewer -- see BoardCard's own doc comment: "opening the form or printing

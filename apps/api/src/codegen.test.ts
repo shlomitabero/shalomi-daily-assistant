@@ -6391,6 +6391,12 @@ test("the exported CalendarView's '+N more' overflow is a real button that revea
   assert.match(moreButtonSrc!, /e\.stopPropagation\(\)/, "the overflow button must stop its click from also opening the day cell's blank create-record form");
   assert.match(moreButtonSrc!, /setExpandedDays/);
   assert.match(moreButtonSrc!, /"Show less"/);
+  // Round 1482: mirrors the live preview's own EntityPanel.tsx fix -- a real
+  // disclosure toggle with no aria-expanded, the same gap round 1467 fixed
+  // for 3 other toggles in this exact generated file (columns-menu,
+  // collapsed-group, collapsed-board-column), just missed for this one
+  // since it lives inside CalendarView.
+  assert.match(moreButtonSrc!, /aria-expanded=\{expandedDays\.has\(dayKey\)\}/, "the overflow button must report its own expand/collapse state via aria-expanded");
 
   const stylesCss = files.find((f) => f.path === "web/src/styles.css")!.content;
   assert.match(stylesCss, /\.calendar-record-more\s*\{[^}]*cursor: pointer/, "the overflow control must look clickable, not plain text");

@@ -4676,6 +4676,7 @@ function CalendarView({ entity, dateField, endDateField, records, month, onPrevM
                 <button
                   type="button"
                   className="calendar-record-more"
+                  aria-expanded={expandedDays.has(dayKey)}
                   onClick={(e) => {
                     e.stopPropagation();
                     setExpandedDays((prev) => {
