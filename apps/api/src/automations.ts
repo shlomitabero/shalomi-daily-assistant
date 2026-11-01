@@ -15,6 +15,7 @@ import {
   recordAutomationRun,
   WHATSAPP_NOT_CONNECTED_ERROR,
   EMAIL_NOT_CONFIGURED_ERROR,
+  WEBHOOK_TIMEOUT_ERROR,
   type AutomationRule,
   type ForgeDatabase,
 } from "@forge/db";
@@ -871,7 +872,13 @@ async function fireWebhookAction(
     // constant above, never configurable) that AUTOMATION_CONFIG_ERROR_CODES
     // (apps/web/src/api.ts) can translate like every other whole-rule
     // misconfiguration message.
-    const message = controller.signal.aborted ? "Webhook request timed out after 10000ms" : err instanceof Error ? err.message : "Webhook request failed";
+    // Round 1442: now the shared WEBHOOK_TIMEOUT_ERROR constant (@forge/db)
+    // instead of its own independently-typed copy of the literal, mirroring
+    // WHATSAPP_NOT_CONNECTED_ERROR/EMAIL_NOT_CONFIGURED_ERROR -- this
+    // module and recordAutomationRun's own retention pruning (see its own
+    // doc comment there) must agree on the exact string or a flood of this
+    // error can evict a genuinely different, older failure for this rule.
+    const message = controller.signal.aborted ? WEBHOOK_TIMEOUT_ERROR : err instanceof Error ? err.message : "Webhook request failed";
     recordAutomationRun(
       db,
       project.id,

@@ -20,6 +20,7 @@ import {
   listEnabledScheduledRules,
   recordAutomationRun,
   updateAutomationRule,
+  WEBHOOK_TIMEOUT_ERROR,
   WHATSAPP_NOT_CONNECTED_ERROR,
 } from "./automations.js";
 
@@ -622,6 +623,48 @@ test("recordAutomationRun's retention prune keeps the newest 20 genuine-failure 
   ).c;
   assert.equal(genuineCountAfter, AUTOMATION_RUNS_RETENTION_LIMIT, "genuine-failure rows must be capped at the normal retention limit too");
   assert.equal(disconnectCountAfter, AUTOMATION_RUNS_RETENTION_LIMIT, "a flood of genuine failures must never evict the disconnect bucket's own retained rows either");
+});
+
+/**
+ * Round 1442: same bug class as the two tests above, for a webhook action's
+ * own AbortController timeout -- the one, always-identical
+ * WEBHOOK_TIMEOUT_ERROR literal fireWebhookAction produces when a rule's
+ * destination is slow/unreachable. Unlike the WhatsApp/email buckets,
+ * this one isn't deployment-wide: it's reachable through an ordinary
+ * bulk-update over many records (round 1076's own "fire unsuppressed, one
+ * per record" design) hitting a webhook rule whose destination happens to
+ * be slow right then -- no attacker, no code change, no misconfiguration
+ * required. Confirms the fix: a timeout flood of any length can no longer
+ * evict a genuinely different, older failure for this same rule.
+ */
+test("recordAutomationRun's retention prune keeps the newest 20 genuine-failure rows and the newest 20 webhook-timeout rows independently, so one kind can never evict the other", () => {
+  const db = openDatabase(":memory:");
+  ensureAutomationRulesTable(db);
+  const rule = insertAutomationRule(db, baseRule());
+
+  // One genuine, distinct failure first (e.g. a real 400 response)...
+  recordAutomationRun(db, "proj1", rule.id, { status: "failed", error: "Webhook responded with status 400" });
+  // ...then a timeout flood far past the old shared-bucket cap of 20 --
+  // e.g. a bulk-update over 30+ records whose webhook destination is slow.
+  // Under the pre-fix shared catch-all bucket, this alone would have
+  // evicted the genuine failure above.
+  for (let i = 0; i < 30; i++) {
+    recordAutomationRun(db, "proj1", rule.id, { status: "failed", error: WEBHOOK_TIMEOUT_ERROR });
+  }
+
+  const genuineCount = (
+    db
+      .prepare("SELECT COUNT(*) AS c FROM automation_runs WHERE projectId = ? AND ruleId = ? AND error != ?")
+      .get("proj1", rule.id, WEBHOOK_TIMEOUT_ERROR) as { c: number }
+  ).c;
+  assert.equal(genuineCount, 1, "the one genuine failure must survive a webhook-timeout flood of any length, not just a short one");
+
+  const timeoutCount = (
+    db
+      .prepare("SELECT COUNT(*) AS c FROM automation_runs WHERE projectId = ? AND ruleId = ? AND error = ?")
+      .get("proj1", rule.id, WEBHOOK_TIMEOUT_ERROR) as { c: number }
+  ).c;
+  assert.equal(timeoutCount, AUTOMATION_RUNS_RETENTION_LIMIT, "the webhook-timeout rows must still be capped at the normal retention limit, just in their own independent bucket");
 });
 
 /**

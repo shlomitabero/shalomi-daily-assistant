@@ -148,6 +148,7 @@ export {
   disableAutomationRulesForField,
   WHATSAPP_NOT_CONNECTED_ERROR,
   EMAIL_NOT_CONFIGURED_ERROR,
+  WEBHOOK_TIMEOUT_ERROR,
   AUTOMATION_RUNS_RETENTION_LIMIT,
   type AutomationRule,
   type AutomationRun,

@@ -49,6 +49,21 @@ export const WHATSAPP_NOT_CONNECTED_ERROR = "WhatsApp is not connected";
  */
 export const EMAIL_NOT_CONFIGURED_ERROR = "Email sending is not configured for this deployment";
 
+/**
+ * Round 1442: the same "fixed, always-identical literal" shape as the two
+ * constants above, for the "webhook" action type's own AbortController
+ * timeout (apps/api/src/automations.ts's fireWebhookAction). Unlike the
+ * other two, this one isn't deployment-wide -- it depends on this rule's
+ * own destination being slow/unreachable -- but the retention-bucket
+ * flood risk is identical: a bulk-update over many records (round 1076's
+ * own "fire unsuppressed, one per record" design) or an automatic
+ * schedule-tick retry can produce more than AUTOMATION_RUNS_RETENTION_LIMIT
+ * of this exact row in one action, and without its own bucket those rows
+ * shared the catch-all "everything else" prune and could evict a
+ * genuinely different, older failure for this same rule.
+ */
+export const WEBHOOK_TIMEOUT_ERROR = "Webhook request timed out after 10000ms";
+
 export interface AutomationRule {
   id: string;
   projectId: string;
@@ -731,6 +746,19 @@ export function recordAutomationRun(
       SELECT id FROM automation_runs WHERE projectId = ? AND ruleId = ? AND error = ? AND (isTest IS NULL OR isTest = 0) ORDER BY triggeredAt DESC, rowid DESC LIMIT ?
     )`,
   ).run(projectId, id, EMAIL_NOT_CONFIGURED_ERROR, projectId, id, EMAIL_NOT_CONFIGURED_ERROR, AUTOMATION_RUNS_RETENTION_LIMIT);
+  // Round 1442: mirrors the WhatsApp/email buckets above, for
+  // WEBHOOK_TIMEOUT_ERROR's own identical flood risk -- a bulk-update over
+  // many records fires one webhook automation per record unsuppressed
+  // (round 1076), and if that rule's destination is slow/unreachable right
+  // then, every single one times out with this exact literal. Without its
+  // own bucket, that volume fell into the catch-all "everything else"
+  // prune just below and could evict a genuinely different, older
+  // failure for this same rule.
+  db.prepare(
+    `DELETE FROM automation_runs WHERE projectId = ? AND ruleId = ? AND error = ? AND (isTest IS NULL OR isTest = 0) AND id NOT IN (
+      SELECT id FROM automation_runs WHERE projectId = ? AND ruleId = ? AND error = ? AND (isTest IS NULL OR isTest = 0) ORDER BY triggeredAt DESC, rowid DESC LIMIT ?
+    )`,
+  ).run(projectId, id, WEBHOOK_TIMEOUT_ERROR, projectId, id, WEBHOOK_TIMEOUT_ERROR, AUTOMATION_RUNS_RETENTION_LIMIT);
   // Round 1416: this catch-all bucket had no isTest awareness at all --
   // round 1263 gave isTest rows their own flag and taught
   // hasTooManyConsecutiveFailuresToday (apps/api/src/automations.ts) to
@@ -748,18 +776,20 @@ export function recordAutomationRun(
   // 1263's own ALTER TABLE (see ensureAutomationRunsTable above), which
   // never got a value and so are not Test rows.
   db.prepare(
-    `DELETE FROM automation_runs WHERE projectId = ? AND ruleId = ? AND (error IS NULL OR (error != ? AND error != ?)) AND (isTest IS NULL OR isTest = 0) AND id NOT IN (
-      SELECT id FROM automation_runs WHERE projectId = ? AND ruleId = ? AND (error IS NULL OR (error != ? AND error != ?)) AND (isTest IS NULL OR isTest = 0) ORDER BY triggeredAt DESC, rowid DESC LIMIT ?
+    `DELETE FROM automation_runs WHERE projectId = ? AND ruleId = ? AND (error IS NULL OR (error != ? AND error != ? AND error != ?)) AND (isTest IS NULL OR isTest = 0) AND id NOT IN (
+      SELECT id FROM automation_runs WHERE projectId = ? AND ruleId = ? AND (error IS NULL OR (error != ? AND error != ? AND error != ?)) AND (isTest IS NULL OR isTest = 0) ORDER BY triggeredAt DESC, rowid DESC LIMIT ?
     )`,
   ).run(
     projectId,
     id,
     WHATSAPP_NOT_CONNECTED_ERROR,
     EMAIL_NOT_CONFIGURED_ERROR,
+    WEBHOOK_TIMEOUT_ERROR,
     projectId,
     id,
     WHATSAPP_NOT_CONNECTED_ERROR,
     EMAIL_NOT_CONFIGURED_ERROR,
+    WEBHOOK_TIMEOUT_ERROR,
     AUTOMATION_RUNS_RETENTION_LIMIT,
   );
   // Round 1416: isTest rows' own independent bucket -- mirrors the
