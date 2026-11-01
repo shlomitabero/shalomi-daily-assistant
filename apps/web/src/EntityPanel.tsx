@@ -60,6 +60,7 @@ import {
   formatDateForInput,
   formatDateValue,
   formatEntityRecordCount,
+  formatImportSummary,
   formatNumberValue,
   formatRecordCreatedAt,
   getDateUrgency,
@@ -4297,13 +4298,9 @@ export function EntityPanel({
     const allErrors = [...parseErrors, ...serverErrors];
     setImportErrors(allErrors);
     setImportMessage(
-      updatedCount === 0
-        ? allErrors.length === 0
-          ? t(createdCount === 1 ? "entity.import.success.one" : "entity.import.success.many", { count: createdCount })
-          : t("entity.import.successWithErrors", { count: createdCount, errorCount: allErrors.length })
-        : allErrors.length === 0
-          ? t("entity.import.successWithUpdates", { count: createdCount, updatedCount })
-          : t("entity.import.successWithUpdatesAndErrors", { count: createdCount, updatedCount, errorCount: allErrors.length }),
+      updatedCount === 0 && allErrors.length === 0
+        ? t(createdCount === 1 ? "entity.import.success.one" : "entity.import.success.many", { count: createdCount })
+        : formatImportSummary(createdCount, updatedCount, allErrors.length, t),
     );
     await refresh();
   }

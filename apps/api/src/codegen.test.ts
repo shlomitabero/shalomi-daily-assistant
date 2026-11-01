@@ -1118,6 +1118,36 @@ test("the exported EntityView's formatEntityRecordCount uses the singular form w
 });
 
 /**
+ * Round 1436: handleImportFile/handleImportJsonFile's own CSV/JSON import
+ * toast had the identical missing-singular-form gap as formatEntityRecordCount
+ * above, on three hardcoded-plural sentences with TWO OR THREE
+ * independently-countable nouns each (createdCount, updatedCount,
+ * errorCount) -- e.g. "Imported 1 new records and updated 1 existing
+ * records." The live preview's own sibling fix (entityFormatting.ts) also
+ * ported the already-fixed plain-success singular form here, since this
+ * exported app's copy never received that port either.
+ */
+test("the exported EntityView's formatImportSummary pluralizes created/updated/skipped independently", () => {
+  const entityViewJsx = generateExportFiles(project).find((f) => f.path === "web/src/components/EntityView.jsx")!.content;
+  const formatImportSummarySrc = entityViewJsx.match(/function formatImportSummary\(createdCount, updatedCount, errorCount\) \{[\s\S]*?\n\}\n/)?.[0];
+  assert.ok(formatImportSummarySrc, "expected to find formatImportSummary in the generated EntityView.jsx");
+
+  const formatImportSummary = new Function(`${formatImportSummarySrc}\nreturn formatImportSummary;`)() as (
+    createdCount: number,
+    updatedCount: number,
+    errorCount: number,
+  ) => string;
+  assert.equal(formatImportSummary(1, 0, 0), "Imported 1 record successfully.", "a lone created record must read singular, not 'records'");
+  assert.equal(formatImportSummary(5, 0, 0), "Imported 5 records successfully.");
+  assert.equal(formatImportSummary(1, 0, 1), "Imported 1 record, skipped 1 row.");
+  assert.equal(formatImportSummary(5, 0, 3), "Imported 5 records, skipped 3 rows.");
+  assert.equal(formatImportSummary(1, 1, 0), "Imported 1 new record and updated 1 existing record.");
+  assert.equal(formatImportSummary(5, 2, 0), "Imported 5 new records and updated 2 existing records.");
+  assert.equal(formatImportSummary(1, 1, 1), "Imported 1 new record, updated 1 existing record, skipped 1 row.");
+  assert.equal(formatImportSummary(5, 2, 3), "Imported 5 new records, updated 2 existing records, skipped 3 rows.");
+});
+
+/**
  * Round 1258: the client-side half of the combined-feed port -- confirms
  * the generated App.jsx actually wires up an app-header "Subscribe (all
  * calendars)" button, next to the existing "Backup All Data" link, that

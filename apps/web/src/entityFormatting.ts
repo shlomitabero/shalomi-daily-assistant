@@ -2275,6 +2275,59 @@ export function formatEntityRecordCount(
 }
 
 /**
+ * Composes the CSV/JSON import toast from independently-pluralized phrase
+ * fragments rather than one hardcoded-plural sentence per combination --
+ * `successWithErrors`/`successWithUpdates`/`successWithUpdatesAndErrors`
+ * each have TWO OR THREE independently-countable nouns in one sentence
+ * (createdCount, updatedCount, errorCount), so a single `=== 1` branch
+ * can't correctly pluralize all of them at once (deferred since round
+ * 1391 for exactly this reason). Each fragment picks its own singular/
+ * plural key off its own count, and the fragments concatenate back into
+ * byte-identical text to the pre-existing hardcoded strings for every
+ * plural case (verified against the exact previous wording).
+ */
+export function formatImportSummary(
+  createdCount: number,
+  updatedCount: number,
+  errorCount: number,
+  t: (key: string, params?: Record<string, string | number>) => string,
+): string {
+  let msg = t(
+    updatedCount > 0
+      ? createdCount === 1
+        ? "entity.import.frag.createdNew.one"
+        : "entity.import.frag.createdNew.many"
+      : createdCount === 1
+        ? "entity.import.frag.createdPlain.one"
+        : "entity.import.frag.createdPlain.many",
+    { count: createdCount },
+  );
+
+  if (updatedCount > 0) {
+    msg += t(
+      errorCount > 0
+        ? updatedCount === 1
+          ? "entity.import.frag.updatedComma.one"
+          : "entity.import.frag.updatedComma.many"
+        : updatedCount === 1
+          ? "entity.import.frag.updatedAnd.one"
+          : "entity.import.frag.updatedAnd.many",
+      { updatedCount },
+    );
+  }
+
+  if (errorCount > 0) {
+    msg += t(errorCount === 1 ? "entity.import.frag.skipped.one" : "entity.import.frag.skipped.many", { errorCount });
+  } else if (updatedCount > 0) {
+    msg += ".";
+  } else {
+    msg += t("entity.import.frag.successfully");
+  }
+
+  return msg;
+}
+
+/**
  * Reverses a calendar grid cell's own local-midnight Date back into the
  * plain "YYYY-MM-DD" a date field actually stores -- using LOCAL getters
  * (getFullYear/getMonth/getDate), matching parseFieldDate's own local

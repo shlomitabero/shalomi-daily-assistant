@@ -6030,7 +6030,20 @@ test("EntityPanel's CSV import updates an existing record by its id column inste
       assert.equal(patchReq!.headers.get("x-suppress-automations"), "true", "an imported update must also suppress automations");
       assert.equal(postReq!.headers.get("x-suppress-automations"), "true", "an imported create must still suppress automations");
 
-      await waitForCondition(() => /updated 1 existing/i.test(document.body.textContent ?? ""));
+      await waitForCondition(() => document.querySelector(".csv-import-row .muted.small") !== null);
+      // Round 1436: this exact createdCount=1/updatedCount=1 combination used
+      // to read "Imported 1 new records and updated 1 existing records." --
+      // the hardcoded plural with no singular form on either noun, left open
+      // since round 1391 specifically because this sentence has two
+      // independently-countable nouns. An exact-text assertion here (not
+      // the previous loose /updated 1 existing/i, which a plural "1 existing
+      // records" would have matched just as well) is what actually catches
+      // a regression back to the old hardcoded plural.
+      assert.equal(
+        document.querySelector(".csv-import-row .muted.small")?.textContent,
+        "Imported 1 new record and updated 1 existing record.",
+        "exactly 1 created and exactly 1 updated must each use their own singular noun form",
+      );
     } finally {
       globalThis.fetch = originalFetch;
     }
@@ -6186,7 +6199,17 @@ test("EntityPanel's JSON import updates an existing record by its id key instead
       assert.equal(patchReq!.headers.get("x-suppress-automations"), "true", "a JSON-imported update must also suppress automations");
       assert.equal(postReq!.headers.get("x-suppress-automations"), "true", "a JSON-imported create must still suppress automations");
 
-      await waitForCondition(() => /updated 1 existing/i.test(document.body.textContent ?? ""));
+      await waitForCondition(() => document.querySelector(".csv-import-row .muted.small") !== null);
+      // Round 1436: see the CSV-import sibling test's own identical comment
+      // above -- this exact createdCount=1/updatedCount=1 combination used
+      // to read "...1 new records and updated 1 existing records." (plural
+      // nouns hardcoded), through this same shared formatImportSummary path
+      // but via handleImportJsonFile instead of handleImportFile.
+      assert.equal(
+        document.querySelector(".csv-import-row .muted.small")?.textContent,
+        "Imported 1 new record and updated 1 existing record.",
+        "exactly 1 created and exactly 1 updated must each use their own singular noun form",
+      );
     } finally {
       globalThis.fetch = originalFetch;
     }

@@ -21,6 +21,7 @@ import {
   formatDateForInput,
   formatDateValue,
   formatEntityRecordCount,
+  formatImportSummary,
   formatNumberValue,
   formatRecordCreatedAt,
   getDateUrgency,
@@ -3301,6 +3302,59 @@ test("formatEntityRecordCount uses the singular form when the total is exactly 1
   const he = (key: string, params?: Record<string, string | number>) => translate("he", key, params);
   assert.equal(formatEntityRecordCount(0, 1, en), "0 of 1 record");
   assert.equal(formatEntityRecordCount(0, 1, he), "0 מתוך 1 רשומה");
+});
+
+/**
+ * Round 1436: `writeImportedRecords`' own `successWithErrors`/
+ * `successWithUpdates`/`successWithUpdatesAndErrors` messages each have
+ * TWO OR THREE independently-countable nouns in one sentence
+ * (createdCount, updatedCount, errorCount), left as hardcoded plurals
+ * since round 1391 for exactly that reason -- a single `=== 1` branch
+ * can't correctly pluralize more than one noun at once. formatImportSummary
+ * composes the sentence from independently-pluralized fragments instead,
+ * so each count picks its own singular/plural form regardless of the
+ * others. Covers every one of the 8 singular/plural combinations across
+ * the 3 previously-broken branches, in both languages.
+ */
+test("formatImportSummary pluralizes created/updated/skipped independently when only created+errors are present", () => {
+  const en = (key: string, params?: Record<string, string | number>) => translate("en", key, params);
+  const he = (key: string, params?: Record<string, string | number>) => translate("he", key, params);
+  assert.equal(formatImportSummary(1, 0, 1, en), "Imported 1 record, skipped 1 row.");
+  assert.equal(formatImportSummary(2, 0, 1, en), "Imported 2 records, skipped 1 row.");
+  assert.equal(formatImportSummary(1, 0, 2, en), "Imported 1 record, skipped 2 rows.");
+  assert.equal(formatImportSummary(2, 0, 2, en), "Imported 2 records, skipped 2 rows.");
+  assert.equal(formatImportSummary(1, 0, 1, he), "יובאה 1 רשומה, 1 שורה דולגה.");
+  assert.equal(formatImportSummary(2, 0, 2, he), "יובאו 2 רשומות, 2 שורות דולגו.");
+});
+
+test("formatImportSummary pluralizes created/updated independently when created+updates are present, no errors", () => {
+  const en = (key: string, params?: Record<string, string | number>) => translate("en", key, params);
+  const he = (key: string, params?: Record<string, string | number>) => translate("he", key, params);
+  assert.equal(formatImportSummary(1, 1, 0, en), "Imported 1 new record and updated 1 existing record.");
+  assert.equal(formatImportSummary(2, 1, 0, en), "Imported 2 new records and updated 1 existing record.");
+  assert.equal(formatImportSummary(1, 2, 0, en), "Imported 1 new record and updated 2 existing records.");
+  assert.equal(formatImportSummary(2, 2, 0, en), "Imported 2 new records and updated 2 existing records.");
+  assert.equal(formatImportSummary(1, 1, 0, he), "יובאה 1 רשומה חדשה ועודכנה 1 רשומה קיימת.");
+  assert.equal(formatImportSummary(2, 2, 0, he), "יובאו 2 רשומות חדשות ועודכנו 2 רשומות קיימות.");
+});
+
+test("formatImportSummary pluralizes created/updated/skipped independently when all three are present", () => {
+  const en = (key: string, params?: Record<string, string | number>) => translate("en", key, params);
+  const he = (key: string, params?: Record<string, string | number>) => translate("he", key, params);
+  assert.equal(formatImportSummary(1, 1, 1, en), "Imported 1 new record, updated 1 existing record, skipped 1 row.");
+  assert.equal(formatImportSummary(2, 1, 1, en), "Imported 2 new records, updated 1 existing record, skipped 1 row.");
+  assert.equal(formatImportSummary(1, 2, 1, en), "Imported 1 new record, updated 2 existing records, skipped 1 row.");
+  assert.equal(formatImportSummary(1, 1, 2, en), "Imported 1 new record, updated 1 existing record, skipped 2 rows.");
+  assert.equal(formatImportSummary(2, 2, 2, en), "Imported 2 new records, updated 2 existing records, skipped 2 rows.");
+  assert.equal(formatImportSummary(1, 1, 1, he), "יובאה 1 רשומה חדשה, עודכנה 1 רשומה קיימת, 1 שורה דולגה.");
+  assert.equal(formatImportSummary(2, 2, 2, he), "יובאו 2 רשומות חדשות, עודכנו 2 רשומות קיימות, 2 שורות דולגו.");
+});
+
+test("formatImportSummary reproduces the pre-existing hardcoded-plural wording byte-for-byte when every count is plural", () => {
+  const en = (key: string, params?: Record<string, string | number>) => translate("en", key, params);
+  assert.equal(formatImportSummary(5, 0, 3, en), "Imported 5 records, skipped 3 rows.");
+  assert.equal(formatImportSummary(5, 2, 0, en), "Imported 5 new records and updated 2 existing records.");
+  assert.equal(formatImportSummary(5, 2, 3, en), "Imported 5 new records, updated 2 existing records, skipped 3 rows.");
 });
 
 /**

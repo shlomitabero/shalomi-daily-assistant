@@ -1860,6 +1860,32 @@ function formatEntityRecordCount(shown, total) {
     : \`\${shown} of \${total} \${total === 1 ? "record" : "records"}\`;
 }
 
+// Mirrors the live preview's own formatImportSummary (entityFormatting.ts,
+// round 1436) -- composes handleImportFile/handleImportJsonFile's own toast
+// from independently-pluralized phrase fragments, since createdCount,
+// updatedCount, and errorCount each need their own singular/plural form in
+// the same sentence. No translator here (this exported app has no i18n),
+// so each ternary is inlined directly rather than going through fragment
+// keys.
+function formatImportSummary(createdCount, updatedCount, errorCount) {
+  let msg =
+    updatedCount > 0
+      ? \`Imported \${createdCount} new record\${createdCount === 1 ? "" : "s"}\`
+      : \`Imported \${createdCount} record\${createdCount === 1 ? "" : "s"}\`;
+  if (updatedCount > 0) {
+    msg +=
+      errorCount > 0
+        ? \`, updated \${updatedCount} existing record\${updatedCount === 1 ? "" : "s"}\`
+        : \` and updated \${updatedCount} existing record\${updatedCount === 1 ? "" : "s"}\`;
+  }
+  if (errorCount > 0) {
+    msg += \`, skipped \${errorCount} row\${errorCount === 1 ? "" : "s"}.\`;
+  } else {
+    msg += updatedCount > 0 ? "." : " successfully.";
+  }
+  return msg;
+}
+
 function emptyForm(entity) {
   const form = {};
   for (const f of entity.fields) form[f.name] = f.type === "boolean" ? false : "";
@@ -7095,15 +7121,7 @@ export function EntityView({ entity, highlightRecordId, onHighlightHandled, onJu
       });
       const allErrors = [...parseErrors, ...serverErrors];
       setImportErrors(allErrors);
-      setImportMessage(
-        updatedCount === 0
-          ? allErrors.length === 0
-            ? \`Imported \${createdCount} records successfully.\`
-            : \`Imported \${createdCount} records, skipped \${allErrors.length} rows.\`
-          : allErrors.length === 0
-            ? \`Imported \${createdCount} new records and updated \${updatedCount} existing records.\`
-            : \`Imported \${createdCount} new records, updated \${updatedCount} existing records, skipped \${allErrors.length} rows.\`,
-      );
+      setImportMessage(formatImportSummary(createdCount, updatedCount, allErrors.length));
       await refresh();
     } catch (err) {
       setError(err.message);
@@ -7171,15 +7189,7 @@ export function EntityView({ entity, highlightRecordId, onHighlightHandled, onJu
       });
       const allErrors = [...parseErrors, ...serverErrors];
       setImportErrors(allErrors);
-      setImportMessage(
-        updatedCount === 0
-          ? allErrors.length === 0
-            ? \`Imported \${createdCount} records successfully.\`
-            : \`Imported \${createdCount} records, skipped \${allErrors.length} rows.\`
-          : allErrors.length === 0
-            ? \`Imported \${createdCount} new records and updated \${updatedCount} existing records.\`
-            : \`Imported \${createdCount} new records, updated \${updatedCount} existing records, skipped \${allErrors.length} rows.\`,
-      );
+      setImportMessage(formatImportSummary(createdCount, updatedCount, allErrors.length));
       await refresh();
     } catch (err) {
       setError(err.message);
