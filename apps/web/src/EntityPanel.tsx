@@ -1582,6 +1582,7 @@ export function EntityPanel({
   onJumpToRecord,
   onSendWhatsApp,
   onRecordCountChange,
+  onViewModeChange,
   readOnly = false,
 }: {
   projectId: string;
@@ -1609,6 +1610,8 @@ export function EntityPanel({
   onSendWhatsApp?: (phoneNumber: string) => void;
   /** Called whenever this entity's own record count changes (initial load, create, delete, bulk-delete, duplicate, import, undo...), so the caller can keep an entity-tab record-count badge in sync without threading a callback through every individual mutation handler -- `records` is already the one state array every mutation funnels through. */
   onRecordCountChange?: (entityName: string, count: number) => void;
+  /** Round 1446: called whenever this entity's own view mode changes (switching Table/Board/Calendar, or the persisted-per-entity mode loading on mount), so App.tsx can pass it to ShortcutsPanel -- its own row-navigation/edit/toggle-select/delete/duplicate shortcuts are all gated on `viewMode === "table"` by the keydown handler just below, so listing them as active while a Board/Calendar view is open would describe keys that silently do nothing, mirroring the identical `readOnly` gating this same callback pattern (onRecordCountChange, just above) already established. */
+  onViewModeChange?: (viewMode: "table" | "board" | "calendar") => void;
 }) {
   const { t, lang } = useTranslation();
   const [records, setRecords] = useState<EntityRecord[]>([]);
@@ -2204,6 +2207,14 @@ export function EntityPanel({
   useEffect(() => {
     if (viewMode !== "table") setSelectedIds(new Set());
   }, [viewMode]);
+
+  // Round 1446: reports this entity's own view mode up to App.tsx (see
+  // onViewModeChange's own doc comment above) -- fires on mount with
+  // whatever viewMode initializes/hydrates to, and again on every later
+  // switch, so ShortcutsPanel's own list is never stale.
+  useEffect(() => {
+    onViewModeChange?.(viewMode);
+  }, [viewMode, onViewModeChange]);
 
   // Same reasoning as viewMode's own effect just above -- the chosen
   // multi-column sort is scoped per project+entity too (round 250).

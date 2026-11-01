@@ -746,6 +746,11 @@ function AppContent() {
   const [showChangeEmail, setShowChangeEmail] = useState(false);
   const [showDeleteAccount, setShowDeleteAccount] = useState(false);
   const [showShortcuts, setShowShortcuts] = useState(false);
+  // Round 1446: EntityPanel's own onViewModeChange reports the active
+  // entity tab's current view mode here so ShortcutsPanel can hide its
+  // table-only row shortcuts (j/k/Enter/x/Delete/d) while Board or
+  // Calendar view is open -- see ShortcutsPanel.tsx's own TABLE_ONLY_KEYS.
+  const [activeEntityViewMode, setActiveEntityViewMode] = useState<"table" | "board" | "calendar">("table");
   const [myProjects, setMyProjects] = useState<Project[]>([]);
   const [templates, setTemplates] = useState<TemplateSummary[]>([]);
   const [templateBusy, setTemplateBusy] = useState<string | null>(null);
@@ -3094,6 +3099,7 @@ function AppContent() {
                       onRecordCountChange={(entityName, count) =>
                         setEntityCounts((prev) => (prev[entityName] === count ? prev : { ...prev, [entityName]: count }))
                       }
+                      onViewModeChange={setActiveEntityViewMode}
                       readOnly={myRole === "viewer"}
                     />
                   </div>
@@ -3294,7 +3300,7 @@ function AppContent() {
           )}
 
           {showShortcuts && (
-            <ShortcutsPanel onClose={() => setShowShortcuts(false)} readOnly={myRole === "viewer"} />
+            <ShortcutsPanel onClose={() => setShowShortcuts(false)} readOnly={myRole === "viewer"} viewMode={activeEntityViewMode} />
           )}
         </main>
       )}

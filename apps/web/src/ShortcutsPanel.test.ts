@@ -44,12 +44,12 @@ async function withJsdom<T>(fn: () => Promise<T> | T): Promise<T> {
   }
 }
 
-function renderPanel(onClose: () => void = () => {}, readOnly = false) {
+function renderPanel(onClose: () => void = () => {}, readOnly = false, viewMode?: "table" | "board" | "calendar") {
   render(
     React.createElement(
       ThemeProvider,
       null,
-      React.createElement(LanguageProvider, null, React.createElement(ShortcutsPanel, { onClose, readOnly })),
+      React.createElement(LanguageProvider, null, React.createElement(ShortcutsPanel, { onClose, readOnly, viewMode })),
     ),
   );
 }
@@ -142,6 +142,49 @@ test("non-viewer still sees the full shortcut list (readOnly defaults to false)"
     renderPanel();
     const rows = document.querySelectorAll(".shortcuts-row");
     assert.equal(rows.length, 14, "expected the full list when readOnly is omitted");
+  });
+});
+
+/**
+ * Round 1446: EntityPanel.tsx's single window-level keydown handler that
+ * implements row navigation (j/k), edit (Enter), toggle-select (x),
+ * delete (Delete/Backspace), and duplicate (d) starts with
+ * `if (viewMode !== "table") return;` -- the whole handler is a no-op in
+ * Board/Calendar view. Before this round, this panel listed every one of
+ * those rows as active regardless of the current view mode, misleading a
+ * keyboard-only user who switched to Board/Calendar.
+ */
+test("board/calendar view mode hides the table-only row shortcuts that silently no-op there", async () => {
+  await withJsdom(async () => {
+    renderPanel(() => {}, false, "board");
+
+    const rows = document.querySelectorAll(".shortcuts-row");
+    // The 14-row full list minus the 7 table-only rows (rowDown, rowUp,
+    // rowEdit, toggleSelect, rowDelete, rowDuplicate, clearSelection) = 7.
+    assert.equal(rows.length, 7, "expected only the 7 shortcuts that still work outside table view");
+
+    const kbds = Array.from(document.querySelectorAll(".shortcuts-keys kbd")).map((el) => el.textContent);
+    assert.ok(!kbds.includes("j"), "j (row-down) is dead in board view and must not be listed");
+    assert.ok(!kbds.includes("k"), "k (row-up) is dead in board view and must not be listed");
+    assert.ok(!kbds.includes("x"), "x (toggle select) is dead in board view and must not be listed");
+    assert.ok(!kbds.includes("Delete"), "Delete (delete row) is dead in board view and must not be listed");
+    assert.ok(!kbds.includes("d"), "d (duplicate row) is dead in board view and must not be listed");
+    assert.equal(kbds.filter((k) => k === "Esc").length, 1, "expected only the close-Esc row, not the dead clear-selection Esc row");
+    assert.equal(
+      kbds.filter((k) => k === "Enter").length,
+      1,
+      "expected only Ctrl+Enter (submit form, which has no viewMode guard) to remain -- the bare Enter row-edit shortcut is dead in board view",
+    );
+    assert.ok(kbds.includes("n"), "n (new record) must remain -- EntityPanel.tsx's own keydown handler for it has no viewMode guard");
+    assert.ok(kbds.includes("Z"), "Ctrl+Z (undo delete) must remain -- it undoes a delete regardless of which view mode is now active");
+  });
+});
+
+test("calendar view mode hides the same table-only row shortcuts as board view", async () => {
+  await withJsdom(async () => {
+    renderPanel(() => {}, false, "calendar");
+    const rows = document.querySelectorAll(".shortcuts-row");
+    assert.equal(rows.length, 7, "expected the identical 7-row list calendar view gets, same as board view");
   });
 });
 

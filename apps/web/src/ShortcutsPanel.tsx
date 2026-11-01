@@ -48,10 +48,48 @@ const EDITOR_ONLY_KEYS = new Set([
   "shortcuts.clearSelection",
 ]);
 
-export function ShortcutsPanel({ onClose, readOnly = false }: { onClose: () => void; readOnly?: boolean }) {
+/**
+ * Round 1446: EntityPanel.tsx's single window-level keydown handler that
+ * implements every one of these rows (j/k row navigation, Enter-to-edit,
+ * x toggle-select, Delete/Backspace, d duplicate, Escape-clears-selection)
+ * starts with `if (viewMode !== "table") return;` -- the whole handler is
+ * a no-op in Board or Calendar view, which have no keyboard row-focus
+ * equivalent at all. Before this round, this panel listed every one of
+ * these rows as active regardless of which view was open, actively
+ * misleading a keyboard-only or screen-reader user who switched an
+ * entity to Board/Calendar (a first-class, persisted view mode) into
+ * thinking a key wasn't working for some other reason -- the exact
+ * "advertised affordance that silently no-ops" class EDITOR_ONLY_KEYS
+ * just above already fixes for the readOnly axis, just never applied to
+ * the viewMode axis.
+ */
+const TABLE_ONLY_KEYS = new Set([
+  "shortcuts.rowDown",
+  "shortcuts.rowUp",
+  "shortcuts.rowEdit",
+  "shortcuts.toggleSelect",
+  "shortcuts.rowDelete",
+  "shortcuts.rowDuplicate",
+  "shortcuts.clearSelection",
+]);
+
+export function ShortcutsPanel({
+  onClose,
+  readOnly = false,
+  viewMode = "table",
+}: {
+  onClose: () => void;
+  readOnly?: boolean;
+  /** The currently active entity tab's view mode, if any -- see TABLE_ONLY_KEYS's own doc comment just above. Defaults to "table" (shows every row) when the caller has no entity tab open to report one from. */
+  viewMode?: "table" | "board" | "calendar";
+}) {
   const { t } = useTranslation();
   const dialogRef = useDialogFocusTrap<HTMLDivElement>(onClose);
-  const visibleShortcuts = readOnly ? SHORTCUTS.filter((row) => !EDITOR_ONLY_KEYS.has(row.descriptionKey)) : SHORTCUTS;
+  const visibleShortcuts = SHORTCUTS.filter((row) => {
+    if (readOnly && EDITOR_ONLY_KEYS.has(row.descriptionKey)) return false;
+    if (viewMode !== "table" && TABLE_ONLY_KEYS.has(row.descriptionKey)) return false;
+    return true;
+  });
 
   return (
     <div className="history-overlay">
