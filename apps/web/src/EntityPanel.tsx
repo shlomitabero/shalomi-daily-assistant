@@ -1719,6 +1719,19 @@ export function EntityPanel({
   // two independent POSTs, two duplicate records, and a record_created
   // automation (WhatsApp/email/webhook) firing twice for one click.
   const [submitBusy, setSubmitBusy] = useState(false);
+  // Round 1472: unlike every other write path folded into writesInFlight
+  // below, handleDuplicate never had ANY flag of its own -- round 1118's
+  // own writesInFlight check inside it only ever covered racing some OTHER
+  // write (a bulk batch, an import), never a second call to itself. A fast
+  // double-click (or two "d" keyboard-shortcut presses) on the exact same
+  // record landed two independent createRecord calls before React had a
+  // chance to re-render with any guard in place -- createRecord mints a
+  // fresh idempotency key per call, so the server has no way to recognize
+  // them as the same logical action either. Keyed by record id (not a
+  // plain boolean) only so a future caller could tell which specific
+  // record's duplicate is still in flight; writesInFlight below only ever
+  // needs it as a boolean.
+  const [duplicatingId, setDuplicatingId] = useState<number | null>(null);
   // Round 1260: bulkActionBusy and importBusy were two fully independent
   // flags guarding the exact same hazard -- a batch of concurrent writes
   // (Promise.allSettled) still in flight racing some OTHER write to one of
@@ -1731,8 +1744,13 @@ export function EntityPanel({
   // record) was just as possible. This single combined flag is read
   // everywhere bulkActionBusy used to guard/disable, so the two batches are
   // now mutually exclusive with everything else that writes. Round 1363
-  // folded submitBusy in alongside them for the same reason.
-  const writesInFlight = bulkActionBusy || importBusy || submitBusy;
+  // folded submitBusy in alongside them for the same reason; round 1472
+  // folded duplicatingId in alongside those, which also means every
+  // existing `disabled={writesInFlight}`/`bulkActionBusy={writesInFlight}`
+  // site (the table-row and in-form Duplicate buttons, BoardCard,
+  // CalendarView) picked up handleDuplicate's own self-guard for free,
+  // with no separate wiring needed at any of those call sites.
+  const writesInFlight = bulkActionBusy || importBusy || submitBusy || duplicatingId !== null;
   const [importMessage, setImportMessage] = useState<string | null>(null);
   const [importErrors, setImportErrors] = useState<string[]>([]);
   const [showImportErrors, setShowImportErrors] = useState(false);
@@ -3731,6 +3749,7 @@ export function EntityPanel({
       setError(t("entity.duplicate.staleEnumField", { field: staleEnumField.label ?? staleEnumField.name, value: String(record[staleEnumField.name]) }));
       return;
     }
+    setDuplicatingId(id);
     try {
       const copy: Record<string, unknown> = {};
       // A "file" field's stored value is just the uploaded file's own
@@ -3748,6 +3767,8 @@ export function EntityPanel({
       await refresh();
     } catch (err) {
       setError((err as Error).message);
+    } finally {
+      setDuplicatingId(null);
     }
   }
 

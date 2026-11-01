@@ -5439,6 +5439,13 @@ export function EntityView({ entity, highlightRecordId, onHighlightHandled, onJu
   // Forge AI app, exactly as it could in the live preview before round
   // 1363.
   const [submitBusy, setSubmitBusy] = useState(false);
+  // Round 1472: this exported app's own copy of the live Forge AI preview's
+  // EntityPanel.tsx duplicatingId -- handleDuplicate below never had any
+  // flag of its own, so a fast double-click (or two "d" keyboard-shortcut
+  // presses) on the same record fired two independent createRecord calls
+  // in every actually-deployed/downloaded Forge AI app, exactly as it
+  // could in the live preview before this round.
+  const [duplicatingId, setDuplicatingId] = useState(null);
   // Round 1281: this exported app's own copy of the live Forge AI preview's
   // EntityPanel.tsx writesInFlight (round 1260) -- bulkActionBusy and
   // importBusy were two fully independent in-flight-write flags here too,
@@ -5447,8 +5454,9 @@ export function EntityView({ entity, highlightRecordId, onHighlightHandled, onJu
   // race a bulk delete/duplicate/update on the exact same records (or vice
   // versa) in every actually-deployed/downloaded Forge AI app, exactly as
   // it could in the live preview before round 1260. Round 1363 folded
-  // submitBusy in alongside them for the same reason.
-  const writesInFlight = bulkActionBusy || importBusy || submitBusy;
+  // submitBusy in alongside them for the same reason; round 1472 folded
+  // duplicatingId in alongside those.
+  const writesInFlight = bulkActionBusy || importBusy || submitBusy || duplicatingId !== null;
   const [importMessage, setImportMessage] = useState(null);
   const [importErrors, setImportErrors] = useState([]);
   const [showImportErrors, setShowImportErrors] = useState(false);
@@ -6609,6 +6617,7 @@ export function EntityView({ entity, highlightRecordId, onHighlightHandled, onJu
       );
       return;
     }
+    setDuplicatingId(id);
     try {
       const copy = {};
       // A "file" field's stored value is just the uploaded file's own
@@ -6621,6 +6630,8 @@ export function EntityView({ entity, highlightRecordId, onHighlightHandled, onJu
       await refresh();
     } catch (err) {
       setError(err.message);
+    } finally {
+      setDuplicatingId(null);
     }
   }
 

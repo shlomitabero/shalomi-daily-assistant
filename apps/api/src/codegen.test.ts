@@ -8272,10 +8272,11 @@ test("the exported EntityView's handleDuplicate/handleBulkDuplicate null out a '
       "setError",
       "createRecord",
       "refresh",
+      "setDuplicatingId",
       `const requiredFileField = undefined;\n${staleEnumValueSrc}\n${handleDuplicateSrc}\nreturn handleDuplicate;`,
     )(false, entityWithFile, [record], () => {}, async (_entityName: string, copy: Record<string, unknown>) => {
       capturedCopy = copy;
-    }, async () => {});
+    }, async () => {}, () => {});
     await fn(1);
     assert.equal(capturedCopy?.resume, null, "handleDuplicate must null out the file field, not copy the original's own file descriptor");
     assert.equal(capturedCopy?.name, "Dana", "every non-file field must still be copied normally");
@@ -8554,6 +8555,7 @@ test("the exported EntityView's handleDuplicate/handleMove surface a failed requ
       "createRecord",
       "updateRecord",
       "refresh",
+      "setDuplicatingId",
       `${displayFieldHintsSrc}\n${pickDisplayFieldSrc}\n${recordDisplayLabelSrc}\n${handleMoveFieldsSrc}\n${staleEnumValueSrc}\n${handlerSrc}\nreturn ${handlerSrc.match(/^async function (\w+)/)![1]};`,
     )(
       false,
@@ -8577,6 +8579,7 @@ test("the exported EntityView's handleDuplicate/handleMove surface a failed requ
         throw rejection;
       },
       async () => {},
+      () => {},
     );
     await invoke(fn);
     return capturedError;
@@ -13092,6 +13095,15 @@ test("the exported EntityView asks for confirmation before deleting a single rec
  * 1281: the guard (and the Save button's disabled check) now reads
  * writesInFlight (bulkActionBusy || importBusy) -- see its own declaration
  * for why a bare bulkActionBusy check was never enough here either.
+ *
+ * Round 1472: the source-text assertion below had gone stale ever since
+ * round 1363 added `|| submitBusy` to this same declaration (and round
+ * 1472 itself then added `|| duplicatingId !== null`) -- the regex still
+ * only ever looked for the original two-flag form, so it silently stopped
+ * matching the real generated text 109 rounds ago without ever failing
+ * fast at the time (this was only caught incidentally while touching this
+ * exact declaration for round 1472's own fix). Updated to match the full
+ * current declaration instead of re-deriving a fragile prefix match.
  */
 test("the exported EntityView's handleSubmit refuses to run while writesInFlight is true, and its Save button is disabled too", () => {
   const files = generateExportFiles(project);
@@ -13114,8 +13126,8 @@ test("the exported EntityView's handleSubmit refuses to run while writesInFlight
   );
   assert.match(
     entityViewJsx,
-    /const writesInFlight = bulkActionBusy \|\| importBusy;/,
-    "writesInFlight must be declared as the derived combination of both in-flight-write flags, mirroring the live preview's own round-1260 fix",
+    /const writesInFlight = bulkActionBusy \|\| importBusy \|\| submitBusy \|\| duplicatingId !== null;/,
+    "writesInFlight must be declared as the derived combination of every in-flight-write flag, mirroring the live preview's own round-1260/1363/1472 fixes",
   );
 });
 

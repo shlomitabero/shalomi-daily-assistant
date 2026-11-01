@@ -75,6 +75,7 @@ test("EntityPanel's handleDuplicate never copies a 'file' field's value -- dupli
     "createRecord",
     "projectId",
     "refresh",
+    "setDuplicatingId",
     `${code}\nreturn handleDuplicate;`,
   )(
     false,
@@ -88,6 +89,7 @@ test("EntityPanel's handleDuplicate never copies a 'file' field's value -- dupli
     async () => {
       refreshCalled += 1;
     },
+    () => {},
   ) as (id: number) => Promise<void>;
 
   await fn(1);
@@ -402,6 +404,7 @@ test("EntityPanel's handleDuplicate does NOT refuse when an optional enum field 
     "projectId",
     "refresh",
     "t",
+    "setDuplicatingId",
     `${code}\nreturn handleDuplicate;`,
   )(
     false,
@@ -416,6 +419,7 @@ test("EntityPanel's handleDuplicate does NOT refuse when an optional enum field 
     "proj1",
     async () => {},
     (key: string, params?: Record<string, unknown>) => (params ? `${key}:${JSON.stringify(params)}` : key),
+    () => {},
   ) as (id: number) => Promise<void>;
 
   await fn(1);
@@ -1208,11 +1212,11 @@ test("EntityPanel disables every single-record write affordance (table row, in-f
  * actually combined -- this is the one test that confirms the combination
  * itself exists).
  */
-test("EntityPanel combines bulkActionBusy and importBusy into one writesInFlight flag", () => {
+test("EntityPanel combines bulkActionBusy, importBusy, submitBusy, and duplicatingId into one writesInFlight flag", () => {
   assert.match(
     entityPanelSrc,
-    /const writesInFlight = bulkActionBusy \|\| importBusy \|\| submitBusy;/,
-    "expected a single writesInFlight flag ORing bulkActionBusy, importBusy, and (round 1363) submitBusy together",
+    /const writesInFlight = bulkActionBusy \|\| importBusy \|\| submitBusy \|\| duplicatingId !== null;/,
+    "expected a single writesInFlight flag ORing bulkActionBusy, importBusy, (round 1363) submitBusy, and (round 1472) duplicatingId together",
   );
 });
 
@@ -1402,6 +1406,83 @@ test("EntityPanel's record-form guards its own Save button against a fast double
       globalThis.fetch = originalFetch;
     }
   });
+});
+
+/**
+ * Round 1472: unlike handleSubmit above (guarded by submitBusy since round
+ * 1363) and handleDelete (synchronous optimistic removal, so a second click
+ * immediately no-ops), handleDuplicate never had any flag of its own --
+ * round 1118's own writesInFlight check inside it only ever covered racing
+ * some OTHER write (a bulk batch, an import), never a second call to
+ * itself. A fast double-click (or two "d" keyboard-shortcut presses) on the
+ * table row's own Duplicate button fired two independent createRecord
+ * calls before the first network response came back, each minting its own
+ * fresh idempotency key -- two real duplicate records from what the user
+ * experienced as one click.
+ *
+ * Deliberately extracted and called directly (mirroring round 1117's own
+ * pivot away from a full-DOM double-click render for this exact reentrancy
+ * shape) rather than rendered through the full component: an earlier draft
+ * rendered the real DOM and fired two click events with a mock createRecord
+ * held open by a manually-resolved gate -- when deliberately broken
+ * (fail-before, duplicatingId absent), the second click's own createRecord
+ * call never resolves and never gets reaped, leaving the whole `tsx --test`
+ * process hanging well past its two-minute timeout instead of failing fast.
+ * This proves the same real fix three ways instead: (1) the source-text
+ * test just above confirms `duplicatingId` is genuinely folded into
+ * `writesInFlight`, not a separate, unwired flag; (2) the pre-existing
+ * round-1118 extraction test already confirms `if (writesInFlight) return;`
+ * refuses to even start handleDuplicate; (3) this test confirms
+ * handleDuplicate itself calls `setDuplicatingId(id)` before starting its
+ * real work and `setDuplicatingId(null)` once it's done, whether it
+ * succeeds or throws -- together, a second click landing after the first
+ * one's `setDuplicatingId` call (and before React re-renders with the new
+ * `writesInFlight`) is exactly the real-world race (1)+(2)+(3) rule out.
+ */
+test("EntityPanel's handleDuplicate sets duplicatingId before its real work and always clears it afterward, success or failure", async () => {
+  const handlerMatch = entityPanelSrc.match(/ {2}async function handleDuplicate\(id: number\) \{[\s\S]*?\n {2}\}\n/);
+  const helperMatch = entityPanelSrc.match(/function staleEnumValue\(field: Field, value: unknown\): boolean \{[\s\S]*?\n\}\n/);
+  assert.ok(handlerMatch && helperMatch, "expected to find handleDuplicate and staleEnumValue in EntityPanel.tsx");
+  const { code } = transformSync(`${helperMatch![0]}\n${handlerMatch![0]}`, { loader: "ts" });
+
+  const entity: Entity = { name: "Customer", fields: [{ name: "name", type: "text", required: true }] };
+  const records: EntityRecord[] = [{ id: 1, createdAt: "x", name: "Acme Corp" }];
+
+  for (const shouldSucceed of [true, false]) {
+    const duplicatingIdCalls: (number | null)[] = [];
+    const fn = new Function(
+      "writesInFlight",
+      "records",
+      "setError",
+      "entity",
+      "createRecord",
+      "projectId",
+      "refresh",
+      "setDuplicatingId",
+      `${code}\nreturn handleDuplicate;`,
+    )(
+      false,
+      records,
+      () => {},
+      entity,
+      async () => {
+        if (!shouldSucceed) throw new Error("network error");
+      },
+      "proj1",
+      async () => {},
+      (id: number | null) => duplicatingIdCalls.push(id),
+    ) as (id: number) => Promise<void>;
+
+    await fn(1);
+
+    assert.deepEqual(
+      duplicatingIdCalls,
+      [1, null],
+      shouldSucceed
+        ? "handleDuplicate must set duplicatingId to the record's own id before its real work and clear it back to null once createRecord resolves"
+        : "handleDuplicate must still clear duplicatingId back to null even when createRecord rejects -- otherwise one failed duplicate would leave every future duplicate permanently blocked",
+    );
+  }
 });
 
 /**
