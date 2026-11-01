@@ -6366,7 +6366,60 @@ test("EntityPanel's Print list action fills the print sheet with only the curren
       const sheetText = document.querySelector(".print-list-sheet")!.textContent ?? "";
       assert.match(sheetText, /Globex/, "the printed list must include the search-matched record");
       assert.doesNotMatch(sheetText, /Acme Corp/, "the printed list must NOT include a record the search filtered out");
-      assert.match(sheetText, /1 records/, "the footer must report the count of records actually printed (1), not the full store (2)");
+      assert.match(sheetText, /1 record\b/, "the footer must report the count of records actually printed (1), not the full store (2)");
+    } finally {
+      globalThis.fetch = originalFetch;
+      window.print = originalPrint;
+    }
+  });
+});
+
+/**
+ * Round 1454: the print-list sheet's own footer ("{count} records ·
+ * Printed on {date}") used a single hardcoded-plural i18n key
+ * (entity.printList.footer) with no singular form, reachable through the
+ * exact same `records` array (selectedOrAllRecords) as the sibling "Print
+ * {count} selected" button round 1453 already fixed -- selecting exactly 1
+ * record and printing read "1 records · Printed on ..." instead of "1
+ * record · Printed on ...".
+ */
+test("EntityPanel's print-list sheet footer uses the singular noun form when exactly 1 record is printed", async () => {
+  await withJsdom(async () => {
+    const store: EntityRecord[] = [
+      { id: 1, name: "Acme Corp", status: "new" },
+      { id: 2, name: "Globex", status: "won" },
+    ];
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = mockRecordsFetch(store) as typeof fetch;
+    const originalPrint = window.print;
+    let printCalls = 0;
+    window.print = () => {
+      printCalls += 1;
+    };
+    try {
+      renderEntityPanel();
+      await waitForCondition(() => document.querySelectorAll("table tbody tr").length === 2);
+
+      fireEvent.click(document.querySelector('td.select-col input[type="checkbox"]') as HTMLInputElement);
+      await waitForCondition(() => (document.querySelector(".copy-records-btn") as HTMLButtonElement).textContent?.includes("1") ?? false);
+
+      const printListBtn = Array.from(document.querySelectorAll("button")).find((b) => b.textContent?.includes("🖨"))!;
+      fireEvent.click(printListBtn);
+      await waitForCondition(() => printCalls === 1);
+
+      let sheetText = document.querySelector(".print-list-sheet")!.textContent ?? "";
+      assert.match(sheetText, /1 record\b/, "exactly 1 printed record must use the singular noun form");
+      assert.doesNotMatch(sheetText, /1 records/, "exactly 1 printed record must not read '1 records'");
+
+      // Selecting the 2nd record too must restore the plural form. The
+      // print sheet is always mounted once shown (round 365's own fix for
+      // window.print()'s mount/unmount race) and re-renders reactively off
+      // `records`, so this needs no second click of Print list.
+      fireEvent.click(document.querySelectorAll('td.select-col input[type="checkbox"]')[1] as HTMLInputElement);
+      await waitForCondition(() => (document.querySelector(".copy-records-btn") as HTMLButtonElement).textContent?.includes("2") ?? false);
+
+      sheetText = document.querySelector(".print-list-sheet")!.textContent ?? "";
+      assert.match(sheetText, /2 records/, "2 printed records must use the plural noun form");
     } finally {
       globalThis.fetch = originalFetch;
       window.print = originalPrint;

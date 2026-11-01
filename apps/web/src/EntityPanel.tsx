@@ -540,7 +540,7 @@ function RecordListPrintSheet({
         )}
       </table>
       <p className="print-record-footer">
-        {t("entity.printList.footer", { count: records.length, date: new Date().toLocaleString(LOCALE[lang]) })}
+        {t(records.length === 1 ? "entity.printList.footer.one" : "entity.printList.footer.many", { count: records.length, date: new Date().toLocaleString(LOCALE[lang]) })}
       </p>
     </div>
   );
