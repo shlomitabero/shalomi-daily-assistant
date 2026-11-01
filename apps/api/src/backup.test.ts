@@ -505,6 +505,80 @@ test("generateBackupZipEntries includes a file field's real uploaded bytes as it
 });
 
 /**
+ * Round 1434: sanitizeZipEntryName deliberately leaves "." untouched (see
+ * its own doc comment), so an entity literally named "Report.csv"
+ * sanitizes to itself unchanged -- and a SEPARATE entity named "Report"
+ * already has its own flat top-level entry at that exact string
+ * ("Report.csv", its own CSV). Round 964's own collision proof only
+ * covers two entities' flat ".csv" paths colliding with EACH OTHER; it
+ * never considered this bare directory prefix (added later, by round
+ * 1203), which has no ".csv" suffix of its own to protect it. Without the
+ * dedup, the archive would contain "Report.csv" as both a flat file
+ * (entity "Report"'s own CSV) and a directory prefix ("Report.csv/files/
+ * ..." for entity "Report.csv"'s own uploaded file) -- a real zip tool
+ * extracting that hits a file/directory name conflict.
+ */
+test("generateBackupZipEntries disambiguates an uploaded-file directory prefix that collides with another entity's own flat CSV path", () => {
+  const collidingProject: Project = {
+    ...project,
+    spec: {
+      ...project.spec,
+      entities: [
+        { name: "Report", fields: [{ name: "name", type: "text", required: true }] },
+        {
+          name: "Report.csv",
+          fields: [
+            { name: "name", type: "text", required: true },
+            { name: "attachment", type: "file", required: false },
+          ],
+        },
+      ],
+    },
+  };
+  const db = createTestDb(collidingProject);
+  const reportCsvEntity = collidingProject.spec.entities[1];
+  const uploadsDir = mkdtempSync(path.join(tmpdir(), "forge-backup-test-"));
+  try {
+    const filename = `${randomUUID()}.pdf`;
+    mkdirSync(path.join(uploadsDir, collidingProject.id, "Report.csv"), { recursive: true });
+    const realBytes = Buffer.from("%PDF-fake-attachment-bytes");
+    writeFileSync(path.join(uploadsDir, collidingProject.id, "Report.csv", filename), realBytes);
+    const { id } = insertRecord(db, collidingProject.id, reportCsvEntity, {
+      name: "Row one",
+      attachment: JSON.stringify({ url: `/api/uploads/${collidingProject.id}/Report.csv/${filename}`, name: "scan.pdf", size: realBytes.length, mimeType: "application/pdf" }),
+    });
+
+    const entries = generateBackupZipEntries(db, collidingProject, {}, uploadsDir);
+
+    // Entity "Report"'s own flat CSV must land at the plain, undisambiguated path.
+    assert.ok(entries.some((e) => e.path === "Report.csv"), "expected entity \"Report\"'s own flat CSV entry");
+    // Entity "Report.csv"'s own CSV is a DIFFERENT path (the literal name plus ".csv").
+    assert.ok(entries.some((e) => e.path === "Report.csv.csv"), "expected entity \"Report.csv\"'s own flat CSV entry");
+
+    // The uploaded file must NOT collide with "Report.csv" -- it has to be
+    // disambiguated into its own, unique directory prefix instead.
+    assert.equal(
+      entries.some((e) => e.path === `Report.csv/files/${id}-attachment-scan.pdf`),
+      false,
+      "the uploaded file must never share its directory prefix with another entity's own flat CSV path",
+    );
+    const fileEntry = entries.find((e) => e.path === `Report.csv (2)/files/${id}-attachment-scan.pdf`);
+    assert.ok(fileEntry, "expected the uploaded file under a disambiguated directory prefix instead");
+    assert.deepEqual(fileEntry!.content, realBytes);
+
+    // Nothing may use the plain "Report.csv" string as a directory prefix
+    // once it's taken by a flat CSV entry.
+    assert.equal(
+      entries.filter((e) => e.path.startsWith("Report.csv/")).length,
+      0,
+      "nothing may use the plain \"Report.csv\" string as a directory prefix once it's taken by a flat file entry",
+    );
+  } finally {
+    rmSync(uploadsDir, { recursive: true, force: true });
+  }
+});
+
+/**
  * Round 1270: migrate.ts's own case-insensitive rename detection treats a
  * case-only entity rename (e.g. "applicant" -> "Applicant") as a true
  * no-op at the db layer -- but createUploadMiddleware wrote this file's

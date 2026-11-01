@@ -445,7 +445,24 @@ function addUploadedFileEntries(
 ): void {
   const fileFields = entity.fields.filter((f) => f.type === "file");
   if (fileFields.length === 0) return;
-  const entityDir = sanitizeZipEntryName(entity.name);
+  // Round 964's own collision proof above covers two entities' flat
+  // "<name>.csv" paths colliding with EACH OTHER -- it never considered
+  // this directory prefix (added later, by round 1203), which has no
+  // ".csv" suffix. sanitizeZipEntryName deliberately leaves "." alone, so
+  // an entity literally named e.g. "Report.csv" sanitizes to itself --
+  // and a SEPARATE entity named "Report" already has a flat top-level
+  // entry at that exact same string ("Report.csv", its own CSV). Entity
+  // names have no uniqueness relationship to each other's ".csv" suffix
+  // (findSanitizedIdentifierCollisions never considers this shape
+  // either), so the two can coexist in the same spec and collide here --
+  // the same existingPaths-based numeric-suffix dedup uniqueWhatsAppLogPath
+  // already applies for its own, differently-shaped collision above.
+  let entityDir = sanitizeZipEntryName(entity.name);
+  if (entries.some((e) => e.path === entityDir)) {
+    let suffix = 2;
+    while (entries.some((e) => e.path === `${entityDir} (${suffix})`)) suffix += 1;
+    entityDir = `${entityDir} (${suffix})`;
+  }
   for (const record of records) {
     for (const field of fileFields) {
       const target = resolveUploadedFilePath(uploadsDir, projectId, entity.name, record[field.name]);
