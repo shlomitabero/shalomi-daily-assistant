@@ -14352,6 +14352,33 @@ test("deleting your account requires a valid session, the same as any other auth
 });
 
 /**
+ * Round 1435: the single most destructive mutating route in this file --
+ * permanently deletes the user row, every project they own via the full
+ * deleteProject cascade, every collaborator grant, and every session --
+ * had no rate limiter at all, unlike every other sensitive route in
+ * routes/auth.ts (signup/login/forgot-password/verify-code/reset-
+ * password/change-password/change-email). Keyed by IP, the same shape as
+ * resetPasswordRateLimiter above, since this route can't rely on
+ * req.userId being reliably set before a middleware runs (see this
+ * route's own doc comment on why requireAuth can't be route middleware
+ * here). Uses requests with no Authorization header -- the limiter
+ * middleware runs before the handler resolves the session, so it still
+ * counts these without ever actually deleting an account.
+ */
+test("DELETE /auth/account is rate-limited per IP: the 11th request in the window is rejected with 429", async () => {
+  await withServer(async (baseUrl) => {
+    for (let i = 0; i < 10; i++) {
+      const res = await fetch(`${baseUrl}/api/auth/account`, { method: "DELETE" });
+      assert.notEqual(res.status, 429, `account-deletion request ${i + 1} of 10 (within the limit) must not be rate-limited yet`);
+      assert.equal(res.status, 401, "a request with no Authorization header must still get the normal 401, not a 429");
+    }
+    const blocked = await fetch(`${baseUrl}/api/auth/account`, { method: "DELETE" });
+    assert.equal(blocked.status, 429);
+    assert.equal(((await blocked.json()) as { code?: string }).code, "RATE_LIMITED");
+  });
+});
+
+/**
  * Round 1339: DELETE /auth/account's own first act is revoking every
  * session for this account, including the very token this request is
  * using -- so unlike this file's other idempotency-guarded routes, a

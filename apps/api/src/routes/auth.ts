@@ -299,6 +299,29 @@ export function createAuthRouter(
   });
 
   /**
+   * Round 1435: the one mutating route in this file with no rate limiter
+   * at all -- and the single most destructive one (permanently deletes
+   * the user row, every project they own via the full deleteProject
+   * cascade, every collaborator grant, and every session). A stolen
+   * bearer token (XSS, a leaked log, a shared machine) lets an attacker
+   * fire this repeatedly -- each hit that reaches the real deletion path
+   * re-runs listOwnedProjectIds plus a full per-project deleteProject
+   * cascade, the same genuinely expensive, attacker-triggerable-at-will
+   * pattern changePasswordRateLimiter's own comment above already names
+   * as the reason that route needs a limiter. Keyed by req.ip, not
+   * req.userId -- this route can't use requireAuth(db) as route
+   * middleware (see this route's own doc comment below on why), so
+   * req.userId isn't reliably set yet when a middleware would run; same
+   * IP-keyed shape as resetPasswordRateLimiter above, for the same reason.
+   */
+  const deleteAccountRateLimiter = createRateLimiter({
+    windowMs: RATE_LIMIT_WINDOW_MS,
+    max: 10,
+    keyGenerator: (req) => req.ip ?? "unknown",
+    message: "Too many account deletion attempts. Please try again later.",
+  });
+
+  /**
    * Round 1328: fetchWithWakeRetry's own doc comment reasons retrying a
    * thrown fetch is always safe because "a connection failure means the
    * request was never received by the server at all" -- true for a
@@ -906,7 +929,7 @@ export function createAuthRouter(
    * deleteAllSessionsForUser above, which only ever touches the account
    * being deleted) is the one who could otherwise race it.
    */
-  router.delete("/auth/account", async (req, res, next) => {
+  router.delete("/auth/account", deleteAccountRateLimiter, async (req, res, next) => {
     try {
       const idempotencyKey = req.header("X-Idempotency-Key") || undefined;
       const token = extractBearerToken(req);
