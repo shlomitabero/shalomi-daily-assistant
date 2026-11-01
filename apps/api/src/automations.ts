@@ -1598,11 +1598,39 @@ const MAX_CONSECUTIVE_SCHEDULE_FAILURES_PER_DAY = 5;
  * real failure row before this filter ever ran, the identical gap round
  * 951 already closed once for the WhatsApp bucket. Lookback widened from
  * 3x to 4x to match the now-four independently-retained buckets.
+ *
+ * Round 1444: WEBHOOK_TIMEOUT_ERROR (fireWebhookAction's own 10s
+ * AbortController firing, round 1327) is excluded too, for the same
+ * self-healing reason as the WhatsApp/email cases above -- but on a
+ * narrower basis, since unlike those two (a pre-send check on OUR OWN
+ * state, never even reaching the destination), a webhook timeout only
+ * fires after an actual network attempt to the rule's own destination.
+ * The distinction that still matters: a destination that's permanently
+ * wrong or refuses the connection never produces this literal in the
+ * first place -- fireWebhookAction's catch block only reaches
+ * WEBHOOK_TIMEOUT_ERROR when controller.signal.aborted is true (the 10s
+ * deadline itself fired with no response yet); any other network failure
+ * (DNS, connection refused) gets err.message instead, and a non-2xx
+ * response gets its own `Webhook responded with status N` string -- both
+ * still count toward this cap exactly as before. So excluding only the
+ * timeout literal does NOT exempt a dead or actively-erroring endpoint
+ * from the cap round 924's own header comment warns about ("unbounded
+ * hammering of a webhook endpoint") -- it only stops a destination that's
+ * merely slow to respond (a cold-starting serverless function, a brief
+ * load spike) from being indistinguishable from one that's truly broken,
+ * mirroring the exact self-healing guarantee already given to WhatsApp
+ * disconnects and a missing RESEND_API_KEY.
  */
 export function hasTooManyConsecutiveFailuresToday(db: ForgeDatabase, rule: AutomationRule, now: Date): boolean {
   const todayUtc = now.toISOString().slice(0, 10);
   const runs = listAutomationRuns(db, rule.projectId, rule.id, 4 * AUTOMATION_RUNS_RETENTION_LIMIT)
-    .filter((run) => run.error !== WHATSAPP_NOT_CONNECTED_ERROR && run.error !== EMAIL_NOT_CONFIGURED_ERROR && !run.isTest)
+    .filter(
+      (run) =>
+        run.error !== WHATSAPP_NOT_CONNECTED_ERROR &&
+        run.error !== EMAIL_NOT_CONFIGURED_ERROR &&
+        run.error !== WEBHOOK_TIMEOUT_ERROR &&
+        !run.isTest,
+    )
     .slice(0, MAX_CONSECUTIVE_SCHEDULE_FAILURES_PER_DAY);
   if (runs.length < MAX_CONSECUTIVE_SCHEDULE_FAILURES_PER_DAY) return false;
   return runs.every((run) => run.status === "failed" && run.triggeredAt.slice(0, 10) === todayUtc);

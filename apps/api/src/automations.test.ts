@@ -23,6 +23,7 @@ import {
   markProjectBuilt,
   openDatabase,
   updateAutomationRule,
+  WEBHOOK_TIMEOUT_ERROR,
 } from "@forge/db";
 import {
   fireRule,
@@ -2327,6 +2328,57 @@ test("runScheduledAutomationsCheck still fires a scheduled send_email rule the s
 
   assert.equal(emailSender.sentTo.length, 1, "must actually attempt the send now that an EmailSender is configured, not stay suppressed for the rest of the day");
   assert.equal(getAutomationRule(db, "proj1", rule.id)!.lastStatus, "sent");
+});
+
+/**
+ * Round 1444: the webhook sibling of the two self-healing tests above --
+ * fireWebhookAction's own 10s AbortController timeout (WEBHOOK_TIMEOUT_ERROR)
+ * is the exact same "destination simply hasn't responded yet" shape as a
+ * WhatsApp disconnect or a missing RESEND_API_KEY, not evidence the rule's
+ * own destination is permanently broken (that's `Webhook responded with
+ * status N` or a raw connection error, neither of which this round
+ * touches). Before this round, 5 consecutive scheduler ticks landing
+ * during a slow/cold-starting webhook destination tripped
+ * hasTooManyConsecutiveFailuresToday exactly like 5 genuine failures
+ * would, silently suppressing the rule for the rest of the UTC day even
+ * once the destination started responding again seconds later.
+ */
+test("runScheduledAutomationsCheck still fires a scheduled webhook rule the same day once its destination starts responding again, even after 5 consecutive timeouts", async () => {
+  const { db } = setupProject();
+  const rule = insertAutomationRule(
+    db,
+    scheduleRuleBase({ actionType: "webhook", webhookUrl: "https://hooks.example.com/forge" }),
+  );
+  const manager = {} as WhatsAppWebManager;
+
+  const originalFetch = globalThis.fetch;
+  let destinationUp = false;
+  globalThis.fetch = ((_url: string, init?: RequestInit) =>
+    destinationUp
+      ? Promise.resolve(new Response(null, { status: 200 }))
+      : new Promise<Response>((_resolve, reject) => {
+          init?.signal?.addEventListener("abort", () => reject(new DOMException("The operation was aborted.", "AbortError")));
+        })) as typeof fetch;
+
+  try {
+    for (const minute of ["09:00", "09:01", "09:02", "09:03", "09:04"]) {
+      await runScheduledAutomationsCheck(db, manager, UNUSED_EMAIL_SENDER, new Date(`2026-03-15T${minute}:00.000Z`));
+    }
+    assert.equal(getAutomationRule(db, "proj1", rule.id)!.lastStatus, "failed");
+    assert.equal(getAutomationRule(db, "proj1", rule.id)!.lastError, WEBHOOK_TIMEOUT_ERROR);
+
+    // The destination starts responding again, and the next tick arrives -- still the same day.
+    destinationUp = true;
+    await runScheduledAutomationsCheck(db, manager, UNUSED_EMAIL_SENDER, new Date("2026-03-15T09:05:00.000Z"));
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+
+  assert.equal(
+    getAutomationRule(db, "proj1", rule.id)!.lastStatus,
+    "sent",
+    "must actually attempt the send now that the destination responds again, not stay suppressed for the rest of the day",
+  );
 });
 
 /**
