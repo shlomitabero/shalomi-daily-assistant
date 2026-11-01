@@ -5920,6 +5920,57 @@ test("cloning someone else's project you have no access to still 404s, the same 
   });
 });
 
+/**
+ * Round 1410: /projects/:id/clone builds its own `name` by string
+ * concatenation (`${source.name}${suffix}`) and writes it straight to
+ * insertProject, bypassing CreateProjectSchema/RenameProjectSchema entirely
+ * -- so the 200-char PROJECT_NAME_MAX_LENGTH ceiling those two schemas
+ * enforce everywhere else (round 1408) silently didn't apply here. Cloning
+ * a project whose own name is already near the cap (itself set through the
+ * normal, validated rename path) pushes the result over 200 by this route
+ * alone; repeatedly cloning a clone would otherwise chain the suffix with
+ * no bound at all.
+ */
+test("cloning a project whose name is already near the 200-char cap truncates the clone's name instead of exceeding the cap, and a clone-of-a-clone still never exceeds it", async () => {
+  await withServer(async (baseUrl) => {
+    const token = await signup(baseUrl, "clone-maxlen-owner@example.com");
+    const createRes = await fetch(`${baseUrl}/api/projects`, {
+      method: "POST",
+      headers: authHeaders(token),
+      body: JSON.stringify({ description: "A CRM with customers and deals." }),
+    });
+    const { project } = (await createRes.json()) as { project: { id: string } };
+
+    const nearCapName = "x".repeat(195);
+    const renameRes = await fetch(`${baseUrl}/api/projects/${project.id}/name`, {
+      method: "PATCH",
+      headers: authHeaders(token),
+      body: JSON.stringify({ name: nearCapName }),
+    });
+    assert.equal(renameRes.status, 200);
+
+    const cloneRes = await fetch(`${baseUrl}/api/projects/${project.id}/clone`, {
+      method: "POST",
+      headers: authHeaders(token),
+    });
+    assert.equal(cloneRes.status, 201);
+    const { project: cloned } = (await cloneRes.json()) as { project: { id: string; name: string } };
+    assert.ok(cloned.name.length <= 200, `expected the clone's name to stay within the 200-char cap, got ${cloned.name.length} characters`);
+    assert.match(cloned.name, /copy/i);
+
+    const secondCloneRes = await fetch(`${baseUrl}/api/projects/${cloned.id}/clone`, {
+      method: "POST",
+      headers: authHeaders(token),
+    });
+    assert.equal(secondCloneRes.status, 201);
+    const { project: secondClone } = (await secondCloneRes.json()) as { project: { name: string } };
+    assert.ok(
+      secondClone.name.length <= 200,
+      `expected a clone-of-a-clone's name to still stay within the 200-char cap, got ${secondClone.name.length} characters`,
+    );
+  });
+});
+
 test("GET /templates returns the Templates Gallery's display metadata, but never a template's full spec", async () => {
   await withServer(async (baseUrl) => {
     const token = await signup(baseUrl, "templates-list1@example.com");

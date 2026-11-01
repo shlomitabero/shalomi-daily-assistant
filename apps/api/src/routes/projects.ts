@@ -79,6 +79,15 @@ import { findMatchingRecord } from "../whatsapp.js";
 import { fireRule, fireScheduledRule, hasTooManyConsecutiveFailuresToday, isAllowedWebhookUrl, runAutomationsForRecordChange } from "../automations.js";
 import type { EmailSender } from "../email.js";
 
+/**
+ * Round 1410: factored out of CreateProjectSchema/RenameProjectSchema's own
+ * `.max(200)` calls (round 1408) into one shared constant, so this ceiling
+ * can never drift between the two schemas -- and so /projects/:id/clone's
+ * own derived name (below) can enforce the identical ceiling without
+ * hardcoding a second, easy-to-forget-to-update copy of "200".
+ */
+const PROJECT_NAME_MAX_LENGTH = 200;
+
 const CreateProjectSchema = z.object({
   // Round 919: every other free-text schema in this file that accepts a
   // user-typed string already trims first (RenameProjectSchema,
@@ -110,7 +119,7 @@ const CreateProjectSchema = z.object({
   // storing a blank project name verbatim -- not reachable through
   // today's web client (createProject never sends `name` at all), but a
   // real server-side validation hole for any other caller.
-  name: z.string().trim().min(1).max(200, "name must be 200 characters or fewer").optional(),
+  name: z.string().trim().min(1).max(PROJECT_NAME_MAX_LENGTH, "name must be 200 characters or fewer").optional(),
 });
 
 const FromTemplateSchema = z.object({
@@ -466,7 +475,7 @@ const RenameProjectSchema = z.object({
   // same place the amplification this round closes is actually reachable
   // from, since CreateProjectSchema's own `name` is rarely exercised by
   // today's web client.
-  name: z.string().trim().min(1, "name is required").max(200, "name must be 200 characters or fewer"),
+  name: z.string().trim().min(1, "name is required").max(PROJECT_NAME_MAX_LENGTH, "name must be 200 characters or fewer"),
 });
 
 const UpdateProjectDescriptionSchema = z.object({
@@ -2231,12 +2240,27 @@ export function createProjectsRouter(
     asyncRoute(async (req, res) => {
       const source = requireProjectAccess(db, req.params.id, req.userId!);
       const suffix = isHebrewText(source.description) ? " (עותק)" : " (copy)";
+      // Round 1410: this route builds its own `name` by string concatenation
+      // and writes it straight to insertProject, bypassing CreateProjectSchema/
+      // RenameProjectSchema entirely -- so the PROJECT_NAME_MAX_LENGTH ceiling
+      // those two schemas enforce everywhere else silently didn't apply here.
+      // Repeatedly cloning a clone chains this suffix with no bound
+      // ("X" -> "X (copy)" -> "X (copy) (copy)" -> ...), and the result feeds
+      // straight into the same collaborator-broadcast emails round 1408
+      // closed this exact amplification for. Truncated, not rejected with a
+      // 400: this value is server-synthesized, not something the user typed
+      // into an editable field, so there's nothing for a validation error to
+      // ask them to fix.
+      const rawName = `${source.name}${suffix}`;
+      const name = rawName.length > PROJECT_NAME_MAX_LENGTH
+        ? `${source.name.slice(0, PROJECT_NAME_MAX_LENGTH - suffix.length)}${suffix}`
+        : rawName;
       const idempotencyKey = req.header("X-Idempotency-Key") || undefined;
       const { status, body } = await withIdempotency(db, idempotencyKey, req.userId!, `POST /projects/${source.id}/clone`, async () => {
         const cloned = insertProject(db, {
           id: randomUUID(),
           ownerId: req.userId!,
-          name: `${source.name}${suffix}`,
+          name,
           description: source.description,
           spec: source.spec,
         });
