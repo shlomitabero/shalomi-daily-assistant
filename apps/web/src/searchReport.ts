@@ -45,7 +45,12 @@ export function formatSearchResults(
     // (falling back to a bare `#<id>` per record), contradicting this
     // function's own doc comment above, which promises the report "never
     // disagrees with what's actually on screen."
-    const entity = entities.find((e) => e.name === result.entityName);
+    // Round 1480: case-insensitive, mirroring GlobalSearchPanel.tsx's own
+    // round-1480 fix to this identical lookup -- a case-only entity rename
+    // from a mid-session refine (e.g. "customer" -> "Customer") isn't a
+    // drop, so this guard (round 1279, itself mirroring round 1122's
+    // "entity vanished" guard) must not also treat a mere recasing as one.
+    const entity = entities.find((e) => e.name.toLowerCase() === result.entityName.toLowerCase());
     if (!entity) continue;
     const displayed = expandedSamples[result.entityName] ?? result.sample;
     lines.push(

@@ -146,6 +146,25 @@ test("formatSearchResults drops a result group for an entity that no longer exis
   assert.doesNotMatch(report, /Vanished/, "a group for an entity no longer present must never appear in the report at all");
 });
 
+/**
+ * Round 1480: the round-1279 guard just above (mirroring the live panel's
+ * own round-1122 fix) compared names with exact `===`, so a refine that
+ * merely RECASES an entity (e.g. "Customer" -> "CUSTOMER", not removes
+ * it) hit the same "entity vanished" guard and dropped the group from
+ * the report too, even though the entity and its data are intact.
+ */
+test("formatSearchResults keeps a result group whose entity was only recased (not removed), unlike one that genuinely vanished", () => {
+  const t = (key: string, params?: Record<string, string | number>) => translate("en", key, params);
+  const results: EntitySearchResult[] = [
+    { entityName: "Customer", entityLabel: "Customers", totalMatches: 1, sample: [customerRecord(1, "Amy")] },
+  ];
+
+  const report = formatSearchResults(results, [{ ...CUSTOMER_ENTITY, name: "CUSTOMER" }], {}, "a", "Flower Shop", "en", t);
+
+  assert.match(report, /Customers/, "a merely-recased entity's group must survive, not be treated as vanished");
+  assert.match(report, /Amy/);
+});
+
 test("formatSearchResults lists results from more than one entity, each under its own label", () => {
   const t = (key: string, params?: Record<string, string | number>) => translate("en", key, params);
   const results: EntitySearchResult[] = [

@@ -394,6 +394,77 @@ test("GlobalSearchPanel's handleShowAll ignores a stale, still-in-flight fetch o
 });
 
 /**
+ * Round 1480: handleShowAll's own `entities.find((e) => e.name ===
+ * entityName)` guard (added in round 1122 to stop a crash when an entity
+ * vanishes mid-session) compared names with exact `===` -- so when a
+ * refine completing while the panel stays open merely RECASES the entity
+ * (e.g. "customer" -> "Customer", round 988's documented AI behavior)
+ * rather than removing it, entityName (captured pre-rename from the
+ * user's click) no longer matches the live, recased entities array, and
+ * "Show all" silently no-ops: no fetch, no expandedSamples update, no
+ * error -- just nothing happens. Proves listRecords is actually called
+ * (meaning the lookup matched) when entities holds the same entity under
+ * a different casing than the entityName argument.
+ */
+test("GlobalSearchPanel's handleShowAll still runs when its entity was only recased (not removed) by a refine completing while the panel is still open", async () => {
+  const handlerMatch = globalSearchPanelSrc.match(/ {2}async function handleShowAll\(entityName: string\) \{[\s\S]*?\n {2}\}\n/);
+  assert.ok(handlerMatch, "expected to find handleShowAll in GlobalSearchPanel.tsx");
+  const { code } = transformSync(handlerMatch![0], { loader: "ts" });
+
+  // The live entities array now holds "Alpha" recased to "ALPHA" -- the
+  // same entity a refine just recased, not a different one.
+  const entityA = { name: "ALPHA", label: "Alpha", fields: [] };
+
+  function fakeSearchEntityRecords(entity: { name: string; label: string }, records: unknown[]) {
+    return { entityName: entity.name, entityLabel: entity.label, totalMatches: records.length, sample: records };
+  }
+
+  let listRecordsCalled = false;
+  const expandedSamplesCalls: unknown[] = [];
+
+  const fn = new Function(
+    "entities",
+    "projectId",
+    "listRecords",
+    "searchEntityRecords",
+    "highlightQuery",
+    "lastRecordsByEntityRef",
+    "setShowAllLoading",
+    "setExpandedSamples",
+    "searchRequestId",
+    "lang",
+    "setError",
+    "errorFromShowAllRef",
+    `${code}\nreturn handleShowAll;`,
+  )(
+    [entityA],
+    "proj1",
+    async () => {
+      listRecordsCalled = true;
+      return { records: [{ id: 1, name: "a-record" }] };
+    },
+    fakeSearchEntityRecords,
+    "stale query",
+    { current: {} },
+    () => {},
+    (updater: (prev: Record<string, unknown>) => Record<string, unknown>) => {
+      expandedSamplesCalls.push(updater({}));
+    },
+    { current: 0 },
+    "en",
+    () => {},
+    { current: false },
+  ) as (entityName: string) => Promise<void>;
+
+  // The UI click still passes the pre-rename casing ("Alpha"), captured
+  // in the panel's own `results` state before the refine completed.
+  await fn("Alpha");
+
+  assert.ok(listRecordsCalled, "a recased (not removed) entity must still resolve and fetch, not silently no-op");
+  assert.equal(expandedSamplesCalls.length, 1, "the fetched sample must actually reach expandedSamples when the entity resolves");
+});
+
+/**
  * Round 923: the SUCCESS path above already discards a stale "Show all"
  * fetch via the searchRequestId check right after the await -- but the
  * catch block added later (round 663, to surface a failed fetch through
@@ -1586,6 +1657,86 @@ test("GlobalSearchPanel doesn't crash and drops the stale result group when the 
         document.querySelector(".global-search-entity-label")!.textContent,
         "Customer",
         "the surviving entity's own group must still render correctly",
+      );
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+});
+
+/**
+ * Round 1480: round 1122's own guard (just above) stops the panel from
+ * crashing when a refine completing mid-session drops an entity `results`
+ * already holds a group for -- but it compared names with exact `===`,
+ * so a refine that merely RECASES the same entity (a real, documented AI
+ * behavior this codebase already defends against elsewhere, e.g.
+ * App.tsx's own case-only-rename handling in rounds 988/1029) hit the
+ * exact same `if (!entity) return null` guard and dropped the group too,
+ * even though the entity and its data are completely intact. Simulates
+ * this with a real search, then a real `rerender` passing the SAME
+ * entity recased (not removed), proving the group survives.
+ */
+test("GlobalSearchPanel keeps a result group visible when its entity is only recased (not dropped) by a refine completing while the panel is still open", async () => {
+  await withJsdom(async () => {
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = mockGlobalSearchFetch() as typeof fetch;
+    try {
+      const { rerender } = render(
+        React.createElement(
+          ThemeProvider,
+          null,
+          React.createElement(
+            LanguageProvider,
+            null,
+            React.createElement(GlobalSearchPanel, {
+              projectId: "proj1",
+              userId: "user1",
+              projectName: "Test Project",
+              entities: [SEARCH_CUSTOMER_ENTITY, SEARCH_ORDER_ENTITY],
+              onClose: () => {},
+              onJumpToEntity: () => {},
+              onJumpToRecord: () => {},
+            }),
+          ),
+        ),
+      );
+
+      const input = document.querySelector(".global-search-input") as HTMLInputElement;
+      fireEvent.change(input, { target: { value: "widget" } });
+      const form = document.querySelector("form.global-search-form")!;
+      fireEvent.submit(form);
+      await waitForCondition(() => document.querySelectorAll(".global-search-group").length === 2);
+
+      // The refine's own completion: "Customer" is recased to "CUSTOMER",
+      // the same entity, same fields -- not removed, not replaced.
+      rerender(
+        React.createElement(
+          ThemeProvider,
+          null,
+          React.createElement(
+            LanguageProvider,
+            null,
+            React.createElement(GlobalSearchPanel, {
+              projectId: "proj1",
+              userId: "user1",
+              projectName: "Test Project",
+              entities: [{ ...SEARCH_CUSTOMER_ENTITY, name: "CUSTOMER" }, SEARCH_ORDER_ENTITY],
+              onClose: () => {},
+              onJumpToEntity: () => {},
+              onJumpToRecord: () => {},
+            }),
+          ),
+        ),
+      );
+
+      assert.equal(
+        document.querySelectorAll(".global-search-group").length,
+        2,
+        "a mere case-only rename must never drop the result group, unlike a genuine removal",
+      );
+      assert.ok(
+        Array.from(document.querySelectorAll(".global-search-entity-label")).some((el) => el.textContent === "Customer"),
+        "the recased entity's own group must still render with its result label",
       );
     } finally {
       globalThis.fetch = originalFetch;

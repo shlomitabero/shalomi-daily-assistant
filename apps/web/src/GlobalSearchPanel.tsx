@@ -286,7 +286,14 @@ export function GlobalSearchPanel({
    * permanently stuck, empty group with no way to dismiss it.
    */
   async function handleShowAll(entityName: string) {
-    const entity = entities.find((e) => e.name === entityName);
+    // Round 1480: case-insensitive, mirroring the identical lookup just
+    // below in the results.map render loop (same round's own fix) -- a
+    // refine completing while this panel stays open can recase an entity
+    // results already holds a group for (e.g. "customer" -> "Customer"),
+    // not just drop it (round 1122's own guard only covered the drop
+    // case). Without this, entityName (captured pre-rename) never matches
+    // the live, recased entities array, and "Show all" silently no-ops.
+    const entity = entities.find((e) => e.name.toLowerCase() === entityName.toLowerCase());
     if (!entity) return;
     const requestId = searchRequestId.current;
     setShowAllLoading((prev) => new Set(prev).add(entityName));
@@ -703,7 +710,13 @@ export function GlobalSearchPanel({
               // synchronously during THIS render, before any effect from
               // the prop change gets a chance to run, so the stale group
               // must be skipped right here instead.
-              const entity = entities.find((e) => e.name === result.entityName);
+              // Round 1480: case-insensitive, for the identical reason
+              // handleShowAll's own lookup above was just made
+              // case-insensitive -- a case-only entity rename from a
+              // mid-session refine isn't a drop (which this guard already
+              // handled since round 1122), so the group must survive it,
+              // not vanish from the panel over a casing difference alone.
+              const entity = entities.find((e) => e.name.toLowerCase() === result.entityName.toLowerCase());
               if (!entity) return null;
               const displayed = expandedSamples[result.entityName] ?? result.sample;
               const remaining = result.totalMatches - displayed.length;
