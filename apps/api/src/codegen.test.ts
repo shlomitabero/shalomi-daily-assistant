@@ -17321,6 +17321,26 @@ test("the exported EntityView's badgeTone classifies 'Hired' as positive, matchi
 });
 
 /**
+ * Regression test for round 1478's finding: the built-in Donation domain
+ * entity's own status enum (spec-engine/domainEntities.ts) is exactly
+ * ["Pledged", "Received", "Refunded"], and the Inventory template's
+ * PurchaseOrder entity (spec-engine/templates.ts) is exactly
+ * ["draft", "ordered", "received", "cancelled"] -- "Received"/"received"
+ * fell through to neutral gray in this exact exported copy too, mirroring
+ * the live-preview fix. Runs the real generated badgeTone, not a
+ * reference copy.
+ */
+test("the exported EntityView's badgeTone classifies 'Received' as positive, matching Donation's and PurchaseOrder's real status enums", () => {
+  const entityViewJsx = generateExportFiles(project).find((f) => f.path === "web/src/components/EntityView.jsx")!.content;
+  const badgeToneSrc = entityViewJsx.match(/const POSITIVE_WORDS[\s\S]*?\nfunction badgeTone\(rawValue\) \{[\s\S]*?\n\}\n/)?.[0];
+  assert.ok(badgeToneSrc, "expected to find POSITIVE_WORDS/NEGATIVE_WORDS/badgeTone in generated output");
+
+  const badgeTone = new Function(`${badgeToneSrc}\nreturn badgeTone;`)() as (v: string) => string;
+  assert.equal(badgeTone("Received"), "positive");
+  assert.equal(badgeTone("Pledged"), "neutral");
+});
+
+/**
  * New in this round: the exported standalone app's entity table columns
  * were a fixed auto-layout width, unlike the live Forge AI preview (round
  * 185's own drag-to-resize columns, persisted per entity via

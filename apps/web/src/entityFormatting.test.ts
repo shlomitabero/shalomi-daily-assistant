@@ -200,6 +200,24 @@ test("badgeTone recognizes 'Hired' as positive, matching JobApplicant's real sta
   assert.equal(badgeTone("Rejected"), "negative");
 });
 
+/**
+ * Round 1478's finding: the built-in Donation domain entity's own status
+ * enum (spec-engine/domainEntities.ts) is exactly
+ * ["Pledged", "Received", "Refunded"], and the Inventory template's
+ * PurchaseOrder entity (spec-engine/templates.ts, both he/en variants) is
+ * exactly ["draft", "ordered", "received", "cancelled"] -- in both,
+ * "Received"/"received" is the successful-completion state, the same
+ * real-world event "Delivered" already covers from the sender's side --
+ * but it fell through to neutral gray, the same tone as the merely-pending
+ * "Pledged"/"ordered" states, since "received" was missing from
+ * POSITIVE_WORDS.
+ */
+test("badgeTone recognizes 'Received' as positive, matching Donation's and PurchaseOrder's real status enums", () => {
+  assert.equal(badgeTone("Received"), "positive");
+  assert.equal(badgeTone("received"), "positive");
+  assert.equal(badgeTone("Pledged"), "neutral");
+});
+
 test("formatDateValue formats a valid ISO date per locale, and leaves an invalid one unchanged", () => {
   const result = formatDateValue("2026-03-15", "en");
   assert.match(result, /3\/15\/2026|15\/3\/2026/); // exact format is locale/engine-dependent, just confirm it parsed

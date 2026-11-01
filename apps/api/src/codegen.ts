@@ -2821,6 +2821,12 @@ const POSITIVE_WORDS = [
   // right alongside "Rejected" (a NEGATIVE_WORDS entry), the same
   // positive-sibling-of-a-negative-value shape "won" already handles.
   "hired",
+  // round 1478: mirrors the live preview's own entityFormatting.ts fix --
+  // the built-in Donation domain entity's status enum and the Inventory
+  // template's PurchaseOrder entity both use "Received"/"received" as
+  // their successful-completion state, the exact same real-world event
+  // "delivered" already covers from the sender's side.
+  "received",
 ];
 // round 458: the "un-"/"dis-" negated forms below must stay listed here too --
 // each contains a POSITIVE_WORDS entry as a literal substring ("unpaid"

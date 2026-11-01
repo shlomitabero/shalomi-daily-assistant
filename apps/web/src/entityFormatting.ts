@@ -76,6 +76,16 @@ const POSITIVE_WORDS = [
   // "Interviewing"/"Offer" instead of reading as positive, even though
   // it's exactly as conclusive an outcome as "Won" already listed above.
   "hired",
+  // round 1478: the built-in Donation domain entity's own status enum (see
+  // spec-engine/domainEntities.ts: ["Pledged", "Received", "Refunded"]) and
+  // the Inventory template's PurchaseOrder entity (see templates.ts, both
+  // he/en variants: ["draft", "ordered", "received", "cancelled"]) both use
+  // "Received"/"received" as their successful-completion state -- the exact
+  // same real-world event "delivered" already covers from the sender's side
+  // -- so a received donation/purchase order showed the same neutral gray
+  // badge as the merely-pending "Pledged"/"ordered" states instead of
+  // reading as positive.
+  "received",
 ];
 const NEGATIVE_WORDS = [
   "lost",
