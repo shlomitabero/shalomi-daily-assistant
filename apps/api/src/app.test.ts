@@ -5971,6 +5971,121 @@ test("cloning a project whose name is already near the 200-char cap truncates th
   });
 });
 
+/**
+ * Round 1411: RenameEntityLabelSchema/RenameFieldLabelSchema/
+ * RenameCheckpointSchema/AddRoleSchema/AddAssumptionSchema/AddPersonaSchema/
+ * AddEntitySchema/AddFieldSchema all had a `.min(1)` floor (or no floor at
+ * all for `label` on AddEntitySchema/AddFieldSchema) but no `.max()`
+ * ceiling -- the same "unbounded free-text field" pattern rounds 1403/
+ * 1404/1408/1409/1410 already closed elsewhere, on a sibling family those
+ * rounds never touched. The whole spec (every entity/field label, every
+ * role/persona/assumption) is re-fetched on every GET /projects/:id --
+ * every page load, by every collaborator -- so this is not a one-shot cost.
+ */
+test("every entity/field/checkpoint label and role/assumption/persona rejects an oversized value with 400, instead of accepting an unbounded string", async () => {
+  await withServer(async (baseUrl) => {
+    const token = await signup(baseUrl, "spec-maxlen-owner@example.com");
+    const createRes = await fetch(`${baseUrl}/api/projects`, {
+      method: "POST",
+      headers: authHeaders(token),
+      body: JSON.stringify({ description: "A CRM with customers and deals." }),
+    });
+    const { project } = (await createRes.json()) as {
+      project: { id: string; spec: { entities: { name: string; fields: { name: string }[] }[] } };
+    };
+    const entityName = project.spec.entities[0].name;
+    const fieldName = project.spec.entities[0].fields[0].name;
+
+    const oversizedEntityLabelRes = await fetch(`${baseUrl}/api/projects/${project.id}/entities/${entityName}/label`, {
+      method: "PATCH",
+      headers: authHeaders(token),
+      body: JSON.stringify({ label: "x".repeat(201) }),
+    });
+    assert.equal(oversizedEntityLabelRes.status, 400);
+    assert.equal(((await oversizedEntityLabelRes.json()) as { code?: string }).code, "VALIDATION_ERROR");
+
+    const oversizedFieldLabelRes = await fetch(`${baseUrl}/api/projects/${project.id}/entities/${entityName}/fields/${fieldName}/label`, {
+      method: "PATCH",
+      headers: authHeaders(token),
+      body: JSON.stringify({ label: "x".repeat(201) }),
+    });
+    assert.equal(oversizedFieldLabelRes.status, 400);
+    assert.equal(((await oversizedFieldLabelRes.json()) as { code?: string }).code, "VALIDATION_ERROR");
+
+    const oversizedAddEntityRes = await fetch(`${baseUrl}/api/projects/${project.id}/entities`, {
+      method: "POST",
+      headers: authHeaders(token),
+      body: JSON.stringify({ label: "x".repeat(201) }),
+    });
+    assert.equal(oversizedAddEntityRes.status, 400);
+    assert.equal(((await oversizedAddEntityRes.json()) as { code?: string }).code, "VALIDATION_ERROR");
+
+    const oversizedAddFieldRes = await fetch(`${baseUrl}/api/projects/${project.id}/entities/${entityName}/fields`, {
+      method: "POST",
+      headers: authHeaders(token),
+      body: JSON.stringify({ label: "x".repeat(201) }),
+    });
+    assert.equal(oversizedAddFieldRes.status, 400);
+    assert.equal(((await oversizedAddFieldRes.json()) as { code?: string }).code, "VALIDATION_ERROR");
+
+    const oversizedRoleRes = await fetch(`${baseUrl}/api/projects/${project.id}/roles`, {
+      method: "POST",
+      headers: authHeaders(token),
+      body: JSON.stringify({ role: "x".repeat(501) }),
+    });
+    assert.equal(oversizedRoleRes.status, 400);
+    assert.equal(((await oversizedRoleRes.json()) as { code?: string }).code, "VALIDATION_ERROR");
+
+    const oversizedAssumptionRes = await fetch(`${baseUrl}/api/projects/${project.id}/assumptions`, {
+      method: "POST",
+      headers: authHeaders(token),
+      body: JSON.stringify({ assumption: "x".repeat(501) }),
+    });
+    assert.equal(oversizedAssumptionRes.status, 400);
+    assert.equal(((await oversizedAssumptionRes.json()) as { code?: string }).code, "VALIDATION_ERROR");
+
+    const oversizedPersonaRes = await fetch(`${baseUrl}/api/projects/${project.id}/personas`, {
+      method: "POST",
+      headers: authHeaders(token),
+      body: JSON.stringify({ persona: "x".repeat(501) }),
+    });
+    assert.equal(oversizedPersonaRes.status, 400);
+    assert.equal(((await oversizedPersonaRes.json()) as { code?: string }).code, "VALIDATION_ERROR");
+
+    // Nothing above should have touched the stored spec.
+    const unchangedRes = await fetch(`${baseUrl}/api/projects/${project.id}`, { headers: authHeaders(token) });
+    const { project: unchanged } = (await unchangedRes.json()) as {
+      project: { spec: { roles: string[]; assumptions: string[]; personas: string[]; entities: { name: string; fields: { name: string }[] }[] } };
+    };
+    assert.equal(unchanged.spec.entities.length, project.spec.entities.length, "the oversized add-entity attempt must not have been persisted");
+    assert.equal(
+      unchanged.spec.entities[0].fields.length,
+      project.spec.entities[0].fields.length,
+      "the oversized add-field attempt must not have been persisted",
+    );
+    assert.equal(unchanged.spec.roles.every((r) => r.length < 501), true, "the oversized role attempt must not have been persisted");
+    assert.equal(unchanged.spec.assumptions.every((a) => a.length < 501), true, "the oversized assumption attempt must not have been persisted");
+    assert.equal(unchanged.spec.personas.every((p) => p.length < 501), true, "the oversized persona attempt must not have been persisted");
+
+    // Checkpoint rename: build the project first, since a checkpoint only exists once built.
+    const buildRes = await fetch(`${baseUrl}/api/projects/${project.id}/build`, {
+      method: "POST",
+      headers: authHeaders(token),
+    });
+    assert.equal(buildRes.status, 200);
+    await collectSSE(buildRes);
+    const checkpointsRes = await fetch(`${baseUrl}/api/projects/${project.id}/checkpoints`, { headers: authHeaders(token) });
+    const { checkpoints } = (await checkpointsRes.json()) as { checkpoints: { id: string }[] };
+    const oversizedCheckpointRes = await fetch(`${baseUrl}/api/projects/${project.id}/checkpoints/${checkpoints[0].id}`, {
+      method: "PATCH",
+      headers: authHeaders(token),
+      body: JSON.stringify({ label: "x".repeat(201) }),
+    });
+    assert.equal(oversizedCheckpointRes.status, 400);
+    assert.equal(((await oversizedCheckpointRes.json()) as { code?: string }).code, "VALIDATION_ERROR");
+  });
+});
+
 test("GET /templates returns the Templates Gallery's display metadata, but never a template's full spec", async () => {
   await withServer(async (baseUrl) => {
     const token = await signup(baseUrl, "templates-list1@example.com");

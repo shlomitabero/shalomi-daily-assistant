@@ -485,16 +485,38 @@ const UpdateProjectDescriptionSchema = z.object({
   description: z.string().trim().min(1, "description is required").max(5000, "description must be 5000 characters or fewer"),
 });
 
+/**
+ * Round 1411: none of these 8 schemas' own free-text fields had a `.max()`
+ * -- the same "unbounded free-text field" pattern rounds 1403/1404/1408/
+ * 1409/1410 already closed elsewhere in this file, but on a sibling family
+ * (entity/field/checkpoint labels, roles/personas/assumptions) those rounds
+ * never touched. Unlike those closed instances, there's no cap at ANY layer
+ * here -- not even the broader ProductSpecSchema in packages/shared, which
+ * also only enforces `.min(1)` on `label`/`roles`/`personas`/`assumptions`.
+ * The whole spec (every entity/field label, every role/persona/assumption)
+ * is re-fetched and shipped on every `GET /projects/:id` -- every page
+ * load, by every collaborator -- so one oversized value set once bloats
+ * every future load of this project, forever, not a one-shot cost. It's
+ * also embedded verbatim into the calendar ICS feed (a real third-party
+ * calendar app has to parse it), the Business Twin report, and print/export
+ * output. `label` fields are short display names (tab/column headers,
+ * dropdown options) -- capped at PROJECT_NAME_MAX_LENGTH, the same
+ * convention `name` already uses. `role`/`assumption`/`persona` are short
+ * free-text phrases, not raw paragraphs, so capped a bit higher at 500.
+ */
+const SPEC_LABEL_MAX_LENGTH = PROJECT_NAME_MAX_LENGTH;
+const SPEC_PHRASE_MAX_LENGTH = 500;
+
 const RenameEntityLabelSchema = z.object({
-  label: z.string().trim().min(1, "label is required"),
+  label: z.string().trim().min(1, "label is required").max(SPEC_LABEL_MAX_LENGTH, "label must be 200 characters or fewer"),
 });
 
 const RenameCheckpointSchema = z.object({
-  label: z.string().trim().min(1, "label is required"),
+  label: z.string().trim().min(1, "label is required").max(SPEC_LABEL_MAX_LENGTH, "label must be 200 characters or fewer"),
 });
 
 const RenameFieldLabelSchema = z.object({
-  label: z.string().trim().min(1, "label is required"),
+  label: z.string().trim().min(1, "label is required").max(SPEC_LABEL_MAX_LENGTH, "label must be 200 characters or fewer"),
 });
 
 const SetFieldRequiredSchema = z.object({
@@ -502,19 +524,19 @@ const SetFieldRequiredSchema = z.object({
 });
 
 const AddRoleSchema = z.object({
-  role: z.string().trim().min(1, "role is required"),
+  role: z.string().trim().min(1, "role is required").max(SPEC_PHRASE_MAX_LENGTH, "role must be 500 characters or fewer"),
 });
 
 const AddAssumptionSchema = z.object({
-  assumption: z.string().trim().min(1, "assumption is required"),
+  assumption: z.string().trim().min(1, "assumption is required").max(SPEC_PHRASE_MAX_LENGTH, "assumption must be 500 characters or fewer"),
 });
 
 const AddPersonaSchema = z.object({
-  persona: z.string().trim().min(1, "persona is required"),
+  persona: z.string().trim().min(1, "persona is required").max(SPEC_PHRASE_MAX_LENGTH, "persona must be 500 characters or fewer"),
 });
 
 const AddEntitySchema = z.object({
-  label: z.string().trim().min(1, "label is required"),
+  label: z.string().trim().min(1, "label is required").max(SPEC_LABEL_MAX_LENGTH, "label must be 200 characters or fewer"),
 });
 
 /**
@@ -537,7 +559,7 @@ const AddEntitySchema = z.object({
  */
 const AddFieldSchema = z
   .object({
-    label: z.string().trim().min(1, "label is required"),
+    label: z.string().trim().min(1, "label is required").max(SPEC_LABEL_MAX_LENGTH, "label must be 200 characters or fewer"),
     type: z.enum(FIELD_TYPES).default("text"),
     required: z.boolean().default(false),
     // Comma-separated in the request body (what the UI's own single text

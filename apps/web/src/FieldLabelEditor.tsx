@@ -122,6 +122,7 @@ export function FieldLabelEditor({
         value={draft}
         autoFocus
         disabled={busy}
+        maxLength={200}
         onChange={(e) => setDraft(e.target.value)}
         onBlur={save}
         onClick={(e) => e.stopPropagation()}

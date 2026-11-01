@@ -170,6 +170,7 @@ export function CheckpointLabelEditor({
           value={draft}
           autoFocus
           disabled={busy}
+          maxLength={200}
           data-escape-handled-locally
           onChange={(e) => setDraft(e.target.value)}
           onBlur={save}

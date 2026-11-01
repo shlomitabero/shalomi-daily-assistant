@@ -142,6 +142,7 @@ export function EntityLabelEditor({
           value={draft}
           autoFocus
           disabled={busy}
+          maxLength={200}
           onChange={(e) => setDraft(e.target.value)}
           onBlur={save}
           onKeyDown={(e) => {

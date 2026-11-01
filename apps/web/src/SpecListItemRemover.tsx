@@ -243,6 +243,7 @@ export function RoleChip({
             value={rename.draft}
             autoFocus
             disabled={rename.busy}
+            maxLength={500}
             onChange={(e) => rename.setDraft(e.target.value)}
             onBlur={rename.save}
             onKeyDown={(e) => {
@@ -368,6 +369,7 @@ export function AssumptionItem({
             value={rename.draft}
             autoFocus
             disabled={rename.busy}
+            maxLength={500}
             onChange={(e) => rename.setDraft(e.target.value)}
             onBlur={rename.save}
             onKeyDown={(e) => {
@@ -500,6 +502,7 @@ export function PersonaItem({
             value={rename.draft}
             autoFocus
             disabled={rename.busy}
+            maxLength={500}
             onChange={(e) => rename.setDraft(e.target.value)}
             onBlur={rename.save}
             onKeyDown={(e) => {
@@ -804,6 +807,7 @@ export function EntitySummaryItem({
             value={rename.draft}
             autoFocus
             disabled={rename.busy}
+            maxLength={200}
             onChange={(e) => rename.setDraft(e.target.value)}
             onBlur={rename.save}
             onKeyDown={(e) => {
@@ -1170,6 +1174,7 @@ export function FieldChip({
             value={rename.draft}
             autoFocus
             disabled={rename.busy}
+            maxLength={200}
             onChange={(e) => rename.setDraft(e.target.value)}
             onBlur={rename.save}
             onKeyDown={(e) => {
@@ -1406,6 +1411,7 @@ export function AddRoleForm({
         placeholder={t("spec.roles.addPlaceholder")}
         aria-label={t("spec.roles.addPlaceholder")}
         disabled={formDisabled}
+        maxLength={500}
       />
       <button type="submit" className="secondary" disabled={formDisabled || !value.trim()}>
         {t("spec.roles.add")}
@@ -1477,6 +1483,7 @@ export function AddEntityForm({
         placeholder={t("spec.entities.addPlaceholder")}
         aria-label={t("spec.entities.addPlaceholder")}
         disabled={formDisabled}
+        maxLength={200}
       />
       <button type="submit" className="secondary" disabled={formDisabled || !value.trim()}>
         {t("spec.entities.add")}
@@ -1618,6 +1625,7 @@ export function AddFieldForm({
         placeholder={t("spec.fields.addPlaceholder")}
         aria-label={t("spec.fields.addPlaceholder")}
         disabled={formDisabled}
+        maxLength={200}
       />
       <select value={type} onChange={(e) => handleTypeChange(e.target.value as Field["type"])} disabled={formDisabled} aria-label={t("spec.fields.type")}>
         {FIELD_TYPES.map((ft) => (
@@ -1698,6 +1706,7 @@ export function AddAssumptionForm({
         placeholder={t("spec.assumptions.addPlaceholder")}
         aria-label={t("spec.assumptions.addPlaceholder")}
         disabled={formDisabled}
+        maxLength={500}
       />
       <button type="submit" className="secondary" disabled={formDisabled || !value.trim()}>
         {t("spec.assumptions.add")}
@@ -1749,6 +1758,7 @@ export function AddPersonaForm({
         placeholder={t("spec.personas.addPlaceholder")}
         aria-label={t("spec.personas.addPlaceholder")}
         disabled={formDisabled}
+        maxLength={500}
       />
       <button type="submit" className="secondary" disabled={formDisabled || !value.trim()}>
         {t("spec.personas.add")}
