@@ -1171,6 +1171,34 @@ test("an incoming WhatsApp poll (across client-version field variants, and with 
 });
 
 /**
+ * Round 1449: an incoming WhatsApp poll VOTE (tapping an option on a poll
+ * someone already created) -- previously dropped with zero trace, the one
+ * remaining gap in round 1051's own poll handling, which only covered poll
+ * *creation* -- is now logged with a generic placeholder. The vote's own
+ * encrypted payload still can't be decoded here (same as round 1051's doc
+ * comment already noted), so this only proves a vote arrived at all.
+ */
+test("an incoming WhatsApp poll vote is logged with a generic placeholder instead of being silently dropped", async () => {
+  const { manager, createdSockets, db } = setupManager();
+  insertProject(db, project);
+  applyMigrations(db, project.id, project.spec);
+  markProjectBuilt(db, project.id);
+
+  await manager.connect(project.id);
+  createdSockets[0].emitConnectionUpdate({ connection: "open" });
+
+  createdSockets[0].emitMessagesUpsert({
+    type: "notify",
+    messages: [{ key: { remoteJid: "972501234567@s.whatsapp.net", fromMe: false }, message: { pollUpdateMessage: {} } }],
+  });
+
+  const { messages } = listWhatsAppMessages(db, project.id);
+  assert.equal(messages.length, 1);
+  assert.equal(messages[0].body, "[Poll vote]");
+  assert.equal(messages[0].direction, "in");
+});
+
+/**
  * Round 1088: an incoming WhatsApp emoji reaction (long-press a message,
  * tap an emoji) -- previously dropped with zero trace, the same gap round
  * 1051's own doc comment left open for "every other still-unrecognized

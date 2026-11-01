@@ -121,6 +121,7 @@ export interface BaileysIncomingMessage {
     pollCreationMessageV2?: { name?: string };
     pollCreationMessageV3?: { name?: string };
     pollCreationMessageV5?: { name?: string };
+    pollUpdateMessage?: Record<string, never>;
     reactionMessage?: { text?: string };
     buttonsResponseMessage?: { selectedButtonId?: string; selectedDisplayText?: string };
     listResponseMessage?: { title?: string; description?: string; singleSelectReply?: { selectedRowId?: string } };
@@ -395,6 +396,19 @@ function describeIncomingMessage(message: BaileysIncomingMessage["message"]): st
   const poll =
     message.pollCreationMessage ?? message.pollCreationMessageV2 ?? message.pollCreationMessageV3 ?? message.pollCreationMessageV5;
   if (poll) return poll.name ? `[Poll] ${poll.name}` : "[Poll]";
+  // Round 1449: a poll VOTE (tapping an option on a poll someone already
+  // created), as opposed to the poll's own creation handled just above.
+  // pollUpdateMessage.vote.encPayload is genuinely encrypted (see this
+  // file's own round-1051 doc comment above), so which option was picked
+  // can't be recovered here -- but detecting that a vote arrived at all
+  // needs no decryption, same shape as reactionMessage's "[Reaction
+  // removed]" case just below. Without this, every poll vote silently hits
+  // the final `return null` and is dropped with zero trace, exactly the
+  // bug this file's whole placeholder-convention family (rounds 1035/1051/
+  // 1088/1106/1121/1139/1142/1152/1445) exists to close -- undermining the
+  // adjacent poll-creation feature itself, which logs the question but
+  // then goes silent on every vote it gets.
+  if (message.pollUpdateMessage) return "[Poll vote]";
   if (message.reactionMessage) return message.reactionMessage.text ? `[Reaction] ${message.reactionMessage.text}` : "[Reaction removed]";
   if (message.buttonsResponseMessage) {
     const b = message.buttonsResponseMessage;
