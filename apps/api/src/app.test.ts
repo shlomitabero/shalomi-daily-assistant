@@ -19792,6 +19792,92 @@ test("POST /public/webhook-in/:projectId/:entityName rejects a record referencin
   });
 });
 
+/**
+ * Round 1418: a real third-party sender (Stripe, Typeform) retries a
+ * delivery on any non-2xx response or a dropped ack, which is normal,
+ * documented behavior -- until now this route had no dedup at all, unlike
+ * every other mutating route in the app (see withIdempotency's own doc
+ * comment, and routes/webhookIn.ts's new comment on reusing it here with
+ * projectId standing in for the userId column this pre-auth route has
+ * none of). A retried delivery would otherwise create a second, duplicate
+ * record and re-fire the matching automation a second time -- a real
+ * duplicate WhatsApp/email send to an actual recipient.
+ */
+test("POST /public/webhook-in/:projectId/:entityName with an X-Idempotency-Key header: a retried delivery replays the same record id and does not create a duplicate record or re-fire the automation", async () => {
+  let createdSockets: ReturnType<typeof createFakeWhatsAppSocket>[] = [];
+  await withServer(
+    async (baseUrl, db) => {
+      const email = `webhook-in-idempotency-${randomUUID()}@example.com`;
+      const authToken = await signup(baseUrl, email);
+      const user = findUserByEmail(db, email)!;
+      const spec: ProductSpec = {
+        summary: "test",
+        personas: [],
+        roles: ["Admin"],
+        entities: [{ name: "Lead", fields: [{ name: "name", type: "text", required: true }, { name: "phone", type: "text" }] }],
+        screens: [],
+        assumptions: [],
+        openQuestions: [],
+      };
+      const projectId = randomUUID();
+      insertProject(db, { id: projectId, ownerId: user.id, name: "CRM", description: "test", spec });
+      diffAndMigrate(db, projectId, undefined, spec);
+      markProjectBuilt(db, projectId);
+
+      await fetch(`${baseUrl}/api/projects/${projectId}/integrations/whatsapp/connect`, { method: "POST", headers: authHeaders(authToken) });
+      createdSockets[0].sock.user = { id: "15550009999:1@s.whatsapp.net" };
+      createdSockets[0].emitConnectionUpdate({ connection: "open" });
+      await fetch(`${baseUrl}/api/projects/${projectId}/entities/Lead/automations`, {
+        method: "POST",
+        headers: authHeaders(authToken),
+        body: JSON.stringify({ trigger: "record_created", actionType: "send_whatsapp", toMode: "field", toField: "phone", messageTemplate: "New lead!" }),
+      });
+
+      const tokenRes = await fetch(`${baseUrl}/api/projects/${projectId}/inbound-webhook-token`, { headers: authHeaders(authToken) });
+      const { token: webhookToken } = (await tokenRes.json()) as { token: string };
+
+      const deliveryHeaders = { "Content-Type": "application/json", "X-Idempotency-Key": `delivery-${randomUUID()}` };
+      const body = JSON.stringify({ name: "Dana", phone: "972500000001" });
+
+      const firstRes = await fetch(`${baseUrl}/api/public/webhook-in/${projectId}/Lead?token=${webhookToken}`, {
+        method: "POST",
+        headers: deliveryHeaders,
+        body,
+      });
+      assert.equal(firstRes.status, 201);
+      const { id: firstRecordId } = (await firstRes.json()) as { id: string };
+
+      // A real sender's retry: same key, same body, as if the first ack
+      // never reached it.
+      const retryRes = await fetch(`${baseUrl}/api/public/webhook-in/${projectId}/Lead?token=${webhookToken}`, {
+        method: "POST",
+        headers: deliveryHeaders,
+        body,
+      });
+      assert.equal(retryRes.status, 201, "a replayed delivery must still look like a successful create to the retrying sender");
+      const { id: retryRecordId } = (await retryRes.json()) as { id: string };
+      assert.equal(retryRecordId, firstRecordId, "a retried delivery must get back the SAME record id, not create a second record");
+
+      const listRes = await fetch(`${baseUrl}/api/projects/${projectId}/entities/Lead`, { headers: authHeaders(authToken) });
+      const { records } = (await listRes.json()) as { records: { id: string }[] };
+      assert.equal(records.length, 1, "the retried delivery must not have created a second, duplicate record");
+
+      // The not-awaited automation fire needs a tick to actually run.
+      for (let i = 0; i < 40 && createdSockets[0].sendCalls.length === 0; i++) {
+        await new Promise((resolve) => setTimeout(resolve, 0));
+      }
+      assert.equal(createdSockets[0].sendCalls.length, 1, "the retried delivery must not re-fire the record_created automation a second time");
+    },
+    {
+      whatsapp: (db) => {
+        const { manager, createdSockets: sockets } = createTestWhatsAppManager(db);
+        createdSockets = sockets;
+        return manager;
+      },
+    },
+  );
+});
+
 test("POST /projects/:id/inbound-webhook-token/regenerate is rate-limited per authenticated account: the 31st regenerate is rejected with 429, while a different account is unaffected", async () => {
   await withServer(async (baseUrl, db) => {
     const email = `webhook-in-rate-limit-${randomUUID()}@example.com`;

@@ -7,6 +7,8 @@ import type { WhatsAppWebManager } from "../whatsappWeb.js";
 import type { EmailSender } from "../email.js";
 import { runAutomationsForRecordChange } from "../automations.js";
 import { createRateLimiter } from "../auth/rateLimit.js";
+import { withIdempotency } from "../idempotency.js";
+import { HttpError } from "../httpError.js";
 
 function tokenMatches(provided: string, stored: string): boolean {
   const providedBuf = Buffer.from(provided, "utf8");
@@ -122,34 +124,67 @@ export function createInboundWebhookRouter(db: ForgeDatabase, whatsapp: WhatsApp
         status: row.status as Project["status"],
         createdAt: row.createdAt,
       };
-      let record: ReturnType<typeof insertRecord>;
-      try {
-        record = insertRecord(db, projectId, entity, req.body ?? {});
-      } catch (err) {
-        if (err instanceof Error && err.message === "FOREIGN KEY constraint failed") {
-          res.status(400).json({ error: "This record references another record that doesn't exist", code: "INVALID_RELATION_TARGET" });
-          return;
-        }
-        throw err;
-      }
-      // Not awaited -- see runAutomationsForRecordChange's own comment on
-      // the normal record-create route this mirrors: a WhatsApp/email/
-      // webhook send is a real network round-trip, and the external
-      // caller (Stripe, Typeform) is only waiting on an ack that their
-      // own event was received, not on anything downstream of it.
-      void runAutomationsForRecordChange(
+      // Round 1418: a real third-party sender (Stripe, Typeform, a generic
+      // form-posting service) retries a delivery on any non-2xx response or
+      // timeout -- that's normal, documented behavior, not an edge case --
+      // and until now this route had no dedup of any kind, unlike every
+      // other mutating route in the app (see withIdempotency's own doc
+      // comment). A retried delivery re-ran insertRecord (a real duplicate
+      // row) and re-fired runAutomationsForRecordChange (a real duplicate
+      // WhatsApp/email/webhook send to an actual recipient). This route has
+      // no req.userId (it's deliberately pre-auth, token-based -- see this
+      // file's own top-of-file comment), so it can't call withIdempotency
+      // the way every authenticated route does; idempotency_keys' own
+      // "userId" column is just a plain TEXT scoping field with no FK, so
+      // projectId is passed in that slot instead, with the route string
+      // already carrying projectId+entityName too (matching round 528's own
+      // per-resource-interpolation convention) -- an external sender that
+      // supports idempotency keys (Stripe's own outbound retries resend the
+      // identical event body, so a key derived from it would work too, but
+      // this route can't assume any particular body shape) can opt in via
+      // the same X-Idempotency-Key header every authenticated route already
+      // recognizes; a sender that doesn't send one gets today's unguarded
+      // behavior unchanged, per withIdempotency's own deliberate opt-in design.
+      const idempotencyKey = req.header("X-Idempotency-Key") || undefined;
+      const { status, body } = await withIdempotency(
         db,
-        whatsapp,
-        emailSender,
-        project,
-        entity,
-        "created",
-        record,
-        new Set(Object.keys(req.body ?? {})),
-        uploadsDir,
-        `${req.protocol}://${req.get("host")}`,
+        idempotencyKey,
+        projectId,
+        `POST /public/webhook-in/${projectId}/${entityName}`,
+        async () => {
+          let record: ReturnType<typeof insertRecord>;
+          try {
+            record = insertRecord(db, projectId, entity, req.body ?? {});
+          } catch (err) {
+            if (err instanceof Error && err.message === "FOREIGN KEY constraint failed") {
+              throw new HttpError(400, "This record references another record that doesn't exist", "INVALID_RELATION_TARGET");
+            }
+            throw err;
+          }
+          // Not awaited -- see runAutomationsForRecordChange's own comment on
+          // the normal record-create route this mirrors: a WhatsApp/email/
+          // webhook send is a real network round-trip, and the external
+          // caller (Stripe, Typeform) is only waiting on an ack that their
+          // own event was received, not on anything downstream of it. Firing
+          // it from inside this callback (not after withIdempotency returns)
+          // means a replayed retry -- which skips the callback entirely --
+          // never re-fires it either.
+          void runAutomationsForRecordChange(
+            db,
+            whatsapp,
+            emailSender,
+            project,
+            entity,
+            "created",
+            record,
+            new Set(Object.keys(req.body ?? {})),
+            uploadsDir,
+            `${req.protocol}://${req.get("host")}`,
+          );
+          return { status: 201, body: { id: record.id } };
+        },
       );
-      res.status(201).json({ id: record.id });
+      res.status(status).json(body);
     }),
   );
 
