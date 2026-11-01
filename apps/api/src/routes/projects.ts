@@ -3609,6 +3609,22 @@ export function createProjectsRouter(
               uploadsDir,
               `${req.protocol}://${req.get("host")}`,
             );
+          } else {
+            // Round 1413: this header has no server-side provenance check --
+            // any collaborator with write access can set it on an ordinary
+            // single-record create, not just the CSV-import path that's
+            // meant to send it (see the comment above). An editor who wants
+            // to defeat this project's automations already has a much
+            // bigger hammer available via the automation-rule CRUD routes
+            // themselves (PATCH/DELETE .../automations/:ruleId, both gated
+            // by this same requireProjectWriteAccess), so this isn't a
+            // privilege escalation -- but unlike disabling a rule, it leaves
+            // zero trace anywhere a project owner would look. This log line
+            // closes that trace gap without touching the header's existing
+            // behavior.
+            console.warn(
+              `X-Suppress-Automations: record ${record.id} created on entity "${entity.name}" of project ${project.id} by user ${req.userId} with automations suppressed`,
+            );
           }
           return { status: 201, body: { record } };
         },
@@ -5075,6 +5091,12 @@ export function createProjectsRouter(
               computeChangedFields(entity, before, record),
               uploadsDir,
               `${req.protocol}://${req.get("host")}`,
+            );
+          } else {
+            // Round 1413: same audit-trace gap as the POST route above --
+            // see its own comment.
+            console.warn(
+              `X-Suppress-Automations: record ${record.id} updated on entity "${entity.name}" of project ${project.id} by user ${req.userId} with automations suppressed`,
             );
           }
           return { status: 200, body: { record } };

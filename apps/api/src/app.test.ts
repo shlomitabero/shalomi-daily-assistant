@@ -3,7 +3,7 @@ import { createHash, randomUUID } from "node:crypto";
 import { existsSync, mkdirSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { test } from "node:test";
+import { mock, test } from "node:test";
 import type { AgentStepEvent, ProductSpec } from "@forge/shared";
 import {
   diffAndMigrate,
@@ -4142,6 +4142,82 @@ test("PATCH .../entities/:entityName/:recordId with X-Suppress-Automations skips
       },
     },
   );
+});
+
+/**
+ * Round 1413's Explore survey found that X-Suppress-Automations (the header
+ * the two tests above confirm skips the automation call) has no server-side
+ * provenance check at all -- any collaborator with write access can set it
+ * on an ordinary single-record create/update, not just the CSV-import path
+ * it's meant for. Verifying editor collaborators already hold
+ * requireProjectWriteAccess on the automation-rule PATCH/DELETE routes
+ * themselves (routes/projects.ts, ~line 5603/5657) showed this isn't a
+ * privilege escalation -- an editor who wants to defeat an automation can
+ * already disable or delete the rule outright, a strictly bigger hammer
+ * than silently skipping it for one record. What the header bypass uniquely
+ * has, that a rule-level disable doesn't, is zero trace: nothing in the
+ * project's own data changes, so nothing an owner looks at shows it
+ * happened. This test confirms the one-line console.warn fix for that trace
+ * gap: it fires exactly when the header actually suppresses an automation
+ * (both create and update), and not on an ordinary request without it.
+ */
+test("X-Suppress-Automations logs a warning identifying the record/entity/project/user when it actually suppresses an automation, on both create and update, but not on an ordinary request", async () => {
+  const warnCalls: unknown[][] = [];
+  const warnMock = mock.method(console, "warn", (...args: unknown[]) => {
+    warnCalls.push(args);
+  });
+  try {
+    await withServer(async (baseUrl) => {
+      const token = await signup(baseUrl, "suppress-automations-log@example.com");
+      const createRes = await fetch(`${baseUrl}/api/projects`, {
+        method: "POST",
+        headers: authHeaders(token),
+        body: JSON.stringify({
+          description:
+            "Build an appointment-management application for a beauty clinic. I need customers, appointments, employees, services, an admin dashboard and automatic appointment status tracking.",
+        }),
+      });
+      const { project } = (await createRes.json()) as { project: { id: string } };
+      const buildRes = await fetch(`${baseUrl}/api/projects/${project.id}/build`, { method: "POST", headers: authHeaders(token) });
+      await collectSSE(buildRes);
+
+      // An ordinary create (no header) must log nothing.
+      const ordinaryRes = await fetch(`${baseUrl}/api/projects/${project.id}/entities/Customer`, {
+        method: "POST",
+        headers: authHeaders(token),
+        body: JSON.stringify({ name: "Noa", email: "noa@example.com", status: "New", phone: "972500000005" }),
+      });
+      const { record: ordinary } = (await ordinaryRes.json()) as { record: { id: number } };
+      assert.equal(ordinaryRes.status, 201);
+      assert.equal(warnCalls.length, 0, "an ordinary create without the header must not log a suppression warning");
+
+      // A suppressed create must log one warning naming the new record.
+      const suppressedCreateRes = await fetch(`${baseUrl}/api/projects/${project.id}/entities/Customer`, {
+        method: "POST",
+        headers: { ...authHeaders(token), "x-suppress-automations": "true" },
+        body: JSON.stringify({ name: "Imported Customer", email: "imported@example.com", status: "New", phone: "972500000006" }),
+      });
+      const { record: imported } = (await suppressedCreateRes.json()) as { record: { id: number } };
+      assert.equal(suppressedCreateRes.status, 201);
+      assert.equal(warnCalls.length, 1);
+      assert.match(String(warnCalls[0]![0]), /X-Suppress-Automations/);
+      assert.match(String(warnCalls[0]![0]), new RegExp(`record ${imported.id} created`));
+      assert.match(String(warnCalls[0]![0]), new RegExp(`project ${project.id}`));
+
+      // A suppressed update on the earlier (ordinary-created) record must
+      // log a second warning naming that record as updated, not created.
+      const suppressedUpdateRes = await fetch(`${baseUrl}/api/projects/${project.id}/entities/Customer/${ordinary.id}`, {
+        method: "PATCH",
+        headers: { ...authHeaders(token), "x-suppress-automations": "true" },
+        body: JSON.stringify({ name: "Noa Updated" }),
+      });
+      assert.equal(suppressedUpdateRes.status, 200);
+      assert.equal(warnCalls.length, 2);
+      assert.match(String(warnCalls[1]![0]), new RegExp(`record ${ordinary.id} updated`));
+    });
+  } finally {
+    warnMock.mock.restore();
+  }
 });
 
 /**
