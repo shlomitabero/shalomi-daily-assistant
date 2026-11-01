@@ -22,6 +22,8 @@ import {
   updateAutomationRule,
   WEBHOOK_TIMEOUT_ERROR,
   WEBHOOK_UNREACHABLE_ERROR,
+  EMAIL_TIMEOUT_ERROR,
+  EMAIL_UNREACHABLE_ERROR,
   WHATSAPP_NOT_CONNECTED_ERROR,
 } from "./automations.js";
 
@@ -706,6 +708,72 @@ test("recordAutomationRun's retention prune keeps the newest 20 genuine-failure 
       .get("proj1", rule.id, WEBHOOK_UNREACHABLE_ERROR) as { c: number }
   ).c;
   assert.equal(unreachableCount, AUTOMATION_RUNS_RETENTION_LIMIT, "the webhook-unreachable rows must still be capped at the normal retention limit, just in their own independent bucket");
+});
+
+/**
+ * Round 1459: same bug class as the two webhook tests above (rounds
+ * 1442/1450), for send_email's own identical pair of network failures --
+ * fireEmailAction never gave EMAIL_TIMEOUT_ERROR/EMAIL_UNREACHABLE_ERROR
+ * their own retention buckets when the webhook sibling got this fix,
+ * despite sharing the exact same flood risk (a bulk-update over many
+ * records fires one send_email automation per record unsuppressed, round
+ * 1076's own reasoning, equally true for email).
+ */
+test("recordAutomationRun's retention prune keeps the newest 20 genuine-failure rows and the newest 20 email-timeout rows independently, so one kind can never evict the other", () => {
+  const db = openDatabase(":memory:");
+  ensureAutomationRulesTable(db);
+  const rule = insertAutomationRule(db, baseRule());
+
+  // One genuine, distinct failure first (e.g. invalid_email_address)...
+  recordAutomationRun(db, "proj1", rule.id, { status: "failed", error: "invalid_email_address" });
+  // ...then a timeout flood far past the old shared-bucket cap of 20 --
+  // e.g. a bulk-update over 30+ records while Resend is slow to respond.
+  for (let i = 0; i < 30; i++) {
+    recordAutomationRun(db, "proj1", rule.id, { status: "failed", error: EMAIL_TIMEOUT_ERROR });
+  }
+
+  const genuineCount = (
+    db
+      .prepare("SELECT COUNT(*) AS c FROM automation_runs WHERE projectId = ? AND ruleId = ? AND error != ?")
+      .get("proj1", rule.id, EMAIL_TIMEOUT_ERROR) as { c: number }
+  ).c;
+  assert.equal(genuineCount, 1, "the one genuine failure must survive an email-timeout flood of any length, not just a short one");
+
+  const timeoutCount = (
+    db
+      .prepare("SELECT COUNT(*) AS c FROM automation_runs WHERE projectId = ? AND ruleId = ? AND error = ?")
+      .get("proj1", rule.id, EMAIL_TIMEOUT_ERROR) as { c: number }
+  ).c;
+  assert.equal(timeoutCount, AUTOMATION_RUNS_RETENTION_LIMIT, "the email-timeout rows must still be capped at the normal retention limit, just in their own independent bucket");
+});
+
+test("recordAutomationRun's retention prune keeps the newest 20 genuine-failure rows and the newest 20 email-unreachable rows independently, so one kind can never evict the other", () => {
+  const db = openDatabase(":memory:");
+  ensureAutomationRulesTable(db);
+  const rule = insertAutomationRule(db, baseRule());
+
+  // One genuine, distinct failure first (e.g. invalid_email_address)...
+  recordAutomationRun(db, "proj1", rule.id, { status: "failed", error: "invalid_email_address" });
+  // ...then an unreachable-destination flood far past the old shared-bucket
+  // cap of 20 -- e.g. a bulk-update over 30+ records while Resend's own API
+  // is genuinely unreachable (DNS/TLS/connection failure).
+  for (let i = 0; i < 30; i++) {
+    recordAutomationRun(db, "proj1", rule.id, { status: "failed", error: EMAIL_UNREACHABLE_ERROR });
+  }
+
+  const genuineCount = (
+    db
+      .prepare("SELECT COUNT(*) AS c FROM automation_runs WHERE projectId = ? AND ruleId = ? AND error != ?")
+      .get("proj1", rule.id, EMAIL_UNREACHABLE_ERROR) as { c: number }
+  ).c;
+  assert.equal(genuineCount, 1, "the one genuine failure must survive an email-unreachable flood of any length, not just a short one");
+
+  const unreachableCount = (
+    db
+      .prepare("SELECT COUNT(*) AS c FROM automation_runs WHERE projectId = ? AND ruleId = ? AND error = ?")
+      .get("proj1", rule.id, EMAIL_UNREACHABLE_ERROR) as { c: number }
+  ).c;
+  assert.equal(unreachableCount, AUTOMATION_RUNS_RETENTION_LIMIT, "the email-unreachable rows must still be capped at the normal retention limit, just in their own independent bucket");
 });
 
 /**

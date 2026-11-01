@@ -3963,6 +3963,90 @@ test("AutomationsPanel translates a send_email rule's known raw error code (inva
 });
 
 /**
+ * Round 1459: the send_email counterpart of the webhook-timeout/network-
+ * error translation tests elsewhere in this file -- apps/api/src/
+ * automations.ts's fireEmailAction now normalizes a Resend-API timeout
+ * into the shared EMAIL_TIMEOUT_ERROR literal and a simply-unreachable
+ * destination into EMAIL_UNREACHABLE_ERROR (mirroring the webhook sibling
+ * rounds 1442/1450 already fixed). Before this round, translateAutomationError
+ * had no send_email branch at all for either literal, so both leaked raw
+ * English into this Hebrew-primary app's run history.
+ */
+test("AutomationsPanel translates a send_email rule's EMAIL_TIMEOUT_ERROR and EMAIL_UNREACHABLE_ERROR, instead of leaking the raw English literal", async () => {
+  await withJsdom(async () => {
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = (async (input: string) => {
+      if (input === "/api/projects/proj1/automations") {
+        return new Response(
+          JSON.stringify({
+            rules: [
+              makeRule({
+                actionType: "send_email",
+                toEmail: "owner@example.com",
+                emailSubject: "Daily report",
+                lastTriggeredAt: new Date("2026-03-15T09:00:00Z").toISOString(),
+                lastStatus: "failed",
+                lastError: "Resend API request timed out after 10000ms",
+              }),
+            ],
+          }),
+          { status: 200, headers: { "content-type": "application/json" } },
+        );
+      }
+      throw new Error(`unexpected request ${input}`);
+    }) as typeof fetch;
+
+    try {
+      renderPanel();
+      await waitForCondition(() => document.querySelectorAll(".automations-rule-row").length === 1);
+
+      const row = document.querySelector(".automations-rule-row") as HTMLElement;
+      assert.equal(row.textContent?.includes("Resend API request timed out"), false, "the raw English timeout literal must never leak into the rule row");
+      assert.match(row.textContent ?? "", /temporary issue|too long|יותר מדי זמן/, "the rule row must show a real translated timeout message");
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+});
+
+test("AutomationsPanel translates a send_email rule's EMAIL_UNREACHABLE_ERROR via the generic network-error fallback, instead of leaking the raw English literal", async () => {
+  await withJsdom(async () => {
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = (async (input: string) => {
+      if (input === "/api/projects/proj1/automations") {
+        return new Response(
+          JSON.stringify({
+            rules: [
+              makeRule({
+                actionType: "send_email",
+                toEmail: "owner@example.com",
+                emailSubject: "Daily report",
+                lastTriggeredAt: new Date("2026-03-15T09:00:00Z").toISOString(),
+                lastStatus: "failed",
+                lastError: "Resend API request failed: could not reach the destination",
+              }),
+            ],
+          }),
+          { status: 200, headers: { "content-type": "application/json" } },
+        );
+      }
+      throw new Error(`unexpected request ${input}`);
+    }) as typeof fetch;
+
+    try {
+      renderPanel();
+      await waitForCondition(() => document.querySelectorAll(".automations-rule-row").length === 1);
+
+      const row = document.querySelector(".automations-rule-row") as HTMLElement;
+      assert.equal(row.textContent?.includes("could not reach the destination"), false, "the raw English unreachable literal must never leak into the rule row");
+      assert.match(row.textContent ?? "", /network error|שגיאת רשת/, "the rule row must show a real translated network-error message");
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+});
+
+/**
  * Round 1166: rounds 935/1080 above only ever translated the stable
  * snake_case codes a per-send ATTEMPT failure stores (not_connected,
  * missing_country_code, invalid_email_address, ...). This rule never

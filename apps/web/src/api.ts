@@ -1441,6 +1441,11 @@ export const AUTOMATION_CONFIG_ERROR_CODES: Record<string, string> = {
   // itself is a fixed constant, never configurable) instead of letting
   // fetch/undici's generic, untranslatable AbortError message through.
   "Webhook request timed out after 10000ms": "AUTOMATION_WEBHOOK_TIMEOUT",
+  // Round 1459: the send_email action type's own equivalent -- email.ts's
+  // ResendEmailSender.performSend throws this exact literal on its own
+  // identical AbortController timeout (see EMAIL_TIMEOUT_ERROR's own doc
+  // comment, packages/db/src/automations.ts).
+  "Resend API request timed out after 10000ms": "AUTOMATION_EMAIL_TIMEOUT",
 };
 
 export interface WhatsAppAttachmentDescriptor {

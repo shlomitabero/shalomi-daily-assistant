@@ -82,6 +82,43 @@ export const WEBHOOK_TIMEOUT_ERROR = "Webhook request timed out after 10000ms";
  */
 export const WEBHOOK_UNREACHABLE_ERROR = "Webhook request failed: could not reach the destination";
 
+/**
+ * Round 1459: the "send_email" action type's own equivalent of
+ * WEBHOOK_TIMEOUT_ERROR above -- apps/api/src/email.ts's
+ * ResendEmailSender.performSend throws this exact, always-identical
+ * literal (its own AbortController timeout is a fixed 10_000ms constant in
+ * production, never configurable) on a Resend API call that didn't
+ * respond in time. fireEmailAction (apps/api/src/automations.ts) re-throws
+ * this literal verbatim rather than needing its own abort-signal check, so
+ * this constant doubles as both the shared value this module's own
+ * retention pruning keys on AND the literal performSend already produces
+ * -- no separate detection logic needed, unlike WEBHOOK_TIMEOUT_ERROR's
+ * own controller.signal.aborted check (fireWebhookAction constructs its
+ * own AbortController inline; fireEmailAction's network call is
+ * encapsulated inside ResendEmailSender and never sees the signal
+ * directly). Same flood risk as every sibling bucket above: a bulk-update
+ * over many records fires one send_email automation per record
+ * unsuppressed (round 1076's own reasoning, equally true for email), and
+ * if Resend is slow/unreachable right then, every one times out with this
+ * exact literal.
+ */
+export const EMAIL_TIMEOUT_ERROR = "Resend API request timed out after 10000ms";
+
+/**
+ * Round 1459: the "send_email" action type's own equivalent of
+ * WEBHOOK_UNREACHABLE_ERROR above -- a Resend API call that fails before
+ * the 10s timeout ever fires (DNS failure, connection refused, TLS
+ * failure) rejects with Node's own fetch/undici TypeError, always the
+ * identical message "fetch failed" regardless of the underlying cause,
+ * exactly like the webhook case. fireEmailAction normalizes that generic,
+ * untranslatable literal into this stable constant the same way
+ * fireWebhookAction already does for WEBHOOK_UNREACHABLE_ERROR, so this
+ * module's own retention pruning and apps/api/src/automations.ts agree on
+ * one literal instead of a flood of "fetch failed" rows evicting a
+ * genuinely different, older failure for this rule.
+ */
+export const EMAIL_UNREACHABLE_ERROR = "Resend API request failed: could not reach the destination";
+
 export interface AutomationRule {
   id: string;
   projectId: string;
@@ -787,6 +824,22 @@ export function recordAutomationRun(
       SELECT id FROM automation_runs WHERE projectId = ? AND ruleId = ? AND error = ? AND (isTest IS NULL OR isTest = 0) ORDER BY triggeredAt DESC, rowid DESC LIMIT ?
     )`,
   ).run(projectId, id, WEBHOOK_UNREACHABLE_ERROR, projectId, id, WEBHOOK_UNREACHABLE_ERROR, AUTOMATION_RUNS_RETENTION_LIMIT);
+  // Round 1459: mirrors the WEBHOOK_TIMEOUT_ERROR bucket above, for
+  // EMAIL_TIMEOUT_ERROR's own identical flood risk -- send_email's own
+  // Resend-API timeout case, never given its own bucket when rounds
+  // 1442/1450 did this for webhook's two network-failure cases.
+  db.prepare(
+    `DELETE FROM automation_runs WHERE projectId = ? AND ruleId = ? AND error = ? AND (isTest IS NULL OR isTest = 0) AND id NOT IN (
+      SELECT id FROM automation_runs WHERE projectId = ? AND ruleId = ? AND error = ? AND (isTest IS NULL OR isTest = 0) ORDER BY triggeredAt DESC, rowid DESC LIMIT ?
+    )`,
+  ).run(projectId, id, EMAIL_TIMEOUT_ERROR, projectId, id, EMAIL_TIMEOUT_ERROR, AUTOMATION_RUNS_RETENTION_LIMIT);
+  // Round 1459: mirrors the WEBHOOK_UNREACHABLE_ERROR bucket above, for
+  // EMAIL_UNREACHABLE_ERROR's own identical flood risk.
+  db.prepare(
+    `DELETE FROM automation_runs WHERE projectId = ? AND ruleId = ? AND error = ? AND (isTest IS NULL OR isTest = 0) AND id NOT IN (
+      SELECT id FROM automation_runs WHERE projectId = ? AND ruleId = ? AND error = ? AND (isTest IS NULL OR isTest = 0) ORDER BY triggeredAt DESC, rowid DESC LIMIT ?
+    )`,
+  ).run(projectId, id, EMAIL_UNREACHABLE_ERROR, projectId, id, EMAIL_UNREACHABLE_ERROR, AUTOMATION_RUNS_RETENTION_LIMIT);
   // Round 1416: this catch-all bucket had no isTest awareness at all --
   // round 1263 gave isTest rows their own flag and taught
   // hasTooManyConsecutiveFailuresToday (apps/api/src/automations.ts) to
@@ -804,8 +857,8 @@ export function recordAutomationRun(
   // 1263's own ALTER TABLE (see ensureAutomationRunsTable above), which
   // never got a value and so are not Test rows.
   db.prepare(
-    `DELETE FROM automation_runs WHERE projectId = ? AND ruleId = ? AND (error IS NULL OR (error != ? AND error != ? AND error != ? AND error != ?)) AND (isTest IS NULL OR isTest = 0) AND id NOT IN (
-      SELECT id FROM automation_runs WHERE projectId = ? AND ruleId = ? AND (error IS NULL OR (error != ? AND error != ? AND error != ? AND error != ?)) AND (isTest IS NULL OR isTest = 0) ORDER BY triggeredAt DESC, rowid DESC LIMIT ?
+    `DELETE FROM automation_runs WHERE projectId = ? AND ruleId = ? AND (error IS NULL OR (error != ? AND error != ? AND error != ? AND error != ? AND error != ? AND error != ?)) AND (isTest IS NULL OR isTest = 0) AND id NOT IN (
+      SELECT id FROM automation_runs WHERE projectId = ? AND ruleId = ? AND (error IS NULL OR (error != ? AND error != ? AND error != ? AND error != ? AND error != ? AND error != ?)) AND (isTest IS NULL OR isTest = 0) ORDER BY triggeredAt DESC, rowid DESC LIMIT ?
     )`,
   ).run(
     projectId,
@@ -814,12 +867,16 @@ export function recordAutomationRun(
     EMAIL_NOT_CONFIGURED_ERROR,
     WEBHOOK_TIMEOUT_ERROR,
     WEBHOOK_UNREACHABLE_ERROR,
+    EMAIL_TIMEOUT_ERROR,
+    EMAIL_UNREACHABLE_ERROR,
     projectId,
     id,
     WHATSAPP_NOT_CONNECTED_ERROR,
     EMAIL_NOT_CONFIGURED_ERROR,
     WEBHOOK_TIMEOUT_ERROR,
     WEBHOOK_UNREACHABLE_ERROR,
+    EMAIL_TIMEOUT_ERROR,
+    EMAIL_UNREACHABLE_ERROR,
     AUTOMATION_RUNS_RETENTION_LIMIT,
   );
   // Round 1416: isTest rows' own independent bucket -- mirrors the

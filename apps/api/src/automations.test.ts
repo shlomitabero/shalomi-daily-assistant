@@ -25,6 +25,8 @@ import {
   updateAutomationRule,
   WEBHOOK_TIMEOUT_ERROR,
   WEBHOOK_UNREACHABLE_ERROR,
+  EMAIL_TIMEOUT_ERROR,
+  EMAIL_UNREACHABLE_ERROR,
 } from "@forge/db";
 import {
   fireRule,
@@ -2383,6 +2385,43 @@ test("runScheduledAutomationsCheck still fires a scheduled webhook rule the same
 });
 
 /**
+ * Round 1459: the send_email sibling of the webhook self-healing test
+ * above -- EMAIL_TIMEOUT_ERROR (fireEmailAction's own normalization of
+ * ResendEmailSender.performSend's AbortController timeout) is the exact
+ * same "destination simply hasn't responded yet" shape as a webhook
+ * timeout, not evidence the rule itself is broken. Before this round, 5
+ * consecutive scheduler ticks landing during a slow/unresponsive Resend
+ * API tripped hasTooManyConsecutiveFailuresToday exactly like 5 genuine
+ * failures would, silently suppressing the rule for the rest of the UTC
+ * day even once Resend started responding again seconds later.
+ */
+test("runScheduledAutomationsCheck still fires a scheduled send_email rule the same day once Resend starts responding again, even after 5 consecutive timeouts", async () => {
+  const { db } = setupProject();
+  const rule = insertAutomationRule(
+    db,
+    scheduleRuleBase({ actionType: "send_email", toMode: "static", toEmail: "owner@example.com", emailSubject: "Daily report" }),
+  );
+  const manager = {} as WhatsAppWebManager;
+
+  const timingOutSender = createFakeEmailSender({ failWith: new Error(EMAIL_TIMEOUT_ERROR) });
+  for (const minute of ["09:00", "09:01", "09:02", "09:03", "09:04"]) {
+    await runScheduledAutomationsCheck(db, manager, timingOutSender, new Date(`2026-03-15T${minute}:00.000Z`));
+  }
+  assert.equal(getAutomationRule(db, "proj1", rule.id)!.lastStatus, "failed");
+  assert.equal(getAutomationRule(db, "proj1", rule.id)!.lastError, EMAIL_TIMEOUT_ERROR);
+
+  // Resend starts responding again, and the next tick arrives -- still the same day.
+  const respondingSender = createFakeEmailSender({ configured: true });
+  await runScheduledAutomationsCheck(db, manager, respondingSender, new Date("2026-03-15T09:05:00.000Z"));
+
+  assert.equal(
+    getAutomationRule(db, "proj1", rule.id)!.lastStatus,
+    "sent",
+    "must actually attempt the send now that Resend responds again, not stay suppressed for the rest of the day",
+  );
+});
+
+/**
  * Round 1032: mirrors the WhatsApp-outage retention test above exactly,
  * for EMAIL_NOT_CONFIGURED_ERROR's own identical flood risk -- without
  * its own retention bucket (recordAutomationRun, packages/db/src/
@@ -3150,6 +3189,70 @@ test("runAutomationsForRecordChange records a clear 'could not reach the destina
   const after = getAutomationRule(db, project.id, rule.id)!;
   assert.equal(after.lastStatus, "failed");
   assert.equal(after.lastError, WEBHOOK_UNREACHABLE_ERROR);
+});
+
+/**
+ * Round 1459: the send_email sibling of the WEBHOOK_UNREACHABLE_ERROR test
+ * above -- email.ts's ResendEmailSender.performSend re-throws a non-abort
+ * fetch rejection as-is, which Node's own fetch/undici always renders as
+ * the identical TypeError "fetch failed" for a destination that's simply
+ * unreachable (DNS/TLS/connection failure against api.resend.com).
+ * Confirms fireEmailAction normalizes that generic, untranslatable literal
+ * into the clear, stable EMAIL_UNREACHABLE_ERROR constant, the same way
+ * fireWebhookAction already does, instead of leaking fetch's raw text
+ * unclassified into the shared catch-all retention bucket.
+ */
+test("runAutomationsForRecordChange records a clear 'could not reach the destination' message when Resend is simply unreachable (DNS/connection failure)", async () => {
+  const { db, project } = setupProject();
+  const rule = insertAutomationRule(db, {
+    projectId: project.id,
+    entityName: "Order",
+    trigger: "record_created",
+    actionType: "send_email",
+    toMode: "static",
+    toEmail: "owner@example.com",
+    emailSubject: "New order from {{customerName}}",
+    messageTemplate: "Order status: {{status}}",
+  });
+  const record = { id: 1, customerName: "Dana Levi", customerPhone: "972501234567", status: "New" };
+  const emailSender = createFakeEmailSender({ failWith: new TypeError("fetch failed") });
+
+  await runAutomationsForRecordChange(db, {} as WhatsAppWebManager, emailSender, project, orderEntity, "created", record, new Set(), UNUSED_UPLOADS_DIR, UNUSED_BASE_URL);
+
+  const after = getAutomationRule(db, project.id, rule.id)!;
+  assert.equal(after.lastStatus, "failed");
+  assert.equal(after.lastError, EMAIL_UNREACHABLE_ERROR);
+});
+
+/**
+ * Round 1459: the send_email sibling of fireWebhookAction's own timeout
+ * normalization -- email.ts's ResendEmailSender.performSend already
+ * throws the fixed EMAIL_TIMEOUT_ERROR literal verbatim on its own
+ * AbortController timeout (its 10s budget is a fixed constant in
+ * production). Confirms fireEmailAction's catch keys off that already-
+ * shared constant rather than letting a hypothetical future drift between
+ * the two independently-defined copies of this string go unnoticed.
+ */
+test("runAutomationsForRecordChange records EMAIL_TIMEOUT_ERROR when the Resend API call times out", async () => {
+  const { db, project } = setupProject();
+  const rule = insertAutomationRule(db, {
+    projectId: project.id,
+    entityName: "Order",
+    trigger: "record_created",
+    actionType: "send_email",
+    toMode: "static",
+    toEmail: "owner@example.com",
+    emailSubject: "New order from {{customerName}}",
+    messageTemplate: "Order status: {{status}}",
+  });
+  const record = { id: 1, customerName: "Dana Levi", customerPhone: "972501234567", status: "New" };
+  const emailSender = createFakeEmailSender({ failWith: new Error(EMAIL_TIMEOUT_ERROR) });
+
+  await runAutomationsForRecordChange(db, {} as WhatsAppWebManager, emailSender, project, orderEntity, "created", record, new Set(), UNUSED_UPLOADS_DIR, UNUSED_BASE_URL);
+
+  const after = getAutomationRule(db, project.id, rule.id)!;
+  assert.equal(after.lastStatus, "failed");
+  assert.equal(after.lastError, EMAIL_TIMEOUT_ERROR);
 });
 
 test("runAutomationsForRecordChange rejects (records failed, never calls fetch) a webhook rule whose URL points at a blocked local/private host", async () => {

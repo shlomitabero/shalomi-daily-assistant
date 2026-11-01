@@ -17,6 +17,8 @@ import {
   EMAIL_NOT_CONFIGURED_ERROR,
   WEBHOOK_TIMEOUT_ERROR,
   WEBHOOK_UNREACHABLE_ERROR,
+  EMAIL_TIMEOUT_ERROR,
+  EMAIL_UNREACHABLE_ERROR,
   type AutomationRule,
   type ForgeDatabase,
 } from "@forge/db";
@@ -1100,11 +1102,31 @@ async function fireEmailAction(
     );
   } catch (err) {
     if (!getProject(db, project.id)) return;
+    // Round 1459: mirrors fireWebhookAction's own identical normalization
+    // just above -- email.ts's ResendEmailSender.performSend already
+    // throws the fixed EMAIL_TIMEOUT_ERROR literal verbatim on its own
+    // AbortController timeout (no signal to re-check here, unlike
+    // fireWebhookAction's own inline controller), and re-throws any other
+    // fetch rejection as-is, which Node's fetch/undici always renders as
+    // the identical TypeError "fetch failed" for a destination that's
+    // simply unreachable. Normalizing the latter into EMAIL_UNREACHABLE_ERROR
+    // (and keying the former off the already-shared constant) lets this
+    // module and recordAutomationRun's own retention pruning agree on one
+    // literal per failure shape instead of a flood of either evicting a
+    // genuinely different, older failure for this rule.
+    const message =
+      err instanceof Error && err.message === EMAIL_TIMEOUT_ERROR
+        ? EMAIL_TIMEOUT_ERROR
+        : err instanceof TypeError && err.message === "fetch failed"
+          ? EMAIL_UNREACHABLE_ERROR
+          : err instanceof Error
+            ? err.message
+            : "Email send failed";
     recordAutomationRun(
       db,
       project.id,
       rule.id,
-      { status: "failed", error: err instanceof Error ? err.message : "Email send failed" },
+      { status: "failed", error: message },
       rule.actionType,
       record ? Number(record.id) : null,
       recordSnapshot,
@@ -1639,15 +1661,29 @@ const MAX_CONSECUTIVE_SCHEDULE_FAILURES_PER_DAY = 5;
  * load spike) from being indistinguishable from one that's truly broken,
  * mirroring the exact self-healing guarantee already given to WhatsApp
  * disconnects and a missing RESEND_API_KEY.
+ *
+ * Round 1459: EMAIL_TIMEOUT_ERROR is excluded for the identical
+ * self-healing reason as WEBHOOK_TIMEOUT_ERROR just above -- Resend being
+ * merely slow to respond right now shouldn't count toward the same cap as
+ * a genuinely broken rule. EMAIL_UNREACHABLE_ERROR is deliberately left
+ * OUT of this filter, mirroring WEBHOOK_UNREACHABLE_ERROR's own correct
+ * non-exemption: a permanently wrong Resend configuration (there isn't
+ * one in practice today, but this mirrors the webhook case exactly in
+ * case that ever changes) should still count toward the cap, not be
+ * indistinguishable from a brief timeout. Lookback widened from 4x to 5x
+ * since there are now five independently-retained buckets (WhatsApp,
+ * email-not-configured, webhook-timeout, email-timeout, isTest) that can
+ * each contribute up to that many rows ahead of a real failure.
  */
 export function hasTooManyConsecutiveFailuresToday(db: ForgeDatabase, rule: AutomationRule, now: Date): boolean {
   const todayUtc = now.toISOString().slice(0, 10);
-  const runs = listAutomationRuns(db, rule.projectId, rule.id, 4 * AUTOMATION_RUNS_RETENTION_LIMIT)
+  const runs = listAutomationRuns(db, rule.projectId, rule.id, 5 * AUTOMATION_RUNS_RETENTION_LIMIT)
     .filter(
       (run) =>
         run.error !== WHATSAPP_NOT_CONNECTED_ERROR &&
         run.error !== EMAIL_NOT_CONFIGURED_ERROR &&
         run.error !== WEBHOOK_TIMEOUT_ERROR &&
+        run.error !== EMAIL_TIMEOUT_ERROR &&
         !run.isTest,
     )
     .slice(0, MAX_CONSECUTIVE_SCHEDULE_FAILURES_PER_DAY);

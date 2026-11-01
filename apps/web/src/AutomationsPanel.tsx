@@ -939,6 +939,19 @@ export function AutomationsPanel({
       if (statusMatch) return translate(lang, "error.AUTOMATION_WEBHOOK_HTTP_ERROR", { status: statusMatch[1] });
       if (error) return translate(lang, "error.AUTOMATION_WEBHOOK_NETWORK_ERROR");
     }
+    // Round 1459: send_email's own equivalent of the webhook fallback just
+    // above -- every KNOWN whole-rule misconfiguration/network-timeout
+    // literal for this action type is already covered by
+    // KNOWN_EMAIL_SEND_ERROR_CODES/AUTOMATION_CONFIG_ERROR_CODES above, so
+    // anything still reaching here for a failed send_email run (most
+    // notably EMAIL_UNREACHABLE_ERROR, and Resend's own non-2xx response
+    // message, which -- unlike the webhook case -- carries an arbitrary
+    // response body rather than a single parseable status code, so it's
+    // left to this generic fallback rather than its own regex branch) is
+    // necessarily some other network-level failure. Without this, those
+    // cases leaked raw English into this Hebrew-primary app's run history
+    // and reports.
+    if (actionType === "send_email" && error) return translate(lang, "error.AUTOMATION_EMAIL_NETWORK_ERROR");
     return error;
   }
 
