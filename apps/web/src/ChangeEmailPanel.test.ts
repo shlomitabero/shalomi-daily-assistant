@@ -358,3 +358,20 @@ test("clicking Close calls onClose", async () => {
     assert.equal(closed, 1);
   });
 });
+
+/**
+ * Round 1458: routes/auth.ts's PATCH /auth/email schema caps both the new
+ * and confirm email at 320 chars server-side, but neither input had a
+ * matching client maxLength -- unlike every other capped free-text field in
+ * this codebase (CheckpointLabelEditor, ProjectNameEditor, AutomationsPanel's
+ * own email field). Without it, a user only discovers the limit after a
+ * server-side rejection instead of simply being unable to type past it.
+ */
+test("both the new-email and confirm-email inputs cap at 320 chars, matching the server's .max(320)", async () => {
+  await withJsdom(async () => {
+    renderPanel();
+    const [newEmailInput, confirmEmailInput] = document.querySelectorAll("input[type='email']") as NodeListOf<HTMLInputElement>;
+    assert.equal(newEmailInput.maxLength, 320, "the new-email input must cap at 320 chars client-side");
+    assert.equal(confirmEmailInput.maxLength, 320, "the confirm-email input must cap at 320 chars client-side");
+  });
+});

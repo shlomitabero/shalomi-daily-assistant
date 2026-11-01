@@ -121,11 +121,11 @@ export function ChangeEmailPanel({ currentEmail, onClose, onChanged }: { current
           >
             <label className="field-row">
               <span>{t("changeEmail.newEmail")}</span>
-              <input type="email" value={email} onChange={(e) => setEmail(e.target.value)} required autoComplete="email" />
+              <input type="email" value={email} onChange={(e) => setEmail(e.target.value)} required autoComplete="email" maxLength={320} />
             </label>
             <label className="field-row">
               <span>{t("changeEmail.confirmEmail")}</span>
-              <input type="email" value={confirmEmail} onChange={(e) => setConfirmEmail(e.target.value)} required autoComplete="email" />
+              <input type="email" value={confirmEmail} onChange={(e) => setConfirmEmail(e.target.value)} required autoComplete="email" maxLength={320} />
             </label>
             <label className="field-row">
               <span>{t("changeEmail.currentPassword")}</span>

@@ -362,6 +362,7 @@ export function AuthScreen({ onAuthenticated }: { onAuthenticated: (user: User) 
                         autoComplete="username"
                         autoFocus
                         required
+                        maxLength={320}
                         value={email}
                         onChange={(e) => setEmail(e.target.value)}
                       />
@@ -449,6 +450,7 @@ export function AuthScreen({ onAuthenticated }: { onAuthenticated: (user: User) 
                     name="email"
                     autoComplete="username"
                     required
+                    maxLength={320}
                     value={email}
                     onChange={(e) => setEmail(e.target.value)}
                   />

@@ -817,3 +817,36 @@ test("AuthScreen's submit button guards against a fast double-click, so only one
     }
   });
 });
+
+/**
+ * Round 1458: every other free-text field with a server-side .max(N) cap
+ * (CheckpointLabelEditor, ProjectNameEditor, AutomationsPanel's own email
+ * field, etc.) carries a matching client maxLength, so the browser blocks
+ * typing/pasting past the limit instead of letting the user discover it
+ * only after a server rejection. AuthScreen's two email inputs (the
+ * login/signup form and the forgot-password form) had no maxLength at all,
+ * despite routes/auth.ts capping all three auth email schemas at 320 chars.
+ */
+test("AuthScreen's email inputs (login/signup and forgot-password) both cap at 320 chars, matching the server's .max(320) on every auth email schema", async () => {
+  await withJsdom(async () => {
+    renderAuthScreen(() => {});
+
+    const signupEmailInput = document.querySelector('input[type="email"]') as HTMLInputElement;
+    assert.equal(signupEmailInput.maxLength, 320, "the signup email input must cap at 320 chars client-side");
+
+    // default mode is signup; the forgot-password link only renders in login mode
+    fireEvent.click(document.querySelector("button.link-button") as HTMLButtonElement);
+
+    const loginEmailInput = document.querySelector('input[type="email"]') as HTMLInputElement;
+    assert.equal(loginEmailInput.maxLength, 320, "the login email input must cap at 320 chars client-side");
+
+    const forgotPasswordLink = Array.from(document.querySelectorAll("button")).find((b) =>
+      b.textContent?.includes("password"),
+    ) as HTMLButtonElement | undefined;
+    assert.ok(forgotPasswordLink, "expected a 'forgot password' link to reach the forgot-password form");
+    fireEvent.click(forgotPasswordLink!);
+
+    const forgotPasswordEmailInput = document.querySelector('input[type="email"]') as HTMLInputElement;
+    assert.equal(forgotPasswordEmailInput.maxLength, 320, "the forgot-password email input must cap at 320 chars client-side");
+  });
+});

@@ -502,6 +502,7 @@ export function CollaboratorsPanel({
               type="email"
               placeholder={t("collab.email.placeholder")}
               aria-label={t("collab.email.placeholder")}
+              maxLength={320}
               value={email}
               onChange={(e) => {
                 setEmail(e.target.value);

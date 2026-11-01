@@ -1974,3 +1974,38 @@ test("the collaborators list row lets its action buttons wrap onto a second line
     ".collab-list li must allow its role select/action buttons to wrap onto a second line instead of squeezing the email <div> to zero width",
   );
 });
+
+/**
+ * Round 1458: routes/projects.ts's invite route caps toEmail at 320 chars
+ * server-side, but the invite input itself had no matching client
+ * maxLength -- unlike every other capped free-text field in this codebase
+ * (CheckpointLabelEditor, ProjectNameEditor, AutomationsPanel's own email
+ * field). Without it, an owner only discovers the limit after a server-side
+ * rejection instead of simply being unable to type past it.
+ */
+test("the invite-email input caps at 320 chars, matching the server's .max(320) on toEmail", async () => {
+  await withJsdom(async () => {
+    const originalFetch = globalThis.fetch;
+    const dana = makeCollaborator("u1", "dana@example.com");
+    globalThis.fetch = (async (input: string, init?: RequestInit) => {
+      const method = init?.method ?? "GET";
+      if (method === "GET" && input === "/api/projects/proj1/collaborators") {
+        return new Response(JSON.stringify({ collaborators: [dana], owner: { userId: "owner1", email: "amit@example.com" } }), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        });
+      }
+      throw new Error(`unexpected request ${method} ${input}`);
+    }) as typeof fetch;
+
+    try {
+      renderPanel(true);
+      await waitForCondition(() => document.querySelectorAll(".collab-list li").length === 2);
+
+      const emailInput = document.querySelector('.collab-invite-form input[type="email"]') as HTMLInputElement;
+      assert.equal(emailInput.maxLength, 320, "the invite-email input must cap at 320 chars client-side");
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+});
