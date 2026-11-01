@@ -365,7 +365,7 @@ const CRM_ENTITIES: EntitySpec[] = [
         enumLabels: { lead: "ליד", qualified: "הוכשר", proposal: "הצעת מחיר", won: "נסגרה בהצלחה", lost: "אבדה" },
       },
       { name: "value", label: "שווי", type: "number" },
-      { name: "closeDate", label: "תאריך סגירה משוער", type: "date" },
+      { name: "closeDeadline", label: "תאריך סגירה משוער", type: "date" },
     ],
   },
   {
@@ -435,7 +435,7 @@ const CRM_ENTITIES_EN: EntitySpec[] = [
         enumLabels: { lead: "Lead", qualified: "Qualified", proposal: "Proposal", won: "Won", lost: "Lost" },
       },
       { name: "value", label: "Value", type: "number" },
-      { name: "closeDate", label: "Expected Close Date", type: "date" },
+      { name: "closeDeadline", label: "Expected Close Date", type: "date" },
     ],
   },
   {

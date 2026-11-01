@@ -797,3 +797,37 @@ test("every template's screen count matches heuristic.ts's own Dashboard-plus-Li
     }
   }
 });
+
+/**
+ * Round 1439's finding: the Sales CRM template's Deal entity had a date
+ * field named "closeDate" -- a name that matches neither "due" nor
+ * "deadline", the two substrings entityFormatting.ts's/twin.ts's/
+ * codegen.ts's own isDeadlineFieldName heuristic (independently
+ * duplicated in each) uses to decide whether a date field can be
+ * "overdue"/"due soon". That silently excluded the single most
+ * sales-actionable field a CRM template has from every overdue/due-soon
+ * highlight, toolbar filter, and Business Twin insight in the app --
+ * live preview and every exported app alike. Renamed to "closeDeadline"
+ * (label unchanged) so it's picked up by the existing heuristic with no
+ * change to shared code.
+ */
+test("the Sales CRM template's Deal entity has a date field whose NAME matches the app-wide isDeadlineFieldName heuristic (\"due\"/\"deadline\"), so overdue/due-soon highlighting actually applies to it", () => {
+  const isDeadlineFieldName = (fieldName: string) => {
+    const lower = fieldName.toLowerCase();
+    return lower.includes("due") || lower.includes("deadline");
+  };
+  for (const [template, spec] of TEMPLATES.flatMap((t) => [
+    [t, t.spec] as const,
+    [t, t.specEn] as const,
+  ])) {
+    if (template.id !== "crm") continue;
+    const deal = spec.entities.find((e) => e.name === "Deal");
+    if (!deal) continue;
+    const closeField = deal.fields.find((f) => f.type === "date" && f.name !== "createdDate");
+    assert.ok(closeField, `template "${template.id}"'s Deal entity must have its own close/expected-close date field`);
+    assert.ok(
+      isDeadlineFieldName(closeField!.name),
+      `template "${template.id}"'s Deal entity's "${closeField!.name}" field name must match isDeadlineFieldName so overdue/due-soon highlighting applies to it`,
+    );
+  }
+});
