@@ -1072,8 +1072,23 @@ export class WhatsAppWebManager {
         // message" way round 1420 already fixed for the audio branch --
         // the plain "no attachment was ever requested" case below stays
         // unconditional, since its body is always real message text.
+        //
+        // Round 1443: a distinct bug this round-1441 fix itself introduced
+        // -- when body is empty here, ZERO Baileys calls happen (nothing
+        // above, nothing here), yet execution still fell through to this
+        // function's own unconditional `return { ok: true }` below. The
+        // round-1341 multi-attachment follow-up loop (automations.ts)
+        // reads only `.ok` to decide the message-log row's own status
+        // ("sent" vs "failed"), so a genuinely missing attachment with no
+        // caption was logged as a clean "sent" even though the customer
+        // received literally nothing -- worse than before round 1441,
+        // where at least a (bad) message genuinely went out matching its
+        // own "sent" label. Returning a failure here instead makes that
+        // row correctly read "failed" in the WhatsApp message log.
         if (body) {
           await this.sendWithTimeout(session.sock.sendMessage(jid, { text: body }));
+        } else {
+          return { ok: false, error: "attachment_unavailable" };
         }
       } else {
         await this.sendWithTimeout(session.sock.sendMessage(jid, { text: body }));

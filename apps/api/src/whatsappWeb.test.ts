@@ -565,7 +565,11 @@ test("sendMessage sends nothing at all, not a blank text message, when a load-fa
     fileName: "invoice-203.pdf",
     mimeType: "application/pdf",
   });
-  assert.equal(result.ok, true);
+  // Round 1443: this used to assert `ok: true` here -- correct about no
+  // blank message going out, but it also meant a customer who received
+  // literally nothing was logged as a clean "sent". See this round's own
+  // fix just below in performSend.
+  assert.equal(result.ok, false, "nothing was actually sent, so this must not be reported as a successful send");
   assert.deepEqual(
     createdSockets[0].sendCalls,
     [],
