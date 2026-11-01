@@ -101,6 +101,11 @@ function useRenamableSpecItem(
   }
 
   async function save() {
+    // See ProjectNameEditor.tsx's own comment on this exact guard (round
+    // 1432): a browser forces this still-focused input to blur the instant
+    // it becomes disabled (which setBusy(true) below triggers), and that
+    // blur re-invokes this same save() a second time without it.
+    if (busy) return;
     if (cancelling.current) {
       cancelling.current = false;
       return;

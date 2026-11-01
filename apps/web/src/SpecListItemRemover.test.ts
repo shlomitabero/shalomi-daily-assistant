@@ -440,6 +440,63 @@ test("clicking a role chip's text opens an inline edit, and saving it calls the 
   });
 });
 
+/**
+ * Round 1433: the exact same bug round 1432 fixed in ProjectNameEditor.tsx
+ * and its 4 siblings, found missing in this file's own shared
+ * `useRenamableSpecItem` hook (backing RoleChip/AssumptionItem/
+ * PersonaItem/EntitySummaryItem's label/FieldChip's label, all five).
+ * Pressing Enter submits the form and calls save(), which sets busy true
+ * and re-renders the still-focused input with disabled={true}. A real
+ * browser forces a focused control to blur the instant it becomes
+ * disabled, and this input's onBlur is still this same save() -- so
+ * without a reentrancy guard, every Enter-confirmed save fired the rename
+ * request twice. jsdom doesn't reproduce that forced blur-on-disable
+ * quirk, so this waits for the real, observable precondition -- the
+ * input actually becoming disabled -- then manually fires blur.
+ */
+test("pressing Enter to save a role chip's rename does not fire the PATCH request twice, even though disabling the input forces a real browser to blur it mid-flight", async () => {
+  await withJsdom(async () => {
+    const originalFetch = globalThis.fetch;
+    let patchCalls = 0;
+    const pendingResolvers: Array<() => void> = [];
+    globalThis.fetch = (async (input: string, init?: RequestInit) => {
+      if (init?.method === "PATCH" && input === "/api/projects/proj1/roles/1") {
+        patchCalls += 1;
+        const body = JSON.parse(init.body as string) as { role: string };
+        const renamed = { ...baseProject, spec: { ...baseProject.spec, roles: ["Admin", body.role] } };
+        await new Promise<void>((resolve) => pendingResolvers.push(resolve));
+        return new Response(JSON.stringify({ project: renamed }), { status: 200, headers: { "content-type": "application/json" } });
+      }
+      throw new Error(`unexpected request ${init?.method ?? "GET"} ${input}`);
+    }) as typeof fetch;
+
+    try {
+      const renamedProjects: Project[] = [];
+      renderRoleChip(() => {}, true, (p) => renamedProjects.push(p));
+
+      fireEvent.click(document.querySelector(".chip-text") as HTMLElement);
+      const input = document.querySelector(".chip-rename-edit input") as HTMLInputElement;
+      const form = document.querySelector(".chip-rename-edit form") as HTMLFormElement;
+
+      fireEvent.change(input, { target: { value: "Warehouse Manager" } });
+      fireEvent.submit(form);
+
+      await waitForCondition(() => input.disabled === true);
+      fireEvent.blur(input);
+
+      assert.equal(patchCalls, 1, "the forced blur while busy must not fire a second PATCH request");
+
+      for (const resolve of pendingResolvers) resolve();
+      await waitForCondition(() => renamedProjects.length === 1);
+      assert.equal(patchCalls, 1);
+      assert.deepEqual(renamedProjects[0].spec.roles, ["Admin", "Warehouse Manager"]);
+    } finally {
+      for (const resolve of pendingResolvers) resolve();
+      globalThis.fetch = originalFetch;
+    }
+  });
+});
+
 /** Mirrors ProjectNameEditor.test.ts's own keyboard-focus test for the identical gap round 483 fixed in a sibling family of click-to-rename components. */
 test("a role chip's text is keyboard-focusable and Enter opens edit mode", async () => {
   await withJsdom(async () => {
