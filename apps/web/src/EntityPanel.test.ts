@@ -903,6 +903,60 @@ test("EntityPanel's bulk-delete confirm dialog uses the singular noun form when 
 });
 
 /**
+ * Round 1453: the Copy/Export CSV/Export JSON/Print-list toolbar buttons'
+ * own "{count} selected" labels used a single hardcoded-plural Hebrew i18n
+ * key each (entity.copy.selected/exportCsv.selected/exportJson.selected/
+ * printList.selected) with no singular form -- the same gap rounds
+ * 1395/1412/1429/1452 already fixed elsewhere, just never swept from this
+ * specific cluster of sibling strings. These buttons' "selected" state is
+ * shown whenever `selectedIds.size > 0`, not `> 1`, so selecting exactly
+ * one row's checkbox reads "ייצוא 1 נבחרות" ("export 1 [feminine-plural]
+ * selected") instead of the grammatically correct "ייצוא 1 נבחרת"
+ * ([feminine-singular]). English has no bug here ("selected" is a bare
+ * adjective, not a count-agreeing noun), so this test only exercises
+ * Hebrew.
+ */
+test("EntityPanel's Copy/Export CSV/Export JSON/Print-list button labels use the Hebrew singular-noun form when exactly 1 record is selected", async () => {
+  await withJsdom(async () => {
+    const store: EntityRecord[] = [
+      { id: 1, name: "Acme Corp", status: "new" },
+      { id: 2, name: "Globex", status: "won" },
+    ];
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = mockRecordsFetch(store) as typeof fetch;
+    try {
+      localStorage.setItem("forge.lang", "he");
+      renderEntityPanel();
+      await waitForCondition(() => document.querySelectorAll("table tbody tr").length === 2);
+
+      fireEvent.click(document.querySelector('td.select-col input[type="checkbox"]') as HTMLInputElement);
+      await waitForCondition(() => (document.querySelector(".copy-records-btn") as HTMLButtonElement).textContent?.includes("1") ?? false);
+
+      const copyBtn = document.querySelector(".copy-records-btn") as HTMLButtonElement;
+      const exportCsvBtn = document.querySelector(".csv-export-btn") as HTMLButtonElement;
+      const exportJsonBtn = document.querySelector(".json-export-btn") as HTMLButtonElement;
+      const printListBtn = Array.from(document.querySelectorAll("button")).find((b) => b.textContent?.includes("🖨"))!;
+
+      assert.match(copyBtn.textContent ?? "", /נבחרת/, "exactly 1 selected record's Copy button must use the Hebrew singular noun form (נבחרת)");
+      assert.doesNotMatch(copyBtn.textContent ?? "", /נבחרות/, "exactly 1 selected record's Copy button must not read the plural נבחרות");
+      assert.match(exportCsvBtn.textContent ?? "", /נבחרת/, "exactly 1 selected record's Export CSV button must use the Hebrew singular noun form (נבחרת)");
+      assert.doesNotMatch(exportCsvBtn.textContent ?? "", /נבחרות/, "exactly 1 selected record's Export CSV button must not read the plural נבחרות");
+      assert.match(exportJsonBtn.textContent ?? "", /נבחרת/, "exactly 1 selected record's Export JSON button must use the Hebrew singular noun form (נבחרת)");
+      assert.doesNotMatch(exportJsonBtn.textContent ?? "", /נבחרות/, "exactly 1 selected record's Export JSON button must not read the plural נבחרות");
+      assert.match(printListBtn.textContent ?? "", /נבחרת/, "exactly 1 selected record's Print-list button must use the Hebrew singular noun form (נבחרת)");
+      assert.doesNotMatch(printListBtn.textContent ?? "", /נבחרות/, "exactly 1 selected record's Print-list button must not read the plural נבחרות");
+
+      // Selecting a 2nd record must restore the plural form on all four.
+      fireEvent.click(document.querySelectorAll('td.select-col input[type="checkbox"]')[1] as HTMLInputElement);
+      await waitForCondition(() => (document.querySelector(".copy-records-btn") as HTMLButtonElement).textContent?.includes("2") ?? false);
+      assert.match(copyBtn.textContent ?? "", /נבחרות/, "2 selected records' Copy button must use the plural form again");
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+});
+
+/**
  * Round 1395: the bulk-delete Undo toast's own message used a single
  * hardcoded-plural i18n key (entity.bulk.deleteUndoToast) with no singular
  * form, so bulk-deleting exactly 1 selected record -- an ordinary outcome

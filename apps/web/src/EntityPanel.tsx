@@ -5071,7 +5071,7 @@ export function EntityPanel({
                 : copyStatus === "failed"
                   ? t("entity.copy.failed")
                   : selectedIds.size > 0
-                    ? t("entity.copy.selected", { count: selectedIds.size })
+                    ? t(selectedIds.size === 1 ? "entity.copy.selected.one" : "entity.copy.selected.many", { count: selectedIds.size })
                     : t("entity.copy")}
             </button>
             <button
@@ -5080,7 +5080,7 @@ export function EntityPanel({
               onClick={handleExportCsv}
               disabled={selectedIds.size === 0 && effectivelyVisibleRecords.length === 0}
             >
-              {selectedIds.size > 0 ? t("entity.exportCsv.selected", { count: selectedIds.size }) : t("entity.exportCsv")}
+              {selectedIds.size > 0 ? t(selectedIds.size === 1 ? "entity.exportCsv.selected.one" : "entity.exportCsv.selected.many", { count: selectedIds.size }) : t("entity.exportCsv")}
             </button>
             <button
               type="button"
@@ -5088,7 +5088,7 @@ export function EntityPanel({
               onClick={handleExportJson}
               disabled={selectedIds.size === 0 && effectivelyVisibleRecords.length === 0}
             >
-              {selectedIds.size > 0 ? t("entity.exportJson.selected", { count: selectedIds.size }) : t("entity.exportJson")}
+              {selectedIds.size > 0 ? t(selectedIds.size === 1 ? "entity.exportJson.selected.one" : "entity.exportJson.selected.many", { count: selectedIds.size }) : t("entity.exportJson")}
             </button>
             {!readOnly && (
               <button
@@ -5111,7 +5111,7 @@ export function EntityPanel({
               onClick={() => setShowPrintList(true)}
               disabled={selectedIds.size === 0 && effectivelyVisibleRecords.length === 0}
             >
-              {selectedIds.size > 0 ? t("entity.printList.selected", { count: selectedIds.size }) : t("entity.printList")}
+              {selectedIds.size > 0 ? t(selectedIds.size === 1 ? "entity.printList.selected.one" : "entity.printList.selected.many", { count: selectedIds.size }) : t("entity.printList")}
             </button>
             <div className="columns-menu-wrapper">
               <button
