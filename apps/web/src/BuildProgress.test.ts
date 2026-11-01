@@ -376,6 +376,40 @@ test("BuildProgress's Architect detail panel reports an entity the refine droppe
 });
 
 /**
+ * Round 1467: the detail-toggle button never reported its own expand/collapse
+ * state via aria-expanded, unlike EntityPanel.tsx's own columns-menu/collapse
+ * toggles, which already use this convention for the identical disclosure-
+ * widget shape (click to reveal more detail inline).
+ */
+test("BuildProgress's detail-toggle button reports its own expand/collapse state via aria-expanded", async () => {
+  await withJsdom(async () => {
+    const events: AgentStepEvent[] = [
+      { agent: "Architect", status: "running", message: "…" },
+      {
+        agent: "Architect",
+        status: "success",
+        message: "Impact: +0 new entities (none), 0 existing entities gaining fields. Warning: 1 entities are no longer in the spec (Deal).",
+        detail: { newEntities: [], changedEntities: [], removedEntities: [{ name: "Deal", label: "Deal" }] },
+      },
+    ];
+    renderBuildProgress(events);
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    const steps = [...document.querySelectorAll(".agent-step")];
+    const architectStep = steps.find((s) => s.textContent?.includes("Product Planner"));
+    const toggle = architectStep?.querySelector(".detail-toggle") as HTMLButtonElement | null;
+    assert.ok(toggle, "expected a details toggle for the Architect step once it succeeds with a detail payload");
+    assert.equal(toggle!.getAttribute("aria-expanded"), "false", "collapsed before any click");
+
+    fireEvent.click(toggle!);
+    assert.equal(toggle!.getAttribute("aria-expanded"), "true", "must report aria-expanded=true once expanded");
+
+    fireEvent.click(toggle!);
+    assert.equal(toggle!.getAttribute("aria-expanded"), "false", "must flip back to aria-expanded=false once collapsed again");
+  });
+});
+
+/**
  * Regression test for a real gap found by round 397's Explore survey:
  * computeImpact's changedEntities (pipeline.ts) already computed
  * removedFieldNames alongside newFieldNames (added in the same round-377

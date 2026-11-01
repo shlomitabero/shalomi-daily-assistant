@@ -1222,6 +1222,13 @@ test("HistoryPanel's 'Compare with' dropdown lets you diff one checkpoint agains
 
       fireEvent.click(middleItem.querySelector(".detail-toggle") as HTMLButtonElement);
       await waitForCondition(() => middleItem.querySelector(".checkpoint-compare-row select") !== null);
+      // Round 1467: aria-expanded, the same disclosure-widget convention this
+      // button's BuildProgress.tsx/AutomationsPanel.tsx siblings now use too.
+      assert.equal(
+        (middleItem.querySelector(".detail-toggle") as HTMLButtonElement).getAttribute("aria-expanded"),
+        "true",
+        "must report aria-expanded=true once its own diff detail is open",
+      );
 
       // The dropdown defaults to comparing against the live current state.
       assert.match(middleItem.textContent ?? "", /Current app state/);
@@ -1230,6 +1237,11 @@ test("HistoryPanel's 'Compare with' dropdown lets you diff one checkpoint agains
       // first against the live current state (default), then against the
       // "middle" checkpoint instead of current.
       fireEvent.click(middleItem.querySelector(".detail-toggle") as HTMLButtonElement); // close it
+      assert.equal(
+        (middleItem.querySelector(".detail-toggle") as HTMLButtonElement).getAttribute("aria-expanded"),
+        "false",
+        "must flip back to aria-expanded=false once collapsed",
+      );
       const olderItem = items[0];
       fireEvent.click(olderItem.querySelector(".detail-toggle") as HTMLButtonElement);
       await waitForCondition(() => olderItem.querySelector(".checkpoint-compare-row select") !== null);

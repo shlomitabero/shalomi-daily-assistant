@@ -396,6 +396,9 @@ export function HistoryPanel({
                     <div className="muted small">
                       {t(checkpoint.spec.screens.length === 1 ? "history.screenCount.one" : "history.screenCount.many", { count: checkpoint.spec.screens.length })}
                     </div>
+                    {/* Round 1467: aria-expanded, mirroring the same convention this
+                        file's BuildProgress.tsx sibling detail-toggle (and
+                        EntityPanel.tsx's columns-menu/collapse toggles) already use. */}
                     <button
                       type="button"
                       className="link-button detail-toggle"
@@ -403,6 +406,7 @@ export function HistoryPanel({
                         setExpandedId(isOpen ? null : checkpoint.id);
                         setCompareTargetId(null);
                       }}
+                      aria-expanded={isOpen}
                     >
                       {isOpen ? t("build.detail.hide") : t("history.diff.show")}
                     </button>

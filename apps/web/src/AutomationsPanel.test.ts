@@ -3638,6 +3638,9 @@ test("AutomationsPanel's History button fetches and shows every real run for tha
 
       const historyButton = Array.from(document.querySelectorAll("button")).find((b) => b.textContent === "History") as HTMLButtonElement;
       assert.ok(historyButton, "expected a History button on the rule row");
+      // Round 1467: aria-expanded, the same disclosure-widget convention this
+      // button's BuildProgress.tsx/HistoryPanel.tsx siblings now use too.
+      assert.equal(historyButton.getAttribute("aria-expanded"), "false", "collapsed before any click");
       fireEvent.click(historyButton);
 
       await waitForCondition(() => document.querySelectorAll(".automations-rule-history-list li").length === 2);
@@ -3645,13 +3648,16 @@ test("AutomationsPanel's History button fetches and shows every real run for tha
       const entries = Array.from(document.querySelectorAll(".automations-rule-history-list li")).map((li) => li.textContent);
       assert.match(entries[0] ?? "", /sent/i, "the newer, successful run must be listed first");
       assert.match(entries[1] ?? "", /WhatsApp not connected/, "the older, failed run's real error must be shown");
+      assert.equal(historyButton.getAttribute("aria-expanded"), "true", "must report aria-expanded=true once the history list is open");
 
       fireEvent.click(historyButton);
       assert.equal(document.querySelector(".automations-rule-history"), null, "a second click must collapse the history list");
+      assert.equal(historyButton.getAttribute("aria-expanded"), "false", "must flip back to aria-expanded=false once collapsed");
 
       fireEvent.click(historyButton);
       await waitForCondition(() => document.querySelectorAll(".automations-rule-history-list li").length === 2);
       assert.equal(runsRequests, 1, "re-expanding the same rule must reuse the cached runs, not re-fetch");
+      assert.equal(historyButton.getAttribute("aria-expanded"), "true", "must report aria-expanded=true again once re-expanded");
     } finally {
       globalThis.fetch = originalFetch;
     }

@@ -570,7 +570,11 @@ export function BuildProgress({
                     <span aria-hidden="true">{icon}</span> {t(`build.agent.${key}.title`)}
                   </strong>
                   {hasDetail && (
-                    <button type="button" className="link-button detail-toggle" onClick={() => toggleExpanded(agent)}>
+                    // Round 1467: aria-expanded, the same disclosure-widget convention
+                    // EntityPanel.tsx's own columns-menu/collapse toggles already use
+                    // (e.g. EntityPanel.tsx:5121) -- the label text alone isn't reliably
+                    // announced as the expand/collapse state changes.
+                    <button type="button" className="link-button detail-toggle" onClick={() => toggleExpanded(agent)} aria-expanded={isOpen}>
                       {isOpen ? t("build.detail.hide") : t("build.detail.show")}
                     </button>
                   )}

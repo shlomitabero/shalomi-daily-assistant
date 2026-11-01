@@ -1277,7 +1277,15 @@ export function AutomationsPanel({
                         this panel's own existing tests (".automations-rule-actions
                         button" picking the first one), so a new control must
                         never be inserted before them. */}
-                    <button type="button" className="secondary small" onClick={() => handleToggleHistory(rule)}>
+                    {/* Round 1467: aria-expanded, mirroring the same disclosure-widget
+                        convention BuildProgress.tsx/HistoryPanel.tsx's own detail-toggle
+                        buttons and EntityPanel.tsx's columns-menu/collapse toggles use. */}
+                    <button
+                      type="button"
+                      className="secondary small"
+                      onClick={() => handleToggleHistory(rule)}
+                      aria-expanded={expandedHistoryRuleId === rule.id}
+                    >
                       {expandedHistoryRuleId === rule.id ? t("automations.history.hide") : t("automations.history.show")}
                     </button>
                   </div>
