@@ -4308,6 +4308,83 @@ test("POST /projects/:id/entities/:entityName/automations retried with the same 
 });
 
 /**
+ * Round 1424: CreateAutomationRuleSchema's free-text fields never got the
+ * `.trim()` treatment rounds 408/919/939 already established everywhere
+ * else in this file for "a whitespace-only value passes `.min(1)` but is
+ * functionally empty" -- a static toNumber of " " used to save cleanly
+ * (truthy, length 1) and produce a rule that looked configured but could
+ * never actually send, with fireRule's own failure then misdiagnosing the
+ * cause as the RECORD's phone field rather than the RULE's own garbage
+ * destination.
+ */
+test("POST .../automations rejects a whitespace-only toNumber or messageTemplate instead of saving a rule that can never send", async () => {
+  await withServer(async (baseUrl) => {
+    const token = await signup(baseUrl, "automation-whitespace1@example.com");
+    const createRes = await fetch(`${baseUrl}/api/projects`, {
+      method: "POST",
+      headers: authHeaders(token),
+      body: JSON.stringify({ description: "A CRM with customers and deals." }),
+    });
+    const { project } = (await createRes.json()) as { project: { id: string; spec: { entities: { name: string }[] } } };
+    const entityName = project.spec.entities[0].name;
+
+    const whitespaceNumberRes = await fetch(`${baseUrl}/api/projects/${project.id}/entities/${entityName}/automations`, {
+      method: "POST",
+      headers: authHeaders(token),
+      body: JSON.stringify({ trigger: "record_created", actionType: "send_whatsapp", toMode: "static", toNumber: " ", messageTemplate: "hi" }),
+    });
+    assert.equal(whitespaceNumberRes.status, 400, "a whitespace-only toNumber must be rejected, not saved as a rule that can never send");
+
+    const whitespaceTemplateRes = await fetch(`${baseUrl}/api/projects/${project.id}/entities/${entityName}/automations`, {
+      method: "POST",
+      headers: authHeaders(token),
+      body: JSON.stringify({ trigger: "record_created", actionType: "send_whatsapp", toMode: "static", toNumber: "972500000000", messageTemplate: "   " }),
+    });
+    assert.equal(whitespaceTemplateRes.status, 400, "a whitespace-only messageTemplate must be rejected, not saved as a rule that sends a blank-looking message");
+
+    const listRes = await fetch(`${baseUrl}/api/projects/${project.id}/automations`, { headers: authHeaders(token) });
+    const { rules } = (await listRes.json()) as { rules: { id: string }[] };
+    assert.equal(rules.length, 0, "neither rejected attempt must have left a rule behind");
+  });
+});
+
+/**
+ * Round 1424: UpdateAutomationRuleSchema's own `.trim()` gap, same shape
+ * as the create-time test just above -- a PATCH could edit a previously
+ * valid rule's toNumber down to whitespace-only and it would still save.
+ */
+test("PATCH .../automations/:ruleId rejects an update that sets toNumber to a whitespace-only value", async () => {
+  await withServer(async (baseUrl) => {
+    const token = await signup(baseUrl, "automation-whitespace2@example.com");
+    const createRes = await fetch(`${baseUrl}/api/projects`, {
+      method: "POST",
+      headers: authHeaders(token),
+      body: JSON.stringify({ description: "A CRM with customers and deals." }),
+    });
+    const { project } = (await createRes.json()) as { project: { id: string; spec: { entities: { name: string }[] } } };
+    const entityName = project.spec.entities[0].name;
+
+    const ruleRes = await fetch(`${baseUrl}/api/projects/${project.id}/entities/${entityName}/automations`, {
+      method: "POST",
+      headers: authHeaders(token),
+      body: JSON.stringify({ trigger: "record_created", actionType: "send_whatsapp", toMode: "static", toNumber: "972500000000", messageTemplate: "hi" }),
+    });
+    const { rule } = (await ruleRes.json()) as { rule: { id: string; toNumber: string } };
+
+    const patchRes = await fetch(`${baseUrl}/api/projects/${project.id}/automations/${rule.id}`, {
+      method: "PATCH",
+      headers: authHeaders(token),
+      body: JSON.stringify({ toNumber: " " }),
+    });
+    assert.equal(patchRes.status, 400, "a PATCH setting toNumber to a whitespace-only value must be rejected");
+
+    const getRes = await fetch(`${baseUrl}/api/projects/${project.id}/automations`, { headers: authHeaders(token) });
+    const { rules } = (await getRes.json()) as { rules: { id: string; toNumber: string }[] };
+    assert.equal(rules[0].toNumber, rule.toNumber, "the rule's original toNumber must be untouched by the rejected PATCH");
+  });
+});
+
+/**
  * Round 959: hasTooManyConsecutiveFailuresToday's own cap (automations.ts,
  * rounds 924/934/951) was always computed and acted on server-side, but
  * GET /projects/:id/automations never surfaced it -- a rule the scheduler
