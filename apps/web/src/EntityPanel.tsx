@@ -1690,6 +1690,20 @@ export function EntityPanel({
   const [selectedIds, setSelectedIds] = useState<Set<number>>(new Set());
   const [bulkEditField, setBulkEditField] = useState("");
   const [bulkEditValue, setBulkEditValue] = useState<unknown>("");
+  // Round 1476: a 9th useBeforeUnloadWarning gap, distinct from formIsDirty
+  // above (which only ever reads the single-record add/edit `form` state) --
+  // the bulk-actions bar's own "Set field" picker lets a user choose any
+  // non-file field (including a real multi-line longtext <textarea>, the
+  // same widget type formIsDirty already protects) and type a value meant
+  // to apply to every selected record. Gating on bulkEditField alone (not
+  // also requiring a non-blank bulkEditValue) because an intentionally
+  // chosen blank/false value to bulk-clear a field (see handleBulkUpdate's
+  // own isBlankClear comment) is just as real a pending action as a typed
+  // one. Reusing selectedIds.size > 0 (the bulk-actions bar's own render
+  // gate) means this clears itself automatically once a bulk update
+  // succeeds (handleBulkUpdate sets selectedIds to only the failed ids) or
+  // the selection is otherwise cleared, with no separate reset needed.
+  useBeforeUnloadWarning(selectedIds.size > 0 && bulkEditField !== "");
   // handleBulkDelete clears selectedIds synchronously, before any await, so
   // the bulk-actions-bar (gated on selectedIds.size > 0) vanishes on the
   // very next render and a second click can't land. handleBulkDuplicate and

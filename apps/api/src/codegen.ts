@@ -5409,6 +5409,22 @@ export function EntityView({ entity, highlightRecordId, onHighlightHandled, onJu
   const [selectedIds, setSelectedIds] = useState(() => new Set());
   const [bulkEditField, setBulkEditField] = useState("");
   const [bulkEditValue, setBulkEditValue] = useState("");
+  // Round 1476: mirrors the live Forge AI preview's own round-1476 fix --
+  // this generated app's formIsDirty beforeunload guard above (round
+  // 1338) only ever reads the single-record add/edit form state, never
+  // bulkEditField/bulkEditValue, a structurally separate piece of state
+  // belonging to the bulk-actions bar. This generated app defines no
+  // custom hooks of its own, so it's inlined directly here, same as the
+  // formIsDirty guard above.
+  useEffect(() => {
+    if (!(selectedIds.size > 0 && bulkEditField !== "")) return;
+    function handleBeforeUnload(e) {
+      e.preventDefault();
+      e.returnValue = "";
+    }
+    window.addEventListener("beforeunload", handleBeforeUnload);
+    return () => window.removeEventListener("beforeunload", handleBeforeUnload);
+  }, [selectedIds, bulkEditField]);
   // handleBulkDelete clears selectedIds synchronously, before any await, so
   // the bulk-actions-bar vanishes on the next render and a second click
   // can't land. handleBulkDuplicate/handleBulkUpdate below have no such

@@ -3715,6 +3715,90 @@ test("the exported EntityView warns before a tab close/refresh discards an in-pr
 });
 
 /**
+ * Round 1476, ported from the live Forge AI preview's own round-1476 fix:
+ * the round-1338 formIsDirty beforeunload guard just above only ever reads
+ * the single-record add/edit form state, never bulkEditField/bulkEditValue
+ * -- a structurally separate piece of state belonging to the bulk-actions
+ * bar's own "Set field" picker. Confirms a chosen bulk-edit field now
+ * warns too, but a bare row selection with no field chosen yet does not,
+ * and the warning clears once the selection is cleared (handleBulkDelete's
+ * own "Clear selection" button).
+ */
+test("the exported EntityView warns before a tab close/refresh discards an in-progress bulk-edit, but not for a bare row selection with no field chosen yet", async () => {
+  const files = generateExportFiles(project);
+  const dir = writeGeneratedWebComponent(files);
+  const store = [
+    { id: 1, name: "Acme Corp", status: "New" },
+    { id: 2, name: "Globex", status: "Won" },
+  ];
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = (async (input: string, init?: RequestInit): Promise<Response> => {
+    const method = init?.method ?? "GET";
+    if (method === "GET" && input === "/api/Customer") {
+      return new Response(JSON.stringify({ records: store }), { status: 200, headers: { "content-type": "application/json" } });
+    }
+    throw new Error(`unexpected request ${method} ${input}`);
+  }) as typeof fetch;
+
+  const dispatchBeforeUnload = () => {
+    const event = new window.Event("beforeunload", { cancelable: true });
+    window.dispatchEvent(event);
+    return event.defaultPrevented;
+  };
+
+  try {
+    await withRealLocalStorage(async () => {
+      const { EntityView } = await import(path.join(dir, "web", "src", "components", "EntityView.jsx"));
+      const customerEntity = project.spec.entities.find((e) => e.name === "Customer")!;
+      const props = {
+        entity: customerEntity,
+        highlightRecordId: null,
+        onHighlightHandled: () => {},
+        onJumpToRecord: () => {},
+        onRecordCountChange: () => {},
+      };
+
+      const { container } = render(React.createElement(EntityView, props));
+      for (let i = 0; i < 40; i++) {
+        if (container.querySelectorAll("tbody tr").length === 2) break;
+        await act(async () => {
+          await new Promise((resolve) => setTimeout(resolve, 0));
+        });
+      }
+      assert.equal(container.querySelectorAll("tbody tr").length, 2, "expected both records to have loaded");
+
+      assert.equal(dispatchBeforeUnload(), false, "no selection yet, nothing to warn about");
+
+      const rowCheckbox = container.querySelector('td.select-col input[type="checkbox"]') as HTMLInputElement;
+      await act(async () => {
+        fireEvent.click(rowCheckbox);
+      });
+      assert.ok(container.querySelector(".bulk-actions-bar"), "expected the bulk-actions-bar once a row is selected");
+      assert.equal(dispatchBeforeUnload(), false, "a row selected but no bulk-edit field chosen yet must not warn");
+
+      const fieldSelect = container.querySelector(".bulk-edit-field-label select") as HTMLSelectElement;
+      await act(async () => {
+        fireEvent.change(fieldSelect, { target: { value: "name" } });
+      });
+      assert.ok(container.querySelector('.bulk-actions-bar input[type="text"]'), "expected the FieldInput for the chosen field to render");
+      assert.equal(dispatchBeforeUnload(), true, "choosing a bulk-edit field must now warn before the in-progress bulk edit is lost");
+
+      const clearButton = Array.from(container.querySelectorAll(".bulk-actions-bar button")).find((b) => b.textContent === "Clear selection");
+      assert.ok(clearButton, "expected a real 'Clear selection' button once a row is selected");
+      await act(async () => {
+        fireEvent.click(clearButton!);
+      });
+      assert.equal(container.querySelector(".bulk-actions-bar"), null, "the bulk-actions-bar must disappear once the selection is cleared");
+      assert.equal(dispatchBeforeUnload(), false, "clearing the selection must clear the warning too, with nothing left to lose");
+    });
+  } finally {
+    globalThis.fetch = originalFetch;
+    cleanup();
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+/**
  * Round 1021 regression, ported from the live Forge AI preview's own
  * EntityPanel.tsx fix (round 1017): handleDelete is a single shared
  * function also called by the table row's own Delete button, the

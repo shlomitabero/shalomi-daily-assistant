@@ -17702,6 +17702,58 @@ test("EntityPanel's record-form warns before a tab close/refresh discards an in-
 });
 
 /**
+ * Round 1476: a 9th useBeforeUnloadWarning gap, distinct from round 1333's
+ * formIsDirty guard just above (which only ever reads the single-record
+ * add/edit `form` state) -- the bulk-actions bar's own "Set field" picker
+ * lets a user choose any non-file field and type a value meant to apply
+ * to every selected record, with no warning at all before a tab close/
+ * refresh/navigation silently discarded the chosen field, the selection,
+ * and the typed value. Confirms the warning only engages once a bulk-edit
+ * field has actually been chosen (not merely on selecting rows), and
+ * clears again once the selection is cleared.
+ */
+test("EntityPanel warns before a tab close/refresh discards an in-progress bulk-edit, but not for a bare row selection with no field chosen yet", async () => {
+  await withJsdom(async () => {
+    const store: EntityRecord[] = [
+      { id: 1, name: "Acme Corp", status: "new" },
+      { id: 2, name: "Globex", status: "won" },
+    ];
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = mockRecordsFetch(store) as typeof fetch;
+    try {
+      renderEntityPanel();
+      await waitForCondition(() => document.querySelectorAll("table tbody tr").length === 2);
+
+      function dispatchBeforeUnload(): boolean {
+        const event = new window.Event("beforeunload", { cancelable: true });
+        window.dispatchEvent(event);
+        return event.defaultPrevented;
+      }
+
+      assert.equal(dispatchBeforeUnload(), false, "no selection yet, nothing to warn about");
+
+      fireEvent.click(document.querySelector('td.select-col input[type="checkbox"]') as HTMLInputElement);
+      await waitForCondition(() => document.querySelector(".bulk-actions-bar") !== null);
+      assert.equal(dispatchBeforeUnload(), false, "a row selected but no bulk-edit field chosen yet must not warn");
+
+      const fieldSelect = document.querySelector(".bulk-actions-bar select") as HTMLSelectElement;
+      fireEvent.change(fieldSelect, { target: { value: "name" } });
+      await waitForCondition(() => document.querySelector('.bulk-actions-bar input[type="text"]') !== null);
+      assert.equal(dispatchBeforeUnload(), true, "choosing a bulk-edit field must now warn before the in-progress bulk edit is lost");
+
+      const clearButton = Array.from(document.querySelectorAll(".bulk-actions-bar button")).find(
+        (b) => b.textContent === "Clear selection",
+      ) as HTMLButtonElement;
+      fireEvent.click(clearButton);
+      assert.equal(document.querySelector(".bulk-actions-bar"), null, "the bulk-actions-bar must disappear once the selection is cleared");
+      assert.equal(dispatchBeforeUnload(), false, "clearing the selection must clear the warning too, with nothing left to lose");
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+});
+
+/**
  * Round 1348: a live Playwright browser session (round 1347's survey)
  * found that in Kanban Board view, `BoardCard`'s `.row-actions` button row
  * (edit/duplicate/send WhatsApp/print/delete -- up to 5 plain buttons)
