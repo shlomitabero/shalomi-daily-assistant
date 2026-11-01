@@ -362,8 +362,8 @@ test("shows the real owned-vs-shared project counts once the real fetch resolves
       );
       assert.match(
         summary,
-        /access to 1 more shared projects/,
-        "must attribute the real SHARED count (1) to the 'shared, access removed' phrase specifically",
+        /access to 1 more shared project\b/,
+        "must attribute the real SHARED count (1) to the 'shared, access removed' phrase specifically, in its correct singular form (round 1429)",
       );
     } finally {
       globalThis.fetch = originalFetch;

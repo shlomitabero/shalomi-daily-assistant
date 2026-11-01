@@ -14,7 +14,19 @@ export function formatDeleteAccountSummary(
   t: (key: string, params?: Record<string, string | number>) => string,
 ): string | null {
   if (ownedCount === 0 && sharedCount === 0) return null;
-  if (ownedCount > 0 && sharedCount === 0) return t("deleteAccount.summary.ownedOnly", { owned: ownedCount });
-  if (ownedCount === 0 && sharedCount > 0) return t("deleteAccount.summary.sharedOnly", { shared: sharedCount });
-  return t("deleteAccount.summary.both", { owned: ownedCount, shared: sharedCount });
+  if (ownedCount > 0 && sharedCount === 0) {
+    return t(ownedCount === 1 ? "deleteAccount.summary.ownedOnly.one" : "deleteAccount.summary.ownedOnly.many", { owned: ownedCount });
+  }
+  if (ownedCount === 0 && sharedCount > 0) {
+    return t(sharedCount === 1 ? "deleteAccount.summary.sharedOnly.one" : "deleteAccount.summary.sharedOnly.many", { shared: sharedCount });
+  }
+  const bothKey =
+    ownedCount === 1
+      ? sharedCount === 1
+        ? "deleteAccount.summary.both.oneOne"
+        : "deleteAccount.summary.both.oneMany"
+      : sharedCount === 1
+        ? "deleteAccount.summary.both.manyOne"
+        : "deleteAccount.summary.both.manyMany";
+  return t(bothKey, { owned: ownedCount, shared: sharedCount });
 }
