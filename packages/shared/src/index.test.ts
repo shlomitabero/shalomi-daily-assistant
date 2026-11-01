@@ -246,6 +246,11 @@ test("findOversizedGeneratedSpecField flags an oversized summary, phrase array e
   });
   assert.match(findOversizedGeneratedSpecField(oversizedEntityName)!, /entity name/);
 
+  const oversizedEntityDescription = ProductSpecSchema.parse({
+    ...baseSpec([{ name: "Order", description: "x".repeat(GENERATED_SPEC_PHRASE_MAX_LENGTH + 1), fields: normalEntity.fields }]),
+  });
+  assert.match(findOversizedGeneratedSpecField(oversizedEntityDescription)!, /entity "Order"'s description/);
+
   const oversizedFieldLabel = ProductSpecSchema.parse({
     ...baseSpec([{ name: "Order", fields: [{ name: "total", label: "x".repeat(GENERATED_SPEC_LABEL_MAX_LENGTH + 1), type: "number", required: true }] }]),
   });

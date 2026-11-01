@@ -391,6 +391,9 @@ export function findOversizedGeneratedSpecField(spec: ProductSpec): string | nul
     if (entity.label && entity.label.length > GENERATED_SPEC_LABEL_MAX_LENGTH) {
       return `entity "${entity.name}"'s label (${entity.label.length} characters, max ${GENERATED_SPEC_LABEL_MAX_LENGTH})`;
     }
+    if (entity.description && entity.description.length > GENERATED_SPEC_PHRASE_MAX_LENGTH) {
+      return `entity "${entity.name}"'s description (${entity.description.length} characters, max ${GENERATED_SPEC_PHRASE_MAX_LENGTH})`;
+    }
     for (const field of entity.fields) {
       if (field.name.length > GENERATED_SPEC_LABEL_MAX_LENGTH) {
         return `a field name in entity "${entity.name}" (${field.name.length} characters, max ${GENERATED_SPEC_LABEL_MAX_LENGTH})`;
