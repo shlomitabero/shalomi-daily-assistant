@@ -10850,6 +10850,44 @@ test("a user cannot restore another user's checkpoint into their own project by 
 });
 
 /**
+ * Round 1427: getCheckpoint (packages/db) used the strict rowToCheckpoint,
+ * which throws for a checkpoint whose stored spec no longer matches
+ * today's ProductSpecSchema -- listCheckpoints already handles this case
+ * leniently (excluding the row), but the restore route's own single-
+ * checkpoint lookup never caught the throw, so it reached errorMiddleware
+ * as an uncaught ZodError and surfaced as a raw 500, instead of the exact
+ * same clean 404 CHECKPOINT_NOT_FOUND the route already throws one line
+ * later for a checkpoint that genuinely doesn't exist.
+ */
+test("restoring a checkpoint whose stored spec no longer matches the current schema returns a clean 404, not a raw 500", async () => {
+  await withServer(async (baseUrl, db) => {
+    const token = await signup(baseUrl, "restore-stale-schema@example.com");
+    const createRes = await fetch(`${baseUrl}/api/projects`, {
+      method: "POST",
+      headers: authHeaders(token),
+      body: JSON.stringify({ description: "A CRM with customers and deals." }),
+    });
+    const { project } = (await createRes.json()) as { project: { id: string } };
+
+    // Inserted via raw SQL (bypassing insertCheckpoint, which would itself
+    // require a valid spec) to stand in for a checkpoint written by an
+    // older version of the app, before some later round tightened the
+    // schema -- mirroring packages/db/src/checkpoints.test.ts's own
+    // identical setup for the lower-level function.
+    db.prepare(
+      "INSERT INTO checkpoints (id, projectId, label, spec_json, createdAt) VALUES (?, ?, ?, ?, ?)",
+    ).run("stale-checkpoint", project.id, "stale checkpoint", JSON.stringify({ summary: "old spec, missing fields" }), new Date().toISOString());
+
+    const restoreRes = await fetch(`${baseUrl}/api/projects/${project.id}/checkpoints/stale-checkpoint/restore`, {
+      method: "POST",
+      headers: authHeaders(token),
+    });
+    assert.equal(restoreRes.status, 404, "a stale-schema checkpoint must 404 cleanly, not 500");
+    assert.equal(((await restoreRes.json()) as { code?: string }).code, "CHECKPOINT_NOT_FOUND");
+  });
+});
+
+/**
  * New in this round: a checkpoint's label was previously only ever the
  * automatic one build/refine gave it -- no way to give an important one a
  * name that's actually memorable months later. Confirms the real PATCH

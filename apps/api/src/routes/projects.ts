@@ -8,7 +8,7 @@ import { z } from "zod";
 import type { Entity, EntityRecord, Field, Project, Screen } from "@forge/shared";
 import { CollaboratorRoleSchema, FIELD_TYPES } from "@forge/shared";
 import {
-  getCheckpoint,
+  tryGetCheckpoint,
   getProject,
   insertProject,
   listCheckpoints,
@@ -3034,7 +3034,7 @@ export function createProjectsRouter(
         req.userId!,
         `POST /projects/${project.id}/checkpoints/${req.params.checkpointId}/restore`,
         async () => {
-          const checkpoint = getCheckpoint(db, req.params.checkpointId);
+          const checkpoint = tryGetCheckpoint(db, req.params.checkpointId);
           if (!checkpoint || checkpoint.projectId !== project.id) {
             throw new HttpError(404, `Checkpoint "${req.params.checkpointId}" not found`, "CHECKPOINT_NOT_FOUND");
           }

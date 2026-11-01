@@ -385,6 +385,26 @@ export function getCheckpoint(db: ForgeDatabase, id: string): Checkpoint | undef
 }
 
 /**
+ * Round 1427: the lenient counterpart to getCheckpoint above, mirroring
+ * tryRowToCheckpoint's own doc comment -- a checkpoint whose stored spec
+ * no longer parses against today's ProductSpecSchema is a real, expected
+ * case (listCheckpoints already excludes such rows from Time Machine's
+ * own list via tryRowToCheckpoint), but getCheckpoint's single callsite,
+ * the restore route, never caught its raw throw: a checkpoint id a caller
+ * already has (a stale rendered "Restore" button, a retried request) hit
+ * an uncaught ZodError -> a raw 500, instead of the exact same clean 404
+ * CHECKPOINT_NOT_FOUND the route already throws one line later for "no
+ * such id"/"wrong project". Routes that only need to know whether a
+ * restorable checkpoint exists should use this instead of getCheckpoint.
+ */
+export function tryGetCheckpoint(db: ForgeDatabase, id: string): Checkpoint | undefined {
+  const row = db.prepare("SELECT * FROM checkpoints WHERE id = ?").get(id) as
+    | Record<string, unknown>
+    | undefined;
+  return row ? tryRowToCheckpoint(row) : undefined;
+}
+
+/**
  * Renames a checkpoint's own label -- Time Machine only ever gave a
  * checkpoint an automatic label ("Initial build", "Refine: <instruction>"),
  * with no way to give an important one a name that's actually memorable

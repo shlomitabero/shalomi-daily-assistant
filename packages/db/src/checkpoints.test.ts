@@ -13,6 +13,7 @@ import {
   listHistoricalEntityNames,
   recordEntityHistory,
   renameCheckpoint,
+  tryGetCheckpoint,
 } from "./checkpoints.js";
 import { NotFoundError } from "./repository.js";
 
@@ -152,6 +153,24 @@ test("getCheckpoint still throws clearly for a single checkpoint whose stored sp
   ).run("stale", "proj1", "stale checkpoint", JSON.stringify({ summary: "old spec, missing fields" }), new Date().toISOString());
 
   assert.throws(() => getCheckpoint(db, "stale"));
+});
+
+/**
+ * Round 1427: tryGetCheckpoint is the lenient counterpart to getCheckpoint
+ * just above, mirroring tryRowToCheckpoint's own convention (already used
+ * by listCheckpoints) -- a single-checkpoint fetch that needs to know
+ * "does a restorable checkpoint exist" should get undefined for a
+ * stale-schema row, not an uncaught throw.
+ */
+test("tryGetCheckpoint returns undefined, instead of throwing, for a checkpoint whose stored spec no longer matches the current schema", () => {
+  const db = openDatabase(":memory:");
+  ensureCheckpointsTable(db);
+  db.prepare(
+    "INSERT INTO checkpoints (id, projectId, label, spec_json, createdAt) VALUES (?, ?, ?, ?, ?)",
+  ).run("stale", "proj1", "stale checkpoint", JSON.stringify({ summary: "old spec, missing fields" }), new Date().toISOString());
+
+  assert.equal(tryGetCheckpoint(db, "stale"), undefined, "a stale-schema checkpoint must come back as undefined, not throw");
+  assert.equal(tryGetCheckpoint(db, "no-such-id"), undefined, "a genuinely missing id must still come back as undefined too");
 });
 
 /**

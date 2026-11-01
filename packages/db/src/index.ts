@@ -71,6 +71,7 @@ export {
   insertCheckpoint,
   listCheckpoints,
   getCheckpoint,
+  tryGetCheckpoint,
   renameCheckpoint,
   deleteCheckpoint,
   deleteCheckpointsForProject,
