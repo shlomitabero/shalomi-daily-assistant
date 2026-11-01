@@ -1173,6 +1173,89 @@ test("fireRule's send_whatsapp action sends every distinct referenced file field
 });
 
 /**
+ * Round 1421: fireRule never set hadAttachment on either insertWhatsAppMessage
+ * call it makes, unlike routes/projects.ts's own manual "Test" send route
+ * (round 1101's own `hadAttachment: Boolean(resolvedAttachment)`) -- every
+ * single automation-triggered WhatsApp send, with or without a real
+ * attachment, was logged with the column's own silent default (false).
+ * WhatsAppPanel.tsx's Retry button reads this exact field to warn the user
+ * before resending a FAILED attachment-bearing send as text-only (the
+ * original file is already deleted from disk by the time a Retry could
+ * ever run); without it, retrying a failed automation send -- the single
+ * most common real-world way a file ever gets attached to a WhatsApp
+ * send, per this file's own round-1341 doc comment ("shipping photos,
+ * menu images, damage reports") -- silently dropped the file a second
+ * time with no warning. Confirms both the primary send (with its real
+ * attachment) and the round-1341 follow-up send (its own always-true
+ * attachment) are logged as hadAttachment: true.
+ */
+test("fireRule's send_whatsapp action logs hadAttachment: true for both the primary send and any follow-up attachment send, not the column's own silent false default", async () => {
+  const entityWithTwoFiles: Entity = {
+    ...orderEntity,
+    fields: [
+      ...orderEntity.fields,
+      { name: "invoice", type: "file", required: false },
+      { name: "receipt", type: "file", required: false },
+    ],
+  };
+  const { db, project } = setupProject();
+  const rule = insertAutomationRule(db, {
+    projectId: project.id,
+    entityName: "Order",
+    trigger: "record_created",
+    actionType: "send_whatsapp",
+    toMode: "static",
+    toNumber: "972509999999",
+    messageTemplate: "Hi {{customerName}}, here's {{invoice}} and {{receipt}}.",
+  });
+  const { manager } = createFakeWhatsApp({ connected: true });
+
+  const uploadsDir = await mkdtemp(path.join(tmpdir(), "forge-automations-whatsapp-had-attachment-test-"));
+  try {
+    const invoiceFilename = "a1b2c3d4-e5f6-7890-abcd-ef1234567890.pdf";
+    const receiptFilename = "b2c3d4e5-f6a7-8901-bcde-f12345678901.pdf";
+    await mkdir(path.join(uploadsDir, project.id, "Order"), { recursive: true });
+    await writeFile(path.join(uploadsDir, project.id, "Order", invoiceFilename), "%PDF-fake-invoice-contents");
+    await writeFile(path.join(uploadsDir, project.id, "Order", receiptFilename), "%PDF-fake-receipt-contents");
+
+    const record = {
+      id: 1,
+      customerName: "Dana",
+      invoice: JSON.stringify({ url: `/api/uploads/${project.id}/Order/${invoiceFilename}`, name: "invoice-203.pdf", size: 27, mimeType: "application/pdf" }),
+      receipt: JSON.stringify({ url: `/api/uploads/${project.id}/Order/${receiptFilename}`, name: "receipt-203.pdf", size: 19, mimeType: "application/pdf" }),
+    };
+
+    await fireRule(db, manager, UNUSED_EMAIL_SENDER, project, entityWithTwoFiles, rule, record, uploadsDir, UNUSED_BASE_URL);
+
+    const { messages } = listWhatsAppMessages(db, project.id);
+    assert.equal(messages.length, 2);
+    assert.ok(messages.every((m) => m.hadAttachment === true), "both the primary send and the follow-up send actually carried a real attachment, so both must be logged as hadAttachment: true");
+  } finally {
+    await rm(uploadsDir, { recursive: true, force: true });
+  }
+});
+
+test("fireRule's send_whatsapp action logs hadAttachment: false for a plain text send with no attachment", async () => {
+  const { db, project } = setupProject();
+  const rule = insertAutomationRule(db, {
+    projectId: project.id,
+    entityName: "Order",
+    trigger: "record_created",
+    actionType: "send_whatsapp",
+    toMode: "static",
+    toNumber: "972509999999",
+    messageTemplate: "Hi {{customerName}}, your order is confirmed.",
+  });
+  const { manager } = createFakeWhatsApp({ connected: true });
+
+  await fireRule(db, manager, UNUSED_EMAIL_SENDER, project, orderEntity, rule, { id: 1, customerName: "Dana" }, "/tmp/unused-uploads-dir", UNUSED_BASE_URL);
+
+  const { messages } = listWhatsAppMessages(db, project.id);
+  assert.equal(messages.length, 1);
+  assert.equal(messages[0]!.hadAttachment, false, "a send with no referenced file field must still be logged as hadAttachment: false");
+});
+
+/**
  * Round 850's finding: this function builds the identical kind of path
  * from the identical unrestricted entity.name string rounds 848/849
  * already found exploitable on the write (upload-destination) and delete

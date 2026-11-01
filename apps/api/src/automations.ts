@@ -1206,6 +1206,17 @@ export async function fireRule(
     matchedRecordId: match?.recordId ?? null,
     matchedLabel: match?.label ?? null,
     status: result.ok ? "sent" : "failed",
+    // Round 1421: without this, every automation-triggered send was
+    // logged with the default hadAttachment: false even when a real file
+    // was actually attached -- unlike the manual "Test" send route
+    // (routes/projects.ts's own `hadAttachment: Boolean(resolvedAttachment)`),
+    // which round 1101 built this exact flag for. A FAILED send with a
+    // real attachment (a WhatsApp disconnect, a transient Baileys error --
+    // not contrived) that the owner then clicks Retry on
+    // (WhatsAppPanel.tsx's handleRetry) silently resent text-only with no
+    // warning, since handleRetry's own confirm-before-text-only-retry
+    // guard reads this exact field.
+    hadAttachment: Boolean(attachments[0]),
   });
   recordAutomationRun(
     db,
@@ -1244,6 +1255,10 @@ export async function fireRule(
       matchedRecordId: match?.recordId ?? null,
       matchedLabel: match?.label ?? null,
       status: extraResult.ok ? "sent" : "failed",
+      // Round 1421: see the primary send's own identical fix just above --
+      // this loop only ever runs once a real extraAttachment was resolved,
+      // so this is always true here, never a `Boolean(...)` conditional.
+      hadAttachment: true,
     });
   }
 }
