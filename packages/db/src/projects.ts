@@ -467,12 +467,23 @@ export function getOrCreateInboundWebhookToken(db: ForgeDatabase, projectId: str
  * overwrites an already-set inboundWebhookToken. Unconditionally
  * overwrites rather than returning an existing value, the whole point
  * being to make the old one stop matching.
+ *
+ * Round 1457: also clears lastInboundWebhookAt back to null -- without
+ * this, round 1456's own delivery-visibility feature would keep
+ * reporting a real timestamp from a delivery that landed under the OLD,
+ * now-dead token, indistinguishable from a fresh delivery under the
+ * token actually live right now. An owner rotating the token (security
+ * hygiene, or round 1407's "an editor's own integration leaked"
+ * scenario) and then clicking "Check last delivery" before the external
+ * service has been reconfigured and sent anything new would otherwise
+ * see stale, misleading confirmation that their rotated integration is
+ * already working.
  */
 export function regenerateInboundWebhookToken(db: ForgeDatabase, projectId: string): string | undefined {
   const project = db.prepare("SELECT id FROM projects WHERE id = ?").get(projectId) as { id: string } | undefined;
   if (!project) return undefined;
   const token = randomBytes(32).toString("hex");
-  db.prepare("UPDATE projects SET inboundWebhookToken = ? WHERE id = ?").run(token, projectId);
+  db.prepare("UPDATE projects SET inboundWebhookToken = ?, lastInboundWebhookAt = NULL WHERE id = ?").run(token, projectId);
   return token;
 }
 

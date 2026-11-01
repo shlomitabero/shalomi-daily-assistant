@@ -1460,6 +1460,55 @@ test("CollaboratorsPanel's \"Check last delivery\" button shows the real, format
 });
 
 /**
+ * Round 1457: a delivery checked under the OLD token must not keep
+ * showing on screen as if it still applies once the owner regenerates --
+ * the server itself clears lastInboundWebhookAt on rotation (see
+ * regenerateInboundWebhookToken's own doc comment, packages/db), and this
+ * panel's own already-displayed value has to follow, or the UI would show
+ * stale, misleading confirmation that a dead token is still receiving.
+ */
+test("CollaboratorsPanel clears its own displayed \"Last delivery received\" line once the inbound-webhook token is regenerated", async () => {
+  await withJsdom(async () => {
+    const originalFetch = globalThis.fetch;
+    const originalConfirm = globalThis.window.confirm;
+    const deliveredAt = new Date("2026-01-15T10:00:00Z").toISOString();
+    globalThis.fetch = (async (input: string, init?: RequestInit) => {
+      const method = init?.method ?? "GET";
+      if (method === "GET" && input === "/api/projects/proj1/collaborators") {
+        return new Response(JSON.stringify({ collaborators: [] }), { status: 200, headers: { "content-type": "application/json" } });
+      }
+      if (method === "GET" && input === "/api/projects/proj1/inbound-webhook-token") {
+        return new Response(JSON.stringify({ token: "abc", lastInboundWebhookAt: deliveredAt }), { status: 200, headers: { "content-type": "application/json" } });
+      }
+      if (method === "POST" && input === "/api/projects/proj1/inbound-webhook-token/regenerate?lang=en") {
+        return new Response(JSON.stringify({ token: "brand-new-token" }), { status: 200, headers: { "content-type": "application/json" } });
+      }
+      throw new Error(`unexpected request ${method} ${input}`);
+    }) as typeof fetch;
+    globalThis.window.confirm = (() => true) as typeof window.confirm;
+
+    try {
+      renderPanel(true);
+      await waitForCondition(() => document.querySelector(".collab-webhook-in-section") !== null);
+
+      const [regenerateButton, checkButton] = Array.from(document.querySelectorAll(".collab-webhook-in-section button")) as HTMLButtonElement[];
+      fireEvent.click(checkButton);
+      await waitForCondition(() => (document.querySelector(".collab-webhook-in-section") as HTMLElement).textContent!.includes("Last delivery received"));
+
+      fireEvent.click(regenerateButton);
+      await waitForCondition(() => (document.querySelector(".collab-webhook-in-section") as HTMLElement).textContent!.includes("invalidated"));
+      assert.ok(
+        !(document.querySelector(".collab-webhook-in-section") as HTMLElement).textContent!.includes("Last delivery received"),
+        "regenerating must clear the previously-displayed delivery timestamp, since it belonged to the now-dead old token",
+      );
+    } finally {
+      globalThis.fetch = originalFetch;
+      globalThis.window.confirm = originalConfirm;
+    }
+  });
+});
+
+/**
  * Round 1247: the "Subscribe to a combined calendar" button, the
  * project-wide counterpart to EntityPanel.tsx's own per-entity subscribe
  * button. Unlike the regenerate section just above (owner-only, since

@@ -1002,6 +1002,31 @@ test("regenerateInboundWebhookToken overwrites an already-set token with a real,
 });
 
 /**
+ * Round 1457: a delivery recorded under token A must not keep showing up
+ * as "the current state" once the owner rotates to token B -- otherwise
+ * getLastInboundWebhookAt reports a real timestamp that belongs to a now-
+ * dead token, indistinguishable from a fresh delivery under the token
+ * actually live right now. Round 1456 added lastInboundWebhookAt without
+ * this reset, which is exactly what this test would have caught.
+ */
+test("regenerateInboundWebhookToken also clears lastInboundWebhookAt back to undefined, so a stale delivery from the old token doesn't look current", () => {
+  const db = openDatabase(":memory:");
+  ensureProjectsTable(db);
+  insertProject(db, { id: "proj1", ownerId: "owner1", name: "P1", description: "", spec: validSpec });
+
+  getOrCreateInboundWebhookToken(db, "proj1");
+  recordInboundWebhookDelivery(db, "proj1");
+  assert.ok(getLastInboundWebhookAt(db, "proj1"), "sanity check: a delivery was actually recorded under the original token");
+
+  regenerateInboundWebhookToken(db, "proj1");
+  assert.equal(
+    getLastInboundWebhookAt(db, "proj1"),
+    undefined,
+    "rotating the token must clear the old delivery timestamp -- it belongs to a token that no longer works",
+  );
+});
+
+/**
  * Round 1456: until now a real delivery through this token left no trace
  * anywhere -- this is the read/write pair that closes that gap, mirroring
  * getOrCreateInboundWebhookToken's own lazy-column shape (undefined until

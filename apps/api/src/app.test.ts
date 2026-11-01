@@ -20291,6 +20291,63 @@ test("GET /projects/:id/inbound-webhook-token reports lastInboundWebhookAt: abse
   });
 });
 
+/**
+ * Round 1457: a delivery recorded under the OLD token must not keep
+ * looking like "the current state" once the owner rotates to a new one --
+ * otherwise GET .../inbound-webhook-token would report a real timestamp
+ * that belongs to a token that no longer works at all, indistinguishable
+ * from a fresh delivery under the token actually live right now. See
+ * regenerateInboundWebhookToken's own doc comment (packages/db).
+ */
+test("POST /projects/:id/inbound-webhook-token/regenerate clears lastInboundWebhookAt back to absent, so a delivery recorded under the old token doesn't look current under the new one", async () => {
+  await withServer(async (baseUrl, db) => {
+    const email = `webhook-in-regen-clears-last-${randomUUID()}@example.com`;
+    const authToken = await signup(baseUrl, email);
+    const user = findUserByEmail(db, email)!;
+    const spec: ProductSpec = {
+      summary: "test",
+      personas: [],
+      roles: ["Admin"],
+      entities: [{ name: "Lead", fields: [{ name: "name", type: "text", required: true }, { name: "phone", type: "text" }] }],
+      screens: [],
+      assumptions: [],
+      openQuestions: [],
+    };
+    const projectId = randomUUID();
+    insertProject(db, { id: projectId, ownerId: user.id, name: "CRM", description: "test", spec });
+    diffAndMigrate(db, projectId, undefined, spec);
+    markProjectBuilt(db, projectId);
+
+    const tokenRes = await fetch(`${baseUrl}/api/projects/${projectId}/inbound-webhook-token`, { headers: authHeaders(authToken) });
+    const { token: oldToken } = (await tokenRes.json()) as { token: string };
+
+    const deliveryRes = await fetch(`${baseUrl}/api/public/webhook-in/${projectId}/Lead?token=${oldToken}`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ name: "Dana", phone: "972500000001" }),
+    });
+    assert.equal(deliveryRes.status, 201);
+
+    const beforeRegenRes = await fetch(`${baseUrl}/api/projects/${projectId}/inbound-webhook-token`, { headers: authHeaders(authToken) });
+    const { lastInboundWebhookAt: beforeRegen } = (await beforeRegenRes.json()) as { lastInboundWebhookAt?: string };
+    assert.ok(beforeRegen, "sanity check: the delivery under the old token was actually recorded");
+
+    const regenRes = await fetch(`${baseUrl}/api/projects/${projectId}/inbound-webhook-token/regenerate`, {
+      method: "POST",
+      headers: { ...authHeaders(authToken), "x-idempotency-key": randomUUID() },
+    });
+    assert.equal(regenRes.status, 200);
+
+    const afterRegenRes = await fetch(`${baseUrl}/api/projects/${projectId}/inbound-webhook-token`, { headers: authHeaders(authToken) });
+    const { lastInboundWebhookAt: afterRegen } = (await afterRegenRes.json()) as { lastInboundWebhookAt?: string };
+    assert.equal(
+      afterRegen,
+      undefined,
+      "rotating the token must clear the old delivery's timestamp -- it belongs to a token that no longer matches anything",
+    );
+  });
+});
+
 test("POST /projects/:id/inbound-webhook-token/regenerate is rate-limited per authenticated account: the 31st regenerate is rejected with 429, while a different account is unaffected", async () => {
   await withServer(async (baseUrl, db) => {
     const email = `webhook-in-rate-limit-${randomUUID()}@example.com`;

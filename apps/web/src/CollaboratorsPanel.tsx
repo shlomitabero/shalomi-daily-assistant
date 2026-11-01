@@ -366,6 +366,13 @@ export function CollaboratorsPanel({
     try {
       await regenerateInboundWebhookToken(projectId, lang);
       setRegenerateWebhookTokenInfo(t("collab.webhookIn.regenerate.success"));
+      // Round 1457: the server just cleared lastInboundWebhookAt back to
+      // null for this same reason (see regenerateInboundWebhookToken's own
+      // doc comment) -- reset this panel's own already-checked value back
+      // to the "haven't checked yet" sentinel too, so a result fetched
+      // under the OLD token doesn't linger on screen looking like it still
+      // applies to the one just generated.
+      setLastInboundWebhookAt(undefined);
     } catch (err) {
       setError((err as Error).message);
     } finally {
