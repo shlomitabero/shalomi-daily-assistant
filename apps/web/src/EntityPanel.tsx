@@ -3849,7 +3849,7 @@ export function EntityPanel({
     if (writesInFlight) return;
     const ids = [...selectedIds];
     if (ids.length === 0) return;
-    if (!window.confirm(t("entity.bulk.confirmDelete", { count: ids.length }))) return;
+    if (!window.confirm(t(ids.length === 1 ? "entity.bulk.confirmDelete.one" : "entity.bulk.confirmDelete.many", { count: ids.length }))) return;
 
     if (pendingDeleteRef.current) {
       clearTimeout(pendingDeleteRef.current.timeoutId);
@@ -3948,8 +3948,12 @@ export function EntityPanel({
     const fieldLabel = bulkEditFieldDef?.label ?? bulkEditFieldDef?.name ?? bulkEditField;
     const isBlankClear = bulkEditFieldDef?.type !== "boolean" && String(bulkEditValue ?? "") === "";
     const confirmMessage = isBlankClear
-      ? t("entity.bulk.confirmClearField", { field: fieldLabel, count: ids.length })
-      : t("entity.bulk.confirmUpdate", { field: fieldLabel, value: bulkEditValueDisplay(bulkEditFieldDef, bulkEditValue), count: ids.length });
+      ? t(ids.length === 1 ? "entity.bulk.confirmClearField.one" : "entity.bulk.confirmClearField.many", { field: fieldLabel, count: ids.length })
+      : t(ids.length === 1 ? "entity.bulk.confirmUpdate.one" : "entity.bulk.confirmUpdate.many", {
+          field: fieldLabel,
+          value: bulkEditValueDisplay(bulkEditFieldDef, bulkEditValue),
+          count: ids.length,
+        });
     if (!window.confirm(confirmMessage)) return;
     setBulkActionBusy(true);
     setError(null);

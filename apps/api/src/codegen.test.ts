@@ -13388,6 +13388,63 @@ test("the exported EntityView's handleBulkDelete uses the singular noun form in 
 });
 
 /**
+ * Round 1412: the exported app's handleBulkDelete had the same missing-
+ * singular-form gap as its own Undo toast (round 1395 fixed that one) in
+ * its window.confirm() message -- "Delete 1 records? ..." instead of
+ * "Delete 1 record? ...". Runs the real extracted handleBulkDelete with
+ * exactly one selected id and captures the actual confirm() message, not
+ * just a static-source assertion.
+ */
+test("the exported EntityView's handleBulkDelete asks a singular confirm question when exactly 1 record is selected", async () => {
+  const entityViewJsx = generateExportFiles(project).find((f) => f.path === "web/src/components/EntityView.jsx")!.content;
+  const handleBulkDeleteSrc = entityViewJsx.match(/async function handleBulkDelete\(\) \{[\s\S]*?\n  \}\n/)?.[0];
+  assert.ok(handleBulkDeleteSrc, "expected to find handleBulkDelete in generated output");
+
+  let confirmMessage: string | undefined;
+  const records = [{ id: 1, name: "Acme Corp" }];
+  const fn = new Function(
+    "writesInFlight",
+    "window",
+    "selectedIds",
+    "records",
+    "pendingDeleteRef",
+    "editingId",
+    "setError",
+    "setRecords",
+    "setSelectedIds",
+    "setTimeout",
+    "setPendingDelete",
+    "clearTimeout",
+    "commitPendingDelete",
+    "UNDO_WINDOW_MS",
+    `${handleBulkDeleteSrc}\nreturn handleBulkDelete();`,
+  );
+  await fn(
+    false,
+    {
+      confirm: (msg: string) => {
+        confirmMessage = msg;
+        return false;
+      },
+    },
+    new Set([1]),
+    records,
+    { current: null },
+    null,
+    () => {},
+    () => {},
+    () => {},
+    () => 0,
+    () => {},
+    () => {},
+    () => {},
+    5000,
+  );
+
+  assert.match(confirmMessage!, /Delete 1 record\?/, "exactly 1 selected record must ask 'Delete 1 record?', not 'Delete 1 records?'");
+});
+
+/**
  * New in this round: the exported standalone app's table could only ever
  * sort by one column at a time, unlike the live Forge AI preview (round
  * 177's own multi-column sort with shift-click tiebreakers). Ports the

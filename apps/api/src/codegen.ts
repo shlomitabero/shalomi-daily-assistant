@@ -6575,7 +6575,7 @@ export function EntityView({ entity, highlightRecordId, onHighlightHandled, onJu
     if (writesInFlight) return;
     const ids = [...selectedIds];
     if (ids.length === 0) return;
-    if (!window.confirm(\`Delete \${ids.length} records? You can undo this for a few seconds after deleting.\`)) return;
+    if (!window.confirm(\`Delete \${ids.length} \${ids.length === 1 ? "record" : "records"}? You can undo this for a few seconds after deleting.\`)) return;
 
     if (pendingDeleteRef.current) {
       clearTimeout(pendingDeleteRef.current.timeoutId);
@@ -6714,9 +6714,10 @@ export function EntityView({ entity, highlightRecordId, onHighlightHandled, onJu
     // an accidental mass-blank can't be missed before confirming.
     const fieldLabel = bulkEditFieldDef ? bulkEditFieldDef.label || bulkEditFieldDef.name : bulkEditField;
     const isBlankClear = (!bulkEditFieldDef || bulkEditFieldDef.type !== "boolean") && String(bulkEditValue ?? "") === "";
+    const recordWord = ids.length === 1 ? "record" : "records";
     const confirmMessage = isBlankClear
-      ? \`Clear "\${fieldLabel}" on \${ids.length} records? This cannot be undone.\`
-      : \`Set "\${fieldLabel}" to "\${bulkEditValueDisplay(bulkEditFieldDef, bulkEditValue)}" on \${ids.length} records? This cannot be undone.\`;
+      ? \`Clear "\${fieldLabel}" on \${ids.length} \${recordWord}? This cannot be undone.\`
+      : \`Set "\${fieldLabel}" to "\${bulkEditValueDisplay(bulkEditFieldDef, bulkEditValue)}" on \${ids.length} \${recordWord}? This cannot be undone.\`;
     if (!window.confirm(confirmMessage)) return;
     setBulkActionBusy(true);
     setError(null);

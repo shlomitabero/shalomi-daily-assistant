@@ -861,6 +861,48 @@ test("EntityPanel's bulk delete removes every selected row immediately and shows
 });
 
 /**
+ * Round 1412: the bulk-action confirm dialogs (Delete selected, Set field,
+ * Clear field) each used a single hardcoded-plural i18n key
+ * (entity.bulk.confirmDelete/confirmUpdate/confirmClearField) with no
+ * singular form -- the same gap round 1395 fixed for the Undo toast's own
+ * message, but still open on these three siblings. The bulk-actions bar is
+ * shown whenever `selectedIds.size > 0`, not `> 1`, so selecting exactly
+ * one record's row checkbox and clicking "Delete selected" reads "Delete 1
+ * records? ..." instead of "Delete 1 record? ...".
+ */
+test("EntityPanel's bulk-delete confirm dialog uses the singular noun form when exactly 1 record is selected", async () => {
+  await withJsdom(async () => {
+    const store: EntityRecord[] = [
+      { id: 1, name: "Acme Corp", status: "new" },
+      { id: 2, name: "Globex", status: "won" },
+    ];
+    const originalFetch = globalThis.fetch;
+    const originalConfirm = globalThis.window.confirm;
+    globalThis.fetch = mockRecordsFetch(store) as typeof fetch;
+    let confirmMessage = "";
+    globalThis.window.confirm = ((msg: string) => {
+      confirmMessage = msg;
+      return false;
+    }) as typeof window.confirm;
+    try {
+      renderEntityPanel();
+      await waitForCondition(() => document.querySelectorAll("table tbody tr").length === 2);
+
+      fireEvent.click(document.querySelector('td.select-col input[type="checkbox"]') as HTMLInputElement);
+      await waitForCondition(() => document.querySelector(".bulk-actions-bar") !== null);
+
+      fireEvent.click(document.querySelector(".bulk-actions-bar .danger") as HTMLButtonElement);
+
+      assert.match(confirmMessage, /\b1 record\b/, "exactly 1 selected record must use the singular noun form");
+      assert.doesNotMatch(confirmMessage, /\b1 records\b/, "exactly 1 selected record must not read '1 records'");
+    } finally {
+      globalThis.fetch = originalFetch;
+      globalThis.window.confirm = originalConfirm;
+    }
+  });
+});
+
+/**
  * Round 1395: the bulk-delete Undo toast's own message used a single
  * hardcoded-plural i18n key (entity.bulk.deleteUndoToast) with no singular
  * form, so bulk-deleting exactly 1 selected record -- an ordinary outcome
