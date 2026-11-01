@@ -89,7 +89,18 @@ const CreateProjectSchema = z.object({
   // whose own "description must not be empty" guard throws a bare Error
   // neither this route nor errorMiddleware ever catches as anything but
   // a raw 500 -- confirmed live against the real running server.
-  description: z.string().trim().min(1, "description is required"),
+  // Round 1408: neither `description` nor `name` had a `.max()` ceiling,
+  // only Express's own default 100KB json() body limit -- the same
+  // "unbounded free-text field" pattern rounds 1403/1404 already closed
+  // for automation-rule fields and WhatsApp send, but with a WORSE
+  // amplification profile here: once set, `project.name` is embedded
+  // verbatim into email subject/body sent to EVERY collaborator by
+  // several already-built broadcast loops (project deletion, calendar-
+  // feed-token regenerate, invite, role change, removal, self-leave,
+  // ownership transfer) -- a single oversized value set once then
+  // multiplies into N outbound emails on every later collaboration
+  // action, not a one-shot cost like the schemas those rounds capped.
+  description: z.string().trim().min(1, "description is required").max(5000, "description must be 5000 characters or fewer"),
   // Round 1292: round 919's own fix above only covered `description` --
   // `name` was left optional with no `.trim().min(1)` guard at all, unlike
   // this exact field's own sibling schema (RenameProjectSchema, below)
@@ -99,7 +110,7 @@ const CreateProjectSchema = z.object({
   // storing a blank project name verbatim -- not reachable through
   // today's web client (createProject never sends `name` at all), but a
   // real server-side validation hole for any other caller.
-  name: z.string().trim().min(1).optional(),
+  name: z.string().trim().min(1).max(200, "name must be 200 characters or fewer").optional(),
 });
 
 const FromTemplateSchema = z.object({
@@ -425,11 +436,20 @@ const TransferOwnershipSchema = z.object({
 });
 
 const RenameProjectSchema = z.object({
-  name: z.string().trim().min(1, "name is required"),
+  // Round 1408: mirrors CreateProjectSchema's own newly-added cap -- this
+  // route is the one place a project's name can be changed at any time
+  // after creation (requireProjectWriteAccess, so any owner/editor), the
+  // same place the amplification this round closes is actually reachable
+  // from, since CreateProjectSchema's own `name` is rarely exercised by
+  // today's web client.
+  name: z.string().trim().min(1, "name is required").max(200, "name must be 200 characters or fewer"),
 });
 
 const UpdateProjectDescriptionSchema = z.object({
-  description: z.string().trim().min(1, "description is required"),
+  // Round 1408: mirrors CreateProjectSchema's own newly-added cap, for the
+  // identical reason -- this route is reachable at any time after
+  // creation, not just once.
+  description: z.string().trim().min(1, "description is required").max(5000, "description must be 5000 characters or fewer"),
 });
 
 const RenameEntityLabelSchema = z.object({

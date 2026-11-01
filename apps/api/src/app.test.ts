@@ -6133,6 +6133,93 @@ test("renaming a project rejects an empty or whitespace-only name instead of sil
   });
 });
 
+/**
+ * Round 1408: neither `name` nor `description` had a server-side `.max()`
+ * ceiling anywhere in the stack (CreateProjectSchema, RenameProjectSchema,
+ * UpdateProjectDescriptionSchema), only Express's own default 100KB
+ * json() body limit -- the same "unbounded free-text field" pattern
+ * rounds 1403/1404 already closed for automation-rule fields and
+ * WhatsApp send, but with a worse amplification profile: once set,
+ * `project.name` is embedded verbatim into email subject/body sent to
+ * EVERY collaborator by several already-built broadcast loops (delete,
+ * calendar-feed-token regenerate, invite, role change, removal,
+ * self-leave, ownership transfer) -- set once, then multiplied into N
+ * outbound emails on every later collaboration action. Confirms a
+ * generous-but-real cap rejects an oversized value on both the rename
+ * and the update-description routes (the ones actually reachable at any
+ * time after creation, not just once at creation), while a comfortably
+ * normal value still passes.
+ */
+test("renaming a project or updating its description is rejected with 400 past a generous but real length cap, instead of accepting an unbounded string", async () => {
+  await withServer(async (baseUrl) => {
+    const ownerToken = await signup(baseUrl, "rename-maxlen-owner@example.com");
+    const createRes = await fetch(`${baseUrl}/api/projects`, {
+      method: "POST",
+      headers: authHeaders(ownerToken),
+      body: JSON.stringify({ description: "A CRM with customers and deals." }),
+    });
+    const { project } = (await createRes.json()) as { project: { id: string; name: string; description: string } };
+
+    const oversizedNameRes = await fetch(`${baseUrl}/api/projects/${project.id}/name`, {
+      method: "PATCH",
+      headers: authHeaders(ownerToken),
+      body: JSON.stringify({ name: "x".repeat(201) }),
+    });
+    assert.equal(oversizedNameRes.status, 400);
+    assert.equal(((await oversizedNameRes.json()) as { code?: string }).code, "VALIDATION_ERROR");
+
+    const oversizedDescriptionRes = await fetch(`${baseUrl}/api/projects/${project.id}/description`, {
+      method: "PATCH",
+      headers: authHeaders(ownerToken),
+      body: JSON.stringify({ description: "x".repeat(5001) }),
+    });
+    assert.equal(oversizedDescriptionRes.status, 400);
+    assert.equal(((await oversizedDescriptionRes.json()) as { code?: string }).code, "VALIDATION_ERROR");
+
+    // Confirm neither rejected request touched the stored values.
+    const getRes = await fetch(`${baseUrl}/api/projects/${project.id}`, { headers: authHeaders(ownerToken) });
+    const { project: unchanged } = (await getRes.json()) as { project: { name: string; description: string } };
+    assert.equal(unchanged.name, project.name);
+    assert.equal(unchanged.description, project.description);
+
+    // A comfortably normal value must still pass -- this isn't a blanket rejection.
+    const goodNameRes = await fetch(`${baseUrl}/api/projects/${project.id}/name`, {
+      method: "PATCH",
+      headers: authHeaders(ownerToken),
+      body: JSON.stringify({ name: "x".repeat(200) }),
+    });
+    assert.equal(goodNameRes.status, 200);
+    const goodDescriptionRes = await fetch(`${baseUrl}/api/projects/${project.id}/description`, {
+      method: "PATCH",
+      headers: authHeaders(ownerToken),
+      body: JSON.stringify({ description: "x".repeat(5000) }),
+    });
+    assert.equal(goodDescriptionRes.status, 200);
+  });
+});
+
+test("creating a project with an oversized name or description is rejected with 400, instead of accepting an unbounded string", async () => {
+  await withServer(async (baseUrl) => {
+    const ownerToken = await signup(baseUrl, "create-maxlen-owner@example.com");
+
+    const oversizedDescriptionRes = await fetch(`${baseUrl}/api/projects`, {
+      method: "POST",
+      headers: authHeaders(ownerToken),
+      body: JSON.stringify({ description: "x".repeat(5001) }),
+    });
+    assert.equal(oversizedDescriptionRes.status, 400);
+    assert.equal(((await oversizedDescriptionRes.json()) as { code?: string }).code, "VALIDATION_ERROR");
+
+    const oversizedNameRes = await fetch(`${baseUrl}/api/projects`, {
+      method: "POST",
+      headers: authHeaders(ownerToken),
+      body: JSON.stringify({ description: "A CRM with customers and deals.", name: "x".repeat(201) }),
+    });
+    assert.equal(oversizedNameRes.status, 400);
+    assert.equal(((await oversizedNameRes.json()) as { code?: string }).code, "VALIDATION_ERROR");
+  });
+});
+
 test("renaming a project you have no access to still 404s, the same as any other project route", async () => {
   await withServer(async (baseUrl) => {
     const ownerToken = await signup(baseUrl, "rename-owner3@example.com");

@@ -124,6 +124,7 @@ export function ProjectDescriptionEditor({
           autoFocus
           disabled={busy}
           rows={3}
+          maxLength={5000}
           onChange={(e) => setDraft(e.target.value)}
           onBlur={save}
           onKeyDown={(e) => {
