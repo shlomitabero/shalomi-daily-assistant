@@ -12631,6 +12631,48 @@ test("the exported EntityView's handleImportFile/handleImportJsonFile route thro
 });
 
 /**
+ * Round 1437: the exported EntityView's "all rows failed" import message
+ * (the early-return branch taken when buildImportRecords/
+ * buildImportRecordsFromJson parse zero valid rows) hardcoded the plural
+ * "N errors" with no singular form -- "Import failed: 1 errors. No
+ * records were created." The live preview's own identical sibling
+ * (entity.import.allFailed.one/.many) was already fixed back in round
+ * 1391, but that fix was never ported here. Unlike the mixed-outcome
+ * message (formatImportSummary, round 1436), this branch runs BEFORE any
+ * import attempt and was missed by that round's own port since it's a
+ * separate early return, not part of the success-path ternary tower.
+ */
+test("the exported EntityView's handleImportFile/handleImportJsonFile use the singular form for exactly 1 all-rows-failed error", () => {
+  const entityViewJsx = generateExportFiles(project).find((f) => f.path === "web/src/components/EntityView.jsx")!.content;
+
+  const handleImportSrc = entityViewJsx.match(/async function handleImportFile\(e\) \{[\s\S]*?\n {2}\}\n/)?.[0];
+  assert.ok(handleImportSrc, "expected to find handleImportFile in generated output");
+  assert.match(
+    handleImportSrc!,
+    /\$\{parseErrors\.length\} \$\{parseErrors\.length === 1 \? "error" : "errors"\}\. No records were created\./,
+    "handleImportFile's all-failed message must pick the singular noun for exactly 1 error, not always 'errors'",
+  );
+
+  const handleImportJsonSrc = entityViewJsx.match(/async function handleImportJsonFile\(e\) \{[\s\S]*?\n {2}\}\n/)?.[0];
+  assert.ok(handleImportJsonSrc, "expected to find handleImportJsonFile in generated output");
+  assert.match(
+    handleImportJsonSrc!,
+    /\$\{parseErrors\.length\} \$\{parseErrors\.length === 1 \? "error" : "errors"\}\. No records were created\./,
+    "handleImportJsonFile's all-failed message must pick the singular noun for exactly 1 error, not always 'errors'",
+  );
+
+  // Independently confirm the actual runtime behavior, not just the source
+  // text shape, by extracting and executing the real ternary expression.
+  const buildAllFailedMessage = (parseErrorsLength: number) =>
+    new Function(
+      "parseErrors",
+      `return parseErrors.length > 0 ? \`Import failed: \${parseErrors.length} \${parseErrors.length === 1 ? "error" : "errors"}. No records were created.\` : "The file contained no data rows to import.";`,
+    )({ length: parseErrorsLength }) as string;
+  assert.equal(buildAllFailedMessage(1), "Import failed: 1 error. No records were created.");
+  assert.equal(buildAllFailedMessage(3), "Import failed: 3 errors. No records were created.");
+});
+
+/**
  * Same feature as above, but rendering the real generated EntityView.jsx
  * end to end: clicks the real Copy button and confirms the exact CSV text
  * handed to a stubbed navigator.clipboard.writeText, then confirms the

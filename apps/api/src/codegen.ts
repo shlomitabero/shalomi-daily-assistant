@@ -7100,7 +7100,9 @@ export function EntityView({ entity, highlightRecordId, onHighlightHandled, onJu
       if (parsedRecords.length === 0) {
         setImportErrors(parseErrors);
         setImportMessage(
-          parseErrors.length > 0 ? \`Import failed: \${parseErrors.length} errors. No records were created.\` : "The file contained no data rows to import.",
+          parseErrors.length > 0
+            ? \`Import failed: \${parseErrors.length} \${parseErrors.length === 1 ? "error" : "errors"}. No records were created.\`
+            : "The file contained no data rows to import.",
         );
         return;
       }
@@ -7168,7 +7170,9 @@ export function EntityView({ entity, highlightRecordId, onHighlightHandled, onJu
       if (parsedRecords.length === 0) {
         setImportErrors(parseErrors);
         setImportMessage(
-          parseErrors.length > 0 ? \`Import failed: \${parseErrors.length} errors. No records were created.\` : "The file contained no data rows to import.",
+          parseErrors.length > 0
+            ? \`Import failed: \${parseErrors.length} \${parseErrors.length === 1 ? "error" : "errors"}. No records were created.\`
+            : "The file contained no data rows to import.",
         );
         return;
       }
