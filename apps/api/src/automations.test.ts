@@ -3416,6 +3416,44 @@ test("runAutomationsForRecordChange sends a 'send_email' rule's email to a toFie
 });
 
 /**
+ * Round 1422: fireEmailAction used to report a toMode:"field" rule whose
+ * triggering record simply has an empty value in the mapped field with
+ * the exact same message as a genuine toMode:"static" whole-rule
+ * misconfiguration ("This rule has no destination email address
+ * configured") -- wrongly telling the user to go fix a perfectly correct
+ * rule, when only this one record's own data is incomplete. Mirrors the
+ * WhatsApp sibling's own existing distinction (AUTOMATION_NO_PHONE_DESTINATION
+ * vs AUTOMATION_PHONE_FIELD_EMPTY). Confirms the rule is reported with the
+ * distinct, record-scoped message instead.
+ */
+test("runAutomationsForRecordChange reports a distinct, record-scoped error (not the whole-rule-misconfigured one) when a toMode:\"field\" send_email rule's record has an empty value in the mapped field", async () => {
+  const { db, project } = setupProject();
+  const rule = insertAutomationRule(db, {
+    projectId: project.id,
+    entityName: "Order",
+    trigger: "record_created",
+    actionType: "send_email",
+    toMode: "field",
+    toField: "customerPhone",
+    emailSubject: "Order update",
+    messageTemplate: "Hi {{customerName}}!",
+  });
+  const record = { id: 1, customerName: "Dana Levi", customerPhone: "", status: "New" };
+  const emailSender = createFakeEmailSender();
+
+  await runAutomationsForRecordChange(db, {} as WhatsAppWebManager, emailSender, project, orderEntity, "created", record, new Set(), UNUSED_UPLOADS_DIR, UNUSED_BASE_URL);
+
+  assert.equal(emailSender.sentTo.length, 0, "no real send must be attempted with no real destination");
+  const [run] = listAutomationRuns(db, project.id, rule.id, 10);
+  assert.equal(run!.status, "failed");
+  assert.equal(
+    run!.error,
+    "This record has no value in the configured email-address field",
+    "a toMode:\"field\" rule hitting an empty per-record value must be reported distinctly from a genuinely misconfigured rule",
+  );
+});
+
+/**
  * Round 1188: the send_email sibling of the WhatsApp/field_equals test
  * above -- a toMode:"field" destination's own toField is likewise a
  * string persisted at rule-creation time, with the identical stale-casing

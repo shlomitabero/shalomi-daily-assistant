@@ -1427,6 +1427,9 @@ export const AUTOMATION_CONFIG_ERROR_CODES: Record<string, string> = {
   "This rule has no destination email address configured": "AUTOMATION_NO_EMAIL_DESTINATION",
   "This rule has no destination phone number configured": "AUTOMATION_NO_PHONE_DESTINATION",
   "This record has no value in the configured phone-number field": "AUTOMATION_PHONE_FIELD_EMPTY",
+  // Round 1422: mirrors AUTOMATION_PHONE_FIELD_EMPTY's own distinction --
+  // see fireEmailAction's own comment in automations.ts.
+  "This record has no value in the configured email-address field": "AUTOMATION_EMAIL_FIELD_EMPTY",
   // Round 1327: automations.ts's fireWebhookAction special-cases its own
   // AbortController timeout (always this exact literal -- the 10s timeout
   // itself is a fixed constant, never configurable) instead of letting

@@ -927,11 +927,28 @@ async function fireEmailAction(
   const resolvedToField = entity && rule.toField ? resolveStoredFieldName(entity, rule.toField) : rule.toField;
   const to = rule.toMode === "static" ? rule.toEmail : resolvedToField && record ? record[resolvedToField] : null;
   if (!to || typeof to !== "string" || !to.trim()) {
+    // Round 1422: mirrors fireRule's own WhatsApp branch, which already
+    // distinguishes these two cases with separate messages/i18n codes
+    // (AUTOMATION_NO_PHONE_DESTINATION vs AUTOMATION_PHONE_FIELD_EMPTY).
+    // This email branch used to emit the same "rule has no destination"
+    // wording for both -- but a toMode:"static" rule with no toEmail set
+    // is a genuine whole-rule misconfiguration (and, per round 1080's own
+    // comment just below, can't actually happen in practice since
+    // CreateAutomationRuleSchema's z.string().email() already requires a
+    // real toEmail at rule-creation time for that mode), while a
+    // toMode:"field" rule hitting this branch just means THIS record's
+    // own mapped field happens to be empty -- an ordinary, expected
+    // per-record data gap with nothing wrong with the rule itself. Using
+    // the "rule misconfigured" wording for that routine case wrongly told
+    // the user to go fix a perfectly correct rule.
     recordAutomationRun(
       db,
       project.id,
       rule.id,
-      { status: "failed", error: "This rule has no destination email address configured" },
+      {
+        status: "failed",
+        error: rule.toMode === "field" ? "This record has no value in the configured email-address field" : "This rule has no destination email address configured",
+      },
       rule.actionType,
       record ? Number(record.id) : null,
       recordSnapshot,
