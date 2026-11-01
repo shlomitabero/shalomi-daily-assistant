@@ -40,6 +40,13 @@ import { findMatchingRecord, normalizePhone } from "./whatsapp.js";
  * "Connect" again to retry. A production-grade version would reconnect
  * automatically on a transient close and only give up on an explicit
  * logout -- a known, real limitation, not a silently skipped corner.
+ *
+ * One exception (round 1415): Baileys' own pairing handshake mandates a
+ * restart (close code 515, RESTART_REQUIRED_STATUS_CODE below) the moment
+ * a QR scan succeeds, before the connection is ever reported "open" -- this
+ * isn't a drop to recover from, it's the last step of a successful pair,
+ * so handleConnectionUpdate re-runs the connect attempt immediately rather
+ * than surfacing it as a disconnect the user has to manually retry.
  */
 
 export type WhatsAppConnectionStatus = "disconnected" | "connecting" | "qr" | "connected";
@@ -140,6 +147,31 @@ export interface BaileysMessagesUpsert {
 
 /** WhatsApp/Baileys' own documented status code for "this device was logged out (unlinked) from the phone", as opposed to a merely transient network close. */
 const LOGGED_OUT_STATUS_CODE = 401;
+
+/**
+ * Round 1415: Baileys' own documented status code for "pairing just
+ * succeeded, the server is asking for the connection to be restarted" --
+ * confirmed directly against the installed library (node_modules/
+ * @whiskeysockets/baileys/lib/Socket/socket.js's own "device paired for the
+ * first time ... if device pairs successfully, the server asks to restart
+ * the connection" comment, right above the `CB:iq,,pair-success` handler
+ * that emits `connection.update({ isNewLogin: true, qr: undefined })` --
+ * note: NOT `connection: "open"` -- followed shortly after by the server's
+ * own `CB:stream:error` closing the socket with exactly this code). This
+ * fires on every single first-time QR scan (and every reconnect after an
+ * explicit logout), strictly BEFORE `connection: "open"` ever reaches this
+ * app -- so without this special case, handleConnectionUpdate's close
+ * branch below sees `session.status` still `"qr"`, treats it as
+ * `wasAwaitingQr`, and tells the user their QR code expired at the exact
+ * moment it was actually scanned successfully. The already-saved creds
+ * (persisted via the `creds.update` handler's own `saveCreds()` call,
+ * which fires before this close) make a plain "click Connect again" work
+ * around it with no new QR needed -- which is exactly why this was easy to
+ * miss: the feature still "works," just with a false error and an
+ * unnecessary manual step in the one guaranteed-common path through this
+ * whole class (linking WhatsApp for the first time).
+ */
+const RESTART_REQUIRED_STATUS_CODE = 515;
 
 /**
  * User-facing explanations for a non-logged-out close (see
@@ -603,17 +635,30 @@ export class WhatsAppWebManager {
     const session: ManagedSession = { sock: null, status: "connecting", qrDataUrl: null, phoneNumber: null, error: null };
     this.sessions.set(projectId, session);
 
-    // Tracked in pendingConnect for the exact duration of createSocket()
-    // (and its own event-handler wiring just after) -- see cleanupAuthDir's
-    // own comment for why a disconnect() landing in this window must wait
-    // for it before touching the auth dir on disk.
+    await this.beginConnectAttempt(projectId, session);
+    return this.getStatus(projectId);
+  }
+
+  /**
+   * Round 1415: factored out of connect()'s own tail so
+   * handleConnectionUpdate's 515/restart-required branch can re-run the
+   * exact same createSocket()-plus-pendingConnect-bookkeeping sequence for
+   * an already-live session, instead of duplicating it. Tracked in
+   * pendingConnect for the exact duration of createSocket() (and its own
+   * event-handler wiring just after) -- see cleanupAuthDir's own comment
+   * for why a disconnect() landing in this window must wait for it before
+   * touching the auth dir on disk. Kept separate from connect() itself,
+   * which still owns deciding WHETHER a fresh attempt should start at all
+   * (the existing-session/pendingCleanup/pendingConnect checks above) --
+   * this only runs the attempt once that decision is already made.
+   */
+  private beginConnectAttempt(projectId: string, session: ManagedSession): Promise<void> {
     const task = this.runConnectAttempt(projectId, session);
     this.pendingConnect.set(projectId, task);
     void task.finally(() => {
       if (this.pendingConnect.get(projectId) === task) this.pendingConnect.delete(projectId);
     });
-    await task;
-    return this.getStatus(projectId);
+    return task;
   }
 
   private async runConnectAttempt(projectId: string, session: ManagedSession): Promise<void> {
@@ -697,11 +742,25 @@ export class WhatsAppWebManager {
     }
 
     if (update.connection === "close") {
-      const loggedOut = update.lastDisconnect?.error?.output?.statusCode === LOGGED_OUT_STATUS_CODE;
+      const statusCode = update.lastDisconnect?.error?.output?.statusCode;
+      const loggedOut = statusCode === LOGGED_OUT_STATUS_CODE;
+      const restartRequired = statusCode === RESTART_REQUIRED_STATUS_CODE;
       if (loggedOut) {
         this.sessions.delete(projectId);
         recordWhatsAppDisconnected(this.db, projectId);
         await this.cleanupAuthDir(projectId);
+      } else if (restartRequired) {
+        // See RESTART_REQUIRED_STATUS_CODE's own comment -- this is not a
+        // disconnect at all from the user's point of view: pairing just
+        // succeeded and Baileys is asking for a fresh socket against the
+        // creds it already saved. Reuse this same session object (left in
+        // the map, never deleted) rather than surfacing QR_EXPIRED_MESSAGE
+        // and waiting for the user to click Connect again.
+        session.sock = null;
+        session.status = "connecting";
+        session.qrDataUrl = null;
+        session.error = null;
+        await this.beginConnectAttempt(projectId, session);
       } else {
         // Keep the session in the map (the same thing runConnectAttempt's
         // own catch block already does on a connect failure) instead of

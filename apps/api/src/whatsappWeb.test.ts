@@ -222,24 +222,108 @@ test("a QR code that times out before being scanned (a non-401 close while still
 
 /**
  * Same bug class, the other branch: a connection that WAS fully open and
- * then drops (a non-401 close after "open", not while still awaiting a
- * QR scan) must get a real explanation too, but a different, accurate one
- * -- "the QR code expired" would be misleading for a session that was
- * never waiting on a QR scan in the first place.
+ * then drops (a non-401, non-515 close after "open", not while still
+ * awaiting a QR scan) must get a real explanation too, but a different,
+ * accurate one -- "the QR code expired" would be misleading for a session
+ * that was never waiting on a QR scan in the first place.
+ *
+ * Round 1415: this test originally used status code 515 for "some other
+ * ordinary disconnect" -- but 515 is Baileys' own `DisconnectReason.
+ * restartRequired`, which (confirmed directly against the installed
+ * library) always means "please reconnect now," never "give up," whether
+ * it happens during initial pairing or after a connection was already
+ * open (`getErrorCodeFromStreamError` in `baileys/lib/Utils/generics.js`
+ * maps it to `"restart required"` unconditionally, with no pairing-only
+ * special case). 515 now gets its own dedicated auto-reconnect test right
+ * below; this test switched to 428 (`DisconnectReason.connectionClosed`)
+ * -- a genuinely different, non-restart-required code -- to keep testing
+ * what it always meant to: an ordinary lost connection this manager
+ * really should give up on and explain, not silently retry.
  */
-test("a connection that drops after being fully connected (not a QR timeout) surfaces a different, accurate explanation", async () => {
+test("a connection that drops after being fully connected (not a QR timeout, not a restart-required 515) surfaces a different, accurate explanation", async () => {
   const { manager, createdSockets } = setupManager();
   await manager.connect("proj1");
   createdSockets[0].sock.user = { id: "972501234567:12@s.whatsapp.net" };
   createdSockets[0].emitConnectionUpdate({ connection: "open" });
   assert.equal(manager.getStatus("proj1").status, "connected");
 
-  createdSockets[0].emitConnectionUpdate({ connection: "close", lastDisconnect: { error: { output: { statusCode: 515 } } } });
+  createdSockets[0].emitConnectionUpdate({ connection: "close", lastDisconnect: { error: { output: { statusCode: 428 } } } });
 
   const state = manager.getStatus("proj1");
   assert.equal(state.status, "disconnected");
   assert.ok(state.error, "expected a real explanation, not a silent revert to disconnected");
   assert.doesNotMatch(state.error!, /qr/i, "a session that was never waiting on a QR scan must not blame a QR code");
+});
+
+/**
+ * Round 1415's Explore survey found that status code 515 (Baileys'
+ * DisconnectReason.restartRequired) is not actually "a connection that
+ * drops after being fully connected" the way the test above USED to
+ * exercise it -- confirmed directly against the installed library:
+ * `baileys/lib/Socket/socket.js`'s own "device paired for the first
+ * time ... if device pairs successfully, the server asks to restart the
+ * connection" comment shows it firing right after a QR scan succeeds,
+ * strictly BEFORE connection: "open" is ever emitted; `baileys/lib/Utils/
+ * generics.js`'s `getErrorCodeFromStreamError` maps this code to the
+ * literal reason string `"restart required"` with no condition on prior
+ * connection state at all, confirming it means "reconnect now" universally,
+ * not only during initial pairing. This first test covers the real,
+ * guaranteed sequence for every first-time WhatsApp link: qr -> (scan) ->
+ * close(515) while session.status is still "qr" -- which the pre-fix code
+ * treated as wasAwaitingQr and surfaced as "the QR code expired", even
+ * though the QR was in fact just scanned successfully.
+ */
+test("Baileys' restart-required close (515) right after a QR scan reconnects automatically instead of surfacing a false 'QR expired' error", async () => {
+  const { manager, createdSockets, getCreateSocketCalls } = setupManager();
+  await manager.connect("proj1");
+  createdSockets[0].emitConnectionUpdate({ qr: "raw-qr-string" });
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(manager.getStatus("proj1").status, "qr");
+
+  // The real sequence: pairing succeeded, Baileys closes with 515 to force
+  // a restart -- never connection: "open" first.
+  createdSockets[0].emitConnectionUpdate({ connection: "close", lastDisconnect: { error: { output: { statusCode: 515 } } } });
+  await new Promise((resolve) => setImmediate(resolve));
+
+  const midState = manager.getStatus("proj1");
+  assert.notEqual(midState.status, "disconnected", "must not surface a disconnect for an in-progress pairing restart");
+  assert.equal(midState.error, null, "must not surface QR_EXPIRED_MESSAGE (or any error) for a successful pairing restart");
+  assert.equal(getCreateSocketCalls(), 2, "the 515 close must trigger a fresh createSocket() call automatically, reusing the already-saved creds");
+
+  // The fresh socket completing the real reconnect (no new QR needed,
+  // exactly like a manual "click Connect again" already worked around
+  // this before the fix) proves this wasn't a dead end.
+  createdSockets[1].sock.user = { id: "972501234567:12@s.whatsapp.net" };
+  createdSockets[1].emitConnectionUpdate({ connection: "open" });
+  assert.equal(manager.getStatus("proj1").status, "connected");
+});
+
+/**
+ * Same restart-required code, the other timing: Baileys can also send a
+ * 515 close to a connection that was already fully "open" (e.g. the
+ * server asking an existing session to restart for an unrelated reason) --
+ * per `getErrorCodeFromStreamError`'s own unconditional mapping (see the
+ * test above's doc comment), this means exactly the same thing in either
+ * case: reconnect, don't surface a disconnect.
+ */
+test("Baileys' restart-required close (515) after an already-open connection also reconnects automatically, not just during initial pairing", async () => {
+  const { manager, createdSockets, getCreateSocketCalls } = setupManager();
+  await manager.connect("proj1");
+  createdSockets[0].sock.user = { id: "972501234567:12@s.whatsapp.net" };
+  createdSockets[0].emitConnectionUpdate({ connection: "open" });
+  assert.equal(manager.getStatus("proj1").status, "connected");
+
+  createdSockets[0].emitConnectionUpdate({ connection: "close", lastDisconnect: { error: { output: { statusCode: 515 } } } });
+  await new Promise((resolve) => setImmediate(resolve));
+
+  const midState = manager.getStatus("proj1");
+  assert.notEqual(midState.status, "disconnected", "a restart-required close on an already-open connection must not surface a disconnect either");
+  assert.equal(midState.error, null);
+  assert.equal(getCreateSocketCalls(), 2, "must trigger a fresh createSocket() call automatically");
+
+  createdSockets[1].sock.user = { id: "972501234567:12@s.whatsapp.net" };
+  createdSockets[1].emitConnectionUpdate({ connection: "open" });
+  assert.equal(manager.getStatus("proj1").status, "connected");
 });
 
 test("sendMessage succeeds once connected, addressing the real WhatsApp JID format", async () => {
