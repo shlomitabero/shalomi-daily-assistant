@@ -394,7 +394,7 @@ export function HistoryPanel({
                         (Dashboard plus a List/Form pair per entity), so entities.length
                         under-reports the real screen count every time (round 547). */}
                     <div className="muted small">
-                      {t("history.screenCount", { count: checkpoint.spec.screens.length })}
+                      {t(checkpoint.spec.screens.length === 1 ? "history.screenCount.one" : "history.screenCount.many", { count: checkpoint.spec.screens.length })}
                     </div>
                     <button
                       type="button"

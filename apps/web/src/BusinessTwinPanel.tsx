@@ -230,7 +230,7 @@ export function BusinessTwinPanel({
               ))}
             </div>
 
-            <p className="muted small twin-total">{t("twin.totalRecords", { count: twin.totalRecords })}</p>
+            <p className="muted small twin-total">{t(twin.totalRecords === 1 ? "twin.totalRecords.one" : "twin.totalRecords.many", { count: twin.totalRecords })}</p>
 
             <div className="twin-stats">
               {sortTwinStatsByCount(twin.entities).map((e) => (
@@ -319,7 +319,7 @@ export function BusinessTwinPanel({
                         >
                           <div className="twin-stat-value">{formatNumberValue(s.overdueCount, lang)}</div>
                           <div className="twin-stat-label">{t("twin.dashboard.overdueOf", { field: s.fieldLabel, entity: s.entityLabel })}</div>
-                          <div className="twin-stat-percent">{t("twin.dashboard.outOfRecords", { count: s.recordCount })}</div>
+                          <div className="twin-stat-percent">{t(s.recordCount === 1 ? "twin.dashboard.outOfRecords.one" : "twin.dashboard.outOfRecords.many", { count: s.recordCount })}</div>
                         </button>
                       ))}
                       {twin.dueSoonStats.map((s, i) => (
@@ -332,7 +332,7 @@ export function BusinessTwinPanel({
                         >
                           <div className="twin-stat-value">{formatNumberValue(s.dueSoonCount, lang)}</div>
                           <div className="twin-stat-label">{t("twin.dashboard.dueSoonOf", { field: s.fieldLabel, entity: s.entityLabel })}</div>
-                          <div className="twin-stat-percent">{t("twin.dashboard.outOfRecords", { count: s.recordCount })}</div>
+                          <div className="twin-stat-percent">{t(s.recordCount === 1 ? "twin.dashboard.outOfRecords.one" : "twin.dashboard.outOfRecords.many", { count: s.recordCount })}</div>
                         </button>
                       ))}
                     </div>

@@ -682,6 +682,63 @@ test("HistoryPanel's screen-count line reads the checkpoint's real screens array
 });
 
 /**
+ * Round 1455: the screen-count line above used a single hardcoded-plural
+ * i18n key (history.screenCount) with no singular form, reachable whenever
+ * a checkpoint's spec genuinely has exactly 1 screen (e.g. a Dashboard-only
+ * spec before any entity was added), reading "1 screens" instead of "1
+ * screen".
+ */
+test("HistoryPanel's screen-count line uses the singular noun form when a checkpoint's spec has exactly 1 screen", async () => {
+  await withJsdom(async () => {
+    const originalFetch = globalThis.fetch;
+    const checkpoint = makeCheckpoint("cp1", "Initial build");
+    checkpoint.spec = {
+      ...checkpoint.spec,
+      screens: [{ name: "Dashboard", type: "dashboard" }],
+    };
+
+    globalThis.fetch = (async (input: string, init?: RequestInit) => {
+      const method = init?.method ?? "GET";
+      if (method === "GET" && input === "/api/projects/proj1/checkpoints") {
+        return new Response(JSON.stringify({ checkpoints: [checkpoint] }), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        });
+      }
+      throw new Error(`unexpected request ${method} ${input}`);
+    }) as typeof fetch;
+
+    try {
+      render(
+        React.createElement(
+          ThemeProvider,
+          null,
+          React.createElement(
+            LanguageProvider,
+            null,
+            React.createElement(HistoryPanel, {
+              projectId: "proj1",
+              userId: "user1",
+              projectName: "Test Project",
+              currentSpec: checkpoint.spec,
+              onRestored: () => {},
+              onClose: () => {},
+            }),
+          ),
+        ),
+      );
+      await waitForCondition(() => document.querySelectorAll(".checkpoint-list li").length === 1);
+
+      const item = document.querySelector(".checkpoint-list li") as HTMLElement;
+      assert.match(item.textContent ?? "", /1 screen/, "exactly 1 real screen must use the singular noun form");
+      assert.doesNotMatch(item.textContent ?? "", /1 screens/, "exactly 1 real screen must not read '1 screens'");
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+});
+
+/**
  * New in this round: every build/refine adds one more checkpoint forever
  * (no cap, no delete), so a project with a long real history had no way to
  * find one specific checkpoint besides scrolling and reading every label.

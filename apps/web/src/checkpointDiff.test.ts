@@ -974,6 +974,22 @@ test("formatCheckpointHistory includes the project name, each checkpoint's own l
   assert.match(report, /3 screens/, "the initial-build checkpoint has 3 real screens, not its 1 entity");
 });
 
+/**
+ * Round 1455: this report's "N screens" line used a single hardcoded-plural
+ * i18n key (history.screenCount) with no singular form, reachable whenever
+ * a checkpoint's own real screens array has exactly 1 entry.
+ */
+test("formatCheckpointHistory uses the singular noun form for a checkpoint with exactly 1 real screen", () => {
+  const t = (key: string, params?: Record<string, string | number>) => translate("en", key, params);
+  const currentSpec: ProductSpec = { ...makeSpec([]), screens: [{ name: "Dashboard", type: "dashboard" }] };
+  const checkpoints: Checkpoint[] = [{ id: "cp1", projectId: "p1", label: "Initial build", kind: "build", spec: currentSpec, createdAt: "2026-03-01T09:00:00.000Z" }];
+
+  const report = formatCheckpointHistory(checkpoints, currentSpec, "Flower Shop", "en", t);
+
+  assert.match(report, /1 screen$/m, "exactly 1 real screen must use the singular noun form");
+  assert.doesNotMatch(report, /1 screens/, "exactly 1 real screen must not read '1 screens'");
+});
+
 test("formatCheckpointHistory marks exactly the checkpoint matching the current spec, not the newest one", () => {
   const t = (key: string, params?: Record<string, string | number>) => translate("en", key, params);
   const currentSpec = makeSpec([{ name: "Customer", label: "Customers", fields: [{ name: "name", type: "text", required: true }] }]);

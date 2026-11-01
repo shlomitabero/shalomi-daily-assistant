@@ -1013,6 +1013,83 @@ test("BusinessTwinPanel's Dashboard view renders stat tiles from twin.overdueSta
 });
 
 /**
+ * Round 1455: the Dashboard's overdue/due-soon stat tiles each show
+ * "out of {count} records" below the count -- a single hardcoded-plural
+ * i18n key (twin.dashboard.outOfRecords) with no singular form, reachable
+ * whenever the underlying entity genuinely has exactly 1 record.
+ */
+test("BusinessTwinPanel's overdue/due-soon stat tiles use the singular noun form when the entity has exactly 1 record", async () => {
+  await withJsdom(async () => {
+    const overdueStat = {
+      text: '"Due date" overdue in "Orders": 1 of 1.',
+      entityName: "Order",
+      entityLabel: "Orders",
+      fieldName: "dueDate",
+      fieldLabel: "Due date",
+      overdueCount: 1,
+      recordCount: 1,
+    };
+    const twinWithOneRecord: BusinessTwin = {
+      ...TWIN,
+      jumpableObservations: [{ text: overdueStat.text, entityName: overdueStat.entityName }],
+      overdueStats: [overdueStat],
+    };
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = (async (input: string) => {
+      if (input.startsWith("/api/projects/proj1/twin")) {
+        return new Response(JSON.stringify({ twin: twinWithOneRecord }), { status: 200, headers: { "content-type": "application/json" } });
+      }
+      throw new Error(`unexpected request ${input}`);
+    }) as typeof fetch;
+    try {
+      renderTwinPanel(() => {});
+      await waitForCondition(() => document.querySelector(".twin-view-toggle") !== null);
+
+      const dashboardButton = Array.from(document.querySelectorAll(".twin-view-toggle button")).find((b) => b.textContent?.includes("Dashboard"));
+      fireEvent.click(dashboardButton!);
+
+      await waitForCondition(() => document.querySelectorAll(".twin-dashboard-stats .twin-stat-tile").length === 1);
+
+      const tile = document.querySelector(".twin-dashboard-stats .twin-stat-tile")!;
+      const percentText = tile.querySelector(".twin-stat-percent")!.textContent ?? "";
+      assert.match(percentText, /1 record/, "exactly 1 underlying record must use the singular noun form");
+      assert.doesNotMatch(percentText, /1 records/, "exactly 1 underlying record must not read '1 records'");
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+});
+
+/**
+ * Round 1455: the Dashboard's own total-records line ("{count} total
+ * records across your app") used the same single hardcoded-plural i18n
+ * key (twin.totalRecords) with no singular form, reachable whenever the
+ * whole project genuinely has exactly 1 record anywhere.
+ */
+test("BusinessTwinPanel's total-records line uses the singular noun form when the whole app has exactly 1 record", async () => {
+  await withJsdom(async () => {
+    const twinWithOneTotalRecord: BusinessTwin = { ...TWIN, totalRecords: 1, entities: [{ name: "Customer", label: "Customers", count: 1 }] };
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = (async (input: string) => {
+      if (input.startsWith("/api/projects/proj1/twin")) {
+        return new Response(JSON.stringify({ twin: twinWithOneTotalRecord }), { status: 200, headers: { "content-type": "application/json" } });
+      }
+      throw new Error(`unexpected request ${input}`);
+    }) as typeof fetch;
+    try {
+      renderTwinPanel(() => {});
+      await waitForCondition(() => document.querySelector(".twin-total") !== null);
+
+      const totalText = document.querySelector(".twin-total")!.textContent ?? "";
+      assert.match(totalText, /1 total record\b/, "exactly 1 total record must use the singular noun form");
+      assert.doesNotMatch(totalText, /1 total records/, "exactly 1 total record must not read '1 total records'");
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+});
+
+/**
  * Round 1332: the Dashboard's numericStats/overdueStats/dueSoonStats tiles
  * were rendered as plain inert <div className="twin-stat-tile-static">,
  * unlike every sibling tile in this same panel (the per-entity record-count

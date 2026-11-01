@@ -547,7 +547,7 @@ export function formatCheckpointHistory(
     lines.push(`${checkpoint.label}${current}`);
     // count must read spec.screens, not spec.entities -- see HistoryPanel.tsx's
     // own identical fix for why entities.length under-reports the real count.
-    lines.push(`${time} — ${t("history.screenCount", { count: checkpoint.spec.screens.length })}`);
+    lines.push(`${time} — ${t(checkpoint.spec.screens.length === 1 ? "history.screenCount.one" : "history.screenCount.many", { count: checkpoint.spec.screens.length })}`);
     const diff = computeCheckpointDiff(currentSpec, checkpoint.spec);
     if (diff.removedEntities.length > 0 || diff.addedEntities.length > 0 || diff.changedEntities.length > 0) {
       lines.push(t("history.diff.show"));
