@@ -57,6 +57,35 @@ test('draftProduct falls back to a clearly-labeled demo draft with no ANTHROPIC_
   }
 });
 
+test('draftProduct parses a real successful Anthropic API response', async () => {
+  // The demo-mode and timeout tests above are the only coverage this
+  // function had — the actual "a real API key is set and the API answers
+  // normally" path, which is what every real production draft goes
+  // through, was never exercised anywhere.
+  const original = process.env.ANTHROPIC_API_KEY;
+  process.env.ANTHROPIC_API_KEY = 'test-key';
+  const originalFetch = globalThis.fetch;
+  const apiResponse = {
+    id: 'msg_test123', type: 'message', role: 'assistant', model: 'claude-sonnet-5-5',
+    content: [{ type: 'text', text: JSON.stringify(VALID_DRAFT) }],
+    stop_reason: 'end_turn', stop_sequence: null, usage: { input_tokens: 50, output_tokens: 120 },
+  };
+  globalThis.fetch = async () => new Response(JSON.stringify(apiResponse), {
+    status: 200, headers: { 'content-type': 'application/json' },
+  });
+  try {
+    const result = await draftProduct({ topic: 'ניהול זמן', audience: 'יזמים' });
+    assert.equal(result.demo, false);
+    assert.equal(result.title, VALID_DRAFT.title);
+    assert.equal(result.guide, VALID_DRAFT.guide);
+    assert.deepEqual(result.salesBullets, VALID_DRAFT.salesBullets);
+  } finally {
+    globalThis.fetch = originalFetch;
+    if (original !== undefined) process.env.ANTHROPIC_API_KEY = original;
+    else delete process.env.ANTHROPIC_API_KEY;
+  }
+});
+
 test('extractJson strips prose the model adds despite being told not to', () => {
   const text = 'Sure, here is the JSON:\n{"title": "x"}\nLet me know if you need anything else!';
   assert.equal(extractJson(text), '{"title": "x"}');

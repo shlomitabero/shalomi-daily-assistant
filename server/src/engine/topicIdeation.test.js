@@ -71,6 +71,31 @@ test('generateTopicIdea falls back to a demo idea with no ANTHROPIC_API_KEY, nev
   }
 });
 
+test('generateTopicIdea parses a real successful Anthropic API response', async () => {
+  // Same gap as productDraft.test.js: the demo-mode and timeout tests here
+  // never exercised the actual "a real API key is set and the API answers
+  // normally" path that every real autonomous scan goes through.
+  const apiResponse = {
+    id: 'msg_test456', type: 'message', role: 'assistant', model: 'claude-sonnet-5-5',
+    content: [{ type: 'text', text: JSON.stringify({ topic: 'תכנון פרישה לעצמאים', audience: 'עצמאים מעל גיל 40' }) }],
+    stop_reason: 'end_turn', stop_sequence: null, usage: { input_tokens: 30, output_tokens: 20 },
+  };
+  await withEnv({ ANTHROPIC_API_KEY: 'test-key' }, async () => {
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = async () => new Response(JSON.stringify(apiResponse), {
+      status: 200, headers: { 'content-type': 'application/json' },
+    });
+    try {
+      const result = await generateTopicIdea({});
+      assert.equal(result.demo, false);
+      assert.equal(result.topic, 'תכנון פרישה לעצמאים');
+      assert.equal(result.audience, 'עצמאים מעל גיל 40');
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+});
+
 test('generateTopicIdea times out instead of hanging for the SDK default of ~10 minutes (retried) when the API never responds', async () => {
   // Without an explicit timeout, a hung connection would block the
   // autonomous scan's background cron job (or a manual "סרוק עכשיו" click)
