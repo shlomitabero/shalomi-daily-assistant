@@ -21,13 +21,13 @@ import {
   getLoginCode,
   getPasswordHash,
   getPasswordResetTokenByHash,
-  getProject,
   getSessionUser,
   incrementLoginCodeAttempts,
   listCollaboratedProjectIds,
   listCollaborators,
   listOwnedProjectIds,
   removeAllCollaborationsForUser,
+  tryGetProject,
   updatePasswordHash,
   updateUserEmail,
   DuplicateEmailError,
@@ -1043,7 +1043,15 @@ export function createAuthRouter(
             // collaborators' access the exact same way. Snapshots the
             // project's own name and collaborator list BEFORE deleteProject
             // erases both -- the cascade is what does that erasing.
-            const projectBeforeDelete = getProject(db, projectId);
+            // Round 1447: tryGetProject, not getProject -- a stale-schema
+            // project (one whose stored spec no longer matches today's
+            // ProductSpecSchema, the same condition rounds 1094/1427/1428
+            // already fixed at narrower call sites) made getProject throw a
+            // ZodError here, aborting this entire account-deletion request
+            // with a 500 for every user who merely OWNED such a project,
+            // even though deleteProject() just below never reads .spec at
+            // all and would have succeeded regardless.
+            const projectBeforeDelete = tryGetProject(db, projectId);
             const collaboratorsBeforeDelete = listCollaborators(db, projectId);
             await whatsapp.disconnect(projectId).catch(() => {});
             deleteProject(db, projectId);
@@ -1086,7 +1094,13 @@ export function createAuthRouter(
           if (deletedUser && emailSender.configured) {
             const collaboratedProjectIds = listCollaboratedProjectIds(db, req.userId!);
             for (const projectId of collaboratedProjectIds) {
-              const collaboratedProject = getProject(db, projectId);
+              // Round 1447: tryGetProject, see projectBeforeDelete's own
+              // comment above -- this loop's own `if (!collaboratedProject)
+              // continue` already assumed a missing project could only ever
+              // come back as undefined, never a thrown ZodError, so one
+              // stale-schema project this user merely collaborated on used
+              // to abort this same request instead of just being skipped.
+              const collaboratedProject = tryGetProject(db, projectId);
               if (!collaboratedProject) continue;
               const owner = findUserById(db, collaboratedProject.ownerId);
               if (!owner) continue;

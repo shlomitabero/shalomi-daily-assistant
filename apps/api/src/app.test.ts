@@ -10888,6 +10888,71 @@ test("restoring a checkpoint whose stored spec no longer matches the current sch
 });
 
 /**
+ * Round 1447: the exact same gap the test just above closed for checkpoint
+ * restore, but at a far wider blast radius -- requireProjectAccess/
+ * requireProjectOwner (routes/projects.ts) are the primary access gate for
+ * nearly every route in this file (~50+: GET/PATCH project, build, refine,
+ * checkpoints, entities, automations, collaborators, WhatsApp, uploads...)
+ * and still called the strict getProject, not tryGetProject, so a project
+ * whose stored spec predates a schema-tightening change made almost the
+ * entire API surface 500 for that one project instead of a clean 404.
+ * Inserted via raw SQL (bypassing insertProject, which would itself
+ * require a valid spec) to stand in for a project written by an older
+ * version of the app, same technique the test above already uses for a
+ * checkpoint row.
+ */
+test("GET /api/projects/:id on a project whose stored spec no longer matches the current schema returns a clean 404, not a raw 500", async () => {
+  await withServer(async (baseUrl, db) => {
+    const token = await signup(baseUrl, "stale-project-get@example.com");
+    db.prepare(
+      "INSERT INTO projects (id, ownerId, name, description, spec_json, status, createdAt) SELECT ?, id, ?, ?, ?, ?, ? FROM users WHERE email = ?",
+    ).run(
+      "stale-project",
+      "Stale project",
+      "test",
+      JSON.stringify({ summary: "old spec, missing fields" }),
+      "built",
+      new Date().toISOString(),
+      "stale-project-get@example.com",
+    );
+
+    const getRes = await fetch(`${baseUrl}/api/projects/stale-project`, { headers: authHeaders(token) });
+    assert.equal(getRes.status, 404, "a stale-schema project must 404 cleanly, not 500");
+    assert.equal(((await getRes.json()) as { code?: string }).code, "PROJECT_NOT_FOUND");
+  });
+});
+
+/**
+ * Round 1447: DELETE /auth/account's own per-project cleanup loop calls
+ * getProject on every project this account owns, to snapshot its name for
+ * a best-effort collaborator-notification email before deleteProject()
+ * erases it -- deleteProject itself never reads .spec, so a stale-schema
+ * owned project used to abort the ENTIRE account-deletion request with a
+ * 500 (for a column that has nothing to do with the problem), rather than
+ * just skipping that one project's notification email as a project that
+ * genuinely doesn't exist already does.
+ */
+test("DELETE /auth/account succeeds even when one of the owned projects has a stored spec that no longer matches the current schema", async () => {
+  await withServer(async (baseUrl, db) => {
+    const token = await signup(baseUrl, "stale-project-delete-account@example.com");
+    db.prepare(
+      "INSERT INTO projects (id, ownerId, name, description, spec_json, status, createdAt) SELECT ?, id, ?, ?, ?, ?, ? FROM users WHERE email = ?",
+    ).run(
+      "stale-owned-project",
+      "Stale owned project",
+      "test",
+      JSON.stringify({ summary: "old spec, missing fields" }),
+      "built",
+      new Date().toISOString(),
+      "stale-project-delete-account@example.com",
+    );
+
+    const deleteRes = await fetch(`${baseUrl}/api/auth/account`, { method: "DELETE", headers: authHeaders(token) });
+    assert.equal(deleteRes.status, 204, "account deletion must succeed even though one owned project has a stale, unparseable spec");
+  });
+});
+
+/**
  * New in this round: a checkpoint's label was previously only ever the
  * automatic one build/refine gave it -- no way to give an important one a
  * name that's actually memorable months later. Confirms the real PATCH

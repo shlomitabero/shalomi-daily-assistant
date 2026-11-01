@@ -10,6 +10,7 @@ import { CollaboratorRoleSchema, FIELD_TYPES } from "@forge/shared";
 import {
   tryGetCheckpoint,
   getProject,
+  tryGetProject,
   insertProject,
   listCheckpoints,
   renameCheckpoint,
@@ -987,18 +988,32 @@ function assertIndexStillMatches(list: string[], index: number, expect: unknown,
  * collaborator gets identical access to the owner through every route that
  * calls this (see collaborators.ts's own module comment); only managing the
  * collaborator list itself is owner-only, via requireProjectOwner below.
+ *
+ * Round 1447: uses tryGetProject, not the stricter getProject, for the same
+ * reason round 1427's checkpoint-restore fix and round 1428's scheduled-
+ * automation scheduler fix already use it over their own siblings --
+ * getProject's rowToProject runs ProductSpecSchema.parse and THROWS a
+ * ZodError for a project whose stored spec no longer matches the current
+ * schema (a pre-schema-tightening project, same root condition those two
+ * rounds already fixed), rather than returning undefined. Since this
+ * function is the primary access gate for nearly every route in this file
+ * (~50+: GET/PATCH project, build, refine, checkpoints, entities,
+ * automations, collaborators, WhatsApp, uploads...), that throw escaped as
+ * a raw 500 instead of this function's own intended clean 404 for EVERY
+ * route on such a project -- not just one narrow call site. Confirmed live
+ * against a real running app instance before this fix.
  */
 function requireProjectAccess(db: ForgeDatabase, id: string, userId: string): Project {
-  const project = getProject(db, id);
+  const project = tryGetProject(db, id);
   if (!project || (project.ownerId !== userId && !isCollaborator(db, id, userId))) {
     throw new HttpError(404, `Project "${id}" not found`, "PROJECT_NOT_FOUND");
   }
   return project;
 }
 
-/** Stricter than requireProjectAccess: for actions only the owner may take (inviting/removing a collaborator, changing a collaborator's role). */
+/** Stricter than requireProjectAccess: for actions only the owner may take (inviting/removing a collaborator, changing a collaborator's role). Round 1447: tryGetProject, see requireProjectAccess's own doc comment just above. */
 function requireProjectOwner(db: ForgeDatabase, id: string, userId: string): Project {
-  const project = getProject(db, id);
+  const project = tryGetProject(db, id);
   if (!project || project.ownerId !== userId) {
     throw new HttpError(404, `Project "${id}" not found`, "PROJECT_NOT_FOUND");
   }
