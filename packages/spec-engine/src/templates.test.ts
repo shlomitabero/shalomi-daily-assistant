@@ -831,3 +831,44 @@ test("the Sales CRM template's Deal entity has a date field whose NAME matches t
     );
   }
 });
+
+/**
+ * Round 1440's finding: the Appointments template's Appointment entity had
+ * a status enum VALUE "noshow" (no hyphen) -- but entityFormatting.ts's/
+ * codegen.ts's own badgeTone NEGATIVE_WORDS list only contains "no-show"
+ * (hyphenated), the exact spelling the built-in domain library (see
+ * domainEntities.ts) already uses for its own canonical Appointment
+ * entity. badgeTone runs on the raw stored enum VALUE, not the
+ * translated enumLabels display text, so "noshow" matched neither
+ * NEGATIVE_WORDS nor POSITIVE_WORDS and silently rendered as a neutral
+ * (gray) badge -- identical to "scheduled" -- instead of negative (red)
+ * like "cancelled", the other negative outcome in the same enum. Same
+ * underlying class of bug as round 1439's closeDate->closeDeadline fix
+ * (a template hardcodes a raw value that must match an app-wide naming
+ * convention another heuristic relies on), just on an enum value instead
+ * of a field name.
+ */
+test("the Appointments template's Appointment entity's \"no-show\" status enum VALUE matches badgeTone's NEGATIVE_WORDS convention, so it renders as a negative (red) badge like \"cancelled\" does, not a neutral one", () => {
+  const NEGATIVE_WORDS = ["lost", "cancelled", "canceled", "inactive", "overdue", "no-show", "failed", "rejected", "declined", "denied"];
+  const badgeTone = (rawValue: string) => {
+    const lower = rawValue.toLowerCase();
+    return NEGATIVE_WORDS.some((w) => lower.includes(w)) ? "negative" : "neutral";
+  };
+  for (const [template, spec] of TEMPLATES.flatMap((t) => [
+    [t, t.spec] as const,
+    [t, t.specEn] as const,
+  ])) {
+    if (template.id !== "appointments") continue;
+    const appointment = spec.entities.find((e) => e.name === "Appointment");
+    assert.ok(appointment, `template "${template.id}" must have an Appointment entity`);
+    const statusField = appointment!.fields.find((f) => f.name === "status" && f.type === "enum") as { enumValues: string[] } | undefined;
+    assert.ok(statusField, `template "${template.id}"'s Appointment entity must have a status enum field`);
+    const noShowValue = statusField!.enumValues.find((v) => v.toLowerCase().replace(/[^a-z]/g, "") === "noshow");
+    assert.ok(noShowValue, `template "${template.id}"'s Appointment status enum must have a no-show value`);
+    assert.equal(
+      badgeTone(noShowValue!),
+      "negative",
+      `template "${template.id}"'s Appointment status enum's no-show VALUE ("${noShowValue}") must match badgeTone's NEGATIVE_WORDS convention so it renders as a negative badge`,
+    );
+  }
+});
