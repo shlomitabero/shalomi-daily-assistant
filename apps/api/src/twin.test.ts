@@ -66,6 +66,28 @@ test("computeBusinessTwin identifies the most active entity and unused ones from
   assert.equal(unusedObservation!.entityName, "Appointment");
 });
 
+/** Round 1461: same singular-form fix as above, for mostActiveObservation (both languages). */
+test("computeBusinessTwin's most-active observation uses the singular 'record'/'רשומה' when the most-active entity has exactly one record", () => {
+  const db = openDatabase(":memory:");
+  applyMigrations(db, project.id, project.spec);
+  insertRecord(db, project.id, project.spec.entities[0], { name: "דנה לוי" });
+
+  const twin = computeBusinessTwin(db, project);
+  assert.equal(twin.mostActive?.count, 1);
+  assert.ok(twin.mostActiveObservation, "expected a most-active observation");
+  assert.ok(twin.mostActiveObservation!.text.includes("1 רשומה."), `expected singular "רשומה", got: "${twin.mostActiveObservation!.text}"`);
+  assert.ok(!twin.mostActiveObservation!.text.includes("רשומות"), `must not say "רשומות" for a single record, got: "${twin.mostActiveObservation!.text}"`);
+
+  const enProject: Project = { ...project, description: "I need a CRM for customers and appointments" };
+  const dbEn = openDatabase(":memory:");
+  applyMigrations(dbEn, enProject.id, enProject.spec);
+  insertRecord(dbEn, enProject.id, enProject.spec.entities[0], { name: "Dana Levi" });
+  const twinEn = computeBusinessTwin(dbEn, enProject);
+  assert.ok(twinEn.mostActiveObservation, "expected an English most-active observation");
+  assert.ok(twinEn.mostActiveObservation!.text.includes("1 record."), `expected singular "record", got: "${twinEn.mostActiveObservation!.text}"`);
+  assert.ok(!twinEn.mostActiveObservation!.text.includes("records"), `must not say "records" for a single record, got: "${twinEn.mostActiveObservation!.text}"`);
+});
+
 /**
  * New in this round: before, two or more unused entities were folded into
  * one sentence naming all of them at once ("No records yet in: X, Y"),
@@ -192,6 +214,45 @@ test("computeBusinessTwin reports how many records are missing a relation field,
 });
 
 /**
+ * Round 1461: a plain pluralization-less "records"/"רשומות" after a count
+ * reads wrong once that count is exactly 1 -- a brand-new project with a
+ * single record is the single most common state anyone evaluating the
+ * product hits. Mirrors the singular-form fix already applied to
+ * computeActivityObservations' English half (line 507) and several web-side
+ * format*Count helpers (rounds 1388-1455), extended here to
+ * computeRelationCoverageObservations.
+ */
+test("computeBusinessTwin's relation-coverage observation uses the singular 'record' when there's exactly one record", () => {
+  const relationProject: Project = {
+    ...project,
+    description: "I need a support ticket system linked to customers",
+    spec: {
+      ...project.spec,
+      entities: [
+        { name: "Customer", label: "Customers", fields: [{ name: "name", type: "text", required: true }] },
+        {
+          name: "Ticket",
+          label: "Tickets",
+          fields: [
+            { name: "subject", type: "text", required: true },
+            { name: "customerId", label: "Customer", type: "relation", required: false, relationTo: "Customer" },
+          ],
+        },
+      ],
+    },
+  };
+  const db = openDatabase(":memory:");
+  applyMigrations(db, relationProject.id, relationProject.spec);
+  insertRecord(db, relationProject.id, relationProject.spec.entities[1], { subject: "Can't log in", customerId: null });
+
+  const twin = computeBusinessTwin(db, relationProject);
+  const coverage = twin.jumpableObservations.find((o) => o.entityName === "Ticket");
+  assert.ok(coverage, `expected a relation-coverage observation, got: ${JSON.stringify(twin.jumpableObservations)}`);
+  assert.match(coverage!.text, /1 of 1 record have/, `expected singular "record", got: "${coverage!.text}"`);
+  assert.ok(!coverage!.text.includes("records"), `must not say "records" for a single record, got: "${coverage!.text}"`);
+});
+
+/**
  * Regression test for a real bug found by round 635's Explore survey:
  * FieldSchema/EntitySchema (packages/shared) only enforce uniqueness on a
  * field's `name`, never its display `label`, and the field-label route
@@ -300,6 +361,36 @@ test("computeBusinessTwin reports how many records are missing a file upload, an
   });
   const twinFullyUploaded = computeBusinessTwin(db2, fileProject);
   assert.ok(!twinFullyUploaded.jumpableObservations.some((o) => o.text.includes("have no")));
+});
+
+/** Round 1461: same singular-form fix as computeRelationCoverageObservations above, for computeFileFieldCoverageObservations. */
+test("computeBusinessTwin's file-upload-coverage observation uses the singular 'record' when there's exactly one record", () => {
+  const fileProject: Project = {
+    ...project,
+    description: "I need to track insurance claims with a receipt upload",
+    spec: {
+      ...project.spec,
+      entities: [
+        {
+          name: "Claim",
+          label: "Claims",
+          fields: [
+            { name: "description", type: "text", required: true },
+            { name: "receipt", label: "Receipt", type: "file", required: false },
+          ],
+        },
+      ],
+    },
+  };
+  const db = openDatabase(":memory:");
+  applyMigrations(db, fileProject.id, fileProject.spec);
+  insertRecord(db, fileProject.id, fileProject.spec.entities[0], { description: "Car repair", receipt: null });
+
+  const twin = computeBusinessTwin(db, fileProject);
+  const coverage = twin.jumpableObservations.find((o) => o.entityName === "Claim");
+  assert.ok(coverage, `expected a file-coverage observation, got: ${JSON.stringify(twin.jumpableObservations)}`);
+  assert.match(coverage!.text, /1 of 1 record have/, `expected singular "record", got: "${coverage!.text}"`);
+  assert.ok(!coverage!.text.includes("records"), `must not say "records" for a single record, got: "${coverage!.text}"`);
 });
 
 test("computeBusinessTwin identifies the record most referenced across multiple relation fields, with a per-entity breakdown", () => {
@@ -958,6 +1049,27 @@ test("computeBusinessTwin reports how many records were added in the last week, 
   assert.ok(activityObservation!.includes("2 records"), `expected exactly the 2 fresh records counted, got: "${activityObservation}"`);
 });
 
+/**
+ * Round 1461: this observation's English half already uses the singular
+ * "record" when the count is 1 (`${recentCount} record${recentCount === 1
+ * ? "" : "s"}`), but the sibling Hebrew string on the same source line was
+ * still unconditionally "רשומות" -- the other half of the same bug this
+ * round fixes in computeRelationCoverageObservations/
+ * computeFileFieldCoverageObservations/computeNumericAggregateObservations/
+ * computeOverdueObservations/computeDueSoonObservations/mostActiveObservation.
+ */
+test("computeBusinessTwin phrases the recent-activity observation with the singular 'רשומה' in Hebrew when exactly one record was added this week", () => {
+  const db = openDatabase(":memory:");
+  applyMigrations(db, project.id, project.spec);
+  insertRecord(db, project.id, project.spec.entities[0], { name: "דנה לוי" });
+
+  const twin = computeBusinessTwin(db, project);
+  const activityObservation = twin.observations.find((o) => o.includes("נוספ"));
+  assert.ok(activityObservation, `expected a recent-activity observation, got: ${JSON.stringify(twin.observations)}`);
+  assert.ok(activityObservation!.includes("1 רשומה "), `expected singular "רשומה", got: "${activityObservation}"`);
+  assert.ok(!activityObservation!.includes("רשומות"), `must not say "רשומות" for a single record, got: "${activityObservation}"`);
+});
+
 test("computeBusinessTwin flags an entity with real records but none added in the last 30 days as stale, and stays silent for one with recent activity", () => {
   const db = openDatabase(":memory:");
   const enProject: Project = {
@@ -1096,6 +1208,44 @@ test("computeBusinessTwin phrases the numeric-aggregate observation in Hebrew fo
 
   const twin = computeBusinessTwin(db, orderProject);
   assert.ok(twin.jumpableObservations.some((o) => o.text.includes('סה"כ') && o.text.includes("הזמנות")));
+});
+
+/** Round 1461: same singular-form fix as computeRelationCoverageObservations above, for computeNumericAggregateObservations (both languages). */
+test("computeBusinessTwin's numeric-aggregate observation uses the singular 'record'/'רשומה' when averaging exactly one value", () => {
+  const orderProject: Project = {
+    ...project,
+    description: "חנות מקוונת עם הזמנות",
+    spec: {
+      ...project.spec,
+      entities: [
+        {
+          name: "Order",
+          label: "הזמנות",
+          fields: [
+            { name: "customer", type: "text", required: true },
+            { name: "total", label: "סכום", type: "number", required: true },
+          ],
+        },
+      ],
+    },
+  };
+  const db = openDatabase(":memory:");
+  applyMigrations(db, orderProject.id, orderProject.spec);
+  insertRecord(db, orderProject.id, orderProject.spec.entities[0], { customer: "דנה", total: 200 });
+
+  const twin = computeBusinessTwin(db, orderProject);
+  const aggregate = twin.jumpableObservations.find((o) => o.text.includes('סה"כ'));
+  assert.ok(aggregate, `expected a numeric-aggregate observation, got: ${JSON.stringify(twin.jumpableObservations)}`);
+  assert.ok(aggregate!.text.includes("על פני 1 רשומה)"), `expected singular "רשומה", got: "${aggregate!.text}"`);
+
+  const enOrderProject: Project = { ...orderProject, description: "An online store with orders" };
+  const dbEn = openDatabase(":memory:");
+  applyMigrations(dbEn, enOrderProject.id, enOrderProject.spec);
+  insertRecord(dbEn, enOrderProject.id, enOrderProject.spec.entities[0], { customer: "Dana", total: 200 });
+  const twinEn = computeBusinessTwin(dbEn, enOrderProject);
+  const aggregateEn = twinEn.jumpableObservations.find((o) => o.text.includes("Total"));
+  assert.ok(aggregateEn, `expected an English numeric-aggregate observation, got: ${JSON.stringify(twinEn.jumpableObservations)}`);
+  assert.ok(aggregateEn!.text.includes("across 1 record)"), `expected singular "record", got: "${aggregateEn!.text}"`);
 });
 
 /**
@@ -1772,6 +1922,37 @@ test("computeBusinessTwin reports an overdue deadline-named date field", () => {
   assert.match(overdue!.text, /2 of 3/);
 });
 
+/** Round 1461: same singular-form fix as computeRelationCoverageObservations above, for computeOverdueObservations. */
+test("computeBusinessTwin's overdue-deadline observation uses the singular 'record' when there's exactly one overdue record out of one", () => {
+  const orderProject: Project = {
+    ...project,
+    description: "An online store with orders",
+    spec: {
+      ...project.spec,
+      entities: [
+        {
+          name: "Order",
+          label: "Orders",
+          fields: [
+            { name: "customer", type: "text", required: true },
+            { name: "dueDate", label: "Due date", type: "date", required: false },
+          ],
+        },
+      ],
+    },
+  };
+  const db = openDatabase(":memory:");
+  applyMigrations(db, orderProject.id, orderProject.spec);
+  const today = new Date(2026, 0, 15);
+  insertRecord(db, orderProject.id, orderProject.spec.entities[0], { customer: "Dana", dueDate: "2026-01-01" }); // overdue
+
+  const twin = computeBusinessTwin(db, orderProject, today);
+  const overdue = twin.jumpableObservations.find((o) => o.text.includes("Due date"));
+  assert.ok(overdue, `expected an overdue-deadline observation, got: ${JSON.stringify(twin.jumpableObservations)}`);
+  assert.match(overdue!.text, /1 of 1 record in/, `expected singular "record", got: "${overdue!.text}"`);
+  assert.ok(!overdue!.text.includes("records"), `must not say "records" for a single record, got: "${overdue!.text}"`);
+});
+
 test("computeBusinessTwin does not flag a past date field whose name isn't deadline-shaped", () => {
   const orderProject: Project = {
     ...project,
@@ -1953,6 +2134,37 @@ test("computeBusinessTwin reports a deadline-named date field coming due soon, d
   const overdue = twin.jumpableObservations.find((o) => o.text.includes("overdue"));
   assert.ok(overdue, `expected the overdue observation to still fire independently, got: ${JSON.stringify(twin.jumpableObservations)}`);
   assert.match(overdue!.text, /1 of 4/);
+});
+
+/** Round 1461: same singular-form fix as computeRelationCoverageObservations above, for computeDueSoonObservations. */
+test("computeBusinessTwin's due-soon observation uses the singular 'record' when there's exactly one due-soon record out of one", () => {
+  const orderProject: Project = {
+    ...project,
+    description: "An online store with orders",
+    spec: {
+      ...project.spec,
+      entities: [
+        {
+          name: "Order",
+          label: "Orders",
+          fields: [
+            { name: "customer", type: "text", required: true },
+            { name: "dueDate", label: "Due date", type: "date", required: false },
+          ],
+        },
+      ],
+    },
+  };
+  const db = openDatabase(":memory:");
+  applyMigrations(db, orderProject.id, orderProject.spec);
+  const today = new Date(2026, 0, 15);
+  insertRecord(db, orderProject.id, orderProject.spec.entities[0], { customer: "Dana", dueDate: "2026-01-15" }); // due today -- due soon
+
+  const twin = computeBusinessTwin(db, orderProject, today);
+  const dueSoon = twin.jumpableObservations.find((o) => o.text.includes("coming up soon"));
+  assert.ok(dueSoon, `expected a due-soon observation, got: ${JSON.stringify(twin.jumpableObservations)}`);
+  assert.match(dueSoon!.text, /1 of 1 record in/, `expected singular "record", got: "${dueSoon!.text}"`);
+  assert.ok(!dueSoon!.text.includes("records"), `must not say "records" for a single record, got: "${dueSoon!.text}"`);
 });
 
 test("computeBusinessTwin does not flag a past-future date field whose name isn't deadline-shaped as due soon", () => {

@@ -185,8 +185,8 @@ function computeRelationCoverageObservations(
       const ambiguous = (labelOccurrences.get(fieldLabel) ?? 0) > 1;
       observations.push({
         text: hebrew
-          ? `ב"${entityLabel}", ל-${unassigned} מתוך ${records.length} רשומות אין "${fieldLabel}"${ambiguous ? ` (${field.name})` : ""} מוגדר.`
-          : `In "${entityLabel}", ${unassigned} of ${records.length} records have no "${fieldLabel}"${ambiguous ? ` (${field.name})` : ""} set.`,
+          ? `ב"${entityLabel}", ל-${unassigned} מתוך ${records.length} רשומ${records.length === 1 ? "ה" : "ות"} אין "${fieldLabel}"${ambiguous ? ` (${field.name})` : ""} מוגדר.`
+          : `In "${entityLabel}", ${unassigned} of ${records.length} record${records.length === 1 ? "" : "s"} have no "${fieldLabel}"${ambiguous ? ` (${field.name})` : ""} set.`,
         entityName: entity.name,
       });
     }
@@ -258,8 +258,8 @@ function computeFileFieldCoverageObservations(
       const ambiguous = (labelOccurrences.get(fieldLabel) ?? 0) > 1;
       observations.push({
         text: hebrew
-          ? `ב"${entityLabel}", ל-${missing} מתוך ${records.length} רשומות אין "${fieldLabel}"${ambiguous ? ` (${field.name})` : ""} מועלה.`
-          : `In "${entityLabel}", ${missing} of ${records.length} records have no "${fieldLabel}"${ambiguous ? ` (${field.name})` : ""} uploaded.`,
+          ? `ב"${entityLabel}", ל-${missing} מתוך ${records.length} רשומ${records.length === 1 ? "ה" : "ות"} אין "${fieldLabel}"${ambiguous ? ` (${field.name})` : ""} מועלה.`
+          : `In "${entityLabel}", ${missing} of ${records.length} record${records.length === 1 ? "" : "s"} have no "${fieldLabel}"${ambiguous ? ` (${field.name})` : ""} uploaded.`,
         entityName: entity.name,
       });
     }
@@ -504,7 +504,9 @@ function computeActivityObservations(
 
   if (recentCount > 0) {
     observations.push(
-      hebrew ? `${recentCount} רשומות נוספו בשבוע האחרון.` : `${recentCount} record${recentCount === 1 ? "" : "s"} added in the last week.`,
+      hebrew
+        ? `${recentCount} רשומ${recentCount === 1 ? "ה" : "ות"} נוספ${recentCount === 1 ? "ה" : "ו"} בשבוע האחרון.`
+        : `${recentCount} record${recentCount === 1 ? "" : "s"} added in the last week.`,
     );
   }
   for (const e of staleEntities) {
@@ -614,8 +616,8 @@ function computeNumericAggregateObservations(
       const averageText = stripBidiMarks(average.toLocaleString(numberLocale, { maximumFractionDigits: 1 }));
       observations.push({
         text: hebrew
-          ? `סה"כ "${fieldLabel}"${fieldSuffix} ב"${entityLabel}": ${sumText} (ממוצע ${averageText} על פני ${values.length} רשומות).`
-          : `Total "${fieldLabel}"${fieldSuffix} in "${entityLabel}": ${sumText} (average ${averageText} across ${values.length} records).`,
+          ? `סה"כ "${fieldLabel}"${fieldSuffix} ב"${entityLabel}": ${sumText} (ממוצע ${averageText} על פני ${values.length} רשומ${values.length === 1 ? "ה" : "ות"}).`
+          : `Total "${fieldLabel}"${fieldSuffix} in "${entityLabel}": ${sumText} (average ${averageText} across ${values.length} record${values.length === 1 ? "" : "s"}).`,
         entityName: entity.name,
         entityLabel,
         fieldName: field.name,
@@ -853,8 +855,8 @@ function computeOverdueObservations(
       const fieldSuffix = ambiguous ? ` (${field.name})` : "";
       observations.push({
         text: hebrew
-          ? `${overdueCount} מ-${recordCount} רשומות ב"${entityLabel}" עברו את התאריך ב"${fieldLabel}"${fieldSuffix}.`
-          : `${overdueCount} of ${recordCount} records in "${entityLabel}" have an overdue "${fieldLabel}"${fieldSuffix}.`,
+          ? `${overdueCount} מ-${recordCount} רשומ${recordCount === 1 ? "ה" : "ות"} ב"${entityLabel}" עברו את התאריך ב"${fieldLabel}"${fieldSuffix}.`
+          : `${overdueCount} of ${recordCount} record${recordCount === 1 ? "" : "s"} in "${entityLabel}" have an overdue "${fieldLabel}"${fieldSuffix}.`,
         entityName: entity.name,
         entityLabel,
         fieldName: field.name,
@@ -930,8 +932,8 @@ function computeDueSoonObservations(
       const fieldSuffix = ambiguous ? ` (${field.name})` : "";
       observations.push({
         text: hebrew
-          ? `${dueSoonCount} מ-${recordCount} רשומות ב"${entityLabel}" מתקרבות לתאריך ב"${fieldLabel}"${fieldSuffix} בימים הקרובים.`
-          : `${dueSoonCount} of ${recordCount} records in "${entityLabel}" have a "${fieldLabel}"${fieldSuffix} coming up soon.`,
+          ? `${dueSoonCount} מ-${recordCount} רשומ${recordCount === 1 ? "ה" : "ות"} ב"${entityLabel}" מתקרבות לתאריך ב"${fieldLabel}"${fieldSuffix} בימים הקרובים.`
+          : `${dueSoonCount} of ${recordCount} record${recordCount === 1 ? "" : "s"} in "${entityLabel}" have a "${fieldLabel}"${fieldSuffix} coming up soon.`,
         entityName: entity.name,
         entityLabel,
         fieldName: field.name,
@@ -1010,8 +1012,8 @@ export function computeBusinessTwin(
     if (mostActive) {
       mostActiveObservation = {
         text: hebrew
-          ? `הכי הרבה פעילות יש ב"${mostActive.label}" — ${mostActive.count} רשומות.`
-          : `Most activity is in "${mostActive.label}" — ${mostActive.count} records.`,
+          ? `הכי הרבה פעילות יש ב"${mostActive.label}" — ${mostActive.count} רשומ${mostActive.count === 1 ? "ה" : "ות"}.`
+          : `Most activity is in "${mostActive.label}" — ${mostActive.count} record${mostActive.count === 1 ? "" : "s"}.`,
         entityName: mostActive.name,
       };
     }
