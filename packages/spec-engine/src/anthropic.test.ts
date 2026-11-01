@@ -145,6 +145,23 @@ test("generate() throws a descriptive error when the model's JSON doesn't match 
   await assert.rejects(() => provider.generate("x"), /did not match ProductSpec schema/);
 });
 
+/**
+ * Round 1426: ProductSpecSchema's own `.min(1)` checks accept a
+ * syntactically valid but pathologically long field (a real LLM
+ * token-repetition-loop failure mode), so this is a separate check -- see
+ * findOversizedGeneratedSpecField's own doc comment for why it can't
+ * live on the schema itself.
+ */
+test("generate() throws a descriptive error when the model's JSON matches ProductSpecSchema but one field is pathologically oversized", async () => {
+  const oversized = { ...VALID_SPEC, summary: "x".repeat(3000) };
+  const fakeFetch = (async () =>
+    new Response(JSON.stringify({ content: [{ type: "text", text: JSON.stringify(oversized) }] }), {
+      status: 200,
+    })) as unknown as typeof fetch;
+  const provider = new AnthropicSpecProvider({ apiKey: "test-key", fetchImpl: fakeFetch });
+  await assert.rejects(() => provider.generate("x"), /summary.*exceeds the sane length/);
+});
+
 test("generate() names truncation specifically when JSON parsing fails and stop_reason is max_tokens, instead of a generic parse error", async () => {
   // A response cut off mid-JSON by hitting the token limit is a different,
   // actionable failure from the model genuinely returning malformed JSON --

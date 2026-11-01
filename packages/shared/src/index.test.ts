@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { EntitySchema, FieldSchema, OpenQuestionSchema, ProductSpecSchema } from "./index.js";
+import { EntitySchema, FieldSchema, OpenQuestionSchema, ProductSpecSchema, findOversizedGeneratedSpecField, GENERATED_SPEC_LABEL_MAX_LENGTH, GENERATED_SPEC_PHRASE_MAX_LENGTH, GENERATED_SPEC_SUMMARY_MAX_LENGTH } from "./index.js";
 
 /**
  * FieldSchema's two `.refine()` checks -- an enum field must declare
@@ -214,6 +214,49 @@ test("OpenQuestionSchema rejects an empty-string option, but still accepts genui
 
   const genuine = OpenQuestionSchema.safeParse({ question: "Which payment methods?", options: ["Cash", "Credit card"] });
   assert.ok(genuine.success, "expected genuinely non-empty options to still be accepted");
+});
+
+/**
+ * Round 1426: ProductSpecSchema itself must never gain a `.max()` on an
+ * existing field (see findOversizedGeneratedSpecField's own doc comment
+ * for why -- every stored spec is re-validated against this exact schema
+ * on every read), so this is a separate function, not a schema change.
+ * These tests confirm it flags each kind of field this bug class can
+ * reach, and leaves an ordinary, correctly-sized spec untouched.
+ */
+test("findOversizedGeneratedSpecField flags an oversized summary, phrase array element, entity/field name or label, and leaves a normal spec alone", () => {
+  const normalEntity = { name: "Order", fields: [{ name: "total", type: "number", required: true }] };
+
+  assert.equal(findOversizedGeneratedSpecField(ProductSpecSchema.parse(baseSpec([normalEntity]))), null, "an ordinary, correctly-sized spec must not be flagged");
+
+  const oversizedSummary = ProductSpecSchema.parse({ ...baseSpec([normalEntity]), summary: "x".repeat(GENERATED_SPEC_SUMMARY_MAX_LENGTH + 1) });
+  assert.match(findOversizedGeneratedSpecField(oversizedSummary)!, /summary/);
+
+  const oversizedRole = ProductSpecSchema.parse({ ...baseSpec([normalEntity]), roles: ["x".repeat(GENERATED_SPEC_PHRASE_MAX_LENGTH + 1)] });
+  assert.match(findOversizedGeneratedSpecField(oversizedRole)!, /role/);
+
+  const oversizedQuestion = ProductSpecSchema.parse({
+    ...baseSpec([normalEntity]),
+    openQuestions: [{ question: "x".repeat(GENERATED_SPEC_PHRASE_MAX_LENGTH + 1), options: [] }],
+  });
+  assert.match(findOversizedGeneratedSpecField(oversizedQuestion)!, /openQuestions question/);
+
+  const oversizedEntityName = ProductSpecSchema.parse({
+    ...baseSpec([{ name: "x".repeat(GENERATED_SPEC_LABEL_MAX_LENGTH + 1), fields: normalEntity.fields }]),
+  });
+  assert.match(findOversizedGeneratedSpecField(oversizedEntityName)!, /entity name/);
+
+  const oversizedFieldLabel = ProductSpecSchema.parse({
+    ...baseSpec([{ name: "Order", fields: [{ name: "total", label: "x".repeat(GENERATED_SPEC_LABEL_MAX_LENGTH + 1), type: "number", required: true }] }]),
+  });
+  assert.match(findOversizedGeneratedSpecField(oversizedFieldLabel)!, /field "total"'s label/);
+
+  const oversizedEnumValue = ProductSpecSchema.parse({
+    ...baseSpec([
+      { name: "Order", fields: [{ name: "status", type: "enum", required: true, enumValues: ["x".repeat(GENERATED_SPEC_LABEL_MAX_LENGTH + 1)] }] },
+    ]),
+  });
+  assert.match(findOversizedGeneratedSpecField(oversizedEnumValue)!, /enumValue/);
 });
 
 test("ProductSpecSchema rejects two entities whose names collide case-insensitively", () => {

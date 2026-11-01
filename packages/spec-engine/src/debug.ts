@@ -1,5 +1,5 @@
 import type { ProductSpec } from "@forge/shared";
-import { ProductSpecSchema } from "@forge/shared";
+import { ProductSpecSchema, findOversizedGeneratedSpecField } from "@forge/shared";
 import { fetchAnthropic } from "./anthropicFetch.js";
 
 const ANTHROPIC_API_URL = "https://api.anthropic.com/v1/messages";
@@ -126,6 +126,15 @@ export async function requestSpecFix(
   const result = ProductSpecSchema.safeParse(parsed);
   if (!result.success) {
     throw new Error(`Anthropic API response did not match ProductSpec schema: ${result.error.message}`);
+  }
+  // Round 1426: same gap as AnthropicSpecProvider.generate's own identical
+  // check -- see findOversizedGeneratedSpecField's own doc comment. This
+  // function's own caller (pipeline.ts) already surfaces a thrown error
+  // here as a clean "automatic fix attempt failed" Debug Agent message
+  // rather than a raw 500, so no new error handling is needed either.
+  const oversizedField = findOversizedGeneratedSpecField(result.data);
+  if (oversizedField) {
+    throw new Error(`Anthropic API response's ${oversizedField} exceeds the sane length Forge AI enforces on generated specs`);
   }
   // Round 1113: same override anthropic.ts's AnthropicSpecProvider.generate
   // already applies (round 1031) -- the Debug Agent is a fresh model call

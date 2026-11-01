@@ -311,6 +311,108 @@ export const ProductSpecSchema = z
 
 export type ProductSpec = z.infer<typeof ProductSpecSchema>;
 
+/**
+ * Round 1426: ProductSpecSchema's own doc comment above explains why this
+ * schema can never gain a new/stricter validator on an EXISTING field --
+ * every stored project and checkpoint re-validates its spec_json against
+ * this exact schema on every read, so a new `.max()` here would make any
+ * previously-stored spec whose content happens to exceed it fail to parse
+ * going forward. That's exactly why rounds 1403/1404/1408-1411/1414/1423/
+ * 1424's own "unbounded free-text field" caps all lived on the narrower
+ * HTTP-input schemas in apps/api/src/routes/projects.ts (write-time only,
+ * never re-validated against stored data) rather than here -- this schema
+ * was the one place in the whole codebase that pattern could never safely
+ * reach, round 1411's own comment says so outright, and no round since
+ * closed it.
+ *
+ * The safe fix is a SEPARATE check, not a schema change: this function is
+ * called only at the two points a freshly-generated spec is first
+ * produced (AnthropicSpecProvider.generate, requestSpecFix), right next
+ * to their own ProductSpecSchema.safeParse call, before anything is ever
+ * stored. A model stuck in a token-repetition loop (a real, documented
+ * LLM failure mode) can legitimately emit a syntactically valid spec
+ * where one string field balloons to several KB -- ProductSpecSchema's
+ * own `.min(1)` checks accept that without complaint, and that oversized
+ * value then gets stored as the project's live spec AND baked into every
+ * future Time Machine checkpoint, re-sent on every GET /projects/:id
+ * (every page load, by every collaborator) and rendered verbatim in every
+ * table header, Kanban column, calendar feed, Business Twin report, and
+ * CSV/print export forever -- the same "bloats every future read"
+ * amplification shape the HTTP-input caps above were built to prevent,
+ * just one layer deeper. Returning a description here (rather than just
+ * true/false) lets each caller fold it into the same descriptive
+ * "Anthropic API response did not match..." Error message their own
+ * schema-mismatch branch just above already throws, so this reuses that
+ * exact same fallback-to-heuristic path with no new plumbing.
+ *
+ * Deliberately NOT applied to HeuristicSpecProvider's own output: its
+ * `summary` legitimately embeds the raw project description verbatim
+ * (see heuristic.ts's own `summarize`), which can itself be up to 5000
+ * characters (CreateProjectSchema's own round-1408 cap) -- a completely
+ * ordinary, expected result for that deterministic generator, not a
+ * failure mode to guard against.
+ */
+export const GENERATED_SPEC_LABEL_MAX_LENGTH = 200;
+export const GENERATED_SPEC_PHRASE_MAX_LENGTH = 500;
+export const GENERATED_SPEC_SUMMARY_MAX_LENGTH = 2000;
+
+export function findOversizedGeneratedSpecField(spec: ProductSpec): string | null {
+  if (spec.summary.length > GENERATED_SPEC_SUMMARY_MAX_LENGTH) {
+    return `summary (${spec.summary.length} characters, max ${GENERATED_SPEC_SUMMARY_MAX_LENGTH})`;
+  }
+  for (const [kind, phrases] of [
+    ["role", spec.roles],
+    ["persona", spec.personas],
+    ["assumption", spec.assumptions],
+  ] as const) {
+    for (const phrase of phrases) {
+      if (phrase.length > GENERATED_SPEC_PHRASE_MAX_LENGTH) {
+        return `a ${kind} (${phrase.length} characters, max ${GENERATED_SPEC_PHRASE_MAX_LENGTH})`;
+      }
+    }
+  }
+  for (const q of spec.openQuestions) {
+    if (q.question.length > GENERATED_SPEC_PHRASE_MAX_LENGTH) {
+      return `an openQuestions question (${q.question.length} characters, max ${GENERATED_SPEC_PHRASE_MAX_LENGTH})`;
+    }
+    for (const option of q.options) {
+      if (option.length > GENERATED_SPEC_PHRASE_MAX_LENGTH) {
+        return `an openQuestions option (${option.length} characters, max ${GENERATED_SPEC_PHRASE_MAX_LENGTH})`;
+      }
+    }
+    if (q.recommendation && q.recommendation.length > GENERATED_SPEC_PHRASE_MAX_LENGTH) {
+      return `an openQuestions recommendation (${q.recommendation.length} characters, max ${GENERATED_SPEC_PHRASE_MAX_LENGTH})`;
+    }
+  }
+  for (const entity of spec.entities) {
+    if (entity.name.length > GENERATED_SPEC_LABEL_MAX_LENGTH) {
+      return `entity name "${entity.name.slice(0, 40)}..." (${entity.name.length} characters, max ${GENERATED_SPEC_LABEL_MAX_LENGTH})`;
+    }
+    if (entity.label && entity.label.length > GENERATED_SPEC_LABEL_MAX_LENGTH) {
+      return `entity "${entity.name}"'s label (${entity.label.length} characters, max ${GENERATED_SPEC_LABEL_MAX_LENGTH})`;
+    }
+    for (const field of entity.fields) {
+      if (field.name.length > GENERATED_SPEC_LABEL_MAX_LENGTH) {
+        return `a field name in entity "${entity.name}" (${field.name.length} characters, max ${GENERATED_SPEC_LABEL_MAX_LENGTH})`;
+      }
+      if (field.label && field.label.length > GENERATED_SPEC_LABEL_MAX_LENGTH) {
+        return `field "${field.name}"'s label in entity "${entity.name}" (${field.label.length} characters, max ${GENERATED_SPEC_LABEL_MAX_LENGTH})`;
+      }
+      for (const value of field.enumValues ?? []) {
+        if (value.length > GENERATED_SPEC_LABEL_MAX_LENGTH) {
+          return `an enumValue on field "${field.name}" in entity "${entity.name}" (${value.length} characters, max ${GENERATED_SPEC_LABEL_MAX_LENGTH})`;
+        }
+      }
+      for (const value of Object.values(field.enumLabels ?? {})) {
+        if (value.length > GENERATED_SPEC_LABEL_MAX_LENGTH) {
+          return `an enumLabel on field "${field.name}" in entity "${entity.name}" (${value.length} characters, max ${GENERATED_SPEC_LABEL_MAX_LENGTH})`;
+        }
+      }
+    }
+  }
+  return null;
+}
+
 export const ProjectSchema = z.object({
   id: z.string(),
   ownerId: z.string(),

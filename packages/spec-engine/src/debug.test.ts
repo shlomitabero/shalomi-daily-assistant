@@ -43,6 +43,24 @@ test("requestSpecFix throws when the model's response fails schema validation", 
   );
 });
 
+/**
+ * Round 1426: same gap this function shares with anthropic.ts's own
+ * generate() -- a fix attempt is itself a fresh model call, so the same
+ * token-repetition-loop failure mode can hit it too. See
+ * findOversizedGeneratedSpecField's own doc comment (packages/shared)
+ * for why this is a separate check rather than a ProductSpecSchema
+ * `.max()`.
+ */
+test("requestSpecFix throws when the model's response matches ProductSpecSchema but one field is pathologically oversized", async () => {
+  const oversizedFix = { ...brokenSpec, summary: "x".repeat(3000) };
+  const fakeFetch = (async () =>
+    new Response(JSON.stringify({ content: [{ type: "text", text: JSON.stringify(oversizedFix) }] }), { status: 200 })) as unknown as typeof fetch;
+  await assert.rejects(
+    () => requestSpecFix(brokenSpec, "some error", { apiKey: "test-key", fetchImpl: fakeFetch }),
+    /summary.*exceeds the sane length/,
+  );
+});
+
 test("requestSpecFix throws a descriptive error on a non-2xx response", async () => {
   const fakeFetch = (async () => new Response("overloaded", { status: 529 })) as unknown as typeof fetch;
   await assert.rejects(

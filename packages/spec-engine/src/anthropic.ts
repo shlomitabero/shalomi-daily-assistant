@@ -1,5 +1,5 @@
 import type { ProductSpec } from "@forge/shared";
-import { ProductSpecSchema } from "@forge/shared";
+import { ProductSpecSchema, findOversizedGeneratedSpecField } from "@forge/shared";
 import type { SpecProvider } from "./provider.js";
 import { fetchAnthropic } from "./anthropicFetch.js";
 
@@ -144,6 +144,15 @@ export class AnthropicSpecProvider implements SpecProvider {
     const result = ProductSpecSchema.safeParse(parsed);
     if (!result.success) {
       throw new Error(`Anthropic API response did not match ProductSpec schema: ${result.error.message}`);
+    }
+    // Round 1426: see findOversizedGeneratedSpecField's own doc comment --
+    // ProductSpecSchema's own .min(1) checks accept a syntactically valid
+    // but pathologically long field (a real LLM failure mode), so this
+    // catches it separately and routes it through the same fallback path
+    // a schema mismatch just above already uses.
+    const oversizedField = findOversizedGeneratedSpecField(result.data);
+    if (oversizedField) {
+      throw new Error(`Anthropic API response's ${oversizedField} exceeds the sane length Forge AI enforces on generated specs`);
     }
     // Round 1031: the model is free to emit whatever "screens" shape it
     // wants per the system prompt above, and real LLM output doesn't
