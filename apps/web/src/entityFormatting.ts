@@ -126,6 +126,13 @@ const NEGATIVE_WORDS = [
   "not won",
   "notactive",
   "not active",
+  // round 1468: the built-in Shipment domain entity's own status enum (see
+  // spec-engine/domainEntities.ts) uses "Delayed" right alongside
+  // "Delivered" -- which already matches POSITIVE_WORDS -- so a delayed
+  // shipment showed the same neutral gray badge as "Preparing"/"InTransit"
+  // instead of reading as negative, even though it's exactly as negative
+  // an outcome as "Overdue" already listed above.
+  "delayed",
 ];
 
 const DATE_FORMAT = /^(\d{4})-(\d{2})-(\d{2})$/;

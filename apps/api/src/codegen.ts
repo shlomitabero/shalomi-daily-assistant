@@ -2830,6 +2830,11 @@ const NEGATIVE_WORDS = [
   // "notwon"/"not won"/"notactive"/"not active" each contain a
   // POSITIVE_WORDS entry ("won"/"active") as a literal substring.
   "notwon", "not won", "notactive", "not active",
+  // round 1468: mirrors the live preview's own entityFormatting.ts fix --
+  // the built-in Shipment domain entity's status enum uses "Delayed"
+  // right alongside "Delivered" (a POSITIVE_WORDS entry), the same
+  // negative-sibling-of-a-positive-value shape "overdue" already handles.
+  "delayed",
 ];
 // Mirrors the live preview's own entityFormatting.ts formatRecordCreatedAt
 // (round 168): every record carries a real, server-assigned createdAt

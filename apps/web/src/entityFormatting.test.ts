@@ -170,6 +170,21 @@ test("badgeTone recognizes 'NotWon'/'Not Won' and 'NotActive'/'Not Active' as ne
   assert.equal(badgeTone("Active"), "positive");
 });
 
+/**
+ * Round 1468's finding: the built-in Shipment domain entity's own status
+ * enum (spec-engine/domainEntities.ts) is exactly
+ * ["Preparing", "InTransit", "Delivered", "Delayed"] -- "Delivered" already
+ * reads as positive, but "Delayed" (right next to it, an equally
+ * conclusive negative outcome, the same shape as "Overdue" already listed)
+ * fell through to neutral gray, the same tone as the genuinely undecided
+ * "Preparing"/"InTransit" states, since "delayed" was missing from
+ * NEGATIVE_WORDS.
+ */
+test("badgeTone recognizes 'Delayed' as negative, matching Shipment's real status enum", () => {
+  assert.equal(badgeTone("Delayed"), "negative");
+  assert.equal(badgeTone("Delivered"), "positive");
+});
+
 test("formatDateValue formats a valid ISO date per locale, and leaves an invalid one unchanged", () => {
   const result = formatDateValue("2026-03-15", "en");
   assert.match(result, /3\/15\/2026|15\/3\/2026/); // exact format is locale/engine-dependent, just confirm it parsed

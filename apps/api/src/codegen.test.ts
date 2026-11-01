@@ -17189,6 +17189,24 @@ test("the exported EntityView's badgeTone classifies 'NotWon'/'NotActive' as neg
 });
 
 /**
+ * Regression test for round 1468's finding: the built-in Shipment domain
+ * entity's own status enum (spec-engine/domainEntities.ts) is exactly
+ * ["Preparing", "InTransit", "Delivered", "Delayed"] -- "Delivered" already
+ * reads as positive, but "Delayed" fell through to neutral gray in this
+ * exact exported copy too, mirroring the live-preview fix. Runs the real
+ * generated badgeTone, not a reference copy.
+ */
+test("the exported EntityView's badgeTone classifies 'Delayed' as negative, matching Shipment's real status enum", () => {
+  const entityViewJsx = generateExportFiles(project).find((f) => f.path === "web/src/components/EntityView.jsx")!.content;
+  const badgeToneSrc = entityViewJsx.match(/const POSITIVE_WORDS[\s\S]*?\nfunction badgeTone\(rawValue\) \{[\s\S]*?\n\}\n/)?.[0];
+  assert.ok(badgeToneSrc, "expected to find POSITIVE_WORDS/NEGATIVE_WORDS/badgeTone in generated output");
+
+  const badgeTone = new Function(`${badgeToneSrc}\nreturn badgeTone;`)() as (v: string) => string;
+  assert.equal(badgeTone("Delayed"), "negative");
+  assert.equal(badgeTone("Delivered"), "positive");
+});
+
+/**
  * New in this round: the exported standalone app's entity table columns
  * were a fixed auto-layout width, unlike the live Forge AI preview (round
  * 185's own drag-to-resize columns, persisted per entity via
