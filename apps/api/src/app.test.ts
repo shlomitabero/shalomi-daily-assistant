@@ -15572,7 +15572,7 @@ test("restoring a checkpoint surfaces a migrationWarning naming an entity that d
     assert.equal(restoreRes.status, 200);
     const restoreBody = (await restoreRes.json()) as { migrationWarning: string | null };
     assert.ok(restoreBody.migrationWarning, "a migrationWarning must be present given Invoice disappears from the restored spec");
-    assert.match(restoreBody.migrationWarning!, /entities are no longer in the spec \(Invoice\)/);
+    assert.match(restoreBody.migrationWarning!, /entity is no longer in the spec \(Invoice\)/);
   });
 });
 

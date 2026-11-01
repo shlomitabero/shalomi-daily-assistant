@@ -896,12 +896,82 @@ test("a refine that drops an existing entity is reported as a removed entity in 
   const architectSuccess = events.find((e) => e.agent === "Architect" && e.status === "success");
   assert.ok(architectSuccess);
 
-  assert.match(architectSuccess!.message, /Warning: 1 entities are no longer in the spec \(Deal\)/);
+  assert.match(architectSuccess!.message, /Warning: 1 entity is no longer in the spec \(Deal\)/);
 
   type ImpactDetail = { removedEntityNames: string[]; removedEntities: { name: string; label: string }[] };
   const detail = architectSuccess!.detail as ImpactDetail;
   assert.deepEqual(detail.removedEntityNames, ["Deal"]);
   assert.deepEqual(detail.removedEntities, [{ name: "Deal", label: "Deal" }]);
+});
+
+/**
+ * Regression test for a real bug found by round 1462's Explore survey:
+ * architectEvent's headline hardcoded the plural "entities"/"tables"/"roles"
+ * with no singular-form branch, so the single most common real refine
+ * pattern -- adding exactly one new entity, or a first build with exactly
+ * one entity/one role -- always read grammatically wrong ("+1 new
+ * entities", "Designed 1 tables for 1 roles"). The removed-entity and
+ * gained-fields singular cases are covered by the two tests immediately
+ * above/below this one; this test covers the remaining two sites: the
+ * "+N new entities" headline itself, and the very first build's own
+ * "Designed N tables for M roles" message (previousSpec undefined).
+ */
+test("the Architect's headline uses the singular 'entity'/'table'/'role' when a refine adds exactly one new entity, and when a first build has exactly one entity and one role", async () => {
+  const db = openDatabase(":memory:");
+  ensureProjectsTable(db);
+  ensureCheckpointsTable(db);
+  const previousSpec: ProductSpec = {
+    summary: "test",
+    personas: [],
+    roles: ["Admin"],
+    screens: [],
+    assumptions: [],
+    openQuestions: [],
+    entities: [{ name: "Customer", label: "Customer", fields: [{ name: "name", type: "text", required: true }] }],
+  };
+  const nextSpec: ProductSpec = {
+    ...previousSpec,
+    entities: [
+      { ...previousSpec.entities[0], fields: [...previousSpec.entities[0].fields, { name: "email", type: "text", required: false }] },
+      { name: "Deal", label: "Deal", fields: [{ name: "amount", type: "number", required: true }] },
+    ],
+  };
+  applyMigrations(db, "proj1", previousSpec);
+  const project = insertProject(db, {
+    id: "proj1",
+    ownerId: "user1",
+    name: "test",
+    description: "test",
+    spec: previousSpec,
+  });
+
+  const events = await collect(runBuildPipeline(db, project, { previousSpec, nextSpec, changeLabel: "Refine: add deals and a Customer field" }));
+  const architectSuccess = events.find((e) => e.agent === "Architect" && e.status === "success");
+  assert.ok(architectSuccess);
+  assert.match(architectSuccess!.message, /\+1 new entity \(Deal\)/, `expected singular "entity", got: "${architectSuccess!.message}"`);
+  assert.match(architectSuccess!.message, /1 existing entity gaining fields\./, `expected singular "entity", got: "${architectSuccess!.message}"`);
+  assert.ok(!architectSuccess!.message.includes("new entities"), `must not say "entities" for exactly one, got: "${architectSuccess!.message}"`);
+  assert.ok(!architectSuccess!.message.includes("existing entities"), `must not say "entities" for exactly one, got: "${architectSuccess!.message}"`);
+
+  const firstBuildSpec: ProductSpec = {
+    ...previousSpec,
+    roles: ["Admin"],
+    entities: [{ name: "Customer", label: "Customer", fields: [{ name: "name", type: "text", required: true }] }],
+  };
+  const db2 = openDatabase(":memory:");
+  ensureProjectsTable(db2);
+  ensureCheckpointsTable(db2);
+  const project2 = insertProject(db2, {
+    id: "proj2",
+    ownerId: "user1",
+    name: "test2",
+    description: "test2",
+    spec: firstBuildSpec,
+  });
+  const firstEvents = await collect(runBuildPipeline(db2, project2, { nextSpec: firstBuildSpec, changeLabel: "Initial build" }));
+  const firstArchitectSuccess = firstEvents.find((e) => e.agent === "Architect" && e.status === "success");
+  assert.ok(firstArchitectSuccess);
+  assert.equal(firstArchitectSuccess!.message, "Designed 1 table for 1 role.", `expected singular "table"/"role", got: "${firstArchitectSuccess!.message}"`);
 });
 
 /**
@@ -1918,7 +1988,7 @@ test("describeImpactHazards reports a removed entity, a removed field, and a tig
   };
 
   const hazards = describeImpactHazards(previousSpec, nextSpec);
-  assert.match(hazards, /entities are no longer in the spec \(Invoice\)/);
+  assert.match(hazards, /entity is no longer in the spec \(Invoice\)/);
   assert.match(hazards, /Customer lost field\(s\): phone/);
   assert.match(hazards, /Customer now enforces stricter rules on: email/);
 });

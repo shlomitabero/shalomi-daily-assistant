@@ -374,7 +374,7 @@ export function describeImpactHazards(previousSpec: ProductSpec, nextSpec: Produ
   const entitiesWithTightenedFields = impact.changedEntities.filter((e) => e.tightenedFieldNames.length > 0);
   return (
     (impact.removedEntityNames.length > 0
-      ? ` Warning: ${impact.removedEntityNames.length} entities are no longer in the spec (${impact.removedEntityNames.join(", ")}) -- their data is kept but is no longer reachable through the app.`
+      ? ` Warning: ${impact.removedEntityNames.length} ${impact.removedEntityNames.length === 1 ? "entity is" : "entities are"} no longer in the spec (${impact.removedEntityNames.join(", ")}) -- their data is kept but is no longer reachable through the app.`
       : "") +
     (entitiesWithRemovedFields.length > 0
       ? ` Warning: ${entitiesWithRemovedFields.map((e) => `${e.label} lost field(s): ${e.removedFieldNames.join(", ")}`).join("; ")} -- their data is kept but is no longer reachable through the app.`
@@ -395,10 +395,10 @@ function architectEvent(previousSpec: ProductSpec | undefined, nextSpec: Product
   // follow in the very same message for that exact entity.
   const entitiesWithNewFields = impact.changedEntities.filter((e) => e.newFieldNames.length > 0);
   const message = previousSpec
-    ? `Impact: +${impact.newEntityNames.length} new entities (${impact.newEntityNames.join(", ") || "none"}), ` +
-      `${entitiesWithNewFields.length} existing entities gaining fields.` +
+    ? `Impact: +${impact.newEntityNames.length} new ${impact.newEntityNames.length === 1 ? "entity" : "entities"} (${impact.newEntityNames.join(", ") || "none"}), ` +
+      `${entitiesWithNewFields.length} existing ${entitiesWithNewFields.length === 1 ? "entity" : "entities"} gaining fields.` +
       describeImpactHazards(previousSpec, nextSpec)
-    : `Designed ${nextSpec.entities.length} tables for ${nextSpec.roles.length} roles.`;
+    : `Designed ${nextSpec.entities.length} ${nextSpec.entities.length === 1 ? "table" : "tables"} for ${nextSpec.roles.length} ${nextSpec.roles.length === 1 ? "role" : "roles"}.`;
   return { agent: "Architect", status: "success", message, detail: impact };
 }
 
