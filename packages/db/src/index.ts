@@ -37,6 +37,8 @@ export {
   getOrCreateInboundWebhookToken,
   getInboundWebhookToken,
   regenerateInboundWebhookToken,
+  recordInboundWebhookDelivery,
+  getLastInboundWebhookAt,
 } from "./projects.js";
 export {
   ensureProjectCollaboratorsTable,

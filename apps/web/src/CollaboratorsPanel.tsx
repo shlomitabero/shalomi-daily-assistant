@@ -3,6 +3,7 @@ import type { CollaboratorRole, Project, ProjectCollaborator } from "@forge/shar
 import {
   addCollaborator,
   getCalendarFeedToken,
+  getInboundWebhookToken,
   listCollaborators,
   regenerateCalendarFeedToken,
   regenerateInboundWebhookToken,
@@ -97,6 +98,14 @@ export function CollaboratorsPanel({
   const [regenerateFeedTokenInfo, setRegenerateFeedTokenInfo] = useState<string | null>(null);
   const [regeneratingWebhookToken, setRegeneratingWebhookToken] = useState(false);
   const [regenerateWebhookTokenInfo, setRegenerateWebhookTokenInfo] = useState<string | null>(null);
+  // Round 1456: undefined until the owner actually clicks "Check" below
+  // (this is fetched on demand, not on mount -- see
+  // handleCheckLastInboundWebhook's own doc comment) vs. null once
+  // checked with no delivery ever recorded -- lets the JSX tell "haven't
+  // checked yet" apart from "checked, and there's genuinely nothing"
+  // without a third boolean.
+  const [lastInboundWebhookAt, setLastInboundWebhookAt] = useState<string | null | undefined>(undefined);
+  const [checkingLastInboundWebhook, setCheckingLastInboundWebhook] = useState(false);
   const [copyStatus, setCopyStatus] = useState<"idle" | "copied" | "failed">("idle");
   const [subscribeAllStatus, setSubscribeAllStatus] = useState<"idle" | "copied" | "failed">("idle");
   const dialogRef = useDialogFocusTrap<HTMLDivElement>(onClose);
@@ -115,6 +124,27 @@ export function CollaboratorsPanel({
     loadCollaborators();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [projectId]);
+
+  /**
+   * Round 1456: deliberately on-demand (a click), not an automatic fetch on
+   * mount -- mirrors handleCopyWebhookUrl/handleSubscribeCalendar's own
+   * established "fetch fresh on the action that needs it" idiom
+   * (EntityPanel.tsx) rather than this panel's own mount-time
+   * loadCollaborators pattern just above. An automatic fetch here would run
+   * on every single render of this owner-only section across the whole
+   * app, for a value almost nobody checks on every open.
+   */
+  async function handleCheckLastInboundWebhook() {
+    setCheckingLastInboundWebhook(true);
+    try {
+      const { lastInboundWebhookAt } = await getInboundWebhookToken(projectId);
+      setLastInboundWebhookAt(lastInboundWebhookAt ?? null);
+    } catch (err) {
+      setError((err as Error).message);
+    } finally {
+      setCheckingLastInboundWebhook(false);
+    }
+  }
 
   async function handleInvite(e: React.FormEvent) {
     e.preventDefault();
@@ -662,6 +692,25 @@ export function CollaboratorsPanel({
             {regenerateWebhookTokenInfo && (
               <p className="muted small" role="status">
                 {regenerateWebhookTokenInfo}
+              </p>
+            )}
+            {/*
+              Round 1456: a second, independent action in this same section
+              -- deliberately NOT auto-fetched on mount (see
+              handleCheckLastInboundWebhook's own doc comment), so its own
+              button and status line come after the regenerate button/status
+              above rather than before them, leaving every existing
+              `.collab-webhook-in-section button` lookup (this file's own
+              regenerate tests) still finding the regenerate button first.
+            */}
+            <button type="button" className="secondary" onClick={handleCheckLastInboundWebhook} disabled={checkingLastInboundWebhook}>
+              {checkingLastInboundWebhook ? t("collab.webhookIn.checkLastReceived.busy") : t("collab.webhookIn.checkLastReceived")}
+            </button>
+            {lastInboundWebhookAt !== undefined && (
+              <p className="muted small" role="status">
+                {lastInboundWebhookAt
+                  ? t("collab.webhookIn.lastReceived.some", { time: new Date(lastInboundWebhookAt).toLocaleString(LOCALE[lang]) })
+                  : t("collab.webhookIn.lastReceived.never")}
               </p>
             )}
           </div>

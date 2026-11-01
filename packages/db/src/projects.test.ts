@@ -35,6 +35,8 @@ import {
   getOrCreateInboundWebhookToken,
   getInboundWebhookToken,
   regenerateInboundWebhookToken,
+  recordInboundWebhookDelivery,
+  getLastInboundWebhookAt,
 } from "./projects.js";
 
 const validSpec: ProductSpec = {
@@ -997,4 +999,46 @@ test("regenerateInboundWebhookToken overwrites an already-set token with a real,
   assert.equal(getInboundWebhookToken(db, "proj1"), regenerated, "the new token must actually be persisted, not just returned");
 
   assert.equal(regenerateInboundWebhookToken(db, "does-not-exist"), undefined);
+});
+
+/**
+ * Round 1456: until now a real delivery through this token left no trace
+ * anywhere -- this is the read/write pair that closes that gap, mirroring
+ * getOrCreateInboundWebhookToken's own lazy-column shape (undefined until
+ * something actually happens, not a default/placeholder value).
+ */
+test("recordInboundWebhookDelivery stamps a real, current timestamp that getLastInboundWebhookAt then returns; absent until the first call", () => {
+  const db = openDatabase(":memory:");
+  ensureProjectsTable(db);
+  insertProject(db, { id: "proj1", ownerId: "owner1", name: "P1", description: "", spec: validSpec });
+
+  assert.equal(getLastInboundWebhookAt(db, "proj1"), undefined, "no delivery has ever landed yet");
+
+  const before = Date.now();
+  recordInboundWebhookDelivery(db, "proj1");
+  const after = Date.now();
+
+  const stamped = getLastInboundWebhookAt(db, "proj1");
+  assert.ok(stamped, "expected a real timestamp to be persisted");
+  const stampedMs = new Date(stamped!).getTime();
+  assert.ok(stampedMs >= before && stampedMs <= after, "the stamped value must actually reflect when this call ran, not an unrelated/stale value");
+});
+
+test("recordInboundWebhookDelivery overwrites the previous timestamp with a newer one on a second call, and is a silent no-op for a project that doesn't exist", () => {
+  const db = openDatabase(":memory:");
+  ensureProjectsTable(db);
+  insertProject(db, { id: "proj1", ownerId: "owner1", name: "P1", description: "", spec: validSpec });
+
+  recordInboundWebhookDelivery(db, "proj1");
+  const first = getLastInboundWebhookAt(db, "proj1");
+
+  recordInboundWebhookDelivery(db, "proj1");
+  const second = getLastInboundWebhookAt(db, "proj1");
+  assert.ok(new Date(second!).getTime() >= new Date(first!).getTime(), "a later delivery must advance the stamp, never move it backwards");
+
+  // Must not throw -- the caller (webhookIn.ts) has already finished the
+  // real work (the record, the automation fan-out) by the time this runs,
+  // so a project deleted in the meantime has nothing left to roll back.
+  recordInboundWebhookDelivery(db, "does-not-exist");
+  assert.equal(getLastInboundWebhookAt(db, "does-not-exist"), undefined);
 });

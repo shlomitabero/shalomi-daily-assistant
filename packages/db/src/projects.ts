@@ -34,6 +34,13 @@ export function ensureProjectsTable(db: ForgeDatabase): void {
   if (!columns.includes("inboundWebhookToken")) {
     db.exec("ALTER TABLE projects ADD COLUMN inboundWebhookToken TEXT");
   }
+  // Round 1456: see recordInboundWebhookDelivery's own doc comment. Same
+  // additive-only, lazily-written shape as inboundWebhookToken just above
+  // -- a project that's never received a delivery (or was created before
+  // this column existed) simply has null here until the first one lands.
+  if (!columns.includes("lastInboundWebhookAt")) {
+    db.exec("ALTER TABLE projects ADD COLUMN lastInboundWebhookAt TEXT");
+  }
 }
 
 function rowToProject(row: Record<string, unknown>): Project {
@@ -481,4 +488,42 @@ export function getInboundWebhookToken(db: ForgeDatabase, projectId: string): st
     | { inboundWebhookToken: string | null }
     | undefined;
   return row?.inboundWebhookToken ?? undefined;
+}
+
+/**
+ * Round 1456: until now, a successful delivery through webhookIn.ts's own
+ * route left no trace anywhere -- unlike every OUTBOUND automation rule
+ * (automation_rules' own lastTriggeredAt/lastStatus, surfaced in
+ * AutomationsPanel.tsx), the owner of a project with an inbound webhook
+ * configured had no way to tell whether a third-party sender (Stripe,
+ * Typeform) had ever actually used the URL they copied, short of opening
+ * the entity table and looking for a plausible new row. Called from
+ * webhookIn.ts's own handler right after a genuinely new insertRecord
+ * succeeds -- deliberately NOT called on an idempotent-replay short
+ * circuit (withIdempotency's own cached-response path never re-runs this
+ * callback), since a replay is by definition not a new delivery.
+ *
+ * Silently no-ops for a project that's since been deleted (the row simply
+ * no longer exists to UPDATE) -- the caller here has already finished the
+ * real work (the record and the automation fan-out) by the time this
+ * runs, so there's nothing left to roll back or report.
+ */
+export function recordInboundWebhookDelivery(db: ForgeDatabase, projectId: string): void {
+  db.prepare("UPDATE projects SET lastInboundWebhookAt = ? WHERE id = ?").run(new Date().toISOString(), projectId);
+}
+
+/**
+ * The read side of recordInboundWebhookDelivery just above -- undefined
+ * for both "project doesn't exist" and "no delivery has ever landed",
+ * mirroring getInboundWebhookToken's own undifferentiated-undefined shape
+ * on this exact table for the identical reason: the only caller (the GET
+ * .../inbound-webhook-token route) already 404s uniformly on project
+ * lookup failure before this is ever reached, so no caller needs the two
+ * cases told apart.
+ */
+export function getLastInboundWebhookAt(db: ForgeDatabase, projectId: string): string | undefined {
+  const row = db.prepare("SELECT lastInboundWebhookAt FROM projects WHERE id = ?").get(projectId) as
+    | { lastInboundWebhookAt: string | null }
+    | undefined;
+  return row?.lastInboundWebhookAt ?? undefined;
 }

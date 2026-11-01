@@ -20225,6 +20225,72 @@ test("POST /public/webhook-in/:projectId/:entityName with an X-Idempotency-Key h
   );
 });
 
+/**
+ * Round 1456: until now a successful delivery left no trace anywhere the
+ * owner could see -- unlike every OUTBOUND automation rule (lastTriggeredAt,
+ * surfaced in AutomationsPanel.tsx), there was no way to tell whether a
+ * third-party sender had ever actually used the URL built from this token.
+ * recordInboundWebhookDelivery (packages/db) now stamps it on every
+ * genuinely new delivery; this confirms the GET route surfaces it, and
+ * that a replayed (idempotent) delivery does NOT stamp it a second time --
+ * mirroring the "retry must not re-fire the automation" test just above,
+ * for the identical reason (withIdempotency's own cached-response path
+ * never re-runs the callback this is called from).
+ */
+test("GET /projects/:id/inbound-webhook-token reports lastInboundWebhookAt: absent until the first real delivery, set after it, and unchanged by a replayed (idempotent) retry", async () => {
+  await withServer(async (baseUrl, db) => {
+    const email = `webhook-in-last-received-${randomUUID()}@example.com`;
+    const authToken = await signup(baseUrl, email);
+    const user = findUserByEmail(db, email)!;
+    const spec: ProductSpec = {
+      summary: "test",
+      personas: [],
+      roles: ["Admin"],
+      entities: [{ name: "Lead", fields: [{ name: "name", type: "text", required: true }, { name: "phone", type: "text" }] }],
+      screens: [],
+      assumptions: [],
+      openQuestions: [],
+    };
+    const projectId = randomUUID();
+    insertProject(db, { id: projectId, ownerId: user.id, name: "CRM", description: "test", spec });
+    diffAndMigrate(db, projectId, undefined, spec);
+    markProjectBuilt(db, projectId);
+
+    const tokenRes = await fetch(`${baseUrl}/api/projects/${projectId}/inbound-webhook-token`, { headers: authHeaders(authToken) });
+    const { token: webhookToken, lastInboundWebhookAt: beforeAny } = (await tokenRes.json()) as { token: string; lastInboundWebhookAt?: string };
+    assert.equal(beforeAny, undefined, "no delivery has happened yet, so this must be absent, not a stale/default timestamp");
+
+    const deliveryHeaders = { "Content-Type": "application/json", "X-Idempotency-Key": `delivery-${randomUUID()}` };
+    const body = JSON.stringify({ name: "Dana", phone: "972500000001" });
+    const firstRes = await fetch(`${baseUrl}/api/public/webhook-in/${projectId}/Lead?token=${webhookToken}`, {
+      method: "POST",
+      headers: deliveryHeaders,
+      body,
+    });
+    assert.equal(firstRes.status, 201);
+
+    const afterFirstRes = await fetch(`${baseUrl}/api/projects/${projectId}/inbound-webhook-token`, { headers: authHeaders(authToken) });
+    const { lastInboundWebhookAt: afterFirst } = (await afterFirstRes.json()) as { lastInboundWebhookAt?: string };
+    assert.ok(afterFirst, "a genuinely new delivery must stamp a real timestamp");
+    assert.ok(Date.now() - new Date(afterFirst!).getTime() < 60_000, "the stamped timestamp must actually reflect this delivery, not some unrelated stale value");
+
+    // A real sender's retry, same idempotency key -- withIdempotency's own
+    // cached-response path, so the callback this is called from never runs
+    // again.
+    await new Promise((resolve) => setTimeout(resolve, 5));
+    const retryRes = await fetch(`${baseUrl}/api/public/webhook-in/${projectId}/Lead?token=${webhookToken}`, {
+      method: "POST",
+      headers: deliveryHeaders,
+      body,
+    });
+    assert.equal(retryRes.status, 201);
+
+    const afterRetryRes = await fetch(`${baseUrl}/api/projects/${projectId}/inbound-webhook-token`, { headers: authHeaders(authToken) });
+    const { lastInboundWebhookAt: afterRetry } = (await afterRetryRes.json()) as { lastInboundWebhookAt?: string };
+    assert.equal(afterRetry, afterFirst, "a replayed delivery must not be treated as a new one, so this must stay byte-identical, not advance");
+  });
+});
+
 test("POST /projects/:id/inbound-webhook-token/regenerate is rate-limited per authenticated account: the 31st regenerate is rejected with 429, while a different account is unaffected", async () => {
   await withServer(async (baseUrl, db) => {
     const email = `webhook-in-rate-limit-${randomUUID()}@example.com`;

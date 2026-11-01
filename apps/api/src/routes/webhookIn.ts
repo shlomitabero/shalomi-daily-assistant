@@ -1,7 +1,7 @@
 import { timingSafeEqual } from "node:crypto";
 import { Router, type Request, type Response } from "express";
 import type { ForgeDatabase } from "@forge/db";
-import { getInboundWebhookToken, insertRecord } from "@forge/db";
+import { getInboundWebhookToken, insertRecord, recordInboundWebhookDelivery } from "@forge/db";
 import { ProductSpecSchema, type Project } from "@forge/shared";
 import type { WhatsAppWebManager } from "../whatsappWeb.js";
 import type { EmailSender } from "../email.js";
@@ -161,6 +161,12 @@ export function createInboundWebhookRouter(db: ForgeDatabase, whatsapp: WhatsApp
             }
             throw err;
           }
+          // Round 1456: see recordInboundWebhookDelivery's own doc comment --
+          // placed inside this callback (never on a replayed delivery, which
+          // skips the callback entirely, same reasoning withIdempotency's own
+          // comment above already gives for not re-firing the automation
+          // below), so only a genuinely new delivery ever updates it.
+          recordInboundWebhookDelivery(db, projectId);
           // Not awaited -- see runAutomationsForRecordChange's own comment on
           // the normal record-create route this mirrors: a WhatsApp/email/
           // webhook send is a real network round-trip, and the external

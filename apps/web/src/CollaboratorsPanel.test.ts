@@ -1386,6 +1386,80 @@ test("CollaboratorsPanel's inbound-webhook regenerate button calls the real endp
 });
 
 /**
+ * Round 1456: until now, nothing in this panel ever showed whether the
+ * inbound-webhook URL (copied from EntityPanel.tsx's own per-entity
+ * button) had actually been used by a real external sender -- this is the
+ * owner-only "Check last delivery" button + "No deliveries yet" / "Last
+ * delivery received: ..." line that closes that gap. Deliberately NOT
+ * fetched automatically on mount (see handleCheckLastInboundWebhook's own
+ * doc comment in CollaboratorsPanel.tsx): an automatic fetch here would
+ * silently send a real request through fetchWithWakeRetry's own realtime
+ * backoff (wakeRetry.ts) for every one of this file's ~35 other
+ * renderPanel() calls that never mock this route, hanging each for well
+ * over a minute instead of failing fast -- a click is both the safer
+ * design and the one consistent with EntityPanel.tsx's own established
+ * "fetch fresh on the action that needs it" idiom for this exact token.
+ */
+test("CollaboratorsPanel's \"Check last delivery\" button shows \"No deliveries received yet\" when lastInboundWebhookAt is absent, and the real formatted timestamp once one is returned", async () => {
+  await withJsdom(async () => {
+    const originalFetch = globalThis.fetch;
+    let tokenFetchCalls = 0;
+    globalThis.fetch = (async (input: string, init?: RequestInit) => {
+      const method = init?.method ?? "GET";
+      if (method === "GET" && input === "/api/projects/proj1/collaborators") {
+        return new Response(JSON.stringify({ collaborators: [] }), { status: 200, headers: { "content-type": "application/json" } });
+      }
+      if (method === "GET" && input === "/api/projects/proj1/inbound-webhook-token") {
+        tokenFetchCalls += 1;
+        return new Response(JSON.stringify({ token: "abc" }), { status: 200, headers: { "content-type": "application/json" } });
+      }
+      throw new Error(`unexpected request ${method} ${input}`);
+    }) as typeof fetch;
+
+    try {
+      renderPanel(true);
+      await waitForCondition(() => document.querySelector(".collab-webhook-in-section") !== null);
+      assert.equal(tokenFetchCalls, 0, "merely opening the panel must never fetch this on its own");
+
+      const checkButton = document.querySelectorAll(".collab-webhook-in-section button")[1] as HTMLButtonElement;
+      fireEvent.click(checkButton);
+      await waitForCondition(() => (document.querySelector(".collab-webhook-in-section") as HTMLElement).textContent!.includes("No deliveries received yet"));
+      assert.equal(tokenFetchCalls, 1, "clicking it must call the real token route exactly once");
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+});
+
+test("CollaboratorsPanel's \"Check last delivery\" button shows the real, formatted delivery timestamp once the server returns one", async () => {
+  await withJsdom(async () => {
+    const originalFetch = globalThis.fetch;
+    const deliveredAt = new Date("2026-01-15T10:00:00Z").toISOString();
+    globalThis.fetch = (async (input: string, init?: RequestInit) => {
+      const method = init?.method ?? "GET";
+      if (method === "GET" && input === "/api/projects/proj1/collaborators") {
+        return new Response(JSON.stringify({ collaborators: [] }), { status: 200, headers: { "content-type": "application/json" } });
+      }
+      if (method === "GET" && input === "/api/projects/proj1/inbound-webhook-token") {
+        return new Response(JSON.stringify({ token: "abc", lastInboundWebhookAt: deliveredAt }), { status: 200, headers: { "content-type": "application/json" } });
+      }
+      throw new Error(`unexpected request ${method} ${input}`);
+    }) as typeof fetch;
+
+    try {
+      renderPanel(true);
+      await waitForCondition(() => document.querySelector(".collab-webhook-in-section") !== null);
+
+      const checkButton = document.querySelectorAll(".collab-webhook-in-section button")[1] as HTMLButtonElement;
+      fireEvent.click(checkButton);
+      await waitForCondition(() => (document.querySelector(".collab-webhook-in-section") as HTMLElement).textContent!.includes("Last delivery received"));
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+});
+
+/**
  * Round 1247: the "Subscribe to a combined calendar" button, the
  * project-wide counterpart to EntityPanel.tsx's own per-entity subscribe
  * button. Unlike the regenerate section just above (owner-only, since

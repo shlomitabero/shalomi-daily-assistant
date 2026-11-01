@@ -1048,8 +1048,14 @@ export function regenerateCalendarFeedToken(projectId: string, lang?: "he" | "en
  * a record in this entity. See apps/api/src/routes/webhookIn.ts and
  * getOrCreateInboundWebhookToken (packages/db) for why this is a real
  * persisted secret, mirroring getCalendarFeedToken's own exact shape.
+ *
+ * `lastInboundWebhookAt` (round 1456): the ISO timestamp of the most
+ * recent delivery this project has ever actually received through the
+ * webhook built from this token, or undefined if none has landed yet --
+ * backs CollaboratorsPanel.tsx's own delivery-visibility line, mirroring
+ * AutomationsPanel.tsx's lastTriggeredAt convention for an OUTBOUND rule.
  */
-export function getInboundWebhookToken(projectId: string): Promise<{ token: string }> {
+export function getInboundWebhookToken(projectId: string): Promise<{ token: string; lastInboundWebhookAt?: string }> {
   return request(`/projects/${projectId}/inbound-webhook-token`);
 }
 

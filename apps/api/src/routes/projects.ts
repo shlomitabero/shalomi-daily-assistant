@@ -56,6 +56,7 @@ import {
   regenerateCalendarFeedToken,
   getOrCreateInboundWebhookToken,
   regenerateInboundWebhookToken,
+  getLastInboundWebhookAt,
   isValidDateString,
   NotFoundError,
   type ForgeDatabase,
@@ -2200,7 +2201,7 @@ export function createProjectsRouter(
     "/projects/:id/inbound-webhook-token",
     asyncRoute(async (req, res) => {
       requireProjectWriteAccess(db, req.params.id, req.userId!);
-      res.json({ token: getOrCreateInboundWebhookToken(db, req.params.id) });
+      res.json({ token: getOrCreateInboundWebhookToken(db, req.params.id), lastInboundWebhookAt: getLastInboundWebhookAt(db, req.params.id) });
     }),
   );
 
