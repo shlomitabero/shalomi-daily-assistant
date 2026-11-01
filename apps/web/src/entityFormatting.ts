@@ -209,10 +209,28 @@ const DUE_SOON_WINDOW_DAYS = 3;
  * built-in Invoice/Task domain entities' own field name, see
  * domainEntities.ts), "deadline" matches the built-in Task entity's own
  * "deadline" field.
+ *
+ * Round 1460: a plain substring check on "due" also matched "residue"
+ * (e.g. a lab/pharma app's own "residueTestDate"), "subdue"/"undue", and
+ * "dues" (e.g. a club/HOA membership app's own "duesPaidDate" or
+ * "lastDuesPaidDate" -- "dues" the noun, not "due" the adjective) -- the
+ * exact same plain-substring collision class pipeline.ts's
+ * SENSITIVE_FIELD_HINTS already hardened "secret"/"token"/"ssn" against
+ * ("secretary", "tokenizer", "businessName"). Any of those real-world
+ * field names would wrongly get the red "Overdue" badge/table styling and
+ * show up in the Overdue/Due-soon filter dropdown once their stored date
+ * is in the past, even though nothing about them is actually a deadline.
+ * Reuses the identical word-boundary shape pipeline.ts's own "secret"
+ * regex established: original-case "due" only counts at a word start (the
+ * very start of the name, or right after a non-letter separator) and
+ * never immediately before a lowercase letter, while "Due" is always a
+ * valid word start wherever it appears -- together this still matches
+ * "dueDate"/"DueDate"/"due_date" but rejects "residue"/"subdue"/"undue"
+ * and "dues"/"Dues" (the trailing "s" blocks the lookahead).
  */
+const DUE_FIELD_NAME_PATTERN = /(?:(?<![a-zA-Z])due|Due)(?![a-z])/;
 export function isDeadlineFieldName(fieldName: string): boolean {
-  const lower = fieldName.toLowerCase();
-  return lower.includes("due") || lower.includes("deadline");
+  return DUE_FIELD_NAME_PATTERN.test(fieldName) || fieldName.toLowerCase().includes("deadline");
 }
 
 export type DateUrgency = "overdue" | "dueSoon" | null;

@@ -2854,9 +2854,13 @@ function badgeTone(rawValue) {
 // getDateUrgency. A date field only reads as a deadline a record can be
 // "overdue" against if its own name says so -- a plain date field (e.g.
 // dateOfBirth, joinedDate, shipDate) carries no such meaning on its own.
+// Round 1460: ported entityFormatting.ts's own word-boundary fix -- a plain
+// substring check on "due" also matched "residue"/"subdue"/"undue" and
+// "dues" ("duesPaidDate"), the same collision class SENSITIVE_FIELD_HINTS
+// already hardened "secret"/"token"/"ssn" against (pipeline.ts).
+const DUE_FIELD_NAME_PATTERN = /(?:(?<![a-zA-Z])due|Due)(?![a-z])/;
 function isDeadlineFieldName(fieldName) {
-  const lower = fieldName.toLowerCase();
-  return lower.includes("due") || lower.includes("deadline");
+  return DUE_FIELD_NAME_PATTERN.test(fieldName) || fieldName.toLowerCase().includes("deadline");
 }
 const DUE_SOON_WINDOW_DAYS = 3;
 function getDateUrgency(value, today) {

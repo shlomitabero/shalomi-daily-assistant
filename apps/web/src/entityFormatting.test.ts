@@ -3917,6 +3917,22 @@ test("isDeadlineFieldName matches field names that actually mean a deadline, and
   assert.equal(isDeadlineFieldName("joinedDate"), false);
 });
 
+/**
+ * Round 1460: a plain substring check on "due" also matched "residue"
+ * (a lab/pharma app's own "residueTestDate"), "subdue"/"undue", and
+ * "dues" (a club/HOA membership app's own "duesPaidDate" -- "dues" the
+ * noun, not "due" the adjective) -- the same plain-substring collision
+ * class pipeline.ts's SENSITIVE_FIELD_HINTS already hardened "secret"/
+ * "token"/"ssn" against ("secretary", "tokenizer", "businessName").
+ */
+test("isDeadlineFieldName rejects field names that merely contain \"due\" as a substring without meaning a deadline", () => {
+  assert.equal(isDeadlineFieldName("residueTestDate"), false, "a lab/pharma app's own pesticide-residue field, not a deadline");
+  assert.equal(isDeadlineFieldName("subdueDate"), false);
+  assert.equal(isDeadlineFieldName("unduePaymentDate"), false);
+  assert.equal(isDeadlineFieldName("duesPaidDate"), false, "a club/HOA membership app's own 'dues' (noun), not 'due' (adjective)");
+  assert.equal(isDeadlineFieldName("lastDuesPaidDate"), false);
+});
+
 test("getDateUrgency classifies a date relative to a fixed reference day, not real wall-clock time", () => {
   const today = new Date(2026, 5, 15); // June 15, 2026 -- a Monday, chosen arbitrarily
   assert.equal(getDateUrgency("2026-06-10", today), "overdue", "a date before today is overdue");

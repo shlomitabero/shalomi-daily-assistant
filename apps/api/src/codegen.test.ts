@@ -4236,6 +4236,31 @@ test("the exported EntityView's groupByField collects a record with an unrecogni
 });
 
 /**
+ * Round 1460: mirrors the live preview's own entityFormatting.ts fix --
+ * isDeadlineFieldName's plain substring check on "due" also matched
+ * "residue"/"subdue"/"undue" and "dues" ("duesPaidDate"), wrongly flagging
+ * those fields as deadlines (red "Overdue" badge, Overdue/Due-soon filter
+ * entry) once their stored date is in the past. Confirms the exported
+ * app's own copy of the function got the identical word-boundary fix.
+ */
+test("the exported EntityView's isDeadlineFieldName rejects field names that merely contain 'due' as a substring without meaning a deadline", () => {
+  const entityViewJsx = generateExportFiles(project).find((f) => f.path === "web/src/components/EntityView.jsx")!.content;
+  const patternSrc = entityViewJsx.match(/const DUE_FIELD_NAME_PATTERN = [^;]+;/)?.[0];
+  assert.ok(patternSrc, "expected to find DUE_FIELD_NAME_PATTERN in generated output");
+  const fnSrc = entityViewJsx.match(/function isDeadlineFieldName\(fieldName\) \{[\s\S]*?\n\}\n/)?.[0];
+  assert.ok(fnSrc, "expected to find isDeadlineFieldName in generated output");
+
+  const isDeadlineFieldName = new Function(`${patternSrc}\n${fnSrc}\nreturn isDeadlineFieldName;`)() as (fieldName: string) => boolean;
+
+  assert.equal(isDeadlineFieldName("dueDate"), true, "the built-in Invoice/Task entities' own field name must still match");
+  assert.equal(isDeadlineFieldName("deadline"), true);
+  assert.equal(isDeadlineFieldName("residueTestDate"), false, "a lab/pharma app's own pesticide-residue field, not a deadline");
+  assert.equal(isDeadlineFieldName("subdueDate"), false);
+  assert.equal(isDeadlineFieldName("unduePaymentDate"), false);
+  assert.equal(isDeadlineFieldName("duesPaidDate"), false, "a club/HOA membership app's own 'dues' (noun), not 'due' (adjective)");
+});
+
+/**
  * Regression test for a real bug found by round 286's Explore survey and
  * fixed the same round in both the live preview (EntityPanel.tsx) and here:
  * findBoardField only ever picks ONE enum field per entity, for Kanban
@@ -5623,8 +5648,12 @@ test("the exported record table's date cell shows the correct calendar day even 
   const cellSrc = entityViewJsx.match(/function Cell\(\{ field, value, relationLabel, highlightQuery, onJumpToRecord \}\) \{[\s\S]*?\n\}\n/)?.[0];
   // Cell also calls isDeadlineFieldName/getDateUrgency (round 340) --
   // needed here too, since this test evals Cell in isolation rather than
-  // importing the whole generated module.
-  const urgencyHelperSrc = entityViewJsx.match(/function isDeadlineFieldName\(fieldName\) \{[\s\S]*?\nfunction getDateUrgency\(value, today\) \{[\s\S]*?\n\}\n/)?.[0];
+  // importing the whole generated module. isDeadlineFieldName's own
+  // DUE_FIELD_NAME_PATTERN const (round 1460) must be captured too, or
+  // calling the extracted function throws "DUE_FIELD_NAME_PATTERN is not
+  // defined" the moment a date-type field reaches the isDeadlineFieldName
+  // check below.
+  const urgencyHelperSrc = entityViewJsx.match(/const DUE_FIELD_NAME_PATTERN[\s\S]*?\nfunction isDeadlineFieldName\(fieldName\) \{[\s\S]*?\nfunction getDateUrgency\(value, today\) \{[\s\S]*?\n\}\n/)?.[0];
   assert.ok(dateHelperSrc && cellSrc && urgencyHelperSrc, "expected to find parseFieldDate/Cell/isDeadlineFieldName+getDateUrgency in generated output");
 
   const transformed = transformSync(`${urgencyHelperSrc}\n${dateHelperSrc}\n${cellSrc}`, { loader: "jsx", jsxFactory: "h", jsxFragment: "Frag" }).code;
