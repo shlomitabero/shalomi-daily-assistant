@@ -1127,7 +1127,22 @@ export function WhatsAppPanel({
   }
 
   const s = status?.status ?? "disconnected";
-  const visibleMessages = filterWhatsAppMessagesByDirection(filterWhatsAppMessages(messages, search), directionFilter);
+  // Round 1464: directionFilter is a lazy-loaded localStorage value (round
+  // 1058) that survives independently of how many messages the log
+  // currently has, but the <select> that lets a person change it back is
+  // only rendered once messages.length > SEARCH_THRESHOLD (just below).
+  // Applying the persisted filter unconditionally meant a stale "Failed"
+  // (or any non-"all") choice from a previous, larger log could silently
+  // hide every remaining message after a "Clear History" + fresh send
+  // dropped the count back to <= SEARCH_THRESHOLD, with no control left on
+  // screen to reset it -- the same "stale persisted filter traps the view
+  // with no visible recovery" bug class already fixed for EntityPanel.tsx's
+  // own fieldFilters/viewMode/sortKeys/hiddenFields (rounds 490/493/500/
+  // 509), just never checked here. Falling back to "all" below the
+  // threshold mirrors the control's own visibility exactly, so the
+  // preference still re-applies correctly once the log grows past it again.
+  const effectiveDirectionFilter = messages.length > SEARCH_THRESHOLD ? directionFilter : "all";
+  const visibleMessages = filterWhatsAppMessagesByDirection(filterWhatsAppMessages(messages, search), effectiveDirectionFilter);
 
   return (
     <div className="history-overlay">

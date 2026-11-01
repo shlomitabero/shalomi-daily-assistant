@@ -9,7 +9,7 @@ import { act, cleanup, fireEvent, render } from "@testing-library/react";
 import type { Entity } from "@forge/shared";
 import type { WhatsAppMessageLogEntry } from "./api.js";
 import { WhatsAppPanel } from "./WhatsAppPanel.js";
-import { getWhatsAppLogFilter } from "./whatsappLogFilter.js";
+import { getWhatsAppLogFilter, setWhatsAppLogFilter } from "./whatsappLogFilter.js";
 import { getWhatsAppLastSeen } from "./whatsappUnread.js";
 import { LanguageProvider } from "./i18n/LanguageContext.js";
 import { ThemeProvider } from "./theme/ThemeContext.js";
@@ -5368,6 +5368,83 @@ test("WhatsAppPanel's log filter choice survives a real unmount+remount, and is 
       const otherSelect = document.querySelector(".whatsapp-log-direction-filter") as HTMLSelectElement;
       assert.equal(otherSelect.value, "all", "a different project must not inherit proj-filter's persisted choice");
       third.unmount();
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+});
+
+test("WhatsAppPanel does not let a stale persisted directionFilter hide messages once the log shrinks back below the filter control's own reveal threshold", async () => {
+  await withJsdom(async () => {
+    const originalFetch = globalThis.fetch;
+    setWhatsAppLogFilter("proj-shrunk", "user1", "failed");
+    const fewMessages: WhatsAppMessageLogEntry[] = [
+      {
+        id: "m0",
+        direction: "in",
+        fromNumber: "972501234567",
+        toNumber: "972521112233",
+        body: "Hello after clearing history",
+        matchedLabel: null,
+        matchedEntityName: null,
+        matchedRecordId: null,
+        status: "sent",
+        createdAt: new Date().toISOString(),
+      },
+    ];
+    globalThis.fetch = (async (input: string, init?: RequestInit) => {
+      const method = init?.method ?? "GET";
+      const projectId = (input as string).split("/projects/")[1]?.split("/")[0];
+      if (method === "GET" && (input as string) === `/api/projects/${projectId}/integrations/whatsapp/status`) {
+        return new Response(
+          JSON.stringify({ status: "connected", phoneNumber: "972501234567", qrDataUrl: null, error: null }),
+          { status: 200, headers: { "content-type": "application/json" } },
+        );
+      }
+      if (method === "GET" && (input as string) === `/api/projects/${projectId}/integrations/whatsapp/messages`) {
+        return new Response(JSON.stringify({ messages: fewMessages }), { status: 200, headers: { "content-type": "application/json" } });
+      }
+      throw new Error(`unexpected request ${method} ${input}`);
+    }) as typeof fetch;
+
+    try {
+      const view = render(
+        React.createElement(
+          ThemeProvider,
+          null,
+          React.createElement(
+            LanguageProvider,
+            null,
+            React.createElement(WhatsAppPanel, {
+              projectId: "proj-shrunk",
+              userId: "user1",
+              projectName: "Test Project",
+              onClose: () => {},
+              onJumpToEntity: () => {},
+              onJumpToRecord: () => {},
+              entities: [],
+              onCreateRecordFromMessage: () => {},
+            }),
+          ),
+        ),
+      );
+      await waitForCondition(() => document.querySelectorAll(".whatsapp-log-list li").length > 0);
+      assert.equal(
+        document.querySelector(".whatsapp-log-direction-filter"),
+        null,
+        "the filter control stays hidden at this message count, same as the un-stale case",
+      );
+      assert.equal(
+        getWhatsAppLogFilter("proj-shrunk", "user1"),
+        "failed",
+        "sanity check: the stale 'failed' choice from a previous, larger log is still what's persisted",
+      );
+      assert.equal(
+        document.querySelectorAll(".whatsapp-log-list li").length,
+        fewMessages.length,
+        "a non-'failed' message must still render even though a stale 'failed' filter is persisted, since the control that could change it back is hidden",
+      );
+      view.unmount();
     } finally {
       globalThis.fetch = originalFetch;
     }
