@@ -624,6 +624,39 @@ test("recordAutomationRun's retention prune keeps the newest 20 genuine-failure 
   assert.equal(disconnectCountAfter, AUTOMATION_RUNS_RETENTION_LIMIT, "a flood of genuine failures must never evict the disconnect bucket's own retained rows either");
 });
 
+/**
+ * Round 1416: same bug class as the test above, for isTest -- round 1263
+ * gave isTest rows their own flag but never their own retention bucket,
+ * so they shared the "everything else" catch-all with genuine failures.
+ * A debugging session clicking "Test" more than AUTOMATION_RUNS_RETENTION_LIMIT
+ * times (an "entirely ordinary troubleshooting flow" per round 1263's own
+ * doc comment) could evict a genuine failure from the table entirely.
+ */
+test("recordAutomationRun's retention prune keeps the newest 20 genuine-failure rows and the newest 20 Test rows independently, so a flood of Test clicks can never evict a genuine failure", () => {
+  const db = openDatabase(":memory:");
+  ensureAutomationRulesTable(db);
+  const rule = insertAutomationRule(db, baseRule());
+
+  // One genuine failure first...
+  recordAutomationRun(db, "proj1", rule.id, { status: "failed", error: "recipient not found" });
+  // ...then a flood of Test clicks far past the old shared-bucket cap of
+  // 20. Under the pre-fix shared-bucket prune, this alone would have
+  // evicted the genuine failure above.
+  for (let i = 0; i < 30; i++) {
+    recordAutomationRun(db, "proj1", rule.id, { status: "failed", error: "recipient not found" }, null, null, null, new Date(), randomUUID(), true);
+  }
+
+  const genuineCount = (
+    db.prepare("SELECT COUNT(*) AS c FROM automation_runs WHERE projectId = ? AND ruleId = ? AND isTest != 1").get("proj1", rule.id) as { c: number }
+  ).c;
+  assert.equal(genuineCount, 1, "the one genuine failure must survive a Test-click flood of any length, not just a short one");
+
+  const testCount = (
+    db.prepare("SELECT COUNT(*) AS c FROM automation_runs WHERE projectId = ? AND ruleId = ? AND isTest = 1").get("proj1", rule.id) as { c: number }
+  ).c;
+  assert.equal(testCount, AUTOMATION_RUNS_RETENTION_LIMIT, "the Test rows must still be capped at the normal retention limit, just in their own independent bucket");
+});
+
 test("deleteAutomationRule also wipes that rule's own run history", () => {
   const db = openDatabase(":memory:");
   ensureAutomationRulesTable(db);

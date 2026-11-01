@@ -1549,10 +1549,19 @@ const MAX_CONSECUTIVE_SCHEDULE_FAILURES_PER_DAY = 5;
  * since there are now three independently-retained buckets (WhatsApp,
  * email, everything else) that can each contribute up to that many rows
  * ahead of a real failure in triggeredAt order.
+ *
+ * Round 1416: isTest rows got their own independent retention bucket too
+ * (recordAutomationRun, packages/db/src/automations.ts) -- round 1263
+ * excluded them from this function's own in-memory filter but left them
+ * sharing the "everything else" bucket on disk, so a debugging session
+ * with more than AUTOMATION_RUNS_RETENTION_LIMIT Test clicks could evict a
+ * real failure row before this filter ever ran, the identical gap round
+ * 951 already closed once for the WhatsApp bucket. Lookback widened from
+ * 3x to 4x to match the now-four independently-retained buckets.
  */
 export function hasTooManyConsecutiveFailuresToday(db: ForgeDatabase, rule: AutomationRule, now: Date): boolean {
   const todayUtc = now.toISOString().slice(0, 10);
-  const runs = listAutomationRuns(db, rule.projectId, rule.id, 3 * AUTOMATION_RUNS_RETENTION_LIMIT)
+  const runs = listAutomationRuns(db, rule.projectId, rule.id, 4 * AUTOMATION_RUNS_RETENTION_LIMIT)
     .filter((run) => run.error !== WHATSAPP_NOT_CONNECTED_ERROR && run.error !== EMAIL_NOT_CONFIGURED_ERROR && !run.isTest)
     .slice(0, MAX_CONSECUTIVE_SCHEDULE_FAILURES_PER_DAY);
   if (runs.length < MAX_CONSECUTIVE_SCHEDULE_FAILURES_PER_DAY) return false;

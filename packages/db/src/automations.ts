@@ -721,9 +721,25 @@ export function recordAutomationRun(
       SELECT id FROM automation_runs WHERE projectId = ? AND ruleId = ? AND error = ? ORDER BY triggeredAt DESC, rowid DESC LIMIT ?
     )`,
   ).run(projectId, id, EMAIL_NOT_CONFIGURED_ERROR, projectId, id, EMAIL_NOT_CONFIGURED_ERROR, AUTOMATION_RUNS_RETENTION_LIMIT);
+  // Round 1416: this catch-all bucket had no isTest awareness at all --
+  // round 1263 gave isTest rows their own flag and taught
+  // hasTooManyConsecutiveFailuresToday (apps/api/src/automations.ts) to
+  // filter them out of its in-memory lookback, but never gave them their
+  // own retention bucket here, the same way rounds 951/1032 already did
+  // for the WhatsApp/email error buckets above. A debugging session
+  // clicking "Test" more than AUTOMATION_RUNS_RETENTION_LIMIT times against
+  // a rule whose real failures aren't WHATSAPP_NOT_CONNECTED_ERROR/
+  // EMAIL_NOT_CONFIGURED_ERROR -- exactly the "ordinary troubleshooting
+  // flow" round 1263's own doc comment describes -- shared this one
+  // bucket with genuine non-Test rows, so enough Test clicks could evict a
+  // real failure row from the table entirely, before
+  // hasTooManyConsecutiveFailuresToday's in-memory filter ever got a
+  // chance to see it. `isTest IS NULL` covers rows inserted before round
+  // 1263's own ALTER TABLE (see ensureAutomationRunsTable above), which
+  // never got a value and so are not Test rows.
   db.prepare(
-    `DELETE FROM automation_runs WHERE projectId = ? AND ruleId = ? AND (error IS NULL OR (error != ? AND error != ?)) AND id NOT IN (
-      SELECT id FROM automation_runs WHERE projectId = ? AND ruleId = ? AND (error IS NULL OR (error != ? AND error != ?)) ORDER BY triggeredAt DESC, rowid DESC LIMIT ?
+    `DELETE FROM automation_runs WHERE projectId = ? AND ruleId = ? AND (error IS NULL OR (error != ? AND error != ?)) AND (isTest IS NULL OR isTest = 0) AND id NOT IN (
+      SELECT id FROM automation_runs WHERE projectId = ? AND ruleId = ? AND (error IS NULL OR (error != ? AND error != ?)) AND (isTest IS NULL OR isTest = 0) ORDER BY triggeredAt DESC, rowid DESC LIMIT ?
     )`,
   ).run(
     projectId,
@@ -736,6 +752,14 @@ export function recordAutomationRun(
     EMAIL_NOT_CONFIGURED_ERROR,
     AUTOMATION_RUNS_RETENTION_LIMIT,
   );
+  // Round 1416: isTest rows' own independent bucket -- mirrors the
+  // WhatsApp/email buckets above, so a flood of Test clicks (of any
+  // length) can never evict a genuine failure row, and vice versa.
+  db.prepare(
+    `DELETE FROM automation_runs WHERE projectId = ? AND ruleId = ? AND isTest = 1 AND id NOT IN (
+      SELECT id FROM automation_runs WHERE projectId = ? AND ruleId = ? AND isTest = 1 ORDER BY triggeredAt DESC, rowid DESC LIMIT ?
+    )`,
+  ).run(projectId, id, projectId, id, AUTOMATION_RUNS_RETENTION_LIMIT);
   return runId;
 }
 
