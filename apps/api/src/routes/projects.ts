@@ -279,7 +279,7 @@ const ScheduleTimezoneSchema = z
  */
 const CreateAutomationRuleSchema = z
   .object({
-    trigger: z.enum(["record_created", "field_equals", "schedule", "record_deleted", "record_updated"]),
+    trigger: z.enum(["record_created", "field_equals", "schedule", "record_deleted", "record_updated", "inbound_webhook"]),
     // Round 1424: these free-text fields never got the `.trim()` treatment
     // rounds 408/919/939 already established everywhere else in this file
     // (see e.g. RenameProjectSchema/UpdateProjectDescriptionSchema a few
@@ -354,7 +354,7 @@ const CreateAutomationRuleSchema = z
   });
 
 const UpdateAutomationRuleSchema = z.object({
-  trigger: z.enum(["record_created", "field_equals", "schedule", "record_deleted", "record_updated"]).optional(),
+  trigger: z.enum(["record_created", "field_equals", "schedule", "record_deleted", "record_updated", "inbound_webhook"]).optional(),
   // Round 1424: same .trim() gap as CreateAutomationRuleSchema's own
   // fields just above -- see that schema's doc comment.
   fieldName: z.string().trim().min(1).max(200).nullable().optional(),

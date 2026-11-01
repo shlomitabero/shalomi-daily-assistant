@@ -444,9 +444,18 @@ export function matchesTrigger(
   record: EntityRecord,
   changedFields: Set<string>,
   entity: Entity,
+  source: "app" | "inbound_webhook" = "app",
 ): boolean {
   if (rule.trigger === "record_created") {
     return event === "created";
+  }
+  // Round 1470: unlike record_created above (which fires for every source),
+  // this only matches a record actually created through the public
+  // inbound-webhook route -- see AutomationTrigger's own doc comment
+  // (packages/db/src/automations.ts) for why this exists as its own
+  // trigger rather than a record_created variant.
+  if (rule.trigger === "inbound_webhook") {
+    return event === "created" && source === "inbound_webhook";
   }
   if (rule.trigger === "record_deleted") {
     return event === "deleted";
@@ -524,10 +533,15 @@ export async function runAutomationsForRecordChange(
   changedFields: Set<string>,
   uploadsDir: string,
   baseUrl: string,
+  // Round 1470: defaults to "app" so every existing call site (the
+  // authenticated record create/update/delete routes, CSV import) behaves
+  // exactly as before -- only routes/webhookIn.ts's own call site passes
+  // "inbound_webhook" explicitly.
+  source: "app" | "inbound_webhook" = "app",
 ): Promise<void> {
   const rules = listEnabledAutomationRulesForEntity(db, project.id, entity.name);
   for (const rule of rules) {
-    if (!matchesTrigger(rule, event, record, changedFields, entity)) continue;
+    if (!matchesTrigger(rule, event, record, changedFields, entity, source)) continue;
     try {
       await fireRule(db, whatsapp, emailSender, project, entity, rule, record, uploadsDir, baseUrl);
     } catch (err) {

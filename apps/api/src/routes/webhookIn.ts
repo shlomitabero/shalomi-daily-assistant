@@ -186,6 +186,11 @@ export function createInboundWebhookRouter(db: ForgeDatabase, whatsapp: WhatsApp
             new Set(Object.keys(req.body ?? {})),
             uploadsDir,
             `${req.protocol}://${req.get("host")}`,
+            // Round 1470: lets a rule target "inbound_webhook" specifically,
+            // distinct from the blanket "record_created" every other
+            // creation path (the authenticated route, CSV import) still
+            // reports as "app".
+            "inbound_webhook",
           );
           return { status: 201, body: { id: record.id } };
         },

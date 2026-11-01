@@ -431,6 +431,53 @@ test("matchesTrigger: record_deleted only matches the 'deleted' event, never 'cr
 });
 
 /**
+ * Round 1470: the new "inbound_webhook" trigger -- fires at the exact same
+ * point as "record_created" (event === "created"), but ONLY when the
+ * optional `source` argument is itself "inbound_webhook" (the value
+ * routes/webhookIn.ts's own call site passes); the default "app" source
+ * every other creation path implicitly uses never matches it, and neither
+ * does "record_created" fail to match regardless of source -- the two
+ * triggers are deliberately asymmetric (record_created is source-blind,
+ * inbound_webhook is source-specific).
+ */
+test("matchesTrigger: inbound_webhook only matches a 'created' event whose source is itself 'inbound_webhook', never the default 'app' source or any other event", () => {
+  const rule = insertAutomationRule(openDbForRuleOnly(), {
+    projectId: "p",
+    entityName: "Order",
+    trigger: "inbound_webhook",
+    actionType: "send_whatsapp",
+    toMode: "static",
+    toNumber: "972500000000",
+    messageTemplate: "Order {{orderId}} arrived via webhook.",
+  });
+  assert.equal(matchesTrigger(rule, "created", { orderId: "A1" }, new Set(), orderEntity, "inbound_webhook"), true);
+  assert.equal(matchesTrigger(rule, "created", { orderId: "A1" }, new Set(), orderEntity, "app"), false);
+  assert.equal(matchesTrigger(rule, "created", { orderId: "A1" }, new Set(), orderEntity), false, "source defaults to 'app', not 'inbound_webhook'");
+  assert.equal(matchesTrigger(rule, "updated", { orderId: "A1" }, new Set(["orderId"]), orderEntity, "inbound_webhook"), false);
+  assert.equal(matchesTrigger(rule, "deleted", { orderId: "A1" }, new Set(), orderEntity, "inbound_webhook"), false);
+});
+
+/**
+ * Round 1470: record_created is the blanket, source-blind trigger -- it
+ * must keep matching every "created" event regardless of which source
+ * fired it, including "inbound_webhook", so existing rules using it are
+ * completely unaffected by this round's new trigger.
+ */
+test("matchesTrigger: record_created still matches a 'created' event regardless of source, unaffected by the new inbound_webhook trigger", () => {
+  const rule = insertAutomationRule(openDbForRuleOnly(), {
+    projectId: "p",
+    entityName: "Order",
+    trigger: "record_created",
+    actionType: "send_whatsapp",
+    toMode: "static",
+    toNumber: "972500000000",
+    messageTemplate: "Order {{orderId}} was created.",
+  });
+  assert.equal(matchesTrigger(rule, "created", { orderId: "A1" }, new Set(), orderEntity, "app"), true);
+  assert.equal(matchesTrigger(rule, "created", { orderId: "A1" }, new Set(), orderEntity, "inbound_webhook"), true);
+});
+
+/**
  * Round 1330: the new "record_updated" trigger -- the generic counterpart
  * to field_equals' single-field/single-value shape, firing on EVERY update
  * regardless of which field changed, mirroring record_created/

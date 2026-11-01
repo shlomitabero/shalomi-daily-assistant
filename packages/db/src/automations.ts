@@ -21,7 +21,19 @@ import { NotFoundError } from "./repository.js";
  * only state a deleted row has left to interpolate a message or resolve
  * a toMode:"field" destination from.
  */
-export type AutomationTrigger = "record_created" | "field_equals" | "schedule" | "record_deleted" | "record_updated";
+/**
+ * Round 1470: "inbound_webhook" fires at the exact same point as
+ * "record_created" would (event === "created"), but ONLY for a record
+ * created by the public inbound-webhook route (routes/webhookIn.ts, round
+ * 1405) -- never for one a human typed into the live UI, CSV-imported, or
+ * created via any other authenticated path. Before this, every rule that
+ * wanted to react specifically to a Stripe/Typeform/website-form delivery
+ * had no choice but to use the blanket "record_created" trigger, which
+ * fires identically for all of those sources too -- there was no way to
+ * express "only notify me when this Order came in via the Stripe webhook"
+ * without that same rule also firing for every manually-created Order.
+ */
+export type AutomationTrigger = "record_created" | "field_equals" | "schedule" | "record_deleted" | "record_updated" | "inbound_webhook";
 export type AutomationActionType = "send_whatsapp" | "webhook" | "send_email";
 export type AutomationToMode = "static" | "field";
 export type AutomationLastStatus = "sent" | "failed" | null;

@@ -19785,6 +19785,90 @@ test("GET /projects/:id/inbound-webhook-token returns a real, persisted token th
 });
 
 /**
+ * Round 1470: the new "inbound_webhook" automation trigger -- before this
+ * round, the ONLY way to react to a record created via the public
+ * inbound-webhook route was "record_created", which fires identically for
+ * every creation source (the live app, CSV import, the webhook). This
+ * confirms the new trigger is source-SPECIFIC: an ordinary create through
+ * the authenticated route never fires an inbound_webhook rule, but a
+ * record created through the public webhook-in route does -- the exact
+ * discrimination this feature exists to provide. Mirrors round 1405's own
+ * webhook-in test's setup shape (Lead entity, WhatsApp connected,
+ * real token), but on the new trigger instead of record_created.
+ */
+test("an \"inbound_webhook\" automation rule fires for a record created via the public webhook-in route, but never for one created through the ordinary authenticated route", async () => {
+  let createdSockets: ReturnType<typeof createFakeWhatsAppSocket>[] = [];
+  await withServer(
+    async (baseUrl, db) => {
+      const email = `webhook-in-trigger-${randomUUID()}@example.com`;
+      const authToken = await signup(baseUrl, email);
+      const user = findUserByEmail(db, email)!;
+      const spec: ProductSpec = {
+        summary: "test",
+        personas: [],
+        roles: ["Admin"],
+        entities: [{ name: "Lead", fields: [{ name: "name", type: "text", required: true }, { name: "phone", type: "text" }] }],
+        screens: [],
+        assumptions: [],
+        openQuestions: [],
+      };
+      const projectId = randomUUID();
+      insertProject(db, { id: projectId, ownerId: user.id, name: "CRM", description: "test", spec });
+      diffAndMigrate(db, projectId, undefined, spec);
+      markProjectBuilt(db, projectId);
+
+      await fetch(`${baseUrl}/api/projects/${projectId}/integrations/whatsapp/connect`, { method: "POST", headers: authHeaders(authToken) });
+      createdSockets[0].sock.user = { id: "15550009999:1@s.whatsapp.net" };
+      createdSockets[0].emitConnectionUpdate({ connection: "open" });
+      const ruleRes = await fetch(`${baseUrl}/api/projects/${projectId}/entities/Lead/automations`, {
+        method: "POST",
+        headers: authHeaders(authToken),
+        body: JSON.stringify({ trigger: "inbound_webhook", actionType: "send_whatsapp", toMode: "field", toField: "phone", messageTemplate: "New webhook lead!" }),
+      });
+      assert.equal(ruleRes.status, 201);
+
+      const tokenRes = await fetch(`${baseUrl}/api/projects/${projectId}/inbound-webhook-token`, { headers: authHeaders(authToken) });
+      const { token: webhookToken } = (await tokenRes.json()) as { token: string };
+
+      // An ordinary authenticated create -- the exact same shape a human
+      // using the live "Add" form would submit -- must NEVER fire an
+      // inbound_webhook rule, unlike record_created which fires for both.
+      const ordinaryRes = await fetch(`${baseUrl}/api/projects/${projectId}/entities/Lead`, {
+        method: "POST",
+        headers: authHeaders(authToken),
+        body: JSON.stringify({ name: "Manual Lead", phone: "972500000001" }),
+      });
+      assert.equal(ordinaryRes.status, 201);
+      await new Promise((resolve) => setTimeout(resolve, 20));
+      assert.equal(createdSockets[0].sendCalls.length, 0, "an inbound_webhook rule must never fire for a record created through the ordinary authenticated route");
+
+      const webhookRes = await fetch(`${baseUrl}/api/public/webhook-in/${projectId}/Lead?token=${webhookToken}`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ name: "Webhook Lead", phone: "972500000002" }),
+      });
+      assert.equal(webhookRes.status, 201);
+
+      // The not-awaited automation fire (see routes/webhookIn.ts's own
+      // comment on this) needs a tick to actually run before asserting on it.
+      for (let i = 0; i < 40 && createdSockets[0].sendCalls.length === 0; i++) {
+        await new Promise((resolve) => setTimeout(resolve, 0));
+      }
+      assert.equal(createdSockets[0].sendCalls.length, 1, "a record created via the inbound webhook must fire the inbound_webhook rule");
+      const sentContent = createdSockets[0].sendCalls[0]!.content as { text?: string };
+      assert.match(sentContent.text ?? "", /New webhook lead/);
+    },
+    {
+      whatsapp: (db) => {
+        const { manager, createdSockets: sockets } = createTestWhatsAppManager(db);
+        createdSockets = sockets;
+        return manager;
+      },
+    },
+  );
+});
+
+/**
  * Round 1406: before `express.urlencoded()` was registered in app.ts,
  * `express.json()` alone silently left `req.body` as `{}` -- no error --
  * for any request whose Content-Type wasn't exactly `application/json`.
