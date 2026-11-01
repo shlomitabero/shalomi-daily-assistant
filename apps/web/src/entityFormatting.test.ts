@@ -185,6 +185,21 @@ test("badgeTone recognizes 'Delayed' as negative, matching Shipment's real statu
   assert.equal(badgeTone("Delivered"), "positive");
 });
 
+/**
+ * Round 1469's finding: the built-in JobApplicant domain entity's own stage
+ * enum (spec-engine/domainEntities.ts) is exactly
+ * ["Applied", "Interviewing", "Offer", "Rejected", "Hired"] -- "Rejected"
+ * already reads as negative, but "Hired" (right next to it, an equally
+ * conclusive positive outcome, the same shape as "Won" already listed)
+ * fell through to neutral gray, the same tone as the genuinely undecided
+ * "Applied"/"Interviewing"/"Offer" states, since "hired" was missing from
+ * POSITIVE_WORDS.
+ */
+test("badgeTone recognizes 'Hired' as positive, matching JobApplicant's real stage enum", () => {
+  assert.equal(badgeTone("Hired"), "positive");
+  assert.equal(badgeTone("Rejected"), "negative");
+});
+
 test("formatDateValue formats a valid ISO date per locale, and leaves an invalid one unchanged", () => {
   const result = formatDateValue("2026-03-15", "en");
   assert.match(result, /3\/15\/2026|15\/3\/2026/); // exact format is locale/engine-dependent, just confirm it parsed

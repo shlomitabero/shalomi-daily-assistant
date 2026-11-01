@@ -2814,7 +2814,14 @@ function relationDisplayLabel(field, value, relatedRecords) {
 // per-app configuration -- covers the common English status words Forge AI's
 // own spec generator uses ("Won", "Lost", "Active", ...) and falls back to
 // neutral for anything else (e.g. a freeform value).
-const POSITIVE_WORDS = ["won", "completed", "active", "paid", "delivered", "success", "qualified", "shipped", "confirmed", "approved"];
+const POSITIVE_WORDS = [
+  "won", "completed", "active", "paid", "delivered", "success", "qualified", "shipped", "confirmed", "approved",
+  // round 1469: mirrors the live preview's own entityFormatting.ts fix --
+  // the built-in JobApplicant domain entity's stage enum uses "Hired"
+  // right alongside "Rejected" (a NEGATIVE_WORDS entry), the same
+  // positive-sibling-of-a-negative-value shape "won" already handles.
+  "hired",
+];
 // round 458: the "un-"/"dis-" negated forms below must stay listed here too --
 // each contains a POSITIVE_WORDS entry as a literal substring ("unpaid"
 // contains "paid", etc.), the same "inactive"/"active" shape "inactive"

@@ -69,6 +69,13 @@ const POSITIVE_WORDS = [
   "shipped",
   "confirmed",
   "approved",
+  // round 1469: the built-in JobApplicant domain entity's own stage enum
+  // (see spec-engine/domainEntities.ts) uses "Hired" right alongside
+  // "Rejected" -- which already matches NEGATIVE_WORDS -- so a hired
+  // applicant showed the same neutral gray badge as "Applied"/
+  // "Interviewing"/"Offer" instead of reading as positive, even though
+  // it's exactly as conclusive an outcome as "Won" already listed above.
+  "hired",
 ];
 const NEGATIVE_WORDS = [
   "lost",

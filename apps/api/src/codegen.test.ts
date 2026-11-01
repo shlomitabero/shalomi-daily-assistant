@@ -17207,6 +17207,24 @@ test("the exported EntityView's badgeTone classifies 'Delayed' as negative, matc
 });
 
 /**
+ * Regression test for round 1469's finding: the built-in JobApplicant
+ * domain entity's own stage enum (spec-engine/domainEntities.ts) is exactly
+ * ["Applied", "Interviewing", "Offer", "Rejected", "Hired"] -- "Rejected"
+ * already reads as negative, but "Hired" fell through to neutral gray in
+ * this exact exported copy too, mirroring the live-preview fix. Runs the
+ * real generated badgeTone, not a reference copy.
+ */
+test("the exported EntityView's badgeTone classifies 'Hired' as positive, matching JobApplicant's real stage enum", () => {
+  const entityViewJsx = generateExportFiles(project).find((f) => f.path === "web/src/components/EntityView.jsx")!.content;
+  const badgeToneSrc = entityViewJsx.match(/const POSITIVE_WORDS[\s\S]*?\nfunction badgeTone\(rawValue\) \{[\s\S]*?\n\}\n/)?.[0];
+  assert.ok(badgeToneSrc, "expected to find POSITIVE_WORDS/NEGATIVE_WORDS/badgeTone in generated output");
+
+  const badgeTone = new Function(`${badgeToneSrc}\nreturn badgeTone;`)() as (v: string) => string;
+  assert.equal(badgeTone("Hired"), "positive");
+  assert.equal(badgeTone("Rejected"), "negative");
+});
+
+/**
  * New in this round: the exported standalone app's entity table columns
  * were a fixed auto-layout width, unlike the live Forge AI preview (round
  * 185's own drag-to-resize columns, persisted per entity via
