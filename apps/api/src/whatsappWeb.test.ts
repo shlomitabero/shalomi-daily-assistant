@@ -574,6 +574,45 @@ test("sendMessage attaches a real audio file from disk, sending the audio clip f
 });
 
 /**
+ * Round 1420: a real bug the survey found -- automations.ts's own round-1341
+ * multi-attachment follow-up (fireRule, when an automation's template
+ * references two or more distinct file fields) sends every attachment
+ * after the first via this exact function with body hardcoded to "",
+ * deliberately caption-less -- for image/video/document that's a genuine
+ * no-op (an empty `caption` field on their single Baileys call), but this
+ * branch's second call used to be unconditional, so an empty body here
+ * meant an extra, separate, visible BLANK WhatsApp message sent to the
+ * real recipient right after the audio clip. Confirms an empty body now
+ * suppresses that second call entirely, leaving only the audio clip sent.
+ */
+test("sendMessage's audio branch sends only the audio clip, with no second blank text message, when invoked with an empty body", async () => {
+  const { manager, createdSockets } = setupManager();
+  await manager.connect("proj1");
+  createdSockets[0].sock.user = { id: "972501234567:1@s.whatsapp.net" };
+  createdSockets[0].emitConnectionUpdate({ connection: "open" });
+
+  const dir = await mkdtemp(path.join(tmpdir(), "forge-whatsapp-audio-attachment-test-"));
+  try {
+    const filePath = path.join(dir, "voice-note.ogg");
+    await writeFile(filePath, "fake-ogg-audio-bytes");
+
+    const result = await manager.sendMessage("proj1", "972509998888", "", {
+      filePath,
+      fileName: "voice-note.ogg",
+      mimeType: "audio/ogg",
+    });
+    assert.equal(result.ok, true);
+    assert.deepEqual(
+      createdSockets[0].sendCalls,
+      [{ jid: "972509998888@s.whatsapp.net", audio: Buffer.from("fake-ogg-audio-bytes"), mimetype: "audio/ogg", ptt: false }],
+      "an empty body must never produce a second, blank WhatsApp text message -- only the audio clip itself must be sent",
+    );
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+/**
  * Round 1242: a real bug the survey found -- the audio branch used to send
  * the caption TEXT first and the audio clip second. A real Baileys media
  * upload (the audio send) is a far more failure-prone network round-trip

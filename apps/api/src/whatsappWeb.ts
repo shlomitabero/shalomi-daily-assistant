@@ -1033,8 +1033,26 @@ export class WhatsAppWebManager {
           // risk (the audio succeeding and then the plain text failing) is
           // real too, just far rarer, since no file upload is involved in
           // that second step at all.
+          //
+          // Round 1420: `body` was sent as this second message
+          // unconditionally, on the premise (true when this branch first
+          // shipped) that messageTemplate can never be empty. automations.ts's
+          // round-1341 multi-attachment follow-up broke that premise: a
+          // SECOND-or-later referenced file field goes out via this exact
+          // function with body hardcoded to "" (deliberately caption-less,
+          // the same as every other attachment type's own empty `caption`
+          // field) -- but unlike image/video/document, where an empty
+          // caption is a no-op on their single Baileys call, this branch's
+          // second call is a genuinely separate, visible message: an
+          // unconditional empty `{ text: "" }` meant nothing was sent as a
+          // blank WhatsApp message to the real recipient. Guarding it the
+          // same way makes an empty body here behave like an empty caption
+          // everywhere else in this function: silently absent, not an
+          // extra blank message.
           await this.sendWithTimeout(session.sock.sendMessage(jid, { audio: fileBuffer, mimetype: attachment.mimeType, ptt: false }));
-          await this.sendWithTimeout(session.sock.sendMessage(jid, { text: body }));
+          if (body) {
+            await this.sendWithTimeout(session.sock.sendMessage(jid, { text: body }));
+          }
         } else {
           await this.sendWithTimeout(session.sock.sendMessage(jid, { document: fileBuffer, mimetype: attachment.mimeType, fileName: attachment.fileName, caption: body }));
         }
