@@ -2052,6 +2052,73 @@ test("App's handleBulkDeleteProjects removes only the projects that actually suc
 });
 
 /**
+ * Round 1452: home.myProjects.bulk.confirmDelete was a single hardcoded-
+ * plural i18n key with no singular form -- the same gap round 1412 already
+ * fixed for EntityPanel's own sibling bulk-delete dialog, but never reached
+ * here. The bulk-actions bar is shown whenever visibleSelectedProjectIds.size
+ * > 0, not > 1, so ticking exactly one project's own checkbox and clicking
+ * "Delete selected" is an ordinary, reachable path, not a contrived edge
+ * case -- it must read "Permanently delete 1 project? ..." not "...1
+ * projects? ...".
+ */
+test("App's handleBulkDeleteProjects confirm dialog uses the singular-noun translation key when exactly 1 project is selected, and the plural key for 2+", async () => {
+  const appSrc = readFileSync(new URL("./App.tsx", import.meta.url), "utf8");
+  const handlerMatch = appSrc.match(/ {2}async function handleBulkDeleteProjects\(\) \{[\s\S]*?\n {2}\}\n/);
+  assert.ok(handlerMatch, "expected to find handleBulkDeleteProjects in App.tsx");
+  const { code } = transformSync(handlerMatch![0], { loader: "ts" });
+
+  function run(initialMyProjects: Project[], selectedIds: string[]) {
+    const confirmCalls: string[] = [];
+    const fn = new Function(
+      "bulkDeleteBusy",
+      "deletingId",
+      "cloningId",
+      "window",
+      "t",
+      "lang",
+      "deleteProject",
+      "visibleSelectedProjectIds",
+      "setBulkDeleteBusy",
+      "setError",
+      "setMyProjects",
+      "setSelectedProjectIds",
+      "purgeProjectPreferences",
+      `${code}\nreturn handleBulkDeleteProjects;`,
+    )(
+      false,
+      null,
+      null,
+      { confirm: (message: string) => (confirmCalls.push(message), false) },
+      (key: string, params?: Record<string, unknown>) => (params ? `${key}:${JSON.stringify(params)}` : key),
+      "en",
+      async () => {},
+      visibleSelectedIds(new Set(selectedIds), initialMyProjects.map((p) => p.id)),
+      () => {},
+      () => {},
+      () => {},
+      () => {},
+      () => {},
+    ) as () => Promise<void>;
+    return { fn, confirmCalls };
+  }
+
+  const a = makeProject([makeEntity("Customer")]);
+  a.id = "a";
+  const b = makeProject([makeEntity("Customer")]);
+  b.id = "b";
+
+  const single = run([a, b], ["a"]);
+  await single.fn();
+  assert.equal(single.confirmCalls.length, 1);
+  assert.match(single.confirmCalls[0], /^home\.myProjects\.bulk\.confirmDelete\.one:/, "exactly 1 selected project must use the singular-noun translation key");
+
+  const multiple = run([a, b], ["a", "b"]);
+  await multiple.fn();
+  assert.equal(multiple.confirmCalls.length, 1);
+  assert.match(multiple.confirmCalls[0], /^home\.myProjects\.bulk\.confirmDelete\.many:/, "2 selected projects must use the plural-noun translation key");
+});
+
+/**
  * Regression test for this round's own fix: a project selected earlier and
  * then hidden by a changed search/filter must never be bulk-deleted, even
  * though it's still present in the raw `selectedProjectIds` set -- only

@@ -1620,7 +1620,7 @@ function AppContent() {
     if (bulkDeleteBusy || deletingId !== null || cloningId !== null) return;
     const ids = [...visibleSelectedProjectIds];
     if (ids.length === 0) return;
-    if (!window.confirm(t("home.myProjects.bulk.confirmDelete", { count: ids.length }))) return;
+    if (!window.confirm(t(ids.length === 1 ? "home.myProjects.bulk.confirmDelete.one" : "home.myProjects.bulk.confirmDelete.many", { count: ids.length }))) return;
     setBulkDeleteBusy(true);
     setError(null);
     try {
