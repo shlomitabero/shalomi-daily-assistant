@@ -1060,9 +1060,18 @@ export function getInboundWebhookToken(projectId: string): Promise<{ token: stri
  * regenerateCalendarFeedToken's own exact reasoning and idempotency-key
  * mechanism (a response lost in transit must never rotate the token
  * twice).
+ *
+ * `lang` (round 1419): same purpose as regenerateCalendarFeedToken's own
+ * `lang` param just above -- picks the language for the server's
+ * best-effort notification to every other collaborator that this
+ * rotation just broke their own already-configured external integration
+ * too (round 1407 widened the GET route above to admit editors, not just
+ * the owner, so this is a real risk now, not just the owner's own
+ * integration).
  */
-export function regenerateInboundWebhookToken(projectId: string): Promise<{ token: string }> {
-  return request(`/projects/${projectId}/inbound-webhook-token/regenerate`, {
+export function regenerateInboundWebhookToken(projectId: string, lang?: "he" | "en"): Promise<{ token: string }> {
+  const query = lang ? `?lang=${lang}` : "";
+  return request(`/projects/${projectId}/inbound-webhook-token/regenerate${query}`, {
     method: "POST",
     headers: { "x-idempotency-key": crypto.randomUUID() },
   });

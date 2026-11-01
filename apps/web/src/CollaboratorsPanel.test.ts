@@ -1319,7 +1319,7 @@ test("CollaboratorsPanel's inbound-webhook regenerate button asks for confirmati
       if (method === "GET" && input === "/api/projects/proj1/collaborators") {
         return new Response(JSON.stringify({ collaborators: [] }), { status: 200, headers: { "content-type": "application/json" } });
       }
-      if (method === "POST" && input === "/api/projects/proj1/inbound-webhook-token/regenerate") {
+      if (method === "POST" && input === "/api/projects/proj1/inbound-webhook-token/regenerate?lang=en") {
         regenerateCalls += 1;
         return new Response(JSON.stringify({ token: "brand-new-token" }), { status: 200, headers: { "content-type": "application/json" } });
       }
@@ -1353,12 +1353,13 @@ test("CollaboratorsPanel's inbound-webhook regenerate button calls the real endp
       if (method === "GET" && input === "/api/projects/proj1/collaborators") {
         return new Response(JSON.stringify({ collaborators: [] }), { status: 200, headers: { "content-type": "application/json" } });
       }
-      // Unlike the calendar-feed regenerate above, this never appends
-      // ?lang=... -- there's no "your webhook was reset" notification
-      // email to other collaborators (see handleRegenerateInboundWebhookToken's
-      // own doc comment for why: this token only ever configures the
-      // OWNER's own external integration, not anything of a collaborator's).
-      if (method === "POST" && input === "/api/projects/proj1/inbound-webhook-token/regenerate") {
+      // Round 1419: now appends ?lang=..., the same as the calendar-feed
+      // regenerate above -- the server's own best-effort "your webhook was
+      // reset" notification to every OTHER collaborator (round 1407
+      // widened the GET route to admit editors too, who can independently
+      // configure their own external integration with this token) picks
+      // its language from this.
+      if (method === "POST" && input === "/api/projects/proj1/inbound-webhook-token/regenerate?lang=en") {
         regenerateCalls += 1;
         return new Response(JSON.stringify({ token: "brand-new-token" }), { status: 200, headers: { "content-type": "application/json" } });
       }

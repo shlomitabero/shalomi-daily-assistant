@@ -321,16 +321,12 @@ export function CollaboratorsPanel({
    * also breaks every external integration (Stripe, Typeform, a website's
    * own form handler) already configured with the old URL.
    *
-   * Deliberately does NOT notify the other collaborators the way
-   * handleRegenerateCalendarFeedToken's own round-1290 behavior does: that
-   * notification exists because regenerating the CALENDAR feed token
-   * silently breaks every OTHER collaborator's own already-configured
-   * calendar subscription too (each of them can click EntityPanel's own
-   * Subscribe button and set one up independently). This token has no such
-   * per-collaborator usage -- it only ever configures the OWNER's own
-   * external integration dashboard (Stripe/Typeform/etc), so rotating it
-   * has no equivalent "this silently broke something of yours" harm to
-   * warn any other collaborator about.
+   * Round 1419: now passes `lang` and notifies other collaborators too,
+   * the same as handleRegenerateCalendarFeedToken -- round 1405's original
+   * reasoning for NOT doing this (this token "only ever configures the
+   * OWNER's own external integration dashboard") stopped holding once
+   * round 1407 widened the GET route to admit editors too, who can
+   * independently configure their own external service with this token.
    */
   async function handleRegenerateInboundWebhookToken() {
     if (!window.confirm(t("collab.webhookIn.regenerate.confirm"))) return;
@@ -338,7 +334,7 @@ export function CollaboratorsPanel({
     setError(null);
     setRegenerateWebhookTokenInfo(null);
     try {
-      await regenerateInboundWebhookToken(projectId);
+      await regenerateInboundWebhookToken(projectId, lang);
       setRegenerateWebhookTokenInfo(t("collab.webhookIn.regenerate.success"));
     } catch (err) {
       setError((err as Error).message);

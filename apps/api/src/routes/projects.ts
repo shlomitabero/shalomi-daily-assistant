@@ -2185,6 +2185,19 @@ export function createProjectsRouter(
    * wrapped in withIdempotency with requireProjectOwner moved inside the
    * callback, for the identical "a retry must never rotate twice" reason
    * that route's own round-1313 fix gives.
+   *
+   * Round 1419: round 1405's original version here deliberately did NOT
+   * email every other collaborator the way the calendar-feed-token sibling
+   * route above does, reasoning that this token "only ever configures the
+   * OWNER's own external integration dashboard" with no equivalent harm to
+   * warn anyone else about. Round 1407 (a later round) invalidated that
+   * exact premise: the GET route above was widened from owner-only to
+   * requireProjectWriteAccess specifically so an EDITOR collaborator could
+   * also fetch this token and wire it into their own external service --
+   * at which point rotating it silently breaks THEIR integration too, with
+   * a real external sender (Stripe, Typeform) now POSTing to a token that
+   * 404s, losing real orders/leads/payment events with no signal anywhere.
+   * Mirrors the calendar route's own round-1290 fix exactly.
    */
   router.post(
     "/projects/:id/inbound-webhook-token/regenerate",
@@ -2192,8 +2205,27 @@ export function createProjectsRouter(
     asyncRoute(async (req, res) => {
       const idempotencyKey = req.header("X-Idempotency-Key") || undefined;
       const { body } = await withIdempotency(db, idempotencyKey, req.userId!, `POST /projects/${req.params.id}/inbound-webhook-token/regenerate`, async () => {
-        requireProjectOwner(db, req.params.id, req.userId!);
+        const project = requireProjectOwner(db, req.params.id, req.userId!);
         const token = regenerateInboundWebhookToken(db, req.params.id);
+        if (emailSender.configured) {
+          const isHebrew = req.query.lang !== "en";
+          const subject = isHebrew
+            ? `כתובת ה-Webhook הנכנס של "${project.name}" ב-Forge AI אופסה`
+            : `The inbound webhook URL for "${project.name}" on Forge AI was reset`;
+          const emailBody = isHebrew
+            ? `בעל/ת הפרויקט "${project.name}" ב-Forge AI אפס/ה את כתובת ה-Webhook הנכנס. אם הגדרת שירות חיצוני (כמו Stripe או Typeform) לשלוח לכתובת הישנה, הוא הפסיק לעבוד -- יש להעתיק את הכתובת החדשה מתוך הפרויקט ולהגדיר אותה שם מחדש.`
+            : `The owner of "${project.name}" on Forge AI reset the inbound webhook URL. If you had configured an external service (like Stripe or Typeform) to send to the old URL, it has stopped working -- you'll need to copy the new URL from within the project and update it there.`;
+          for (const collaborator of listCollaborators(db, project.id)) {
+            try {
+              await emailSender.send(collaborator.email, subject, emailBody);
+            } catch {
+              // Swallowed, deliberately, same as this route family's own
+              // convention -- the rotation itself already succeeded and
+              // was already committed; a failed best-effort notification
+              // must never turn that into an error response.
+            }
+          }
+        }
         return { status: 200, body: { token } };
       });
       res.json(body);

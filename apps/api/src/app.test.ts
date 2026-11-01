@@ -19751,6 +19751,96 @@ test("POST /projects/:id/inbound-webhook-token/regenerate invalidates the old to
 });
 
 /**
+ * Round 1419: this route's own doc comment had long reasoned this token
+ * "only ever configures the OWNER's own external integration dashboard",
+ * but round 1407 (a later round) widened the GET route above from
+ * owner-only to requireProjectWriteAccess specifically so an editor
+ * collaborator could also fetch and configure this token -- at which
+ * point rotating it silently breaks THEIR integration too, with nothing
+ * notifying them. Mirrors the calendar-feed-token sibling test above
+ * exactly.
+ */
+test("regenerating the inbound webhook token sends a real notification to every OTHER collaborator, naming the project, when email is configured", async () => {
+  const emailSender = createFakeEmailSender();
+  await withServer(
+    async (baseUrl, db) => {
+      const ownerEmail = `webhook-in-regen-notify-owner-${randomUUID()}@example.com`;
+      const ownerToken = await signup(baseUrl, ownerEmail);
+      const collabEmail = `webhook-in-regen-notify-collab-${randomUUID()}@example.com`;
+      await signup(baseUrl, collabEmail);
+      const owner = findUserByEmail(db, ownerEmail)!;
+      const spec: ProductSpec = {
+        summary: "test",
+        personas: [],
+        roles: ["Admin"],
+        entities: [{ name: "Lead", fields: [{ name: "name", type: "text", required: true }] }],
+        screens: [],
+        assumptions: [],
+        openQuestions: [],
+      };
+      const projectId = randomUUID();
+      insertProject(db, { id: projectId, ownerId: owner.id, name: "Sales CRM", description: "test", spec });
+
+      await fetch(`${baseUrl}/api/projects/${projectId}/collaborators`, {
+        method: "POST",
+        headers: authHeaders(ownerToken),
+        body: JSON.stringify({ email: collabEmail }),
+      });
+      emailSender.sentTo.length = 0; // The invite itself (round 1253) also sends one -- only the regenerate send matters here.
+
+      const res = await fetch(`${baseUrl}/api/projects/${projectId}/inbound-webhook-token/regenerate?lang=en`, {
+        method: "POST",
+        headers: authHeaders(ownerToken),
+      });
+      assert.equal(res.status, 200);
+
+      assert.equal(emailSender.sentTo.length, 1, "exactly one notification must be sent");
+      assert.equal(emailSender.sentTo[0].to, collabEmail, "the notification must go to the OTHER collaborator, not the owner who triggered the rotation");
+      assert.match(emailSender.sentTo[0].text, /Sales CRM/, "the body must name the real project");
+    },
+    { emailSender },
+  );
+});
+
+test("regenerating the inbound webhook token itself still succeeds, with no notification attempted, when no email provider is configured", async () => {
+  const emailSender = createFakeEmailSender({ configured: false });
+  await withServer(
+    async (baseUrl, db) => {
+      const ownerEmail = `webhook-in-regen-notify-unconfigured-${randomUUID()}@example.com`;
+      const ownerToken = await signup(baseUrl, ownerEmail);
+      const collabEmail = `webhook-in-regen-notify-unconfigured-collab-${randomUUID()}@example.com`;
+      await signup(baseUrl, collabEmail);
+      const owner = findUserByEmail(db, ownerEmail)!;
+      const spec: ProductSpec = {
+        summary: "test",
+        personas: [],
+        roles: ["Admin"],
+        entities: [{ name: "Lead", fields: [{ name: "name", type: "text", required: true }] }],
+        screens: [],
+        assumptions: [],
+        openQuestions: [],
+      };
+      const projectId = randomUUID();
+      insertProject(db, { id: projectId, ownerId: owner.id, name: "Sales CRM", description: "test", spec });
+
+      await fetch(`${baseUrl}/api/projects/${projectId}/collaborators`, {
+        method: "POST",
+        headers: authHeaders(ownerToken),
+        body: JSON.stringify({ email: collabEmail }),
+      });
+
+      const res = await fetch(`${baseUrl}/api/projects/${projectId}/inbound-webhook-token/regenerate`, {
+        method: "POST",
+        headers: authHeaders(ownerToken),
+      });
+      assert.equal(res.status, 200, "the rotation itself must still succeed with no email provider configured");
+      assert.equal(emailSender.sentTo.length, 0, "no send should even be attempted when email isn't configured");
+    },
+    { emailSender },
+  );
+});
+
+/**
  * Round 1405: mirrors insertRecord's own round-1231 self-referencing
  * relation guard and the ordinary authenticated record-create route's own
  * FK-constraint-to-400 mapping -- confirms the public ingestion route maps
