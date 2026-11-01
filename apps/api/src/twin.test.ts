@@ -1983,6 +1983,47 @@ test("computeBusinessTwin does not flag a past date field whose name isn't deadl
   assert.ok(!twin.jumpableObservations.some((o) => o.text.includes("Ship date")));
 });
 
+/**
+ * Round 1463: twin.ts's own isDeadlineFieldName had the same plain-substring
+ * collision round 1460 already fixed in entityFormatting.ts/codegen.ts --
+ * a bare .includes("due") also matched "residue" (a lab/pharma app's own
+ * residueTestDate), "subdue"/"undue", and "dues" (a club/HOA app's own
+ * duesPaidDate -- "dues" the noun, not "due" the adjective). Without the
+ * fix, the Business Twin would fabricate a false "overdue"/"due soon"
+ * insight for any such field once its stored date is in the past/near --
+ * directly contradicting its own doc comment promising an "honest" snapshot.
+ */
+test("computeBusinessTwin does not flag a past date field that merely contains 'due' as a substring without meaning a deadline", () => {
+  const orderProject: Project = {
+    ...project,
+    description: "A club membership tracker",
+    spec: {
+      ...project.spec,
+      entities: [
+        {
+          name: "Member",
+          label: "Members",
+          fields: [
+            { name: "name", type: "text", required: true },
+            { name: "duesPaidDate", label: "Dues paid date", type: "date", required: false },
+            { name: "residueTestDate", label: "Residue test date", type: "date", required: false },
+          ],
+        },
+      ],
+    },
+  };
+  const db = openDatabase(":memory:");
+  applyMigrations(db, orderProject.id, orderProject.spec);
+  const member = orderProject.spec.entities[0];
+  const today = new Date(2026, 0, 15);
+  insertRecord(db, orderProject.id, member, { name: "Dana", duesPaidDate: "2026-01-01", residueTestDate: "2026-01-01" });
+  insertRecord(db, orderProject.id, member, { name: "Yossi", duesPaidDate: "2026-01-05", residueTestDate: "2026-01-05" });
+
+  const twin = computeBusinessTwin(db, orderProject, today);
+  assert.ok(!twin.jumpableObservations.some((o) => o.text.includes("Dues paid date")), `must not flag "dues" as a deadline, got: ${JSON.stringify(twin.jumpableObservations)}`);
+  assert.ok(!twin.jumpableObservations.some((o) => o.text.includes("Residue test date")), `must not flag "residue" as a deadline, got: ${JSON.stringify(twin.jumpableObservations)}`);
+});
+
 test("computeBusinessTwin stays silent about a deadline field when nothing is actually overdue yet", () => {
   const orderProject: Project = {
     ...project,

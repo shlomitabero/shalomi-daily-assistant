@@ -756,10 +756,17 @@ function parseFieldDate(raw: string): Date {
  * own pure helpers, and displayField.ts/codegen.ts each keep their own copy
  * of parseFieldDate -- an established convention in this codebase for a
  * small, pure, cross-package-reused heuristic.
+ *
+ * Round 1463: this copy still had the plain-substring bug round 1460 fixed
+ * in entityFormatting.ts/codegen.ts -- a bare .includes("due") also matches
+ * "residue" (a lab/pharma app's own residueTestDate), "subdue"/"undue", and
+ * "dues" (a club/HOA app's own duesPaidDate -- "dues" the noun, not "due"
+ * the adjective). Ported the identical word-boundary regex those two
+ * siblings already use.
  */
+const DUE_FIELD_NAME_PATTERN = /(?:(?<![a-zA-Z])due|Due)(?![a-z])/;
 function isDeadlineFieldName(fieldName: string): boolean {
-  const lower = fieldName.toLowerCase();
-  return lower.includes("due") || lower.includes("deadline");
+  return DUE_FIELD_NAME_PATTERN.test(fieldName) || fieldName.toLowerCase().includes("deadline");
 }
 
 /**
