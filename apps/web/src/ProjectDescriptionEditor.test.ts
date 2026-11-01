@@ -280,6 +280,58 @@ test("a failed description edit shows its error with role=alert, so a screen rea
   });
 });
 
+/**
+ * Round 1477: this is the app's single longest free-text input (5000 chars)
+ * saved only on blur/submit, never as-you-type -- unlike the home screen's
+ * idea textarea, which ideaDraft.ts already autosaves to localStorage on
+ * every keystroke. Before this round's fix, a tab close/refresh/navigation
+ * mid-edit silently discarded the draft with zero warning and no way to
+ * recover it. Confirms the warning only engages once the draft genuinely
+ * differs from the saved description (not merely on entering edit mode),
+ * and clears again once the draft is saved.
+ */
+test("ProjectDescriptionEditor warns before a tab close/refresh discards an in-progress edit, but not while the draft still matches the saved description", async () => {
+  await withJsdom(async () => {
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = (async (input: string, init?: RequestInit) => {
+      if (init?.method === "PATCH" && input === "/api/projects/proj1/description") {
+        const body = JSON.parse(init.body as string) as { description: string };
+        return new Response(JSON.stringify({ project: { ...project, description: body.description } }), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        });
+      }
+      throw new Error(`unexpected request ${init?.method ?? "GET"} ${input}`);
+    }) as typeof fetch;
+
+    function dispatchBeforeUnload(): boolean {
+      const event = new window.Event("beforeunload", { cancelable: true });
+      window.dispatchEvent(event);
+      return event.defaultPrevented;
+    }
+
+    try {
+      renderEditor(() => {});
+
+      assert.equal(dispatchBeforeUnload(), false, "nothing being edited yet, nothing to warn about");
+
+      fireEvent.click(document.querySelector(".project-description") as HTMLElement);
+      await waitForCondition(() => document.querySelector(".project-description-edit textarea") !== null);
+      assert.equal(dispatchBeforeUnload(), false, "editing started but the draft still matches the saved description");
+
+      const textarea = document.querySelector(".project-description-edit textarea") as HTMLTextAreaElement;
+      fireEvent.change(textarea, { target: { value: "A CRM with customers and deals, with payments." } });
+      assert.equal(dispatchBeforeUnload(), true, "the draft now genuinely differs from the saved description -- must warn");
+
+      fireEvent.blur(textarea);
+      await waitForCondition(() => document.querySelector(".project-description-edit") === null);
+      assert.equal(dispatchBeforeUnload(), false, "the edit was saved, nothing left to lose");
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+});
+
 /*
  * Round 1357: a live Playwright browser session found that a project
  * description with one long unbroken token (no spaces/hyphens) overflowed

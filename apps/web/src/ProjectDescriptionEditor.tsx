@@ -2,6 +2,7 @@ import { useRef, useState } from "react";
 import type { Project } from "@forge/shared";
 import { updateProjectDescription } from "./api.js";
 import { useTranslation } from "./i18n/LanguageContext.js";
+import { useBeforeUnloadWarning } from "./useBeforeUnloadWarning.js";
 
 /**
  * Inline click-to-edit for a project's original description, shown on the
@@ -39,6 +40,13 @@ export function ProjectDescriptionEditor({
   const [error, setError] = useState<string | null>(null);
 
   const cancelling = useRef(false);
+
+  // Round 1477: this is the app's single longest free-text input (5000
+  // chars) saved only on blur/submit, never as-you-type -- unlike the home
+  // screen's idea textarea, which ideaDraft.ts already autosaves to
+  // localStorage on every keystroke. A tab close/refresh/navigation before
+  // blurring silently discards the edit with no draft to recover.
+  useBeforeUnloadWarning(editing && draft.trim() !== "" && draft.trim() !== project.description);
 
   function startEditing() {
     // Round 1087: see ProjectNameEditor.tsx's own doc comment -- the
