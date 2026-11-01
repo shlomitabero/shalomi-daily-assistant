@@ -17434,6 +17434,30 @@ test("the exported EntityView's badgeTone classifies 'Received' as positive, mat
 });
 
 /**
+ * Regression test for round 1481's finding: the built-in Ticket domain
+ * entity's own status enum (spec-engine/domainEntities.ts) is exactly
+ * ["Open", "InProgress", "Resolved", "Closed"], and the Task domain
+ * entity's own status enum is exactly ["Todo", "InProgress", "Done"] --
+ * "Resolved"/"Done" fell through to neutral gray in this exact exported
+ * copy too, mirroring the live-preview fix, including its negated-form
+ * collision guard ("Unresolved"/"Undone" must still read negative). Runs
+ * the real generated badgeTone, not a reference copy.
+ */
+test("the exported EntityView's badgeTone classifies 'Resolved' and 'Done' as positive, matching Ticket's and Task's real status enums, without misreading their negated forms", () => {
+  const entityViewJsx = generateExportFiles(project).find((f) => f.path === "web/src/components/EntityView.jsx")!.content;
+  const badgeToneSrc = entityViewJsx.match(/const POSITIVE_WORDS[\s\S]*?\nfunction badgeTone\(rawValue\) \{[\s\S]*?\n\}\n/)?.[0];
+  assert.ok(badgeToneSrc, "expected to find POSITIVE_WORDS/NEGATIVE_WORDS/badgeTone in generated output");
+
+  const badgeTone = new Function(`${badgeToneSrc}\nreturn badgeTone;`)() as (v: string) => string;
+  assert.equal(badgeTone("Resolved"), "positive");
+  assert.equal(badgeTone("Open"), "neutral");
+  assert.equal(badgeTone("Done"), "positive");
+  assert.equal(badgeTone("Todo"), "neutral");
+  assert.equal(badgeTone("Unresolved"), "negative");
+  assert.equal(badgeTone("Undone"), "negative");
+});
+
+/**
  * New in this round: the exported standalone app's entity table columns
  * were a fixed auto-layout width, unlike the live Forge AI preview (round
  * 185's own drag-to-resize columns, persisted per entity via

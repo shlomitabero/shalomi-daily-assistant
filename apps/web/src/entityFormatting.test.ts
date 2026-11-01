@@ -218,6 +218,31 @@ test("badgeTone recognizes 'Received' as positive, matching Donation's and Purch
   assert.equal(badgeTone("Pledged"), "neutral");
 });
 
+/**
+ * Round 1481's finding: the built-in Ticket domain entity's own status
+ * enum (spec-engine/domainEntities.ts) is exactly
+ * ["Open", "InProgress", "Resolved", "Closed"], and the Task domain
+ * entity's own status enum is exactly ["Todo", "InProgress", "Done"] --
+ * in both, "Resolved"/"Done" is the successful-outcome state, but it fell
+ * through to neutral gray, the same tone as the merely-in-progress states,
+ * since "resolved"/"done" were missing from POSITIVE_WORDS. Also confirms
+ * the negated collision guard added alongside them: "unresolved" and
+ * "undone" are real, natural status words that contain "resolved"/"done"
+ * as a literal substring, the exact "unpaid" contains "paid" shape round
+ * 458 already fixed -- without the NEGATIVE_WORDS entries, both would be
+ * misread as positive, the opposite of their meaning.
+ */
+test("badgeTone recognizes 'Resolved' and 'Done' as positive, matching Ticket's and Task's real status enums, without misreading their negated forms", () => {
+  assert.equal(badgeTone("Resolved"), "positive");
+  assert.equal(badgeTone("resolved"), "positive");
+  assert.equal(badgeTone("Open"), "neutral");
+  assert.equal(badgeTone("Done"), "positive");
+  assert.equal(badgeTone("done"), "positive");
+  assert.equal(badgeTone("Todo"), "neutral");
+  assert.equal(badgeTone("Unresolved"), "negative");
+  assert.equal(badgeTone("Undone"), "negative");
+});
+
 test("formatDateValue formats a valid ISO date per locale, and leaves an invalid one unchanged", () => {
   const result = formatDateValue("2026-03-15", "en");
   assert.match(result, /3\/15\/2026|15\/3\/2026/); // exact format is locale/engine-dependent, just confirm it parsed

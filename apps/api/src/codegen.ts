@@ -2835,6 +2835,11 @@ const POSITIVE_WORDS = [
   // their successful-completion state, the exact same real-world event
   // "delivered" already covers from the sender's side.
   "received",
+  // round 1481: mirrors the live preview's own entityFormatting.ts fix --
+  // the built-in Ticket domain entity's status enum uses "Resolved" and
+  // the Task domain entity's status enum uses "Done" as their own
+  // successful-outcome states.
+  "resolved", "done",
 ];
 // round 458: the "un-"/"dis-" negated forms below must stay listed here too --
 // each contains a POSITIVE_WORDS entry as a literal substring ("unpaid"
@@ -2856,6 +2861,10 @@ const NEGATIVE_WORDS = [
   // right alongside "Delivered" (a POSITIVE_WORDS entry), the same
   // negative-sibling-of-a-positive-value shape "overdue" already handles.
   "delayed",
+  // round 1481: mirrors the live preview's own entityFormatting.ts fix --
+  // "unresolved"/"undone" each contain a POSITIVE_WORDS entry
+  // ("resolved"/"done") as a literal substring.
+  "unresolved", "undone",
 ];
 // Mirrors the live preview's own entityFormatting.ts formatRecordCreatedAt
 // (round 168): every record carries a real, server-assigned createdAt

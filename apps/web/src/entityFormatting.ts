@@ -86,6 +86,16 @@ const POSITIVE_WORDS = [
   // badge as the merely-pending "Pledged"/"ordered" states instead of
   // reading as positive.
   "received",
+  // round 1481: the built-in Ticket domain entity's own status enum (see
+  // spec-engine/domainEntities.ts: ["Open", "InProgress", "Resolved",
+  // "Closed"]) uses "Resolved" as its successful-outcome state, and the
+  // Task domain entity's own status enum (["Todo", "InProgress", "Done"])
+  // uses "Done" the same way -- so a resolved ticket or a done task showed
+  // the same neutral gray badge as a merely-pending state instead of
+  // reading as positive, the same gap round 1478/1469 already closed for
+  // "received"/"hired".
+  "resolved",
+  "done",
 ];
 const NEGATIVE_WORDS = [
   "lost",
@@ -150,6 +160,16 @@ const NEGATIVE_WORDS = [
   // instead of reading as negative, even though it's exactly as negative
   // an outcome as "Overdue" already listed above.
   "delayed",
+  // round 1481: adding "resolved"/"done" to POSITIVE_WORDS just above
+  // introduces the identical negated-word collision round 458 already
+  // fixed for "paid"/"completed"/etc -- "unresolved" is a real, natural
+  // ticket-status word that contains "resolved" as a literal substring,
+  // and "undone" is the equally natural single-word negation of "done"
+  // (the same "un-" shape as "unpaid"/"unapproved"/"unqualified" above),
+  // so both must be listed here too or they'd be misread as positive, the
+  // exact opposite of their meaning.
+  "unresolved",
+  "undone",
 ];
 
 const DATE_FORMAT = /^(\d{4})-(\d{2})-(\d{2})$/;
