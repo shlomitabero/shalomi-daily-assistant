@@ -262,6 +262,13 @@ test("findOversizedGeneratedSpecField flags an oversized summary, phrase array e
     ]),
   });
   assert.match(findOversizedGeneratedSpecField(oversizedEnumValue)!, /enumValue/);
+
+  const oversizedRelationTo = ProductSpecSchema.parse({
+    ...baseSpec([
+      { name: "Order", fields: [{ name: "customer", type: "relation", required: true, relationTo: "x".repeat(GENERATED_SPEC_LABEL_MAX_LENGTH + 1) }] },
+    ]),
+  });
+  assert.match(findOversizedGeneratedSpecField(oversizedRelationTo)!, /field "customer"'s relationTo/);
 });
 
 test("ProductSpecSchema rejects two entities whose names collide case-insensitively", () => {

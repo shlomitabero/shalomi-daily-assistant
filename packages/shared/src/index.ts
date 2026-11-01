@@ -401,6 +401,16 @@ export function findOversizedGeneratedSpecField(spec: ProductSpec): string | nul
       if (field.label && field.label.length > GENERATED_SPEC_LABEL_MAX_LENGTH) {
         return `field "${field.name}"'s label in entity "${entity.name}" (${field.label.length} characters, max ${GENERATED_SPEC_LABEL_MAX_LENGTH})`;
       }
+      // Round 1448: relationTo (FieldSchema's own declaration above) is
+      // plain z.string().optional() -- no .max() of its own, unlike every
+      // other free-text field this function already guards -- so it's
+      // just as exposed to the token-repetition failure mode this whole
+      // function exists to catch. Capped at the identifier-like
+      // GENERATED_SPEC_LABEL_MAX_LENGTH (it names another entity, the same
+      // shape as field.name/entity.name above), not the longer phrase cap.
+      if (field.relationTo && field.relationTo.length > GENERATED_SPEC_LABEL_MAX_LENGTH) {
+        return `field "${field.name}"'s relationTo in entity "${entity.name}" (${field.relationTo.length} characters, max ${GENERATED_SPEC_LABEL_MAX_LENGTH})`;
+      }
       for (const value of field.enumValues ?? []) {
         if (value.length > GENERATED_SPEC_LABEL_MAX_LENGTH) {
           return `an enumValue on field "${field.name}" in entity "${entity.name}" (${value.length} characters, max ${GENERATED_SPEC_LABEL_MAX_LENGTH})`;
