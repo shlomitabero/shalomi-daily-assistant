@@ -24,6 +24,7 @@ import {
   openDatabase,
   updateAutomationRule,
   WEBHOOK_TIMEOUT_ERROR,
+  WEBHOOK_UNREACHABLE_ERROR,
 } from "@forge/db";
 import {
   fireRule,
@@ -3112,6 +3113,43 @@ test("runAutomationsForRecordChange records a clear 'timed out' message, not fet
   const after = getAutomationRule(db, project.id, rule.id)!;
   assert.equal(after.lastStatus, "failed");
   assert.equal(after.lastError, "Webhook request timed out after 10000ms");
+});
+
+/**
+ * Round 1450: fireWebhookAction's OTHER special-cased network failure, for
+ * a destination that's simply unreachable (wrong domain, dead server,
+ * closed port, DNS/TLS failure) -- as opposed to the timeout test above
+ * (reached it, got no response in 10s). Node's own fetch/undici rejects
+ * every one of these causes with the identical `TypeError: "fetch failed"`
+ * message, confirmed directly against the runtime. Confirms the stored
+ * error is the clear, stable WEBHOOK_UNREACHABLE_ERROR message, not
+ * fetch's raw (but still fixed-literal) "fetch failed" text leaking
+ * through unclassified into the shared catch-all retention bucket.
+ */
+test("runAutomationsForRecordChange records a clear 'could not reach the destination' message when the webhook URL is simply unreachable (DNS/connection failure)", async () => {
+  const { db, project } = setupProject();
+  const rule = insertAutomationRule(db, {
+    projectId: project.id,
+    entityName: "Order",
+    trigger: "record_created",
+    actionType: "webhook",
+    webhookUrl: "https://hooks.example.com/forge",
+    toMode: "static",
+    messageTemplate: "New order!",
+  });
+  const record = { id: 1, customerName: "Dana Levi", customerPhone: "972501234567", status: "New" };
+
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = (() => Promise.reject(new TypeError("fetch failed"))) as typeof fetch;
+  try {
+    await runAutomationsForRecordChange(db, {} as WhatsAppWebManager, UNUSED_EMAIL_SENDER, project, orderEntity, "created", record, new Set(), UNUSED_UPLOADS_DIR, UNUSED_BASE_URL);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+
+  const after = getAutomationRule(db, project.id, rule.id)!;
+  assert.equal(after.lastStatus, "failed");
+  assert.equal(after.lastError, WEBHOOK_UNREACHABLE_ERROR);
 });
 
 test("runAutomationsForRecordChange rejects (records failed, never calls fetch) a webhook rule whose URL points at a blocked local/private host", async () => {

@@ -16,6 +16,7 @@ import {
   WHATSAPP_NOT_CONNECTED_ERROR,
   EMAIL_NOT_CONFIGURED_ERROR,
   WEBHOOK_TIMEOUT_ERROR,
+  WEBHOOK_UNREACHABLE_ERROR,
   type AutomationRule,
   type ForgeDatabase,
 } from "@forge/db";
@@ -878,7 +879,25 @@ async function fireWebhookAction(
     // module and recordAutomationRun's own retention pruning (see its own
     // doc comment there) must agree on the exact string or a flood of this
     // error can evict a genuinely different, older failure for this rule.
-    const message = controller.signal.aborted ? WEBHOOK_TIMEOUT_ERROR : err instanceof Error ? err.message : "Webhook request failed";
+    // Round 1450: a webhook URL that's simply unreachable (wrong domain,
+    // dead server, closed port, DNS/TLS failure) fails Node's fetch
+    // immediately, well before the 10s abort timeout above ever fires,
+    // with a TypeError whose message is always the fixed literal
+    // "fetch failed" regardless of the actual underlying cause --
+    // confirmed directly against the runtime for both a connection-refused
+    // and a DNS-failure target. Normalized to its own shared constant the
+    // same way the timeout case already was (round 1442), so this module
+    // and recordAutomationRun's own retention pruning agree on one
+    // literal instead of a flood of "fetch failed" rows evicting a
+    // genuinely different, older failure for this rule.
+    const message =
+      controller.signal.aborted
+        ? WEBHOOK_TIMEOUT_ERROR
+        : err instanceof TypeError && err.message === "fetch failed"
+          ? WEBHOOK_UNREACHABLE_ERROR
+          : err instanceof Error
+            ? err.message
+            : "Webhook request failed";
     recordAutomationRun(
       db,
       project.id,

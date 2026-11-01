@@ -21,6 +21,7 @@ import {
   recordAutomationRun,
   updateAutomationRule,
   WEBHOOK_TIMEOUT_ERROR,
+  WEBHOOK_UNREACHABLE_ERROR,
   WHATSAPP_NOT_CONNECTED_ERROR,
 } from "./automations.js";
 
@@ -665,6 +666,46 @@ test("recordAutomationRun's retention prune keeps the newest 20 genuine-failure 
       .get("proj1", rule.id, WEBHOOK_TIMEOUT_ERROR) as { c: number }
   ).c;
   assert.equal(timeoutCount, AUTOMATION_RUNS_RETENTION_LIMIT, "the webhook-timeout rows must still be capped at the normal retention limit, just in their own independent bucket");
+});
+
+/**
+ * Round 1450: same bug class as the test above, for a webhook rule's own
+ * network-unreachable failure (WEBHOOK_UNREACHABLE_ERROR) -- unlike
+ * WEBHOOK_TIMEOUT_ERROR's "no response within 10s" shape, this is Node's
+ * own fetch failing immediately with the fixed literal "fetch failed" for
+ * a wrong domain, dead server, closed port, or DNS/TLS failure. Reachable
+ * through an ordinary bulk-update over many records hitting a webhook
+ * rule whose destination is simply misconfigured (more common than a true
+ * 10s-stall), with no attacker or deployment-wide gap required.
+ */
+test("recordAutomationRun's retention prune keeps the newest 20 genuine-failure rows and the newest 20 webhook-unreachable rows independently, so one kind can never evict the other", () => {
+  const db = openDatabase(":memory:");
+  ensureAutomationRulesTable(db);
+  const rule = insertAutomationRule(db, baseRule());
+
+  // One genuine, distinct failure first (e.g. a real 400 response)...
+  recordAutomationRun(db, "proj1", rule.id, { status: "failed", error: "Webhook responded with status 400" });
+  // ...then an unreachable-destination flood far past the old shared-bucket
+  // cap of 20 -- e.g. a bulk-update over 30+ records whose webhook URL is
+  // simply wrong. Under the pre-fix shared catch-all bucket, this alone
+  // would have evicted the genuine failure above.
+  for (let i = 0; i < 30; i++) {
+    recordAutomationRun(db, "proj1", rule.id, { status: "failed", error: WEBHOOK_UNREACHABLE_ERROR });
+  }
+
+  const genuineCount = (
+    db
+      .prepare("SELECT COUNT(*) AS c FROM automation_runs WHERE projectId = ? AND ruleId = ? AND error != ?")
+      .get("proj1", rule.id, WEBHOOK_UNREACHABLE_ERROR) as { c: number }
+  ).c;
+  assert.equal(genuineCount, 1, "the one genuine failure must survive a webhook-unreachable flood of any length, not just a short one");
+
+  const unreachableCount = (
+    db
+      .prepare("SELECT COUNT(*) AS c FROM automation_runs WHERE projectId = ? AND ruleId = ? AND error = ?")
+      .get("proj1", rule.id, WEBHOOK_UNREACHABLE_ERROR) as { c: number }
+  ).c;
+  assert.equal(unreachableCount, AUTOMATION_RUNS_RETENTION_LIMIT, "the webhook-unreachable rows must still be capped at the normal retention limit, just in their own independent bucket");
 });
 
 /**

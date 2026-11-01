@@ -64,6 +64,24 @@ export const EMAIL_NOT_CONFIGURED_ERROR = "Email sending is not configured for t
  */
 export const WEBHOOK_TIMEOUT_ERROR = "Webhook request timed out after 10000ms";
 
+/**
+ * Round 1450: the same "fixed, always-identical literal" shape as the
+ * three constants above, for fireWebhookAction's OTHER special-cased
+ * network failure -- a destination that's simply unreachable (wrong
+ * domain/typo, dead server, closed port, DNS failure, TLS failure), as
+ * opposed to WEBHOOK_TIMEOUT_ERROR's "reached it but got no response in
+ * 10s" case. Node's own fetch/undici rejects every one of these causes
+ * with the identical `TypeError: "fetch failed"` message regardless of
+ * the actual underlying cause (connection refused vs. DNS failure vs. TLS
+ * failure all produce this exact same string) -- confirmed directly
+ * against the runtime. Without its own bucket, a rule pointed at a
+ * permanently wrong URL (the more common real-world case than a true
+ * 10s-stall) would flood this literal into the catch-all "everything
+ * else" prune just like WEBHOOK_TIMEOUT_ERROR once did, and could evict a
+ * genuinely different, older failure for the same rule.
+ */
+export const WEBHOOK_UNREACHABLE_ERROR = "Webhook request failed: could not reach the destination";
+
 export interface AutomationRule {
   id: string;
   projectId: string;
@@ -759,6 +777,16 @@ export function recordAutomationRun(
       SELECT id FROM automation_runs WHERE projectId = ? AND ruleId = ? AND error = ? AND (isTest IS NULL OR isTest = 0) ORDER BY triggeredAt DESC, rowid DESC LIMIT ?
     )`,
   ).run(projectId, id, WEBHOOK_TIMEOUT_ERROR, projectId, id, WEBHOOK_TIMEOUT_ERROR, AUTOMATION_RUNS_RETENTION_LIMIT);
+  // Round 1450: mirrors the WEBHOOK_TIMEOUT_ERROR bucket just above, for
+  // WEBHOOK_UNREACHABLE_ERROR's own identical flood risk -- a rule pointed
+  // at a permanently wrong URL produces this exact literal every single
+  // time it fires, with no response ever needed to reach it (unlike the
+  // timeout case, this doesn't even need the 10s to elapse).
+  db.prepare(
+    `DELETE FROM automation_runs WHERE projectId = ? AND ruleId = ? AND error = ? AND (isTest IS NULL OR isTest = 0) AND id NOT IN (
+      SELECT id FROM automation_runs WHERE projectId = ? AND ruleId = ? AND error = ? AND (isTest IS NULL OR isTest = 0) ORDER BY triggeredAt DESC, rowid DESC LIMIT ?
+    )`,
+  ).run(projectId, id, WEBHOOK_UNREACHABLE_ERROR, projectId, id, WEBHOOK_UNREACHABLE_ERROR, AUTOMATION_RUNS_RETENTION_LIMIT);
   // Round 1416: this catch-all bucket had no isTest awareness at all --
   // round 1263 gave isTest rows their own flag and taught
   // hasTooManyConsecutiveFailuresToday (apps/api/src/automations.ts) to
@@ -776,8 +804,8 @@ export function recordAutomationRun(
   // 1263's own ALTER TABLE (see ensureAutomationRunsTable above), which
   // never got a value and so are not Test rows.
   db.prepare(
-    `DELETE FROM automation_runs WHERE projectId = ? AND ruleId = ? AND (error IS NULL OR (error != ? AND error != ? AND error != ?)) AND (isTest IS NULL OR isTest = 0) AND id NOT IN (
-      SELECT id FROM automation_runs WHERE projectId = ? AND ruleId = ? AND (error IS NULL OR (error != ? AND error != ? AND error != ?)) AND (isTest IS NULL OR isTest = 0) ORDER BY triggeredAt DESC, rowid DESC LIMIT ?
+    `DELETE FROM automation_runs WHERE projectId = ? AND ruleId = ? AND (error IS NULL OR (error != ? AND error != ? AND error != ? AND error != ?)) AND (isTest IS NULL OR isTest = 0) AND id NOT IN (
+      SELECT id FROM automation_runs WHERE projectId = ? AND ruleId = ? AND (error IS NULL OR (error != ? AND error != ? AND error != ? AND error != ?)) AND (isTest IS NULL OR isTest = 0) ORDER BY triggeredAt DESC, rowid DESC LIMIT ?
     )`,
   ).run(
     projectId,
@@ -785,11 +813,13 @@ export function recordAutomationRun(
     WHATSAPP_NOT_CONNECTED_ERROR,
     EMAIL_NOT_CONFIGURED_ERROR,
     WEBHOOK_TIMEOUT_ERROR,
+    WEBHOOK_UNREACHABLE_ERROR,
     projectId,
     id,
     WHATSAPP_NOT_CONNECTED_ERROR,
     EMAIL_NOT_CONFIGURED_ERROR,
     WEBHOOK_TIMEOUT_ERROR,
+    WEBHOOK_UNREACHABLE_ERROR,
     AUTOMATION_RUNS_RETENTION_LIMIT,
   );
   // Round 1416: isTest rows' own independent bucket -- mirrors the
