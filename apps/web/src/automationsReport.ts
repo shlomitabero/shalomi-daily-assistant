@@ -153,6 +153,16 @@ function describeRule(
   if (rule.trigger === "record_deleted") return t("automations.rule.when.deleted", { entity: entityLabel(rule, entities) });
   if (rule.trigger === "record_updated") return t("automations.rule.when.updated", { entity: entityLabel(rule, entities) });
   if (rule.trigger === "schedule") return describeSchedule(rule, lang, t);
+  // Round 1473: this module's own hand-duplicated describeRule sibling
+  // (see this file's top comment) never got the "inbound_webhook" branch
+  // round 1470 added to AutomationsPanel.tsx's own live describeRule
+  // (AutomationsPanel.tsx:869) -- the exact bug class rounds 969/1330
+  // already fixed here for record_deleted/record_updated, just recurring
+  // for the newest trigger. fieldName/fieldValue are both null for this
+  // trigger (same shape as record_created/record_deleted), so without
+  // this branch the rule fell through to the field_equals wording below,
+  // printing a nonsensical `When "" on "X" becomes ""`.
+  if (rule.trigger === "inbound_webhook") return t("automations.rule.when.inboundWebhook", { entity: entityLabel(rule, entities) });
   return t("automations.rule.when.fieldEquals", {
     field: fieldLabel(rule, rule.fieldName, entities),
     entity: entityLabel(rule, entities),

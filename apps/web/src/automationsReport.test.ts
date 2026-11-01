@@ -187,6 +187,25 @@ test("formatAutomationsReport describes a record_updated rule with its own disti
 });
 
 /**
+ * Round 1473 regression test: the exact same bug class rounds 969/1330
+ * fixed in this module's own hand-duplicated describeRule for
+ * record_deleted/record_updated -- the newest trigger, "inbound_webhook"
+ * (added by round 1470, with AutomationsPanel.tsx's own live copy fixed
+ * directly at the time), never got the matching branch ported into this
+ * report module. Without it, the rule fell through to the field_equals
+ * description with empty field/value placeholders.
+ */
+test("formatAutomationsReport describes an inbound_webhook rule with its own distinct wording, not the field_equals fallback", () => {
+  const t = (key: string, params?: Record<string, string | number>) => translate("en", key, params);
+  const rule = makeRule({ trigger: "inbound_webhook", fieldName: null, fieldValue: null });
+
+  const report = formatAutomationsReport([rule], [duplicateLabelOrderEntity], "Shop", "en", t);
+
+  assert.match(report, /webhook/i);
+  assert.equal(report.includes("becomes"), false, "must not fall through to the field_equals description");
+});
+
+/**
  * Round 952 regression test: the entity-level counterpart of the round-772
  * test just above -- the exact same bug class round 864 fixed in
  * AutomationsPanel.tsx's own live rule list (entityLabelOccurrences/
