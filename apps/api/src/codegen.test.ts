@@ -13185,6 +13185,80 @@ test("the exported EntityView's Print list sheet includes a grand-total row for 
 });
 
 /**
+ * Round 1516: the Print list sheet's own footer hardcoded "records" with
+ * no singular form at all, the one gap left in this file's own
+ * established "N record(s)" convention (formatEntityRecordCount a few
+ * hundred lines up, and the handleBulkDelete confirm dialog both already
+ * branch on `=== 1`). Printing exactly one record from the list view
+ * showed "1 records · Printed on ...". Renders the real generated
+ * EntityView.jsx end to end and clicks the real "Print list" button,
+ * same approach as the grand-total test just above, since the fix is in
+ * JSX text content rather than an extractable pure function.
+ */
+test("the exported EntityView's Print list sheet footer uses the singular form when printing exactly one record", async () => {
+  const files = generateExportFiles(project);
+  const dir = writeGeneratedWebComponent(files);
+  const originalFetch = globalThis.fetch;
+  const store = [{ id: 1, name: "Dana Levi" }];
+  globalThis.fetch = (async (input: string, init?: RequestInit): Promise<Response> => {
+    const method = init?.method ?? "GET";
+    if (method === "GET" && input === `/api/${project.spec.entities[0].name}`) {
+      return new Response(JSON.stringify({ records: store }), { status: 200, headers: { "content-type": "application/json" } });
+    }
+    throw new Error(`unexpected request ${method} ${input}`);
+  }) as typeof fetch;
+  const originalPrint = window.print;
+  let printCalls = 0;
+  window.print = () => {
+    printCalls += 1;
+  };
+
+  try {
+    await withRealLocalStorage(async () => {
+      const { EntityView } = await import(path.join(dir, "web", "src", "components", "EntityView.jsx"));
+      const entity = project.spec.entities[0];
+      const props = {
+        entity,
+        highlightRecordId: null,
+        onHighlightHandled: () => {},
+        onJumpToRecord: () => {},
+        onRecordCountChange: () => {},
+      };
+
+      const { container } = render(React.createElement(EntityView, props));
+      for (let i = 0; i < 40; i++) {
+        if (container.querySelectorAll("tbody tr").length === 1) break;
+        await act(async () => {
+          await new Promise((resolve) => setTimeout(resolve, 0));
+        });
+      }
+
+      const printListButton = Array.from(container.querySelectorAll("button")).find((b) => b.textContent?.includes("Print"))!;
+      await act(async () => {
+        fireEvent.click(printListButton);
+      });
+      for (let i = 0; i < 40; i++) {
+        if (printCalls === 1) break;
+        await act(async () => {
+          await new Promise((resolve) => setTimeout(resolve, 0));
+        });
+      }
+
+      assert.match(
+        container.querySelector(".print-record-footer")?.textContent ?? "",
+        /^1 record ·/,
+        "a printed list of exactly one record must read '1 record', not '1 records'",
+      );
+    });
+  } finally {
+    globalThis.fetch = originalFetch;
+    window.print = originalPrint;
+    cleanup();
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+/**
  * Round 885: a feature round 884 (just above) didn't reach -- grouping the
  * table by an enum field gives the on-screen table its own per-group
  * heading and numeric subtotal (recordGroups/groupNumericTotals), the

@@ -4859,7 +4859,12 @@ function RecordListPrintSheet({ entity, fields, records, groups, relatedRecords,
           </tfoot>
         )}
       </table>
-      <p className="print-record-footer">{records.length} records · Printed on {new Date().toLocaleString()}</p>
+      {/* Round 1516: this hardcoded "records" was the one missing-plural gap
+          left in this file's own established "N record(s)" convention
+          (see formatEntityRecordCount a few hundred lines up, and the
+          handleBulkDelete confirm dialog) -- printing exactly one record
+          from the list view showed "1 records". */}
+      <p className="print-record-footer">{records.length} {records.length === 1 ? "record" : "records"} · Printed on {new Date().toLocaleString()}</p>
     </div>
   );
 }
