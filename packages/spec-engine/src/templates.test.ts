@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import { test } from "node:test";
 import { ProductSpecSchema } from "@forge/shared";
 import { isHebrewText } from "./domainEntities.js";
@@ -719,6 +720,40 @@ test("a template with no billing entity (e.g. the CRM/Project Tracker/Volunteer/
     assert.deepEqual(template.specEn.openQuestions[0].options, ["Stripe", "PayPal", "No payments", "Decide for me"]);
     assert.equal(template.specEn.openQuestions[0].recommendation, "No payments");
   }
+});
+
+/**
+ * Round 1540's finding: this file's own BILLING_ENTITY_NAMES (declared
+ * right above, its doc comment claiming it "mirrors heuristic.ts's own
+ * BILLING_ENTITY_NAMES exactly") had silently drifted out of sync --
+ * heuristic.ts gained "WorkOrder" (round 1345) and "InsuranceClaim"
+ * (round 1346), but this file's own copy was never updated, so a future
+ * template built around either entity would silently get the wrong
+ * ("No payments") default for its own payment-provider open question.
+ * Neither Set is exported (this file's own established "duplicate the
+ * small pure helper per module, don't cross-import" convention), so this
+ * reads both files' own source text directly, the same regex-extraction
+ * convention this codebase's own App.test.ts already uses, to assert the
+ * two Sets' contents stay equal regardless of which file next changes.
+ */
+test("templates.ts's own BILLING_ENTITY_NAMES stays in sync with heuristic.ts's, so this file's own \"mirrors ... exactly\" doc comment stays true", () => {
+  const heuristicSrc = readFileSync(new URL("./heuristic.ts", import.meta.url), "utf8");
+  const templatesSrc = readFileSync(new URL("./templates.ts", import.meta.url), "utf8");
+
+  const heuristicMatch = heuristicSrc.match(/const BILLING_ENTITY_NAMES = new Set\(\[([\s\S]*?)\]\);/);
+  const templatesMatch = templatesSrc.match(/const BILLING_ENTITY_NAMES = new Set\(\[([\s\S]*?)\]\);/);
+  assert.ok(heuristicMatch, "expected to find heuristic.ts's own BILLING_ENTITY_NAMES declaration");
+  assert.ok(templatesMatch, "expected to find templates.ts's own BILLING_ENTITY_NAMES declaration");
+
+  const extractNames = (body: string) => Array.from(body.matchAll(/"([A-Za-z]+)"/g), (m) => m[1]).sort();
+  const heuristicNames = extractNames(heuristicMatch![1]);
+  const templatesNames = extractNames(templatesMatch![1]);
+
+  assert.deepEqual(
+    templatesNames,
+    heuristicNames,
+    "templates.ts's BILLING_ENTITY_NAMES must contain exactly the same entity names as heuristic.ts's, or its own doc comment claiming an exact mirror is false",
+  );
 });
 
 /**

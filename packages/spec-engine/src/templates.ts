@@ -67,7 +67,15 @@ function screensFor(entityNames: string[]): ProductSpec["screens"] {
  * twin.ts/checkpointDiff.ts each keep their own small copies of shared
  * pure logic rather than cross-importing between spec-engine modules).
  */
-const BILLING_ENTITY_NAMES = new Set(["Invoice", "Order", "Donation", "Subscription", "Rental", "Property", "MenuItem"]);
+// Round 1540: this copy had drifted out of sync with heuristic.ts's own
+// BILLING_ENTITY_NAMES -- WorkOrder and InsuranceClaim were added there
+// in rounds 1345/1346 but never ported here, making this file's own
+// "mirrors heuristic.ts's own BILLING_ENTITY_NAMES exactly" doc comment
+// above false. No existing curated template declares either entity
+// today, so this was latent, not yet reachable -- but the next template
+// built around a field-service or insurance-claims business would
+// otherwise silently get the wrong ("No payments") default.
+const BILLING_ENTITY_NAMES = new Set(["Invoice", "Order", "Donation", "Subscription", "Rental", "Property", "MenuItem", "WorkOrder", "InsuranceClaim"]);
 
 /**
  * Round 1248: mirrors heuristic.ts's own buildOpenQuestions exactly for
