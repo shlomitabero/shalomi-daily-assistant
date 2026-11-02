@@ -1501,14 +1501,24 @@ export function AutomationsPanel({
                   ))}
                 </select>
               </label>
-              {(selectedField?.type === "number" || selectedField?.type === "date") && (
+              {selectedField && (
                 <label>
                   {t("automations.fieldOperator.label")}
                   <select value={fieldOperator} onChange={(e) => setFieldOperator(e.target.value as AutomationFieldOperator)}>
                     <option value="equals">{t("automations.fieldOperator.equals")}</option>
                     <option value="not_equals">{t("automations.fieldOperator.notEquals")}</option>
-                    <option value="greater_than">{t("automations.fieldOperator.greaterThan")}</option>
-                    <option value="less_than">{t("automations.fieldOperator.lessThan")}</option>
+                    {/* Round 1501: "greater_than"/"less_than" need a real numeric/
+                        chronological ordering (validateAutomationFieldOperator,
+                        routes/projects.ts) -- unlike "not_equals", a pure negation
+                        of "equals" that matchesFieldOperator already evaluates for
+                        every field type via a plain string comparison, so only
+                        these two options stay restricted to number/date fields. */}
+                    {(selectedField.type === "number" || selectedField.type === "date") && (
+                      <>
+                        <option value="greater_than">{t("automations.fieldOperator.greaterThan")}</option>
+                        <option value="less_than">{t("automations.fieldOperator.lessThan")}</option>
+                      </>
+                    )}
                   </select>
                 </label>
               )}

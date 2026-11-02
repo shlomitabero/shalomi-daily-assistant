@@ -2343,12 +2343,19 @@ test("AutomationsPanel locale-formats a date/number field_equals rule's value in
 });
 
 /**
- * Round 1491 regression test: AutomationFieldOperator -- see that type's
- * own doc comment (packages/db/src/automations.ts) for the full rationale.
- * The operator <select> must only appear for a number/date field (the only
- * two types "greater_than"/"less_than" have a real meaning for), must
- * disappear again when the field is switched to a type that doesn't
- * support it, and the chosen operator must actually reach the server.
+ * Round 1491 regression test, updated by round 1501: AutomationFieldOperator
+ * -- see that type's own doc comment (packages/db/src/automations.ts) for
+ * the full rationale. The "greater_than"/"less_than" options must only
+ * appear for a number/date field (the only two types a real numeric/
+ * chronological ordering has any meaning for, per validateAutomationField
+ * Operator in routes/projects.ts) and must disappear again when the field
+ * is switched to a type that doesn't support them, but the chosen operator
+ * must actually reach the server. Round 1501: the operator selector itself
+ * (not just "greater_than"/"less_than") used to be gated behind the same
+ * number/date check, which made "not_equals" -- a pure negation of
+ * "equals" that matchesFieldOperator (apps/api/src/automations.ts) already
+ * evaluates for every field type via a plain string comparison --
+ * unreachable through the UI for any text/enum/boolean/relation field.
  */
 test("AutomationsPanel's field_equals form shows an operator selector only for number/date fields, and submits the chosen operator", async () => {
   await withJsdom(async () => {
@@ -2384,17 +2391,25 @@ test("AutomationsPanel's field_equals form shows an operator selector only for n
 
       function findOperatorSelect(): HTMLSelectElement | undefined {
         return Array.from(document.querySelectorAll("select")).find((s) =>
-          Array.from(s.options).some((o) => o.value === "greater_than"),
+          Array.from(s.options).some((o) => o.value === "not_equals"),
         ) as HTMLSelectElement | undefined;
       }
 
-      // "label" (text) is the field_equals form's default selection -- no
-      // numeric/chronological ordering has any meaning for it.
-      assert.equal(findOperatorSelect(), undefined, "a text field must show no operator selector at all");
+      function operatorSelectHasOrderingOptions(): boolean {
+        const select = findOperatorSelect();
+        return select != null && Array.from(select.options).some((o) => o.value === "greater_than");
+      }
 
-      // Switching to "amount" (number) must reveal the operator selector.
+      // "label" (text) is the field_equals form's default selection -- the
+      // operator selector itself is still present (not_equals is a pure
+      // negation that works for any field type), but "greater_than"/
+      // "less_than" (ordering comparisons) must not be offered for it.
+      assert.ok(findOperatorSelect(), "the operator selector must appear even for a text field");
+      assert.equal(operatorSelectHasOrderingOptions(), false, "a text field must not offer greater_than/less_than");
+
+      // Switching to "amount" (number) must reveal the ordering options.
       fireEvent.change(fieldSelect, { target: { value: "amount" } });
-      await waitForCondition(() => findOperatorSelect() !== undefined, 200);
+      await waitForCondition(() => operatorSelectHasOrderingOptions(), 200);
       const operatorSelect = findOperatorSelect()!;
       fireEvent.change(operatorSelect, { target: { value: "greater_than" } });
       await waitForCondition(() => operatorSelect.value === "greater_than", 200);
@@ -2413,10 +2428,82 @@ test("AutomationsPanel's field_equals form shows an operator selector only for n
       assert.equal(createBody?.fieldOperator, "greater_than", "the chosen operator must actually be sent to the server");
 
       // Switching the field back to "isUrgent" (boolean) must hide the
-      // selector again -- a now-invalid operator must never be left
-      // silently selected underneath a selector that just disappeared.
+      // ordering options again (and reset the now-invalid "greater_than"
+      // back to "equals") -- but the operator selector itself must stay,
+      // since "not_equals" remains a valid choice for a boolean field.
       fireEvent.change(fieldSelect, { target: { value: "isUrgent" } });
-      await waitForCondition(() => findOperatorSelect() === undefined, 200);
+      await waitForCondition(() => !operatorSelectHasOrderingOptions() && operatorSelect.value === "equals", 200);
+      assert.ok(findOperatorSelect(), "the operator selector must still be present for a boolean field");
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+});
+
+/**
+ * Round 1501 regression test: before this round, the operator <select>
+ * only rendered when the selected field was number/date, so "not_equals"
+ * -- a pure negation of "equals" matchesFieldOperator (apps/api/src/
+ * automations.ts) already evaluates correctly for every field type via a
+ * plain string comparison -- could never actually be chosen through this
+ * form for a boolean/enum/text/relation field, even though round 1494
+ * fixed real not_equals matching behavior using exactly such a field as
+ * its own motivating example. Confirms a user can now select "not_equals"
+ * for a boolean field and have it reach the real create request.
+ */
+test("AutomationsPanel's field_equals form lets not_equals be selected and submitted for a boolean field, not just number/date", async () => {
+  await withJsdom(async () => {
+    const originalFetch = globalThis.fetch;
+    let createBody: Record<string, unknown> | undefined;
+    globalThis.fetch = (async (input: string, init?: RequestInit) => {
+      const method = init?.method ?? "GET";
+      if (method === "GET" && input === "/api/projects/proj7/automations") {
+        return new Response(JSON.stringify({ rules: [] }), { status: 200, headers: { "content-type": "application/json" } });
+      }
+      if (method === "POST" && input === "/api/projects/proj7/entities/Order/automations") {
+        createBody = JSON.parse(init!.body as string);
+        return new Response(JSON.stringify({ rule: { id: "rule17", ...createBody } }), {
+          status: 201,
+          headers: { "content-type": "application/json" },
+        });
+      }
+      throw new Error(`unexpected request ${method} ${input}`);
+    }) as typeof fetch;
+
+    try {
+      renderPanelWith(dateFieldProject);
+      await waitForCondition(() => document.body.textContent?.includes("No automations yet") ?? false);
+
+      const triggerSelect = Array.from(document.querySelectorAll("select")).find((s) =>
+        Array.from(s.options).some((o) => o.value === "field_equals"),
+      ) as HTMLSelectElement;
+      fireEvent.change(triggerSelect, { target: { value: "field_equals" } });
+
+      const fieldSelect = Array.from(document.querySelectorAll("select")).find((s) =>
+        Array.from(s.options).some((o) => o.value === "isUrgent"),
+      ) as HTMLSelectElement;
+      fireEvent.change(fieldSelect, { target: { value: "isUrgent" } });
+      await waitForCondition(() => fieldSelect.value === "isUrgent", 200);
+
+      const operatorSelect = Array.from(document.querySelectorAll("select")).find((s) =>
+        Array.from(s.options).some((o) => o.value === "not_equals"),
+      ) as HTMLSelectElement;
+      assert.ok(operatorSelect, "the operator selector must be present for a boolean field");
+      assert.ok(
+        !Array.from(operatorSelect.options).some((o) => o.value === "greater_than"),
+        "greater_than/less_than must not be offered for a boolean field",
+      );
+      fireEvent.change(operatorSelect, { target: { value: "not_equals" } });
+      await waitForCondition(() => operatorSelect.value === "not_equals", 200);
+
+      const messageField = document.querySelector(".automations-create-form textarea") as HTMLTextAreaElement;
+      fireEvent.change(messageField, { target: { value: "Order urgency changed!" } });
+      await waitForCondition(() => messageField.value === "Order urgency changed!", 200);
+      fireEvent.submit(document.querySelector(".automations-create-form")!);
+      await waitForCondition(() => createBody !== undefined);
+
+      assert.equal(createBody?.fieldName, "isUrgent");
+      assert.equal(createBody?.fieldOperator, "not_equals", "not_equals must actually reach the server for a boolean field");
     } finally {
       globalThis.fetch = originalFetch;
     }
