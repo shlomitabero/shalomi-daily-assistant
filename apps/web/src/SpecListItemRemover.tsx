@@ -23,6 +23,7 @@ import {
 } from "./api.js";
 import { entityDisplayLabel, entityLabelOccurrences, fieldDisplayLabel, fieldLabelOccurrences } from "./entityFormatting.js";
 import { useTranslation } from "./i18n/LanguageContext.js";
+import { useBeforeUnloadWarning } from "./useBeforeUnloadWarning.js";
 
 /**
  * The spec review screen's "roles" chips and "assumptions" list were
@@ -1355,6 +1356,17 @@ function useAddableSpecItem(add: (value: string) => Promise<{ project: Project }
   const [value, setValue] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // Round 1496: this hook backs AddRoleForm/AddEntityForm/AddAssumptionForm/
+  // AddPersonaForm -- none of them, nor AddFieldForm (below, which doesn't
+  // share this hook), had any useBeforeUnloadWarning protection, unlike
+  // every other "would a user mourn losing this typed draft" location in
+  // the app (round 1331's own 6 dialogs, round 1333/1476's EntityPanel
+  // forms, round 1475/1477's spec-review/description boxes). Round 1331's
+  // own exclusion list only names CheckpointLabelEditor's/FieldLabelEditor's
+  // single-field RENAME drafts as deliberately low-stakes; these forms
+  // compose brand-new content from scratch, not a rename, so that
+  // exclusion doesn't apply here.
+  useBeforeUnloadWarning(value.trim() !== "");
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
@@ -1557,6 +1569,12 @@ export function AddFieldForm({
   const [relationTo, setRelationTo] = useState(allEntities[0]?.name ?? "");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // Round 1496: see useAddableSpecItem's own identical comment above --
+  // this form doesn't share that hook, so it needs its own call. Gated on
+  // label OR enumValues (not relationTo, which is always seeded to a real
+  // entity name and never meaningfully "empty") so switching to type
+  // "enum" and starting to type a comma-separated value list warns too.
+  useBeforeUnloadWarning(label.trim() !== "" || enumValues.trim() !== "");
 
   // Round 1235: mirrors FieldChip's own openDraftFor, which re-derives
   // draftRelationTo fresh every time its own relation draft opens, rather

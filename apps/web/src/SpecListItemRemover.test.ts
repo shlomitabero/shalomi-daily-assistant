@@ -4315,3 +4315,67 @@ test("PersonaItem's own CSS classes (persona-item/persona-text/persona-remove) a
   );
   assert.match(removeButtonGroup!, /width:\s*16px/, ".persona-remove must get the same bounded 16px icon-button size as its sibling remove buttons");
 });
+
+/**
+ * Round 1496: none of the five "Add new spec item" forms had any
+ * useBeforeUnloadWarning protection, unlike every other "would a user
+ * mourn losing this typed draft" location in the app (round 1331's own 6
+ * dialogs, round 1333/1476's EntityPanel forms, round 1475/1477's
+ * spec-review/description boxes). AddRoleForm/AddAssumptionForm/
+ * AddPersonaForm/AddEntityForm all share the useAddableSpecItem hook, so
+ * one representative (AddRoleForm) proves the fix for all four.
+ */
+test("warns before a tab close/refresh while the add-role form has a draft, and stops once it's cleared or submitted", async () => {
+  await withJsdom(async () => {
+    renderAddRoleForm(() => {});
+    const input = document.querySelector(".spec-add-item-form input") as HTMLInputElement;
+
+    const eventWhilePristine = new window.Event("beforeunload", { cancelable: true });
+    window.dispatchEvent(eventWhilePristine);
+    assert.equal(eventWhilePristine.defaultPrevented, false, "must not warn while the form is still empty");
+
+    fireEvent.change(input, { target: { value: "Warehouse Manager" } });
+    const eventWhileDirty = new window.Event("beforeunload", { cancelable: true });
+    window.dispatchEvent(eventWhileDirty);
+    assert.equal(eventWhileDirty.defaultPrevented, true, "must warn while a role draft is in progress");
+
+    fireEvent.change(input, { target: { value: "" } });
+    const eventAfterClear = new window.Event("beforeunload", { cancelable: true });
+    window.dispatchEvent(eventAfterClear);
+    assert.equal(eventAfterClear.defaultPrevented, false, "must not warn once the draft is cleared again");
+  });
+});
+
+/**
+ * Round 1496: AddFieldForm doesn't share useAddableSpecItem (it has its
+ * own label/type/enumValues/relationTo state), so it needs its own
+ * coverage -- confirms both the label AND the enum-values sub-field
+ * (AddFieldForm's own multi-step, from-scratch-composition case the
+ * survey called out specifically) trigger the warning.
+ */
+test("warns before a tab close/refresh while the add-field form has a label or enum-values draft, and stops once cleared", async () => {
+  await withJsdom(async () => {
+    renderAddFieldForm(() => {});
+    const labelInput = document.querySelector(".spec-add-field-form input[type='text']") as HTMLInputElement;
+    const typeSelect = document.querySelector(".spec-add-field-form select") as HTMLSelectElement;
+
+    fireEvent.change(labelInput, { target: { value: "Status" } });
+    const eventWithLabel = new window.Event("beforeunload", { cancelable: true });
+    window.dispatchEvent(eventWithLabel);
+    assert.equal(eventWithLabel.defaultPrevented, true, "must warn while a field label draft is in progress");
+
+    fireEvent.change(labelInput, { target: { value: "" } });
+    const eventAfterLabelClear = new window.Event("beforeunload", { cancelable: true });
+    window.dispatchEvent(eventAfterLabelClear);
+    assert.equal(eventAfterLabelClear.defaultPrevented, false, "must not warn once the label is cleared and nothing else is typed");
+
+    fireEvent.change(typeSelect, { target: { value: "enum" } });
+    const textInputs = document.querySelectorAll(".spec-add-field-form input[type='text']");
+    assert.equal(textInputs.length, 2, "expected the label input plus a second enum-values input once type is 'enum'");
+    const enumInput = textInputs[1] as HTMLInputElement;
+    fireEvent.change(enumInput, { target: { value: "Open,Closed" } });
+    const eventWithEnumValues = new window.Event("beforeunload", { cancelable: true });
+    window.dispatchEvent(eventWithEnumValues);
+    assert.equal(eventWithEnumValues.defaultPrevented, true, "must warn while an enum-values draft is in progress, even with an empty label");
+  });
+});
