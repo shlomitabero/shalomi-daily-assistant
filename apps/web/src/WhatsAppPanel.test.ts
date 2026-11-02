@@ -3795,6 +3795,169 @@ test("WhatsAppPanel's log shows which entity a matched message belongs to, disam
 });
 
 /**
+ * Round 1487: a message's own matchedEntityName is captured once, at
+ * match time, from whatever casing the entity's name had then (see
+ * packages/db/src/whatsapp.ts). A later case-only entity rename (e.g.
+ * "customer" -> "Customer" -- an ordinary, explicitly-supported scenario,
+ * the same "recase vs. removal" blind spot rounds 1485/1486 just closed
+ * for AutomationsPanel's ruleEntity/relationFieldTargets/applyRuleToForm)
+ * leaves every already-logged message's matchedEntityName stuck at the
+ * OLD casing forever, with no backfill. matchedEntityLabel's own exact-case
+ * lookup used to miss here and fall back to the raw stale name, even
+ * though the entity is still perfectly present, just recased.
+ */
+test("WhatsAppPanel's log entity label resolves a stale-cased matchedEntityName to the entity's current casing instead of falling back to the raw name", async () => {
+  await withJsdom(async () => {
+    const originalFetch = globalThis.fetch;
+    const message: WhatsAppMessageLogEntry = {
+      id: "m1",
+      direction: "in",
+      fromNumber: "972521112233",
+      toNumber: "972501234567",
+      body: "Where's my delivery?",
+      matchedLabel: "Dana Levi",
+      matchedEntityName: "customer",
+      matchedRecordId: 1,
+      status: "received",
+      createdAt: new Date().toISOString(),
+    };
+    const entities: Entity[] = [
+      {
+        name: "Customer",
+        fields: [
+          { name: "name", type: "text", required: true },
+          { name: "phone", type: "text", required: false },
+        ],
+      },
+    ];
+    globalThis.fetch = (async (input: string, init?: RequestInit): Promise<Response> => {
+      const method = init?.method ?? "GET";
+      if (method === "GET" && input === "/api/projects/proj1/integrations/whatsapp/status") {
+        return new Response(
+          JSON.stringify({ status: "connected", phoneNumber: "972501234567", qrDataUrl: null, error: null }),
+          { status: 200, headers: { "content-type": "application/json" } },
+        );
+      }
+      if (method === "GET" && input === "/api/projects/proj1/integrations/whatsapp/messages") {
+        return new Response(JSON.stringify({ messages: [message] }), { status: 200, headers: { "content-type": "application/json" } });
+      }
+      throw new Error(`unexpected request ${method} ${input}`);
+    }) as typeof fetch;
+    try {
+      render(
+        React.createElement(
+          ThemeProvider,
+          null,
+          React.createElement(
+            LanguageProvider,
+            null,
+            React.createElement(WhatsAppPanel, {
+              entities,
+              onCreateRecordFromMessage: () => {},
+              projectId: "proj1", userId: "user1",
+              projectName: "Test Project",
+              onClose: () => {},
+              onJumpToEntity: () => {},
+              onJumpToRecord: () => {},
+            }),
+          ),
+        ),
+      );
+      await waitForCondition(() => document.querySelectorAll(".whatsapp-log-entity").length === 1);
+
+      assert.equal(
+        document.querySelector(".whatsapp-log-entity")!.textContent,
+        "Customer",
+        "must resolve the stale-cased \"customer\" to the entity's current real name \"Customer\" instead of the raw stored name",
+      );
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+});
+
+/**
+ * Round 1487: same stale-cased matchedEntityName scenario as the entity-label
+ * test above, but for the "jump to" click handlers. Before this fix,
+ * onJumpToEntity/onJumpToRecord were called with the raw stale name
+ * straight from the message, which App.tsx's setActiveEntity then matches
+ * against the live entities list with an exact-case `===` (its own
+ * entity-tabs filter) -- so the WhatsApp panel would close but no entity
+ * tab would ever open, silently, with no error shown anywhere.
+ */
+test("WhatsAppPanel's jump-to-entity/jump-to-record handlers resolve a stale-cased matchedEntityName to the entity's current name, not the raw stored one", async () => {
+  await withJsdom(async () => {
+    const originalFetch = globalThis.fetch;
+    const matchedNoRecordId: WhatsAppMessageLogEntry = {
+      id: "m1",
+      direction: "in",
+      fromNumber: "972521112233",
+      toNumber: "972501234567",
+      body: "Hello",
+      matchedLabel: "Dana Levi",
+      matchedEntityName: "customer",
+      matchedRecordId: null,
+      status: "received",
+      createdAt: new Date().toISOString(),
+    };
+    const entities: Entity[] = [
+      {
+        name: "Customer",
+        fields: [{ name: "name", type: "text", required: true }],
+      },
+    ];
+    globalThis.fetch = (async (input: string, init?: RequestInit): Promise<Response> => {
+      const method = init?.method ?? "GET";
+      if (method === "GET" && input === "/api/projects/proj1/integrations/whatsapp/status") {
+        return new Response(
+          JSON.stringify({ status: "connected", phoneNumber: "972501234567", qrDataUrl: null, error: null }),
+          { status: 200, headers: { "content-type": "application/json" } },
+        );
+      }
+      if (method === "GET" && input === "/api/projects/proj1/integrations/whatsapp/messages") {
+        return new Response(JSON.stringify({ messages: [matchedNoRecordId] }), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        });
+      }
+      throw new Error(`unexpected request ${method} ${input}`);
+    }) as typeof fetch;
+    const entityJumps: string[] = [];
+    try {
+      render(
+        React.createElement(
+          ThemeProvider,
+          null,
+          React.createElement(
+            LanguageProvider,
+            null,
+            React.createElement(WhatsAppPanel, {
+              entities,
+              onCreateRecordFromMessage: () => {},
+              projectId: "proj1", userId: "user1",
+              projectName: "Test Project",
+              onClose: () => {},
+              onJumpToEntity: (entityName: string) => entityJumps.push(entityName),
+              onJumpToRecord: () => {},
+            }),
+          ),
+        ),
+      );
+      await waitForCondition(() => document.querySelectorAll(".whatsapp-log-who-link").length === 1);
+
+      fireEvent.click(document.querySelector(".whatsapp-log-who-link")!);
+      assert.deepEqual(
+        entityJumps,
+        ["Customer"],
+        "must resolve the stale-cased \"customer\" to the entity's current real name \"Customer\" before calling onJumpToEntity, or App.tsx's own exact-case activeEntity filter would match nothing",
+      );
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+});
+
+/**
  * New in this round: the message log had no way to keep a real record of a
  * WhatsApp conversation before using the panel's own "Clear history"
  * button, which is irreversible -- exactly the gap Business Twin's report

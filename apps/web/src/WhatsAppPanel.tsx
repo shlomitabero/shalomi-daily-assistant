@@ -250,10 +250,34 @@ export function WhatsAppPanel({
     return (occurrences.get(label) ?? 0) > 1 ? `${label} (${entity.name})` : label;
   }
   const entityOccurrences = useMemo(() => entityLabelOccurrences(entities), [entities]);
-  /** Falls back to the raw stored entityName when the entity has since been renamed or deleted -- same convention as AutomationsPanel's own entityLabel helper for a rule whose entity no longer resolves. */
+  /**
+   * Falls back to the raw stored entityName when the entity has since been
+   * renamed or deleted -- same convention as AutomationsPanel's own
+   * entityLabel helper for a rule whose entity no longer resolves. Round
+   * 1487: a message's own matchedEntityName is captured once, at match
+   * time, so a later case-only entity rename (e.g. "customer" ->
+   * "Customer") leaves it permanently stale -- the same recase-vs-removal
+   * gap rounds 1485/1486 closed for AutomationsPanel's ruleEntity, now
+   * resolved the same way here before falling back to the raw name.
+   */
   function matchedEntityLabel(entityName: string): string {
-    const entity = entities.find((e) => e.name === entityName);
+    const entity = entities.find((e) => e.name === entityName) ?? entities.find((e) => e.name.toLowerCase() === entityName.toLowerCase());
     return entity ? entityDisplayLabel(entity, entityOccurrences) : entityName;
+  }
+  /**
+   * Round 1487: onJumpToRecord/onJumpToEntity ultimately feed App.tsx's
+   * `setActiveEntity`, which is matched against the live entities list with
+   * an exact-case `===` (App.tsx's own entity-tabs filter). Passing the
+   * stale, possibly-recased matchedEntityName straight through -- as this
+   * used to do -- makes that filter match nothing after a case-only rename:
+   * the WhatsApp panel closes but no entity tab opens, with no error shown.
+   * Resolves to the entity's current name first, same fallback as
+   * matchedEntityLabel just above, so a jump always lands on a real tab
+   * when the entity still exists under any casing.
+   */
+  function resolvedJumpTargetName(entityName: string): string {
+    const entity = entities.find((e) => e.name === entityName) ?? entities.find((e) => e.name.toLowerCase() === entityName.toLowerCase());
+    return entity ? entity.name : entityName;
   }
   const [status, setStatus] = useState<WhatsAppStatusView | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
@@ -1494,8 +1518,8 @@ export function WhatsAppPanel({
                         aria-label={t("whatsapp.log.jumpTo", { name: m.matchedLabel ?? "" })}
                         onClick={() =>
                           m.matchedRecordId != null
-                            ? onJumpToRecord(m.matchedEntityName!, m.matchedRecordId)
-                            : onJumpToEntity(m.matchedEntityName!)
+                            ? onJumpToRecord(resolvedJumpTargetName(m.matchedEntityName!), m.matchedRecordId)
+                            : onJumpToEntity(resolvedJumpTargetName(m.matchedEntityName!))
                         }
                       >
                         <Highlighted text={m.matchedLabel!} query={search} />

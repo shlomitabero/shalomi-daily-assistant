@@ -202,9 +202,16 @@ function entityDisplayLabel(entity: Entity, occurrences: Map<string, number>): s
   return (occurrences.get(label) ?? 0) > 1 ? `${label} (${entity.name})` : label;
 }
 
-/** Falls back to the raw stored entityName when the entity has since been renamed or deleted -- same convention as whatsappLog.ts's/WhatsAppPanel.tsx's own matchedEntityLabel helpers for a reference that no longer resolves. */
+/**
+ * Falls back to the raw stored entityName when the entity has since been
+ * renamed or deleted -- same convention as whatsappLog.ts's/WhatsAppPanel.tsx's
+ * own matchedEntityLabel helpers for a reference that no longer resolves.
+ * Round 1487: added the same case-insensitive fallback those two copies
+ * just got, so the backup ZIP's WhatsApp Messages CSV doesn't fall back to
+ * the raw stale-cased internal name after a case-only entity rename either.
+ */
 function matchedEntityLabel(entityName: string, entities: Entity[]): string {
-  const entity = entities.find((e) => e.name === entityName);
+  const entity = entities.find((e) => e.name === entityName) ?? entities.find((e) => e.name.toLowerCase() === entityName.toLowerCase());
   return entity ? entityDisplayLabel(entity, entityLabelOccurrences(entities)) : entityName;
 }
 
