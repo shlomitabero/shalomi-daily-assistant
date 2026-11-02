@@ -7664,7 +7664,16 @@ export function EntityView({ entity, highlightRecordId, onHighlightHandled, onJu
         )}
         {importWarnings.length > 0 && (
           <button type="button" className="import-errors-toggle" onClick={() => setShowImportWarnings((v) => !v)}>
-            {showImportWarnings ? "Hide warnings" : \`Show \${importWarnings.length} possible duplicates\`}
+            {/* Round 1517: round 1391's own live-preview fix for this identical
+                string (EntityPanel.tsx, split into .one/.many i18n keys) wrongly
+                concluded this hardcoded codegen.ts sibling had "no port needed"
+                because it only checked for an i18n key to port -- codegen.ts has
+                no i18n layer at all, so that check could never find anything,
+                but the underlying singular/plural defect was never independently
+                checked here. This was the one site this file's own established
+                \${n === 1 ? "" : "s"} convention (formatImportSummary, the parse-
+                errors message) hadn't reached. */}
+            {showImportWarnings ? "Hide warnings" : \`Show \${importWarnings.length} possible duplicate\${importWarnings.length === 1 ? "" : "s"}\`}
           </button>
         )}
       </div>

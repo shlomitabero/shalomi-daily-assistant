@@ -12886,11 +12886,43 @@ test("the exported EntityView's handleImportFile/handleImportJsonFile route thro
   assert.ok(handleImportJsonSrc, "expected to find handleImportJsonFile in generated output");
   assert.match(handleImportJsonSrc!, /setImportWarnings\(warnings\)/, "handleImportJsonFile must surface buildImportRecordsFromJson's own warnings");
 
-  assert.match(entityViewJsx, /Show \$\{importWarnings\.length\} possible duplicates/, "expected the 'Show N possible duplicates' toggle label in generated output");
+  assert.match(
+    entityViewJsx,
+    /Show \$\{importWarnings\.length\} possible duplicate\$\{importWarnings\.length === 1 \? "" : "s"\}/,
+    "expected the 'Show N possible duplicate(s)' toggle label, with its own singular/plural form, in generated output",
+  );
   assert.match(entityViewJsx, /className="csv-import-warnings"/, "expected the warnings list's own CSS class in generated output");
 
   const stylesCss = files.find((f) => f.path === "web/src/styles.css")!.content;
   assert.match(stylesCss, /\.csv-import-warnings \{[^}]*color: var\(--warning\)/, "the warnings list must use the advisory --warning token, not --danger");
+});
+
+/**
+ * Round 1517: the "Show N possible duplicates" toggle label just above
+ * hardcoded the plural with no singular form at all -- round 1391's own
+ * live-preview fix for this identical string (EntityPanel.tsx, split into
+ * .one/.many i18n keys) wrongly concluded this codegen.ts sibling needed
+ * "no port" because it only checked for an i18n key to port, and
+ * codegen.ts has no i18n layer to find one in -- the underlying
+ * singular/plural defect in codegen.ts's own hardcoded string was never
+ * independently checked. Extracts the real generated template literal
+ * and exercises it directly, the same "extract real source, exercise via
+ * new Function" pattern this file already uses for formatEntityRecordCount.
+ */
+test("the exported EntityView's 'Show N possible duplicates' toggle label uses the singular form when there is exactly one", () => {
+  const files = generateExportFiles(project);
+  const entityViewJsx = files.find((f) => f.path === "web/src/components/EntityView.jsx")!.content;
+
+  const labelExprSrc = entityViewJsx.match(
+    /Show \$\{importWarnings\.length\} possible duplicate\$\{importWarnings\.length === 1 \? "" : "s"\}/,
+  )?.[0];
+  assert.ok(labelExprSrc, "expected to find the possible-duplicates toggle label's own template literal in generated output");
+
+  const importWarningsLabel = new Function("importWarnings", `return \`${labelExprSrc}\`;`) as (importWarnings: {
+    length: number;
+  }) => string;
+  assert.equal(importWarningsLabel({ length: 1 }), "Show 1 possible duplicate", "exactly one warning must read 'duplicate', not 'duplicates'");
+  assert.equal(importWarningsLabel({ length: 2 }), "Show 2 possible duplicates");
 });
 
 /**
