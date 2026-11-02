@@ -2844,6 +2844,11 @@ const POSITIVE_WORDS = [
   // the built-in Property domain entity's status enum uses "Sold" as its
   // own successful-outcome state.
   "sold",
+  // round 1490: mirrors the live preview's own entityFormatting.ts fix --
+  // the same Property status enum's "Rented" and the built-in Vehicle
+  // domain entity's status enum both use "Rented" as their own
+  // successful-outcome state.
+  "rented",
 ];
 // round 458: the "un-"/"dis-" negated forms below must stay listed here too --
 // each contains a POSITIVE_WORDS entry as a literal substring ("unpaid"
@@ -2873,6 +2878,10 @@ const NEGATIVE_WORDS = [
   // "unsold" contains a POSITIVE_WORDS entry ("sold") as a literal
   // substring.
   "unsold",
+  // round 1490: mirrors the live preview's own entityFormatting.ts fix --
+  // "unrented" contains a POSITIVE_WORDS entry ("rented") as a literal
+  // substring.
+  "unrented",
 ];
 // Mirrors the live preview's own entityFormatting.ts formatRecordCreatedAt
 // (round 168): every record carries a real, server-assigned createdAt

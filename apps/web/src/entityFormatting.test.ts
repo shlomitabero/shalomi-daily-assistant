@@ -265,6 +265,28 @@ test("badgeTone recognizes 'Sold' as positive, matching Property's real status e
   assert.equal(badgeTone("Unsold"), "negative");
 });
 
+/**
+ * Round 1490's finding: the same Property status enum's "Rented" is its
+ * OTHER successful-outcome state (found a tenant, not a buyer), and the
+ * built-in Vehicle domain entity's own status enum (spec-engine/
+ * domainEntities.ts: ["Available", "InService", "Rented"]) uses "Rented"
+ * the same way -- the asset currently generating revenue, not sitting idle
+ * ("Available") or out for repair ("InService"). It fell through to
+ * neutral gray, the same tone as "Available"/"InService", since "rented"
+ * was missing from POSITIVE_WORDS. Also confirms the negated collision
+ * guard added alongside it: "unrented" is a real, ordinary real-estate/
+ * vehicle-fleet term (currently NOT rented out) that contains "rented" as
+ * a literal substring, the same "unsold" contains "sold" shape round 1483
+ * already fixed -- without the NEGATIVE_WORDS entry, it would be misread
+ * as positive, the opposite of its meaning.
+ */
+test("badgeTone recognizes 'Rented' as positive, matching Property/Vehicle's real status enums, without misreading its negated form", () => {
+  assert.equal(badgeTone("Rented"), "positive");
+  assert.equal(badgeTone("rented"), "positive");
+  assert.equal(badgeTone("InService"), "neutral");
+  assert.equal(badgeTone("Unrented"), "negative");
+});
+
 test("formatDateValue formats a valid ISO date per locale, and leaves an invalid one unchanged", () => {
   const result = formatDateValue("2026-03-15", "en");
   assert.match(result, /3\/15\/2026|15\/3\/2026/); // exact format is locale/engine-dependent, just confirm it parsed

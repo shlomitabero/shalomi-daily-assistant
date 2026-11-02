@@ -103,6 +103,20 @@ const POSITIVE_WORDS = [
   // property showed the same neutral gray badge as "Available"/
   // "UnderContract" instead of reading as positive.
   "sold",
+  // round 1490: the same Property status enum's "Rented" is its OTHER
+  // successful-outcome state (found a tenant, not a buyer) -- and the
+  // built-in Vehicle domain entity's own status enum (["Available",
+  // "InService", "Rented"]) uses "Rented" the same way, the asset
+  // currently generating revenue, not sitting idle ("Available") or out
+  // for repair ("InService"). Unlike "Refunded" (round 1487, correctly
+  // left unclassified -- a genuinely two-sided outcome, reversed sale vs.
+  // neutral administrative action), "Rented" has no competing negative
+  // reading: it's a closed, successful transaction exactly like "Sold",
+  // just for a lease instead of a purchase. That it's not permanent (a
+  // rented property eventually returns to "Available") doesn't make the
+  // state itself negative or neutral, any more than a sold item being
+  // later returned would retroactively make "Sold" ambiguous.
+  "rented",
 ];
 const NEGATIVE_WORDS = [
   "lost",
@@ -184,6 +198,13 @@ const NEGATIVE_WORDS = [
   // substring, so it must be listed here too or it would be misread as
   // positive, the exact opposite of its meaning.
   "unsold",
+  // round 1490: adding "rented" to POSITIVE_WORDS just above introduces the
+  // identical negated-word collision round 458 already fixed for every
+  // other entry -- "unrented" is a real, ordinary real-estate/vehicle-fleet
+  // term (a property or car currently NOT rented out) that contains
+  // "rented" as a literal substring, so it must be listed here too or it
+  // would be misread as positive, the exact opposite of its meaning.
+  "unrented",
 ];
 
 const DATE_FORMAT = /^(\d{4})-(\d{2})-(\d{2})$/;
