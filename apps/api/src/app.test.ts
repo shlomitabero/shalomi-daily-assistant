@@ -20085,6 +20085,56 @@ test("POST /public/webhook-in/:projectId/:entityName accepts a plain HTML form's
   });
 });
 
+/**
+ * Round 1511: the entity-name lookup two lines below already falls back
+ * to case-insensitive matching (round 1185's own reasoning: an external
+ * sender can't be trusted to match this app's exact casing), but the
+ * same reasoning was never extended to field names inside the body
+ * itself -- insertRecord/coerceValue look up `data[field.name]` with an
+ * exact-case key and no fallback, so a real integrator who types "Name"
+ * where the entity's field is actually "name" either got a 400 (a
+ * required field) or had the value silently discarded as null (an
+ * optional field), even though a value was genuinely sent.
+ */
+test("POST /public/webhook-in/:projectId/:entityName resolves field names case-insensitively, mirroring the entity-name lookup's own round-1185 fallback", async () => {
+  await withServer(async (baseUrl, db) => {
+    const email = `webhook-in-field-case-${randomUUID()}@example.com`;
+    const authToken = await signup(baseUrl, email);
+    const user = findUserByEmail(db, email)!;
+    const spec: ProductSpec = {
+      summary: "test",
+      personas: [],
+      roles: ["Admin"],
+      entities: [{ name: "Lead", fields: [{ name: "name", type: "text", required: true }, { name: "phone", type: "text" }] }],
+      screens: [],
+      assumptions: [],
+      openQuestions: [],
+    };
+    const projectId = randomUUID();
+    insertProject(db, { id: projectId, ownerId: user.id, name: "CRM", description: "test", spec });
+    diffAndMigrate(db, projectId, undefined, spec);
+    markProjectBuilt(db, projectId);
+
+    const tokenRes = await fetch(`${baseUrl}/api/projects/${projectId}/inbound-webhook-token`, { headers: authHeaders(authToken) });
+    const { token: webhookToken } = (await tokenRes.json()) as { token: string };
+
+    const webhookRes = await fetch(`${baseUrl}/api/public/webhook-in/${projectId}/Lead?token=${webhookToken}`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ Name: "Dana", PHONE: "972500000001" }),
+    });
+    assert.equal(webhookRes.status, 201, "a required field sent under a different letter case must not be rejected as if nothing was sent");
+    const { id: recordId } = (await webhookRes.json()) as { id: string };
+
+    const listRes = await fetch(`${baseUrl}/api/projects/${projectId}/entities/Lead`, { headers: authHeaders(authToken) });
+    const { records } = (await listRes.json()) as { records: { id: string; name: string; phone: string }[] };
+    const created = records.find((r) => r.id === recordId);
+    assert.ok(created, "expected the record the route reported creating to actually exist");
+    assert.equal(created!.name, "Dana", "a value sent under a different letter case must actually reach the created record, not be silently dropped as null");
+    assert.equal(created!.phone, "972500000001");
+  });
+});
+
 test("POST /public/webhook-in/:projectId/:entityName 404s for a missing, wrong, or never-requested token, a nonexistent entity, or a nonexistent project -- the token itself is the only authentication", async () => {
   await withServer(async (baseUrl, db) => {
     const email = `webhook-in-bad-${randomUUID()}@example.com`;

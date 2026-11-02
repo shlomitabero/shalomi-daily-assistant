@@ -2,7 +2,7 @@ import { timingSafeEqual } from "node:crypto";
 import { Router, type Request, type Response } from "express";
 import type { ForgeDatabase } from "@forge/db";
 import { getInboundWebhookToken, insertRecord, recordInboundWebhookDelivery, recordInboundWebhookFailure } from "@forge/db";
-import { ProductSpecSchema, type Project } from "@forge/shared";
+import { ProductSpecSchema, type Entity, type Project } from "@forge/shared";
 import type { WhatsAppWebManager } from "../whatsappWeb.js";
 import type { EmailSender } from "../email.js";
 import { runAutomationsForRecordChange } from "../automations.js";
@@ -21,6 +21,38 @@ function asyncRoute(fn: (req: Request, res: Response) => Promise<void> | void) {
   return (req: Request, res: Response, next: (err?: unknown) => void) => {
     Promise.resolve(fn(req, res)).catch(next);
   };
+}
+
+/**
+ * Round 1511: this route's entity-name lookup two lines below already
+ * falls back to a case-insensitive match, because an external sender
+ * (Stripe, Typeform, a website's own form handler -- this file's own
+ * top-of-file comment) can't be trusted to match this app's exact
+ * casing. The same reasoning was never extended to FIELD names inside
+ * the body itself: insertRecord/coerceValue (packages/db/src/repository.ts)
+ * look up `data[field.name]` with an exact-case key and no fallback, so a
+ * real integrator who configures a webhook payload template by hand and
+ * types e.g. "Name" where this entity's field is actually "name" either
+ * gets a 400 "Field is required" (a required field) or silently has that
+ * value discarded as null (an optional field) -- even though a value was
+ * genuinely sent, just under different letter case. EntitySchema's own
+ * `.refine` already guarantees no two fields on one entity collide
+ * case-insensitively, so this remap can never be ambiguous. Deliberately
+ * scoped to this route rather than insertRecord/coerceValue themselves --
+ * every other caller (the authenticated create route, CSV import) already
+ * builds its body from entity.fields' own exact casing and must not change
+ * behavior.
+ */
+function normalizeBodyKeys(entity: Entity, body: Record<string, unknown>): Record<string, unknown> {
+  const normalized: Record<string, unknown> = { ...body };
+  for (const [key, value] of Object.entries(body)) {
+    if (entity.fields.some((f) => f.name === key)) continue;
+    const match = entity.fields.find((f) => f.name.toLowerCase() === key.toLowerCase());
+    if (match && !(match.name in normalized)) {
+      normalized[match.name] = value;
+    }
+  }
+  return normalized;
 }
 
 /**
@@ -154,7 +186,7 @@ export function createInboundWebhookRouter(db: ForgeDatabase, whatsapp: WhatsApp
         async () => {
           let record: ReturnType<typeof insertRecord>;
           try {
-            record = insertRecord(db, projectId, entity, req.body ?? {});
+            record = insertRecord(db, projectId, entity, normalizeBodyKeys(entity, req.body ?? {}));
           } catch (err) {
             // Round 1471: see recordInboundWebhookFailure's own doc comment
             // (packages/db) for why this is recorded here specifically --
