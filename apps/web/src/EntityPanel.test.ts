@@ -2577,6 +2577,54 @@ test("EntityPanel's Table/Board view toggle reports its selected state via aria-
 });
 
 /**
+ * Round 1499: handleSubmit's own missingField/invalidField checks
+ * (long-established, round 702/939/984) only ever surfaced a disconnected
+ * `role="status"` banner naming the field in plain text -- a screen-reader
+ * user had no way to tell WHICH control on the form was actually invalid,
+ * and focus stayed wherever it already was (typically the Save button)
+ * instead of moving to the broken field. Confirms the add/edit form's
+ * real failing <input> now carries aria-invalid + aria-describedby
+ * pointing at the error banner's own id, that real DOM focus actually
+ * lands on it, and that both clear again once the user edits that field.
+ */
+test("EntityPanel's add/edit form marks the field that actually failed validation with aria-invalid/aria-describedby and moves focus to it", async () => {
+  await withJsdom(async () => {
+    const store: EntityRecord[] = [];
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = mockRecordsFetch(store) as typeof fetch;
+    try {
+      renderEntityPanel();
+      await waitForCondition(() => document.querySelector(".record-form") !== null);
+
+      // Fill "status" (required too) but leave "name" (also required) blank,
+      // so missingField unambiguously flags "name" specifically.
+      fireEvent.change(document.querySelector(".record-form select") as HTMLSelectElement, { target: { value: "new" } });
+
+      const nameInput = document.querySelector('.record-form input[type="text"]') as HTMLInputElement;
+      const form = document.querySelector(".record-form") as HTMLFormElement;
+      fireEvent.submit(form);
+
+      await waitForCondition(() => document.querySelector(".record-form + .error") !== null);
+      const errorEl = document.querySelector(".record-form + .error") as HTMLElement;
+      assert.match(errorEl.textContent ?? "", /required/i, "sanity check: the usual banner text must still be there");
+      assert.ok(errorEl.id, "the error banner must carry a real id for aria-describedby to point at");
+
+      assert.equal(nameInput.getAttribute("aria-invalid"), "true", "the actual field that failed must carry aria-invalid");
+      assert.equal(nameInput.getAttribute("aria-describedby"), errorEl.id, "aria-describedby must point at the real error banner's own id");
+      assert.equal(document.activeElement, nameInput, "focus must move to the field that actually failed, not stay on the Save button");
+
+      // Typing into the now-flagged field must drop the stale aria-invalid/
+      // aria-describedby immediately, before any new submit attempt.
+      fireEvent.change(nameInput, { target: { value: "Acme Corp" } });
+      assert.equal(nameInput.getAttribute("aria-invalid"), null, "aria-invalid must clear once the user edits the field it was flagging");
+      assert.equal(nameInput.getAttribute("aria-describedby"), null, "aria-describedby must clear along with aria-invalid");
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+});
+
+/**
  * New in this round: selectedIds is view-mode-agnostic state, but the only
  * UI that can ever set it (the row checkboxes, select-all, and the "x"
  * shortcut) lives entirely in Table view -- Board's own card and the

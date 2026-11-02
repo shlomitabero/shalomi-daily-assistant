@@ -1182,12 +1182,27 @@ function FieldInput({
   originalValue,
   excludeRecordIds,
   formInstanceKeyRef,
+  invalid,
+  errorId,
 }: {
   field: Field;
   value: unknown;
   onChange: (value: unknown) => void;
   relatedEntity?: Entity;
   relatedEntityRecords?: EntityRecord[];
+  /**
+   * Round 1499: set only by the plain add/edit form's own call site, once
+   * handleSubmit's missingField/invalidField check rejects this exact
+   * field -- gives its real control aria-invalid plus aria-describedby
+   * pointing at errorId (the submit-error banner's own id), instead of
+   * leaving a screen-reader user with only a disconnected role="status"
+   * announcement and no way to tell which control needs fixing. Neither
+   * the inline-cell-edit nor the bulk-edit call sites pass these (both
+   * surface their own validation failures some other way already), so
+   * they're always undefined there, same as before this round.
+   */
+  invalid?: boolean;
+  errorId?: string;
   /**
    * Round 1037: the record id(s) a self-referencing relation field
    * (field.relationTo === this entity's own name -- e.g. Employee.managerId
@@ -1353,6 +1368,8 @@ function FieldInput({
           autoFocus={autoFocus}
           onBlur={onBlur}
           onKeyDown={onKeyDown}
+          aria-invalid={invalid || undefined}
+          aria-describedby={invalid ? errorId : undefined}
         >
           <option value="">{t("entity.select")}</option>
           {!hasCurrentRelationOption && <option value={currentRelationId as number}>{`#${currentRelationId}`}</option>}
@@ -1374,6 +1391,8 @@ function FieldInput({
         autoFocus={autoFocus}
         onBlur={onBlur}
         onKeyDown={onKeyDown}
+        aria-invalid={invalid || undefined}
+        aria-describedby={invalid ? errorId : undefined}
       />
     );
   }
@@ -1396,6 +1415,8 @@ function FieldInput({
         autoFocus={autoFocus}
         onBlur={onBlur}
         onKeyDown={onKeyDown}
+        aria-invalid={invalid || undefined}
+        aria-describedby={invalid ? errorId : undefined}
       >
         {/* Round 981: this placeholder used to be unconditionally disabled,
             unlike the relation branch's own identical "no value" placeholder
@@ -1426,6 +1447,8 @@ function FieldInput({
         autoFocus={autoFocus}
         onBlur={onBlur}
         onKeyDown={onKeyDown}
+        aria-invalid={invalid || undefined}
+        aria-describedby={invalid ? errorId : undefined}
       />
     );
   }
@@ -1458,6 +1481,8 @@ function FieldInput({
         autoFocus={autoFocus}
         onBlur={onBlur}
         onKeyDown={onKeyDown}
+        aria-invalid={invalid || undefined}
+        aria-describedby={invalid ? errorId : undefined}
       />
     );
   }
@@ -1471,6 +1496,8 @@ function FieldInput({
         autoFocus={autoFocus}
         onBlur={onBlur}
         onKeyDown={onKeyDown}
+        aria-invalid={invalid || undefined}
+        aria-describedby={invalid ? errorId : undefined}
       />
     );
   }
@@ -1513,6 +1540,8 @@ function FieldInput({
           type="file"
           required={field.required && !currentFile}
           aria-label={t("entity.file.choose")}
+          aria-invalid={invalid || undefined}
+          aria-describedby={invalid ? errorId : undefined}
           autoFocus={autoFocus}
           onBlur={onBlur}
           onChange={async (e) => {
@@ -1571,6 +1600,8 @@ function FieldInput({
       autoFocus={autoFocus}
       onBlur={onBlur}
       onKeyDown={onKeyDown}
+      aria-invalid={invalid || undefined}
+      aria-describedby={invalid ? errorId : undefined}
     />
   );
 }
@@ -1664,9 +1695,24 @@ export function EntityPanel({
   // refreshRequestId below needs its own ref rather than reading
   // formInstanceKey's state directly.
   const formInstanceKeyRef = useRef(0);
+  // Round 1499: which field (if any) handleSubmit's own missingField/
+  // invalidField checks most recently rejected -- lets the one specific
+  // <input>/<select>/<textarea> that actually failed carry aria-invalid
+  // and aria-describedby pointing at the error text below, instead of
+  // only the disconnected role="status" banner every prior round left
+  // this form with (see handleSubmit's own check just below for why a
+  // screen-reader user otherwise has no way to tell WHICH field is wrong).
+  const [invalidFieldName, setInvalidFieldName] = useState<string | null>(null);
   function bumpFormInstanceKey() {
     formInstanceKeyRef.current += 1;
     setFormInstanceKey(formInstanceKeyRef.current);
+    // Round 1499: every call site of this function starts a genuinely new
+    // editing session (a different record, a fresh blank create, an
+    // abandoned edit) -- a field flagged invalid by a PREVIOUS submit
+    // attempt must not keep wearing aria-invalid/aria-describedby (see
+    // handleSubmit's own invalidFieldName doc comment below) into a
+    // session its own fields had nothing to do with.
+    setInvalidFieldName(null);
   }
   // Round 1333: the record-form's own create/edit draft is this app's
   // highest-traffic typed input of all, yet unlike the 6 dialogs
@@ -3377,6 +3423,20 @@ export function EntityPanel({
     return () => window.removeEventListener("keydown", handleKeyDown);
   }, [entity, readOnly]);
 
+  /**
+   * Round 1499: moves real keyboard/screen-reader focus to the one field
+   * handleSubmit's own missingField/invalidField check just rejected,
+   * mirroring startCreateNew's own `firstField?.focus()` convention just
+   * below -- a sighted mouse user already sees the row highlighted via
+   * the fieldInvalid prop (FieldInput below), but without this a keyboard
+   * or screen-reader user submitting an invalid form had no indication of
+   * where focus even was, let alone which field needs fixing.
+   */
+  function focusFormField(fieldName: string) {
+    const row = formRef.current?.querySelector<HTMLElement>(`[data-field-name="${fieldName}"]`);
+    row?.querySelector<HTMLElement>("input, select, textarea")?.focus();
+  }
+
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
     // Round 1264: see handleDelete's own identical guard -- the form's own
@@ -3387,6 +3447,7 @@ export function EntityPanel({
     // against it.
     if (writesInFlight) return;
     setError(null);
+    setInvalidFieldName(null);
     // Checked client-side (with noValidate on the <form>) rather than
     // relying on the browser's own native required-field validation: that
     // native tooltip is rendered by the OS/browser in its own locale, not
@@ -3409,6 +3470,12 @@ export function EntityPanel({
     const missingField = entity.fields.find((f) => f.required && String(form[f.name] ?? "").trim() === "");
     if (missingField) {
       setError(t("entity.form.requiredField", { field: missingField.label ?? missingField.name }));
+      // Round 1499: see invalidFieldName's own doc comment above -- marks
+      // the actual failing control, not just the banner, and moves focus
+      // to it the same way startCreateNew already does for a fresh form's
+      // first field (this file's own established convention).
+      setInvalidFieldName(missingField.name);
+      focusFormField(missingField.name);
       return;
     }
     // Round 984: mirrors missingField just above for the "present but not
@@ -3418,6 +3485,8 @@ export function EntityPanel({
     const invalidField = entity.fields.find((f) => invalidNumberField(f, form[f.name]));
     if (invalidField) {
       setError(t("entity.form.invalidNumber", { field: invalidField.label ?? invalidField.name }));
+      setInvalidFieldName(invalidField.name);
+      focusFormField(invalidField.name);
       return;
     }
     // Nothing disables startEdit/startCreateNew/the in-form Delete button
@@ -4748,7 +4817,7 @@ export function EntityPanel({
          * builds a plain keyed object regardless of field order.
          */}
         {orderedFields.map((field) => (
-          <label key={`${field.name}-${formInstanceKey}`} className="field-row">
+          <label key={`${field.name}-${formInstanceKey}`} className="field-row" data-field-name={field.name}>
             <FieldLabelEditor
               entityName={entity.name}
               field={field}
@@ -4760,7 +4829,14 @@ export function EntityPanel({
             <FieldInput
               field={field}
               value={form[field.name]}
-              onChange={(v) => setForm((prev) => ({ ...prev, [field.name]: v }))}
+              onChange={(v) => {
+                setForm((prev) => ({ ...prev, [field.name]: v }));
+                // Round 1499: once the user actually edits the field
+                // handleSubmit's own check just flagged, drop the stale
+                // aria-invalid/aria-describedby rather than leaving it
+                // marked invalid through a value it hasn't even tried yet.
+                if (invalidFieldName === field.name) setInvalidFieldName(null);
+              }}
               // Round 1178: case-insensitive, same reason as the inline-cell-edit
               // call site above.
               relatedEntity={field.relationTo ? allEntities.find((e) => e.name.toLowerCase() === field.relationTo!.toLowerCase()) : undefined}
@@ -4772,6 +4848,14 @@ export function EntityPanel({
               editingId={editingId}
               originalValue={editingOriginalRef.current?.[field.name]}
               formInstanceKeyRef={formInstanceKeyRef}
+              // Round 1499: see this component's own invalidFieldName doc
+              // comment above -- gives the one field that actually failed
+              // validation real aria-invalid/aria-describedby semantics
+              // pointing at the error banner below, instead of leaving a
+              // screen-reader user with only a disconnected role="status"
+              // announcement and no way to tell which control is wrong.
+              invalid={invalidFieldName === field.name}
+              errorId={`entity-form-error-${entity.name}`}
             />
           </label>
         ))}
@@ -4841,7 +4925,7 @@ export function EntityPanel({
       )}
 
       {error && (
-        <p className="error" role="status">
+        <p className="error" role="status" id={`entity-form-error-${entity.name}`}>
           {error}
         </p>
       )}
