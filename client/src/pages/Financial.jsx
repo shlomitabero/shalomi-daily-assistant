@@ -11,6 +11,8 @@ export default function Financial() {
   const [error, setError] = useState('');
   const [refreshingId, setRefreshingId] = useState(null);
   const [refreshingAll, setRefreshingAll] = useState(false);
+  const [addBusy, setAddBusy] = useState(false);
+  const [tradeBusy, setTradeBusy] = useState(false);
 
   function refresh() {
     api.getFinancialWatchlist().then((r) => { setWatchlist(r.watchlist); setConnected(r.connected); }).catch((err) => setError(err.data?.error || err.message));
@@ -22,12 +24,15 @@ export default function Financial() {
     e.preventDefault();
     if (!symbol.trim()) return;
     setError('');
+    setAddBusy(true);
     try {
       await api.addToWatchlist(symbol.trim().toUpperCase());
       setSymbol('');
       refresh();
     } catch (err) {
       setError(err.data?.error || err.message);
+    } finally {
+      setAddBusy(false);
     }
   }
 
@@ -79,6 +84,7 @@ export default function Financial() {
   async function onPaperTrade(e) {
     e.preventDefault();
     setError('');
+    setTradeBusy(true);
     try {
       await api.paperTrade({
         symbol: trade.symbol.toUpperCase(), side: trade.side,
@@ -88,6 +94,8 @@ export default function Financial() {
       refresh();
     } catch (err) {
       setError(err.data?.error || err.message);
+    } finally {
+      setTradeBusy(false);
     }
   }
 
@@ -111,8 +119,8 @@ export default function Financial() {
           )}
         </div>
         <form onSubmit={onAddSymbol} className="field-row">
-          <input value={symbol} onChange={(e) => setSymbol(e.target.value)} placeholder="AAPL" />
-          <button className="btn btn-ghost" type="submit">הוסף</button>
+          <input value={symbol} onChange={(e) => setSymbol(e.target.value)} placeholder="AAPL" disabled={addBusy} />
+          <button className="btn btn-ghost" type="submit" disabled={addBusy}>{addBusy ? 'מוסיף…' : 'הוסף'}</button>
         </form>
         {error && <p className="form-error">{error}</p>}
         {watchlist.map((w) => (
@@ -148,7 +156,7 @@ export default function Financial() {
           <input type="number" placeholder="כמות" value={trade.quantity} onChange={(e) => setTrade({ ...trade, quantity: e.target.value })} />
         </div>
         {error && <p className="form-error">{error}</p>}
-        <button className="btn btn-ghost" type="submit">הרץ סימולציה</button>
+        <button className="btn btn-ghost" type="submit" disabled={tradeBusy}>{tradeBusy ? 'מריץ…' : 'הרץ סימולציה'}</button>
       </form>
 
       <section className="section">
