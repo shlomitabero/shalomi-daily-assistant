@@ -214,8 +214,30 @@ function coerceValue(field: Field, raw: unknown, projectId: string, entityName: 
         throw new ValidationError(`Field "${field.name}" must be a valid file descriptor`);
       }
       const url = (parsed as { url?: unknown } | null)?.url;
-      const expectedPrefix = `/api/uploads/${projectId}/${entityName}/`;
-      if (typeof url !== "string" || !url.startsWith(expectedPrefix) || !UPLOADED_FILENAME.test(url.slice(expectedPrefix.length))) {
+      // Round 1530: entityName here is the entity's CURRENT, canonical
+      // name -- a case-only entity rename (a real, supported refine
+      // operation) leaves every already-uploaded file's own stored url
+      // embedding the entity's casing AT UPLOAD TIME (createUploadMiddleware
+      // never rewrites it). An unconditional exact-case match below would
+      // reject re-submitting that record's own already-valid, unmodified
+      // file descriptor the moment its entity is renamed only by letter
+      // case -- the same case-only-rename hazard round 1270 already fixed
+      // for this descriptor's own read-side siblings (resolveUploadedFilePath/
+      // deleteUploadedFile in uploadPaths.ts), but never on this write-side
+      // gate. Falling back to a case-insensitive match of just the
+      // entity-name segment, after the exact projectId prefix still
+      // matched exactly, is as safe as the exact match: round 1210's own
+      // anti-cross-project-injection guarantee lives entirely in the
+      // projectId segment (unchanged here), and ProductSpecSchema's
+      // findCaseInsensitiveDuplicateEntityNames refine guarantees at most
+      // one entity name can ever match a given string this way, so the
+      // fallback is never ambiguous -- the same precedent findEntity's own
+      // round-1162 fallback already relies on.
+      const projectPrefix = `/api/uploads/${projectId}/`;
+      const entitySegment = `${entityName}/`;
+      const rest = typeof url === "string" && url.startsWith(projectPrefix) ? url.slice(projectPrefix.length) : null;
+      const entityMatches = rest !== null && (rest.startsWith(entitySegment) || rest.slice(0, entitySegment.length).toLowerCase() === entitySegment.toLowerCase());
+      if (rest === null || !entityMatches || !UPLOADED_FILENAME.test(rest.slice(entitySegment.length))) {
         throw new ValidationError(`Field "${field.name}" must be a valid file descriptor`);
       }
       return str;

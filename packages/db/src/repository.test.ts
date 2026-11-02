@@ -909,3 +909,36 @@ test("insertRecord rejects an array value for a file field, even a single-elemen
     ValidationError,
   );
 });
+
+/**
+ * Regression test for round 1530: a case-only entity rename (a real,
+ * supported refine operation) leaves every already-uploaded file's own
+ * stored descriptor embedding the entity's casing AT UPLOAD TIME --
+ * createUploadMiddleware never rewrites it. Round 1270 already fixed this
+ * exact casing hazard for this descriptor's own READ-side siblings
+ * (resolveUploadedFilePath/deleteUploadedFile in uploadPaths.ts), but
+ * coerceValue's own WRITE-side gate (round 908/1210) never got the same
+ * fallback -- an ordinary, unmodified round-trip PATCH of a record's own
+ * legitimate file field, submitted right after its entity was renamed
+ * only by letter case, was rejected as an invalid descriptor even though
+ * nothing about the file itself ever changed.
+ */
+test("updateRecord accepts a record's own unmodified file descriptor after its entity has been renamed only by letter case", () => {
+  const applicant: Entity = {
+    name: "applicant",
+    fields: [{ name: "resume", type: "file", required: false }],
+  };
+  const db = openDatabase(":memory:");
+  applyMigrations(db, "proj1", { ...spec, entities: [applicant] });
+  const descriptor = JSON.stringify({ url: "/api/uploads/proj1/applicant/11111111-1111-1111-1111-111111111111.pdf" });
+  const created = insertRecord(db, "proj1", applicant, { resume: descriptor });
+  assert.equal(created.resume, descriptor);
+
+  // The entity is now renamed only by letter case -- a real, supported
+  // refine operation. updateRecord is always called with the entity's
+  // CURRENT, canonical name, never the one that was in effect when any
+  // given file was originally uploaded.
+  const renamedApplicant: Entity = { ...applicant, name: "Applicant" };
+  const updated = updateRecord(db, "proj1", renamedApplicant, created.id as number, { resume: descriptor });
+  assert.equal(updated.resume, descriptor, "the record's own unmodified file descriptor must survive a case-only entity rename");
+});
