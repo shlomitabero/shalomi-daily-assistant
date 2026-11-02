@@ -14806,6 +14806,102 @@ test("deleting a record another record still references through a relation field
 });
 
 /**
+ * Regression test for a real data-loss bug a live Playwright exploration
+ * found (round 1527): EntityPanel.tsx's own deferred-delete undo window
+ * (UNDO_WINDOW_MS = 5000ms) leaves the real DELETE request pending for up
+ * to 5s after the row has already vanished from the deleting tab's own
+ * view. A second tab/collaborator, unaware of the pending delete, can
+ * open and successfully save an edit to the SAME record during that
+ * window (it still genuinely exists server-side) -- and that save used
+ * to be silently discarded the moment the deferred delete finally ran,
+ * with no warning to either user. Confirms the DELETE route now rejects
+ * with RECORD_MODIFIED_SINCE_DELETE when the client's own `expectedRecord`
+ * (the snapshot taken the moment Delete was clicked) no longer matches
+ * the record's current, edited-in-the-meantime state, and that the
+ * edited record survives untouched -- as opposed to a matching snapshot,
+ * which must still delete normally.
+ */
+test("deleting a record whose expectedRecord snapshot no longer matches (edited by someone else during the undo window) is rejected with RECORD_MODIFIED_SINCE_DELETE, and the edit survives", async () => {
+  await withServer(async (baseUrl) => {
+    const token = await signup(baseUrl, "record-modified-since-delete@example.com");
+    const createRes = await fetch(`${baseUrl}/api/projects`, {
+      method: "POST",
+      headers: authHeaders(token),
+      body: JSON.stringify({ description: "A small restaurant that tracks its own menu items." }),
+    });
+    const { project } = (await createRes.json()) as { project: { id: string } };
+    await collectSSE(await fetch(`${baseUrl}/api/projects/${project.id}/build`, { method: "POST", headers: authHeaders(token) }));
+
+    const createItemRes = await fetch(`${baseUrl}/api/projects/${project.id}/entities/MenuItem`, {
+      method: "POST",
+      headers: authHeaders(token),
+      body: JSON.stringify({ name: "Caesar Salad", price: 20 }),
+    });
+    assert.equal(createItemRes.status, 201);
+    const { record: original } = (await createItemRes.json()) as { record: { id: number; name: string; price: number } };
+
+    // Simulates Tab A's own concurrent, genuinely successful edit landing
+    // during Tab B's still-open undo window -- the price really did
+    // change server-side after the snapshot below was taken.
+    const patchRes = await fetch(`${baseUrl}/api/projects/${project.id}/entities/MenuItem/${original.id}`, {
+      method: "PATCH",
+      headers: authHeaders(token),
+      body: JSON.stringify({ price: 777 }),
+    });
+    assert.equal(patchRes.status, 200, "the concurrent edit itself must genuinely succeed -- the record is still alive server-side");
+
+    // Tab B's own deferred delete, finally committing with the STALE
+    // snapshot it captured before Tab A's edit ever happened.
+    const deleteRes = await fetch(`${baseUrl}/api/projects/${project.id}/entities/MenuItem/${original.id}`, {
+      method: "DELETE",
+      headers: authHeaders(token),
+      body: JSON.stringify({ expectedRecord: original }),
+    });
+    assert.equal(deleteRes.status, 409, "a delete whose snapshot no longer matches the current record must be rejected, not silently succeed");
+    assert.equal(((await deleteRes.json()) as { code?: string }).code, "RECORD_MODIFIED_SINCE_DELETE");
+
+    const getRes = await fetch(`${baseUrl}/api/projects/${project.id}/entities/MenuItem`, { headers: authHeaders(token) });
+    const { records } = (await getRes.json()) as { records: { id: number; price: number }[] };
+    const survivor = records.find((r) => r.id === original.id);
+    assert.ok(survivor, "the record must still exist -- the rejected delete must not have partially applied");
+    assert.equal(survivor!.price, 777, "the concurrent edit must survive untouched, not be silently discarded by the rejected delete");
+  });
+});
+
+/**
+ * The other half of the same round-1527 fix: a snapshot that DOES still
+ * match the record's current state (the ordinary case -- nobody else
+ * touched it during the undo window) must still delete normally, not be
+ * wrongly rejected by the new check.
+ */
+test("deleting a record whose expectedRecord snapshot still matches the current record succeeds normally", async () => {
+  await withServer(async (baseUrl) => {
+    const token = await signup(baseUrl, "record-modified-since-delete-match@example.com");
+    const createRes = await fetch(`${baseUrl}/api/projects`, {
+      method: "POST",
+      headers: authHeaders(token),
+      body: JSON.stringify({ description: "A small restaurant that tracks its own menu items." }),
+    });
+    const { project } = (await createRes.json()) as { project: { id: string } };
+    await collectSSE(await fetch(`${baseUrl}/api/projects/${project.id}/build`, { method: "POST", headers: authHeaders(token) }));
+
+    const createItemRes = await fetch(`${baseUrl}/api/projects/${project.id}/entities/MenuItem`, {
+      method: "POST",
+      headers: authHeaders(token),
+      body: JSON.stringify({ name: "Caesar Salad", price: 20 }),
+    });
+    const { record: original } = (await createItemRes.json()) as { record: { id: number } };
+
+    const deleteRes = await fetch(`${baseUrl}/api/projects/${project.id}/entities/MenuItem/${original.id}`, {
+      method: "DELETE",
+      headers: authHeaders(token),
+      body: JSON.stringify({ expectedRecord: original }),
+    });
+    assert.equal(deleteRes.status, 204, "a snapshot matching the record's genuinely-unchanged current state must still delete normally");
+  });
+});
+
+/**
  * Regression test for a real gap round 394's Explore survey found: the
  * DELETE route above translates a FOREIGN KEY constraint failure into a
  * clear 409, but creating or updating a record with a relation value that

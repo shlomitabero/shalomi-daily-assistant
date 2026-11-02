@@ -1255,10 +1255,20 @@ export function updateRecord(
  * succeeded (see EntityPanel.tsx's commitPendingDelete, which would
  * otherwise restore the already-gone row into the UI on that error).
  */
-export function deleteRecord(projectId: string, entityName: string, recordId: number): Promise<void> {
+/**
+ * Round 1527: `expectedRecord`, when passed, is the exact record snapshot
+ * captured the moment Delete was clicked (EntityPanel.tsx's
+ * pendingDelete.entries[].record) -- sent along so the server can detect
+ * a second tab/collaborator's edit landing during this delete's own
+ * UNDO_WINDOW_MS deferral window (see the DELETE route's own comment for
+ * why that race was otherwise silent data loss) and reject instead of
+ * deleting the now-different record.
+ */
+export function deleteRecord(projectId: string, entityName: string, recordId: number, expectedRecord?: EntityRecord): Promise<void> {
   return request(`/projects/${projectId}/entities/${encodeURIComponent(entityName)}/${recordId}`, {
     method: "DELETE",
     headers: { "x-idempotency-key": crypto.randomUUID() },
+    body: expectedRecord ? JSON.stringify({ expectedRecord }) : undefined,
   });
 }
 

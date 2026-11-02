@@ -3680,7 +3680,14 @@ export function EntityPanel({
   // setError on an unmounted component (the unmount-flush caller below) are
   // simply no-ops in React 18, so this is safe from every call site.
   async function commitPendingDelete(pending: PendingDelete) {
-    const results = await Promise.allSettled(pending.entries.map((e) => deleteRecord(projectId, entity.name, e.id)));
+    // Round 1527: passes each entry's own delete-time snapshot (e.record)
+    // so the server can detect a second tab/collaborator's edit landing
+    // during this deferred delete's own UNDO_WINDOW_MS window and reject
+    // instead of silently discarding it -- see deleteRecord's (api.ts) and
+    // the DELETE route's (routes/projects.ts) own comments. A rejection
+    // here already falls into this function's own existing restore/error
+    // path below, same as any other delete failure.
+    const results = await Promise.allSettled(pending.entries.map((e) => deleteRecord(projectId, entity.name, e.id, e.record)));
     const failed = pending.entries.filter((_, i) => results[i].status === "rejected");
     if (failed.length === 0) return;
     setRecords((prev) => failed.reduce((acc, e) => restoreRecordAt(acc, e.record, e.index), prev));

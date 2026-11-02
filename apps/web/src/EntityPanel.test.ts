@@ -9000,6 +9000,73 @@ test("EntityPanel restores the row and shows an error when the deferred real del
 });
 
 /**
+ * Round 1527: a live Playwright exploration found a real cross-tab
+ * data-loss bug -- a second tab/collaborator's edit landing during this
+ * same undo window used to be silently discarded the moment the
+ * deferred delete below finally ran, with no warning. Confirms the
+ * DELETE request now sends the delete-time record snapshot as
+ * `expectedRecord` (api.ts's deleteRecord), and that a server rejection
+ * for RECORD_MODIFIED_SINCE_DELETE falls into this exact same
+ * restore-the-row-and-show-an-error path the sibling test just above
+ * already proves for RECORD_HAS_DEPENDENT_RECORDS.
+ */
+test("EntityPanel sends the delete-time record snapshot with the real DELETE call, and restores the row with an error when the server rejects it as RECORD_MODIFIED_SINCE_DELETE", async (t) => {
+  await withJsdom(async () => {
+    const store: EntityRecord[] = [{ id: 1, name: "Acme Corp", status: "new" }];
+    let deleteRequestBody: unknown;
+    const originalFetch = globalThis.fetch;
+    const originalConfirm = globalThis.window.confirm;
+    globalThis.fetch = (async (input: string, init?: RequestInit): Promise<Response> => {
+      const method = init?.method ?? "GET";
+      if (method === "GET" && input === "/api/projects/proj1/entities/Deal") {
+        return new Response(JSON.stringify({ records: store }), { status: 200, headers: { "content-type": "application/json" } });
+      }
+      if (method === "DELETE" && input === "/api/projects/proj1/entities/Deal/1") {
+        deleteRequestBody = init?.body ? JSON.parse(init.body as string) : undefined;
+        return new Response(
+          JSON.stringify({
+            error: "This record was changed by someone else after it was deleted here -- the deletion was cancelled",
+            code: "RECORD_MODIFIED_SINCE_DELETE",
+          }),
+          { status: 409, headers: { "content-type": "application/json" } },
+        );
+      }
+      throw new Error(`unexpected request ${method} ${input}`);
+    }) as typeof fetch;
+    globalThis.window.confirm = (() => true) as typeof window.confirm;
+    try {
+      renderEntityPanel();
+      await waitForCondition(() => document.querySelectorAll("table tbody tr").length === 1);
+
+      t.mock.timers.enable({ apis: ["setTimeout"] });
+
+      fireEvent.click(document.querySelector(".danger") as HTMLButtonElement);
+      assert.equal(document.querySelectorAll("table tbody tr").length, 0, "the row must disappear from view immediately, as before");
+
+      act(() => {
+        t.mock.timers.tick(5000);
+      });
+      t.mock.timers.reset();
+      await waitForCondition(() => document.querySelectorAll("table tbody tr").length === 1);
+
+      assert.deepEqual(
+        deleteRequestBody,
+        { expectedRecord: { id: 1, name: "Acme Corp", status: "new" } },
+        "the real DELETE call must send the exact record snapshot captured when Delete was clicked",
+      );
+      assert.match(
+        document.querySelector(".error")?.textContent ?? "",
+        /deletion was cancelled/,
+        "a cross-tab/collaborator conflict must be surfaced as a visible error, not silently discarded",
+      );
+    } finally {
+      globalThis.fetch = originalFetch;
+      globalThis.window.confirm = originalConfirm;
+    }
+  });
+});
+
+/**
  * Switching entity tabs remounts EntityPanel fresh (App.tsx keys it by
  * entity.name), so leaving one open with a delete still inside its undo
  * window and then navigating away must not silently keep the "deleted"

@@ -5284,6 +5284,34 @@ export function createProjectsRouter(
           // delete itself is about to 404, same as always.
           const before = getRecord(db, project.id, entity, recordId);
           /**
+           * Round 1527: EntityPanel.tsx's own deferred-delete undo window
+           * (UNDO_WINDOW_MS, see its handleDelete) can leave this real
+           * DELETE pending for up to 5s after the row already vanished
+           * from the deleting tab's own view -- long enough for a SECOND
+           * tab/collaborator, unaware of the pending delete, to open and
+           * successfully save an edit to the same still-genuinely-alive
+           * record. Without this check, that save succeeded silently and
+           * was then discarded the moment this deferred delete finally
+           * ran, with no warning to either user -- the same failure shape
+           * round 1017's own comment on handleDelete already documents,
+           * but that fix only ever protects the SAME tab's own open edit
+           * form, not a second session's. `expectedRecord`, when the
+           * client sends it (the exact snapshot taken the moment Delete
+           * was clicked), lets this route detect that drift and reject
+           * instead of deleting -- EntityPanel.tsx's commitPendingDelete
+           * already restores the row and surfaces an error on any
+           * rejection here, the same existing path a FOREIGN KEY failure
+           * just below already takes.
+           */
+          const expectedRecord = (req.body as { expectedRecord?: EntityRecord } | undefined)?.expectedRecord;
+          if (expectedRecord && before && computeChangedFields(entity, expectedRecord, before).size > 0) {
+            throw new HttpError(
+              409,
+              "This record was changed by someone else after it was deleted here -- the deletion was cancelled",
+              "RECORD_MODIFIED_SINCE_DELETE",
+            );
+          }
+          /**
            * `PRAGMA foreign_keys = ON` (connection.ts) makes deleting a record
            * another record still points to via a `relation` field throw a real
            * "FOREIGN KEY constraint failed" error from node:sqlite -- app.ts's
