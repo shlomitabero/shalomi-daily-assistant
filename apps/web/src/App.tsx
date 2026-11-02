@@ -925,9 +925,17 @@ function AppContent() {
   // visibility exactly, so the preference still re-applies correctly once
   // the project count grows past it again.
   const effectiveProjectStatusFilter = myProjects.length > 1 ? projectStatusFilter : "all";
+  // Round 1498: the exact same gap as `effectiveProjectStatusFilter` just
+  // above -- but for the sibling `projectSearch` text filter, which round
+  // 1465 never reached. The search box itself (and its clear path) is only
+  // rendered while myProjects.length > 5, below -- a stricter threshold
+  // than projectStatusFilter's own `> 1`, so the window where a stale term
+  // can silently hide every remaining project with no control left to
+  // clear it is wider here than it was for the status filter.
+  const effectiveProjectSearch = myProjects.length > 5 ? projectSearch : "";
   const visibleMyProjects = useMemo(
-    () => filterAndSortProjects(filterProjectsByStatus(myProjects, effectiveProjectStatusFilter), projectSearch, pinnedIds, projectSortMode),
-    [myProjects, effectiveProjectStatusFilter, projectSearch, pinnedIds, projectSortMode],
+    () => filterAndSortProjects(filterProjectsByStatus(myProjects, effectiveProjectStatusFilter), effectiveProjectSearch, pinnedIds, projectSortMode),
+    [myProjects, effectiveProjectStatusFilter, effectiveProjectSearch, pinnedIds, projectSortMode],
   );
 
   /**

@@ -2648,6 +2648,55 @@ test("App's effectiveProjectStatusFilter falls back to 'all' once myProjects.len
   );
 });
 
+/**
+ * Round 1498: the exact same bug class as round 1465's own
+ * effectiveProjectStatusFilter test just above -- but for the sibling
+ * `projectSearch` text filter, which that round never reached. The search
+ * `<input>` (the only control that can clear `projectSearch`) is only
+ * rendered while myProjects.length > 5 -- a stricter threshold than
+ * projectStatusFilter's own `> 1` -- so a stale, no-longer-visible search
+ * term could silently hide every one of the remaining (<=5) projects, with
+ * no control left on screen to clear it. Same extraction technique as
+ * round 1465's own test: pulls the real `effectiveProjectSearch` expression
+ * straight out of App.tsx and feeds it into the real, already-imported
+ * filterAndSortProjects.
+ */
+test("App's effectiveProjectSearch falls back to '' once myProjects.length drops to the search box's own hidden threshold, so a stale search term can't hide the remaining projects", () => {
+  const appSrc = readFileSync(new URL("./App.tsx", import.meta.url), "utf8");
+  const exprMatch = appSrc.match(/const effectiveProjectSearch = ([^;\n]+);/);
+  assert.ok(exprMatch, "expected to find effectiveProjectSearch's own expression in App.tsx");
+
+  function computeEffectiveSearch(myProjectsLength: number, projectSearch: string) {
+    const fn = new Function("myProjects", "projectSearch", `return ${exprMatch![1]};`) as (
+      myProjects: { length: number },
+      projectSearch: string,
+    ) => string;
+    return fn({ length: myProjectsLength }, projectSearch);
+  }
+
+  // Sanity check: with the search box visible (more than 5 projects), the real term is honored.
+  assert.equal(computeEffectiveSearch(6, "acme"), "acme", "the typed search term must still apply while the search box is visible");
+
+  // The bug scenario: only 5 projects left (the search box is hidden), but a stale
+  // non-matching term was typed earlier -- it must fall back to "".
+  assert.equal(
+    computeEffectiveSearch(5, "acme"),
+    "",
+    "a stale search term must not apply once the project count drops to the search box's own hidden threshold",
+  );
+  assert.equal(computeEffectiveSearch(0, "acme"), "", "same fallback with zero projects");
+
+  // End-to-end: the remaining project (whose name doesn't match the stale term) must still render.
+  const onlyProject = makeProject([makeEntity("Customer")]);
+  onlyProject.name = "Beauty Clinic";
+  const effective = computeEffectiveSearch(5, "acme");
+  assert.deepEqual(
+    filterAndSortProjects([onlyProject], effective, new Set(), "recent"),
+    [onlyProject],
+    "the remaining project must still be visible, not silently hidden by the stale search term",
+  );
+});
+
 function makeEntity(name: string): Entity {
   return { name, fields: [{ name: "name", type: "text", required: true }] };
 }
