@@ -2840,6 +2840,10 @@ const POSITIVE_WORDS = [
   // the Task domain entity's status enum uses "Done" as their own
   // successful-outcome states.
   "resolved", "done",
+  // round 1483: mirrors the live preview's own entityFormatting.ts fix --
+  // the built-in Property domain entity's status enum uses "Sold" as its
+  // own successful-outcome state.
+  "sold",
 ];
 // round 458: the "un-"/"dis-" negated forms below must stay listed here too --
 // each contains a POSITIVE_WORDS entry as a literal substring ("unpaid"
@@ -2865,6 +2869,10 @@ const NEGATIVE_WORDS = [
   // "unresolved"/"undone" each contain a POSITIVE_WORDS entry
   // ("resolved"/"done") as a literal substring.
   "unresolved", "undone",
+  // round 1483: mirrors the live preview's own entityFormatting.ts fix --
+  // "unsold" contains a POSITIVE_WORDS entry ("sold") as a literal
+  // substring.
+  "unsold",
 ];
 // Mirrors the live preview's own entityFormatting.ts formatRecordCreatedAt
 // (round 168): every record carries a real, server-assigned createdAt

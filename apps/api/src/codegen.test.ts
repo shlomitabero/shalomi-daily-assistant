@@ -17464,6 +17464,27 @@ test("the exported EntityView's badgeTone classifies 'Resolved' and 'Done' as po
 });
 
 /**
+ * Regression test for round 1483's finding: the built-in Property domain
+ * entity's own status enum (spec-engine/domainEntities.ts) is exactly
+ * ["Available", "UnderContract", "Sold", "Rented"] -- "Sold" fell through
+ * to neutral gray in this exact exported copy too, mirroring the
+ * live-preview fix, including its negated-form collision guard
+ * ("Unsold" must still read negative). Runs the real generated badgeTone,
+ * not a reference copy.
+ */
+test("the exported EntityView's badgeTone classifies 'Sold' as positive, matching Property's real status enum, without misreading its negated form", () => {
+  const entityViewJsx = generateExportFiles(project).find((f) => f.path === "web/src/components/EntityView.jsx")!.content;
+  const badgeToneSrc = entityViewJsx.match(/const POSITIVE_WORDS[\s\S]*?\nfunction badgeTone\(rawValue\) \{[\s\S]*?\n\}\n/)?.[0];
+  assert.ok(badgeToneSrc, "expected to find POSITIVE_WORDS/NEGATIVE_WORDS/badgeTone in generated output");
+
+  const badgeTone = new Function(`${badgeToneSrc}\nreturn badgeTone;`)() as (v: string) => string;
+  assert.equal(badgeTone("Sold"), "positive");
+  assert.equal(badgeTone("Available"), "neutral");
+  assert.equal(badgeTone("UnderContract"), "neutral");
+  assert.equal(badgeTone("Unsold"), "negative");
+});
+
+/**
  * New in this round: the exported standalone app's entity table columns
  * were a fixed auto-layout width, unlike the live Forge AI preview (round
  * 185's own drag-to-resize columns, persisted per entity via

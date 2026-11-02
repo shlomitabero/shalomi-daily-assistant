@@ -243,6 +243,28 @@ test("badgeTone recognizes 'Resolved' and 'Done' as positive, matching Ticket's 
   assert.equal(badgeTone("Undone"), "negative");
 });
 
+/**
+ * Round 1483's finding: the built-in Property domain entity's own status
+ * enum (spec-engine/domainEntities.ts) is exactly
+ * ["Available", "UnderContract", "Sold", "Rented"] -- "Sold" is the
+ * successful-outcome state, exactly analogous to "Won" (Deal) and
+ * "Delivered" (Shipment/Order), but it fell through to neutral gray, the
+ * same tone as "Available"/"UnderContract", since "sold" was missing from
+ * POSITIVE_WORDS. Also confirms the negated collision guard added
+ * alongside it: "unsold" is a real, common real-estate/retail term
+ * ("unsold inventory") that contains "sold" as a literal substring, the
+ * exact "unpaid" contains "paid" shape round 458 already fixed -- without
+ * the NEGATIVE_WORDS entry, it would be misread as positive, the opposite
+ * of its meaning.
+ */
+test("badgeTone recognizes 'Sold' as positive, matching Property's real status enum, without misreading its negated form", () => {
+  assert.equal(badgeTone("Sold"), "positive");
+  assert.equal(badgeTone("sold"), "positive");
+  assert.equal(badgeTone("Available"), "neutral");
+  assert.equal(badgeTone("UnderContract"), "neutral");
+  assert.equal(badgeTone("Unsold"), "negative");
+});
+
 test("formatDateValue formats a valid ISO date per locale, and leaves an invalid one unchanged", () => {
   const result = formatDateValue("2026-03-15", "en");
   assert.match(result, /3\/15\/2026|15\/3\/2026/); // exact format is locale/engine-dependent, just confirm it parsed

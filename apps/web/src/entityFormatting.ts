@@ -96,6 +96,13 @@ const POSITIVE_WORDS = [
   // "received"/"hired".
   "resolved",
   "done",
+  // round 1483: the built-in Property domain entity's own status enum (see
+  // spec-engine/domainEntities.ts: ["Available", "UnderContract", "Sold",
+  // "Rented"]) uses "Sold" as its own successful-outcome state, exactly
+  // analogous to "Won" (Deal) and "Delivered" (Shipment) -- so a sold
+  // property showed the same neutral gray badge as "Available"/
+  // "UnderContract" instead of reading as positive.
+  "sold",
 ];
 const NEGATIVE_WORDS = [
   "lost",
@@ -170,6 +177,13 @@ const NEGATIVE_WORDS = [
   // exact opposite of their meaning.
   "unresolved",
   "undone",
+  // round 1483: adding "sold" to POSITIVE_WORDS just above introduces the
+  // identical negated-word collision round 458 already fixed for every
+  // other entry -- "unsold" is a real, common real-estate/retail term
+  // ("unsold inventory/units") that contains "sold" as a literal
+  // substring, so it must be listed here too or it would be misread as
+  // positive, the exact opposite of its meaning.
+  "unsold",
 ];
 
 const DATE_FORMAT = /^(\d{4})-(\d{2})-(\d{2})$/;
