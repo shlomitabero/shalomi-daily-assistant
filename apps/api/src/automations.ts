@@ -19,6 +19,7 @@ import {
   WEBHOOK_UNREACHABLE_ERROR,
   EMAIL_TIMEOUT_ERROR,
   EMAIL_UNREACHABLE_ERROR,
+  type AutomationFieldOperator,
   type AutomationRule,
   type ForgeDatabase,
 } from "@forge/db";
@@ -497,7 +498,41 @@ export function matchesTrigger(
   if (event === "updated" && !changedFields.has(fieldName)) return false;
   const actual = record[fieldName];
   if (actual === null || actual === undefined) return false;
-  return String(actual) === rule.fieldValue;
+  if (rule.fieldValue == null) return false;
+  return matchesFieldOperator(rule.fieldOperator, actual, rule.fieldValue, entity, fieldName);
+}
+
+/**
+ * Round 1491: the operator-aware half of field_equals' own comparison --
+ * see AutomationFieldOperator's own doc comment (packages/db/src/
+ * automations.ts) for why this exists. Null (every rule created before
+ * fieldOperator existed) is "equals", the exact `String(actual) ===
+ * rule.fieldValue` byte-exact comparison this file always used -- so an
+ * existing rule's real matching behavior is completely unchanged.
+ * "greater_than"/"less_than" are only ever saved against a number or date
+ * field (validateAutomationFieldOperator, routes/projects.ts), so the field
+ * lookup here is only to pick the right numeric parse for each -- a date's
+ * only valid stored shape is "YYYY-MM-DD" (repository.ts's own
+ * coerceValue/isValidDateString), which Date.parse resolves to a real UTC
+ * instant; a number field's `actual` is already a JS number via
+ * rowToRecord, so Number(actual) is a no-op for it and only matters for
+ * normalizing the rule's own string fieldValue.
+ */
+function matchesFieldOperator(
+  operator: AutomationFieldOperator | null,
+  actual: unknown,
+  fieldValue: string,
+  entity: Entity,
+  fieldName: string,
+): boolean {
+  if (operator == null || operator === "equals") return String(actual) === fieldValue;
+  if (operator === "not_equals") return String(actual) !== fieldValue;
+  const field = entity.fields.find((f) => f.name === fieldName);
+  const isDate = field?.type === "date";
+  const actualNum = isDate ? Date.parse(String(actual)) : Number(actual);
+  const ruleNum = isDate ? Date.parse(fieldValue) : Number(fieldValue);
+  if (!Number.isFinite(actualNum) || !Number.isFinite(ruleNum)) return false;
+  return operator === "greater_than" ? actualNum > ruleNum : actualNum < ruleNum;
 }
 
 /**

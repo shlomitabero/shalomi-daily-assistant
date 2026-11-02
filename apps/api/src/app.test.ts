@@ -3118,6 +3118,85 @@ test("creating or updating a toMode:\"field\" automation rule whose destination 
 });
 
 /**
+ * Round 1491: AutomationFieldOperator -- see that type's own doc comment
+ * (packages/db/src/automations.ts) for the full rationale. "greater_than"/
+ * "less_than" only have a real meaning for a number/date field's own
+ * numeric/chronological ordering, so validateAutomationFieldOperator
+ * (routes/projects.ts) rejects them against any other field type, the
+ * same "reject at creation, don't rely on a runtime guard to silently
+ * never match" discipline the sibling type-check tests above already
+ * establish for fieldValue/toField.
+ */
+test("creating or updating a field_equals automation rule's fieldOperator rejects 'greater_than'/'less_than' against a non-number/date field, but accepts them against number and date fields", async () => {
+  await withServer(async (baseUrl) => {
+    const token = await signup(baseUrl, "automation-fieldoperator@example.com");
+    const createRes = await fetch(`${baseUrl}/api/projects`, {
+      method: "POST",
+      headers: authHeaders(token),
+      body: JSON.stringify({
+        description:
+          "Build an appointment-management application for a beauty clinic. I need customers, appointments, employees, services, an admin dashboard and automatic appointment status tracking.",
+      }),
+    });
+    const { project } = (await createRes.json()) as { project: { id: string } };
+    const buildRes = await fetch(`${baseUrl}/api/projects/${project.id}/build`, { method: "POST", headers: authHeaders(token) });
+    await collectSSE(buildRes);
+
+    const baseRule = {
+      trigger: "field_equals",
+      actionType: "send_whatsapp",
+      toMode: "static",
+      toNumber: "+972500000000",
+      messageTemplate: "hi",
+    };
+
+    // Customer's "email" field is type:"text" -- no numeric ordering has
+    // any real meaning for it, and (unlike an enum field) any string is a
+    // valid fieldValue for it, so a 400 here can only come from the
+    // operator check itself, not some other field-value validation.
+    const badTextRes = await fetch(`${baseUrl}/api/projects/${project.id}/entities/Customer/automations`, {
+      method: "POST",
+      headers: authHeaders(token),
+      body: JSON.stringify({ ...baseRule, fieldName: "email", fieldValue: "someone@example.com", fieldOperator: "greater_than" }),
+    });
+    assert.equal(badTextRes.status, 400);
+    assert.equal(((await badTextRes.json()) as { code?: string }).code, "VALIDATION_ERROR");
+
+    // Service's "durationMinutes" field is type:"number" -- a real
+    // numeric ordering, so greater_than must be accepted.
+    const goodNumberRes = await fetch(`${baseUrl}/api/projects/${project.id}/entities/Service/automations`, {
+      method: "POST",
+      headers: authHeaders(token),
+      body: JSON.stringify({ ...baseRule, fieldName: "durationMinutes", fieldValue: "30", fieldOperator: "greater_than" }),
+    });
+    assert.equal(goodNumberRes.status, 201);
+
+    // Appointment's "date" field is type:"date" -- a real chronological
+    // ordering, so less_than must be accepted too.
+    const goodDateRes = await fetch(`${baseUrl}/api/projects/${project.id}/entities/Appointment/automations`, {
+      method: "POST",
+      headers: authHeaders(token),
+      body: JSON.stringify({ ...baseRule, fieldName: "date", fieldValue: "2026-01-01", fieldOperator: "less_than" }),
+    });
+    assert.equal(goodDateRes.status, 201);
+    const { rule: createdRule } = (await goodDateRes.json()) as { rule: { id: string } };
+
+    // A PATCH that would re-point an existing rule's field/operator onto a
+    // non-number/date field must be rejected the same way as creation --
+    // "notes" here is Appointment's OWN longtext field (createdRule's
+    // entityName), accepting any string, so the 400 can only come from
+    // the operator check.
+    const patchRes = await fetch(`${baseUrl}/api/projects/${project.id}/automations/${createdRule.id}`, {
+      method: "PATCH",
+      headers: authHeaders(token),
+      body: JSON.stringify({ fieldName: "notes", fieldValue: "some notes", fieldOperator: "greater_than" }),
+    });
+    assert.equal(patchRes.status, 400);
+    assert.equal(((await patchRes.json()) as { code?: string }).code, "VALIDATION_ERROR");
+  });
+});
+
+/**
  * Round 965: performSend (whatsappWeb.ts) always attached a referenced
  * "file"-field value as a generic Baileys "document" message -- even when
  * its mimeType is a real photo. A real WhatsApp client renders a document

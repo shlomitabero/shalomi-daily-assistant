@@ -34,6 +34,23 @@ import { NotFoundError } from "./repository.js";
  * without that same rule also firing for every manually-created Order.
  */
 export type AutomationTrigger = "record_created" | "field_equals" | "schedule" | "record_deleted" | "record_updated" | "inbound_webhook";
+/**
+ * Round 1491: only meaningful when trigger is "field_equals". Before this,
+ * matchesTrigger (apps/api/src/automations.ts) only ever compared with
+ * byte-exact string equality -- there was no way to express "fires when
+ * this date field becomes overdue" or "fires when this number field drops
+ * below a threshold," only "fires when it's set to this exact value,"
+ * which a continuously-changing date/quantity field essentially never is.
+ * "greater_than"/"less_than" are only accepted (apps/api/src/routes/
+ * projects.ts's validateAutomationFieldOperator) when the trigger field is
+ * "number" or "date" -- a numeric ordering has no sensible meaning for an
+ * enum/boolean/text/relation/file field. Null (every rule created before
+ * this column existed, and every new rule that doesn't explicitly choose
+ * one) is treated identically to "equals" everywhere this is read, so an
+ * existing rule's real matching behavior is completely unchanged by this
+ * column's addition.
+ */
+export type AutomationFieldOperator = "equals" | "not_equals" | "greater_than" | "less_than";
 export type AutomationActionType = "send_whatsapp" | "webhook" | "send_email";
 export type AutomationToMode = "static" | "field";
 export type AutomationLastStatus = "sent" | "failed" | null;
@@ -138,8 +155,10 @@ export interface AutomationRule {
   trigger: AutomationTrigger;
   /** Required when trigger is "field_equals"; null for "record_created". */
   fieldName: string | null;
-  /** Required when trigger is "field_equals"; null for "record_created". Compared as a string against the record's own field value. */
+  /** Required when trigger is "field_equals"; null for "record_created". Compared against the record's own field value using fieldOperator below. */
   fieldValue: string | null;
+  /** Round 1491: see AutomationFieldOperator's own doc comment. Null (every rule created before this column existed) is treated as "equals". */
+  fieldOperator: AutomationFieldOperator | null;
   /**
    * Required when trigger is "schedule"; null otherwise. "HH:MM", 24-hour --
    * despite the field's own name (kept as-is for backward compatibility
@@ -479,6 +498,10 @@ export function ensureAutomationRulesTable(db: ForgeDatabase): void {
   if (!columns.includes("emailSubject")) {
     db.exec("ALTER TABLE automation_rules ADD COLUMN emailSubject TEXT");
   }
+  // Round 1491: see AutomationRule.fieldOperator's own doc comment.
+  if (!columns.includes("fieldOperator")) {
+    db.exec("ALTER TABLE automation_rules ADD COLUMN fieldOperator TEXT");
+  }
 }
 
 function rowToRule(row: Record<string, unknown>): AutomationRule {
@@ -489,6 +512,7 @@ function rowToRule(row: Record<string, unknown>): AutomationRule {
     trigger: row.trigger as AutomationTrigger,
     fieldName: (row.fieldName as string | null) ?? null,
     fieldValue: (row.fieldValue as string | null) ?? null,
+    fieldOperator: (row.fieldOperator as AutomationFieldOperator | null) ?? null,
     scheduleTimeUtc: (row.scheduleTimeUtc as string | null) ?? null,
     scheduleDaysOfWeek: (row.scheduleDaysOfWeek as string | null) ?? null,
     scheduleTimezone: (row.scheduleTimezone as string | null) ?? null,
@@ -519,6 +543,7 @@ export function insertAutomationRule(
     trigger: AutomationTrigger;
     fieldName?: string | null;
     fieldValue?: string | null;
+    fieldOperator?: AutomationFieldOperator | null;
     scheduleTimeUtc?: string | null;
     scheduleDaysOfWeek?: string | null;
     scheduleTimezone?: string | null;
@@ -537,8 +562,8 @@ export function insertAutomationRule(
   const now = new Date().toISOString();
   db.prepare(
     `INSERT INTO automation_rules
-       (id, projectId, entityName, trigger, fieldName, fieldValue, scheduleTimeUtc, scheduleDaysOfWeek, scheduleTimezone, actionType, toMode, toNumber, toField, webhookUrl, webhookSecret, toEmail, emailSubject, messageTemplate, enabled, lastTriggeredAt, lastStatus, lastError, createdAt, updatedAt)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, NULL, NULL, NULL, ?, ?)`,
+       (id, projectId, entityName, trigger, fieldName, fieldValue, fieldOperator, scheduleTimeUtc, scheduleDaysOfWeek, scheduleTimezone, actionType, toMode, toNumber, toField, webhookUrl, webhookSecret, toEmail, emailSubject, messageTemplate, enabled, lastTriggeredAt, lastStatus, lastError, createdAt, updatedAt)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, NULL, NULL, NULL, ?, ?)`,
   ).run(
     id,
     rule.projectId,
@@ -546,6 +571,7 @@ export function insertAutomationRule(
     rule.trigger,
     rule.fieldName ?? null,
     rule.fieldValue ?? null,
+    rule.fieldOperator ?? null,
     rule.scheduleTimeUtc ?? null,
     rule.scheduleDaysOfWeek ?? null,
     rule.scheduleTimezone ?? null,
@@ -628,6 +654,7 @@ export function updateAutomationRule(
     trigger: AutomationTrigger;
     fieldName: string | null;
     fieldValue: string | null;
+    fieldOperator: AutomationFieldOperator | null;
     scheduleTimeUtc: string | null;
     scheduleDaysOfWeek: string | null;
     scheduleTimezone: string | null;
@@ -650,13 +677,14 @@ export function updateAutomationRule(
   const next = { ...existing, ...patch };
   db.prepare(
     `UPDATE automation_rules SET
-       entityName = ?, trigger = ?, fieldName = ?, fieldValue = ?, scheduleTimeUtc = ?, scheduleDaysOfWeek = ?, scheduleTimezone = ?, actionType = ?, toMode = ?, toNumber = ?, toField = ?, webhookUrl = ?, webhookSecret = ?, toEmail = ?, emailSubject = ?, messageTemplate = ?, enabled = ?, updatedAt = ?
+       entityName = ?, trigger = ?, fieldName = ?, fieldValue = ?, fieldOperator = ?, scheduleTimeUtc = ?, scheduleDaysOfWeek = ?, scheduleTimezone = ?, actionType = ?, toMode = ?, toNumber = ?, toField = ?, webhookUrl = ?, webhookSecret = ?, toEmail = ?, emailSubject = ?, messageTemplate = ?, enabled = ?, updatedAt = ?
      WHERE projectId = ? AND id = ?`,
   ).run(
     next.entityName,
     next.trigger,
     next.fieldName,
     next.fieldValue,
+    next.fieldOperator,
     next.scheduleTimeUtc,
     next.scheduleDaysOfWeek,
     next.scheduleTimezone,

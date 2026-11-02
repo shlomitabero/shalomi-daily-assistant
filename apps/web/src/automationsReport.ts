@@ -171,11 +171,19 @@ function describeRule(
   // this branch the rule fell through to the field_equals wording below,
   // printing a nonsensical `When "" on "X" becomes ""`.
   if (rule.trigger === "inbound_webhook") return t("automations.rule.when.inboundWebhook", { entity: entityLabel(rule, entities) });
-  return t("automations.rule.when.fieldEquals", {
+  // Round 1491: operator-aware description -- mirrors AutomationsPanel.tsx's
+  // own identical describeRule branch exactly (see that file's comment for
+  // why), the same hand-duplication convention this module's top comment
+  // already follows for every other rule-description helper here.
+  const params = {
     field: fieldLabel(rule, rule.fieldName, entities),
     entity: entityLabel(rule, entities),
     value: fieldValueLabel(rule, entities, relatedRecords, lang),
-  });
+  };
+  if (rule.fieldOperator === "not_equals") return t("automations.rule.when.fieldNotEquals", params);
+  if (rule.fieldOperator === "greater_than") return t("automations.rule.when.fieldGreaterThan", params);
+  if (rule.fieldOperator === "less_than") return t("automations.rule.when.fieldLessThan", params);
+  return t("automations.rule.when.fieldEquals", params);
 }
 
 function describeDestination(

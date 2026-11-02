@@ -107,6 +107,7 @@ function makeRule(overrides: Partial<Record<string, unknown>> = {}) {
     trigger: "field_equals",
     fieldName: "status",
     fieldValue: "Delivered",
+    fieldOperator: null,
     actionType: "send_whatsapp",
     toMode: "field",
     toNumber: null,
@@ -2342,6 +2343,87 @@ test("AutomationsPanel locale-formats a date/number field_equals rule's value in
 });
 
 /**
+ * Round 1491 regression test: AutomationFieldOperator -- see that type's
+ * own doc comment (packages/db/src/automations.ts) for the full rationale.
+ * The operator <select> must only appear for a number/date field (the only
+ * two types "greater_than"/"less_than" have a real meaning for), must
+ * disappear again when the field is switched to a type that doesn't
+ * support it, and the chosen operator must actually reach the server.
+ */
+test("AutomationsPanel's field_equals form shows an operator selector only for number/date fields, and submits the chosen operator", async () => {
+  await withJsdom(async () => {
+    const originalFetch = globalThis.fetch;
+    let createBody: Record<string, unknown> | undefined;
+    globalThis.fetch = (async (input: string, init?: RequestInit) => {
+      const method = init?.method ?? "GET";
+      if (method === "GET" && input === "/api/projects/proj7/automations") {
+        return new Response(JSON.stringify({ rules: [] }), { status: 200, headers: { "content-type": "application/json" } });
+      }
+      if (method === "POST" && input === "/api/projects/proj7/entities/Order/automations") {
+        createBody = JSON.parse(init!.body as string);
+        return new Response(JSON.stringify({ rule: { id: "rule16", ...createBody } }), {
+          status: 201,
+          headers: { "content-type": "application/json" },
+        });
+      }
+      throw new Error(`unexpected request ${method} ${input}`);
+    }) as typeof fetch;
+
+    try {
+      renderPanelWith(dateFieldProject);
+      await waitForCondition(() => document.body.textContent?.includes("No automations yet") ?? false);
+
+      const triggerSelect = Array.from(document.querySelectorAll("select")).find((s) =>
+        Array.from(s.options).some((o) => o.value === "field_equals"),
+      ) as HTMLSelectElement;
+      fireEvent.change(triggerSelect, { target: { value: "field_equals" } });
+
+      const fieldSelect = Array.from(document.querySelectorAll("select")).find((s) =>
+        Array.from(s.options).some((o) => o.value === "amount"),
+      ) as HTMLSelectElement;
+
+      function findOperatorSelect(): HTMLSelectElement | undefined {
+        return Array.from(document.querySelectorAll("select")).find((s) =>
+          Array.from(s.options).some((o) => o.value === "greater_than"),
+        ) as HTMLSelectElement | undefined;
+      }
+
+      // "label" (text) is the field_equals form's default selection -- no
+      // numeric/chronological ordering has any meaning for it.
+      assert.equal(findOperatorSelect(), undefined, "a text field must show no operator selector at all");
+
+      // Switching to "amount" (number) must reveal the operator selector.
+      fireEvent.change(fieldSelect, { target: { value: "amount" } });
+      await waitForCondition(() => findOperatorSelect() !== undefined, 200);
+      const operatorSelect = findOperatorSelect()!;
+      fireEvent.change(operatorSelect, { target: { value: "greater_than" } });
+      await waitForCondition(() => operatorSelect.value === "greater_than", 200);
+
+      const valueInput = document.querySelector('.automations-create-form input[type="text"]') as HTMLInputElement;
+      fireEvent.change(valueInput, { target: { value: "1000" } });
+      await waitForCondition(() => valueInput.value === "1000", 200);
+
+      const messageField = document.querySelector(".automations-create-form textarea") as HTMLTextAreaElement;
+      fireEvent.change(messageField, { target: { value: "Large order!" } });
+      await waitForCondition(() => messageField.value === "Large order!", 200);
+      fireEvent.submit(document.querySelector(".automations-create-form")!);
+      await waitForCondition(() => createBody !== undefined);
+
+      assert.equal(createBody?.fieldName, "amount");
+      assert.equal(createBody?.fieldOperator, "greater_than", "the chosen operator must actually be sent to the server");
+
+      // Switching the field back to "isUrgent" (boolean) must hide the
+      // selector again -- a now-invalid operator must never be left
+      // silently selected underneath a selector that just disappeared.
+      fireEvent.change(fieldSelect, { target: { value: "isUrgent" } });
+      await waitForCondition(() => findOperatorSelect() === undefined, 200);
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+});
+
+/**
  * Round 760 regression test: fieldValueLabel (in both AutomationsPanel.tsx
  * and automationsReport.ts) had no boolean branch either -- a boolean
  * field_equals rule's raw stored value ("true"/"false", lowercase, the
@@ -3438,6 +3520,7 @@ test("submitting an edited rule calls the real PATCH endpoint and updates the ru
         trigger: "field_equals",
         fieldName: "status",
         fieldValue: "Delivered",
+        fieldOperator: "equals",
         scheduleTimeUtc: null,
         scheduleDaysOfWeek: null,
         scheduleTimezone: null,

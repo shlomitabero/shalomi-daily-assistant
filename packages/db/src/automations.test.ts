@@ -62,6 +62,33 @@ test("insertAutomationRule stores the rule and returns it with generated id/time
   assert.ok(rule.updatedAt);
 });
 
+/**
+ * Round 1491: AutomationFieldOperator -- see that type's own doc comment
+ * for the full rationale. Defaults to null (treated as "equals" by every
+ * reader) so a rule created before this column existed, or one that simply
+ * never set it, round-trips identically to before this column's addition.
+ */
+test("insertAutomationRule defaults fieldOperator to null when omitted, and persists an explicit value", () => {
+  const db = openDatabase(":memory:");
+  ensureAutomationRulesTable(db);
+  const defaulted = insertAutomationRule(db, baseRule());
+  assert.equal(defaulted.fieldOperator, null);
+  const explicit = insertAutomationRule(db, baseRule({ fieldName: "amount", fieldValue: "1000", fieldOperator: "greater_than" }));
+  assert.equal(explicit.fieldOperator, "greater_than");
+  assert.equal(getAutomationRule(db, "proj1", explicit.id)!.fieldOperator, "greater_than", "must survive a round-trip through storage");
+});
+
+test("updateAutomationRule persists a patched fieldOperator, and clears it back to null when the patch explicitly sets null", () => {
+  const db = openDatabase(":memory:");
+  ensureAutomationRulesTable(db);
+  const rule = insertAutomationRule(db, baseRule({ fieldName: "amount", fieldValue: "1000" }));
+  assert.equal(rule.fieldOperator, null);
+  const withOperator = updateAutomationRule(db, "proj1", rule.id, { fieldOperator: "less_than" });
+  assert.equal(withOperator.fieldOperator, "less_than");
+  const cleared = updateAutomationRule(db, "proj1", rule.id, { fieldOperator: null });
+  assert.equal(cleared.fieldOperator, null);
+});
+
 test("insertAutomationRule supports a record_created trigger with no field/value", () => {
   const db = openDatabase(":memory:");
   ensureAutomationRulesTable(db);

@@ -1648,6 +1648,8 @@ export function deleteWhatsAppMessage(projectId: string, messageId: string): Pro
 export type AutomationTrigger = "record_created" | "field_equals" | "schedule" | "record_deleted" | "record_updated" | "inbound_webhook";
 export type AutomationToMode = "static" | "field";
 export type AutomationActionType = "send_whatsapp" | "webhook" | "send_email";
+/** Round 1491: only meaningful when trigger is "field_equals" -- see packages/db's AutomationFieldOperator for the full rationale. Null (every rule created before this field existed) is treated as "equals". */
+export type AutomationFieldOperator = "equals" | "not_equals" | "greater_than" | "less_than";
 
 export interface AutomationRuleView {
   id: string;
@@ -1655,6 +1657,7 @@ export interface AutomationRuleView {
   trigger: AutomationTrigger;
   fieldName: string | null;
   fieldValue: string | null;
+  fieldOperator: AutomationFieldOperator | null;
   scheduleTimeUtc: string | null;
   scheduleDaysOfWeek: string | null;
   /** Round 967: the IANA timezone scheduleTimeUtc/scheduleDaysOfWeek are wall-clock values in; null (treated as "UTC") for a rule created before this field existed. */
@@ -1746,6 +1749,7 @@ export function createAutomationRule(
     trigger: AutomationTrigger;
     fieldName?: string;
     fieldValue?: string;
+    fieldOperator?: AutomationFieldOperator;
     scheduleTimeUtc?: string;
     scheduleDaysOfWeek?: string;
     scheduleTimezone?: string;
@@ -1775,6 +1779,7 @@ export function updateAutomationRule(
     trigger: AutomationTrigger;
     fieldName: string | null;
     fieldValue: string | null;
+    fieldOperator: AutomationFieldOperator | null;
     scheduleTimeUtc: string | null;
     scheduleDaysOfWeek: string | null;
     scheduleTimezone: string | null;

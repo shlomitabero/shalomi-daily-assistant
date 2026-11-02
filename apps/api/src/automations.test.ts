@@ -411,6 +411,90 @@ test("matchesTrigger: field_equals does not match when the record's value differ
 });
 
 /**
+ * Round 1491: AutomationFieldOperator -- see that type's own doc comment
+ * (packages/db/src/automations.ts) for the full rationale. invoiceEntity
+ * has its own number/date fields since orderEntity above has neither.
+ */
+const invoiceEntity: Entity = {
+  name: "Invoice",
+  label: "Invoice",
+  fields: [
+    { name: "amount", type: "number", required: true },
+    { name: "dueDate", type: "date", required: true },
+  ],
+};
+
+test("matchesTrigger: field_equals with operator 'greater_than' fires only when a number field's value exceeds the target, not when equal or below", () => {
+  const rule = insertAutomationRule(openDbForRuleOnly(), {
+    projectId: "p",
+    entityName: "Invoice",
+    trigger: "field_equals",
+    fieldName: "amount",
+    fieldValue: "1000",
+    fieldOperator: "greater_than",
+    actionType: "send_whatsapp",
+    toMode: "static",
+    toNumber: "972500000000",
+    messageTemplate: "Large invoice!",
+  });
+  assert.equal(matchesTrigger(rule, "updated", { amount: 1500 }, new Set(["amount"]), invoiceEntity), true);
+  assert.equal(matchesTrigger(rule, "updated", { amount: 1000 }, new Set(["amount"]), invoiceEntity), false);
+  assert.equal(matchesTrigger(rule, "updated", { amount: 500 }, new Set(["amount"]), invoiceEntity), false);
+});
+
+test("matchesTrigger: field_equals with operator 'less_than' fires only when a date field's value is chronologically earlier than the target", () => {
+  const rule = insertAutomationRule(openDbForRuleOnly(), {
+    projectId: "p",
+    entityName: "Invoice",
+    trigger: "field_equals",
+    fieldName: "dueDate",
+    fieldValue: "2026-01-15",
+    fieldOperator: "less_than",
+    actionType: "send_whatsapp",
+    toMode: "static",
+    toNumber: "972500000000",
+    messageTemplate: "Overdue soon!",
+  });
+  assert.equal(matchesTrigger(rule, "updated", { dueDate: "2026-01-01" }, new Set(["dueDate"]), invoiceEntity), true);
+  assert.equal(matchesTrigger(rule, "updated", { dueDate: "2026-01-15" }, new Set(["dueDate"]), invoiceEntity), false);
+  assert.equal(matchesTrigger(rule, "updated", { dueDate: "2026-02-01" }, new Set(["dueDate"]), invoiceEntity), false);
+});
+
+test("matchesTrigger: field_equals with operator 'not_equals' fires when the value differs from the target, not when it matches", () => {
+  const rule = insertAutomationRule(openDbForRuleOnly(), {
+    projectId: "p",
+    entityName: "Order",
+    trigger: "field_equals",
+    fieldName: "status",
+    fieldValue: "Cancelled",
+    fieldOperator: "not_equals",
+    actionType: "send_whatsapp",
+    toMode: "static",
+    toNumber: "972500000000",
+    messageTemplate: "Still active!",
+  });
+  assert.equal(matchesTrigger(rule, "updated", { status: "Delivered" }, new Set(["status"]), orderEntity), true);
+  assert.equal(matchesTrigger(rule, "updated", { status: "Cancelled" }, new Set(["status"]), orderEntity), false);
+});
+
+test("matchesTrigger: a null fieldOperator (every rule created before this column existed) is treated identically to 'equals'", () => {
+  const rule = insertAutomationRule(openDbForRuleOnly(), {
+    projectId: "p",
+    entityName: "Order",
+    trigger: "field_equals",
+    fieldName: "status",
+    fieldValue: "Delivered",
+    actionType: "send_whatsapp",
+    toMode: "static",
+    toNumber: "972500000000",
+    messageTemplate: "Delivered!",
+  });
+  assert.equal(rule.fieldOperator, null, "insertAutomationRule must default fieldOperator to null when omitted");
+  assert.equal(matchesTrigger(rule, "updated", { status: "Delivered" }, new Set(["status"]), orderEntity), true);
+  assert.equal(matchesTrigger(rule, "updated", { status: "Cancelled" }, new Set(["status"]), orderEntity), false);
+});
+
+/**
  * Round 969: the new "record_deleted" trigger -- fires on the "deleted"
  * event only, mirroring record_created's own "created"-only matching
  * exactly.

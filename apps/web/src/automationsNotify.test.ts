@@ -10,6 +10,7 @@ function rule(overrides: Partial<AutomationRuleView> & { id: string }): Automati
     trigger: "schedule",
     fieldName: null,
     fieldValue: null,
+    fieldOperator: null,
     scheduleTimeUtc: null,
     scheduleDaysOfWeek: null,
     scheduleTimezone: null,

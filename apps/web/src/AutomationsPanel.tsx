@@ -13,6 +13,7 @@ import {
   KNOWN_EMAIL_SEND_ERROR_CODES,
   KNOWN_WHATSAPP_SEND_ERROR_CODES,
   type AutomationActionType,
+  type AutomationFieldOperator,
   type AutomationRuleView,
   type AutomationRunView,
   type AutomationToMode,
@@ -114,6 +115,14 @@ export function AutomationsPanel({
   const [trigger, setTrigger] = useState<AutomationTrigger>("record_created");
   const [fieldName, setFieldName] = useState("");
   const [fieldValue, setFieldValue] = useState("");
+  // Round 1491: only meaningful (and only shown) when the selected field's
+  // own type is "number" or "date" -- see AutomationFieldOperator's own
+  // doc comment (packages/db/src/automations.ts) for why every other field
+  // type stays "equals" only. Reset to "equals" by the same field-switch
+  // effect that resets fieldValue below, so switching to a field that
+  // doesn't support "greater_than"/"less_than" can never leave one of
+  // those silently selected underneath a hidden selector.
+  const [fieldOperator, setFieldOperator] = useState<AutomationFieldOperator>("equals");
   const [toMode, setToMode] = useState<AutomationToMode>("field");
   const [toField, setToField] = useState("");
   // Round 1382: true right after the Entity <select> itself is switched,
@@ -347,6 +356,14 @@ export function AutomationsPanel({
       // validateAutomationFieldValue shape exactly.
       setFieldValue("");
     }
+    // Round 1491: "greater_than"/"less_than" only make sense for a
+    // number/date field (validateAutomationFieldOperator, routes/
+    // projects.ts) -- reset to "equals" so switching away from one never
+    // leaves a now-invalid operator silently selected underneath a
+    // selector that just disappeared.
+    if (selectedField?.type !== "number" && selectedField?.type !== "date" && fieldOperator !== "equals" && fieldOperator !== "not_equals") {
+      setFieldOperator("equals");
+    }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [fieldName, fieldTypesKey, fieldEnumValuesKey]);
 
@@ -458,6 +475,7 @@ export function AutomationsPanel({
     setTrigger("record_created");
     setFieldName(firstTriggerableField?.name ?? "");
     setFieldValue("");
+    setFieldOperator("equals");
     setToMode("field");
     setToField(firstPhoneField?.name ?? "");
     setToNumber("");
@@ -524,6 +542,7 @@ export function AutomationsPanel({
       ruleTriggerableFields.some((f) => f.name === rule.fieldName) ? rule.fieldName ?? "" : ruleTriggerableFields[0]?.name ?? "",
     );
     setFieldValue(rule.fieldValue ?? "");
+    setFieldOperator(rule.fieldOperator ?? "equals");
     setScheduleTimeUtc(rule.scheduleTimeUtc ?? "09:00");
     setScheduleDays(rule.scheduleDaysOfWeek ? rule.scheduleDaysOfWeek.split(",").map(Number) : [0, 1, 2, 3, 4, 5, 6]);
     // Shows (and, if saved unchanged, keeps) the rule's OWN stored zone --
@@ -664,6 +683,7 @@ export function AutomationsPanel({
           trigger,
           fieldName: trigger === "field_equals" ? fieldName : null,
           fieldValue: trigger === "field_equals" ? fieldValue.trim() : null,
+          fieldOperator: trigger === "field_equals" ? fieldOperator : null,
           scheduleTimeUtc: trigger === "schedule" ? scheduleTimeUtc : null,
           scheduleDaysOfWeek: trigger === "schedule" && !everyDay ? [...scheduleDays].sort().join(",") : null,
           scheduleTimezone: trigger === "schedule" ? scheduleTimezone : null,
@@ -684,6 +704,7 @@ export function AutomationsPanel({
           trigger,
           fieldName: trigger === "field_equals" ? fieldName : undefined,
           fieldValue: trigger === "field_equals" ? fieldValue.trim() : undefined,
+          fieldOperator: trigger === "field_equals" ? fieldOperator : undefined,
           scheduleTimeUtc: trigger === "schedule" ? scheduleTimeUtc : undefined,
           scheduleDaysOfWeek: trigger === "schedule" && !everyDay ? [...scheduleDays].sort().join(",") : undefined,
           scheduleTimezone: trigger === "schedule" ? scheduleTimezone : undefined,
@@ -895,11 +916,14 @@ export function AutomationsPanel({
     if (rule.trigger === "record_deleted") return t("automations.rule.when.deleted", { entity: entityLabel(rule) });
     if (rule.trigger === "record_updated") return t("automations.rule.when.updated", { entity: entityLabel(rule) });
     if (rule.trigger === "schedule") return describeSchedule(rule);
-    return t("automations.rule.when.fieldEquals", {
-      field: fieldLabel(rule, rule.fieldName),
-      entity: entityLabel(rule),
-      value: fieldValueLabel(rule),
-    });
+    // Round 1491: operator-aware description -- see AutomationFieldOperator's
+    // own doc comment (packages/db/src/automations.ts). Null/"equals" keeps
+    // the exact original wording every existing rule already shows.
+    const params = { field: fieldLabel(rule, rule.fieldName), entity: entityLabel(rule), value: fieldValueLabel(rule) };
+    if (rule.fieldOperator === "not_equals") return t("automations.rule.when.fieldNotEquals", params);
+    if (rule.fieldOperator === "greater_than") return t("automations.rule.when.fieldGreaterThan", params);
+    if (rule.fieldOperator === "less_than") return t("automations.rule.when.fieldLessThan", params);
+    return t("automations.rule.when.fieldEquals", params);
   }
 
   function describeDestination(rule: AutomationRuleView): string {
@@ -1477,6 +1501,17 @@ export function AutomationsPanel({
                   ))}
                 </select>
               </label>
+              {(selectedField?.type === "number" || selectedField?.type === "date") && (
+                <label>
+                  {t("automations.fieldOperator.label")}
+                  <select value={fieldOperator} onChange={(e) => setFieldOperator(e.target.value as AutomationFieldOperator)}>
+                    <option value="equals">{t("automations.fieldOperator.equals")}</option>
+                    <option value="not_equals">{t("automations.fieldOperator.notEquals")}</option>
+                    <option value="greater_than">{t("automations.fieldOperator.greaterThan")}</option>
+                    <option value="less_than">{t("automations.fieldOperator.lessThan")}</option>
+                  </select>
+                </label>
+              )}
               {selectedField?.type === "boolean" ? (
                 <label className="automations-field-value-checkbox">
                   <input type="checkbox" checked={fieldValue === "true"} onChange={(e) => setFieldValue(e.target.checked ? "true" : "false")} />

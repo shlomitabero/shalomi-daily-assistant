@@ -64,6 +64,7 @@ import {
   type AutomationTrigger,
   type AutomationToMode,
   type AutomationActionType,
+  type AutomationFieldOperator,
 } from "@forge/db";
 import type { SpecProvider } from "@forge/spec-engine";
 import { enhancePrompt, generateSpec, isHebrewText, TEMPLATES } from "@forge/spec-engine";
@@ -293,6 +294,11 @@ const CreateAutomationRuleSchema = z
     // already fails isAllowedWebhookUrl's URL parse / .email() respectively.
     fieldName: z.string().trim().min(1).max(200).optional(),
     fieldValue: z.string().trim().min(1).max(2000).optional(),
+    // Round 1491: see AutomationFieldOperator's own doc comment
+    // (packages/db/src/automations.ts). Omitted (same as every rule created
+    // before this field existed) defaults to "equals" everywhere this is
+    // read -- see matchesTrigger's own matchesFieldOperator helper.
+    fieldOperator: z.enum(["equals", "not_equals", "greater_than", "less_than"]).optional(),
     scheduleTimeUtc: z.string().regex(SCHEDULE_TIME_UTC_PATTERN, "scheduleTimeUtc must be \"HH:MM\" in 24-hour UTC").optional(),
     scheduleDaysOfWeek: z
       .string()
@@ -316,6 +322,10 @@ const CreateAutomationRuleSchema = z
   .refine((data) => data.trigger === "field_equals" || (!data.fieldName && !data.fieldValue), {
     message: "fieldName and fieldValue must be empty when trigger is not field_equals",
     path: ["fieldName"],
+  })
+  .refine((data) => data.trigger === "field_equals" || !data.fieldOperator, {
+    message: "fieldOperator must be empty when trigger is not field_equals",
+    path: ["fieldOperator"],
   })
   .refine((data) => data.trigger !== "schedule" || !!data.scheduleTimeUtc, {
     message: "scheduleTimeUtc is required when trigger is schedule",
@@ -360,6 +370,8 @@ const UpdateAutomationRuleSchema = z.object({
   // fields just above -- see that schema's doc comment.
   fieldName: z.string().trim().min(1).max(200).nullable().optional(),
   fieldValue: z.string().trim().min(1).max(2000).nullable().optional(),
+  // Round 1491: see CreateAutomationRuleSchema's own identical field.
+  fieldOperator: z.enum(["equals", "not_equals", "greater_than", "less_than"]).nullable().optional(),
   scheduleTimeUtc: z.string().regex(SCHEDULE_TIME_UTC_PATTERN, "scheduleTimeUtc must be \"HH:MM\" in 24-hour UTC").nullable().optional(),
   scheduleDaysOfWeek: z
     .string()
@@ -397,6 +409,7 @@ export function findAutomationRuleInvariantViolation(rule: {
   trigger: AutomationTrigger;
   fieldName: string | null;
   fieldValue: string | null;
+  fieldOperator: AutomationFieldOperator | null;
   scheduleTimeUtc: string | null;
   actionType: AutomationActionType;
   toMode: AutomationToMode;
@@ -419,6 +432,11 @@ export function findAutomationRuleInvariantViolation(rule: {
   // rule starts silently double-firing.
   if (rule.trigger !== "field_equals" && (rule.fieldName || rule.fieldValue)) {
     return "fieldName and fieldValue must be empty when trigger is not field_equals";
+  }
+  // Round 1491: same reasoning as the fieldName/fieldValue check above --
+  // mirrors CreateAutomationRuleSchema's own identical .refine().
+  if (rule.trigger !== "field_equals" && rule.fieldOperator) {
+    return "fieldOperator must be empty when trigger is not field_equals";
   }
   if (rule.trigger === "schedule" && !rule.scheduleTimeUtc) {
     return "scheduleTimeUtc is required when trigger is schedule";
@@ -907,6 +925,24 @@ function validateAutomationFieldValue(field: Field, fieldValue: string): void {
   // match.
   if (field.type === "file") {
     throw new HttpError(400, `Field "${field.name}" can't be used in a trigger condition -- a file field's stored value can never be typed in by hand`, "VALIDATION_ERROR");
+  }
+}
+
+/**
+ * Round 1491: "greater_than"/"less_than" only have a sensible meaning for a
+ * field with a real numeric ordering -- "number" and "date" (compared
+ * chronologically, see matchesTrigger's own matchesFieldOperator helper).
+ * An enum/boolean/text/longtext/relation/file field has no such ordering a
+ * user configuring this rule could reasonably predict (a relation field's
+ * own id, for instance, is an internal implementation detail with no
+ * meaning as a magnitude), so saving one of these two operators against any
+ * of them is rejected here, the same "reject at creation, don't rely on a
+ * runtime guard to silently never match" discipline validateAutomationFieldValue
+ * above already establishes for its own cases.
+ */
+function validateAutomationFieldOperator(field: Field, operator: AutomationFieldOperator): void {
+  if ((operator === "greater_than" || operator === "less_than") && field.type !== "number" && field.type !== "date") {
+    throw new HttpError(400, `Field "${field.name}" must be a number or date field to use a greater-than/less-than comparison`, "VALIDATION_ERROR");
   }
 }
 
@@ -5627,6 +5663,7 @@ export function createProjectsRouter(
       if (data.trigger === "field_equals" && data.fieldName) {
         const field = findField(entity, data.fieldName);
         if (data.fieldValue) validateAutomationFieldValue(field, data.fieldValue);
+        if (data.fieldOperator) validateAutomationFieldOperator(field, data.fieldOperator);
       }
       if (data.toMode === "field" && data.toField) {
         validateAutomationToField(findField(entity, data.toField));
@@ -5658,6 +5695,7 @@ export function createProjectsRouter(
             trigger: data.trigger,
             fieldName: data.fieldName ?? null,
             fieldValue: data.fieldValue ?? null,
+            fieldOperator: data.fieldOperator ?? null,
             scheduleTimeUtc: data.scheduleTimeUtc ?? null,
             scheduleDaysOfWeek: data.scheduleDaysOfWeek ?? null,
             scheduleTimezone: data.scheduleTimezone ?? null,
@@ -5733,6 +5771,7 @@ export function createProjectsRouter(
           if (next.trigger === "field_equals" && next.fieldName) {
             const field = findField(entity, next.fieldName);
             if (next.fieldValue) validateAutomationFieldValue(field, next.fieldValue);
+            if (next.fieldOperator) validateAutomationFieldOperator(field, next.fieldOperator);
           }
           if (next.toMode === "field" && next.toField) {
             validateAutomationToField(findField(entity, next.toField));
