@@ -45,7 +45,18 @@ function useRemovableSpecItem(remove: () => Promise<{ project: Project }>, onRem
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
+  // Round 1522: mirrors useRenamableSpecItem's own save() guard just below
+  // (round 1432's `if (busy) return;`) -- every call site here
+  // (RoleChip/AssumptionItem/PersonaItem's remove, EntitySummaryItem's
+  // remove AND duplicate, FieldChip's remove) relies entirely on React
+  // having already committed the button's own `disabled={...busy...}`
+  // attribute from a first click before a second click can land. A fast
+  // double-click fires this handler twice before that render commits,
+  // sending two concurrent requests for one click -- the exact "own-click
+  // reentrancy" shape rounds 1363-1372 already closed everywhere else in
+  // this app, just never ported to this one shared hook.
   async function handleRemove() {
+    if (busy) return;
     setBusy(true);
     setError(null);
     try {

@@ -2,6 +2,7 @@ import "./jsdomWarmup.js";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { test } from "node:test";
+import { transformSync } from "esbuild";
 import { JSDOM } from "jsdom";
 import React from "react";
 import { cleanup, fireEvent, render } from "@testing-library/react";
@@ -20,6 +21,8 @@ import {
 } from "./SpecListItemRemover.js";
 import { LanguageProvider } from "./i18n/LanguageContext.js";
 import { ThemeProvider } from "./theme/ThemeContext.js";
+
+const specListItemRemoverSrc = readFileSync(new URL("./SpecListItemRemover.tsx", import.meta.url), "utf8");
 
 /** Same jsdom-swap technique as EntityLabelEditor.test.ts and the rest of this project's real-DOM tests. */
 async function withJsdom<T>(fn: () => Promise<T> | T): Promise<T> {
@@ -1355,6 +1358,35 @@ test("AddEntityForm's submit button guards against a fast double-click, so only 
       globalThis.fetch = originalFetch;
     }
   });
+});
+
+/**
+ * Round 1522: useRemovableSpecItem's own handleRemove (shared by RoleChip,
+ * AssumptionItem, PersonaItem, EntitySummaryItem's remove AND duplicate,
+ * FieldChip) had no guard against racing ITSELF -- the same own-click
+ * reentrancy gap round 1366 closed for the sibling useAddableSpecItem hook
+ * right above (and round 1401's own WhatsAppPanel handleRetry fix). Every
+ * call site's own `disabled={...busy...}` is a real guard against a SECOND
+ * test-harness click (jsdom's fireEvent.click respects the disabled
+ * attribute once React's act()-wrapped re-render has already applied it),
+ * but that's not the same as a code-level guard against a genuinely fast
+ * real double-click landing both native click events before the browser's
+ * own next paint commits that attribute -- and a full-render double
+ * fireEvent.click() test would pass even without the fix for exactly that
+ * reason (confirmed: it does), the same false-pass round 1401's own
+ * methodology correction documents for this identical shape. Extracted and
+ * called with ONLY `busy` declared (already true, simulating an in-flight
+ * call), mirroring WhatsAppPanel.test.ts's round-1401 handleRetry test and
+ * round 1013/1118's identical technique -- if the guard were ever removed,
+ * the very next line reached (`setBusy`) throws a ReferenceError instead
+ * of silently doing nothing, proving the guard itself stops execution.
+ */
+test("useRemovableSpecItem's handleRemove is a no-op while busy is already true", async () => {
+  const handlerMatch = specListItemRemoverSrc.match(/ {2}async function handleRemove\(\) \{[\s\S]*?\n {2}\}\n/);
+  assert.ok(handlerMatch, "expected to find handleRemove in SpecListItemRemover.tsx");
+  const { code } = transformSync(handlerMatch![0], { loader: "ts" });
+  const fn = new Function("busy", `${code}\nreturn handleRemove;`)(true) as () => Promise<void>;
+  await fn();
 });
 
 test("the add-entity form surfaces a real error instead of silently doing nothing, and never fires onAdded", async () => {
