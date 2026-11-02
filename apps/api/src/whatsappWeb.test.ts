@@ -1274,6 +1274,47 @@ test("an incoming WhatsApp buttons/list offer message is logged with a placehold
 });
 
 /**
+ * Round 1515: an incoming WhatsApp templateMessage/interactiveMessage --
+ * the "offer" halves round 1509's own survey missed, of the
+ * templateButtonReplyMessage/interactiveResponseMessage pair this file
+ * already handled -- is now logged with its text instead of being
+ * silently dropped. A templateMessage is a WhatsApp Business "template"
+ * notification (e.g. an appointment reminder); an interactiveMessage is
+ * the offer half of a catalog/collection/native-flow interactive message.
+ * Covers a populated templateMessage and interactiveMessage.
+ */
+test("an incoming WhatsApp template/interactive offer message is logged with its text instead of being silently dropped", async () => {
+  const { manager, createdSockets, db } = setupManager();
+  insertProject(db, project);
+  applyMigrations(db, project.id, project.spec);
+  markProjectBuilt(db, project.id);
+
+  await manager.connect(project.id);
+  createdSockets[0].emitConnectionUpdate({ connection: "open" });
+
+  createdSockets[0].emitMessagesUpsert({
+    type: "notify",
+    messages: [
+      {
+        key: { remoteJid: "972501234567@s.whatsapp.net", fromMe: false },
+        message: { templateMessage: { hydratedTemplate: { hydratedContentText: "Your appointment is tomorrow at 10am" } } },
+      },
+      {
+        key: { remoteJid: "972501234567@s.whatsapp.net", fromMe: false },
+        message: { interactiveMessage: { body: { text: "Browse our new collection" } } },
+      },
+    ],
+  });
+
+  // listWhatsAppMessages orders newest-first, the reverse of emission order.
+  const { messages } = listWhatsAppMessages(db, project.id);
+  assert.equal(messages.length, 2);
+  assert.equal(messages[0].body, "[Interactive] Browse our new collection");
+  assert.equal(messages[1].body, "[Template] Your appointment is tomorrow at 10am");
+  for (const m of messages) assert.equal(m.direction, "in", "every placeholder row must still be a real, matched-against incoming message, not metadata");
+});
+
+/**
  * Round 1088: an incoming WhatsApp emoji reaction (long-press a message,
  * tap an emoji) -- previously dropped with zero trace, the same gap round
  * 1051's own doc comment left open for "every other still-unrecognized

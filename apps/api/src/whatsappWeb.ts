@@ -131,6 +131,8 @@ export interface BaileysIncomingMessage {
     listResponseMessage?: { title?: string; description?: string; singleSelectReply?: { selectedRowId?: string } };
     templateButtonReplyMessage?: { selectedId?: string; selectedDisplayText?: string };
     interactiveResponseMessage?: { body?: { text?: string }; nativeFlowResponseMessage?: { name?: string } };
+    templateMessage?: { hydratedTemplate?: { hydratedContentText?: string } };
+    interactiveMessage?: { body?: { text?: string } };
     liveLocationMessage?: { caption?: string };
     groupInviteMessage?: { groupName?: string; caption?: string };
     productMessage?: { product?: { title?: string; description?: string }; body?: string; footer?: string };
@@ -466,6 +468,23 @@ function describeIncomingMessage(message: BaileysIncomingMessage["message"]): st
   if (message.listResponseMessage) {
     const l = message.listResponseMessage;
     return `[List] ${l.title ?? l.description ?? l.singleSelectReply?.selectedRowId ?? ""}`;
+  }
+  // Round 1515: templateMessage/interactiveMessage are the "offer" halves
+  // round 1509's own survey missed -- templateButtonReplyMessage and
+  // interactiveResponseMessage (the reply halves) were already handled
+  // just above, but the offer that prompts those replies (a WhatsApp
+  // Business "template" notification, or a catalog/collection/native-flow
+  // interactive message) fell through to the final `return null` and was
+  // silently dropped. TemplateMessage.hydratedTemplate.hydratedContentText
+  // and InteractiveMessage.body.text are both plaintext in Baileys' own
+  // shipped WAProto.proto, same bar as every other branch here. Labeled
+  // distinctly from the existing "[Button]" reply label so the offer and
+  // the reply to it are never confused in the log.
+  if (message.templateMessage?.hydratedTemplate?.hydratedContentText) {
+    return `[Template] ${message.templateMessage.hydratedTemplate.hydratedContentText}`;
+  }
+  if (message.interactiveMessage?.body?.text) {
+    return `[Interactive] ${message.interactiveMessage.body.text}`;
   }
   if (message.interactiveResponseMessage) {
     const i = message.interactiveResponseMessage;
