@@ -111,7 +111,12 @@ test("migrateColumnOrderForEntityRename remaps every collaborator's own order to
 
     assert.deepEqual(getColumnOrder("proj1", "Customer", "userA"), ["email", "name"], "userA's order must resolve under the new casing");
     assert.deepEqual(getColumnOrder("proj1", "Customer", "userB"), ["name", "email"], "userB's order must resolve under the new casing too");
-    assert.deepEqual(getColumnOrder("proj1", "customer", "userA"), [], "nothing must remain reachable under the old casing");
+    // Round 1542: getColumnOrder itself now has a case-insensitive fallback
+    // (for every collaborator who never ran this exact migration in their
+    // own browser), so a lookup under the OLD casing correctly still
+    // resolves to the migrated entry too -- this is the intended new
+    // behavior, not a regression of the migration itself.
+    assert.deepEqual(getColumnOrder("proj1", "customer", "userA"), ["email", "name"], "a lookup under the old casing must still resolve via getColumnOrder's own case-insensitive fallback");
     assert.deepEqual(getColumnOrder("proj1", "Order", "userA"), ["total", "status"], "a sibling entity's own order must survive the rename untouched");
   });
 });
@@ -193,5 +198,38 @@ test("removeColumnOrderForUserProject is a no-op, not an error, when this user n
   await withJsdom(() => {
     assert.doesNotThrow(() => removeColumnOrderForUserProject("proj1", "userA"));
     assert.deepEqual(getColumnOrder("proj1", "Customer", "userA"), []);
+  });
+});
+
+/**
+ * Round 1542: migrateEntityPreferencesForCaseRename (entityPreferenceCleanup.ts)
+ * only ever runs in the one browser tab that triggered a case-only entity
+ * rename (build/refine completion, or a checkpoint restore) -- every OTHER
+ * collaborator's own localStorage still holds this entry under the entity's
+ * OLD casing, forever, with no way to ever re-run that migration. Before
+ * this round's fix, getColumnOrder's exact-match lookup silently reverted
+ * such a collaborator's saved column order to the entity's default field
+ * order the moment they next loaded the project, with zero error or
+ * indication.
+ */
+test("getColumnOrder finds a collaborator's own order stored under the entity's OLD casing, even though this browser never ran migrateEntityPreferencesForCaseRename for it", async () => {
+  await withJsdom(() => {
+    setColumnOrder("proj1", "Customer", "userB", ["name", "email", "phone"]);
+
+    assert.deepEqual(
+      getColumnOrder("proj1", "customer", "userB"),
+      ["name", "email", "phone"],
+      "a case-only entity rename elsewhere must not silently revert this collaborator's own saved column order",
+    );
+  });
+});
+
+test("getColumnOrder's case-insensitive fallback never leaks a DIFFERENT user's or a DIFFERENT project's own order for the same entity", async () => {
+  await withJsdom(() => {
+    setColumnOrder("proj1", "Customer", "userA", ["email", "name"]);
+    setColumnOrder("proj2", "Customer", "userB", ["phone", "name"]);
+
+    assert.deepEqual(getColumnOrder("proj1", "customer", "userB"), [], "must not return a different user's own order for the same project+entity");
+    assert.deepEqual(getColumnOrder("proj2", "customer", "userA"), [], "must not return a different project's own order for the same user+entity");
   });
 });

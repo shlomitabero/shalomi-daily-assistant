@@ -46,10 +46,37 @@ function writeStore(store: Record<string, string[]>): void {
  * columns have never been reordered, in which case callers fall back to the
  * entity's own natural field order. Round 1069: also scoped per user --
  * see keyFor's own doc comment above.
+ *
+ * Round 1542: a case-only entity rename (an ordinary, explicitly-anticipated
+ * refine/AI casing drift) only ever gets its stored preferences re-keyed by
+ * migrateEntityPreferencesForCaseRename (entityPreferenceCleanup.ts), which
+ * is called from exactly two places in App.tsx -- both scoped to the single
+ * browser tab that happened to trigger the rename (the build/refine-complete
+ * handler, or a checkpoint restore). Every OTHER collaborator's own
+ * localStorage (a different browser, a different device, or the same
+ * browser simply not open at that moment) still holds this preference under
+ * the entity's OLD casing forever -- the exact-match lookup above would miss
+ * it with zero error or indication, silently reverting their saved column
+ * order to the entity's default field order. Falls back to a case-insensitive
+ * scan of this exact project+user's own keys, the same "tolerate either
+ * casing at read time" resolution this codebase already applies everywhere
+ * else a stale case mismatch can arise (applyColumnOrder's own byLowerName
+ * fallback below, migrate.ts's prevFieldByLowerName, etc.), rather than
+ * relying on every reader having already run the one-tab-only migration.
  */
 export function getColumnOrder(projectId: string, entityName: string, userId: string): string[] {
   const store = readStore();
-  return [...(store[keyFor(projectId, entityName, userId)] ?? [])];
+  const exact = store[keyFor(projectId, entityName, userId)];
+  if (exact) return [...exact];
+  const prefix = `${projectId}:`;
+  const suffix = `:${userId}`;
+  const lowerEntityName = entityName.toLowerCase();
+  for (const [key, value] of Object.entries(store)) {
+    if (!key.startsWith(prefix) || !key.endsWith(suffix)) continue;
+    const keyEntityName = key.slice(prefix.length, key.length - suffix.length);
+    if (keyEntityName.toLowerCase() === lowerEntityName) return [...value];
+  }
+  return [];
 }
 
 /** Persists a full field-name order and returns it, so callers can update their own state from the return value instead of re-reading storage. */
