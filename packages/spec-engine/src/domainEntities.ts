@@ -401,17 +401,23 @@ export const DOMAIN_ENTITY_RULES: DomainEntityRule[] = [
       // the specific "ט" that marks "Mozart" while still matching
       // "מוצר"/"מוצרים".
       /מוצר(?!ט)/, "מוצרים",
-      // Bare "מלאי" ("inventory/stock") is a substring of two unrelated,
-      // ordinary Hebrew words (round 518): WorkOrder's own "חשמלאי"/
-      // "חשמלאים" ("electrician(s)") and the common adjective "מלאים"
-      // ("full", plural) -- e.g. "ארונות מלאים" ("full cabinets") has
-      // nothing to do with retail inventory. JS regex's `\b` only
-      // recognizes ASCII word characters, so it can't bound a Hebrew
-      // word the way it bounds "stock"/"product" above; a lookbehind for
-      // the "חש" prefix plus a lookahead against the "ם" plural suffix
-      // excludes exactly these two collisions while "מלאי" still matches
-      // as its own word (e.g. "ניהול מלאי", "המלאי", "במלאי").
-      /(?<!חש)מלאי(?!ם)/,
+      // Bare "מלאי" ("inventory/stock") is a substring of three unrelated,
+      // ordinary Hebrew words. Round 518 excluded WorkOrder's own
+      // "חשמלאי"/"חשמלאים" ("electrician(s)") and the common adjective
+      // "מלאים" ("full", plural) -- e.g. "ארונות מלאים" ("full cabinets")
+      // has nothing to do with retail inventory. Round 1535: "ממלאי מקום"/
+      // "ממלאי תפקיד" ("deputies"/"role-holders" -- ordinary HR/admin
+      // Hebrew, e.g. substitute teachers) also contains "מלאי" as a
+      // literal substring ("מ"+"מלאי"), and round 518's own lookbehind
+      // only excluded the two-character "חש" prefix, not a bare single
+      // "מ" -- same reason round 565's "עובד"/"נהג" fixes needed a
+      // `(?<!מ)` lookbehind of their own. JS regex's `\b` only recognizes
+      // ASCII word characters, so it can't bound a Hebrew word the way it
+      // bounds "stock"/"product" above; a lookbehind for "חש", a second
+      // lookbehind for a bare "מ", plus a lookahead against the "ם"
+      // plural suffix excludes all three collisions while "מלאי" still
+      // matches as its own word (e.g. "ניהול מלאי", "המלאי", "במלאי").
+      /(?<!חש)(?<!מ)מלאי(?!ם)/,
     ],
     labelHe: "מוצרים",
     descriptionHe: "פריט שהעסק מוכר או עוקב אחריו.",

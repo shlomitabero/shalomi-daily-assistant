@@ -2049,6 +2049,40 @@ test("Product's 'מלאי' keyword doesn't spuriously match 'חשמלאי' (elec
 });
 
 /**
+ * Regression test for round 1535's finding: Product's bare "מלאי" keyword
+ * is also a substring of the ordinary, unrelated HR/admin term "ממלאי"
+ * ("deputies"/"role-holders" -- the construct-state plural of "ממלא",
+ * "filler-of"), as in "ממלאי מקום" ("substitutes") or "ממלאי תפקיד"
+ * ("role-holders"). Round 518's own lookbehind only excluded the
+ * two-character "חש" prefix, not a bare single "מ", so a description
+ * about managing substitute teachers spuriously matched only Product (and
+ * nothing else, since no other keyword in such a description happens to
+ * match) -- the wrong entity and the only one detected. Fixed with a
+ * second lookbehind excluding a bare "מ", mirroring round 565's own
+ * "עובד"/"נהג" fixes for the identical class of collision.
+ */
+test("Product's 'מלאי' keyword doesn't spuriously match 'ממלאי' (deputies/role-holders)", async () => {
+  const provider = new HeuristicSpecProvider();
+
+  const deputies = await provider.generate("אפליקציה לניהול ממלאי מקום למורים בבית ספר - מעקב אחרי שיבוצים וזמינות");
+  assert.ok(
+    !deputies.entities.some((e) => e.name === "Product"),
+    "'ממלאי מקום' (deputies/substitutes) alone must not spuriously match Product via a bare 'מלאי' substring",
+  );
+
+  const roleHolders = await provider.generate("אפליקציה למעקב אחרי ממלאי תפקיד בארגון");
+  assert.ok(
+    !roleHolders.entities.some((e) => e.name === "Product"),
+    "'ממלאי תפקיד' (role-holders) alone must not spuriously match Product via a bare 'מלאי' substring",
+  );
+
+  // The real business term still works, including with a definite
+  // article/preposition prefix and no suffix at all.
+  const inventory = await provider.generate("אפליקציה לניהול מלאי בחנות");
+  assert.ok(inventory.entities.some((e) => e.name === "Product"), "'מלאי' must still match Product");
+});
+
+/**
  * Regression test for round 527's finding: bare "חיוב" ("charge"), used in
  * both PAYMENT_KEYWORDS and the Invoice entry's keywords, is a substring
  * of the ordinary, unrelated adjective/noun "חיובי"/"חיובית"/"חיוביות"
