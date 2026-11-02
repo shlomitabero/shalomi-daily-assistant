@@ -287,6 +287,23 @@ test("badgeTone recognizes 'Rented' as positive, matching Property/Vehicle's rea
   assert.equal(badgeTone("Unrented"), "negative");
 });
 
+/**
+ * Round 1493's finding: the built-in Student domain entity's own status
+ * enum (spec-engine/domainEntities.ts: ["Active", "Graduated", "OnHold"])
+ * uses "Graduated" as its own successful-outcome state, exactly analogous
+ * to "Hired" (JobApplicant) and "Resolved"/"Done" (Ticket/Task) -- but it
+ * fell through to neutral gray, the same tone as "Active"/"OnHold", since
+ * "graduated" was missing from POSITIVE_WORDS. Unlike "sold"/"rented"
+ * above, this one takes no matching NEGATIVE_WORDS entry (the same "hired"
+ * shape): "ungraduated" isn't an ordinary real-world status term.
+ */
+test("badgeTone recognizes 'Graduated' as positive, matching Student's real status enum", () => {
+  assert.equal(badgeTone("Graduated"), "positive");
+  assert.equal(badgeTone("graduated"), "positive");
+  assert.equal(badgeTone("Active"), "positive");
+  assert.equal(badgeTone("OnHold"), "neutral");
+});
+
 test("formatDateValue formats a valid ISO date per locale, and leaves an invalid one unchanged", () => {
   const result = formatDateValue("2026-03-15", "en");
   assert.match(result, /3\/15\/2026|15\/3\/2026/); // exact format is locale/engine-dependent, just confirm it parsed

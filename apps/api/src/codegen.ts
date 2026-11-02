@@ -2849,6 +2849,12 @@ const POSITIVE_WORDS = [
   // domain entity's status enum both use "Rented" as their own
   // successful-outcome state.
   "rented",
+  // round 1493: mirrors the live preview's own entityFormatting.ts fix --
+  // the built-in Student domain entity's status enum uses "Graduated" as
+  // its own successful-outcome state. No matching NEGATIVE_WORDS entry
+  // needed (same as "hired") -- "ungraduated" isn't an ordinary real-world
+  // status term the way "unsold"/"unresolved" are.
+  "graduated",
 ];
 // round 458: the "un-"/"dis-" negated forms below must stay listed here too --
 // each contains a POSITIVE_WORDS entry as a literal substring ("unpaid"

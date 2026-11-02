@@ -117,6 +117,18 @@ const POSITIVE_WORDS = [
   // state itself negative or neutral, any more than a sold item being
   // later returned would retroactively make "Sold" ambiguous.
   "rented",
+  // round 1493: the built-in Student domain entity's own status enum (see
+  // spec-engine/domainEntities.ts: ["Active", "Graduated", "OnHold"]) uses
+  // "Graduated" as its own successful-outcome state, exactly analogous to
+  // "Hired" (JobApplicant) and "Resolved"/"Done" (Ticket/Task) -- so a
+  // graduated student showed the same neutral gray badge as "Active"/
+  // "OnHold" instead of reading as positive. Unlike "sold"/"rented"/
+  // "resolved"/"done" above, this one does NOT need a matching
+  // NEGATIVE_WORDS entry: "ungraduated"/"not graduated" aren't ordinary
+  // real-world status terms the way "unsold"/"unresolved" are (the same
+  // "hired" shape, which also took no negative-word counterpart), and no
+  // existing word contains "graduated" as a substring either way.
+  "graduated",
 ];
 const NEGATIVE_WORDS = [
   "lost",

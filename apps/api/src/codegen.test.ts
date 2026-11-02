@@ -17505,6 +17505,24 @@ test("the exported EntityView's badgeTone classifies 'Rented' as positive, match
 });
 
 /**
+ * Regression test for round 1493's finding: the built-in Student domain
+ * entity's own status enum (["Active", "Graduated", "OnHold"]) uses
+ * "Graduated" as its own successful-outcome state -- it fell through to
+ * neutral gray in this exact exported copy too, mirroring the live-preview
+ * fix. No negated-form collision guard needed (same as "hired"). Runs the
+ * real generated badgeTone, not a reference copy.
+ */
+test("the exported EntityView's badgeTone classifies 'Graduated' as positive, matching Student's real status enum", () => {
+  const entityViewJsx = generateExportFiles(project).find((f) => f.path === "web/src/components/EntityView.jsx")!.content;
+  const badgeToneSrc = entityViewJsx.match(/const POSITIVE_WORDS[\s\S]*?\nfunction badgeTone\(rawValue\) \{[\s\S]*?\n\}\n/)?.[0];
+  assert.ok(badgeToneSrc, "expected to find POSITIVE_WORDS/NEGATIVE_WORDS/badgeTone in generated output");
+
+  const badgeTone = new Function(`${badgeToneSrc}\nreturn badgeTone;`)() as (v: string) => string;
+  assert.equal(badgeTone("Graduated"), "positive");
+  assert.equal(badgeTone("OnHold"), "neutral");
+});
+
+/**
  * New in this round: the exported standalone app's entity table columns
  * were a fixed auto-layout width, unlike the live Forge AI preview (round
  * 185's own drag-to-resize columns, persisted per entity via
