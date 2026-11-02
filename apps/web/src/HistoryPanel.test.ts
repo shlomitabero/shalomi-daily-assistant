@@ -822,6 +822,93 @@ test("HistoryPanel's search box (shown once there are more than 5 checkpoints) n
 });
 
 /**
+ * Round 1520: the exact "stale persisted/plain-state filter traps the view
+ * with no visible recovery" shape rounds 1464/1497/1498 already fixed for
+ * WhatsAppPanel.tsx's directionFilter/search and App.tsx's projectSearch --
+ * this panel's own search box has the identical gap. The search box is
+ * only rendered while checkpoints.length > 5; deleting checkpoints down to
+ * <= 5 removes the box (and the clear button/type filter) from the DOM but,
+ * before this round's fix, never reset the `search` state driving
+ * visibleCheckpoints -- so the remaining checkpoints stayed silently
+ * filtered out by a search term the user can no longer see or clear.
+ */
+test("HistoryPanel's search filter stops applying once a delete drops the checkpoint count to 5 or fewer, instead of silently hiding the rest with no control left to clear it", async () => {
+  await withJsdom(async () => {
+    const originalFetch = globalThis.fetch;
+    const originalConfirm = window.confirm;
+    const checkpoints = [
+      makeCheckpoint("cp1", "Initial build"),
+      makeCheckpoint("cp2", "Refine: add invoice tracking"),
+      makeCheckpoint("cp3", "Refine: add customer notes"),
+      makeCheckpoint("cp4", "Refine: fix invoice totals"),
+      makeCheckpoint("cp5", "Refine: add reminders"),
+      makeCheckpoint("cp6", "Refine: add tags"),
+    ];
+    window.confirm = () => true;
+    globalThis.fetch = (async (input: string, init?: RequestInit) => {
+      const method = init?.method ?? "GET";
+      if (method === "GET" && input === "/api/projects/proj1/checkpoints") {
+        return new Response(JSON.stringify({ checkpoints }), { status: 200, headers: { "content-type": "application/json" } });
+      }
+      if (method === "DELETE" && input === "/api/projects/proj1/checkpoints/cp6") {
+        return new Response(null, { status: 204 });
+      }
+      throw new Error(`unexpected request ${method} ${input}`);
+    }) as typeof fetch;
+
+    try {
+      render(
+        React.createElement(
+          ThemeProvider,
+          null,
+          React.createElement(
+            LanguageProvider,
+            null,
+            React.createElement(HistoryPanel, {
+              projectId: "proj1",
+              userId: "user1",
+              projectName: "Test Project",
+              currentSpec: checkpoints[0].spec,
+              onRestored: () => {},
+              onClose: () => {},
+            }),
+          ),
+        ),
+      );
+      await waitForCondition(() => document.querySelectorAll(".checkpoint-list li").length === 6);
+
+      const searchBox = document.querySelector(".history-search") as HTMLInputElement;
+      assert.ok(searchBox, "expected a search box once there are more than 5 checkpoints");
+      fireEvent.change(searchBox, { target: { value: "tags" } });
+      await waitForCondition(() => document.querySelectorAll(".checkpoint-list li").length === 1);
+
+      // Delete the ONE checkpoint that still matches "tags" (cp6, the only
+      // row visible under the search) -- this drops checkpoints.length from
+      // 6 to 5 and removes the search box, but leaves the 5 other,
+      // non-matching checkpoints (cp1-cp5) still existing server-side.
+      const deleteButtons = Array.from(document.querySelectorAll(".checkpoint-delete-btn")) as HTMLButtonElement[];
+      const cp6Row = deleteButtons.find((btn) => btn.closest("li")?.textContent?.includes("add tags"));
+      assert.ok(cp6Row, "expected a delete button on the one row still visible under the search filter");
+
+      await act(async () => {
+        fireEvent.click(cp6Row!);
+        await new Promise((resolve) => setTimeout(resolve, 0));
+      });
+      await waitForCondition(() => !document.querySelector(".history-search"));
+
+      assert.equal(
+        document.querySelectorAll(".checkpoint-list li").length,
+        5,
+        "once the search box disappears (checkpoints.length dropped to 5), the stale 'tags' search term -- which none of the 5 remaining checkpoints match -- must stop hiding all of them",
+      );
+    } finally {
+      globalThis.fetch = originalFetch;
+      window.confirm = originalConfirm;
+    }
+  });
+});
+
+/**
  * New in this round: EntityPanel.tsx's own identically-shaped live-filter
  * search box already got a one-click "Clear search" (✕) button (round
  * 355) and Escape-to-clear (round 357), but this sibling panel's search

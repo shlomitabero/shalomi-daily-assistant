@@ -40512,6 +40512,29 @@ Fail-before/pass-after verified for every new test: `apps/api/src/automations.te
 
 Full suite run (all three touched workspaces): `packages/db` 311/311, `apps/api` 1042/1044 (2 known pre-existing non-regressions: `password.test.ts`'s CPU-contention timing flake, `codegen.test.ts`'s documented cgroup-OOM SIGKILL -- task #55's own root-cause finding, identical signature to every prior round), `apps/web` 1765/1765 with `npx tsc -b` clean.
 
+### Round 1520: `HistoryPanel.tsx`'s search/type-filter state kept silently applying after a delete dropped the checkpoint count below the threshold that shows the controls, hiding every remaining checkpoint with no way left to clear it
+
+A fresh survey (Explore-type subagent, backgrounded) found that `HistoryPanel.tsx`'s `visibleCheckpoints` (`:68`, at the time) was computed unconditionally from the raw `search`/`typeFilter` state, while the search `<input>`, its clear button, and the type `<select>` are all gated behind `checkpoints.length > 5` (`:274`) -- the exact "stale persisted/plain-state filter traps the view with no visible recovery" shape rounds 1464/1497/1498 already fixed for `WhatsAppPanel.tsx`'s `directionFilter`/`search` and `App.tsx`'s `projectSearch`, but never checked against this sibling panel in the same bug-class family (round 1103 touched this file's Escape-handling for the same controls, but not this gap).
+
+**Independently re-verified before implementing**: read `visibleCheckpoints`'s definition and the `checkpoints.length > 5` render gate directly, confirming neither `search` nor `typeFilter` was reset anywhere when the count dropped. Read `handleDelete` (`:177`) directly, confirming it removes a checkpoint from local state live and in place (`setCheckpoints((prev) => prev.filter((c) => c.id !== checkpoint.id))`) with no remount -- the exact mechanism that can shrink `checkpoints.length` below 5 while the panel stays open and a filter stays in memory. Confirmed via `grep -c "HistoryPanel\|checkpointDiff\|filterCheckpoints" apps/api/src/codegen.ts` → `0` that no `codegen.ts` parity applies -- the exported standalone app has no Time Machine/checkpoint feature at all.
+
+**Reachability**: open History on a project with 6+ checkpoints (controls visible), search or pick a type filter that narrows the list, then delete checkpoints (one at a time, a routine action in this panel) down to 5 or fewer. The `.history-filters` block disappears entirely, but the stale filter keeps applying to the real `checkpoints` array underneath -- potentially hiding every remaining checkpoint behind the "no results" message, looking exactly like the project's whole build/refine history vanished, with no visible control left to recover it. Same severity/shape as round 1497's own WhatsApp finding, just never independently re-checked against this file.
+
+**The fix**: mirrored round 1464/1497's own `effective*` guard pattern exactly:
+```ts
+const effectiveSearch = checkpoints.length > 5 ? search : "";
+const effectiveTypeFilter = checkpoints.length > 5 ? typeFilter : "all";
+const visibleCheckpoints = filterCheckpointsByType(filterCheckpoints(checkpoints, effectiveSearch), effectiveTypeFilter);
+```
+
+**Tests**: 1 new in `HistoryPanel.test.ts` -- renders with 6 checkpoints, narrows the list to 1 via the search box ("tags", matching only cp6), then clicks Delete on that one visible, matching checkpoint (not an arbitrary other one, to isolate the bug: any remaining hidden checkpoints after this can only be explained by the stale filter itself, not simply by the matching row having been removed), and asserts the search box disappears (`checkpoints.length` now 5) AND all 5 remaining, non-matching checkpoints (cp1-cp5) are still rendered rather than hidden behind the now-invisible "tags" search term.
+
+Fail-before/pass-after verified directly: reverted `HistoryPanel.tsx` to `HEAD` (`git stash push -- apps/web/src/HistoryPanel.tsx`, keeping the test-file change), ran the new test -- failed exactly as predicted (`0 !== 5`: all 5 remaining checkpoints hidden behind the stale "tags" filter). Restored the fix (`git stash pop`) and reran -- passed.
+
+Full suite run: `apps/web`'s `npx tsc -b` passed clean. Full `apps/web` suite: 1781/1781 passing, zero failures (including the new test; this round's one touched file is `apps/web`-only, so no `apps/api` suite run was needed).
+
+**Topic status**: extends the "stale filter traps the view" bug-class family (rounds 1464/1497/1498) to a third file; the survey's own notes suggest it's worth a quick check whether any other panel with the same "controls gated behind a count threshold" shape (e.g. `CollaboratorsPanel.tsx`, `AutomationsPanel.tsx`, if either has one) has the identical gap, though none was confirmed this round.
+
 ### Round 1519: `codegen.ts`'s exported entity-tabs nav renders a live per-tab record-count badge with no `aria-label` at all -- a screen reader hears a bare number next to the entity name, with no plural agreement either way, and no indication the number is a record count
 
 A fresh survey (Explore-type subagent, backgrounded) found that `codegen.ts`'s entity-tab record-count badge (`<span className="tab-count">{entityCounts[e.name]}</span>`, ~line 9624) has no `aria-label`, unlike the live preview's own identical badge, which already renders `aria-label={t(entityCounts[entity.name] === 1 ? "entity.tab.recordCount.one" : "entity.tab.recordCount.many", ...)}`. A screen-reader user tabbing through the exported standalone app's primary navigation -- the entity-tab bar, present whenever any entity has records -- hears only a bare number ("42") next to the entity name, not "42 records."

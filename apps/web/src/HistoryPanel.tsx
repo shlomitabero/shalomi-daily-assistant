@@ -65,7 +65,18 @@ export function HistoryPanel({
   const [renamingId, setRenamingId] = useState<string | null>(null);
   const [copyStatus, setCopyStatus] = useState<"idle" | "copied" | "failed">("idle");
   const dialogRef = useDialogFocusTrap<HTMLDivElement>(onClose);
-  const visibleCheckpoints = filterCheckpointsByType(filterCheckpoints(checkpoints, search), typeFilter);
+  // Round 1520: the exact same "stale persisted/plain-state filter traps the
+  // view with no visible recovery" shape rounds 1464/1497/1498 already fixed
+  // for WhatsAppPanel.tsx's directionFilter/search and App.tsx's
+  // projectSearch -- applies equally here. The search <input> and typeFilter
+  // <select> below are only rendered while checkpoints.length > 5; nothing
+  // resets `search`/`typeFilter` when handleDelete drops the count back to
+  // <= 5 while the panel stays mounted, so a leftover, no-longer-visible
+  // filter keeps silently hiding every remaining checkpoint, with no control
+  // left on screen to clear it.
+  const effectiveSearch = checkpoints.length > 5 ? search : "";
+  const effectiveTypeFilter = checkpoints.length > 5 ? typeFilter : "all";
+  const visibleCheckpoints = filterCheckpointsByType(filterCheckpoints(checkpoints, effectiveSearch), effectiveTypeFilter);
   // Round 927: counted over the FULL checkpoint list (not just the
   // search/type-filtered visibleCheckpoints above) -- two checkpoints
   // sharing a label are still ambiguous to each other in the "Compare
