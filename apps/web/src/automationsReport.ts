@@ -268,6 +268,12 @@ function translateAutomationError(actionType: AutomationActionType | null, error
   // leaked raw English even when the live panel already showed the
   // translated sentence for the exact same error.
   if (actionType === "send_email" && error) return translate(lang, "error.AUTOMATION_EMAIL_NETWORK_ERROR");
+  // Round 1539: mirrors AutomationsPanel.tsx's own identical fix (see its
+  // comment) -- send_whatsapp's own equivalent of the webhook/send_email
+  // fallbacks above. Without this, the downloaded/copied report leaked raw
+  // English even when the live panel already showed the translated
+  // sentence for the exact same error.
+  if (actionType === "send_whatsapp" && error) return translate(lang, "error.AUTOMATION_WHATSAPP_NETWORK_ERROR");
   return error;
 }
 

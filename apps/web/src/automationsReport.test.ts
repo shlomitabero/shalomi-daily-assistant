@@ -388,6 +388,31 @@ test("formatAutomationsReport translates a send_email rule's unrecognized networ
 });
 
 /**
+ * Round 1539: mirrors AutomationsPanel.tsx's own identical fix (see its
+ * own comment) -- this module's hand-duplicated translateAutomationError
+ * had the webhook/send_email network-error fallbacks above but never got
+ * the matching send_whatsapp one, so an unrecognized Baileys-internal
+ * error (performSend's catch block, apps/api/src/whatsappWeb.ts) leaked
+ * the raw English message into the downloaded/copied report even though
+ * the live panel already showed the translated sentence for the exact
+ * same error.
+ */
+test("formatAutomationsReport translates a send_whatsapp rule's unrecognized network-error failure instead of showing the bare English sentence", () => {
+  const t = (key: string, params?: Record<string, string | number>) => translate("en", key, params);
+  const rule = makeRule({
+    actionType: "send_whatsapp",
+    lastTriggeredAt: "2026-03-15T09:00:00Z",
+    lastStatus: "failed",
+    lastError: "Connection Closed",
+  });
+
+  const report = formatAutomationsReport([rule], [], "Shop", "en", t);
+
+  assert.match(report, /network error/i, "the report must show a translated network-error message for the unrecognized send_whatsapp failure");
+  assert.equal(report.includes("Connection Closed"), false, "the bare raw Baileys-internal sentence must never leak into the report");
+});
+
+/**
  * Round 948: same fix as AutomationsPanel.tsx's own identical regression
  * (see its own comment) -- editing a rule's actionType never
  * retroactively clears/updates its own already-stored lastError

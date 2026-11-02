@@ -1002,6 +1002,18 @@ export function AutomationsPanel({
     // cases leaked raw English into this Hebrew-primary app's run history
     // and reports.
     if (actionType === "send_email" && error) return translate(lang, "error.AUTOMATION_EMAIL_NETWORK_ERROR");
+    // Round 1539: send_whatsapp's own equivalent of the webhook/send_email
+    // fallbacks above -- every KNOWN whatsapp send-attempt code is already
+    // covered by KNOWN_WHATSAPP_SEND_ERROR_CODES above, so anything still
+    // reaching here for a failed send_whatsapp run is necessarily some
+    // other Baileys-internal error (e.g. a mid-send socket disconnect),
+    // whose raw .message performSend's catch block (whatsappWeb.ts)
+    // returns verbatim. Flagged but left unfixed by round 1474's own
+    // comment in api.ts ("neither has a generic send_whatsapp fallback
+    // branch, unlike webhook/send_email"); without this, such an error
+    // leaked raw, untranslated English into this Hebrew-primary app's rule
+    // list and run history.
+    if (actionType === "send_whatsapp" && error) return translate(lang, "error.AUTOMATION_WHATSAPP_NETWORK_ERROR");
     return error;
   }
 

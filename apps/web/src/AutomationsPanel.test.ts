@@ -4077,7 +4077,7 @@ test("AutomationsPanel's History button fetches and shows every real run for tha
           JSON.stringify({
             runs: [
               { id: "run2", ruleId: "rule1", status: "sent", error: null, triggeredAt: new Date("2026-03-15T10:00:00Z").toISOString() },
-              { id: "run1", ruleId: "rule1", status: "failed", error: "WhatsApp not connected", triggeredAt: new Date("2026-03-15T09:00:00Z").toISOString() },
+              { id: "run1", ruleId: "rule1", status: "failed", error: "not_connected", triggeredAt: new Date("2026-03-15T09:00:00Z").toISOString() },
             ],
           }),
           { status: 200, headers: { "content-type": "application/json" } },
@@ -4104,7 +4104,15 @@ test("AutomationsPanel's History button fetches and shows every real run for tha
       assert.equal(runsRequests, 1);
       const entries = Array.from(document.querySelectorAll(".automations-rule-history-list li")).map((li) => li.textContent);
       assert.match(entries[0] ?? "", /sent/i, "the newer, successful run must be listed first");
-      assert.match(entries[1] ?? "", /WhatsApp not connected/, "the older, failed run's real error must be shown");
+      // Round 1539: this fixture previously used made-up prose ("WhatsApp
+      // not connected") that happened to leak through raw because it
+      // matched no known code -- now that an unrecognized send_whatsapp
+      // error gets the generic network-error fallback instead, the
+      // fixture uses the real stable code this run shape actually stores,
+      // so this test still verifies its own intent (a real, translated
+      // per-run error renders) rather than the no-longer-true raw-fallback
+      // behavior.
+      assert.match(entries[1] ?? "", /disconnected|reconnect|התנתק/i, "the older, failed run's real error must be shown, translated");
       assert.equal(historyButton.getAttribute("aria-expanded"), "true", "must report aria-expanded=true once the history list is open");
 
       fireEvent.click(historyButton);
@@ -4556,6 +4564,50 @@ test("AutomationsPanel translates a send_email rule's EMAIL_UNREACHABLE_ERROR vi
 
       const row = document.querySelector(".automations-rule-row") as HTMLElement;
       assert.equal(row.textContent?.includes("could not reach the destination"), false, "the raw English unreachable literal must never leak into the rule row");
+      assert.match(row.textContent ?? "", /network error|שגיאת רשת/, "the rule row must show a real translated network-error message");
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+});
+
+/**
+ * Round 1539: the send_whatsapp counterpart of the webhook/send_email
+ * generic network-error fallback tests above -- performSend's catch block
+ * (apps/api/src/whatsappWeb.ts) returns an arbitrary Baileys-internal
+ * error message verbatim whenever a send fails for a reason other than
+ * one of the 5 enumerated KNOWN_WHATSAPP_SEND_ERROR_CODES. Before this
+ * round, translateAutomationError had no send_whatsapp fallback branch at
+ * all, so such an error leaked raw English into this Hebrew-primary app's
+ * run history -- flagged but left unfixed by round 1474's own comment.
+ */
+test("AutomationsPanel translates a send_whatsapp rule's unrecognized Baileys error via the generic network-error fallback, instead of leaking the raw English literal", async () => {
+  await withJsdom(async () => {
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = (async (input: string) => {
+      if (input === "/api/projects/proj1/automations") {
+        return new Response(
+          JSON.stringify({
+            rules: [
+              makeRule({
+                lastTriggeredAt: new Date("2026-03-15T09:00:00Z").toISOString(),
+                lastStatus: "failed",
+                lastError: "Connection Closed",
+              }),
+            ],
+          }),
+          { status: 200, headers: { "content-type": "application/json" } },
+        );
+      }
+      throw new Error(`unexpected request ${input}`);
+    }) as typeof fetch;
+
+    try {
+      renderPanel();
+      await waitForCondition(() => document.querySelectorAll(".automations-rule-row").length === 1);
+
+      const row = document.querySelector(".automations-rule-row") as HTMLElement;
+      assert.equal(row.textContent?.includes("Connection Closed"), false, "the raw Baileys-internal error must never leak into the rule row");
       assert.match(row.textContent ?? "", /network error|שגיאת רשת/, "the rule row must show a real translated network-error message");
     } finally {
       globalThis.fetch = originalFetch;
