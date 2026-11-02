@@ -3538,6 +3538,11 @@ test("the exported EntityView's handleSubmit saves only the field the user actua
     // validation-failure branches that actually use them.
     function setInvalidFieldName() {}
     function focusFormField() {}
+    // Round 1518: startEdit now also calls scrollIntoViewRespectingMotion
+    // (a free variable it references, same as every other setter above) --
+    // a no-op here since this test exercises startEdit's own form-snapshot
+    // behavior, not the scroll.
+    function scrollIntoViewRespectingMotion() {}
     // handleSubmit's own closure (round 798/852) also reaches these two --
     // Customer (this test's entity) has no file field, so requiredFileField
     // is always undefined here and recordHasNoRequiredFile always falsy,
@@ -18120,7 +18125,8 @@ test("the exported EntityView's scrollIntoViewRespectingMotion substitutes behav
 // end-to-end above. Round 821's own fix added two more EntityView.jsx call
 // sites (startCreateForColumn/startCreateForDate, the Board/Calendar
 // siblings of startCreateNew that used to skip the scroll entirely) --
-// counted below alongside the original four.
+// counted below alongside the original four. Round 1518 added a seventh:
+// startEdit, the one entry point into the form that still skipped it.
 test("every scrollIntoView call site in the exported app routes through scrollIntoViewRespectingMotion, not a direct DOM call", () => {
   const files = generateExportFiles(project);
   const entityViewJsx = files.find((f) => f.path === "web/src/components/EntityView.jsx")!.content;
@@ -18133,8 +18139,8 @@ test("every scrollIntoView call site in the exported app routes through scrollIn
   const entityViewCallCount = (entityViewJsx.match(/scrollIntoViewRespectingMotion\(/g) ?? []).length;
   assert.equal(
     entityViewCallCount,
-    6,
-    "expected exactly 6 occurrences in EntityView.jsx: the function's own definition, the highlighted-row effect, the focused-row effect, startCreateNew, startCreateForColumn, and startCreateForDate",
+    7,
+    "expected exactly 7 occurrences in EntityView.jsx: the function's own definition, the highlighted-row effect, the focused-row effect, startCreateNew, startCreateForColumn, startCreateForDate, and (round 1518) startEdit",
   );
 
   assert.match(globalSearchJsx, /scrollIntoViewRespectingMotion,\n\} from "\.\/EntityView\.jsx";/, "GlobalSearch.jsx must import the shared helper from EntityView.jsx rather than duplicating it");

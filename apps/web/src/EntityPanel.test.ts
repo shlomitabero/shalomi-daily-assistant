@@ -2509,6 +2509,42 @@ test("EntityPanel's table cell renders a real clickable link for a URL and an em
 });
 
 /**
+ * Round 1518: startEdit was the one entry point into the record form that
+ * never scrolled it into view, unlike its three siblings
+ * (startCreateNew/startCreateForDate/startCreateForColumn), even though
+ * it's the most common way in -- the table row's own Edit button. jsdom
+ * doesn't implement scrollIntoView at all, so this test installs the same
+ * minimal stub GlobalSearchPanel.test.ts already uses for its own
+ * scrollIntoView coverage.
+ */
+test("EntityPanel's startEdit (the table row's Edit button) scrolls the record form into view, matching its create-form siblings", async () => {
+  await withJsdom(async () => {
+    const store: EntityRecord[] = [{ id: 1, name: "Dana", status: "new" }];
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = mockRecordsFetch(store) as typeof fetch;
+    const calls: Element[] = [];
+    const proto = window.HTMLElement.prototype as unknown as { scrollIntoView?: (...args: unknown[]) => void };
+    proto.scrollIntoView = function (this: Element) {
+      calls.push(this);
+    };
+    try {
+      renderEntityPanel();
+      await waitForCondition(() => document.querySelectorAll("table tbody tr").length === 1);
+
+      const editButton = Array.from(document.querySelectorAll(".row-actions button")).find((b) => /^edit$/i.test(b.textContent ?? "")) as HTMLButtonElement;
+      fireEvent.click(editButton);
+
+      await waitForCondition(() => (document.querySelector('.record-form input[type="text"]') as HTMLInputElement)?.value === "Dana");
+      assert.equal(calls.length, 1, "clicking Edit must trigger exactly one scroll, matching startCreateNew/startCreateForDate/startCreateForColumn");
+      assert.equal(calls[0], document.querySelector(".record-form"), "the scroll must target the record form itself");
+    } finally {
+      globalThis.fetch = originalFetch;
+      delete proto.scrollIntoView;
+    }
+  });
+});
+
+/**
  * Regression-style coverage for a real-DOM contract the existing
  * handleBulkDelete extraction tests above can't reach: groupByField's own
  * doc comment says an enum value with zero matching records "still shows as

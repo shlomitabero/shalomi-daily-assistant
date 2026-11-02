@@ -3578,12 +3578,24 @@ export function EntityPanel({
     }
   }
 
+  /**
+   * Round 1518: this was the one entry point into the record form that
+   * never scrolled it into view, unlike its three siblings just below
+   * (startCreateNew/startCreateForDate/startCreateForColumn, which all
+   * call scrollIntoViewRespectingMotion) -- yet it's the most common way
+   * in: the table row's Edit button, the j/k+Enter keyboard shortcut, and
+   * BoardCard's/CalendarView's own onEdit all land here. The form renders
+   * at the top of the panel, well above a long table/board/calendar, so
+   * clicking Edit on anything not already near the top silently populated
+   * the form off-screen with zero visual confirmation.
+   */
   function startEdit(record: EntityRecord) {
     discardAbandonedFileUploads();
     setEditingId(record.id as number);
     setForm({ ...record });
     editingOriginalRef.current = record;
     bumpFormInstanceKey();
+    scrollIntoViewRespectingMotion(formRef.current, { behavior: "smooth", block: "start" });
   }
 
   /**

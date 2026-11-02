@@ -6621,6 +6621,10 @@ export function EntityView({ entity, highlightRecordId, onHighlightHandled, onJu
     }
   }
 
+  // Round 1518: mirrors the live preview's own identical fix -- startEdit
+  // was the one entry point into the record form that never scrolled it
+  // into view, unlike startCreateForColumn/startCreateForDate/
+  // startCreateNew just below.
   function startEdit(record) {
     const next = {};
     for (const f of entity.fields) next[f.name] = record[f.name] ?? (f.type === "boolean" ? false : "");
@@ -6628,6 +6632,7 @@ export function EntityView({ entity, highlightRecordId, onHighlightHandled, onJu
     setEditingId(record.id);
     editingOriginalRef.current = record;
     bumpFormInstanceKey();
+    scrollIntoViewRespectingMotion(document.querySelector(".record-form"), { behavior: "smooth", block: "start" });
   }
 
   function startCreateForColumn(value, field) {
