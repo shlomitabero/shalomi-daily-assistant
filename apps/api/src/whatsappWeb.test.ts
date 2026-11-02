@@ -1849,3 +1849,44 @@ test("incoming WhatsApp group invites, catalog products, and orders are logged w
   assert.equal(messages[3].body, "[Group Invite] לקוחות VIP");
   for (const m of messages) assert.equal(m.direction, "in", "every placeholder row must still be a real, matched-against incoming message, not metadata");
 });
+
+/**
+ * Round 1502: WhatsApp's native "Create Event" feature (the calendar/
+ * event-creation action in a chat's own "+" menu) was previously dropped
+ * with zero trace, the same silent-vanish gap every prior round in this
+ * message-type-coverage family (1035/1051/1088/1106/1121/1139/1142/1152/
+ * 1306/1379/1445/1449) fixed for a different message shape. eventMessage's
+ * name/description/isCanceled fields are plaintext, confirmed directly
+ * against the installed Baileys protobuf types (IEventMessage).
+ */
+test("incoming WhatsApp events (the chat's own calendar/event-creation action) are logged with a descriptive placeholder instead of being silently dropped", async () => {
+  const { manager, createdSockets, db } = setupManager();
+  insertProject(db, project);
+  applyMigrations(db, project.id, project.spec);
+  markProjectBuilt(db, project.id);
+
+  await manager.connect(project.id);
+  createdSockets[0].emitConnectionUpdate({ connection: "open" });
+
+  createdSockets[0].emitMessagesUpsert({
+    type: "notify",
+    messages: [
+      { key: { remoteJid: "972501234567@s.whatsapp.net", fromMe: false }, message: { eventMessage: { name: "איסוף משלוח - שלישי 15:00" } } },
+      { key: { remoteJid: "972501234567@s.whatsapp.net", fromMe: false }, message: { eventMessage: {} } },
+      {
+        key: { remoteJid: "972501234567@s.whatsapp.net", fromMe: false },
+        message: { eventMessage: { name: "פגישת ייעוץ", isCanceled: true } },
+      },
+    ],
+  });
+
+  // listWhatsAppMessages orders newest-first, the reverse of emission order.
+  const { messages: eventMessages } = listWhatsAppMessages(db, project.id);
+  assert.equal(eventMessages.length, 3);
+  assert.equal(eventMessages[0].body, "[Event canceled] פגישת ייעוץ", "a canceled event must say so, not just show its name like a live one");
+  assert.equal(eventMessages[1].body, "[Event]", "an event with no name must fall back to a plain placeholder, not print nothing or throw");
+  assert.equal(eventMessages[2].body, "[Event] איסוף משלוח - שלישי 15:00");
+  for (const m of eventMessages) {
+    assert.equal(m.direction, "in", "every placeholder row must still be a real, matched-against incoming message, not metadata");
+  }
+});

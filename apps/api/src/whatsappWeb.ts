@@ -131,6 +131,7 @@ export interface BaileysIncomingMessage {
     groupInviteMessage?: { groupName?: string; caption?: string };
     productMessage?: { product?: { title?: string; description?: string }; body?: string; footer?: string };
     orderMessage?: { orderTitle?: string; message?: string };
+    eventMessage?: { name?: string; description?: string; isCanceled?: boolean };
     viewOnceMessage?: { message?: BaileysIncomingMessage["message"] };
     viewOnceMessageV2?: { message?: BaileysIncomingMessage["message"] };
     viewOnceMessageV2Extension?: { message?: BaileysIncomingMessage["message"] };
@@ -384,6 +385,19 @@ function describeIncomingMessage(message: BaileysIncomingMessage["message"]): st
   if (message.orderMessage) {
     const o = message.orderMessage;
     return o.orderTitle ?? o.message ? `[Order] ${o.orderTitle ?? o.message}` : "[Order]";
+  }
+  // Round 1502: WhatsApp's native "Create Event" feature (the calendar/
+  // event-creation action in a chat's own "+" menu) -- IEventMessage in
+  // Baileys' own shipped protobuf types (WAProto/index.d.ts), confirmed
+  // fully plaintext (name/description/isCanceled, same bar every prior
+  // round in this message-type family used). Previously fell through to
+  // the final `return null` and vanished with zero trace -- the exact
+  // kind of "a customer scheduling a pickup/meeting through this linked
+  // WhatsApp number" message a small business relies on seeing.
+  if (message.eventMessage) {
+    const ev = message.eventMessage;
+    const label = ev.isCanceled ? "[Event canceled]" : "[Event]";
+    return ev.name ? `${label} ${ev.name}` : label;
   }
   if (message.contactMessage) {
     const name = message.contactMessage.displayName;
