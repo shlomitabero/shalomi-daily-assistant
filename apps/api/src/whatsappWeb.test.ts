@@ -1236,6 +1236,44 @@ test("an incoming WhatsApp poll-closed snapshot is logged with its question text
 });
 
 /**
+ * Round 1509: an incoming WhatsApp buttonsMessage/listMessage -- the
+ * "offer" half of the buttonsResponseMessage/listResponseMessage pair this
+ * file already handled -- is now logged with a placeholder instead of
+ * being silently dropped. These are WhatsApp's own interactive "pick one
+ * of these buttons"/"pick from this list" messages, typically sent by
+ * another business's own WhatsApp Business number. Covers a populated
+ * buttonsMessage, a listMessage with only a description (no title), and a
+ * listMessage with neither, which must still fall back to a placeholder
+ * rather than printing nothing or throwing.
+ */
+test("an incoming WhatsApp buttons/list offer message is logged with a placeholder instead of being silently dropped", async () => {
+  const { manager, createdSockets, db } = setupManager();
+  insertProject(db, project);
+  applyMigrations(db, project.id, project.spec);
+  markProjectBuilt(db, project.id);
+
+  await manager.connect(project.id);
+  createdSockets[0].emitConnectionUpdate({ connection: "open" });
+
+  createdSockets[0].emitMessagesUpsert({
+    type: "notify",
+    messages: [
+      { key: { remoteJid: "972501234567@s.whatsapp.net", fromMe: false }, message: { buttonsMessage: { contentText: "Pick an option" } } },
+      { key: { remoteJid: "972501234567@s.whatsapp.net", fromMe: false }, message: { listMessage: { description: "Choose a time slot" } } },
+      { key: { remoteJid: "972501234567@s.whatsapp.net", fromMe: false }, message: { listMessage: {} } },
+    ],
+  });
+
+  // listWhatsAppMessages orders newest-first, the reverse of emission order.
+  const { messages } = listWhatsAppMessages(db, project.id);
+  assert.equal(messages.length, 3);
+  assert.equal(messages[0].body, "[List Options]", "a listMessage with neither title nor description must fall back to a plain placeholder, not print nothing or throw");
+  assert.equal(messages[1].body, "[List Options] Choose a time slot");
+  assert.equal(messages[2].body, "[Buttons] Pick an option");
+  for (const m of messages) assert.equal(m.direction, "in", "every placeholder row must still be a real, matched-against incoming message, not metadata");
+});
+
+/**
  * Round 1088: an incoming WhatsApp emoji reaction (long-press a message,
  * tap an emoji) -- previously dropped with zero trace, the same gap round
  * 1051's own doc comment left open for "every other still-unrecognized

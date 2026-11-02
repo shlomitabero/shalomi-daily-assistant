@@ -125,7 +125,9 @@ export interface BaileysIncomingMessage {
     pollResultSnapshotMessage?: { name?: string };
     pollResultSnapshotMessageV3?: { name?: string };
     reactionMessage?: { text?: string };
+    buttonsMessage?: { contentText?: string };
     buttonsResponseMessage?: { selectedButtonId?: string; selectedDisplayText?: string };
+    listMessage?: { title?: string; description?: string };
     listResponseMessage?: { title?: string; description?: string; singleSelectReply?: { selectedRowId?: string } };
     templateButtonReplyMessage?: { selectedId?: string; selectedDisplayText?: string };
     interactiveResponseMessage?: { body?: { text?: string }; nativeFlowResponseMessage?: { name?: string } };
@@ -437,6 +439,22 @@ function describeIncomingMessage(message: BaileysIncomingMessage["message"]): st
   // then goes silent on every vote it gets.
   if (message.pollUpdateMessage) return "[Poll vote]";
   if (message.reactionMessage) return message.reactionMessage.text ? `[Reaction] ${message.reactionMessage.text}` : "[Reaction removed]";
+  // Round 1509: a buttonsMessage/listMessage is the "offer" half of the
+  // buttonsResponseMessage/listResponseMessage pair already handled below --
+  // WhatsApp's own interactive "pick one of these buttons"/"pick from this
+  // list" message a sender (typically another business's own WhatsApp
+  // Business number) can send. ButtonsMessage.contentText and
+  // ListMessage.title/description are plaintext in Baileys' own shipped
+  // WAProto.proto, same bar as every other branch here. Labeled distinctly
+  // from the existing "[Button]"/"[List]" reply labels so the offer and the
+  // reply to it are never confused in the log.
+  if (message.buttonsMessage) {
+    return message.buttonsMessage.contentText ? `[Buttons] ${message.buttonsMessage.contentText}` : "[Buttons]";
+  }
+  if (message.listMessage) {
+    const label = message.listMessage.title ?? message.listMessage.description;
+    return label ? `[List Options] ${label}` : "[List Options]";
+  }
   if (message.buttonsResponseMessage) {
     const b = message.buttonsResponseMessage;
     return `[Button] ${b.selectedDisplayText ?? b.selectedButtonId ?? ""}`;
