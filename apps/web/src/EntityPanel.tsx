@@ -1652,7 +1652,7 @@ export function EntityPanel({
   /** Round 1446: called whenever this entity's own view mode changes (switching Table/Board/Calendar, or the persisted-per-entity mode loading on mount), so App.tsx can pass it to ShortcutsPanel -- its own row-navigation/edit/toggle-select/delete/duplicate shortcuts are all gated on `viewMode === "table"` by the keydown handler just below, so listing them as active while a Board/Calendar view is open would describe keys that silently do nothing, mirroring the identical `readOnly` gating this same callback pattern (onRecordCountChange, just above) already established. */
   onViewModeChange?: (viewMode: "table" | "board" | "calendar") => void;
 }) {
-  const { t, lang } = useTranslation();
+  const { t, lang, dir } = useTranslation();
   const [records, setRecords] = useState<EntityRecord[]>([]);
   const [pendingDelete, setPendingDelete] = useState<PendingDelete | null>(null);
   const pendingDeleteRef = useRef<PendingDelete | null>(null);
@@ -5536,7 +5536,7 @@ export function EntityPanel({
                               disabled={visibleIndex === 0}
                               aria-label={t("entity.columns.moveEarlier", { field: fieldDisplayLabel(f, visibleFieldLabelOccurrences) })}
                             >
-                              ‹
+                              {dir === "rtl" ? "›" : "‹"}
                             </button>
                             <button
                               type="button"
@@ -5545,7 +5545,7 @@ export function EntityPanel({
                               disabled={visibleIndex === visibleFields.length - 1}
                               aria-label={t("entity.columns.moveLater", { field: fieldDisplayLabel(f, visibleFieldLabelOccurrences) })}
                             >
-                              ›
+                              {dir === "rtl" ? "‹" : "›"}
                             </button>
                           </span>
                           <span

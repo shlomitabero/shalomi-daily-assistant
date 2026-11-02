@@ -20386,6 +20386,37 @@ test("the exported App.jsx's entity-tab bar's ArrowLeft/ArrowRight keyboard navi
   assert.equal(pressKey("A", "ArrowLeft", "rtl"), "B", "RTL ArrowLeft must move to the visually-previous tab, the NEXT array entry");
 });
 
+/**
+ * Round 1504: the entity-tab "move earlier"/"move later" buttons (tested
+ * for plain reorder behavior above, round 662) always rendered the same
+ * static '‹'/'›' glyphs regardless of text direction -- the identical
+ * defect class the RTL ArrowKey test just above fixes for this same tab
+ * bar's keyboard nav, and round 1373 fixed for the resize handle, but
+ * round 1150's own roadmap entry had explicitly carved these move buttons
+ * out as a separate feature, so neither fix ever touched them. Ports the
+ * live preview's round-1504 fix: the glyph shown (not which handler
+ * fires) now swaps under `document.documentElement.dir === "rtl"`, so the
+ * arrow still points toward where handleMoveEntityTab actually moves the
+ * tab (always toward array index 0, which is the visual RIGHT under RTL).
+ */
+test("the exported App.jsx's entity-tab 'move earlier'/'move later' buttons swap their chevron glyph under RTL", () => {
+  const files = generateExportFiles(project);
+  const appJsx = files.find((f) => f.path === "web/src/App.jsx")!.content;
+
+  const tabMoveBlock = appJsx.match(/<span className="tab-move-buttons">[\s\S]*?<\/span>/);
+  assert.ok(tabMoveBlock, "expected to find the tab-move-buttons span in generated App.jsx");
+  assert.match(
+    tabMoveBlock![0],
+    /onClick=\{\(\) => handleMoveEntityTab\(e\.name, "earlier"\)\}[\s\S]*?\{document\.documentElement\.dir === "rtl" \? "›" : "‹"\}/,
+    "expected 'move earlier' to show the right-pointing chevron under RTL and the left-pointing one under LTR",
+  );
+  assert.match(
+    tabMoveBlock![0],
+    /onClick=\{\(\) => handleMoveEntityTab\(e\.name, "later"\)\}[\s\S]*?\{document\.documentElement\.dir === "rtl" \? "‹" : "›"\}/,
+    "expected 'move later' to show the left-pointing chevron under RTL and the right-pointing one under LTR",
+  );
+});
+
 /** Round 1150: see the keyboard-model test above for the full rationale -- this is the pattern's other missing half, the tab<->panel programmatic link. */
 test("the exported App.jsx's active entity View is wrapped in a real tabpanel, linked back to its own tab via aria-labelledby", () => {
   const files = generateExportFiles(project);
@@ -24098,6 +24129,65 @@ test("the exported EntityView's column headers have keyboard-operable 'move earl
     });
   } finally {
     globalThis.fetch = originalFetch;
+    cleanup();
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+/**
+ * Round 1504: the column "move earlier"/"move later" buttons tested above
+ * (round 478) always rendered the same static '‹'/'›' glyphs regardless
+ * of text direction -- the identical defect class round 1373 fixed for
+ * this same exported app's column-resize handle, but round 1150's own
+ * roadmap entry had explicitly carved these move buttons out as a
+ * separate feature, so that fix never touched them. Under RTL the
+ * table's columns render right-to-left, so index 0 (what handleMoveColumn
+ * always moves toward) sits on the visual right -- a left-pointing '‹' on
+ * "move earlier" therefore visually moved a column to the RIGHT, the
+ * opposite of what the arrow told the user. Confirms the real generated
+ * component actually swaps the glyph once `document.documentElement.dir`
+ * is "rtl", not just that the source contains the right ternary text.
+ */
+test("the exported EntityView's column 'move earlier'/'move later' buttons swap their chevron glyph under RTL", async () => {
+  const files = generateExportFiles(project);
+  const dir = writeGeneratedWebComponent(files);
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = (async () => ({
+    ok: true,
+    status: 200,
+    json: async () => ({ records: [{ id: 1, name: "Alice", status: "New" }] }),
+  })) as typeof fetch;
+  const originalDir = document.documentElement.dir;
+
+  try {
+    await withRealLocalStorage(async () => {
+      document.documentElement.dir = "rtl";
+      const { EntityView } = await import(path.join(dir, "web", "src", "components", "EntityView.jsx"));
+      const customerEntity = project.spec.entities.find((e) => e.name === "Customer")!;
+      const props = {
+        entity: customerEntity,
+        highlightRecordId: null,
+        onHighlightHandled: () => {},
+        onJumpToRecord: () => {},
+        onRecordCountChange: () => {},
+      };
+
+      const { container } = render(React.createElement(EntityView, props));
+      for (let i = 0; i < 40; i++) {
+        if (container.querySelectorAll(".resizable-col").length === 2) break;
+        await act(async () => {
+          await new Promise((resolve) => setTimeout(resolve, 0));
+        });
+      }
+
+      const headers = container.querySelectorAll(".resizable-col");
+      const [nameEarlier, nameLater] = headers[0].querySelectorAll(".column-move-btn") as NodeListOf<HTMLButtonElement>;
+      assert.equal(nameEarlier.textContent, "›", "under RTL, 'move earlier' (toward index 0, visually rightward) must show the right-pointing chevron");
+      assert.equal(nameLater.textContent, "‹", "under RTL, 'move later' (visually leftward) must show the left-pointing chevron");
+    });
+  } finally {
+    globalThis.fetch = originalFetch;
+    document.documentElement.dir = originalDir;
     cleanup();
     rmSync(dir, { recursive: true, force: true });
   }

@@ -3110,7 +3110,7 @@ function AppContent() {
                         disabled={entityTabIndex === 0}
                         aria-label={t("entity.tab.moveEarlier", { entity: entityDisplayLabel(entity, entityTabLabelOccurrences) })}
                       >
-                        ‹
+                        {dir === "rtl" ? "›" : "‹"}
                       </button>
                       <button
                         type="button"
@@ -3119,7 +3119,7 @@ function AppContent() {
                         disabled={entityTabIndex === orderedEntities.length - 1}
                         aria-label={t("entity.tab.moveLater", { entity: entityDisplayLabel(entity, entityTabLabelOccurrences) })}
                       >
-                        ›
+                        {dir === "rtl" ? "‹" : "›"}
                       </button>
                     </span>
                   </span>

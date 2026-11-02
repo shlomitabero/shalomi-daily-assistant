@@ -12562,6 +12562,41 @@ test("EntityPanel's column headers have keyboard-operable 'move earlier'/'move l
   });
 });
 
+/**
+ * Round 1504: the column "move earlier"/"move later" buttons above (round
+ * 478) always rendered the same static '‹'/'›' glyphs regardless of text
+ * direction, even though handleMoveColumn's own effect (always moving
+ * toward index 0) is direction-independent, but its VISUAL effect isn't --
+ * under RTL the table's columns render right-to-left, so index 0 sits on
+ * the visual right, not the left. A left-pointing '‹' glyph on "move
+ * earlier" therefore visually moved a column to the RIGHT under Hebrew,
+ * the opposite of what the arrow told the user, mirroring the identical
+ * defect class round 1373 fixed for the column-resize handle and round
+ * 1503 fixed for the entity-tab ArrowKey nav -- but round 1150's own
+ * roadmap entry had explicitly carved these move buttons out as a
+ * separate feature from the keyboard-nav work, so neither of those two
+ * rounds' fixes ever touched them.
+ */
+test("EntityPanel's column 'move earlier'/'move later' buttons swap their chevron glyph under RTL so the arrow still points toward where the column actually moves", async () => {
+  await withJsdom(async () => {
+    const store: EntityRecord[] = [{ id: 1, createdAt: "x", name: "Acme Corp", status: "new" }];
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = mockRecordsFetch(store) as typeof fetch;
+    try {
+      localStorage.setItem("forge.lang", "he");
+      renderEntityPanel();
+      await waitForCondition(() => document.querySelector("table") !== null);
+
+      const headers = document.querySelectorAll("thead th.resizable-col");
+      const [nameEarlier, nameLater] = headers[0].querySelectorAll(".column-move-btn") as NodeListOf<HTMLButtonElement>;
+      assert.equal(nameEarlier.textContent, "›", "under RTL, 'move earlier' (toward index 0, visually rightward) must show the right-pointing chevron");
+      assert.equal(nameLater.textContent, "‹", "under RTL, 'move later' (visually leftward) must show the left-pointing chevron");
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+});
+
 // Deliberately shares a field NAME ("name") with DEAL_ENTITY, in a different
 // position -- if Deal's leftover in-memory column order ["status", "name"]
 // ever leaked into Courier's own render (the reset effect not reloading

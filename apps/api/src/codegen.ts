@@ -8113,7 +8113,7 @@ export function EntityView({ entity, highlightRecordId, onHighlightHandled, onJu
                               disabled={visibleIndex === 0}
                               aria-label={\`Move \${fieldDisplayLabel(f, visibleFieldLabelOccurrences)} column earlier\`}
                             >
-                              ‹
+                              {document.documentElement.dir === "rtl" ? "›" : "‹"}
                             </button>
                             <button
                               type="button"
@@ -8122,7 +8122,7 @@ export function EntityView({ entity, highlightRecordId, onHighlightHandled, onJu
                               disabled={visibleIndex === visibleFields.length - 1}
                               aria-label={\`Move \${fieldDisplayLabel(f, visibleFieldLabelOccurrences)} column later\`}
                             >
-                              ›
+                              {document.documentElement.dir === "rtl" ? "‹" : "›"}
                             </button>
                           </span>
                           <span
@@ -9592,7 +9592,7 @@ export default function App() {
                 disabled={entityTabIndex === 0}
                 aria-label={\`Move \${entityDisplayLabel(e, entityTabLabelOccurrences)} tab earlier\`}
               >
-                ‹
+                {document.documentElement.dir === "rtl" ? "›" : "‹"}
               </button>
               <button
                 type="button"
@@ -9601,7 +9601,7 @@ export default function App() {
                 disabled={entityTabIndex === orderedEntities.length - 1}
                 aria-label={\`Move \${entityDisplayLabel(e, entityTabLabelOccurrences)} tab later\`}
               >
-                ›
+                {document.documentElement.dir === "rtl" ? "‹" : "›"}
               </button>
             </span>
           </span>

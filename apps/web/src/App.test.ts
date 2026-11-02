@@ -393,6 +393,40 @@ test("App.tsx's entity-tab record-count badge branches on entityCounts[entity.na
 });
 
 /**
+ * Round 1504: the entity-tab "move earlier"/"move later" buttons (just
+ * below the tab-count badge tested above) always rendered the same static
+ * '‹'/'›' glyphs regardless of text direction, even though
+ * handleMoveEntityTab always moves an entity toward array index 0 --
+ * under RTL the tab bar renders right-to-left (round 1503's own roadmap
+ * entry already established this for this exact nav), so index 0 sits on
+ * the visual right, not the left. A left-pointing '‹' on "move earlier"
+ * therefore visually moved a tab to the RIGHT under Hebrew, the opposite
+ * of what the arrow told the user -- the identical defect class round
+ * 1373 fixed for the column-resize handle and round 1503 fixed for the
+ * ArrowKey nav just above this same tab bar, but round 1150's own roadmap
+ * entry had explicitly carved these move buttons out as a separate
+ * feature, so neither fix ever touched them. Verified via regex
+ * extraction of the JSX call site (same source-extraction convention as
+ * the entity-tab-badge test just above -- App.tsx has no full-render
+ * harness for the entity-tabs screen in this file's own suite).
+ */
+test("App.tsx's entity-tab 'move earlier'/'move later' buttons swap their chevron glyph under RTL so the arrow still points toward where the tab actually moves", () => {
+  const appSrc = readFileSync(new URL("./App.tsx", import.meta.url), "utf8");
+  const tabMoveBlock = appSrc.match(/<span className="tab-move-buttons">[\s\S]*?<\/span>/);
+  assert.ok(tabMoveBlock, "expected to find the entity-tab's own tab-move-buttons span in App.tsx");
+  assert.match(
+    tabMoveBlock![0],
+    /handleMoveEntityTab\(entity\.name, "earlier"\)[\s\S]*?\{dir === "rtl" \? "›" : "‹"\}/,
+    "expected the 'move earlier' button to show the right-pointing chevron under RTL and the left-pointing one under LTR",
+  );
+  assert.match(
+    tabMoveBlock![0],
+    /handleMoveEntityTab\(entity\.name, "later"\)[\s\S]*?\{dir === "rtl" \? "‹" : "›"\}/,
+    "expected the 'move later' button to show the left-pointing chevron under RTL and the right-pointing one under LTR",
+  );
+});
+
+/**
  * Round 1397: the WhatsApp-unread and failing-automations toolbar badges'
  * own aria-labels each used a single hardcoded-plural i18n key with no
  * singular form, so an ordinary single unread message or single failing
