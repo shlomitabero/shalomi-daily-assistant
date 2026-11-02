@@ -2000,10 +2000,20 @@ export function EntityPanel({
    * (already-"deleted" rows stay gone) regardless of which handler
    * triggered it.
    */
-  async function refresh() {
+  /**
+   * Round 1528: `silent` skips the loading/error UI entirely -- used by
+   * handleUndoDelete, where the restored row is already visible via its
+   * own optimistic splice the instant Undo is clicked; toggling the same
+   * `loading` flag every other caller here uses would otherwise replace
+   * that already-correct table with a full-screen "Loading..." message
+   * for the duration of this purely background reconciliation fetch.
+   */
+  async function refresh(options: { silent?: boolean } = {}) {
     const requestId = ++refreshRequestId.current;
-    setLoading(true);
-    setLoadError(null);
+    if (!options.silent) {
+      setLoading(true);
+      setLoadError(null);
+    }
     try {
       const { records } = await listRecords(projectId, entity.name);
       if (refreshRequestId.current !== requestId) return;
@@ -2043,10 +2053,10 @@ export function EntityPanel({
         });
       }
     } catch (err) {
-      if (refreshRequestId.current !== requestId) return;
+      if (refreshRequestId.current !== requestId || options.silent) return;
       setLoadError((err as Error).message);
     } finally {
-      if (refreshRequestId.current === requestId) setLoading(false);
+      if (refreshRequestId.current === requestId && !options.silent) setLoading(false);
     }
   }
 
@@ -3830,6 +3840,17 @@ export function EntityPanel({
     clearTimeout(pending.timeoutId);
     setRecords((prev) => pending.entries.reduce((acc, e) => restoreRecordAt(acc, e.record, e.index), prev));
     setPendingDelete(null);
+    // Round 1528: Undo never calls the server at all -- the real DELETE
+    // was only ever deferred, never sent -- so splicing back
+    // pending.entries[].record (the snapshot from the moment Delete was
+    // clicked) blindly overwrites any edit a second tab/collaborator
+    // saved to the same record during this same undo window. Clearing the
+    // ref synchronously (setPendingDelete's effect mirror hasn't run yet)
+    // and refetching now (silently -- see refresh's own comment on why)
+    // replaces that stale guess with the record's real current
+    // server-side state.
+    pendingDeleteRef.current = null;
+    void refresh({ silent: true });
   }
 
   // Copies a record's own field values into a real new record -- a quick

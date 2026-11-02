@@ -3982,6 +3982,109 @@ test("the exported EntityView warns before a tab close/refresh would silently re
 });
 
 /**
+ * Round 1528, ported from the live Forge AI preview's own round-1528 fix:
+ * clicking "Undo" never re-checked the server at all -- it spliced
+ * pending.entries[].record (the snapshot from the moment Delete was
+ * clicked) straight back into local state. A second tab/collaborator
+ * saving an edit to the same record during this same undo window was
+ * silently overwritten by Undo with the stale pre-delete value. Confirms
+ * Undo now re-syncs with the server (refresh()) instead of trusting its
+ * own stale snapshot, here too.
+ */
+test("the exported EntityView's Undo button re-fetches the record instead of restoring a stale pre-delete snapshot, so a concurrent edit saved during the undo window survives", async (t) => {
+  const files = generateExportFiles(project);
+  const dir = writeGeneratedWebComponent(files);
+  const store: EntityRecord[] = [{ id: 1, name: "Acme Corp", status: "New" }];
+  const deletedIds: number[] = [];
+  const originalFetch = globalThis.fetch;
+  const originalConfirm = globalThis.window.confirm;
+  globalThis.fetch = (async (input: string, init?: RequestInit): Promise<Response> => {
+    const method = init?.method ?? "GET";
+    if (method === "GET" && input === "/api/Customer") {
+      return new Response(JSON.stringify({ records: store }), { status: 200, headers: { "content-type": "application/json" } });
+    }
+    const patchMatch = /^\/api\/Customer\/(\d+)$/.exec(input);
+    if (method === "PATCH" && patchMatch) {
+      const record = store.find((r) => r.id === Number(patchMatch[1]));
+      assert.ok(record, `mock PATCH target record ${patchMatch[1]} must exist`);
+      Object.assign(record!, JSON.parse(init!.body as string));
+      return new Response(JSON.stringify({ record }), { status: 200, headers: { "content-type": "application/json" } });
+    }
+    const deleteMatch = /^\/api\/Customer\/(\d+)$/.exec(input);
+    if (method === "DELETE" && deleteMatch) {
+      deletedIds.push(Number(deleteMatch[1]));
+      return new Response(null, { status: 204 });
+    }
+    throw new Error(`unexpected request ${method} ${input}`);
+  }) as typeof fetch;
+  globalThis.window.confirm = (() => true) as typeof window.confirm;
+
+  try {
+    await withRealLocalStorage(async () => {
+      const { EntityView } = await import(path.join(dir, "web", "src", "components", "EntityView.jsx"));
+      const customerEntity = project.spec.entities.find((e) => e.name === "Customer")!;
+      const props = {
+        entity: customerEntity,
+        highlightRecordId: null,
+        onHighlightHandled: () => {},
+        onJumpToRecord: () => {},
+        onRecordCountChange: () => {},
+      };
+
+      const { container } = render(React.createElement(EntityView, props));
+      for (let i = 0; i < 40; i++) {
+        if (container.querySelectorAll("tbody tr").length === 1) break;
+        await act(async () => {
+          await new Promise((resolve) => setTimeout(resolve, 0));
+        });
+      }
+      assert.equal(container.querySelectorAll("tbody tr").length, 1, "expected the record to have loaded");
+
+      const row = container.querySelector('tr[data-record-id="1"]') as HTMLElement;
+      const deleteButton = Array.from(row.querySelectorAll(".row-actions button")).find((b) => /^delete$/i.test(b.textContent ?? "")) as HTMLButtonElement;
+      await act(async () => {
+        fireEvent.click(deleteButton);
+      });
+      assert.equal(container.querySelectorAll("tbody tr").length, 0, "the row must disappear from view immediately");
+
+      // Simulates a second tab/collaborator saving a real PATCH to the same
+      // record while this tab's undo window is still open -- the server
+      // genuinely holds the edited name now, even though this tab's own
+      // pending-delete snapshot was captured back when it was still "Acme
+      // Corp". Uses the plain-text `name` field (not the `status` enum,
+      // whose values this Hebrew-labeled project's own i18n translates for
+      // display) so the restored text can be checked verbatim.
+      await globalThis.fetch("/api/Customer/1", { method: "PATCH", body: JSON.stringify({ name: "Acme Corp (edited by another tab)" }) });
+
+      const toast = container.querySelector(".entity-undo-toast");
+      assert.ok(toast, "expected an Undo toast to appear once a delete is pending");
+      await act(async () => {
+        fireEvent.click(toast!.querySelector("button") as HTMLButtonElement);
+      });
+
+      for (let i = 0; i < 40; i++) {
+        if (/edited by another tab/.test(container.querySelector("tbody tr")?.textContent ?? "")) break;
+        await act(async () => {
+          await new Promise((resolve) => setTimeout(resolve, 0));
+        });
+      }
+      assert.equal(container.querySelector(".entity-undo-toast"), null, "the toast must disappear once undone");
+      assert.equal(deletedIds.length, 0, "undoing must still genuinely cancel the real delete");
+      assert.match(
+        container.querySelector("tbody tr")?.textContent ?? "",
+        /edited by another tab/,
+        "the restored row must reflect the concurrent edit saved during the undo window, not the stale pre-delete snapshot",
+      );
+    });
+  } finally {
+    globalThis.fetch = originalFetch;
+    globalThis.window.confirm = originalConfirm;
+    cleanup();
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+/**
  * Round 1021 regression, ported from the live Forge AI preview's own
  * EntityPanel.tsx fix (round 1017): handleDelete is a single shared
  * function also called by the table row's own Delete button, the
@@ -12217,7 +12320,7 @@ test("the exported EntityView's 'n' shortcut discards an in-progress edit, reset
  */
 test("the exported EntityView's refresh ignores a stale, still-in-flight refresh's records once a newer refresh has already completed", async () => {
   const entityViewJsx = generateExportFiles(project).find((f) => f.path === "web/src/components/EntityView.jsx")!.content;
-  const refreshSrc = entityViewJsx.match(/ {2}async function refresh\(\) \{[\s\S]*?\n {2}\}\n/)?.[0];
+  const refreshSrc = entityViewJsx.match(/ {2}async function refresh\([^)]*\) \{[\s\S]*?\n {2}\}\n/)?.[0];
   assert.ok(refreshSrc, "expected to find refresh in generated output");
 
   let listRecordsCallCount = 0;

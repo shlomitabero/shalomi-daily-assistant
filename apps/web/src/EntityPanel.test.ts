@@ -842,6 +842,15 @@ test("EntityPanel's bulk delete removes every selected row immediately and shows
       assert.ok(toast, "expected one Undo toast for the whole batch");
       assert.match(toast!.textContent ?? "", /3/, "the toast must name the real number of deleted records");
 
+      // Round 1528: Undo now fires a background refresh() (see
+      // EntityPanel.tsx's own handleUndoDelete comment) to replace the
+      // restored rows' local snapshot with the record's real current
+      // server-side state. Switching back to real timers for the click
+      // itself lets that refresh()'s own fetchApi call (which registers
+      // its own request-timeout setTimeout) resolve normally through
+      // waitForCondition's real polling, instead of racing t.mock.timers'
+      // mocked setTimeout the way it would here.
+      t.mock.timers.reset();
       fireEvent.click(toast!.querySelector("button") as HTMLButtonElement);
 
       await waitForCondition(() => document.querySelectorAll("table tbody tr").length === 3);
@@ -852,6 +861,7 @@ test("EntityPanel's bulk delete removes every selected row immediately and shows
         "all 3 rows must come back in their original order, not just restored in some arbitrary order",
       );
 
+      t.mock.timers.enable({ apis: ["setTimeout"] });
       act(() => {
         t.mock.timers.tick(10_000);
       });
@@ -2233,7 +2243,7 @@ test("EntityPanel's handleBulkUpdate refuses a non-numeric value for a 'number' 
  * own completion. Runs the real generated refresh function.
  */
 test("EntityPanel's refresh ignores a stale, still-in-flight refresh's records once a newer refresh has already completed", async () => {
-  const handlerMatch = entityPanelSrc.match(/ {2}async function refresh\(\) \{[\s\S]*?\n {2}\}\n/);
+  const handlerMatch = entityPanelSrc.match(/ {2}async function refresh\([^)]*\) \{[\s\S]*?\n {2}\}\n/);
   assert.ok(handlerMatch, "expected to find refresh in EntityPanel.tsx");
   const { code } = transformSync(handlerMatch![0], { loader: "ts" });
 
@@ -8606,17 +8616,81 @@ test("EntityPanel's delete removes the row immediately and shows an Undo toast, 
       assert.ok(toast, "expected an Undo toast to appear once a delete is pending");
       assert.match(toast!.textContent ?? "", /Acme Corp/, "the toast must name the actual record that was deleted");
 
+      // Round 1528: Undo now fires a background refresh() (see
+      // EntityPanel.tsx's own handleUndoDelete comment). Switching back to
+      // real timers for the click itself lets that refresh()'s own
+      // fetchApi call (which registers its own request-timeout setTimeout)
+      // resolve normally, instead of racing t.mock.timers' mocked
+      // setTimeout the way it would here.
+      t.mock.timers.reset();
       fireEvent.click(toast!.querySelector("button") as HTMLButtonElement);
 
-      assert.equal(document.querySelectorAll("table tbody tr").length, 1, "clicking Undo must restore the row");
+      await waitForCondition(() => document.querySelectorAll("table tbody tr").length === 1);
       assert.equal(document.querySelector(".entity-undo-toast"), null, "the toast must disappear once undone");
 
+      t.mock.timers.enable({ apis: ["setTimeout"] });
       act(() => {
         t.mock.timers.tick(10_000);
       });
       assert.equal(deletedIds.length, 0, "even long after the undo window would have elapsed, undoing must have genuinely cancelled the real delete");
     } finally {
       t.mock.timers.reset();
+      globalThis.fetch = originalFetch;
+      globalThis.window.confirm = originalConfirm;
+    }
+  });
+});
+
+/**
+ * Round 1528: a live Playwright exploration found that clicking "Undo"
+ * never re-checks the server at all -- it splices pending.entries[].record
+ * (the snapshot from the moment Delete was clicked) straight back into
+ * local state. If a second tab/collaborator saves an edit to the same
+ * record during this same undo window, Undo silently overwrites that edit
+ * in the deleting tab's own view with the stale pre-delete value, with no
+ * warning. Confirms Undo now re-syncs with the server (the same refresh()
+ * every other mutation in this file already calls) instead of trusting its
+ * own stale snapshot.
+ */
+test("EntityPanel's Undo button re-fetches the record instead of restoring a stale pre-delete snapshot, so a concurrent edit saved during the undo window survives", async (t) => {
+  await withJsdom(async () => {
+    const store: EntityRecord[] = [{ id: 1, name: "Acme Corp", status: "new" }];
+    const deletedIds: number[] = [];
+    const originalFetch = globalThis.fetch;
+    const originalConfirm = globalThis.window.confirm;
+    globalThis.fetch = mockRecordsFetch(store, (id) => deletedIds.push(id)) as typeof fetch;
+    globalThis.window.confirm = (() => true) as typeof window.confirm;
+    try {
+      renderEntityPanel();
+      await waitForCondition(() => document.querySelectorAll("table tbody tr").length === 1);
+
+      fireEvent.click(document.querySelector(".danger") as HTMLButtonElement);
+      assert.equal(document.querySelectorAll("table tbody tr").length, 0, "the row must disappear from view immediately");
+
+      // Simulates a second tab/collaborator saving a real PATCH to the same
+      // record while this tab's undo window is still open -- the server
+      // genuinely holds "won" now, even though this tab's own pending-delete
+      // snapshot was captured back when it was still "new".
+      await globalThis.fetch("/api/projects/proj1/entities/Deal/1", {
+        method: "PATCH",
+        body: JSON.stringify({ status: "won" }),
+      });
+
+      const toast = document.querySelector(".entity-undo-toast");
+      assert.ok(toast, "expected an Undo toast to appear once a delete is pending");
+      fireEvent.click(toast!.querySelector("button") as HTMLButtonElement);
+
+      await waitForCondition(() => document.querySelectorAll("table tbody tr").length === 1);
+      assert.equal(document.querySelector(".entity-undo-toast"), null, "the toast must disappear once undone");
+      assert.equal(deletedIds.length, 0, "undoing must still genuinely cancel the real delete");
+
+      await waitForCondition(() => /Won/.test(document.querySelector("table tbody tr")?.textContent ?? ""));
+      assert.doesNotMatch(
+        document.querySelector("table tbody tr")?.textContent ?? "",
+        /\bNew\b/,
+        "the restored row must reflect the concurrent edit saved during the undo window, not the stale pre-delete snapshot",
+      );
+    } finally {
       globalThis.fetch = originalFetch;
       globalThis.window.confirm = originalConfirm;
     }
@@ -18064,10 +18138,16 @@ test("EntityPanel warns before a tab close/refresh would silently revert a still
       assert.equal(dispatchBeforeUnload(), true, "a delete still inside its undo window must now warn before a reload would silently revert it");
 
       const toast = document.querySelector(".entity-undo-toast");
+      // Round 1528: Undo now fires a background refresh() (see
+      // EntityPanel.tsx's own handleUndoDelete comment). Switching back to
+      // real timers for the click itself lets that refresh()'s own
+      // fetchApi call (which registers its own request-timeout setTimeout)
+      // resolve normally, instead of racing t.mock.timers' mocked
+      // setTimeout the way it would here.
+      t.mock.timers.reset();
       fireEvent.click(toast!.querySelector("button") as HTMLButtonElement);
       assert.equal(dispatchBeforeUnload(), false, "undoing the delete must clear the warning too, with nothing left pending");
     } finally {
-      t.mock.timers.reset();
       globalThis.fetch = originalFetch;
       globalThis.window.confirm = originalConfirm;
     }

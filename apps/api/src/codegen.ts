@@ -5851,10 +5851,12 @@ export function EntityView({ entity, highlightRecordId, onHighlightHandled, onJu
     return () => window.removeEventListener("afterprint", clearPrinted);
   }, []);
 
-  async function refresh() {
+  async function refresh(options = {}) {
     const requestId = ++refreshRequestId.current;
-    setLoading(true);
-    setLoadError(null);
+    if (!options.silent) {
+      setLoading(true);
+      setLoadError(null);
+    }
     try {
       const { records } = await listRecords(entity.name);
       if (refreshRequestId.current !== requestId) return;
@@ -5884,10 +5886,10 @@ export function EntityView({ entity, highlightRecordId, onHighlightHandled, onJu
         });
       }
     } catch (err) {
-      if (refreshRequestId.current !== requestId) return;
+      if (refreshRequestId.current !== requestId || options.silent) return;
       setLoadError(err.message);
     } finally {
-      if (refreshRequestId.current === requestId) setLoading(false);
+      if (refreshRequestId.current === requestId && !options.silent) setLoading(false);
     }
   }
 
@@ -6790,6 +6792,8 @@ export function EntityView({ entity, highlightRecordId, onHighlightHandled, onJu
     clearTimeout(pending.timeoutId);
     setRecords((prev) => pending.entries.reduce((acc, e) => restoreRecordAt(acc, e.record, e.index), prev));
     setPendingDelete(null);
+    pendingDeleteRef.current = null;
+    refresh({ silent: true });
   }
 
   // Copies a record's own field values into a real new record -- no
