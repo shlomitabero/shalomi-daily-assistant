@@ -258,6 +258,16 @@ function translateAutomationError(actionType: AutomationActionType | null, error
     if (statusMatch) return translate(lang, "error.AUTOMATION_WEBHOOK_HTTP_ERROR", { status: statusMatch[1] });
     if (error) return translate(lang, "error.AUTOMATION_WEBHOOK_NETWORK_ERROR");
   }
+  // Round 1524: mirrors AutomationsPanel.tsx's own identical fix (round
+  // 1459, see its comment) -- send_email's own equivalent of the webhook
+  // fallback just above. Every KNOWN whole-rule misconfiguration literal
+  // is already covered by KNOWN_EMAIL_SEND_ERROR_CODES/AUTOMATION_CONFIG_ERROR_CODES
+  // above, so anything still reaching here for a failed send_email run
+  // (most notably EMAIL_UNREACHABLE_ERROR) is necessarily some other
+  // network-level failure. Without this, the downloaded/copied report
+  // leaked raw English even when the live panel already showed the
+  // translated sentence for the exact same error.
+  if (actionType === "send_email" && error) return translate(lang, "error.AUTOMATION_EMAIL_NETWORK_ERROR");
   return error;
 }
 

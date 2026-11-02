@@ -358,6 +358,36 @@ test("formatAutomationsReport translates a webhook rule's HTTP-status failure an
 });
 
 /**
+ * Round 1524: mirrors AutomationsPanel.tsx's own identical fix (round 1459,
+ * see its own comment) -- this module's hand-duplicated translateAutomationError
+ * had the webhook network-error fallback above (round 1381) but never got
+ * the matching send_email one, so EMAIL_UNREACHABLE_ERROR (and any other
+ * unrecognized send_email failure) leaked the raw English server message
+ * into the downloaded/copied report even though the live panel already
+ * showed the translated sentence for the exact same error.
+ */
+test("formatAutomationsReport translates a send_email rule's unrecognized network-error failure instead of showing the bare English sentence", () => {
+  const t = (key: string, params?: Record<string, string | number>) => translate("en", key, params);
+  const rule = makeRule({
+    actionType: "send_email",
+    toEmail: "owner@example.com",
+    emailSubject: "Order update",
+    lastTriggeredAt: "2026-03-15T09:00:00Z",
+    lastStatus: "failed",
+    lastError: "Resend API request failed: could not reach the destination",
+  });
+
+  const report = formatAutomationsReport([rule], [], "Shop", "en", t);
+
+  assert.match(report, /network error/i, "the report must show a translated network-error message for the unrecognized send_email failure");
+  assert.equal(
+    report.includes("Resend API request failed: could not reach the destination"),
+    false,
+    "the bare raw server sentence must never leak into the report",
+  );
+});
+
+/**
  * Round 948: same fix as AutomationsPanel.tsx's own identical regression
  * (see its own comment) -- editing a rule's actionType never
  * retroactively clears/updates its own already-stored lastError
