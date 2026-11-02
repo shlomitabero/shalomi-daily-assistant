@@ -1199,6 +1199,43 @@ test("an incoming WhatsApp poll vote is logged with a generic placeholder instea
 });
 
 /**
+ * Round 1508: a poll being closed/finalized (the creator taps "Stop this
+ * poll") -- previously dropped with zero trace, the one remaining gap in
+ * round 1051's own poll handling, which only covered creation (and round
+ * 1449's own vote handling) -- is now logged with a placeholder showing
+ * the poll's own question text, the exact same convention round 1051
+ * established for poll creation. Covers both client-version field
+ * variants Baileys may populate (pollResultSnapshotMessage/V3), plus a
+ * closed poll with no name at all.
+ */
+test("an incoming WhatsApp poll-closed snapshot is logged with its question text instead of being silently dropped", async () => {
+  const { manager, createdSockets, db } = setupManager();
+  insertProject(db, project);
+  applyMigrations(db, project.id, project.spec);
+  markProjectBuilt(db, project.id);
+
+  await manager.connect(project.id);
+  createdSockets[0].emitConnectionUpdate({ connection: "open" });
+
+  createdSockets[0].emitMessagesUpsert({
+    type: "notify",
+    messages: [
+      { key: { remoteJid: "972501234567@s.whatsapp.net", fromMe: false }, message: { pollResultSnapshotMessage: { name: "איזה יום מתאים?" } } },
+      { key: { remoteJid: "972501234567@s.whatsapp.net", fromMe: false }, message: { pollResultSnapshotMessageV3: { name: "Which day works?" } } },
+      { key: { remoteJid: "972501234567@s.whatsapp.net", fromMe: false }, message: { pollResultSnapshotMessage: {} } },
+    ],
+  });
+
+  // listWhatsAppMessages orders newest-first, the reverse of emission order.
+  const { messages } = listWhatsAppMessages(db, project.id);
+  assert.equal(messages.length, 3);
+  assert.equal(messages[0].body, "[Poll closed]", "a closed poll with no name at all must fall back to a plain placeholder, not print nothing or throw");
+  assert.equal(messages[1].body, "[Poll closed] Which day works?");
+  assert.equal(messages[2].body, "[Poll closed] איזה יום מתאים?");
+  for (const m of messages) assert.equal(m.direction, "in", "every placeholder row must still be a real, matched-against incoming message, not metadata");
+});
+
+/**
  * Round 1088: an incoming WhatsApp emoji reaction (long-press a message,
  * tap an emoji) -- previously dropped with zero trace, the same gap round
  * 1051's own doc comment left open for "every other still-unrecognized

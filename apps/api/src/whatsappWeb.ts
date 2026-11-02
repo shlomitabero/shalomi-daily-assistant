@@ -122,6 +122,8 @@ export interface BaileysIncomingMessage {
     pollCreationMessageV3?: { name?: string };
     pollCreationMessageV5?: { name?: string };
     pollUpdateMessage?: Record<string, never>;
+    pollResultSnapshotMessage?: { name?: string };
+    pollResultSnapshotMessageV3?: { name?: string };
     reactionMessage?: { text?: string };
     buttonsResponseMessage?: { selectedButtonId?: string; selectedDisplayText?: string };
     listResponseMessage?: { title?: string; description?: string; singleSelectReply?: { selectedRowId?: string } };
@@ -411,6 +413,16 @@ function describeIncomingMessage(message: BaileysIncomingMessage["message"]): st
   const poll =
     message.pollCreationMessage ?? message.pollCreationMessageV2 ?? message.pollCreationMessageV3 ?? message.pollCreationMessageV5;
   if (poll) return poll.name ? `[Poll] ${poll.name}` : "[Poll]";
+  // Round 1508: a poll being closed/finalized (the creator taps "Stop this
+  // poll") is a genuine sibling of the poll-creation handling just above,
+  // not a decryption gap -- proto.Message.IPollResultSnapshotMessage's
+  // `name` is plaintext in the protobuf, exactly like IPollCreationMessage.
+  // WhatsApp populates one of two near-identical fields depending on
+  // client version, the same "V3 sibling" shape pollCreationMessage/V2/V3/
+  // V5 already has above. Without this, the poll's own creation and every
+  // vote on it were visible, but closing it silently vanished.
+  const pollResult = message.pollResultSnapshotMessage ?? message.pollResultSnapshotMessageV3;
+  if (pollResult) return pollResult.name ? `[Poll closed] ${pollResult.name}` : "[Poll closed]";
   // Round 1449: a poll VOTE (tapping an option on a poll someone already
   // created), as opposed to the poll's own creation handled just above.
   // pollUpdateMessage.vote.encPayload is genuinely encrypted (see this
