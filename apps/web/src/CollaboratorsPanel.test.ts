@@ -538,6 +538,69 @@ test("CollaboratorsPanel's invite button guards against a fast double-click, so 
 });
 
 /**
+ * Round 1534: handleRoleChange had the exact same own-click reentrancy gap
+ * round 1365 closed above for handleInvite -- it relied solely on its own
+ * updatingRoleUserId busy flag disabling the <select>, with no guard inside
+ * the handler itself against a second invocation landing before React
+ * commits that disabled= attribute. Unlike handleRemove/handleTransferOwnership/
+ * handleLeave (also given the identical guard this round, as cheap defensive
+ * consistency, though a real browser's window.confirm() call already blocks
+ * the JS thread synchronously and so already prevents a second real click
+ * from reaching them at all), handleRoleChange has no confirm gate -- two
+ * fast onChange events (e.g. keyboard-cycling the select) fire two
+ * independent PATCH requests whose full setCollaborators replace means
+ * whichever response lands last silently wins, a genuinely reachable race
+ * with no other safety net. Fires two onChange events before the first
+ * PATCH resolves and asserts the request only ever reaches the server once.
+ */
+test("CollaboratorsPanel's role-change select guards against firing twice before the first PATCH resolves", async () => {
+  await withJsdom(async () => {
+    const originalFetch = globalThis.fetch;
+    const dana = makeCollaborator("u1", "dana@example.com", "editor");
+    let patchCalls = 0;
+    let resolveFirstPatch: (() => void) | undefined;
+
+    globalThis.fetch = (async (input: string, init?: RequestInit) => {
+      const method = init?.method ?? "GET";
+      if (method === "GET" && input === "/api/projects/proj1/collaborators") {
+        return new Response(JSON.stringify({ collaborators: [dana] }), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        });
+      }
+      if (method === "PATCH" && input === "/api/projects/proj1/collaborators/u1/role") {
+        patchCalls += 1;
+        await new Promise<void>((resolve) => {
+          resolveFirstPatch = resolve;
+        });
+        return new Response(JSON.stringify({ collaborators: [makeCollaborator("u1", "dana@example.com", "viewer")] }), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        });
+      }
+      throw new Error(`unexpected request ${method} ${input}`);
+    }) as typeof fetch;
+
+    try {
+      renderPanel(true);
+      await waitForCondition(() => document.querySelectorAll(".collab-list li").length === 1);
+
+      const rowSelect = document.querySelector(".collab-list li select") as HTMLSelectElement;
+      fireEvent.change(rowSelect, { target: { value: "viewer" } });
+      fireEvent.change(rowSelect, { target: { value: "viewer" } });
+      await waitForCondition(() => patchCalls > 0);
+
+      assert.equal(patchCalls, 1, "a second onChange before the first PATCH resolves must be blocked by updatingRoleUserId, not fire its own independent PATCH");
+
+      resolveFirstPatch?.();
+      await waitForCondition(() => rowSelect.value === "viewer");
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+});
+
+/**
  * New in this round: re-inviting an existing collaborator while the role
  * dropdown is set to a DIFFERENT role than the one they already have must
  * say so explicitly -- addCollaborator (packages/db/src/collaborators.ts)

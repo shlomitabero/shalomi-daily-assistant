@@ -247,6 +247,15 @@ export function CollaboratorsPanel({
   }
 
   async function handleRoleChange(userId: string, role: CollaboratorRole) {
+    // Round 1534: the same own-click reentrancy gap round 1365 closed for
+    // handleInvite in this same file -- the <select>'s disabled= attribute
+    // (set from updatingRoleUserId below) only takes effect once React
+    // commits the next render, so two onChange events in that window (e.g.
+    // arrow-key cycling a focused select, or two fast picks) each fire an
+    // independent updateCollaboratorRole PATCH; whichever response lands
+    // last silently overwrites the other via the full setCollaborators
+    // replace below, regardless of which pick the user actually meant.
+    if (updatingRoleUserId !== null) return;
     setUpdatingRoleUserId(userId);
     setError(null);
     try {
@@ -260,6 +269,11 @@ export function CollaboratorsPanel({
   }
 
   async function handleRemove(userId: string, email: string) {
+    // Round 1534: the same own-click reentrancy gap round 1365 closed for
+    // handleInvite -- window.confirm blocks most real double-clicks, but a
+    // test or a very fast second invocation before React commits the
+    // disabled= attribute can still fire two independent DELETE requests.
+    if (removingUserId !== null) return;
     if (!window.confirm(t("collab.confirmRemove", { email }))) return;
     setRemovingUserId(userId);
     setError(null);
@@ -287,6 +301,8 @@ export function CollaboratorsPanel({
    * independently-racing actor against the identical shared list state.
    */
   async function handleTransferOwnership(userId: string, email: string) {
+    // Round 1534: same own-click reentrancy gap as handleRemove just above.
+    if (transferringUserId !== null) return;
     if (!window.confirm(t("collab.transferOwnership.confirm", { email }))) return;
     setTransferringUserId(userId);
     setError(null);
@@ -318,6 +334,10 @@ export function CollaboratorsPanel({
    * nothing left here to keep showing.
    */
   async function handleLeave() {
+    // Round 1534: same own-click reentrancy gap as handleRemove above --
+    // handleLeave shares removingUserId with it (both ultimately call
+    // removeCollaborator), so the guard is against the same state.
+    if (removingUserId !== null) return;
     if (!currentUserId) return;
     if (!window.confirm(t("collab.confirmLeave"))) return;
     setRemovingUserId(currentUserId);
