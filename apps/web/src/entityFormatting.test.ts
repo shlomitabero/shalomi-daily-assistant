@@ -304,6 +304,26 @@ test("badgeTone recognizes 'Graduated' as positive, matching Student's real stat
   assert.equal(badgeTone("OnHold"), "neutral");
 });
 
+/**
+ * Round 1495's finding: the Restaurant template's own Order status enum
+ * (spec-engine/templates.ts: ["pending", "preparing", "served", "paid"])
+ * uses "served" as its own successful-outcome state -- but it can't
+ * simply be added to POSITIVE_WORDS, because the same template's sibling
+ * Table entity has its own status enum (["free", "occupied", "reserved"]),
+ * and "reserved" contains "served" as a literal substring: a plain
+ * membership check would misread a reserved table as positive, the
+ * opposite of "someone is holding this table, it isn't free". Checked via
+ * a dedicated word-boundary regex instead (SERVED_WORD_PATTERN), the same
+ * fix shape round 1460 already established for isDeadlineFieldName.
+ */
+test("badgeTone recognizes 'Served' as positive, matching the Restaurant template's Order status, without misreading the sibling Table entity's 'Reserved' status", () => {
+  assert.equal(badgeTone("Served"), "positive");
+  assert.equal(badgeTone("served"), "positive");
+  assert.equal(badgeTone("Reserved"), "neutral");
+  assert.equal(badgeTone("reserved"), "neutral");
+  assert.equal(badgeTone("Preparing"), "neutral");
+});
+
 test("formatDateValue formats a valid ISO date per locale, and leaves an invalid one unchanged", () => {
   const result = formatDateValue("2026-03-15", "en");
   assert.match(result, /3\/15\/2026|15\/3\/2026/); // exact format is locale/engine-dependent, just confirm it parsed

@@ -130,6 +130,23 @@ const POSITIVE_WORDS = [
   // existing word contains "graduated" as a substring either way.
   "graduated",
 ];
+// Round 1495: the Restaurant template's own Order status enum
+// (spec-engine/templates.ts: ["pending", "preparing", "served", "paid"])
+// uses "served" as its own successful-outcome state, exactly analogous to
+// every other entry in POSITIVE_WORDS above -- but it can't simply be
+// added there, because the SAME template's sibling Table entity has its
+// own status enum (["free", "occupied", "reserved"]), and "reserved"
+// contains "served" as a literal substring. A plain POSITIVE_WORDS
+// membership check (badgeTone's own `lower.includes(w)`) would misread a
+// reserved table as positive, the exact opposite of "someone is holding
+// this table, it isn't free" -- a false positive, not the usual
+// "negated word" false negative round 458 already guards against. Checked
+// separately via a dedicated word-boundary regex, the same fix shape
+// round 1460 already established for isDeadlineFieldName ("due" matching
+// inside "residue"/"subdue"): a boundary check correctly accepts "Served"
+// (string start, no preceding letter) and rejects "Reserved" (the
+// substring begins right after "re", preceded by the letter "e").
+const SERVED_WORD_PATTERN = /(?<![a-z])served(?![a-z])/;
 const NEGATIVE_WORDS = [
   "lost",
   "cancelled",
@@ -271,6 +288,8 @@ export function badgeTone(rawValue: string): BadgeTone {
   // fixes it without introducing a new false negative elsewhere.
   if (NEGATIVE_WORDS.some((w) => lower.includes(w))) return "negative";
   if (POSITIVE_WORDS.some((w) => lower.includes(w))) return "positive";
+  // Round 1495: see SERVED_WORD_PATTERN's own doc comment above.
+  if (SERVED_WORD_PATTERN.test(lower)) return "positive";
   return "neutral";
 }
 

@@ -17523,6 +17523,26 @@ test("the exported EntityView's badgeTone classifies 'Graduated' as positive, ma
 });
 
 /**
+ * Regression test for round 1495's finding: the Restaurant template's
+ * Order status enum uses "served" as its own successful-outcome state,
+ * but the sibling Table entity's status enum has "reserved" (which
+ * contains "served" as a literal substring) -- a plain POSITIVE_WORDS
+ * membership check would misread a reserved table as positive in this
+ * exact exported copy too, mirroring the live-preview fix's dedicated
+ * word-boundary regex. Runs the real generated badgeTone, not a
+ * reference copy.
+ */
+test("the exported EntityView's badgeTone classifies 'Served' as positive, matching the Restaurant template's Order status, without misreading the sibling Table entity's 'Reserved' status", () => {
+  const entityViewJsx = generateExportFiles(project).find((f) => f.path === "web/src/components/EntityView.jsx")!.content;
+  const badgeToneSrc = entityViewJsx.match(/const POSITIVE_WORDS[\s\S]*?\nfunction badgeTone\(rawValue\) \{[\s\S]*?\n\}\n/)?.[0];
+  assert.ok(badgeToneSrc, "expected to find POSITIVE_WORDS/NEGATIVE_WORDS/badgeTone in generated output");
+
+  const badgeTone = new Function(`${badgeToneSrc}\nreturn badgeTone;`)() as (v: string) => string;
+  assert.equal(badgeTone("Served"), "positive");
+  assert.equal(badgeTone("Reserved"), "neutral");
+});
+
+/**
  * New in this round: the exported standalone app's entity table columns
  * were a fixed auto-layout width, unlike the live Forge AI preview (round
  * 185's own drag-to-resize columns, persisted per entity via

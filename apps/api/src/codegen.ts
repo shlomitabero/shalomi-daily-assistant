@@ -2889,6 +2889,14 @@ const NEGATIVE_WORDS = [
   // substring.
   "unrented",
 ];
+// Round 1495: mirrors the live preview's own entityFormatting.ts fix --
+// the Restaurant template's Order status enum uses "served" as its own
+// successful-outcome state, but the sibling Table entity's status enum
+// has "reserved" (which contains "served" as a literal substring), so a
+// plain POSITIVE_WORDS membership check would misread a reserved table
+// as positive. Checked separately via a word-boundary regex instead, the
+// same fix shape round 1460 already established for isDeadlineFieldName.
+const SERVED_WORD_PATTERN = /(?<![a-z])served(?![a-z])/;
 // Mirrors the live preview's own entityFormatting.ts formatRecordCreatedAt
 // (round 168): every record carries a real, server-assigned createdAt
 // (see insertRecord below), but the exported app's own table never showed
@@ -2905,6 +2913,7 @@ function badgeTone(rawValue) {
   const lower = String(rawValue).toLowerCase();
   if (NEGATIVE_WORDS.some((w) => lower.includes(w))) return "negative";
   if (POSITIVE_WORDS.some((w) => lower.includes(w))) return "positive";
+  if (SERVED_WORD_PATTERN.test(lower)) return "positive";
   return "neutral";
 }
 
