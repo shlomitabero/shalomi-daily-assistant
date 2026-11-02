@@ -2917,6 +2917,14 @@ const NEGATIVE_WORDS = [
 // as positive. Checked separately via a word-boundary regex instead, the
 // same fix shape round 1460 already established for isDeadlineFieldName.
 const SERVED_WORD_PATTERN = /(?<![a-z])served(?![a-z])/;
+// Round 1521: mirrors the live preview's own entityFormatting.ts fix --
+// the built-in Ticket/Case domain entities both use "Closed" as a
+// successful-completion state (Case's ONLY one), but "closed" is a
+// literal substring of "Foreclosed"/"Disclosed"/"Enclosed", the same
+// false-positive hazard SERVED_WORD_PATTERN already solves for "served"
+// vs "reserved" above, so it needs the same word-boundary regex rather
+// than a plain POSITIVE_WORDS membership check.
+const CLOSED_WORD_PATTERN = /(?<![a-z])closed(?![a-z])/;
 // Mirrors the live preview's own entityFormatting.ts formatRecordCreatedAt
 // (round 168): every record carries a real, server-assigned createdAt
 // (see insertRecord below), but the exported app's own table never showed
@@ -2934,6 +2942,7 @@ function badgeTone(rawValue) {
   if (NEGATIVE_WORDS.some((w) => lower.includes(w))) return "negative";
   if (POSITIVE_WORDS.some((w) => lower.includes(w))) return "positive";
   if (SERVED_WORD_PATTERN.test(lower)) return "positive";
+  if (CLOSED_WORD_PATTERN.test(lower)) return "positive";
   return "neutral";
 }
 

@@ -17764,6 +17764,32 @@ test("the exported EntityView's badgeTone classifies 'Published' as positive and
 });
 
 /**
+ * Round 1521: mirrors the live preview's own identical fix -- the built-in
+ * Ticket domain entity's own status enum (["Open", "InProgress",
+ * "Resolved", "Closed"]) and the built-in Case (legal case) domain
+ * entity's own status enum (["Open", "InProgress", "Closed"]) both use
+ * "Closed" as a successful-completion state -- for Case it's the ONLY
+ * terminal state -- but it can't simply be added to POSITIVE_WORDS,
+ * because "closed" is a literal substring of real words with the opposite
+ * meaning, most notably "Foreclosed" (a real Property-status value), plus
+ * "Disclosed"/"Enclosed". Checked via a dedicated word-boundary regex
+ * instead (CLOSED_WORD_PATTERN), the same fix shape round 1495 already
+ * established for "served" vs "reserved".
+ */
+test("the exported EntityView's badgeTone classifies 'Closed' as positive, matching Ticket's and Case's real status enums, without misreading 'Foreclosed'/'Disclosed'/'Enclosed'", () => {
+  const entityViewJsx = generateExportFiles(project).find((f) => f.path === "web/src/components/EntityView.jsx")!.content;
+  const badgeToneSrc = entityViewJsx.match(/const POSITIVE_WORDS[\s\S]*?\nfunction badgeTone\(rawValue\) \{[\s\S]*?\n\}\n/)?.[0];
+  assert.ok(badgeToneSrc, "expected to find POSITIVE_WORDS/NEGATIVE_WORDS/badgeTone in generated output");
+
+  const badgeTone = new Function(`${badgeToneSrc}\nreturn badgeTone;`)() as (v: string) => string;
+  assert.equal(badgeTone("Closed"), "positive");
+  assert.equal(badgeTone("Open"), "neutral");
+  assert.equal(badgeTone("Foreclosed"), "neutral");
+  assert.equal(badgeTone("Disclosed"), "neutral");
+  assert.equal(badgeTone("Enclosed"), "neutral");
+});
+
+/**
  * New in this round: the exported standalone app's entity table columns
  * were a fixed auto-layout width, unlike the live Forge AI preview (round
  * 185's own drag-to-resize columns, persisted per entity via

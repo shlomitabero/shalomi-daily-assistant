@@ -325,6 +325,28 @@ test("badgeTone recognizes 'Served' as positive, matching the Restaurant templat
 });
 
 /**
+ * Round 1521's finding: the built-in Ticket domain entity's own status enum
+ * (spec-engine/domainEntities.ts: ["Open", "InProgress", "Resolved",
+ * "Closed"]) and the built-in Case (legal case) domain entity's own status
+ * enum (["Open", "InProgress", "Closed"]) both use "Closed" as a
+ * successful-completion state -- for Case it's the ONLY terminal state --
+ * but it can't simply be added to POSITIVE_WORDS, because "closed" is a
+ * literal substring of real words with the opposite meaning, most notably
+ * "Foreclosed" (a real Property-status value; this app already has a
+ * built-in Property entity), plus "Disclosed"/"Enclosed". Checked via a
+ * dedicated word-boundary regex instead (CLOSED_WORD_PATTERN), the same fix
+ * shape round 1495 already established for "served" vs "reserved".
+ */
+test("badgeTone recognizes 'Closed' as positive, matching Ticket's and Case's real status enums, without misreading 'Foreclosed'/'Disclosed'/'Enclosed'", () => {
+  assert.equal(badgeTone("Closed"), "positive");
+  assert.equal(badgeTone("closed"), "positive");
+  assert.equal(badgeTone("Open"), "neutral");
+  assert.equal(badgeTone("Foreclosed"), "neutral");
+  assert.equal(badgeTone("Disclosed"), "neutral");
+  assert.equal(badgeTone("Enclosed"), "neutral");
+});
+
+/**
  * Round 1506's finding: the built-in Rental domain entity's own status
  * enum (spec-engine/domainEntities.ts: ["Reserved", "Active", "Returned"])
  * uses "Returned" as its own successful-completion state -- the item came

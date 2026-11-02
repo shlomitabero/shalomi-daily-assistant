@@ -165,6 +165,25 @@ const POSITIVE_WORDS = [
 // (string start, no preceding letter) and rejects "Reserved" (the
 // substring begins right after "re", preceded by the letter "e").
 const SERVED_WORD_PATTERN = /(?<![a-z])served(?![a-z])/;
+// Round 1521: the built-in Ticket domain entity's own status enum (see
+// spec-engine/domainEntities.ts: ["Open", "InProgress", "Resolved",
+// "Closed"]) and the built-in Case (legal case) domain entity's own status
+// enum (["Open", "InProgress", "Closed"]) both use "Closed" as a
+// successful-completion state -- for Case it's the ONLY terminal state,
+// there's no "Resolved" for that entity at all -- so a closed ticket/case
+// showed the same neutral gray badge as "Open"/"InProgress" instead of
+// reading as positive. Round 1481 quoted Ticket's full enum, "Closed"
+// right next to "Resolved", when adding "resolved" to POSITIVE_WORDS, but
+// never circled back to fix this one. Can't simply be added to
+// POSITIVE_WORDS, though: "closed" is a literal substring of real English
+// words with the OPPOSITE meaning a freeform AI-generated spec could
+// plausibly produce for exactly this kind of entity -- most notably
+// "Foreclosed" (a real Property-status value; this app already has a
+// built-in Property entity with Sold/Rented), plus "Disclosed"/"Enclosed"
+// -- the same false-positive hazard round 1495 already solved for
+// "served" vs "reserved" via SERVED_WORD_PATTERN just above, not a plain
+// array membership check.
+const CLOSED_WORD_PATTERN = /(?<![a-z])closed(?![a-z])/;
 const NEGATIVE_WORDS = [
   "lost",
   "cancelled",
@@ -329,6 +348,8 @@ export function badgeTone(rawValue: string): BadgeTone {
   if (POSITIVE_WORDS.some((w) => lower.includes(w))) return "positive";
   // Round 1495: see SERVED_WORD_PATTERN's own doc comment above.
   if (SERVED_WORD_PATTERN.test(lower)) return "positive";
+  // Round 1521: see CLOSED_WORD_PATTERN's own doc comment above.
+  if (CLOSED_WORD_PATTERN.test(lower)) return "positive";
   return "neutral";
 }
 
