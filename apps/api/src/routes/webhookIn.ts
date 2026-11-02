@@ -101,7 +101,23 @@ function normalizeBodyValues(entity: Entity, body: Record<string, unknown>): Rec
     const raw = normalized[field.name];
     if (typeof raw !== "string") continue;
     if (field.type === "enum" && field.enumValues && !field.enumValues.includes(raw)) {
-      const match = field.enumValues.find((v) => v.toLowerCase() === raw.toLowerCase());
+      const match =
+        field.enumValues.find((v) => v.toLowerCase() === raw.toLowerCase()) ??
+        // Round 1541: the raw-value match above only ever matches the
+        // field's internal/stored values, never its own enumLabels --
+        // the human-readable text actually shown in this project's live
+        // picker UI. An external integrator who only ever sees the
+        // displayed label (e.g. a Hebrew refine's "חדש" for the stored
+        // value "New") naturally configures their webhook body with that
+        // same text, the identical "a real value was sent, just not in
+        // the exact shape this route expected" gap rounds 1511-1514
+        // already closed for field-name/boolean casing and shape. Mirrors
+        // CSV import's own label-match precedent (entityFormatting.ts,
+        // round 1084), but -- like round 1512's own raw-value match right
+        // above -- deliberately keeps this route's simpler first-match-
+        // wins behavior rather than adding CSV import's ambiguity-
+        // rejection for two values sharing an identical label.
+        field.enumValues.find((v) => (field.enumLabels?.[v] ?? v).toLowerCase() === raw.toLowerCase());
       if (match) normalized[field.name] = match;
     } else if (field.type === "boolean" && raw !== "true" && raw !== "false") {
       const lower = raw.toLowerCase();

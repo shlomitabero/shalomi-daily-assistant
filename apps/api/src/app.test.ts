@@ -20278,6 +20278,52 @@ test("POST /public/webhook-in/:projectId/:entityName resolves enum field values 
   });
 });
 
+test("POST /public/webhook-in/:projectId/:entityName resolves an enum field value sent as its own display label (enumLabels), not just its internal raw value", async () => {
+  await withServer(async (baseUrl, db) => {
+    const email = `webhook-in-enum-label-${randomUUID()}@example.com`;
+    const authToken = await signup(baseUrl, email);
+    const user = findUserByEmail(db, email)!;
+    const spec: ProductSpec = {
+      summary: "test",
+      personas: [],
+      roles: ["Admin"],
+      entities: [
+        {
+          name: "Lead",
+          fields: [
+            { name: "name", type: "text", required: true },
+            { name: "status", type: "enum", enumValues: ["New", "Contacted", "Won"], enumLabels: { New: "חדש", Contacted: "בקשר", Won: "זכינו" } },
+          ],
+        },
+      ],
+      screens: [],
+      assumptions: [],
+      openQuestions: [],
+    };
+    const projectId = randomUUID();
+    insertProject(db, { id: projectId, ownerId: user.id, name: "CRM", description: "test", spec });
+    diffAndMigrate(db, projectId, undefined, spec);
+    markProjectBuilt(db, projectId);
+
+    const tokenRes = await fetch(`${baseUrl}/api/projects/${projectId}/inbound-webhook-token`, { headers: authHeaders(authToken) });
+    const { token: webhookToken } = (await tokenRes.json()) as { token: string };
+
+    const webhookRes = await fetch(`${baseUrl}/api/public/webhook-in/${projectId}/Lead?token=${webhookToken}`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ name: "Dana", status: "חדש" }),
+    });
+    assert.equal(webhookRes.status, 201, "an enum value sent as its own display label (never shown to a real integrator as the internal code) must not be rejected");
+    const { id: recordId } = (await webhookRes.json()) as { id: string };
+
+    const listRes = await fetch(`${baseUrl}/api/projects/${projectId}/entities/Lead`, { headers: authHeaders(authToken) });
+    const { records } = (await listRes.json()) as { records: { id: string; name: string; status: string }[] };
+    const created = records.find((r) => r.id === recordId);
+    assert.ok(created, "expected the record the route reported creating to actually exist");
+    assert.equal(created!.status, "New", "the value must be stored as the entity's own internal raw value, not the sender's label text");
+  });
+});
+
 test("POST /public/webhook-in/:projectId/:entityName resolves boolean field values case-insensitively, extending the same reasoning to the one remaining coercible field type", async () => {
   await withServer(async (baseUrl, db) => {
     const email = `webhook-in-boolean-case-${randomUUID()}@example.com`;
