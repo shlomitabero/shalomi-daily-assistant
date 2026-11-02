@@ -30,8 +30,16 @@ const LOCALE: Record<Lang, string> = { he: "he-IL", en: "en-US" };
  * already structured: each formats its own panel's data independently,
  * not by reaching back into that panel's render functions.
  */
+// Round 1485: mirrors resolveStoredFieldName's own case-insensitive
+// fallback just below -- packages/db/src/migrate.ts's
+// entityNamesByLowerName treats a case-only entity rename as the same
+// entity, a true no-op, so an existing rule's stored entityName can be
+// stale-cased relative to the live entities array without
+// resolveStoredFieldName ever getting a chance to run (ruleFields would
+// be [] if ruleEntity itself returns undefined here).
 function ruleEntity(rule: AutomationRuleView, entities: Entity[]): Entity | undefined {
-  return entities.find((e) => e.name === rule.entityName);
+  if (!rule.entityName) return undefined;
+  return entities.find((e) => e.name === rule.entityName) ?? entities.find((e) => e.name.toLowerCase() === rule.entityName.toLowerCase());
 }
 
 // Round 952: mirrors (rather than imports, matching this codebase's

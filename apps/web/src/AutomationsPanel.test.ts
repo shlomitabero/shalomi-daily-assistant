@@ -2326,6 +2326,77 @@ test("AutomationsPanel resolves a rule's case-drifted stored fieldName to the en
 });
 
 /**
+ * Round 1485 regression test: the same case-drift scenario as round 1267's
+ * own test just above, but one level up -- a case-only ENTITY rename (e.g.
+ * "Order" -> "order") instead of a field rename. ruleEntity (both in
+ * AutomationsPanel.tsx and automationsReport.ts) only did an exact-case
+ * `entities.find((e) => e.name === rule.entityName)` lookup, so it
+ * returned undefined once the live entity's name no longer matched the
+ * rule's stale-cased entityName exactly. Since fieldLabel/fieldValueLabel
+ * both derive their own ruleFields from `ruleEntity(rule)?.fields ?? []`,
+ * resolveStoredFieldName's own case-insensitive fallback (round 1267)
+ * never even got a chance to run -- it was handed an empty array, not a
+ * casing mismatch it could resolve.
+ */
+test("AutomationsPanel resolves a rule's case-drifted stored entityName to the entity's current casing, in both the rule list and the Copy report", async () => {
+  await withJsdom(async () => {
+    const originalFetch = globalThis.fetch;
+    const staleCasedRule = makeRule({
+      id: "rule16",
+      entityName: "Order",
+      trigger: "field_equals",
+      fieldName: "dueDate",
+      fieldValue: "2024-01-15",
+    });
+    const recasedProject: Project = {
+      ...dateFieldProject,
+      spec: {
+        ...dateFieldProject.spec,
+        entities: [{ ...dateFieldProject.spec.entities[0]!, name: "order" }],
+      },
+    };
+    globalThis.fetch = (async (input: string, init?: RequestInit) => {
+      const method = init?.method ?? "GET";
+      if (method === "GET" && input === "/api/projects/proj7/automations") {
+        return new Response(JSON.stringify({ rules: [staleCasedRule] }), { status: 200, headers: { "content-type": "application/json" } });
+      }
+      throw new Error(`unexpected request ${method} ${input}`);
+    }) as typeof fetch;
+
+    let writtenText: string | undefined;
+    Object.defineProperty(navigator, "clipboard", {
+      value: { writeText: async (text: string) => void (writtenText = text) },
+      configurable: true,
+    });
+
+    try {
+      renderPanelWith(recasedProject);
+      await waitForCondition(() => document.querySelector(".automations-rule-condition") !== null);
+      const conditionText = document.querySelector(".automations-rule-condition")?.textContent ?? "";
+
+      assert.ok(conditionText.includes("Due Date"), `expected the field's real label "Due Date", got: ${JSON.stringify(conditionText)}`);
+      assert.ok(!conditionText.includes("dueDate"), "the raw, stale-cased stored fieldName must never be shown once the entity (and therefore its fields) is resolvable under its current casing");
+      assert.ok(conditionText.includes("1/15/2024"), `expected the date value to still be locale-formatted, got: ${JSON.stringify(conditionText)}`);
+      assert.ok(!conditionText.includes("2024-01-15"), "the raw ISO date string must never be shown once the field's type is resolvable as \"date\"");
+
+      const copyButton = Array.from(document.querySelectorAll("button")).find((b) => b.textContent?.includes("Copy report")) as HTMLButtonElement;
+      await act(async () => {
+        fireEvent.click(copyButton);
+        await Promise.resolve();
+        await Promise.resolve();
+      });
+
+      assert.equal(typeof writtenText, "string", "clicking Copy must actually call navigator.clipboard.writeText");
+      assert.match(writtenText!, /Due Date/, "the Copy report text must also resolve the case-drifted entityName to the entity's current casing");
+      assert.match(writtenText!, /1\/15\/2024/, "the Copy report text must also locale-format the date value despite the case-drifted entityName");
+    } finally {
+      globalThis.fetch = originalFetch;
+      delete (navigator as { clipboard?: unknown }).clipboard;
+    }
+  });
+});
+
+/**
  * New: the "schedule" trigger -- a recurring, time-of-day rule with no
  * triggering record at all, unlike record_created/field_equals. Choosing
  * it must reveal a time input and a day-of-week picker, force toMode to

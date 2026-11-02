@@ -777,8 +777,17 @@ export function AutomationsPanel({
   // entity/field can no longer be found (it was renamed or deleted after
   // the rule was created), matching label's own "falls back to name when
   // absent" convention in packages/shared.
+  // Round 1485: mirrors resolveStoredFieldName's own case-insensitive
+  // fallback just below -- packages/db/src/migrate.ts's
+  // entityNamesByLowerName treats a case-only entity rename (e.g.
+  // "customer" -> "Customer") as the same entity, a true no-op, so an
+  // existing rule's stored entityName can be stale-cased relative to the
+  // live entities prop without resolveStoredFieldName ever getting a
+  // chance to run (ruleFields would be [] if ruleEntity itself returns
+  // undefined here).
   function ruleEntity(rule: AutomationRuleView): Entity | undefined {
-    return entities.find((e) => e.name === rule.entityName);
+    if (!rule.entityName) return undefined;
+    return entities.find((e) => e.name === rule.entityName) ?? entities.find((e) => e.name.toLowerCase() === rule.entityName.toLowerCase());
   }
 
   function entityLabel(rule: AutomationRuleView): string {
