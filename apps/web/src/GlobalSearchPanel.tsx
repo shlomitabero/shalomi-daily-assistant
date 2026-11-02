@@ -718,6 +718,20 @@ export function GlobalSearchPanel({
               // not vanish from the panel over a casing difference alone.
               const entity = entities.find((e) => e.name.toLowerCase() === result.entityName.toLowerCase());
               if (!entity) return null;
+              // Round 1531: `result.entityName` is a snapshot captured at
+              // search time -- still the entity's casing BEFORE whatever
+              // mid-session refine prompted the lookup above to go
+              // case-insensitive in the first place. Every navigation
+              // callback below used to pass that stale string straight
+              // through instead of `entity.name` (the just-resolved,
+              // CURRENT casing already sitting in scope here), even
+              // though App.tsx's own `activeEntity` consumer does an
+              // exact-match filter with no case-insensitive fallback of
+              // its own -- clicking "Jump to" (or any record row) after a
+              // case-only rename closed the search dialog and landed on
+              // a blank preview pane with no tab selected and no error,
+              // the identical failure shape round 1487 already fixed for
+              // WhatsAppPanel.tsx's own sibling jump targets.
               const displayed = expandedSamples[result.entityName] ?? result.sample;
               const remaining = result.totalMatches - displayed.length;
               return (
@@ -735,7 +749,7 @@ export function GlobalSearchPanel({
                         count: result.totalMatches,
                       })}
                     </span>
-                    <button type="button" className="secondary small" onClick={() => onJumpToEntity(result.entityName)}>
+                    <button type="button" className="secondary small" onClick={() => onJumpToEntity(entity.name)}>
                       {t("search.jumpTo")}
                     </button>
                   </div>
@@ -758,7 +772,7 @@ export function GlobalSearchPanel({
                           {hasLink ? (
                             <div
                               className="link-button global-search-hit-button"
-                              onClick={() => onJumpToRecord(result.entityName, record.id as number)}
+                              onClick={() => onJumpToRecord(entity.name, record.id as number)}
                             >
                               <button
                                 type="button"
@@ -767,7 +781,7 @@ export function GlobalSearchPanel({
                                 aria-label={t("search.jumpToRecord")}
                                 onClick={(e) => {
                                   e.stopPropagation();
-                                  onJumpToRecord(result.entityName, record.id as number);
+                                  onJumpToRecord(entity.name, record.id as number);
                                 }}
                               >
                                 ↗
@@ -779,12 +793,12 @@ export function GlobalSearchPanel({
                               role="button"
                               tabIndex={0}
                               className="link-button global-search-hit-button"
-                              onClick={() => onJumpToRecord(result.entityName, record.id as number)}
+                              onClick={() => onJumpToRecord(entity.name, record.id as number)}
                               onKeyDown={(e) => {
                                 if (e.target !== e.currentTarget) return;
                                 if (e.key !== "Enter" && e.key !== " ") return;
                                 e.preventDefault();
-                                onJumpToRecord(result.entityName, record.id as number);
+                                onJumpToRecord(entity.name, record.id as number);
                               }}
                             >
                               <LinkifiedHighlighted text={previewText} query={highlightQuery} />

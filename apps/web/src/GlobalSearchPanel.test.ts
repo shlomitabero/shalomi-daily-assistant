@@ -1745,6 +1745,96 @@ test("GlobalSearchPanel keeps a result group visible when its entity is only rec
 });
 
 /**
+ * Round 1531: round 1480's own fix (just above) made the case-insensitive
+ * lookup resolve the CURRENT entity correctly, but every navigation
+ * callback in this same render loop ("Jump to" and every record-row
+ * click/Enter) still passed `result.entityName` -- the STALE, pre-rename
+ * snapshot -- instead of the just-resolved `entity.name` already sitting
+ * in scope one line above. App.tsx's own `activeEntity` consumer does an
+ * exact-match filter with no case-insensitive fallback of its own, so
+ * clicking "Jump to" after a case-only rename closed the search dialog
+ * and landed on a blank preview pane with no tab selected and no error --
+ * the identical failure shape round 1487 already fixed for
+ * WhatsAppPanel.tsx's own sibling jump targets. Reuses the exact same
+ * recase-while-open repro as the test above, but asserts on the actual
+ * argument `onJumpToEntity` receives, not just that the group stays visible.
+ */
+test("GlobalSearchPanel's 'Jump to' passes the entity's CURRENT casing, not the stale pre-rename snapshot, after a refine recases it while the panel is still open", async () => {
+  await withJsdom(async () => {
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = mockGlobalSearchFetch() as typeof fetch;
+    let jumpedToEntity: string | undefined;
+    try {
+      const { rerender } = render(
+        React.createElement(
+          ThemeProvider,
+          null,
+          React.createElement(
+            LanguageProvider,
+            null,
+            React.createElement(GlobalSearchPanel, {
+              projectId: "proj1",
+              userId: "user1",
+              projectName: "Test Project",
+              entities: [SEARCH_CUSTOMER_ENTITY, SEARCH_ORDER_ENTITY],
+              onClose: () => {},
+              onJumpToEntity: (entityName: string) => {
+                jumpedToEntity = entityName;
+              },
+              onJumpToRecord: () => {},
+            }),
+          ),
+        ),
+      );
+
+      const input = document.querySelector(".global-search-input") as HTMLInputElement;
+      fireEvent.change(input, { target: { value: "widget" } });
+      const form = document.querySelector("form.global-search-form")!;
+      fireEvent.submit(form);
+      await waitForCondition(() => document.querySelectorAll(".global-search-group").length === 2);
+
+      // The refine's own completion: "Customer" is recased to "CUSTOMER",
+      // the same entity, same fields -- not removed, not replaced.
+      rerender(
+        React.createElement(
+          ThemeProvider,
+          null,
+          React.createElement(
+            LanguageProvider,
+            null,
+            React.createElement(GlobalSearchPanel, {
+              projectId: "proj1",
+              userId: "user1",
+              projectName: "Test Project",
+              entities: [{ ...SEARCH_CUSTOMER_ENTITY, name: "CUSTOMER" }, SEARCH_ORDER_ENTITY],
+              onClose: () => {},
+              onJumpToEntity: (entityName: string) => {
+                jumpedToEntity = entityName;
+              },
+              onJumpToRecord: () => {},
+            }),
+          ),
+        ),
+      );
+
+      const jumpButton = Array.from(document.querySelectorAll(".global-search-group-header button")).find(
+        (btn) => btn.closest(".global-search-group")?.querySelector(".global-search-entity-label")?.textContent === "Customer",
+      ) as HTMLButtonElement;
+      assert.ok(jumpButton, "expected to find the recased entity's own 'Jump to' button");
+      fireEvent.click(jumpButton);
+
+      assert.equal(
+        jumpedToEntity,
+        "CUSTOMER",
+        "onJumpToEntity must receive the entity's CURRENT casing, not the stale pre-rename snapshot captured at search time",
+      );
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+});
+
+/**
  * New in this round: a submitted search now survives closing and
  * reopening the panel, via recentSearches.ts's real localStorage
  * persistence (the same convention pinnedProjects.ts/ideaDraft.ts already
