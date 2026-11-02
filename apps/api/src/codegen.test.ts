@@ -3476,6 +3476,110 @@ test("the exported EntityView's commitPendingDelete restores the row and surface
 });
 
 /**
+ * Round 1529: parity port of round 1527's live-backend fix, which never
+ * made it into this generated server.js -- deferred by round 1527's own
+ * roadmap note, closed here. The exported app's own delete-undo-window
+ * (commitPendingDelete) defers the real DELETE for up to 5s after the row
+ * already vanished from the deleting session's own view, long enough for
+ * a second session, unaware of the pending delete, to open and
+ * successfully save an edit to the same still-genuinely-alive record.
+ * Before this fix, server.js's generated DELETE route had no way to
+ * detect that drift -- it deleted unconditionally, silently discarding
+ * the second session's just-saved edit the moment the deferred delete
+ * finally ran, exactly as round 1527's app.test.ts counterpart
+ * demonstrated for the live backend.
+ */
+test("generated server.js's DELETE route rejects a delete whose expectedRecord snapshot no longer matches (edited by a second session during the undo window), and the edit survives", async () => {
+  const files = generateExportFiles(project);
+  const serverJs = files.find((f) => f.path === "server.js")!.content;
+
+  const dir = mkdtempSync(path.join(tmpdir(), "codegen-delete-conflict-test-"));
+  const repoRoot = path.resolve(import.meta.dirname, "../../..");
+  symlinkSync(path.join(repoRoot, "node_modules"), path.join(dir, "node_modules"));
+  writeFileSync(path.join(dir, "server.js"), serverJs);
+
+  const port = 59000 + Math.floor(Math.random() * 5000);
+  const child = spawn(process.execPath, ["--experimental-sqlite", "server.js"], {
+    cwd: dir,
+    env: { ...process.env, PORT: String(port) },
+    stdio: ["ignore", "pipe", "pipe"],
+  });
+  let stderr = "";
+  child.stderr.on("data", (chunk) => {
+    stderr += chunk.toString();
+  });
+
+  try {
+    const deadline = Date.now() + 5000;
+    let lastErr: unknown;
+    while (Date.now() < deadline) {
+      if (child.exitCode !== null) throw new Error(`server.js exited early (code ${child.exitCode}):\n${stderr}`);
+      try {
+        await fetch(`http://localhost:${port}/api/entities`);
+        break;
+      } catch (err) {
+        lastErr = err;
+        await new Promise((r) => setTimeout(r, 100));
+      }
+    }
+    if (child.exitCode !== null) throw lastErr instanceof Error ? lastErr : new Error(String(lastErr));
+
+    const createRes = await fetch(`http://localhost:${port}/api/Customer`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ name: "Alice", status: "New" }),
+    });
+    assert.equal(createRes.status, 201);
+    const customer = (await createRes.json()).record;
+    // The snapshot taken the instant Delete was clicked -- stale the
+    // moment the second session's PATCH below lands.
+    const expectedRecord = customer;
+
+    // Simulate a second session saving an edit to the same record while
+    // the first session's delete is still deferred behind the undo window.
+    const patchRes = await fetch(`http://localhost:${port}/api/Customer/${customer.id}`, {
+      method: "PATCH",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ name: "Alice Cohen" }),
+    });
+    assert.equal(patchRes.status, 200);
+
+    const deleteRes = await fetch(`http://localhost:${port}/api/Customer/${customer.id}`, {
+      method: "DELETE",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ expectedRecord }),
+    });
+    assert.equal(deleteRes.status, 409);
+    const deleteBody = await deleteRes.json();
+    assert.equal(deleteBody.code, "RECORD_MODIFIED_SINCE_DELETE");
+
+    const getRes = await fetch(`http://localhost:${port}/api/Customer`);
+    const { records } = await getRes.json();
+    const survived = records.find((r: { id: number }) => r.id === customer.id);
+    assert.ok(survived, "the record must still exist -- the delete must have been rejected, not partially applied");
+    assert.equal(survived.name, "Alice Cohen", "the second session's edit must survive, not be silently discarded");
+
+    // A matching expectedRecord (no concurrent edit happened) must still
+    // delete normally -- ruling out a false positive on every delete.
+    const secondCreateRes = await fetch(`http://localhost:${port}/api/Customer`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ name: "Bob", status: "New" }),
+    });
+    const bob = (await secondCreateRes.json()).record;
+    const cleanDeleteRes = await fetch(`http://localhost:${port}/api/Customer/${bob.id}`, {
+      method: "DELETE",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ expectedRecord: bob }),
+    });
+    assert.equal(cleanDeleteRes.status, 204);
+  } finally {
+    child.kill();
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+/**
  * Round 644 regression, ported from the live Forge AI preview's own
  * EntityPanel.tsx fix: startEdit used to snapshot the whole record into
  * `form`, and handleSubmit sent that whole snapshot back on save -- not

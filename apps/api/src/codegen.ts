@@ -682,6 +682,32 @@ for (const entity of ENTITIES) {
 
   app.delete(\`\${base}/:id\`, (req, res) => {
     try {
+      // Round 1529: mirrors the live Forge AI backend's own round-1527
+      // expectedRecord check, which this generated route never got --
+      // this app's own delete-undo-window (commitPendingDelete) defers
+      // the real DELETE for up to 5s after the row already vanished from
+      // the deleting tab's own view, long enough for a second
+      // tab/session to open and successfully save an edit to the same
+      // still-genuinely-alive record. Without this check, that save
+      // succeeded silently and was then destroyed the moment this
+      // deferred delete finally ran, with no warning to either user.
+      // expectedRecord, when the client sends it (the exact snapshot
+      // taken the moment Delete was clicked), lets this route detect
+      // that drift and reject instead of deleting.
+      const expectedRecord = req.body && req.body.expectedRecord;
+      if (expectedRecord) {
+        const existing = db.prepare(\`SELECT * FROM \${q(entity.name)} WHERE id = ?\`).get(req.params.id);
+        if (existing) {
+          const before = rowToRecord(entity, existing);
+          const changed = entity.fields.some((f) => before[f.name] !== expectedRecord[f.name]);
+          if (changed) {
+            return res.status(409).json({
+              error: "This record was changed by someone else after it was deleted here -- the deletion was cancelled",
+              code: "RECORD_MODIFIED_SINCE_DELETE",
+            });
+          }
+        }
+      }
       const result = db.prepare(\`DELETE FROM \${q(entity.name)} WHERE id = ?\`).run(req.params.id);
       if (result.changes === 0) return res.status(404).json({ error: "Not found" });
       res.status(204).end();
@@ -1823,8 +1849,11 @@ export function updateRecord(entityName, id, data) {
   return request(\`/\${entityName}/\${id}\`, { method: "PATCH", body: JSON.stringify(data) });
 }
 
-export function deleteRecord(entityName, id) {
-  return request(\`/\${entityName}/\${id}\`, { method: "DELETE" });
+export function deleteRecord(entityName, id, expectedRecord) {
+  return request(\`/\${entityName}/\${id}\`, {
+    method: "DELETE",
+    body: expectedRecord ? JSON.stringify({ expectedRecord }) : undefined,
+  });
 }
 
 export function listEntityCounts() {
@@ -6039,7 +6068,7 @@ export function EntityView({ entity, highlightRecordId, onHighlightHandled, onJu
   // shown at all. Restores the row (same helper handleUndoDelete uses) and
   // surfaces the real error instead.
   async function commitPendingDelete(pending) {
-    const results = await Promise.allSettled(pending.entries.map((e) => deleteRecord(entity.name, e.id)));
+    const results = await Promise.allSettled(pending.entries.map((e) => deleteRecord(entity.name, e.id, e.record)));
     const failed = pending.entries.filter((_, i) => results[i].status === "rejected");
     if (failed.length === 0) return;
     setRecords((prev) => failed.reduce((acc, e) => restoreRecordAt(acc, e.record, e.index), prev));
