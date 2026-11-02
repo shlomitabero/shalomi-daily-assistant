@@ -334,7 +334,12 @@ test("migrateEntityPreferencesForCaseRename moves exactly one project+entity's e
     );
 
     // Nothing is left reachable under the OLD casing.
-    assert.deepEqual(getColumnWidths("abc", "customer", "userA"), {}, "nothing must remain reachable under the old casing");
+    // Round 1543: getColumnWidths now falls back to a case-insensitive scan (the same
+    // resolution round 1542 gave columnOrder.ts's identical gap), so a lookup under the
+    // old casing still resolves via that fallback instead of coming back empty. This is
+    // the intended new behavior, not a regression -- the whole point of the fallback is
+    // that such a lookup no longer silently reverts to default widths.
+    assert.deepEqual(getColumnWidths("abc", "customer", "userA"), { name: 220 }, "a lookup under the old casing must still resolve via getColumnWidths's own case-insensitive fallback");
     assert.deepEqual(getFieldFilters("abc", "customer", "userA"), {}, "nothing must remain reachable under the old casing");
     assert.equal(getGroupByField("abc", "customer", "userA"), "", "nothing must remain reachable under the old casing");
     assert.deepEqual(getEntityRecentSearches("abc", "customer", "userA"), [], "nothing must remain reachable under the old casing");

@@ -57,10 +57,33 @@ function writeStore(store: Record<string, Record<string, number>>): void {
  * project's same-named entity). A field absent from the returned record has
  * never been resized and keeps the table's normal automatic sizing. Round
  * 1068: also scoped per user -- see keyFor's own doc comment above.
+ *
+ * Round 1543: a case-only entity rename (an ordinary, explicitly-anticipated
+ * refine/AI casing drift) only ever gets this store's keys rewritten by
+ * migrateColumnWidthsForEntityRename below, which -- exactly like
+ * columnOrder.ts's own migrateColumnOrderForEntityRename before round 1542
+ * -- is called only from the single browser tab that happened to trigger
+ * the rename (App.tsx's build/refine-complete handler, or a checkpoint
+ * restore). Every OTHER collaborator's own localStorage keeps this
+ * preference under the entity's OLD casing forever -- the exact-match
+ * lookup above would miss it with zero error or indication, silently
+ * reverting their drag-resized columns back to automatic sizing. Falls back
+ * to a case-insensitive scan of this exact project+user's own keys, the
+ * same resolution round 1542 applied to columnOrder.ts's identical gap.
  */
 export function getColumnWidths(projectId: string, entityName: string, userId: string): Record<string, number> {
   const store = readStore();
-  return { ...(store[keyFor(projectId, entityName, userId)] ?? {}) };
+  const exact = store[keyFor(projectId, entityName, userId)];
+  if (exact) return { ...exact };
+  const prefix = `${projectId}:`;
+  const suffix = `:${userId}`;
+  const lowerEntityName = entityName.toLowerCase();
+  for (const [key, value] of Object.entries(store)) {
+    if (!key.startsWith(prefix) || !key.endsWith(suffix)) continue;
+    const keyEntityName = key.slice(prefix.length, key.length - suffix.length);
+    if (keyEntityName.toLowerCase() === lowerEntityName) return { ...value };
+  }
+  return {};
 }
 
 /** Persists one field's own resized width and returns the entity's full updated width map, so callers can update their own state from the return value instead of re-reading storage. */

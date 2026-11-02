@@ -146,8 +146,40 @@ test("migrateColumnWidthsForEntityRename remaps every collaborator's own widths 
 
     assert.deepEqual(getColumnWidths("proj1", "Customer", "userA"), { name: 220 }, "userA's widths must resolve under the new casing");
     assert.deepEqual(getColumnWidths("proj1", "Customer", "userB"), { name: 350 }, "userB's widths must resolve under the new casing too");
-    assert.deepEqual(getColumnWidths("proj1", "customer", "userA"), {}, "nothing must remain reachable under the old casing");
+    // Round 1543: getColumnWidths now falls back to a case-insensitive scan, the same
+    // resolution round 1542 gave columnOrder.ts's identical gap -- so a lookup under the
+    // old casing still resolves via that fallback instead of coming back empty. This is
+    // the intended new behavior, not a regression: the whole point of the fallback is
+    // that such a lookup no longer silently reverts to default widths.
+    assert.deepEqual(getColumnWidths("proj1", "customer", "userA"), { name: 220 }, "a lookup under the old casing must still resolve via getColumnWidths's own case-insensitive fallback");
     assert.deepEqual(getColumnWidths("proj1", "Order", "userA"), { total: 180 }, "a sibling entity's own widths must survive the rename untouched");
+  });
+});
+
+/**
+ * Round 1543: migrateColumnWidthsForEntityRename only ever runs in the single
+ * browser tab that triggered the rename (see getColumnWidths's own doc
+ * comment) -- so a different collaborator's own localStorage, which never
+ * saw that migration run, must still resolve its real widths via
+ * getColumnWidths's new case-insensitive fallback, mirroring
+ * columnOrder.test.ts's identical round-1542 coverage for getColumnOrder.
+ */
+test("getColumnWidths resolves a collaborator's own widths stored under the OLD casing, even though no migration ever ran in this browser", async () => {
+  await withJsdom(() => {
+    setColumnWidth("proj1", "customer", "userB", "name", 350);
+
+    assert.deepEqual(getColumnWidths("proj1", "Customer", "userB"), { name: 350 }, "must resolve userB's own widths under the new casing via the case-insensitive fallback, with no migration ever having run");
+  });
+});
+
+test("getColumnWidths's case-insensitive fallback never leaks a different user's or different project's own widths for the same entity name", async () => {
+  await withJsdom(() => {
+    setColumnWidth("proj1", "customer", "userA", "name", 220);
+    setColumnWidth("proj2", "customer", "userB", "name", 400);
+
+    assert.deepEqual(getColumnWidths("proj1", "Customer", "userB"), {}, "userB has no widths of their own in proj1 -- userA's own widths for the same entity must not leak across users");
+    assert.deepEqual(getColumnWidths("proj1", "Customer", "userA"), { name: 220 }, "userA's own widths must still resolve via the fallback");
+    assert.deepEqual(getColumnWidths("proj2", "Customer", "userA"), {}, "a different project's own widths for the same entity+user combination must not leak across projects");
   });
 });
 
