@@ -111,6 +111,9 @@ export default function Settings() {
             <option value="USD">דולר</option>
           </select>
         </label>
+        <p className="hint" style={{ margin: '-4px 0 0' }}>
+          זו תצוגה בלבד — העלויות וההכנסות האמיתיות במערכת (Paddle, AI) הן דולריות ללא המרה, אז כל סכום שתזין בתקציב/הפסד מרבי למעלה נבדק כמספר דולרים גולמי, בלי קשר לבחירה כאן.
+        </p>
         <label>
           מצב פעולה
           <select value={form.mode} onChange={(e) => setForm({ ...form, mode: e.target.value })}>

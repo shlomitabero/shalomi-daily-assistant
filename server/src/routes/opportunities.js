@@ -58,7 +58,7 @@ const EDITABLE_FIELDS = ['revenueEstimate', 'costs', 'riskLevel', 'dataQuality',
 
 // A non-finite value here wouldn't crash anything — it would silently
 // corrupt computeNetProfit's totals (NaN propagating through the profit
-// math) instead of being rejected, so the dashboard would show "₪NaN" to
+// math) instead of being rejected, so the dashboard would show "$NaN" to
 // the owner instead of a clear error. Reject it at the door.
 function isFiniteOrNullish(value) {
   return value == null || (typeof value === 'number' && Number.isFinite(value));

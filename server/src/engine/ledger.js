@@ -27,7 +27,7 @@ export function summarizeLedger(entries, todayKey) {
 function sumAmounts(entries) {
   // Number.isFinite, not typeof — a single corrupted entry's amount (NaN,
   // undefined, a stray string) would otherwise poison the running total via
-  // NaN propagation, turning every dashboard figure into "₪NaN" instead of
+  // NaN propagation, turning every dashboard figure into "$NaN" instead of
   // just excluding that one bad entry.
   return entries.reduce((total, e) => (Number.isFinite(e.amount) ? total + e.amount : total), 0);
 }
