@@ -2700,6 +2700,101 @@ test("AddFieldForm's relationTo re-derives even while already open in relation m
 });
 
 /**
+ * Round 1484: the same exact-case guard round 1235/1236 added for a
+ * REMOVED sibling entity has the opposite blind spot for a RECASED one --
+ * a same-screen refine that recases an existing entity (e.g. "Customer"
+ * -> "customer") without dropping it is a documented, repeatedly-fixed
+ * behavior elsewhere (rounds 988/1029/1159/1160/1480), but this effect's
+ * exact-case `.some((e) => e.name === relationTo)` check treated the
+ * recased entity as gone and reset relationTo to allEntities[0] -- an
+ * arbitrary, unrelated entity -- instead of just following "Customer"
+ * under its new casing.
+ */
+test("AddFieldForm's relationTo follows a sibling entity's own recase (not a removal) instead of jumping to an unrelated entity", async () => {
+  await withJsdom(async () => {
+    const originalFetch = globalThis.fetch;
+    let postedBody: { label: string; type: string; relationTo?: string } | undefined;
+    globalThis.fetch = (async (input: string, init?: RequestInit) => {
+      if (init?.method === "POST" && input === "/api/projects/proj1/entities/Account/fields") {
+        postedBody = JSON.parse(init.body as string) as typeof postedBody;
+        return new Response(JSON.stringify({ project: baseProject }), { status: 200, headers: { "content-type": "application/json" } });
+      }
+      throw new Error(`unexpected request ${init?.method ?? "GET"} ${input}`);
+    }) as typeof fetch;
+
+    const withCustomer: Entity[] = [
+      { name: "Customer", fields: [{ name: "name", type: "text", required: true }] },
+      { name: "Deal", fields: [{ name: "amount", type: "number", required: false }] },
+      { name: "Account", fields: [{ name: "name", type: "text", required: true }] },
+    ];
+    // Mirrors a same-screen refine recasing "Customer" -> "customer"
+    // WITHOUT removing it -- same entity, same position, new casing only.
+    // "Deal" (NOT the recased entity) sits first, so the old buggy
+    // "reset to allEntities[0]" behavior would land on an unrelated entity
+    // rather than coincidentally landing on the right one by position.
+    const withRecasedCustomer: Entity[] = [withCustomer[1], { name: "customer", fields: withCustomer[0].fields }, withCustomer[2]];
+
+    try {
+      const addedProjects: Project[] = [];
+      const view = render(
+        React.createElement(
+          ThemeProvider,
+          null,
+          React.createElement(
+            LanguageProvider,
+            null,
+            React.createElement(AddFieldForm, {
+              projectId: "proj1",
+              entityName: "Account",
+              allEntities: withCustomer,
+              onAdded: (p: Project) => addedProjects.push(p),
+            }),
+          ),
+        ),
+      );
+
+      fireEvent.change(document.querySelector(".spec-add-item-form input") as HTMLInputElement, { target: { value: "Owner" } });
+      fireEvent.change(document.querySelector(".spec-add-field-form select") as HTMLSelectElement, { target: { value: "relation" } });
+      assert.equal(
+        (document.querySelectorAll(".spec-add-field-form select")[1] as HTMLSelectElement).value,
+        "Customer",
+        "relationTo must land on Customer while it still exists under that casing",
+      );
+
+      // "Customer" is recased to "customer" elsewhere on the same screen
+      // -- still present, just under new casing, unlike round 1236's own
+      // removal scenario.
+      view.rerender(
+        React.createElement(
+          ThemeProvider,
+          null,
+          React.createElement(
+            LanguageProvider,
+            null,
+            React.createElement(AddFieldForm, {
+              projectId: "proj1",
+              entityName: "Account",
+              allEntities: withRecasedCustomer,
+              onAdded: (p: Project) => addedProjects.push(p),
+            }),
+          ),
+        ),
+      );
+
+      const relationSelect = document.querySelectorAll(".spec-add-field-form select")[1] as HTMLSelectElement;
+      assert.equal(relationSelect.value, "customer", "relationTo must follow the entity's own new casing, not jump to an unrelated entity");
+
+      fireEvent.click(document.querySelector(".spec-add-field-form button") as HTMLButtonElement);
+      await waitForCondition(() => addedProjects.length === 1);
+
+      assert.deepEqual(postedBody, { label: "Owner", type: "relation", relationTo: "customer" });
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+});
+
+/**
  * Round 1236: FieldChip's own openDraftFor has the identical gap -- it
  * re-derives draftRelationTo fresh when the draft OPENS, but not while
  * it's left open afterward. Confirms the same self-correction for an
@@ -2784,6 +2879,94 @@ test("FieldChip's draftRelationTo re-derives even while its edit-target draft is
       await waitForCondition(() => changedProjects.length === 1);
 
       assert.deepEqual(patchBody, { type: "relation", relationTo: withoutSupplier[0]?.name });
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+});
+
+/**
+ * Round 1484: the same exact-case guard round 1236 added for a REMOVED
+ * relation target has the opposite blind spot for a RECASED one -- see
+ * the identical comment on AddFieldForm's own sibling test above.
+ */
+test("FieldChip's draftRelationTo follows its own relation target's recase (not a removal) instead of jumping to an unrelated entity", async () => {
+  await withJsdom(async () => {
+    const originalFetch = globalThis.fetch;
+    let patchBody: { type: string; relationTo?: string } | undefined;
+    globalThis.fetch = (async (input: string, init?: RequestInit) => {
+      if (init?.method === "PATCH" && input === "/api/projects/proj1/entities/Customer/fields/supplierId/type") {
+        patchBody = JSON.parse(init.body as string) as { type: string; relationTo?: string };
+        return new Response(JSON.stringify({ project: baseProject }), { status: 200, headers: { "content-type": "application/json" } });
+      }
+      throw new Error(`unexpected request ${init?.method ?? "GET"} ${input}`);
+    }) as typeof fetch;
+
+    const withSupplier: Entity[] = [
+      ...baseProject.spec.entities,
+      { name: "Supplier", label: "Supplier", fields: [{ name: "name", type: "text", required: true }] },
+      { name: "Warehouse", label: "Warehouse", fields: [{ name: "name", type: "text", required: true }] },
+    ];
+    // Mirrors a same-screen refine recasing "Supplier" -> "supplier"
+    // WITHOUT removing it, unlike round 1236's own removal scenario.
+    const withRecasedSupplier: Entity[] = withSupplier.map((e) => (e.name === "Supplier" ? { ...e, name: "supplier" } : e));
+    const field: Field = { name: "supplierId", type: "relation", required: false, relationTo: "Supplier" };
+
+    try {
+      const changedProjects: Project[] = [];
+      const view = render(
+        React.createElement(
+          ThemeProvider,
+          null,
+          React.createElement(
+            LanguageProvider,
+            null,
+            React.createElement(FieldChip, {
+              field,
+              projectId: "proj1",
+              entityName: "Customer",
+              canRemove: true,
+              onChanged: (p: Project) => changedProjects.push(p),
+              allEntities: withSupplier,
+              labelOccurrences: new Map(),
+            }),
+          ),
+        ),
+      );
+
+      fireEvent.click(document.querySelector(".chip-field-edit-values") as HTMLButtonElement);
+      const confirmForm = document.querySelector(".chip-field-type-confirm") as HTMLFormElement;
+      assert.equal((confirmForm.querySelector("select") as HTMLSelectElement).value, "Supplier", "the draft must start pre-filled with the field's own current relationTo");
+
+      // "Supplier" -- the field's own current target -- is recased
+      // elsewhere on the same screen while the draft is still open.
+      view.rerender(
+        React.createElement(
+          ThemeProvider,
+          null,
+          React.createElement(
+            LanguageProvider,
+            null,
+            React.createElement(FieldChip, {
+              field,
+              projectId: "proj1",
+              entityName: "Customer",
+              canRemove: true,
+              onChanged: (p: Project) => changedProjects.push(p),
+              allEntities: withRecasedSupplier,
+              labelOccurrences: new Map(),
+            }),
+          ),
+        ),
+      );
+
+      const relationSelect = document.querySelector(".chip-field-type-confirm select") as HTMLSelectElement;
+      assert.equal(relationSelect.value, "supplier", "draftRelationTo must follow Supplier's own new casing, not jump to an unrelated entity");
+
+      fireEvent.submit(confirmForm);
+      await waitForCondition(() => changedProjects.length === 1);
+
+      assert.deepEqual(patchBody, { type: "relation", relationTo: "supplier" });
     } finally {
       globalThis.fetch = originalFetch;
     }

@@ -1127,9 +1127,16 @@ export function FieldChip({
   // closes both triggers (the open-moment one above, and this one) with a
   // single mechanism.
   useEffect(() => {
-    if (draftType === "relation" && !allEntities.some((e) => e.name === draftRelationTo)) {
-      setDraftRelationTo(allEntities[0]?.name ?? "");
-    }
+    if (draftType !== "relation" || allEntities.some((e) => e.name === draftRelationTo)) return;
+    // Round 1484: an exact-case miss here doesn't always mean the target
+    // entity was removed -- a same-screen refine can RECASE an existing
+    // entity's name (e.g. "customer" -> "Customer") without dropping it,
+    // the same gap round 1480 fixed in GlobalSearchPanel's own "did this
+    // entity vanish" guard. Falling straight to allEntities[0] in that case
+    // would silently redirect this draft at an unrelated entity instead of
+    // just following its real target's new casing.
+    const recased = allEntities.find((e) => e.name.toLowerCase() === draftRelationTo.toLowerCase());
+    setDraftRelationTo(recased ? recased.name : allEntities[0]?.name ?? "");
   }, [draftType, allEntities, draftRelationTo]);
 
   function handleTypeSelectChange(newType: Field["type"]) {
@@ -1578,9 +1585,14 @@ export function AddFieldForm({
     setType(newType);
   }
   useEffect(() => {
-    if (type === "relation" && !allEntities.some((e) => e.name === relationTo)) {
-      setRelationTo(allEntities[0]?.name ?? "");
-    }
+    if (type !== "relation" || allEntities.some((e) => e.name === relationTo)) return;
+    // Round 1484: mirrors FieldChip's identical draftRelationTo effect
+    // above -- an exact-case miss can mean the target entity was RECASED
+    // by a same-screen refine, not removed, so resolve it case-insensitively
+    // and follow the entity's current casing instead of jumping to an
+    // unrelated entity at allEntities[0].
+    const recased = allEntities.find((e) => e.name.toLowerCase() === relationTo.toLowerCase());
+    setRelationTo(recased ? recased.name : allEntities[0]?.name ?? "");
   }, [type, allEntities, relationTo]);
   // Round 1039: see EntitySummaryItem's own identical comment -- this
   // form's own relation-target dropdown (below) has the same unresolved
