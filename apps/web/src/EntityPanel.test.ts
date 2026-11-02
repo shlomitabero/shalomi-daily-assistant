@@ -17962,6 +17962,52 @@ test("EntityPanel warns before a tab close/refresh discards an in-progress bulk-
 });
 
 /**
+ * Round 1525: a live Playwright session found that a tab close/refresh
+ * during the delete undo window (UNDO_WINDOW_MS) silently reverted the
+ * delete with zero feedback -- the unmount-flush effect only ever commits
+ * a pending delete on an in-app unmount (switching entity tabs), never a
+ * real browser unload, and the deferred DELETE fetch itself has no
+ * `keepalive`, so the browser aborts it mid-flight. An 11th
+ * useBeforeUnloadWarning gap, the same problem class as the formIsDirty
+ * and bulk-edit guards just above, but for the undo-window's own pending
+ * delete instead.
+ */
+test("EntityPanel warns before a tab close/refresh would silently revert a still-pending delete, and stops warning once it's undone", async (t) => {
+  await withJsdom(async () => {
+    const store: EntityRecord[] = [{ id: 1, name: "Acme Corp", status: "new" }];
+    const originalFetch = globalThis.fetch;
+    const originalConfirm = globalThis.window.confirm;
+    globalThis.fetch = mockRecordsFetch(store) as typeof fetch;
+    globalThis.window.confirm = (() => true) as typeof window.confirm;
+    try {
+      renderEntityPanel();
+      await waitForCondition(() => document.querySelectorAll("table tbody tr").length === 1);
+
+      function dispatchBeforeUnload(): boolean {
+        const event = new window.Event("beforeunload", { cancelable: true });
+        window.dispatchEvent(event);
+        return event.defaultPrevented;
+      }
+
+      assert.equal(dispatchBeforeUnload(), false, "nothing pending yet, nothing to warn about");
+
+      t.mock.timers.enable({ apis: ["setTimeout"] });
+      fireEvent.click(document.querySelector(".danger") as HTMLButtonElement);
+      assert.equal(document.querySelectorAll("table tbody tr").length, 0, "the row must disappear from view immediately");
+      assert.equal(dispatchBeforeUnload(), true, "a delete still inside its undo window must now warn before a reload would silently revert it");
+
+      const toast = document.querySelector(".entity-undo-toast");
+      fireEvent.click(toast!.querySelector("button") as HTMLButtonElement);
+      assert.equal(dispatchBeforeUnload(), false, "undoing the delete must clear the warning too, with nothing left pending");
+    } finally {
+      t.mock.timers.reset();
+      globalThis.fetch = originalFetch;
+      globalThis.window.confirm = originalConfirm;
+    }
+  });
+});
+
+/**
  * Round 1348: a live Playwright browser session (round 1347's survey)
  * found that in Kanban Board view, `BoardCard`'s `.row-actions` button row
  * (edit/duplicate/send WhatsApp/print/delete -- up to 5 plain buttons)

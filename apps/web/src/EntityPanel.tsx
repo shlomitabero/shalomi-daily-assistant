@@ -1758,6 +1758,17 @@ export function EntityPanel({
   // succeeds (handleBulkUpdate sets selectedIds to only the failed ids) or
   // the selection is otherwise cleared, with no separate reset needed.
   useBeforeUnloadWarning(selectedIds.size > 0 && bulkEditField !== "");
+  // Round 1525: a tab close/refresh/navigation during the UNDO_WINDOW_MS
+  // delay (handleDelete/handleBulkDelete below) used to silently revert the
+  // delete with zero feedback -- the unmount-flush effect right below
+  // commitPendingDelete's own definition only ever fires on an in-app
+  // unmount (switching entity tabs, going Home), never a real browser
+  // unload, and the deferred DELETE fetch itself has no `keepalive`, so the
+  // browser is free to abort it mid-flight when the document tears down.
+  // Warning here, same as every other kind of pending state this file
+  // already protects (formIsDirty/bulkEditField above), at least gives the
+  // user the chance to wait out the window or click Undo before leaving.
+  useBeforeUnloadWarning(pendingDelete !== null);
   // handleBulkDelete clears selectedIds synchronously, before any await, so
   // the bulk-actions-bar (gated on selectedIds.size > 0) vanishes on the
   // very next render and a second click can't land. handleBulkDuplicate and

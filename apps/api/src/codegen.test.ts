@@ -3904,6 +3904,84 @@ test("the exported EntityView warns before a tab close/refresh discards an in-pr
 });
 
 /**
+ * Round 1525, ported from the live Forge AI preview's own round-1525 fix:
+ * a tab close/refresh/navigation during the delete undo window
+ * (UNDO_WINDOW_MS) used to silently revert the delete with zero
+ * feedback here too, since the unmount-flush effect only ever fires on
+ * an in-app unmount, never a real browser unload. Confirms a still-
+ * pending delete now warns, and the warning clears once undone.
+ */
+test("the exported EntityView warns before a tab close/refresh would silently revert a still-pending delete, and stops warning once it's undone", async (t) => {
+  const files = generateExportFiles(project);
+  const dir = writeGeneratedWebComponent(files);
+  const store = [{ id: 1, name: "Acme Corp", status: "New" }];
+  const originalFetch = globalThis.fetch;
+  const originalConfirm = globalThis.window.confirm;
+  globalThis.fetch = (async (input: string, init?: RequestInit): Promise<Response> => {
+    const method = init?.method ?? "GET";
+    if (method === "GET" && input === "/api/Customer") {
+      return new Response(JSON.stringify({ records: store }), { status: 200, headers: { "content-type": "application/json" } });
+    }
+    throw new Error(`unexpected request ${method} ${input}`);
+  }) as typeof fetch;
+  globalThis.window.confirm = (() => true) as typeof window.confirm;
+
+  const dispatchBeforeUnload = () => {
+    const event = new window.Event("beforeunload", { cancelable: true });
+    window.dispatchEvent(event);
+    return event.defaultPrevented;
+  };
+
+  try {
+    await withRealLocalStorage(async () => {
+      const { EntityView } = await import(path.join(dir, "web", "src", "components", "EntityView.jsx"));
+      const customerEntity = project.spec.entities.find((e) => e.name === "Customer")!;
+      const props = {
+        entity: customerEntity,
+        highlightRecordId: null,
+        onHighlightHandled: () => {},
+        onJumpToRecord: () => {},
+        onRecordCountChange: () => {},
+      };
+
+      const { container } = render(React.createElement(EntityView, props));
+      for (let i = 0; i < 40; i++) {
+        if (container.querySelectorAll("tbody tr").length === 1) break;
+        await act(async () => {
+          await new Promise((resolve) => setTimeout(resolve, 0));
+        });
+      }
+      assert.equal(container.querySelectorAll("tbody tr").length, 1, "expected the record to have loaded");
+
+      assert.equal(dispatchBeforeUnload(), false, "nothing pending yet, nothing to warn about");
+
+      t.mock.timers.enable({ apis: ["setTimeout"] });
+
+      const row = container.querySelector('tr[data-record-id="1"]') as HTMLElement;
+      const deleteButton = Array.from(row.querySelectorAll(".row-actions button")).find((b) => /^delete$/i.test(b.textContent ?? "")) as HTMLButtonElement;
+      await act(async () => {
+        fireEvent.click(deleteButton);
+      });
+      assert.equal(container.querySelectorAll("tbody tr").length, 0, "the row must disappear from view immediately");
+      assert.equal(dispatchBeforeUnload(), true, "a delete still inside its undo window must now warn before a reload would silently revert it");
+
+      const toast = container.querySelector(".entity-undo-toast");
+      assert.ok(toast, "expected an Undo toast to appear once a delete is pending");
+      await act(async () => {
+        fireEvent.click(toast!.querySelector("button") as HTMLButtonElement);
+      });
+      assert.equal(dispatchBeforeUnload(), false, "undoing the delete must clear the warning too, with nothing left pending");
+    });
+  } finally {
+    t.mock.timers.reset();
+    globalThis.fetch = originalFetch;
+    globalThis.window.confirm = originalConfirm;
+    cleanup();
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+/**
  * Round 1021 regression, ported from the live Forge AI preview's own
  * EntityPanel.tsx fix (round 1017): handleDelete is a single shared
  * function also called by the table row's own Delete button, the

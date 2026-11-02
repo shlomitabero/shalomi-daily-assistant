@@ -5607,6 +5607,22 @@ export function EntityView({ entity, highlightRecordId, onHighlightHandled, onJu
   // way copyStatus above already does.
   const [subscribeStatus, setSubscribeStatus] = useState("idle");
   const [pendingDelete, setPendingDelete] = useState(null);
+  // Round 1525: mirrors the live Forge AI preview's own round-1525 fix --
+  // a tab close/refresh/navigation during the delete undo window
+  // (UNDO_WINDOW_MS, below) used to silently revert the delete with zero
+  // feedback, since the unmount-flush effect further below only ever
+  // fires on an in-app unmount, never a real browser unload. This
+  // generated app defines no custom hooks of its own, so it's inlined
+  // directly here, same as the two beforeunload guards above.
+  useEffect(() => {
+    if (!pendingDelete) return;
+    function handleBeforeUnload(e) {
+      e.preventDefault();
+      e.returnValue = "";
+    }
+    window.addEventListener("beforeunload", handleBeforeUnload);
+    return () => window.removeEventListener("beforeunload", handleBeforeUnload);
+  }, [pendingDelete]);
   // Mirrors pendingDelete so the unmount-flush effect and a second delete
   // arriving mid-undo-window can read the latest pending delete without
   // depending on a stale render's closure.
