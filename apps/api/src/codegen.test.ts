@@ -3531,6 +3531,13 @@ test("the exported EntityView's handleSubmit saves only the field the user actua
       formInstanceKeyRef.current += 1;
       setFormInstanceKey(formInstanceKeyRef.current);
     }
+    // Round 1500: handleSubmit now also calls setInvalidFieldName/
+    // focusFormField (free variables it references, same as every other
+    // setter above) -- no-ops here since this test exercises handleSubmit's
+    // own field-diffing behavior with both fields valid, never the
+    // validation-failure branches that actually use them.
+    function setInvalidFieldName() {}
+    function focusFormField() {}
     // handleSubmit's own closure (round 798/852) also reaches these two --
     // Customer (this test's entity) has no file field, so requiredFileField
     // is always undefined here and recordHasNoRequiredFile always falsy,
@@ -25925,6 +25932,77 @@ test("the exported EntityView shows a required-field error instead of relying on
 
       assert.equal(postCount, 1, "once every required field is filled in, the real create request must actually fire");
       assert.equal(container.querySelector(".record-form + p.error"), null, "the error must clear once the record is created successfully");
+    });
+  } finally {
+    globalThis.fetch = originalFetch;
+    cleanup();
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("Round 1500: the exported EntityView's add/edit form marks the field that actually failed validation with aria-invalid/aria-describedby and moves focus to it, mirroring the live preview's own round-1499 fix", async () => {
+  const files = generateExportFiles(project);
+  const dir = writeGeneratedWebComponent(files);
+  const originalFetch = globalThis.fetch;
+  const store = [{ id: 1, name: "Globex", status: "Won" }];
+  globalThis.fetch = (async (input: string, init?: RequestInit): Promise<Response> => {
+    const method = init?.method ?? "GET";
+    if (method === "GET" && input === "/api/Customer") {
+      return new Response(JSON.stringify({ records: store }), { status: 200, headers: { "content-type": "application/json" } });
+    }
+    throw new Error(`unexpected request ${method} ${input}`);
+  }) as typeof fetch;
+
+  try {
+    await withRealLocalStorage(async () => {
+      const { EntityView } = await import(path.join(dir, "web", "src", "components", "EntityView.jsx"));
+      const customerEntity = project.spec.entities.find((e) => e.name === "Customer")!;
+      const props = {
+        entity: customerEntity,
+        highlightRecordId: null,
+        onHighlightHandled: () => {},
+        onJumpToRecord: () => {},
+        onRecordCountChange: () => {},
+      };
+
+      const { container } = render(React.createElement(EntityView, props));
+      for (let i = 0; i < 40; i++) {
+        if (container.querySelectorAll("tbody tr").length === 1) break;
+        await act(async () => {
+          await new Promise((resolve) => setTimeout(resolve, 0));
+        });
+      }
+
+      const statusSelect = container.querySelector(".record-form select") as HTMLSelectElement;
+      await act(async () => {
+        fireEvent.change(statusSelect, { target: { value: "New" } });
+      });
+
+      const submitButton = container.querySelector(".record-form button[type=submit]") as HTMLButtonElement;
+      assert.ok(submitButton, "expected a real submit button");
+      await act(async () => {
+        fireEvent.click(submitButton);
+      });
+
+      const errorEl = container.querySelector(".record-form + p.error") as HTMLElement;
+      assert.ok(errorEl, "expected a real error paragraph to appear");
+      const errorId = errorEl.getAttribute("id");
+      assert.ok(errorId, "the error banner must carry a real id for aria-describedby to point at");
+
+      const nameInput = document.getElementById(`f_${customerEntity.name}_name`) as HTMLInputElement;
+      assert.ok(nameInput, "the name field's own control must carry the established f_<entity>_<field> id");
+      assert.equal(nameInput.getAttribute("aria-invalid"), "true", "the actual rejected field (name) must be marked aria-invalid");
+      assert.equal(nameInput.getAttribute("aria-describedby"), errorId, "the field must point its aria-describedby at the real error banner's id");
+      assert.equal(document.activeElement, nameInput, "focus must move to the field that actually failed validation");
+
+      const statusSelectAfter = document.getElementById(`f_${customerEntity.name}_status`) as HTMLSelectElement;
+      assert.notEqual(statusSelectAfter.getAttribute("aria-invalid"), "true", "a field that passed validation must not be marked invalid");
+
+      await act(async () => {
+        fireEvent.change(nameInput, { target: { value: "Acme Corp" } });
+      });
+      assert.equal(nameInput.getAttribute("aria-invalid"), null, "aria-invalid must clear once the field is edited");
+      assert.equal(nameInput.getAttribute("aria-describedby"), null, "aria-describedby must clear once the field is edited");
     });
   } finally {
     globalThis.fetch = originalFetch;

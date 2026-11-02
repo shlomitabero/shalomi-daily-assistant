@@ -4957,7 +4957,7 @@ function staleEnumValue(field, value) {
 // add/edit form below the table never passes these, so a field there
 // behaves exactly as before. Mirrors the live preview's own FieldInput
 // (EntityPanel.tsx, round 206).
-function FieldInput({ entity, field, value, onChange, relatedEntity, relatedEntityRecords, autoFocus, onBlur, onKeyDown, excludeRecordIds }) {
+function FieldInput({ entity, field, value, onChange, relatedEntity, relatedEntityRecords, autoFocus, onBlur, onKeyDown, excludeRecordIds, invalid, errorId }) {
   const id = \`f_\${entity.name}_\${field.name}\`;
   // Mirrors the live preview's own fix (EntityPanel.tsx, round 698): a
   // relation field with more than a handful of related records had no way
@@ -5035,6 +5035,8 @@ function FieldInput({ entity, field, value, onChange, relatedEntity, relatedEnti
           autoFocus={autoFocus}
           onBlur={onBlur}
           onKeyDown={onKeyDown}
+          aria-invalid={invalid || undefined}
+          aria-describedby={invalid ? errorId : undefined}
         >
           <option value="">…</option>
           {!hasCurrentRelationOption && <option value={currentRelationId}>{\`#\${currentRelationId}\`}</option>}
@@ -5057,6 +5059,8 @@ function FieldInput({ entity, field, value, onChange, relatedEntity, relatedEnti
         autoFocus={autoFocus}
         onBlur={onBlur}
         onKeyDown={onKeyDown}
+        aria-invalid={invalid || undefined}
+        aria-describedby={invalid ? errorId : undefined}
       />
     );
   }
@@ -5072,7 +5076,17 @@ function FieldInput({ entity, field, value, onChange, relatedEntity, relatedEnti
     const knownEnumValues = uniqueEnumValues(field.enumValues);
     const enumOptionValues = currentEnumValue && !knownEnumValues.includes(currentEnumValue) ? [currentEnumValue, ...knownEnumValues] : knownEnumValues;
     return (
-      <select id={id} required={field.required} value={currentEnumValue} onChange={(e) => onChange(e.target.value)} autoFocus={autoFocus} onBlur={onBlur} onKeyDown={onKeyDown}>
+      <select
+        id={id}
+        required={field.required}
+        value={currentEnumValue}
+        onChange={(e) => onChange(e.target.value)}
+        autoFocus={autoFocus}
+        onBlur={onBlur}
+        onKeyDown={onKeyDown}
+        aria-invalid={invalid || undefined}
+        aria-describedby={invalid ? errorId : undefined}
+      >
         {/* Mirrors the live preview's own fix (EntityPanel.tsx, round 981):
             this placeholder used to be unconditionally disabled, unlike the
             relation branch's own identical "no value" placeholder (never
@@ -5088,10 +5102,37 @@ function FieldInput({ entity, field, value, onChange, relatedEntity, relatedEnti
     );
   }
   if (field.type === "longtext") {
-    return <textarea id={id} required={field.required} rows={2} maxLength={20000} value={value ?? ""} onChange={(e) => onChange(e.target.value)} autoFocus={autoFocus} onBlur={onBlur} onKeyDown={onKeyDown} />;
+    return (
+      <textarea
+        id={id}
+        required={field.required}
+        rows={2}
+        maxLength={20000}
+        value={value ?? ""}
+        onChange={(e) => onChange(e.target.value)}
+        autoFocus={autoFocus}
+        onBlur={onBlur}
+        onKeyDown={onKeyDown}
+        aria-invalid={invalid || undefined}
+        aria-describedby={invalid ? errorId : undefined}
+      />
+    );
   }
   if (field.type === "date") {
-    return <input id={id} type="date" required={field.required} value={value ?? ""} onChange={(e) => onChange(e.target.value)} autoFocus={autoFocus} onBlur={onBlur} onKeyDown={onKeyDown} />;
+    return (
+      <input
+        id={id}
+        type="date"
+        required={field.required}
+        value={value ?? ""}
+        onChange={(e) => onChange(e.target.value)}
+        autoFocus={autoFocus}
+        onBlur={onBlur}
+        onKeyDown={onKeyDown}
+        aria-invalid={invalid || undefined}
+        aria-describedby={invalid ? errorId : undefined}
+      />
+    );
   }
   if (field.type === "number" || field.type === "relation") {
     // Mirrors the live preview's own fix (EntityPanel.tsx, round 980): a
@@ -5115,6 +5156,8 @@ function FieldInput({ entity, field, value, onChange, relatedEntity, relatedEnti
         autoFocus={autoFocus}
         onBlur={onBlur}
         onKeyDown={onKeyDown}
+        aria-invalid={invalid || undefined}
+        aria-describedby={invalid ? errorId : undefined}
       />
     );
   }
@@ -5144,7 +5187,21 @@ function FieldInput({ entity, field, value, onChange, relatedEntity, relatedEnti
       </div>
     );
   }
-  return <input id={id} type="text" required={field.required} maxLength={5000} value={value ?? ""} onChange={(e) => onChange(e.target.value)} autoFocus={autoFocus} onBlur={onBlur} onKeyDown={onKeyDown} />;
+  return (
+    <input
+      id={id}
+      type="text"
+      required={field.required}
+      maxLength={5000}
+      value={value ?? ""}
+      onChange={(e) => onChange(e.target.value)}
+      autoFocus={autoFocus}
+      onBlur={onBlur}
+      onKeyDown={onKeyDown}
+      aria-invalid={invalid || undefined}
+      aria-describedby={invalid ? errorId : undefined}
+    />
+  );
 }
 
 // How long a deleted record stays undoable before the delete actually
@@ -5314,9 +5371,28 @@ export function EntityView({ entity, highlightRecordId, onHighlightHandled, onJu
   // that specific submit began. Mirrors the live Forge AI preview's own
   // EntityPanel.tsx.
   const formInstanceKeyRef = useRef(0);
+  // Round 1500: which field (if any) handleSubmit's own missingField/
+  // invalidField checks most recently rejected -- mirrors the live
+  // preview's own identical fix (EntityPanel.tsx, round 1499). Cleared
+  // here (every "start a new editing session" call site already goes
+  // through bumpFormInstanceKey) so a stale marker from one session can
+  // never survive into the next.
+  const [invalidFieldName, setInvalidFieldName] = useState(null);
   function bumpFormInstanceKey() {
     formInstanceKeyRef.current += 1;
     setFormInstanceKey(formInstanceKeyRef.current);
+    setInvalidFieldName(null);
+  }
+  // Round 1500: moves real focus to the field handleSubmit's own
+  // missingField/invalidField check just rejected, mirroring
+  // startCreateNew's own focus convention just below. Each FieldInput's
+  // own rendered control already carries a stable id ("f_<entity>_<field>",
+  // set in FieldInput itself) -- reused here instead of adding a separate
+  // data-attribute, unlike the live preview's own version of this fix
+  // (which has no such id to reuse).
+  function focusFormField(fieldName) {
+    const el = document.getElementById("f_" + entity.name + "_" + fieldName);
+    if (el) el.focus();
   }
   // Round 1338: mirrors the live Forge AI preview's own round-1333 fix --
   // this form's own create/edit draft had no warning before a tab
@@ -6430,6 +6506,7 @@ export function EntityView({ entity, highlightRecordId, onHighlightHandled, onJu
     // (writesInFlight).
     if (writesInFlight) return;
     setError(null);
+    setInvalidFieldName(null);
     // Checked first, and worded specifically, because the generic
     // missingField message below ("is a required field") reads like a
     // fixable omission -- this is permanent, for a brand-new record or an
@@ -6457,6 +6534,8 @@ export function EntityView({ entity, highlightRecordId, onHighlightHandled, onJu
     const missingField = entity.fields.find((f) => f.required && String(form[f.name] ?? "").trim() === "");
     if (missingField) {
       setError(\`"\${missingField.label || missingField.name}" is a required field\`);
+      setInvalidFieldName(missingField.name);
+      focusFormField(missingField.name);
       return;
     }
     // Round 984: mirrors missingField just above for the "present but not
@@ -6464,6 +6543,8 @@ export function EntityView({ entity, highlightRecordId, onHighlightHandled, onJu
     const invalidField = entity.fields.find((f) => invalidNumberField(f, form[f.name]));
     if (invalidField) {
       setError(\`"\${invalidField.label || invalidField.name}" must be a number\`);
+      setInvalidFieldName(invalidField.name);
+      focusFormField(invalidField.name);
       return;
     }
     // Nothing disables startEdit/startCreateNew/the in-form Delete button
@@ -7448,10 +7529,20 @@ export function EntityView({ entity, highlightRecordId, onHighlightHandled, onJu
               entity={entity}
               field={f}
               value={form[f.name]}
-              onChange={(v) => setForm((prev) => ({ ...prev, [f.name]: v }))}
+              onChange={(v) => {
+                setForm((prev) => ({ ...prev, [f.name]: v }));
+                // Round 1500: mirrors the live preview's own identical fix
+                // (EntityPanel.tsx, round 1499) -- drops the stale
+                // aria-invalid/aria-describedby the instant the user edits
+                // the field that was flagged, rather than leaving it marked
+                // invalid through a value it hasn't even tried yet.
+                if (invalidFieldName === f.name) setInvalidFieldName(null);
+              }}
               relatedEntity={f.relationTo ? ALL_ENTITIES.find((e) => e.name.toLowerCase() === f.relationTo.toLowerCase()) : undefined}
               relatedEntityRecords={f.relationTo ? relatedRecords[f.relationTo] : undefined}
               excludeRecordIds={f.relationTo?.toLowerCase() === entity.name.toLowerCase() && editingId != null ? [editingId] : undefined}
+              invalid={invalidFieldName === f.name}
+              errorId={"entity-form-error-" + entity.name}
             />
           </label>
         ))}
@@ -7512,7 +7603,7 @@ export function EntityView({ entity, highlightRecordId, onHighlightHandled, onJu
           )}
         </div>
       </form>
-      {error && <p className="error" role="status">{error}</p>}
+      {error && <p className="error" role="status" id={"entity-form-error-" + entity.name}>{error}</p>}
       {loadError && (
         <div className="error-retry-row">
           <p className="error" role="status">{loadError}</p>
