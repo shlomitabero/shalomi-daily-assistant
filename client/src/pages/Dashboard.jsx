@@ -50,7 +50,7 @@ export default function Dashboard() {
   for (const e of entries) {
     // Number.isFinite, not a bare add — a single corrupted entry's amount
     // would otherwise turn that source's whole total into NaN, showing
-    // "₪NaN נכנס" to the owner instead of just excluding the bad entry.
+    // "$NaN נכנס" to the owner instead of just excluding the bad entry.
     if (e.type !== 'revenue' || !e.verified || !e.opportunityId || !Number.isFinite(e.amount)) continue;
     const opp = opportunities.find((o) => o.id === e.opportunityId);
     const key = opp?.source ?? 'unknown';
@@ -128,31 +128,31 @@ export default function Dashboard() {
       <div className="cash-grid">
         <div className="cash-box cash-in">
           <span>נכנס היום</span>
-          <strong>₪{summary.cashInToday.toFixed(2)}</strong>
+          <strong>${summary.cashInToday.toFixed(2)}</strong>
         </div>
         <div className="cash-box cash-out">
           <span>יצא היום</span>
-          <strong>₪{summary.cashOutToday.toFixed(2)}</strong>
+          <strong>${summary.cashOutToday.toFixed(2)}</strong>
         </div>
       </div>
 
       <div className={`net-profit-box ${summary.netProfitToday >= 0 ? 'positive' : 'negative'}`}>
         <span>רווח/הפסד נטו היום (מאומת, לא תזרים)</span>
-        <strong>₪{summary.netProfitToday.toFixed(2)}</strong>
+        <strong>${summary.netProfitToday.toFixed(2)}</strong>
       </div>
 
       <div className="stat-row">
         <div className="stat-chip">
           <span>כסף שטרם נגבה</span>
-          <strong>₪{summary.outstandingReceivables.toFixed(2)}</strong>
+          <strong>${summary.outstandingReceivables.toFixed(2)}</strong>
         </div>
         <div className="stat-chip">
           <span>התחייבויות שטרם שולמו</span>
-          <strong>₪{summary.pendingObligations.toFixed(2)}</strong>
+          <strong>${summary.pendingObligations.toFixed(2)}</strong>
         </div>
         <div className="stat-chip">
           <span>רווח נטו מצטבר (מאומת)</span>
-          <strong>₪{summary.netProfitAllTime.toFixed(2)}</strong>
+          <strong>${summary.netProfitAllTime.toFixed(2)}</strong>
         </div>
       </div>
 
@@ -165,7 +165,7 @@ export default function Dashboard() {
         {activeOpportunities.slice(0, 3).map((o) => (
           <Link key={o.id} to={`/opportunities/${o.id}`} className="opp-row">
             <span className="opp-title">{o.title}</span>
-            <span className="opp-profit">{o.netProfitMid != null ? `₪${o.netProfitMid.toFixed(0)}` : 'חסר מידע'}</span>
+            <span className="opp-profit">{o.netProfitMid != null ? `$${o.netProfitMid.toFixed(0)}` : 'חסר מידע'}</span>
           </Link>
         ))}
       </section>
@@ -187,7 +187,7 @@ export default function Dashboard() {
             <span className={`dot ${s.connected ? 'dot-on' : 'dot-off'}`} />
             <span className="source-name">{s.name}</span>
             <span className="source-revenue">
-              {revenueBySource[s.key] ? `₪${revenueBySource[s.key].toFixed(0)} נכנס` : s.connected ? 'עדיין ללא תוצאה' : 'לא מחובר'}
+              {revenueBySource[s.key] ? `$${revenueBySource[s.key].toFixed(0)} נכנס` : s.connected ? 'עדיין ללא תוצאה' : 'לא מחובר'}
             </span>
           </div>
         ))}

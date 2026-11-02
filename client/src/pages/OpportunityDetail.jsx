@@ -124,9 +124,9 @@ export default function OpportunityDetail() {
       <form className="card form" onSubmit={onSave}>
         <h3>הערכת רווח (על אחריותך — לא נתון מאומת)</h3>
         <div className="field-row">
-          <label>הכנסה נמוכה (₪)<input type="number" value={form.low} onChange={(e) => setForm({ ...form, low: e.target.value })} /></label>
-          <label>הכנסה ממוצעת (₪)<input type="number" value={form.mid} onChange={(e) => setForm({ ...form, mid: e.target.value })} /></label>
-          <label>הכנסה גבוהה (₪)<input type="number" value={form.high} onChange={(e) => setForm({ ...form, high: e.target.value })} /></label>
+          <label>הכנסה נמוכה ($)<input type="number" value={form.low} onChange={(e) => setForm({ ...form, low: e.target.value })} /></label>
+          <label>הכנסה ממוצעת ($)<input type="number" value={form.mid} onChange={(e) => setForm({ ...form, mid: e.target.value })} /></label>
+          <label>הכנסה גבוהה ($)<input type="number" value={form.high} onChange={(e) => setForm({ ...form, high: e.target.value })} /></label>
         </div>
         <div className="field-row">
           <label>עלות AI ($)<input type="number" step="0.01" value={form.aiUsage} onChange={(e) => setForm({ ...form, aiUsage: e.target.value })} /></label>
@@ -168,7 +168,7 @@ export default function OpportunityDetail() {
         {opp.feasibility.status === 'incomplete' ? (
           <p className="hint">חסר מידע: {opp.feasibility.missing.join(', ')}</p>
         ) : (
-          <p>₪{opp.feasibility.netProfit.low.toFixed(0)} – ₪{opp.feasibility.netProfit.high.toFixed(0)} (ממוצע: ₪{opp.feasibility.netProfit.mid.toFixed(0)})</p>
+          <p>${opp.feasibility.netProfit.low.toFixed(0)} – ${opp.feasibility.netProfit.high.toFixed(0)} (ממוצע: ${opp.feasibility.netProfit.mid.toFixed(0)})</p>
         )}
       </div>
 

@@ -93,7 +93,7 @@ export default function Opportunities() {
               <span className="badge">{STATUS_LABEL[o.status] ?? o.status}</span>
             </div>
             <div className="opp-card-bottom">
-              <span>{o.netProfitMid != null ? `רווח משוער: ₪${o.netProfitMid.toFixed(0)}` : 'חסר מידע לחישוב רווח'}</span>
+              <span>{o.netProfitMid != null ? `רווח משוער: $${o.netProfitMid.toFixed(0)}` : 'חסר מידע לחישוב רווח'}</span>
               <span>סיכון: {riskLevelLabel(o.riskLevel)}</span>
             </div>
           </Link>
