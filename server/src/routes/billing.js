@@ -7,9 +7,15 @@ import { isPaddleConfigured, paddleClientConfig } from '../services/paddle.js';
 
 export const billingRouter = Router();
 
-billingRouter.get('/billing/configured', (req, res) => {
+// Lets the client show an honest "billing isn't set up yet" state instead
+// of a checkout button that would silently fail — unlike every other route
+// handler in this app, this one was defined as an inline, unexported arrow
+// function, which meant it had no test coverage at all.
+export function getBillingConfigured(req, res) {
   res.json({ configured: isPaddleConfigured(), ...paddleClientConfig() });
-});
+}
+
+billingRouter.get('/billing/configured', getBillingConfigured);
 
 // Mounted separately in server.js with express.raw() — signature
 // verification needs the exact raw request body. Never crashes the process

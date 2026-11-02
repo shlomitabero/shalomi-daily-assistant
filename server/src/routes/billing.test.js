@@ -2,7 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { createHmac } from 'node:crypto';
 import { db, __resetForTests, makeId } from '../db/store.js';
-import { paddleWebhookHandler } from './billing.js';
+import { paddleWebhookHandler, getBillingConfigured } from './billing.js';
 
 function withEnv(vars, fn) {
   const originals = {};
@@ -45,6 +45,22 @@ function completedTxn({ id = 'txn_1', opportunityId, totalCents = '900', feeCent
     data: { id, custom_data: { opportunityId }, details: { totals: { total: totalCents, fee: feeCents } } },
   };
 }
+
+test('getBillingConfigured reports honestly when Paddle is not set up', () => {
+  withEnv({ PADDLE_API_KEY: undefined, PADDLE_CLIENT_TOKEN: undefined, PADDLE_ENV: undefined }, () => {
+    const res = makeRes();
+    getBillingConfigured({}, res);
+    assert.deepEqual(res.body, { configured: false, clientToken: null, sandbox: false });
+  });
+});
+
+test('getBillingConfigured reports configured once both the API key and client token are set', () => {
+  withEnv({ PADDLE_API_KEY: 'key', PADDLE_CLIENT_TOKEN: 'tok', PADDLE_ENV: 'sandbox' }, () => {
+    const res = makeRes();
+    getBillingConfigured({}, res);
+    assert.deepEqual(res.body, { configured: true, clientToken: 'tok', sandbox: true });
+  });
+});
 
 test('a webhook with an invalid signature is rejected and never touches the ledger', () => {
   __resetForTests();
