@@ -300,6 +300,34 @@ test("asks about payments (recommending Stripe) for an insurance-claims descript
   assert.equal(paymentQuestion!.recommendation, "Stripe");
 });
 
+/**
+ * Round 1523: "car dealership"/"fleet...for rental" match only the Vehicle
+ * entity, whose own bare keywords ("vehicle", "fleet management", "garage")
+ * are too ambiguous to add Vehicle to BILLING_ENTITY_NAMES outright (an
+ * internal fleet-tracking tool with no customer payment at all also matches
+ * them) -- but selling or renting out vehicles for money is definitionally
+ * a paid transaction, the same drift rounds 566/622/826/1345/1346 already
+ * fixed for Rental/Property/MenuItem/WorkOrder/InsuranceClaim. Fixed with
+ * specific PAYMENT_KEYWORDS phrases instead (the same shape round 893's
+ * e-commerce phrases and round 1007's "monthly fee" used), not a
+ * BILLING_ENTITY_NAMES entry. The Hebrew case reuses heuristic.test.ts's
+ * own existing Vehicle entity-match fixture ("ניהול צי רכבים להשכרה"),
+ * never previously checked against openQuestions.
+ */
+test("asks about payments (recommending Stripe) for a car-dealership or vehicle-rental description, even though it names none of PAYMENT_KEYWORDS", async () => {
+  const provider = new HeuristicSpecProvider();
+
+  const dealership = await provider.generate("A CRM for a car dealership to manage vehicles.");
+  assert.deepEqual(dealership.entities.map((e) => e.name), ["Vehicle"]);
+  const dealershipPaymentQuestion = dealership.openQuestions.find((q) => q.question.toLowerCase().includes("payment"));
+  assert.ok(dealershipPaymentQuestion);
+  assert.equal(dealershipPaymentQuestion!.recommendation, "Stripe");
+
+  const rentalFleet = await provider.generate("ניהול צי רכבים להשכרה.");
+  assert.deepEqual(rentalFleet.entities.map((e) => e.name), ["Vehicle"]);
+  assert.equal(rentalFleet.openQuestions[0].recommendation, "Stripe");
+});
+
 test("asks about payments (recommending Stripe) for a field-service/repair description, even though it names none of PAYMENT_KEYWORDS", async () => {
   // "repair jobs"/"service calls"/"plumbing business" match the Service and
   // WorkOrder entities but share no substring with "payment"/"billing"/

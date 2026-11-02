@@ -74,6 +74,29 @@ const PAYMENT_KEYWORDS: (string | RegExp)[] = [
   // already contains the literal "תשלום" substring -- so this is an
   // English-only gap.
   "monthly fee", "tuition", "charges parents", "charges customers",
+  // Round 1523: the exact same drift this file's own PAYMENT_KEYWORDS
+  // comments above (round 893's e-commerce phrases, round 1007's
+  // "monthly fee"/"tuition") already document for other entities, this
+  // time for Vehicle. A car-dealership or vehicle-rental description
+  // ("A CRM for a car dealership to manage vehicles.") matches only
+  // Vehicle and got recommended "No payments", even though selling or
+  // renting out vehicles for money is definitionally a paid transaction
+  // -- the same Rental/Property/MenuItem/WorkOrder/InsuranceClaim shape
+  // BILLING_ENTITY_NAMES below already covers, just not reachable that
+  // way here: Vehicle's own bare keywords ("vehicle", "fleet management",
+  // "garage", "mechanic") are genuinely ambiguous (an internal company
+  // fleet-tracking tool with no customer payment at all also matches
+  // them), so simply adding "Vehicle" to BILLING_ENTITY_NAMES would
+  // regress the same way that Set's own comment already documents
+  // rejecting for Service/Course. "car dealership" is already one of
+  // Vehicle's own keywords and always implies a sale, so it's safe here
+  // too. "ניהול צי רכבים להשכרה" ("managing a fleet of vehicles for
+  // rental") is already a real test fixture for Vehicle's own entity
+  // match (heuristic.test.ts's realVehicles case) -- this word order
+  // doesn't contain Rental's own narrower keywords ("השכרת רכב"), so it
+  // needs its own specific phrase rather than relying on Rental firing.
+  "car dealership", "car rental", "vehicle rental", "rent out vehicles",
+  "רכב להשכרה", "רכבים להשכרה", "מכירת רכבים",
 ];
 
 /**
