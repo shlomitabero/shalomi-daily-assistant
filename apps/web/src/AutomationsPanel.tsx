@@ -1088,6 +1088,16 @@ export function AutomationsPanel({
    * does; if History isn't expanded, there's nothing to refresh.
    */
   function handleTestRule(rule: AutomationRuleView) {
+    // Round 1488: own-click reentrancy guard -- mirrors handleRetryRun's
+    // own guard (round 1402) and WhatsAppPanel's handleRetry fix (round
+    // 1401). The Test button's own disabled={... || testingRuleId !==
+    // null} only takes effect after React's next render commits, so a
+    // fast double-click on the same button fires this function twice
+    // before that happens. testAutomationRule (api.ts) mints a fresh
+    // crypto.randomUUID() idempotency key on every call, so nothing
+    // server-side dedupes the second call -- it would re-fire the rule for
+    // real a second time (duplicate WhatsApp/email/webhook send).
+    if (testingRuleId !== null) return;
     setTestingRuleId(rule.id);
     setTestErrorByRuleId((prev) => {
       if (!(rule.id in prev)) return prev;

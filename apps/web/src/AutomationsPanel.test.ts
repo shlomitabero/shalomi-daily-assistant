@@ -5221,3 +5221,32 @@ test("AutomationsPanel's handleRetryRun is a no-op while retryingRunId is alread
   ) => void;
   fn({ id: "rule1" }, { id: "run1" });
 });
+
+/**
+ * Round 1488: handleTestRule (round 997) is the older sibling handleRetryRun
+ * was itself modeled on ("mirrors handleRetryRun's exact shape", per its own
+ * doc comment) -- but round 1402's own survey, which added handleRetryRun's
+ * guard, never revisited this handler, even though it has the identical
+ * shape and the identical real-send consequence. The Test button's own
+ * disabled={... || testingRuleId !== null} only takes effect once React's
+ * next render commits, so a fast double-click fires handleTestRule twice
+ * before that happens. testAutomationRule (api.ts) mints a fresh
+ * crypto.randomUUID() idempotency key per call, so nothing server-side
+ * dedupes the second call -- it would re-fire the rule for real a second
+ * time (duplicate WhatsApp/email/webhook send), exactly like the gap round
+ * 1402 closed for handleRetryRun.
+ *
+ * Extracted and called with ONLY `testingRuleId` declared, mirroring round
+ * 1402's own methodology exactly: a full-render double-click test would
+ * falsely pass even with no guard at all (React's disabled attribute takes
+ * over after the first click's re-render), so instead the guard's absence
+ * is proven by a ReferenceError on the very next line (`setTestingRuleId`)
+ * rather than by any DOM assertion.
+ */
+test("AutomationsPanel's handleTestRule is a no-op while testingRuleId is already set", () => {
+  const handlerMatch = automationsPanelSrc.match(/ {2}function handleTestRule\(rule: AutomationRuleView\) \{[\s\S]*?\n {2}\}\n/);
+  assert.ok(handlerMatch, "expected to find handleTestRule in AutomationsPanel.tsx");
+  const { code } = transformSync(handlerMatch![0], { loader: "ts" });
+  const fn = new Function("testingRuleId", `${code}\nreturn handleTestRule;`)("rule0") as (rule: unknown) => void;
+  fn({ id: "rule1" });
+});
