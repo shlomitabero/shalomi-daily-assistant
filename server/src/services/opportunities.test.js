@@ -48,6 +48,27 @@ test('createDigitalProductOpportunity logs a draft_product action recording who 
   }
 });
 
+test('createDigitalProductOpportunity propagates a drafting failure without inserting a partial row or logging a false success', async () => {
+  // This function has no try/catch of its own — a failure from draftProduct
+  // (a real Anthropic API error/timeout) must reach the caller as a real
+  // rejection, never get swallowed into a half-built opportunity or a
+  // draft_product log entry that claims it worked.
+  __resetForTests();
+  const original = process.env.ANTHROPIC_API_KEY;
+  process.env.ANTHROPIC_API_KEY = 'test-key';
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async () => { throw new Error('network unreachable'); };
+  try {
+    await assert.rejects(() => createDigitalProductOpportunity({ topic: 'x', audience: 'y' }));
+    assert.equal(db.opportunities.all().length, 0);
+    assert.equal(db.actions_log.where((a) => a.type === 'draft_product').length, 0);
+  } finally {
+    globalThis.fetch = originalFetch;
+    if (original !== undefined) process.env.ANTHROPIC_API_KEY = original;
+    else delete process.env.ANTHROPIC_API_KEY;
+  }
+});
+
 test('createDigitalProductOpportunity defaults createdBy to "owner" when omitted', async () => {
   __resetForTests();
   const original = process.env.ANTHROPIC_API_KEY;
