@@ -29,6 +29,12 @@ test('generateDailyDigest reflects a currently-active emergency stop in the text
   assert.match(digest.text, /עצירת חירום הייתה פעילה/);
 });
 
+test('generateDailyDigest reflects research mode (the default) in the text', () => {
+  __resetForTests();
+  const digest = generateDailyDigest();
+  assert.match(digest.text, /מצב מחקר בלבד/);
+});
+
 test('a digest generated for a different day does not get merged with today\'s', () => {
   __resetForTests();
   const today = generateDailyDigest();

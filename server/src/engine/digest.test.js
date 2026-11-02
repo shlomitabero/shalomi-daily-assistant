@@ -46,3 +46,21 @@ test('says nothing about emergency stop when it was not active', () => {
   const digest = buildDailyDigest({ ledgerSummary, emergencyStop: false });
   assert.doesNotMatch(digest.text, /עצירת חירום/);
 });
+
+test('calls out research mode, so "0 actions" is not mistaken for nothing worth doing', () => {
+  const digest = buildDailyDigest({ ledgerSummary, mode: 'research' });
+  assert.match(digest.text, /מצב מחקר בלבד/);
+});
+
+test('says nothing about research mode in any other mode', () => {
+  const digest = buildDailyDigest({ ledgerSummary, mode: 'auto_limited' });
+  assert.doesNotMatch(digest.text, /מצב מחקר/);
+});
+
+test('shows only the emergency stop line, not also the research-mode line, when both are true', () => {
+  // The emergency stop already fully explains "0 actions" on its own —
+  // showing both would just be noise, not a second, independent reason.
+  const digest = buildDailyDigest({ ledgerSummary, emergencyStop: true, mode: 'research' });
+  assert.match(digest.text, /עצירת חירום הייתה פעילה/);
+  assert.doesNotMatch(digest.text, /מצב מחקר בלבד/);
+});

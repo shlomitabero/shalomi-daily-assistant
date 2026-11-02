@@ -20,7 +20,8 @@ export function generateDailyDigest() {
   const ranked = rankOpportunities(openOpportunities);
   const topOpportunity = ranked[0]?.netProfitMid != null ? ranked[0] : null;
 
-  const digest = buildDailyDigest({ ledgerSummary, actionsToday, failuresToday, topOpportunity, emergencyStop: getSettings().emergencyStop });
+  const settings = getSettings();
+  const digest = buildDailyDigest({ ledgerSummary, actionsToday, failuresToday, topOpportunity, emergencyStop: settings.emergencyStop, mode: settings.mode });
 
   // The owner can click "generate now" on the Digests page any number of
   // times in a day on top of the 7am cron run — without this, each click
