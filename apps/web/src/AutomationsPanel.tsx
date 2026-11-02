@@ -375,7 +375,12 @@ export function AutomationsPanel({
     const names = new Set<string>();
     if (relationTargetEntity) names.add(relationTargetEntity.name);
     for (const rule of rules ?? []) {
-      const ruleFieldEntity = entities.find((e) => e.name === rule.entityName);
+      // Round 1486: use the already-hardened ruleEntity (round 1485) --
+      // this inline lookup used to do its own exact-case ===, so a
+      // case-only entity rename made it miss the rule's entity entirely,
+      // silently skipping that rule's relation target from the fetch list
+      // below no matter what fieldLabel/fieldValueLabel resolved later.
+      const ruleFieldEntity = ruleEntity(rule);
       const field = ruleFieldEntity?.fields.find((f) => f.name === rule.fieldName);
       if (field?.type === "relation" && field.relationTo) names.add(field.relationTo);
     }
@@ -499,9 +504,20 @@ export function AutomationsPanel({
   // in create mode instead, so Submit POSTs a brand-new rule rather than
   // PATCHing the source one).
   function applyRuleToForm(rule: AutomationRuleView) {
-    setEntityName(rule.entityName);
+    // Round 1486: resolve via the already-hardened ruleEntity (round 1485)
+    // once, and use its CURRENT name (not the raw, possibly stale
+    // rule.entityName) to seed entityName -- selectedEntity just above
+    // does its own exact-case lookup against the live entities list keyed
+    // on this very state, so seeding it with a case-only-stale name left
+    // selectedEntity undefined too, disabling Save outright (formIncomplete
+    // requires a truthy selectedEntity) even once ruleEntityFields below is
+    // fixed. Falls back to the raw rule.entityName when truly unresolvable
+    // (a genuinely removed entity), matching every prior behavior for that
+    // case exactly.
+    const resolvedEntity = ruleEntity(rule);
+    setEntityName(resolvedEntity?.name ?? rule.entityName);
     setTrigger(rule.trigger);
-    const ruleEntityFields = entities.find((e) => e.name === rule.entityName)?.fields ?? [];
+    const ruleEntityFields = resolvedEntity?.fields ?? [];
     const ruleTriggerableFields = ruleEntityFields.filter((f) => f.type !== "file");
     const rulePhoneFields = ruleEntityFields.filter((f) => f.type === "text" || f.type === "longtext");
     setFieldName(

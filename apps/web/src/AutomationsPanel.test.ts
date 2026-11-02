@@ -2043,6 +2043,160 @@ test("AutomationsPanel still resolves an existing rule's stored relation id to i
   });
 });
 
+const entityRecaseRelationProject: Project = {
+  ...relationFieldProject,
+  id: "proj6c",
+  spec: {
+    ...relationFieldProject.spec,
+    entities: [
+      // Round 1486: "Order" recased to "order" -- the rule below still
+      // stores the OLD casing in its own entityName, the same legitimate
+      // AI-refine case drift rounds 1159-1485 already established
+      // elsewhere. relationTo ("Courier") is untouched here, isolating
+      // this test from the round-1181 case-mismatch scenario above.
+      {
+        name: "order",
+        label: "Order",
+        fields: [
+          { name: "label", label: "Label", type: "text", required: true },
+          { name: "courierId", label: "Courier", type: "relation", required: false, relationTo: "Courier" },
+        ],
+      },
+      {
+        name: "Courier",
+        label: "Courier",
+        fields: [{ name: "name", label: "Name", type: "text", required: true }],
+      },
+    ],
+  },
+};
+
+/**
+ * Round 1486's finding: relationFieldTargets' own antecedent lookup
+ * (`entities.find((e) => e.name === rule.entityName)`) did its own
+ * exact-case ===, independently of ruleEntity (round 1485's own fix,
+ * defined later in this same file but used elsewhere). A case-only entity
+ * rename made this lookup miss the rule's entity entirely, so the
+ * relation field's own target name was never added to relationFieldTargets
+ * -- relatedRecords for it was never fetched at all, making
+ * fieldValueLabel's otherwise-correct relation resolution a no-op: it
+ * falls back to the bare, never-meaningful-to-a-user internal record id,
+ * in both the rule list and the Copy/Download report.
+ */
+test("AutomationsPanel still fetches and resolves a relation field's related record label when the rule's OWN entity (not the relation target) was only recased, not removed", async () => {
+  await withJsdom(async () => {
+    const originalFetch = globalThis.fetch;
+    const rule = makeRule({
+      id: "rule11c",
+      entityName: "Order",
+      trigger: "field_equals",
+      fieldName: "courierId",
+      fieldValue: "2",
+    });
+    globalThis.fetch = (async (input: string, init?: RequestInit) => {
+      const method = init?.method ?? "GET";
+      if (method === "GET" && input === "/api/projects/proj6c/automations") {
+        return new Response(JSON.stringify({ rules: [rule] }), { status: 200, headers: { "content-type": "application/json" } });
+      }
+      if (method === "GET" && input === "/api/projects/proj6c/entities/Courier") {
+        return new Response(
+          JSON.stringify({ records: [{ id: 1, name: "Yossi Cohen" }, { id: 2, name: "Dana Levi" }] }),
+          { status: 200, headers: { "content-type": "application/json" } },
+        );
+      }
+      throw new Error(`unexpected request ${method} ${input}`);
+    }) as typeof fetch;
+
+    let writtenText: string | undefined;
+    Object.defineProperty(navigator, "clipboard", {
+      value: { writeText: async (text: string) => void (writtenText = text) },
+      configurable: true,
+    });
+
+    try {
+      renderPanelWith(entityRecaseRelationProject);
+      await waitForCondition(() => document.querySelector(".automations-rule-condition") !== null);
+      await waitForCondition(() => (document.querySelector(".automations-rule-condition")?.textContent ?? "").includes("Dana Levi"));
+      assert.doesNotMatch(
+        document.querySelector(".automations-rule-condition")?.textContent ?? "",
+        /"2"/,
+        "the raw stored id must never be shown once the related record's label is resolvable, even when the rule's own entity was only recased",
+      );
+
+      const copyButton = Array.from(document.querySelectorAll("button")).find((b) => b.textContent?.includes("Copy report")) as HTMLButtonElement;
+      await act(async () => {
+        fireEvent.click(copyButton);
+        await Promise.resolve();
+        await Promise.resolve();
+      });
+
+      assert.equal(typeof writtenText, "string", "clicking Copy must actually call navigator.clipboard.writeText");
+      assert.match(writtenText!, /Dana Levi/, "the Copy report text must also resolve the relation id to its display label despite the rule's own entity being recased");
+    } finally {
+      globalThis.fetch = originalFetch;
+      delete (navigator as { clipboard?: unknown }).clipboard;
+    }
+  });
+});
+
+/**
+ * Round 1486's second finding, same root cause: applyRuleToForm (shared by
+ * the Edit and Duplicate actions) did its own independent, unhardened
+ * exact-case entityName lookup to seed the create-form's field picker from
+ * an existing rule. When the rule's entity was only recased, ruleEntityFields
+ * resolved to [] (not just missing the rule's own field, like the existing
+ * round-831 "now-removed field" test above, but having no fields at all),
+ * so fieldName fell back to `ruleTriggerableFields[0]?.name ?? ""` -- "".
+ * formIncomplete (the single source of truth shared by the Save button's
+ * own `disabled` and handleSubmit's own early-return guard, see that
+ * constant's own doc comment) requires a truthy fieldName for a
+ * field_equals rule, so this is a worse symptom than round 831's "submits
+ * the wrong field": Save stays disabled outright, and even a direct form
+ * submission (bypassing the disabled button, as fireEvent.submit does)
+ * is silently dropped by handleSubmit's own guard -- the user cannot save
+ * their edit at all, with no error shown anywhere.
+ */
+test("AutomationsPanel's Save button is NOT disabled after Edit when the rule's entity was only recased, not removed", async () => {
+  await withJsdom(async () => {
+    const originalFetch = globalThis.fetch;
+    const rule = makeRule({
+      id: "rule11d",
+      entityName: "Order",
+      trigger: "field_equals",
+      fieldName: "courierId",
+      fieldValue: "2",
+    });
+    globalThis.fetch = (async (input: string, init?: RequestInit) => {
+      const method = init?.method ?? "GET";
+      if (method === "GET" && input === "/api/projects/proj6c/automations") {
+        return new Response(JSON.stringify({ rules: [rule] }), { status: 200, headers: { "content-type": "application/json" } });
+      }
+      if (method === "GET" && input === "/api/projects/proj6c/entities/Courier") {
+        return new Response(JSON.stringify({ records: [{ id: 2, name: "Dana Levi" }] }), { status: 200, headers: { "content-type": "application/json" } });
+      }
+      throw new Error(`unexpected request ${method} ${input}`);
+    }) as typeof fetch;
+
+    try {
+      renderPanelWith(entityRecaseRelationProject);
+      await waitForCondition(() => document.querySelectorAll(".automations-rule-row").length === 1);
+
+      fireEvent.click(
+        Array.from(document.querySelectorAll(".automations-rule-actions button")).find((b) => b.textContent === "Edit") as HTMLButtonElement,
+      );
+
+      const saveButton = document.querySelector(".automations-create-form button[type=submit]") as HTMLButtonElement;
+      assert.equal(
+        saveButton.disabled,
+        false,
+        "Save must stay enabled after clicking Edit on a rule whose entity was only recased, not removed -- its own field is still perfectly valid",
+      );
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+});
+
 /**
  * Round 764 regression test: AutomationsPanel used to derive its entity
  * list straight from project.spec.entities, ignoring any `entities` prop
