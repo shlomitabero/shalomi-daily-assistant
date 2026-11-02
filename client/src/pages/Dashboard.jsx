@@ -65,12 +65,31 @@ export default function Dashboard() {
   // One concrete next step, picked in priority order, so there's always a
   // clear answer to "what should I actually do now" instead of just numbers.
   let nextStep = null;
-  if (!settings.budgetConfigured) {
-    nextStep = { text: 'עדיין לא הוגדר תקציב — בלי תקציב המערכת לא תפרסם ולא תוציא כסף אמיתי, גם במצב אוטומטי. הגדירי תקציב בהגדרות.', to: '/settings', cta: 'להגדרות' };
+  if (settings.mode === 'research') {
+    // The single most common reason the owner sees zero real activity: the
+    // mode card lower on this page already says this in small print, but
+    // without a prominent, actionable callout it's easy to miss entirely —
+    // everything else below (budget, opportunities, approvals) can look
+    // "ready" while this one setting silently keeps every real action from
+    // ever running.
+    nextStep = {
+      text: 'המצב הנוכחי הוא "מחקר בלבד" — המערכת מאתרת ומכינה הזדמנויות, אבל לעולם לא מפרסמת ולא גובה כסף אמיתי בעצמה. כדי שהרווח יתחיל לקרות בפועל, צריך לבחור מצב אחר בהגדרות.',
+      to: '/settings', cta: 'להגדרות',
+    };
   } else if (opportunities.length === 0) {
     nextStep = { text: 'עדיין אין אף הזדמנות. אפשר לסרוק אוטומטית או ליצור מוצר דיגיטלי ידנית.', to: '/opportunities', cta: 'להזדמנויות' };
   } else if (pendingApprovals.length > 0 && settings.mode === 'approve') {
     nextStep = { text: `${pendingApprovals.length} פעולות ממתינות לאישור שלך ולא יתבצעו בלעדיו.`, to: '/approvals', cta: 'לאישורים' };
+  } else if (!settings.budgetConfigured) {
+    // Publishing the one implemented revenue path costs $0 (no ad spend, no
+    // COGS — see autonomousScan.js), so a missing budget never actually
+    // blocks it — the previous wording here overstated that and could read
+    // as "this is why nothing published" when it wasn't. It only matters
+    // for a future action that spends real money.
+    nextStep = {
+      text: 'עדיין לא הוגדר תקציב — זה לא חוסם פרסום מוצרים (שזה בחינם), אבל יחסום כל פעולה עתידית שעולה כסף אמיתי. מומלץ להגדיר בהגדרות.',
+      to: '/settings', cta: 'להגדרות',
+    };
   }
 
   return (
