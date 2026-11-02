@@ -138,6 +138,7 @@ export interface BaileysIncomingMessage {
     productMessage?: { product?: { title?: string; description?: string }; body?: string; footer?: string };
     orderMessage?: { orderTitle?: string; message?: string };
     eventMessage?: { name?: string; description?: string; isCanceled?: boolean };
+    scheduledCallCreationMessage?: { callType?: number; title?: string };
     viewOnceMessage?: { message?: BaileysIncomingMessage["message"] };
     viewOnceMessageV2?: { message?: BaileysIncomingMessage["message"] };
     viewOnceMessageV2Extension?: { message?: BaileysIncomingMessage["message"] };
@@ -405,6 +406,18 @@ function describeIncomingMessage(message: BaileysIncomingMessage["message"]): st
     const ev = message.eventMessage;
     const label = ev.isCanceled ? "[Event canceled]" : "[Event]";
     return ev.name ? `${label} ${ev.name}` : label;
+  }
+  // Round 1537: WhatsApp's native "Schedule a call" chat-menu action --
+  // ScheduledCallCreationMessage in Baileys' own shipped protobuf
+  // (WAProto/WAProto.proto: scheduledTimestampMs int64, callType enum
+  // [UNKNOWN=0, VOICE=1, VIDEO=2], title plaintext string), confirmed
+  // fully plaintext on the fields this uses, same bar every prior round
+  // in this message-type family used. Previously fell through to the
+  // final `return null` and vanished with zero trace.
+  if (message.scheduledCallCreationMessage) {
+    const call = message.scheduledCallCreationMessage;
+    const label = call.callType === 2 ? "[Scheduled video call]" : "[Scheduled call]";
+    return call.title ? `${label} ${call.title}` : label;
   }
   if (message.contactMessage) {
     const name = message.contactMessage.displayName;

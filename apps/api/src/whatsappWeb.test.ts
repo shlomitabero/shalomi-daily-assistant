@@ -2040,3 +2040,46 @@ test("incoming WhatsApp events (the chat's own calendar/event-creation action) a
     assert.equal(m.direction, "in", "every placeholder row must still be a real, matched-against incoming message, not metadata");
   }
 });
+
+/**
+ * Round 1537: WhatsApp's native "Schedule a call" chat-menu action was
+ * previously dropped with zero trace, the same silent-vanish gap round
+ * 1502 fixed for eventMessage. ScheduledCallCreationMessage's title/
+ * callType fields are plaintext, confirmed directly against the installed
+ * Baileys protobuf (WAProto.proto: scheduledTimestampMs int64, callType
+ * enum [UNKNOWN=0, VOICE=1, VIDEO=2], title plaintext string).
+ */
+test("incoming WhatsApp scheduled-call messages (the chat's own 'Schedule a call' action) are logged with a descriptive placeholder instead of being silently dropped", async () => {
+  const { manager, createdSockets, db } = setupManager();
+  insertProject(db, project);
+  applyMigrations(db, project.id, project.spec);
+  markProjectBuilt(db, project.id);
+
+  await manager.connect(project.id);
+  createdSockets[0].emitConnectionUpdate({ connection: "open" });
+
+  createdSockets[0].emitMessagesUpsert({
+    type: "notify",
+    messages: [
+      {
+        key: { remoteJid: "972501234567@s.whatsapp.net", fromMe: false },
+        message: { scheduledCallCreationMessage: { title: "שיחת תיאום", callType: 1 } },
+      },
+      { key: { remoteJid: "972501234567@s.whatsapp.net", fromMe: false }, message: { scheduledCallCreationMessage: {} } },
+      {
+        key: { remoteJid: "972501234567@s.whatsapp.net", fromMe: false },
+        message: { scheduledCallCreationMessage: { title: "ראיון עבודה", callType: 2 } },
+      },
+    ],
+  });
+
+  // listWhatsAppMessages orders newest-first, the reverse of emission order.
+  const { messages: callMessages } = listWhatsAppMessages(db, project.id);
+  assert.equal(callMessages.length, 3);
+  assert.equal(callMessages[0].body, "[Scheduled video call] ראיון עבודה", "callType VIDEO must be distinguished from a plain voice call");
+  assert.equal(callMessages[1].body, "[Scheduled call]", "a scheduled call with no title must fall back to a plain placeholder, not print nothing or throw");
+  assert.equal(callMessages[2].body, "[Scheduled call] שיחת תיאום", "callType VOICE must use the plain (non-video) label");
+  for (const m of callMessages) {
+    assert.equal(m.direction, "in", "every placeholder row must still be a real, matched-against incoming message, not metadata");
+  }
+});
