@@ -20182,6 +20182,44 @@ test("POST /public/webhook-in/:projectId/:entityName resolves enum field values 
   });
 });
 
+test("POST /public/webhook-in/:projectId/:entityName resolves boolean field values case-insensitively, extending the same reasoning to the one remaining coercible field type", async () => {
+  await withServer(async (baseUrl, db) => {
+    const email = `webhook-in-boolean-case-${randomUUID()}@example.com`;
+    const authToken = await signup(baseUrl, email);
+    const user = findUserByEmail(db, email)!;
+    const spec: ProductSpec = {
+      summary: "test",
+      personas: [],
+      roles: ["Admin"],
+      entities: [{ name: "Lead", fields: [{ name: "name", type: "text", required: true }, { name: "isActive", type: "boolean", required: false }] }],
+      screens: [],
+      assumptions: [],
+      openQuestions: [],
+    };
+    const projectId = randomUUID();
+    insertProject(db, { id: projectId, ownerId: user.id, name: "CRM", description: "test", spec });
+    diffAndMigrate(db, projectId, undefined, spec);
+    markProjectBuilt(db, projectId);
+
+    const tokenRes = await fetch(`${baseUrl}/api/projects/${projectId}/inbound-webhook-token`, { headers: authHeaders(authToken) });
+    const { token: webhookToken } = (await tokenRes.json()) as { token: string };
+
+    const webhookRes = await fetch(`${baseUrl}/api/public/webhook-in/${projectId}/Lead?token=${webhookToken}`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ name: "Dana", isActive: "True" }),
+    });
+    assert.equal(webhookRes.status, 201, "a boolean value sent under a different letter case must not be rejected as if it weren't a valid boolean");
+    const { id: recordId } = (await webhookRes.json()) as { id: string };
+
+    const listRes = await fetch(`${baseUrl}/api/projects/${projectId}/entities/Lead`, { headers: authHeaders(authToken) });
+    const { records } = (await listRes.json()) as { records: { id: string; name: string; isActive: boolean }[] };
+    const created = records.find((r) => r.id === recordId);
+    assert.ok(created, "expected the record the route reported creating to actually exist");
+    assert.equal(created!.isActive, true, "the value must be stored as true, not rejected or silently coerced to false");
+  });
+});
+
 test("POST /public/webhook-in/:projectId/:entityName 404s for a missing, wrong, or never-requested token, a nonexistent entity, or a nonexistent project -- the token itself is the only authentication", async () => {
   await withServer(async (baseUrl, db) => {
     const email = `webhook-in-bad-${randomUUID()}@example.com`;

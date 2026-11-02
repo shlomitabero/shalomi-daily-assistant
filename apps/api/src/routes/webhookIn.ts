@@ -73,15 +73,31 @@ function normalizeBodyKeys(entity: Entity, body: Record<string, unknown>): Recor
  * Deliberately scoped to this route and to enum values only, the same
  * "must not change behavior for every other caller" boundary
  * normalizeBodyKeys' own doc comment draws.
+ *
+ * Round 1513: extends the same reasoning to boolean fields. coerceValue's
+ * boolean branch (repository.ts) accepts only the exact strings
+ * "true"/"false" (plus 1/0/"1"/"0") -- "True", "FALSE", "TRUE" all throw
+ * the identical "a value was genuinely sent, just under different letter
+ * case" rejection this file already fixed for field names and enum
+ * values. Deliberately case-only, not shape: round 1512 itself flagged
+ * the CSV-import precedent's broader "yes"/"no"/"כן"/"לא" acceptance
+ * (entityFormatting.ts's BOOLEAN_TRUE_VALUES/BOOLEAN_FALSE_VALUES) as a
+ * separate, larger-scope future candidate and deferred it -- this stays
+ * narrow and only normalizes the letter case of the exact two words
+ * coerceValue already accepts.
  */
 function normalizeBodyValues(entity: Entity, body: Record<string, unknown>): Record<string, unknown> {
   const normalized: Record<string, unknown> = { ...body };
   for (const field of entity.fields) {
-    if (field.type !== "enum" || !field.enumValues) continue;
     const raw = normalized[field.name];
-    if (typeof raw !== "string" || field.enumValues.includes(raw)) continue;
-    const match = field.enumValues.find((v) => v.toLowerCase() === raw.toLowerCase());
-    if (match) normalized[field.name] = match;
+    if (typeof raw !== "string") continue;
+    if (field.type === "enum" && field.enumValues && !field.enumValues.includes(raw)) {
+      const match = field.enumValues.find((v) => v.toLowerCase() === raw.toLowerCase());
+      if (match) normalized[field.name] = match;
+    } else if (field.type === "boolean" && raw !== "true" && raw !== "false") {
+      const lower = raw.toLowerCase();
+      if (lower === "true" || lower === "false") normalized[field.name] = lower;
+    }
   }
   return normalized;
 }
