@@ -20135,6 +20135,53 @@ test("POST /public/webhook-in/:projectId/:entityName resolves field names case-i
   });
 });
 
+/**
+ * Round 1512: round 1511 only remapped the body's own KEYS to each
+ * field's real casing -- the VALUES it carries flowed straight into
+ * coerceValue untouched, whose own enum branch is an exact-case
+ * Array.includes check with no fallback. An external sender who submits
+ * a value like "new" against an enumValues list of ["New", "Contacted",
+ * "Won"] got rejected even though a real, unambiguous value was sent,
+ * just under different letter case.
+ */
+test("POST /public/webhook-in/:projectId/:entityName resolves enum field values case-insensitively, the same reasoning round 1511 already applied to field names", async () => {
+  await withServer(async (baseUrl, db) => {
+    const email = `webhook-in-enum-case-${randomUUID()}@example.com`;
+    const authToken = await signup(baseUrl, email);
+    const user = findUserByEmail(db, email)!;
+    const spec: ProductSpec = {
+      summary: "test",
+      personas: [],
+      roles: ["Admin"],
+      entities: [{ name: "Lead", fields: [{ name: "name", type: "text", required: true }, { name: "status", type: "enum", enumValues: ["New", "Contacted", "Won"] }] }],
+      screens: [],
+      assumptions: [],
+      openQuestions: [],
+    };
+    const projectId = randomUUID();
+    insertProject(db, { id: projectId, ownerId: user.id, name: "CRM", description: "test", spec });
+    diffAndMigrate(db, projectId, undefined, spec);
+    markProjectBuilt(db, projectId);
+
+    const tokenRes = await fetch(`${baseUrl}/api/projects/${projectId}/inbound-webhook-token`, { headers: authHeaders(authToken) });
+    const { token: webhookToken } = (await tokenRes.json()) as { token: string };
+
+    const webhookRes = await fetch(`${baseUrl}/api/public/webhook-in/${projectId}/Lead?token=${webhookToken}`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ name: "Dana", status: "new" }),
+    });
+    assert.equal(webhookRes.status, 201, "an enum value sent under a different letter case must not be rejected as if it weren't one of the declared options");
+    const { id: recordId } = (await webhookRes.json()) as { id: string };
+
+    const listRes = await fetch(`${baseUrl}/api/projects/${projectId}/entities/Lead`, { headers: authHeaders(authToken) });
+    const { records } = (await listRes.json()) as { records: { id: string; name: string; status: string }[] };
+    const created = records.find((r) => r.id === recordId);
+    assert.ok(created, "expected the record the route reported creating to actually exist");
+    assert.equal(created!.status, "New", "the value must be stored as the entity's own declared casing, not the sender's raw casing");
+  });
+});
+
 test("POST /public/webhook-in/:projectId/:entityName 404s for a missing, wrong, or never-requested token, a nonexistent entity, or a nonexistent project -- the token itself is the only authentication", async () => {
   await withServer(async (baseUrl, db) => {
     const email = `webhook-in-bad-${randomUUID()}@example.com`;

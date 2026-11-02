@@ -56,6 +56,37 @@ function normalizeBodyKeys(entity: Entity, body: Record<string, unknown>): Recor
 }
 
 /**
+ * Round 1512: normalizeBodyKeys just above only remaps the body's own
+ * KEYS to each field's real casing -- the VALUES it carries flow straight
+ * into insertRecord untouched. coerceValue's own enum branch
+ * (packages/db/src/repository.ts) is an exact-case Array.includes check
+ * with no fallback, so an external sender who submits e.g.
+ * {"status": "new"} against an enumValues list of ["New", "Contacted",
+ * "Won"] gets the identical "a value was genuinely sent, just under
+ * different letter case" rejection round 1511 already fixed for field
+ * names -- even though the exact same reasoning, and a ready-made
+ * precedent, already exists for CSV import's own case-insensitive
+ * raw-value match (apps/web/src/entityFormatting.ts). Mirrors that
+ * precedent's own unguarded `.find()` (first case-insensitive match
+ * wins) rather than adding new ambiguity-rejection behavior this
+ * codebase doesn't already apply to raw enum values elsewhere.
+ * Deliberately scoped to this route and to enum values only, the same
+ * "must not change behavior for every other caller" boundary
+ * normalizeBodyKeys' own doc comment draws.
+ */
+function normalizeBodyValues(entity: Entity, body: Record<string, unknown>): Record<string, unknown> {
+  const normalized: Record<string, unknown> = { ...body };
+  for (const field of entity.fields) {
+    if (field.type !== "enum" || !field.enumValues) continue;
+    const raw = normalized[field.name];
+    if (typeof raw !== "string" || field.enumValues.includes(raw)) continue;
+    const match = field.enumValues.find((v) => v.toLowerCase() === raw.toLowerCase());
+    if (match) normalized[field.name] = match;
+  }
+  return normalized;
+}
+
+/**
  * Round 1405: every automation trigger before this one (record_created,
  * field_equals, record_updated, record_deleted, schedule) only ever fires
  * from something that happens INSIDE this app. There was no way for an
@@ -186,7 +217,7 @@ export function createInboundWebhookRouter(db: ForgeDatabase, whatsapp: WhatsApp
         async () => {
           let record: ReturnType<typeof insertRecord>;
           try {
-            record = insertRecord(db, projectId, entity, normalizeBodyKeys(entity, req.body ?? {}));
+            record = insertRecord(db, projectId, entity, normalizeBodyValues(entity, normalizeBodyKeys(entity, req.body ?? {})));
           } catch (err) {
             // Round 1471: see recordInboundWebhookFailure's own doc comment
             // (packages/db) for why this is recorded here specifically --
