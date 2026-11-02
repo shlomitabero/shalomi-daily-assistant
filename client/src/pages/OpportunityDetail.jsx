@@ -7,6 +7,7 @@ export default function OpportunityDetail() {
   const { id } = useParams();
   const [opp, setOpp] = useState(null);
   const [settings, setSettings] = useState(null);
+  const [hasPublishApproval, setHasPublishApproval] = useState(false);
   const [form, setForm] = useState({ low: '', mid: '', high: '', aiUsage: '', paymentProcessing: '', riskLevel: 'medium', dataQuality: 'unknown', priceUSD: 9 });
   const [error, setError] = useState('');
   const [loadError, setLoadError] = useState('');
@@ -28,6 +29,15 @@ export default function OpportunityDetail() {
       });
     }).catch((err) => setLoadError(err.data?.error || err.message));
     api.getSettings().then((r) => setSettings(r.settings)).catch((err) => setLoadError(err.data?.error || err.message));
+    // In "approve" mode the publish button must stay disabled until this
+    // exact opportunity's publish_product action has been approved — before
+    // this, the owner could click "פרסם מוצר" straight away, the server
+    // would correctly reject it with a 409 ("ממתין לאישור מפורש"), and the
+    // button looked clickable with no indication anything was missing.
+    api.getApprovals().then((r) => {
+      const approved = r.approvals.some((a) => a.opportunityId === id && a.actionType === 'publish_product' && a.status === 'approved');
+      setHasPublishApproval(approved);
+    }).catch((err) => setLoadError(err.data?.error || err.message));
   }
 
   useEffect(refresh, [id]);
@@ -178,8 +188,14 @@ export default function OpportunityDetail() {
           <button
             className="btn btn-primary"
             onClick={onPublish}
-            disabled={busy || settings?.mode === 'research'}
-            title={settings?.mode === 'research' ? 'מצב מחקר בלבד — שום פעולה לא מתבצעת אוטומטית' : undefined}
+            disabled={busy || settings?.mode === 'research' || (settings?.mode === 'approve' && !hasPublishApproval)}
+            title={
+              settings?.mode === 'research'
+                ? 'מצב מחקר בלבד — שום פעולה לא מתבצעת אוטומטית'
+                : settings?.mode === 'approve' && !hasPublishApproval
+                  ? 'צריך ללחוץ קודם על "אשר פרסום" למעלה'
+                  : undefined
+            }
           >
             פרסם מוצר (יצירת תשלום אמיתי)
           </button>
