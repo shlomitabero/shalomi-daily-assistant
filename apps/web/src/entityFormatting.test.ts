@@ -324,6 +324,28 @@ test("badgeTone recognizes 'Served' as positive, matching the Restaurant templat
   assert.equal(badgeTone("Preparing"), "neutral");
 });
 
+/**
+ * Round 1506's finding: the built-in Rental domain entity's own status
+ * enum (spec-engine/domainEntities.ts: ["Reserved", "Active", "Returned"])
+ * uses "Returned" as its own successful-completion state -- the item came
+ * back, exactly analogous to "Sold"/"Rented" (Property/Vehicle) and
+ * "Delivered" (Shipment) -- but it fell through to neutral gray, the same
+ * tone as the merely-ongoing "Reserved"/"Active" states, since "returned"
+ * was missing from POSITIVE_WORDS. Also confirms the negated collision
+ * guard added alongside it: "unreturned" is a real, ordinary rental/
+ * library term (an item currently NOT returned) that contains "returned"
+ * as a literal substring, the same "unsold"/"unrented" shape rounds
+ * 1483/1490 already fixed -- without the NEGATIVE_WORDS entry, it would be
+ * misread as positive, the opposite of its meaning.
+ */
+test("badgeTone recognizes 'Returned' as positive, matching Rental's real status enum, without misreading its negated form", () => {
+  assert.equal(badgeTone("Returned"), "positive");
+  assert.equal(badgeTone("returned"), "positive");
+  assert.equal(badgeTone("Reserved"), "neutral");
+  assert.equal(badgeTone("Active"), "positive");
+  assert.equal(badgeTone("Unreturned"), "negative");
+});
+
 test("formatDateValue formats a valid ISO date per locale, and leaves an invalid one unchanged", () => {
   const result = formatDateValue("2026-03-15", "en");
   assert.match(result, /3\/15\/2026|15\/3\/2026/); // exact format is locale/engine-dependent, just confirm it parsed

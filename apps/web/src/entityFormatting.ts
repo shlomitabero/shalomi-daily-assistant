@@ -129,6 +129,17 @@ const POSITIVE_WORDS = [
   // "hired" shape, which also took no negative-word counterpart), and no
   // existing word contains "graduated" as a substring either way.
   "graduated",
+  // round 1506: the built-in Rental domain entity's own status enum (see
+  // spec-engine/domainEntities.ts: ["Reserved", "Active", "Returned"])
+  // uses "Returned" as its own successful-completion state -- the item
+  // came back, exactly analogous to "Sold"/"Rented" (Property/Vehicle)
+  // and "Delivered" (Shipment) -- so a returned rental showed the same
+  // neutral gray badge as the merely-ongoing "Reserved"/"Active" states
+  // instead of reading as positive. Unlike "Refunded" (round 1487,
+  // correctly left unclassified as a genuinely two-sided outcome), this
+  // entity's only use of "returned" is the rental-closed-successfully
+  // sense, with no competing negative reading.
+  "returned",
 ];
 // Round 1495: the Restaurant template's own Order status enum
 // (spec-engine/templates.ts: ["pending", "preparing", "served", "paid"])
@@ -234,6 +245,13 @@ const NEGATIVE_WORDS = [
   // "rented" as a literal substring, so it must be listed here too or it
   // would be misread as positive, the exact opposite of its meaning.
   "unrented",
+  // round 1506: adding "returned" to POSITIVE_WORDS just above introduces
+  // the identical negated-word collision round 458 already fixed for
+  // every other entry -- "unreturned" is a real, ordinary rental/library
+  // term (an item currently NOT returned) that contains "returned" as a
+  // literal substring, so it must be listed here too or it would be
+  // misread as positive, the exact opposite of its meaning.
+  "unreturned",
 ];
 
 const DATE_FORMAT = /^(\d{4})-(\d{2})-(\d{2})$/;

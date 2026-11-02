@@ -17576,6 +17576,26 @@ test("the exported EntityView's badgeTone classifies 'Served' as positive, match
 });
 
 /**
+ * Regression test for round 1506's finding: the built-in Rental domain
+ * entity's own status enum (["Reserved", "Active", "Returned"]) uses
+ * "Returned" as its own successful-completion state -- it fell through
+ * to neutral gray in this exact exported copy too, mirroring the
+ * live-preview fix, including its negated-form collision guard
+ * ("Unreturned" must still read negative). Runs the real generated
+ * badgeTone, not a reference copy.
+ */
+test("the exported EntityView's badgeTone classifies 'Returned' as positive, matching Rental's real status enum, without misreading its negated form", () => {
+  const entityViewJsx = generateExportFiles(project).find((f) => f.path === "web/src/components/EntityView.jsx")!.content;
+  const badgeToneSrc = entityViewJsx.match(/const POSITIVE_WORDS[\s\S]*?\nfunction badgeTone\(rawValue\) \{[\s\S]*?\n\}\n/)?.[0];
+  assert.ok(badgeToneSrc, "expected to find POSITIVE_WORDS/NEGATIVE_WORDS/badgeTone in generated output");
+
+  const badgeTone = new Function(`${badgeToneSrc}\nreturn badgeTone;`)() as (v: string) => string;
+  assert.equal(badgeTone("Returned"), "positive");
+  assert.equal(badgeTone("Reserved"), "neutral");
+  assert.equal(badgeTone("Unreturned"), "negative");
+});
+
+/**
  * New in this round: the exported standalone app's entity table columns
  * were a fixed auto-layout width, unlike the live Forge AI preview (round
  * 185's own drag-to-resize columns, persisted per entity via

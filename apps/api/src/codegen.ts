@@ -2855,6 +2855,11 @@ const POSITIVE_WORDS = [
   // needed (same as "hired") -- "ungraduated" isn't an ordinary real-world
   // status term the way "unsold"/"unresolved" are.
   "graduated",
+  // round 1506: mirrors the live preview's own entityFormatting.ts fix --
+  // the built-in Rental domain entity's status enum uses "Returned" as its
+  // own successful-completion state, exactly analogous to "Sold"/"Rented"
+  // (Property/Vehicle) and "Delivered" (Shipment).
+  "returned",
 ];
 // round 458: the "un-"/"dis-" negated forms below must stay listed here too --
 // each contains a POSITIVE_WORDS entry as a literal substring ("unpaid"
@@ -2888,6 +2893,10 @@ const NEGATIVE_WORDS = [
   // "unrented" contains a POSITIVE_WORDS entry ("rented") as a literal
   // substring.
   "unrented",
+  // round 1506: mirrors the live preview's own entityFormatting.ts fix --
+  // "unreturned" contains a POSITIVE_WORDS entry ("returned") as a literal
+  // substring.
+  "unreturned",
 ];
 // Round 1495: mirrors the live preview's own entityFormatting.ts fix --
 // the Restaurant template's Order status enum uses "served" as its own
