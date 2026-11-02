@@ -139,6 +139,13 @@ export interface BaileysIncomingMessage {
     orderMessage?: { orderTitle?: string; message?: string };
     eventMessage?: { name?: string; description?: string; isCanceled?: boolean };
     scheduledCallCreationMessage?: { callType?: number; title?: string };
+    requestPaymentMessage?: {
+      noteMessage?: BaileysIncomingMessage["message"];
+      currencyCodeIso4217?: string;
+      amount1000?: number;
+      amount?: { value?: number; currencyCode?: string };
+    };
+    sendPaymentMessage?: { noteMessage?: BaileysIncomingMessage["message"] };
     viewOnceMessage?: { message?: BaileysIncomingMessage["message"] };
     viewOnceMessageV2?: { message?: BaileysIncomingMessage["message"] };
     viewOnceMessageV2Extension?: { message?: BaileysIncomingMessage["message"] };
@@ -535,6 +542,27 @@ function describeIncomingMessage(message: BaileysIncomingMessage["message"]): st
     if (message.pinInChatMessage.type === PIN_FOR_ALL) return "[Message pinned]";
     if (message.pinInChatMessage.type === UNPIN_FOR_ALL) return "[Message unpinned]";
     return null;
+  }
+  // Round 1538: WhatsApp's native Pay feature ("Request Payment"/"Send
+  // Payment", available in India/Brazil/Singapore etc.) produces
+  // requestPaymentMessage/sendPaymentMessage -- confirmed fully plaintext
+  // against the installed Baileys protobuf (WAProto.proto: Money's
+  // value/currencyCode, RequestPaymentMessage's currencyCodeIso4217/
+  // amount1000, both messages' noteMessage is itself a Message, recursed
+  // through this same function exactly like viewOnceInner/editedMessage
+  // above). Previously fell through to the final `return null` and
+  // vanished with zero trace.
+  if (message.requestPaymentMessage) {
+    const rp = message.requestPaymentMessage;
+    const currency = rp.amount?.currencyCode ?? rp.currencyCodeIso4217;
+    const amountValue = rp.amount?.value != null ? Number(rp.amount.value) : rp.amount1000 != null ? Number(rp.amount1000) / 1000 : undefined;
+    const label = amountValue != null && currency ? `[Payment request: ${amountValue} ${currency}]` : "[Payment request]";
+    const note = rp.noteMessage ? describeIncomingMessage(rp.noteMessage) : null;
+    return note ? `${label} ${note}` : label;
+  }
+  if (message.sendPaymentMessage) {
+    const note = message.sendPaymentMessage.noteMessage ? describeIncomingMessage(message.sendPaymentMessage.noteMessage) : null;
+    return note ? `[Payment sent] ${note}` : "[Payment sent]";
   }
   return null;
 }

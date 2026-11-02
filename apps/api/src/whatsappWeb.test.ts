@@ -2083,3 +2083,49 @@ test("incoming WhatsApp scheduled-call messages (the chat's own 'Schedule a call
     assert.equal(m.direction, "in", "every placeholder row must still be a real, matched-against incoming message, not metadata");
   }
 });
+
+/**
+ * Round 1538: WhatsApp's native Pay feature ("Request Payment"/"Send
+ * Payment") was previously dropped with zero trace, the same silent-vanish
+ * gap round 1537 fixed for scheduledCallCreationMessage. requestPaymentMessage/
+ * sendPaymentMessage's title/currency/amount/noteMessage fields are plaintext,
+ * confirmed directly against the installed Baileys protobuf (WAProto.proto:
+ * Money's value/currencyCode, RequestPaymentMessage's currencyCodeIso4217/
+ * amount1000, both messages' noteMessage is itself a Message).
+ */
+test("incoming WhatsApp payment-request/payment-sent messages are logged with a descriptive placeholder instead of being silently dropped", async () => {
+  const { manager, createdSockets, db } = setupManager();
+  insertProject(db, project);
+  applyMigrations(db, project.id, project.spec);
+  markProjectBuilt(db, project.id);
+
+  await manager.connect(project.id);
+  createdSockets[0].emitConnectionUpdate({ connection: "open" });
+
+  createdSockets[0].emitMessagesUpsert({
+    type: "notify",
+    messages: [
+      {
+        key: { remoteJid: "972501234567@s.whatsapp.net", fromMe: false },
+        message: { requestPaymentMessage: { amount: { value: 50, currencyCode: "ILS" }, noteMessage: { conversation: "עבור הזמנה #42" } } },
+      },
+      { key: { remoteJid: "972501234567@s.whatsapp.net", fromMe: false }, message: { requestPaymentMessage: {} } },
+      {
+        key: { remoteJid: "972501234567@s.whatsapp.net", fromMe: false },
+        message: { sendPaymentMessage: { noteMessage: { conversation: "תודה!" } } },
+      },
+      { key: { remoteJid: "972501234567@s.whatsapp.net", fromMe: false }, message: { sendPaymentMessage: {} } },
+    ],
+  });
+
+  // listWhatsAppMessages orders newest-first, the reverse of emission order.
+  const { messages: paymentMessages } = listWhatsAppMessages(db, project.id);
+  assert.equal(paymentMessages.length, 4);
+  assert.equal(paymentMessages[0].body, "[Payment sent]", "a payment-sent message with no note must fall back to a plain placeholder, not print nothing or throw");
+  assert.equal(paymentMessages[1].body, "[Payment sent] תודה!");
+  assert.equal(paymentMessages[2].body, "[Payment request]", "a payment-request message with no amount/currency must fall back to a plain placeholder");
+  assert.equal(paymentMessages[3].body, "[Payment request: 50 ILS] עבור הזמנה #42");
+  for (const m of paymentMessages) {
+    assert.equal(m.direction, "in", "every placeholder row must still be a real, matched-against incoming message, not metadata");
+  }
+});
