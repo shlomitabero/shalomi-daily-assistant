@@ -5,6 +5,7 @@ import { existsSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
+import { healthRouter } from './routes/health.js';
 import { authRouter } from './routes/auth.js';
 import { settingsRouter } from './routes/settings.js';
 import { sourcesRouter } from './routes/sources.js';
@@ -33,15 +34,7 @@ app.post('/api/billing/webhook', express.raw({ type: 'application/json' }), padd
 
 app.use(express.json());
 
-app.get('/api/health', (req, res) => res.json({
-  ok: true,
-  name: 'PROFIT AI',
-  aiConfigured: Boolean(process.env.ANTHROPIC_API_KEY),
-  billingConfigured: Boolean(process.env.PADDLE_API_KEY && process.env.PADDLE_CLIENT_TOKEN),
-  marketDataConfigured: Boolean(process.env.MARKET_DATA_API_KEY),
-  ownerPasswordConfigured: Boolean(process.env.OWNER_PASSWORD),
-}));
-
+app.use('/api', healthRouter);
 app.use('/api', authRouter);
 app.use('/api', settingsRouter);
 app.use('/api', sourcesRouter);
