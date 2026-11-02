@@ -138,6 +138,7 @@ export interface BaileysIncomingMessage {
     documentWithCaptionMessage?: { message?: BaileysIncomingMessage["message"] };
     editedMessage?: { message?: BaileysIncomingMessage["message"] };
     protocolMessage?: { type?: number; editedMessage?: BaileysIncomingMessage["message"] };
+    pinInChatMessage?: { type?: number };
     ephemeralMessage?: { message?: BaileysIncomingMessage["message"] };
     associatedChildMessage?: { message?: BaileysIncomingMessage["message"] };
     groupStatusMessage?: { message?: BaileysIncomingMessage["message"] };
@@ -459,6 +460,19 @@ function describeIncomingMessage(message: BaileysIncomingMessage["message"]): st
   if (message.editedMessage) {
     const inner = describeIncomingMessage(message.editedMessage.message);
     return inner ? `[Edited] ${inner}` : "[Edited]";
+  }
+  // Round 1507: WhatsApp's own "Pin message"/"Unpin message" chat action
+  // (long-press a message, tap Pin/Unpin) arrives as a message whose
+  // `pinInChatMessage` field is set, a plaintext int enum (proto.Message
+  // .PinInChatMessage.Type: UNKNOWN_TYPE=0, PIN_FOR_ALL=1, UNPIN_FOR_ALL=2)
+  // -- the same "no decryption needed, just an unrecognized shape" pattern
+  // round 1139 already fixed for protocolMessage's delete/edit actions.
+  if (message.pinInChatMessage) {
+    const PIN_FOR_ALL = 1;
+    const UNPIN_FOR_ALL = 2;
+    if (message.pinInChatMessage.type === PIN_FOR_ALL) return "[Message pinned]";
+    if (message.pinInChatMessage.type === UNPIN_FOR_ALL) return "[Message unpinned]";
+    return null;
   }
   return null;
 }

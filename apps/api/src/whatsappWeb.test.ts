@@ -1315,6 +1315,40 @@ test("an incoming WhatsApp message deletion or edit is logged with a placeholder
 });
 
 /**
+ * Round 1507: WhatsApp's own "Pin message"/"Unpin message" chat action
+ * (long-press a message -> Pin/Unpin) delivers as a `pinInChatMessage`,
+ * a plaintext int enum (proto.Message.PinInChatMessage.Type:
+ * UNKNOWN_TYPE=0, PIN_FOR_ALL=1, UNPIN_FOR_ALL=2) -- previously dropped
+ * with zero trace, the same gap round 1139 already fixed for
+ * protocolMessage's delete/edit actions.
+ */
+test("an incoming WhatsApp pin/unpin message action is logged with a placeholder instead of being silently dropped", async () => {
+  const { manager, createdSockets, db } = setupManager();
+  insertProject(db, project);
+  applyMigrations(db, project.id, project.spec);
+  markProjectBuilt(db, project.id);
+
+  await manager.connect(project.id);
+  createdSockets[0].emitConnectionUpdate({ connection: "open" });
+
+  createdSockets[0].emitMessagesUpsert({
+    type: "notify",
+    messages: [
+      { key: { remoteJid: "972501234567@s.whatsapp.net", fromMe: false }, message: { pinInChatMessage: { type: 1 } } },
+      { key: { remoteJid: "972501234567@s.whatsapp.net", fromMe: false }, message: { pinInChatMessage: { type: 2 } } },
+      { key: { remoteJid: "972501234567@s.whatsapp.net", fromMe: false }, message: { pinInChatMessage: { type: 0 } } },
+    ],
+  });
+
+  // listWhatsAppMessages orders newest-first, the reverse of emission order.
+  const { messages } = listWhatsAppMessages(db, project.id);
+  assert.equal(messages.length, 2, "the UNKNOWN_TYPE (0) pin action has no recoverable meaning and must stay genuinely dropped, not guessed at");
+  assert.equal(messages[0].body, "[Message unpinned]");
+  assert.equal(messages[1].body, "[Message pinned]");
+  for (const m of messages) assert.equal(m.direction, "in", "every placeholder row must still be a real, matched-against incoming message, not metadata");
+});
+
+/**
  * Round 1142: a chat with WhatsApp's own "Disappearing messages" toggle on
  * (an ordinary, user-controlled, widely-used per-chat setting) wraps EVERY
  * message in that chat inside an `ephemeralMessage` envelope, of any
