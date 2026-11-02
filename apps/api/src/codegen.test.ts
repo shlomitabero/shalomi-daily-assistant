@@ -4952,7 +4952,10 @@ test("the exported app's entity-tabs nav shows a live record-count badge per tab
   assert.match(appJsx, /import \{ listEntityCounts \} from "\.\/api\.js";/);
   assert.match(appJsx, /const \[entityCounts, setEntityCounts\] = useState\(\{\}\);/);
   assert.match(appJsx, /listEntityCounts\(\)\s*\n\s*\.then\(\(\{ counts \}\) => setEntityCounts\(counts\)\)/);
-  assert.match(appJsx, /entityCounts\[e\.name\] != null && <span className="tab-count">\{entityCounts\[e\.name\]\}<\/span>/);
+  assert.match(
+    appJsx,
+    /entityCounts\[e\.name\] != null && \(\s*<span className="tab-count" aria-label=\{`\$\{entityCounts\[e\.name\]\} \$\{entityCounts\[e\.name\] === 1 \? "record" : "records"\}`\}>\s*\{entityCounts\[e\.name\]\}\s*<\/span>\s*\)/,
+  );
   assert.match(appJsx, /onRecordCountChange=\{\(name, count\) =>/);
 
   const entityViewJsx = files.find((f) => f.path === "web/src/components/EntityView.jsx")!.content;
@@ -4975,6 +4978,39 @@ test("the exported app's entity-tabs nav shows a live record-count badge per tab
 
   const stylesCss = files.find((f) => f.path === "web/src/styles.css")!.content;
   assert.match(stylesCss, /\.tab-count/);
+});
+
+/**
+ * Round 1519: the entity-tabs nav's per-tab record-count badge
+ * (<span className="tab-count">{entityCounts[e.name]}</span>, just above)
+ * has no aria-label at all in the exported app, so a screen reader tabbing
+ * through the nav hears only a bare number next to the entity name -- e.g.
+ * "Customers, 1" with no indication "1" is a record count, and no plural
+ * agreement either way. The live preview's own identical badge
+ * (App.tsx) was already fixed this way; round 1393 looked at this exact
+ * span while fixing the live preview's i18n key but concluded there was
+ * "no parity site to port to" since codegen.ts had no existing aria-label
+ * to pluralize -- the same i18n-key-grep trap rounds 1516/1517 later
+ * diagnosed for other features. This closes it directly in the generated
+ * source, following codegen.ts's own established plain-English ternary
+ * convention (no i18n layer exists in the exported app).
+ */
+test("the exported app's entity-tab record-count badge has an aria-label with correct singular/plural agreement", () => {
+  const files = generateExportFiles(project);
+  const appJsx = files.find((f) => f.path === "web/src/App.jsx")!.content;
+
+  const labelExprSrc = appJsx.match(
+    /\$\{entityCounts\[e\.name\]\} \$\{entityCounts\[e\.name\] === 1 \? "record" : "records"\}/,
+  )?.[0];
+  assert.ok(labelExprSrc, "expected to find the tab-count badge's own aria-label template literal in generated output");
+
+  const tabCountAriaLabel = new Function("entityCounts", "e", `return \`${labelExprSrc}\`;`) as (
+    entityCounts: Record<string, number>,
+    e: { name: string },
+  ) => string;
+  assert.equal(tabCountAriaLabel({ Customer: 1 }, { name: "Customer" }), "1 record", "exactly one record must read 'record', not 'records'");
+  assert.equal(tabCountAriaLabel({ Customer: 2 }, { name: "Customer" }), "2 records");
+  assert.equal(tabCountAriaLabel({ Customer: 0 }, { name: "Customer" }), "0 records");
 });
 
 /**

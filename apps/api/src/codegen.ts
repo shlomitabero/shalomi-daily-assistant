@@ -9621,7 +9621,11 @@ export default function App() {
               }}
             >
               {entityDisplayLabel(e, entityTabLabelOccurrences)}
-              {entityCounts[e.name] != null && <span className="tab-count">{entityCounts[e.name]}</span>}
+              {entityCounts[e.name] != null && (
+                <span className="tab-count" aria-label={\`\${entityCounts[e.name]} \${entityCounts[e.name] === 1 ? "record" : "records"}\`}>
+                  {entityCounts[e.name]}
+                </span>
+              )}
             </button>
             <span className="tab-move-buttons">
               <button
