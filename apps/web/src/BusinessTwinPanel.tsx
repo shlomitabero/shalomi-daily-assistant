@@ -92,9 +92,10 @@ export function BusinessTwinPanel({
    * toolbar filter on landing -- without it, a user clicking "3 Invoices
    * overdue" lands on the entity's full, unfiltered table and has to
    * manually find and set the same filter themselves. Every other
-   * onJumpToEntity call site (the per-entity tiles, mostActiveObservation,
-   * jumpableObservations) has no single field to filter by, so they omit
-   * this argument entirely.
+   * onJumpToEntity call site (the per-entity tiles, mostActiveObservation)
+   * has no single field to filter by, so they omit this argument
+   * entirely. jumpableObservations below is the one exception -- its own
+   * overdue/dueSoon entries carry a fieldName too (round 1526).
    *
    * Round 1343: `value`'s type widened from the literal `"overdue" |
    * "dueSoon"` to a plain `string` so TwinBarChart's own distribution bars
@@ -374,17 +375,33 @@ export function BusinessTwinPanel({
                       </button>
                     </li>
                   )}
-                  {twin.jumpableObservations.map((o, i) => (
-                    <li key={`jumpable-${i}`}>
-                      <button
-                        type="button"
-                        className="link-button twin-observation-link"
-                        onClick={() => onJumpToEntity(o.entityName)}
-                      >
-                        {o.text}
-                      </button>
-                    </li>
-                  ))}
+                  {twin.jumpableObservations.map((o, i) => {
+                    // Round 1526: mirrors the Dashboard view's own
+                    // overdueStats/dueSoonStats tiles (round 1337) -- these
+                    // two kinds of jumpableObservations entries are the one
+                    // exception that DO carry a single field to filter by
+                    // (see onJumpToEntity's own doc comment above), so
+                    // clicking the same insight from the Report view must
+                    // land pre-filtered too, not on the full unfiltered
+                    // table.
+                    const dateFilter =
+                      o.fieldName && o.overdueCount !== undefined
+                        ? { fieldName: o.fieldName, value: "overdue" }
+                        : o.fieldName && o.dueSoonCount !== undefined
+                          ? { fieldName: o.fieldName, value: "dueSoon" }
+                          : undefined;
+                    return (
+                      <li key={`jumpable-${i}`}>
+                        <button
+                          type="button"
+                          className="link-button twin-observation-link"
+                          onClick={() => onJumpToEntity(o.entityName, dateFilter)}
+                        >
+                          {o.text}
+                        </button>
+                      </li>
+                    );
+                  })}
                   {twin.observations.map((o, i) => (
                     <li key={i}>{o}</li>
                   ))}

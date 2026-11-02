@@ -944,7 +944,19 @@ export interface BusinessTwin {
   observations: string[];
   mostLinkedRecord: { text: string; entityName: string; recordId: number } | null;
   mostActiveObservation: { text: string; entityName: string } | null;
-  jumpableObservations: { text: string; entityName: string }[];
+  /**
+   * Round 1526: the overdue/dueSoon entries spread into this array
+   * (twin.ts's own jumpableObservations.push(...overdueStats,
+   * ...dueSoonStats)) actually carry fieldName + overdueCount/dueSoonCount
+   * too, same as their dedicated overdueStats/dueSoonStats array below --
+   * widened here (previously just { text, entityName }) so
+   * BusinessTwinPanel.tsx can tell them apart from the other jumpable
+   * kinds (numericStats/distributions/relation-coverage/etc., which
+   * genuinely have no single field to filter by) and pass the matching
+   * dateFilter to onJumpToEntity, the same way the Dashboard view's own
+   * overdueStats/dueSoonStats tiles already do.
+   */
+  jumpableObservations: { text: string; entityName: string; fieldName?: string; overdueCount?: number; dueSoonCount?: number }[];
   distributions: {
     text: string;
     entityName: string;

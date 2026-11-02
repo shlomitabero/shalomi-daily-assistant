@@ -325,6 +325,77 @@ test("BusinessTwinPanel's jumpable observations (relation-coverage, duplicates) 
 });
 
 /**
+ * Round 1526: a live/code-reading survey found that the Report view's own
+ * jumpableObservations rendering (just above) dropped the date-filter
+ * jump that the Dashboard view's equivalent overdueStats/dueSoonStats
+ * tiles already apply (round 1337) -- same underlying overdue/dueSoon
+ * fact, inconsistent onJumpToEntity call depending on which of the two
+ * views it's clicked from. The server already spreads overdueStats/
+ * dueSoonStats (each carrying fieldName + overdueCount/dueSoonCount) into
+ * jumpableObservations (twin.ts), so this confirms the Report view now
+ * detects those two kinds of jumpable observations and passes the
+ * matching dateFilter, while the other kinds (no overdueCount/
+ * dueSoonCount, e.g. relation-coverage/duplicates) still omit it.
+ */
+test("BusinessTwinPanel's Report-view jumpable observations pass the matching date-filter for overdue/dueSoon entries, same as the Dashboard tiles", async () => {
+  await withJsdom(async () => {
+    const twinWithDeadlineJumpable: BusinessTwin = {
+      ...TWIN,
+      jumpableObservations: [
+        {
+          text: '"Due date" overdue in "Orders": 2 of 5.',
+          entityName: "Order",
+          fieldName: "dueDate",
+          overdueCount: 2,
+        },
+        {
+          text: '"Renewal" coming up soon in "Orders": 1 of 5.',
+          entityName: "Order",
+          fieldName: "renewal",
+          dueSoonCount: 1,
+        },
+        { text: 'In "Tickets", 2 of 3 records have no "Customer" set.', entityName: "Ticket" },
+      ],
+    };
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = (async (input: string) => {
+      if (input.startsWith("/api/projects/proj1/twin")) {
+        return new Response(JSON.stringify({ twin: twinWithDeadlineJumpable }), { status: 200, headers: { "content-type": "application/json" } });
+      }
+      throw new Error(`unexpected request ${input}`);
+    }) as typeof fetch;
+    const jumps: [string, { fieldName: string; value: string } | undefined][] = [];
+    try {
+      renderTwinPanel((entityName, dateFilter) => jumps.push([entityName, dateFilter]));
+      await waitForCondition(() => document.querySelectorAll(".twin-observation-link").length === 3);
+
+      const buttons = document.querySelectorAll(".twin-observation-link") as NodeListOf<HTMLButtonElement>;
+      fireEvent.click(buttons[0]);
+      fireEvent.click(buttons[1]);
+      fireEvent.click(buttons[2]);
+
+      assert.deepEqual(
+        jumps[0],
+        ["Order", { fieldName: "dueDate", value: "overdue" }],
+        "the overdue jumpable observation must pass the same dateFilter the Dashboard's overdueStats tile already applies",
+      );
+      assert.deepEqual(
+        jumps[1],
+        ["Order", { fieldName: "renewal", value: "dueSoon" }],
+        "the dueSoon jumpable observation must pass the same dateFilter the Dashboard's dueSoonStats tile already applies",
+      );
+      assert.deepEqual(
+        jumps[2],
+        ["Ticket", undefined],
+        "a jumpable observation with no single field to filter by (relation-coverage) must still omit dateFilter entirely",
+      );
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+});
+
+/**
  * New in this round: computeBusinessTwin has always computed a real
  * totalRecords figure -- it was already included in the downloadable text
  * report (round 129's twinReport.ts) -- but the live panel itself never
