@@ -497,8 +497,17 @@ export function matchesTrigger(
   const fieldName = resolveStoredFieldName(entity, rule.fieldName);
   if (event === "updated" && !changedFields.has(fieldName)) return false;
   const actual = record[fieldName];
-  if (actual === null || actual === undefined) return false;
   if (rule.fieldValue == null) return false;
+  // Round 1494: "not_equals" is the one operator where an absent/cleared
+  // field value IS a genuine match -- it is certainly not equal to
+  // rule.fieldValue (CreateAutomationRuleSchema's own min(1) guarantees
+  // that's always a real, non-empty string), the same way
+  // matchesFieldOperator's own "not_equals" branch already treats any
+  // other mismatching value. "equals"/"greater_than"/"less_than" have no
+  // meaningful comparison against an absent value, so they keep this
+  // guard's original, pre-1491 behavior of never matching when the field
+  // is unset -- only "not_equals" needs to see past it.
+  if (actual === null || actual === undefined) return rule.fieldOperator === "not_equals";
   return matchesFieldOperator(rule.fieldOperator, actual, rule.fieldValue, entity, fieldName);
 }
 

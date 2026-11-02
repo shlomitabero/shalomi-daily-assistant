@@ -477,6 +477,36 @@ test("matchesTrigger: field_equals with operator 'not_equals' fires when the val
   assert.equal(matchesTrigger(rule, "updated", { status: "Cancelled" }, new Set(["status"]), orderEntity), false);
 });
 
+/**
+ * Round 1494: the field-is-absent guard just above matchesFieldOperator's
+ * own dispatch (added long before round 1491's operators existed)
+ * unconditionally returned false whenever the matched field was
+ * null/undefined -- correct for "equals" (a cleared field can never
+ * equal a real target value) but wrong for "not_equals": a cleared field
+ * is certainly not equal to rule.fieldValue (CreateAutomationRuleSchema's
+ * own min(1) guarantees that's always a real, non-empty string), the
+ * exact same mismatch matchesFieldOperator's own "not_equals" branch
+ * already fires on for any other non-matching value. Reachable via an
+ * ordinary "clear field" bulk-update (EntityPanel.tsx's isBlankClear
+ * branch) or any single-record edit that empties an optional field.
+ */
+test("matchesTrigger: field_equals with operator 'not_equals' fires when the matched field is cleared to null, not just when it holds a different value", () => {
+  const rule = insertAutomationRule(openDbForRuleOnly(), {
+    projectId: "p",
+    entityName: "Order",
+    trigger: "field_equals",
+    fieldName: "status",
+    fieldValue: "Cancelled",
+    fieldOperator: "not_equals",
+    actionType: "send_whatsapp",
+    toMode: "static",
+    toNumber: "972500000000",
+    messageTemplate: "Still active!",
+  });
+  assert.equal(matchesTrigger(rule, "updated", { status: null }, new Set(["status"]), orderEntity), true);
+  assert.equal(matchesTrigger(rule, "updated", { status: undefined }, new Set(["status"]), orderEntity), true);
+});
+
 test("matchesTrigger: a null fieldOperator (every rule created before this column existed) is treated identically to 'equals'", () => {
   const rule = insertAutomationRule(openDbForRuleOnly(), {
     projectId: "p",
