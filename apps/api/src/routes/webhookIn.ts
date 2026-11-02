@@ -79,13 +79,22 @@ function normalizeBodyKeys(entity: Entity, body: Record<string, unknown>): Recor
  * "true"/"false" (plus 1/0/"1"/"0") -- "True", "FALSE", "TRUE" all throw
  * the identical "a value was genuinely sent, just under different letter
  * case" rejection this file already fixed for field names and enum
- * values. Deliberately case-only, not shape: round 1512 itself flagged
- * the CSV-import precedent's broader "yes"/"no"/"כן"/"לא" acceptance
- * (entityFormatting.ts's BOOLEAN_TRUE_VALUES/BOOLEAN_FALSE_VALUES) as a
- * separate, larger-scope future candidate and deferred it -- this stays
- * narrow and only normalizes the letter case of the exact two words
- * coerceValue already accepts.
+ * values.
+ *
+ * Round 1514: round 1513 itself (and round 1512 before it) explicitly
+ * flagged and deferred the CSV-import precedent's broader value *shape*
+ * acceptance -- entityFormatting.ts's BOOLEAN_TRUE_VALUES/
+ * BOOLEAN_FALSE_VALUES already treats "yes"/"no"/"כן"/"לא" as valid
+ * booleans, not just case variants of "true"/"false". A real integrator
+ * mapping a yes/no checkbox field to "Yes"/"No" -- a completely natural
+ * webhook payload shape -- got the exact same unjustified 400 rejection.
+ * Duplicated the two word lists locally rather than cross-importing
+ * apps/web into apps/api, mirroring this file's own established
+ * "mirror, don't cross-import" convention for every other helper here.
  */
+const WEBHOOK_BOOLEAN_TRUE_VALUES = ["true", "1", "yes", "כן"];
+const WEBHOOK_BOOLEAN_FALSE_VALUES = ["false", "0", "no", "לא"];
+
 function normalizeBodyValues(entity: Entity, body: Record<string, unknown>): Record<string, unknown> {
   const normalized: Record<string, unknown> = { ...body };
   for (const field of entity.fields) {
@@ -96,7 +105,8 @@ function normalizeBodyValues(entity: Entity, body: Record<string, unknown>): Rec
       if (match) normalized[field.name] = match;
     } else if (field.type === "boolean" && raw !== "true" && raw !== "false") {
       const lower = raw.toLowerCase();
-      if (lower === "true" || lower === "false") normalized[field.name] = lower;
+      if (WEBHOOK_BOOLEAN_TRUE_VALUES.includes(lower)) normalized[field.name] = "true";
+      else if (WEBHOOK_BOOLEAN_FALSE_VALUES.includes(lower)) normalized[field.name] = "false";
     }
   }
   return normalized;
