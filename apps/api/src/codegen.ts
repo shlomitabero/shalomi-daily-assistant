@@ -3164,8 +3164,16 @@ function Cell({ field, value, relationLabel, highlightQuery, onJumpToRecord }) {
   if (field.type === "relation") {
     const label = relationLabel || \`#\${value}\`;
     if (onJumpToRecord && field.relationTo) {
+      // Round 1533: field.relationTo can differ in letter case from its
+      // real target entity's name (migrate.ts never rewrites a sibling
+      // field's relationTo when an entity itself is case-renamed) --
+      // mirrors the case-insensitive relationTo convention used
+      // everywhere else in this file (rounds 1159-1182) instead of
+      // passing the raw string straight to onJumpToRecord.
+      const resolvedTarget = ALL_ENTITIES.find((e) => e.name.toLowerCase() === field.relationTo.toLowerCase());
+      const targetEntity = resolvedTarget ? resolvedTarget.name : field.relationTo;
       return (
-        <button type="button" className="link-button" onClick={() => onJumpToRecord(field.relationTo, Number(value))}>
+        <button type="button" className="link-button" onClick={() => onJumpToRecord(targetEntity, Number(value))}>
           {label}
         </button>
       );

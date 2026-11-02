@@ -247,6 +247,7 @@ function Cell({
   relationLabel,
   highlightQuery,
   onJumpToRecord,
+  allEntities,
 }: {
   field: Field;
   value: unknown;
@@ -268,6 +269,15 @@ function Cell({
    * only from those other panels. Omitted entirely in print output,
    * where a click target makes no sense. */
   onJumpToRecord?: (targetEntity: string, recordId: number) => void;
+  /** Round 1533: `field.relationTo` can permanently differ in letter case
+   * from its real target entity's name (see routes/projects.ts's own
+   * `findEntity` doc comment) -- migrate.ts's case-rename handling never
+   * rewrites a sibling field's `relationTo` string when an entity itself
+   * is renamed. Every other `relationTo` consumer in this file (including
+   * `relationLabel` above, via `relationDisplayLabel`) already resolves
+   * this case-insensitively; only passed when `onJumpToRecord` is, so it
+   * can resolve the click target the same way before calling it. */
+  allEntities?: Entity[];
 }) {
   if (value === null || value === undefined || value === "") {
     return <span className="muted">{t("entity.empty")}</span>;
@@ -275,8 +285,12 @@ function Cell({
   if (field.type === "relation") {
     const label = relationLabel || `#${value}`;
     if (onJumpToRecord && field.relationTo) {
+      const resolvedTarget =
+        allEntities?.find((e) => e.name === field.relationTo) ??
+        allEntities?.find((e) => e.name.toLowerCase() === field.relationTo!.toLowerCase());
+      const targetEntity = resolvedTarget ? resolvedTarget.name : field.relationTo;
       return (
-        <button type="button" className="link-button relation-jump-link" onClick={() => onJumpToRecord(field.relationTo!, Number(value))}>
+        <button type="button" className="link-button relation-jump-link" onClick={() => onJumpToRecord(targetEntity, Number(value))}>
           {label}
         </button>
       );
@@ -655,6 +669,7 @@ function BoardCard({
             }
             highlightQuery={highlightQuery}
             onJumpToRecord={onJumpToRecord}
+            allEntities={allEntities}
           />
         </div>
       ))}
@@ -4782,6 +4797,7 @@ export function EntityPanel({
                   }
                   highlightQuery={search}
                   onJumpToRecord={onJumpToRecord}
+                  allEntities={allEntities}
                 />
               )}
             </td>

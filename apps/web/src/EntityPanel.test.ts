@@ -14517,6 +14517,76 @@ test("EntityPanel's relation cell jumps to the related record when onJumpToRecor
 });
 
 /**
+ * Round 1533: a relation field's own `relationTo` can permanently differ in
+ * letter case from its real target entity's name (migrate.ts's case-rename
+ * handling never rewrites a sibling field's `relationTo` string when an
+ * entity itself is case-renamed -- see routes/projects.ts's own `findEntity`
+ * doc comment). Every other `relationTo` consumer in this file (including
+ * this same cell's own displayed label, via `relationDisplayLabel`) already
+ * resolves that case-insensitively; before this round's fix, the jump
+ * button above was the one exception -- it passed the raw, stale-cased
+ * `relationTo` straight to `onJumpToRecord`, which App.tsx's own exact-case
+ * `activeEntity` lookup then failed to match, landing on a blank preview
+ * pane with no tab selected. Mirrors the test just above, but with
+ * `relationTo: "courier"` (stale casing) while the live target entity is
+ * actually named "Courier".
+ */
+test("EntityPanel's relation cell resolves a case-mismatched relationTo to the target entity's CURRENT casing before calling onJumpToRecord", async () => {
+  await withJsdom(async () => {
+    const orderEntity: Entity = {
+      name: "Order",
+      label: "Order",
+      fields: [
+        { name: "item", label: "Item", type: "text", required: true },
+        { name: "courierId", label: "Courier", type: "relation", relationTo: "courier", required: false },
+      ],
+    };
+    const courierEntity: Entity = { name: "Courier", label: "Courier", fields: [{ name: "name", label: "Name", type: "text", required: true }] };
+    const courierRelated: EntityRecord[] = [{ id: 9, createdAt: "x", name: "Dana" }];
+    const store: EntityRecord[] = [{ id: 1, createdAt: "x", item: "Pizza", courierId: 9 }];
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = (async (input: string, init?: RequestInit) => {
+      if (input === "/api/projects/proj1/entities/Order") {
+        const method = init?.method ?? "GET";
+        if (method === "GET") {
+          return new Response(JSON.stringify({ records: store }), { status: 200, headers: { "content-type": "application/json" } });
+        }
+      }
+      if (input === "/api/projects/proj1/entities/courier") {
+        return new Response(JSON.stringify({ records: courierRelated }), { status: 200, headers: { "content-type": "application/json" } });
+      }
+      throw new Error(`unexpected request ${init?.method ?? "GET"} ${input}`);
+    }) as typeof fetch;
+    let jumped: [string, number] | null = null;
+    try {
+      renderEntityPanel({
+        entity: orderEntity,
+        allEntities: [orderEntity, courierEntity],
+        onJumpToRecord: (targetEntity: string, recordId: number) => {
+          jumped = [targetEntity, recordId];
+        },
+      });
+      await waitForCondition(() => document.querySelectorAll("table tbody tr").length === 1);
+      await waitForCondition(() => document.querySelectorAll("table tbody td")[2]?.textContent === "Dana");
+
+      const relationCell = document.querySelectorAll("table tbody td")[2] as HTMLTableCellElement;
+      const relationButton = relationCell.querySelector("button");
+      assert.ok(relationButton, "with an onJumpToRecord callback, the relation cell must render as a real clickable button");
+
+      fireEvent.click(relationButton!);
+
+      assert.deepEqual(
+        jumped,
+        ["Courier", 9],
+        "clicking must resolve the stale-cased relationTo to the target entity's CURRENT casing (\"Courier\"), not pass the raw \"courier\" string through",
+      );
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+});
+
+/**
  * New in this round: a "Send WhatsApp" row action on any entity with a
  * recognized phone-like field (findPhoneField), wired to onSendWhatsApp --
  * the reverse direction of onJumpToRecord above. Before this, messaging a

@@ -12567,7 +12567,13 @@ test("the exported EntityView's relation cells jump to the related record via th
   const cellSrc = entityViewJsx.match(/function Cell\(\{ field, value, relationLabel, highlightQuery, onJumpToRecord \}\) \{[\s\S]*?\n\}\n/)?.[0];
   assert.ok(cellSrc, "expected to find the real generated Cell component");
   assert.match(cellSrc!, /if \(onJumpToRecord && field\.relationTo\) \{/);
-  assert.match(cellSrc!, /<button type="button" className="link-button" onClick=\{\(\) => onJumpToRecord\(field\.relationTo, Number\(value\)\)\}>/);
+  // Round 1533: field.relationTo can differ in letter case from its real
+  // target entity's name -- the button now resolves it against ALL_ENTITIES
+  // the same case-insensitive way established everywhere else in this file,
+  // instead of passing the raw (possibly stale-cased) relationTo straight
+  // through to onJumpToRecord.
+  assert.match(cellSrc!, /const resolvedTarget = ALL_ENTITIES\.find\(\(e\) => e\.name\.toLowerCase\(\) === field\.relationTo\.toLowerCase\(\)\);/);
+  assert.match(cellSrc!, /<button type="button" className="link-button" onClick=\{\(\) => onJumpToRecord\(targetEntity, Number\(value\)\)\}>/);
   // Without a jump handler (or without a relationTo target), a relation
   // cell must still fall back to plain, non-clickable text -- the same
   // guard the live-preview's own Cell uses.
