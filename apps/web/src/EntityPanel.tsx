@@ -4986,7 +4986,7 @@ export function EntityPanel({
           <p className="error" role="status">
             {loadError}
           </p>
-          <button type="button" className="secondary small" onClick={refresh}>
+          <button type="button" className="secondary small" onClick={() => refresh()}>
             {t("entity.retry")}
           </button>
         </div>

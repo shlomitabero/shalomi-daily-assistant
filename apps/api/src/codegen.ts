@@ -7695,7 +7695,7 @@ export function EntityView({ entity, highlightRecordId, onHighlightHandled, onJu
       {loadError && (
         <div className="error-retry-row">
           <p className="error" role="status">{loadError}</p>
-          <button type="button" onClick={refresh}>
+          <button type="button" onClick={() => refresh()}>
             Try again
           </button>
         </div>

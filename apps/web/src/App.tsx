@@ -3215,6 +3215,7 @@ function AppContent() {
             <BusinessTwinPanel
               projectId={project.id}
               projectName={project.name}
+              entities={orderedEntities}
               onClose={() => setShowTwin(false)}
               onJumpToEntity={(entityName, dateFilter) => {
                 setActiveEntity(entityName);

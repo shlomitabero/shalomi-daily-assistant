@@ -5,6 +5,7 @@ import { test } from "node:test";
 import { JSDOM } from "jsdom";
 import React from "react";
 import { act, cleanup, fireEvent, render } from "@testing-library/react";
+import type { Entity } from "@forge/shared";
 import type { BusinessTwin } from "./api.js";
 import { BusinessTwinPanel } from "./BusinessTwinPanel.js";
 import { LanguageProvider } from "./i18n/LanguageContext.js";
@@ -88,6 +89,7 @@ function mockTwinFetch() {
 function renderTwinPanel(
   onJumpToEntity: (entityName: string, dateFilter?: { fieldName: string; value: string }) => void,
   onJumpToRecord: (entityName: string, recordId: number) => void = () => {},
+  entities: Entity[] = [],
 ) {
   return render(
     React.createElement(
@@ -99,6 +101,7 @@ function renderTwinPanel(
         React.createElement(BusinessTwinPanel, {
           projectId: "proj1",
           projectName: "Test CRM",
+          entities,
           onClose: () => {},
           onJumpToEntity,
           onJumpToRecord,
@@ -1284,5 +1287,75 @@ test("BusinessTwinPanel's numericStats/overdueStats/dueSoonStats dashboard tiles
       /overflow-wrap:\s*anywhere/,
       "the Business Twin observations list (which can embed arbitrary entity/record labels) must declare overflow-wrap: anywhere for the same reason",
     );
+  });
+});
+
+/**
+ * Round 1532: unlike its sibling jump-capable panels (GlobalSearchPanel,
+ * WhatsAppPanel), this panel's `twin` state is fetched once on mount and
+ * never refreshed -- so a refine that recases an entity while the panel
+ * stays open leaves every stat-tile/observation entityName stale. Before
+ * this round's fix, every onJumpToEntity/onJumpToRecord call site passed
+ * that stale name straight through with no resolution against the live
+ * `entities` list at all (unlike GlobalSearchPanel's round-1480 lookup or
+ * WhatsAppPanel's round-1487 resolvedJumpTargetName). Simulates a refine
+ * completing while the panel is open by rerendering with the SAME entity
+ * recased in the `entities` prop (the live app's own contract: `twin`
+ * itself never changes, only `orderedEntities` does), then asserts the
+ * stat tile's click now resolves to the entity's current casing.
+ */
+test("BusinessTwinPanel's per-entity stat tile calls onJumpToEntity with the entity's CURRENT casing, not twin's stale snapshot, after a refine recases it while the panel is still open", async () => {
+  await withJsdom(async () => {
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = mockTwinFetch() as typeof fetch;
+    const customerEntity: Entity = { name: "Customer", label: "Customers", fields: [{ name: "name", label: "Name", type: "text", required: true }] };
+    const orderEntity: Entity = { name: "Order", label: "Orders", fields: [{ name: "note", label: "Note", type: "text", required: false }] };
+    let jumpedToEntity: string | undefined;
+    try {
+      const { rerender } = renderTwinPanel((entityName) => {
+        jumpedToEntity = entityName;
+      }, () => {}, [customerEntity, orderEntity]);
+      await waitForCondition(() => document.querySelectorAll(".twin-stat-tile").length === 2);
+
+      // The refine's own completion: "Customer" is recased to "CUSTOMER",
+      // the same entity, same fields -- not removed, not replaced. `twin`
+      // itself is untouched (this panel never refetches it), exactly
+      // mirroring the live app's own contract (App.tsx's orderedEntities
+      // updates independently of this panel's own fetched state).
+      rerender(
+        React.createElement(
+          ThemeProvider,
+          null,
+          React.createElement(
+            LanguageProvider,
+            null,
+            React.createElement(BusinessTwinPanel, {
+              projectId: "proj1",
+              projectName: "Test CRM",
+              entities: [{ ...customerEntity, name: "CUSTOMER" }, orderEntity],
+              onClose: () => {},
+              onJumpToEntity: (entityName: string) => {
+                jumpedToEntity = entityName;
+              },
+              onJumpToRecord: () => {},
+            }),
+          ),
+        ),
+      );
+
+      const customerTile = Array.from(document.querySelectorAll(".twin-stat-tile")).find(
+        (el) => el.querySelector(".twin-stat-label")?.textContent === "Customers",
+      ) as HTMLButtonElement;
+      assert.ok(customerTile, "expected to find the Customer stat tile (still labeled from twin's own unchanged state)");
+      fireEvent.click(customerTile);
+
+      assert.equal(
+        jumpedToEntity,
+        "CUSTOMER",
+        "onJumpToEntity must receive the entity's CURRENT casing, not twin's stale pre-rename snapshot",
+      );
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
   });
 });

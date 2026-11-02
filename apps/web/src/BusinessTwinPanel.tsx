@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import type { Entity } from "@forge/shared";
 import { getBusinessTwin, type BusinessTwin } from "./api.js";
 import { formatNumberValue } from "./entityFormatting.js";
 import { useTranslation } from "./i18n/LanguageContext.js";
@@ -78,12 +79,26 @@ function TwinBarChart({
 export function BusinessTwinPanel({
   projectId,
   projectName,
+  entities,
   onClose,
   onJumpToEntity,
   onJumpToRecord,
 }: {
   projectId: string;
   projectName: string;
+  /**
+   * Round 1532: unlike its sibling jump-capable panels (GlobalSearchPanel,
+   * WhatsAppPanel), this panel's `twin` state is fetched once on mount and
+   * never refreshed -- so every entityName below is a snapshot that can
+   * go stale the instant a refine completing while this panel is still
+   * open case-renames the entity it belongs to. `entities` (the live,
+   * current-casing list) lets `resolvedJumpTargetName` below resolve back
+   * to the entity's real current name before handing it to
+   * onJumpToEntity/onJumpToRecord, the same fix round 1487
+   * (WhatsAppPanel) and round 1531 (GlobalSearchPanel) already applied to
+   * their own sibling jump targets.
+   */
+  entities: Entity[];
   onClose: () => void;
   /**
    * Round 1337: the optional second argument lets the overdue/dueSoon
@@ -128,6 +143,21 @@ export function BusinessTwinPanel({
   // already there.
   const [view, setView] = useState<"dashboard" | "report">("report");
   const dialogRef = useDialogFocusTrap<HTMLDivElement>(onClose);
+
+  /**
+   * Round 1532: see the `entities` prop's own doc comment above. Mirrors
+   * WhatsAppPanel.tsx's own round-1487 resolvedJumpTargetName exactly.
+   */
+  function resolvedJumpTargetName(entityName: string): string {
+    const entity = entities.find((e) => e.name === entityName) ?? entities.find((e) => e.name.toLowerCase() === entityName.toLowerCase());
+    return entity ? entity.name : entityName;
+  }
+  function resolvedJumpToEntity(entityName: string, dateFilter?: { fieldName: string; value: string }) {
+    onJumpToEntity(resolvedJumpTargetName(entityName), dateFilter);
+  }
+  function resolvedJumpToRecord(entityName: string, recordId: number) {
+    onJumpToRecord(resolvedJumpTargetName(entityName), recordId);
+  }
 
   function handleDownload() {
     if (!twin) return;
@@ -240,7 +270,7 @@ export function BusinessTwinPanel({
                   type="button"
                   className={e.count === 0 ? "twin-stat-tile twin-stat-tile-empty" : "twin-stat-tile"}
                   aria-label={t("twin.stat.jumpTo", { entity: e.label })}
-                  onClick={() => onJumpToEntity(e.name)}
+                  onClick={() => resolvedJumpToEntity(e.name)}
                 >
                   <div className="twin-stat-value">{e.count}</div>
                   <div className="twin-stat-label">{e.label}</div>
@@ -290,7 +320,7 @@ export function BusinessTwinPanel({
                       lang={lang}
                       entityName={d.entityName}
                       fieldName={d.fieldName}
-                      onJumpToEntity={onJumpToEntity}
+                      onJumpToEntity={resolvedJumpToEntity}
                     />
                   ))}
                   {(twin.numericStats.length > 0 || twin.overdueStats.length > 0 || twin.dueSoonStats.length > 0) && (
@@ -301,7 +331,7 @@ export function BusinessTwinPanel({
                           type="button"
                           className="twin-stat-tile"
                           aria-label={t("twin.stat.jumpTo", { entity: s.entityLabel })}
-                          onClick={() => onJumpToEntity(s.entityName)}
+                          onClick={() => resolvedJumpToEntity(s.entityName)}
                         >
                           <div className="twin-stat-value">{formatNumberValue(s.sum, lang)}</div>
                           <div className="twin-stat-label">{t("twin.dashboard.totalOf", { field: s.fieldLabel, entity: s.entityLabel })}</div>
@@ -316,7 +346,7 @@ export function BusinessTwinPanel({
                           type="button"
                           className="twin-stat-tile"
                           aria-label={t("twin.stat.jumpTo", { entity: s.entityLabel })}
-                          onClick={() => onJumpToEntity(s.entityName, { fieldName: s.fieldName, value: "overdue" })}
+                          onClick={() => resolvedJumpToEntity(s.entityName, { fieldName: s.fieldName, value: "overdue" })}
                         >
                           <div className="twin-stat-value">{formatNumberValue(s.overdueCount, lang)}</div>
                           <div className="twin-stat-label">{t("twin.dashboard.overdueOf", { field: s.fieldLabel, entity: s.entityLabel })}</div>
@@ -329,7 +359,7 @@ export function BusinessTwinPanel({
                           type="button"
                           className="twin-stat-tile"
                           aria-label={t("twin.stat.jumpTo", { entity: s.entityLabel })}
-                          onClick={() => onJumpToEntity(s.entityName, { fieldName: s.fieldName, value: "dueSoon" })}
+                          onClick={() => resolvedJumpToEntity(s.entityName, { fieldName: s.fieldName, value: "dueSoon" })}
                         >
                           <div className="twin-stat-value">{formatNumberValue(s.dueSoonCount, lang)}</div>
                           <div className="twin-stat-label">{t("twin.dashboard.dueSoonOf", { field: s.fieldLabel, entity: s.entityLabel })}</div>
@@ -358,7 +388,7 @@ export function BusinessTwinPanel({
                       <button
                         type="button"
                         className="link-button twin-observation-link"
-                        onClick={() => onJumpToEntity(twin.mostActiveObservation!.entityName)}
+                        onClick={() => resolvedJumpToEntity(twin.mostActiveObservation!.entityName)}
                       >
                         {twin.mostActiveObservation.text}
                       </button>
@@ -369,7 +399,7 @@ export function BusinessTwinPanel({
                       <button
                         type="button"
                         className="link-button twin-observation-link"
-                        onClick={() => onJumpToRecord(twin.mostLinkedRecord!.entityName, twin.mostLinkedRecord!.recordId)}
+                        onClick={() => resolvedJumpToRecord(twin.mostLinkedRecord!.entityName, twin.mostLinkedRecord!.recordId)}
                       >
                         {twin.mostLinkedRecord.text}
                       </button>
@@ -395,7 +425,7 @@ export function BusinessTwinPanel({
                         <button
                           type="button"
                           className="link-button twin-observation-link"
-                          onClick={() => onJumpToEntity(o.entityName, dateFilter)}
+                          onClick={() => resolvedJumpToEntity(o.entityName, dateFilter)}
                         >
                           {o.text}
                         </button>
