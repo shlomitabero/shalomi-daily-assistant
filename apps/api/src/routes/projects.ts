@@ -4358,6 +4358,27 @@ export function createProjectsRouter(
                 stillValid = false;
               }
             }
+            // Round 1492: this loop's own doc comment above claims every
+            // stored value that depends on the field's type gets
+            // re-validated here -- but fieldOperator (round 1491) didn't
+            // exist when this loop was written and was never added to it.
+            // "greater_than"/"less_than" are only ever accepted against a
+            // number/date field (validateAutomationFieldOperator); without
+            // this check, retyping a number/date field to anything else
+            // (e.g. text, to allow a free-text range like "60-90 min") left
+            // such a rule enabled but permanently dead -- matchesFieldOperator
+            // (automations.ts) computes Number(actual) for the new, no-longer-
+            // numeric stored value, gets NaN, and silently never fires again.
+            // The exact same "permanently, silently dead rule" failure shape
+            // this loop exists to prevent for fieldValue/toField, reopened by
+            // the one field it didn't know about.
+            if (stillValid && rule.fieldName === field.name && rule.fieldOperator) {
+              try {
+                validateAutomationFieldOperator(nextField, rule.fieldOperator);
+              } catch {
+                stillValid = false;
+              }
+            }
             if (!stillValid) {
               updateAutomationRule(db, project.id, rule.id, { enabled: false });
             }

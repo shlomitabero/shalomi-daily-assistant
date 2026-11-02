@@ -17313,6 +17313,94 @@ test("changing a field's type pre-build disables an automation rule whose toFiel
 });
 
 /**
+ * Round 1492: round 1100's own sweep above re-checks fieldValue and toField
+ * against a field's new type, but never fieldOperator (round 1491) -- it
+ * didn't exist yet when that loop was written. A field_equals rule's
+ * "greater_than"/"less_than" only have a real meaning for a number/date
+ * field (validateAutomationFieldOperator); retyping that field to text
+ * left such a rule enabled but permanently dead, since matchesFieldOperator
+ * (automations.ts) computes Number(actual) on free text and always gets
+ * NaN. (There's no false-positive-style "safe" type change to pair with
+ * this the way round 1100 paired text -> longtext for toField: number and
+ * date fieldValues use mutually incompatible string formats -- "50" isn't
+ * a valid date string and "2026-01-01" isn't a valid number -- so any
+ * number <-> date retype that keeps the operator valid always already
+ * breaks validateAutomationFieldValue's own, pre-existing format check
+ * first. Instead this mirrors round 1099's own false-positive style: a
+ * second, unrelated rule on a field nothing touched must not be disabled
+ * as collateral damage.)
+ */
+test("changing a field's type pre-build disables a field_equals automation rule whose fieldOperator the new type breaks, but leaves an unrelated rule untouched", async () => {
+  await withServer(async (baseUrl, db) => {
+    const email = `prebuild-type-change-disable-fieldoperator-${randomUUID()}@example.com`;
+    const token = await signup(baseUrl, email);
+    const owner = findUserByEmail(db, email)!;
+
+    const spec: ProductSpec = {
+      summary: "test",
+      personas: [],
+      roles: ["Admin"],
+      entities: [
+        {
+          name: "Lead",
+          fields: [
+            { name: "score", type: "number", required: true },
+            { name: "email", type: "text", required: false },
+          ],
+        },
+      ],
+      screens: [],
+      assumptions: [],
+      openQuestions: [],
+    };
+    const projectId = randomUUID();
+    insertProject(db, { id: projectId, ownerId: owner.id, name: "Leads", description: "test", spec });
+
+    const baseRule = { trigger: "field_equals", actionType: "send_whatsapp", toMode: "static", toNumber: "972500000000", messageTemplate: "New lead!" };
+
+    const createScoreRule = await fetch(`${baseUrl}/api/projects/${projectId}/entities/Lead/automations`, {
+      method: "POST",
+      headers: authHeaders(token),
+      body: JSON.stringify({ ...baseRule, fieldName: "score", fieldValue: "50", fieldOperator: "greater_than" }),
+    });
+    assert.equal(createScoreRule.status, 201);
+    const { rule: scoreRule } = (await createScoreRule.json()) as { rule: { id: string } };
+
+    // An unrelated rule (no fieldOperator, different field) that nothing
+    // about this PATCH should ever touch.
+    const createEmailRule = await fetch(`${baseUrl}/api/projects/${projectId}/entities/Lead/automations`, {
+      method: "POST",
+      headers: authHeaders(token),
+      body: JSON.stringify({ ...baseRule, fieldName: "email", fieldValue: "someone@example.com" }),
+    });
+    assert.equal(createEmailRule.status, 201);
+    const { rule: emailRule } = (await createEmailRule.json()) as { rule: { id: string } };
+
+    // Breaks the score rule's own fieldOperator (number -> text has no
+    // numeric ordering at all).
+    const breakRes = await fetch(`${baseUrl}/api/projects/${projectId}/entities/Lead/fields/score/type`, {
+      method: "PATCH",
+      headers: authHeaders(token),
+      body: JSON.stringify({ type: "text" }),
+    });
+    assert.equal(breakRes.status, 200);
+
+    const listRes = await fetch(`${baseUrl}/api/projects/${projectId}/automations`, { headers: authHeaders(token) });
+    const { rules } = (await listRes.json()) as { rules: { id: string; enabled: boolean }[] };
+    assert.equal(
+      rules.find((r) => r.id === scoreRule.id)!.enabled,
+      false,
+      "the rule whose fieldOperator the new type actually breaks (number -> text) must be disabled",
+    );
+    assert.equal(
+      rules.find((r) => r.id === emailRule.id)!.enabled,
+      true,
+      "an unrelated rule on a field nothing touched must not be disabled as collateral damage",
+    );
+  });
+});
+
+/**
  * Round 967: a schedule rule's scheduleTimeUtc/scheduleDaysOfWeek are now
  * wall-clock values in its own scheduleTimezone (see isScheduledRuleDue's
  * own doc comment, apps/api/src/automations.ts), not literal UTC --
