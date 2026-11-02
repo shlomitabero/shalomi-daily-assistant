@@ -81,6 +81,23 @@ real threats to a smaller, concrete list:
   severity findings block publishing, per vision section 38).
 - **CORS** is enabled broadly for local development; tighten before any
   real deployment (below).
+- **Inbound webhooks** (`POST /public/webhook-in/:projectId/:entityName`,
+  `apps/api/src/routes/webhookIn.ts`, round 1405) are the one route family
+  deliberately outside `requireAuth` -- an external sender (Stripe,
+  Typeform, a website's own form handler) has no session and can't be made
+  to attach an Authorization header, so a per-project, regeneratable token
+  in the URL's query string is the entire authentication, compared with
+  `timingSafeEqual` rather than `===`. Rate-limited to 60 requests/15min,
+  keyed by `projectId:token` together (not just the project id), so a
+  wrong guess against one project's token can't exhaust a real
+  integration's own budget for that same project (round 1109's own
+  reasoning, extended here round 1405). 404s uniformly for "project
+  doesn't exist", "entity doesn't exist", "no token generated yet", and
+  "token mismatch", mirroring the public calendar feed route's own
+  anti-enumeration convention below. Idempotency is opt-in via an
+  `X-Idempotency-Key` header (round 1418), and delivery/failure history is
+  tracked and surfaced to collaborators in `CollaboratorsPanel.tsx` (rounds
+  1456/1457/1471).
 
 ### Explicitly not addressed yet (do not assume these exist)
 
