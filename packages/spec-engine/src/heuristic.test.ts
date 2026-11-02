@@ -885,6 +885,44 @@ test("Donation/Shipment keywords avoid the substring collisions their obvious ph
   assert.ok(!warehouseHe.entities.some((e) => e.name === "Order"), "a warehouse/logistics description must not spuriously match Order via a 'משלוח' substring");
 });
 
+/**
+ * Regression test for round 1536's finding: unlike the test above (which
+ * carefully avoids the trigger word entirely, sidestepping the bug rather
+ * than fixing it), this uses the actual idiomatic fundraising phrase
+ * "גיוס כספים"/"גיוס תרומות" ("raising money"/"raising donations") that a
+ * real nonprofit app description would naturally use. JobApplicant's own
+ * bare "גיוס" keyword used to match as a plain substring of that phrase
+ * (Hebrew overloads the root for both "recruiting people" and "recruiting
+ * money"), spuriously fabricating a candidate-tracking entity for a
+ * description that has nothing to do with hiring. Fixed with a lookahead
+ * that excludes only the fundraising senses while still matching every
+ * real recruitment phrasing.
+ */
+test("JobApplicant's 'גיוס' keyword doesn't spuriously match the fundraising phrase 'גיוס כספים'/'גיוס תרומות'", async () => {
+  const provider = new HeuristicSpecProvider();
+
+  const fundraising = await provider.generate("אפליקציה לניהול גיוס כספים לעמותה שלנו, עם קמפיינים ותורמים.");
+  assert.ok(fundraising.entities.some((e) => e.name === "Donation"), "'גיוס כספים' must still match Donation");
+  assert.ok(
+    !fundraising.entities.some((e) => e.name === "JobApplicant"),
+    "'גיוס כספים' (fundraising) alone must not spuriously match JobApplicant via a bare 'גיוס' substring",
+  );
+
+  const donationDrive = await provider.generate("מערכת לגיוס תרומות לעמותת צדקה, כולל מעקב אחר קמפיינים ותורמים.");
+  assert.ok(
+    !donationDrive.entities.some((e) => e.name === "JobApplicant"),
+    "'גיוס תרומות' (fundraising) alone must not spuriously match JobApplicant via a bare 'גיוס' substring",
+  );
+
+  // The real recruitment term still works, with and without an object
+  // noun following it.
+  const recruiting = await provider.generate("אפליקציה לניהול תהליך הגיוס שלנו למשרות פתוחות");
+  assert.ok(recruiting.entities.some((e) => e.name === "JobApplicant"), "'הגיוס' must still match JobApplicant");
+
+  const recruitingStaff = await provider.generate("אפליקציה לגיוס עובדים חדשים לחברה שלנו");
+  assert.ok(recruitingStaff.entities.some((e) => e.name === "JobApplicant"), "'גיוס עובדים' must still match JobApplicant");
+});
+
 // Regression test for a real bug caught by actually running a build, not by
 // inspecting the keyword lists: "תורם"/"תורמים" ("donor"/"donors") both
 // *start with* "תור" ("turn/appointment", Appointment's own former bare

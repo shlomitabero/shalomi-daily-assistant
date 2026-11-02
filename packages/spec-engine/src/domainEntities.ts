@@ -1191,7 +1191,22 @@ export const DOMAIN_ENTITY_RULES: DomainEntityRule[] = [
   {
     keywords: [
       "job applicant", "job application", "recruitment", "hiring", "candidate tracking",
-      "מועמד", "מועמדים", "גיוס", "קורות חיים",
+      "מועמד", "מועמדים",
+      // Round 1536: bare "גיוס" is a substring of the equally ordinary
+      // fundraising phrases "גיוס כספים"/"גיוס תרומות" ("raising money"/
+      // "raising donations") -- Hebrew overloads this root for both
+      // "recruiting people" and "recruiting money" (already noted in the
+      // Donation entry's own doc comment below, which left "גיוס כספים"
+      // out of ITS keyword list for exactly this reason, but never
+      // stopped this bare keyword from matching that phrase in the first
+      // place). A nonprofit/fundraising description using this
+      // completely idiomatic phrasing spuriously fabricated a
+      // candidate-tracking JobApplicant entity. The lookahead excludes
+      // only the fundraising senses while still matching every real
+      // recruitment phrasing ("גיוס עובדים", "תהליך הגיוס", "גיוס
+      // מועמדים").
+      /גיוס(?!\s*(כספים|תרומות))/,
+      "קורות חיים",
     ],
     labelHe: "מועמדים",
     descriptionHe: "מי שהגיש מועמדות למשרה בעסק.",
@@ -1219,10 +1234,14 @@ export const DOMAIN_ENTITY_RULES: DomainEntityRule[] = [
   {
     // Two deliberate Hebrew keyword omissions here, both caught by an
     // actual build, not by inspection:
-    // 1. "גיוס כספים" (fundraising) is left out even though it's the
-    //    obvious phrase -- "גיוס" is JobApplicant's own keyword
-    //    (recruitment), and Hebrew overloads that root for both
-    //    "recruiting people" and "recruiting money".
+    // 1. "גיוס כספים" (fundraising) is left out -- "גיוס" is
+    //    JobApplicant's own keyword (recruitment), and Hebrew overloads
+    //    that root for both "recruiting people" and "recruiting money".
+    //    Round 1536 fixed JobApplicant's own "גיוס" to exclude this
+    //    phrase via a lookahead, so the underlying collision is now
+    //    closed at its source; this entity's own list still leaves the
+    //    phrase out since "תרומה"/"תרומות"/"עמותה" below already cover
+    //    the same descriptions without needing it.
     // 2. "תורם"/"תורמים" (donor/donors) are left out even though they're
     //    the literal Hebrew word for "donor" -- both words *start with*
     //    "תור" (turn/appointment), Appointment's own keyword, so a
