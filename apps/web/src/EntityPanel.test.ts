@@ -4879,6 +4879,47 @@ test("EntityPanel's calendar view 'Today' button is disabled on the current mont
 });
 
 /**
+ * Round 1505: the calendar view's own prev/next month buttons above (the
+ * subject of the 'Today' test just above) always rendered the same static
+ * '‹'/'›' glyphs regardless of text direction -- the identical defect
+ * class rounds 1373/1503/1504 already fixed for the resize handle,
+ * entity-tab ArrowKey nav, and column/tab move buttons respectively, but
+ * never ported to this sibling screen's own chevrons, since `CalendarView`
+ * (unlike its sibling `EntityPanel` function in the same file) never had
+ * `dir` threaded into it at all. Both buttons always move toward the same
+ * neighboring month regardless of direction, so under RTL the '.calendar-
+ * nav' flex row renders right-to-left and a left-pointing '‹' on "Previous
+ * month" visually points toward the month that comes AFTER it on screen --
+ * the opposite of what the arrow communicates.
+ */
+test("EntityPanel's calendar view prev/next month buttons swap their chevron glyph under RTL so the arrow still points toward the month it actually opens", async () => {
+  await withJsdom(async () => {
+    const today = isoDateToday();
+    const store: EntityRecord[] = [{ id: 1, title: "Dana's appointment", date: today }];
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = mockListRecordsFetch(store) as typeof fetch;
+    try {
+      localStorage.setItem("forge.lang", "he");
+      renderAppointmentPanel();
+      await waitForCondition(() => document.querySelector(".entity-toolbar") !== null);
+
+      const calendarToggle = document.querySelectorAll(".view-toggle-btn")[1] as HTMLButtonElement;
+      fireEvent.click(calendarToggle);
+      await waitForCondition(() => document.querySelector(".calendar-month-label") !== null);
+
+      const prevBtn = document.querySelector('[aria-label="החודש הקודם"]') as HTMLButtonElement;
+      const nextBtn = document.querySelector('[aria-label="החודש הבא"]') as HTMLButtonElement;
+      assert.ok(prevBtn, "expected the Hebrew-labeled previous-month button to render");
+      assert.ok(nextBtn, "expected the Hebrew-labeled next-month button to render");
+      assert.equal(prevBtn.textContent, "›", "under RTL, 'Previous month' must show the right-pointing chevron");
+      assert.equal(nextBtn.textContent, "‹", "under RTL, 'Next month' must show the left-pointing chevron");
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+});
+
+/**
  * New in this round: reaching a date more than a couple of months away (a
  * rental due in 11 months, a historical record from 2 years back) meant
  * clicking the prev/next chevron that many times -- the month label was

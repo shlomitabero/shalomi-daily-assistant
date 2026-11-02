@@ -5739,6 +5739,32 @@ test("the exported CalendarView renders a Today button wired to onToday and disa
 });
 
 /**
+ * Round 1505: the prev/next month buttons tested above always rendered
+ * the same static '‹'/'›' glyphs regardless of text direction -- the
+ * identical defect class rounds 1373/1503/1504 already fixed for the
+ * column-resize handle, entity-tab ArrowKey nav, and column/tab move
+ * buttons respectively, but never ported to this sibling screen's own
+ * chevrons. Under RTL, '.calendar-nav' (a plain flex row, no direction
+ * override) renders right-to-left, so a left-pointing '‹' on "Previous
+ * month" visually points toward the month that comes AFTER it on screen.
+ */
+test("the exported CalendarView's prev/next month buttons swap their chevron glyph under RTL", () => {
+  const entityViewJsx = generateExportFiles(project).find((f) => f.path === "web/src/components/EntityView.jsx")!.content;
+  const calendarViewSource = entityViewJsx.slice(entityViewJsx.indexOf("function CalendarView"), entityViewJsx.indexOf("function CalendarView") + 3500);
+
+  assert.match(
+    calendarViewSource,
+    /onClick=\{onPrevMonth\} aria-label="Previous month">\{document\.documentElement\.dir === "rtl" \? "›" : "‹"\}</,
+    "expected 'Previous month' to show the right-pointing chevron under RTL and the left-pointing one under LTR",
+  );
+  assert.match(
+    calendarViewSource,
+    /onClick=\{onNextMonth\} aria-label="Next month">\{document\.documentElement\.dir === "rtl" \? "‹" : "›"\}</,
+    "expected 'Next month' to show the left-pointing chevron under RTL and the right-pointing one under LTR",
+  );
+});
+
+/**
  * New in this round: the exported CalendarView had the identical gap the
  * live preview's own EntityPanel.tsx did -- reaching a date more than a
  * couple of months away meant clicking the prev/next chevron that many

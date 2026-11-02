@@ -4522,7 +4522,7 @@ function CalendarView({ entity, dateField, endDateField, records, month, onPrevM
     <div className="calendar-view">
       <div className="calendar-nav">
         <button type="button" className="calendar-today-btn" onClick={onToday} disabled={isCurrentMonth}>Today</button>
-        <button type="button" onClick={onPrevMonth} aria-label="Previous month">‹</button>
+        <button type="button" onClick={onPrevMonth} aria-label="Previous month">{document.documentElement.dir === "rtl" ? "›" : "‹"}</button>
         {showMonthPicker ? (
           <input
             type="month"
@@ -4540,7 +4540,7 @@ function CalendarView({ entity, dateField, endDateField, records, month, onPrevM
         ) : (
           <button type="button" className="calendar-month-label" onClick={() => setShowMonthPicker(true)} aria-label="Jump to month/year">{monthLabel}</button>
         )}
-        <button type="button" onClick={onNextMonth} aria-label="Next month">›</button>
+        <button type="button" onClick={onNextMonth} aria-label="Next month">{document.documentElement.dir === "rtl" ? "‹" : "›"}</button>
       </div>
       <div className="calendar-grid calendar-weekdays">
         {weekdayLabels.map((label, i) => (

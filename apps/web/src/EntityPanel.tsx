@@ -820,7 +820,7 @@ function CalendarView({
           {t("entity.calendar.today")}
         </button>
         <button type="button" onClick={onPrevMonth} aria-label={t("entity.calendar.prev")}>
-          ‹
+          {dirFor(lang) === "rtl" ? "›" : "‹"}
         </button>
         {showMonthPicker ? (
           <input
@@ -842,7 +842,7 @@ function CalendarView({
           </button>
         )}
         <button type="button" onClick={onNextMonth} aria-label={t("entity.calendar.next")}>
-          ›
+          {dirFor(lang) === "rtl" ? "‹" : "›"}
         </button>
       </div>
       <div className="calendar-grid calendar-weekdays">
