@@ -140,6 +140,13 @@ const POSITIVE_WORDS = [
   // entity's only use of "returned" is the rental-closed-successfully
   // sense, with no competing negative reading.
   "returned",
+  // round 1510: the built-in Review domain entity's own status enum (see
+  // spec-engine/domainEntities.ts: ["Published", "Pending", "Hidden"]) uses
+  // "Published" as its own successful-outcome state -- the review is live
+  // and visible, exactly analogous to "Approved"/"Confirmed" -- so a
+  // published review showed the same neutral gray badge as the merely-
+  // pending "Pending" state instead of reading as positive.
+  "published",
 ];
 // Round 1495: the Restaurant template's own Order status enum
 // (spec-engine/templates.ts: ["pending", "preparing", "served", "paid"])
@@ -252,6 +259,20 @@ const NEGATIVE_WORDS = [
   // literal substring, so it must be listed here too or it would be
   // misread as positive, the exact opposite of its meaning.
   "unreturned",
+  // round 1510: adding "published" to POSITIVE_WORDS just above introduces
+  // the identical negated-word collision round 458 already fixed for
+  // every other entry -- "unpublished" is a real, ordinary content-status
+  // term (a draft or retracted review/post that is NOT published) that
+  // contains "published" as a literal substring, so it must be listed
+  // here too or it would be misread as positive, the exact opposite of
+  // its meaning.
+  "unpublished",
+  // round 1510: the same Review domain entity's status enum also uses
+  // "Hidden" as its own negative-outcome state -- a review suppressed by
+  // moderation (e.g. spam/inappropriate), exactly analogous to "Denied"/
+  // "Rejected" -- so a hidden review showed the same neutral gray badge
+  // as "Pending" instead of reading as negative.
+  "hidden",
 ];
 
 const DATE_FORMAT = /^(\d{4})-(\d{2})-(\d{2})$/;

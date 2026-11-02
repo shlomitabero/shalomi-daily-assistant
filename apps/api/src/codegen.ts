@@ -2860,6 +2860,11 @@ const POSITIVE_WORDS = [
   // own successful-completion state, exactly analogous to "Sold"/"Rented"
   // (Property/Vehicle) and "Delivered" (Shipment).
   "returned",
+  // round 1510: mirrors the live preview's own entityFormatting.ts fix --
+  // the built-in Review domain entity's status enum uses "Published" as
+  // its own successful-outcome state, exactly analogous to "Approved"/
+  // "Confirmed".
+  "published",
 ];
 // round 458: the "un-"/"dis-" negated forms below must stay listed here too --
 // each contains a POSITIVE_WORDS entry as a literal substring ("unpaid"
@@ -2897,6 +2902,12 @@ const NEGATIVE_WORDS = [
   // "unreturned" contains a POSITIVE_WORDS entry ("returned") as a literal
   // substring.
   "unreturned",
+  // round 1510: mirrors the live preview's own entityFormatting.ts fix --
+  // "unpublished" contains a POSITIVE_WORDS entry ("published") as a
+  // literal substring. The same Review domain entity's status enum also
+  // uses "Hidden" as its own negative-outcome state, exactly analogous to
+  // "Denied"/"Rejected".
+  "unpublished", "hidden",
 ];
 // Round 1495: mirrors the live preview's own entityFormatting.ts fix --
 // the Restaurant template's Order status enum uses "served" as its own

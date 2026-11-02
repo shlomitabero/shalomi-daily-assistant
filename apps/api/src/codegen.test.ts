@@ -17596,6 +17596,27 @@ test("the exported EntityView's badgeTone classifies 'Returned' as positive, mat
 });
 
 /**
+ * Round 1510: the built-in Review domain entity's own status enum
+ * (["Published", "Pending", "Hidden"]) uses "Published" as its own
+ * successful-outcome state and "Hidden" as its own negative-outcome state
+ * -- both fell through to neutral gray in this exact exported copy too,
+ * mirroring the live-preview fix, including the negated-form collision
+ * guard ("Unpublished" must still read negative). Runs the real generated
+ * badgeTone, not a reference copy.
+ */
+test("the exported EntityView's badgeTone classifies 'Published' as positive and 'Hidden' as negative, matching Review's real status enum, without misreading the negated form", () => {
+  const entityViewJsx = generateExportFiles(project).find((f) => f.path === "web/src/components/EntityView.jsx")!.content;
+  const badgeToneSrc = entityViewJsx.match(/const POSITIVE_WORDS[\s\S]*?\nfunction badgeTone\(rawValue\) \{[\s\S]*?\n\}\n/)?.[0];
+  assert.ok(badgeToneSrc, "expected to find POSITIVE_WORDS/NEGATIVE_WORDS/badgeTone in generated output");
+
+  const badgeTone = new Function(`${badgeToneSrc}\nreturn badgeTone;`)() as (v: string) => string;
+  assert.equal(badgeTone("Published"), "positive");
+  assert.equal(badgeTone("Pending"), "neutral");
+  assert.equal(badgeTone("Hidden"), "negative");
+  assert.equal(badgeTone("Unpublished"), "negative");
+});
+
+/**
  * New in this round: the exported standalone app's entity table columns
  * were a fixed auto-layout width, unlike the live Forge AI preview (round
  * 185's own drag-to-resize columns, persisted per entity via

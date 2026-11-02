@@ -346,6 +346,14 @@ test("badgeTone recognizes 'Returned' as positive, matching Rental's real status
   assert.equal(badgeTone("Unreturned"), "negative");
 });
 
+test("badgeTone recognizes 'Published' as positive and 'Hidden' as negative, matching Review's real status enum, without misreading the negated form", () => {
+  assert.equal(badgeTone("Published"), "positive");
+  assert.equal(badgeTone("published"), "positive");
+  assert.equal(badgeTone("Pending"), "neutral");
+  assert.equal(badgeTone("Hidden"), "negative");
+  assert.equal(badgeTone("Unpublished"), "negative");
+});
+
 test("formatDateValue formats a valid ISO date per locale, and leaves an invalid one unchanged", () => {
   const result = formatDateValue("2026-03-15", "en");
   assert.match(result, /3\/15\/2026|15\/3\/2026/); // exact format is locale/engine-dependent, just confirm it parsed
