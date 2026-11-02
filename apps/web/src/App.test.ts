@@ -5324,6 +5324,55 @@ test("the project view's active EntityPanel is wrapped in a real tabpanel, linke
   );
 });
 
+/**
+ * Round 1503: round 1150's own roving-tabindex keyboard model (tested just
+ * above) always treated ArrowRight as "index + 1" and ArrowLeft as "index -
+ * 1", with no RTL awareness -- unlike EntityPanel.tsx's own column-resize
+ * keyboard handler (handleResizeKeyDown), which flips the sign via
+ * dirFor(lang)/computeResizedWidth whenever the layout is RTL. `.entity-
+ * tabs` is a plain flex-row (styles.css, no RTL override), so under
+ * dir="rtl" (Hebrew) the tabs render right-to-left: tab 0 sits on the
+ * visual right, not the left. ArrowRight is supposed to mean "move to the
+ * visually next tab", which in that layout is actually the PREVIOUS array
+ * entry -- the opposite of what the un-flipped handler did.
+ */
+test("the project view's entity-tab bar's ArrowLeft/ArrowRight keyboard navigation swaps meaning under RTL, mirroring EntityPanel.tsx's own column-resize RTL-aware direction flip", () => {
+  const appSrc = readFileSync(new URL("./App.tsx", import.meta.url), "utf8");
+  const entityTabsBlock = appSrc.match(/<nav className="entity-tabs"[^>]*>[\s\S]*?<\/nav>/);
+  assert.ok(entityTabsBlock, "expected the entity-tabs nav's own block");
+  const callbackMatch = entityTabsBlock![0].match(/onKeyDown=\{\(e\) => \{[\s\S]*?\n\s*\}\}/);
+  assert.ok(callbackMatch, "expected to find the tab bar's own onKeyDown callback");
+
+  const body = callbackMatch![0].replace(/^onKeyDown=\{/, "").replace(/\}$/, "");
+  const { code } = transformSync(`const fn = ${body};\nreturn fn;`, { loader: "ts" });
+
+  const orderedEntities = [{ name: "A" }, { name: "B" }, { name: "C" }];
+  function pressKey(entityName: string, key: string, dir: "ltr" | "rtl"): string | undefined {
+    let activated: string | undefined;
+    const fakeDocument = { getElementById: () => ({ focus: () => {} }) };
+    const fn = new Function("orderedEntities", "entity", "dir", "setActiveEntity", "document", `${code}`)(
+      orderedEntities,
+      { name: entityName },
+      dir,
+      (name: string) => (activated = name),
+      fakeDocument,
+    ) as (e: { key: string; preventDefault: () => void }) => void;
+    fn({ key, preventDefault: () => {} });
+    return activated;
+  }
+
+  // LTR (the existing, already-correct behavior): ArrowRight is array
+  // index+1, ArrowLeft is index-1 (wrapping).
+  assert.equal(pressKey("A", "ArrowRight", "ltr"), "B");
+  assert.equal(pressKey("A", "ArrowLeft", "ltr"), "C", "LTR ArrowLeft must wrap to the last entity");
+
+  // RTL: the visual order is reversed, so the two arrows' meaning must
+  // swap -- ArrowRight now moves to the previous array entry (visually
+  // next in a right-to-left layout), and ArrowLeft to the next one.
+  assert.equal(pressKey("A", "ArrowRight", "rtl"), "C", "RTL ArrowRight must move to the visually-next tab, the PREVIOUS array entry");
+  assert.equal(pressKey("A", "ArrowLeft", "rtl"), "B", "RTL ArrowLeft must move to the visually-previous tab, the NEXT array entry");
+});
+
 test("the decorative 3D hero cube's CSS uses real 3D transforms and respects prefers-reduced-motion", () => {
   const stylesCss = readFileSync(new URL("./styles.css", import.meta.url), "utf8");
 

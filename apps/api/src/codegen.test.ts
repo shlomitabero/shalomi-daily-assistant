@@ -20344,6 +20344,48 @@ test("the exported App.jsx's entity-tab bar implements the full WAI-ARIA Tabs ke
   }
 });
 
+/**
+ * Round 1503: ports the live Forge AI preview's own round-1503 fix -- the
+ * keyboard-model test above confirms the handler recognizes ArrowLeft/
+ * ArrowRight at all, but the un-fixed handler always treated ArrowRight as
+ * "array index + 1" regardless of layout direction, exactly like the
+ * resize handle's own pre-round-1373 bug this same file already fixed
+ * for the identical reason (a plain flex-row visually reverses under
+ * dir="rtl"). Extracts the real generated onKeyDown callback and runs it
+ * with document.documentElement.dir toggled, confirming the two arrows'
+ * meaning actually swaps under RTL rather than just asserting the keys
+ * are recognized.
+ */
+test("the exported App.jsx's entity-tab bar's ArrowLeft/ArrowRight keyboard navigation swaps meaning under RTL, mirroring this file's own resize-handle RTL-aware direction flip", () => {
+  const files = generateExportFiles(project);
+  const appJsx = files.find((f) => f.path === "web/src/App.jsx")!.content;
+
+  const entityTabsBlock = appJsx.match(/<nav role="tablist">[\s\S]*?<\/nav>/);
+  assert.ok(entityTabsBlock, "expected the entity-tab bar's own <nav> block");
+  const callbackMatch = entityTabsBlock![0].match(/onKeyDown=\{\(ev\) => \{[\s\S]*?\n\s*\}\}/);
+  assert.ok(callbackMatch, "expected to find the tab bar's own onKeyDown callback");
+  const body = callbackMatch![0].replace(/^onKeyDown=\{/, "").replace(/\}$/, "");
+
+  const orderedEntities = [{ name: "A" }, { name: "B" }, { name: "C" }];
+  function pressKey(entityName: string, key: string, dir: "ltr" | "rtl"): string | undefined {
+    let activated: string | undefined;
+    const fakeDocument = { documentElement: { dir }, getElementById: () => ({ focus: () => {} }) };
+    const fn = new Function("orderedEntities", "e", "setActive", "document", `const fn = ${body};\nreturn fn;`)(
+      orderedEntities,
+      { name: entityName },
+      (name: string) => (activated = name),
+      fakeDocument,
+    ) as (ev: { key: string; preventDefault: () => void }) => void;
+    fn({ key, preventDefault: () => {} });
+    return activated;
+  }
+
+  assert.equal(pressKey("A", "ArrowRight", "ltr"), "B", "LTR ArrowRight must be array index+1");
+  assert.equal(pressKey("A", "ArrowLeft", "ltr"), "C", "LTR ArrowLeft must wrap to the last entity");
+  assert.equal(pressKey("A", "ArrowRight", "rtl"), "C", "RTL ArrowRight must move to the visually-next tab, the PREVIOUS array entry");
+  assert.equal(pressKey("A", "ArrowLeft", "rtl"), "B", "RTL ArrowLeft must move to the visually-previous tab, the NEXT array entry");
+});
+
 /** Round 1150: see the keyboard-model test above for the full rationale -- this is the pattern's other missing half, the tab<->panel programmatic link. */
 test("the exported App.jsx's active entity View is wrapped in a real tabpanel, linked back to its own tab via aria-labelledby", () => {
   const files = generateExportFiles(project);

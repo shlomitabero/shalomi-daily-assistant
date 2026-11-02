@@ -508,7 +508,7 @@ export default function App() {
 }
 
 function AppContent() {
-  const { t, lang } = useTranslation();
+  const { t, lang, dir } = useTranslation();
   const [user, setUser] = useState<User | null>(null);
   const [checkingSession, setCheckingSession] = useState(true);
   const [waking, setWaking] = useState(false);
@@ -3063,12 +3063,25 @@ function AppContent() {
                         // already implies), wrapping at either end the same
                         // way a carousel would, so ArrowRight on the last tab
                         // returns to the first rather than doing nothing.
+                        //
+                        // Round 1503: ArrowRight/ArrowLeft must mean "move to
+                        // the visually next/previous tab", not "increment/
+                        // decrement the array index" -- the same distinction
+                        // EntityPanel.tsx's own column-resize keyboard handler
+                        // already makes via dirFor(lang)/computeResizedWidth's
+                        // dir-aware sign flip. .entity-tabs is a plain
+                        // flex-row, so under dir="rtl" (Hebrew) the tabs render
+                        // right-to-left and the WAI-ARIA Authoring Practices
+                        // Guide's own Tabs pattern calls for swapping the two
+                        // arrows' meaning in that case.
                         if (e.key !== "ArrowLeft" && e.key !== "ArrowRight" && e.key !== "Home" && e.key !== "End") return;
                         e.preventDefault();
                         const currentIndex = orderedEntities.findIndex((candidate) => candidate.name === entity.name);
                         let nextIndex = currentIndex;
-                        if (e.key === "ArrowRight") nextIndex = (currentIndex + 1) % orderedEntities.length;
-                        else if (e.key === "ArrowLeft") nextIndex = (currentIndex - 1 + orderedEntities.length) % orderedEntities.length;
+                        const visuallyNext = dir === "rtl" ? e.key === "ArrowLeft" : e.key === "ArrowRight";
+                        const visuallyPrevious = dir === "rtl" ? e.key === "ArrowRight" : e.key === "ArrowLeft";
+                        if (visuallyNext) nextIndex = (currentIndex + 1) % orderedEntities.length;
+                        else if (visuallyPrevious) nextIndex = (currentIndex - 1 + orderedEntities.length) % orderedEntities.length;
                         else if (e.key === "Home") nextIndex = 0;
                         else if (e.key === "End") nextIndex = orderedEntities.length - 1;
                         const nextEntity = orderedEntities[nextIndex];

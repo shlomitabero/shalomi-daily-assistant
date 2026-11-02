@@ -9564,8 +9564,16 @@ export default function App() {
                 ev.preventDefault();
                 const currentIndex = orderedEntities.findIndex((candidate) => candidate.name === e.name);
                 let nextIndex = currentIndex;
-                if (ev.key === "ArrowRight") nextIndex = (currentIndex + 1) % orderedEntities.length;
-                else if (ev.key === "ArrowLeft") nextIndex = (currentIndex - 1 + orderedEntities.length) % orderedEntities.length;
+                // Round 1503: mirrors the resize handle's own RTL-aware flip
+                // just above -- ArrowRight/ArrowLeft must mean "move to the
+                // visually next/previous tab", and under dir="rtl" the tab
+                // bar (a plain flex-row) renders right-to-left, so the two
+                // arrows' meaning swaps, same as the live preview's own fix.
+                const isRtl = document.documentElement.dir === "rtl";
+                const visuallyNext = isRtl ? ev.key === "ArrowLeft" : ev.key === "ArrowRight";
+                const visuallyPrevious = isRtl ? ev.key === "ArrowRight" : ev.key === "ArrowLeft";
+                if (visuallyNext) nextIndex = (currentIndex + 1) % orderedEntities.length;
+                else if (visuallyPrevious) nextIndex = (currentIndex - 1 + orderedEntities.length) % orderedEntities.length;
                 else if (ev.key === "Home") nextIndex = 0;
                 else if (ev.key === "End") nextIndex = orderedEntities.length - 1;
                 const nextEntity = orderedEntities[nextIndex];
