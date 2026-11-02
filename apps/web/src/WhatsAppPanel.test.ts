@@ -5615,6 +5615,113 @@ test("WhatsAppPanel does not let a stale persisted directionFilter hide messages
 });
 
 /**
+ * Round 1497: the exact same "stale filter traps the view with no visible
+ * recovery" shape the test above already confirms round 1464 fixed for
+ * directionFilter -- but that round left the sibling `search` text filter
+ * unguarded. Starts with 6 messages (> SEARCH_THRESHOLD, so the search box
+ * is visible), types a term that matches only one of them, then deletes
+ * that one matching message via its own real per-message delete button
+ * (dropping the count to 5, <= SEARCH_THRESHOLD, hiding the search box).
+ * The 5 remaining messages don't contain the leftover search term, so
+ * without the fix they'd all stay hidden with no control left to clear it.
+ */
+test("WhatsAppPanel does not let a stale search term hide every remaining message once the log shrinks back below the search box's own reveal threshold", async () => {
+  await withJsdom(async () => {
+    const originalFetch = globalThis.fetch;
+    const originalConfirm = globalThis.window.confirm;
+    globalThis.window.confirm = (() => true) as typeof window.confirm;
+    const store: WhatsAppMessageLogEntry[] = [
+      {
+        id: "unique-match",
+        direction: "in",
+        fromNumber: "972501234567",
+        toNumber: "972521112233",
+        body: "this one matches the search term",
+        matchedLabel: null,
+        matchedEntityName: null,
+        matchedRecordId: null,
+        status: "sent",
+        createdAt: new Date().toISOString(),
+      },
+      ...Array.from({ length: 5 }, (_, i) => ({
+        id: `plain-${i}`,
+        direction: "in" as const,
+        fromNumber: "972501234567",
+        toNumber: "972521112233",
+        body: `an ordinary message ${i}`,
+        matchedLabel: null,
+        matchedEntityName: null,
+        matchedRecordId: null,
+        status: "sent" as const,
+        createdAt: new Date().toISOString(),
+      })),
+    ];
+    globalThis.fetch = (async (input: string, init?: RequestInit) => {
+      const method = init?.method ?? "GET";
+      if (method === "GET" && input === "/api/projects/proj-search-shrink/integrations/whatsapp/status") {
+        return new Response(
+          JSON.stringify({ status: "connected", phoneNumber: "972501234567", qrDataUrl: null, error: null }),
+          { status: 200, headers: { "content-type": "application/json" } },
+        );
+      }
+      if (method === "GET" && input === "/api/projects/proj-search-shrink/integrations/whatsapp/messages") {
+        return new Response(JSON.stringify({ messages: store }), { status: 200, headers: { "content-type": "application/json" } });
+      }
+      const deleteMatch = /^\/api\/projects\/proj-search-shrink\/integrations\/whatsapp\/messages\/([^/]+)$/.exec(input);
+      if (method === "DELETE" && deleteMatch) {
+        const index = store.findIndex((m) => m.id === deleteMatch[1]);
+        store.splice(index, 1);
+        return new Response(null, { status: 204 });
+      }
+      throw new Error(`unexpected request ${method} ${input}`);
+    }) as typeof fetch;
+
+    try {
+      render(
+        React.createElement(
+          ThemeProvider,
+          null,
+          React.createElement(
+            LanguageProvider,
+            null,
+            React.createElement(WhatsAppPanel, {
+              projectId: "proj-search-shrink",
+              userId: "user1",
+              projectName: "Test Project",
+              onClose: () => {},
+              onJumpToEntity: () => {},
+              onJumpToRecord: () => {},
+              entities: [],
+              onCreateRecordFromMessage: () => {},
+            }),
+          ),
+        ),
+      );
+      await waitForCondition(() => document.querySelectorAll(".whatsapp-log-list li").length === 6);
+
+      const searchInput = document.querySelector(".whatsapp-log-search") as HTMLInputElement;
+      assert.ok(searchInput, "the search box must be visible with 6 messages");
+      fireEvent.change(searchInput, { target: { value: "matches the search term" } });
+      await waitForCondition(() => document.querySelectorAll(".whatsapp-log-list li").length === 1);
+
+      const deleteButton = document.querySelector(".whatsapp-log-delete") as HTMLButtonElement;
+      assert.ok(deleteButton, "expected a delete button on the one visible (matching) row");
+      fireEvent.click(deleteButton);
+
+      await waitForCondition(() => document.querySelector(".whatsapp-log-search") === null);
+      assert.equal(
+        document.querySelectorAll(".whatsapp-log-list li").length,
+        5,
+        "the 5 remaining ordinary messages must render even though a stale, no-longer-visible search term is still set, since the control that could clear it is hidden",
+      );
+    } finally {
+      globalThis.fetch = originalFetch;
+      globalThis.window.confirm = originalConfirm;
+    }
+  });
+});
+
+/**
  * New in this round (263): listWhatsAppMessages always capped at 50 with no
  * way to reach anything older -- once a real conversation passed that, the
  * rest of the log was permanently unreachable, with the count label itself

@@ -1166,7 +1166,18 @@ export function WhatsAppPanel({
   // threshold mirrors the control's own visibility exactly, so the
   // preference still re-applies correctly once the log grows past it again.
   const effectiveDirectionFilter = messages.length > SEARCH_THRESHOLD ? directionFilter : "all";
-  const visibleMessages = filterWhatsAppMessagesByDirection(filterWhatsAppMessages(messages, search), effectiveDirectionFilter);
+  // Round 1497: the exact same "stale persisted filter traps the view with
+  // no visible recovery" shape round 1464 just fixed for directionFilter
+  // above -- applies equally to this sibling, `search`, which round 1464
+  // left untouched. `search` is plain component state (not persisted), but
+  // the gap is identical either way: the search <input>/clear-button are
+  // only rendered while messages.length > SEARCH_THRESHOLD (just below),
+  // and nothing resets `search` when a delete or "Clear History" drops the
+  // count back to <= SEARCH_THRESHOLD while the panel stays mounted -- a
+  // leftover, no-longer-visible search term keeps silently filtering out
+  // every remaining message, with no control left on screen to clear it.
+  const effectiveSearch = messages.length > SEARCH_THRESHOLD ? search : "";
+  const visibleMessages = filterWhatsAppMessagesByDirection(filterWhatsAppMessages(messages, effectiveSearch), effectiveDirectionFilter);
 
   return (
     <div className="history-overlay">
