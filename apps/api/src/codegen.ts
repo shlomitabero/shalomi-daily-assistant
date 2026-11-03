@@ -2985,6 +2985,10 @@ const NEGATIVE_WORDS = [
   // uses "Hidden" as its own negative-outcome state, exactly analogous to
   // "Denied"/"Rejected".
   "unpublished", "hidden",
+  // round 1577: mirrors the live preview's own entityFormatting.ts fix --
+  // the built-in Courier domain entity's status enum uses "Offline" as
+  // its own negative-outcome state, exactly analogous to "Inactive".
+  "offline",
 ];
 // Round 1495: mirrors the live preview's own entityFormatting.ts fix --
 // the Restaurant template's Order status enum uses "served" as its own

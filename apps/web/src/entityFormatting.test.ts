@@ -376,6 +376,13 @@ test("badgeTone recognizes 'Published' as positive and 'Hidden' as negative, mat
   assert.equal(badgeTone("Unpublished"), "negative");
 });
 
+test("badgeTone recognizes 'Offline' as negative, matching Courier's real status enum, leaving 'Available'/'OnDelivery' neutral", () => {
+  assert.equal(badgeTone("Available"), "neutral");
+  assert.equal(badgeTone("OnDelivery"), "neutral");
+  assert.equal(badgeTone("Offline"), "negative");
+  assert.equal(badgeTone("offline"), "negative");
+});
+
 test("formatDateValue formats a valid ISO date per locale, and leaves an invalid one unchanged", () => {
   const result = formatDateValue("2026-03-15", "en");
   assert.match(result, /3\/15\/2026|15\/3\/2026/); // exact format is locale/engine-dependent, just confirm it parsed

@@ -18112,6 +18112,25 @@ test("the exported EntityView's badgeTone classifies 'Published' as positive and
 });
 
 /**
+ * Round 1577: the built-in Courier domain entity's own status enum
+ * (["Available", "OnDelivery", "Offline"]) uses "Offline" as its own
+ * negative-outcome state, exactly analogous to "Inactive" -- it fell
+ * through to neutral gray in this exact exported copy too, mirroring
+ * the live-preview fix. Runs the real generated badgeTone, not a
+ * reference copy.
+ */
+test("the exported EntityView's badgeTone classifies 'Offline' as negative, matching Courier's real status enum, leaving 'Available'/'OnDelivery' neutral", () => {
+  const entityViewJsx = generateExportFiles(project).find((f) => f.path === "web/src/components/EntityView.jsx")!.content;
+  const badgeToneSrc = entityViewJsx.match(/const POSITIVE_WORDS[\s\S]*?\nfunction badgeTone\(rawValue\) \{[\s\S]*?\n\}\n/)?.[0];
+  assert.ok(badgeToneSrc, "expected to find POSITIVE_WORDS/NEGATIVE_WORDS/badgeTone in generated output");
+
+  const badgeTone = new Function(`${badgeToneSrc}\nreturn badgeTone;`)() as (v: string) => string;
+  assert.equal(badgeTone("Available"), "neutral");
+  assert.equal(badgeTone("OnDelivery"), "neutral");
+  assert.equal(badgeTone("Offline"), "negative");
+});
+
+/**
  * Round 1521: mirrors the live preview's own identical fix -- the built-in
  * Ticket domain entity's own status enum (["Open", "InProgress",
  * "Resolved", "Closed"]) and the built-in Case (legal case) domain

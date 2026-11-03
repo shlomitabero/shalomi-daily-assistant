@@ -292,6 +292,12 @@ const NEGATIVE_WORDS = [
   // "Rejected" -- so a hidden review showed the same neutral gray badge
   // as "Pending" instead of reading as negative.
   "hidden",
+  // Round 1577: the built-in Courier domain entity's own status enum
+  // uses "Offline" as its own negative-outcome state -- a courier who
+  // isn't available for a delivery, exactly analogous to "Inactive" --
+  // so an offline courier showed the same neutral gray badge as
+  // "Available"/"OnDelivery" instead of reading as negative.
+  "offline",
 ];
 
 const DATE_FORMAT = /^(\d{4})-(\d{2})-(\d{2})$/;
