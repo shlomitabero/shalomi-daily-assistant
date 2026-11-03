@@ -95,6 +95,37 @@ test('patchOpportunity rejects a non-finite cost field', () => {
   assert.equal(res.statusCode, 400);
 });
 
+test('patchOpportunity rejects an invalid riskLevel or dataQuality instead of storing it', () => {
+  __resetForTests();
+  const opp1 = insertOpportunity();
+  const res1 = makeRes();
+  patchOpportunity({ params: { id: opp1.id }, body: { riskLevel: 'veryhigh' } }, res1);
+  assert.equal(res1.statusCode, 400);
+
+  const opp2 = insertOpportunity();
+  const res2 = makeRes();
+  patchOpportunity({ params: { id: opp2.id }, body: { dataQuality: 'confirmed' } }, res2);
+  assert.equal(res2.statusCode, 400);
+});
+
+test('patchOpportunity accepts each valid riskLevel and dataQuality', () => {
+  __resetForTests();
+  for (const riskLevel of ['low', 'medium', 'high']) {
+    const opp = insertOpportunity();
+    const res = makeRes();
+    patchOpportunity({ params: { id: opp.id }, body: { riskLevel } }, res);
+    assert.equal(res.statusCode, 200);
+    assert.equal(res.body.opportunity.riskLevel, riskLevel);
+  }
+  for (const dataQuality of ['unknown', 'estimated', 'verified']) {
+    const opp = insertOpportunity();
+    const res = makeRes();
+    patchOpportunity({ params: { id: opp.id }, body: { dataQuality } }, res);
+    assert.equal(res.statusCode, 200);
+    assert.equal(res.body.opportunity.dataQuality, dataQuality);
+  }
+});
+
 test('patchOpportunity rejects a null or non-positive priceUSD — a product always has a real price', () => {
   __resetForTests();
   const opp = insertOpportunity();

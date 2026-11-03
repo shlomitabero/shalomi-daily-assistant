@@ -64,12 +64,29 @@ function isFiniteOrNullish(value) {
   return value == null || (typeof value === 'number' && Number.isFinite(value));
 }
 
+const VALID_RISK_LEVELS = ['low', 'medium', 'high'];
+const VALID_DATA_QUALITIES = ['unknown', 'estimated', 'verified'];
+
 export function patchOpportunity(req, res) {
   const opportunity = db.opportunities.get(req.params.id);
   if (!opportunity) return res.status(404).json({ error: 'not found' });
   const patch = {};
   for (const field of EDITABLE_FIELDS) {
     if (field in (req.body ?? {})) patch[field] = req.body[field];
+  }
+
+  // Every other editable field here is validated before being stored —
+  // these two were the exception, with no check at all. Nothing crashes on
+  // an invalid value (ranking.js's weight lookups already fall back safely
+  // for an unrecognized key), but a stray value here would still silently
+  // get the wrong risk/quality weight in the ranking score with no error
+  // telling the caller why, rather than being rejected at the door like
+  // every other field on this same endpoint.
+  if ('riskLevel' in patch && !VALID_RISK_LEVELS.includes(patch.riskLevel)) {
+    return res.status(400).json({ error: `riskLevel must be one of ${VALID_RISK_LEVELS.join(', ')}` });
+  }
+  if ('dataQuality' in patch && !VALID_DATA_QUALITIES.includes(patch.dataQuality)) {
+    return res.status(400).json({ error: `dataQuality must be one of ${VALID_DATA_QUALITIES.join(', ')}` });
   }
 
   if ('revenueEstimate' in patch && patch.revenueEstimate !== null) {
