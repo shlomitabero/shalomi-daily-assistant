@@ -151,6 +151,7 @@ export interface BaileysIncomingMessage {
     declinePaymentRequestMessage?: Record<string, never>;
     cancelPaymentRequestMessage?: Record<string, never>;
     invoiceMessage?: { note?: string };
+    albumMessage?: { expectedImageCount?: number; expectedVideoCount?: number };
     viewOnceMessage?: { message?: BaileysIncomingMessage["message"] };
     viewOnceMessageV2?: { message?: BaileysIncomingMessage["message"] };
     viewOnceMessageV2Extension?: { message?: BaileysIncomingMessage["message"] };
@@ -631,6 +632,24 @@ function describeIncomingMessage(message: BaileysIncomingMessage["message"]): st
   // noteMessage). Previously fell through to the final `return null`
   // below and vanished with zero trace.
   if (message.invoiceMessage) return message.invoiceMessage.note ? `[Invoice] ${message.invoiceMessage.note}` : "[Invoice]";
+  // Round 1581: WhatsApp's native multi-select "share several photos/videos
+  // together" action sends one albumMessage header (fields:
+  // expectedImageCount/expectedVideoCount) alongside the individual
+  // imageMessage/videoMessage items, which were already logged fine on their
+  // own. Confirmed against the installed Baileys source, not just its
+  // protobuf types (the exact gap round 1580 found with
+  // pollCreationMessageV4): albumMessage is a plain top-level Message field,
+  // not an IFutureProofMessage wrapper, so none of getFutureProofMessage's
+  // exclusions apply here; Baileys' own send path
+  // (lib/Utils/messages.js's generateWAMessageContent) actively builds and
+  // sends this exact field when message.album is set, so it is a real,
+  // exercised feature on the wire, not a reserved/unused protobuf slot.
+  // Previously fell through to the final `return null` below and vanished
+  // from the message log with zero trace.
+  if (message.albumMessage) {
+    const total = (message.albumMessage.expectedImageCount ?? 0) + (message.albumMessage.expectedVideoCount ?? 0);
+    return `[Album] ${total} item${total === 1 ? "" : "s"}`;
+  }
   return null;
 }
 

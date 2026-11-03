@@ -2269,6 +2269,41 @@ test("incoming WhatsApp invoice messages are logged with their note instead of b
 });
 
 /**
+ * Round 1581: WhatsApp's native multi-select "share several photos/videos
+ * together" action sends one albumMessage header (expectedImageCount/
+ * expectedVideoCount) alongside the individual imageMessage/videoMessage
+ * items -- confirmed directly against the installed Baileys source that
+ * this is a plain top-level Message field (not an IFutureProofMessage
+ * wrapper) that Baileys' own send path actively builds and sends.
+ */
+test("incoming WhatsApp album header messages are logged with their item count instead of being silently dropped", async () => {
+  const { manager, createdSockets, db } = setupManager();
+  insertProject(db, project);
+  applyMigrations(db, project.id, project.spec);
+  markProjectBuilt(db, project.id);
+
+  await manager.connect(project.id);
+  createdSockets[0].emitConnectionUpdate({ connection: "open" });
+
+  createdSockets[0].emitMessagesUpsert({
+    type: "notify",
+    messages: [
+      { key: { remoteJid: "972501234567@s.whatsapp.net", fromMe: false }, message: { albumMessage: { expectedImageCount: 3, expectedVideoCount: 1 } } },
+      { key: { remoteJid: "972501234567@s.whatsapp.net", fromMe: false }, message: { albumMessage: { expectedImageCount: 1 } } },
+    ],
+  });
+
+  // listWhatsAppMessages orders newest-first, the reverse of emission order.
+  const { messages: albumMessages } = listWhatsAppMessages(db, project.id);
+  assert.equal(albumMessages.length, 2);
+  assert.equal(albumMessages[0].body, "[Album] 1 item");
+  assert.equal(albumMessages[1].body, "[Album] 4 items");
+  for (const m of albumMessages) {
+    assert.equal(m.direction, "in", "every placeholder row must still be a real, matched-against incoming message, not metadata");
+  }
+});
+
+/**
  * Round 1554: WhatsApp's "video note" (the circular, Instagram-style clip
  * sent by switching the compose bar's mic into video-recording mode) was
  * previously dropped with zero trace -- round 785 handled plain
