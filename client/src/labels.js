@@ -73,3 +73,28 @@ const SOURCE_LABEL = {
 export function sourceLabel(source) {
   return SOURCE_LABEL[source] ?? source;
 }
+
+// opportunity.feasibility.missing (engine/feasibility.js) is a list of raw
+// field keys ('revenueEstimate', 'cost:paymentProcessing') — OpportunityDetail
+// showed this verbatim ("חסר מידע: revenueEstimate, cost:paymentProcessing"),
+// English technical keys dropped into an otherwise all-Hebrew explanation
+// with no indication of what they mean or what to do about them.
+const MISSING_FIELD_LABEL = {
+  revenueEstimate: 'הערכת הכנסה — אין ביקוש אמיתי מחובר, יש להזין הערכה משלך',
+};
+const MISSING_COST_LABEL = {
+  aiUsage: 'עלות AI',
+  paymentProcessing: 'עמלת סליקה',
+};
+
+export function missingFieldLabel(field) {
+  if (MISSING_FIELD_LABEL[field]) return MISSING_FIELD_LABEL[field];
+  if (field.startsWith('cost:')) {
+    const costKey = field.slice('cost:'.length);
+    // A cost field this mapping doesn't know about yet (future addition)
+    // still shows its real key rather than a fabricated Hebrew phrase —
+    // honest and ungraceful beats a wrong-sounding translation.
+    return `${MISSING_COST_LABEL[costKey] ?? costKey} — לא ידוע עדיין`;
+  }
+  return field;
+}
