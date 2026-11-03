@@ -619,6 +619,7 @@ test("verify-code rejects a wrong code without consuming it, locks it out after 
         headers: { "content-type": "application/json" },
         body: JSON.stringify({ email, password: "correct-horse-battery" }),
       });
+      emailSender.sentTo.length = 0; // Round 1566: signup itself now also sends its own verification email -- only the login-code email below matters here.
       const loginRes = await fetch(`${baseUrl}/api/auth/login`, {
         method: "POST",
         headers: { "content-type": "application/json" },
