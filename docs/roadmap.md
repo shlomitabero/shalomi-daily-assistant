@@ -43293,6 +43293,20 @@ Full suite run: `packages/db` 328/328 clean. `apps/api` full suite clean except 
 
 **Topic status**: closes the restore half of the audit-trail gap round 1567 opened. `codegen.ts` parity does not apply -- confirmed via `grep -n checkpoint apps/api/src/codegen.ts` (zero matches): the exported standalone app has no Time Machine/checkpoint feature at all.
 
+### Round 1572: port round 1571's per-record pin feature to codegen.ts's exported EntityView
+
+Round 1571 deliberately deferred the exported standalone app's parity ("Scope note: codegen.ts parity is deliberately deferred to a follow-up round"). A fresh survey subagent confirmed the port is genuine and meaningful before proposing it: `codegen.ts`'s generated `EntityView` already has an established per-entity (no project/user id -- this is a single-tenant exported app) localStorage preference-store pattern (`HIDDEN_COLUMNS_STORAGE_KEY`, case-insensitive entity-rename fallback via the shared `migrateEntityStoreKeyCase` helper), so a pin store slots in identically. Confirmed via `grep -n -i "pinnedRecord\|record-pin\|togglePin" apps/api/src/codegen.ts` returning zero hits prior to this round.
+
+**Implementation**, mirroring round 1571's own live-preview shape but scoped per-entity only (no projectId/userId segments, matching every sibling store in this file):
+- New `PINNED_RECORDS_STORAGE_KEY` ("forge_pinned_records") store with `getPinnedRecordIds`/`toggleRecordPinned`, plus a `sortRecordsByPinned` helper, added right after `HIDDEN_COLUMNS_STORAGE_KEY`'s own block.
+- `EntityView`: a `pinnedIds` state (loaded on mount and reloaded in the existing entity-switch `useEffect`, alongside `hiddenFields`'s own reload), and `visibleRecords`'s `useMemo` now wraps its return in `sortRecordsByPinned(..., pinnedIds)`.
+- A ⭐/☆ toggle `<button>` added as the LAST element of the row-actions `<td>` (after Delete) -- deliberately not first, mirroring round 1571's own rationale: a dozen+ existing tests in `codegen.test.ts` assume `.row-actions button`'s own first/`[0]` match is Edit.
+- No dedicated CSS needed: the existing `.row-actions button` styling already in the generated `styles.css` template covers it, the same choice round 1571 made for the live preview.
+
+**Test**: 1 new in `codegen.test.ts`, generating a real exported app via `generateExportFiles`/`writeGeneratedWebComponent`, rendering the real `EntityView.jsx`, clicking the real pin button, and asserting the table actually reorders (Yossi moves to row 0) and the pin round-trips through real `localStorage` (`{"Customer":[2]}`). Fail-before/pass-after verified directly via `git stash` on `codegen.ts` alone (fails with `'Delete' !== '☆'` -- the pin button genuinely doesn't exist yet -- then passes once restored).
+
+Full suite run: `apps/api` 1090/1091 passing; the one failure is the file-level SIGKILL this session already root-caused as a pre-existing cgroup-OOM flake in `codegen.test.ts` (confirmed the kill landed before even reaching this round's own new test -- re-ran that one test in isolation twice, both clean). `npm run build` clean. `apps/web` untouched, no suite run needed.
+
 ### Round 1571: add a per-record pin/favorite feature to EntityPanel
 
 A fresh survey subagent (backgrounded, independently re-verified before implementing) noted that the project level has had a ⭐/☆ pin-to-top feature since round 1003 (`pinnedProjects.ts`, the My Projects home screen), but it was never extended one level down to an entity's own records, even though almost every other per-row/per-view preference on this exact screen (view mode, sort, group-by, column order/width/visibility, collapsed groups, recent searches) already has a mature per-project+entity+user localStorage store of this same shape. Confirmed via `grep -rn -i "favoriteRecord\|starredRecord\|pinnedRecord"` across `apps/web/src`, `apps/api/src`, `packages/db/src` returning zero hits.
