@@ -69,6 +69,7 @@ export {
   getPasswordHash,
   updatePasswordHash,
   updateUserEmail,
+  markEmailVerified,
   DuplicateEmailError,
 } from "./users.js";
 export {
@@ -132,6 +133,15 @@ export {
   pruneExpiredPasswordResetTokens,
   type PasswordResetTokenRecord,
 } from "./passwordResetTokens.js";
+export {
+  ensureEmailVerificationTokensTable,
+  createEmailVerificationToken,
+  getEmailVerificationTokenByHash,
+  deleteEmailVerificationToken,
+  deleteEmailVerificationTokensForUser,
+  pruneExpiredEmailVerificationTokens,
+  type EmailVerificationTokenRecord,
+} from "./emailVerificationTokens.js";
 export {
   ensureAutomationRulesTable,
   ensureAutomationRunsTable,

@@ -52,10 +52,32 @@ export function ensureUsersTable(db: ForgeDatabase): void {
       expiresAt TEXT NOT NULL
     )
   `);
+  // Round 1566: backs the "verify your email" feature -- additive-only,
+  // same discipline as projects.ts's own calendarFeedToken/
+  // inboundWebhookToken columns. Unlike those (lazily null forever until
+  // first used), a row left null here would mean every account that
+  // existed before this feature shipped shows the "please verify your
+  // email" banner forever, with no way to tell them apart from a genuinely
+  // unverified new signup -- a false signal on every real, already-trusted
+  // existing account. Backfilling to createdAt, in the same migration step
+  // (not a separate pass), marks every pre-existing account as already
+  // verified; createUser below always inserts NULL for a brand-new row, so
+  // only a signup made AFTER this column existed can ever be genuinely
+  // unverified.
+  const userColumns = (db.prepare("PRAGMA table_info(users)").all() as { name: string }[]).map((c) => c.name);
+  if (!userColumns.includes("emailVerifiedAt")) {
+    db.exec("ALTER TABLE users ADD COLUMN emailVerifiedAt TEXT");
+    db.exec("UPDATE users SET emailVerifiedAt = createdAt WHERE emailVerifiedAt IS NULL");
+  }
 }
 
 function rowToUser(row: Record<string, unknown>): User {
-  return { id: row.id as string, email: row.email as string, createdAt: row.createdAt as string };
+  return {
+    id: row.id as string,
+    email: row.email as string,
+    createdAt: row.createdAt as string,
+    emailVerifiedAt: (row.emailVerifiedAt as string | null) ?? null,
+  };
 }
 
 export class DuplicateEmailError extends Error {}
@@ -69,13 +91,25 @@ export function createUser(
     throw new DuplicateEmailError(`An account with email "${user.email}" already exists`);
   }
   const createdAt = new Date().toISOString();
-  db.prepare("INSERT INTO users (id, email, passwordHash, createdAt) VALUES (?, ?, ?, ?)").run(
+  db.prepare("INSERT INTO users (id, email, passwordHash, createdAt, emailVerifiedAt) VALUES (?, ?, ?, ?, NULL)").run(
     user.id,
     user.email,
     user.passwordHash,
     createdAt,
   );
-  return { id: user.id, email: user.email, createdAt };
+  return { id: user.id, email: user.email, createdAt, emailVerifiedAt: null };
+}
+
+/**
+ * Round 1566: marks the account's email as verified -- called either when
+ * a real POST /auth/verify-email call consumes a genuine token, or
+ * immediately at signup when emailSender.configured is false (there is no
+ * way to verify on a deployment with no email provider, so treating a
+ * brand-new account as perpetually "unverified" with no usable resend
+ * would just be a dead-end banner; see routes/auth.ts's own signup route).
+ */
+export function markEmailVerified(db: ForgeDatabase, userId: string): void {
+  db.prepare("UPDATE users SET emailVerifiedAt = ? WHERE id = ?").run(new Date().toISOString(), userId);
 }
 
 export function findUserById(db: ForgeDatabase, id: string): User | undefined {

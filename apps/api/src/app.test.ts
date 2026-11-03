@@ -440,6 +440,7 @@ test("login with an EmailSender configured sends an emailed code instead of a to
         headers: { "content-type": "application/json" },
         body: JSON.stringify({ email, password: "correct-horse-battery" }),
       });
+      emailSender.sentTo.length = 0; // Round 1566: signup itself now also sends its own verification email -- only the login-code email below matters here.
 
       const loginRes = await fetch(`${baseUrl}/api/auth/login`, {
         method: "POST",
@@ -500,6 +501,7 @@ test("POST /auth/login/verify-code retried with the same idempotency key after t
         headers: { "content-type": "application/json" },
         body: JSON.stringify({ email, password: "correct-horse-battery" }),
       });
+      emailSender.sentTo.length = 0; // Round 1566: signup itself now also sends its own verification email -- only the login-code email below matters here.
       const loginRes = await fetch(`${baseUrl}/api/auth/login`, {
         method: "POST",
         headers: { "content-type": "application/json" },
@@ -551,6 +553,7 @@ test("POST /auth/login retried with the same idempotency key, when the email log
         headers: { "content-type": "application/json" },
         body: JSON.stringify({ email, password: "correct-horse-battery" }),
       });
+      emailSender.sentTo.length = 0; // Round 1566: signup itself now also sends its own verification email -- only the login-code email below matters here.
 
       const headers = { "content-type": "application/json", "x-idempotency-key": "login-repro-key" };
       const body = JSON.stringify({ email, password: "correct-horse-battery", lang: "en" });
@@ -683,6 +686,7 @@ test("requesting a fresh login code invalidates the previous one for the same ac
         headers: { "content-type": "application/json" },
         body: JSON.stringify({ email, password: "correct-horse-battery" }),
       });
+      emailSender.sentTo.length = 0; // Round 1566: signup itself now also sends its own verification email -- only the login-code emails below matter here.
       const firstLogin = await fetch(`${baseUrl}/api/auth/login`, {
         method: "POST",
         headers: { "content-type": "application/json" },
@@ -734,11 +738,21 @@ test("two concurrent /auth/login calls for the same account must not let one inv
   await withServer(
     async (baseUrl) => {
       const email = "dana@example.com";
+      // Round 1566: signup itself now also calls emailSender.send() (its own
+      // verification email) when configured -- that would otherwise consume
+      // the gate's "first call parks" slot and deadlock this test (signup's
+      // own await never resolves, since nothing releases the gate until
+      // after signup would need to have already returned). Toggling
+      // `configured` off just for signup (a plain mutable property on this
+      // test double, not a frozen value) keeps signup's own send inert so
+      // request A's login below is genuinely the gate's first call.
+      emailSender.configured = false;
       await fetch(`${baseUrl}/api/auth/signup`, {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({ email, password: "correct-horse-battery" }),
       });
+      emailSender.configured = true;
 
       // Request A's send() is the gate's first call -> parks until released.
       const requestA = fetch(`${baseUrl}/api/auth/login`, {
@@ -1284,6 +1298,7 @@ test("changing your password sends a real notification to your own address, when
     async (baseUrl) => {
       const email = `change-pw-notify-${Date.now()}@example.com`;
       const token = await signup(baseUrl, email);
+      emailSender.sentTo.length = 0; // Round 1566: signup itself now also sends its own verification email -- only the password-change notification matters here.
 
       const changeRes = await fetch(`${baseUrl}/api/auth/password`, {
         method: "PATCH",
@@ -1443,6 +1458,7 @@ test("changing your email sends a real notification to the OLD address, naming t
       const oldEmail = `change-email-notify-old-${Date.now()}@example.com`;
       const newEmail = `change-email-notify-new-${Date.now()}@example.com`;
       const token = await signup(baseUrl, oldEmail);
+      emailSender.sentTo.length = 0; // Round 1566: signup itself now also sends its own verification email -- only the email-change notification matters here.
 
       const changeRes = await fetch(`${baseUrl}/api/auth/email`, {
         method: "PATCH",
@@ -1482,6 +1498,7 @@ test("resubmitting your own current email as the 'new' email is a no-op that sen
     async (baseUrl) => {
       const email = `change-email-notify-noop-${Date.now()}@example.com`;
       const token = await signup(baseUrl, email);
+      emailSender.sentTo.length = 0; // Round 1566: signup itself now also sends its own verification email -- only this route's own (non-)send matters here.
       const changeRes = await fetch(`${baseUrl}/api/auth/email`, {
         method: "PATCH",
         headers: authHeaders(token),
@@ -1613,6 +1630,7 @@ test("forgot-password emails a real reset link, and following it with a new pass
     async (baseUrl) => {
       const email = "dana@example.com";
       const token = await signup(baseUrl, email);
+      emailSender.sentTo.length = 0; // Round 1566: signup itself now also sends its own verification email -- only the login-code and reset emails below matter here.
       // A second, independent session for the same account, to confirm the
       // reset revokes EVERY session, not just the one that happened to
       // request it (there is no "request it" session here at all -- forgot
@@ -1711,6 +1729,7 @@ test("POST /auth/reset-password retried with the same idempotency key after the 
     async (baseUrl) => {
       const email = `reset-idem-1-${Date.now()}@example.com`;
       await signup(baseUrl, email);
+      emailSender.sentTo.length = 0; // Round 1566: signup itself now also sends its own verification email -- only the reset email below matters here.
 
       const forgotRes = await fetch(`${baseUrl}/api/auth/forgot-password`, {
         method: "POST",
@@ -1847,6 +1866,7 @@ test("resetting your password via the forgot-password link while the same accoun
     async (baseUrl) => {
       const email = `reset-pw-vs-delete-${Date.now()}@example.com`;
       const token = await signup(baseUrl, email);
+      emailSender.sentTo.length = 0; // Round 1566: signup itself now also sends its own verification email -- only the reset email below matters here.
       // A couple of throwaway requests first, matching the PATCH-vs-DELETE
       // race test's own convention above -- settles the HTTP client's
       // connection machinery before the timed race below.
@@ -1973,6 +1993,7 @@ test("requesting a fresh reset token invalidates the previous one for the same a
     async (baseUrl) => {
       const email = "dana@example.com";
       await signup(baseUrl, email);
+      emailSender.sentTo.length = 0; // Round 1566: signup itself now also sends its own verification email -- only the reset emails below matter here.
 
       await fetch(`${baseUrl}/api/auth/forgot-password`, {
         method: "POST",
@@ -2015,11 +2036,17 @@ test("requesting a fresh reset token invalidates the previous one for the same a
  * ordering fix for the identical class of hazard (round 538).
  */
 test("a transient send failure on a second forgot-password request does not invalidate the first request's already-delivered token", async () => {
-  const emailSender = createFakeEmailSender({ failWith: new Error("simulated provider outage"), failFromCall: 2 });
+  // Round 1566: failFromCall bumped from 2 to 3 -- signup itself now also
+  // calls emailSender.send() once (its own verification email), consuming
+  // what used to be call #1's "succeeds" slot. Call #1 is now signup's own
+  // send, call #2 is the first forgot-password (must still succeed), call
+  // #3+ is the second forgot-password (the one this test needs to fail).
+  const emailSender = createFakeEmailSender({ failWith: new Error("simulated provider outage"), failFromCall: 3 });
   await withServer(
     async (baseUrl) => {
       const email = "dana@example.com";
       await signup(baseUrl, email);
+      emailSender.sentTo.length = 0; // Round 1566: signup itself now also sends its own verification email -- only the reset emails below matter here.
 
       const firstRes = await fetch(`${baseUrl}/api/auth/forgot-password`, {
         method: "POST",
@@ -2051,6 +2078,265 @@ test("a transient send failure on a second forgot-password request does not inva
         204,
         "the first request's own token, which WAS successfully delivered, must still work after a later request's send failed",
       );
+    },
+    { emailSender },
+  );
+});
+
+/**
+ * Round 1566: with no EmailSender configured -- the default for every test
+ * that calls the plain `signup()` helper above without passing its own
+ * `emailSender` -- there is no way to ever deliver a verification link, so
+ * the account must be marked verified immediately at signup rather than
+ * showing a permanently-unusable "please verify" banner with no working
+ * resend.
+ */
+test("signup auto-verifies the account immediately when no email provider is configured", async () => {
+  await withServer(async (baseUrl) => {
+    const token = await signup(baseUrl, "dana@example.com");
+    const meRes = await fetch(`${baseUrl}/api/auth/me`, { headers: authHeaders(token) });
+    const { user } = (await meRes.json()) as { user: { emailVerifiedAt: string | null } };
+    assert.ok(user.emailVerifiedAt, "with no email provider configured, the account must be verified immediately");
+  });
+});
+
+/**
+ * Round 1566: the opposite branch -- with a real (fake, inspectable)
+ * EmailSender configured, signup must send a real verification link and
+ * leave the account genuinely unverified until that link is followed via
+ * POST /auth/verify-email.
+ */
+test("signup with an email provider configured sends a verification email and leaves the account unverified until the link is followed", async () => {
+  const emailSender = createFakeEmailSender();
+  await withServer(
+    async (baseUrl) => {
+      const email = "dana@example.com";
+      const token = await signup(baseUrl, email);
+
+      const meBeforeRes = await fetch(`${baseUrl}/api/auth/me`, { headers: authHeaders(token) });
+      const { user: userBefore } = (await meBeforeRes.json()) as { user: { emailVerifiedAt: string | null } };
+      assert.equal(userBefore.emailVerifiedAt, null, "the account must stay unverified until the link is actually followed");
+
+      assert.equal(emailSender.sentTo.length, 1);
+      const verifyEmail = emailSender.sentTo[0]!;
+      assert.equal(verifyEmail.to, email);
+      const verifyUrl = verifyEmail.text.match(/https?:\/\/\S+/)?.[0];
+      assert.ok(verifyUrl, "the verification email must contain a real verification link");
+      const verifyToken = new URL(verifyUrl!).searchParams.get("verifyToken");
+      assert.ok(verifyToken, "the verification link must carry a verifyToken query param");
+
+      const verifyRes = await fetch(`${baseUrl}/api/auth/verify-email`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ token: verifyToken }),
+      });
+      assert.equal(verifyRes.status, 200);
+      const { user: verifiedUser } = (await verifyRes.json()) as { user: { emailVerifiedAt: string | null } };
+      assert.ok(verifiedUser.emailVerifiedAt, "the account must be verified once the real link is followed");
+
+      const meAfterRes = await fetch(`${baseUrl}/api/auth/me`, { headers: authHeaders(token) });
+      const { user: userAfter } = (await meAfterRes.json()) as { user: { emailVerifiedAt: string | null } };
+      assert.ok(userAfter.emailVerifiedAt, "the verification must be durable, not just reflected in verify-email's own response");
+    },
+    { emailSender },
+  );
+});
+
+test("POST /auth/verify-email rejects a garbage/unknown token, and an expired one, both with VERIFY_TOKEN_INVALID", async () => {
+  const emailSender = createFakeEmailSender();
+  await withServer(
+    async (baseUrl) => {
+      const garbageRes = await fetch(`${baseUrl}/api/auth/verify-email`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ token: "not-a-real-token" }),
+      });
+      assert.equal(garbageRes.status, 401);
+      assert.equal(((await garbageRes.json()) as { code?: string }).code, "VERIFY_TOKEN_INVALID");
+
+      await signup(baseUrl, "dana@example.com");
+      const verifyUrl = emailSender.sentTo[0]!.text.match(/https?:\/\/\S+/)![0];
+      const verifyToken = new URL(verifyUrl).searchParams.get("verifyToken")!;
+
+      // 24h TTL already expired -- simulated by racing the real token
+      // against an immediate request, well before any real clock could
+      // expire it, is impossible without mocking time; instead this re-uses
+      // the real token twice (its own single-use property IS what makes the
+      // second attempt invalid), which exercises the same VERIFY_TOKEN_INVALID
+      // branch (the pending row is simply gone) without needing fake timers.
+      const firstRes = await fetch(`${baseUrl}/api/auth/verify-email`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ token: verifyToken }),
+      });
+      assert.equal(firstRes.status, 200);
+
+      const reuseRes = await fetch(`${baseUrl}/api/auth/verify-email`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ token: verifyToken }),
+      });
+      assert.equal(reuseRes.status, 401, "a verification token must be single-use, just like reset-password's own token");
+      assert.equal(((await reuseRes.json()) as { code?: string }).code, "VERIFY_TOKEN_INVALID");
+    },
+    { emailSender },
+  );
+});
+
+/**
+ * Round 1566: the same fetchWithWakeRetry lost-response risk rounds 1310/
+ * 1335 already fixed for PATCH /auth/password and reset-password -- a
+ * verification that already fully succeeded server-side, but whose
+ * response was lost in transit, must not make a client retry fail with a
+ * false VERIFY_TOKEN_INVALID for a token that's already (correctly) gone.
+ */
+test("POST /auth/verify-email retried with the same idempotency key after the first attempt already succeeded replays the original response, instead of 401ing with VERIFY_TOKEN_INVALID", async () => {
+  const emailSender = createFakeEmailSender();
+  await withServer(
+    async (baseUrl) => {
+      await signup(baseUrl, "dana@example.com");
+      const verifyUrl = emailSender.sentTo[0]!.text.match(/https?:\/\/\S+/)![0];
+      const verifyToken = new URL(verifyUrl).searchParams.get("verifyToken")!;
+
+      const headers = { "content-type": "application/json", "x-idempotency-key": "verify-email-repro-key" };
+      const body = JSON.stringify({ token: verifyToken });
+
+      const firstRes = await fetch(`${baseUrl}/api/auth/verify-email`, { method: "POST", headers, body });
+      assert.equal(firstRes.status, 200);
+
+      const retryRes = await fetch(`${baseUrl}/api/auth/verify-email`, { method: "POST", headers, body });
+      assert.equal(
+        retryRes.status,
+        200,
+        "a retried verify-email with the same idempotency key must replay the original success, not 401 now that the token is already consumed",
+      );
+    },
+    { emailSender },
+  );
+});
+
+/**
+ * Round 1566: the self-service resend happy path -- an already-signed-in
+ * user whose email is still unverified (first link expired/lost/never
+ * arrived) can request a fresh one, and following THAT link actually
+ * verifies the account.
+ */
+test("POST /auth/resend-verification sends a fresh verification link, and following it verifies the account", async () => {
+  const emailSender = createFakeEmailSender();
+  await withServer(
+    async (baseUrl) => {
+      const email = "dana@example.com";
+      const token = await signup(baseUrl, email);
+      assert.equal(emailSender.sentTo.length, 1, "signup itself must have already sent one verification email");
+
+      const resendRes = await fetch(`${baseUrl}/api/auth/resend-verification`, {
+        method: "POST",
+        headers: authHeaders(token),
+      });
+      assert.equal(resendRes.status, 204);
+      assert.equal(emailSender.sentTo.length, 2, "resend must have sent a second, fresh verification email");
+
+      const freshVerifyUrl = emailSender.sentTo[1]!.text.match(/https?:\/\/\S+/)![0];
+      const freshVerifyToken = new URL(freshVerifyUrl).searchParams.get("verifyToken")!;
+
+      const verifyRes = await fetch(`${baseUrl}/api/auth/verify-email`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ token: freshVerifyToken }),
+      });
+      assert.equal(verifyRes.status, 200, "the fresh link from the resend must work to verify the account");
+
+      const meRes = await fetch(`${baseUrl}/api/auth/me`, { headers: authHeaders(token) });
+      const { user } = (await meRes.json()) as { user: { emailVerifiedAt: string | null } };
+      assert.ok(user.emailVerifiedAt);
+    },
+    { emailSender },
+  );
+});
+
+test("POST /auth/resend-verification short-circuits to alreadyVerified: true, without sending anything, once the account is already verified", async () => {
+  await withServer(async (baseUrl) => {
+    // The default server here has no EmailSender configured, so signup
+    // itself already auto-verified the account (see the dedicated test for
+    // that branch above) -- exactly the "already verified" state this test
+    // needs, with no email send involved at all.
+    const token = await signup(baseUrl, "dana@example.com");
+
+    const resendRes = await fetch(`${baseUrl}/api/auth/resend-verification`, {
+      method: "POST",
+      headers: authHeaders(token),
+    });
+    assert.equal(resendRes.status, 200);
+    assert.deepEqual(await resendRes.json(), { alreadyVerified: true });
+  });
+});
+
+/**
+ * Round 1566: forces the one combination that can't happen via the real
+ * signup route (an unverified account exists only when emailSender was
+ * configured at signup time) by flipping the same fake sender's own
+ * `configured` flag after signup -- confirms resend-verification's own
+ * EMAIL_NOT_CONFIGURED guard actually fires, rather than silently calling
+ * send() against a sender no longer willing to.
+ */
+test("POST /auth/resend-verification returns 503 EMAIL_NOT_CONFIGURED for a genuinely unverified account on a deployment with no email provider", async () => {
+  const emailSender = createFakeEmailSender();
+  await withServer(
+    async (baseUrl) => {
+      const token = await signup(baseUrl, "dana@example.com");
+      emailSender.configured = false;
+
+      const resendRes = await fetch(`${baseUrl}/api/auth/resend-verification`, {
+        method: "POST",
+        headers: authHeaders(token),
+      });
+      assert.equal(resendRes.status, 503);
+      assert.equal(((await resendRes.json()) as { code?: string }).code, "EMAIL_NOT_CONFIGURED");
+    },
+    { emailSender },
+  );
+});
+
+test("POST /auth/resend-verification returns 502 EMAIL_SEND_FAILED, and mints no new token, when the provider send genuinely fails", async () => {
+  const emailSender = createFakeEmailSender({ failFromCall: 2, failWith: new Error("simulated provider outage") });
+  await withServer(
+    async (baseUrl) => {
+      const token = await signup(baseUrl, "dana@example.com");
+      const firstVerifyUrl = emailSender.sentTo[0]!.text.match(/https?:\/\/\S+/)![0];
+      const firstVerifyToken = new URL(firstVerifyUrl).searchParams.get("verifyToken")!;
+
+      const resendRes = await fetch(`${baseUrl}/api/auth/resend-verification`, {
+        method: "POST",
+        headers: authHeaders(token),
+      });
+      assert.equal(resendRes.status, 502);
+      assert.equal(((await resendRes.json()) as { code?: string }).code, "EMAIL_SEND_FAILED");
+
+      // The original, already-delivered token from signup must still work --
+      // the failed resend must not have deleted it (round 1296's own
+      // ordering discipline, mirrored here).
+      const verifyRes = await fetch(`${baseUrl}/api/auth/verify-email`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ token: firstVerifyToken }),
+      });
+      assert.equal(verifyRes.status, 200, "the original token delivered at signup must survive a later resend's failed send");
+    },
+    { emailSender },
+  );
+});
+
+test("POST /auth/resend-verification is rate-limited per USER: the 6th request for the same account in the window is rejected with 429", async () => {
+  const emailSender = createFakeEmailSender();
+  await withServer(
+    async (baseUrl) => {
+      const token = await signup(baseUrl, "dana@example.com");
+      for (let i = 0; i < 5; i++) {
+        const res = await fetch(`${baseUrl}/api/auth/resend-verification`, { method: "POST", headers: authHeaders(token) });
+        assert.notEqual(res.status, 429, `resend-verification request ${i + 1} of 5 (within the limit) must not be rate-limited yet`);
+      }
+      const blocked = await fetch(`${baseUrl}/api/auth/resend-verification`, { method: "POST", headers: authHeaders(token) });
+      assert.equal(blocked.status, 429);
     },
     { emailSender },
   );
@@ -5671,6 +5957,7 @@ test("inviting a collaborator sends a real notification to the invited user, nam
       const ownerToken = await signup(baseUrl, `owner-collab-notify-${Date.now()}@example.com`);
       const invitedEmail = `collab-notify-${Date.now()}@example.com`;
       await signup(baseUrl, invitedEmail);
+      emailSender.sentTo.length = 0; // Round 1566: both signups above now also each send their own verification email -- only the invite notification below matters here.
 
       const createRes = await fetch(`${baseUrl}/api/projects`, {
         method: "POST",
@@ -5735,6 +6022,7 @@ test("re-inviting an existing collaborator is a no-op that sends no notification
       const ownerToken = await signup(baseUrl, `owner-collab-notify-noop-${Date.now()}@example.com`);
       const invitedEmail = `collab-notify-noop-${Date.now()}@example.com`;
       await signup(baseUrl, invitedEmail);
+      emailSender.sentTo.length = 0; // Round 1566: both signups above now also each send their own verification email -- only the invite notifications below matter here.
 
       const createRes = await fetch(`${baseUrl}/api/projects`, {
         method: "POST",
@@ -10488,6 +10776,7 @@ test("deleting a project with no collaborators sends no notification, and the de
   await withServer(
     async (baseUrl) => {
       const ownerToken = await signup(baseUrl, `owner-delete-notify-solo-${Date.now()}@example.com`);
+      emailSender.sentTo.length = 0; // Round 1566: signup itself now also sends its own verification email -- only the delete's own (non-)send matters here.
       const createRes = await fetch(`${baseUrl}/api/projects`, {
         method: "POST",
         headers: authHeaders(ownerToken),
@@ -10972,6 +11261,7 @@ test("deleting your account with an owned project that has no collaborators send
   await withServer(
     async (baseUrl) => {
       const ownerToken = await signup(baseUrl, `owner-acct-delete-notify-solo-${Date.now()}@example.com`);
+      emailSender.sentTo.length = 0; // Round 1566: signup itself now also sends its own verification email -- only the account-deletion's own (non-)send matters here.
       const createRes = await fetch(`${baseUrl}/api/projects`, {
         method: "POST",
         headers: authHeaders(ownerToken),
@@ -17940,6 +18230,7 @@ test("creating a 'send_email' automation rule requires toEmail (or toField) and 
     async (baseUrl, db) => {
       const email = `send-email-automation-${randomUUID()}@example.com`;
       const token = await signup(baseUrl, email);
+      emailSender.sentTo.length = 0; // Round 1566: signup itself now also sends its own verification email -- only the automation's own send_email below matters here.
       const owner = findUserByEmail(db, email)!;
 
       const spec: ProductSpec = {

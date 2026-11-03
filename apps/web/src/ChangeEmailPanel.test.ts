@@ -74,7 +74,7 @@ test("submitting a matching new email and confirmation calls the real changeEmai
   await withJsdom(async () => {
     const originalFetch = globalThis.fetch;
     const calls: { body: string }[] = [];
-    const updatedUser: User = { id: "u1", email: "dana.new@example.com", createdAt: "2024-01-01T00:00:00.000Z" };
+    const updatedUser: User = { id: "u1", email: "dana.new@example.com", createdAt: "2024-01-01T00:00:00.000Z", emailVerifiedAt: null };
     globalThis.fetch = (async (input: string, init?: RequestInit) => {
       if (init?.method === "PATCH" && input === "/api/auth/email") {
         calls.push({ body: init.body as string });
@@ -131,7 +131,7 @@ test("ChangeEmailPanel's submit button guards against a fast double-click, so on
         } else {
           await new Promise(() => {});
         }
-        const updatedUser: User = { id: "u1", email: "dana.new@example.com", createdAt: "2024-01-01T00:00:00.000Z" };
+        const updatedUser: User = { id: "u1", email: "dana.new@example.com", createdAt: "2024-01-01T00:00:00.000Z", emailVerifiedAt: null };
         return new Response(JSON.stringify({ user: updatedUser }), { status: 200, headers: { "content-type": "application/json" } });
       }
       throw new Error(`unexpected request ${init?.method ?? "GET"} ${input}`);
@@ -250,7 +250,7 @@ test("a new email differing from its confirmation only by letter case or surroun
   await withJsdom(async () => {
     const originalFetch = globalThis.fetch;
     const calls: { body: string }[] = [];
-    const updatedUser: User = { id: "u1", email: "dana.new@example.com", createdAt: "2024-01-01T00:00:00.000Z" };
+    const updatedUser: User = { id: "u1", email: "dana.new@example.com", createdAt: "2024-01-01T00:00:00.000Z", emailVerifiedAt: null };
     globalThis.fetch = (async (input: string, init?: RequestInit) => {
       if (init?.method === "PATCH" && input === "/api/auth/email") {
         calls.push({ body: init.body as string });

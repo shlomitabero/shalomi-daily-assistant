@@ -367,6 +367,36 @@ export function resetPassword(token: string, newPassword: string, lang?: "he" | 
   });
 }
 
+/**
+ * Round 1566: the link emailed by signup (or resendVerification below)
+ * carries this exact token as `?verifyToken=` -- see App.tsx's own
+ * mount-time effect that reads it from the URL and calls this,
+ * unconditionally of whether a session exists yet (the server route
+ * itself is unauthenticated, same as resetPassword above). Same
+ * `x-idempotency-key` mechanism resetPassword already sends: the token is
+ * single-use, deleted the moment it's consumed, so a lost response after
+ * a genuinely successful verification would otherwise make a retry see
+ * a false "expired or invalid" error.
+ */
+export function verifyEmail(token: string): Promise<{ user: User }> {
+  return request("/auth/verify-email", {
+    method: "POST",
+    headers: { "x-idempotency-key": crypto.randomUUID() },
+    body: JSON.stringify({ token }),
+  });
+}
+
+/**
+ * Round 1566: lets an already-signed-in user with a still-unverified
+ * email (user.emailVerifiedAt === null) request a fresh link -- e.g. the
+ * first one expired or never arrived. `lang` goes in the query string,
+ * the same shape CollaboratorsPanel's own removeCollaborator uses for an
+ * authenticated mutating call with no body of its own.
+ */
+export function resendVerification(lang: "he" | "en"): Promise<void> {
+  return request(`/auth/resend-verification?lang=${lang}`, { method: "POST" });
+}
+
 export function me(): Promise<{ user: User }> {
   return request("/auth/me");
 }

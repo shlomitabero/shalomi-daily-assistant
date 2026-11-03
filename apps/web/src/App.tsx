@@ -20,6 +20,7 @@ import {
   listWhatsAppMessages,
   logout,
   me,
+  resendVerification,
   revokeOtherSessions,
   streamBuild,
   streamRefine,
@@ -27,6 +28,7 @@ import {
   subscribeProjectGone,
   subscribeViewerDemoted,
   subscribeWakeStatus,
+  verifyEmail,
   type AutomationRuleView,
   type CollaboratorRole,
   type TemplateSummary,
@@ -767,6 +769,17 @@ function AppContent() {
   // of a separate success/error banner, fading back to idle a couple
   // seconds later (see the matching useEffect near the topbar JSX below).
   const [revokeOtherSessionsStatus, setRevokeOtherSessionsStatus] = useState<"idle" | "busy" | "done" | "failed">("idle");
+  // Round 1566: same idle/busy/done/failed copyStatus shape as
+  // revokeOtherSessionsStatus just above, for the "Resend verification
+  // email" button inside the unverified-email banner (see the mount-time
+  // verifyToken effect and the banner's own JSX further below).
+  const [resendVerificationStatus, setResendVerificationStatus] = useState<"idle" | "busy" | "done" | "failed">("idle");
+  // Dismissible independently of resendVerificationStatus -- closing the
+  // banner for this tab's session must not also discard whatever the
+  // button's own text is currently showing (e.g. right after a successful
+  // resend, closing the banner shouldn't retroactively look like nothing
+  // happened).
+  const [verifyBannerDismissed, setVerifyBannerDismissed] = useState(false);
   const [showDeleteAccount, setShowDeleteAccount] = useState(false);
   const [showShortcuts, setShowShortcuts] = useState(false);
   // Round 1446: EntityPanel's own onViewModeChange reports the active
@@ -1240,6 +1253,55 @@ function AppContent() {
       .catch(() => clearToken())
       .finally(() => setCheckingSession(false));
   }, []);
+
+  /**
+   * Round 1566: the link emailed by signup (or the resend button in the
+   * unverified-email banner below) carries this exact token as
+   * `?verifyToken=`, the same URL-param idiom AuthScreen.tsx's own
+   * resetToken already uses for POST /auth/reset-password's link. Handled
+   * here in App.tsx, not AuthScreen, and deliberately independent of
+   * `user`/`checkingSession`: the link is very often opened on the SAME
+   * browser that just signed up, which already has a live session by the
+   * time this runs, and the server route itself is unauthenticated (it
+   * consumes the token regardless of any session) so this must work
+   * whether or not `user` is set yet. Runs once, at mount -- a URL this
+   * app otherwise never reads any query param from outside AuthScreen's
+   * own resetToken.
+   */
+  const [verifyEmailStatus, setVerifyEmailStatus] = useState<"idle" | "verifying" | "success" | "error">("idle");
+  useEffect(() => {
+    const token = new URLSearchParams(window.location.search).get("verifyToken");
+    if (!token) return;
+    setVerifyEmailStatus("verifying");
+    verifyEmail(token)
+      .then(({ user: verifiedUser }) => {
+        setVerifyEmailStatus("success");
+        // Only merges into a CURRENTLY signed-in user whose id actually
+        // matches -- a different account's session on this same browser
+        // (or no session at all) must never have its own emailVerifiedAt
+        // overwritten by a token that verified someone else's address.
+        setUser((prev) => (prev && prev.id === verifiedUser.id ? verifiedUser : prev));
+      })
+      .catch(() => setVerifyEmailStatus("error"))
+      .finally(() => {
+        // Strips the now-consumed token from the URL, same one-liner
+        // AuthScreen.tsx's own handleBackToLogin/handleResetPasswordSubmit
+        // use for resetToken -- a refresh afterward must never re-attempt
+        // a single-use token the server already deleted.
+        window.history.replaceState(null, "", window.location.pathname + window.location.hash);
+      });
+  }, []);
+
+  // Fades the one-shot "email verified"/"link expired" result banner
+  // (rendered alongside wakingBanner below) back to nothing a few seconds
+  // after it appears -- the banner above (verifyEmailBanner, gated on
+  // user.emailVerifiedAt) is the lasting signal; this one is just the
+  // immediate feedback for the click that just happened.
+  useEffect(() => {
+    if (verifyEmailStatus !== "success" && verifyEmailStatus !== "error") return;
+    const timer = setTimeout(() => setVerifyEmailStatus("idle"), 5000);
+    return () => clearTimeout(timer);
+  }, [verifyEmailStatus]);
 
   /**
    * Round 1018: pinnedIds/seenShared's own lazy init (above) couldn't know
@@ -1721,6 +1783,47 @@ function AppContent() {
     </p>
   );
 
+  // Round 1566: the one-shot result of the mount-time verifyToken effect
+  // above -- shown whether or not `user` is set, since the link is just
+  // as likely to be opened on a browser with no live session. "idle"/
+  // "verifying" render nothing (a verification in flight needs no
+  // separate spinner on top of wakingBanner's own).
+  const verifyEmailResultBanner =
+    verifyEmailStatus === "success" ? (
+      <p className="success banner" role="status">
+        {t("account.verifyEmail.success")}
+      </p>
+    ) : verifyEmailStatus === "error" ? (
+      <p className="error banner" role="alert">
+        {t("account.verifyEmail.error")}
+      </p>
+    ) : null;
+
+  // Round 1566: purely informational in v1 -- nothing is gated on
+  // emailVerifiedAt, so this is a dismissible notice, not a blocking
+  // screen. Never shown for an account this deployment itself marked
+  // verified at signup time (no email provider configured) or that was
+  // backfilled as already-verified at migration time (see users.ts's own
+  // ensureUsersTable comment) -- user.emailVerifiedAt is only ever null
+  // for a genuinely new, still-unconfirmed signup.
+  const verifyEmailBanner = user && !user.emailVerifiedAt && !verifyBannerDismissed && (
+    <p className="verify-email banner" role="status">
+      {t("account.verifyEmail.banner")}{" "}
+      <button type="button" className="link-button" onClick={handleResendVerification} disabled={resendVerificationStatus === "busy"}>
+        {resendVerificationStatus === "done"
+          ? t("account.verifyEmail.resend.done")
+          : resendVerificationStatus === "failed"
+            ? t("account.verifyEmail.resend.failed")
+            : resendVerificationStatus === "busy"
+              ? t("account.verifyEmail.resend.busy")
+              : t("account.verifyEmail.resend")}
+      </button>{" "}
+      <button type="button" className="link-button" onClick={() => setVerifyBannerDismissed(true)}>
+        {t("account.verifyEmail.dismiss")}
+      </button>
+    </p>
+  );
+
   if (checkingSession) {
     return (
       <div className="app">
@@ -1736,6 +1839,7 @@ function AppContent() {
     return (
       <div className="app">
         {wakingBanner}
+        {verifyEmailResultBanner}
         <AuthScreen onAuthenticated={setUser} />
       </div>
     );
@@ -2173,6 +2277,32 @@ function AppContent() {
   }, [revokeOtherSessionsStatus]);
 
   /**
+   * Round 1566: the unverified-email banner's own "Resend" button. Own-
+   * click reentrancy guard mirrors handleRevokeOtherSessions just above,
+   * minus the confirm() dialog -- re-requesting a verification email is
+   * low-stakes (unlike revoking every other session), so no "are you
+   * sure" step.
+   */
+  async function handleResendVerification() {
+    if (resendVerificationStatus === "busy") return;
+    setResendVerificationStatus("busy");
+    try {
+      await resendVerification(lang);
+      setResendVerificationStatus("done");
+    } catch {
+      setResendVerificationStatus("failed");
+    }
+  }
+
+  // Same fade-back-to-idle shape as revokeOtherSessionsStatus's own effect
+  // just above.
+  useEffect(() => {
+    if (resendVerificationStatus === "idle" || resendVerificationStatus === "busy") return;
+    const timer = setTimeout(() => setResendVerificationStatus("idle"), 2000);
+    return () => clearTimeout(timer);
+  }, [resendVerificationStatus]);
+
+  /**
    * Runs once DeleteAccountPanel's own DELETE /auth/account call has
    * already succeeded server-side -- the account, its projects, and every
    * one of its sessions (including this one) are already gone by this
@@ -2326,6 +2456,8 @@ function AppContent() {
       )}
 
       {wakingBanner}
+      {verifyEmailResultBanner}
+      {verifyEmailBanner}
       {error && (
         <p className="error banner" role="alert">
           {error}

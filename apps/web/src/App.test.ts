@@ -3925,6 +3925,153 @@ test("App's handleRevokeOtherSessions is gated by window.confirm and its own bus
 });
 
 /**
+ * Round 1566: handleResendVerification's own click-busy guard, mirroring
+ * handleRevokeOtherSessions just above -- minus the confirm() dialog, since
+ * this action is low-stakes (re-requesting a verification link) and its own
+ * doc comment explicitly says so.
+ */
+test("App's handleResendVerification is gated by its own busy flag, and only calls the real resendVerification() API when idle", async () => {
+  const appSrc = readFileSync(new URL("./App.tsx", import.meta.url), "utf8");
+  const handlerMatch = appSrc.match(/ {2}async function handleResendVerification\(\) \{[\s\S]*?\n {2}\}\n/);
+  assert.ok(handlerMatch, "expected to find handleResendVerification in App.tsx");
+  const { code } = transformSync(handlerMatch![0], { loader: "ts" });
+
+  function run(opts: { status: "idle" | "busy"; apiFn: () => Promise<void> }) {
+    const state: { status: string } = { status: opts.status };
+    const fn = new Function(
+      "resendVerificationStatus",
+      "lang",
+      "resendVerification",
+      "setResendVerificationStatus",
+      `${code}\nreturn handleResendVerification;`,
+    )(opts.status, "en", opts.apiFn, (v: string) => (state.status = v)) as () => Promise<void>;
+    return { fn, state };
+  }
+
+  // Already busy: must return immediately, with no API call.
+  let apiCalls = 0;
+  const busy = run({ status: "busy", apiFn: async () => void (apiCalls += 1) });
+  await busy.fn();
+  assert.equal(apiCalls, 0, "must never call the API while a previous call is still in flight");
+  assert.equal(busy.state.status, "busy", "status must stay untouched while the busy guard short-circuits");
+
+  // Idle, API succeeds: must go busy, call the real API, then land on "done".
+  apiCalls = 0;
+  const succeeded = run({ status: "idle", apiFn: async () => void (apiCalls += 1) });
+  await succeeded.fn();
+  assert.equal(apiCalls, 1, "must call the real resendVerification() API exactly once");
+  assert.equal(succeeded.state.status, "done", "must land on the 'done' status once the API call succeeds");
+
+  // Idle, API rejects: must land on "failed", not throw.
+  const failed = run({
+    status: "idle",
+    apiFn: async () => {
+      throw new Error("network error");
+    },
+  });
+  await failed.fn();
+  assert.equal(failed.state.status, "failed", "must land on the 'failed' status when the API call rejects, instead of throwing");
+});
+
+/**
+ * Round 1566: the mount-time effect that reads `?verifyToken=` off the URL
+ * (the link signup/resend-verification emails) and consumes it against the
+ * real POST /auth/verify-email endpoint -- extracts the real effect
+ * callback straight out of App.tsx rather than reimplementing it, the same
+ * technique as the listProjects home-screen effect test above.
+ */
+test("App's verifyToken mount effect consumes the URL token, merges a successful verification into a matching signed-in user, and always strips the token from the URL", async () => {
+  const appSrc = readFileSync(new URL("./App.tsx", import.meta.url), "utf8");
+  const handlerMatch = appSrc.match(
+    / {2}useEffect\(\(\) => \{\n {4}const token = new URLSearchParams\(window\.location\.search\)\.get\("verifyToken"\);[\s\S]*?\n {2}\}, \[\]\);\n/,
+  );
+  assert.ok(handlerMatch, "expected to find the verifyToken mount effect in App.tsx");
+  const bodyMatch = handlerMatch![0].match(/useEffect\((\(\) => \{[\s\S]*?\})\, \[\]\);\n$/);
+  assert.ok(bodyMatch, "expected to extract the effect's own callback body");
+  const { code } = transformSync(bodyMatch![1], { loader: "ts" });
+
+  function run(opts: { search: string; verifyEmailFn: (token: string) => Promise<{ user: { id: string; emailVerifiedAt: string } }> }) {
+    const state: { status: string; user: { id: string; emailVerifiedAt: string | null } | null; replacedUrl: string | undefined } = {
+      status: "idle",
+      user: null,
+      replacedUrl: undefined,
+    };
+    const fakeWindow = {
+      location: { search: opts.search, pathname: "/", hash: "" },
+      history: { replaceState: (_s: unknown, _t: string, url: string) => (state.replacedUrl = url) },
+    };
+    const fn = new Function(
+      "window",
+      "verifyEmail",
+      "setVerifyEmailStatus",
+      "setUser",
+      `return ${code}`,
+    )(fakeWindow, opts.verifyEmailFn, (v: string) => (state.status = v), (updater: (prev: unknown) => unknown) => (state.user = updater(state.user) as typeof state.user)) as () => void;
+    return { fn, state };
+  }
+
+  // No token at all in the URL: must do nothing -- no status change, no API call, no URL rewrite.
+  {
+    let apiCalls = 0;
+    const { fn, state } = run({
+      search: "",
+      verifyEmailFn: async () => {
+        apiCalls += 1;
+        return { user: { id: "u1", emailVerifiedAt: "2024-01-01T00:00:00.000Z" } };
+      },
+    });
+    fn();
+    assert.equal(apiCalls, 0, "must never call verifyEmail when there is no token in the URL");
+    assert.equal(state.status, "idle");
+    assert.equal(state.replacedUrl, undefined, "must never touch the URL when there was no token to strip");
+  }
+
+  // A real token, and a CURRENTLY signed-in user whose id matches: must merge the verified user in, and strip the URL.
+  {
+    const { fn, state } = run({
+      search: "?verifyToken=real-token",
+      verifyEmailFn: async (token) => {
+        assert.equal(token, "real-token");
+        return { user: { id: "u1", emailVerifiedAt: "2024-01-01T00:00:00.000Z" } };
+      },
+    });
+    state.user = { id: "u1", emailVerifiedAt: null };
+    fn();
+    await new Promise((r) => setTimeout(r, 0));
+    assert.equal(state.status, "success");
+    assert.equal(state.user?.emailVerifiedAt, "2024-01-01T00:00:00.000Z", "a matching signed-in user must have the verified fields merged in");
+    assert.equal(state.replacedUrl, "/", "the now-consumed token must be stripped from the URL");
+  }
+
+  // A real token, but a DIFFERENT signed-in user's session on this browser: must never overwrite that unrelated user's own state.
+  {
+    const { fn, state } = run({
+      search: "?verifyToken=real-token",
+      verifyEmailFn: async () => ({ user: { id: "someone-else", emailVerifiedAt: "2024-01-01T00:00:00.000Z" } }),
+    });
+    state.user = { id: "u1", emailVerifiedAt: null };
+    fn();
+    await new Promise((r) => setTimeout(r, 0));
+    assert.equal(state.status, "success", "the link itself still succeeded");
+    assert.deepEqual(state.user, { id: "u1", emailVerifiedAt: null }, "a different signed-in user's own state must never be overwritten by someone else's verification");
+  }
+
+  // An expired/invalid token: must land on "error", and still strip the URL.
+  {
+    const { fn, state } = run({
+      search: "?verifyToken=stale-token",
+      verifyEmailFn: async () => {
+        throw new Error("VERIFY_TOKEN_INVALID");
+      },
+    });
+    fn();
+    await new Promise((r) => setTimeout(r, 0));
+    assert.equal(state.status, "error");
+    assert.equal(state.replacedUrl, "/", "an invalid token must still be stripped from the URL, same as a successful one");
+  }
+});
+
+/**
  * Round 404: self-service "leave project" (CollaboratorsPanel's own
  * handleLeave, wired here via the onLeft prop) ends in the exact same
  * state for this user as the three paths rounds 390/392/403 already
@@ -6166,8 +6313,13 @@ test("App's checkUnread reads tRef.current fresh on every tick instead of closin
  */
 test("App.tsx's own top-level error banner carries role=\"alert\", the same convention every other error surface in this app already follows", () => {
   const appSrc = readFileSync(new URL("./App.tsx", import.meta.url), "utf8");
-  const bannerMatch = appSrc.match(/\{wakingBanner\}\s*\{error && \([\s\S]*?\)\}/);
-  assert.ok(bannerMatch, "expected to find the top-level error banner's own JSX block, right after wakingBanner");
+  // Round 1566: tolerates the new verifyEmailResultBanner/verifyEmailBanner
+  // now rendered between wakingBanner and this error banner -- this test's
+  // own intent is the error banner's role="alert", not strict adjacency to
+  // wakingBanner, which was always just a convenient anchor to avoid
+  // accidentally matching some unrelated "error &&" block elsewhere.
+  const bannerMatch = appSrc.match(/\{wakingBanner\}[\s\S]*?\{error && \([\s\S]*?\)\}/);
+  assert.ok(bannerMatch, "expected to find the top-level error banner's own JSX block, after wakingBanner");
   assert.match(
     bannerMatch![0],
     /<p className="error banner" role="alert">/,

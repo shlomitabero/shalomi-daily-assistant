@@ -13,6 +13,7 @@ import {
   getPasswordHash,
   getSessionUser,
   hashSessionToken,
+  markEmailVerified,
   updatePasswordHash,
   updateUserEmail,
   DuplicateEmailError,
@@ -328,4 +329,79 @@ test("deleteUser removes the real user row, leaving a different user's own row u
 
   assert.equal(findUserById(db, leaving.id), undefined);
   assert.ok(findUserById(db, staying.id), "a different user's own row must be completely untouched");
+});
+
+/**
+ * Round 1566: createUser must leave emailVerifiedAt NULL for a brand-new
+ * signup -- the route layer (not the db layer) decides whether to
+ * immediately call markEmailVerified (e.g. when no email provider is
+ * configured), so this layer must stay "dumb" and never pre-verify on its
+ * own.
+ */
+test("createUser leaves emailVerifiedAt null for a brand-new account", () => {
+  const db = openDatabase(":memory:");
+  ensureUsersTable(db);
+  const user = createUser(db, { id: "u1", email: "dana@example.com", passwordHash: "x" });
+
+  assert.equal(user.emailVerifiedAt, null);
+  assert.equal(findUserById(db, user.id)?.emailVerifiedAt, null);
+});
+
+test("markEmailVerified sets emailVerifiedAt on exactly its own user, leaving a different user's own row untouched", () => {
+  const db = openDatabase(":memory:");
+  ensureUsersTable(db);
+  const verifying = createUser(db, { id: "u1", email: "dana@example.com", passwordHash: "x" });
+  const other = createUser(db, { id: "u2", email: "yossi@example.com", passwordHash: "x" });
+
+  markEmailVerified(db, verifying.id);
+
+  assert.ok(findUserById(db, verifying.id)?.emailVerifiedAt, "the verified user must now have a non-null emailVerifiedAt");
+  assert.equal(findUserById(db, other.id)?.emailVerifiedAt, null, "a different user's own row must be completely untouched");
+});
+
+/**
+ * Round 1566: the whole point of backfilling emailVerifiedAt = createdAt
+ * in the SAME migration step (ensureUsersTable's own ALTER TABLE +
+ * UPDATE), rather than leaving it lazily null like every other additive
+ * column in this codebase -- a pre-existing, already-trusted account must
+ * never show the "please verify your email" banner just because the
+ * feature shipped after it signed up. Simulates a genuinely pre-migration
+ * row by creating the OLD table shape directly (no emailVerifiedAt
+ * column at all) before calling ensureUsersTable, rather than relying on
+ * createUser (which always targets the CURRENT, already-migrated schema).
+ */
+test("ensureUsersTable backfills emailVerifiedAt = createdAt for a row that existed before the column did", () => {
+  const db = openDatabase(":memory:");
+  db.exec(`
+    CREATE TABLE users (
+      id TEXT PRIMARY KEY,
+      email TEXT NOT NULL UNIQUE,
+      passwordHash TEXT NOT NULL,
+      createdAt TEXT NOT NULL
+    )
+  `);
+  const preExistingCreatedAt = "2020-01-01T00:00:00.000Z";
+  db.prepare("INSERT INTO users (id, email, passwordHash, createdAt) VALUES (?, ?, ?, ?)").run(
+    "pre-existing",
+    "old-timer@example.com",
+    "hash",
+    preExistingCreatedAt,
+  );
+
+  ensureUsersTable(db);
+
+  const migrated = findUserById(db, "pre-existing");
+  assert.equal(migrated?.emailVerifiedAt, preExistingCreatedAt, "a pre-existing row must be backfilled to its own createdAt, not left null");
+});
+
+test("ensureUsersTable is a harmless no-op the second time it's called -- it doesn't re-run the migration or clobber an already-verified row", () => {
+  const db = openDatabase(":memory:");
+  ensureUsersTable(db);
+  const user = createUser(db, { id: "u1", email: "dana@example.com", passwordHash: "x" });
+  markEmailVerified(db, user.id);
+  const verifiedAt = findUserById(db, user.id)?.emailVerifiedAt;
+
+  ensureUsersTable(db);
+
+  assert.equal(findUserById(db, user.id)?.emailVerifiedAt, verifiedAt, "calling ensureUsersTable again must not reset an already-verified row");
 });

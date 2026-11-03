@@ -2,11 +2,14 @@ import { createHash, randomBytes, randomInt, randomUUID, timingSafeEqual } from 
 import { Router } from "express";
 import { z } from "zod";
 import {
+  createEmailVerificationToken,
   createLoginCode,
   createPasswordResetToken,
   createSession,
   createUser,
   deleteAllSessionsForUser,
+  deleteEmailVerificationToken,
+  deleteEmailVerificationTokensForUser,
   deleteLoginCode,
   deleteLoginCodesForUser,
   deleteOtherSessionsForUser,
@@ -17,6 +20,7 @@ import {
   deleteProject,
   findUserByEmail,
   findUserById,
+  getEmailVerificationTokenByHash,
   getIdempotencyRecord,
   getLoginCode,
   getPasswordHash,
@@ -26,6 +30,7 @@ import {
   listCollaboratedProjectIds,
   listCollaborators,
   listOwnedProjectIds,
+  markEmailVerified,
   removeAllCollaborationsForUser,
   tryGetProject,
   updatePasswordHash,
@@ -105,6 +110,10 @@ const ResetPasswordSchema = z.object({
   lang: z.enum(["he", "en"]).optional(),
 });
 
+const VerifyEmailSchema = z.object({
+  token: z.string().min(1, "token is required"),
+});
+
 const PASSWORD_RESET_TOKEN_TTL_MS = 60 * 60 * 1000; // 1 hour
 
 const RATE_LIMIT_WINDOW_MS = 15 * 60 * 1000; // 15 minutes
@@ -119,6 +128,18 @@ const RATE_LIMIT_WINDOW_MS = 15 * 60 * 1000; // 15 minutes
  * needed either).
  */
 function hashResetToken(token: string): string {
+  return createHash("sha256").update(token).digest("hex");
+}
+
+const EMAIL_VERIFICATION_TOKEN_TTL_MS = 24 * 60 * 60 * 1000; // 24 hours -- longer than PASSWORD_RESET_TOKEN_TTL_MS's 1 hour, deliberately: a verification link is followed far less urgently than a "someone may have taken over my account" reset link.
+
+/**
+ * Same reasoning as hashResetToken just above: the token itself is never
+ * stored, only this hash, and a fast sha256 is deliberate here too -- this
+ * token's real defense is its own 256 bits of randomness plus its TTL, not
+ * hash cost.
+ */
+function hashVerificationToken(token: string): string {
   return createHash("sha256").update(token).digest("hex");
 }
 
@@ -315,6 +336,35 @@ export function createAuthRouter(
   });
 
   /**
+   * Round 1566: same rationale as resetPasswordRateLimiter above -- not a
+   * token-guessing defense (a high-entropy random value makes that
+   * infeasible regardless), but a volumetric throttle on this unauthenticated
+   * POST route's own DB lookup. Keyed by IP, same shape as every sibling
+   * unauthenticated token-consuming route in this file.
+   */
+  const verifyEmailRateLimiter = createRateLimiter({
+    windowMs: RATE_LIMIT_WINDOW_MS,
+    max: 30,
+    keyGenerator: (req) => req.ip ?? "unknown",
+    message: "Too many verification attempts. Please try again later.",
+  });
+
+  /**
+   * Round 1566: mirrors forgotPasswordRateLimiter's own rationale, but
+   * keyed by the authenticated user's own id (requireAuth runs first)
+   * rather than by email -- there's no enumeration concern here the way
+   * there is for forgot-password (the caller already proved which account
+   * they are), just the same "don't let repeated requests spam one inbox"
+   * volumetric guard.
+   */
+  const resendVerificationRateLimiter = createRateLimiter({
+    windowMs: RATE_LIMIT_WINDOW_MS,
+    max: 5,
+    keyGenerator: (req) => req.userId ?? "unknown",
+    message: "Too many verification email requests. Please try again later.",
+  });
+
+  /**
    * Round 1435: the one mutating route in this file with no rate limiter
    * at all -- and the single most destructive one (permanently deletes
    * the user row, every project they own via the full deleteProject
@@ -374,13 +424,51 @@ export function createAuthRouter(
       return;
     }
     try {
-      const { email, password } = parsed.data;
+      const { email, password, lang } = parsed.data;
       const idempotencyKey = req.header("X-Idempotency-Key") || undefined;
       const { status, body } = await withIdempotency(db, idempotencyKey, idempotencyKey ?? "", "POST /auth/signup", async () => {
         const passwordHash = await hashPassword(password);
         const user = createUser(db, { id: randomUUID(), email, passwordHash });
         const token = issueSession(db, user.id);
-        return { status: 201, body: { user, token } };
+        // Round 1566: docs/security.md's own "before any real deployment"
+        // checklist named this gap -- a brand-new account's email was
+        // never verified at all, the same ownership-unproven state round
+        // 1564 already closed for "sign out everywhere". Mirrors the
+        // login-code step's own emailSender.configured gate exactly: a
+        // deployment with no email provider configured has no way to
+        // deliver a verification link at all, so that account is marked
+        // verified immediately instead of showing a permanently-unusable
+        // "please verify" banner with no working resend.
+        if (emailSender.configured) {
+          const verifyToken = randomBytes(32).toString("hex");
+          const verifyUrl = `${req.protocol}://${req.get("host")}/?verifyToken=${verifyToken}`;
+          const isHebrew = lang !== "en";
+          const subject = isHebrew ? "אמתו את כתובת האימייל שלכם ב-Forge AI" : "Verify your Forge AI email address";
+          const verifyBody = isHebrew
+            ? `תודה שנרשמתם ל-Forge AI! לחצו על הקישור הבא כדי לאמת את כתובת האימייל שלכם:\n\n${verifyUrl}\n\nהקישור בתוקף ל-24 שעות. אם לא נרשמתם, אפשר להתעלם מהודעה זו.`
+            : `Thanks for signing up for Forge AI! Click the link below to verify your email address:\n\n${verifyUrl}\n\nThis link expires in 24 hours. If you didn't sign up, you can ignore this email.`;
+          try {
+            await emailSender.send(user.email, subject, verifyBody);
+            // Round 1296's own ordering lesson, same as forgot-password's
+            // write below: only after send() actually succeeds, so a
+            // transient failure never deletes/replaces an already-
+            // delivered token (there is none yet here, but a future
+            // resend could race this one the same way).
+            createEmailVerificationToken(db, {
+              id: randomUUID(),
+              userId: user.id,
+              tokenHash: hashVerificationToken(verifyToken),
+              expiresAt: new Date(Date.now() + EMAIL_VERIFICATION_TOKEN_TTL_MS).toISOString(),
+            });
+          } catch {
+            // Swallowed, deliberately -- signup itself must still succeed;
+            // verification is best-effort and has its own resend action
+            // (POST /auth/resend-verification) for exactly this case.
+          }
+        } else {
+          markEmailVerified(db, user.id);
+        }
+        return { status: 201, body: { user: findUserById(db, user.id)!, token } };
       });
       res.status(status).json(body);
     } catch (err) {
@@ -388,6 +476,112 @@ export function createAuthRouter(
         next(new HttpError(409, err.message, "EMAIL_TAKEN"));
         return;
       }
+      next(err);
+    }
+  });
+
+  /**
+   * Round 1566: the other half of the signup-time mint above -- the link
+   * it emails carries this exact token. Unauthenticated (like POST
+   * /auth/reset-password): the link may be opened on a different device/
+   * browser than the one that signed up, with no session to rely on.
+   * Single-use (deleted on consumption), so wrapped in withIdempotency the
+   * same way reset-password/verify-code are -- a response lost in transit
+   * after a genuinely successful verification would otherwise make a
+   * retry hit "token already deleted" and show a false "expired or
+   * invalid" error for a verification that already succeeded. Same
+   * userId-less scoping trick as signup/verify-code/reset-password: no
+   * reliable session exists at this point, so the idempotency key itself
+   * stands in for userId.
+   */
+  router.post("/auth/verify-email", verifyEmailRateLimiter, async (req, res, next) => {
+    const parsed = VerifyEmailSchema.safeParse(req.body);
+    if (!parsed.success) {
+      next(new HttpError(400, formatValidationError(parsed.error), "VALIDATION_ERROR"));
+      return;
+    }
+    try {
+      const { token } = parsed.data;
+      const idempotencyKey = req.header("X-Idempotency-Key") || undefined;
+      const { status, body } = await withIdempotency(db, idempotencyKey, idempotencyKey ?? "", "POST /auth/verify-email", async () => {
+        const pending = getEmailVerificationTokenByHash(db, hashVerificationToken(token));
+        const expired = !pending || new Date(pending.expiresAt).getTime() < Date.now();
+        if (expired) {
+          if (pending) deleteEmailVerificationToken(db, pending.id);
+          throw new HttpError(401, "This verification link has expired or is invalid. Please request a new one.", "VERIFY_TOKEN_INVALID");
+        }
+        deleteEmailVerificationToken(db, pending.id);
+        // Same post-await existence re-check every sibling token-consuming
+        // route in this file already does (reset-password's own round-1024
+        // comment explains why) -- nothing genuinely awaits here before
+        // this point, but markEmailVerified below would otherwise silently
+        // affect zero rows for an account deleted out from under this
+        // exact request.
+        const user = findUserById(db, pending.userId);
+        if (!user) {
+          throw new HttpError(401, "This account no longer exists", "USER_NOT_FOUND");
+        }
+        markEmailVerified(db, user.id);
+        return { status: 200, body: { user: findUserById(db, user.id)! } };
+      });
+      res.status(status).json(body);
+    } catch (err) {
+      next(err);
+    }
+  });
+
+  /**
+   * Round 1566: lets an already-signed-in user with a still-unverified
+   * email request a fresh link -- e.g. the first one expired, landed in
+   * spam, or was never delivered. Mirrors forgot-password's own mint-and-
+   * email shape (including its round-1296 ordering: the DB write only
+   * happens after send() actually succeeds, so a transient failure never
+   * invalidates an earlier, still-valid, already-delivered token) rather
+   * than reset-password's, and -- also like forgot-password -- is
+   * deliberately NOT wrapped in withIdempotency: a retry here just mints
+   * another link for the same already-authenticated account, the same
+   * "at most one pending token" invariant forgot-password's own
+   * deletePasswordResetTokensForUser comment already documents as
+   * deliberate, not a bug needing idempotency protection.
+   */
+  router.post("/auth/resend-verification", requireAuth(db), resendVerificationRateLimiter, async (req, res, next) => {
+    try {
+      if (req.user!.emailVerifiedAt) {
+        res.json({ alreadyVerified: true });
+        return;
+      }
+      if (!emailSender.configured) {
+        next(
+          new HttpError(
+            503,
+            "Email verification isn't available on this deployment yet -- no email provider is configured",
+            "EMAIL_NOT_CONFIGURED",
+          ),
+        );
+        return;
+      }
+      const verifyToken = randomBytes(32).toString("hex");
+      const verifyUrl = `${req.protocol}://${req.get("host")}/?verifyToken=${verifyToken}`;
+      const isHebrew = req.query.lang !== "en";
+      const subject = isHebrew ? "אמתו את כתובת האימייל שלכם ב-Forge AI" : "Verify your Forge AI email address";
+      const verifyBody = isHebrew
+        ? `לחצו על הקישור הבא כדי לאמת את כתובת האימייל שלכם ב-Forge AI:\n\n${verifyUrl}\n\nהקישור בתוקף ל-24 שעות.`
+        : `Click the link below to verify your Forge AI email address:\n\n${verifyUrl}\n\nThis link expires in 24 hours.`;
+      try {
+        await emailSender.send(req.user!.email, subject, verifyBody);
+        deleteEmailVerificationTokensForUser(db, req.userId!);
+        createEmailVerificationToken(db, {
+          id: randomUUID(),
+          userId: req.userId!,
+          tokenHash: hashVerificationToken(verifyToken),
+          expiresAt: new Date(Date.now() + EMAIL_VERIFICATION_TOKEN_TTL_MS).toISOString(),
+        });
+      } catch (err) {
+        next(new HttpError(502, `Failed to send the verification email: ${(err as Error).message}`, "EMAIL_SEND_FAILED"));
+        return;
+      }
+      res.status(204).end();
+    } catch (err) {
       next(err);
     }
   });
@@ -427,7 +621,10 @@ export function createAuthRouter(
         // environment variable is what turns the code step on at all.
         if (!emailSender.configured) {
           const token = issueSession(db, record.id);
-          return { status: 200, body: { user: { id: record.id, email: record.email, createdAt: record.createdAt }, token } };
+          return {
+            status: 200,
+            body: { user: { id: record.id, email: record.email, createdAt: record.createdAt, emailVerifiedAt: record.emailVerifiedAt }, token },
+          };
         }
         const code = generateLoginCode();
         const loginCodeId = randomUUID();
@@ -916,6 +1113,13 @@ export function createAuthRouter(
         return;
       }
       const previousEmail = existing.email;
+      // Round 1566: deliberate v1 scope decision, written down so a future
+      // round doesn't "rediscover" this as a bug -- this route does NOT
+      // reset emailVerifiedAt (or re-fire a verification email to the new
+      // address) when the email actually changes. The verification
+      // feature is purely informational in v1 (nothing is gated on it),
+      // so an account staying "verified" under its OLD, no-longer-owned
+      // address is a minor consistency gap, not a security exposure.
       const user = updateUserEmail(db, req.userId!, email);
       // Resubmitting your own current email (updateUserEmail's own
       // self-exclusion from the uniqueness check already allows this, per

@@ -449,6 +449,13 @@ export const UserSchema = z.object({
   id: z.string(),
   email: z.string().email(),
   createdAt: z.string(),
+  // Round 1566: null until a real POST /auth/verify-email call consumes a
+  // genuine token (or, on a deployment with no email provider configured,
+  // immediately at signup -- there's no way to verify there at all). A
+  // pre-existing account (created before this field existed) is backfilled
+  // to its own createdAt at migration time, so it's never null either --
+  // see users.ts's own ensureUsersTable doc comment.
+  emailVerifiedAt: z.string().nullable(),
 });
 
 export type User = z.infer<typeof UserSchema>;
