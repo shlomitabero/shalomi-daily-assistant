@@ -104,6 +104,38 @@ test('getProductGuide does not release the guide for an unverified (pending) led
   assert.equal(res.statusCode, 402);
 });
 
+test('getProductGuide releases the guide for a confirmed sandbox transaction, even with no real ledger entry', () => {
+  // A sandbox purchase (PADDLE_ENV=sandbox, the owner testing before going
+  // live) never writes to the real ledger by design - billing.js logs a
+  // "skipped: sandbox" action for it instead. That marker must still be
+  // enough to let the owner verify a real customer would actually receive
+  // the guide, without ever touching real financial records.
+  __resetForTests();
+  const opp = insertOpportunity();
+  db.actions_log.insert({
+    id: makeId('act'), type: 'sale_confirmed', detail: { opportunityId: opp.id, transactionId: 'txn_sandbox' },
+    result: 'skipped: sandbox transaction, not recorded as real revenue', createdAt: '2026-01-01T00:00:00.000Z',
+  });
+  const res = makeRes();
+  getProductGuide({ params: { slug: 'time-management-guide' }, query: { transactionId: 'txn_sandbox' } }, res);
+  assert.equal(res.statusCode, 200);
+  assert.equal(res.body.guide, 'תוכן המדריך המלא — זה מה שהלקוח קנה');
+  assert.equal(db.ledger.all().length, 0);
+});
+
+test('getProductGuide does not release a different opportunity\'s guide for a confirmed sandbox transaction', () => {
+  __resetForTests();
+  insertOpportunity();
+  const otherOpp = insertOpportunity({ id: makeId('opp'), slug: 'other-slug' });
+  db.actions_log.insert({
+    id: makeId('act'), type: 'sale_confirmed', detail: { opportunityId: otherOpp.id, transactionId: 'txn_sandbox' },
+    result: 'skipped: sandbox transaction, not recorded as real revenue', createdAt: '2026-01-01T00:00:00.000Z',
+  });
+  const res = makeRes();
+  getProductGuide({ params: { slug: 'time-management-guide' }, query: { transactionId: 'txn_sandbox' } }, res);
+  assert.equal(res.statusCode, 402);
+});
+
 test('getProductGuide does not release a different opportunity\'s guide for a mismatched transaction', () => {
   __resetForTests();
   insertOpportunity();

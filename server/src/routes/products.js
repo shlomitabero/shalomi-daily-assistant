@@ -41,10 +41,22 @@ export function getProductGuide(req, res) {
   const opportunity = db.opportunities.where((o) => o.slug === req.params.slug && o.status === 'published')[0];
   if (!opportunity) return res.status(404).json({ error: 'not found' });
 
-  const paid = db.ledger.where(
+  const paidForReal = db.ledger.where(
     (e) => e.type === 'revenue' && e.verified && e.opportunityId === opportunity.id && e.externalId === transactionId
   ).length > 0;
-  if (!paid) return res.status(402).json({ error: 'payment not verified yet' });
+  // A sandbox transaction (PADDLE_ENV=sandbox, the owner testing before
+  // going live) never writes to the real ledger (see billing.js) — it
+  // can never satisfy the check above, by design. But it's still a real,
+  // confirmed sandbox checkout, and the owner needs to be able to verify
+  // the full flow end to end (does a paying customer actually receive
+  // the guide?). Accept the matching marker the webhook logs for it
+  // instead, so sandbox testing isn't silently broken by keeping the
+  // real ledger free of test data.
+  const confirmedSandbox = db.actions_log.where(
+    (a) => a.type === 'sale_confirmed' && a.detail?.opportunityId === opportunity.id &&
+      a.detail?.transactionId === transactionId && a.result?.startsWith('skipped: sandbox')
+  ).length > 0;
+  if (!paidForReal && !confirmedSandbox) return res.status(402).json({ error: 'payment not verified yet' });
 
   res.json({ guide: opportunity.productDraft.guide });
 }
