@@ -27,12 +27,14 @@ export async function runAutonomousScan() {
     return { ran: false, reason: 'ai_digital_products source is not connected' };
   }
 
-  // A demo draft (created when ANTHROPIC_API_KEY wasn't set at the time)
-  // can never be published - publishing.js refuses it - and there's no
-  // route to delete an opportunity, so it sits as 'draft' forever. Without
-  // this exclusion, any demo drafts that piled up before a real API key
-  // was configured would permanently count toward the cap, silently
-  // blocking every future real scan even after the key is set correctly.
+  // A demo draft (created by the owner's manual "new product" form while
+  // ANTHROPIC_API_KEY wasn't set) can never be published - publishing.js
+  // refuses it - and there's no route to delete an opportunity, so it sits
+  // as 'draft' forever. The scan itself can never produce one: this
+  // function already can't get past the isSourceConnected check above
+  // without ANTHROPIC_API_KEY, so excluding demo drafts here only ever
+  // drops old manual-form litter, never anything this loop could pile up
+  // on its own.
   const pendingDrafts = db.opportunities.where((o) => o.status === 'draft' && !o.productDraft?.demo).length;
   if (pendingDrafts >= MAX_PENDING_DRAFTS) {
     logAction({ type: 'autonomous_scan', detail: { pendingDrafts }, result: `skipped: ${pendingDrafts} drafts already awaiting review` });
