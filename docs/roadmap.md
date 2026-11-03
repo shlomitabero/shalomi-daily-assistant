@@ -40512,6 +40512,27 @@ Fail-before/pass-after verified for every new test: `apps/api/src/automations.te
 
 Full suite run (all three touched workspaces): `packages/db` 311/311, `apps/api` 1042/1044 (2 known pre-existing non-regressions: `password.test.ts`'s CPU-contention timing flake, `codegen.test.ts`'s documented cgroup-OOM SIGKILL -- task #55's own root-cause finding, identical signature to every prior round), `apps/web` 1765/1765 with `npx tsc -b` clean.
 
+### Round 1560: AutomationsPanel's create-rule form had its OWN stale-entity-casing gap -- a sibling of round 1485's fix for the same file's existing-rule lookup, never reached by that fix
+
+This round's survey, told explicitly that the "stale entity casing after a mid-session case-rename" family had several sibling instances already closed (GlobalSearchPanel's mouse and keyboard jump paths, BusinessTwinPanel's jump-target, EntityPanel's relation-jump button), found one more inside `AutomationsPanel.tsx` itself: `selectedEntity` (the CREATE-rule form's own entity lookup, lines 183-186) did a plain exact-case `entities.find((e) => e.name === entityName)`, while `ruleEntity` (the EXISTING-rule lookup in the very same file, lines 825-828) was already hardened with a case-insensitive fallback back in round 1485, specifically for this exact hazard. `AutomationsPanel.tsx`'s own comment above `fieldTypesKey` explains why this matters: the panel is mounted once per `showAutomations` toggle and never remounts when a background Refine finishes, so a case-only entity rename (a true no-op server-side, per `migrate.ts`'s own case-insensitive rename detection) updates the live `entities` prop in place while `entityName` state stays pinned to its pre-rename casing.
+
+Independently re-verified before implementing: read `AutomationsPanel.tsx` directly and confirmed lines 183-186 (`selectedEntity`) do the exact-case-only lookup, while lines 825-828 (`ruleEntity`) already carry the round-1485 fallback with a comment explaining the exact same hazard. Traced the blast radius once `selectedEntity` goes `undefined`: `orderedSelectedEntityFields` -> `[]`, `phoneFields`/`triggerableFields` -> `[]`, `selectedField` -> `undefined`, every field/value/toField `<select>` (gated on `selectedEntity &&`) stops rendering, `formIncomplete` (line 611, `!selectedEntity || ...`) becomes permanently `true`, and the Submit button (line 1721, `disabled={createBusy || formIncomplete}`) is permanently disabled -- with no error message anywhere, since none of the file's effects resync `entityName` itself (they all early-return `if (!selectedEntity) return;`). The create-rule form's entity `<select>` itself keeps a `value` that matches none of its live `<option>`s.
+
+**The fix** (`apps/web/src/AutomationsPanel.tsx`): `selectedEntity` now falls back to a case-insensitive match, mirroring `ruleEntity`'s own round-1485 fix:
+
+```ts
+const selectedEntity: Entity | undefined = useMemo(
+  () => entities.find((e) => e.name === entityName) ?? entities.find((e) => e.name.toLowerCase() === entityName.toLowerCase()),
+  [entities, entityName],
+);
+```
+
+**Test** (`apps/web/src/AutomationsPanel.test.ts`): renders the create-rule form against an entity named `"Shipment"` (confirming the phone-field selector appears with its real options), then re-renders with the SAME entity recased to `"SHIPMENT"` (same fields, simulating a refine landing while the panel stays open), and asserts the selector is still rendered with the same options -- proving `selectedEntity` resolves under the new casing instead of going `undefined` and collapsing the form. Inserted immediately after the existing round-1485 regression test for `ruleEntity`'s own equivalent fix, for direct comparison.
+
+Fail-before/pass-after verified in isolation: reverted `AutomationsPanel.tsx` via `git show HEAD:... > AutomationsPanel.tsx` and ran the new test alone -- genuine failure (`the toField select must still be rendered after the entity is recased...`, assertion `expected: true, actual: ~`/null). Restored the fix and reran -- passes, alongside the sibling round-1485 test, both green together.
+
+Full `apps/web` suite run: 1827/1827 passing, 0 failures (no flakes this run). `npx tsc -b` clean.
+
 ### Round 1559: GlobalSearchPanel's keyboard Enter-to-jump path still passed a stale pre-rename entity casing -- round 1531 fixed only the mouse "Jump to" path, not this sibling
 
 This round's survey, told explicitly that the "stale entity casing after a mid-session case-only rename" family (rounds 1480/1531/1532/1533) was partially but not fully closed, found a genuine sibling gap: round 1531 fixed `GlobalSearchPanel.tsx`'s render-loop mouse "Jump to" button by resolving `entity = entities.find((e) => e.name.toLowerCase() === result.entityName.toLowerCase())` before using `entity.name`, instead of the stale `result.entityName` captured at search time. But `handleInputKeyDown`'s own `Enter` branch -- the keyboard path, triggered by arrow-key-highlighting a result group then pressing Enter -- is a structurally separate code path operating directly on `results[selectedIndex].entityName`, and round 1531 never touched it. A case-only entity rename from a mid-session refine (a true no-op at the db layer, per `migrate.ts`'s case-insensitive rename detection) left this keyboard path still passing the pre-rename casing to `onJumpToEntity`.
