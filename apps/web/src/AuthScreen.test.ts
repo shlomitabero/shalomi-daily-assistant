@@ -747,12 +747,16 @@ test("AuthScreen's reset-password form rejects a mismatched confirmation client-
  * Round 1370: handleSubmit had no guard against racing ITSELF -- the same
  * own-click reentrancy gap rounds 1363-1369 closed for EntityPanel/
  * AutomationsPanel/WhatsAppPanel/CollaboratorsPanel/useAddableSpecItem/
- * ChangeEmailPanel/ChangePasswordPanel/App.tsx. POST /auth/login has no
- * withIdempotency protection at all, unlike every other mutating auth
- * route -- a fast double-click/double-Enter on the login button must only
- * ever reach login() once, not fire two independent requests that could
- * each mint their own login-code row and race each other's
- * deleteLoginCodesForUser cleanup (see handleSubmit's own doc comment).
+ * ChangeEmailPanel/ChangePasswordPanel/App.tsx. This guard stays necessary
+ * even after round 1565 gave POST /auth/login its own withIdempotency
+ * protection: login() mints a brand-new `x-idempotency-key` on every call
+ * (crypto.randomUUID()), so two independent fetches from one double-click
+ * would still carry two different keys and still race each other's
+ * deleteLoginCodesForUser cleanup -- withIdempotency only replays a RETRY
+ * of the exact same request, it can't collapse two client-initiated calls
+ * into one. A fast double-click/double-Enter on the login button must only
+ * ever reach login() once in the first place (see handleSubmit's own doc
+ * comment).
  */
 test("AuthScreen's submit button guards against a fast double-click, so only one login request ever fires for one submission", async () => {
   await withJsdom(async () => {

@@ -158,18 +158,18 @@ export function AuthScreen({ onAuthenticated }: { onAuthenticated: (user: User) 
     // this handler never checked busy either -- the same own-click
     // reentrancy gap rounds 1363-1369 already closed elsewhere (see
     // handleForgotPasswordSubmit's own identical doc comment above). This
-    // is the highest-stakes instance in this file: login()'s own
-    // POST /auth/login route has no withIdempotency protection at all
-    // (unlike /auth/signup, /auth/login/verify-code, /auth/password,
-    // /auth/reset-password, and /auth/account, which all do), and its own
-    // round-538 doc comment only guarantees a single request's own insert
-    // and response stay internally consistent with each other, not that a
-    // second concurrent request can't come along afterward and delete that
-    // row via deleteLoginCodesForUser's own "at most one code is ever
-    // valid at a time per account" invariant. A fast double-click/double-
-    // Enter firing two concurrent logins can send two separate code emails
-    // for one click, with the account's own single-code invariant then
-    // discarding whichever one's DB write loses the race.
+    // is the highest-stakes instance in this file: round 1565 gave
+    // POST /auth/login its own withIdempotency protection, same as every
+    // sibling mutating auth route, but that only replays a RETRY of the
+    // exact same request (matched by its own idempotency key) -- it can't
+    // collapse two independent, client-initiated requests into one, since
+    // login() mints a brand-new key on every call. A fast double-click/
+    // double-Enter firing two concurrent logins, each with its own key,
+    // can still send two separate code emails for one click, with the
+    // account's own single-code invariant (deleteLoginCodesForUser's "at
+    // most one code is ever valid at a time per account") then discarding
+    // whichever one's DB write loses the race -- this guard is what stops
+    // two such requests from ever being sent in the first place.
     if (busy) return;
     setError(null);
     // Signup is the one place a typo would otherwise go unnoticed until the

@@ -392,6 +392,18 @@ export function createAuthRouter(
     }
   });
 
+  // Round 1565: the same fetchWithWakeRetry lost-response risk rounds
+  // 1328/1334/1335 already fixed for signup/verify-code/reset-password --
+  // this route sat unguarded the whole time despite going through the
+  // exact same request()/fetchWithWakeRetry client path. Concretely: two
+  // near-simultaneous /auth/login calls for the same account (two tabs, a
+  // slow attempt plus an impatient retry, or a genuine fetchWithWakeRetry
+  // retry after a dropped connection) each independently call
+  // deleteLoginCodesForUser then createLoginCode below, so whichever
+  // call's write loses the race silently invalidates the other's
+  // just-issued loginCodeId. No real userId exists until a session is
+  // issued, so -- same trick signup/verify-code already use -- the
+  // idempotency key itself stands in for userId scoping.
   router.post("/auth/login", loginRateLimiter, async (req, res, next) => {
     const parsed = CredentialsSchema.safeParse(req.body);
     if (!parsed.success) {
@@ -400,61 +412,62 @@ export function createAuthRouter(
     }
     try {
       const { email, password, lang } = parsed.data;
-      const record = findUserByEmail(db, email);
-      // Always call verifyPassword, even when no such user exists (against
-      // the dummy hash above) -- see dummyPasswordHashPromise's comment for why.
-      const passwordMatches = await verifyPassword(password, record?.passwordHash ?? (await dummyPasswordHashPromise));
-      if (!record || !passwordMatches) {
-        next(new HttpError(401, "Invalid email or password", "INVALID_CREDENTIALS"));
-        return;
-      }
-      // emailSender.configured is false whenever RESEND_API_KEY hasn't been
-      // set -- a deployment that never set up an email provider logs in
-      // exactly like before this feature existed. Setting that one
-      // environment variable is what turns the code step on at all.
-      if (!emailSender.configured) {
-        const token = issueSession(db, record.id);
-        res.json({ user: { id: record.id, email: record.email, createdAt: record.createdAt }, token });
-        return;
-      }
-      const code = generateLoginCode();
-      const loginCodeId = randomUUID();
-      const isHebrew = lang !== "en";
-      const subject = isHebrew ? `קוד ההתחברות שלך: ${code}` : `Your login code: ${code}`;
-      const body = isHebrew
-        ? `קוד ההתחברות שלך ל-Forge AI הוא: ${code}\n\nהקוד בתוקף ל-10 דקות. אם לא ניסית להתחבר, אפשר להתעלם מהודעה זו.`
-        : `Your Forge AI login code is: ${code}\n\nThis code expires in 10 minutes. If you didn't try to log in, you can ignore this email.`;
-      try {
-        await emailSender.send(record.email, subject, body);
-      } catch (err) {
-        // Nothing was ever written, so there's no row to clean up here --
-        // unlike before this fix (round 538), the DB write now happens only
-        // after send() succeeds (see below), precisely to avoid needing
-        // this kind of compensating delete.
-        next(new HttpError(502, `Failed to send the login code email: ${(err as Error).message}`, "EMAIL_SEND_FAILED"));
-        return;
-      }
-      // The insert (and the invalidation of any older pending code for this
-      // account -- see deleteLoginCodesForUser's own doc comment) happens
-      // only now, after the genuine network await above, with no further
-      // await before the response: two concurrent logins for the same
-      // account used to both run their insert *before* their own send()
-      // call, so whichever one's send() resolved first could invalidate the
-      // other's already-inserted row while that other request was still
-      // parked on its own send() -- that other request would then respond
-      // with a loginCodeId already deleted out from under it (round 538).
-      // Doing the write+respond here instead, synchronously, means nothing
-      // can interleave between this exact request minting its row and
-      // naming it in the response it sends -- the same "no await = no
-      // race" guarantee the rest of this codebase already relies on.
-      deleteLoginCodesForUser(db, record.id);
-      createLoginCode(db, {
-        id: loginCodeId,
-        userId: record.id,
-        codeHash: hashLoginCode(code),
-        expiresAt: new Date(Date.now() + LOGIN_CODE_TTL_MS).toISOString(),
+      const idempotencyKey = req.header("X-Idempotency-Key") || undefined;
+      const { status, body } = await withIdempotency(db, idempotencyKey, idempotencyKey ?? "", "POST /auth/login", async () => {
+        const record = findUserByEmail(db, email);
+        // Always call verifyPassword, even when no such user exists (against
+        // the dummy hash above) -- see dummyPasswordHashPromise's comment for why.
+        const passwordMatches = await verifyPassword(password, record?.passwordHash ?? (await dummyPasswordHashPromise));
+        if (!record || !passwordMatches) {
+          throw new HttpError(401, "Invalid email or password", "INVALID_CREDENTIALS");
+        }
+        // emailSender.configured is false whenever RESEND_API_KEY hasn't been
+        // set -- a deployment that never set up an email provider logs in
+        // exactly like before this feature existed. Setting that one
+        // environment variable is what turns the code step on at all.
+        if (!emailSender.configured) {
+          const token = issueSession(db, record.id);
+          return { status: 200, body: { user: { id: record.id, email: record.email, createdAt: record.createdAt }, token } };
+        }
+        const code = generateLoginCode();
+        const loginCodeId = randomUUID();
+        const isHebrew = lang !== "en";
+        const subject = isHebrew ? `קוד ההתחברות שלך: ${code}` : `Your login code: ${code}`;
+        const emailBody = isHebrew
+          ? `קוד ההתחברות שלך ל-Forge AI הוא: ${code}\n\nהקוד בתוקף ל-10 דקות. אם לא ניסית להתחבר, אפשר להתעלם מהודעה זו.`
+          : `Your Forge AI login code is: ${code}\n\nThis code expires in 10 minutes. If you didn't try to log in, you can ignore this email.`;
+        try {
+          await emailSender.send(record.email, subject, emailBody);
+        } catch (err) {
+          // Nothing was ever written, so there's no row to clean up here --
+          // unlike before this fix (round 538), the DB write now happens only
+          // after send() succeeds (see below), precisely to avoid needing
+          // this kind of compensating delete.
+          throw new HttpError(502, `Failed to send the login code email: ${(err as Error).message}`, "EMAIL_SEND_FAILED");
+        }
+        // The insert (and the invalidation of any older pending code for this
+        // account -- see deleteLoginCodesForUser's own doc comment) happens
+        // only now, after the genuine network await above, with no further
+        // await before the response: two concurrent logins for the same
+        // account used to both run their insert *before* their own send()
+        // call, so whichever one's send() resolved first could invalidate the
+        // other's already-inserted row while that other request was still
+        // parked on its own send() -- that other request would then respond
+        // with a loginCodeId already deleted out from under it (round 538).
+        // Doing the write+respond here instead, synchronously, means nothing
+        // can interleave between this exact request minting its row and
+        // naming it in the response it sends -- the same "no await = no
+        // race" guarantee the rest of this codebase already relies on.
+        deleteLoginCodesForUser(db, record.id);
+        createLoginCode(db, {
+          id: loginCodeId,
+          userId: record.id,
+          codeHash: hashLoginCode(code),
+          expiresAt: new Date(Date.now() + LOGIN_CODE_TTL_MS).toISOString(),
+        });
+        return { status: 200, body: { requiresCode: true, loginCodeId } };
       });
-      res.json({ requiresCode: true, loginCodeId });
+      res.status(status).json(body);
     } catch (err) {
       next(err);
     }

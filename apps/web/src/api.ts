@@ -298,12 +298,25 @@ export function signup(email: string, password: string): Promise<{ user: User; t
  * immediately, exactly as before this feature existed -- see
  * routes/auth.ts's own `emailSender.configured` check.
  */
+/**
+ * Round 1565: same `x-idempotency-key` mechanism signup/verifyLoginCode/
+ * resetPassword already send -- fetchWithWakeRetry can retry this exact
+ * request after the server already issued a login code (or, with no email
+ * provider configured, a session) but the response was lost, and without
+ * a key the retry would mint a second, redundant login code (invalidating
+ * the first one's loginCodeId out from under the user) or a second,
+ * never-used extra session row.
+ */
 export function login(
   email: string,
   password: string,
   lang: "he" | "en",
 ): Promise<{ user: User; token: string } | { requiresCode: true; loginCodeId: string }> {
-  return request("/auth/login", { method: "POST", body: JSON.stringify({ email, password, lang }) });
+  return request("/auth/login", {
+    method: "POST",
+    headers: { "x-idempotency-key": crypto.randomUUID() },
+    body: JSON.stringify({ email, password, lang }),
+  });
 }
 
 /**

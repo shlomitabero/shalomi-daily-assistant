@@ -529,6 +529,83 @@ test("POST /auth/login/verify-code retried with the same idempotency key after t
   );
 });
 
+/**
+ * Round 1565: the same fetchWithWakeRetry lost-response risk rounds
+ * 1328/1334/1335 already fixed for signup/verify-code/reset-password --
+ * /auth/login sat unguarded the whole time despite going through the exact
+ * same request()/fetchWithWakeRetry client path. When the email login-code
+ * step is active, deleteLoginCodesForUser+createLoginCode invalidate the
+ * exact precondition a retry would otherwise re-run against, minting a
+ * second loginCodeId that invalidates the first one's -- the sentTo-length
+ * assertion below proves the retry never re-sent the email (and thus never
+ * re-minted the code) at all, not just that the final loginCodeId happens
+ * to match.
+ */
+test("POST /auth/login retried with the same idempotency key, when the email login-code step is active, replays the original loginCodeId instead of minting a second one that invalidates the first", async () => {
+  const emailSender = createFakeEmailSender();
+  await withServer(
+    async (baseUrl) => {
+      const email = `login-idem-code-${Date.now()}@example.com`;
+      await fetch(`${baseUrl}/api/auth/signup`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ email, password: "correct-horse-battery" }),
+      });
+
+      const headers = { "content-type": "application/json", "x-idempotency-key": "login-repro-key" };
+      const body = JSON.stringify({ email, password: "correct-horse-battery", lang: "en" });
+
+      const firstRes = await fetch(`${baseUrl}/api/auth/login`, { method: "POST", headers, body });
+      assert.equal(firstRes.status, 200);
+      const first = (await firstRes.json()) as { requiresCode: true; loginCodeId: string };
+      assert.equal(first.requiresCode, true);
+
+      const retryRes = await fetch(`${baseUrl}/api/auth/login`, { method: "POST", headers, body });
+      assert.equal(
+        retryRes.status,
+        200,
+        "a retried login with the same idempotency key must replay the original requiresCode response",
+      );
+      const retry = (await retryRes.json()) as { requiresCode: true; loginCodeId: string };
+      assert.equal(retry.loginCodeId, first.loginCodeId, "the replayed response must name the exact same loginCodeId, not a second one");
+      assert.equal(emailSender.sentTo.length, 1, "the retry must never re-send the login-code email -- that would mint a second, conflicting code");
+    },
+    { emailSender },
+  );
+});
+
+/**
+ * Round 1565: the sibling of the test above, for a deployment with no
+ * email provider configured (emailSender.configured === false, this
+ * repo's own default test-environment state) -- here a lost response
+ * means the first attempt already minted a real session via issueSession,
+ * so an unguarded retry would mint a second, redundant session row for an
+ * account that already has a perfectly good one.
+ */
+test("POST /auth/login retried with the same idempotency key, when no email provider is configured, replays the original session token instead of minting a second one", async () => {
+  await withServer(async (baseUrl) => {
+    const email = `login-idem-nocode-${Date.now()}@example.com`;
+    await fetch(`${baseUrl}/api/auth/signup`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ email, password: "correct-horse-battery" }),
+    });
+
+    const headers = { "content-type": "application/json", "x-idempotency-key": "login-repro-key-nocode" };
+    const body = JSON.stringify({ email, password: "correct-horse-battery", lang: "en" });
+
+    const firstRes = await fetch(`${baseUrl}/api/auth/login`, { method: "POST", headers, body });
+    assert.equal(firstRes.status, 200);
+    const first = (await firstRes.json()) as { user: { id: string }; token: string };
+
+    const retryRes = await fetch(`${baseUrl}/api/auth/login`, { method: "POST", headers, body });
+    assert.equal(retryRes.status, 200, "a retried login with the same idempotency key must replay the original session");
+    const retry = (await retryRes.json()) as { user: { id: string }; token: string };
+    assert.equal(retry.token, first.token, "the replayed response must be the exact same session, not a second one");
+    assert.equal(retry.user.id, first.user.id);
+  });
+});
+
 test("verify-code rejects a wrong code without consuming it, locks it out after too many wrong attempts, and the right code still works right up until that lockout", async () => {
   const emailSender = createFakeEmailSender();
   await withServer(
