@@ -47,10 +47,37 @@ function writeStore(store: Record<string, string[]>): void {
  * scoped per project+entity so hiding a wide entity's columns in one
  * project never affects another project's same-named entity. Round 1055:
  * also scoped per user -- see keyFor's own doc comment above.
+ *
+ * Round 1544: a case-only entity rename (an ordinary, explicitly-anticipated
+ * refine/AI casing drift) only ever gets this store's keys rewritten by
+ * migrateHiddenFieldsForEntityRename below, which -- exactly like
+ * columnOrder.ts's own migrateColumnOrderForEntityRename before round 1542,
+ * and columnWidths.ts's own migrateColumnWidthsForEntityRename before round
+ * 1543 -- is called only from the single browser tab that happened to
+ * trigger the rename (App.tsx's build/refine-complete handler, or a
+ * checkpoint restore). Every OTHER collaborator's own localStorage keeps
+ * this preference under the entity's OLD casing forever -- the exact-match
+ * lookup above would miss it with zero error or indication, silently
+ * UNhiding every field that collaborator had deliberately hidden, with no
+ * visual cue anything even changed (this store's own doc comment above
+ * already flags it as failing more silently than its siblings for exactly
+ * this reason). Falls back to a case-insensitive scan of this exact
+ * project+user's own keys, the same resolution rounds 1542/1543 applied to
+ * columnOrder.ts's/columnWidths.ts's identical gap.
  */
 export function getHiddenFields(projectId: string, entityName: string, userId: string): Set<string> {
   const store = readStore();
-  return new Set(store[keyFor(projectId, entityName, userId)] ?? []);
+  const exact = store[keyFor(projectId, entityName, userId)];
+  if (exact) return new Set(exact);
+  const prefix = `${projectId}:`;
+  const suffix = `:${userId}`;
+  const lowerEntityName = entityName.toLowerCase();
+  for (const [key, value] of Object.entries(store)) {
+    if (!key.startsWith(prefix) || !key.endsWith(suffix)) continue;
+    const keyEntityName = key.slice(prefix.length, key.length - suffix.length);
+    if (keyEntityName.toLowerCase() === lowerEntityName) return new Set(value);
+  }
+  return new Set();
 }
 
 /** Toggles one field's hidden state and returns the new full set, so callers can update their own state from the return value instead of re-reading storage. */

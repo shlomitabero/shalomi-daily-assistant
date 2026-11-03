@@ -2,7 +2,13 @@ import "./jsdomWarmup.js";
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { JSDOM } from "jsdom";
-import { getHiddenFields, removeHiddenFieldsForUserProject, replaceHiddenFields, toggleFieldVisibility } from "./columnVisibility.js";
+import {
+  getHiddenFields,
+  migrateHiddenFieldsForEntityRename,
+  removeHiddenFieldsForUserProject,
+  replaceHiddenFields,
+  toggleFieldVisibility,
+} from "./columnVisibility.js";
 
 /** Same full-jsdom-swap technique used by pinnedProjects.test.ts: real localStorage, not a mock, so these tests prove the actual persistence contract. */
 async function withJsdom(fn: () => void | Promise<void>): Promise<void> {
@@ -132,5 +138,54 @@ test("removeHiddenFieldsForUserProject is a no-op, not an error, when this user 
   await withJsdom(() => {
     assert.doesNotThrow(() => removeHiddenFieldsForUserProject("proj1", "userA"));
     assert.deepEqual(getHiddenFields("proj1", "Customer", "userA"), new Set());
+  });
+});
+
+/**
+ * Round 1544: migrateHiddenFieldsForEntityRename only ever runs in the single
+ * browser tab that triggered the rename (see getHiddenFields's own doc
+ * comment) -- so a different collaborator's own localStorage, which never
+ * saw that migration run, must still resolve its real hidden-fields set via
+ * getHiddenFields's new case-insensitive fallback, mirroring
+ * columnOrder.test.ts's/columnWidths.test.ts's identical round-1542/1543
+ * coverage for their own getters.
+ */
+test("getHiddenFields resolves a collaborator's own hidden-fields set stored under the OLD casing, even though no migration ever ran in this browser", async () => {
+  await withJsdom(() => {
+    toggleFieldVisibility("proj1", "customer", "userB", "email");
+
+    assert.deepEqual(getHiddenFields("proj1", "Customer", "userB"), new Set(["email"]), "must resolve userB's own hidden-fields set under the new casing via the case-insensitive fallback, with no migration ever having run");
+  });
+});
+
+test("getHiddenFields's case-insensitive fallback never leaks a different user's or different project's own hidden-fields set for the same entity name", async () => {
+  await withJsdom(() => {
+    toggleFieldVisibility("proj1", "customer", "userA", "email");
+    toggleFieldVisibility("proj2", "customer", "userB", "phone");
+
+    assert.deepEqual(getHiddenFields("proj1", "Customer", "userB"), new Set(), "userB has no hidden-fields set of their own in proj1 -- userA's own set for the same entity must not leak across users");
+    assert.deepEqual(getHiddenFields("proj1", "Customer", "userA"), new Set(["email"]), "userA's own set must still resolve via the fallback");
+    assert.deepEqual(getHiddenFields("proj2", "Customer", "userA"), new Set(), "a different project's own set for the same entity+user combination must not leak across projects");
+  });
+});
+
+/**
+ * Round 1544: mirrors columnOrder.test.ts's/columnWidths.test.ts's identical
+ * round-1542/1543 test fixing the "nothing must remain reachable under the
+ * old casing" assumption this round's fallback correctly invalidates for
+ * getHiddenFields too.
+ */
+test("migrateHiddenFieldsForEntityRename remaps every collaborator's own hidden-fields set to the new casing, leaving a sibling entity's own set untouched -- and a lookup under the old casing still resolves via the new case-insensitive fallback", async () => {
+  await withJsdom(() => {
+    toggleFieldVisibility("proj1", "customer", "userA", "email");
+    toggleFieldVisibility("proj1", "customer", "userB", "phone");
+    toggleFieldVisibility("proj1", "Order", "userA", "total");
+
+    migrateHiddenFieldsForEntityRename("proj1", "customer", "Customer");
+
+    assert.deepEqual(getHiddenFields("proj1", "Customer", "userA"), new Set(["email"]), "userA's set must resolve under the new casing");
+    assert.deepEqual(getHiddenFields("proj1", "Customer", "userB"), new Set(["phone"]), "userB's set must resolve under the new casing too");
+    assert.deepEqual(getHiddenFields("proj1", "customer", "userA"), new Set(["email"]), "a lookup under the old casing must still resolve via getHiddenFields's own case-insensitive fallback -- the intended new behavior, not a regression");
+    assert.deepEqual(getHiddenFields("proj1", "Order", "userA"), new Set(["total"]), "a sibling entity's own set must survive the rename untouched");
   });
 });
