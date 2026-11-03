@@ -15,7 +15,10 @@ export function generateDailyDigest() {
     .map((a) => ({ summary: `${a.type}: ${a.detail?.error ?? a.result}` }));
 
   const openOpportunities = db.opportunities.all()
-    .filter((o) => o.status !== 'published' && o.status !== 'rejected')
+    // A demo draft (no ANTHROPIC_API_KEY set when it was drafted) can never
+    // actually be published for real money (publishing.js refuses it) — it
+    // must never be recommended here as if it were a real next action.
+    .filter((o) => o.status !== 'published' && o.status !== 'rejected' && !o.productDraft?.demo)
     .map((o) => ({ ...o, netProfitMid: computeNetProfit({ revenueEstimate: o.revenueEstimate, costs: o.costs }).netProfit?.mid ?? null }));
   const ranked = rankOpportunities(openOpportunities);
   const topOpportunity = ranked[0]?.netProfitMid != null ? ranked[0] : null;

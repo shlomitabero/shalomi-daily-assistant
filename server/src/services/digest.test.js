@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { db, __resetForTests } from '../db/store.js';
+import { db, __resetForTests, makeId } from '../db/store.js';
 import { generateDailyDigest } from './digest.js';
 import { updateSettings } from './settings.js';
 
@@ -33,6 +33,35 @@ test('generateDailyDigest reflects research mode (the default) in the text', () 
   __resetForTests();
   const digest = generateDailyDigest();
   assert.match(digest.text, /מצב מחקר בלבד/);
+});
+
+test('generateDailyDigest never recommends a demo opportunity as the next action', () => {
+  // A demo draft (no ANTHROPIC_API_KEY when it was drafted) can never
+  // actually be published for real money - publishing.js refuses it -
+  // so it must never be recommended here as if it were a real next step,
+  // even if the owner set a revenue estimate on it.
+  __resetForTests();
+  db.opportunities.insert({
+    id: makeId('opp'), status: 'draft', title: '[דמו] מדריך: x',
+    revenueEstimate: { low: 100, mid: 200, high: 300 }, costs: {},
+    riskLevel: 'medium', dataQuality: 'unknown',
+    productDraft: { demo: true, title: '[דמו] מדריך: x' },
+  });
+  const digest = generateDailyDigest();
+  assert.doesNotMatch(digest.text, /דמו/);
+  assert.match(digest.text, /אין הזדמנות מספקת כרגע/);
+});
+
+test('generateDailyDigest still recommends a real (non-demo) opportunity normally', () => {
+  __resetForTests();
+  db.opportunities.insert({
+    id: makeId('opp'), status: 'draft', title: 'מדריך ניהול זמן',
+    revenueEstimate: { low: 100, mid: 200, high: 300 }, costs: {},
+    riskLevel: 'medium', dataQuality: 'unknown',
+    productDraft: { demo: false, title: 'מדריך ניהול זמן' },
+  });
+  const digest = generateDailyDigest();
+  assert.match(digest.text, /מדריך ניהול זמן/);
 });
 
 test('a digest generated for a different day does not get merged with today\'s', () => {
