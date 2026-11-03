@@ -2164,3 +2164,40 @@ test("incoming WhatsApp payment-request decline/cancel messages are logged with 
     assert.equal(m.direction, "in", "every placeholder row must still be a real, matched-against incoming message, not metadata");
   }
 });
+
+/**
+ * Round 1554: WhatsApp's "video note" (the circular, Instagram-style clip
+ * sent by switching the compose bar's mic into video-recording mode) was
+ * previously dropped with zero trace -- round 785 handled plain
+ * `videoMessage` but never `ptvMessage`, its own undocumented sibling.
+ * Confirmed directly against the installed Baileys protobuf
+ * (WAProto/index.d.ts): `ptvMessage` is a plain top-level field of
+ * `IMessage`, typed identically to `videoMessage` (`IVideoMessage`, same
+ * `caption` field), never nested inside any wrapper.
+ */
+test("an incoming WhatsApp video note (ptvMessage) is logged with a descriptive placeholder instead of being silently dropped", async () => {
+  const { manager, createdSockets, db } = setupManager();
+  insertProject(db, project);
+  applyMigrations(db, project.id, project.spec);
+  markProjectBuilt(db, project.id);
+
+  await manager.connect(project.id);
+  createdSockets[0].emitConnectionUpdate({ connection: "open" });
+
+  createdSockets[0].emitMessagesUpsert({
+    type: "notify",
+    messages: [
+      { key: { remoteJid: "972501234567@s.whatsapp.net", fromMe: false }, message: { ptvMessage: {} } },
+      { key: { remoteJid: "972501234567@s.whatsapp.net", fromMe: false }, message: { ptvMessage: { caption: "תגובה מהירה" } } },
+    ],
+  });
+
+  // listWhatsAppMessages orders newest-first, the reverse of emission order.
+  const { messages: videoNoteMessages } = listWhatsAppMessages(db, project.id);
+  assert.equal(videoNoteMessages.length, 2);
+  assert.equal(videoNoteMessages[0].body, "[Video note] תגובה מהירה");
+  assert.equal(videoNoteMessages[1].body, "[Video note]", "a video note with no caption must fall back to a plain placeholder, not print nothing or throw");
+  for (const m of videoNoteMessages) {
+    assert.equal(m.direction, "in", "every placeholder row must still be a real, matched-against incoming message, not metadata");
+  }
+});

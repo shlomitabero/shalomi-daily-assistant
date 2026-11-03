@@ -111,6 +111,7 @@ export interface BaileysIncomingMessage {
     extendedTextMessage?: { text?: string };
     imageMessage?: { caption?: string };
     videoMessage?: { caption?: string };
+    ptvMessage?: { caption?: string };
     documentMessage?: { caption?: string; fileName?: string };
     audioMessage?: { ptt?: boolean };
     stickerMessage?: Record<string, never>;
@@ -376,6 +377,17 @@ function describeIncomingMessage(message: BaileysIncomingMessage["message"]): st
   if (text) return text;
   if (message.imageMessage) return message.imageMessage.caption ? `[Photo] ${message.imageMessage.caption}` : "[Photo]";
   if (message.videoMessage) return message.videoMessage.caption ? `[Video] ${message.videoMessage.caption}` : "[Video]";
+  // Round 1554: `ptvMessage` is WhatsApp's "video note" (the circular,
+  // Instagram-style clip sent by switching the compose bar's mic into
+  // video-recording mode) -- an ordinary, one-tap action, not an edge case.
+  // Baileys' own shipped protobuf types (WAProto/index.d.ts) declare it as a
+  // plain top-level sibling of `videoMessage`, typed identically
+  // (`IVideoMessage`, same `caption`/`seconds`/`mimetype` fields), never
+  // nested inside any wrapper -- so it needs its own branch here, not a
+  // recursive unwrap. Given its own "[Video note]" label (not "[Video]") so
+  // the two distinct WhatsApp UI actions stay distinguishable in the log,
+  // matching this file's "[Voice note]" vs "[Audio]" convention.
+  if (message.ptvMessage) return message.ptvMessage.caption ? `[Video note] ${message.ptvMessage.caption}` : "[Video note]";
   if (message.documentMessage) {
     const name = message.documentMessage.fileName;
     const label = `[Document${name ? `: ${name}` : ""}]`;
