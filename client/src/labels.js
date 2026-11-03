@@ -8,6 +8,7 @@ export const ACTION_TYPE_LABEL = {
   autonomous_scan: 'סריקה אוטונומית',
   approve: 'אישור פעולה',
   reject: 'ביטול אישור',
+  reject_opportunity: 'דחיית הזדמנות',
   publish_product: 'פרסום מוצר',
   sale_confirmed: 'מכירה אומתה',
   paper_trade: 'עסקה מדומה',
@@ -95,6 +96,7 @@ const MISSING_COST_LABEL = {
 // opportunity, which logs identically with no reason at all.
 const REASON_LABEL = {
   'price changed after approval': 'האישור בוטל אוטומטית — המחיר השתנה אחרי שאושר',
+  'opportunity was rejected': 'האישור בוטל אוטומטית — ההזדמנות נדחתה',
 };
 
 export function reasonLabel(reason) {

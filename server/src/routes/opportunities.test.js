@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { db, __resetForTests, makeId } from '../db/store.js';
-import { createDigitalProduct, listOpportunities, getOpportunity, patchOpportunity, publishOpportunityRoute } from './opportunities.js';
+import { createDigitalProduct, listOpportunities, getOpportunity, patchOpportunity, publishOpportunityRoute, rejectOpportunity } from './opportunities.js';
 
 function makeRes() {
   const res = { statusCode: null, body: null };
@@ -225,4 +225,67 @@ test('patchOpportunity merges a valid patch without dropping untouched fields', 
   patchOpportunity({ params: { id: opp.id }, body: { priceUSD: 15 } }, res);
   assert.equal(res.body.opportunity.priceUSD, 15);
   assert.equal(res.body.opportunity.riskLevel, 'low');
+});
+
+test('rejectOpportunity 404s for an id that does not exist', () => {
+  __resetForTests();
+  const res = makeRes();
+  rejectOpportunity({ params: { id: 'opp_missing' } }, res);
+  assert.equal(res.statusCode, 404);
+});
+
+test('rejectOpportunity marks a draft opportunity rejected', () => {
+  __resetForTests();
+  const opp = insertOpportunity();
+  const res = makeRes();
+  rejectOpportunity({ params: { id: opp.id } }, res);
+  assert.equal(res.statusCode, 200);
+  assert.equal(res.body.opportunity.status, 'rejected');
+  assert.ok(db.opportunities.get(opp.id).rejectedAt);
+
+  const logged = db.actions_log.where((a) => a.type === 'reject_opportunity');
+  assert.equal(logged.length, 1);
+  assert.equal(logged[0].detail.opportunityId, opp.id);
+});
+
+test('rejectOpportunity refuses to reject an already-published opportunity', () => {
+  __resetForTests();
+  const opp = insertOpportunity({ status: 'published', paddlePriceId: 'pri_123', slug: 'already-live' });
+  const res = makeRes();
+  rejectOpportunity({ params: { id: opp.id } }, res);
+  assert.equal(res.statusCode, 409);
+  assert.equal(db.opportunities.get(opp.id).status, 'published');
+});
+
+test('rejectOpportunity is idempotent — rejecting an already-rejected opportunity is a no-op 409, not a duplicate log entry', () => {
+  __resetForTests();
+  const opp = insertOpportunity({ status: 'rejected' });
+  const res = makeRes();
+  rejectOpportunity({ params: { id: opp.id } }, res);
+  assert.equal(res.statusCode, 409);
+  assert.equal(res.body.duplicate, true);
+  assert.equal(db.actions_log.where((a) => a.type === 'reject_opportunity').length, 0);
+});
+
+test('rejectOpportunity also invalidates a stale "approve"-mode approval for this opportunity', () => {
+  // Mirrors patchOpportunity's stale-approval invalidation on a price
+  // change: an approval has no memory of the opportunity being rejected
+  // afterward, so without this it would sit there as "approved" forever
+  // even though publishing is now permanently blocked.
+  __resetForTests();
+  const opp = insertOpportunity();
+  const approval = db.approvals.insert({
+    id: makeId('appr'), opportunityId: opp.id, actionType: 'publish_product', status: 'approved', createdAt: '2026-01-01T00:00:00.000Z', approvedAt: '2026-01-01T00:00:00.000Z',
+  });
+  rejectOpportunity({ params: { id: opp.id } }, makeRes());
+  assert.equal(db.approvals.get(approval.id).status, 'rejected');
+});
+
+test('publishOpportunityRoute refuses to publish an opportunity the owner already rejected', async () => {
+  __resetForTests();
+  const opp = insertOpportunity({ status: 'rejected' });
+  const res = makeRes();
+  await publishOpportunityRoute({ params: { id: opp.id } }, res);
+  assert.equal(res.statusCode, 409);
+  assert.equal(db.opportunities.get(opp.id).status, 'rejected');
 });

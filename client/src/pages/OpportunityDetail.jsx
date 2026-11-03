@@ -89,6 +89,20 @@ export default function OpportunityDetail() {
     }
   }
 
+  async function onReject() {
+    if (!window.confirm('לדחות את ההזדמנות הזו? לא יהיה אפשר לפרסם אותה אחר כך.')) return;
+    setError('');
+    setBusy(true);
+    try {
+      await api.rejectOpportunity(id);
+      refresh();
+    } catch (err) {
+      setError(err.data?.error || err.message);
+    } finally {
+      setBusy(false);
+    }
+  }
+
   if (!opp) {
     return (
       <div className="page-loading">
@@ -178,6 +192,11 @@ export default function OpportunityDetail() {
           <p>נמכר {opp.salesCount} פעמים.</p>
           <p>דף המכירה: <a className="link" href={`/p/${opp.slug}`} target="_blank" rel="noreferrer">/p/{opp.slug}</a></p>
         </div>
+      ) : opp.status === 'rejected' ? (
+        <div className="card">
+          <h3>נדחה</h3>
+          <p className="hint">ההזדמנות הזו נדחתה ולא ניתן לפרסם אותה.</p>
+        </div>
       ) : (
         <div className="card">
           <h3>פרסום</h3>
@@ -198,6 +217,9 @@ export default function OpportunityDetail() {
             }
           >
             פרסם מוצר (יצירת תשלום אמיתי)
+          </button>
+          <button className="btn btn-ghost" onClick={onReject} disabled={busy} style={{ marginRight: 8 }}>
+            דחה הזדמנות
           </button>
           {publishResult && !publishResult.ok && <p className="form-error">{publishResult.message}</p>}
         </div>

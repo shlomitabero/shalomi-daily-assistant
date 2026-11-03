@@ -154,6 +154,13 @@ export async function publishOpportunityRoute(req, res) {
   if (opportunity.status === 'published') {
     return res.status(409).json({ error: 'already published', duplicate: true });
   }
+  // The owner explicitly dismissed this one via rejectOpportunity above —
+  // without this check, a stray repeat click, a stale approval, or a race
+  // against the autonomous scan could still carry it through to a real
+  // Paddle checkout and reverse the owner's own decision not to pursue it.
+  if (opportunity.status === 'rejected') {
+    return res.status(409).json({ error: 'this opportunity was rejected and cannot be published' });
+  }
   if (!isPaddleConfigured()) {
     logAction({ type: 'publish_product', detail: { opportunityId: opportunity.id }, result: 'blocked: Paddle is not configured yet' });
     return res.status(503).json({ error: 'Paddle is not configured yet — cannot open real checkout' });
@@ -172,9 +179,44 @@ export async function publishOpportunityRoute(req, res) {
   res.json({ opportunity: withFeasibility(db.opportunities.get(opportunity.id)) });
 }
 
+// Lets the owner permanently dismiss a draft they don't want to pursue.
+// Before this, 'rejected' was a status several places already defensively
+// filtered out (digest.js's recommendation, Dashboard.jsx's active-list,
+// Opportunities.jsx's own status label) but nothing could ever actually
+// set it - a draft the owner didn't want just sat there forever. That's
+// not just a missing feature: runAutonomousScan's MAX_PENDING_DRAFTS cap
+// only clears a draft by publishing it, so 5 ideas the owner doesn't want
+// to publish would permanently starve the autonomous loop with no way to
+// clear them short of publishing something unwanted.
+export function rejectOpportunity(req, res) {
+  const opportunity = db.opportunities.get(req.params.id);
+  if (!opportunity) return res.status(404).json({ error: 'not found' });
+  if (opportunity.status === 'published') {
+    return res.status(409).json({ error: 'cannot reject an opportunity that is already published' });
+  }
+  if (opportunity.status === 'rejected') {
+    return res.status(409).json({ error: 'already rejected', duplicate: true });
+  }
+  const updated = db.opportunities.update(opportunity.id, { status: 'rejected', rejectedAt: new Date().toISOString() });
+  // Same reasoning as the stale-approval invalidation on a price change
+  // (above): an "approve"-mode approval has no memory of the opportunity
+  // being rejected afterward, so without this it would sit there as
+  // "approved" forever even though publishing is now permanently blocked.
+  const staleApproval = db.approvals.where(
+    (a) => a.opportunityId === opportunity.id && a.actionType === 'publish_product' && a.status === 'approved'
+  )[0];
+  if (staleApproval) {
+    db.approvals.update(staleApproval.id, { status: 'rejected', rejectedAt: new Date().toISOString() });
+    logAction({ type: 'reject', detail: { opportunityId: opportunity.id, actionType: 'publish_product', reason: 'opportunity was rejected' }, result: 'success' });
+  }
+  logAction({ type: 'reject_opportunity', detail: { opportunityId: opportunity.id }, result: 'success' });
+  res.json({ opportunity: withFeasibility(updated) });
+}
+
 opportunitiesRouter.post('/opportunities/digital-product', requireOwner, asyncHandler(createDigitalProduct));
 opportunitiesRouter.post('/opportunities/autonomous-scan', requireOwner, asyncHandler(triggerAutonomousScan));
 opportunitiesRouter.get('/opportunities', requireOwner, listOpportunities);
 opportunitiesRouter.get('/opportunities/:id', requireOwner, getOpportunity);
 opportunitiesRouter.patch('/opportunities/:id', requireOwner, patchOpportunity);
 opportunitiesRouter.post('/opportunities/:id/publish', requireOwner, asyncHandler(publishOpportunityRoute));
+opportunitiesRouter.post('/opportunities/:id/reject', requireOwner, rejectOpportunity);
