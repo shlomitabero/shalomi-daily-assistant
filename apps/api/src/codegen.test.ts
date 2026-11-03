@@ -6778,7 +6778,7 @@ test("the exported CalendarView accepts an onPrint prop and renders a Print acti
 
   assert.match(
     entityViewJsx,
-    /function CalendarView\(\{ entity, dateField, endDateField, records, month, onPrevMonth, onNextMonth, onToday, onJumpToMonth, onEdit, onPrint, onDuplicate, onDelete, onDayClick, onReschedule, moveErrorId, bulkActionBusy \}\)/,
+    /function CalendarView\(\{ entity, dateField, endDateField, records, month, onPrevMonth, onNextMonth, onToday, onJumpToMonth, onEdit, onPrint, onDuplicate, onDelete, onDayClick, onReschedule, moveErrorId, bulkActionBusy, pinnedIds, onTogglePin \}\)/,
     "CalendarView must accept an onPrint prop",
   );
   assert.match(
@@ -6836,6 +6836,37 @@ test("the exported CalendarView accepts onDuplicate/onDelete props and renders D
 
   const stylesCss = files.find((f) => f.path === "web/src/styles.css")!.content;
   assert.match(stylesCss, /\.calendar-record-duplicate,\s*\.calendar-record-delete\s*\{/);
+});
+
+/**
+ * Round 1574: mirrors Table/Board view's own per-record pin/favorite toggle
+ * (rounds 1571-1573) -- sortRecordsByPinned already reorders the records
+ * this calendar is built from, but until now there was no affordance
+ * inside a record row itself to pin/unpin one, leaving Calendar view as
+ * the one remaining view without this feature. Confirms a real pin button
+ * now renders beside each record row and writes to the exact same
+ * forge_pinned_records store Table/Board view's own pin button already
+ * uses.
+ */
+test("the exported CalendarView accepts a pinnedIds/onTogglePin prop and renders a pin action beside each record row, matching Table/Board view", () => {
+  const files = generateExportFiles(project);
+  const entityViewJsx = files.find((f) => f.path === "web/src/components/EntityView.jsx")!.content;
+
+  const calendarViewSource = entityViewJsx.slice(entityViewJsx.indexOf("function CalendarView"), entityViewJsx.indexOf("function BoardCard"));
+
+  const pinButtonSrc = calendarViewSource.match(/<button\s+type="button"\s+className=\{pinnedIds\.has\(record\.id\)[\s\S]*?<\/button>/)?.[0];
+  assert.ok(pinButtonSrc, "expected a pin button beside the calendar record row");
+  assert.match(
+    pinButtonSrc!,
+    /onClick=\{\(e\) => \{\s*e\.stopPropagation\(\);\s*onTogglePin\(record\);/,
+    "clicking the pin button must call onTogglePin(record), stopping the click from also bubbling into the day cell's or chip's own onClick",
+  );
+
+  assert.match(
+    entityViewJsx,
+    /moveErrorId=\{moveErrorId\}\s*pinnedIds=\{pinnedIds\}\s*onTogglePin=\{\(record\) => setPinnedIds\(toggleRecordPinned\(entity\.name, record\.id\)\)\}/,
+    "the real call site must wire pinnedIds/onTogglePin into the same pinnedIds state and toggleRecordPinned function Table/Board view already share",
+  );
 });
 
 /**

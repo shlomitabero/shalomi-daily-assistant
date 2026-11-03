@@ -4605,7 +4605,7 @@ function buildCalendarIcs(entity, dateField, labelField, records, relatedRecords
 // shape every entity gets. Each day cell shows a chip per record landing on
 // that date (click to edit), with a "+N more" overflow instead of an
 // ever-growing cell.
-function CalendarView({ entity, dateField, endDateField, records, month, onPrevMonth, onNextMonth, onToday, onJumpToMonth, onEdit, onPrint, onDuplicate, onDelete, onDayClick, onReschedule, moveErrorId, bulkActionBusy }) {
+function CalendarView({ entity, dateField, endDateField, records, month, onPrevMonth, onNextMonth, onToday, onJumpToMonth, onEdit, onPrint, onDuplicate, onDelete, onDayClick, onReschedule, moveErrorId, bulkActionBusy, pinnedIds, onTogglePin }) {
   const year = month.getFullYear();
   const monthIndex = month.getMonth();
   const days = useMemo(() => buildCalendarMonth(records, dateField, year, monthIndex, endDateField), [records, dateField, endDateField, year, monthIndex]);
@@ -4815,6 +4815,17 @@ function CalendarView({ entity, dateField, endDateField, records, month, onPrevM
                     }}
                   >
                     Delete
+                  </button>
+                  <button
+                    type="button"
+                    className={pinnedIds.has(record.id) ? "calendar-record-pin calendar-record-pin-active" : "calendar-record-pin"}
+                    aria-label={pinnedIds.has(record.id) ? "Unpin" : "Pin to top"}
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      onTogglePin(record);
+                    }}
+                  >
+                    {pinnedIds.has(record.id) ? "⭐" : "☆"}
                   </button>
                 </div>
               ))}
@@ -8200,6 +8211,8 @@ export function EntityView({ entity, highlightRecordId, onHighlightHandled, onJu
               onDayClick={(date) => startCreateForDate(date, dateField)}
               onReschedule={(record, date, originDay) => handleCalendarDrop(record, dateField.name, date, originDay)}
               moveErrorId={moveErrorId}
+              pinnedIds={pinnedIds}
+              onTogglePin={(record) => setPinnedIds(toggleRecordPinned(entity.name, record.id))}
               bulkActionBusy={writesInFlight}
             />
           ) : (

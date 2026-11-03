@@ -4305,6 +4305,55 @@ test("EntityPanel's calendar view record chip has a Send WhatsApp action for a r
 });
 
 /**
+ * Round 1574: mirrors Table/Board view's own per-record pin/favorite toggle
+ * (rounds 1571-1573) -- sortRecordsByPinned already reorders the records
+ * this calendar's own day cells are built from, but until now there was no
+ * affordance inside a record row itself to pin/unpin one, leaving Calendar
+ * view as the one remaining view without this feature. Confirms a real pin
+ * button now renders as the calendar record row's own last button and
+ * writes to the exact same `forge.pinnedRecords` localStorage store
+ * Table/Board view's own pin button already uses.
+ */
+test("EntityPanel's calendar view record row has a pin button that writes to the same pinnedRecords store Table/Board view uses", async () => {
+  await withJsdom(async () => {
+    const today = isoDateToday();
+    const store: EntityRecord[] = [{ id: 1, title: "Dentist", date: today }];
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = mockListRecordsFetch(store) as typeof fetch;
+    try {
+      renderAppointmentPanel();
+      await waitForCondition(() => document.querySelector(".entity-toolbar") !== null);
+
+      const calendarToggle = document.querySelectorAll(".view-toggle-btn")[1] as HTMLButtonElement;
+      fireEvent.click(calendarToggle);
+      await waitForCondition(() => document.querySelectorAll(".calendar-record-chip").length === 1);
+
+      const pinButton = document.querySelector(".calendar-record-pin") as HTMLButtonElement;
+      assert.ok(pinButton, "expected a pin action in the calendar record row");
+      assert.equal(pinButton.textContent, "☆", "an unpinned record must show the empty star");
+
+      fireEvent.click(pinButton);
+      await waitForCondition(() => pinButton.className === "calendar-record-pin calendar-record-pin-active");
+      assert.equal(pinButton.textContent, "⭐", "pinning must flip the row's own button to the filled star");
+
+      // Mirrors the print/duplicate/delete/WhatsApp tests' own identical
+      // check -- clicking the row's nested pin button must not also bubble
+      // into the day cell's own onDayClick.
+      const dateInput = document.querySelector('.record-form input[name="date"]') as HTMLInputElement | null;
+      assert.equal(dateInput?.value ?? "", "", "clicking the pin button must not also prefill the create form with the clicked day's date");
+
+      const raw = window.localStorage.getItem("forge.pinnedRecords");
+      assert.ok(raw, "pinning from Calendar view must write to the same store key Table/Board view's pin button uses");
+      const parsedStore = JSON.parse(raw!) as Record<string, string[]>;
+      const key = JSON.stringify(["proj1", "Appointment", "user1"]);
+      assert.deepEqual(parsedStore[key], ["1"], "the pinned record's id must be stored under the same [projectId, entityName, userId] key Table/Board view uses");
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+});
+
+/**
  * Round 778: for an entity with no name/title/text field (e.g. a
  * "CheckIn"/"Attendance"-shaped log entity with just a date and a
  * boolean), the calendar day-chip used to render the raw stored value

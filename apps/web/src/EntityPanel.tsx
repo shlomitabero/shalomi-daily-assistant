@@ -770,6 +770,8 @@ function CalendarView({
   onDayClick,
   onReschedule,
   moveErrorId,
+  pinnedIds,
+  onTogglePin,
   readOnly = false,
   bulkActionBusy = false,
 }: {
@@ -816,6 +818,14 @@ function CalendarView({
   onDayClick: (date: Date) => void;
   onReschedule: (record: EntityRecord, date: Date, originDay?: string) => void;
   moveErrorId?: number | null;
+  /** Round 1574: mirrors Table/Board view's own per-record pin/favorite
+   * toggle (rounds 1571-1573) -- sortRecordsByPinned already reorders this
+   * calendar's own `records` prop before it ever reaches buildCalendarMonth,
+   * but until now there was no affordance inside a record row itself to
+   * pin/unpin one, the one remaining view (after Board, round 1573) without
+   * this feature. */
+  pinnedIds: Set<number>;
+  onTogglePin: (record: EntityRecord) => void;
   /** Mirrors BoardCard's own readOnly convention for the identical hazard: the caller already no-ops onEdit/onDayClick/onReschedule for a read-only viewer, but every affordance in here (day-cell click/keyboard/drag-drop, chip drag/click) stayed fully "live" regardless -- a viewer saw a clickable/draggable calendar that silently did nothing. */
   readOnly?: boolean;
   /** Round 1118: mirrors BoardCard's own identical addition -- a bulk batch
@@ -1151,6 +1161,20 @@ function CalendarView({
                       💬
                     </button>
                   )}
+                  <button
+                    type="button"
+                    className={pinnedIds.has(record.id as number) ? "calendar-record-pin calendar-record-pin-active" : "calendar-record-pin"}
+                    aria-label={pinnedIds.has(record.id as number) ? t("entity.record.unpin") : t("entity.record.pin")}
+                    title={pinnedIds.has(record.id as number) ? t("entity.record.unpin") : t("entity.record.pin")}
+                    onClick={(e) => {
+                      // Mirrors the print button's own stopPropagation
+                      // just above -- same day-cell-onDayClick hazard.
+                      e.stopPropagation();
+                      onTogglePin(record);
+                    }}
+                  >
+                    {pinnedIds.has(record.id as number) ? "⭐" : "☆"}
+                  </button>
                 </div>
               ))}
               {day.records.length > 3 && (
@@ -5558,6 +5582,8 @@ export function EntityPanel({
               onSendWhatsApp={onSendWhatsApp}
               onDayClick={readOnly ? () => {} : (date) => startCreateForDate(date, dateField)}
               onReschedule={readOnly ? () => {} : (record, date, originDay) => handleCalendarDrop(record, dateField.name, date, originDay)}
+              pinnedIds={pinnedIds}
+              onTogglePin={(record) => setPinnedIds(toggleRecordPinned(projectId, entity.name, userId, record.id as number))}
               moveErrorId={moveErrorId}
               readOnly={readOnly}
               bulkActionBusy={writesInFlight}
