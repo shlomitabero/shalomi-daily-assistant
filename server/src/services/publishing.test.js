@@ -44,6 +44,25 @@ test('publishOpportunity creates a real Paddle price and a slug on first publish
   }
 });
 
+test('publishOpportunity refuses to publish demo content, never opening a real Paddle checkout for it', async () => {
+  __resetForTests();
+  updateSettings({ mode: 'auto_limited' });
+  const opportunity = insertOpportunity({ productDraft: { demo: true, title: '[דמו] מדריך: x' } });
+  const restore = stubFetchOnce([]); // any fetch call means it tried to publish for real - a failure
+  try {
+    const result = await publishOpportunity(opportunity);
+    assert.equal(result.allowed, false);
+    assert.match(result.reason, /דמו/);
+    const stillDraft = db.opportunities.get(opportunity.id);
+    assert.equal(stillDraft.status, 'draft');
+    assert.equal(stillDraft.paddlePriceId, null);
+    const logged = db.actions_log.where((a) => a.type === 'publish_product')[0];
+    assert.match(logged.result, /blocked: demo/);
+  } finally {
+    restore();
+  }
+});
+
 test('publishOpportunity never calls Paddle again once a price already exists', async () => {
   // Re-publishing (e.g. the autonomous scan retrying) must not create a
   // second, orphaned Paddle price for the same product.
