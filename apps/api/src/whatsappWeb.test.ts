@@ -2118,6 +2118,41 @@ test("incoming WhatsApp scheduled-call-cancel messages are logged with a descrip
 });
 
 /**
+ * Round 1570: WhatsApp's native "Keep"/"Undo Keep" chat action on a
+ * view-once photo/video (tap Keep to save it past its single view)
+ * delivers as `keepInChatMessage`, a plaintext int enum (proto.Message
+ * .KeepInChatMessage.KeepType: UNKNOWN=0, KEEP_FOR_ALL=1,
+ * UNDO_KEEP_FOR_ALL=2) -- confirmed directly against the installed
+ * Baileys protobuf. Previously dropped with zero trace, same gap as
+ * pinInChatMessage (round 1507) and scheduledCallEditMessage (round 1569).
+ */
+test("incoming WhatsApp keep/undo-keep (view-once) messages are logged with a descriptive placeholder instead of being silently dropped", async () => {
+  const { manager, createdSockets, db } = setupManager();
+  insertProject(db, project);
+  applyMigrations(db, project.id, project.spec);
+  markProjectBuilt(db, project.id);
+
+  await manager.connect(project.id);
+  createdSockets[0].emitConnectionUpdate({ connection: "open" });
+
+  createdSockets[0].emitMessagesUpsert({
+    type: "notify",
+    messages: [
+      { key: { remoteJid: "972501234567@s.whatsapp.net", fromMe: false }, message: { keepInChatMessage: { keepType: 1 } } },
+      { key: { remoteJid: "972501234567@s.whatsapp.net", fromMe: false }, message: { keepInChatMessage: { keepType: 2 } } },
+      { key: { remoteJid: "972501234567@s.whatsapp.net", fromMe: false }, message: { keepInChatMessage: { keepType: 0 } } },
+    ],
+  });
+
+  // listWhatsAppMessages orders newest-first, the reverse of emission order.
+  const { messages: keepMessages } = listWhatsAppMessages(db, project.id);
+  assert.equal(keepMessages.length, 2, "the UNKNOWN (0) keepType has no recoverable meaning and must stay genuinely dropped, same as pinInChatMessage's own UNKNOWN_TYPE handling");
+  assert.equal(keepMessages[0].body, "[Un-kept photo/video]");
+  assert.equal(keepMessages[1].body, "[Kept photo/video]");
+  for (const m of keepMessages) assert.equal(m.direction, "in", "every placeholder row must still be a real, matched-against incoming message, not metadata");
+});
+
+/**
  * Round 1538: WhatsApp's native Pay feature ("Request Payment"/"Send
  * Payment") was previously dropped with zero trace, the same silent-vanish
  * gap round 1537 fixed for scheduledCallCreationMessage. requestPaymentMessage/

@@ -157,6 +157,7 @@ export interface BaileysIncomingMessage {
     editedMessage?: { message?: BaileysIncomingMessage["message"] };
     protocolMessage?: { type?: number; editedMessage?: BaileysIncomingMessage["message"] };
     pinInChatMessage?: { type?: number };
+    keepInChatMessage?: { keepType?: number };
     ephemeralMessage?: { message?: BaileysIncomingMessage["message"] };
     associatedChildMessage?: { message?: BaileysIncomingMessage["message"] };
     groupStatusMessage?: { message?: BaileysIncomingMessage["message"] };
@@ -571,6 +572,20 @@ function describeIncomingMessage(message: BaileysIncomingMessage["message"]): st
     const UNPIN_FOR_ALL = 2;
     if (message.pinInChatMessage.type === PIN_FOR_ALL) return "[Message pinned]";
     if (message.pinInChatMessage.type === UNPIN_FOR_ALL) return "[Message unpinned]";
+    return null;
+  }
+  // Round 1570: WhatsApp's native "Keep"/"Undo Keep" chat action on a
+  // view-once photo/video (tap Keep to save it past its single view)
+  // arrives as `keepInChatMessage`, a plaintext int enum (proto.Message
+  // .KeepInChatMessage.KeepType: UNKNOWN=0, KEEP_FOR_ALL=1,
+  // UNDO_KEEP_FOR_ALL=2) -- the same "detect presence only" shape as
+  // pinInChatMessage just above. Previously fell through to the final
+  // `return null` and vanished with zero trace.
+  if (message.keepInChatMessage) {
+    const KEEP_FOR_ALL = 1;
+    const UNDO_KEEP_FOR_ALL = 2;
+    if (message.keepInChatMessage.keepType === KEEP_FOR_ALL) return "[Kept photo/video]";
+    if (message.keepInChatMessage.keepType === UNDO_KEEP_FOR_ALL) return "[Un-kept photo/video]";
     return null;
   }
   // Round 1538: WhatsApp's native Pay feature ("Request Payment"/"Send
