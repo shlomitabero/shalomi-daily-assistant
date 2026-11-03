@@ -1,7 +1,7 @@
 import { timingSafeEqual } from "node:crypto";
 import { Router, type Request, type Response } from "express";
 import type { ForgeDatabase } from "@forge/db";
-import { getInboundWebhookToken, insertRecord, recordInboundWebhookDelivery, recordInboundWebhookFailure } from "@forge/db";
+import { getInboundWebhookToken, insertRecord, isValidDateString, recordInboundWebhookDelivery, recordInboundWebhookFailure } from "@forge/db";
 import { ProductSpecSchema, type Entity, type Project } from "@forge/shared";
 import type { WhatsAppWebManager } from "../whatsappWeb.js";
 import type { EmailSender } from "../email.js";
@@ -91,16 +91,35 @@ function normalizeBodyKeys(entity: Entity, body: Record<string, unknown>): Recor
  * Duplicated the two word lists locally rather than cross-importing
  * apps/web into apps/api, mirroring this file's own established
  * "mirror, don't cross-import" convention for every other helper here.
+ *
+ * Round 1551: extends the same reasoning to date fields -- the one
+ * coercible field type rounds 1511-1514 never reached. coerceValue's own
+ * date branch (packages/db/src/repository.ts) is isValidDateString's
+ * strict `^\d{4}-\d{2}-\d{2}$` regex with zero tolerance for anything
+ * else, so an ISO-8601 timestamp with a time component (e.g.
+ * "2024-01-15T00:00:00Z") -- the single most common real-world shape a
+ * third-party integrator, or even this app's own `Date.prototype.toISOString()`,
+ * would send for a date -- gets the identical "a value was genuinely
+ * sent, just not in the exact shape this route expected" rejection
+ * already closed for field names, enum values/labels, and boolean
+ * casing/shape. Unlike those siblings, a bad date value throws for the
+ * WHOLE record regardless of field.required (coerceValue's date branch
+ * isn't gated by it), so this one is worse: the record is rejected
+ * outright, not just one field silently nulled.
  */
 const WEBHOOK_BOOLEAN_TRUE_VALUES = ["true", "1", "yes", "כן"];
 const WEBHOOK_BOOLEAN_FALSE_VALUES = ["false", "0", "no", "לא"];
+const WEBHOOK_DATE_PREFIX = /^\d{4}-\d{2}-\d{2}/;
 
 function normalizeBodyValues(entity: Entity, body: Record<string, unknown>): Record<string, unknown> {
   const normalized: Record<string, unknown> = { ...body };
   for (const field of entity.fields) {
     const raw = normalized[field.name];
     if (typeof raw !== "string") continue;
-    if (field.type === "enum" && field.enumValues && !field.enumValues.includes(raw)) {
+    if (field.type === "date" && !isValidDateString(raw)) {
+      const match = WEBHOOK_DATE_PREFIX.exec(raw);
+      if (match && isValidDateString(match[0])) normalized[field.name] = match[0];
+    } else if (field.type === "enum" && field.enumValues && !field.enumValues.includes(raw)) {
       const match =
         field.enumValues.find((v) => v.toLowerCase() === raw.toLowerCase()) ??
         // Round 1541: the raw-value match above only ever matches the
