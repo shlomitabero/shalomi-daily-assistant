@@ -59,7 +59,16 @@ const CredentialsSchema = z.object({
   // (RFC 5321's real max email length), the same convention already used
   // for the automation rule's own toEmail field.
   email: z.string().email().max(320, "email must be 320 characters or fewer").transform((email) => email.toLowerCase()),
-  password: z.string().min(8, "password must be at least 8 characters"),
+  // Round 1583: same convention as the email field's own cap just above --
+  // every other free-text field in this app already has a `.max()`
+  // ceiling (rounds 1403/1408/1409/1411/1414/1423/1426/1479), and password
+  // was the one left unbounded. A generous 256 avoids any risk of locking
+  // out an existing account whose already-hashed password happens to be
+  // longer (this schema is also used by /auth/login, not just signup, so
+  // a cap here must stay comfortably above anything a real password
+  // manager would ever generate) while still closing the "no ceiling at
+  // all" gap every sibling field already closed.
+  password: z.string().min(8, "password must be at least 8 characters").max(256, "password must be 256 characters or fewer"),
   // Client-supplied, same convention as POST /projects/from-template's own
   // `lang` param (round 492) -- the server has no other way to know which
   // language the login-code email should be written in.
@@ -69,8 +78,12 @@ const CredentialsSchema = z.object({
 const SESSION_TTL_MS = 30 * 24 * 60 * 60 * 1000; // 30 days
 
 const ChangePasswordSchema = z.object({
-  currentPassword: z.string().min(1, "currentPassword is required"),
-  newPassword: z.string().min(8, "newPassword must be at least 8 characters"),
+  // Round 1583: same cap as CredentialsSchema's own password field above --
+  // currentPassword is checked against this account's existing hash, so
+  // the cap must stay generous enough to never reject a real existing
+  // password.
+  currentPassword: z.string().min(1, "currentPassword is required").max(256, "currentPassword must be 256 characters or fewer"),
+  newPassword: z.string().min(8, "newPassword must be at least 8 characters").max(256, "newPassword must be 256 characters or fewer"),
   // Round 1252: same optional client-language hint CredentialsSchema/
   // ForgotPasswordSchema/ChangeEmailSchema already carry, for the
   // notification email this route now sends.
@@ -78,7 +91,8 @@ const ChangePasswordSchema = z.object({
 });
 
 const ChangeEmailSchema = z.object({
-  currentPassword: z.string().min(1, "currentPassword is required"),
+  // Round 1583: same cap as ChangePasswordSchema's own currentPassword above.
+  currentPassword: z.string().min(1, "currentPassword is required").max(256, "currentPassword must be 256 characters or fewer"),
   // Same case-insensitive normalization as CredentialsSchema's own email
   // field above -- keeps the uniqueness check and every future login
   // consistent no matter which casing someone types.
@@ -106,7 +120,8 @@ const ForgotPasswordSchema = z.object({
 
 const ResetPasswordSchema = z.object({
   token: z.string().min(1, "token is required"),
-  newPassword: z.string().min(8, "newPassword must be at least 8 characters"),
+  // Round 1583: same cap as CredentialsSchema's own password field above.
+  newPassword: z.string().min(8, "newPassword must be at least 8 characters").max(256, "newPassword must be 256 characters or fewer"),
   lang: z.enum(["he", "en"]).optional(),
 });
 

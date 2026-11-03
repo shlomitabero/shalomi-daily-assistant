@@ -292,13 +292,14 @@ export function AuthScreen({ onAuthenticated }: { onAuthenticated: (user: User) 
                       onChange={setResetNewPassword}
                       required
                       minLength={8}
+                      maxLength={256}
                       autoComplete="new-password"
                       showStrength
                     />
                   </label>
                   <label className="field-row">
                     <span>{t("auth.resetPassword.confirm")}</span>
-                    <PasswordInput value={resetConfirmPassword} onChange={setResetConfirmPassword} required minLength={8} autoComplete="new-password" />
+                    <PasswordInput value={resetConfirmPassword} onChange={setResetConfirmPassword} required minLength={8} maxLength={256} autoComplete="new-password" />
                   </label>
                   <button type="submit" disabled={busy}>
                     {busy ? t("auth.submit.busy") : t("auth.resetPassword.submit")}
@@ -462,6 +463,7 @@ export function AuthScreen({ onAuthenticated }: { onAuthenticated: (user: User) 
                     onChange={setPassword}
                     required
                     minLength={8}
+                    maxLength={256}
                     name="password"
                     autoComplete={mode === "signup" ? "new-password" : "current-password"}
                     showStrength={mode === "signup"}
@@ -470,7 +472,7 @@ export function AuthScreen({ onAuthenticated }: { onAuthenticated: (user: User) 
                 {mode === "signup" && (
                   <label className="field-row">
                     <span>{t("auth.confirmPassword.label")}</span>
-                    <PasswordInput value={confirmPassword} onChange={setConfirmPassword} required minLength={8} autoComplete="new-password" />
+                    <PasswordInput value={confirmPassword} onChange={setConfirmPassword} required minLength={8} maxLength={256} autoComplete="new-password" />
                   </label>
                 )}
                 <button type="submit" disabled={busy}>

@@ -103,15 +103,15 @@ export function ChangePasswordPanel({ onClose }: { onClose: () => void }) {
           >
             <label className="field-row">
               <span>{t("changePassword.current")}</span>
-              <PasswordInput value={currentPassword} onChange={setCurrentPassword} required autoComplete="current-password" />
+              <PasswordInput value={currentPassword} onChange={setCurrentPassword} required maxLength={256} autoComplete="current-password" />
             </label>
             <label className="field-row">
               <span>{t("changePassword.new")}</span>
-              <PasswordInput value={newPassword} onChange={setNewPassword} required minLength={8} autoComplete="new-password" showStrength />
+              <PasswordInput value={newPassword} onChange={setNewPassword} required minLength={8} maxLength={256} autoComplete="new-password" showStrength />
             </label>
             <label className="field-row">
               <span>{t("changePassword.confirm")}</span>
-              <PasswordInput value={confirmPassword} onChange={setConfirmPassword} required minLength={8} autoComplete="new-password" />
+              <PasswordInput value={confirmPassword} onChange={setConfirmPassword} required minLength={8} maxLength={256} autoComplete="new-password" />
             </label>
             {error && (
               <p className="error small" role="alert">

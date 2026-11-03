@@ -1100,6 +1100,57 @@ test("POST /auth/signup rejects an email longer than 320 characters instead of p
 });
 
 /**
+ * Round 1583: every other free-text field in the auth flow already carries
+ * a `.max()` ceiling (email just above, plus rounds 1403/1408/1409/1411/
+ * 1414/1423/1426/1479 across the rest of the app) -- password was the one
+ * field in this exact file left genuinely unbounded, reachable pre-auth on
+ * every signup. Verifies both the accepting side (a comfortably-sized real
+ * password must still work) and the rejecting side (an oversized one must
+ * not), the same "cap must not be so tight it rejects genuine use" pair
+ * rounds 1403/1408 established.
+ */
+test("POST /auth/signup rejects a password longer than 256 characters, but still accepts one right at that limit", async () => {
+  await withServer(async (baseUrl) => {
+    const oversized = await fetch(`${baseUrl}/api/auth/signup`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ email: "oversized-password@example.com", password: "a".repeat(257) }),
+    });
+    assert.equal(oversized.status, 400, "a 257-character password must be rejected, not silently accepted and hashed");
+
+    const atLimit = await fetch(`${baseUrl}/api/auth/signup`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ email: "at-limit-password@example.com", password: "a".repeat(256) }),
+    });
+    assert.equal(atLimit.status, 201, "a 256-character password is still within the cap and must be accepted");
+  });
+});
+
+/**
+ * Round 1583: same cap, same reasoning, applied to ChangePasswordSchema's
+ * own currentPassword/newPassword fields.
+ */
+test("PATCH /auth/password rejects a newPassword longer than 256 characters", async () => {
+  await withServer(async (baseUrl) => {
+    const email = `change-pw-maxlen-${Date.now()}@example.com`;
+    const signupRes = await fetch(`${baseUrl}/api/auth/signup`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ email, password: "original-password" }),
+    });
+    const { token } = (await signupRes.json()) as { token: string };
+
+    const res = await fetch(`${baseUrl}/api/auth/password`, {
+      method: "PATCH",
+      headers: authHeaders(token),
+      body: JSON.stringify({ currentPassword: "original-password", newPassword: "a".repeat(257) }),
+    });
+    assert.equal(res.status, 400, "a 257-character newPassword must be rejected, not silently accepted and hashed");
+  });
+});
+
+/**
  * Round 1310: this route's own success invalidates the exact precondition
  * (currentPassword verified against storedHash) a retry re-checks -- once
  * the password changes, the caller's own unchanged request body no longer

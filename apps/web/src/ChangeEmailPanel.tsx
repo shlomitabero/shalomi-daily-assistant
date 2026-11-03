@@ -129,7 +129,7 @@ export function ChangeEmailPanel({ currentEmail, onClose, onChanged }: { current
             </label>
             <label className="field-row">
               <span>{t("changeEmail.currentPassword")}</span>
-              <PasswordInput value={currentPassword} onChange={setCurrentPassword} required autoComplete="current-password" />
+              <PasswordInput value={currentPassword} onChange={setCurrentPassword} required maxLength={256} autoComplete="current-password" />
             </label>
             {error && (
               <p className="error small" role="alert">

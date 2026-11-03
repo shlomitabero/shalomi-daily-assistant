@@ -22,6 +22,7 @@ export function PasswordInput({
   onChange,
   required,
   minLength,
+  maxLength,
   autoComplete,
   name,
   showStrength,
@@ -32,6 +33,11 @@ export function PasswordInput({
   onChange: (value: string) => void;
   required?: boolean;
   minLength?: number;
+  // Round 1583: same client-side parity round 1458 already gave the two
+  // email inputs for their own new server-side cap -- the server now caps
+  // every password field at 256 (routes/auth.ts), so this mirrors that
+  // limit for immediate feedback instead of a silent server 400 on submit.
+  maxLength?: number;
   autoComplete?: string;
   name?: string;
   showStrength?: boolean;
@@ -70,6 +76,7 @@ export function PasswordInput({
           type={visible ? "text" : "password"}
           required={required}
           minLength={minLength}
+          maxLength={maxLength}
           autoComplete={autoComplete}
           name={name}
           placeholder={placeholder}
