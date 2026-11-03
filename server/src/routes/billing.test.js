@@ -27,7 +27,11 @@ function sign(body, ts, secret) {
 
 function makeReq(payload, secret) {
   const rawBody = JSON.stringify(payload);
-  const ts = '1700000000';
+  // Must be fresh: verifyPaddleSignature now rejects a signature whose
+  // timestamp is outside a tolerance window of the real current time
+  // (replay protection), so a fixed historical ts would fail every one
+  // of these tests regardless of the rest of the signature being correct.
+  const ts = Math.floor(Date.now() / 1000);
   return { headers: { 'paddle-signature': `ts=${ts};h1=${sign(rawBody, ts, secret)}` }, body: Buffer.from(rawBody) };
 }
 
@@ -200,7 +204,7 @@ test('a malformed JSON body never crashes the handler', () => {
   __resetForTests();
   withEnv({ PADDLE_WEBHOOK_SECRET: 'whsec_real' }, () => {
     const rawBody = '{not valid json';
-    const ts = '1700000000';
+    const ts = Math.floor(Date.now() / 1000);
     const req = { headers: { 'paddle-signature': `ts=${ts};h1=${sign(rawBody, ts, 'whsec_real')}` }, body: Buffer.from(rawBody) };
     const res = makeRes();
     assert.doesNotThrow(() => paddleWebhookHandler(req, res));
