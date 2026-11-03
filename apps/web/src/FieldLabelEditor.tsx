@@ -3,6 +3,7 @@ import type { Field, Project } from "@forge/shared";
 import { renameFieldLabel } from "./api.js";
 import { fieldDisplayLabel } from "./entityFormatting.js";
 import { useTranslation } from "./i18n/LanguageContext.js";
+import { useBeforeUnloadWarning } from "./useBeforeUnloadWarning.js";
 
 /**
  * Inline click-to-rename for a single field's display label (e.g. a
@@ -52,6 +53,12 @@ export function FieldLabelEditor({
   // to that suffixed text instead of leaving its real label untouched.
   const currentLabel = field.label ?? field.name;
   const displayLabel = fieldDisplayLabel(field, labelOccurrences);
+
+  // Round 1552: mirrors ProjectDescriptionEditor.tsx's own round-1477 fix --
+  // a tab close/refresh/navigation while a typed-but-unsubmitted rename is
+  // sitting in this draft silently discards it with no warning, the exact
+  // gap that round already closed for the sibling description editor.
+  useBeforeUnloadWarning(editing && draft.trim() !== "" && draft.trim() !== currentLabel);
 
   function startEditing(e: React.MouseEvent) {
     e.preventDefault();

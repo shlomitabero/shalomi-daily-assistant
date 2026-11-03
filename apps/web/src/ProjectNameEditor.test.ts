@@ -369,3 +369,53 @@ test("pressing Enter to save does not fire the rename request twice, even though
     }
   });
 });
+
+/**
+ * Round 1552: mirrors ProjectDescriptionEditor.test.ts's own round-1477
+ * coverage -- before this round's fix, a tab close/refresh/navigation
+ * while a typed-but-unsubmitted rename sat in this draft silently
+ * discarded it with zero warning. Confirms the warning only engages once
+ * the draft genuinely differs from the saved name (not merely on entering
+ * edit mode), and clears again once the draft is saved.
+ */
+test("ProjectNameEditor warns before a tab close/refresh discards an in-progress edit, but not while the draft still matches the saved name", async () => {
+  await withJsdom(async () => {
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = (async (input: string, init?: RequestInit) => {
+      if (init?.method === "PATCH" && input === "/api/projects/proj1/name") {
+        const body = JSON.parse(init.body as string) as { name: string };
+        return new Response(JSON.stringify({ project: { ...project, name: body.name } }), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        });
+      }
+      throw new Error(`unexpected request ${init?.method ?? "GET"} ${input}`);
+    }) as typeof fetch;
+
+    function dispatchBeforeUnload(): boolean {
+      const event = new window.Event("beforeunload", { cancelable: true });
+      window.dispatchEvent(event);
+      return event.defaultPrevented;
+    }
+
+    try {
+      renderEditor(() => {});
+
+      assert.equal(dispatchBeforeUnload(), false, "nothing being edited yet, nothing to warn about");
+
+      fireEvent.click(document.querySelector(".project-name") as HTMLElement);
+      await waitForCondition(() => document.querySelector(".project-name-edit input") !== null);
+      assert.equal(dispatchBeforeUnload(), false, "editing started but the draft still matches the saved name");
+
+      const input = document.querySelector(".project-name-edit input") as HTMLInputElement;
+      fireEvent.change(input, { target: { value: "A Much Better Name" } });
+      assert.equal(dispatchBeforeUnload(), true, "the draft now genuinely differs from the saved name -- must warn");
+
+      fireEvent.blur(input);
+      await waitForCondition(() => document.querySelector(".project-name-edit") === null);
+      assert.equal(dispatchBeforeUnload(), false, "the edit was saved, nothing left to lose");
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+});

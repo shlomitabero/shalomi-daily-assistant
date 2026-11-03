@@ -2,6 +2,7 @@ import { useRef, useState } from "react";
 import type { Project } from "@forge/shared";
 import { renameProject } from "./api.js";
 import { useTranslation } from "./i18n/LanguageContext.js";
+import { useBeforeUnloadWarning } from "./useBeforeUnloadWarning.js";
 
 /**
  * Inline click-to-rename for the preview screen's project title. A
@@ -49,6 +50,12 @@ export function ProjectNameEditor({
    * whether that spurious call ever shows up.
    */
   const cancelling = useRef(false);
+
+  // Round 1552: mirrors ProjectDescriptionEditor.tsx's own round-1477 fix --
+  // a tab close/refresh/navigation while a typed-but-unsubmitted rename is
+  // sitting in this draft silently discards it with no warning, the exact
+  // gap that round already closed for the sibling description editor.
+  useBeforeUnloadWarning(editing && draft.trim() !== "" && draft.trim() !== project.name);
 
   function startEditing() {
     cancelling.current = false;

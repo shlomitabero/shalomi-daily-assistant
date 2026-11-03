@@ -456,3 +456,56 @@ test("pressing Enter to save a field label does not fire the rename request twic
     }
   });
 });
+
+/**
+ * Round 1552: mirrors ProjectDescriptionEditor.test.ts's own round-1477
+ * coverage -- before this round's fix, a tab close/refresh/navigation
+ * while a typed-but-unsubmitted rename sat in this draft silently
+ * discarded it with zero warning. Confirms the warning only engages once
+ * the draft genuinely differs from the saved label (not merely on
+ * entering edit mode), and clears again once the draft is saved.
+ */
+test("FieldLabelEditor warns before a tab close/refresh discards an in-progress edit, but not while the draft still matches the saved label", async () => {
+  await withJsdom(async () => {
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = (async (input: string, init?: RequestInit) => {
+      if (init?.method === "PATCH" && input === "/api/projects/proj1/entities/Customer/fields/phone/label") {
+        const body = JSON.parse(init.body as string) as { label: string };
+        const renamedField = { ...field, label: body.label };
+        return new Response(
+          JSON.stringify({
+            project: { ...project, spec: { ...project.spec, entities: [{ ...project.spec.entities[0], fields: [renamedField] }] } },
+          }),
+          { status: 200, headers: { "content-type": "application/json" } },
+        );
+      }
+      throw new Error(`unexpected request ${init?.method ?? "GET"} ${input}`);
+    }) as typeof fetch;
+
+    function dispatchBeforeUnload(): boolean {
+      const event = new window.Event("beforeunload", { cancelable: true });
+      window.dispatchEvent(event);
+      return event.defaultPrevented;
+    }
+
+    try {
+      renderEditor(() => {});
+
+      assert.equal(dispatchBeforeUnload(), false, "nothing being edited yet, nothing to warn about");
+
+      fireEvent.click(document.querySelector(".field-label-edit-btn") as HTMLElement);
+      await waitForCondition(() => document.querySelector(".field-label-edit input") !== null);
+      assert.equal(dispatchBeforeUnload(), false, "editing started but the draft still matches the saved label");
+
+      const input = document.querySelector(".field-label-edit input") as HTMLInputElement;
+      fireEvent.change(input, { target: { value: "A Much Better Label" } });
+      assert.equal(dispatchBeforeUnload(), true, "the draft now genuinely differs from the saved label -- must warn");
+
+      fireEvent.blur(input);
+      await waitForCondition(() => document.querySelector(".field-label-edit") === null);
+      assert.equal(dispatchBeforeUnload(), false, "the edit was saved, nothing left to lose");
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+});

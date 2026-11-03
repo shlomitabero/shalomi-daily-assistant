@@ -2,6 +2,7 @@ import { useRef, useState } from "react";
 import type { Checkpoint } from "@forge/shared";
 import { renameCheckpoint } from "./api.js";
 import { useTranslation } from "./i18n/LanguageContext.js";
+import { useBeforeUnloadWarning } from "./useBeforeUnloadWarning.js";
 
 /**
  * Inline click-to-rename for a Time Machine checkpoint's own label -- a
@@ -74,6 +75,12 @@ export function CheckpointLabelEditor({
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const cancelling = useRef(false);
+
+  // Round 1552: mirrors ProjectDescriptionEditor.tsx's own round-1477 fix --
+  // a tab close/refresh/navigation while a typed-but-unsubmitted rename is
+  // sitting in this draft silently discards it with no warning, the exact
+  // gap that round already closed for the sibling description editor.
+  useBeforeUnloadWarning(editing && draft.trim() !== "" && draft.trim() !== checkpoint.label);
 
   function startEditing() {
     // Round 1120: see this component's own `disabled` prop doc comment --
