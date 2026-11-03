@@ -43293,6 +43293,18 @@ Full suite run: `packages/db` 328/328 clean. `apps/api` full suite clean except 
 
 **Topic status**: closes the restore half of the audit-trail gap round 1567 opened. `codegen.ts` parity does not apply -- confirmed via `grep -n checkpoint apps/api/src/codegen.ts` (zero matches): the exported standalone app has no Time Machine/checkpoint feature at all.
 
+### Round 1578: fix verify-code lockout test's flaky realCode extraction
+
+Round 1577's own entry flagged a `verify-code rejects a wrong code...locks it out...` test in `apps/api/src/app.test.ts` as "a pre-existing, unrelated flake" observed during that round's full-suite run but not investigated. A fresh survey subagent root-caused it: round 1566 added a signup-time email-verification send (gated on `emailSender.configured`, which the test fixture's fake sender defaults to `true`) and correctly reset `emailSender.sentTo` after every other test's signup call so a later `sentTo[0]` read sees the intended email -- ~16 other call sites in this file already carry that exact reset line with the exact same comment wording. This one test (started line 612) was missed: its `realCode = emailSender.sentTo[0]!.text.match(/\d{6}/)![0]` read the signup verification email (body contains a random hex token) instead of the login-code email, only "passing" when the random hex token happened to contain a run of 6 digit characters by chance.
+
+Independently re-verified before accepting the subagent's diff: confirmed the exact same reset-line convention appears 16 times elsewhere in `app.test.ts` via `grep`, then personally reproduced the flake directly -- ran the test in isolation 12x before the fix (1 failure, matching the described null-match `TypeError`), then 15x after the fix (0 failures) -- rather than trusting the subagent's own reported repro numbers.
+
+**Implementation**: inserted `emailSender.sentTo.length = 0; // Round 1566: signup itself now also sends its own verification email -- only the login-code email below matters here.` between the signup and login `fetch` calls, matching the file's own established convention exactly (no new pattern introduced).
+
+Full suite run: `apps/api` 1093/1094 passing; the one failure is the already-root-caused, pre-existing `codegen.test.ts` SIGKILL/cgroup-OOM flake (unrelated -- this round never touches `codegen.ts`). This is the first `apps/api` full-suite run in several rounds with the verify-code flake gone.
+
+**Topic status**: closes the loose end round 1577 explicitly flagged rather than investigated. No `codegen.ts`/`apps/web` parity applies -- this is a test-only fix for an API-side test file.
+
 ### Round 1577: fix badgeTone missing Courier's "Offline" status
 
 A fresh survey subagent enumerated every `enumValues` status-like list in `packages/spec-engine/src/domainEntities.ts` against `badgeTone`'s `NEGATIVE_WORDS`/`POSITIVE_WORDS` coverage and found the built-in Courier domain entity's status enum (`["Available", "OnDelivery", "Offline"]`) completely unclassified -- all three values rendered the same neutral gray badge, so a dispatcher looking at the Courier table/board couldn't visually tell an offline courier from an available one. Independently re-verified before implementing: ran the actual `NEGATIVE_WORDS`/`POSITIVE_WORDS` membership check against `"offline"` in both files (matches neither list), and confirmed via `grep` that "Offline"/"offline" appears nowhere else in `domainEntities.ts`/`templates.ts` and is not a substring of any existing list entry (and vice versa) -- a clean, zero-collision addition, the same shape as every prior one-word `badgeTone` fix in this family (rounds 1469-1521).
