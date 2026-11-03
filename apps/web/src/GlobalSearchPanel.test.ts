@@ -1835,6 +1835,92 @@ test("GlobalSearchPanel's 'Jump to' passes the entity's CURRENT casing, not the 
 });
 
 /**
+ * Round 1559: the exact same stale-casing hazard round 1531 fixed for the
+ * render loop's mouse "Jump to" button -- but handleInputKeyDown's own
+ * Enter branch is a structurally separate code path (operating on
+ * results[selectedIndex] directly, not through the resolved `entity`
+ * already in scope inside that loop's .map()) that round 1531 never
+ * touched. A keyboard user arrow-key-highlighting a result group, then
+ * pressing Enter, hit the identical "stale casing reaches App.tsx's own
+ * exact-match activeEntity filter" failure, just reached via keyboard
+ * instead of a mouse click.
+ */
+test("GlobalSearchPanel's keyboard Enter-to-jump passes the entity's CURRENT casing, not the stale pre-rename snapshot, after a refine recases it while the panel is still open", async () => {
+  await withJsdom(async () => {
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = mockGlobalSearchFetch() as typeof fetch;
+    let jumpedToEntity: string | undefined;
+    try {
+      const { rerender } = render(
+        React.createElement(
+          ThemeProvider,
+          null,
+          React.createElement(
+            LanguageProvider,
+            null,
+            React.createElement(GlobalSearchPanel, {
+              projectId: "proj1",
+              userId: "user1",
+              projectName: "Test Project",
+              entities: [SEARCH_CUSTOMER_ENTITY, SEARCH_ORDER_ENTITY],
+              onClose: () => {},
+              onJumpToEntity: (entityName: string) => {
+                jumpedToEntity = entityName;
+              },
+              onJumpToRecord: () => {},
+            }),
+          ),
+        ),
+      );
+
+      const input = document.querySelector(".global-search-input") as HTMLInputElement;
+      fireEvent.change(input, { target: { value: "widget" } });
+      const form = document.querySelector("form.global-search-form")!;
+      fireEvent.submit(form);
+      await waitForCondition(() => document.querySelectorAll(".global-search-group").length === 2);
+
+      // The refine's own completion: "Customer" is recased to "CUSTOMER",
+      // the same entity, same fields -- not removed, not replaced.
+      rerender(
+        React.createElement(
+          ThemeProvider,
+          null,
+          React.createElement(
+            LanguageProvider,
+            null,
+            React.createElement(GlobalSearchPanel, {
+              projectId: "proj1",
+              userId: "user1",
+              projectName: "Test Project",
+              entities: [{ ...SEARCH_CUSTOMER_ENTITY, name: "CUSTOMER" }, SEARCH_ORDER_ENTITY],
+              onClose: () => {},
+              onJumpToEntity: (entityName: string) => {
+                jumpedToEntity = entityName;
+              },
+              onJumpToRecord: () => {},
+            }),
+          ),
+        ),
+      );
+
+      // ArrowDown to highlight the Customer group (the first result group,
+      // same ordering the sibling "arrow keys" test above relies on), then
+      // Enter -- the keyboard path, not a mouse click on "Jump to".
+      fireEvent.keyDown(input, { key: "ArrowDown" });
+      fireEvent.keyDown(input, { key: "Enter" });
+
+      assert.equal(
+        jumpedToEntity,
+        "CUSTOMER",
+        "Enter-to-jump must pass the entity's CURRENT casing, not the stale pre-rename snapshot captured at search time",
+      );
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+});
+
+/**
  * New in this round: a submitted search now survives closing and
  * reopening the panel, via recentSearches.ts's real localStorage
  * persistence (the same convention pinnedProjects.ts/ideaDraft.ts already

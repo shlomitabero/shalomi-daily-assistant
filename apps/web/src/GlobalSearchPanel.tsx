@@ -543,7 +543,17 @@ export function GlobalSearchPanel({
       setSelectedIndex((prev) => (prev === null ? results.length - 1 : Math.max(prev - 1, 0)));
     } else if (e.key === "Enter" && selectedIndex !== null) {
       e.preventDefault();
-      onJumpToEntity(results[selectedIndex].entityName);
+      // Round 1559: results[selectedIndex].entityName is a snapshot
+      // captured at search time -- still the entity's casing BEFORE
+      // whatever mid-session refine case-renamed it, the exact same
+      // "stale casing reaches App.tsx's own exact-match activeEntity
+      // filter" hazard round 1531 already fixed for this file's render
+      // loop (the mouse "Jump to" path), just reached here via keyboard
+      // instead. Resolve against the live, current-casing entities prop
+      // the same way that loop already does.
+      const entityName = results[selectedIndex].entityName;
+      const entity = entities.find((e) => e.name.toLowerCase() === entityName.toLowerCase());
+      if (entity) onJumpToEntity(entity.name);
     }
   }
 
