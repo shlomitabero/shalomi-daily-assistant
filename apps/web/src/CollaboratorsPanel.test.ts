@@ -845,7 +845,9 @@ test("CollaboratorsPanel's Leave button asks for confirmation, calls the real DE
           headers: { "content-type": "application/json" },
         });
       }
-      if (method === "DELETE" && input === "/api/projects/proj1/collaborators/u2") {
+      // Round 1563: handleLeave now passes lang (it never did before),
+      // mirroring every other sibling mutating call in this file.
+      if (method === "DELETE" && input === "/api/projects/proj1/collaborators/u2?lang=en") {
         deleteCalls += 1;
         return new Response(null, { status: 204 });
       }

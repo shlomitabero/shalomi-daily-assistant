@@ -343,7 +343,12 @@ export function CollaboratorsPanel({
     setRemovingUserId(currentUserId);
     setError(null);
     try {
-      await removeCollaborator(projectId, currentUserId);
+      // Round 1563: every sibling mutating call in this file passes lang
+      // (handleRemove, handleRoleChange, handleTransferOwnership, ...) --
+      // this one never did, so the round-1277 self-leave owner-notification
+      // email's own isHebrew (req.query.lang !== "en") always defaulted to
+      // Hebrew regardless of the leaver's or owner's actual UI language.
+      await removeCollaborator(projectId, currentUserId, lang);
       onLeft();
     } catch (err) {
       setError((err as Error).message);
