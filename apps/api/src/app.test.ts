@@ -11833,6 +11833,76 @@ test("exporting a project whose spec has a lone non-ASCII entity name (not a col
   );
 });
 
+/**
+ * Round 1557: unlike the /export route just above (whose own buildZip call
+ * is harmless in practice, since its own "files" is a fixed-size generated-
+ * app skeleton bounded by entity/field counts), /backup's own entries
+ * (generateBackupZipEntries, backup.ts) scale with every uploaded file
+ * across every record -- genuinely unbounded as real project data grows.
+ * Before this round, buildZip's own plain Error (thrown once any of its
+ * five internal writer limits is exceeded) fell straight through to
+ * app.ts's generic 500 handler, the exact "unexplained 500" failure class
+ * the /export route's own try/catch was built to avoid for a different
+ * cause. This reproduces the cheapest of buildZip's five limits to reach
+ * without needing tens of thousands of real records/entities: a single
+ * uploaded file's own stored display `name` (fileFieldDisplayName,
+ * backup.ts), which flows unbounded into the ZIP entry's own path, crafted
+ * long enough on its own to exceed buildZip's 65535-byte per-entry
+ * filename limit.
+ */
+test("backing up a project whose data pushes a single ZIP entry's own name past buildZip's 65535-byte limit returns a clear, translated 422 instead of a generic 500", async () => {
+  await withServer(async (baseUrl, db, uploadsDir) => {
+    const email = `backup-too-large-${randomUUID()}@example.com`;
+    const token = await signup(baseUrl, email);
+    const user = findUserByEmail(db, email)!;
+
+    const spec: ProductSpec = {
+      summary: "test",
+      personas: [],
+      roles: ["Admin"],
+      entities: [
+        {
+          name: "Document",
+          fields: [
+            { name: "title", type: "text", required: true },
+            { name: "attachment", type: "file", required: false },
+          ],
+        },
+      ],
+      screens: [],
+      assumptions: [],
+      openQuestions: [],
+    };
+
+    const projectId = randomUUID();
+    insertProject(db, { id: projectId, ownerId: user.id, name: "Docs", description: "A document tracker.", spec });
+    diffAndMigrate(db, projectId, undefined, spec);
+    markProjectBuilt(db, projectId);
+
+    // A real uploaded file, on disk, exactly where the real upload route
+    // would have put it -- not a stand-in path.
+    const filename = `${randomUUID()}.pdf`;
+    const fileDir = path.join(uploadsDir, projectId, "Document");
+    mkdirSync(fileDir, { recursive: true });
+    writeFileSync(path.join(fileDir, filename), "%PDF-fake-contents");
+
+    insertRecord(db, projectId, spec.entities[0], {
+      title: "Contract",
+      attachment: JSON.stringify({
+        url: `/api/uploads/${projectId}/Document/${filename}`,
+        name: "A".repeat(70_000),
+        size: 19,
+        mimeType: "application/pdf",
+      }),
+    });
+
+    const backupRes = await fetch(`${baseUrl}/api/projects/${projectId}/backup`, { headers: authHeaders(token) });
+    assert.equal(backupRes.status, 422, "must be a clear, actionable error, not a generic 500");
+    const body = (await backupRes.json()) as { error: string; code: string };
+    assert.equal(body.code, "BACKUP_ARCHIVE_TOO_LARGE");
+  });
+});
+
 test("backup refuses before build, and returns a real zip with one CSV per entity after", async () => {
   await withServer(async (baseUrl) => {
     const token = await signup(baseUrl);

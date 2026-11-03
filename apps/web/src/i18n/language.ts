@@ -151,6 +151,7 @@ export const translations: Record<Lang, Record<string, string>> = {
     "error.COLLABORATOR_NOT_FOUND": "השותף הזה לא נמצא.",
     "error.EXPORT_UNSAFE_IDENTIFIER":
       "לא ניתן לייצא: לאחת הישויות או השדות יש שם שאינו באותיות אנגליות. שנו את השם (השתמשו באותיות אנגליות, ספרות וקו תחתון בלבד) ונסו שוב -- אפשר להמשיך להשתמש באפליקציה בתצוגה החיה גם בלי לייצא.",
+    "error.BACKUP_ARCHIVE_TOO_LARGE": "יש בפרויקט הזה יותר מדי מידע (יותר מדי רשומות או קבצים שהועלו) כדי לגבות אותו כקובץ ZIP אחד.",
     "error.RECORD_HAS_DEPENDENT_RECORDS": "אי אפשר למחוק את הרשומה הזו -- רשומה אחרת עדיין מקושרת אליה.",
     "error.RECORD_MODIFIED_SINCE_DELETE": "מישהו אחר שינה את הרשומה הזו לפני שהמחיקה הושלמה -- המחיקה בוטלה.",
     "error.ROLE_NOT_FOUND": "התפקיד הזה לא נמצא.",
@@ -1032,6 +1033,7 @@ export const translations: Record<Lang, Record<string, string>> = {
     "error.COLLABORATOR_NOT_FOUND": "That collaborator wasn't found.",
     "error.EXPORT_UNSAFE_IDENTIFIER":
       "Can't export: an entity or field name isn't in English. Rename it (English letters, digits, and underscores only) and try again -- you can keep using the app in the live preview without exporting.",
+    "error.BACKUP_ARCHIVE_TOO_LARGE": "This project has too much data (too many records or uploaded files) to back up as a single ZIP file.",
     "error.RECORD_HAS_DEPENDENT_RECORDS": "Can't delete this record -- another record still refers to it.",
     "error.RECORD_MODIFIED_SINCE_DELETE": "Someone else changed this record before the deletion finished -- the deletion was cancelled.",
     "error.ROLE_NOT_FOUND": "This role wasn't found.",

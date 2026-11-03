@@ -3332,7 +3332,34 @@ export function createProjectsRouter(
       }
       const columnOrders = parseColumnOrdersQueryParam(req.query.columnOrders);
       const entries = generateBackupZipEntries(db, project, columnOrders, uploadsDir);
-      const zip = buildZip(entries);
+      /**
+       * Round 1557: unlike /export's buildZip(files) just above (harmless
+       * in practice there, since `files` is a fixed-size generated-app
+       * skeleton bounded by entity/field counts, not user data), this
+       * route's own entries scale with every entity's row count AND one
+       * entry per uploaded file across every record (addUploadedFileEntries,
+       * backup.ts) -- genuinely unbounded as a project's real data grows,
+       * with no cap anywhere in this codebase. buildZip throws a plain
+       * Error (every throw site's message contains "Zip64") once that
+       * crosses one of its own five writer limits (entry count, per-entry
+       * name/size, or total archive size) -- uncaught, that's the exact
+       * "unexplained 500" failure class the /export route's own try/catch
+       * just above was deliberately built to avoid, just never ported to
+       * this sibling route whose underlying data can actually reach it.
+       */
+      let zip: Buffer;
+      try {
+        zip = buildZip(entries);
+      } catch (err) {
+        if (err instanceof Error && err.message.includes("Zip64")) {
+          throw new HttpError(
+            422,
+            "This project has too much data (too many records or uploaded files) to back up as a single ZIP file",
+            "BACKUP_ARCHIVE_TOO_LARGE",
+          );
+        }
+        throw err;
+      }
       const safeName = project.name.replace(/[^A-Za-z0-9 _-]/g, "").trim() || "forge-app";
       res.setHeader("content-type", "application/zip");
       res.setHeader("content-disposition", `attachment; filename="${safeName}-backup.zip"`);
