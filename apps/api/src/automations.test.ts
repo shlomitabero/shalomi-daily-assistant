@@ -525,6 +525,53 @@ test("matchesTrigger: a null fieldOperator (every rule created before this colum
 });
 
 /**
+ * Round 1556: validateAutomationFieldValue (routes/projects.ts) has no
+ * branch at all for text/longtext fields, unlike every other field type --
+ * so a rule author's free-typed fieldValue against Order's own text
+ * "status" field (the same field the tests just above use) had no
+ * guarantee of matching the record's real stored casing, the exact
+ * "permanently, silently dead rule" failure class rounds 595/607/613
+ * already closed for every other field type. matchesFieldOperator now
+ * compares case-insensitively (and whitespace-trimmed) for text/longtext
+ * fields only -- every other field type (exercised by the tests above and
+ * below this one) keeps its byte-exact comparison unchanged.
+ */
+test("matchesTrigger: field_equals on a text field matches regardless of casing/surrounding whitespace, closing a silently-dead-rule gap no other field type has", () => {
+  const rule = insertAutomationRule(openDbForRuleOnly(), {
+    projectId: "p",
+    entityName: "Order",
+    trigger: "field_equals",
+    fieldName: "status",
+    fieldValue: "Approved",
+    actionType: "send_whatsapp",
+    toMode: "static",
+    toNumber: "972500000000",
+    messageTemplate: "Approved!",
+  });
+  assert.equal(matchesTrigger(rule, "updated", { status: "approved" }, new Set(["status"]), orderEntity), true, "a record stored in a different case must still match");
+  assert.equal(matchesTrigger(rule, "updated", { status: "APPROVED" }, new Set(["status"]), orderEntity), true);
+  assert.equal(matchesTrigger(rule, "updated", { status: " Approved " }, new Set(["status"]), orderEntity), true, "surrounding whitespace must not block an otherwise-matching value");
+  assert.equal(matchesTrigger(rule, "updated", { status: "Rejected" }, new Set(["status"]), orderEntity), false, "a genuinely different value must still not match");
+});
+
+test("matchesTrigger: field_equals with operator 'not_equals' on a text field is also case-insensitive, not just the default 'equals'", () => {
+  const rule = insertAutomationRule(openDbForRuleOnly(), {
+    projectId: "p",
+    entityName: "Order",
+    trigger: "field_equals",
+    fieldName: "status",
+    fieldValue: "Delivered",
+    fieldOperator: "not_equals",
+    actionType: "send_whatsapp",
+    toMode: "static",
+    toNumber: "972500000000",
+    messageTemplate: "Not delivered",
+  });
+  assert.equal(matchesTrigger(rule, "updated", { status: "delivered" }, new Set(["status"]), orderEntity), false, "a case-different but otherwise-matching value must NOT count as not_equals");
+  assert.equal(matchesTrigger(rule, "updated", { status: "Cancelled" }, new Set(["status"]), orderEntity), true);
+});
+
+/**
  * Round 969: the new "record_deleted" trigger -- fires on the "deleted"
  * event only, mirroring record_created's own "created"-only matching
  * exactly.

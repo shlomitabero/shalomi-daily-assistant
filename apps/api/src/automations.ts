@@ -517,7 +517,8 @@ export function matchesTrigger(
  * automations.ts) for why this exists. Null (every rule created before
  * fieldOperator existed) is "equals", the exact `String(actual) ===
  * rule.fieldValue` byte-exact comparison this file always used -- so an
- * existing rule's real matching behavior is completely unchanged.
+ * existing rule's real matching behavior is completely unchanged for every
+ * field type except text/longtext (round 1556, see below).
  * "greater_than"/"less_than" are only ever saved against a number or date
  * field (validateAutomationFieldOperator, routes/projects.ts), so the field
  * lookup here is only to pick the right numeric parse for each -- a date's
@@ -534,9 +535,29 @@ function matchesFieldOperator(
   entity: Entity,
   fieldName: string,
 ): boolean {
-  if (operator == null || operator === "equals") return String(actual) === fieldValue;
-  if (operator === "not_equals") return String(actual) !== fieldValue;
   const field = entity.fields.find((f) => f.name === fieldName);
+  if (operator == null || operator === "equals" || operator === "not_equals") {
+    // Round 1556: validateAutomationFieldValue (routes/projects.ts) has no
+    // branch at all for text/longtext fields -- every other type's
+    // fieldValue is picked through a constrained UI control (dropdown/
+    // checkbox/validated input) and so is already in the exact canonical
+    // shape the stored value takes, making the byte-exact compare below
+    // correct and safe for them. A text/longtext field's fieldValue is a
+    // free-typed string with no such guarantee: a rule author typing
+    // "Approved" against a hand-added text "status" field whose records
+    // actually hold "approved"/"APPROVED" (entered via inline edit, CSV
+    // import, or just a different collaborator's habit) got a rule that
+    // silently never fired, with no error anywhere -- the exact
+    // "permanently, silently dead rule" failure class validateAutomation
+    // FieldValue's own comment already treats as unacceptable for every
+    // other field type (rounds 595/607/613). Deliberately scoped to text/
+    // longtext only via this field-type check, so enum/boolean/date/
+    // number/relation keep today's exact-match behavior unchanged.
+    const isFreeText = field?.type === "text" || field?.type === "longtext";
+    const normalizedActual = isFreeText ? String(actual).trim().toLowerCase() : String(actual);
+    const normalizedRuleValue = isFreeText ? fieldValue.trim().toLowerCase() : fieldValue;
+    return operator === "not_equals" ? normalizedActual !== normalizedRuleValue : normalizedActual === normalizedRuleValue;
+  }
   const isDate = field?.type === "date";
   const actualNum = isDate ? Date.parse(String(actual)) : Number(actual);
   const ruleNum = isDate ? Date.parse(fieldValue) : Number(fieldValue);
