@@ -138,7 +138,13 @@ test("migrateFieldFiltersForEntityRename moves every collaborator account's own 
 
     assert.deepEqual(getFieldFilters("proj1", "Customer", "userA"), { status: "overdue" }, "userA's filter must resolve under the new casing");
     assert.deepEqual(getFieldFilters("proj1", "Customer", "userB"), { status: "paid" }, "userB's filter must resolve under the new casing too, not just userA's");
-    assert.deepEqual(getFieldFilters("proj1", "customer", "userA"), {}, "nothing must remain reachable under the old casing");
+    // Round 1545: getFieldFilters now falls back to a case-insensitive scan (the same
+    // resolution rounds 1542-1544 gave columnOrder.ts's/columnWidths.ts's/columnVisibility.ts's
+    // identical gap), so a lookup under the old casing still resolves via that fallback
+    // instead of coming back empty. This is the intended new behavior, not a regression --
+    // the whole point of the fallback is that such a lookup no longer silently reverts to
+    // "no filter applied."
+    assert.deepEqual(getFieldFilters("proj1", "customer", "userA"), { status: "overdue" }, "a lookup under the old casing must still resolve via getFieldFilters's own case-insensitive fallback");
     assert.deepEqual(getFieldFilters("proj1", "Order", "userA"), { status: "shipped" }, "a sibling entity must be untouched");
     assert.deepEqual(getFieldFilters("proj2", "customer", "userA"), { status: "closed" }, "an unrelated project's same-named entity must be untouched");
   });
@@ -149,6 +155,34 @@ test("migrateFieldFiltersForEntityRename is a no-op when the old and new names a
     setFieldFilters("proj1", "Customer", "userA", { status: "overdue" });
     migrateFieldFiltersForEntityRename("proj1", "Customer", "Customer");
     assert.deepEqual(getFieldFilters("proj1", "Customer", "userA"), { status: "overdue" });
+  });
+});
+
+/**
+ * Round 1545: migrateFieldFiltersForEntityRename only ever runs in the
+ * single browser tab that triggered the rename (see getFieldFilters's own
+ * doc comment) -- so a different collaborator's own localStorage, which
+ * never saw that migration run, must still resolve its real filter map via
+ * getFieldFilters's new case-insensitive fallback, mirroring the identical
+ * round-1542/1543/1544 coverage for columnOrder.ts/columnWidths.ts/
+ * columnVisibility.ts's own getters.
+ */
+test("getFieldFilters resolves a collaborator's own filter map stored under the OLD casing, even though no migration ever ran in this browser", async () => {
+  await withJsdom(() => {
+    setFieldFilters("proj1", "customer", "userB", { status: "overdue" });
+
+    assert.deepEqual(getFieldFilters("proj1", "Customer", "userB"), { status: "overdue" }, "must resolve userB's own filter map under the new casing via the case-insensitive fallback, with no migration ever having run");
+  });
+});
+
+test("getFieldFilters's case-insensitive fallback never leaks a different user's or different project's own filter map for the same entity name", async () => {
+  await withJsdom(() => {
+    setFieldFilters("proj1", "customer", "userA", { status: "overdue" });
+    setFieldFilters("proj2", "customer", "userB", { status: "paid" });
+
+    assert.deepEqual(getFieldFilters("proj1", "Customer", "userB"), {}, "userB has no filter of their own in proj1 -- userA's own filter for the same entity must not leak across users");
+    assert.deepEqual(getFieldFilters("proj1", "Customer", "userA"), { status: "overdue" }, "userA's own filter must still resolve via the fallback");
+    assert.deepEqual(getFieldFilters("proj2", "Customer", "userA"), {}, "a different project's own filter for the same entity+user combination must not leak across projects");
   });
 });
 

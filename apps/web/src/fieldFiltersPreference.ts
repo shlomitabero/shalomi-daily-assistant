@@ -56,10 +56,38 @@ function writeStore(store: Record<string, Record<string, string>>): void {
  * columns, and column widths, every one of which already survives the same
  * switch. A field absent from the returned record has no active filter.
  * Round 1054: also scoped per user -- see keyFor's own doc comment above.
+ *
+ * Round 1545: a case-only entity rename (an ordinary, explicitly-anticipated
+ * refine/AI casing drift) only ever gets this store's keys rewritten by
+ * migrateFieldFiltersForEntityRename below, which -- exactly like
+ * columnOrder.ts's/columnWidths.ts's/columnVisibility.ts's own migrate
+ * functions before rounds 1542-1544 -- is called only from the single
+ * browser tab that happened to trigger the rename (App.tsx's
+ * build/refine-complete handler, or a checkpoint restore). Every OTHER
+ * collaborator's own localStorage keeps this preference under the entity's
+ * OLD casing forever -- the exact-match lookup above would miss it with
+ * zero error or indication, silently reverting that collaborator's table to
+ * showing every row unfiltered while they still believe their own chosen
+ * filter (e.g. Status = "Overdue") is applied -- arguably the most
+ * consequential instance of this bug family, since it misleads about what
+ * DATA is being shown rather than just a cosmetic layout choice. Falls back
+ * to a case-insensitive scan of this exact project+user's own keys, the
+ * same resolution rounds 1542-1544 applied to this bug family's other
+ * instances.
  */
 export function getFieldFilters(projectId: string, entityName: string, userId: string): Record<string, string> {
   const store = readStore();
-  return { ...(store[keyFor(projectId, entityName, userId)] ?? {}) };
+  const exact = store[keyFor(projectId, entityName, userId)];
+  if (exact) return { ...exact };
+  const prefix = `${projectId}:`;
+  const suffix = `:${userId}`;
+  const lowerEntityName = entityName.toLowerCase();
+  for (const [key, value] of Object.entries(store)) {
+    if (!key.startsWith(prefix) || !key.endsWith(suffix)) continue;
+    const keyEntityName = key.slice(prefix.length, key.length - suffix.length);
+    if (keyEntityName.toLowerCase() === lowerEntityName) return { ...value };
+  }
+  return {};
 }
 
 /** Persists the entity's full updated filter map (dropping any cleared-to-"" entries) and returns it, so callers can update their own state from the return value instead of re-reading storage. */
