@@ -11,6 +11,7 @@ export default function Financial() {
   const [error, setError] = useState('');
   const [refreshingId, setRefreshingId] = useState(null);
   const [refreshingAll, setRefreshingAll] = useState(false);
+  const [removingId, setRemovingId] = useState(null);
   const [addBusy, setAddBusy] = useState(false);
   const [tradeBusy, setTradeBusy] = useState(false);
 
@@ -72,12 +73,19 @@ export default function Financial() {
   }
 
   async function onRemoveSymbol(id) {
+    // Without a busy state here (every other action on this page has one),
+    // a double-click fires two concurrent DELETE requests - the first
+    // removes it, and the second then 404s and flashes a confusing "not
+    // found" error even though the removal actually succeeded.
     setError('');
+    setRemovingId(id);
     try {
       await api.removeFromWatchlist(id);
       refresh();
     } catch (err) {
       setError(err.data?.error || err.message);
+    } finally {
+      setRemovingId(null);
     }
   }
 
@@ -136,7 +144,9 @@ export default function Financial() {
             >
               {refreshingId === w.id ? 'מרענן…' : 'רענן מחיר'}
             </button>
-            <button className="btn btn-ghost" onClick={() => onRemoveSymbol(w.id)}>הסר</button>
+            <button className="btn btn-ghost" onClick={() => onRemoveSymbol(w.id)} disabled={removingId === w.id}>
+              {removingId === w.id ? 'מסיר…' : 'הסר'}
+            </button>
           </div>
         ))}
       </div>
