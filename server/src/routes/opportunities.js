@@ -118,6 +118,22 @@ export function patchOpportunity(req, res) {
   if ('priceUSD' in patch && opportunity.status === 'published') {
     return res.status(400).json({ error: 'priceUSD cannot be changed after publishing — the live price is already fixed in Paddle' });
   }
+  // In "approve" mode the owner explicitly approves publish_product for
+  // this exact opportunity before it runs — but that approval record has
+  // no memory of what priceUSD was at the time. Without this, approving at
+  // $9 and then changing the price to $29 would leave the approval sitting
+  // there as "approved", and publishing would go ahead at $29 under an
+  // approval that was only ever given for $9. Changing the actual charged
+  // price must force a fresh approval.
+  if ('priceUSD' in patch && patch.priceUSD !== opportunity.priceUSD) {
+    const staleApproval = db.approvals.where(
+      (a) => a.opportunityId === opportunity.id && a.actionType === 'publish_product' && a.status === 'approved'
+    )[0];
+    if (staleApproval) {
+      db.approvals.update(staleApproval.id, { status: 'rejected', rejectedAt: new Date().toISOString() });
+      logAction({ type: 'reject', detail: { opportunityId: opportunity.id, actionType: 'publish_product', reason: 'price changed after approval' }, result: 'success' });
+    }
+  }
 
   const updated = db.opportunities.update(req.params.id, patch);
   res.json({ opportunity: withFeasibility(updated) });

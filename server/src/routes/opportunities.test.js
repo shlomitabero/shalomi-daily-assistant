@@ -151,6 +151,34 @@ test('patchOpportunity rejects changing priceUSD after publishing — the live P
   assert.equal(db.opportunities.get(opp.id).priceUSD, 9);
 });
 
+test('patchOpportunity rejects a stale "approve"-mode approval when priceUSD actually changes', () => {
+  // The approval has no memory of what priceUSD was when it was given -
+  // without this, approving at $9 then changing the price to $29 would
+  // leave the approval sitting there as "approved" for a price that was
+  // never the one actually approved.
+  __resetForTests();
+  const opp = insertOpportunity({ priceUSD: 9 });
+  const approval = db.approvals.insert({
+    id: makeId('appr'), opportunityId: opp.id, actionType: 'publish_product', status: 'approved', createdAt: '2026-01-01T00:00:00.000Z', approvedAt: '2026-01-01T00:00:00.000Z',
+  });
+  const res = makeRes();
+  patchOpportunity({ params: { id: opp.id }, body: { priceUSD: 29 } }, res);
+  assert.equal(res.statusCode, 200);
+  assert.equal(db.approvals.get(approval.id).status, 'rejected');
+});
+
+test('patchOpportunity leaves an existing approval alone when priceUSD is unchanged or not touched', () => {
+  __resetForTests();
+  const opp = insertOpportunity({ priceUSD: 9 });
+  const approval = db.approvals.insert({
+    id: makeId('appr'), opportunityId: opp.id, actionType: 'publish_product', status: 'approved', createdAt: '2026-01-01T00:00:00.000Z', approvedAt: '2026-01-01T00:00:00.000Z',
+  });
+  patchOpportunity({ params: { id: opp.id }, body: { priceUSD: 9 } }, makeRes());
+  assert.equal(db.approvals.get(approval.id).status, 'approved');
+  patchOpportunity({ params: { id: opp.id }, body: { riskLevel: 'low' } }, makeRes());
+  assert.equal(db.approvals.get(approval.id).status, 'approved');
+});
+
 test('patchOpportunity still allows editing other fields (riskLevel, revenueEstimate) after publishing', () => {
   __resetForTests();
   const opp = insertOpportunity({ status: 'published', paddlePriceId: 'pri_123', slug: 'already-live' });
