@@ -6,15 +6,15 @@ const ledgerSummary = { cashInToday: 100, cashOutToday: 20, netProfitToday: 80, 
 
 test('reports net profit, cash in/out, and action count', () => {
   const digest = buildDailyDigest({ ledgerSummary, actionsToday: [{ id: 1 }, { id: 2 }] });
-  assert.match(digest.text, /רווח נטו מאומת היום: 80\.00/);
-  assert.match(digest.text, /נכנס בפועל: 100\.00/);
-  assert.match(digest.text, /יצא בפועל: 20\.00/);
+  assert.match(digest.text, /רווח נטו מאומת היום: \$80\.00/);
+  assert.match(digest.text, /נכנס בפועל: \$100\.00/);
+  assert.match(digest.text, /יצא בפועל: \$20\.00/);
   assert.match(digest.text, /פעולות שבוצעו: 2/);
 });
 
 test('reports a negative net profit with a minus sign, not a fabricated positive', () => {
   const digest = buildDailyDigest({ ledgerSummary: { ...ledgerSummary, netProfitToday: -45.5 } });
-  assert.match(digest.text, /רווח נטו מאומת היום: -45\.50/);
+  assert.match(digest.text, /רווח נטו מאומת היום: -\$45\.50/);
 });
 
 test('lists failures by their summary when present', () => {

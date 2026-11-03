@@ -24,6 +24,10 @@ export function buildDailyDigest({ ledgerSummary, actionsToday = [], failuresTod
   return { text: lines.join('\n'), generatedAt: new Date().toISOString() };
 }
 
+// Every other money display in the app shows USD with a "$" sign (the
+// dashboard, opportunity cards, product price) - this digest text was the
+// one place still showing a bare number with no currency unit at all,
+// left behind when the rest of the app moved off a stale "₪" label to "$".
 function formatMoney(n) {
-  return `${n < 0 ? '-' : ''}${Math.abs(n).toFixed(2)}`;
+  return `${n < 0 ? '-' : ''}$${Math.abs(n).toFixed(2)}`;
 }
