@@ -43293,6 +43293,33 @@ Full suite run: `packages/db` 328/328 clean. `apps/api` full suite clean except 
 
 **Topic status**: closes the restore half of the audit-trail gap round 1567 opened. `codegen.ts` parity does not apply -- confirmed via `grep -n checkpoint apps/api/src/codegen.ts` (zero matches): the exported standalone app has no Time Machine/checkpoint feature at all.
 
+### Round 1582: WhatsApp "Request phone number" / "Share phone number" message pair silently dropped
+
+A fresh survey subagent found `describeIncomingMessage` (`apps/api/src/whatsappWeb.ts`) missing two related, previously-unconsidered message shapes: `requestPhoneNumberMessage` (WhatsApp Business's native "Request phone number" chat action) and the reply half -- a `protocolMessage` whose `type` is `SHARE_PHONE_NUMBER` (11), when the other party agrees and shares their number. Neither was referenced anywhere in `whatsappWeb.ts`/`whatsappWeb.test.ts`/`docs/roadmap.md`. The existing `protocolMessage` branch already special-cased `type === 0` (REVOKE, round 1139) and `type === 14` (MESSAGE_EDIT, round 1307), but every other type including 11 fell through that same branch's own `return null`.
+
+Independently re-verified before implementing, applying round 1580's lesson and round 1581's methodology: confirmed `WAProto.proto:2111` declares `requestPhoneNumberMessage` as a plain top-level `Message` field (field 54), and `:3388-3390` confirms `RequestPhoneNumberMessage` carries only `contextInfo` -- no plaintext content beyond presence, the same bar `declinePaymentRequestMessage`'s own "[Payment request declined]" (round 1546) already met. Confirmed `:3346` declares `SHARE_PHONE_NUMBER = 11` inside `ProtocolMessage.Type`. Critically, confirmed against Baileys' actual send-building code, not just its protobuf types -- `node_modules/@whiskeysockets/baileys/lib/Utils/messages.js:469-476`, inside the real `generateWAMessageContent`:
+```js
+else if (hasNonNullishProperty(message, 'sharePhoneNumber')) {
+    m.protocolMessage = { type: proto.Message.ProtocolMessage.Type.SHARE_PHONE_NUMBER };
+}
+else if (hasNonNullishProperty(message, 'requestPhoneNumber')) {
+    m.requestPhoneNumberMessage = {};
+}
+```
+Both are real, actively-built branches -- not reserved/unused slots like round 1580's rejected `pollCreationMessageV4`.
+
+**Reachability**: identical to the established reasoning for `buttonsMessage`/`templateMessage`/`interactiveMessage` (rounds 1509/1515) -- any contact using the WhatsApp Business app can trigger either action in an ordinary chat with this app's connected number, and both arrive as normal incoming messages. This app's one caller treats a `null` return as "skip entirely," so both previously vanished from the log with zero trace, not even "[Unrecognized]".
+
+**The fix**: added `requestPhoneNumberMessage?: Record<string, never>;` to the `BaileysIncomingMessage["message"]` interface and a branch returning `"[Phone number requested]"`. Extended the existing `protocolMessage` branch with a `PROTOCOL_MESSAGE_TYPE_SHARE_PHONE_NUMBER = 11` constant returning `"[Phone number shared]"`, mirroring the branch's existing REVOKE/MESSAGE_EDIT style exactly.
+
+**Tests**: 1 new in `whatsappWeb.test.ts`, mirroring round 1546's decline/cancel pair test structure -- one incoming `requestPhoneNumberMessage` and one `protocolMessage: { type: 11 }`, asserting both placeholder texts and that both land as real `direction: "in"` rows. Fail-before/pass-after verified directly: reverted `whatsappWeb.ts` to `HEAD` via `git stash`, ran the new test -- failed exactly as predicted (0 messages logged instead of 2). Restored the fix and reran -- passed, along with the rest of the file (68/68).
+
+`codegen.ts` parity does not apply: confirmed via direct grep (`grep -c "WhatsApp\|whatsapp" apps/api/src/codegen.ts` → `0`) -- the exported standalone app has no WhatsApp integration at all, the same confirmation every prior round in this family has made.
+
+Full suite run: full `apps/api` suite: 1095/1096 passing -- the one failure is the pre-existing `codegen.test.ts` cgroup-OOM SIGKILL (task #55), confirmed unrelated since this round touched no codegen.ts code. No `apps/web` changes, so no typecheck/suite run needed there.
+
+**Topic status**: closes another previously-unflagged WhatsApp message-type gap in the same family as rounds 1049-1581, verified against Baileys' actual send-side behavior rather than just its protobuf types, consistent with round 1580's lesson.
+
 ### Round 1581: WhatsApp album-share header messages (`albumMessage`) silently dropped
 
 A fresh survey subagent found that `describeIncomingMessage` (`apps/api/src/whatsappWeb.ts`) is missing `albumMessage` -- the header message WhatsApp sends when a contact uses the native "share multiple photos/videos together" multi-select action -- so that one header message silently vanishes from the WhatsApp message log with zero trace, the same failure mode this routine has hardened against for ~20+ other message kinds since round 1049.

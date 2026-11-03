@@ -2304,6 +2304,41 @@ test("incoming WhatsApp album header messages are logged with their item count i
 });
 
 /**
+ * Round 1582: WhatsApp Business's native "Request phone number" chat action
+ * sends a requestPhoneNumberMessage, and the direct reply half (the other
+ * party agreeing to share their number) is a protocolMessage whose type is
+ * SHARE_PHONE_NUMBER (11) -- confirmed directly against the installed
+ * Baileys source (not just its protobuf types) that both are actively
+ * built and sent by generateWAMessageContent, not reserved/unused slots.
+ */
+test("incoming WhatsApp 'request phone number' / 'share phone number' messages are logged with a descriptive placeholder instead of being silently dropped", async () => {
+  const { manager, createdSockets, db } = setupManager();
+  insertProject(db, project);
+  applyMigrations(db, project.id, project.spec);
+  markProjectBuilt(db, project.id);
+
+  await manager.connect(project.id);
+  createdSockets[0].emitConnectionUpdate({ connection: "open" });
+
+  createdSockets[0].emitMessagesUpsert({
+    type: "notify",
+    messages: [
+      { key: { remoteJid: "972501234567@s.whatsapp.net", fromMe: false }, message: { requestPhoneNumberMessage: {} } },
+      { key: { remoteJid: "972501234567@s.whatsapp.net", fromMe: false }, message: { protocolMessage: { type: 11 } } },
+    ],
+  });
+
+  // listWhatsAppMessages orders newest-first, the reverse of emission order.
+  const { messages: phoneMessages } = listWhatsAppMessages(db, project.id);
+  assert.equal(phoneMessages.length, 2);
+  assert.equal(phoneMessages[0].body, "[Phone number shared]");
+  assert.equal(phoneMessages[1].body, "[Phone number requested]");
+  for (const m of phoneMessages) {
+    assert.equal(m.direction, "in", "every placeholder row must still be a real, matched-against incoming message, not metadata");
+  }
+});
+
+/**
  * Round 1554: WhatsApp's "video note" (the circular, Instagram-style clip
  * sent by switching the compose bar's mic into video-recording mode) was
  * previously dropped with zero trace -- round 785 handled plain

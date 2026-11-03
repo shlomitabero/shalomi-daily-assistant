@@ -152,6 +152,7 @@ export interface BaileysIncomingMessage {
     cancelPaymentRequestMessage?: Record<string, never>;
     invoiceMessage?: { note?: string };
     albumMessage?: { expectedImageCount?: number; expectedVideoCount?: number };
+    requestPhoneNumberMessage?: Record<string, never>;
     viewOnceMessage?: { message?: BaileysIncomingMessage["message"] };
     viewOnceMessageV2?: { message?: BaileysIncomingMessage["message"] };
     viewOnceMessageV2Extension?: { message?: BaileysIncomingMessage["message"] };
@@ -552,11 +553,16 @@ function describeIncomingMessage(message: BaileysIncomingMessage["message"]): st
   if (message.protocolMessage) {
     const PROTOCOL_MESSAGE_TYPE_REVOKE = 0;
     const PROTOCOL_MESSAGE_TYPE_MESSAGE_EDIT = 14;
+    // Round 1582: the reply half of requestPhoneNumberMessage above --
+    // confirmed against WAProto.proto's ProtocolMessage.Type enum
+    // (SHARE_PHONE_NUMBER = 11) and Baileys' own send-building code.
+    const PROTOCOL_MESSAGE_TYPE_SHARE_PHONE_NUMBER = 11;
     if (message.protocolMessage.type === PROTOCOL_MESSAGE_TYPE_REVOKE) return "[Message deleted]";
     if (message.protocolMessage.type === PROTOCOL_MESSAGE_TYPE_MESSAGE_EDIT) {
       const inner = describeIncomingMessage(message.protocolMessage.editedMessage);
       return inner ? `[Edited] ${inner}` : "[Edited]";
     }
+    if (message.protocolMessage.type === PROTOCOL_MESSAGE_TYPE_SHARE_PHONE_NUMBER) return "[Phone number shared]";
     return null;
   }
   if (message.editedMessage) {
@@ -650,6 +656,21 @@ function describeIncomingMessage(message: BaileysIncomingMessage["message"]): st
     const total = (message.albumMessage.expectedImageCount ?? 0) + (message.albumMessage.expectedVideoCount ?? 0);
     return `[Album] ${total} item${total === 1 ? "" : "s"}`;
   }
+  // Round 1582: WhatsApp Business's native "Request phone number" chat
+  // action sends a requestPhoneNumberMessage; the direct reply half (the
+  // other party agreeing to share their number) is a protocolMessage whose
+  // type is SHARE_PHONE_NUMBER (11), handled below in the existing
+  // protocolMessage branch. Confirmed against the installed Baileys source,
+  // not just its protobuf types (round 1580's lesson, round 1581's
+  // methodology): lib/Utils/messages.js's generateWAMessageContent actively
+  // builds and sends both (`m.requestPhoneNumberMessage = {}` /
+  // `m.protocolMessage = { type: SHARE_PHONE_NUMBER }`), so neither is a
+  // reserved/unused protobuf slot. RequestPhoneNumberMessage carries only
+  // contextInfo -- no plaintext content beyond presence, the same
+  // "detect presence only" bar as declinePaymentRequestMessage's own
+  // "[Payment request declined]". Previously fell through to the final
+  // `return null` below and vanished from the message log with zero trace.
+  if (message.requestPhoneNumberMessage) return "[Phone number requested]";
   return null;
 }
 
