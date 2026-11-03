@@ -120,6 +120,7 @@ input, select, textarea {
 .log-row { padding: 10px 14px; }
 .log-row-top { display: flex; justify-content: space-between; margin-bottom: 4px; }
 .log-type { font-weight: 600; }
+.log-row .link { display: block; margin-bottom: 4px; font-size: 14px; }
 .log-reason { margin: 0 0 4px; }
 .log-time { font-size: 11px; color: var(--text-dim); }
 
