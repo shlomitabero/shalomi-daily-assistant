@@ -20,6 +20,7 @@ import {
   listWhatsAppMessages,
   logout,
   me,
+  revokeOtherSessions,
   streamBuild,
   streamRefine,
   subscribeAuthExpired,
@@ -761,6 +762,11 @@ function AppContent() {
   const [showCollaborators, setShowCollaborators] = useState(false);
   const [showChangePassword, setShowChangePassword] = useState(false);
   const [showChangeEmail, setShowChangeEmail] = useState(false);
+  // Round 1564: idle/busy/done/failed, same shape as BusinessTwinPanel's
+  // own copyStatus -- the button's own text cycles through these instead
+  // of a separate success/error banner, fading back to idle a couple
+  // seconds later (see the matching useEffect near the topbar JSX below).
+  const [revokeOtherSessionsStatus, setRevokeOtherSessionsStatus] = useState<"idle" | "busy" | "done" | "failed">("idle");
   const [showDeleteAccount, setShowDeleteAccount] = useState(false);
   const [showShortcuts, setShowShortcuts] = useState(false);
   // Round 1446: EntityPanel's own onViewModeChange reports the active
@@ -2137,6 +2143,36 @@ function AppContent() {
   }
 
   /**
+   * Round 1564: the standalone "log out of other devices" action --
+   * deleteOtherSessionsForUser was already wired to PATCH /auth/password
+   * and DELETE /auth/account, but only ever as a side effect of changing
+   * a credential or deleting the whole account. This is the first place
+   * it's triggered on its own, e.g. after noticing a session left logged
+   * in on a borrowed/shared computer. Own-click reentrancy guard mirrors
+   * every other busy-gated handler in this file.
+   */
+  async function handleRevokeOtherSessions() {
+    if (revokeOtherSessionsStatus === "busy") return;
+    if (!window.confirm(t("topbar.logoutOtherDevices.confirm"))) return;
+    setRevokeOtherSessionsStatus("busy");
+    try {
+      await revokeOtherSessions();
+      setRevokeOtherSessionsStatus("done");
+    } catch {
+      setRevokeOtherSessionsStatus("failed");
+    }
+  }
+
+  // Fades the button's own "done"/"failed" text back to its idle label a
+  // couple seconds later, same cleanup-on-unmount discipline as
+  // BusinessTwinPanel's own copyStatus effect.
+  useEffect(() => {
+    if (revokeOtherSessionsStatus === "idle" || revokeOtherSessionsStatus === "busy") return;
+    const timer = setTimeout(() => setRevokeOtherSessionsStatus("idle"), 2000);
+    return () => clearTimeout(timer);
+  }, [revokeOtherSessionsStatus]);
+
+  /**
    * Runs once DeleteAccountPanel's own DELETE /auth/account call has
    * already succeeded server-side -- the account, its projects, and every
    * one of its sessions (including this one) are already gone by this
@@ -2251,6 +2287,22 @@ function AppContent() {
             </button>
             <button type="button" className="secondary" onClick={() => setShowChangePassword(true)}>
               {t("topbar.changePassword")}
+            </button>
+            <button
+              type="button"
+              className="secondary"
+              onClick={handleRevokeOtherSessions}
+              disabled={revokeOtherSessionsStatus === "busy"}
+              aria-live="polite"
+              aria-atomic="true"
+            >
+              {revokeOtherSessionsStatus === "done"
+                ? t("topbar.logoutOtherDevices.done")
+                : revokeOtherSessionsStatus === "failed"
+                  ? t("topbar.logoutOtherDevices.failed")
+                  : revokeOtherSessionsStatus === "busy"
+                    ? t("topbar.logoutOtherDevices.busy")
+                    : t("topbar.logoutOtherDevices")}
             </button>
             <button type="button" className="secondary" onClick={handleLogout}>
               {t("topbar.logout")}

@@ -3854,6 +3854,77 @@ test("App's handleLogout resets local UI state, including the live idea descript
 });
 
 /**
+ * Round 1564: the new standalone "log out of other devices" handler --
+ * deleteOtherSessionsForUser was already wired to PATCH /auth/password and
+ * DELETE /auth/account, but only ever as a side effect of changing a
+ * credential or deleting the account; this is the first place it's
+ * triggered on its own. Confirms the same own-click reentrancy guard and
+ * confirm-then-call shape every other busy-gated handler in this file
+ * already follows: declining the confirm, or calling while already busy,
+ * must never reach the real API.
+ */
+test("App's handleRevokeOtherSessions is gated by window.confirm and its own busy flag, and only calls the real revokeOtherSessions() API when both are clear", async () => {
+  const appSrc = readFileSync(new URL("./App.tsx", import.meta.url), "utf8");
+  const handlerMatch = appSrc.match(/ {2}async function handleRevokeOtherSessions\(\) \{[\s\S]*?\n {2}\}\n/);
+  assert.ok(handlerMatch, "expected to find handleRevokeOtherSessions in App.tsx");
+  const { code } = transformSync(handlerMatch![0], { loader: "ts" });
+
+  function run(opts: { status: "idle" | "busy"; confirmReturns: boolean; apiFn: () => Promise<void> }) {
+    const state: { status: string } = { status: opts.status };
+    const confirmCalls: string[] = [];
+    const fn = new Function(
+      "revokeOtherSessionsStatus",
+      "window",
+      "t",
+      "revokeOtherSessions",
+      "setRevokeOtherSessionsStatus",
+      `${code}\nreturn handleRevokeOtherSessions;`,
+    )(
+      opts.status,
+      { confirm: (message: string) => (confirmCalls.push(message), opts.confirmReturns) },
+      (key: string) => key,
+      opts.apiFn,
+      (v: string) => (state.status = v),
+    ) as () => Promise<void>;
+    return { fn, state, confirmCalls };
+  }
+
+  // Already busy: must return immediately, with no confirm prompt and no API call.
+  let apiCalls = 0;
+  const busy = run({ status: "busy", confirmReturns: true, apiFn: async () => void (apiCalls += 1) });
+  await busy.fn();
+  assert.equal(apiCalls, 0, "must never call the API while a previous call is still in flight");
+  assert.deepEqual(busy.confirmCalls, [], "must never even prompt for confirmation while already busy");
+  assert.equal(busy.state.status, "busy", "status must stay untouched while the busy guard short-circuits");
+
+  // Idle, but the confirm is declined: must never call the API or set busy.
+  apiCalls = 0;
+  const declined = run({ status: "idle", confirmReturns: false, apiFn: async () => void (apiCalls += 1) });
+  await declined.fn();
+  assert.equal(apiCalls, 0, "declining the confirm must never call the real API");
+  assert.equal(declined.confirmCalls.length, 1, "must prompt for confirmation exactly once");
+  assert.equal(declined.state.status, "idle", "status must stay idle when the confirm is declined");
+
+  // Idle, confirmed, API succeeds: must go busy, call the real API, then land on "done".
+  apiCalls = 0;
+  const succeeded = run({ status: "idle", confirmReturns: true, apiFn: async () => void (apiCalls += 1) });
+  await succeeded.fn();
+  assert.equal(apiCalls, 1, "confirming must call the real revokeOtherSessions() API exactly once");
+  assert.equal(succeeded.state.status, "done", "must land on the 'done' status once the API call succeeds");
+
+  // Idle, confirmed, API rejects: must land on "failed", not throw.
+  const failed = run({
+    status: "idle",
+    confirmReturns: true,
+    apiFn: async () => {
+      throw new Error("network error");
+    },
+  });
+  await failed.fn();
+  assert.equal(failed.state.status, "failed", "must land on the 'failed' status when the API call rejects, instead of throwing");
+});
+
+/**
  * Round 404: self-service "leave project" (CollaboratorsPanel's own
  * handleLeave, wired here via the onLeft prop) ends in the exact same
  * state for this user as the three paths rounds 390/392/403 already

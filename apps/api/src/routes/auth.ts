@@ -299,6 +299,22 @@ export function createAuthRouter(
   });
 
   /**
+   * Round 1564: unlike changePasswordRateLimiter/changeEmailRateLimiter
+   * just above, this route checks no secret -- requireAuth's own bearer
+   * token is the only credential involved, so there's no brute-force
+   * target to defend. The limiter here instead guards against a stolen
+   * token being replayed to repeatedly churn this user's own sessions
+   * table, mirroring every other mutating route in this file: keyed by
+   * req.userId (requireAuth runs first), not req.ip.
+   */
+  const revokeOtherSessionsRateLimiter = createRateLimiter({
+    windowMs: RATE_LIMIT_WINDOW_MS,
+    max: 30,
+    keyGenerator: (req) => req.userId ?? "unknown",
+    message: "Too many requests. Please try again later.",
+  });
+
+  /**
    * Round 1435: the one mutating route in this file with no rate limiter
    * at all -- and the single most destructive one (permanently deletes
    * the user row, every project they own via the full deleteProject
@@ -710,6 +726,25 @@ export function createAuthRouter(
     // requireAuth already validated this exact header on this request, so
     // the token is guaranteed present here.
     deleteSession(db, extractBearerToken(req)!);
+    res.status(204).end();
+  });
+
+  /**
+   * Round 1564: deleteOtherSessionsForUser already exists and is already
+   * exercised (PATCH /auth/password, DELETE /auth/account), but only ever
+   * as a side effect of changing a credential or deleting the account --
+   * there was no standalone way for someone to say "sign me out
+   * everywhere else" on its own, e.g. after noticing they left a session
+   * logged in on a borrowed/public computer, with no desire to also
+   * change their password. docs/security.md's own "Before any real
+   * deployment" checklist names this exact gap. Mirrors /auth/logout
+   * just above, but revokes every OTHER session instead of this one --
+   * this request's own session (the one requireAuth just validated)
+   * deliberately survives, so the 204 response still has a valid session
+   * behind it and the caller isn't logged out of the very tab that asked.
+   */
+  router.post("/auth/sessions/revoke-others", requireAuth(db), revokeOtherSessionsRateLimiter, (req, res) => {
+    deleteOtherSessionsForUser(db, req.userId!, extractBearerToken(req)!);
     res.status(204).end();
   });
 

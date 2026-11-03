@@ -364,6 +364,17 @@ export async function logout(): Promise<void> {
 }
 
 /**
+ * Round 1564: standalone "log out of other devices" -- deleteOtherSessionsForUser
+ * (packages/db) was already wired to PATCH /auth/password and DELETE
+ * /auth/account as a side effect, but there was no way to trigger it on
+ * its own, e.g. after noticing a session left logged in on a shared
+ * computer, without also wanting to change a credential.
+ */
+export function revokeOtherSessions(): Promise<void> {
+  return request("/auth/sessions/revoke-others", { method: "POST" });
+}
+
+/**
  * `lang` (round 1252) picks which language the server's own
  * password-changed notification is written in, the same `changeEmail`
  * convention just below.

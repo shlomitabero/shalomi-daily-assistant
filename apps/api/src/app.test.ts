@@ -1124,6 +1124,49 @@ test("changing your password revokes every OTHER session, but the session making
   });
 });
 
+/**
+ * Round 1564: the new standalone "log out of other devices" route --
+ * deleteOtherSessionsForUser was already exercised by PATCH /auth/password
+ * and DELETE /auth/account, but only ever as a side effect of changing a
+ * credential or deleting the account. This confirms the same revoke-but-
+ * keep-the-caller-valid behavior works as its own, dedicated action, with
+ * no password/email change involved at all.
+ */
+test("POST /auth/sessions/revoke-others signs out every OTHER session, but the session making the request itself stays valid", async () => {
+  await withServer(async (baseUrl) => {
+    const email = `revoke-others-${Date.now()}@example.com`;
+    const password = "correct-horse-battery";
+    const firstSessionToken = await signup(baseUrl, email);
+
+    const secondLoginRes = await fetch(`${baseUrl}/api/auth/login`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ email, password }),
+    });
+    const { token: secondSessionToken } = (await secondLoginRes.json()) as { token: string };
+
+    const revokeRes = await fetch(`${baseUrl}/api/auth/sessions/revoke-others`, {
+      method: "POST",
+      headers: authHeaders(firstSessionToken),
+    });
+    assert.equal(revokeRes.status, 204);
+
+    const secondSessionMe = await fetch(`${baseUrl}/api/auth/me`, { headers: authHeaders(secondSessionToken) });
+    assert.equal(secondSessionMe.status, 401, "the other session must be rejected once revoke-others has run");
+
+    const firstSessionMe = await fetch(`${baseUrl}/api/auth/me`, { headers: authHeaders(firstSessionToken) });
+    assert.equal(firstSessionMe.status, 200, "the session that made the revoke-others request itself must stay valid");
+  });
+});
+
+test("POST /auth/sessions/revoke-others requires a valid session, the same as any other authenticated route", async () => {
+  await withServer(async (baseUrl) => {
+    const res = await fetch(`${baseUrl}/api/auth/sessions/revoke-others`, { method: "POST" });
+    assert.equal(res.status, 401);
+    assert.equal(((await res.json()) as { code?: string }).code, "AUTH_REQUIRED");
+  });
+});
+
 test("changing your password rejects a new password shorter than 8 characters, the same minimum signup enforces", async () => {
   await withServer(async (baseUrl) => {
     const token = await signup(baseUrl, `change-pw-3-${Date.now()}@example.com`);
