@@ -5,6 +5,7 @@ import { JSDOM } from "jsdom";
 import {
   getGroupByField,
   getGroupByFieldType,
+  migrateGroupByFieldForEntityRename,
   removeGroupByFieldForUserProject,
   setGroupByField,
   setGroupByFieldType,
@@ -118,5 +119,54 @@ test("removeGroupByFieldForUserProject is a no-op, not an error, when this user 
   await withJsdom(() => {
     assert.doesNotThrow(() => removeGroupByFieldForUserProject("proj1", "userA"));
     assert.equal(getGroupByField("proj1", "Deal", "userA"), "");
+  });
+});
+
+/**
+ * Round 1547: migrateGroupByFieldForEntityRename only ever runs in the
+ * single browser tab that triggered the rename (see getGroupByField's own
+ * doc comment) -- so a different collaborator's own localStorage, which
+ * never saw that migration run, must still resolve its real group-by
+ * choice (and paired field type) via getGroupByField's/
+ * getGroupByFieldType's new case-insensitive fallback, mirroring
+ * fieldFiltersPreference.test.ts's identical round-1545 coverage.
+ */
+test("getGroupByField and getGroupByFieldType resolve a collaborator's own choice stored under the OLD casing, even though no migration ever ran in this browser", async () => {
+  await withJsdom(() => {
+    setGroupByField("proj1", "customer", "userB", "status");
+    setGroupByFieldType("proj1", "customer", "userB", "enum");
+
+    assert.equal(getGroupByField("proj1", "Customer", "userB"), "status", "must resolve userB's own group-by choice under the new casing via the case-insensitive fallback, with no migration ever having run");
+    assert.equal(getGroupByFieldType("proj1", "Customer", "userB"), "enum", "the paired field-type entry must resolve the same way");
+  });
+});
+
+test("getGroupByField's and getGroupByFieldType's case-insensitive fallback never leak a different user's or different project's own choice for the same entity name", async () => {
+  await withJsdom(() => {
+    setGroupByField("proj1", "customer", "userA", "status");
+    setGroupByFieldType("proj1", "customer", "userA", "enum");
+    setGroupByField("proj2", "customer", "userB", "owner");
+
+    assert.equal(getGroupByField("proj1", "Customer", "userB"), "", "userB has no choice of their own in proj1 -- userA's own choice for the same entity must not leak across users");
+    assert.equal(getGroupByField("proj1", "Customer", "userA"), "status", "userA's own choice must still resolve via the fallback");
+    assert.equal(getGroupByFieldType("proj1", "Customer", "userA"), "enum", "the paired field-type entry must resolve via the fallback too");
+    assert.equal(getGroupByField("proj2", "Customer", "userA"), "", "a different project's own choice for the same entity+user combination must not leak across projects");
+  });
+});
+
+test("migrateGroupByFieldForEntityRename remaps every collaborator's own choice (and paired type) to the new casing, leaving a sibling entity untouched -- and a lookup under the old casing still resolves via the new case-insensitive fallback", async () => {
+  await withJsdom(() => {
+    setGroupByField("proj1", "customer", "userA", "status");
+    setGroupByFieldType("proj1", "customer", "userA", "enum");
+    setGroupByField("proj1", "customer", "userB", "owner");
+    setGroupByField("proj1", "Deal", "userA", "stage");
+
+    migrateGroupByFieldForEntityRename("proj1", "customer", "Customer");
+
+    assert.equal(getGroupByField("proj1", "Customer", "userA"), "status", "userA's choice must resolve under the new casing");
+    assert.equal(getGroupByFieldType("proj1", "Customer", "userA"), "enum", "the paired type must resolve under the new casing too");
+    assert.equal(getGroupByField("proj1", "Customer", "userB"), "owner", "userB's choice must resolve under the new casing too");
+    assert.equal(getGroupByField("proj1", "customer", "userA"), "status", "a lookup under the old casing must still resolve via getGroupByField's own case-insensitive fallback -- the intended new behavior, not a regression");
+    assert.equal(getGroupByField("proj1", "Deal", "userA"), "stage", "a sibling entity's own choice must survive the rename untouched");
   });
 });

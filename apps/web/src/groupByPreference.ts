@@ -51,10 +51,34 @@ function writeStore(store: Record<string, string>): void {
  * grouping a table is to leave it that way while you keep working. Returns
  * "" (matching the "no grouping" option's own empty value) when nothing has
  * ever been chosen for this project+entity.
+ *
+ * Round 1547: a case-only entity rename (an ordinary, explicitly-anticipated
+ * refine/AI casing drift) only ever gets this store's keys rewritten by
+ * migrateGroupByFieldForEntityRename below, which -- exactly like
+ * columnOrder.ts's/columnWidths.ts's/columnVisibility.ts's/
+ * fieldFiltersPreference.ts's own migrate functions before rounds
+ * 1542-1545 -- is called only from the single browser tab that happened to
+ * trigger the rename. Every OTHER collaborator's own localStorage keeps
+ * this choice under the entity's OLD casing forever -- the exact-match
+ * lookup above would miss it with zero error or indication, silently
+ * reverting that collaborator's table to "no grouping". Falls back to a
+ * case-insensitive scan of this exact project+user's own keys, the same
+ * resolution rounds 1542-1545 applied to this bug family's other
+ * instances.
  */
 export function getGroupByField(projectId: string, entityName: string, userId: string): string {
   const store = readStore();
-  return store[keyFor(projectId, entityName, userId)] ?? "";
+  const exact = store[keyFor(projectId, entityName, userId)];
+  if (exact !== undefined) return exact;
+  const prefix = `${projectId}:`;
+  const suffix = `:${userId}`;
+  const lowerEntityName = entityName.toLowerCase();
+  for (const [key, value] of Object.entries(store)) {
+    if (!key.startsWith(prefix) || !key.endsWith(suffix)) continue;
+    const keyEntityName = key.slice(prefix.length, key.length - suffix.length);
+    if (keyEntityName.toLowerCase() === lowerEntityName) return value;
+  }
+  return "";
 }
 
 /** Persists a group-by field choice (or "" to clear it) and returns it, so callers can update their own state from the return value instead of re-reading storage. */
@@ -155,10 +179,25 @@ function writeTypeStore(store: Record<string, string>): void {
  * live refine while mounted. Returns "" when nothing has ever been
  * recorded, so a pre-existing persisted choice from before this round
  * shipped is treated as "no type on record yet" rather than a mismatch.
+ *
+ * Round 1547: shares getGroupByField's own identical case-insensitive
+ * fallback (see its doc comment above) -- this paired store suffers the
+ * exact same gap, since both stores are written/read together and migrated
+ * together by migrateGroupByFieldForEntityRename below.
  */
 export function getGroupByFieldType(projectId: string, entityName: string, userId: string): string {
   const store = readTypeStore();
-  return store[keyFor(projectId, entityName, userId)] ?? "";
+  const exact = store[keyFor(projectId, entityName, userId)];
+  if (exact !== undefined) return exact;
+  const prefix = `${projectId}:`;
+  const suffix = `:${userId}`;
+  const lowerEntityName = entityName.toLowerCase();
+  for (const [key, value] of Object.entries(store)) {
+    if (!key.startsWith(prefix) || !key.endsWith(suffix)) continue;
+    const keyEntityName = key.slice(prefix.length, key.length - suffix.length);
+    if (keyEntityName.toLowerCase() === lowerEntityName) return value;
+  }
+  return "";
 }
 
 /** Persists the field type alongside a group-by choice (call together with setGroupByField), or clears it when type is "". */

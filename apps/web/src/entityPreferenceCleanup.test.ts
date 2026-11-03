@@ -345,7 +345,11 @@ test("migrateEntityPreferencesForCaseRename moves exactly one project+entity's e
     // identical gap), so a lookup under the old casing still resolves via that fallback
     // instead of coming back empty. This is the intended new behavior, not a regression.
     assert.deepEqual(getFieldFilters("abc", "customer", "userA"), { status: "active" }, "a lookup under the old casing must still resolve via getFieldFilters's own case-insensitive fallback");
-    assert.equal(getGroupByField("abc", "customer", "userA"), "", "nothing must remain reachable under the old casing");
+    // Round 1547: getGroupByField now falls back to a case-insensitive scan (the same
+    // resolution rounds 1542-1545 gave this bug family's other instances), so a lookup
+    // under the old casing still resolves via that fallback instead of coming back empty.
+    // This is the intended new behavior, not a regression.
+    assert.equal(getGroupByField("abc", "customer", "userA"), "status", "a lookup under the old casing must still resolve via getGroupByField's own case-insensitive fallback");
     assert.deepEqual(getEntityRecentSearches("abc", "customer", "userA"), [], "nothing must remain reachable under the old casing");
 
     // "abc"/"Deal" -- a sibling entity in the SAME project -- is completely untouched.
