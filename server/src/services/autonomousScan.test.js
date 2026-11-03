@@ -111,3 +111,50 @@ test('runAutonomousScan backs off once too many drafts are already awaiting revi
     }
   );
 });
+
+test('runAutonomousScan never counts demo drafts toward the pending-draft cap', async () => {
+  // A demo draft can never be published (publishing.js refuses it) and
+  // there's no route to delete an opportunity, so it would otherwise sit
+  // there forever and permanently block every future scan once 5 piled up -
+  // even after a real ANTHROPIC_API_KEY is configured.
+  __resetForTests();
+  const topicResponse = {
+    id: 'msg_topic', type: 'message', role: 'assistant', model: 'claude-sonnet-5-5',
+    content: [{ type: 'text', text: JSON.stringify({ topic: 'נושא', audience: 'קהל' }) }],
+    stop_reason: 'end_turn', stop_sequence: null, usage: { input_tokens: 10, output_tokens: 10 },
+  };
+  const draftResponse = {
+    id: 'msg_draft', type: 'message', role: 'assistant', model: 'claude-sonnet-5-5',
+    content: [{ type: 'text', text: JSON.stringify({
+      title: 'מדריך חדש', guide: 'תוכן', salesHeadline: 'כותרת', salesBullets: ['א'], salesParagraph: 'פסקה',
+    }) }],
+    stop_reason: 'end_turn', stop_sequence: null, usage: { input_tokens: 10, output_tokens: 10 },
+  };
+  for (let i = 0; i < 5; i += 1) {
+    db.opportunities.insert({ id: makeId('opp'), title: `demo ${i}`, status: 'draft', productDraft: { demo: true } });
+  }
+  const envVars = { ANTHROPIC_API_KEY: 'test-key', PADDLE_API_KEY: 'fake', PADDLE_CLIENT_TOKEN: 'fake', PADDLE_WEBHOOK_SECRET: 'fake' };
+  const originalEnv = {};
+  for (const key of Object.keys(envVars)) {
+    originalEnv[key] = process.env[key];
+    process.env[key] = envVars[key];
+  }
+  let call = 0;
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async () => {
+    call += 1;
+    const body = call === 1 ? topicResponse : draftResponse;
+    return new Response(JSON.stringify(body), { status: 200, headers: { 'content-type': 'application/json' } });
+  };
+  try {
+    const result = await runAutonomousScan();
+    assert.equal(result.ran, true);
+    assert.equal(db.opportunities.all().length, 6);
+  } finally {
+    globalThis.fetch = originalFetch;
+    for (const key of Object.keys(originalEnv)) {
+      if (originalEnv[key] === undefined) delete process.env[key];
+      else process.env[key] = originalEnv[key];
+    }
+  }
+});
