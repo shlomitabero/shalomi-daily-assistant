@@ -91,7 +91,7 @@ test("getFieldFilters tolerates corrupted/foreign localStorage content instead o
 
     localStorage.setItem(
       "forge.fieldFilters",
-      JSON.stringify({ "proj1:Customer:userA": { status: "overdue", bogus: 42, other: null } }),
+      JSON.stringify({ [JSON.stringify(["proj1", "Customer", "userA"])]: { status: "overdue", bogus: 42, other: null } }),
     );
     assert.deepEqual(
       getFieldFilters("proj1", "Customer", "userA"),
@@ -206,5 +206,21 @@ test("removeFieldFiltersForUserProject is a no-op, not an error, when this user 
   await withJsdom(() => {
     assert.doesNotThrow(() => removeFieldFiltersForUserProject("proj1", "userA"));
     assert.deepEqual(getFieldFilters("proj1", "Customer", "userA"), {});
+  });
+});
+
+test("purging or renaming an entity named 'Foo' must not touch a sibling entity whose name is 'Foo:Bar'", async () => {
+  await withJsdom(() => {
+    setFieldFilters("proj1", "Foo", "userA", { status: "overdue" });
+    setFieldFilters("proj1", "Foo:Bar", "userA", { status: "paid" });
+
+    purgeFieldFiltersForEntity("proj1", "Foo");
+    assert.deepEqual(getFieldFilters("proj1", "Foo", "userA"), {}, "the purged entity's own filters must be gone");
+    assert.deepEqual(getFieldFilters("proj1", "Foo:Bar", "userA"), { status: "paid" }, "the sibling 'Foo:Bar' entity's filters must survive untouched");
+
+    setFieldFilters("proj1", "Foo", "userA", { status: "overdue" });
+    migrateFieldFiltersForEntityRename("proj1", "Foo", "Baz");
+    assert.deepEqual(getFieldFilters("proj1", "Baz", "userA"), { status: "overdue" }, "the renamed entity's filters must land under the new name");
+    assert.deepEqual(getFieldFilters("proj1", "Foo:Bar", "userA"), { status: "paid" }, "renaming 'Foo' must not corrupt the sibling 'Foo:Bar' entity's own filters");
   });
 });

@@ -2,7 +2,13 @@ import "./jsdomWarmup.js";
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { JSDOM } from "jsdom";
-import { getViewMode, migrateViewModeForEntityRename, removeViewModeForUserProject, setViewMode } from "./viewModePreference.js";
+import {
+  getViewMode,
+  migrateViewModeForEntityRename,
+  purgeViewModeForEntity,
+  removeViewModeForUserProject,
+  setViewMode,
+} from "./viewModePreference.js";
 
 /** Same full-jsdom-swap technique used by groupByPreference.test.ts: real localStorage, not a mock. */
 async function withJsdom(fn: () => void | Promise<void>): Promise<void> {
@@ -161,5 +167,21 @@ test("migrateViewModeForEntityRename remaps every collaborator's own choice to t
     assert.equal(getViewMode("proj1", "Customer", "userB"), "calendar", "userB's choice must resolve under the new casing too");
     assert.equal(getViewMode("proj1", "customer", "userA"), "board", "a lookup under the old casing must still resolve via getViewMode's own case-insensitive fallback -- the intended new behavior, not a regression");
     assert.equal(getViewMode("proj1", "Deal", "userA"), "board", "a sibling entity's own choice must survive the rename untouched");
+  });
+});
+
+test("purging or renaming an entity named 'Foo' must not touch a sibling entity whose name is 'Foo:Bar'", async () => {
+  await withJsdom(() => {
+    setViewMode("proj1", "Foo", "userA", "board");
+    setViewMode("proj1", "Foo:Bar", "userA", "calendar");
+
+    purgeViewModeForEntity("proj1", "Foo");
+    assert.equal(getViewMode("proj1", "Foo", "userA"), "table", "the purged entity's own choice must be gone (back to default)");
+    assert.equal(getViewMode("proj1", "Foo:Bar", "userA"), "calendar", "the sibling 'Foo:Bar' entity's choice must survive untouched");
+
+    setViewMode("proj1", "Foo", "userA", "board");
+    migrateViewModeForEntityRename("proj1", "Foo", "Baz");
+    assert.equal(getViewMode("proj1", "Baz", "userA"), "board", "the renamed entity's choice must land under the new name");
+    assert.equal(getViewMode("proj1", "Foo:Bar", "userA"), "calendar", "renaming 'Foo' must not corrupt the sibling 'Foo:Bar' entity's own choice");
   });
 });

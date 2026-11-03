@@ -5,6 +5,7 @@ import { JSDOM } from "jsdom";
 import {
   getHiddenFields,
   migrateHiddenFieldsForEntityRename,
+  purgeHiddenFieldsForEntity,
   removeHiddenFieldsForUserProject,
   replaceHiddenFields,
   toggleFieldVisibility,
@@ -94,7 +95,7 @@ test("replaceHiddenFields with an empty set clears the stored entry entirely, no
     toggleFieldVisibility("proj1", "Customer", "userA", "notes");
     replaceHiddenFields("proj1", "Customer", "userA", []);
     assert.deepEqual(getHiddenFields("proj1", "Customer", "userA"), new Set());
-    assert.equal(JSON.parse(localStorage.getItem("forge.hiddenColumns")!)["proj1:Customer:userA"], undefined);
+    assert.equal(JSON.parse(localStorage.getItem("forge.hiddenColumns")!)[JSON.stringify(["proj1", "Customer", "userA"])], undefined);
   });
 });
 
@@ -108,7 +109,7 @@ test("getHiddenFields tolerates corrupted/foreign localStorage content instead o
 
     localStorage.setItem(
       "forge.hiddenColumns",
-      JSON.stringify({ "proj1:Customer:userA": ["notes", 42, null, "phone"] }),
+      JSON.stringify({ [JSON.stringify(["proj1", "Customer", "userA"])]: ["notes", 42, null, "phone"] }),
     );
     assert.deepEqual(
       getHiddenFields("proj1", "Customer", "userA"),
@@ -187,5 +188,27 @@ test("migrateHiddenFieldsForEntityRename remaps every collaborator's own hidden-
     assert.deepEqual(getHiddenFields("proj1", "Customer", "userB"), new Set(["phone"]), "userB's set must resolve under the new casing too");
     assert.deepEqual(getHiddenFields("proj1", "customer", "userA"), new Set(["email"]), "a lookup under the old casing must still resolve via getHiddenFields's own case-insensitive fallback -- the intended new behavior, not a regression");
     assert.deepEqual(getHiddenFields("proj1", "Order", "userA"), new Set(["total"]), "a sibling entity's own set must survive the rename untouched");
+  });
+});
+
+/**
+ * Round 1579: entity names have no character restriction, so two sibling
+ * entities like "Foo" and "Foo:Bar" can legally coexist in one project --
+ * see columnWidths.ts's own identical regression test for the full
+ * "colon-joined key collision" reasoning.
+ */
+test("purging or renaming an entity named 'Foo' must not touch a sibling entity whose name is 'Foo:Bar'", async () => {
+  await withJsdom(() => {
+    toggleFieldVisibility("proj1", "Foo", "userA", "name");
+    toggleFieldVisibility("proj1", "Foo:Bar", "userA", "label");
+
+    purgeHiddenFieldsForEntity("proj1", "Foo");
+    assert.deepEqual(getHiddenFields("proj1", "Foo", "userA"), new Set(), "the purged entity's own hidden fields must be gone");
+    assert.deepEqual(getHiddenFields("proj1", "Foo:Bar", "userA"), new Set(["label"]), "the sibling 'Foo:Bar' entity's hidden fields must survive untouched");
+
+    toggleFieldVisibility("proj1", "Foo", "userA", "name");
+    migrateHiddenFieldsForEntityRename("proj1", "Foo", "Baz");
+    assert.deepEqual(getHiddenFields("proj1", "Baz", "userA"), new Set(["name"]), "the renamed entity's hidden fields must land under the new name");
+    assert.deepEqual(getHiddenFields("proj1", "Foo:Bar", "userA"), new Set(["label"]), "renaming 'Foo' must not corrupt the sibling 'Foo:Bar' entity's own hidden fields");
   });
 });

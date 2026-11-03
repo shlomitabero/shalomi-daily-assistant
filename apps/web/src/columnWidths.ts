@@ -13,12 +13,34 @@ export const MAX_COLUMN_WIDTH = 480;
  * (fieldFiltersPreference.ts round 1054, columnVisibility.ts round 1055,
  * viewModePreference.ts round 1064), never ported here. See
  * fieldFiltersPreference.ts's own keyFor doc comment for the full
- * reasoning. purgeColumnWidthsForProject/purgeColumnWidthsForEntity below
- * still match by prefix, which keeps working unchanged regardless of what
- * the key's own remaining segments (entityName, userId) look like.
+ * reasoning.
+ *
+ * Round 1579: JSON-encoded rather than colon-joined -- entity names have no
+ * character restriction (EntitySchema just requires a non-empty string), so
+ * two sibling entities like "Foo" and "Foo:Bar" can both legally exist in
+ * one project. A colon-joined key made purgeColumnWidthsForEntity's own
+ * prefix scan for "Foo" also match "Foo:Bar"'s keys (wiping an unrelated,
+ * still-live entity's widths), and migrateColumnWidthsForEntityRename's own
+ * slice-off-the-prefix logic would mis-parse "Bar:<userId>" as a bogus
+ * userId, corrupting that collaborator's data outright. The same risk
+ * collapsedGroupsPreference.ts's own keyFor doc comment already documents
+ * and JSON.stringify already avoids -- ported here, and to every other
+ * sibling store below that still matched by colon-joined prefix.
  */
 function keyFor(projectId: string, entityName: string, userId: string): string {
-  return `${projectId}:${entityName}:${userId}`;
+  return JSON.stringify([projectId, entityName, userId]);
+}
+
+function parseKey(key: string): [string, string, string] | null {
+  try {
+    const parsed = JSON.parse(key);
+    if (Array.isArray(parsed) && parsed.length === 3 && parsed.every((part): part is string => typeof part === "string")) {
+      return parsed as [string, string, string];
+    }
+    return null;
+  } catch {
+    return null;
+  }
 }
 
 function readStore(): Record<string, Record<string, number>> {
@@ -75,13 +97,12 @@ export function getColumnWidths(projectId: string, entityName: string, userId: s
   const store = readStore();
   const exact = store[keyFor(projectId, entityName, userId)];
   if (exact) return { ...exact };
-  const prefix = `${projectId}:`;
-  const suffix = `:${userId}`;
   const lowerEntityName = entityName.toLowerCase();
   for (const [key, value] of Object.entries(store)) {
-    if (!key.startsWith(prefix) || !key.endsWith(suffix)) continue;
-    const keyEntityName = key.slice(prefix.length, key.length - suffix.length);
-    if (keyEntityName.toLowerCase() === lowerEntityName) return { ...value };
+    const parsed = parseKey(key);
+    if (!parsed) continue;
+    const [keyProjectId, keyEntityName, keyUserId] = parsed;
+    if (keyProjectId === projectId && keyUserId === userId && keyEntityName.toLowerCase() === lowerEntityName) return { ...value };
   }
   return {};
 }
@@ -137,11 +158,12 @@ export function clearColumnWidths(projectId: string, entityName: string, userId:
 export function migrateColumnWidthsForEntityRename(projectId: string, oldName: string, newName: string): void {
   if (oldName === newName) return;
   const store = readStore();
-  const oldPrefix = `${projectId}:${oldName}:`;
   let changed = false;
   for (const key of Object.keys(store)) {
-    if (!key.startsWith(oldPrefix)) continue;
-    const userId = key.slice(oldPrefix.length);
+    const parsed = parseKey(key);
+    if (!parsed) continue;
+    const [keyProjectId, keyEntityName, userId] = parsed;
+    if (keyProjectId !== projectId || keyEntityName !== oldName) continue;
     const newKey = keyFor(projectId, newName, userId);
     if (store[newKey] === undefined) store[newKey] = store[key];
     delete store[key];
@@ -167,11 +189,10 @@ export function migrateColumnWidthsForEntityRename(projectId: string, oldName: s
  */
 export function removeColumnWidthsForUserProject(projectId: string, userId: string): void {
   const store = readStore();
-  const prefix = `${projectId}:`;
-  const suffix = `:${userId}`;
   let changed = false;
   for (const key of Object.keys(store)) {
-    if (key.startsWith(prefix) && key.endsWith(suffix)) {
+    const parsed = parseKey(key);
+    if (parsed && parsed[0] === projectId && parsed[2] === userId) {
       delete store[key];
       changed = true;
     }
@@ -182,9 +203,9 @@ export function removeColumnWidthsForUserProject(projectId: string, userId: stri
 /** Removes every stored width for this project, across all of its entities, regardless of entity name -- unlike purgeColumnWidthsForEntity below, which needs one specific entity. Used when the whole project is deleted (projectPreferenceCleanup.ts): nothing else ever clears this store, so without this a deleted project's entries sit here forever. */
 export function purgeColumnWidthsForProject(projectId: string): void {
   const store = readStore();
-  const prefix = `${projectId}:`;
   for (const key of Object.keys(store)) {
-    if (key.startsWith(prefix)) delete store[key];
+    const parsed = parseKey(key);
+    if (parsed && parsed[0] === projectId) delete store[key];
   }
   writeStore(store);
 }
@@ -205,9 +226,9 @@ export function purgeColumnWidthsForProject(projectId: string): void {
  */
 export function purgeColumnWidthsForEntity(projectId: string, entityName: string): void {
   const store = readStore();
-  const prefix = `${projectId}:${entityName}:`;
   for (const key of Object.keys(store)) {
-    if (key.startsWith(prefix)) delete store[key];
+    const parsed = parseKey(key);
+    if (parsed && parsed[0] === projectId && parsed[1] === entityName) delete store[key];
   }
   writeStore(store);
 }

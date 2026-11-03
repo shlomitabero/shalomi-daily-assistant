@@ -13,9 +13,26 @@ const STORAGE_KEY = "forge.groupByField";
  * purgeGroupByFieldForEntity below still match by prefix, which keeps
  * working unchanged regardless of what the key's own remaining segments
  * (entityName, userId) look like.
+ *
+ * Round 1579: JSON-encoded rather than colon-joined -- see columnWidths.ts's
+ * own keyFor doc comment for the full "Foo"/"Foo:Bar" collision reasoning,
+ * ported here identically (and shared by both this store and its paired
+ * TYPE store below, since they both call this same function).
  */
 function keyFor(projectId: string, entityName: string, userId: string): string {
-  return `${projectId}:${entityName}:${userId}`;
+  return JSON.stringify([projectId, entityName, userId]);
+}
+
+function parseKey(key: string): [string, string, string] | null {
+  try {
+    const parsed = JSON.parse(key);
+    if (Array.isArray(parsed) && parsed.length === 3 && parsed.every((part): part is string => typeof part === "string")) {
+      return parsed as [string, string, string];
+    }
+    return null;
+  } catch {
+    return null;
+  }
 }
 
 function readStore(): Record<string, string> {
@@ -70,13 +87,12 @@ export function getGroupByField(projectId: string, entityName: string, userId: s
   const store = readStore();
   const exact = store[keyFor(projectId, entityName, userId)];
   if (exact !== undefined) return exact;
-  const prefix = `${projectId}:`;
-  const suffix = `:${userId}`;
   const lowerEntityName = entityName.toLowerCase();
   for (const [key, value] of Object.entries(store)) {
-    if (!key.startsWith(prefix) || !key.endsWith(suffix)) continue;
-    const keyEntityName = key.slice(prefix.length, key.length - suffix.length);
-    if (keyEntityName.toLowerCase() === lowerEntityName) return value;
+    const parsed = parseKey(key);
+    if (!parsed) continue;
+    const [keyProjectId, keyEntityName, keyUserId] = parsed;
+    if (keyProjectId === projectId && keyUserId === userId && keyEntityName.toLowerCase() === lowerEntityName) return value;
   }
   return "";
 }
@@ -101,12 +117,11 @@ export function setGroupByField(projectId: string, entityName: string, userId: s
  * above already keeps in sync.
  */
 export function removeGroupByFieldForUserProject(projectId: string, userId: string): void {
-  const prefix = `${projectId}:`;
-  const suffix = `:${userId}`;
   const store = readStore();
   let storeChanged = false;
   for (const key of Object.keys(store)) {
-    if (key.startsWith(prefix) && key.endsWith(suffix)) {
+    const parsed = parseKey(key);
+    if (parsed && parsed[0] === projectId && parsed[2] === userId) {
       delete store[key];
       storeChanged = true;
     }
@@ -115,7 +130,8 @@ export function removeGroupByFieldForUserProject(projectId: string, userId: stri
   const typeStore = readTypeStore();
   let typeStoreChanged = false;
   for (const key of Object.keys(typeStore)) {
-    if (key.startsWith(prefix) && key.endsWith(suffix)) {
+    const parsed = parseKey(key);
+    if (parsed && parsed[0] === projectId && parsed[2] === userId) {
       delete typeStore[key];
       typeStoreChanged = true;
     }
@@ -126,9 +142,9 @@ export function removeGroupByFieldForUserProject(projectId: string, userId: stri
 /** Removes every stored group-by choice for this project, across all of its entities -- see columnWidths.ts's purgeColumnWidthsForProject for the full rationale. */
 export function purgeGroupByFieldForProject(projectId: string): void {
   const store = readStore();
-  const prefix = `${projectId}:`;
   for (const key of Object.keys(store)) {
-    if (key.startsWith(prefix)) delete store[key];
+    const parsed = parseKey(key);
+    if (parsed && parsed[0] === projectId) delete store[key];
   }
   writeStore(store);
   purgeGroupByFieldTypeForProject(projectId);
@@ -189,13 +205,12 @@ export function getGroupByFieldType(projectId: string, entityName: string, userI
   const store = readTypeStore();
   const exact = store[keyFor(projectId, entityName, userId)];
   if (exact !== undefined) return exact;
-  const prefix = `${projectId}:`;
-  const suffix = `:${userId}`;
   const lowerEntityName = entityName.toLowerCase();
   for (const [key, value] of Object.entries(store)) {
-    if (!key.startsWith(prefix) || !key.endsWith(suffix)) continue;
-    const keyEntityName = key.slice(prefix.length, key.length - suffix.length);
-    if (keyEntityName.toLowerCase() === lowerEntityName) return value;
+    const parsed = parseKey(key);
+    if (!parsed) continue;
+    const [keyProjectId, keyEntityName, keyUserId] = parsed;
+    if (keyProjectId === projectId && keyUserId === userId && keyEntityName.toLowerCase() === lowerEntityName) return value;
   }
   return "";
 }
@@ -211,9 +226,9 @@ export function setGroupByFieldType(projectId: string, entityName: string, userI
 /** Removes every stored group-by field TYPE for this project -- see purgeGroupByFieldForProject, which already calls this. */
 export function purgeGroupByFieldTypeForProject(projectId: string): void {
   const store = readTypeStore();
-  const prefix = `${projectId}:`;
   for (const key of Object.keys(store)) {
-    if (key.startsWith(prefix)) delete store[key];
+    const parsed = parseKey(key);
+    if (parsed && parsed[0] === projectId) delete store[key];
   }
   writeTypeStore(store);
 }
@@ -229,15 +244,16 @@ export function purgeGroupByFieldTypeForProject(projectId: string): void {
  * why this exists alongside the project-wide purge.
  */
 export function purgeGroupByFieldForEntity(projectId: string, entityName: string): void {
-  const prefix = `${projectId}:${entityName}:`;
   const store = readStore();
   for (const key of Object.keys(store)) {
-    if (key.startsWith(prefix)) delete store[key];
+    const parsed = parseKey(key);
+    if (parsed && parsed[0] === projectId && parsed[1] === entityName) delete store[key];
   }
   writeStore(store);
   const typeStore = readTypeStore();
   for (const key of Object.keys(typeStore)) {
-    if (key.startsWith(prefix)) delete typeStore[key];
+    const parsed = parseKey(key);
+    if (parsed && parsed[0] === projectId && parsed[1] === entityName) delete typeStore[key];
   }
   writeTypeStore(typeStore);
 }
@@ -254,12 +270,13 @@ export function purgeGroupByFieldForEntity(projectId: string, entityName: string
  */
 export function migrateGroupByFieldForEntityRename(projectId: string, oldName: string, newName: string): void {
   if (oldName === newName) return;
-  const oldPrefix = `${projectId}:${oldName}:`;
   const store = readStore();
   let storeChanged = false;
   for (const key of Object.keys(store)) {
-    if (!key.startsWith(oldPrefix)) continue;
-    const userId = key.slice(oldPrefix.length);
+    const parsed = parseKey(key);
+    if (!parsed) continue;
+    const [keyProjectId, keyEntityName, userId] = parsed;
+    if (keyProjectId !== projectId || keyEntityName !== oldName) continue;
     const newKey = keyFor(projectId, newName, userId);
     if (store[newKey] === undefined) store[newKey] = store[key];
     delete store[key];
@@ -269,8 +286,10 @@ export function migrateGroupByFieldForEntityRename(projectId: string, oldName: s
   const typeStore = readTypeStore();
   let typeStoreChanged = false;
   for (const key of Object.keys(typeStore)) {
-    if (!key.startsWith(oldPrefix)) continue;
-    const userId = key.slice(oldPrefix.length);
+    const parsed = parseKey(key);
+    if (!parsed) continue;
+    const [keyProjectId, keyEntityName, userId] = parsed;
+    if (keyProjectId !== projectId || keyEntityName !== oldName) continue;
     const newKey = keyFor(projectId, newName, userId);
     if (typeStore[newKey] === undefined) typeStore[newKey] = typeStore[key];
     delete typeStore[key];

@@ -233,3 +233,25 @@ test("getColumnOrder's case-insensitive fallback never leaks a DIFFERENT user's 
     assert.deepEqual(getColumnOrder("proj2", "customer", "userA"), [], "must not return a different project's own order for the same user+entity");
   });
 });
+
+/**
+ * Round 1579: entity names have no character restriction, so two sibling
+ * entities like "Foo" and "Foo:Bar" can legally coexist in one project --
+ * see columnWidths.ts's own identical regression test for the full
+ * "colon-joined key collision" reasoning.
+ */
+test("purging or renaming an entity named 'Foo' must not touch a sibling entity whose name is 'Foo:Bar'", async () => {
+  await withJsdom(() => {
+    setColumnOrder("proj1", "Foo", "userA", ["name"]);
+    setColumnOrder("proj1", "Foo:Bar", "userA", ["label"]);
+
+    purgeColumnOrderForEntity("proj1", "Foo");
+    assert.deepEqual(getColumnOrder("proj1", "Foo", "userA"), [], "the purged entity's own order must be gone");
+    assert.deepEqual(getColumnOrder("proj1", "Foo:Bar", "userA"), ["label"], "the sibling 'Foo:Bar' entity's order must survive untouched");
+
+    setColumnOrder("proj1", "Foo", "userA", ["name"]);
+    migrateColumnOrderForEntityRename("proj1", "Foo", "Baz");
+    assert.deepEqual(getColumnOrder("proj1", "Baz", "userA"), ["name"], "the renamed entity's order must land under the new name");
+    assert.deepEqual(getColumnOrder("proj1", "Foo:Bar", "userA"), ["label"], "renaming 'Foo' must not corrupt the sibling 'Foo:Bar' entity's own order");
+  });
+});

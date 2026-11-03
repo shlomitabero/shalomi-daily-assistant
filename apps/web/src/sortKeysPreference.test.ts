@@ -201,3 +201,19 @@ test("removeSortKeysForUserProject is a no-op, not an error, when this user neve
     assert.deepEqual(getSortKeys("proj1", "Deal", "userA"), []);
   });
 });
+
+test("purging or renaming an entity named 'Foo' must not touch a sibling entity whose name is 'Foo:Bar'", async () => {
+  await withJsdom(() => {
+    setSortKeys("proj1", "Foo", "userA", [{ field: "status", direction: "asc" }]);
+    setSortKeys("proj1", "Foo:Bar", "userA", [{ field: "total", direction: "desc" }]);
+
+    purgeSortKeysForEntity("proj1", "Foo");
+    assert.deepEqual(getSortKeys("proj1", "Foo", "userA"), [], "the purged entity's own sort must be gone");
+    assert.deepEqual(getSortKeys("proj1", "Foo:Bar", "userA"), [{ field: "total", direction: "desc" }], "the sibling 'Foo:Bar' entity's sort must survive untouched");
+
+    setSortKeys("proj1", "Foo", "userA", [{ field: "status", direction: "asc" }]);
+    migrateSortKeysForEntityRename("proj1", "Foo", "Baz");
+    assert.deepEqual(getSortKeys("proj1", "Baz", "userA"), [{ field: "status", direction: "asc" }], "the renamed entity's sort must land under the new name");
+    assert.deepEqual(getSortKeys("proj1", "Foo:Bar", "userA"), [{ field: "total", direction: "desc" }], "renaming 'Foo' must not corrupt the sibling 'Foo:Bar' entity's own sort");
+  });
+});

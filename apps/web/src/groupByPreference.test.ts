@@ -6,6 +6,7 @@ import {
   getGroupByField,
   getGroupByFieldType,
   migrateGroupByFieldForEntityRename,
+  purgeGroupByFieldForEntity,
   removeGroupByFieldForUserProject,
   setGroupByField,
   setGroupByFieldType,
@@ -168,5 +169,26 @@ test("migrateGroupByFieldForEntityRename remaps every collaborator's own choice 
     assert.equal(getGroupByField("proj1", "Customer", "userB"), "owner", "userB's choice must resolve under the new casing too");
     assert.equal(getGroupByField("proj1", "customer", "userA"), "status", "a lookup under the old casing must still resolve via getGroupByField's own case-insensitive fallback -- the intended new behavior, not a regression");
     assert.equal(getGroupByField("proj1", "Deal", "userA"), "stage", "a sibling entity's own choice must survive the rename untouched");
+  });
+});
+
+test("purging or renaming an entity named 'Foo' must not touch a sibling entity whose name is 'Foo:Bar'", async () => {
+  await withJsdom(() => {
+    setGroupByField("proj1", "Foo", "userA", "status");
+    setGroupByFieldType("proj1", "Foo", "userA", "enum");
+    setGroupByField("proj1", "Foo:Bar", "userA", "owner");
+    setGroupByFieldType("proj1", "Foo:Bar", "userA", "relation");
+
+    purgeGroupByFieldForEntity("proj1", "Foo");
+    assert.equal(getGroupByField("proj1", "Foo", "userA"), "", "the purged entity's own choice must be gone");
+    assert.equal(getGroupByField("proj1", "Foo:Bar", "userA"), "owner", "the sibling 'Foo:Bar' entity's choice must survive untouched");
+    assert.equal(getGroupByFieldType("proj1", "Foo:Bar", "userA"), "relation", "the sibling 'Foo:Bar' entity's paired type must survive untouched");
+
+    setGroupByField("proj1", "Foo", "userA", "status");
+    setGroupByFieldType("proj1", "Foo", "userA", "enum");
+    migrateGroupByFieldForEntityRename("proj1", "Foo", "Baz");
+    assert.equal(getGroupByField("proj1", "Baz", "userA"), "status", "the renamed entity's choice must land under the new name");
+    assert.equal(getGroupByFieldType("proj1", "Baz", "userA"), "enum", "the renamed entity's paired type must land under the new name");
+    assert.equal(getGroupByField("proj1", "Foo:Bar", "userA"), "owner", "renaming 'Foo' must not corrupt the sibling 'Foo:Bar' entity's own choice");
   });
 });

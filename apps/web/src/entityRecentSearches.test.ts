@@ -149,7 +149,7 @@ test("getEntityRecentSearches tolerates corrupted/foreign localStorage content i
 
     localStorage.setItem(
       "forge.entityRecentSearches",
-      JSON.stringify({ "proj1:Customer:userA": ["acme", 42, null, "zeta"] }),
+      JSON.stringify({ [JSON.stringify(["proj1", "Customer", "userA"])]: ["acme", 42, null, "zeta"] }),
     );
     assert.deepEqual(
       getEntityRecentSearches("proj1", "Customer", "userA"),
@@ -267,5 +267,21 @@ test("migrateEntityRecentSearchesForEntityRename remaps every collaborator's own
     assert.deepEqual(getEntityRecentSearches("proj1", "Customer", "userB"), ["zeta"], "userB's list must resolve under the new casing too");
     assert.deepEqual(getEntityRecentSearches("proj1", "customer", "userA"), ["acme"], "a lookup under the old casing must still resolve via getEntityRecentSearches's own case-insensitive fallback -- the intended new behavior, not a regression");
     assert.deepEqual(getEntityRecentSearches("proj1", "Order", "userA"), ["paid"], "a sibling entity's own list must survive the rename untouched");
+  });
+});
+
+test("purging or renaming an entity named 'Foo' must not touch a sibling entity whose name is 'Foo:Bar'", async () => {
+  await withJsdom(() => {
+    addEntityRecentSearch("proj1", "Foo", "userA", "acme");
+    addEntityRecentSearch("proj1", "Foo:Bar", "userA", "zeta");
+
+    purgeEntityRecentSearchesForEntity("proj1", "Foo");
+    assert.deepEqual(getEntityRecentSearches("proj1", "Foo", "userA"), [], "the purged entity's own list must be gone");
+    assert.deepEqual(getEntityRecentSearches("proj1", "Foo:Bar", "userA"), ["zeta"], "the sibling 'Foo:Bar' entity's list must survive untouched");
+
+    addEntityRecentSearch("proj1", "Foo", "userA", "acme");
+    migrateEntityRecentSearchesForEntityRename("proj1", "Foo", "Baz");
+    assert.deepEqual(getEntityRecentSearches("proj1", "Baz", "userA"), ["acme"], "the renamed entity's list must land under the new name");
+    assert.deepEqual(getEntityRecentSearches("proj1", "Foo:Bar", "userA"), ["zeta"], "renaming 'Foo' must not corrupt the sibling 'Foo:Bar' entity's own list");
   });
 });

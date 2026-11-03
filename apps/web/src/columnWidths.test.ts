@@ -223,3 +223,27 @@ test("removeColumnWidthsForUserProject is a no-op, not an error, when this user 
     assert.deepEqual(getColumnWidths("proj1", "Customer", "userA"), {});
   });
 });
+
+/**
+ * Round 1579: entity names have no character restriction (EntitySchema is a
+ * bare non-empty string), so two sibling entities like "Foo" and "Foo:Bar"
+ * can legally coexist in one project. A colon-joined key would make
+ * purgeColumnWidthsForEntity's/migrateColumnWidthsForEntityRename's own
+ * prefix-scan for "Foo" also match "Foo:Bar"'s real keys, silently wiping
+ * or corrupting an unrelated, still-live entity's widths.
+ */
+test("purging or renaming an entity named 'Foo' must not touch a sibling entity whose name is 'Foo:Bar'", async () => {
+  await withJsdom(() => {
+    setColumnWidth("proj1", "Foo", "userA", "name", 150);
+    setColumnWidth("proj1", "Foo:Bar", "userA", "label", 200);
+
+    purgeColumnWidthsForEntity("proj1", "Foo");
+    assert.deepEqual(getColumnWidths("proj1", "Foo", "userA"), {}, "the purged entity's own widths must be gone");
+    assert.deepEqual(getColumnWidths("proj1", "Foo:Bar", "userA"), { label: 200 }, "the sibling 'Foo:Bar' entity's widths must survive untouched");
+
+    setColumnWidth("proj1", "Foo", "userA", "name", 150);
+    migrateColumnWidthsForEntityRename("proj1", "Foo", "Baz");
+    assert.deepEqual(getColumnWidths("proj1", "Baz", "userA"), { name: 150 }, "the renamed entity's widths must land under the new name");
+    assert.deepEqual(getColumnWidths("proj1", "Foo:Bar", "userA"), { label: 200 }, "renaming 'Foo' must not corrupt the sibling 'Foo:Bar' entity's own widths");
+  });
+});
