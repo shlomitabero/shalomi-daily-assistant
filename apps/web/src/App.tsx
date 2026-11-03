@@ -1909,7 +1909,12 @@ function AppContent() {
   }
 
   async function handleExport() {
-    if (!project) return;
+    // Round 1555: the same own-click reentrancy gap this codebase has
+    // already closed by name in ~15 other handlers (rounds 1117/1118/1260/
+    // 1264/1363-1372/1522/1534) -- a fast double-click (or a double-tap
+    // mis-fire on mobile) used to fire a second real export request before
+    // React had committed the button's own `disabled={exportBusy}`.
+    if (!project || exportBusy) return;
     setExportBusy(true);
     setError(null);
     try {
@@ -1923,7 +1928,9 @@ function AppContent() {
   }
 
   async function handleBackup() {
-    if (!project || !user) return;
+    // Round 1555: see handleExport's own comment just above -- the same
+    // own-click reentrancy gap, never closed for this sibling handler.
+    if (!project || !user || backupBusy) return;
     setBackupBusy(true);
     setError(null);
     try {

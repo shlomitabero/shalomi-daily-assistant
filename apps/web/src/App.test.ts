@@ -899,6 +899,100 @@ test("App's handleUseTemplate refuses to run while the Build submit button or En
 });
 
 /**
+ * Round 1555: handleExport (the preview toolbar's own "Export App" button)
+ * is a separate code path from the three home-screen handlers round 1369
+ * already closed this exact gap for in this same file -- it never got the
+ * same own-click reentrancy guard, so a fast double-click (or a double-tap
+ * mis-fire, common on mobile) used to fire a second real export request
+ * before React had committed the button's own `disabled={exportBusy}`.
+ */
+test("App's handleExport refuses to run a second export while its own exportBusy flag is already set, but still runs normally otherwise", async () => {
+  const appSrc = readFileSync(new URL("./App.tsx", import.meta.url), "utf8");
+  const handlerMatch = appSrc.match(/ {2}async function handleExport\(\) \{[\s\S]*?\n {2}\}\n/);
+  assert.ok(handlerMatch, "expected to find handleExport in App.tsx");
+  const { code } = transformSync(handlerMatch![0], { loader: "ts" });
+
+  function run(opts: { exportBusy?: boolean }) {
+    const state = { exportProjectCallCount: 0, exportBusySet: "untouched" as unknown };
+    const fn = new Function(
+      "project",
+      "exportBusy",
+      "setExportBusy",
+      "setError",
+      "exportProject",
+      "setExportDone",
+      `${code}\nreturn handleExport;`,
+    )(
+      makeProject([]),
+      opts.exportBusy ?? false,
+      (v: boolean) => (state.exportBusySet = v),
+      () => {},
+      async () => {
+        state.exportProjectCallCount += 1;
+      },
+      () => {},
+    ) as () => Promise<void>;
+    return { fn, state };
+  }
+
+  const { fn: fnWhileBusy, state: stateWhileBusy } = run({ exportBusy: true });
+  await fnWhileBusy();
+  assert.equal(stateWhileBusy.exportProjectCallCount, 0, "must never call exportProject a second time while this very handler's own exportBusy is already set");
+  assert.equal(stateWhileBusy.exportBusySet, "untouched", "must not even touch exportBusy again, since it never started");
+
+  const { fn: fnNormally, state: stateNormally } = run({});
+  await fnNormally();
+  assert.equal(stateNormally.exportProjectCallCount, 1, "must still run normally when exportBusy is false");
+});
+
+/**
+ * Round 1555: handleBackup's direct sibling gap -- see handleExport's own
+ * test above.
+ */
+test("App's handleBackup refuses to run a second backup while its own backupBusy flag is already set, but still runs normally otherwise", async () => {
+  const appSrc = readFileSync(new URL("./App.tsx", import.meta.url), "utf8");
+  const handlerMatch = appSrc.match(/ {2}async function handleBackup\(\) \{[\s\S]*?\n {2}\}\n/);
+  assert.ok(handlerMatch, "expected to find handleBackup in App.tsx");
+  const { code } = transformSync(handlerMatch![0], { loader: "ts" });
+
+  function run(opts: { backupBusy?: boolean }) {
+    const state = { backupProjectCallCount: 0, backupBusySet: "untouched" as unknown };
+    const fn = new Function(
+      "project",
+      "user",
+      "backupBusy",
+      "setBackupBusy",
+      "setError",
+      "getColumnOrder",
+      "backupProject",
+      "setBackupDone",
+      `${code}\nreturn handleBackup;`,
+    )(
+      makeProject([]),
+      { id: "user1" },
+      opts.backupBusy ?? false,
+      (v: boolean) => (state.backupBusySet = v),
+      () => {},
+      () => [],
+      async () => {
+        state.backupProjectCallCount += 1;
+      },
+      () => {},
+    ) as () => Promise<void>;
+    return { fn, state };
+  }
+
+  const { fn: fnWhileBusy, state: stateWhileBusy } = run({ backupBusy: true });
+  await fnWhileBusy();
+  assert.equal(stateWhileBusy.backupProjectCallCount, 0, "must never call backupProject a second time while this very handler's own backupBusy is already set");
+  assert.equal(stateWhileBusy.backupBusySet, "untouched", "must not even touch backupBusy again, since it never started");
+
+  const { fn: fnNormally, state: stateNormally } = run({});
+  await fnNormally();
+  assert.equal(stateNormally.backupProjectCallCount, 1, "must still run normally when backupBusy is false");
+});
+
+/**
  * Regression test for round 407: POST /projects/:id/answers calls the
  * exact same generateSpec() as project creation and /refine (round 406),
  * but until now its own providerName -- round 406's own open follow-up --
