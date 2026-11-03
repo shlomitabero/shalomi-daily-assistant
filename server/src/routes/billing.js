@@ -43,6 +43,21 @@ export function paddleWebhookHandler(req, res) {
       const alreadyRecorded = opportunityId && db.ledger.where((e) => e.externalId === txn.id).length > 0;
 
       if (opportunityId && !alreadyRecorded) {
+        // A sandbox transaction (PADDLE_ENV=sandbox — the README's own
+        // documented default while testing) still signs and sends a real
+        // webhook once its own sandbox secret is configured, indistinguishable
+        // from this handler's point of view from a real sale. Without this,
+        // every test purchase made while trying out the checkout would get
+        // recorded as verified: true real revenue, inflating the dashboard's
+        // actual cash-in/net-profit numbers with fake test money — the one
+        // thing this ledger exists to never do. PADDLE_ENV is the same
+        // signal paddleClientConfig()/ProductPage.jsx's sandbox banner
+        // already treat as authoritative, not a guess at Paddle's payload.
+        if (process.env.PADDLE_ENV === 'sandbox') {
+          logAction({ type: 'sale_confirmed', detail: { opportunityId, transactionId: txn.id }, result: 'skipped: sandbox transaction, not recorded as real revenue' });
+          res.json({ received: true });
+          return;
+        }
         let amount, fee;
         try {
           amount = extractTransactionAmount(txn);

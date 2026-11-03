@@ -150,6 +150,38 @@ test('replaying the same transaction never double-records its fee either', () =>
   });
 });
 
+test('a sandbox transaction is never recorded as real revenue, even with a valid signature', () => {
+  // PADDLE_ENV=sandbox is the README's own documented default while
+  // testing — a test purchase made during that setup still sends a real,
+  // validly-signed webhook here (signed with the sandbox's own secret),
+  // and must never be mistaken for a real sale.
+  __resetForTests();
+  withEnv({ PADDLE_WEBHOOK_SECRET: 'whsec_sandbox', PADDLE_ENV: 'sandbox' }, () => {
+    const opportunity = db.opportunities.insert({ id: makeId('opp'), title: 'מדריך', salesCount: 0 });
+    const req = makeReq(completedTxn({ id: 'txn_1', opportunityId: opportunity.id, totalCents: '900' }), 'whsec_sandbox');
+    const res = makeRes();
+    paddleWebhookHandler(req, res);
+
+    assert.deepEqual(res.body, { received: true });
+    assert.equal(db.ledger.all().length, 0);
+    assert.equal(db.opportunities.get(opportunity.id).salesCount, 0);
+    const logged = db.actions_log.where((a) => a.type === 'sale_confirmed')[0];
+    assert.match(logged.result, /skipped: sandbox/);
+  });
+});
+
+test('a production transaction is still recorded normally when PADDLE_ENV is unset or production', () => {
+  __resetForTests();
+  withEnv({ PADDLE_WEBHOOK_SECRET: 'whsec_real', PADDLE_ENV: 'production' }, () => {
+    const opportunity = db.opportunities.insert({ id: makeId('opp'), title: 'מדריך', salesCount: 0 });
+    const req = makeReq(completedTxn({ id: 'txn_1', opportunityId: opportunity.id, totalCents: '900' }), 'whsec_real');
+    paddleWebhookHandler(req, makeRes());
+
+    assert.equal(db.ledger.where((e) => e.externalId === 'txn_1').length, 1);
+    assert.equal(db.opportunities.get(opportunity.id).salesCount, 1);
+  });
+});
+
 test('a malformed transaction amount is refused instead of poisoning the ledger with NaN', () => {
   __resetForTests();
   withEnv({ PADDLE_WEBHOOK_SECRET: 'whsec_real' }, () => {
