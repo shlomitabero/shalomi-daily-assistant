@@ -5671,6 +5671,78 @@ test("build and refine attach the authenticated caller's own userId to the check
 });
 
 /**
+ * Round 1568: round 1567 attached createdByUserId to every checkpoint a
+ * /build or /refine creates, but the restore route -- which actually
+ * overwrites the live spec, potentially discarding newer customizations --
+ * never called insertCheckpoint at all, leaving no trace of who restored
+ * what. Confirms the restore route now attaches the authenticated caller's
+ * own userId via recordCheckpointRestore, and GET .../checkpoints resolves
+ * it to a real email via the exact same collaboratorEmails map checkpoint
+ * creators already resolve through.
+ */
+test("restoring a checkpoint attaches the authenticated caller's own userId as the project's lastRestore, resolved to a real email via the same collaboratorEmails map, and stays undefined until a restore actually happens", async () => {
+  await withServer(async (baseUrl) => {
+    const ownerSignupRes = await fetch(`${baseUrl}/api/auth/signup`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ email: "owner-restore-audit@example.com", password: "correct-horse-battery" }),
+    });
+    const { user: ownerUser, token: ownerToken } = (await ownerSignupRes.json()) as {
+      user: { id: string; email: string };
+      token: string;
+    };
+
+    const collabSignupRes = await fetch(`${baseUrl}/api/auth/signup`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ email: "collab-restore-audit@example.com", password: "correct-horse-battery" }),
+    });
+    const { user: collabUser, token: collabToken } = (await collabSignupRes.json()) as {
+      user: { id: string; email: string };
+      token: string;
+    };
+
+    const createRes = await fetch(`${baseUrl}/api/projects`, {
+      method: "POST",
+      headers: authHeaders(ownerToken),
+      body: JSON.stringify({ description: "A CRM with customers and deals." }),
+    });
+    const { project } = (await createRes.json()) as { project: { id: string } };
+
+    await fetch(`${baseUrl}/api/projects/${project.id}/collaborators`, {
+      method: "POST",
+      headers: authHeaders(ownerToken),
+      body: JSON.stringify({ email: "collab-restore-audit@example.com" }),
+    });
+
+    const buildRes = await fetch(`${baseUrl}/api/projects/${project.id}/build`, { method: "POST", headers: authHeaders(ownerToken) });
+    await collectSSE(buildRes);
+
+    const beforeRestoreRes = await fetch(`${baseUrl}/api/projects/${project.id}/checkpoints`, { headers: authHeaders(ownerToken) });
+    const beforeRestore = (await beforeRestoreRes.json()) as { checkpoints: { id: string; label: string }[]; lastRestore?: unknown };
+    assert.equal(beforeRestore.lastRestore, undefined, "no restore has happened yet");
+    const initialCheckpoint = beforeRestore.checkpoints.find((c) => c.label === "Initial build")!;
+
+    const restoreRes = await fetch(`${baseUrl}/api/projects/${project.id}/checkpoints/${initialCheckpoint.id}/restore`, {
+      method: "POST",
+      headers: authHeaders(collabToken),
+    });
+    assert.equal(restoreRes.status, 200);
+
+    const afterRestoreRes = await fetch(`${baseUrl}/api/projects/${project.id}/checkpoints`, { headers: authHeaders(ownerToken) });
+    const afterRestore = (await afterRestoreRes.json()) as {
+      collaboratorEmails: Record<string, string>;
+      lastRestore?: { checkpointId: string; byUserId: string; at: string };
+    };
+    assert.ok(afterRestore.lastRestore, "a restore must now be recorded");
+    assert.equal(afterRestore.lastRestore!.checkpointId, initialCheckpoint.id);
+    assert.equal(afterRestore.lastRestore!.byUserId, collabUser.id);
+    assert.equal(afterRestore.collaboratorEmails[afterRestore.lastRestore!.byUserId], "collab-restore-audit@example.com");
+    assert.equal(afterRestore.collaboratorEmails[ownerUser.id], "owner-restore-audit@example.com");
+  });
+});
+
+/**
  * Round 708: isHebrewText only checks whether its input contains at least
  * one Hebrew character, not which language dominates. Both /refine and
  * /answers build combinedDescription by concatenating the project's own

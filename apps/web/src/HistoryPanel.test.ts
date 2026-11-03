@@ -2531,3 +2531,92 @@ test("HistoryPanel cross-gates checkpoint rename against Restore/Delete in both 
     "the Delete button must also be disabled while a rename is in flight",
   );
 });
+
+/**
+ * Round 1568: GET .../checkpoints now returns a sibling lastRestore field
+ * (packages/db's recordCheckpointRestore/getLastCheckpointRestore, wired in
+ * routes/projects.ts) -- the restore-audit-trail counterpart to round
+ * 1567's own createdByUserId. Confirms the panel renders a resolved "last
+ * restored by" line near the top (same collaboratorEmails map the
+ * per-checkpoint createdBy line already uses) when the server reports one,
+ * and omits it entirely -- same honesty convention as createdBy -- when
+ * there's no lastRestore yet, or its byUserId isn't in collaboratorEmails
+ * (e.g. a collaborator who's since left).
+ */
+test("HistoryPanel shows a resolved 'last restored by' line when the server reports one, and omits it when unresolvable or absent", async () => {
+  await withJsdom(async () => {
+    const originalFetch = globalThis.fetch;
+    const cp1 = makeCheckpoint("cp1", "Initial build");
+
+    async function renderWith(body: Record<string, unknown>) {
+      globalThis.fetch = (async (input: string, init?: RequestInit): Promise<Response> => {
+        const method = init?.method ?? "GET";
+        if (method === "GET" && input === "/api/projects/proj1/checkpoints") {
+          return new Response(JSON.stringify(body), { status: 200, headers: { "content-type": "application/json" } });
+        }
+        throw new Error(`unexpected request ${method} ${input}`);
+      }) as typeof fetch;
+      render(
+        React.createElement(
+          ThemeProvider,
+          null,
+          React.createElement(
+            LanguageProvider,
+            null,
+            React.createElement(HistoryPanel, {
+              projectId: "proj1",
+              userId: "user1",
+              projectName: "Test Project",
+              currentSpec: cp1.spec,
+              onRestored: () => {},
+              onClose: () => {},
+            }),
+          ),
+        ),
+      );
+      await waitForCondition(() => document.querySelectorAll(".checkpoint-list li").length === 1);
+    }
+
+    try {
+      // Case 1: a resolvable lastRestore -- the line must render with the
+      // restorer's real email and the restore's own timestamp.
+      await renderWith({
+        checkpoints: [cp1],
+        collaboratorEmails: { "user-restorer": "restorer@example.com" },
+        lastRestore: { checkpointId: "cp1", byUserId: "user-restorer", at: "2026-01-15T10:00:00.000Z" },
+      });
+      assert.match(
+        document.body.textContent ?? "",
+        /restorer@example\.com/,
+        "expected the resolved restorer's email to appear somewhere in the panel",
+      );
+      cleanup();
+
+      // Case 2: lastRestore present but byUserId not in collaboratorEmails
+      // (e.g. the restorer has since left the project) -- must omit the
+      // line entirely, never a raw id or "unknown".
+      await renderWith({
+        checkpoints: [cp1],
+        collaboratorEmails: {},
+        lastRestore: { checkpointId: "cp1", byUserId: "user-gone", at: "2026-01-15T10:00:00.000Z" },
+      });
+      assert.equal(
+        document.body.textContent?.includes("user-gone"),
+        false,
+        "an unresolvable restorer id must never be rendered raw",
+      );
+      cleanup();
+
+      // Case 3: no lastRestore at all (a project that's never had a
+      // checkpoint restored) -- must omit the line, not render it empty.
+      await renderWith({ checkpoints: [cp1], collaboratorEmails: {} });
+      assert.equal(
+        document.body.textContent?.includes("Last restored"),
+        false,
+        "a project with no restore history yet must show no 'last restored by' line at all",
+      );
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+});

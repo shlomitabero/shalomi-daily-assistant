@@ -51,6 +51,22 @@ export function ensureProjectsTable(db: ForgeDatabase): void {
   if (!columns.includes("lastInboundWebhookFailureReason")) {
     db.exec("ALTER TABLE projects ADD COLUMN lastInboundWebhookFailureReason TEXT");
   }
+  // Round 1568: see recordCheckpointRestore's own doc comment. Same
+  // additive-only, lazily-written shape as lastInboundWebhookAt above -- a
+  // project that's never had a checkpoint restored simply has null in all
+  // three until the first one happens. No backfill: unlike this app's own
+  // audit trail for build/refine (checkpoints.createdByUserId, round 1567),
+  // there's nothing in a pre-existing project row to reconstruct a past
+  // restore's actor/target from.
+  if (!columns.includes("lastRestoredCheckpointId")) {
+    db.exec("ALTER TABLE projects ADD COLUMN lastRestoredCheckpointId TEXT");
+  }
+  if (!columns.includes("lastRestoredByUserId")) {
+    db.exec("ALTER TABLE projects ADD COLUMN lastRestoredByUserId TEXT");
+  }
+  if (!columns.includes("lastRestoredAt")) {
+    db.exec("ALTER TABLE projects ADD COLUMN lastRestoredAt TEXT");
+  }
 }
 
 function rowToProject(row: Record<string, unknown>): Project {
@@ -217,6 +233,39 @@ export function updateProjectSpec(db: ForgeDatabase, id: string, spec: ProductSp
   const project = getProject(db, id);
   if (!project) throw new Error(`Project ${id} not found`);
   return project;
+}
+
+/**
+ * Round 1568: closes the half of docs/security.md's "No audit log" gap
+ * round 1567 left open -- that round attached createdByUserId to every
+ * checkpoint a /build or /refine creates, but the restore route (which
+ * actually overwrites the live spec, potentially discarding newer
+ * customizations -- see its own carryForwardLabels/describeImpactHazards
+ * comments) never calls insertCheckpoint at all, so it left literally no
+ * trace of who restored what. This is a project-level fact (there's only
+ * ever one "most recent restore"), not a per-checkpoint one, so it lives
+ * on `projects` directly rather than growing checkpoints.ts's own schema
+ * further -- same reasoning this file's own calendarFeedToken/
+ * inboundWebhookToken/lastInboundWebhookAt columns already follow for
+ * lazily-written, feature-specific metadata that isn't part of the core
+ * Project shape every test/caller constructs.
+ */
+export function recordCheckpointRestore(db: ForgeDatabase, projectId: string, checkpointId: string, userId: string): void {
+  db.prepare("UPDATE projects SET lastRestoredCheckpointId = ?, lastRestoredByUserId = ?, lastRestoredAt = ? WHERE id = ?").run(
+    checkpointId,
+    userId,
+    new Date().toISOString(),
+    projectId,
+  );
+}
+
+/** Returns undefined for a project that's never had a checkpoint restored, matching getLastInboundWebhookFailure's own identical "nothing yet" contract just below. */
+export function getLastCheckpointRestore(db: ForgeDatabase, projectId: string): { checkpointId: string; byUserId: string; at: string } | undefined {
+  const row = db.prepare("SELECT lastRestoredCheckpointId, lastRestoredByUserId, lastRestoredAt FROM projects WHERE id = ?").get(projectId) as
+    | { lastRestoredCheckpointId: string | null; lastRestoredByUserId: string | null; lastRestoredAt: string | null }
+    | undefined;
+  if (!row?.lastRestoredCheckpointId || !row.lastRestoredByUserId || !row.lastRestoredAt) return undefined;
+  return { checkpointId: row.lastRestoredCheckpointId, byUserId: row.lastRestoredByUserId, at: row.lastRestoredAt };
 }
 
 /**

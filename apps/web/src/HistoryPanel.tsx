@@ -52,6 +52,12 @@ export function HistoryPanel({
   // or any test fixture built before this round's own server change keeps
   // rendering exactly as it did before, just without a creator email line.
   const [collaboratorEmails, setCollaboratorEmails] = useState<Record<string, string>>({});
+  // Round 1568: the restore counterpart to createdByUserId above -- resolved
+  // via the exact same collaboratorEmails map, since a checkpoint's own
+  // restorer is just as often the owner or a collaborator as its creator is.
+  // undefined for a project that's never had a checkpoint restored (no
+  // backfill -- see getLastCheckpointRestore's own doc comment, packages/db).
+  const [lastRestore, setLastRestore] = useState<{ checkpointId: string; byUserId: string; at: string } | undefined>(undefined);
   const [error, setError] = useState<string | null>(null);
   const [restoreWarning, setRestoreWarning] = useState<string | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
@@ -92,9 +98,10 @@ export function HistoryPanel({
   function loadHistory() {
     setLoadError(null);
     listCheckpoints(projectId)
-      .then(({ checkpoints, collaboratorEmails }) => {
+      .then(({ checkpoints, collaboratorEmails, lastRestore }) => {
         setCheckpoints(checkpoints);
         setCollaboratorEmails(collaboratorEmails ?? {});
+        setLastRestore(lastRestore);
       })
       .catch((err) => setLoadError((err as Error).message));
   }
@@ -163,6 +170,18 @@ export function HistoryPanel({
       const { project, migrationWarning } = await restoreCheckpoint(projectId, checkpoint.id);
       onRestored(project);
       setRestoreWarning(migrationWarning);
+      // Round 1568: refreshes lastRestore (and collaboratorEmails, in case
+      // this is the project's first-ever restore and the caller wasn't in
+      // the map yet) from the server's own record rather than constructing
+      // one locally -- mirrors this function's existing "update from the
+      // real server response" convention (userId/timestamp come from the
+      // server, never assumed from the client's own clock or props.userId).
+      listCheckpoints(projectId)
+        .then(({ collaboratorEmails, lastRestore }) => {
+          setCollaboratorEmails(collaboratorEmails ?? {});
+          setLastRestore(lastRestore);
+        })
+        .catch(() => {});
     } catch (err) {
       setError((err as Error).message);
     } finally {
@@ -265,6 +284,18 @@ export function HistoryPanel({
           </div>
         </div>
         <p className="muted small">{t("history.description")}</p>
+        {/* Round 1568: same honesty convention as the per-checkpoint createdBy
+            line below -- omit entirely (never a raw id or "unknown") when
+            lastRestore.byUserId isn't resolvable in collaboratorEmails, e.g.
+            a collaborator who's since left. */}
+        {lastRestore && collaboratorEmails[lastRestore.byUserId] && (
+          <p className="muted small">
+            {t("history.lastRestoredBy", {
+              date: new Date(lastRestore.at).toLocaleString(LOCALE[lang]),
+              email: collaboratorEmails[lastRestore.byUserId],
+            })}
+          </p>
+        )}
         {error && (
           <p className="error" role="status">
             {error}

@@ -39,6 +39,8 @@ import {
   getLastInboundWebhookAt,
   recordInboundWebhookFailure,
   getLastInboundWebhookFailure,
+  recordCheckpointRestore,
+  getLastCheckpointRestore,
 } from "./projects.js";
 
 const validSpec: ProductSpec = {
@@ -1139,4 +1141,83 @@ test("recordInboundWebhookFailure overwrites the previous failure with a newer o
 
   recordInboundWebhookFailure(db, "does-not-exist", "irrelevant");
   assert.equal(getLastInboundWebhookFailure(db, "does-not-exist"), undefined);
+});
+
+/**
+ * Round 1568: closes the half of docs/security.md's "No audit log" gap
+ * round 1567 left open -- see recordCheckpointRestore's own doc comment
+ * (this file) for why restore needed its own audit columns, separate from
+ * checkpoints.createdByUserId.
+ */
+test("recordCheckpointRestore stamps a real, current timestamp + the given checkpoint/user that getLastCheckpointRestore then returns; undefined until the first call", () => {
+  const db = openDatabase(":memory:");
+  ensureProjectsTable(db);
+  insertProject(db, { id: "proj1", ownerId: "owner1", name: "P1", description: "", spec: validSpec });
+
+  assert.equal(getLastCheckpointRestore(db, "proj1"), undefined, "no restore has ever happened yet");
+
+  const before = Date.now();
+  recordCheckpointRestore(db, "proj1", "cp1", "user1");
+  const after = Date.now();
+
+  const restore = getLastCheckpointRestore(db, "proj1");
+  assert.ok(restore, "expected a real restore record to be persisted");
+  const stampedMs = new Date(restore!.at).getTime();
+  assert.ok(stampedMs >= before && stampedMs <= after, "the stamped value must actually reflect when this call ran, not an unrelated/stale value");
+  assert.equal(restore!.checkpointId, "cp1");
+  assert.equal(restore!.byUserId, "user1");
+});
+
+test("recordCheckpointRestore overwrites the previous restore record with a newer one on a second call, leaving every other project column untouched", () => {
+  const db = openDatabase(":memory:");
+  ensureProjectsTable(db);
+  insertProject(db, { id: "proj1", ownerId: "owner1", name: "P1", description: "", spec: validSpec });
+
+  recordCheckpointRestore(db, "proj1", "cp1", "user1");
+  recordCheckpointRestore(db, "proj1", "cp2", "user2");
+
+  const restore = getLastCheckpointRestore(db, "proj1");
+  assert.equal(restore!.checkpointId, "cp2", "only the most recent restore is ever tracked, not a history of every one");
+  assert.equal(restore!.byUserId, "user2");
+
+  const project = getProject(db, "proj1")!;
+  assert.equal(project.name, "P1", "recordCheckpointRestore must not disturb any other project column");
+});
+
+/**
+ * Round 1568: mirrors ensureCheckpointsTable's own additive-migration test
+ * convention (packages/db/src/checkpoints.test.ts) for createdByUserId --
+ * there is no signal anywhere to reconstruct a past restore's actor/target
+ * for a project row written before these columns existed, so (unlike
+ * `kind`, which IS backfilled from each row's own label) this is left
+ * undefined on purpose, not a bug.
+ */
+test("ensureProjectsTable adds the missing lastRestoredCheckpointId/lastRestoredByUserId/lastRestoredAt columns to a pre-existing table and leaves every pre-existing row's restore info undefined, with no backfill attempted", () => {
+  const db = openDatabase(":memory:");
+  db.exec(`
+    CREATE TABLE projects (
+      id TEXT PRIMARY KEY,
+      ownerId TEXT NOT NULL,
+      name TEXT NOT NULL,
+      description TEXT NOT NULL,
+      spec_json TEXT NOT NULL,
+      status TEXT NOT NULL,
+      createdAt TEXT NOT NULL
+    )
+  `);
+  db.prepare("INSERT INTO projects (id, ownerId, name, description, spec_json, status, createdAt) VALUES (?, ?, ?, ?, ?, ?, ?)").run(
+    "old-proj",
+    "owner1",
+    "Old Project",
+    "",
+    JSON.stringify(validSpec),
+    "built",
+    "2026-01-01T00:00:00.000Z",
+  );
+
+  ensureProjectsTable(db);
+
+  assert.equal(getLastCheckpointRestore(db, "old-proj"), undefined);
+  assert.doesNotThrow(() => ensureProjectsTable(db));
+  assert.equal(getLastCheckpointRestore(db, "old-proj"), undefined, "re-running the migration must not invent a value for a pre-existing row");
 });

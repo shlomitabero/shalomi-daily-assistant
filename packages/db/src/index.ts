@@ -41,6 +41,8 @@ export {
   getLastInboundWebhookAt,
   recordInboundWebhookFailure,
   getLastInboundWebhookFailure,
+  recordCheckpointRestore,
+  getLastCheckpointRestore,
 } from "./projects.js";
 export {
   ensureProjectCollaboratorsTable,

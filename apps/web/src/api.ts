@@ -1159,7 +1159,13 @@ export function regenerateInboundWebhookToken(projectId: string, lang?: "he" | "
   });
 }
 
-export function listCheckpoints(projectId: string): Promise<{ checkpoints: Checkpoint[]; collaboratorEmails: Record<string, string> }> {
+export function listCheckpoints(
+  projectId: string,
+): Promise<{
+  checkpoints: Checkpoint[];
+  collaboratorEmails: Record<string, string>;
+  lastRestore?: { checkpointId: string; byUserId: string; at: string };
+}> {
   return request(`/projects/${projectId}/checkpoints`);
 }
 

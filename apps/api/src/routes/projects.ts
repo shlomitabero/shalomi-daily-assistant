@@ -21,6 +21,8 @@ import {
   diffAndMigrate,
   describeMigrationHazards,
   updateProjectSpec,
+  recordCheckpointRestore,
+  getLastCheckpointRestore,
   updateProjectName,
   updateProjectDescription,
   transferProjectOwnership,
@@ -3073,7 +3075,12 @@ export function createProjectsRouter(
       for (const collaborator of listCollaborators(db, project.id)) {
         collaboratorEmails[collaborator.userId] = collaborator.email;
       }
-      res.json({ checkpoints: listCheckpoints(db, project.id), collaboratorEmails });
+      // Round 1568: the restore counterpart to createdByUserId above --
+      // resolved via the exact same collaboratorEmails map, since a
+      // restore's own actor is just as often the owner or a collaborator
+      // as a checkpoint's creator is. undefined (never a fabricated value)
+      // for a project that's never had a checkpoint restored.
+      res.json({ checkpoints: listCheckpoints(db, project.id), collaboratorEmails, lastRestore: getLastCheckpointRestore(db, project.id) });
     }),
   );
 
@@ -3175,6 +3182,11 @@ export function createProjectsRouter(
             // own doc comment (pipeline.ts).
             await cleanupFileFieldsRetypedAway(db, uploadsDir, project.id, changes);
             const updated = updateProjectSpec(db, project.id, checkpoint.spec);
+            // Round 1568: closes the half of docs/security.md's "No audit
+            // log" gap round 1567 left open -- see recordCheckpointRestore's
+            // own doc comment (packages/db) for why restore needed its own
+            // audit columns, separate from checkpoints.createdByUserId.
+            recordCheckpointRestore(db, project.id, checkpoint.id, req.userId!);
             // An older checkpoint being restored to isn't guaranteed to be a
             // safe, monotonically-looser move the way the data migration above
             // already is (additive-only) -- it can easily be STRICTER on a field
