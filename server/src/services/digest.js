@@ -21,7 +21,16 @@ export function generateDailyDigest() {
     .filter((o) => o.status !== 'published' && o.status !== 'rejected' && !o.productDraft?.demo)
     .map((o) => ({ ...o, netProfitMid: computeNetProfit({ revenueEstimate: o.revenueEstimate, costs: o.costs }).netProfit?.mid ?? null }));
   const ranked = rankOpportunities(openOpportunities);
-  const topOpportunity = ranked[0]?.netProfitMid != null ? ranked[0] : null;
+  // netProfitMid > 0, not just != null - ranking.js's risk/quality/capital/
+  // speed factors are all positive multipliers, so for a losing opportunity
+  // (netProfitMid < 0) a WORSE risk/quality/speed profile actually makes the
+  // score less negative, not more. If every current draft happens to be a
+  // net loss (a real possibility whenever costs exceed a low revenue
+  // estimate), ranked[0] would then be the single worst one by every other
+  // measure - and recommending it anyway as "the next action" would be
+  // actively misleading, directly against this app's one promise: never
+  // recommend losing money.
+  const topOpportunity = ranked[0]?.netProfitMid > 0 ? ranked[0] : null;
 
   const settings = getSettings();
   const digest = buildDailyDigest({ ledgerSummary, actionsToday, failuresToday, topOpportunity, emergencyStop: settings.emergencyStop, mode: settings.mode });

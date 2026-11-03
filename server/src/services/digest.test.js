@@ -64,6 +64,27 @@ test('generateDailyDigest still recommends a real (non-demo) opportunity normall
   assert.match(digest.text, /מדריך ניהול זמן/);
 });
 
+test('generateDailyDigest never recommends a money-losing opportunity as the next action', () => {
+  // ranking.js's risk/quality/capital/speed factors are all positive
+  // multipliers - for a net-loss opportunity, a WORSE profile (higher
+  // risk, slower, lower data quality) actually scores less negative, not
+  // more, so ranked[0] among several losses would be the single worst one
+  // by every other measure. If every current draft happens to be a loss
+  // (costs exceed a low revenue estimate), recommending it anyway would
+  // directly contradict the one promise this digest makes: never
+  // recommend losing money.
+  __resetForTests();
+  db.opportunities.insert({
+    id: makeId('opp'), status: 'draft', title: 'מדריך בהפסד',
+    revenueEstimate: { low: 1, mid: 2, high: 3 }, costs: { aiUsage: 50 },
+    riskLevel: 'high', dataQuality: 'unknown',
+    productDraft: { demo: false, title: 'מדריך בהפסד' },
+  });
+  const digest = generateDailyDigest();
+  assert.doesNotMatch(digest.text, /מדריך בהפסד/);
+  assert.match(digest.text, /אין הזדמנות מספקת כרגע/);
+});
+
 test('a digest generated for a different day does not get merged with today\'s', () => {
   __resetForTests();
   const today = generateDailyDigest();
