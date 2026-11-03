@@ -14,11 +14,24 @@ async function request(path, { method = 'GET', body } = {}) {
   const token = getToken();
   if (token) headers.authorization = `Bearer ${token}`;
 
-  const res = await fetch(`/api${path}`, {
-    method,
-    headers,
-    body: body ? JSON.stringify(body) : undefined,
-  });
+  let res;
+  try {
+    res = await fetch(`/api${path}`, {
+      method,
+      headers,
+      body: body ? JSON.stringify(body) : undefined,
+    });
+  } catch (err) {
+    // fetch() itself throws on a real network failure (offline, DNS, the
+    // server unreachable) — never on an HTTP error status, which lands
+    // below instead. Uncaught, that raw browser error (e.g. "Failed to
+    // fetch") has an English message and no `.data`, so every page's
+    // `err.data?.error || err.message` fallback would show English text
+    // dropped into this otherwise all-Hebrew app.
+    const networkErr = new Error('בעיית תקשורת — בדוק את החיבור לאינטרנט ונסה שוב');
+    networkErr.data = { error: networkErr.message };
+    throw networkErr;
+  }
 
   const data = await res.json().catch(() => ({}));
   if (!res.ok) {
