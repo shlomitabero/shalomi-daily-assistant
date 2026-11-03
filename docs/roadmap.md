@@ -43293,6 +43293,23 @@ Full suite run: `packages/db` 328/328 clean. `apps/api` full suite clean except 
 
 **Topic status**: closes the restore half of the audit-trail gap round 1567 opened. `codegen.ts` parity does not apply -- confirmed via `grep -n checkpoint apps/api/src/codegen.ts` (zero matches): the exported standalone app has no Time Machine/checkpoint feature at all.
 
+### Round 1575: add aria-pressed to all 6 per-record pin-toggle buttons (Table row, BoardCard, CalendarView x live preview + exported app)
+
+Round 1574 closed the per-record pin/favorite feature family across all three views in both files, but a fresh survey subagent noted the pin button itself only swapped a CSS class to show its pinned state -- the same accessibility gap round 1140's own fix already closed for 8 other toggle buttons in these files (Table/Board/Calendar view-mode toggles, Recent/Alphabetical sort-mode toggles). Independently re-verified via direct `grep`/`Read` of both files before implementing: confirmed none of the 7 pin-button call sites (3 in `EntityPanel.tsx`, 3 in `codegen.ts`, plus the project-level pin button in `App.tsx`) had an `aria-pressed` attribute.
+
+**Implementation**: added one `aria-pressed={<same boolean expression the button's own className ternary already uses>}` line immediately before the existing `aria-label` line, at all 7 sites:
+- `App.tsx`'s project-level pin button (home screen "My Projects"): `aria-pressed={pinnedIds.has(p.id)}`.
+- `EntityPanel.tsx`: Table row (`aria-pressed={pinnedIds.has(record.id as number)}`), BoardCard (`aria-pressed={isPinned}`), CalendarView (`aria-pressed={pinnedIds.has(record.id as number)}`).
+- `codegen.ts`: Table row (`aria-pressed={pinnedIds.has(r.id)}`), BoardCard (`aria-pressed={isPinned}`), CalendarView (`aria-pressed={pinnedIds.has(record.id)}`).
+
+No new state, no new props -- purely surfacing an expression each button already computed for its own `className`.
+
+**Tests**: 1 new in `App.test.ts` (source-regex, matching the established round-1140 sort-toggle test's own style: extracts the project-pin button's JSX block and asserts it carries `aria-pressed={pinnedIds.has(p.id)}`), 1 new in `EntityPanel.test.ts` (covers all three per-record pin buttons -- Table row, BoardCard, CalendarView -- in one test, same source-regex style using the file's own shared `entityPanelSrc` constant), 1 new in `codegen.test.ts` (covers the 3 exported-app pin buttons in one test, via `generateExportFiles`/`entityViewJsx` content, mirroring the established pattern this file already uses for CalendarView's own onPrint/onDuplicate/onDelete tests). All three fail-before/pass-after verified via `git stash` on the relevant production file alone.
+
+Full suite run: `apps/web` 1854/1854 passing (0 failures). `apps/api` 1092/1093 passing; the one failure is the already-root-caused, pre-existing `codegen.test.ts` SIGKILL/cgroup-OOM flake, confirmed unrelated: this round's own new test (`the exported EntityView's three per-record pin buttons...`) is visible in the log as passing (`ok 750`) well before the kill point.
+
+**Topic status**: all 6 per-record pin-toggle buttons (3 views x 2 files) plus the project-level pin button now report their toggle state via `aria-pressed`, matching every other toggle button already established in this codebase.
+
 ### Round 1574: add a pin button to Calendar view's own record row, closing the last remaining view without the per-record pin feature
 
 Round 1573's own survey explicitly deferred Calendar view's record-chip equivalent of the pin feature, since `CalendarView` builds its own per-record action-button row (`.calendar-record-row`) rather than sharing `.row-actions` with Table/Board view. A fresh round-1574 survey subagent proposed this port as its primary candidate; independently re-verified via direct `grep`/`Read` of both files before implementing (confirmed `CalendarView` in `EntityPanel.tsx` and `codegen.ts` had no `pinnedIds`/`onTogglePin` prop and no pin button anywhere in their record-row rendering, in either file).
