@@ -150,6 +150,7 @@ export interface BaileysIncomingMessage {
     sendPaymentMessage?: { noteMessage?: BaileysIncomingMessage["message"] };
     declinePaymentRequestMessage?: Record<string, never>;
     cancelPaymentRequestMessage?: Record<string, never>;
+    invoiceMessage?: { note?: string };
     viewOnceMessage?: { message?: BaileysIncomingMessage["message"] };
     viewOnceMessageV2?: { message?: BaileysIncomingMessage["message"] };
     viewOnceMessageV2Extension?: { message?: BaileysIncomingMessage["message"] };
@@ -622,6 +623,14 @@ function describeIncomingMessage(message: BaileysIncomingMessage["message"]): st
   // or canceled.
   if (message.declinePaymentRequestMessage) return "[Payment request declined]";
   if (message.cancelPaymentRequestMessage) return "[Payment request canceled]";
+  // Round 1576: WhatsApp Business's native "Create/Send Invoice" chat
+  // action produces invoiceMessage -- confirmed against the installed
+  // Baileys protobuf (WAProto.proto: InvoiceMessage's `note` is plaintext;
+  // the rest of the message is encrypted attachment media, the same
+  // "plaintext top-level field" shape as requestPaymentMessage's own
+  // noteMessage). Previously fell through to the final `return null`
+  // below and vanished with zero trace.
+  if (message.invoiceMessage) return message.invoiceMessage.note ? `[Invoice] ${message.invoiceMessage.note}` : "[Invoice]";
   return null;
 }
 

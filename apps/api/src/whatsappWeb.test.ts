@@ -2234,6 +2234,41 @@ test("incoming WhatsApp payment-request decline/cancel messages are logged with 
 });
 
 /**
+ * Round 1576: WhatsApp Business's native "Create/Send Invoice" chat action
+ * produces invoiceMessage. Confirmed directly against the installed
+ * Baileys protobuf (WAProto.proto: InvoiceMessage's `note` field is
+ * plaintext; the rest is encrypted attachment media -- the same
+ * "plaintext top-level field" shape requestPaymentMessage's own
+ * noteMessage already met).
+ */
+test("incoming WhatsApp invoice messages are logged with their note instead of being silently dropped", async () => {
+  const { manager, createdSockets, db } = setupManager();
+  insertProject(db, project);
+  applyMigrations(db, project.id, project.spec);
+  markProjectBuilt(db, project.id);
+
+  await manager.connect(project.id);
+  createdSockets[0].emitConnectionUpdate({ connection: "open" });
+
+  createdSockets[0].emitMessagesUpsert({
+    type: "notify",
+    messages: [
+      { key: { remoteJid: "972501234567@s.whatsapp.net", fromMe: false }, message: { invoiceMessage: { note: "חשבונית עבור הזמנה #42" } } },
+      { key: { remoteJid: "972501234567@s.whatsapp.net", fromMe: false }, message: { invoiceMessage: {} } },
+    ],
+  });
+
+  // listWhatsAppMessages orders newest-first, the reverse of emission order.
+  const { messages: invoiceMessages } = listWhatsAppMessages(db, project.id);
+  assert.equal(invoiceMessages.length, 2);
+  assert.equal(invoiceMessages[0].body, "[Invoice]");
+  assert.equal(invoiceMessages[1].body, "[Invoice] חשבונית עבור הזמנה #42");
+  for (const m of invoiceMessages) {
+    assert.equal(m.direction, "in", "every placeholder row must still be a real, matched-against incoming message, not metadata");
+  }
+});
+
+/**
  * Round 1554: WhatsApp's "video note" (the circular, Instagram-style clip
  * sent by switching the compose bar's mic into video-recording mode) was
  * previously dropped with zero trace -- round 785 handled plain
