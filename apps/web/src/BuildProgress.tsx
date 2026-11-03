@@ -579,7 +579,18 @@ export function BuildProgress({
                     </button>
                   )}
                 </div>
-                <p>{caption}</p>
+                {/* Round 1558: this caption is the only source of status
+                 * information for a non-sighted user (StatusIcon just above
+                 * is a bare glyph with no aria-label) and changes live,
+                 * unattended, as real SSE events stream in over the build's
+                 * whole 10-60+ second run -- without an explicit live
+                 * region, none of that was ever announced. Mirrors the same
+                 * role="status" convention App.tsx's own wakingBanner
+                 * already uses for exactly this "async state changes with
+                 * no user action to trigger it" situation. */}
+                <p aria-live="polite" role="status">
+                  {caption}
+                </p>
                 {hasDetail && isOpen && (
                   <div className="agent-detail">
                     <AgentDetail agent={agent} detail={event!.detail} />

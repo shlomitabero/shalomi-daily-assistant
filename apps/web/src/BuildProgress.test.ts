@@ -410,6 +410,40 @@ test("BuildProgress's detail-toggle button reports its own expand/collapse state
 });
 
 /**
+ * Round 1558: an agent's status caption (the only source of status
+ * information for a non-sighted user -- StatusIcon is a bare glyph with no
+ * aria-label) changes live, unattended, as real SSE events stream in over
+ * the build's whole run, but carried no aria-live/role="status" at all, so
+ * none of it was ever announced. Mirrors App.tsx's own wakingBanner
+ * convention for exactly this "async state changes with no user action to
+ * trigger it" situation.
+ */
+test("BuildProgress's per-agent status caption is a live region that announces its own text as the agent's status changes", async () => {
+  await withJsdom(async () => {
+    const events: AgentStepEvent[] = [
+      { agent: "Architect", status: "running", message: "…" },
+      { agent: "Architect", status: "success", message: "3/3 entity checks passed", detail: { newEntities: [], changedEntities: [] } },
+    ];
+    renderBuildProgress(events);
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    const steps = [...document.querySelectorAll(".agent-step")];
+    const architectStep = steps.find((s) => s.textContent?.includes("Product Planner"));
+    assert.ok(architectStep, "expected an agent-step for Architect");
+    const caption = architectStep!.querySelector("p");
+    assert.ok(caption, "expected a caption <p> inside the agent-step");
+    assert.equal(caption!.getAttribute("aria-live"), "polite", "the caption must be a live region so a screen reader announces it on change");
+    assert.equal(caption!.getAttribute("role"), "status", "must use the same role=\"status\" convention this codebase's other live-text regions already use");
+    // Proves the mechanism actually works, not just that the attribute is
+    // present: the SAME <p> node (React's own key="Architect" means this li
+    // is never remounted) ends up holding the real, final success message
+    // after both events fire -- exactly the content change a live region
+    // exists to announce.
+    assert.equal(caption!.textContent, "3/3 entity checks passed");
+  });
+});
+
+/**
  * Regression test for a real gap found by round 397's Explore survey:
  * computeImpact's changedEntities (pipeline.ts) already computed
  * removedFieldNames alongside newFieldNames (added in the same round-377
