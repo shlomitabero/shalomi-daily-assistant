@@ -87,6 +87,20 @@ const MISSING_COST_LABEL = {
   paymentProcessing: 'עמלת סליקה',
 };
 
+// logAction's detail.reason is a free-text technical reason, written in
+// English in the one place that currently populates it (opportunities.js's
+// stale-approval invalidation) — the activity log showed only the action
+// type and "success", with no way to tell an automatic price-change
+// rejection apart from the owner manually clicking reject on the same
+// opportunity, which logs identically with no reason at all.
+const REASON_LABEL = {
+  'price changed after approval': 'האישור בוטל אוטומטית — המחיר השתנה אחרי שאושר',
+};
+
+export function reasonLabel(reason) {
+  return REASON_LABEL[reason] ?? reason;
+}
+
 export function missingFieldLabel(field) {
   if (MISSING_FIELD_LABEL[field]) return MISSING_FIELD_LABEL[field];
   if (field.startsWith('cost:')) {

@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { api } from '../api.js';
-import { actionTypeLabel, resultLabel } from '../labels.js';
+import { actionTypeLabel, resultLabel, reasonLabel } from '../labels.js';
 
 export default function ActivityLog() {
   const [actions, setActions] = useState([]);
@@ -20,6 +20,7 @@ export default function ActivityLog() {
             <span className="log-type">{actionTypeLabel(a.type)}</span>
             <span className={`log-result ${a.result === 'success' ? 'positive' : a.result?.startsWith('blocked') ? 'muted' : 'negative'}`}>{resultLabel(a.result)}</span>
           </div>
+          {a.detail?.reason && <p className="hint log-reason">{reasonLabel(a.detail.reason)}</p>}
           <span className="log-time">{new Date(a.createdAt).toLocaleString('he-IL')}</span>
         </div>
       ))}
