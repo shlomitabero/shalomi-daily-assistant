@@ -154,8 +154,47 @@ test("migrateCollapsedGroupsForEntityRename remaps every collaborator's own coll
 
     assert.deepEqual(getCollapsedGroups("proj1", "Deal", "status", "userA"), ["Won"], "userA's set must resolve under the new entity casing");
     assert.deepEqual(getCollapsedGroups("proj1", "Deal", "status", "userB"), ["Lost"], "userB's set must resolve under the new entity casing too");
-    assert.deepEqual(getCollapsedGroups("proj1", "deal", "status", "userA"), [], "nothing must remain reachable under the old entity casing");
+    // Round 1550: getCollapsedGroups now falls back to a case-insensitive
+    // entity-name scan (the same resolution rounds 1542-1549 gave this bug
+    // family's other instances), so a lookup under the old entity casing still
+    // resolves via that fallback instead of coming back empty. This is the
+    // intended new behavior, not a regression.
+    assert.deepEqual(getCollapsedGroups("proj1", "deal", "status", "userA"), ["Won"], "a lookup under the old entity casing must still resolve via getCollapsedGroups's own case-insensitive fallback");
     assert.deepEqual(getCollapsedGroups("proj1", "Customer", "owner", "userA"), ["Active"], "a sibling entity's own collapsed set must survive the rename untouched");
+  });
+});
+
+/**
+ * Round 1550: migrateCollapsedGroupsForEntityRename only ever runs in the
+ * single browser tab that triggered a case-only entity rename (see
+ * getCollapsedGroups's own doc comment) -- so a different collaborator's
+ * own localStorage, which never saw that migration run, must still resolve
+ * its real collapsed set via getCollapsedGroups's new case-insensitive
+ * fallback, mirroring sortKeysPreference.test.ts's identical round-1548
+ * coverage.
+ */
+test("getCollapsedGroups resolves a collaborator's own collapsed set stored under the OLD entity casing, even though no migration ever ran in this browser", async () => {
+  await withJsdom(() => {
+    setCollapsedGroups("proj1", "deal", "status", "userB", ["Won"]);
+
+    assert.deepEqual(
+      getCollapsedGroups("proj1", "Deal", "status", "userB"),
+      ["Won"],
+      "must resolve userB's own collapsed set under the new entity casing via the case-insensitive fallback, with no migration ever having run",
+    );
+  });
+});
+
+test("getCollapsedGroups's case-insensitive entity-name fallback never leaks a different user's, different group field's, or different project's own collapsed set for the same entity name", async () => {
+  await withJsdom(() => {
+    setCollapsedGroups("proj1", "deal", "status", "userA", ["Won"]);
+    setCollapsedGroups("proj1", "deal", "owner", "userA", ["Dana"]);
+    setCollapsedGroups("proj2", "deal", "status", "userB", ["Lost"]);
+
+    assert.deepEqual(getCollapsedGroups("proj1", "Deal", "status", "userB"), [], "userB has no collapsed set of their own in proj1 -- userA's own set for the same entity must not leak across users");
+    assert.deepEqual(getCollapsedGroups("proj1", "Deal", "status", "userA"), ["Won"], "userA's own set must still resolve via the fallback");
+    assert.deepEqual(getCollapsedGroups("proj1", "Deal", "owner", "userB"), [], "a different group field's own set must not leak either");
+    assert.deepEqual(getCollapsedGroups("proj2", "Deal", "status", "userA"), [], "a different project's own set for the same entity+groupField+user combination must not leak across projects");
   });
 });
 

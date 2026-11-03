@@ -77,10 +77,35 @@ function writeStore(store: Record<string, string[]>): void {
  * "stage") can silently swap which field drives the board -- without this
  * dimension in the key, the newly-chosen field would inherit whichever
  * columns were collapsed under the field that used to hold that role.
+ *
+ * Round 1550: a case-only entity rename (an ordinary, explicitly-anticipated
+ * refine/AI casing drift) only ever gets this store's keys rewritten by
+ * migrateCollapsedBoardColumnsForEntityRename below, which -- exactly like
+ * every sibling store's own migrate function fixed in rounds 1542-1549 --
+ * is called only from the single browser tab that happened to trigger the
+ * rename. Every OTHER collaborator's own localStorage keeps this choice
+ * under the entity's OLD casing forever -- the exact-match lookup above
+ * would miss it with zero error or indication, silently re-expanding a
+ * board column that collaborator had deliberately collapsed.
+ * migrateCollapsedBoardColumnsFieldCase above already fixes this same
+ * fallback gap for the boardFieldName (third) segment; this is the
+ * entityName (second) segment's own counterpart. Falls back to a scan of
+ * this exact project+boardField+user's own keys with entityName compared
+ * case-insensitively, the same resolution rounds 1542-1549 applied to this
+ * bug family's other instances (adapted here for the 4-segment JSON-array
+ * key shape instead of a colon-joined string).
  */
 export function getCollapsedBoardColumns(projectId: string, entityName: string, boardFieldName: string, userId: string): string[] {
   const store = readStore();
-  return [...(store[keyFor(projectId, entityName, boardFieldName, userId)] ?? [])];
+  const exact = store[keyFor(projectId, entityName, boardFieldName, userId)];
+  if (exact !== undefined) return [...exact];
+  const lowerEntityName = entityName.toLowerCase();
+  for (const [key, value] of Object.entries(store)) {
+    const parsed = parseKey(key);
+    if (!parsed || parsed[0] !== projectId || parsed[2] !== boardFieldName || parsed[3] !== userId) continue;
+    if (parsed[1].toLowerCase() === lowerEntityName) return [...value];
+  }
+  return [];
 }
 
 /**

@@ -155,7 +155,12 @@ test("migrateCollapsedBoardColumnsForEntityRename remaps every collaborator's ow
 
     assert.deepEqual(getCollapsedBoardColumns("proj1", "Deal", "stage", "userA"), ["Won"], "userA's set must resolve under the new entity casing");
     assert.deepEqual(getCollapsedBoardColumns("proj1", "Deal", "stage", "userB"), ["Lost"], "userB's set must resolve under the new entity casing too");
-    assert.deepEqual(getCollapsedBoardColumns("proj1", "deal", "stage", "userA"), [], "nothing must remain reachable under the old entity casing");
+    // Round 1550: getCollapsedBoardColumns now falls back to a case-insensitive
+    // entity-name scan (the same resolution rounds 1542-1549 gave this bug
+    // family's other instances), so a lookup under the old entity casing still
+    // resolves via that fallback instead of coming back empty. This is the
+    // intended new behavior, not a regression.
+    assert.deepEqual(getCollapsedBoardColumns("proj1", "deal", "stage", "userA"), ["Won"], "a lookup under the old entity casing must still resolve via getCollapsedBoardColumns's own case-insensitive fallback");
     assert.deepEqual(getCollapsedBoardColumns("proj1", "Customer", "owner", "userA"), ["Active"], "a sibling entity's own collapsed set must survive the rename untouched");
   });
 });
@@ -180,5 +185,39 @@ test("removeCollapsedBoardColumnsForUserProject is a no-op, not an error, when t
   await withJsdom(() => {
     assert.doesNotThrow(() => removeCollapsedBoardColumnsForUserProject("proj1", "userA"));
     assert.deepEqual(getCollapsedBoardColumns("proj1", "Deal", "stage", "userA"), []);
+  });
+});
+
+/**
+ * Round 1550: migrateCollapsedBoardColumnsForEntityRename only ever runs in
+ * the single browser tab that triggered a case-only entity rename (see
+ * getCollapsedBoardColumns's own doc comment) -- so a different
+ * collaborator's own localStorage, which never saw that migration run,
+ * must still resolve its real collapsed set via getCollapsedBoardColumns's
+ * new case-insensitive fallback, mirroring sortKeysPreference.test.ts's
+ * identical round-1548 coverage.
+ */
+test("getCollapsedBoardColumns resolves a collaborator's own collapsed set stored under the OLD entity casing, even though no migration ever ran in this browser", async () => {
+  await withJsdom(() => {
+    setCollapsedBoardColumns("proj1", "deal", "stage", "userB", ["Won"]);
+
+    assert.deepEqual(
+      getCollapsedBoardColumns("proj1", "Deal", "stage", "userB"),
+      ["Won"],
+      "must resolve userB's own collapsed set under the new entity casing via the case-insensitive fallback, with no migration ever having run",
+    );
+  });
+});
+
+test("getCollapsedBoardColumns's case-insensitive entity-name fallback never leaks a different user's, different board field's, or different project's own collapsed set for the same entity name", async () => {
+  await withJsdom(() => {
+    setCollapsedBoardColumns("proj1", "deal", "stage", "userA", ["Won"]);
+    setCollapsedBoardColumns("proj1", "deal", "owner", "userA", ["Dana"]);
+    setCollapsedBoardColumns("proj2", "deal", "stage", "userB", ["Lost"]);
+
+    assert.deepEqual(getCollapsedBoardColumns("proj1", "Deal", "stage", "userB"), [], "userB has no collapsed set of their own in proj1 -- userA's own set for the same entity must not leak across users");
+    assert.deepEqual(getCollapsedBoardColumns("proj1", "Deal", "stage", "userA"), ["Won"], "userA's own set must still resolve via the fallback");
+    assert.deepEqual(getCollapsedBoardColumns("proj1", "Deal", "owner", "userB"), [], "a different board field's own set must not leak either");
+    assert.deepEqual(getCollapsedBoardColumns("proj2", "Deal", "stage", "userA"), [], "a different project's own set for the same entity+boardField+user combination must not leak across projects");
   });
 });
