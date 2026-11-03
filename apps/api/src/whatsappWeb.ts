@@ -146,6 +146,8 @@ export interface BaileysIncomingMessage {
       amount?: { value?: number; currencyCode?: string };
     };
     sendPaymentMessage?: { noteMessage?: BaileysIncomingMessage["message"] };
+    declinePaymentRequestMessage?: Record<string, never>;
+    cancelPaymentRequestMessage?: Record<string, never>;
     viewOnceMessage?: { message?: BaileysIncomingMessage["message"] };
     viewOnceMessageV2?: { message?: BaileysIncomingMessage["message"] };
     viewOnceMessageV2Extension?: { message?: BaileysIncomingMessage["message"] };
@@ -564,6 +566,19 @@ function describeIncomingMessage(message: BaileysIncomingMessage["message"]): st
     const note = message.sendPaymentMessage.noteMessage ? describeIncomingMessage(message.sendPaymentMessage.noteMessage) : null;
     return note ? `[Payment sent] ${note}` : "[Payment sent]";
   }
+  // Round 1546: the direct reply-half siblings of requestPaymentMessage
+  // (round 1538) -- when either side taps Cancel/Decline on a pending
+  // payment request, Baileys delivers declinePaymentRequestMessage/
+  // cancelPaymentRequestMessage. Confirmed against the installed Baileys
+  // protobuf (WAProto.proto: both messages are just `optional MessageKey
+  // key = 1;`, a reference to the original request -- no content to
+  // decrypt, same "detect presence only" bar as pollUpdateMessage's own
+  // "[Poll vote]"). Previously fell through to the final `return null`
+  // below and vanished with zero trace -- a business owner saw the
+  // original payment request logged but never learned it was declined
+  // or canceled.
+  if (message.declinePaymentRequestMessage) return "[Payment request declined]";
+  if (message.cancelPaymentRequestMessage) return "[Payment request canceled]";
   return null;
 }
 

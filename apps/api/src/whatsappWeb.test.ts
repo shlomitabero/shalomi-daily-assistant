@@ -2129,3 +2129,38 @@ test("incoming WhatsApp payment-request/payment-sent messages are logged with a 
     assert.equal(m.direction, "in", "every placeholder row must still be a real, matched-against incoming message, not metadata");
   }
 });
+
+/**
+ * Round 1546: declinePaymentRequestMessage/cancelPaymentRequestMessage are
+ * the direct reply-half siblings of requestPaymentMessage (round 1538) --
+ * when either side taps Decline/Cancel on a pending payment request.
+ * Confirmed directly against the installed Baileys protobuf (WAProto.proto:
+ * both messages are just `optional MessageKey key = 1;`, no content beyond
+ * presence, the same bar pollUpdateMessage's own "[Poll vote]" already met).
+ */
+test("incoming WhatsApp payment-request decline/cancel messages are logged with a descriptive placeholder instead of being silently dropped", async () => {
+  const { manager, createdSockets, db } = setupManager();
+  insertProject(db, project);
+  applyMigrations(db, project.id, project.spec);
+  markProjectBuilt(db, project.id);
+
+  await manager.connect(project.id);
+  createdSockets[0].emitConnectionUpdate({ connection: "open" });
+
+  createdSockets[0].emitMessagesUpsert({
+    type: "notify",
+    messages: [
+      { key: { remoteJid: "972501234567@s.whatsapp.net", fromMe: false }, message: { declinePaymentRequestMessage: {} } },
+      { key: { remoteJid: "972501234567@s.whatsapp.net", fromMe: false }, message: { cancelPaymentRequestMessage: {} } },
+    ],
+  });
+
+  // listWhatsAppMessages orders newest-first, the reverse of emission order.
+  const { messages: paymentMessages } = listWhatsAppMessages(db, project.id);
+  assert.equal(paymentMessages.length, 2);
+  assert.equal(paymentMessages[0].body, "[Payment request canceled]");
+  assert.equal(paymentMessages[1].body, "[Payment request declined]");
+  for (const m of paymentMessages) {
+    assert.equal(m.direction, "in", "every placeholder row must still be a real, matched-against incoming message, not metadata");
+  }
+});
