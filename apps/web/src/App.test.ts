@@ -5618,6 +5618,25 @@ test("the home screen's My Projects sort toggle reports its selected state via a
 });
 
 /**
+ * Round 1575: the project-level pin/favorite toggle (round 1003) has the
+ * exact same "selected state shown only via a CSS class" gap round 1140
+ * (just above) fixed for the My Projects sort toggle, and rounds 1571-1574
+ * left unaddressed while building the parallel per-record pin feature
+ * across Table/Board/Calendar view in EntityPanel.tsx/codegen.ts -- none
+ * of those 6 sibling pin buttons (this one plus the 3 live-preview +
+ * 3 codegen.ts record-level ones, see the EntityPanel.test.ts and
+ * codegen.test.ts siblings of this test) exposed their own pinned/unpinned
+ * state to assistive tech beyond the visual star glyph swap.
+ */
+test("the home screen's project-pin toggle reports its own pinned state via aria-pressed, not just a CSS class", () => {
+  const appSrc = readFileSync(new URL("./App.tsx", import.meta.url), "utf8");
+
+  const pinButtonBlock = appSrc.match(/className=\{pinnedIds\.has\(p\.id\) \? "my-project-pin my-project-pin-active" : "my-project-pin"\}[\s\S]*?<\/button>/);
+  assert.ok(pinButtonBlock, "expected the project-level pin button's own JSX block");
+  assert.match(pinButtonBlock![0], /aria-pressed=\{pinnedIds\.has\(p\.id\)\}/, "the pin button must report its own pinned state via aria-pressed");
+});
+
+/**
  * Round 1144: the project view's entity-tab bar (`<nav className="entity-
  * tabs">`) is structurally a real ARIA tab list -- exactly one tab's own
  * content (the active entity's EntityPanel) is ever shown at a time -- but

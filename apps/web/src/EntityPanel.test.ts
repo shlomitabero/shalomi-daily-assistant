@@ -4354,6 +4354,30 @@ test("EntityPanel's calendar view record row has a pin button that writes to the
 });
 
 /**
+ * Round 1575: the three per-record pin/favorite toggle buttons built across
+ * rounds 1571-1574 (Table row, BoardCard, CalendarView record row) all have
+ * the exact same "selected state shown only via a CSS class" gap round 1140
+ * already fixed for the view-mode toggle a few lines above them in this
+ * same component. Source-regex per button, since each one's own
+ * `pinnedIds.has(...)`/`isPinned` expression (already used for className
+ * and aria-label at that exact site) is the correct aria-pressed value --
+ * no new state needed.
+ */
+test("EntityPanel's three per-record pin buttons (Table row, BoardCard, CalendarView) each report their own pinned state via aria-pressed, not just a CSS class", () => {
+  const tableRowPinBlock = entityPanelSrc.match(/className=\{pinnedIds\.has\(record\.id as number\) \? "record-pin record-pin-active" : "record-pin"\}[\s\S]*?<\/button>/);
+  assert.ok(tableRowPinBlock, "expected the Table row's own pin button JSX block");
+  assert.match(tableRowPinBlock![0], /aria-pressed=\{pinnedIds\.has\(record\.id as number\)\}/, "the Table row's pin button must report its own pinned state via aria-pressed");
+
+  const boardCardPinBlock = entityPanelSrc.match(/className=\{isPinned \? "record-pin record-pin-active" : "record-pin"\}[\s\S]*?<\/button>/);
+  assert.ok(boardCardPinBlock, "expected BoardCard's own pin button JSX block");
+  assert.match(boardCardPinBlock![0], /aria-pressed=\{isPinned\}/, "BoardCard's pin button must report its own pinned state via aria-pressed");
+
+  const calendarPinBlock = entityPanelSrc.match(/className=\{pinnedIds\.has\(record\.id as number\) \? "calendar-record-pin calendar-record-pin-active" : "calendar-record-pin"\}[\s\S]*?<\/button>/);
+  assert.ok(calendarPinBlock, "expected CalendarView's own pin button JSX block");
+  assert.match(calendarPinBlock![0], /aria-pressed=\{pinnedIds\.has\(record\.id as number\)\}/, "CalendarView's pin button must report its own pinned state via aria-pressed");
+});
+
+/**
  * Round 778: for an entity with no name/title/text field (e.g. a
  * "CheckIn"/"Attendance"-shaped log entity with just a date and a
  * boolean), the calendar day-chip used to render the raw stored value

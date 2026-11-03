@@ -6870,6 +6870,32 @@ test("the exported CalendarView accepts a pinnedIds/onTogglePin prop and renders
 });
 
 /**
+ * Round 1575 (ported from the live preview): each of the three per-record
+ * pin buttons (Table row, BoardCard, CalendarView) toggled only a CSS
+ * class to show its pinned state -- the same gap round 1140's own
+ * sort-mode toggle fix already closed for 8 other toggle buttons in this
+ * file. A screen reader user got no signal the button was a toggle at
+ * all, let alone its current state. Confirms aria-pressed now mirrors
+ * each button's own pinned-state expression.
+ */
+test("the exported EntityView's three per-record pin buttons (Table row, BoardCard, CalendarView) each report their own pinned state via aria-pressed, not just a CSS class", () => {
+  const files = generateExportFiles(project);
+  const entityViewJsx = files.find((f) => f.path === "web/src/components/EntityView.jsx")!.content;
+
+  const tableRowPinBlock = entityViewJsx.match(/className=\{pinnedIds\.has\(r\.id\) \? "record-pin record-pin-active" : "record-pin"\}[\s\S]*?<\/button>/);
+  assert.ok(tableRowPinBlock, "expected the Table row's own pin button JSX block");
+  assert.match(tableRowPinBlock![0], /aria-pressed=\{pinnedIds\.has\(r\.id\)\}/, "the Table row's pin button must report its own pinned state via aria-pressed");
+
+  const boardCardPinBlock = entityViewJsx.match(/className=\{isPinned \? "record-pin record-pin-active" : "record-pin"\}[\s\S]*?<\/button>/);
+  assert.ok(boardCardPinBlock, "expected BoardCard's own pin button JSX block");
+  assert.match(boardCardPinBlock![0], /aria-pressed=\{isPinned\}/, "BoardCard's pin button must report its own pinned state via aria-pressed");
+
+  const calendarPinBlock = entityViewJsx.match(/className=\{pinnedIds\.has\(record\.id\) \? "calendar-record-pin calendar-record-pin-active" : "calendar-record-pin"\}[\s\S]*?<\/button>/);
+  assert.ok(calendarPinBlock, "expected CalendarView's own pin button JSX block");
+  assert.match(calendarPinBlock![0], /aria-pressed=\{pinnedIds\.has\(record\.id\)\}/, "CalendarView's pin button must report its own pinned state via aria-pressed");
+});
+
+/**
  * Round 1385: mirrors the live preview's own round-1384 fix. The exported
  * CalendarView's chip offered reschedule only via native HTML5
  * drag-and-drop (draggable/onDragStart, wired to onReschedule via the day

@@ -2594,6 +2594,7 @@ function AppContent() {
                       <button
                         type="button"
                         className={pinnedIds.has(p.id) ? "my-project-pin my-project-pin-active" : "my-project-pin"}
+                        aria-pressed={pinnedIds.has(p.id)}
                         aria-label={pinnedIds.has(p.id) ? t("home.myProjects.unpin") : t("home.myProjects.pin")}
                         title={pinnedIds.has(p.id) ? t("home.myProjects.unpin") : t("home.myProjects.pin")}
                         onClick={() => setPinnedIds(togglePinned(user.id, p.id))}

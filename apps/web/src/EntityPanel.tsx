@@ -729,6 +729,7 @@ function BoardCard({
           <button
             type="button"
             className={isPinned ? "record-pin record-pin-active" : "record-pin"}
+            aria-pressed={isPinned}
             aria-label={isPinned ? t("entity.record.unpin") : t("entity.record.pin")}
             title={isPinned ? t("entity.record.unpin") : t("entity.record.pin")}
             onClick={onTogglePin}
@@ -1164,6 +1165,7 @@ function CalendarView({
                   <button
                     type="button"
                     className={pinnedIds.has(record.id as number) ? "calendar-record-pin calendar-record-pin-active" : "calendar-record-pin"}
+                    aria-pressed={pinnedIds.has(record.id as number)}
                     aria-label={pinnedIds.has(record.id as number) ? t("entity.record.unpin") : t("entity.record.pin")}
                     title={pinnedIds.has(record.id as number) ? t("entity.record.unpin") : t("entity.record.pin")}
                     onClick={(e) => {
@@ -4906,6 +4908,7 @@ export function EntityPanel({
           <button
             type="button"
             className={pinnedIds.has(record.id as number) ? "record-pin record-pin-active" : "record-pin"}
+            aria-pressed={pinnedIds.has(record.id as number)}
             aria-label={pinnedIds.has(record.id as number) ? t("entity.record.unpin") : t("entity.record.pin")}
             title={pinnedIds.has(record.id as number) ? t("entity.record.unpin") : t("entity.record.pin")}
             onClick={() => setPinnedIds(toggleRecordPinned(projectId, entity.name, userId, record.id as number))}

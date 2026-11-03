@@ -4819,6 +4819,7 @@ function CalendarView({ entity, dateField, endDateField, records, month, onPrevM
                   <button
                     type="button"
                     className={pinnedIds.has(record.id) ? "calendar-record-pin calendar-record-pin-active" : "calendar-record-pin"}
+                    aria-pressed={pinnedIds.has(record.id)}
                     aria-label={pinnedIds.has(record.id) ? "Unpin" : "Pin to top"}
                     onClick={(e) => {
                       e.stopPropagation();
@@ -5047,6 +5048,7 @@ function BoardCard({ orderedFields, boardField, record, relatedRecords, highligh
         {onTogglePin && (
           <button
             className={isPinned ? "record-pin record-pin-active" : "record-pin"}
+            aria-pressed={isPinned}
             aria-label={isPinned ? "Unpin" : "Pin to top"}
             title={isPinned ? "Unpin" : "Pin to top"}
             onClick={onTogglePin}
@@ -7663,6 +7665,7 @@ export function EntityView({ entity, highlightRecordId, onHighlightHandled, onJu
         }
         <button
           className={pinnedIds.has(r.id) ? "record-pin record-pin-active" : "record-pin"}
+          aria-pressed={pinnedIds.has(r.id)}
           aria-label={pinnedIds.has(r.id) ? "Unpin" : "Pin to top"}
           title={pinnedIds.has(r.id) ? "Unpin" : "Pin to top"}
           onClick={() => setPinnedIds(toggleRecordPinned(entity.name, r.id))}
