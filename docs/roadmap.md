@@ -43293,6 +43293,20 @@ Full suite run: `packages/db` 328/328 clean. `apps/api` full suite clean except 
 
 **Topic status**: closes the restore half of the audit-trail gap round 1567 opened. `codegen.ts` parity does not apply -- confirmed via `grep -n checkpoint apps/api/src/codegen.ts` (zero matches): the exported standalone app has no Time Machine/checkpoint feature at all.
 
+### Round 1576: fix describeIncomingMessage missing invoiceMessage handling
+
+A fresh survey subagent found that `describeIncomingMessage` (`apps/api/src/whatsappWeb.ts`) was missing `invoiceMessage` -- WhatsApp Business's native "Create/Send Invoice" chat action. Independently re-verified via direct diff against the installed Baileys protobuf before implementing: `grep -n invoiceMessage` across `whatsappWeb.ts`/`whatsappWeb.test.ts`/`docs/roadmap.md` returned zero hits, and `WAProto.proto:2778-2793` confirms `InvoiceMessage`'s `note` field (`optional string note = 1;`) is plaintext, while the rest of the message is encrypted attachment media -- the same "plaintext top-level field" shape `requestPaymentMessage`'s own `noteMessage` already handles (round 1538). A customer or business sending a WhatsApp Business invoice previously fell through to the final `return null` and vanished from the message log with zero trace, the same silent-drop failure mode this function has been hardened against ~20+ times already.
+
+**Implementation**, mirroring the `requestPaymentMessage`/`cancelPaymentRequestMessage` pattern exactly:
+- Added `invoiceMessage?: { note?: string };` to the `BaileysIncomingMessage["message"]` interface, right after `cancelPaymentRequestMessage`.
+- Added a branch right before the final `return null`: `if (message.invoiceMessage) return message.invoiceMessage.note ? `[Invoice] ${message.invoiceMessage.note}` : "[Invoice]";`.
+
+**Tests**: 1 new in `whatsappWeb.test.ts` (two incoming `invoiceMessage` fixtures -- one with a note, one without -- asserting `"[Invoice] <note>"` and `"[Invoice]"` respectively, mirroring round 1546's own payment-decline/cancel test structure). Fail-before/pass-after verified via `git stash` on `whatsappWeb.ts` alone (fail-before: both messages silently dropped, `listWhatsAppMessages` returned 0 rows instead of 2).
+
+Full suite run: `apps/api` 1093/1094 passing; the one failure is the already-root-caused, pre-existing `codegen.test.ts` SIGKILL/cgroup-OOM flake, confirmed unrelated -- this round never touches `codegen.ts`, and the new test is visible in the log as passing (`ok 1086`) well before the kill.
+
+**Topic status**: `codegen.ts` parity does not apply -- confirmed via `grep -c "WhatsApp|whatsapp" apps/api/src/codegen.ts` (zero matches): the exported standalone app has no WhatsApp feature at all.
+
 ### Round 1575: add aria-pressed to all 6 per-record pin-toggle buttons (Table row, BoardCard, CalendarView x live preview + exported app)
 
 Round 1574 closed the per-record pin/favorite feature family across all three views in both files, but a fresh survey subagent noted the pin button itself only swapped a CSS class to show its pinned state -- the same accessibility gap round 1140's own fix already closed for 8 other toggle buttons in these files (Table/Board/Calendar view-mode toggles, Recent/Alphabetical sort-mode toggles). Independently re-verified via direct `grep`/`Read` of both files before implementing: confirmed none of the 7 pin-button call sites (3 in `EntityPanel.tsx`, 3 in `codegen.ts`, plus the project-level pin button in `App.tsx`) had an `aria-pressed` attribute.
