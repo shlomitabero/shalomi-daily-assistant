@@ -2,7 +2,7 @@ import "./jsdomWarmup.js";
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { JSDOM } from "jsdom";
-import { getViewMode, removeViewModeForUserProject, setViewMode } from "./viewModePreference.js";
+import { getViewMode, migrateViewModeForEntityRename, removeViewModeForUserProject, setViewMode } from "./viewModePreference.js";
 
 /** Same full-jsdom-swap technique used by groupByPreference.test.ts: real localStorage, not a mock. */
 async function withJsdom(fn: () => void | Promise<void>): Promise<void> {
@@ -114,5 +114,52 @@ test("removeViewModeForUserProject is a no-op, not an error, when this user neve
   await withJsdom(() => {
     assert.doesNotThrow(() => removeViewModeForUserProject("proj1", "userA"));
     assert.equal(getViewMode("proj1", "Deal", "userA"), "table");
+  });
+});
+
+/**
+ * Round 1549: migrateViewModeForEntityRename only ever runs in the single
+ * browser tab that triggered a case-only entity rename (see getViewMode's
+ * own doc comment) -- so a different collaborator's own localStorage,
+ * which never saw that migration run, must still resolve its real
+ * Table/Board/Calendar choice via getViewMode's new case-insensitive
+ * fallback, mirroring sortKeysPreference.test.ts's identical round-1548
+ * coverage.
+ */
+test("getViewMode resolves a collaborator's own view choice stored under the OLD casing, even though no migration ever ran in this browser", async () => {
+  await withJsdom(() => {
+    setViewMode("proj1", "customer", "userB", "board");
+
+    assert.equal(
+      getViewMode("proj1", "Customer", "userB"),
+      "board",
+      "must resolve userB's own view choice under the new casing via the case-insensitive fallback, with no migration ever having run",
+    );
+  });
+});
+
+test("getViewMode's case-insensitive fallback never leaks a different user's or different project's own view choice for the same entity name", async () => {
+  await withJsdom(() => {
+    setViewMode("proj1", "customer", "userA", "board");
+    setViewMode("proj2", "customer", "userB", "calendar");
+
+    assert.equal(getViewMode("proj1", "Customer", "userB"), "table", "userB has no view choice of their own in proj1 -- userA's own choice for the same entity must not leak across users");
+    assert.equal(getViewMode("proj1", "Customer", "userA"), "board", "userA's own choice must still resolve via the fallback");
+    assert.equal(getViewMode("proj2", "Customer", "userA"), "table", "a different project's own choice for the same entity+user combination must not leak across projects");
+  });
+});
+
+test("migrateViewModeForEntityRename remaps every collaborator's own choice to the new casing, leaving a sibling entity untouched -- and a lookup under the old casing still resolves via the new case-insensitive fallback", async () => {
+  await withJsdom(() => {
+    setViewMode("proj1", "customer", "userA", "board");
+    setViewMode("proj1", "customer", "userB", "calendar");
+    setViewMode("proj1", "Deal", "userA", "board");
+
+    migrateViewModeForEntityRename("proj1", "customer", "Customer");
+
+    assert.equal(getViewMode("proj1", "Customer", "userA"), "board", "userA's choice must resolve under the new casing");
+    assert.equal(getViewMode("proj1", "Customer", "userB"), "calendar", "userB's choice must resolve under the new casing too");
+    assert.equal(getViewMode("proj1", "customer", "userA"), "board", "a lookup under the old casing must still resolve via getViewMode's own case-insensitive fallback -- the intended new behavior, not a regression");
+    assert.equal(getViewMode("proj1", "Deal", "userA"), "board", "a sibling entity's own choice must survive the rename untouched");
   });
 });

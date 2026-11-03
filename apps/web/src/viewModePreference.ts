@@ -56,10 +56,34 @@ function writeStore(store: Record<string, PersistedViewMode>): void {
  * Returns "table" (matching the default view) when nothing has ever been
  * chosen for this project+entity. Round 1064: also scoped per user -- see
  * keyFor's own doc comment above.
+ *
+ * Round 1549: a case-only entity rename (an ordinary, explicitly-anticipated
+ * refine/AI casing drift) only ever gets this store's keys rewritten by
+ * migrateViewModeForEntityRename below, which -- exactly like
+ * columnOrder.ts's/columnWidths.ts's/columnVisibility.ts's/
+ * fieldFiltersPreference.ts's/groupByPreference.ts's/sortKeysPreference.ts's
+ * own migrate functions before rounds 1542-1548 -- is called only from the
+ * single browser tab that happened to trigger the rename. Every OTHER
+ * collaborator's own localStorage keeps this choice under the entity's OLD
+ * casing forever -- the exact-match lookup above would miss it with zero
+ * error or indication, silently reverting that collaborator's deliberately
+ * chosen Board/Calendar view back to "table". Falls back to a
+ * case-insensitive scan of this exact project+user's own keys, the same
+ * resolution rounds 1542-1548 applied to this bug family's other instances.
  */
 export function getViewMode(projectId: string, entityName: string, userId: string): PersistedViewMode {
   const store = readStore();
-  return store[keyFor(projectId, entityName, userId)] ?? "table";
+  const exact = store[keyFor(projectId, entityName, userId)];
+  if (exact !== undefined) return exact;
+  const prefix = `${projectId}:`;
+  const suffix = `:${userId}`;
+  const lowerEntityName = entityName.toLowerCase();
+  for (const [key, value] of Object.entries(store)) {
+    if (!key.startsWith(prefix) || !key.endsWith(suffix)) continue;
+    const keyEntityName = key.slice(prefix.length, key.length - suffix.length);
+    if (keyEntityName.toLowerCase() === lowerEntityName) return value;
+  }
+  return "table";
 }
 
 /** Persists a view-mode choice and returns it, so callers can update their own state from the return value instead of re-reading storage. */

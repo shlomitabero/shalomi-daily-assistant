@@ -6,6 +6,7 @@ import {
   addEntityRecentSearch,
   clearEntityRecentSearches,
   getEntityRecentSearches,
+  migrateEntityRecentSearchesForEntityRename,
   purgeEntityRecentSearchesForEntity,
   purgeEntityRecentSearchesForProject,
   removeEntityRecentSearch,
@@ -219,5 +220,52 @@ test("removeEntityRecentSearchesForUserProject is a no-op, not an error, when th
   await withJsdom(() => {
     assert.doesNotThrow(() => removeEntityRecentSearchesForUserProject("proj1", "userA"));
     assert.deepEqual(getEntityRecentSearches("proj1", "Customer", "userA"), []);
+  });
+});
+
+/**
+ * Round 1549: migrateEntityRecentSearchesForEntityRename only ever runs in
+ * the single browser tab that triggered a case-only entity rename (see
+ * getEntityRecentSearches's own doc comment) -- so a different
+ * collaborator's own localStorage, which never saw that migration run,
+ * must still resolve its real recent-search list via
+ * getEntityRecentSearches's new case-insensitive fallback, mirroring
+ * sortKeysPreference.test.ts's identical round-1548 coverage.
+ */
+test("getEntityRecentSearches resolves a collaborator's own recent-search list stored under the OLD casing, even though no migration ever ran in this browser", async () => {
+  await withJsdom(() => {
+    addEntityRecentSearch("proj1", "customer", "userB", "acme");
+
+    assert.deepEqual(
+      getEntityRecentSearches("proj1", "Customer", "userB"),
+      ["acme"],
+      "must resolve userB's own list under the new casing via the case-insensitive fallback, with no migration ever having run",
+    );
+  });
+});
+
+test("getEntityRecentSearches's case-insensitive fallback never leaks a different user's or different project's own list for the same entity name", async () => {
+  await withJsdom(() => {
+    addEntityRecentSearch("proj1", "customer", "userA", "acme");
+    addEntityRecentSearch("proj2", "customer", "userB", "zeta");
+
+    assert.deepEqual(getEntityRecentSearches("proj1", "Customer", "userB"), [], "userB has no list of their own in proj1 -- userA's own list for the same entity must not leak across users");
+    assert.deepEqual(getEntityRecentSearches("proj1", "Customer", "userA"), ["acme"], "userA's own list must still resolve via the fallback");
+    assert.deepEqual(getEntityRecentSearches("proj2", "Customer", "userA"), [], "a different project's own list for the same entity+user combination must not leak across projects");
+  });
+});
+
+test("migrateEntityRecentSearchesForEntityRename remaps every collaborator's own list to the new casing, leaving a sibling entity untouched -- and a lookup under the old casing still resolves via the new case-insensitive fallback", async () => {
+  await withJsdom(() => {
+    addEntityRecentSearch("proj1", "customer", "userA", "acme");
+    addEntityRecentSearch("proj1", "customer", "userB", "zeta");
+    addEntityRecentSearch("proj1", "Order", "userA", "paid");
+
+    migrateEntityRecentSearchesForEntityRename("proj1", "customer", "Customer");
+
+    assert.deepEqual(getEntityRecentSearches("proj1", "Customer", "userA"), ["acme"], "userA's list must resolve under the new casing");
+    assert.deepEqual(getEntityRecentSearches("proj1", "Customer", "userB"), ["zeta"], "userB's list must resolve under the new casing too");
+    assert.deepEqual(getEntityRecentSearches("proj1", "customer", "userA"), ["acme"], "a lookup under the old casing must still resolve via getEntityRecentSearches's own case-insensitive fallback -- the intended new behavior, not a regression");
+    assert.deepEqual(getEntityRecentSearches("proj1", "Order", "userA"), ["paid"], "a sibling entity's own list must survive the rename untouched");
   });
 });
