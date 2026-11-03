@@ -62,10 +62,34 @@ function writeStore(store: Record<string, SortKey[]>): void {
  * never survived clicking to another tab and back. Returns [] (no sort)
  * when nothing has ever been chosen for this project+entity. Round 1074:
  * also scoped per user -- see keyFor's own doc comment above.
+ *
+ * Round 1548: a case-only entity rename (an ordinary, explicitly-anticipated
+ * refine/AI casing drift) only ever gets this store's keys rewritten by
+ * migrateSortKeysForEntityRename below, which -- exactly like
+ * columnOrder.ts's/columnWidths.ts's/columnVisibility.ts's/
+ * fieldFiltersPreference.ts's/groupByPreference.ts's own migrate functions
+ * before rounds 1542-1547 -- is called only from the single browser tab
+ * that happened to trigger the rename. Every OTHER collaborator's own
+ * localStorage keeps this choice under the entity's OLD casing forever --
+ * the exact-match lookup above would miss it with zero error or
+ * indication, silently reverting that collaborator's table to "no sort".
+ * Falls back to a case-insensitive scan of this exact project+user's own
+ * keys, the same resolution rounds 1542-1547 applied to this bug family's
+ * other instances.
  */
 export function getSortKeys(projectId: string, entityName: string, userId: string): SortKey[] {
   const store = readStore();
-  return store[keyFor(projectId, entityName, userId)] ?? [];
+  const exact = store[keyFor(projectId, entityName, userId)];
+  if (exact) return exact;
+  const prefix = `${projectId}:`;
+  const suffix = `:${userId}`;
+  const lowerEntityName = entityName.toLowerCase();
+  for (const [key, value] of Object.entries(store)) {
+    if (!key.startsWith(prefix) || !key.endsWith(suffix)) continue;
+    const keyEntityName = key.slice(prefix.length, key.length - suffix.length);
+    if (keyEntityName.toLowerCase() === lowerEntityName) return value;
+  }
+  return [];
 }
 
 /** Persists a sort-key choice and returns it, so callers can update their own state from the return value instead of re-reading storage. */

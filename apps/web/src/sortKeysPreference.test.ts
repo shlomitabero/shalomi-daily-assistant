@@ -139,8 +139,43 @@ test("migrateSortKeysForEntityRename remaps every collaborator's own sort choice
 
     assert.deepEqual(getSortKeys("proj1", "Deal", "userA"), [{ field: "status", direction: "asc" }], "userA's sort choice must resolve under the new casing");
     assert.deepEqual(getSortKeys("proj1", "Deal", "userB"), [{ field: "total", direction: "desc" }], "userB's sort choice must resolve under the new casing too");
-    assert.deepEqual(getSortKeys("proj1", "deal", "userA"), [], "nothing must remain reachable under the old casing");
+    // Round 1548: getSortKeys now falls back to a case-insensitive scan (the same
+    // resolution rounds 1542-1547 gave this bug family's other instances), so a lookup
+    // under the old casing still resolves via that fallback instead of coming back empty.
+    // This is the intended new behavior, not a regression.
+    assert.deepEqual(getSortKeys("proj1", "deal", "userA"), [{ field: "status", direction: "asc" }], "a lookup under the old casing must still resolve via getSortKeys's own case-insensitive fallback");
     assert.deepEqual(getSortKeys("proj1", "Customer", "userA"), [{ field: "name", direction: "asc" }], "a sibling entity's own sort choice must survive the rename untouched");
+  });
+});
+
+/**
+ * Round 1548: migrateSortKeysForEntityRename only ever runs in the single
+ * browser tab that triggered the rename (see getSortKeys's own doc
+ * comment) -- so a different collaborator's own localStorage, which never
+ * saw that migration run, must still resolve its real sort order via
+ * getSortKeys's new case-insensitive fallback, mirroring
+ * groupByPreference.test.ts's identical round-1547 coverage.
+ */
+test("getSortKeys resolves a collaborator's own sort order stored under the OLD casing, even though no migration ever ran in this browser", async () => {
+  await withJsdom(() => {
+    setSortKeys("proj1", "customer", "userB", [{ field: "name", direction: "asc" }]);
+
+    assert.deepEqual(
+      getSortKeys("proj1", "Customer", "userB"),
+      [{ field: "name", direction: "asc" }],
+      "must resolve userB's own sort order under the new casing via the case-insensitive fallback, with no migration ever having run",
+    );
+  });
+});
+
+test("getSortKeys's case-insensitive fallback never leaks a different user's or different project's own sort order for the same entity name", async () => {
+  await withJsdom(() => {
+    setSortKeys("proj1", "customer", "userA", [{ field: "status", direction: "asc" }]);
+    setSortKeys("proj2", "customer", "userB", [{ field: "owner", direction: "desc" }]);
+
+    assert.deepEqual(getSortKeys("proj1", "Customer", "userB"), [], "userB has no sort order of their own in proj1 -- userA's own order for the same entity must not leak across users");
+    assert.deepEqual(getSortKeys("proj1", "Customer", "userA"), [{ field: "status", direction: "asc" }], "userA's own order must still resolve via the fallback");
+    assert.deepEqual(getSortKeys("proj2", "Customer", "userA"), [], "a different project's own order for the same entity+user combination must not leak across projects");
   });
 });
 
