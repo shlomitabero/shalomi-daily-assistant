@@ -199,6 +199,22 @@ test('patchOpportunity ignores fields outside the editable allow-list, e.g. stat
   assert.equal(res.body.opportunity.priceUSD, 29);
 });
 
+test('patchOpportunity ignores missingInfo - a one-time creation snapshot, never meant to be edited through here', () => {
+  // Unlike every other field this endpoint accepts, missingInfo used to
+  // have zero validation at all: any value - a string, a number, null -
+  // could be stored through it with no check, even though nothing reads
+  // it back and the client never sends it. Removed from the allow-list
+  // entirely rather than bolting on validation for a field nothing
+  // legitimately edits.
+  __resetForTests();
+  const opp = insertOpportunity({ missingInfo: ['revenueEstimate'] });
+  const res = makeRes();
+  patchOpportunity({ params: { id: opp.id }, body: { missingInfo: 'not an array', priceUSD: 29 } }, res);
+  assert.equal(res.statusCode, 200);
+  assert.deepEqual(res.body.opportunity.missingInfo, ['revenueEstimate']);
+  assert.equal(res.body.opportunity.priceUSD, 29);
+});
+
 test('publishOpportunityRoute 404s for an id that does not exist', async () => {
   __resetForTests();
   const res = makeRes();

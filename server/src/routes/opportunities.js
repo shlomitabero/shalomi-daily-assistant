@@ -54,7 +54,15 @@ export function getOpportunity(req, res) {
   res.json({ opportunity: withFeasibility(opportunity) });
 }
 
-const EDITABLE_FIELDS = ['revenueEstimate', 'costs', 'riskLevel', 'dataQuality', 'priceUSD', 'missingInfo'];
+// missingInfo is a one-time snapshot written at creation (what was
+// missing when the AI drafted this product) - services/opportunities.js
+// sets it, nothing reads it back, and the client never sends it in a
+// PATCH. It used to be on this allow-list anyway, with no validation at
+// all unlike every other field here, so any value - a string, a number,
+// null - could be stored through it with no check. Since nothing
+// legitimately edits it, it has no business being editable through this
+// general endpoint at all.
+const EDITABLE_FIELDS = ['revenueEstimate', 'costs', 'riskLevel', 'dataQuality', 'priceUSD'];
 
 // A non-finite value here wouldn't crash anything — it would silently
 // corrupt computeNetProfit's totals (NaN propagating through the profit
