@@ -180,8 +180,14 @@ export function AutomationsPanel({
     if (trigger === "schedule") setToMode("static");
   }, [trigger]);
 
+  // Round 1560: mirrors ruleEntity's own case-insensitive fallback just
+  // below (round 1485) -- this panel never remounts on a background
+  // Refine, so a case-only entity rename leaves `entityName` state stale-
+  // cased relative to the live `entities` prop, collapsing the create-rule
+  // form to an empty field list and a permanently-disabled Submit with no
+  // error shown.
   const selectedEntity: Entity | undefined = useMemo(
-    () => entities.find((e) => e.name === entityName),
+    () => entities.find((e) => e.name === entityName) ?? entities.find((e) => e.name.toLowerCase() === entityName.toLowerCase()),
     [entities, entityName],
   );
 

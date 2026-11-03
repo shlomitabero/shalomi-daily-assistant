@@ -2720,6 +2720,86 @@ test("AutomationsPanel resolves a rule's case-drifted stored entityName to the e
 });
 
 /**
+ * Round 1560: the exact same stale-casing hazard round 1485 fixed for
+ * ruleEntity (the EXISTING-rule lookup), but for selectedEntity -- the
+ * CREATE-rule form's own entity lookup, a structurally separate `useMemo`
+ * in this same file that round 1485 never touched. This panel is mounted
+ * once per showAutomations toggle and never remounts when a background
+ * Refine finishes (see fieldTypesKey's own comment just below
+ * selectedEntity), so `entityName` state stays pinned to whatever casing
+ * was live when the create form first initialized it, even after a
+ * case-only entity rename (a true no-op server-side) updates the live
+ * `entities` prop in place. Before this round's fix, selectedEntity went
+ * undefined the moment that happened, collapsing the create-rule form to
+ * an empty field list with no error shown.
+ */
+test("AutomationsPanel's create-rule form resolves entityName to the entity's CURRENT casing, not the stale casing captured when the form first initialized, after a refine recases it while the panel stays open", async () => {
+  await withJsdom(async () => {
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = (async (input: string) => {
+      if (input === "/api/projects/proj2/automations") {
+        return new Response(JSON.stringify({ rules: [] }), { status: 200, headers: { "content-type": "application/json" } });
+      }
+      throw new Error(`unexpected request ${input}`);
+    }) as typeof fetch;
+
+    try {
+      const { rerender } = render(
+        React.createElement(
+          ThemeProvider,
+          null,
+          React.createElement(
+            LanguageProvider,
+            null,
+            React.createElement(AutomationsPanel, { projectId: mixedFieldsProject.id, project: mixedFieldsProject, userId: "user1", onClose: () => {} }),
+          ),
+        ),
+      );
+      await waitForCondition(() => document.body.textContent?.includes("No automations yet") ?? false);
+
+      const toFieldSelectBefore = document.querySelector('select[aria-label="Choose a phone field"]') as HTMLSelectElement | null;
+      assert.ok(toFieldSelectBefore, "the toField select must be rendered before any rename, with the entity resolvable under its initial casing");
+      assert.deepEqual(Array.from(toFieldSelectBefore!.options).map((o) => o.value), ["contactPhone", "notes"]);
+
+      // The refine's own completion: "Shipment" is recased to "SHIPMENT",
+      // the same entity, same fields -- not removed, not replaced. The
+      // panel stays open and mounted throughout, exactly as App.tsx keeps
+      // it (it never remounts this panel on a background Refine).
+      const recasedProject: Project = {
+        ...mixedFieldsProject,
+        spec: { ...mixedFieldsProject.spec, entities: [{ ...mixedFieldsProject.spec.entities[0]!, name: "SHIPMENT" }] },
+      };
+      await act(async () => {
+        rerender(
+          React.createElement(
+            ThemeProvider,
+            null,
+            React.createElement(
+              LanguageProvider,
+              null,
+              React.createElement(AutomationsPanel, { projectId: recasedProject.id, project: recasedProject, userId: "user1", onClose: () => {} }),
+            ),
+          ),
+        );
+      });
+
+      const toFieldSelectAfter = document.querySelector('select[aria-label="Choose a phone field"]') as HTMLSelectElement | null;
+      assert.ok(
+        toFieldSelectAfter,
+        "the toField select must still be rendered after the entity is recased -- selectedEntity must resolve the live entity under its CURRENT casing, not go undefined and collapse the create-rule form",
+      );
+      assert.deepEqual(
+        Array.from(toFieldSelectAfter!.options).map((o) => o.value),
+        ["contactPhone", "notes"],
+        "the entity's real fields must still populate the create-rule form's selectors after the case-only rename",
+      );
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+});
+
+/**
  * New: the "schedule" trigger -- a recurring, time-of-day rule with no
  * triggering record at all, unlike record_created/field_equals. Choosing
  * it must reveal a time input and a day-of-week picker, force toMode to
