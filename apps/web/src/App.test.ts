@@ -1225,6 +1225,53 @@ test("removeRefineHistoryEntry drops only the matching entry, leaving the rest (
 });
 
 /**
+ * Round 1562: the exact same gap effectiveProjectSearch (round 1498) and
+ * HistoryPanel's own search/typeFilter (round 1520) already closed, for
+ * the sibling refine-history search this file never reached. The search
+ * <input> is only rendered while refineHistory.length > 5; deleting
+ * entries down to that threshold (handleRemoveRefineHistoryEntry, a plain
+ * client-side filter with no search reset) left refineHistorySearch
+ * stale, so visibleRefineHistory kept filtering against it with the
+ * input itself gone -- no control left on screen to clear it. Same
+ * extraction technique as round 1498's own test: pulls the real
+ * effectiveRefineHistorySearch expression straight out of App.tsx.
+ */
+test("App's effectiveRefineHistorySearch falls back to '' once refineHistory.length drops to the search box's own hidden threshold, so a stale search term can't hide the remaining entries", () => {
+  const appSrc = readFileSync(new URL("./App.tsx", import.meta.url), "utf8");
+  const exprMatch = appSrc.match(/const effectiveRefineHistorySearch = ([^;\n]+);/);
+  assert.ok(exprMatch, "expected to find effectiveRefineHistorySearch's own expression in App.tsx");
+
+  function computeEffectiveSearch(refineHistoryLength: number, refineHistorySearch: string) {
+    const fn = new Function("refineHistory", "refineHistorySearch", `return ${exprMatch![1]};`) as (
+      refineHistory: { length: number },
+      refineHistorySearch: string,
+    ) => string;
+    return fn({ length: refineHistoryLength }, refineHistorySearch);
+  }
+
+  // Sanity check: with the search box visible (more than 5 entries), the real term is honored.
+  assert.equal(computeEffectiveSearch(6, "invoice"), "invoice", "the typed search term must still apply while the search box is visible");
+
+  // The bug scenario: only 5 entries left (the search box is hidden), but a stale
+  // non-matching term was typed earlier -- it must fall back to "".
+  assert.equal(
+    computeEffectiveSearch(5, "invoice"),
+    "",
+    "a stale search term must not apply once the entry count drops to the search box's own hidden threshold",
+  );
+  assert.equal(computeEffectiveSearch(0, "invoice"), "", "same fallback with zero entries");
+
+  // End-to-end: the remaining entry (whose instruction doesn't match the stale term) must still render.
+  const remaining = { id: "r1", instruction: "Track customer reviews", summary: "s", completedAt: "2026-01-03", providerName: null };
+  const effective = computeEffectiveSearch(5, "invoice");
+  assert.deepEqual(
+    filterRefineHistory([remaining], effective),
+    [remaining],
+    "the remaining entry must still be visible, not silently hidden by the stale search term",
+  );
+});
+
+/**
  * Regression test: each of the five overlay panels (History, Business
  * Twin, WhatsApp, Collaborators, Search) -- each a full-screen backdrop --
  * used to be opened by setting only its own "show" boolean to true, with no

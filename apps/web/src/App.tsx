@@ -976,9 +976,17 @@ function AppContent() {
     clearRecentProjectSearches(user.id);
     setRecentProjectSearches([]);
   }
+  // Round 1562: the exact same gap effectiveProjectSearch (round 1498) and
+  // HistoryPanel's own search/typeFilter (round 1520) already closed --
+  // the search <input> below is only rendered while refineHistory.length >
+  // 5, but deleting entries down to that threshold (handleRemoveRefine
+  // HistoryEntry, a plain client-side filter with no search reset) leaves
+  // refineHistorySearch stale, silently hiding whatever remains with no
+  // control left on screen to clear it.
+  const effectiveRefineHistorySearch = refineHistory.length > 5 ? refineHistorySearch : "";
   const visibleRefineHistory = useMemo(
-    () => filterRefineHistory(refineHistory, refineHistorySearch),
-    [refineHistory, refineHistorySearch],
+    () => filterRefineHistory(refineHistory, effectiveRefineHistorySearch),
+    [refineHistory, effectiveRefineHistorySearch],
   );
 
   useEffect(() => subscribeWakeStatus(setWaking), []);
