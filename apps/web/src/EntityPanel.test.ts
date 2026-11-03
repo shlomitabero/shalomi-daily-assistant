@@ -18003,10 +18003,14 @@ test("EntityPanel with readOnly=true hides the record form and row edit/delete b
 
       assert.equal(document.querySelector("form.record-form"), null, "a viewer must never see the add/edit record form");
       // Print is a pure read (and deliberately still offered), so the
-      // row-actions cell isn't empty -- it just has exactly that one
-      // button left, instead of also Edit/Duplicate/Delete.
+      // row-actions cell isn't empty -- it just has exactly those two
+      // buttons left, instead of also Edit/Duplicate/Delete. Round 1571:
+      // the pin/unpin ⭐ toggle is a personal, client-side-only preference
+      // (nothing written to the project's own data), so it's deliberately
+      // never gated on readOnly either -- a viewer can pin a record for
+      // their own organization even though they can't edit it.
       const rowActionButtons = document.querySelectorAll("table tbody td.row-actions button");
-      assert.equal(rowActionButtons.length, 1, "a viewer's row-actions cell must keep only the read-only Print button");
+      assert.equal(rowActionButtons.length, 2, "a viewer's row-actions cell must keep only the read-only Print and Pin buttons");
 
       const selectAll = document.querySelector("th.select-col input") as HTMLInputElement | null;
       const rowCheckbox = document.querySelector("td.select-col input") as HTMLInputElement | null;

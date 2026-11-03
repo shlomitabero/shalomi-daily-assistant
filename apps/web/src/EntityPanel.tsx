@@ -30,6 +30,7 @@ import {
 } from "./entityRecentSearches.js";
 import { getGroupByField, getGroupByFieldType, setGroupByField, setGroupByFieldType } from "./groupByPreference.js";
 import { getViewMode as getViewModePreference, setViewMode as setViewModePreference } from "./viewModePreference.js";
+import { getPinnedRecordIds, toggleRecordPinned, sortRecordsByPinned } from "./pinnedRecordsPreference.js";
 import { getSortKeys as getSortKeysPreference, setSortKeys as setSortKeysPreference } from "./sortKeysPreference.js";
 import { getFieldFilters as getFieldFiltersPreference, setFieldFilters as setFieldFiltersPreference } from "./fieldFiltersPreference.js";
 import { migrateCollapsedGroupsFieldCase, setCollapsedGroups as setCollapsedGroupsPreference } from "./collapsedGroupsPreference.js";
@@ -1749,6 +1750,8 @@ export function EntityPanel({
   const [loadError, setLoadError] = useState<string | null>(null);
   const [search, setSearch] = useState("");
   const [recentSearches, setRecentSearches] = useState<string[]>(() => getEntityRecentSearches(projectId, entity.name, userId));
+  /** Round 1571: which of this entity's own records this user has pinned to the top -- mirrors pinnedProjects.ts's own per-user Set<id>, one level down. */
+  const [pinnedIds, setPinnedIds] = useState<Set<number>>(() => getPinnedRecordIds(projectId, entity.name, userId));
   const [fieldFilters, setFieldFilters] = useState<Record<string, string>>({});
   const [groupFieldName, setGroupFieldName] = useState("");
   const [collapsedGroups, setCollapsedGroups] = useState<Set<string>>(new Set());
@@ -2132,6 +2135,15 @@ export function EntityPanel({
   useEffect(() => {
     setRecentSearches(getEntityRecentSearches(projectId, entity.name, userId));
   }, [projectId, entity.name]);
+
+  // Same reasoning as recentSearches' own effect just above -- pinned
+  // records are scoped per project+entity+user too, and this component
+  // instance is reused across an entity-tab switch (userId never changes
+  // mid-session, but is still a dependency for consistency with every
+  // sibling preference-reload effect on this exact screen).
+  useEffect(() => {
+    setPinnedIds(getPinnedRecordIds(projectId, entity.name, userId));
+  }, [projectId, entity.name, userId]);
 
   // Same reasoning as hiddenFields' own effect just above -- a reordered
   // column layout is scoped per project+entity too.
@@ -3133,8 +3145,14 @@ export function EntityPanel({
         return String(r[fieldName] ?? "") === value;
       }),
     );
-    return sortRecordsMulti(filtered, sortKeys, entity.fields, allEntities, relatedRecords);
-  }, [records, entity.fields, search, fieldFilters, sortKeys, allEntities, relatedRecords, lang]);
+    // Round 1571: pinned-first, mirroring pinnedProjects.ts's own identical
+    // sortByPinned at the project level -- applied as the final step, after
+    // every other filter/sort, so a pinned record still only shows up here
+    // at all when it actually matches the current search/filters, and its
+    // relative order among OTHER pinned (or unpinned) records still
+    // reflects sortKeys exactly as before this round.
+    return sortRecordsByPinned(sortRecordsMulti(filtered, sortKeys, entity.fields, allEntities, relatedRecords), pinnedIds);
+  }, [records, entity.fields, search, fieldFilters, sortKeys, allEntities, relatedRecords, lang, pinnedIds]);
 
   // Whether the totals row under the table is relevant at all -- only
   // rendered when at least one visible field is numeric.
@@ -4828,6 +4846,27 @@ export function EntityPanel({
               {t("entity.delete")}
             </button>
           )}
+          {
+            // Round 1571: pinning is a personal, client-side-only
+            // preference (nothing written to the project's own data), so
+            // -- mirroring the project-level ⭐/☆ toggle on the My
+            // Projects home screen, which every collaborator (any role)
+            // can use on a shared project -- this is never gated on
+            // readOnly, unlike every other button in this row. Placed
+            // LAST (not first), since many existing tests in
+            // EntityPanel.test.ts already assume `.row-actions button`'s
+            // own first match is the Edit button -- inserting ahead of it
+            // would have silently broken every one of them.
+          }
+          <button
+            type="button"
+            className={pinnedIds.has(record.id as number) ? "record-pin record-pin-active" : "record-pin"}
+            aria-label={pinnedIds.has(record.id as number) ? t("entity.record.unpin") : t("entity.record.pin")}
+            title={pinnedIds.has(record.id as number) ? t("entity.record.unpin") : t("entity.record.pin")}
+            onClick={() => setPinnedIds(toggleRecordPinned(projectId, entity.name, userId, record.id as number))}
+          >
+            {pinnedIds.has(record.id as number) ? "⭐" : "☆"}
+          </button>
         </td>
       </tr>
     );

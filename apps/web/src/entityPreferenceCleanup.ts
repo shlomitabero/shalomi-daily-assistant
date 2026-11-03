@@ -12,6 +12,7 @@ import { purgeSortKeysForEntity, migrateSortKeysForEntityRename } from "./sortKe
 import { purgeViewModeForEntity, migrateViewModeForEntityRename } from "./viewModePreference.js";
 import { purgeEntityRecentSearchesForEntity, migrateEntityRecentSearchesForEntityRename } from "./entityRecentSearches.js";
 import { purgeEntityNameFromTabOrder } from "./entityTabOrder.js";
+import { purgePinnedRecordsForEntity, migratePinnedRecordsForEntityRename } from "./pinnedRecordsPreference.js";
 
 /**
  * projectPreferenceCleanup.ts's own purgeProjectPreferences sweeps every
@@ -55,6 +56,7 @@ export function purgeEntityPreferences(projectId: string, entityName: string): v
   purgeViewModeForEntity(projectId, entityName);
   purgeEntityRecentSearchesForEntity(projectId, entityName);
   purgeEntityNameFromTabOrder(projectId, entityName);
+  purgePinnedRecordsForEntity(projectId, entityName);
 }
 
 /**
@@ -95,4 +97,5 @@ export function migrateEntityPreferencesForCaseRename(projectId: string, oldName
   migrateSortKeysForEntityRename(projectId, oldName, newName);
   migrateViewModeForEntityRename(projectId, oldName, newName);
   migrateEntityRecentSearchesForEntityRename(projectId, oldName, newName);
+  migratePinnedRecordsForEntityRename(projectId, oldName, newName);
 }
