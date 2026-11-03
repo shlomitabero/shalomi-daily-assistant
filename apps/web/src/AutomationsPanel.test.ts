@@ -2800,6 +2800,95 @@ test("AutomationsPanel's create-rule form resolves entityName to the entity's CU
 });
 
 /**
+ * Round 1561: a sibling of round 1560's fix, one level down -- a case-only
+ * FIELD rename (not an entity rename) reaches the effect that keeps
+ * fieldName/toField pointed at a real field (just above this test's own
+ * component code, keyed on fieldTypesKey). An exact-case `.some()` check
+ * can't tell a pure letter-casing change apart from the field being
+ * removed outright, so before this round's fix it reset fieldName to an
+ * arbitrary different field (triggerableFields[0]) instead of recognizing
+ * the rename and adopting its current casing -- mirrors EntityPanel.tsx's
+ * own groupFieldName fix (round 985) for the identical hazard.
+ */
+test("AutomationsPanel's field_equals Field dropdown adopts a case-only field rename's CURRENT casing, instead of resetting to an arbitrary different field", async () => {
+  await withJsdom(async () => {
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = (async (input: string) => {
+      if (input === "/api/projects/proj2/automations") {
+        return new Response(JSON.stringify({ rules: [] }), { status: 200, headers: { "content-type": "application/json" } });
+      }
+      throw new Error(`unexpected request ${input}`);
+    }) as typeof fetch;
+
+    try {
+      const { rerender } = render(
+        React.createElement(
+          ThemeProvider,
+          null,
+          React.createElement(
+            LanguageProvider,
+            null,
+            React.createElement(AutomationsPanel, { projectId: mixedFieldsProject.id, project: mixedFieldsProject, userId: "user1", onClose: () => {} }),
+          ),
+        ),
+      );
+      await waitForCondition(() => document.body.textContent?.includes("No automations yet") ?? false);
+
+      const triggerSelect = Array.from(document.querySelectorAll("select")).find((s) =>
+        Array.from(s.options).some((o) => o.value === "field_equals"),
+      ) as HTMLSelectElement;
+      fireEvent.change(triggerSelect, { target: { value: "field_equals" } });
+
+      const fieldSelectBefore = Array.from(document.querySelectorAll("label"))
+        .find((l) => l.textContent?.startsWith("Field"))
+        ?.querySelector("select") as HTMLSelectElement;
+      fireEvent.change(fieldSelectBefore, { target: { value: "contactPhone" } });
+      assert.equal(fieldSelectBefore.value, "contactPhone", "the Field dropdown must be pointed at contactPhone before the rename");
+
+      // The refine's own completion: "contactPhone" is recased to
+      // "CONTACTPHONE", the same field, same type -- not removed, not
+      // replaced. The panel stays open and mounted throughout.
+      const recasedProject: Project = {
+        ...mixedFieldsProject,
+        spec: {
+          ...mixedFieldsProject.spec,
+          entities: [
+            {
+              ...mixedFieldsProject.spec.entities[0]!,
+              fields: mixedFieldsProject.spec.entities[0]!.fields.map((f) => (f.name === "contactPhone" ? { ...f, name: "CONTACTPHONE" } : f)),
+            },
+          ],
+        },
+      };
+      await act(async () => {
+        rerender(
+          React.createElement(
+            ThemeProvider,
+            null,
+            React.createElement(
+              LanguageProvider,
+              null,
+              React.createElement(AutomationsPanel, { projectId: recasedProject.id, project: recasedProject, userId: "user1", onClose: () => {} }),
+            ),
+          ),
+        );
+      });
+
+      const fieldSelectAfter = Array.from(document.querySelectorAll("label"))
+        .find((l) => l.textContent?.startsWith("Field"))
+        ?.querySelector("select") as HTMLSelectElement;
+      assert.equal(
+        fieldSelectAfter.value,
+        "CONTACTPHONE",
+        "the Field dropdown must adopt the field's CURRENT casing after a case-only rename, not reset to an arbitrary different field (e.g. the entity's first triggerable field)",
+      );
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+});
+
+/**
  * New: the "schedule" trigger -- a recurring, time-of-day rule with no
  * triggering record at all, unlike record_created/field_equals. Choosing
  * it must reveal a time input and a day-of-week picker, force toMode to

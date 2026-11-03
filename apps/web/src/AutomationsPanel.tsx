@@ -251,7 +251,15 @@ export function AutomationsPanel({
   // ever fail with a 400 the user never asked for.
   const triggerableFields = orderedSelectedEntityFields.filter((f) => f.type !== "file");
 
-  const selectedField = selectedEntity?.fields.find((f) => f.name === fieldName);
+  // Round 1561: mirrors selectedEntity's own case-insensitive fallback
+  // (round 1560) -- a case-only field rename reached the same way (the
+  // panel staying mounted through a background Refine) leaves fieldName
+  // state stale-cased relative to the entity's live fields, so the Value
+  // control below would otherwise render as if the field didn't exist for
+  // one render before the effect two blocks down corrects it.
+  const selectedField =
+    selectedEntity?.fields.find((f) => f.name === fieldName) ??
+    selectedEntity?.fields.find((f) => f.name.toLowerCase() === fieldName.toLowerCase());
 
   // Round 1382: a live Playwright session found that switching the Entity
   // <select> (only possible in create mode -- editingRuleId disables it)
@@ -303,14 +311,31 @@ export function AutomationsPanel({
   // switching to "Send an email") -- an arbitrary field name the user
   // deliberately chose (matching neither hint list) is left untouched,
   // same as it already was for entity/fieldType changes above.
+  //
+  // Round 1561: a case-only field rename (reached the same way as round
+  // 1560's entity-level fix -- this panel never remounts on a background
+  // Refine) changes fieldTypesKey (it's keyed on the field's own NAME) and
+  // reruns this effect, but an exact-case .some() can't tell that apart
+  // from the field being removed outright. Without the fallback below, a
+  // rule mid-edit got silently rebound to an arbitrary different field
+  // (triggerableFields[0]/phoneFields[0]) with no error shown -- mirrors
+  // EntityPanel.tsx's own groupFieldName fix (round 985) for the identical
+  // hazard: resolve the rename and adopt its current casing instead of
+  // treating it as a loss.
   useEffect(() => {
     if (!selectedEntity) return;
     if (!triggerableFields.some((f) => f.name === fieldName)) {
-      setFieldName(triggerableFields[0]?.name ?? "");
+      const renamed = triggerableFields.find((f) => f.name.toLowerCase() === fieldName.toLowerCase());
+      setFieldName(renamed?.name ?? triggerableFields[0]?.name ?? "");
     }
     if (!phoneFields.some((f) => f.name === toField)) {
-      const preferred = actionType === "send_email" ? findEmailField(phoneFields) : findPhoneField(phoneFields);
-      setToField(preferred?.name ?? phoneFields[0]?.name ?? "");
+      const renamedToField = phoneFields.find((f) => f.name.toLowerCase() === toField.toLowerCase());
+      if (renamedToField) {
+        setToField(renamedToField.name);
+      } else {
+        const preferred = actionType === "send_email" ? findEmailField(phoneFields) : findPhoneField(phoneFields);
+        setToField(preferred?.name ?? phoneFields[0]?.name ?? "");
+      }
     } else if (actionType === "send_email" ? isPhoneFieldName(toField) : isEmailFieldName(toField)) {
       const preferred = actionType === "send_email" ? findEmailField(phoneFields) : findPhoneField(phoneFields);
       if (preferred) setToField(preferred.name);
