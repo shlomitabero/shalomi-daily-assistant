@@ -106,10 +106,29 @@ function normalizeBodyKeys(entity: Entity, body: Record<string, unknown>): Recor
  * WHOLE record regardless of field.required (coerceValue's date branch
  * isn't gated by it), so this one is worse: the record is rejected
  * outright, not just one field silently nulled.
+ *
+ * Round 1553: extends the same reasoning to number fields -- the last
+ * remaining coercible field type. coerceValue's own number/relation
+ * branch (packages/db/src/repository.ts) is a bare `Number(raw)` plus
+ * `Number.isFinite`, with zero tolerance for anything but a plain numeric
+ * string, and -- like the date branch above -- throws for the WHOLE
+ * record regardless of field.required. A webhook body carrying ordinary
+ * currency/thousands-separator formatting for an amount field (e.g.
+ * `"$1,234.56"` or `"1,200"`, exactly what a real integrator's own form
+ * or payment-provider payload plausibly sends) fails `Number.isFinite`
+ * outright. Strips thousands-separator commas, common currency symbols,
+ * and surrounding whitespace before retrying; only overwrites the value
+ * when the cleaned string actually parses, so a genuinely non-numeric
+ * value still falls through unchanged and is correctly rejected by
+ * coerceValue as before. Deliberately scoped to `number` only, not the
+ * sibling `relation` type that shares coerceValue's own branch -- a
+ * foreign-key id has no realistic currency-formatted shape to be lenient
+ * about, unlike an amount field.
  */
 const WEBHOOK_BOOLEAN_TRUE_VALUES = ["true", "1", "yes", "כן"];
 const WEBHOOK_BOOLEAN_FALSE_VALUES = ["false", "0", "no", "לא"];
 const WEBHOOK_DATE_PREFIX = /^\d{4}-\d{2}-\d{2}/;
+const WEBHOOK_NUMBER_FORMATTING = /[,$€£₪\s]/g;
 
 function normalizeBodyValues(entity: Entity, body: Record<string, unknown>): Record<string, unknown> {
   const normalized: Record<string, unknown> = { ...body };
@@ -119,6 +138,9 @@ function normalizeBodyValues(entity: Entity, body: Record<string, unknown>): Rec
     if (field.type === "date" && !isValidDateString(raw)) {
       const match = WEBHOOK_DATE_PREFIX.exec(raw);
       if (match && isValidDateString(match[0])) normalized[field.name] = match[0];
+    } else if (field.type === "number" && !Number.isFinite(Number(raw))) {
+      const cleaned = raw.replace(WEBHOOK_NUMBER_FORMATTING, "");
+      if (cleaned !== "" && Number.isFinite(Number(cleaned))) normalized[field.name] = cleaned;
     } else if (field.type === "enum" && field.enumValues && !field.enumValues.includes(raw)) {
       const match =
         field.enumValues.find((v) => v.toLowerCase() === raw.toLowerCase()) ??

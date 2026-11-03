@@ -20469,6 +20469,75 @@ test("POST /public/webhook-in/:projectId/:entityName still rejects a genuinely i
   });
 });
 
+test("POST /public/webhook-in/:projectId/:entityName accepts currency/thousands-separator formatting for a number field, extending the same reasoning to the last remaining coercible field type", async () => {
+  await withServer(async (baseUrl, db) => {
+    const email = `webhook-in-number-formatting-${randomUUID()}@example.com`;
+    const authToken = await signup(baseUrl, email);
+    const user = findUserByEmail(db, email)!;
+    const spec: ProductSpec = {
+      summary: "test",
+      personas: [],
+      roles: ["Admin"],
+      entities: [{ name: "Lead", fields: [{ name: "name", type: "text", required: true }, { name: "amount", type: "number", required: false }] }],
+      screens: [],
+      assumptions: [],
+      openQuestions: [],
+    };
+    const projectId = randomUUID();
+    insertProject(db, { id: projectId, ownerId: user.id, name: "CRM", description: "test", spec });
+    diffAndMigrate(db, projectId, undefined, spec);
+    markProjectBuilt(db, projectId);
+
+    const tokenRes = await fetch(`${baseUrl}/api/projects/${projectId}/inbound-webhook-token`, { headers: authHeaders(authToken) });
+    const { token: webhookToken } = (await tokenRes.json()) as { token: string };
+
+    const webhookRes = await fetch(`${baseUrl}/api/public/webhook-in/${projectId}/Lead?token=${webhookToken}`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ name: "Dana", amount: "$1,234.56" }),
+    });
+    assert.equal(webhookRes.status, 201, "a number value sent with ordinary currency/thousands-separator formatting, the shape a real payment integrator plausibly sends, must not be rejected as an invalid number");
+    const { id: recordId } = (await webhookRes.json()) as { id: string };
+
+    const listRes = await fetch(`${baseUrl}/api/projects/${projectId}/entities/Lead`, { headers: authHeaders(authToken) });
+    const { records } = (await listRes.json()) as { records: { id: string; name: string; amount: number }[] };
+    const created = records.find((r) => r.id === recordId);
+    assert.ok(created, "expected the record the route reported creating to actually exist");
+    assert.equal(created!.amount, 1234.56, "the stored value must be the cleaned numeric amount");
+  });
+});
+
+test("POST /public/webhook-in/:projectId/:entityName still rejects a genuinely invalid number value for a number field, not just any string with currency-like characters", async () => {
+  await withServer(async (baseUrl, db) => {
+    const email = `webhook-in-number-invalid-${randomUUID()}@example.com`;
+    const authToken = await signup(baseUrl, email);
+    const user = findUserByEmail(db, email)!;
+    const spec: ProductSpec = {
+      summary: "test",
+      personas: [],
+      roles: ["Admin"],
+      entities: [{ name: "Lead", fields: [{ name: "name", type: "text", required: true }, { name: "amount", type: "number", required: false }] }],
+      screens: [],
+      assumptions: [],
+      openQuestions: [],
+    };
+    const projectId = randomUUID();
+    insertProject(db, { id: projectId, ownerId: user.id, name: "CRM", description: "test", spec });
+    diffAndMigrate(db, projectId, undefined, spec);
+    markProjectBuilt(db, projectId);
+
+    const tokenRes = await fetch(`${baseUrl}/api/projects/${projectId}/inbound-webhook-token`, { headers: authHeaders(authToken) });
+    const { token: webhookToken } = (await tokenRes.json()) as { token: string };
+
+    const webhookRes = await fetch(`${baseUrl}/api/public/webhook-in/${projectId}/Lead?token=${webhookToken}`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ name: "Dana", amount: "not a number" }),
+    });
+    assert.equal(webhookRes.status, 400, "a genuinely invalid number string must still be rejected, not silently accepted just because the leniency fix exists");
+  });
+});
+
 test("POST /public/webhook-in/:projectId/:entityName 404s for a missing, wrong, or never-requested token, a nonexistent entity, or a nonexistent project -- the token itself is the only authentication", async () => {
   await withServer(async (baseUrl, db) => {
     const email = `webhook-in-bad-${randomUUID()}@example.com`;
