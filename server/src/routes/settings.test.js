@@ -57,6 +57,21 @@ test('patchSettings sets budgetConfigured true as soon as a real budget is set',
   assert.equal(res.body.settings.budgetConfigured, true);
 });
 
+test('patchSettings does not mark budgetConfigured true for a budget of 0', () => {
+  // The client's settings form always resubmits every field together
+  // (country, mode, budget, ...) on every save, so `budget` is present
+  // in the request body even when the owner only meant to change some
+  // other field and never touched budget (still at its untouched default
+  // of 0). Treating that as "a budget was configured" would dismiss the
+  // dashboard's "set a budget" nudge the owner never actually acted on.
+  __resetForTests();
+  const res = makeRes();
+  patchSettings({ body: { budget: 0, country: 'IL' } }, res);
+  assert.equal(res.statusCode, 200);
+  assert.equal(res.body.settings.budget, 0);
+  assert.equal(res.body.settings.budgetConfigured, false);
+});
+
 test('patchSettings allows maxLoss to be explicitly cleared to null (no limit)', () => {
   __resetForTests();
   patchSettings({ body: { maxLoss: 200 } }, makeRes());

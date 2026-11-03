@@ -23,7 +23,16 @@ export function patchSettings(req, res) {
     if (typeof patch.budget !== 'number' || !Number.isFinite(patch.budget) || patch.budget < 0) {
       return res.status(400).json({ error: 'budget must be a non-negative number' });
     }
-    patch.budgetConfigured = true;
+    // Settings.jsx's form always resubmits every field together on save
+    // (a controlled form, not a per-field PATCH), so `budget` is present
+    // in the request body on every save, including one made only to
+    // change country or mode. Marking budgetConfigured true just because
+    // the key was present - even at its untouched default of 0 - would
+    // fabricate a "the owner decided on a budget" status the owner never
+    // actually gave, and silently dismiss the dashboard's "set a budget"
+    // nudge the first time they save anything at all. Only a genuinely
+    // positive budget counts as a real decision.
+    if (patch.budget > 0) patch.budgetConfigured = true;
   }
   if ('maxLoss' in patch && patch.maxLoss !== null) {
     if (typeof patch.maxLoss !== 'number' || !Number.isFinite(patch.maxLoss) || patch.maxLoss < 0) {
