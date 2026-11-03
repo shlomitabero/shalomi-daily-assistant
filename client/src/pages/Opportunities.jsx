@@ -51,6 +51,15 @@ export default function Opportunities() {
     }
   }
 
+  // The list came back in ranking order with no regard for status - a
+  // rejected or already-published opportunity could outrank the actual
+  // drafts the owner needs to look at, and only grows more cluttered as
+  // more get published or rejected over time. Active drafts (the thing
+  // this whole page is for) always come first, in their existing ranked
+  // order; resolved ones are still visible, just out of the way below.
+  const activeOpportunities = opportunities.filter((o) => o.status === 'draft');
+  const resolvedOpportunities = opportunities.filter((o) => o.status !== 'draft');
+
   return (
     <div className="page">
       <h1>הזדמנויות</h1>
@@ -86,7 +95,7 @@ export default function Opportunities() {
 
       <section className="section">
         {opportunities.length === 0 && <p className="hint">אין הזדמנויות עדיין.</p>}
-        {opportunities.map((o) => (
+        {activeOpportunities.map((o) => (
           <Link key={o.id} to={`/opportunities/${o.id}`} className="opp-card">
             <div className="opp-card-top">
               <span className="opp-title">{o.title}</span>
@@ -99,6 +108,24 @@ export default function Opportunities() {
           </Link>
         ))}
       </section>
+
+      {resolvedOpportunities.length > 0 && (
+        <section className="section">
+          <h2>הושלמו ({resolvedOpportunities.length})</h2>
+          {resolvedOpportunities.map((o) => (
+            <Link key={o.id} to={`/opportunities/${o.id}`} className="opp-card">
+              <div className="opp-card-top">
+                <span className="opp-title">{o.title}</span>
+                <span className="badge">{STATUS_LABEL[o.status] ?? o.status}</span>
+              </div>
+              <div className="opp-card-bottom">
+                <span>{o.netProfitMid != null ? `רווח משוער: $${o.netProfitMid.toFixed(0)}` : 'חסר מידע לחישוב רווח'}</span>
+                <span>סיכון: {riskLevelLabel(o.riskLevel)}</span>
+              </div>
+            </Link>
+          ))}
+        </section>
+      )}
     </div>
   );
 }
