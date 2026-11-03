@@ -3002,6 +3002,7 @@ export function createProjectsRouter(
           nextSpec: project.spec,
           changeLabel: isHebrewText(project.description) ? "בנייה ראשונית" : "Initial build",
           uploadsDir,
+          createdByUserId: req.userId!,
         });
       } finally {
         activePipelines.delete(project.id);
@@ -3050,6 +3051,7 @@ export function createProjectsRouter(
           changeLabel: isHebrewText(project.description) ? `שיפור: ${instruction}` : `Refine: ${instruction}`,
           providerName,
           uploadsDir,
+          createdByUserId: req.userId!,
         });
       } finally {
         activePipelines.delete(project.id);
@@ -3062,7 +3064,16 @@ export function createProjectsRouter(
     checkpointRateLimiter,
     asyncRoute(async (req, res) => {
       const project = requireProjectAccess(db, req.params.id, req.userId!);
-      res.json({ checkpoints: listCheckpoints(db, project.id) });
+      // Resolves each checkpoint's raw createdByUserId into a display email
+      // here, at the route layer, rather than baking it into the checkpoint
+      // row/schema itself -- see CheckpointSchema's own doc-comment for why.
+      const collaboratorEmails: Record<string, string> = {};
+      const owner = getOwnerInfo(db, project);
+      if (owner) collaboratorEmails[owner.userId] = owner.email;
+      for (const collaborator of listCollaborators(db, project.id)) {
+        collaboratorEmails[collaborator.userId] = collaborator.email;
+      }
+      res.json({ checkpoints: listCheckpoints(db, project.id), collaboratorEmails });
     }),
   );
 

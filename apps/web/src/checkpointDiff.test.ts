@@ -21,7 +21,7 @@ function makeSpec(entities: ProductSpec["entities"]): ProductSpec {
 }
 
 function makeCheckpoint(label: string, kind: Checkpoint["kind"] = "build"): Checkpoint {
-  return { id: label, projectId: "p1", label, kind, spec: makeSpec([]), createdAt: "2026-01-01T00:00:00.000Z" };
+  return { id: label, projectId: "p1", label, kind, spec: makeSpec([]), createdAt: "2026-01-01T00:00:00.000Z", createdByUserId: null };
 }
 
 test("computeCheckpointDiff reports an entity present now but missing from the checkpoint as removed", () => {
@@ -954,6 +954,7 @@ test("formatCheckpointHistory includes the project name, each checkpoint's own l
         ],
       },
       createdAt: "2026-03-10T12:00:00.000Z",
+      createdByUserId: null,
     },
     {
       id: "cp1",
@@ -962,6 +963,7 @@ test("formatCheckpointHistory includes the project name, each checkpoint's own l
       kind: "build",
       spec: currentSpec,
       createdAt: "2026-03-01T09:00:00.000Z",
+      createdByUserId: null,
     },
   ];
 
@@ -982,7 +984,7 @@ test("formatCheckpointHistory includes the project name, each checkpoint's own l
 test("formatCheckpointHistory uses the singular noun form for a checkpoint with exactly 1 real screen", () => {
   const t = (key: string, params?: Record<string, string | number>) => translate("en", key, params);
   const currentSpec: ProductSpec = { ...makeSpec([]), screens: [{ name: "Dashboard", type: "dashboard" }] };
-  const checkpoints: Checkpoint[] = [{ id: "cp1", projectId: "p1", label: "Initial build", kind: "build", spec: currentSpec, createdAt: "2026-03-01T09:00:00.000Z" }];
+  const checkpoints: Checkpoint[] = [{ id: "cp1", projectId: "p1", label: "Initial build", kind: "build", spec: currentSpec, createdAt: "2026-03-01T09:00:00.000Z", createdByUserId: null }];
 
   const report = formatCheckpointHistory(checkpoints, currentSpec, "Flower Shop", "en", t);
 
@@ -1004,6 +1006,7 @@ test("formatCheckpointHistory marks exactly the checkpoint matching the current 
         { name: "Invoice", label: "Invoices", fields: [{ name: "total", type: "number", required: true }] },
       ]),
       createdAt: "2026-03-10T12:00:00.000Z",
+      createdByUserId: null,
     },
     {
       id: "cp1",
@@ -1012,6 +1015,7 @@ test("formatCheckpointHistory marks exactly the checkpoint matching the current 
       kind: "build",
       spec: currentSpec,
       createdAt: "2026-03-01T09:00:00.000Z",
+      createdByUserId: null,
     },
   ];
 
@@ -1031,11 +1035,47 @@ test("formatCheckpointHistory shows the empty-history message instead of an empt
   assert.match(report, /No saved points yet\./);
 });
 
+/**
+ * Round 1567: the audit-trail feature docs/security.md's own "No audit
+ * log" gap named. collaboratorEmails is an optional trailing parameter
+ * specifically so every pre-existing call (including every other test in
+ * this file) keeps passing unchanged -- see this function's own doc-comment.
+ */
+test("formatCheckpointHistory includes a creator line only when collaboratorEmails resolves the checkpoint's own createdByUserId", () => {
+  const t = (key: string, params?: Record<string, string | number>) => translate("en", key, params);
+  const currentSpec = makeSpec([{ name: "Customer", fields: [] }]);
+  const checkpoints: Checkpoint[] = [
+    { id: "cp1", projectId: "p1", label: "Initial build", kind: "build", spec: currentSpec, createdAt: "2026-03-01T09:00:00.000Z", createdByUserId: "user-1" },
+    { id: "cp2", projectId: "p1", label: "Refine: add invoices", kind: "refine", spec: currentSpec, createdAt: "2026-03-02T09:00:00.000Z", createdByUserId: "user-deleted" },
+    { id: "cp3", projectId: "p1", label: "Older checkpoint", kind: "build", spec: currentSpec, createdAt: "2026-02-01T09:00:00.000Z", createdByUserId: null },
+  ];
+
+  const report = formatCheckpointHistory(checkpoints, currentSpec, "Flower Shop", "en", t, { "user-1": "owner@example.com" });
+  const lines = report.split("\n");
+  const resolvedIndex = lines.findIndex((l) => l.includes("Initial build"));
+  const unresolvedIndex = lines.findIndex((l) => l.includes("Refine: add invoices"));
+  const nullIndex = lines.findIndex((l) => l.includes("Older checkpoint"));
+
+  assert.match(lines[resolvedIndex + 2], /Created by owner@example\.com/, "a resolvable creator must get its own report line");
+  assert.doesNotMatch(lines.slice(unresolvedIndex, unresolvedIndex + 3).join("\n"), /Created by/, "a createdByUserId with no matching email (e.g. a since-removed collaborator) must omit the line, not print a raw id");
+  assert.doesNotMatch(lines.slice(nullIndex, nullIndex + 3).join("\n"), /Created by/, "a null createdByUserId (pre-existing checkpoint, no backfill) must omit the line");
+});
+
+test("formatCheckpointHistory omits every creator line when collaboratorEmails is omitted entirely, matching every pre-existing call site", () => {
+  const t = (key: string, params?: Record<string, string | number>) => translate("en", key, params);
+  const currentSpec = makeSpec([{ name: "Customer", fields: [] }]);
+  const checkpoints: Checkpoint[] = [
+    { id: "cp1", projectId: "p1", label: "Initial build", kind: "build", spec: currentSpec, createdAt: "2026-03-01T09:00:00.000Z", createdByUserId: "user-1" },
+  ];
+  const report = formatCheckpointHistory(checkpoints, currentSpec, "Flower Shop", "en", t);
+  assert.doesNotMatch(report, /Created by/);
+});
+
 test("formatCheckpointHistory renders in Hebrew when given the Hebrew translator, with Hebrew text surviving intact", () => {
   const t = (key: string, params?: Record<string, string | number>) => translate("he", key, params);
   const currentSpec = makeSpec([{ name: "Customer", fields: [] }]);
   const checkpoints: Checkpoint[] = [
-    { id: "cp1", projectId: "p1", label: "בנייה ראשונית", kind: "build", spec: currentSpec, createdAt: "2026-03-01T09:00:00.000Z" },
+    { id: "cp1", projectId: "p1", label: "בנייה ראשונית", kind: "build", spec: currentSpec, createdAt: "2026-03-01T09:00:00.000Z", createdByUserId: null },
   ];
   const report = formatCheckpointHistory(checkpoints, currentSpec, "חנות הפרחים", "he", t);
 
@@ -1074,7 +1114,7 @@ test("formatCheckpointHistory includes each checkpoint's own restore-impact diff
     { name: "Invoice", label: "Invoices", fields: [{ name: "total", type: "number", required: true }] },
   ]);
   const checkpoints: Checkpoint[] = [
-    { id: "cp1", projectId: "p1", label: "Older build", kind: "build", spec: checkpointSpec, createdAt: "2026-03-01T09:00:00.000Z" },
+    { id: "cp1", projectId: "p1", label: "Older build", kind: "build", spec: checkpointSpec, createdAt: "2026-03-01T09:00:00.000Z", createdByUserId: null },
   ];
 
   const report = formatCheckpointHistory(checkpoints, currentSpec, "Flower Shop", "en", t);
@@ -1093,7 +1133,7 @@ test("formatCheckpointHistory includes each checkpoint's own restore-impact diff
 test("formatCheckpointHistory omits the diff section entirely for a checkpoint whose spec matches currentSpec, rather than printing a redundant 'no changes' line", () => {
   const t = (key: string, params?: Record<string, string | number>) => translate("en", key, params);
   const currentSpec = makeSpec([{ name: "Customer", label: "Customers", fields: [{ name: "name", type: "text", required: true }] }]);
-  const checkpoints: Checkpoint[] = [{ id: "cp1", projectId: "p1", label: "Initial build", kind: "build", spec: currentSpec, createdAt: "2026-03-01T09:00:00.000Z" }];
+  const checkpoints: Checkpoint[] = [{ id: "cp1", projectId: "p1", label: "Initial build", kind: "build", spec: currentSpec, createdAt: "2026-03-01T09:00:00.000Z", createdByUserId: null }];
 
   const report = formatCheckpointHistory(checkpoints, currentSpec, "Flower Shop", "en", t);
 
@@ -1104,7 +1144,7 @@ test("formatCheckpointHistory omits the diff section entirely for a checkpoint w
 test("resolveCompareSpec returns currentSpec when compareTargetId is null, keeping the original 'vs current' behavior unchanged", () => {
   const currentSpec = makeSpec([{ name: "Customer", fields: [] }]);
   const checkpoints: Checkpoint[] = [
-    { id: "cp1", projectId: "p1", label: "Initial build", kind: "build", spec: makeSpec([{ name: "Order", fields: [] }]), createdAt: "2026-01-01T00:00:00.000Z" },
+    { id: "cp1", projectId: "p1", label: "Initial build", kind: "build", spec: makeSpec([{ name: "Order", fields: [] }]), createdAt: "2026-01-01T00:00:00.000Z", createdByUserId: null },
   ];
   assert.equal(resolveCompareSpec(checkpoints, null, currentSpec), currentSpec);
 });
@@ -1113,8 +1153,8 @@ test("resolveCompareSpec returns the matching checkpoint's own spec when a real 
   const currentSpec = makeSpec([{ name: "Customer", fields: [] }]);
   const olderSpec = makeSpec([{ name: "Order", fields: [] }]);
   const checkpoints: Checkpoint[] = [
-    { id: "cp-older", projectId: "p1", label: "Initial build", kind: "build", spec: olderSpec, createdAt: "2026-01-01T00:00:00.000Z" },
-    { id: "cp-newer", projectId: "p1", label: "Refine: add invoices", kind: "refine", spec: currentSpec, createdAt: "2026-01-02T00:00:00.000Z" },
+    { id: "cp-older", projectId: "p1", label: "Initial build", kind: "build", spec: olderSpec, createdAt: "2026-01-01T00:00:00.000Z", createdByUserId: null },
+    { id: "cp-newer", projectId: "p1", label: "Refine: add invoices", kind: "refine", spec: currentSpec, createdAt: "2026-01-02T00:00:00.000Z", createdByUserId: null },
   ];
   assert.equal(resolveCompareSpec(checkpoints, "cp-older", currentSpec), olderSpec);
 });
@@ -1127,7 +1167,7 @@ test("resolveCompareSpec falls back to currentSpec instead of throwing when the 
 test("formatCompareTarget names the current app state by default, and the real checkpoint label once one is chosen", () => {
   const t = (key: string, params?: Record<string, string | number>) => translate("en", key, params);
   const checkpoints: Checkpoint[] = [
-    { id: "cp1", projectId: "p1", label: "Initial build", kind: "build", spec: makeSpec([]), createdAt: "2026-01-01T00:00:00.000Z" },
+    { id: "cp1", projectId: "p1", label: "Initial build", kind: "build", spec: makeSpec([]), createdAt: "2026-01-01T00:00:00.000Z", createdByUserId: null },
   ];
   assert.equal(formatCompareTarget(checkpoints, null, t, "en"), "Current app state");
   assert.equal(formatCompareTarget(checkpoints, "cp1", t, "en"), "Initial build");
@@ -1135,8 +1175,8 @@ test("formatCompareTarget names the current app state by default, and the real c
 
 test("checkpointDisplayLabel returns the bare label when no other checkpoint shares it", () => {
   const checkpoints: Checkpoint[] = [
-    { id: "cp1", projectId: "p1", label: "Initial build", kind: "build", spec: makeSpec([]), createdAt: "2026-01-01T00:00:00.000Z" },
-    { id: "cp2", projectId: "p1", label: "Refine: add invoices", kind: "refine", spec: makeSpec([]), createdAt: "2026-01-02T00:00:00.000Z" },
+    { id: "cp1", projectId: "p1", label: "Initial build", kind: "build", spec: makeSpec([]), createdAt: "2026-01-01T00:00:00.000Z", createdByUserId: null },
+    { id: "cp2", projectId: "p1", label: "Refine: add invoices", kind: "refine", spec: makeSpec([]), createdAt: "2026-01-02T00:00:00.000Z", createdByUserId: null },
   ];
   const occurrences = checkpointLabelOccurrences(checkpoints);
   assert.equal(checkpointDisplayLabel(checkpoints[0], occurrences, "en"), "Initial build");
@@ -1153,8 +1193,8 @@ test("checkpointDisplayLabel returns the bare label when no other checkpoint sha
  */
 test("checkpointDisplayLabel appends a date disambiguator when two checkpoints share the identical label", () => {
   const checkpoints: Checkpoint[] = [
-    { id: "cp1", projectId: "p1", label: "v1", kind: "refine", spec: makeSpec([]), createdAt: "2026-01-01T10:00:00.000Z" },
-    { id: "cp2", projectId: "p1", label: "v1", kind: "refine", spec: makeSpec([]), createdAt: "2026-01-02T15:30:00.000Z" },
+    { id: "cp1", projectId: "p1", label: "v1", kind: "refine", spec: makeSpec([]), createdAt: "2026-01-01T10:00:00.000Z", createdByUserId: null },
+    { id: "cp2", projectId: "p1", label: "v1", kind: "refine", spec: makeSpec([]), createdAt: "2026-01-02T15:30:00.000Z", createdByUserId: null },
   ];
   const occurrences = checkpointLabelOccurrences(checkpoints);
   const label1 = checkpointDisplayLabel(checkpoints[0], occurrences, "en");
@@ -1167,8 +1207,8 @@ test("checkpointDisplayLabel appends a date disambiguator when two checkpoints s
 test("formatCompareTarget disambiguates two same-labeled checkpoints in the 'Comparing to' header, not just the bare label", () => {
   const t = (key: string, params?: Record<string, string | number>) => translate("en", key, params);
   const checkpoints: Checkpoint[] = [
-    { id: "cp1", projectId: "p1", label: "v1", kind: "refine", spec: makeSpec([]), createdAt: "2026-01-01T10:00:00.000Z" },
-    { id: "cp2", projectId: "p1", label: "v1", kind: "refine", spec: makeSpec([]), createdAt: "2026-01-02T15:30:00.000Z" },
+    { id: "cp1", projectId: "p1", label: "v1", kind: "refine", spec: makeSpec([]), createdAt: "2026-01-01T10:00:00.000Z", createdByUserId: null },
+    { id: "cp2", projectId: "p1", label: "v1", kind: "refine", spec: makeSpec([]), createdAt: "2026-01-02T15:30:00.000Z", createdByUserId: null },
   ];
   const result1 = formatCompareTarget(checkpoints, "cp1", t, "en");
   const result2 = formatCompareTarget(checkpoints, "cp2", t, "en");

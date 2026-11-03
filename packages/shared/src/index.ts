@@ -475,6 +475,18 @@ export const CheckpointSchema = z.object({
   kind: z.enum(["build", "refine"]),
   spec: ProductSpecSchema,
   createdAt: z.string(),
+  /**
+   * Round 1567: closes docs/security.md's own named gap ("checkpoints
+   * record *what* changed but not *who* triggered it"). Null for every
+   * checkpoint written before this field existed -- there is no signal to
+   * retroactively reconstruct it from, an honest limit, same as `kind`'s
+   * own pre-migration backfill admits for its own (recoverable, unlike
+   * this one) history. Resolving this id to a display email is the
+   * caller's job (see routes/projects.ts's GET .../checkpoints, which
+   * returns a sibling `collaboratorEmails` map rather than baking a
+   * resolved email into this schema itself).
+   */
+  createdByUserId: z.string().nullable(),
 });
 
 export type Checkpoint = z.infer<typeof CheckpointSchema>;

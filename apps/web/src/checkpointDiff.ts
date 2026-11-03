@@ -530,6 +530,12 @@ export function formatCheckpointHistory(
   projectName: string,
   lang: Lang,
   t: (key: string, params?: Record<string, string | number>) => string,
+  // Round 1567: optional and trailing specifically so this doesn't force a
+  // 6th argument onto every pre-existing call site -- see HistoryPanel.tsx's
+  // own two call sites for the only places that actually have a real map to
+  // pass; every other caller (including every existing test) keeps working
+  // exactly as before, just without a creator line.
+  collaboratorEmails?: Record<string, string>,
 ): string {
   const lines: string[] = [];
   lines.push(`${t("history.title")} — ${projectName}`);
@@ -548,6 +554,8 @@ export function formatCheckpointHistory(
     // count must read spec.screens, not spec.entities -- see HistoryPanel.tsx's
     // own identical fix for why entities.length under-reports the real count.
     lines.push(`${time} — ${t(checkpoint.spec.screens.length === 1 ? "history.screenCount.one" : "history.screenCount.many", { count: checkpoint.spec.screens.length })}`);
+    const creatorEmail = checkpoint.createdByUserId ? collaboratorEmails?.[checkpoint.createdByUserId] : undefined;
+    if (creatorEmail) lines.push(t("history.createdBy", { email: creatorEmail }));
     const diff = computeCheckpointDiff(currentSpec, checkpoint.spec);
     if (diff.removedEntities.length > 0 || diff.addedEntities.length > 0 || diff.changedEntities.length > 0) {
       lines.push(t("history.diff.show"));

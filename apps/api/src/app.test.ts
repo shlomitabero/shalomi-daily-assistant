@@ -5599,6 +5599,78 @@ test("full acceptance flow: idea -> spec -> AI build pipeline -> CRUD -> refine 
 });
 
 /**
+ * Round 1567: closes the audit-trail gap docs/security.md's own "No audit
+ * log" section named -- checkpoints used to record *what* changed but not
+ * *who* triggered it. /build and /refine attach the authenticated caller's
+ * own userId to the checkpoint they create, and GET .../checkpoints
+ * resolves it into a real email via a new collaboratorEmails sibling field
+ * (never baked into the Checkpoint schema itself -- see CheckpointSchema's
+ * own doc-comment), covering both the project owner and an invited
+ * collaborator.
+ */
+test("build and refine attach the authenticated caller's own userId to the checkpoint they create, and GET .../checkpoints resolves it to a real email for both the owner and a collaborator", async () => {
+  await withServer(async (baseUrl) => {
+    const ownerSignupRes = await fetch(`${baseUrl}/api/auth/signup`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ email: "owner-audit@example.com", password: "correct-horse-battery" }),
+    });
+    const { user: ownerUser, token: ownerToken } = (await ownerSignupRes.json()) as {
+      user: { id: string; email: string };
+      token: string;
+    };
+
+    const collabSignupRes = await fetch(`${baseUrl}/api/auth/signup`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ email: "collab-audit@example.com", password: "correct-horse-battery" }),
+    });
+    const { user: collabUser, token: collabToken } = (await collabSignupRes.json()) as {
+      user: { id: string; email: string };
+      token: string;
+    };
+
+    const createRes = await fetch(`${baseUrl}/api/projects`, {
+      method: "POST",
+      headers: authHeaders(ownerToken),
+      body: JSON.stringify({ description: "A CRM with customers and deals." }),
+    });
+    const { project } = (await createRes.json()) as { project: { id: string } };
+
+    await fetch(`${baseUrl}/api/projects/${project.id}/collaborators`, {
+      method: "POST",
+      headers: authHeaders(ownerToken),
+      body: JSON.stringify({ email: "collab-audit@example.com" }),
+    });
+
+    const buildRes = await fetch(`${baseUrl}/api/projects/${project.id}/build`, { method: "POST", headers: authHeaders(ownerToken) });
+    await collectSSE(buildRes);
+
+    const refineRes = await fetch(`${baseUrl}/api/projects/${project.id}/refine`, {
+      method: "POST",
+      headers: authHeaders(collabToken),
+      body: JSON.stringify({ instruction: "Also track invoices." }),
+    });
+    await collectSSE(refineRes);
+
+    const checkpointsRes = await fetch(`${baseUrl}/api/projects/${project.id}/checkpoints`, { headers: authHeaders(ownerToken) });
+    assert.equal(checkpointsRes.status, 200);
+    const { checkpoints, collaboratorEmails } = (await checkpointsRes.json()) as {
+      checkpoints: { label: string; createdByUserId: string | null }[];
+      collaboratorEmails: Record<string, string>;
+    };
+
+    const buildCheckpoint = checkpoints.find((c) => c.label === "Initial build")!;
+    const refineCheckpoint = checkpoints.find((c) => c.label.startsWith("Refine:"))!;
+    assert.equal(buildCheckpoint.createdByUserId, ownerUser.id);
+    assert.equal(refineCheckpoint.createdByUserId, collabUser.id);
+
+    assert.equal(collaboratorEmails[ownerUser.id], "owner-audit@example.com");
+    assert.equal(collaboratorEmails[collabUser.id], "collab-audit@example.com");
+  });
+});
+
+/**
  * Round 708: isHebrewText only checks whether its input contains at least
  * one Hebrew character, not which language dominates. Both /refine and
  * /answers build combinedDescription by concatenating the project's own

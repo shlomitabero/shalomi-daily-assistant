@@ -47,6 +47,11 @@ export function HistoryPanel({
 }) {
   const { t, lang } = useTranslation();
   const [checkpoints, setCheckpoints] = useState<Checkpoint[]>([]);
+  // Round 1567: populated from GET .../checkpoints' own sibling field --
+  // defaults to {} (never missing-field-crashes) so a stale cached response
+  // or any test fixture built before this round's own server change keeps
+  // rendering exactly as it did before, just without a creator email line.
+  const [collaboratorEmails, setCollaboratorEmails] = useState<Record<string, string>>({});
   const [error, setError] = useState<string | null>(null);
   const [restoreWarning, setRestoreWarning] = useState<string | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
@@ -87,7 +92,10 @@ export function HistoryPanel({
   function loadHistory() {
     setLoadError(null);
     listCheckpoints(projectId)
-      .then(({ checkpoints }) => setCheckpoints(checkpoints))
+      .then(({ checkpoints, collaboratorEmails }) => {
+        setCheckpoints(checkpoints);
+        setCollaboratorEmails(collaboratorEmails ?? {});
+      })
       .catch((err) => setLoadError((err as Error).message));
   }
 
@@ -114,7 +122,7 @@ export function HistoryPanel({
   }
 
   function handleDownload() {
-    downloadCheckpointHistory(formatCheckpointHistory(checkpoints, currentSpec, projectName, lang, t), projectName);
+    downloadCheckpointHistory(formatCheckpointHistory(checkpoints, currentSpec, projectName, lang, t, collaboratorEmails), projectName);
   }
 
   /**
@@ -127,7 +135,7 @@ export function HistoryPanel({
    */
   async function handleCopy() {
     try {
-      await navigator.clipboard.writeText(formatCheckpointHistory(checkpoints, currentSpec, projectName, lang, t));
+      await navigator.clipboard.writeText(formatCheckpointHistory(checkpoints, currentSpec, projectName, lang, t, collaboratorEmails));
       setCopyStatus("copied");
     } catch {
       setCopyStatus("failed");
@@ -400,6 +408,17 @@ export function HistoryPanel({
                     <div className="muted small">
                       {new Date(checkpoint.createdAt).toLocaleString(LOCALE[lang])}
                     </div>
+                    {/* Round 1567: createdByUserId is honestly null for every
+                        checkpoint written before this round (no backfill --
+                        see CheckpointSchema's own doc-comment), and a
+                        collaborator who's since left leaves no entry in
+                        collaboratorEmails either -- both cases just omit
+                        this line rather than rendering a raw id or "unknown". */}
+                    {checkpoint.createdByUserId && collaboratorEmails[checkpoint.createdByUserId] && (
+                      <div className="muted small">
+                        {t("history.createdBy", { email: collaboratorEmails[checkpoint.createdByUserId] })}
+                      </div>
+                    )}
                     {/* count must read spec.screens, not spec.entities -- the heuristic/
                         template generators both emit more screens than entities
                         (Dashboard plus a List/Form pair per entity), so entities.length

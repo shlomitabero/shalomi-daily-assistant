@@ -77,6 +77,7 @@ function makeCheckpoint(id: string, label: string, kind: Checkpoint["kind"] = la
       openQuestions: [],
     },
     createdAt: new Date().toISOString(),
+    createdByUserId: null,
   };
 }
 
@@ -2329,6 +2330,7 @@ test("HistoryPanel's diff panel shows a real, rendered message when a checkpoint
         openQuestions: [],
       },
       createdAt: new Date().toISOString(),
+      createdByUserId: null,
     };
     const currentSpec: ProductSpec = {
       ...cp.spec,
@@ -2425,6 +2427,7 @@ test("HistoryPanel's diff panel shows a real, rendered message when a checkpoint
         openQuestions: [],
       },
       createdAt: new Date().toISOString(),
+      createdByUserId: null,
     };
     const currentSpec: ProductSpec = {
       ...cp.spec,

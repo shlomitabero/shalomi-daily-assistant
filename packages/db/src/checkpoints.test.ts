@@ -43,6 +43,55 @@ test("insertCheckpoint stores a checkpoint and returns it with a createdAt times
  * build/refine added one checkpoint, forever, with no cap at all before
  * this round, each row carrying a full spec_json blob.
  */
+/**
+ * Round 1567: the audit-trail feature docs/security.md's own "No audit
+ * log" gap names -- createdByUserId is recorded once, at insert time, same
+ * as `kind`, and is never re-derived or changed afterward.
+ */
+test("insertCheckpoint stores and returns the createdByUserId it was given", () => {
+  const db = openDatabase(":memory:");
+  ensureCheckpointsTable(db);
+  const checkpoint = insertCheckpoint(db, { id: "cp1", projectId: "proj1", label: "before refine", kind: "refine", spec: validSpec, createdByUserId: "user-1" });
+  assert.equal(checkpoint.createdByUserId, "user-1");
+  assert.equal(getCheckpoint(db, "cp1")!.createdByUserId, "user-1");
+});
+
+test("insertCheckpoint defaults createdByUserId to null when omitted", () => {
+  const db = openDatabase(":memory:");
+  ensureCheckpointsTable(db);
+  const checkpoint = insertCheckpoint(db, { id: "cp1", projectId: "proj1", label: "before refine", kind: "refine", spec: validSpec });
+  assert.equal(checkpoint.createdByUserId, null);
+  assert.equal(getCheckpoint(db, "cp1")!.createdByUserId, null);
+});
+
+/**
+ * Round 1567: unlike `kind` (backfilled from each row's own label just
+ * below), there is no signal anywhere to reconstruct who created a
+ * checkpoint written before this column existed -- see CheckpointSchema's
+ * own doc-comment. This is the deliberate, honest half of that tradeoff.
+ */
+test("ensureCheckpointsTable adds a missing createdByUserId column to a pre-existing table and leaves every pre-existing row null, with no backfill attempted", () => {
+  const db = openDatabase(":memory:");
+  db.exec(`
+    CREATE TABLE checkpoints (
+      id TEXT PRIMARY KEY,
+      projectId TEXT NOT NULL,
+      label TEXT NOT NULL,
+      kind TEXT NOT NULL,
+      spec_json TEXT NOT NULL,
+      createdAt TEXT NOT NULL
+    )
+  `);
+  const insertOldRow = db.prepare("INSERT INTO checkpoints (id, projectId, label, kind, spec_json, createdAt) VALUES (?, ?, ?, ?, ?, ?)");
+  insertOldRow.run("old-build", "proj1", "Initial build", "build", JSON.stringify(validSpec), "2026-01-01T00:00:00.000Z");
+
+  ensureCheckpointsTable(db);
+
+  assert.equal(getCheckpoint(db, "old-build")!.createdByUserId, null);
+  assert.doesNotThrow(() => ensureCheckpointsTable(db));
+  assert.equal(getCheckpoint(db, "old-build")!.createdByUserId, null, "re-running the migration must not invent a value for a pre-existing row");
+});
+
 test("insertCheckpoint prunes the oldest checkpoints once a project passes the retention limit, keeping only the newest ones", () => {
   const db = openDatabase(":memory:");
   ensureCheckpointsTable(db);

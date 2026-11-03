@@ -64,6 +64,7 @@ const checkpoint: Checkpoint = {
   kind: "build",
   spec: { summary: "s", personas: [], roles: ["Admin"], entities: [], screens: [], assumptions: [], openQuestions: [] },
   createdAt: new Date().toISOString(),
+  createdByUserId: null,
 };
 
 function renderEditor(

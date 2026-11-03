@@ -67,6 +67,20 @@ export function ensureCheckpointsTable(db: ForgeDatabase): void {
     );
   }
 
+  // Round 1567: closes docs/security.md's own named gap ("checkpoints
+  // record *what* changed but not *who* triggered it") -- unlike `kind`/
+  // `renamed` above, there is no signal anywhere to backfill this from for
+  // a pre-existing row (no prior column, no label heuristic that could
+  // ever have encoded a user id), so this stays honestly NULL forever for
+  // every checkpoint written before this column existed. Every checkpoint
+  // written after this point gets it set directly by insertCheckpoint,
+  // from the real authenticated req.userId the build/refine route already
+  // has on hand (routes/projects.ts).
+  const hasCreatedByUserIdColumn = (db.prepare("PRAGMA table_info(checkpoints)").all() as { name: string }[]).some((c) => c.name === "createdByUserId");
+  if (!hasCreatedByUserIdColumn) {
+    db.exec("ALTER TABLE checkpoints ADD COLUMN createdByUserId TEXT");
+  }
+
   // A durable, append-only record of every entity name a project's spec has
   // ever contained -- written once at insertCheckpoint and never pruned by
   // deleteCheckpoint, unlike listAllCheckpointedEntityNames below, which
@@ -130,6 +144,7 @@ function rowToCheckpoint(row: Record<string, unknown>): Checkpoint {
     kind: row.kind as "build" | "refine",
     spec: ProductSpecSchema.parse(JSON.parse(row.spec_json as string)),
     createdAt: row.createdAt as string,
+    createdByUserId: (row.createdByUserId as string | null) ?? null,
   };
 }
 
@@ -199,12 +214,13 @@ export const CHECKPOINTS_RETENTION_LIMIT = 100;
 
 export function insertCheckpoint(
   db: ForgeDatabase,
-  checkpoint: { id: string; projectId: string; label: string; kind: "build" | "refine"; spec: ProductSpec },
+  checkpoint: { id: string; projectId: string; label: string; kind: "build" | "refine"; spec: ProductSpec; createdByUserId?: string | null },
 ): Checkpoint {
   const createdAt = new Date().toISOString();
+  const createdByUserId = checkpoint.createdByUserId ?? null;
   db.prepare(
-    "INSERT INTO checkpoints (id, projectId, label, kind, spec_json, createdAt) VALUES (?, ?, ?, ?, ?, ?)",
-  ).run(checkpoint.id, checkpoint.projectId, checkpoint.label, checkpoint.kind, JSON.stringify(checkpoint.spec), createdAt);
+    "INSERT INTO checkpoints (id, projectId, label, kind, spec_json, createdAt, createdByUserId) VALUES (?, ?, ?, ?, ?, ?, ?)",
+  ).run(checkpoint.id, checkpoint.projectId, checkpoint.label, checkpoint.kind, JSON.stringify(checkpoint.spec), createdAt, createdByUserId);
   recordEntityHistory(db, checkpoint.projectId, checkpoint.spec);
   // Prunes the oldest checkpoints beyond the retention limit, mirroring
   // recordAutomationRun's own exact DELETE...NOT IN (SELECT...ORDER BY...
@@ -229,7 +245,7 @@ export function insertCheckpoint(
       SELECT id FROM checkpoints WHERE projectId = ? ORDER BY createdAt DESC, rowid DESC LIMIT ?
     )`,
   ).run(checkpoint.projectId, checkpoint.projectId, CHECKPOINTS_RETENTION_LIMIT);
-  return { ...checkpoint, createdAt };
+  return { ...checkpoint, createdAt, createdByUserId };
 }
 
 export function listCheckpoints(db: ForgeDatabase, projectId: string): Checkpoint[] {
@@ -450,6 +466,7 @@ export function renameCheckpoint(db: ForgeDatabase, projectId: string, checkpoin
     kind: row.kind as "build" | "refine",
     spec: JSON.parse(row.spec_json as string) as ProductSpec,
     createdAt: row.createdAt as string,
+    createdByUserId: (row.createdByUserId as string | null) ?? null,
   };
 }
 

@@ -556,6 +556,12 @@ export interface PipelineOptions {
   // shape, so every existing SSE consumer (which assumes every frame is an
   // AgentStepEvent) keeps working unchanged.
   providerName?: string;
+  // The authenticated caller who triggered this /build or /refine, recorded
+  // on the checkpoint this pipeline creates (see insertCheckpoint below).
+  // Both route handlers always have a req.userId by the time they get here
+  // (requireProjectWriteAccess already ran), so this is only ever undefined
+  // in a test that constructs PipelineOptions directly.
+  createdByUserId?: string;
 }
 
 /**
@@ -926,6 +932,7 @@ export async function* runBuildPipeline(
       label: changeLabel,
       kind: previousSpec ? "refine" : "build",
       spec: nextSpec,
+      createdByUserId: options.createdByUserId ?? null,
     });
     const finalProject = getProject(db, project.id)!;
 
