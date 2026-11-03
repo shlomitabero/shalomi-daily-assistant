@@ -4967,7 +4967,7 @@ function RecordListPrintSheet({ entity, fields, records, groups, relatedRecords,
 // field itself, since that's implied by which column the card is in), a
 // select to move it directly to another column, and the same Edit/Delete
 // actions the table row has.
-function BoardCard({ orderedFields, boardField, record, relatedRecords, highlightQuery, hasMoveError, onMove, onEdit, onDuplicate, onDelete, onPrint, onJumpToRecord, bulkActionBusy, onDragEnd }) {
+function BoardCard({ orderedFields, boardField, record, relatedRecords, highlightQuery, hasMoveError, onMove, onEdit, onDuplicate, onDelete, onPrint, onJumpToRecord, bulkActionBusy, onDragEnd, isPinned, onTogglePin }) {
   // orderedFields (not the entity's raw declared order) -- mirrors round
   // 615's fix for Export CSV/Copy/per-record Print/Print list, so a board
   // card's field order follows the user's drag-reordered columns the same
@@ -5033,6 +5033,16 @@ function BoardCard({ orderedFields, boardField, record, relatedRecords, highligh
         <button disabled={bulkActionBusy} onClick={onDuplicate}>Duplicate</button>
         <button onClick={onPrint}>Print</button>
         <button disabled={bulkActionBusy} onClick={onDelete}>Delete</button>
+        {onTogglePin && (
+          <button
+            className={isPinned ? "record-pin record-pin-active" : "record-pin"}
+            aria-label={isPinned ? "Unpin" : "Pin to top"}
+            title={isPinned ? "Unpin" : "Pin to top"}
+            onClick={onTogglePin}
+          >
+            {isPinned ? "⭐" : "☆"}
+          </button>
+        )}
       </div>
     </div>
   );
@@ -8164,6 +8174,8 @@ export function EntityView({ entity, highlightRecordId, onHighlightHandled, onJu
                       onJumpToRecord={onJumpToRecord}
                       bulkActionBusy={writesInFlight}
                       onDragEnd={() => setDragOverColumn(null)}
+                      isPinned={pinnedIds.has(r.id)}
+                      onTogglePin={() => setPinnedIds(toggleRecordPinned(entity.name, r.id))}
                     />
                   ))}
                 </div>

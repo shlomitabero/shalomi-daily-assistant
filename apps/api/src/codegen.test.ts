@@ -24009,6 +24009,78 @@ test("the exported EntityView's pin button moves a record to the top of the tabl
 });
 
 /**
+ * Round 1573: mirrors the Table-view pin test just above, for Board view --
+ * sortRecordsByPinned already reorders a board column's own cards (the
+ * same function both views call), but until now BoardCard itself had no
+ * pin button at all, only Table view's row did, so a user looking at Board
+ * view had no in-view way to pin a record. Confirms a real pin button now
+ * renders as BoardCard's own last `.row-actions` button and writes to the
+ * exact same `forge_pinned_records` localStorage key Table view's pin
+ * button uses.
+ */
+test("the exported EntityView's board view card has a pin button that writes to the same forge_pinned_records store Table view uses", async () => {
+  const files = generateExportFiles(project);
+  const dir = writeGeneratedWebComponent(files);
+  const store: EntityRecord[] = [
+    { id: 1, name: "Dana", status: "New" },
+    { id: 2, name: "Yossi", status: "New" },
+  ];
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = (async () => new Response(JSON.stringify({ records: store }), { status: 200, headers: { "content-type": "application/json" } })) as typeof fetch;
+
+  try {
+    await withRealLocalStorage(async () => {
+      const { EntityView } = await import(path.join(dir, "web", "src", "components", "EntityView.jsx"));
+      const customerEntity = project.spec.entities[0];
+      const props = {
+        entity: customerEntity,
+        highlightRecordId: null,
+        onHighlightHandled: () => {},
+        onJumpToRecord: () => {},
+        onRecordCountChange: () => {},
+      };
+
+      const { container } = render(React.createElement(EntityView, props));
+      for (let i = 0; i < 40; i++) {
+        if (container.querySelectorAll("tbody tr").length === 2) break;
+        await act(async () => {
+          await new Promise((resolve) => setTimeout(resolve, 0));
+        });
+      }
+
+      const boardToggle = container.querySelectorAll(".view-toggle-btn")[1] as HTMLButtonElement;
+      await act(async () => {
+        fireEvent.click(boardToggle);
+      });
+      for (let i = 0; i < 40; i++) {
+        if (container.querySelectorAll(".board-card").length === 2) break;
+        await act(async () => {
+          await new Promise((resolve) => setTimeout(resolve, 0));
+        });
+      }
+
+      const cards = container.querySelectorAll(".board-card");
+      assert.equal(cards.length, 2, "both records must render as board cards");
+      const secondCardButtons = cards[1].querySelectorAll(".row-actions button");
+      const pinButton = secondCardButtons[secondCardButtons.length - 1] as HTMLButtonElement;
+      assert.equal(pinButton.className, "record-pin", "the pin button must be the last .row-actions button, after Delete");
+      assert.equal(pinButton.textContent, "☆", "an unpinned card must show the empty star");
+
+      await act(async () => {
+        fireEvent.click(pinButton);
+      });
+
+      assert.equal(pinButton.textContent, "⭐", "pinning must flip the card's own button to the filled star");
+      assert.deepEqual(JSON.parse(localStorage.getItem("forge_pinned_records") ?? "{}"), { Customer: [2] }, "pinning from Board view must write to the same store key Table view's pin button uses");
+    });
+  } finally {
+    globalThis.fetch = originalFetch;
+    cleanup();
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+/**
  * New in this round: the toolbar filter select (not FieldInput's own
  * relation branch, already fixed round 515 just above) has the identical
  * "stale value has no <option>" gap for the exported app's own filter

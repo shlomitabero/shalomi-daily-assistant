@@ -2623,6 +2623,53 @@ test("EntityPanel's Table/Board view toggle reports its selected state via aria-
 });
 
 /**
+ * Round 1573: Table view's row pin/favorite toggle (rounds 1571-1572) had no
+ * equivalent in Board view -- sortRecordsByPinned already reorders a board
+ * column's own cards (pinned first), but a user looking at Board view had
+ * no in-view way to pin a record at all, only Table view's row did.
+ * Confirms a real pin button now renders as BoardCard's own last
+ * `.row-actions` button, toggles the same `forge.pinnedRecords`
+ * localStorage store Table view already writes to, and the card's pinned
+ * state survives independently per board card.
+ */
+test("EntityPanel's board view card has a pin button that persists to the same pinnedRecords store Table view uses", async () => {
+  await withJsdom(async () => {
+    const store: EntityRecord[] = [
+      { id: 1, name: "Acme Corp", status: "new" },
+      { id: 2, name: "Globex", status: "new" },
+    ];
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = mockRecordsFetch(store) as typeof fetch;
+    try {
+      renderEntityPanel();
+      await waitForCondition(() => document.querySelector(".entity-toolbar") !== null);
+
+      const boardToggle = document.querySelectorAll(".view-toggle-btn")[1] as HTMLButtonElement;
+      fireEvent.click(boardToggle);
+      await waitForCondition(() => document.querySelectorAll(".board-card").length === 2);
+
+      const cards = Array.from(document.querySelectorAll(".board-card"));
+      const secondCardActions = cards[1].querySelectorAll(".row-actions button");
+      const pinButton = secondCardActions[secondCardActions.length - 1] as HTMLButtonElement;
+      assert.equal(pinButton.className, "record-pin", "the pin button must be the last .row-actions button, after Delete");
+      assert.equal(pinButton.textContent, "☆", "an unpinned record must show the empty star");
+
+      fireEvent.click(pinButton);
+      await waitForCondition(() => pinButton.className === "record-pin record-pin-active");
+      assert.equal(pinButton.textContent, "⭐", "pinning must flip the card's own button to the filled star");
+
+      const raw = window.localStorage.getItem("forge.pinnedRecords");
+      assert.ok(raw, "pinning from Board view must write to the same store key Table view's pin button uses");
+      const parsedStore = JSON.parse(raw!) as Record<string, string[]>;
+      const key = JSON.stringify(["proj1", "Deal", "user1"]);
+      assert.deepEqual(parsedStore[key], ["2"], "the pinned record's id must be stored under the same [projectId, entityName, userId] key Table view uses");
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+});
+
+/**
  * Round 1499: handleSubmit's own missingField/invalidField checks
  * (long-established, round 702/939/984) only ever surfaced a disconnected
  * `role="status"` banner naming the field in plain text -- a screen-reader

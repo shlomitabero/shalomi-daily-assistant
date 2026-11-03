@@ -579,6 +579,8 @@ function BoardCard({
   phoneField,
   onSendWhatsApp,
   onJumpToRecord,
+  isPinned = false,
+  onTogglePin,
   onDragEnd,
   readOnly = false,
   bulkActionBusy = false,
@@ -600,6 +602,14 @@ function BoardCard({
   phoneField?: Field | null;
   onSendWhatsApp?: (phoneNumber: string) => void;
   onJumpToRecord?: (targetEntity: string, recordId: number) => void;
+  /** Round 1573: mirrors Table view's own per-record pin/favorite toggle
+   * (rounds 1571-1572) -- sortRecordsByPinned already reorders this board
+   * column's records (pinned first within each column), but until now
+   * there was no affordance inside a card itself to pin/unpin one, forcing
+   * a user who wanted to pin a record they found in Board view to first
+   * switch to Table view. */
+  isPinned?: boolean;
+  onTogglePin?: () => void;
   /** Round 1232: native HTML5 drag-and-drop only fires `dragleave` on a
    * column the pointer actually moves off of -- cancelling a drag with
    * Escape (or dropping outside any valid target) fires `dragend` on the
@@ -713,6 +723,17 @@ function BoardCard({
         {!readOnly && (
           <button type="button" className="danger" disabled={bulkActionBusy} onClick={onDelete}>
             {t("entity.delete")}
+          </button>
+        )}
+        {onTogglePin && (
+          <button
+            type="button"
+            className={isPinned ? "record-pin record-pin-active" : "record-pin"}
+            aria-label={isPinned ? t("entity.record.unpin") : t("entity.record.pin")}
+            title={isPinned ? t("entity.record.unpin") : t("entity.record.pin")}
+            onClick={onTogglePin}
+          >
+            {isPinned ? "⭐" : "☆"}
           </button>
         )}
       </div>
@@ -5504,6 +5525,8 @@ export function EntityPanel({
                       phoneField={phoneField}
                       onSendWhatsApp={onSendWhatsApp}
                       onDragEnd={() => setDragOverColumn(null)}
+                      isPinned={pinnedIds.has(record.id as number)}
+                      onTogglePin={() => setPinnedIds(toggleRecordPinned(projectId, entity.name, userId, record.id as number))}
                       onJumpToRecord={onJumpToRecord}
                       readOnly={readOnly}
                       bulkActionBusy={writesInFlight}
