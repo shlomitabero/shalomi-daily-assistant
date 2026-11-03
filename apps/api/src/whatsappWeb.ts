@@ -140,6 +140,7 @@ export interface BaileysIncomingMessage {
     orderMessage?: { orderTitle?: string; message?: string };
     eventMessage?: { name?: string; description?: string; isCanceled?: boolean };
     scheduledCallCreationMessage?: { callType?: number; title?: string };
+    scheduledCallEditMessage?: { editType?: number };
     requestPaymentMessage?: {
       noteMessage?: BaileysIncomingMessage["message"];
       currencyCodeIso4217?: string;
@@ -439,6 +440,21 @@ function describeIncomingMessage(message: BaileysIncomingMessage["message"]): st
     const call = message.scheduledCallCreationMessage;
     const label = call.callType === 2 ? "[Scheduled video call]" : "[Scheduled call]";
     return call.title ? `${label} ${call.title}` : label;
+  }
+  // Round 1569: the direct cancel-sibling of scheduledCallCreationMessage
+  // just above (round 1537) -- when either side cancels a pending
+  // scheduled call from the chat's own scheduled-call UI, Baileys delivers
+  // scheduledCallEditMessage. Confirmed against the installed Baileys
+  // protobuf (WAProto.proto: ScheduledCallEditMessage is just `key` +
+  // `editType` enum [UNKNOWN=0, CANCEL=1] -- no content to decrypt, same
+  // "detect presence only" bar as declinePaymentRequestMessage just below).
+  // Previously fell through to the final `return null` and vanished with
+  // zero trace -- the creation logged correctly, but a business owner's
+  // log kept showing a call as still pending after the customer canceled it.
+  if (message.scheduledCallEditMessage) {
+    const EDIT_TYPE_CANCEL = 1;
+    if (message.scheduledCallEditMessage.editType === EDIT_TYPE_CANCEL) return "[Scheduled call canceled]";
+    return null;
   }
   if (message.contactMessage) {
     const name = message.contactMessage.displayName;

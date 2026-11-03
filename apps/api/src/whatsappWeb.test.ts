@@ -2085,6 +2085,39 @@ test("incoming WhatsApp scheduled-call messages (the chat's own 'Schedule a call
 });
 
 /**
+ * Round 1569: the direct cancel-sibling of scheduledCallCreationMessage
+ * (round 1537) -- canceling a pending scheduled call from the chat's own
+ * scheduled-call UI was previously dropped with zero trace.
+ * ScheduledCallEditMessage's editType is a plaintext int enum, confirmed
+ * directly against the installed Baileys protobuf (WAProto.proto:
+ * optional MessageKey key = 1; optional EditType editType = 2; enum
+ * EditType { UNKNOWN = 0; CANCEL = 1; }).
+ */
+test("incoming WhatsApp scheduled-call-cancel messages are logged with a descriptive placeholder instead of being silently dropped", async () => {
+  const { manager, createdSockets, db } = setupManager();
+  insertProject(db, project);
+  applyMigrations(db, project.id, project.spec);
+  markProjectBuilt(db, project.id);
+
+  await manager.connect(project.id);
+  createdSockets[0].emitConnectionUpdate({ connection: "open" });
+
+  createdSockets[0].emitMessagesUpsert({
+    type: "notify",
+    messages: [
+      { key: { remoteJid: "972501234567@s.whatsapp.net", fromMe: false }, message: { scheduledCallEditMessage: { editType: 1 } } },
+      { key: { remoteJid: "972501234567@s.whatsapp.net", fromMe: false }, message: { scheduledCallEditMessage: { editType: 0 } } },
+    ],
+  });
+
+  // listWhatsAppMessages orders newest-first, the reverse of emission order.
+  const { messages: editMessages } = listWhatsAppMessages(db, project.id);
+  assert.equal(editMessages.length, 1, "the UNKNOWN (0) editType has no recoverable meaning and must stay genuinely dropped, same as pinInChatMessage's own UNKNOWN_TYPE handling");
+  assert.equal(editMessages[0].body, "[Scheduled call canceled]");
+  assert.equal(editMessages[0].direction, "in", "the placeholder row must still be a real, matched-against incoming message, not metadata");
+});
+
+/**
  * Round 1538: WhatsApp's native Pay feature ("Request Payment"/"Send
  * Payment") was previously dropped with zero trace, the same silent-vanish
  * gap round 1537 fixed for scheduledCallCreationMessage. requestPaymentMessage/
