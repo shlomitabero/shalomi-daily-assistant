@@ -28,7 +28,7 @@ function makeRes() {
 test('getHealth reports every integration as not configured when no env vars are set', () => {
   withEnv({
     ANTHROPIC_API_KEY: undefined, PADDLE_API_KEY: undefined, PADDLE_CLIENT_TOKEN: undefined,
-    MARKET_DATA_API_KEY: undefined, OWNER_PASSWORD: undefined,
+    PADDLE_WEBHOOK_SECRET: undefined, MARKET_DATA_API_KEY: undefined, OWNER_PASSWORD: undefined,
   }, () => {
     const res = makeRes();
     getHealth({}, res);
@@ -39,18 +39,23 @@ test('getHealth reports every integration as not configured when no env vars are
   });
 });
 
-test('getHealth reports billingConfigured true only once both Paddle vars are set, never on just one', () => {
-  withEnv({ PADDLE_API_KEY: 'key', PADDLE_CLIENT_TOKEN: undefined }, () => {
+test('getHealth reports billingConfigured true only once all three Paddle vars are set', () => {
+  withEnv({ PADDLE_API_KEY: 'key', PADDLE_CLIENT_TOKEN: undefined, PADDLE_WEBHOOK_SECRET: 'whsec' }, () => {
     const res = makeRes();
     getHealth({}, res);
     assert.equal(res.body.billingConfigured, false);
   });
-  withEnv({ PADDLE_API_KEY: undefined, PADDLE_CLIENT_TOKEN: 'tok' }, () => {
+  withEnv({ PADDLE_API_KEY: undefined, PADDLE_CLIENT_TOKEN: 'tok', PADDLE_WEBHOOK_SECRET: 'whsec' }, () => {
     const res = makeRes();
     getHealth({}, res);
     assert.equal(res.body.billingConfigured, false);
   });
-  withEnv({ PADDLE_API_KEY: 'key', PADDLE_CLIENT_TOKEN: 'tok' }, () => {
+  withEnv({ PADDLE_API_KEY: 'key', PADDLE_CLIENT_TOKEN: 'tok', PADDLE_WEBHOOK_SECRET: undefined }, () => {
+    const res = makeRes();
+    getHealth({}, res);
+    assert.equal(res.body.billingConfigured, false);
+  });
+  withEnv({ PADDLE_API_KEY: 'key', PADDLE_CLIENT_TOKEN: 'tok', PADDLE_WEBHOOK_SECRET: 'whsec' }, () => {
     const res = makeRes();
     getHealth({}, res);
     assert.equal(res.body.billingConfigured, true);

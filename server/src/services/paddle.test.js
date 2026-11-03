@@ -19,20 +19,27 @@ function withEnv(vars, fn) {
   }
 }
 
-test('isPaddleConfigured is false when either the API key or client token is missing', () => {
+test('isPaddleConfigured is false when any one of the three required vars is missing', () => {
   // This is what gates the real "פרסם מוצר" checkout button — it must
   // never read as configured on a half-set-up environment, or the owner
   // could be shown a checkout that silently can't actually charge anyone.
-  withEnv({ PADDLE_API_KEY: undefined, PADDLE_CLIENT_TOKEN: 'tok' }, () => {
+  withEnv({ PADDLE_API_KEY: undefined, PADDLE_CLIENT_TOKEN: 'tok', PADDLE_WEBHOOK_SECRET: 'whsec' }, () => {
     assert.equal(isPaddleConfigured(), false);
   });
-  withEnv({ PADDLE_API_KEY: 'key', PADDLE_CLIENT_TOKEN: undefined }, () => {
+  withEnv({ PADDLE_API_KEY: 'key', PADDLE_CLIENT_TOKEN: undefined, PADDLE_WEBHOOK_SECRET: 'whsec' }, () => {
+    assert.equal(isPaddleConfigured(), false);
+  });
+  // Without this, a real customer could pay through a real checkout and
+  // the webhook that confirms it would be silently rejected for a missing
+  // signature secret — the sale recorded nowhere, the customer given
+  // nothing, with no error anyone would ever see.
+  withEnv({ PADDLE_API_KEY: 'key', PADDLE_CLIENT_TOKEN: 'tok', PADDLE_WEBHOOK_SECRET: undefined }, () => {
     assert.equal(isPaddleConfigured(), false);
   });
 });
 
-test('isPaddleConfigured is true only once both the API key and client token are set', () => {
-  withEnv({ PADDLE_API_KEY: 'key', PADDLE_CLIENT_TOKEN: 'tok' }, () => {
+test('isPaddleConfigured is true only once all three required vars are set', () => {
+  withEnv({ PADDLE_API_KEY: 'key', PADDLE_CLIENT_TOKEN: 'tok', PADDLE_WEBHOOK_SECRET: 'whsec' }, () => {
     assert.equal(isPaddleConfigured(), true);
   });
 });

@@ -1,4 +1,5 @@
 import { Router } from 'express';
+import { isPaddleConfigured } from '../services/paddle.js';
 
 export const healthRouter = Router();
 
@@ -12,7 +13,10 @@ export function getHealth(req, res) {
     ok: true,
     name: 'PROFIT AI',
     aiConfigured: Boolean(process.env.ANTHROPIC_API_KEY),
-    billingConfigured: Boolean(process.env.PADDLE_API_KEY && process.env.PADDLE_CLIENT_TOKEN),
+    // Reuses the exact same check the real publish/checkout gate uses
+    // (services/paddle.js) rather than its own separate copy, which had
+    // drifted to only check two of the three vars Paddle actually needs.
+    billingConfigured: isPaddleConfigured(),
     marketDataConfigured: Boolean(process.env.MARKET_DATA_API_KEY),
     ownerPasswordConfigured: Boolean(process.env.OWNER_PASSWORD),
   });

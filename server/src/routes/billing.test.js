@@ -54,8 +54,8 @@ test('getBillingConfigured reports honestly when Paddle is not set up', () => {
   });
 });
 
-test('getBillingConfigured reports configured once both the API key and client token are set', () => {
-  withEnv({ PADDLE_API_KEY: 'key', PADDLE_CLIENT_TOKEN: 'tok', PADDLE_ENV: 'sandbox' }, () => {
+test('getBillingConfigured reports configured once the API key, client token, and webhook secret are all set', () => {
+  withEnv({ PADDLE_API_KEY: 'key', PADDLE_CLIENT_TOKEN: 'tok', PADDLE_WEBHOOK_SECRET: 'whsec', PADDLE_ENV: 'sandbox' }, () => {
     const res = makeRes();
     getBillingConfigured({}, res);
     assert.deepEqual(res.body, { configured: true, clientToken: 'tok', sandbox: true });

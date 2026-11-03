@@ -27,8 +27,16 @@ async function fetchWithTimeout(url, options, timeoutMs = FETCH_TIMEOUT_MS) {
   }
 }
 
+// All three must be set, not just the two that let a checkout open.
+// Without PADDLE_WEBHOOK_SECRET, verifyPaddleSignature always returns
+// false (it treats a missing secret the same as a missing signature), so
+// a real customer could pay through a real checkout and the webhook that
+// confirms it would be silently rejected — the sale never gets recorded
+// as revenue and the customer never receives their guide. "Configured"
+// has to mean the whole path works end to end, not just that checkout
+// can be opened.
 export function isPaddleConfigured() {
-  return Boolean(process.env.PADDLE_API_KEY && process.env.PADDLE_CLIENT_TOKEN);
+  return Boolean(process.env.PADDLE_API_KEY && process.env.PADDLE_CLIENT_TOKEN && process.env.PADDLE_WEBHOOK_SECRET);
 }
 
 export function paddleClientConfig() {
