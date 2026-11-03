@@ -2015,6 +2015,54 @@ function replaceHiddenColumns(entityName, fields) {
   return hidden;
 }
 
+// Round 1571 (live preview): a per-record pin/favorite toggle, mirrored
+// here. Persisted per entity (this single-tenant exported app has no
+// project id or user id to scope by, unlike the live preview's own
+// pinnedRecordsPreference.ts), the same scoping HIDDEN_COLUMNS_STORAGE_KEY
+// just above already uses.
+const PINNED_RECORDS_STORAGE_KEY = "forge_pinned_records";
+function readPinnedRecordsStore() {
+  try {
+    const raw = localStorage.getItem(PINNED_RECORDS_STORAGE_KEY);
+    if (!raw) return {};
+    const parsed = JSON.parse(raw);
+    if (parsed === null || typeof parsed !== "object" || Array.isArray(parsed)) return {};
+    return parsed;
+  } catch {
+    return {};
+  }
+}
+function writePinnedRecordsStore(store) {
+  try {
+    localStorage.setItem(PINNED_RECORDS_STORAGE_KEY, JSON.stringify(store));
+  } catch {
+    // localStorage can be unavailable (private mode) -- the pin just won't survive a reload.
+  }
+}
+function getPinnedRecordIds(entityName) {
+  const store = migrateEntityStoreKeyCase(readPinnedRecordsStore(), entityName, writePinnedRecordsStore);
+  return new Set(Array.isArray(store[entityName]) ? store[entityName] : []);
+}
+function toggleRecordPinned(entityName, recordId) {
+  const store = readPinnedRecordsStore();
+  const pinned = new Set(Array.isArray(store[entityName]) ? store[entityName] : []);
+  if (pinned.has(recordId)) pinned.delete(recordId);
+  else pinned.add(recordId);
+  if (pinned.size === 0) delete store[entityName];
+  else store[entityName] = [...pinned];
+  writePinnedRecordsStore(store);
+  return pinned;
+}
+// Pinned records first, unpinned after -- each group keeping its own
+// original relative order, mirroring pinnedRecordsPreference.ts's own
+// identical sortRecordsByPinned.
+function sortRecordsByPinned(records, pinnedIds) {
+  if (pinnedIds.size === 0) return records;
+  const pinned = records.filter((r) => pinnedIds.has(r.id));
+  const unpinned = records.filter((r) => !pinnedIds.has(r.id));
+  return [...pinned, ...unpinned];
+}
+
 // Recent queries typed into an entity's own filter-as-you-type search box,
 // persisted per entity (same single-tenant scoping as the hidden-columns
 // store above -- this exported app has no project id to scope by, unlike
@@ -5708,6 +5756,10 @@ export function EntityView({ entity, highlightRecordId, onHighlightHandled, onJu
   // browser that still holds an older export's "forge_hidden_columns"
   // entry for a field whose letter casing a refine then normalized (e.g.
   // "status" -> "Status").
+  // Round 1571 (live preview, ported here): which of this entity's own
+  // records have been pinned to the top of its table -- see
+  // getPinnedRecordIds/toggleRecordPinned just above.
+  const [pinnedIds, setPinnedIds] = useState(() => getPinnedRecordIds(entity.name));
   const [hiddenFields, setHiddenFields] = useState(() => {
     const loaded = getHiddenColumns(entity.name);
     const currentNames = new Set(entity.fields.map((f) => f.name));
@@ -5945,6 +5997,7 @@ export function EntityView({ entity, highlightRecordId, onHighlightHandled, onJu
     setImportErrors([]);
     setShowImportErrors(false);
     setHiddenFields(getHiddenColumns(entity.name));
+    setPinnedIds(getPinnedRecordIds(entity.name));
     setColumnsMenuOpen(false);
     setColumnWidths(getColumnWidths(entity.name));
     setColumnOrderState(getColumnOrder(entity.name));
@@ -6322,8 +6375,8 @@ export function EntityView({ entity, highlightRecordId, onHighlightHandled, onJu
         return String(r[fieldName] ?? "") === value;
       }),
     );
-    return sortRecordsMulti(filtered, sortKeys, entity.fields, relatedRecords);
-  }, [records, entity.fields, search, fieldFilters, sortKeys, relatedRecords]);
+    return sortRecordsByPinned(sortRecordsMulti(filtered, sortKeys, entity.fields, relatedRecords), pinnedIds);
+  }, [records, entity.fields, search, fieldFilters, sortKeys, relatedRecords, pinnedIds]);
 
   const hasNumericVisibleField = useMemo(() => visibleFields.some((f) => f.type === "number"), [visibleFields]);
 
@@ -7582,6 +7635,19 @@ export function EntityView({ entity, highlightRecordId, onHighlightHandled, onJu
         <button disabled={writesInFlight} onClick={() => handleDuplicate(r.id)}>Duplicate</button>
         <button onClick={() => setRecordToPrint(r)}>Print</button>
         <button disabled={writesInFlight} onClick={() => handleDelete(r.id)}>Delete</button>
+        {
+          // Round 1571 (live preview, ported here): placed LAST, after
+          // Delete -- not first -- so a test or user script that assumes
+          // the row-actions cell's own first button is Edit keeps working.
+        }
+        <button
+          className={pinnedIds.has(r.id) ? "record-pin record-pin-active" : "record-pin"}
+          aria-label={pinnedIds.has(r.id) ? "Unpin" : "Pin to top"}
+          title={pinnedIds.has(r.id) ? "Unpin" : "Pin to top"}
+          onClick={() => setPinnedIds(toggleRecordPinned(entity.name, r.id))}
+        >
+          {pinnedIds.has(r.id) ? "⭐" : "☆"}
+        </button>
       </td>
     </tr>
   );

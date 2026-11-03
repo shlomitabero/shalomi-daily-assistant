@@ -23944,6 +23944,71 @@ test("the exported EntityView's relation field keeps the record's real stored va
 });
 
 /**
+ * Round 1572: ports round 1571's per-record pin/favorite feature (live
+ * preview EntityPanel.tsx) to the exported standalone app's EntityView.
+ * Confirms the pin button actually reorders the real rendered table (not
+ * just that a store function returns the right Set), round-tripping
+ * through real localStorage exactly like every other codegen.ts
+ * preference-store port in this file.
+ */
+test("the exported EntityView's pin button moves a record to the top of the table and persists across a reload", async () => {
+  const files = generateExportFiles(project);
+  const dir = writeGeneratedWebComponent(files);
+  const store: EntityRecord[] = [
+    { id: 1, name: "Dana", status: "New" },
+    { id: 2, name: "Yossi", status: "Won" },
+  ];
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = (async () => new Response(JSON.stringify({ records: store }), { status: 200, headers: { "content-type": "application/json" } })) as typeof fetch;
+
+  try {
+    await withRealLocalStorage(async () => {
+      const { EntityView } = await import(path.join(dir, "web", "src", "components", "EntityView.jsx"));
+      const customerEntity = project.spec.entities[0];
+      const props = {
+        entity: customerEntity,
+        highlightRecordId: null,
+        onHighlightHandled: () => {},
+        onJumpToRecord: () => {},
+        onRecordCountChange: () => {},
+      };
+
+      const { container } = render(React.createElement(EntityView, props));
+      for (let i = 0; i < 40; i++) {
+        if (container.querySelectorAll("tbody tr").length === 2) break;
+        await act(async () => {
+          await new Promise((resolve) => setTimeout(resolve, 0));
+        });
+      }
+
+      const rowsBefore = container.querySelectorAll("tbody tr");
+      assert.ok(/Dana/.test(rowsBefore[0].textContent ?? ""), "Dana (id 1, the first fetched record) must render first before any pin");
+
+      // The pin toggle is deliberately the LAST button in .row-actions
+      // (round 1571's own live-preview rationale, mirrored here): many
+      // existing tests in this file assume that cell's own first button
+      // is Edit.
+      const secondRowButtons = rowsBefore[1].querySelectorAll(".row-actions button");
+      const pinButton = secondRowButtons[secondRowButtons.length - 1] as HTMLButtonElement;
+      assert.equal(pinButton.textContent, "☆", "the second row's (Yossi, id 2) own pin button must start unpinned");
+      await act(async () => {
+        fireEvent.click(pinButton);
+      });
+
+      const rowsAfter = container.querySelectorAll("tbody tr");
+      assert.ok(/Yossi/.test(rowsAfter[0].textContent ?? ""), "pinning Yossi (id 2) must move that row to the top of the table");
+      assert.ok(/Dana/.test(rowsAfter[1].textContent ?? ""), "the previously-first row (Dana) must now be second, not dropped");
+
+      assert.deepEqual(JSON.parse(localStorage.getItem("forge_pinned_records") ?? "{}"), { Customer: [2] }, "the pin must actually be written to localStorage, not just reflected in this render");
+    });
+  } finally {
+    globalThis.fetch = originalFetch;
+    cleanup();
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+/**
  * New in this round: the toolbar filter select (not FieldInput's own
  * relation branch, already fixed round 515 just above) has the identical
  * "stale value has no <option>" gap for the exported app's own filter
