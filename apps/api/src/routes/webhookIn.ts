@@ -158,42 +158,72 @@ function normalizeBodyValues(db: ForgeDatabase, projectId: string, allEntities: 
   for (const field of entity.fields) {
     const raw = normalized[field.name];
     if (typeof raw !== "string") continue;
-    if (field.type === "relation" && field.relationTo && !Number.isFinite(Number(raw))) {
-      const targetEntity =
-        allEntities.find((e) => e.name === field.relationTo) ?? allEntities.find((e) => e.name.toLowerCase() === field.relationTo!.toLowerCase());
-      if (targetEntity) {
-        const match = listRecords(db, projectId, targetEntity).find((r) => recordDisplayLabel(targetEntity, r).toLowerCase() === raw.toLowerCase());
-        if (match) normalized[field.name] = String(match.id);
+    // Round 1598: every comparison below (relation label match, date regex,
+    // enum/label match, boolean word list) is an exact or anchored match
+    // against `value`, none of which tolerate incidental leading/trailing
+    // whitespace (coerceValue, packages/db/src/repository.ts, doesn't
+    // either) -- an entirely plausible shape for a real external sender
+    // (Zapier/Make field mapping, a hand-built HTML form). Trimmed once
+    // here and written back unconditionally (not just when a deeper match
+    // below also fires), so a value that's ALREADY valid once trimmed --
+    // e.g. enum raw `"New "` when `"New"` is already a valid enumValue --
+    // still gets its whitespace stripped before reaching coerceValue,
+    // which would otherwise reject it on an exact-includes check of its
+    // own. The `number` branch already tolerated this as a side effect of
+    // its own formatting regex also stripping `\s`; this makes it uniform
+    // across relation/date/enum/boolean instead of accidental for one type.
+    const value = raw.trim();
+    if (field.type === "relation" && field.relationTo) {
+      normalized[field.name] = value;
+      if (!Number.isFinite(Number(value))) {
+        const targetEntity =
+          allEntities.find((e) => e.name === field.relationTo) ?? allEntities.find((e) => e.name.toLowerCase() === field.relationTo!.toLowerCase());
+        if (targetEntity) {
+          const match = listRecords(db, projectId, targetEntity).find((r) => recordDisplayLabel(targetEntity, r).toLowerCase() === value.toLowerCase());
+          if (match) normalized[field.name] = String(match.id);
+        }
       }
-    } else if (field.type === "date" && !isValidDateString(raw)) {
-      const match = WEBHOOK_DATE_PREFIX.exec(raw);
-      if (match && isValidDateString(match[0])) normalized[field.name] = match[0];
-    } else if (field.type === "number" && !Number.isFinite(Number(raw))) {
-      const cleaned = raw.replace(WEBHOOK_NUMBER_FORMATTING, "");
-      if (cleaned !== "" && Number.isFinite(Number(cleaned))) normalized[field.name] = cleaned;
-    } else if (field.type === "enum" && field.enumValues && !field.enumValues.includes(raw)) {
-      const match =
-        field.enumValues.find((v) => v.toLowerCase() === raw.toLowerCase()) ??
-        // Round 1541: the raw-value match above only ever matches the
-        // field's internal/stored values, never its own enumLabels --
-        // the human-readable text actually shown in this project's live
-        // picker UI. An external integrator who only ever sees the
-        // displayed label (e.g. a Hebrew refine's "חדש" for the stored
-        // value "New") naturally configures their webhook body with that
-        // same text, the identical "a real value was sent, just not in
-        // the exact shape this route expected" gap rounds 1511-1514
-        // already closed for field-name/boolean casing and shape. Mirrors
-        // CSV import's own label-match precedent (entityFormatting.ts,
-        // round 1084), but -- like round 1512's own raw-value match right
-        // above -- deliberately keeps this route's simpler first-match-
-        // wins behavior rather than adding CSV import's ambiguity-
-        // rejection for two values sharing an identical label.
-        field.enumValues.find((v) => (field.enumLabels?.[v] ?? v).toLowerCase() === raw.toLowerCase());
-      if (match) normalized[field.name] = match;
-    } else if (field.type === "boolean" && raw !== "true" && raw !== "false") {
-      const lower = raw.toLowerCase();
-      if (WEBHOOK_BOOLEAN_TRUE_VALUES.includes(lower)) normalized[field.name] = "true";
-      else if (WEBHOOK_BOOLEAN_FALSE_VALUES.includes(lower)) normalized[field.name] = "false";
+    } else if (field.type === "date") {
+      normalized[field.name] = value;
+      if (!isValidDateString(value)) {
+        const match = WEBHOOK_DATE_PREFIX.exec(value);
+        if (match && isValidDateString(match[0])) normalized[field.name] = match[0];
+      }
+    } else if (field.type === "number") {
+      normalized[field.name] = value;
+      if (!Number.isFinite(Number(value))) {
+        const cleaned = value.replace(WEBHOOK_NUMBER_FORMATTING, "");
+        if (cleaned !== "" && Number.isFinite(Number(cleaned))) normalized[field.name] = cleaned;
+      }
+    } else if (field.type === "enum" && field.enumValues) {
+      normalized[field.name] = value;
+      if (!field.enumValues.includes(value)) {
+        const match =
+          field.enumValues.find((v) => v.toLowerCase() === value.toLowerCase()) ??
+          // Round 1541: the raw-value match above only ever matches the
+          // field's internal/stored values, never its own enumLabels --
+          // the human-readable text actually shown in this project's live
+          // picker UI. An external integrator who only ever sees the
+          // displayed label (e.g. a Hebrew refine's "חדש" for the stored
+          // value "New") naturally configures their webhook body with that
+          // same text, the identical "a real value was sent, just not in
+          // the exact shape this route expected" gap rounds 1511-1514
+          // already closed for field-name/boolean casing and shape. Mirrors
+          // CSV import's own label-match precedent (entityFormatting.ts,
+          // round 1084), but -- like round 1512's own raw-value match right
+          // above -- deliberately keeps this route's simpler first-match-
+          // wins behavior rather than adding CSV import's ambiguity-
+          // rejection for two values sharing an identical label.
+          field.enumValues.find((v) => (field.enumLabels?.[v] ?? v).toLowerCase() === value.toLowerCase());
+        if (match) normalized[field.name] = match;
+      }
+    } else if (field.type === "boolean") {
+      normalized[field.name] = value;
+      if (value !== "true" && value !== "false") {
+        const lower = value.toLowerCase();
+        if (WEBHOOK_BOOLEAN_TRUE_VALUES.includes(lower)) normalized[field.name] = "true";
+        else if (WEBHOOK_BOOLEAN_FALSE_VALUES.includes(lower)) normalized[field.name] = "false";
+      }
     }
   }
   return normalized;

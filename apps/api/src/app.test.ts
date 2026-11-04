@@ -21010,6 +21010,53 @@ test("POST /public/webhook-in/:projectId/:entityName resolves enum field values 
   });
 });
 
+/**
+ * Round 1598: unlike the case-insensitivity test just above, this value
+ * ("New " with a trailing space) is ALREADY one of the entity's own
+ * declared enumValues once trimmed -- it never needs the deeper
+ * case-insensitive/label-matching fallback at all. Before this round,
+ * normalizeBodyValues only ever wrote back a trimmed value when that
+ * deeper fallback fired, so this exact "trivial once trimmed" case still
+ * reached coerceValue with its own trailing space intact and was rejected.
+ */
+test("POST /public/webhook-in/:projectId/:entityName resolves an enum field value with incidental surrounding whitespace, not just a different letter case", async () => {
+  await withServer(async (baseUrl, db) => {
+    const email = `webhook-in-enum-whitespace-${randomUUID()}@example.com`;
+    const authToken = await signup(baseUrl, email);
+    const user = findUserByEmail(db, email)!;
+    const spec: ProductSpec = {
+      summary: "test",
+      personas: [],
+      roles: ["Admin"],
+      entities: [{ name: "Lead", fields: [{ name: "name", type: "text", required: true }, { name: "status", type: "enum", enumValues: ["New", "Contacted", "Won"] }] }],
+      screens: [],
+      assumptions: [],
+      openQuestions: [],
+    };
+    const projectId = randomUUID();
+    insertProject(db, { id: projectId, ownerId: user.id, name: "CRM", description: "test", spec });
+    diffAndMigrate(db, projectId, undefined, spec);
+    markProjectBuilt(db, projectId);
+
+    const tokenRes = await fetch(`${baseUrl}/api/projects/${projectId}/inbound-webhook-token`, { headers: authHeaders(authToken) });
+    const { token: webhookToken } = (await tokenRes.json()) as { token: string };
+
+    const webhookRes = await fetch(`${baseUrl}/api/public/webhook-in/${projectId}/Lead?token=${webhookToken}`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ name: "Dana", status: "New " }),
+    });
+    assert.equal(webhookRes.status, 201, "an enum value already valid once trimmed must not be rejected over incidental surrounding whitespace");
+    const { id: recordId } = (await webhookRes.json()) as { id: string };
+
+    const listRes = await fetch(`${baseUrl}/api/projects/${projectId}/entities/Lead`, { headers: authHeaders(authToken) });
+    const { records } = (await listRes.json()) as { records: { id: string; name: string; status: string }[] };
+    const created = records.find((r) => r.id === recordId);
+    assert.ok(created, "expected the record the route reported creating to actually exist");
+    assert.equal(created!.status, "New", "the stored value must have its whitespace stripped, not carry the sender's incidental padding into storage");
+  });
+});
+
 test("POST /public/webhook-in/:projectId/:entityName resolves an enum field value sent as its own display label (enumLabels), not just its internal raw value", async () => {
   await withServer(async (baseUrl, db) => {
     const email = `webhook-in-enum-label-${randomUUID()}@example.com`;
@@ -21167,6 +21214,53 @@ test("POST /public/webhook-in/:projectId/:entityName accepts an ISO-8601 timesta
     const created = records.find((r) => r.id === recordId);
     assert.ok(created, "expected the record the route reported creating to actually exist");
     assert.equal(created!.signupDate, "2024-01-15", "the stored value must be just the date portion, this app's own canonical YYYY-MM-DD shape");
+  });
+});
+
+/**
+ * Round 1598: WEBHOOK_DATE_PREFIX's own regex is anchored only at the
+ * START (`^\d{4}-\d{2}-\d{2}`), so a trailing time-component suffix (the
+ * test just above) was already tolerated as a side effect of being a
+ * prefix match -- but LEADING whitespace breaks that same anchor, and
+ * isValidDateString's own `^...$`-anchored regex rejects it outright
+ * either way. A stray leading space is an entirely ordinary shape for a
+ * hand-built HTML form field or a Zapier/Make mapping.
+ */
+test("POST /public/webhook-in/:projectId/:entityName accepts a date value with incidental leading whitespace, not just a trailing time-component suffix", async () => {
+  await withServer(async (baseUrl, db) => {
+    const email = `webhook-in-date-whitespace-${randomUUID()}@example.com`;
+    const authToken = await signup(baseUrl, email);
+    const user = findUserByEmail(db, email)!;
+    const spec: ProductSpec = {
+      summary: "test",
+      personas: [],
+      roles: ["Admin"],
+      entities: [{ name: "Lead", fields: [{ name: "name", type: "text", required: true }, { name: "signupDate", type: "date", required: false }] }],
+      screens: [],
+      assumptions: [],
+      openQuestions: [],
+    };
+    const projectId = randomUUID();
+    insertProject(db, { id: projectId, ownerId: user.id, name: "CRM", description: "test", spec });
+    diffAndMigrate(db, projectId, undefined, spec);
+    markProjectBuilt(db, projectId);
+
+    const tokenRes = await fetch(`${baseUrl}/api/projects/${projectId}/inbound-webhook-token`, { headers: authHeaders(authToken) });
+    const { token: webhookToken } = (await tokenRes.json()) as { token: string };
+
+    const webhookRes = await fetch(`${baseUrl}/api/public/webhook-in/${projectId}/Lead?token=${webhookToken}`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ name: "Dana", signupDate: " 2024-01-15" }),
+    });
+    assert.equal(webhookRes.status, 201, "a date value with incidental leading whitespace must not be rejected as an invalid date");
+    const { id: recordId } = (await webhookRes.json()) as { id: string };
+
+    const listRes = await fetch(`${baseUrl}/api/projects/${projectId}/entities/Lead`, { headers: authHeaders(authToken) });
+    const { records } = (await listRes.json()) as { records: { id: string; name: string; signupDate: string }[] };
+    const created = records.find((r) => r.id === recordId);
+    assert.ok(created, "expected the record the route reported creating to actually exist");
+    assert.equal(created!.signupDate, "2024-01-15", "the stored value must have its leading whitespace stripped");
   });
 });
 
