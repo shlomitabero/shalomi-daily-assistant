@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { api } from '../api.js';
-import { riskLevelLabel } from '../labels.js';
+import { riskLevelLabel, formatMoney } from '../labels.js';
 
 const STATUS_LABEL = { draft: 'טיוטה', published: 'פורסם', rejected: 'נדחה' };
 
@@ -109,7 +109,7 @@ export default function Opportunities() {
               <span className="badge">{STATUS_LABEL[o.status] ?? o.status}</span>
             </div>
             <div className="opp-card-bottom">
-              <span>{o.netProfitMid != null ? `רווח משוער: $${o.netProfitMid.toFixed(0)}` : 'חסר מידע לחישוב רווח'}</span>
+              <span>{o.netProfitMid != null ? `רווח משוער: ${formatMoney(o.netProfitMid, 0)}` : 'חסר מידע לחישוב רווח'}</span>
               <span>סיכון: {riskLevelLabel(o.riskLevel)}</span>
             </div>
           </Link>
@@ -126,7 +126,7 @@ export default function Opportunities() {
                 <span className="badge">{STATUS_LABEL[o.status] ?? o.status}</span>
               </div>
               <div className="opp-card-bottom">
-                <span>{o.netProfitMid != null ? `רווח משוער: $${o.netProfitMid.toFixed(0)}` : 'חסר מידע לחישוב רווח'}</span>
+                <span>{o.netProfitMid != null ? `רווח משוער: ${formatMoney(o.netProfitMid, 0)}` : 'חסר מידע לחישוב רווח'}</span>
                 <span>סיכון: {riskLevelLabel(o.riskLevel)}</span>
               </div>
             </Link>

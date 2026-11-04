@@ -1,3 +1,13 @@
+// A plain `${n.toFixed(2)}` puts the minus sign AFTER the dollar sign for a
+// negative value ("$-45.50" instead of "-$45.50") - a real, reachable case
+// now that revenueEstimate.low is explicitly allowed to be negative (a
+// coherent worst-case loss scenario), and net profit (today, all-time, or
+// per-opportunity) can go negative any time costs exceed revenue. Mirrors
+// engine/digest.js's formatMoney on the server for the exact same reason.
+export function formatMoney(n, decimals = 2) {
+  return `${n < 0 ? '-' : ''}$${Math.abs(n).toFixed(decimals)}`;
+}
+
 // Shared Hebrew labels for the raw action-type codes the server logs
 // (services/execution.js logAction calls) — without this, the activity
 // log and the approvals page showed codes like "publish_product" or

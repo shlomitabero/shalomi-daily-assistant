@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { useParams, Link } from 'react-router-dom';
 import { api } from '../api.js';
-import { opportunityStatusLabel, sourceLabel, missingFieldLabel } from '../labels.js';
+import { opportunityStatusLabel, sourceLabel, missingFieldLabel, formatMoney } from '../labels.js';
 
 export default function OpportunityDetail() {
   const { id } = useParams();
@@ -182,7 +182,7 @@ export default function OpportunityDetail() {
         {opp.feasibility.status === 'incomplete' ? (
           <p className="hint">חסר מידע: {opp.feasibility.missing.map(missingFieldLabel).join(', ')}</p>
         ) : (
-          <p>${opp.feasibility.netProfit.low.toFixed(0)} – ${opp.feasibility.netProfit.high.toFixed(0)} (ממוצע: ${opp.feasibility.netProfit.mid.toFixed(0)})</p>
+          <p>{formatMoney(opp.feasibility.netProfit.low, 0)} – {formatMoney(opp.feasibility.netProfit.high, 0)} (ממוצע: {formatMoney(opp.feasibility.netProfit.mid, 0)})</p>
         )}
       </div>
 

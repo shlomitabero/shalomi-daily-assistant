@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { api } from '../api.js';
+import { formatMoney } from '../labels.js';
 
 const MODE_LABEL = {
   research: 'מחקר בלבד — איתור והצגת הזדמנויות, שום דבר לא מתבצע לבד',
@@ -146,7 +147,7 @@ export default function Dashboard() {
 
       <div className={`net-profit-box ${summary.netProfitToday >= 0 ? 'positive' : 'negative'}`}>
         <span>רווח/הפסד נטו היום (מאומת, לא תזרים)</span>
-        <strong>${summary.netProfitToday.toFixed(2)}</strong>
+        <strong>{formatMoney(summary.netProfitToday)}</strong>
       </div>
 
       <div className="stat-row">
@@ -160,7 +161,7 @@ export default function Dashboard() {
         </div>
         <div className="stat-chip">
           <span>רווח נטו מצטבר (מאומת)</span>
-          <strong>${summary.netProfitAllTime.toFixed(2)}</strong>
+          <strong>{formatMoney(summary.netProfitAllTime)}</strong>
         </div>
       </div>
 
@@ -173,7 +174,7 @@ export default function Dashboard() {
         {activeOpportunities.slice(0, 3).map((o) => (
           <Link key={o.id} to={`/opportunities/${o.id}`} className="opp-row">
             <span className="opp-title">{o.title}</span>
-            <span className="opp-profit">{o.netProfitMid != null ? `$${o.netProfitMid.toFixed(0)}` : 'חסר מידע'}</span>
+            <span className="opp-profit">{o.netProfitMid != null ? formatMoney(o.netProfitMid, 0) : 'חסר מידע'}</span>
           </Link>
         ))}
       </section>
