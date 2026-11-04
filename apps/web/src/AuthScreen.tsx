@@ -64,6 +64,47 @@ export function AuthScreen({ onAuthenticated }: { onAuthenticated: (user: User) 
   // so it never lingers as a stale confirmation.
   const [forgotPasswordResent, setForgotPasswordResent] = useState(false);
 
+  /**
+   * Round 1587: every `<form>` below still relies on native HTML5
+   * required/minLength/type="email" constraint validation to block an
+   * empty or too-short submit -- the exact bug class round 342 diagnosed
+   * and fixed for EntityPanel's record form: the browser's own validation
+   * tooltip is rendered by the OS/browser in its own locale, not through
+   * t(), so it ignores this screen's own language toggle entirely (the
+   * one piece of user-facing text on this fully-translated screen that
+   * would otherwise show up in English/Hebrew regardless of what the
+   * user picked). `noValidate` on each `<form>` (added below) suppresses
+   * only the automatic popup -- the underlying constraint-validation state
+   * (`checkValidity()`) stays fully intact, so this reuses it instead of
+   * re-deriving required/minLength/email-format logic by hand the way
+   * EntityPanel's dynamic field list has to. Walks `form.elements` and
+   * calls each control's own `checkValidity()` directly, rather than a
+   * `:invalid` CSS-selector query -- that selector doesn't reliably
+   * reflect the live validity state for a React-managed input in every
+   * environment this runs in (confirmed via this round's own tests), while
+   * `checkValidity()` itself always does.
+   */
+  function findFirstInvalidField(form: HTMLFormElement): HTMLInputElement | null {
+    // Round 1587: `el.tagName` rather than `el instanceof HTMLInputElement`
+    // -- the latter is a runtime reference to whatever realm's global
+    // HTMLInputElement constructor happens to be bound at the moment this
+    // runs, which this app's own test harness (AuthScreen.test.ts's
+    // withJsdom helper) never replaces alongside window/document/
+    // HTMLElement/Node, throwing a bare ReferenceError the first time this
+    // function is actually called under test.
+    for (const el of Array.from(form.elements)) {
+      if (el.tagName === "INPUT" && !(el as HTMLInputElement).checkValidity()) return el as HTMLInputElement;
+    }
+    return null;
+  }
+
+  function describeInvalidField(input: HTMLInputElement): string {
+    if (input.validity.valueMissing) return t("auth.form.requiredField");
+    if (input.validity.tooShort) return t("auth.form.passwordTooShort");
+    if (input.validity.typeMismatch) return t("auth.form.invalidEmail");
+    return t("auth.form.requiredField");
+  }
+
   function handleBackToLogin() {
     window.history.replaceState(null, "", window.location.pathname + window.location.hash);
     setResetToken(null);
@@ -90,6 +131,12 @@ export function AuthScreen({ onAuthenticated }: { onAuthenticated: (user: User) 
     // on the main login path specifically.
     if (busy) return;
     setError(null);
+    const invalid = findFirstInvalidField(e.currentTarget as HTMLFormElement);
+    if (invalid) {
+      setError(describeInvalidField(invalid));
+      invalid.focus();
+      return;
+    }
     setBusy(true);
     try {
       await forgotPassword(email, lang);
@@ -124,6 +171,12 @@ export function AuthScreen({ onAuthenticated }: { onAuthenticated: (user: User) 
     // comment -- this handler never checked busy either.
     if (busy) return;
     setError(null);
+    const invalid = findFirstInvalidField(e.currentTarget as HTMLFormElement);
+    if (invalid) {
+      setError(describeInvalidField(invalid));
+      invalid.focus();
+      return;
+    }
     // Mirrors handleSubmit's own signup confirm-check exactly -- caught
     // client-side, before it ever reaches the server.
     if (resetNewPassword !== resetConfirmPassword) {
@@ -172,6 +225,12 @@ export function AuthScreen({ onAuthenticated }: { onAuthenticated: (user: User) 
     // two such requests from ever being sent in the first place.
     if (busy) return;
     setError(null);
+    const invalid = findFirstInvalidField(e.currentTarget as HTMLFormElement);
+    if (invalid) {
+      setError(describeInvalidField(invalid));
+      invalid.focus();
+      return;
+    }
     // Signup is the one place a typo would otherwise go unnoticed until the
     // very next login attempt -- round 716 added a real "forgot password"
     // recovery path for an account locked out this way, but catching the
@@ -211,6 +270,12 @@ export function AuthScreen({ onAuthenticated }: { onAuthenticated: (user: User) 
     // comment -- this handler never checked busy either.
     if (busy) return;
     setError(null);
+    const invalid = findFirstInvalidField(e.currentTarget as HTMLFormElement);
+    if (invalid) {
+      setError(describeInvalidField(invalid));
+      invalid.focus();
+      return;
+    }
     setCodeResent(false);
     setBusy(true);
     try {
@@ -284,7 +349,7 @@ export function AuthScreen({ onAuthenticated }: { onAuthenticated: (user: User) 
               <>
                 <h1>{t("auth.resetPassword.title")}</h1>
                 <p className="muted">{t("auth.resetPassword.subtitle")}</p>
-                <form onSubmit={handleResetPasswordSubmit} className="auth-form">
+                <form onSubmit={handleResetPasswordSubmit} className="auth-form" noValidate>
                   <label className="field-row">
                     <span>{t("auth.resetPassword.new")}</span>
                     <PasswordInput
@@ -355,7 +420,7 @@ export function AuthScreen({ onAuthenticated }: { onAuthenticated: (user: User) 
               ) : (
                 <>
                   <p className="muted">{t("auth.forgotPassword.subtitle")}</p>
-                  <form onSubmit={handleForgotPasswordSubmit} className="auth-form">
+                  <form onSubmit={handleForgotPasswordSubmit} className="auth-form" noValidate>
                     <label className="field-row">
                       <span>{t("auth.email.label")}</span>
                       <input
@@ -395,7 +460,7 @@ export function AuthScreen({ onAuthenticated }: { onAuthenticated: (user: User) 
             <>
               <h1>{t("auth.code.title")}</h1>
               <p className="muted">{t("auth.code.subtitle", { email })}</p>
-              <form onSubmit={handleVerifyCode} className="auth-form">
+              <form onSubmit={handleVerifyCode} className="auth-form" noValidate>
                 <label className="field-row">
                   <span>{t("auth.code.label")}</span>
                   <input
@@ -443,7 +508,7 @@ export function AuthScreen({ onAuthenticated }: { onAuthenticated: (user: User) 
             <>
               <h1>{mode === "signup" ? t("auth.title.signup") : t("auth.title.login")}</h1>
               <p className="muted">{mode === "signup" ? t("auth.subtitle.signup") : t("auth.subtitle.login")}</p>
-              <form onSubmit={handleSubmit} className="auth-form">
+              <form onSubmit={handleSubmit} className="auth-form" noValidate>
                 <label className="field-row">
                   <span>{t("auth.email.label")}</span>
                   <input

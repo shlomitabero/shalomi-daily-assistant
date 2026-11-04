@@ -245,6 +245,117 @@ test("AuthScreen blocks signup entirely when password and confirmPassword don't 
   });
 });
 
+/**
+ * Round 1587: every form in this file relied on native HTML5 required/
+ * type="email" constraint validation to block an empty submit -- the exact
+ * bug class round 342 fixed for EntityPanel's own record form: the
+ * browser's own validation tooltip renders in the OS/browser's own locale,
+ * ignoring this screen's language toggle entirely. Confirms the signup
+ * form's own fix: leaving email blank sends zero requests, shows the
+ * real translated message (not a native popup jsdom can't even render),
+ * and moves focus to the actual empty field.
+ */
+test("AuthScreen's signup form shows a translated required-field message and sends zero requests when email is left blank", async () => {
+  await withJsdom(async () => {
+    const originalFetch = globalThis.fetch;
+    let requestCount = 0;
+    globalThis.fetch = (async () => {
+      requestCount += 1;
+      throw new Error("must never be called");
+    }) as typeof fetch;
+    try {
+      renderAuthScreen(() => {});
+
+      const emailInput = document.querySelector('input[type="email"]') as HTMLInputElement;
+      const [passwordInput, confirmPasswordInput] = document.querySelectorAll('input[type="password"]') as NodeListOf<HTMLInputElement>;
+      fireEvent.change(passwordInput, { target: { value: "correct-horse-battery" } });
+      fireEvent.change(confirmPasswordInput, { target: { value: "correct-horse-battery" } });
+      // email left blank on purpose.
+
+      const form = document.querySelector("form.auth-form")!;
+      await act(async () => {
+        fireEvent.submit(form);
+        await Promise.resolve();
+      });
+
+      assert.equal(requestCount, 0, "a blank required field must never reach the server");
+      assert.match(document.querySelector(".error")!.textContent ?? "", /fill in this field/i);
+      assert.equal(document.querySelector(".error")!.getAttribute("role"), "status", "the error must be announced to screen readers");
+      assert.equal(document.activeElement, emailInput, "focus must move to the actual empty field, not stay on the submit button");
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+});
+
+/**
+ * Round 1587: same fix, the forgot-password form's own standalone email
+ * field (a separate `<form>`/handler from the signup/login one above).
+ */
+test("AuthScreen's forgot-password form shows a translated required-field message and sends zero requests when email is left blank", async () => {
+  await withJsdom(async () => {
+    const originalFetch = globalThis.fetch;
+    let requestCount = 0;
+    globalThis.fetch = (async () => {
+      requestCount += 1;
+      throw new Error("must never be called");
+    }) as typeof fetch;
+    try {
+      renderAuthScreen(() => {});
+      fireEvent.click(document.querySelector("button.link-button") as HTMLButtonElement); // switch to login
+      const forgotLink = Array.from(document.querySelectorAll("button")).find((b) => b.textContent === "Forgot password?") as HTMLButtonElement;
+      fireEvent.click(forgotLink);
+
+      const form = document.querySelector("form.auth-form")!;
+      await act(async () => {
+        fireEvent.submit(form);
+        await Promise.resolve();
+      });
+
+      assert.equal(requestCount, 0, "a blank required email must never reach the server");
+      assert.match(document.querySelector(".error")!.textContent ?? "", /fill in this field/i);
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+});
+
+/**
+ * Round 1587: same fix, the reset-password form reached via a real
+ * `?resetToken=...` URL -- its own required new-password field.
+ */
+test("AuthScreen's reset-password form shows a translated required-field message and sends zero requests when the new password is left blank", async () => {
+  await withJsdom(
+    async () => {
+      const originalFetch = globalThis.fetch;
+      let requestCount = 0;
+      globalThis.fetch = (async () => {
+        requestCount += 1;
+        throw new Error("must never be called");
+      }) as typeof fetch;
+      try {
+        renderAuthScreen(() => {});
+        const [newPasswordInput, confirmPasswordInput] = document.querySelectorAll('input[type="password"]') as NodeListOf<HTMLInputElement>;
+        fireEvent.change(confirmPasswordInput, { target: { value: "brand-new-password" } });
+        // newPasswordInput left blank on purpose.
+
+        const form = document.querySelector("form.auth-form")!;
+        await act(async () => {
+          fireEvent.submit(form);
+          await Promise.resolve();
+        });
+
+        assert.equal(requestCount, 0, "a blank required new-password must never reach the server");
+        assert.match(document.querySelector(".error")!.textContent ?? "", /fill in this field/i);
+        assert.equal(document.activeElement, newPasswordInput, "focus must move to the actual empty field");
+      } finally {
+        globalThis.fetch = originalFetch;
+      }
+    },
+    "http://localhost/?resetToken=abc123",
+  );
+});
+
 /** Login mode has no confirm-password field at all -- there's nothing to typo-check against on an existing account, only a real password to authenticate with. */
 test("AuthScreen's confirm-password field only appears in signup mode, never in login mode", async () => {
   await withJsdom(() => {
