@@ -1938,6 +1938,77 @@ test("WhatsAppPanel does not start polling from its initial status fetch if the 
 });
 
 /**
+ * Round 1586: WhatsAppPanel's connection-status captions ("connecting...",
+ * "connected as +972...") transition entirely on their own, driven by
+ * startPolling's background setInterval tick, not by any user keystroke or
+ * click -- the same "async state changes with no user action to trigger
+ * it" situation round 1558 fixed for BuildProgress's per-agent caption.
+ * Before this round, none of these captions carried aria-live/role="status",
+ * so a screen-reader user watching the WhatsApp connect flow got zero
+ * announcement that the QR scan had succeeded. Drives a real "connecting"
+ * -> "connected" transition through the real poll tick (not a prop change)
+ * and asserts the live-region attributes on both captions, plus that the
+ * final caption's own text content is the real "connected as" message --
+ * proving the mechanism has something real to announce, not just that the
+ * attribute exists.
+ */
+test("WhatsAppPanel's connection-status captions are live regions that announce the real transition from connecting to connected", async (t) => {
+  await withJsdom(async () => {
+    const originalFetch = globalThis.fetch;
+    let statusCallCount = 0;
+    globalThis.fetch = (async (input: string, init?: RequestInit): Promise<Response> => {
+      const method = init?.method ?? "GET";
+      if (method === "GET" && input === "/api/projects/proj1/integrations/whatsapp/status") {
+        statusCallCount += 1;
+        const body =
+          statusCallCount === 1
+            ? { status: "connecting", phoneNumber: null, qrDataUrl: null, error: null }
+            : { status: "connected", phoneNumber: "972501234567", qrDataUrl: null, error: null };
+        return new Response(JSON.stringify(body), { status: 200, headers: { "content-type": "application/json" } });
+      }
+      if (method === "GET" && input === "/api/projects/proj1/integrations/whatsapp/messages") {
+        return new Response(JSON.stringify({ messages: [] }), { status: 200, headers: { "content-type": "application/json" } });
+      }
+      throw new Error(`unexpected request ${method} ${input}`);
+    }) as typeof fetch;
+
+    t.mock.timers.enable({ apis: ["setInterval"] });
+    try {
+      render(
+        React.createElement(
+          ThemeProvider,
+          null,
+          React.createElement(
+            LanguageProvider,
+            null,
+            React.createElement(WhatsAppPanel, { projectId: "proj1", userId: "user1", projectName: "Test Project", onClose: () => {}, onJumpToEntity: () => {}, onJumpToRecord: () => {}, entities: [], onCreateRecordFromMessage: () => {} }),
+          ),
+        ),
+      );
+      await waitForCondition(() => document.querySelector(".whatsapp-connect-box p.muted.small") !== null);
+      const connectingCaption = document.querySelector(".whatsapp-connect-box p.muted.small")!;
+      assert.equal(connectingCaption.getAttribute("aria-live"), "polite", "the connecting caption must be a live region");
+      assert.equal(connectingCaption.getAttribute("role"), "status", "must use this codebase's established role=\"status\" convention");
+      assert.equal(connectingCaption.textContent, "Connecting…");
+
+      await act(async () => {
+        t.mock.timers.tick(1500);
+        await new Promise((resolve) => setTimeout(resolve, 0));
+      });
+      await waitForCondition(() => document.querySelector(".whatsapp-connected-status") !== null);
+
+      const connectedCaption = document.querySelector(".whatsapp-connected-status")!;
+      assert.equal(connectedCaption.getAttribute("aria-live"), "polite", "the connected caption must be a live region so a screen reader announces the successful pairing");
+      assert.equal(connectedCaption.getAttribute("role"), "status");
+      assert.match(connectedCaption.textContent ?? "", /972501234567/, "the live region's real final text must carry the actual phone number, not a placeholder");
+    } finally {
+      t.mock.timers.reset();
+      globalThis.fetch = originalFetch;
+    }
+  });
+});
+
+/**
  * New in this round: every other write-form in this app resets to empty
  * right after a successful submission (e.g. EntityPanel's own record form
  * clears right after createRecord succeeds) -- but this test-send form

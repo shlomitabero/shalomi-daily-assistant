@@ -1219,7 +1219,17 @@ export function WhatsAppPanel({
 
         {s === "disconnected" && (
           <div className="whatsapp-connect-box">
-            {status?.phoneNumber && <p className="muted small">{t("whatsapp.lastConnected", { phone: status.phoneNumber })}</p>}
+            {/* Round 1586: this status caption transitions on its own (e.g.
+                the phone unlinks remotely while the panel is open, driven
+                by startConnectedPolling's background tick), not from a
+                keystroke -- mirrors round 1558's own aria-live/role="status"
+                convention for BuildProgress's caption, the other genuinely
+                live, non-user-driven status surface in this codebase. */}
+            {status?.phoneNumber && (
+              <p className="muted small" aria-live="polite" role="status">
+                {t("whatsapp.lastConnected", { phone: status.phoneNumber })}
+              </p>
+            )}
             {!readOnly && (
               <button type="button" onClick={handleConnect} disabled={connecting}>
                 {connecting ? t("whatsapp.connect.connecting") : t("whatsapp.connect.button")}
@@ -1235,7 +1245,11 @@ export function WhatsAppPanel({
 
         {(s === "connecting" || s === "qr") && (
           <div className="whatsapp-connect-box">
-            {s === "connecting" && <p className="muted small">{t("whatsapp.connect.connecting")}</p>}
+            {s === "connecting" && (
+              <p className="muted small" aria-live="polite" role="status">
+                {t("whatsapp.connect.connecting")}
+              </p>
+            )}
             {s === "qr" && status?.qrDataUrl && (
               <>
                 <p className="muted small">{t("whatsapp.connect.qrInstructions")}</p>
@@ -1267,7 +1281,9 @@ export function WhatsAppPanel({
 
         {s === "connected" && (
           <div className="whatsapp-connected-box">
-            <p className="whatsapp-connected-status">{t("whatsapp.connected.as", { phone: status?.phoneNumber ?? "" })}</p>
+            <p className="whatsapp-connected-status" aria-live="polite" role="status">
+              {t("whatsapp.connected.as", { phone: status?.phoneNumber ?? "" })}
+            </p>
             <div className="whatsapp-connected-actions">
               {notifyPermission === "default" && (
                 <button type="button" className="secondary small" onClick={handleRequestNotifyPermission}>
