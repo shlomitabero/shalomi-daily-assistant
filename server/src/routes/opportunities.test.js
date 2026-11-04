@@ -87,6 +87,27 @@ test('patchOpportunity rejects a non-finite revenueEstimate instead of letting i
   assert.equal(db.opportunities.get(opp.id).revenueEstimate, null);
 });
 
+test('patchOpportunity rejects an inverted revenueEstimate range (low greater than high)', () => {
+  // Each of low/mid/high individually passing finiteness doesn't catch
+  // this - computeNetProfit would still run the subtraction and show it
+  // as-is (e.g. "$400 – $100"), reading as a display bug rather than
+  // what it actually is: bad input data that was never rejected.
+  __resetForTests();
+  const opp = insertOpportunity();
+  const res = makeRes();
+  patchOpportunity({ params: { id: opp.id }, body: { revenueEstimate: { low: 400, mid: 250, high: 100 } } }, res);
+  assert.equal(res.statusCode, 400);
+  assert.equal(db.opportunities.get(opp.id).revenueEstimate, null);
+});
+
+test('patchOpportunity accepts revenueEstimate when low equals high (a single-point estimate)', () => {
+  __resetForTests();
+  const opp = insertOpportunity();
+  const res = makeRes();
+  patchOpportunity({ params: { id: opp.id }, body: { revenueEstimate: { low: 100, mid: 100, high: 100 } } }, res);
+  assert.equal(res.statusCode, 200);
+});
+
 test('patchOpportunity rejects a non-finite cost field', () => {
   __resetForTests();
   const opp = insertOpportunity();

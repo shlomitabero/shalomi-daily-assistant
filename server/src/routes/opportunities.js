@@ -102,6 +102,14 @@ export function patchOpportunity(req, res) {
     if (!isFiniteOrNullish(low) || !isFiniteOrNullish(mid) || !isFiniteOrNullish(high)) {
       return res.status(400).json({ error: 'revenueEstimate.low/mid/high must each be a finite number (or omitted)' });
     }
+    // Each field individually passing finiteness doesn't catch an
+    // inverted range (low > high) - computeNetProfit would still run
+    // the subtraction and show it as-is, e.g. "$400 – $100" on the
+    // opportunity page, reading as a display bug rather than what it
+    // actually is: bad input data that was never rejected.
+    if (low != null && high != null && low > high) {
+      return res.status(400).json({ error: 'revenueEstimate.low cannot be greater than revenueEstimate.high' });
+    }
   }
   if ('costs' in patch && patch.costs != null) {
     for (const [key, value] of Object.entries(patch.costs)) {
