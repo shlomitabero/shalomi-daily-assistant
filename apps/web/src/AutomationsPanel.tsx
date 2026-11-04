@@ -577,9 +577,19 @@ export function AutomationsPanel({
     const ruleEntityFields = resolvedEntity?.fields ?? [];
     const ruleTriggerableFields = ruleEntityFields.filter((f) => f.type !== "file");
     const rulePhoneFields = ruleEntityFields.filter((f) => f.type === "text" || f.type === "longtext");
-    setFieldName(
-      ruleTriggerableFields.some((f) => f.name === rule.fieldName) ? rule.fieldName ?? "" : ruleTriggerableFields[0]?.name ?? "",
-    );
+    // Round 1605: resolveStoredFieldName (same fallback fieldLabel/
+    // fieldValueLabel/relationFieldTargets already use) instead of a plain
+    // exact-case .some() === check. migrate.ts treats a case-only FIELD
+    // rename as a benign no-op, so a rule's stored fieldName survives in
+    // its OLD casing while ruleTriggerableFields (seeded from the
+    // already-hardened resolvedEntity just above) now has the NEW casing.
+    // The old exact-case check missed that match entirely and silently
+    // fell back to ruleTriggerableFields[0] -- an arbitrary, unrelated
+    // field shown selected in Edit/Duplicate's form while fieldValue still
+    // showed the original value, and saving that silently overwrote the
+    // rule's real trigger field with the wrong one.
+    const resolvedFieldName = rule.fieldName ? resolveStoredFieldName(ruleTriggerableFields, rule.fieldName)?.name : undefined;
+    setFieldName(resolvedFieldName ?? ruleTriggerableFields[0]?.name ?? "");
     setFieldValue(rule.fieldValue ?? "");
     setFieldOperator(rule.fieldOperator ?? "equals");
     setScheduleTimeUtc(rule.scheduleTimeUtc ?? "09:00");
@@ -593,12 +603,16 @@ export function AutomationsPanel({
     setScheduleTimezone(rule.scheduleTimezone ?? "UTC");
     setActionType(rule.actionType);
     setToMode(rule.toMode);
+    // Round 1605: same resolveStoredFieldName fallback as fieldName above --
+    // toField (the destination phone/email field for a field-mode send)
+    // had the identical exact-case gap, risking a saved rule silently
+    // sending to the wrong field's value after a case-only field rename.
+    const resolvedToField = rule.toField ? resolveStoredFieldName(rulePhoneFields, rule.toField)?.name : undefined;
     setToField(
-      rulePhoneFields.some((f) => f.name === rule.toField)
-        ? rule.toField ?? ""
-        : (rule.actionType === "send_email" ? findEmailField(rulePhoneFields) : findPhoneField(rulePhoneFields))?.name ??
-          rulePhoneFields[0]?.name ??
-          "",
+      resolvedToField ??
+        (rule.actionType === "send_email" ? findEmailField(rulePhoneFields) : findPhoneField(rulePhoneFields))?.name ??
+        rulePhoneFields[0]?.name ??
+        "",
     );
     setToNumber(rule.toNumber ?? "");
     setWebhookUrl(rule.webhookUrl ?? "");

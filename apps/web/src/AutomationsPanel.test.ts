@@ -3889,6 +3889,99 @@ test("AutomationsPanel's Edit button falls back to a real field instead of submi
   });
 });
 
+/**
+ * Round 1605: applyRuleToForm (shared by Edit and Duplicate) is the one
+ * place in this file that never got resolveStoredFieldName's own
+ * case-insensitive fallback -- round 1486 hardened its ENTITY-level lookup
+ * (ruleEntity) and round 1561 hardened the create-form's live-rename
+ * EFFECT (keyed on fieldTypesKey), but applyRuleToForm's own per-FIELD
+ * `.some((f) => f.name === rule.fieldName)` check (and the identical one
+ * for toField) was never touched -- the third instance of the "entity-level
+ * fixed, field-level sibling missed" shape round 1603's own closing note
+ * explicitly flagged as worth auditing. Unlike round 1561's effect (which
+ * only reruns when entityName/fieldTypesKey actually change value, not
+ * when Edit is merely clicked on an already-current entity), this is the
+ * ONE path that seeds the form the moment Edit/Duplicate is clicked, so a
+ * case-only field rename that happened before the panel was even opened
+ * (or before this rule was last edited) is never corrected: the dropdown
+ * silently shows an arbitrary, unrelated field selected while fieldValue
+ * still shows the original value, and saving silently overwrites the
+ * rule's real trigger field/destination with the wrong one -- a severity
+ * step up from a mere stale display label, since it corrupts live
+ * automation config, not just what's shown on screen.
+ *
+ * Deliberately asserts on the submitted PATCH body, not the <select>'s own
+ * .value, for the identical reason round 883's neighboring test above
+ * does: an HTML <select> whose value matches none of its real <option>s
+ * silently falls back its own DOM .value to the first option regardless
+ * of React's true state, so only the submitted request proves which field
+ * was actually selected.
+ */
+test("AutomationsPanel's Edit button resolves fieldName and toField to their CURRENT casing, instead of falling back to an arbitrary field, after a case-only field rename", async () => {
+  await withJsdom(async () => {
+    const orderWithRecasedFields = [
+      {
+        name: "Order",
+        label: "Order",
+        fields: [
+          { name: "customerName", label: "Customer Name", type: "text" as const, required: true },
+          // Round 1605: "customerPhone" recased to "CUSTOMERPHONE" and
+          // "status" recased to "STATUS" -- the rule below still stores
+          // BOTH in their OLD casing, the same legitimate case-only field
+          // rename this codebase has established many times elsewhere
+          // (migrate.ts's own prevFieldByLowerName treats it as a no-op).
+          { name: "CUSTOMERPHONE", label: "Customer Phone", type: "text" as const, required: false },
+          { name: "STATUS", label: "Status", type: "text" as const, required: true },
+        ],
+      },
+    ];
+    const originalFetch = globalThis.fetch;
+    let patchBody: Record<string, unknown> | undefined;
+    globalThis.fetch = (async (input: string, init?: RequestInit) => {
+      const method = init?.method ?? "GET";
+      if (method === "GET" && input === "/api/projects/proj1/automations") {
+        return new Response(JSON.stringify({ rules: [makeRule()] }), { status: 200, headers: { "content-type": "application/json" } });
+      }
+      if (method === "PATCH" && input === "/api/projects/proj1/automations/rule1") {
+        patchBody = JSON.parse(init!.body as string) as Record<string, unknown>;
+        return new Response(JSON.stringify({ rule: makeRule({ fieldName: patchBody.fieldName, toField: patchBody.toField }) }), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        });
+      }
+      throw new Error(`unexpected request ${method} ${input}`);
+    }) as typeof fetch;
+
+    try {
+      renderPanelWith(project, () => {}, orderWithRecasedFields);
+      await waitForCondition(() => document.querySelectorAll(".automations-rule-row").length === 1);
+
+      fireEvent.click(
+        Array.from(document.querySelectorAll(".automations-rule-actions button")).find((b) => b.textContent === "Edit") as HTMLButtonElement,
+      );
+
+      // Submits immediately, without touching either dropdown -- proving
+      // applyRuleToForm's own seeding resolved both fields correctly on
+      // its own, not that some later user interaction happened to fix it.
+      fireEvent.submit(document.querySelector(".automations-create-form")!);
+      await waitForCondition(() => patchBody !== undefined);
+
+      assert.equal(
+        patchBody!.fieldName,
+        "STATUS",
+        "must resolve the rule's stale-cased stored fieldName to the field's CURRENT casing, not fall back to an arbitrary field",
+      );
+      assert.equal(
+        patchBody!.toField,
+        "CUSTOMERPHONE",
+        "must resolve the rule's stale-cased stored toField to the field's CURRENT casing, not fall back to an arbitrary field",
+      );
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+});
+
 test("submitting an edited rule calls the real PATCH endpoint and updates the rule in place, then returns the form to create mode", async () => {
   await withJsdom(async () => {
     const originalFetch = globalThis.fetch;
