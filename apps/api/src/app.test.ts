@@ -12794,6 +12794,61 @@ test("WhatsApp send is rejected with 400 past a generous but real length cap on 
   );
 });
 
+/**
+ * Round 1594: `to`/`message` had no `.trim()`, unlike every sibling
+ * free-text schema in this same file (round 1424 gave the automation
+ * schemas' own `toNumber`/`messageTemplate` this exact treatment for this
+ * exact reason: a whitespace-only value passes `.min(1)` but is
+ * functionally empty). The consequence here is worse than the automation
+ * case: a whitespace-only `message` passed HTML5 `required` and this
+ * schema's own `.min(1)`, then reached whatsappWeb.ts's `performSend`
+ * plain-text branch, whose own comment explicitly assumes the plain
+ * "no attachment" case's body "is always real message text" -- so a
+ * literal blank-looking message would be sent to a real contact and
+ * logged as a clean "sent" row. Validation runs before the
+ * connection-status check (confirmed by the sibling length-cap test just
+ * above), so this doesn't need an actual connected WhatsApp session.
+ */
+test("WhatsApp send rejects a whitespace-only `message`/`to` with 400 instead of silently sending a blank message, and still trims real text before sending", async () => {
+  await withServer(
+    async (baseUrl) => {
+      const token = await signup(baseUrl, "whatsapp-send-whitespace@example.com");
+      const createRes = await fetch(`${baseUrl}/api/projects`, {
+        method: "POST",
+        headers: authHeaders(token),
+        body: JSON.stringify({ description: "A CRM with customers and deals." }),
+      });
+      const { project } = (await createRes.json()) as { project: { id: string } };
+
+      const blankMessageRes = await fetch(`${baseUrl}/api/projects/${project.id}/integrations/whatsapp/send`, {
+        method: "POST",
+        headers: authHeaders(token),
+        body: JSON.stringify({ to: "972501234567", message: "   \n\t  " }),
+      });
+      assert.equal(blankMessageRes.status, 400, "a whitespace-only message must never pass validation and reach a real send");
+      assert.equal(((await blankMessageRes.json()) as { code?: string }).code, "VALIDATION_ERROR");
+
+      const blankToRes = await fetch(`${baseUrl}/api/projects/${project.id}/integrations/whatsapp/send`, {
+        method: "POST",
+        headers: authHeaders(token),
+        body: JSON.stringify({ to: "   ", message: "hi" }),
+      });
+      assert.equal(blankToRes.status, 400);
+      assert.equal(((await blankToRes.json()) as { code?: string }).code, "VALIDATION_ERROR");
+
+      // Real text with incidental leading/trailing whitespace must still
+      // pass -- the trim must not reject a genuinely non-blank message.
+      const realMessageRes = await fetch(`${baseUrl}/api/projects/${project.id}/integrations/whatsapp/send`, {
+        method: "POST",
+        headers: authHeaders(token),
+        body: JSON.stringify({ to: "  972501234567  ", message: "  Hello there  " }),
+      });
+      assert.equal(realMessageRes.status, 409, "real text with surrounding whitespace must pass validation and reach the connection-status check");
+    },
+    { whatsapp: (db) => createTestWhatsAppManager(db).manager },
+  );
+});
+
 test("WhatsApp send succeeds once connected, is logged as an outgoing message, and disconnect via HTTP tears the session down", async () => {
   let createdSockets: ReturnType<typeof createFakeWhatsAppSocket>[] = [];
   await withServer(

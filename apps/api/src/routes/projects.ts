@@ -225,9 +225,27 @@ const AnswerQuestionsSchema = z.object({
  * an oversized value there already fails downstream regardless of this
  * schema's own `.min(1)`-only declaration.
  */
+/**
+ * Round 1594: neither field had `.trim()`, unlike every sibling free-text
+ * field in this same file -- round 1424 already gave the automation
+ * schemas' own `toNumber`/`messageTemplate` this exact treatment for this
+ * exact reason ("a whitespace-only value passes `.min(1)` but is
+ * functionally empty"), and rounds 1403/1404 touched this schema twice
+ * since (adding `.max()`) without ever adding it here too. The real
+ * consequence is worse than the automation case: a whitespace-only
+ * `message` passes HTML5 `required` (WhatsAppPanel.tsx's test-send form,
+ * round 1593's own noValidate fix never checked for this -- only
+ * blank-vs-non-blank) and this schema's own `.min(1)`, then reaches
+ * whatsappWeb.ts's `performSend` plain-text branch, whose own comment
+ * explicitly assumes "the plain 'no attachment was ever requested' case
+ * ... stays unconditional, since its body is always real message text" --
+ * a premise this exact gap violates. The result: a literal blank-looking
+ * WhatsApp message is sent to a real contact, reported `{ok: true}`, and
+ * logged as a clean "sent" row with no sign anything was wrong.
+ */
 const WhatsAppSendSchema = z.object({
-  to: z.string().min(1, "to is required").max(50),
-  message: z.string().min(1, "message is required").max(4096),
+  to: z.string().trim().min(1, "to is required").max(50),
+  message: z.string().trim().min(1, "message is required").max(4096),
   attachment: z
     .object({
       url: z.string().min(1),
