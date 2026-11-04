@@ -444,6 +444,26 @@ test("Project's 'client' seed value reuses Vendor's own business-name pool, not 
 });
 
 /**
+ * Round 1591's finding: Volunteer shares the "role" field name with
+ * Employee ("A person who works for the business"), but ROLES_HE/EN was
+ * written for Employee's own paid-staff job titles (e.g. "Shift Manager").
+ * Round 1115 already gave Volunteer's own sibling "skills" field a
+ * volunteer-flavored pool, but never revisited "role" next to it -- a
+ * seeded Volunteer record read role: "Shift Manager" beside
+ * skills: "Event setup, First aid", internally inconsistent on one row.
+ */
+test("Volunteer's 'role' seed value is volunteer-appropriate, not Employee's own paid-staff job titles", () => {
+  const volunteer: Entity = { name: "Volunteer", fields: [{ name: "role", type: "text", required: false }] };
+  const employee: Entity = { name: "Employee", fields: [{ name: "role", type: "text", required: false }] };
+
+  const employeeRoles = new Set(generateSeedRecords(employee, 4).map((r) => r.role as string));
+  const volunteerRoles = generateSeedRecords(volunteer, 4).map((r) => r.role as string);
+  for (const role of volunteerRoles) {
+    assert.ok(!employeeRoles.has(role), `Volunteer's role "${role}" must not reuse Employee's own paid-staff job-title pool`);
+  }
+});
+
+/**
  * Round 828's finding: the exact same shape as round 827's "title" fix,
  * one case below it. textSeedValueFor's "service"/"itemName" case had no
  * entity-aware dispatch either -- ITEM_NAMES_HE/EN was written for

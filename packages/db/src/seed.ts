@@ -36,6 +36,18 @@ const SOURCES_HE = ["אתר האינטרנט", "המלצה מלקוח", "פיי�
 const SOURCES_EN = ["Website", "Customer referral", "Facebook Ads", "Google Search"];
 const ROLES_HE = ["מוכר/ת", "טכנאי/ת", "מנהל/ת משמרת", "רכז/ת שירות"];
 const ROLES_EN = ["Sales Associate", "Technician", "Shift Manager", "Service Coordinator"];
+// Round 1591: Volunteer (domainEntities.ts, "A person who donates time to
+// the organization", and the identically-shaped Volunteer & Shift
+// Management template's own Volunteer entity, templates.ts) shares the
+// "role" field name with Employee ("A person who works for the business"),
+// but ROLES_HE/EN above was written for Employee's own paid-staff job
+// titles -- round 1115 already gave this exact entity's sibling "skills"
+// field its own volunteer-flavored pool (SKILLS_HE/EN below), but never
+// revisited "role" sitting right next to it, so a seeded Volunteer record
+// read role: "Shift Manager" beside skills: "Event setup, First aid" --
+// internally inconsistent on the very same row.
+const VOLUNTEER_ROLES_HE = ["רכז/ת אירוע", "נהג/ת", "דלפק רישום", "עזרה במטבח"];
+const VOLUNTEER_ROLES_EN = ["Event Coordinator", "Driver", "Registration Desk", "Kitchen Help"];
 const DEAL_TITLES_HE = ["שדרוג חבילת שירות", "התקנה ראשונית", "חוזה שנתי", "הרחבת מנוי"];
 const DEAL_TITLES_EN = ["Service upgrade", "Initial setup", "Annual contract", "Plan expansion"];
 const WORK_ORDER_TITLES_HE = ["תיקון ברז דולף", "בדיקת מזגן", "החלפת חלון שבור", "בדק שנתי"];
@@ -206,6 +218,7 @@ function textSeedValueFor(fieldName: string, entityName: string, isHebrew: boole
     case "source":
       return pick(isHebrew ? SOURCES_HE : SOURCES_EN, index);
     case "role":
+      if (entityName === "Volunteer") return pick(isHebrew ? VOLUNTEER_ROLES_HE : VOLUNTEER_ROLES_EN, index);
       return pick(isHebrew ? ROLES_HE : ROLES_EN, index);
     case "sku":
       return `SKU-${1000 + index * 42}`;
