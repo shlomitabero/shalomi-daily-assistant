@@ -653,6 +653,34 @@ test("verify-code rejects a wrong code without consuming it, locks it out after 
   );
 });
 
+/**
+ * Round 1599: loginCodeId is always a randomUUID() (36 chars) and code is
+ * always exactly 6 digits (generateLoginCode()) -- round 1583's own sweep
+ * comment on CredentialsSchema's password field claimed to close "the last
+ * unbounded free-text field in the entire auth flow", but missed these two
+ * fields plus ResetPasswordSchema/VerifyEmailSchema's own token fields, all
+ * in this same file. Both rejections must fire before any DB lookup (a
+ * valid-length-but-unknown loginCodeId instead gets a 401, as the lockout
+ * test above shows) -- these oversized values are rejected at 400.
+ */
+test("POST /auth/login/verify-code rejects an oversized loginCodeId or code before ever reaching the DB lookup", async () => {
+  await withServer(async (baseUrl) => {
+    const oversizedId = await fetch(`${baseUrl}/api/auth/login/verify-code`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ loginCodeId: "a".repeat(37), code: "123456" }),
+    });
+    assert.equal(oversizedId.status, 400, "a 37-character loginCodeId must be rejected, not reach the DB as a plain lookup miss");
+
+    const oversizedCode = await fetch(`${baseUrl}/api/auth/login/verify-code`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ loginCodeId: randomUUID(), code: "1234567" }),
+    });
+    assert.equal(oversizedCode.status, 400, "a 7-character code must be rejected, not reach the DB as a plain lookup miss");
+  });
+});
+
 test("a login code is scoped to one login attempt: requesting a second one invalidates the first, and signup/login stay token-immediate when no EmailSender is configured at all", async () => {
   await withServer(async (baseUrl) => {
     // The default withServer (no emailSender option) uses createApp's own
@@ -2039,6 +2067,25 @@ test("reset-password rejects a garbage/unknown token, and an expired one, both w
   });
 });
 
+/**
+ * Round 1599: token is always randomBytes(32).toString("hex") (64 chars,
+ * see hashResetToken's callers) -- same unclosed-cap gap as the
+ * verify-code test above, for this route's own token field. Distinct from
+ * the garbage/unknown-token test above: that one is valid-length but
+ * reaches the DB as a lookup miss (401); this one must never get that far
+ * (400, from schema validation alone).
+ */
+test("POST /auth/reset-password rejects a token longer than 64 characters before ever reaching the DB lookup", async () => {
+  await withServer(async (baseUrl) => {
+    const res = await fetch(`${baseUrl}/api/auth/reset-password`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ token: "a".repeat(65), newPassword: "whatever-password" }),
+    });
+    assert.equal(res.status, 400, "a 65-character token must be rejected, not reach the DB as a plain lookup miss");
+  });
+});
+
 test("requesting a fresh reset token invalidates the previous one for the same account", async () => {
   const emailSender = createFakeEmailSender();
   await withServer(
@@ -2233,6 +2280,22 @@ test("POST /auth/verify-email rejects a garbage/unknown token, and an expired on
     },
     { emailSender },
   );
+});
+
+/**
+ * Round 1599: same reasoning as reset-password's own equivalent test above
+ * -- this route's token field is always randomBytes(32).toString("hex")
+ * (64 chars), and was left uncapped in this same file.
+ */
+test("POST /auth/verify-email rejects a token longer than 64 characters before ever reaching the DB lookup", async () => {
+  await withServer(async (baseUrl) => {
+    const res = await fetch(`${baseUrl}/api/auth/verify-email`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ token: "a".repeat(65) }),
+    });
+    assert.equal(res.status, 400, "a 65-character token must be rejected, not reach the DB as a plain lookup miss");
+  });
 });
 
 /**

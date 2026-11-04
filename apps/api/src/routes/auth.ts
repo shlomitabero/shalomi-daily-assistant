@@ -105,8 +105,13 @@ const ChangeEmailSchema = z.object({
 });
 
 const VerifyLoginCodeSchema = z.object({
-  loginCodeId: z.string().min(1, "loginCodeId is required"),
-  code: z.string().min(1, "code is required"),
+  // Round 1599: this is always a randomUUID() (36 chars, see createLoginCode's
+  // caller below) -- round 1583's own sweep comment on the password field
+  // above claimed to close "the last unbounded free-text field in the
+  // entire auth flow" but missed this one, in the very same file.
+  loginCodeId: z.string().min(1, "loginCodeId is required").max(36, "loginCodeId must be 36 characters or fewer"),
+  // Round 1599: generateLoginCode() always produces exactly 6 digits.
+  code: z.string().min(1, "code is required").max(6, "code must be 6 characters or fewer"),
 });
 
 const LOGIN_CODE_TTL_MS = 10 * 60 * 1000; // 10 minutes
@@ -119,14 +124,19 @@ const ForgotPasswordSchema = z.object({
 });
 
 const ResetPasswordSchema = z.object({
-  token: z.string().min(1, "token is required"),
+  // Round 1599: always randomBytes(32).toString("hex") (64 chars, see
+  // hashResetToken's callers below) -- the same "every free-text field gets
+  // a ceiling" gap round 1583 left unclosed for this file's token fields.
+  token: z.string().min(1, "token is required").max(64, "token must be 64 characters or fewer"),
   // Round 1583: same cap as CredentialsSchema's own password field above.
   newPassword: z.string().min(8, "newPassword must be at least 8 characters").max(256, "newPassword must be 256 characters or fewer"),
   lang: z.enum(["he", "en"]).optional(),
 });
 
 const VerifyEmailSchema = z.object({
-  token: z.string().min(1, "token is required"),
+  // Round 1599: same reasoning as ResetPasswordSchema's own token field
+  // above -- always randomBytes(32).toString("hex") (64 chars).
+  token: z.string().min(1, "token is required").max(64, "token must be 64 characters or fewer"),
 });
 
 const PASSWORD_RESET_TOKEN_TTL_MS = 60 * 60 * 1000; // 1 hour
