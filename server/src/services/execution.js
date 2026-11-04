@@ -1,7 +1,7 @@
 import { db, makeId } from '../db/store.js';
 import { canSpend } from '../engine/budget.js';
 import { checkExecutionGate } from '../engine/executionGate.js';
-import { makeIdempotencyKey } from '../engine/idempotency.js';
+import { makeIdempotencyKey, wasAlreadyPerformed } from '../engine/idempotency.js';
 import { getSettings } from './settings.js';
 import { totalSpentSoFar, totalLossSoFar, todayKey } from './ledger.js';
 
@@ -20,9 +20,11 @@ export async function executeGatedAction({ opportunityId, actionType, amount = 0
   const settings = getSettings();
   const key = makeIdempotencyKey({ opportunityId, actionType, dateKey: todayKey() });
 
-  const alreadyDone = db.actions_log.where(
-    (a) => a.detail?.idempotencyKey === key && a.result === 'success'
-  ).length > 0;
+  // wasAlreadyPerformed is idempotency.js's own dedicated, tested "has this
+  // exact action already run" check - until now nothing actually called it,
+  // and this duplicated its exact logic inline instead.
+  const performedKeys = db.actions_log.where((a) => a.result === 'success').map((a) => a.detail?.idempotencyKey);
+  const alreadyDone = wasAlreadyPerformed(key, performedKeys);
   if (alreadyDone) return { allowed: false, duplicate: true, reason: 'this exact action was already performed today' };
 
   const modeGate = checkExecutionGate({
