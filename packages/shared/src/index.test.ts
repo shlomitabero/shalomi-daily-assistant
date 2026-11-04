@@ -263,6 +263,24 @@ test("findOversizedGeneratedSpecField flags an oversized summary, phrase array e
   });
   assert.match(findOversizedGeneratedSpecField(oversizedEnumValue)!, /enumValue/);
 
+  const oversizedEnumLabelKey = ProductSpecSchema.parse({
+    ...baseSpec([
+      {
+        name: "Order",
+        fields: [
+          {
+            name: "status",
+            type: "enum",
+            required: true,
+            enumValues: ["Active"],
+            enumLabels: { ["x".repeat(GENERATED_SPEC_LABEL_MAX_LENGTH + 1)]: "Active" },
+          },
+        ],
+      },
+    ]),
+  });
+  assert.match(findOversizedGeneratedSpecField(oversizedEnumLabelKey)!, /enumLabel key/);
+
   const oversizedRelationTo = ProductSpecSchema.parse({
     ...baseSpec([
       { name: "Order", fields: [{ name: "customer", type: "relation", required: true, relationTo: "x".repeat(GENERATED_SPEC_LABEL_MAX_LENGTH + 1) }] },

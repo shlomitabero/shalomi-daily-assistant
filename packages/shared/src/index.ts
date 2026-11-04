@@ -421,6 +421,19 @@ export function findOversizedGeneratedSpecField(spec: ProductSpec): string | nul
           return `an enumLabel on field "${field.name}" in entity "${entity.name}" (${value.length} characters, max ${GENERATED_SPEC_LABEL_MAX_LENGTH})`;
         }
       }
+      // Round 1602: enumLabels's KEY (FieldSchema's own declaration above,
+      // z.record(z.string(), z.string().min(1))) has no .max() of its own --
+      // only the value does -- so a key is just as exposed to the
+      // token-repetition failure mode this whole function exists to catch,
+      // and need not even match anything in this field's own (already
+      // capped) enumValues array. Capped at the identifier-like
+      // GENERATED_SPEC_LABEL_MAX_LENGTH, same as enumValues's own elements,
+      // since a key IS a raw enum-value identifier, not a display phrase.
+      for (const key of Object.keys(field.enumLabels ?? {})) {
+        if (key.length > GENERATED_SPEC_LABEL_MAX_LENGTH) {
+          return `an enumLabel key on field "${field.name}" in entity "${entity.name}" (${key.length} characters, max ${GENERATED_SPEC_LABEL_MAX_LENGTH})`;
+        }
+      }
     }
   }
   return null;
