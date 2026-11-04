@@ -57,8 +57,15 @@ export default function Opportunities() {
   // more get published or rejected over time. Active drafts (the thing
   // this whole page is for) always come first, in their existing ranked
   // order; resolved ones are still visible, just out of the way below.
-  const activeOpportunities = opportunities.filter((o) => o.status === 'draft');
-  const resolvedOpportunities = opportunities.filter((o) => o.status !== 'draft');
+  // A demo draft (no ANTHROPIC_API_KEY when drafted) can never actually
+  // be published - publishing.js refuses it - so it can never be acted
+  // on either; digest.js, runAutonomousScan and the dashboard already
+  // exclude it from their own "what should I look at" surfaces for the
+  // same reason. It still shows up here, just below with the resolved
+  // ones rather than mixed into the worklist of things that can
+  // actually be acted on.
+  const activeOpportunities = opportunities.filter((o) => o.status === 'draft' && !o.productDraft?.demo);
+  const resolvedOpportunities = opportunities.filter((o) => o.status !== 'draft' || o.productDraft?.demo);
 
   return (
     <div className="page">
