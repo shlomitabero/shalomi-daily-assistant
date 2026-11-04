@@ -70,5 +70,12 @@ export async function runAutonomousScan() {
     }
   }
 
+  // Every other outcome above (not connected, over the draft cap, an AI
+  // call failing) logs its own 'autonomous_scan' entry - this success path
+  // was the one exception. Filtering the audit log by type 'autonomous_scan'
+  // to check "is the scheduled scan actually running" would otherwise show
+  // nothing but failures and skips forever, even while it was working
+  // perfectly and creating opportunities on every run.
+  logAction({ type: 'autonomous_scan', detail: { opportunityId: opportunity.id, published: opportunity.status === 'published' }, result: 'success' });
   return { ran: true, opportunity };
 }

@@ -85,6 +85,14 @@ test('runAutonomousScan actually creates a real honest opportunity end-to-end wh
     assert.equal(result.opportunity.status, 'draft'); // default mode is 'research' — never auto-published
     assert.equal(result.opportunity.revenueEstimate, null); // demand is never fabricated
     assert.equal(db.opportunities.all().length, 1);
+    // Every other outcome (not connected, over the cap, an AI call failing)
+    // logs its own 'autonomous_scan' entry - this is the one success case,
+    // and without it the audit log would show nothing but failures/skips
+    // for this type even while the scan was working perfectly.
+    const logged = db.actions_log.where((a) => a.type === 'autonomous_scan' && a.result === 'success')[0];
+    assert.ok(logged);
+    assert.equal(logged.detail.opportunityId, result.opportunity.id);
+    assert.equal(logged.detail.published, false);
   } finally {
     globalThis.fetch = originalFetch;
     for (const key of Object.keys(originalEnv)) {
@@ -227,6 +235,8 @@ test('runAutonomousScan publishes immediately in auto_limited mode when Paddle i
     assert.equal(result.ran, true);
     assert.equal(result.opportunity.status, 'published');
     assert.equal(result.opportunity.paddlePriceId, 'pri_456');
+    const logged = db.actions_log.where((a) => a.type === 'autonomous_scan' && a.result === 'success')[0];
+    assert.equal(logged.detail.published, true);
   } finally {
     globalThis.fetch = originalFetch;
     for (const key of Object.keys(originalEnv)) {
