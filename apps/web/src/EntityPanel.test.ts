@@ -15,6 +15,7 @@ import { getCollapsedBoardColumns } from "./collapsedBoardColumnsPreference.js";
 import { getViewMode } from "./viewModePreference.js";
 import { getSortKeys } from "./sortKeysPreference.js";
 import { getFieldFilters, setFieldFilters } from "./fieldFiltersPreference.js";
+import { getPinnedRecordIds } from "./pinnedRecordsPreference.js";
 import { EntityPanel } from "./EntityPanel.js";
 import { LanguageProvider } from "./i18n/LanguageContext.js";
 import { ThemeProvider } from "./theme/ThemeContext.js";
@@ -8753,6 +8754,55 @@ test("EntityPanel's delete removes the row immediately and shows an Undo toast, 
         t.mock.timers.tick(10_000);
       });
       assert.equal(deletedIds.length, 0, "even long after the undo window would have elapsed, undoing must have genuinely cancelled the real delete");
+    } finally {
+      t.mock.timers.reset();
+      globalThis.fetch = originalFetch;
+      globalThis.window.confirm = originalConfirm;
+    }
+  });
+});
+
+/**
+ * Round 1595: commitPendingDelete only ever restored a failed delete's
+ * own entries -- a successfully deleted record's own pinned id was never
+ * removed from pinnedRecordsPreference.ts's own store, leaking its id in
+ * localStorage forever with no size cap of its own (see
+ * removePinnedRecord's own doc comment there for the full "unbounded
+ * localStorage growth" reasoning). Confirms the pinned id is actually
+ * forgotten once the real delete commits (the undo window elapsing with
+ * no Undo click), not just that the row disappears from view.
+ */
+test("EntityPanel forgets a deleted record's own pinned id once its real delete commits, instead of leaking it in localStorage forever", async (t) => {
+  await withJsdom(async () => {
+    const store: EntityRecord[] = [{ id: 1, name: "Acme Corp", status: "new" }];
+    const deletedIds: number[] = [];
+    const originalFetch = globalThis.fetch;
+    const originalConfirm = globalThis.window.confirm;
+    globalThis.fetch = mockRecordsFetch(store, (id) => deletedIds.push(id)) as typeof fetch;
+    globalThis.window.confirm = (() => true) as typeof window.confirm;
+    try {
+      renderEntityPanel();
+      await waitForCondition(() => document.querySelectorAll("table tbody tr").length === 1);
+
+      const pinButton = document.querySelector(".record-pin") as HTMLButtonElement;
+      fireEvent.click(pinButton);
+      await waitForCondition(() => pinButton.className === "record-pin record-pin-active");
+      assert.deepEqual(getPinnedRecordIds("proj1", "Deal", "user1"), new Set([1]), "pinning must actually write to storage before the delete");
+
+      t.mock.timers.enable({ apis: ["setTimeout"] });
+      fireEvent.click(document.querySelector(".danger") as HTMLButtonElement);
+      assert.equal(document.querySelectorAll("table tbody tr").length, 0, "the row must disappear from view immediately");
+
+      act(() => {
+        t.mock.timers.tick(5000);
+      });
+      await new Promise((resolve) => setImmediate(resolve));
+      assert.equal(deletedIds[0], 1, "the real delete must have actually committed");
+      assert.deepEqual(
+        getPinnedRecordIds("proj1", "Deal", "user1"),
+        new Set(),
+        "the deleted record's own pinned id must be forgotten, not left sitting in localStorage forever",
+      );
     } finally {
       t.mock.timers.reset();
       globalThis.fetch = originalFetch;

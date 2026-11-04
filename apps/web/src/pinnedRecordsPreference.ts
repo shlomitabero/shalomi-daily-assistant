@@ -97,6 +97,31 @@ function toIdSet(ids: string[]): Set<number> {
   return result;
 }
 
+/**
+ * Round 1595: a deleted record's own id never got removed from this store --
+ * commitPendingDelete (EntityPanel.tsx) only ever restores on failure, never
+ * forgets on success, so a pinned record's id sat in localStorage forever
+ * once the real record was gone, with no size cap of its own (unlike e.g.
+ * whatsappRecentNumbers.ts's MAX_RECENT_NUMBERS) to bound the leak. The
+ * exact "unbounded localStorage growth across a resource's lifecycle" bug
+ * class rounds 390-1128 already fixed repeatedly for projects/entities, just
+ * never extended to this finer grain since records didn't have their own
+ * preference key before round 1571. Unconditional (unlike toggleRecordPinned,
+ * which flips state either way) -- a no-op on an id that was never pinned.
+ */
+export function removePinnedRecord(projectId: string, entityName: string, userId: string, recordId: number): void {
+  const store = readStore();
+  const key = keyFor(projectId, entityName, userId);
+  const ids = store[key];
+  if (ids === undefined) return;
+  const idStr = String(recordId);
+  const next = ids.filter((id) => id !== idStr);
+  if (next.length === ids.length) return;
+  if (next.length === 0) delete store[key];
+  else store[key] = next;
+  writeStore(store);
+}
+
 /** Toggles one record's pinned state for this one project+entity+user and returns the new full set, so callers can update their own state from the return value instead of re-reading storage. */
 export function toggleRecordPinned(projectId: string, entityName: string, userId: string, recordId: number): Set<number> {
   const store = readStore();

@@ -30,7 +30,7 @@ import {
 } from "./entityRecentSearches.js";
 import { getGroupByField, getGroupByFieldType, setGroupByField, setGroupByFieldType } from "./groupByPreference.js";
 import { getViewMode as getViewModePreference, setViewMode as setViewModePreference } from "./viewModePreference.js";
-import { getPinnedRecordIds, toggleRecordPinned, sortRecordsByPinned } from "./pinnedRecordsPreference.js";
+import { getPinnedRecordIds, toggleRecordPinned, sortRecordsByPinned, removePinnedRecord } from "./pinnedRecordsPreference.js";
 import { getSortKeys as getSortKeysPreference, setSortKeys as setSortKeysPreference } from "./sortKeysPreference.js";
 import { getFieldFilters as getFieldFiltersPreference, setFieldFilters as setFieldFiltersPreference } from "./fieldFiltersPreference.js";
 import { migrateCollapsedGroupsFieldCase, setCollapsedGroups as setCollapsedGroupsPreference } from "./collapsedGroupsPreference.js";
@@ -3779,6 +3779,15 @@ export function EntityPanel({
     // path below, same as any other delete failure.
     const results = await Promise.allSettled(pending.entries.map((e) => deleteRecord(projectId, entity.name, e.id, e.record)));
     const failed = pending.entries.filter((_, i) => results[i].status === "rejected");
+    // Round 1595: a pinned record's id never got removed from its own
+    // store once the real delete actually succeeded -- see
+    // removePinnedRecord's own doc comment (pinnedRecordsPreference.ts)
+    // for the full "unbounded localStorage growth" reasoning. Only the
+    // entries that genuinely succeeded, mirroring failed's own exclusion
+    // of them from the restore path right below.
+    for (const entry of pending.entries) {
+      if (!failed.includes(entry)) removePinnedRecord(projectId, entity.name, userId, entry.id);
+    }
     if (failed.length === 0) return;
     setRecords((prev) => failed.reduce((acc, e) => restoreRecordAt(acc, e.record, e.index), prev));
     const firstFailure = results.find((r): r is PromiseRejectedResult => r.status === "rejected")!;

@@ -5,6 +5,7 @@ import { JSDOM } from "jsdom";
 import {
   getPinnedRecordIds,
   toggleRecordPinned,
+  removePinnedRecord,
   sortRecordsByPinned,
   purgePinnedRecordsForEntity,
   purgePinnedRecordsForProject,
@@ -63,6 +64,41 @@ test("unpinning the last record clears the storage entry instead of leaving an e
     toggleRecordPinned("proj1", "Deal", "userA", 7);
     const raw = localStorage.getItem("forge.pinnedRecords");
     assert.equal(raw, "{}", "an entity+user with no pins left should not bloat storage with an explicit empty entry");
+  });
+});
+
+/**
+ * Round 1595: deleting a pinned record never forgot its id -- commitPendingDelete
+ * (EntityPanel.tsx) only ever restored on failure, never removed it from this
+ * store on success, so the id leaked in localStorage forever. Unconditional,
+ * unlike toggleRecordPinned (which flips state either way): removing an id
+ * that's genuinely gone must not resurrect it as pinned.
+ */
+test("removePinnedRecord forgets one pinned id for real, leaving a sibling pin for the same project+entity+user untouched", async () => {
+  await withJsdom(() => {
+    toggleRecordPinned("proj1", "Deal", "userA", 7);
+    toggleRecordPinned("proj1", "Deal", "userA", 9);
+    removePinnedRecord("proj1", "Deal", "userA", 7);
+    assert.deepEqual(getPinnedRecordIds("proj1", "Deal", "userA"), new Set([9]), "only the removed id must be gone -- the sibling pin must survive");
+  });
+});
+
+test("removePinnedRecord clears the storage entry instead of leaving an empty array, when it removes the last pinned id", async () => {
+  await withJsdom(() => {
+    toggleRecordPinned("proj1", "Deal", "userA", 7);
+    removePinnedRecord("proj1", "Deal", "userA", 7);
+    const raw = localStorage.getItem("forge.pinnedRecords");
+    assert.equal(raw, "{}", "an entity+user with no pins left should not bloat storage with an explicit empty entry");
+  });
+});
+
+test("removePinnedRecord on an id that was never pinned, or for a project+entity+user with no entry at all, is a harmless no-op", async () => {
+  await withJsdom(() => {
+    toggleRecordPinned("proj1", "Deal", "userA", 7);
+    removePinnedRecord("proj1", "Deal", "userA", 99);
+    assert.deepEqual(getPinnedRecordIds("proj1", "Deal", "userA"), new Set([7]), "removing an id that was never pinned must not touch the real pin");
+    removePinnedRecord("proj2", "Customer", "userB", 1);
+    assert.deepEqual(getPinnedRecordIds("proj2", "Customer", "userB"), new Set());
   });
 });
 

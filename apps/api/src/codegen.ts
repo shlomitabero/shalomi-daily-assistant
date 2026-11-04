@@ -2053,6 +2053,17 @@ function toggleRecordPinned(entityName, recordId) {
   writePinnedRecordsStore(store);
   return pinned;
 }
+// Round 1595 (live preview): a deleted record's own id never got removed
+// from this store -- mirrored here, see pinnedRecordsPreference.ts's own
+// removePinnedRecord for the full "unbounded localStorage growth" reasoning.
+function removePinnedRecord(entityName, recordId) {
+  const store = readPinnedRecordsStore();
+  const pinned = new Set(Array.isArray(store[entityName]) ? store[entityName] : []);
+  if (!pinned.delete(recordId)) return;
+  if (pinned.size === 0) delete store[entityName];
+  else store[entityName] = [...pinned];
+  writePinnedRecordsStore(store);
+}
 // Pinned records first, unpinned after -- each group keeping its own
 // original relative order, mirroring pinnedRecordsPreference.ts's own
 // identical sortRecordsByPinned.
@@ -6158,6 +6169,12 @@ export function EntityView({ entity, highlightRecordId, onHighlightHandled, onJu
   async function commitPendingDelete(pending) {
     const results = await Promise.allSettled(pending.entries.map((e) => deleteRecord(entity.name, e.id, e.record)));
     const failed = pending.entries.filter((_, i) => results[i].status === "rejected");
+    // Round 1595: see the live preview's own commitPendingDelete comment --
+    // a pinned record's id must be forgotten once its delete actually
+    // succeeded, not left in storage forever.
+    for (const entry of pending.entries) {
+      if (!failed.includes(entry)) removePinnedRecord(entity.name, entry.id);
+    }
     if (failed.length === 0) return;
     setRecords((prev) => failed.reduce((acc, e) => restoreRecordAt(acc, e.record, e.index), prev));
     const firstFailure = results.find((r) => r.status === "rejected");
