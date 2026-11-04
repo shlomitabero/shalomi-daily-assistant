@@ -108,6 +108,17 @@ export function patchOpportunity(req, res) {
       if (!isFiniteOrNullish(value)) {
         return res.status(400).json({ error: `costs.${key} must be a finite number or null (unknown)` });
       }
+      // Unlike revenueEstimate.low (which can legitimately be negative - a
+      // worst-case loss scenario is still a coherent estimate), a cost is
+      // money going out and can never be negative. Letting one through
+      // would silently inflate computeNetProfit's totalCost subtraction
+      // into an addition, showing the owner a profit higher than what's
+      // actually true from a single typo (e.g. "-5" instead of "5") -
+      // exactly the kind of fabricated number this app exists to avoid,
+      // even when the mistake is the owner's own.
+      if (value != null && value < 0) {
+        return res.status(400).json({ error: `costs.${key} must be a non-negative number` });
+      }
     }
   }
   // priceUSD, unlike revenueEstimate/costs, is never meaningfully "unknown" —

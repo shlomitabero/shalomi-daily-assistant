@@ -95,6 +95,25 @@ test('patchOpportunity rejects a non-finite cost field', () => {
   assert.equal(res.statusCode, 400);
 });
 
+test('patchOpportunity rejects a negative cost - a single typo must not silently inflate the shown profit', () => {
+  __resetForTests();
+  const opp = insertOpportunity();
+  const res = makeRes();
+  patchOpportunity({ params: { id: opp.id }, body: { costs: { aiUsage: -5 } } }, res);
+  assert.equal(res.statusCode, 400);
+  assert.equal(db.opportunities.get(opp.id).costs.aiUsage, undefined);
+});
+
+test('patchOpportunity still accepts a zero or null cost - unlike negative, both are legitimate', () => {
+  __resetForTests();
+  const opp = insertOpportunity();
+  const res = makeRes();
+  patchOpportunity({ params: { id: opp.id }, body: { costs: { aiUsage: 0, paymentProcessing: null } } }, res);
+  assert.equal(res.statusCode, 200);
+  assert.equal(res.body.opportunity.costs.aiUsage, 0);
+  assert.equal(res.body.opportunity.costs.paymentProcessing, null);
+});
+
 test('patchOpportunity rejects an invalid riskLevel or dataQuality instead of storing it', () => {
   __resetForTests();
   const opp1 = insertOpportunity();
