@@ -158,6 +158,30 @@ test('refreshWatchlistEntry updates a previously-disconnected entry to the curre
   });
 });
 
+test('refreshWatchlistEntry surfaces a 502 instead of silently keeping the stale price when the quote provider fails', async () => {
+  // Mirrors addToWatchlist's own 502-on-provider-failure test above — this
+  // route makes the exact same fetchQuote call but had no test for its
+  // failure path, even though a failed refresh must never look like it
+  // succeeded (nor silently fall back to the old, now-stale price).
+  __resetForTests();
+  const entry = db.financial_watchlist.insert({
+    id: 'wl_1', symbol: 'AAPL', connected: false, dataSource: null, lastPrice: null, lastUpdatedAt: null,
+  });
+  await withMarketDataKey(async () => {
+    const restore = stubFetchOnce({ ok: false, status: 429 });
+    try {
+      const res = makeRes();
+      await refreshWatchlistEntry({ params: { id: entry.id } }, res);
+      assert.equal(res.statusCode, 502);
+      const unchanged = db.financial_watchlist.get(entry.id);
+      assert.equal(unchanged.connected, false);
+      assert.equal(unchanged.lastPrice, null);
+    } finally {
+      restore();
+    }
+  });
+});
+
 test('deleteWatchlistEntry removes an existing entry and 404s for one that does not exist', () => {
   __resetForTests();
   const entry = db.financial_watchlist.insert({ id: 'wl_1', symbol: 'AAPL' });
