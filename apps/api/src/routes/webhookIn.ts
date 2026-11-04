@@ -1,7 +1,7 @@
 import { timingSafeEqual } from "node:crypto";
 import { Router, type Request, type Response } from "express";
 import type { ForgeDatabase } from "@forge/db";
-import { getInboundWebhookToken, insertRecord, isValidDateString, recordInboundWebhookDelivery, recordInboundWebhookFailure } from "@forge/db";
+import { getInboundWebhookToken, insertRecord, isValidDateString, listRecords, recordInboundWebhookDelivery, recordInboundWebhookFailure } from "@forge/db";
 import { ProductSpecSchema, type Entity, type Project } from "@forge/shared";
 import type { WhatsAppWebManager } from "../whatsappWeb.js";
 import type { EmailSender } from "../email.js";
@@ -9,6 +9,7 @@ import { runAutomationsForRecordChange } from "../automations.js";
 import { createRateLimiter } from "../auth/rateLimit.js";
 import { withIdempotency } from "../idempotency.js";
 import { HttpError } from "../httpError.js";
+import { recordDisplayLabel } from "../displayField.js";
 
 function tokenMatches(provided: string, stored: string): boolean {
   const providedBuf = Buffer.from(provided, "utf8");
@@ -124,18 +125,47 @@ function normalizeBodyKeys(entity: Entity, body: Record<string, unknown>): Recor
  * sibling `relation` type that shares coerceValue's own branch -- a
  * foreign-key id has no realistic currency-formatted shape to be lenient
  * about, unlike an amount field.
+ *
+ * Round 1584: extends the same reasoning to relation fields after all --
+ * round 1553's own scoping-out only ruled out being lenient about a raw
+ * foreign-key id's own formatting (there's no realistic currency-style
+ * shape for an id to be lenient about), but never considered the
+ * identical case-insensitive-match problem CSV import already solves for
+ * relation columns: a real external integrator has no API to discover
+ * this app's internal numeric record ids at all, so the only identifier
+ * they could plausibly send for e.g. an Order's `customer` relation field
+ * is the related record's own human name/label (`{"customer": "Acme
+ * Corp"}`) -- exactly the shape CSV import's own buildImportRecords
+ * (apps/web/src/entityFormatting.ts) already resolves via
+ * recordDisplayLabel, case-insensitively. Without this, that payload hits
+ * coerceValue's bare `Number(raw)` relation branch (repository.ts, shared
+ * with the number branch above) and throws for the WHOLE record --
+ * the exact same severity round 1551/1553 already flagged for date/number.
+ * Resolves via this project's own target entity + its records, matching
+ * recordDisplayLabel case-insensitively; mirrors this file's own
+ * established first-case-insensitive-match-wins convention (round 1512's
+ * doc comment) rather than importing CSV import's stricter ambiguity-
+ * rejection. A value that already parses as a number, or matches no
+ * record, falls through unchanged to today's existing behavior.
  */
 const WEBHOOK_BOOLEAN_TRUE_VALUES = ["true", "1", "yes", "כן"];
 const WEBHOOK_BOOLEAN_FALSE_VALUES = ["false", "0", "no", "לא"];
 const WEBHOOK_DATE_PREFIX = /^\d{4}-\d{2}-\d{2}/;
 const WEBHOOK_NUMBER_FORMATTING = /[,$€£₪\s]/g;
 
-function normalizeBodyValues(entity: Entity, body: Record<string, unknown>): Record<string, unknown> {
+function normalizeBodyValues(db: ForgeDatabase, projectId: string, allEntities: Entity[], entity: Entity, body: Record<string, unknown>): Record<string, unknown> {
   const normalized: Record<string, unknown> = { ...body };
   for (const field of entity.fields) {
     const raw = normalized[field.name];
     if (typeof raw !== "string") continue;
-    if (field.type === "date" && !isValidDateString(raw)) {
+    if (field.type === "relation" && field.relationTo && !Number.isFinite(Number(raw))) {
+      const targetEntity =
+        allEntities.find((e) => e.name === field.relationTo) ?? allEntities.find((e) => e.name.toLowerCase() === field.relationTo!.toLowerCase());
+      if (targetEntity) {
+        const match = listRecords(db, projectId, targetEntity).find((r) => recordDisplayLabel(targetEntity, r).toLowerCase() === raw.toLowerCase());
+        if (match) normalized[field.name] = String(match.id);
+      }
+    } else if (field.type === "date" && !isValidDateString(raw)) {
       const match = WEBHOOK_DATE_PREFIX.exec(raw);
       if (match && isValidDateString(match[0])) normalized[field.name] = match[0];
     } else if (field.type === "number" && !Number.isFinite(Number(raw))) {
@@ -300,7 +330,12 @@ export function createInboundWebhookRouter(db: ForgeDatabase, whatsapp: WhatsApp
         async () => {
           let record: ReturnType<typeof insertRecord>;
           try {
-            record = insertRecord(db, projectId, entity, normalizeBodyValues(entity, normalizeBodyKeys(entity, req.body ?? {})));
+            record = insertRecord(
+              db,
+              projectId,
+              entity,
+              normalizeBodyValues(db, projectId, parsed.data.entities, entity, normalizeBodyKeys(entity, req.body ?? {})),
+            );
           } catch (err) {
             // Round 1471: see recordInboundWebhookFailure's own doc comment
             // (packages/db) for why this is recorded here specifically --

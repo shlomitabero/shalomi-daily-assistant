@@ -21215,6 +21215,106 @@ test("POST /public/webhook-in/:projectId/:entityName still rejects a genuinely i
   });
 });
 
+/**
+ * Round 1584: extends the same leniency to relation fields -- a real
+ * external sender has no API to discover this app's internal numeric
+ * record ids, so the only identifier it could plausibly send for a
+ * relation field is the related record's own human name/label, exactly
+ * the shape CSV import already resolves (entityFormatting.ts).
+ */
+test("POST /public/webhook-in/:projectId/:entityName accepts a related record's display label for a relation field, resolving it to the real numeric id", async () => {
+  await withServer(async (baseUrl, db) => {
+    const email = `webhook-in-relation-label-${randomUUID()}@example.com`;
+    const authToken = await signup(baseUrl, email);
+    const user = findUserByEmail(db, email)!;
+    const spec: ProductSpec = {
+      summary: "test",
+      personas: [],
+      roles: ["Admin"],
+      entities: [
+        { name: "Customer", fields: [{ name: "name", type: "text", required: true }] },
+        {
+          name: "Order",
+          fields: [
+            { name: "item", type: "text", required: true },
+            { name: "customer", type: "relation", relationTo: "Customer", required: true },
+          ],
+        },
+      ],
+      screens: [],
+      assumptions: [],
+      openQuestions: [],
+    };
+    const projectId = randomUUID();
+    insertProject(db, { id: projectId, ownerId: user.id, name: "CRM", description: "test", spec });
+    diffAndMigrate(db, projectId, undefined, spec);
+    markProjectBuilt(db, projectId);
+    const customer = insertRecord(db, projectId, spec.entities[0], { name: "Acme Corp" });
+
+    const tokenRes = await fetch(`${baseUrl}/api/projects/${projectId}/inbound-webhook-token`, { headers: authHeaders(authToken) });
+    const { token: webhookToken } = (await tokenRes.json()) as { token: string };
+
+    const webhookRes = await fetch(`${baseUrl}/api/public/webhook-in/${projectId}/Order?token=${webhookToken}`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ item: "Widget", customer: "acme corp" }),
+    });
+    assert.equal(
+      webhookRes.status,
+      201,
+      "a relation value sent as the related record's own display label (the only identifier a real external integrator could plausibly know), case-insensitively, must not be rejected as an invalid number",
+    );
+    const { id: recordId } = (await webhookRes.json()) as { id: string };
+
+    const listRes = await fetch(`${baseUrl}/api/projects/${projectId}/entities/Order`, { headers: authHeaders(authToken) });
+    const { records } = (await listRes.json()) as { records: { id: string; item: string; customer: number }[] };
+    const created = records.find((r) => r.id === recordId);
+    assert.ok(created, "expected the record the route reported creating to actually exist");
+    assert.equal(created!.customer, Number(customer.id), "the stored value must be the resolved customer's real numeric id, not the raw label string");
+  });
+});
+
+test("POST /public/webhook-in/:projectId/:entityName still rejects a relation value that matches no record's display label", async () => {
+  await withServer(async (baseUrl, db) => {
+    const email = `webhook-in-relation-nomatch-${randomUUID()}@example.com`;
+    const authToken = await signup(baseUrl, email);
+    const user = findUserByEmail(db, email)!;
+    const spec: ProductSpec = {
+      summary: "test",
+      personas: [],
+      roles: ["Admin"],
+      entities: [
+        { name: "Customer", fields: [{ name: "name", type: "text", required: true }] },
+        {
+          name: "Order",
+          fields: [
+            { name: "item", type: "text", required: true },
+            { name: "customer", type: "relation", relationTo: "Customer", required: true },
+          ],
+        },
+      ],
+      screens: [],
+      assumptions: [],
+      openQuestions: [],
+    };
+    const projectId = randomUUID();
+    insertProject(db, { id: projectId, ownerId: user.id, name: "CRM", description: "test", spec });
+    diffAndMigrate(db, projectId, undefined, spec);
+    markProjectBuilt(db, projectId);
+    insertRecord(db, projectId, spec.entities[0], { name: "Acme Corp" });
+
+    const tokenRes = await fetch(`${baseUrl}/api/projects/${projectId}/inbound-webhook-token`, { headers: authHeaders(authToken) });
+    const { token: webhookToken } = (await tokenRes.json()) as { token: string };
+
+    const webhookRes = await fetch(`${baseUrl}/api/public/webhook-in/${projectId}/Order?token=${webhookToken}`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ item: "Widget", customer: "Nonexistent Customer" }),
+    });
+    assert.equal(webhookRes.status, 400, "a relation value matching no real record's label must still be rejected, not silently accepted just because the leniency fix exists");
+  });
+});
+
 test("POST /public/webhook-in/:projectId/:entityName 404s for a missing, wrong, or never-requested token, a nonexistent entity, or a nonexistent project -- the token itself is the only authentication", async () => {
   await withServer(async (baseUrl, db) => {
     const email = `webhook-in-bad-${randomUUID()}@example.com`;
