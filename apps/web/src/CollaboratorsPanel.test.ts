@@ -465,6 +465,65 @@ test("CollaboratorsPanel tells the owner when the invited email already has acce
 });
 
 /**
+ * Round 1592: the invite form's type="email" input had no `noValidate` on
+ * its <form>, so a non-empty but malformed value (e.g. "not-an-email")
+ * tripped the browser's own native type="email" constraint and blocked
+ * submission before handleInvite ever ran -- an untranslated native popup
+ * instead of this app's own translated message, the same bug class rounds
+ * 342/1587/1588/1589 already closed for other forms. Confirms the real
+ * POST never fires for a malformed value, a translated message appears,
+ * and the field is refocused -- then confirms a genuinely valid email
+ * still submits normally once corrected.
+ */
+test("CollaboratorsPanel's invite form rejects a malformed email with a translated message instead of a native browser popup, and still submits once corrected", async () => {
+  await withJsdom(async () => {
+    const originalFetch = globalThis.fetch;
+    let postCount = 0;
+
+    globalThis.fetch = (async (input: string, init?: RequestInit) => {
+      const method = init?.method ?? "GET";
+      if (method === "GET" && input === "/api/projects/proj1/collaborators") {
+        return new Response(JSON.stringify({ collaborators: [], owner: { userId: "owner1", email: "amit@example.com" } }), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        });
+      }
+      if (method === "POST" && input === "/api/projects/proj1/collaborators") {
+        postCount++;
+        const dana = makeCollaborator("u1", "dana@example.com");
+        return new Response(JSON.stringify({ collaborators: [dana], owner: { userId: "owner1", email: "amit@example.com" } }), {
+          status: 201,
+          headers: { "content-type": "application/json" },
+        });
+      }
+      throw new Error(`unexpected request ${method} ${input}`);
+    }) as typeof fetch;
+
+    try {
+      renderPanel(true);
+      await waitForCondition(() => document.querySelectorAll(".collab-list li").length === 1);
+
+      const emailInput = document.querySelector('.collab-invite-form input[type="email"]') as HTMLInputElement;
+      fireEvent.change(emailInput, { target: { value: "not-an-email" } });
+      fireEvent.submit(document.querySelector(".collab-invite-form")!);
+
+      await waitForCondition(() => document.body.textContent?.includes("valid email") ?? false);
+      assert.equal(postCount, 0, "a malformed email must never reach the real POST .../collaborators endpoint");
+      assert.equal(document.activeElement, emailInput, "the malformed email field must be refocused");
+
+      // Correcting it must still submit normally -- this form isn't broken
+      // for the real happy path, only for the malformed-value case.
+      fireEvent.change(emailInput, { target: { value: "dana@example.com" } });
+      fireEvent.submit(document.querySelector(".collab-invite-form")!);
+      await waitForCondition(() => postCount === 1);
+      await waitForCondition(() => document.querySelectorAll(".collab-list li").length === 2);
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+});
+
+/**
  * Round 1365: handleInvite had no guard against racing ITSELF -- the same
  * own-click reentrancy gap round 1363/1364 closed for EntityPanel/
  * AutomationsPanel/WhatsAppPanel's own submit handlers. A fast double-click

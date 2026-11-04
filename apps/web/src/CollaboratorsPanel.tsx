@@ -157,6 +157,34 @@ export function CollaboratorsPanel({
     }
   }
 
+  /**
+   * Round 1592: this form's type="email" input had no `noValidate` on its
+   * <form>, the same bug class rounds 342/1587/1588/1589 already fixed for
+   * EntityPanel/AuthScreen/ChangePasswordPanel/ChangeEmailPanel/
+   * AutomationsPanel. The submit button already disables on a blank email
+   * (below), so that case was safe, but a non-empty, malformed value (e.g.
+   * "not-an-email") still failed the browser's own native type="email"
+   * constraint -- that check fires independent of `required` -- blocking
+   * submission with an untranslated native popup and never reaching
+   * handleInvite's own try/catch at all, let alone the server's real,
+   * translated `z.string().email(...)` check (routes/projects.ts). Reuses
+   * ChangeEmailPanel's own findFirstInvalidField/describeInvalidField pair
+   * verbatim (minus the tooShort branch -- this form has no password
+   * field).
+   */
+  function findFirstInvalidField(form: HTMLFormElement): HTMLInputElement | null {
+    for (const el of Array.from(form.elements)) {
+      if (el.tagName === "INPUT" && !(el as HTMLInputElement).checkValidity()) return el as HTMLInputElement;
+    }
+    return null;
+  }
+
+  function describeInvalidField(input: HTMLInputElement): string {
+    if (input.validity.valueMissing) return t("auth.form.requiredField");
+    if (input.validity.typeMismatch) return t("auth.form.invalidEmail");
+    return t("auth.form.requiredField");
+  }
+
   async function handleInvite(e: React.FormEvent) {
     e.preventDefault();
     // Round 1365: inviteBusy already disabled the submit button, but
@@ -169,11 +197,17 @@ export function CollaboratorsPanel({
     // invitee, so a double-fire risks a duplicate invite email landing in
     // a third party's inbox for one click.
     if (inviteBusy) return;
+    setError(null);
+    setInviteInfo(null);
+    const invalid = findFirstInvalidField(e.currentTarget as HTMLFormElement);
+    if (invalid) {
+      setError(describeInvalidField(invalid));
+      invalid.focus();
+      return;
+    }
     const trimmed = email.trim();
     if (!trimmed) return;
     setInviteBusy(true);
-    setError(null);
-    setInviteInfo(null);
     // addCollaborator (packages/db/src/collaborators.ts) is deliberately
     // idempotent -- inviting someone already on the project is a silent
     // no-op server-side, still a 201 with the unchanged list, so the owner
@@ -542,6 +576,7 @@ export function CollaboratorsPanel({
           <form
             className="collab-invite-form"
             onSubmit={handleInvite}
+            noValidate
             data-escape-handled-locally={hasUnsavedInviteDraft ? "" : undefined}
             onKeyDown={(e) => {
               if (e.key === "Escape" && hasUnsavedInviteDraft) handleResetInviteForm();
