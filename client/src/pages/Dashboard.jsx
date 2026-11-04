@@ -43,7 +43,15 @@ export default function Dashboard() {
     const opp = opportunities.find((o) => o.id === a.opportunityId);
     return opp?.status === 'draft';
   });
-  const activeOpportunities = opportunities.filter((o) => o.status !== 'published' && o.status !== 'rejected');
+  // A demo draft (no ANTHROPIC_API_KEY when it was drafted) can never
+  // actually be published - publishing.js refuses it - and this list is
+  // sliced down to the top 3 below, so without this exclusion a demo
+  // draft could occupy one of those 3 slots and crowd out a real,
+  // actionable opportunity from the dashboard. digest.js's own
+  // recommendation and runAutonomousScan's pending-draft cap already
+  // exclude demo drafts for the same reason - this was the one
+  // "what should I look at" surface left out of that pattern.
+  const activeOpportunities = opportunities.filter((o) => o.status !== 'published' && o.status !== 'rejected' && !o.productDraft?.demo);
 
   // Which source actually produced verified revenue vs. which only cost money with nothing to show.
   const revenueBySource = {};
