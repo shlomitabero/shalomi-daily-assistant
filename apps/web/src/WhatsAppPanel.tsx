@@ -723,6 +723,30 @@ export function WhatsAppPanel({
     setNotifyPermission(result);
   }
 
+  /**
+   * Round 1593: the test-send form's two `required` text inputs (testTo/
+   * testMessage) had no `noValidate` on their <form>, the same bug class
+   * rounds 342/1587/1588/1589/1592 already fixed for every other form in
+   * this app -- clicking "Send" with either field blank never reached
+   * handleSendTest at all, just the browser's own untranslated native
+   * popup, on an otherwise fully bilingual panel. This is the one instance
+   * those earlier rounds' own survey notes explicitly flagged and left
+   * open as backup-only (a higher-traffic instance was found first each
+   * time). Reuses findFirstInvalidField/describeInvalidField's own shape
+   * from ChangeEmailPanel.tsx -- just valueMissing here, since neither
+   * field has a type/format constraint beyond `required`.
+   */
+  function findFirstInvalidField(form: HTMLFormElement): HTMLInputElement | null {
+    for (const el of Array.from(form.elements)) {
+      if (el.tagName === "INPUT" && !(el as HTMLInputElement).checkValidity()) return el as HTMLInputElement;
+    }
+    return null;
+  }
+
+  function describeInvalidField(_input: HTMLInputElement): string {
+    return t("auth.form.requiredField");
+  }
+
   async function handleSendTest(e: React.FormEvent) {
     e.preventDefault();
     // Round 1364: every other handler in this file already guards
@@ -733,6 +757,12 @@ export function WhatsAppPanel({
     // twice before the first sendWhatsAppMessage call's own await
     // returned, sending the same message twice to a real recipient.
     if (sending) return;
+    const invalid = findFirstInvalidField(e.currentTarget as HTMLFormElement);
+    if (invalid) {
+      setSendResult({ ok: false, text: describeInvalidField(invalid) });
+      invalid.focus();
+      return;
+    }
     setSending(true);
     setSendResult(null);
     setRecentNumbers(addRecentWhatsAppNumber(projectId, userId, testTo));
@@ -1305,6 +1335,7 @@ export function WhatsAppPanel({
           <form
             className="whatsapp-test-form"
             onSubmit={handleSendTest}
+            noValidate
             data-escape-handled-locally={hasUnsavedTestDraft ? "" : undefined}
             onKeyDown={(e) => {
               if (e.key === "Escape" && hasUnsavedTestDraft) handleResetTestForm();

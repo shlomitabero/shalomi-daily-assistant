@@ -1380,6 +1380,66 @@ test("WhatsAppPanel's test-send button guards against a fast double-click, so on
 });
 
 /**
+ * Round 1593: the test-send form's two `required` text inputs had no
+ * `noValidate` on their <form>, the same bug class rounds 342/1587/1588/
+ * 1589/1592 already fixed for every other form in this app -- submitting
+ * with the "to" field blank never reached handleSendTest at all, just the
+ * browser's own untranslated native popup. Confirms a blank submit never
+ * reaches the real send endpoint, shows this app's own translated message
+ * in the existing error paragraph, and refocuses the blank field.
+ */
+test("WhatsAppPanel's test-send form rejects a blank 'to' field with a translated message instead of a native browser popup", async () => {
+  await withJsdom(async () => {
+    const originalFetch = globalThis.fetch;
+    let sendCount = 0;
+    globalThis.fetch = (async (input: string, init?: RequestInit): Promise<Response> => {
+      const method = init?.method ?? "GET";
+      if (method === "GET" && input === "/api/projects/proj1/integrations/whatsapp/status") {
+        return new Response(
+          JSON.stringify({ status: "connected", phoneNumber: "972501234567", qrDataUrl: null, error: null }),
+          { status: 200, headers: { "content-type": "application/json" } },
+        );
+      }
+      if (method === "GET" && input === "/api/projects/proj1/integrations/whatsapp/messages") {
+        return new Response(JSON.stringify({ messages: [] }), { status: 200, headers: { "content-type": "application/json" } });
+      }
+      if (method === "POST" && input === "/api/projects/proj1/integrations/whatsapp/send") {
+        sendCount++;
+        return new Response(JSON.stringify({ ok: true }), { status: 200, headers: { "content-type": "application/json" } });
+      }
+      throw new Error(`unexpected request ${method} ${input}`);
+    }) as typeof fetch;
+    try {
+      render(
+        React.createElement(
+          ThemeProvider,
+          null,
+          React.createElement(LanguageProvider, null, React.createElement(WhatsAppPanel, { projectId: "proj1", userId: "user1", projectName: "Test Project", onClose: () => {}, onJumpToEntity: () => {}, onJumpToRecord: () => {}, entities: [], onCreateRecordFromMessage: () => {} })),
+        ),
+      );
+      await waitForCondition(() => document.querySelector(".whatsapp-test-form") !== null);
+
+      const inputs = document.querySelectorAll('.whatsapp-test-form input[type="text"]');
+      const toInput = inputs[0] as HTMLInputElement;
+      fireEvent.change(inputs[1] as HTMLInputElement, { target: { value: "Hello there" } });
+
+      fireEvent.submit(document.querySelector("form.whatsapp-test-form")!);
+
+      await waitForCondition(() => document.querySelector("form.whatsapp-test-form p.error") !== null);
+      assert.equal(sendCount, 0, "a blank 'to' field must never reach the real send endpoint");
+      assert.equal(
+        document.querySelector("form.whatsapp-test-form p.error")?.textContent,
+        "Please fill in this field before submitting.",
+        "must show this app's own translated message, not rely on a native browser popup",
+      );
+      assert.equal(document.activeElement, toInput, "the blank 'to' field must be refocused");
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+});
+
+/**
  * Round 973: confirms the new attachment picker actually uploads the
  * chosen file through the new .../attachments/upload route, shows the
  * returned descriptor instead of the raw file input once upload succeeds,
