@@ -2638,6 +2638,99 @@ test("POST /projects/:id/clone retried with the same idempotency key after the f
 });
 
 /**
+ * Round 1601: PATCH /projects/:id/name and /description were the last two
+ * "rename X" PATCH mutations in this app never given the withIdempotency()
+ * wrap every sibling rename already has (round 960's own doc comment gives
+ * the exact hazard). Proves the real-world shape: a response lost in
+ * transit after attempt 1 already committed, a genuinely newer rename
+ * from another tab/collaborator landing in between, and attempt 1's own
+ * retry arriving after that -- the retry must replay attempt 1's own
+ * cached response, not re-run and silently revert the newer rename back
+ * to attempt 1's stale value.
+ */
+test("PATCH /projects/:id/name retried with the same idempotency key after a genuinely newer rename landed in between replays attempt 1's own response, instead of reverting the newer name", async () => {
+  await withServer(async (baseUrl) => {
+    const token = await signup(baseUrl, "rename-idem1@example.com");
+    const createRes = await fetch(`${baseUrl}/api/projects`, {
+      method: "POST",
+      headers: authHeaders(token),
+      body: JSON.stringify({ description: "A CRM with customers and deals." }),
+    });
+    const { project } = (await createRes.json()) as { project: { id: string } };
+
+    const headers = { ...authHeaders(token), "x-idempotency-key": "rename-repro-key" };
+    const firstRes = await fetch(`${baseUrl}/api/projects/${project.id}/name`, { method: "PATCH", headers, body: JSON.stringify({ name: "Attempt 1 Name" }) });
+    assert.equal(firstRes.status, 200);
+    const first = (await firstRes.json()) as { project: { name: string } };
+    assert.equal(first.project.name, "Attempt 1 Name");
+
+    // A genuinely newer rename, from another tab/collaborator -- no idempotency key, so it always runs for real.
+    const newerRes = await fetch(`${baseUrl}/api/projects/${project.id}/name`, {
+      method: "PATCH",
+      headers: authHeaders(token),
+      body: JSON.stringify({ name: "Newer Collaborator Name" }),
+    });
+    assert.equal(newerRes.status, 200);
+
+    // Attempt 1's own retry, reusing the exact same key and stale body.
+    const retryRes = await fetch(`${baseUrl}/api/projects/${project.id}/name`, { method: "PATCH", headers, body: JSON.stringify({ name: "Attempt 1 Name" }) });
+    assert.equal(retryRes.status, 200, "the retry must replay attempt 1's own cached success, not fail or re-run");
+    const retry = (await retryRes.json()) as { project: { name: string } };
+    assert.equal(retry.project.name, "Attempt 1 Name", "the replayed response body must match attempt 1's own result exactly");
+
+    const stateRes = await fetch(`${baseUrl}/api/projects/${project.id}`, { headers: authHeaders(token) });
+    const { project: state } = (await stateRes.json()) as { project: { name: string } };
+    assert.equal(state.name, "Newer Collaborator Name", "the retry must NOT have re-run and reverted the genuinely newer rename back to attempt 1's stale name");
+  });
+});
+
+test("PATCH /projects/:id/description retried with the same idempotency key after a genuinely newer edit landed in between replays attempt 1's own response, instead of reverting the newer description", async () => {
+  await withServer(async (baseUrl) => {
+    const token = await signup(baseUrl, "description-idem1@example.com");
+    const createRes = await fetch(`${baseUrl}/api/projects`, {
+      method: "POST",
+      headers: authHeaders(token),
+      body: JSON.stringify({ description: "A CRM with customers and deals." }),
+    });
+    const { project } = (await createRes.json()) as { project: { id: string } };
+
+    const headers = { ...authHeaders(token), "x-idempotency-key": "description-repro-key" };
+    const firstRes = await fetch(`${baseUrl}/api/projects/${project.id}/description`, {
+      method: "PATCH",
+      headers,
+      body: JSON.stringify({ description: "Attempt 1 description." }),
+    });
+    assert.equal(firstRes.status, 200);
+    const first = (await firstRes.json()) as { project: { description: string } };
+    assert.equal(first.project.description, "Attempt 1 description.");
+
+    const newerRes = await fetch(`${baseUrl}/api/projects/${project.id}/description`, {
+      method: "PATCH",
+      headers: authHeaders(token),
+      body: JSON.stringify({ description: "Newer collaborator description." }),
+    });
+    assert.equal(newerRes.status, 200);
+
+    const retryRes = await fetch(`${baseUrl}/api/projects/${project.id}/description`, {
+      method: "PATCH",
+      headers,
+      body: JSON.stringify({ description: "Attempt 1 description." }),
+    });
+    assert.equal(retryRes.status, 200, "the retry must replay attempt 1's own cached success, not fail or re-run");
+    const retry = (await retryRes.json()) as { project: { description: string } };
+    assert.equal(retry.project.description, "Attempt 1 description.", "the replayed response body must match attempt 1's own result exactly");
+
+    const stateRes = await fetch(`${baseUrl}/api/projects/${project.id}`, { headers: authHeaders(token) });
+    const { project: state } = (await stateRes.json()) as { project: { description: string } };
+    assert.equal(
+      state.description,
+      "Newer collaborator description.",
+      "the retry must NOT have re-run and reverted the genuinely newer description back to attempt 1's stale value",
+    );
+  });
+});
+
+/**
  * Round 473 extends the same withIdempotency() mechanism to the
  * append-only gap docs/wakeRetry-idempotency-design.md identified in
  * POST /projects/:id/roles, /assumptions, /entities, and

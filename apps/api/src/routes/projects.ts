@@ -2334,18 +2334,37 @@ export function createProjectsRouter(
    * starts with. requireProjectAccess (not requireProjectOwner): a
    * collaborator has the exact same full read/write access as the owner
    * everywhere else, and a project's display name is no different.
+   *
+   * Round 1601: unlike every other "rename X" PATCH mutation in this app
+   * (entity/field labels, checkpoints, roles/personas/assumptions -- round
+   * 960's own doc comment gives the exact hazard), this route and its
+   * sibling just below it never got the matching withIdempotency() wrap.
+   * A response lost in transit after fetchWithWakeRetry's own documented
+   * retry fires, with a genuinely newer rename from another
+   * tab/collaborator landing in between, means the stale retry silently
+   * overwrites that newer name back to the old one with no error to
+   * either side -- the identical bug round 960 already fixed for every
+   * other rename in the app, just never ported here.
+   * requireProjectWriteAccess moves inside the withIdempotency callback
+   * for the identical reason every sibling route's own doc comment
+   * already gives: a genuine retry never reaches it, since the wrap
+   * short-circuits first with the first attempt's own cached response.
    */
   router.patch(
     "/projects/:id/name",
     projectMetadataRateLimiter,
     asyncRoute(async (req, res) => {
-      const project = requireProjectWriteAccess(db, req.params.id, req.userId!);
       const parsed = RenameProjectSchema.safeParse(req.body);
       if (!parsed.success) {
         throw new HttpError(400, formatValidationError(parsed.error), "VALIDATION_ERROR");
       }
-      const updated = updateProjectName(db, project.id, parsed.data.name);
-      res.json({ project: updated });
+      const idempotencyKey = req.header("X-Idempotency-Key") || undefined;
+      const { body } = await withIdempotency(db, idempotencyKey, req.userId!, `PATCH /projects/${req.params.id}/name`, async () => {
+        const project = requireProjectWriteAccess(db, req.params.id, req.userId!);
+        const updated = updateProjectName(db, project.id, parsed.data.name);
+        return { status: 200, body: { project: updated } };
+      });
+      res.json(body);
     }),
   );
 
@@ -2364,18 +2383,25 @@ export function createProjectsRouter(
    * to, this never reads-then-writes project.spec -- the description
    * column is never touched anywhere else in the app after insertProject,
    * so there is no read-modify-write race for it to lose.
+   *
+   * Round 1601: same withIdempotency() gap, and the same reason, as the
+   * name route right above.
    */
   router.patch(
     "/projects/:id/description",
     projectMetadataRateLimiter,
     asyncRoute(async (req, res) => {
-      const project = requireProjectWriteAccess(db, req.params.id, req.userId!);
       const parsed = UpdateProjectDescriptionSchema.safeParse(req.body);
       if (!parsed.success) {
         throw new HttpError(400, formatValidationError(parsed.error), "VALIDATION_ERROR");
       }
-      const updated = updateProjectDescription(db, project.id, parsed.data.description);
-      res.json({ project: updated });
+      const idempotencyKey = req.header("X-Idempotency-Key") || undefined;
+      const { body } = await withIdempotency(db, idempotencyKey, req.userId!, `PATCH /projects/${req.params.id}/description`, async () => {
+        const project = requireProjectWriteAccess(db, req.params.id, req.userId!);
+        const updated = updateProjectDescription(db, project.id, parsed.data.description);
+        return { status: 200, body: { project: updated } };
+      });
+      res.json(body);
     }),
   );
 

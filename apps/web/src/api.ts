@@ -544,12 +544,14 @@ export function cloneProject(projectId: string): Promise<{ project: Project }> {
   return request(`/projects/${projectId}/clone`, { method: "POST", headers: { "x-idempotency-key": crypto.randomUUID() } });
 }
 
+/** Round 1601: generates one idempotency key per call, mirroring cloneProject's own doc comment just above -- without it, a response lost in transit after fetchWithWakeRetry's retry fires could silently overwrite a genuinely newer rename from another tab/collaborator back to this stale one. */
 export function renameProject(projectId: string, name: string): Promise<{ project: Project }> {
-  return request(`/projects/${projectId}/name`, { method: "PATCH", body: JSON.stringify({ name }) });
+  return request(`/projects/${projectId}/name`, { method: "PATCH", body: JSON.stringify({ name }), headers: { "x-idempotency-key": crypto.randomUUID() } });
 }
 
+/** Round 1601: same reasoning as renameProject's own doc comment just above. */
 export function updateProjectDescription(projectId: string, description: string): Promise<{ project: Project }> {
-  return request(`/projects/${projectId}/description`, { method: "PATCH", body: JSON.stringify({ description }) });
+  return request(`/projects/${projectId}/description`, { method: "PATCH", body: JSON.stringify({ description }), headers: { "x-idempotency-key": crypto.randomUUID() } });
 }
 
 /**
