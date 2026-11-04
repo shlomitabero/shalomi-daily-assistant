@@ -1,6 +1,8 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { existsSync, readdirSync, readFileSync } from 'node:fs';
+import { existsSync, readdirSync, readFileSync, mkdtempSync, writeFileSync, rmSync } from 'node:fs';
+import { execFileSync } from 'node:child_process';
+import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { resolveDataDir, db, __resetForTests, makeId } from './store.js';
@@ -79,4 +81,37 @@ test('persist() writes db.json atomically, leaving no stray temp file and always
 
   const leftoverTmp = readdirSync(DATA_DIR).filter((f) => f.startsWith('db.json.tmp-'));
   assert.deepEqual(leftoverTmp, []);
+});
+
+// load() runs once, at module import time, from a DATA_DIR fixed at that
+// same moment - there's no way to exercise a corrupt db.json through this
+// same process's already-loaded module. Spawn a fresh node process with its
+// own DATA_DIR pointing at a prepared corrupt file instead: this is the one
+// way to actually prove the real startup path - without it, a corrupt
+// db.json (a disk error, an interrupted write before the atomic-rename fix
+// above existed) would be entirely untested, on the single most
+// catastrophic failure mode this file guards against: silently starting
+// from empty state and then overwriting the corrupt file with it on the
+// very next write, destroying the real data for good.
+test('a corrupt db.json on disk is backed up, not destroyed, and the app starts from empty state instead of crashing', () => {
+  const tmpDir = mkdtempSync(join(tmpdir(), 'profitai-store-corrupt-'));
+  try {
+    writeFileSync(join(tmpDir, 'db.json'), '{ this is not valid json');
+    const storeUrl = new URL('./store.js', import.meta.url).href;
+    const script = `import('${storeUrl}').then(({ db }) => { console.log(JSON.stringify({ opportunities: db.opportunities.all().length })); });`;
+    const output = execFileSync('node', ['--input-type=module', '-e', script], {
+      cwd: join(__dirname, '..', '..'),
+      env: { ...process.env, DATA_DIR: tmpDir },
+      encoding: 'utf-8',
+    });
+    const parsed = JSON.parse(output.trim().split('\n').pop());
+    assert.equal(parsed.opportunities, 0); // starts empty, never crashes, never fabricates data
+
+    const files = readdirSync(tmpDir);
+    assert.ok(files.some((f) => f.startsWith('db.json.corrupt-')), 'the corrupt file must be preserved, not deleted');
+    const preserved = files.find((f) => f.startsWith('db.json.corrupt-'));
+    assert.equal(readFileSync(join(tmpDir, preserved), 'utf-8'), '{ this is not valid json');
+  } finally {
+    rmSync(tmpDir, { recursive: true, force: true });
+  }
 });
