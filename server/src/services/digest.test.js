@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { db, __resetForTests, makeId } from '../db/store.js';
-import { generateDailyDigest } from './digest.js';
+import { generateDailyDigest, catchUpDailyDigestIfMissed } from './digest.js';
 import { updateSettings } from './settings.js';
 
 test('generateDailyDigest creates exactly one row for today on first run', () => {
@@ -110,6 +110,36 @@ test('generateDailyDigest does not count an approval whose opportunity was alrea
   });
   const digest = generateDailyDigest();
   assert.doesNotMatch(digest.text, /מאושרות ומחכות/);
+});
+
+test('catchUpDailyDigestIfMissed does nothing before 7am, leaving the 7am cron tick to handle it normally', () => {
+  __resetForTests();
+  const result = catchUpDailyDigestIfMissed(new Date('2026-01-01T06:59:00'));
+  assert.equal(result, null);
+  assert.equal(db.digests.all().length, 0);
+});
+
+test('catchUpDailyDigestIfMissed generates today\'s digest when called after 7am and none exists yet', () => {
+  // This is the self-healing case: the process restarted (this app gets
+  // redeployed roughly hourly) at, say, 9am, missing the exact 7:00 cron
+  // tick entirely - without this, that day's digest would simply never be
+  // generated, with no error or indication anything was skipped.
+  __resetForTests();
+  const result = catchUpDailyDigestIfMissed(new Date('2026-01-01T09:00:00'));
+  assert.ok(result);
+  assert.equal(db.digests.all().length, 1);
+});
+
+test('catchUpDailyDigestIfMissed does nothing when today\'s digest already exists, even after 7am', () => {
+  // Must never silently overwrite a digest the owner already generated
+  // today (via the normal cron tick or their own manual "generate now"
+  // click) just because the server happened to restart again later.
+  __resetForTests();
+  const first = generateDailyDigest();
+  const result = catchUpDailyDigestIfMissed(new Date('2026-01-01T10:00:00'));
+  assert.equal(result, null);
+  assert.equal(db.digests.all().length, 1);
+  assert.equal(db.digests.get(first.id).generatedAt, first.generatedAt);
 });
 
 test('a digest generated for a different day does not get merged with today\'s', () => {

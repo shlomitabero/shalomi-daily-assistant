@@ -60,3 +60,18 @@ export function generateDailyDigest() {
   }
   return db.digests.insert({ id: makeId('dig'), date: today, text: digest.text, generatedAt: digest.generatedAt });
 }
+
+// node-cron's '0 7 * * *' job only fires while the process happens to be
+// alive at the exact minute the clock hits 07:00 - it does not back-fill a
+// tick it missed. This app gets redeployed roughly hourly by its own
+// upgrade routine, so any given day's 7am tick has a real chance of landing
+// in the middle of exactly one of those restarts and never firing at all.
+// Called once at startup, this makes a missed tick self-heal on the very
+// next boot instead of silently skipping that day's digest - generateDailyDigest()
+// is itself idempotent per day, so calling it here is always safe.
+export function catchUpDailyDigestIfMissed(now = new Date()) {
+  if (now.getHours() < 7) return null; // too early - the normal 7am cron tick will handle it
+  const today = todayKey();
+  if (db.digests.where((d) => d.date === today).length > 0) return null; // already generated today
+  return generateDailyDigest();
+}

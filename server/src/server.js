@@ -18,7 +18,7 @@ import { billingRouter, paddleWebhookHandler } from './routes/billing.js';
 import { financialRouter } from './routes/financial.js';
 import { digestRouter } from './routes/digest.js';
 import { syncSources } from './services/sources.js';
-import { generateDailyDigest } from './services/digest.js';
+import { generateDailyDigest, catchUpDailyDigestIfMissed } from './services/digest.js';
 import { runAutonomousScan } from './services/autonomousScan.js';
 import { classifyApiError } from './engine/apiError.js';
 
@@ -60,6 +60,18 @@ if (existsSync(clientDist)) {
 }
 
 syncSources();
+
+// This app gets redeployed roughly hourly by its own upgrade routine, so
+// the 7am cron tick below has a real chance of landing in the middle of a
+// restart and never firing that day. Self-heal on boot instead of silently
+// skipping a day's digest - generateDailyDigest() is idempotent per day, so
+// this is always safe even if the process happens to restart again later
+// the same morning.
+try {
+  catchUpDailyDigestIfMissed();
+} catch (err) {
+  console.error('catch-up daily digest failed', err);
+}
 
 // In-process scheduler. This only runs while the Node process stays alive —
 // on Render's free tier the service can spin down when idle, so this is not
