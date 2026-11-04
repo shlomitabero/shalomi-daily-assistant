@@ -421,6 +421,29 @@ test("Customer's 'company', Volunteer's 'skills', Shift's 'timeRange', and Staff
 });
 
 /**
+ * Round 1590's finding: Project's own "client" field (domainEntities.ts's
+ * built-in Project entity, and the identically-shaped Project Tracker
+ * template's own Project.client, templates.ts) shared the generic
+ * person-name case with ownerName/renterName/donorName/claimant/
+ * contactPerson/reviewerName -- all genuinely individual people -- even
+ * though "Defined work the business performs for a client" is a B2B
+ * concept, the same "business, not a person" shape company/vendor already
+ * cover. Seeded a freshly built Project Tracker app with rows like
+ * "Website Redesign -- Client: Dana Levi" instead of a company name.
+ */
+test("Project's 'client' seed value reuses Vendor's own business-name pool, not the generic person-name fallback", () => {
+  const project: Entity = { name: "Project", fields: [{ name: "client", type: "text", required: false }] };
+  const vendor: Entity = { name: "Vendor", fields: [{ name: "name", type: "text", required: true }] };
+
+  const vendorNames = new Set(generateSeedRecords(vendor, 4).map((r) => r.name as string));
+  const clients = generateSeedRecords(project, 4).map((r) => r.client as string);
+  for (const client of clients) {
+    assert.notEqual(client, "Dana Levi", `"${client}" must not be the generic person-name fallback`);
+    assert.ok(vendorNames.has(client), `Project's client "${client}" must reuse Vendor's own business-name pool`);
+  }
+});
+
+/**
  * Round 828's finding: the exact same shape as round 827's "title" fix,
  * one case below it. textSeedValueFor's "service"/"itemName" case had no
  * entity-aware dispatch either -- ITEM_NAMES_HE/EN was written for

@@ -43293,6 +43293,22 @@ Full suite run: `packages/db` 328/328 clean. `apps/api` full suite clean except 
 
 **Topic status**: closes the restore half of the audit-trail gap round 1567 opened. `codegen.ts` parity does not apply -- confirmed via `grep -n checkpoint apps/api/src/codegen.ts` (zero matches): the exported standalone app has no Time Machine/checkpoint feature at all.
 
+### Round 1590: Project's "client" field seeded a random person's name instead of a company name -- the seed-data-realism bug class rounds 1105/1107/1114/1115/1148/1244 already fixed six times for other field names, just never cross-checked for this one
+
+A fresh survey, explicitly instructed to leave the validation family alone after 4 straight rounds on it, searched spec-engine, routes, db, and several web panels and found the existing hardening extremely thorough everywhere else it looked. The one genuinely fresh, concrete gap: `packages/db/src/seed.ts`'s `textSeedValueFor` switch grouped `"client"` together with `ownerName`/`renterName`/`donorName`/`claimant`/`contactPerson`/`reviewerName` -- all genuinely individual people -- returning `PERSON_NAMES_HE/EN` (e.g. "Dana Levi"). But `"client"` belongs only to `Project` (`domainEntities.ts`'s built-in entity, description "Defined work the business performs for a client", and the identically-shaped Project Tracker template's own `Project.client`, `templates.ts` -- added by round 1305), a B2B concept where the client is overwhelmingly a company, not a person -- the exact same "business, not a person" shape `company`/`vendor` already cover a few cases below in the same switch.
+
+Independently re-verified before implementing: read both `Project` entity declarations directly (`domainEntities.ts:877`, `templates.ts:486/554`), confirmed via `grep` that `"client"` appears nowhere else in the codebase as a field name (so no person-shaped entity would be broken by the fix), and confirmed the current switch really does route it to `PERSON_NAMES_HE/EN` by reading the case block directly.
+
+**The fix** (`packages/db/src/seed.ts`): moved `"client"` out of the person-name case group and into the existing `vendor`/`company` case group, which already returns `VENDOR_NAMES_HE/EN` (e.g. "CloudTech Solutions").
+
+**Tests**: 1 new in `seed.test.ts`, mirroring the existing Customer/Vendor company-name test's own shape -- asserts a `Project.client` seed value is never `"Dana Levi"` and always comes from the same pool a sibling `Vendor.name` call produces. Fail-before/pass-after verified directly via `git stash` (stashed only `seed.ts`, kept the new test): fail-before showed 31 tests/30 pass/1 fail (the new test, as predicted); pass-after showed 31/31 passing, 0 failures.
+
+`codegen.ts` parity does not apply: seed data is generated once at build time by the Seed Data Agent step (`packages/db/src/seed.ts`), never re-derived by the exported standalone app itself.
+
+Full suite run: only `packages/db` touched, so only its own full suite was run (329/329 passing, 0 failures) -- `packages/db` has no separate build/typecheck step (no `tsconfig.json`; confirmed via `ls`), so the full `tsx --test` run is the complete verification here.
+
+**Topic status**: closes the 7th instance of the "seed-data entity-shape mismatch" bug class (after rounds 1105/1107/1114/1115/1148/1244) for `Project.client` specifically. Also marks a successful diversification away from the 4-round noValidate/native-validation family that dominated rounds 1587-1589.
+
 ### Round 1589: AutomationsPanel's webhookUrl/toEmail inputs still relied on native HTML5 format-constraint validation -- the same bug class round 342/1587/1588 already fixed, but here the gap is format mismatch (not blank), since formIncomplete already disables Save on blank
 
 A fresh survey, explicitly instructed to diversify away from the validation family after 3 straight rounds on it, searched apps/api/src/routes, packages/spec-engine, and packages/shared and found nothing else concrete -- the route layer is exhaustively hardened and eliteAgent.ts isn't wired into any live route yet. The strongest remaining candidate, flagged honestly as "same family, 4th instance" by the survey, was `AutomationsPanel.tsx`'s own create/edit rule form (line 1471): no `noValidate`, with a `type="time"` required field (scheduleTimeUtc) plus `type="url"` (webhookUrl) and `type="email"` (toEmail) fields with no `required` at all.

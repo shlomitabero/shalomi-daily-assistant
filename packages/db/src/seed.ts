@@ -246,7 +246,6 @@ function textSeedValueFor(fieldName: string, entityName: string, isHebrew: boole
       return fieldName === "instructor"
         ? pick(isHebrew ? INSTRUCTORS_HE : INSTRUCTORS_EN, index)
         : pick(isHebrew ? PERSON_NAMES_HE : PERSON_NAMES_EN, index);
-    case "client":
     case "ownerName":
     case "renterName":
     case "donorName":
@@ -312,6 +311,16 @@ function textSeedValueFor(fieldName: string, entityName: string, isHebrew: boole
     // either equally well.
     case "vendor":
     case "company":
+    // Round 1590: "client" (domainEntities.ts's own Project entity, "Defined
+    // work the business performs for a client", plus the Project Tracker
+    // template's identically-shaped Project.client, templates.ts) is the
+    // same B2B "business, not a person" concept company/vendor already
+    // cover above -- it previously shared the generic person-name case with
+    // ownerName/renterName/donorName/claimant/contactPerson/reviewerName
+    // (all genuinely individual people), seeding a freshly built Project
+    // Tracker app with rows like "Website Redesign -- Client: Dana Levi"
+    // instead of a company name.
+    case "client":
       return pick(isHebrew ? VENDOR_NAMES_HE : VENDOR_NAMES_EN, index);
     // Round 1115: the Volunteer & Shift Management template's own
     // Volunteer.skills and Shift.timeRange, and the Appointments & Clients
