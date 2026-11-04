@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { api } from '../api.js';
-import { actionTypeLabel, resultLabel, reasonLabel } from '../labels.js';
+import { actionTypeLabel, resultLabel, reasonLabel, formatMoney } from '../labels.js';
 
 export default function ActivityLog() {
   const [actions, setActions] = useState([]);
@@ -33,6 +33,13 @@ export default function ActivityLog() {
             </div>
             {opportunity && (
               <Link className="link" to={`/opportunities/${opportunity.id}`}>{opportunity.title}</Link>
+            )}
+            {/* billing.js's webhook logs the verified sale amount on every
+                successful sale_confirmed entry - without showing it here,
+                the owner had to leave the audit log and cross-reference the
+                ledger just to see how much a given sale was actually for. */}
+            {a.type === 'sale_confirmed' && a.result === 'success' && Number.isFinite(a.detail?.amount) && (
+              <p className="hint log-amount">נמכר בעד {formatMoney(a.detail.amount)}</p>
             )}
             {a.detail?.reason && <p className="hint log-reason">{reasonLabel(a.detail.reason)}</p>}
             <span className="log-time">{new Date(a.createdAt).toLocaleString('he-IL')}</span>
