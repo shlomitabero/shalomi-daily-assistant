@@ -2234,6 +2234,38 @@ test("incoming WhatsApp payment-request decline/cancel messages are logged with 
 });
 
 /**
+ * Round 1600: encReactionMessage is the separate, genuinely-encrypted
+ * sibling of reactionMessage (round 1088) this file's own doc comment
+ * already named but never actually handled. Confirmed directly against
+ * the installed Baileys library itself: messages-send.js treats it as a
+ * fully equivalent sibling of reactionMessage for message-type
+ * classification, and reporting-utils.js groups it with pollUpdateMessage
+ * (round 1449) in the same "modifies/reacts to an earlier message" bucket
+ * -- its encPayload/encIv can't be recovered, but detecting that a
+ * reaction arrived at all needs no decryption, the same bar
+ * pollUpdateMessage/declinePaymentRequestMessage already met.
+ */
+test("an incoming WhatsApp encrypted emoji reaction (encReactionMessage) is logged with a descriptive placeholder instead of being silently dropped", async () => {
+  const { manager, createdSockets, db } = setupManager();
+  insertProject(db, project);
+  applyMigrations(db, project.id, project.spec);
+  markProjectBuilt(db, project.id);
+
+  await manager.connect(project.id);
+  createdSockets[0].emitConnectionUpdate({ connection: "open" });
+
+  createdSockets[0].emitMessagesUpsert({
+    type: "notify",
+    messages: [{ key: { remoteJid: "972501234567@s.whatsapp.net", fromMe: false }, message: { encReactionMessage: {} } }],
+  });
+
+  const { messages } = listWhatsAppMessages(db, project.id);
+  assert.equal(messages.length, 1);
+  assert.equal(messages[0].body, "[Reaction]");
+  assert.equal(messages[0].direction, "in", "the placeholder row must still be a real, matched-against incoming message, not metadata");
+});
+
+/**
  * Round 1576: WhatsApp Business's native "Create/Send Invoice" chat action
  * produces invoiceMessage. Confirmed directly against the installed
  * Baileys protobuf (WAProto.proto: InvoiceMessage's `note` field is

@@ -126,6 +126,7 @@ export interface BaileysIncomingMessage {
     pollResultSnapshotMessage?: { name?: string };
     pollResultSnapshotMessageV3?: { name?: string };
     reactionMessage?: { text?: string };
+    encReactionMessage?: Record<string, never>;
     buttonsMessage?: { contentText?: string };
     buttonsResponseMessage?: { selectedButtonId?: string; selectedDisplayText?: string };
     listMessage?: { title?: string; description?: string };
@@ -495,6 +496,18 @@ function describeIncomingMessage(message: BaileysIncomingMessage["message"]): st
   // then goes silent on every vote it gets.
   if (message.pollUpdateMessage) return "[Poll vote]";
   if (message.reactionMessage) return message.reactionMessage.text ? `[Reaction] ${message.reactionMessage.text}` : "[Reaction removed]";
+  // Round 1600: this file's own round-1088 doc comment above already named
+  // encReactionMessage as a separate, genuinely-encrypted sibling of
+  // reactionMessage it still didn't populate or touch -- but never actually
+  // added a branch for it. Confirmed against the installed Baileys library
+  // itself (not just its .d.ts): messages-send.js treats reactionMessage and
+  // encReactionMessage as fully equivalent for message-type classification,
+  // and reporting-utils.js groups it with pollUpdateMessage (round 1449) in
+  // the same "modifies/reacts to an earlier message" bucket. Its content
+  // (encPayload/encIv) can't be recovered, but detecting that a reaction
+  // arrived at all needs no decryption, the same "detect presence only" bar
+  // pollUpdateMessage/declinePaymentRequestMessage already clear below.
+  if (message.encReactionMessage) return "[Reaction]";
   // Round 1509: a buttonsMessage/listMessage is the "offer" half of the
   // buttonsResponseMessage/listResponseMessage pair already handled below --
   // WhatsApp's own interactive "pick one of these buttons"/"pick from this
