@@ -2159,8 +2159,22 @@ export function EntityPanel({
   const seenFieldNamesRef = useRef<Set<string> | null>(null);
   useEffect(() => {
     const currentFieldNames = entity.fields.map((f) => f.name);
-    const hasNewField = seenFieldNamesRef.current === null || currentFieldNames.some((name) => !seenFieldNamesRef.current!.has(name));
-    seenFieldNamesRef.current = new Set(currentFieldNames);
+    // Round 1608: compared case-insensitively -- a live refine that merely
+    // recases a field (e.g. "status" -> "Status") is a pure no-op
+    // (migrate.ts/pipeline.ts already treat it this way, round 985's own
+    // doc comment), but the exact-match check this effect used before
+    // treated the new spelling as a brand-new field every single time,
+    // unconditionally firing this effect's full "something structural
+    // changed" reset: wiping the in-progress add/edit form, the search
+    // filter, every selected row, an in-progress inline cell edit
+    // (editingCell), and the Columns menu's open state, plus a needless
+    // refresh()/loading flash -- all for a change that, semantically,
+    // touched nothing the user was doing. seenFieldNamesRef itself now
+    // stores lowercased names purely for this comparison; nothing else in
+    // the file reads it.
+    const seenLower = seenFieldNamesRef.current;
+    const hasNewField = seenLower === null || currentFieldNames.some((name) => !seenLower.has(name.toLowerCase()));
+    seenFieldNamesRef.current = new Set(currentFieldNames.map((name) => name.toLowerCase()));
     if (!hasNewField) return;
 
     setForm(emptyForm(entity));
@@ -2689,7 +2703,18 @@ export function EntityPanel({
   }, [bulkEditField]);
   useEffect(() => {
     if (!bulkEditField) return;
-    const currentType = entity.fields.find((f) => f.name === bulkEditField)?.type;
+    const exactField = entity.fields.find((f) => f.name === bulkEditField);
+    // Round 1608: the identical case-only-rename fallback round 985 already
+    // gave groupFieldName's own sibling effect above -- missed here, so a
+    // live refine that merely recases this same field (e.g. "status" ->
+    // "Status") made the exact-match lookup below miss just like a genuine
+    // removal, wiping bulkEditField AND the value the user had already
+    // typed for every selected record, forcing them to redo the whole
+    // bulk-edit from scratch with no indication why. Resolved only when the
+    // exact lookup itself already missed, so a real ambiguity still
+    // prefers the exact match it already has.
+    const renamedField = exactField ? undefined : entity.fields.find((f) => f.name.toLowerCase() === bulkEditField.toLowerCase());
+    const currentType = exactField?.type ?? renamedField?.type;
     // Round 892: deliberately NOT `currentType &&` -- see groupFieldName's
     // own effect above for why. A refine that REMOVES bulkEditField
     // outright, not just retypes it, left this guard silently no-oping
@@ -2707,6 +2732,15 @@ export function EntityPanel({
       } else {
         handleBulkEditFieldChange(bulkEditField);
       }
+      return;
+    }
+    // A pure rename never reaches handleBulkEditFieldChange above (the type
+    // hasn't changed) -- retarget bulkEditField to the field's new casing
+    // directly, WITHOUT recomputing bulkEditValue the way that function
+    // would, since the value the user already typed is still exactly
+    // valid for this same field under its new name.
+    if (renamedField) {
+      setBulkEditField(renamedField.name);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [fieldTypesKey]);
@@ -2738,7 +2772,17 @@ export function EntityPanel({
   }, [editingCell]);
   useEffect(() => {
     if (!editingCell) return;
-    const currentType = entity.fields.find((f) => f.name === editingCell.field)?.type;
+    const exactField = entity.fields.find((f) => f.name === editingCell.field);
+    // Round 1608: the identical case-only-rename fallback round 985 already
+    // gave groupFieldName's own sibling effect above -- missed here, so a
+    // live refine that merely recases this same field (e.g. "status" ->
+    // "Status") made the exact-match lookup below miss just like a genuine
+    // removal, silently cancelling an in-progress, unsaved inline-cell
+    // edit (real data loss) for a field that, semantically, never actually
+    // changed. Resolved only when the exact lookup itself already missed,
+    // so a real ambiguity still prefers the exact match it already has.
+    const renamedField = exactField ? undefined : entity.fields.find((f) => f.name.toLowerCase() === editingCell.field.toLowerCase());
+    const currentType = exactField?.type ?? renamedField?.type;
     // Round 892: deliberately NOT `currentType &&` -- see groupFieldName's
     // own effect above for why. A refine that REMOVES the field currently
     // being inline-edited, not just retypes it, left this guard silently
@@ -2747,6 +2791,13 @@ export function EntityPanel({
     // server no longer recognizes on this entity at all.
     if (editingCellFieldTypeRef.current && currentType !== editingCellFieldTypeRef.current) {
       cancelInlineEdit();
+      return;
+    }
+    // A pure rename -- retarget editingCell to the field's new casing,
+    // leaving cellDraft (the in-progress typed value) untouched, since the
+    // type hasn't changed and the value is still exactly valid.
+    if (renamedField) {
+      setEditingCell({ recordId: editingCell.recordId, field: renamedField.name });
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [fieldTypesKey]);

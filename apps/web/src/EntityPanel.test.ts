@@ -11532,6 +11532,181 @@ test("EntityPanel clears a stale bulk-edit field selection when a live refine RE
 });
 
 /**
+ * Round 1608: the identical case-only-rename fallback round 985 already
+ * gave groupFieldName's own sibling effect (fieldFilters/hiddenFields/
+ * columnOrder/sortKeys/columnWidths/groupFieldName) was never extended to
+ * bulkEditField, its structurally identical sibling from round 781. Before
+ * this fix, a live refine that merely recased "status" -> "Status" (same
+ * type, same entity.name) made the exact-match lookup miss just like a
+ * genuine removal -- wiping BOTH bulkEditField and the value the user had
+ * already picked for every selected record, forcing them to redo the whole
+ * bulk-edit from scratch with no indication why.
+ */
+test("EntityPanel carries a chosen bulk-edit field AND its already-picked value forward under the field's new spelling when a live refine renames its letter casing", async () => {
+  await withJsdom(async () => {
+    const statusFieldV1 = {
+      name: "status",
+      label: "Status",
+      type: "enum" as const,
+      required: false,
+      enumValues: ["Pending", "Shipped"],
+      enumLabels: { Pending: "Pending", Shipped: "Shipped" },
+    };
+    const entityV1: Entity = {
+      name: "Deal",
+      label: "Deal",
+      fields: [{ name: "name", label: "Name", type: "text", required: true }, statusFieldV1],
+    };
+    const statusFieldV2 = { ...statusFieldV1, name: "Status" };
+    const entityV2: Entity = {
+      name: "Deal",
+      label: "Deal",
+      fields: [{ name: "name", label: "Name", type: "text", required: true }, statusFieldV2],
+    };
+    const store: EntityRecord[] = [
+      { id: 1, createdAt: "x", name: "Acme Corp", status: "Pending" },
+      { id: 2, createdAt: "x", name: "Globex", status: "Pending" },
+    ];
+    const patchedBodies: Record<number, unknown> = {};
+    const originalFetch = globalThis.fetch;
+    const originalConfirm = globalThis.window.confirm;
+    globalThis.fetch = (async (input: string, init?: RequestInit) => {
+      const method = init?.method ?? "GET";
+      if (method === "PATCH") {
+        const match = /\/(\d+)$/.exec(input);
+        const id = Number(match![1]);
+        const body = JSON.parse(init!.body as string);
+        patchedBodies[id] = body;
+        const record = store.find((r) => r.id === id)!;
+        Object.assign(record, body);
+        return new Response(JSON.stringify({ record }), { status: 200, headers: { "content-type": "application/json" } });
+      }
+      return mockRecordsFetch(store)(input, init);
+    }) as typeof fetch;
+    globalThis.window.confirm = (() => true) as typeof window.confirm;
+    try {
+      const view = renderEntityPanel({ entity: entityV1, allEntities: [entityV1] });
+      await waitForCondition(() => document.querySelectorAll("table tbody tr").length === 2);
+
+      for (const checkbox of document.querySelectorAll('td.select-col input[type="checkbox"]')) {
+        fireEvent.click(checkbox);
+      }
+      await waitForCondition(() => document.querySelector(".bulk-actions-bar") !== null);
+
+      const fieldPicker = document.querySelector(".bulk-edit-field-label select") as HTMLSelectElement;
+      fireEvent.change(fieldPicker, { target: { value: "status" } });
+      await waitForCondition(() => document.querySelectorAll(".bulk-actions-bar select").length === 2);
+      const valueSelect = document.querySelectorAll(".bulk-actions-bar select")[1] as HTMLSelectElement;
+      fireEvent.change(valueSelect, { target: { value: "Shipped" } });
+      await waitForCondition(() => valueSelect.value === "Shipped");
+
+      // Simulate a live refine that renames "status" -> "Status" ONLY --
+      // same field, same type, same enum values, same entity.name ("Deal"),
+      // with the bulk-edit panel still open, "status" still selected, and
+      // "Shipped" already picked as the value to apply.
+      view.rerender(buildEntityPanelElement({ entity: entityV2, allEntities: [entityV2] }));
+      await waitForCondition(() => (document.querySelector(".bulk-edit-field-label select") as HTMLSelectElement | null)?.value === "Status");
+
+      assert.equal(
+        (document.querySelector(".bulk-edit-field-label select") as HTMLSelectElement).value,
+        "Status",
+        "the field picker must now point at the field's new spelling, not blank out to the empty placeholder",
+      );
+      assert.equal(
+        (document.querySelectorAll(".bulk-actions-bar select")[1] as HTMLSelectElement).value,
+        "Shipped",
+        "the already-picked value must survive the rename untouched, not be wiped/reset",
+      );
+
+      const applyButton = Array.from(document.querySelectorAll(".bulk-actions-bar button")).find((b) => /Apply|החל/.test(b.textContent ?? ""))!;
+      fireEvent.click(applyButton);
+
+      await waitForCondition(() => Object.keys(patchedBodies).length === 2);
+      assert.deepEqual(patchedBodies[1], { Status: "Shipped" }, "the real PATCH must use the field's CURRENT spelling as its key, carrying the preserved value");
+      assert.deepEqual(patchedBodies[2], { Status: "Shipped" }, "every selected record's PATCH must use the same new spelling and preserved value");
+    } finally {
+      globalThis.fetch = originalFetch;
+      globalThis.window.confirm = originalConfirm;
+    }
+  });
+});
+
+/**
+ * Round 1608: the identical case-only-rename fallback as the bulk-edit test
+ * just above, for editingCell/cellDraft -- round 800's own sibling that
+ * goes through the same exact-match-only lookup. Before this fix, a live
+ * refine that merely recased the field currently being inline-edited made
+ * the lookup miss just like a genuine removal, silently cancelling the
+ * in-progress, unsaved edit (real data loss) for a field that, semantically,
+ * never actually changed.
+ */
+test("EntityPanel keeps an in-progress inline cell edit open, with its draft value intact, when a live refine renames that field's letter casing", async () => {
+  await withJsdom(async () => {
+    const statusFieldV1 = {
+      name: "status",
+      label: "Status",
+      type: "enum" as const,
+      required: false,
+      enumValues: ["Pending", "Shipped"],
+      enumLabels: { Pending: "Pending", Shipped: "Shipped" },
+    };
+    const entityV1: Entity = {
+      name: "Deal",
+      label: "Deal",
+      fields: [{ name: "name", label: "Name", type: "text", required: true }, statusFieldV1],
+    };
+    const statusFieldV2 = { ...statusFieldV1, name: "Status" };
+    const entityV2: Entity = {
+      name: "Deal",
+      label: "Deal",
+      fields: [{ name: "name", label: "Name", type: "text", required: true }, statusFieldV2],
+    };
+    const store: EntityRecord[] = [{ id: 1, createdAt: "x", name: "Acme Corp", status: "Pending" }];
+    const patchedBodies: Record<number, unknown> = {};
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = (async (input: string, init?: RequestInit) => {
+      const method = init?.method ?? "GET";
+      if (method === "PATCH") {
+        const match = /\/(\d+)$/.exec(input);
+        const id = Number(match![1]);
+        const body = JSON.parse(init!.body as string);
+        patchedBodies[id] = body;
+        const record = store.find((r) => r.id === id)!;
+        Object.assign(record, body);
+        return new Response(JSON.stringify({ record }), { status: 200, headers: { "content-type": "application/json" } });
+      }
+      return mockRecordsFetch(store)(input, init);
+    }) as typeof fetch;
+    try {
+      const view = renderEntityPanel({ entity: entityV1, allEntities: [entityV1] });
+      await waitForCondition(() => document.querySelectorAll("table tbody tr").length === 1);
+
+      const statusCell = document.querySelectorAll("table tbody td")[2] as HTMLTableCellElement;
+      fireEvent.doubleClick(statusCell);
+      await waitForCondition(() => document.querySelector("td.cell-editing select") !== null);
+      const cellSelect = document.querySelector("td.cell-editing select") as HTMLSelectElement;
+      fireEvent.change(cellSelect, { target: { value: "Shipped" } });
+      await waitForCondition(() => cellSelect.value === "Shipped");
+
+      // Simulate a live refine that renames "status" -> "Status" ONLY --
+      // same field, same type, same entity.name ("Deal"), with the cell
+      // still open for editing and "Shipped" already drafted.
+      view.rerender(buildEntityPanelElement({ entity: entityV2, allEntities: [entityV2] }));
+
+      assert.equal(document.querySelector("td.cell-editing") !== null, true, "the in-progress edit must stay open -- a pure rename must never be treated like a removal");
+      const cellSelectAfterRename = document.querySelector("td.cell-editing select") as HTMLSelectElement;
+      assert.equal(cellSelectAfterRename.value, "Shipped", "the drafted-but-uncommitted value must survive the rename untouched, not be discarded");
+
+      fireEvent.keyDown(cellSelectAfterRename, { key: "Enter" });
+      await waitForCondition(() => Object.keys(patchedBodies).length === 1);
+      assert.deepEqual(patchedBodies[1], { Status: "Shipped" }, "committing after the rename must PATCH using the field's CURRENT spelling, carrying the preserved draft value");
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+});
+
+/**
  * Round 805: the fourth sibling of the same "field TYPE changes while its
  * NAME survives a live refine" bug class rounds 780/781/800 already fixed
  * for groupFieldName, bulkEditField/bulkEditValue, and editingCell/
