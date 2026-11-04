@@ -20,8 +20,16 @@ real threats to a smaller, concrete list:
   `POST /api/auth/reset-password`, `apps/api/src/routes/auth.ts`) — a
   hashed, time-limited token, enumeration-safe (the same response whether
   or not the email exists), rate-limited (see "Rate limiting" below).
-  Email verification is still genuinely absent — see "Before any real
-  deployment" below.
+  Email verification is also implemented (round 1566) —
+  `POST /auth/verify-email` / `POST /auth/resend-verification`, a
+  `users.emailVerifiedAt` column (backfilled to `createdAt` for
+  pre-existing rows so nobody already signed up is locked out), both
+  rate-limited the same way. A signed-in user can also revoke every
+  *other* session ("log out everywhere", round 1564) via
+  `POST /auth/sessions/revoke-others`, which calls the
+  `deleteOtherSessionsForUser` function in `packages/db` that already
+  existed but was until then only wired to the current session's own
+  logout.
 - **Authorization / multi-tenancy.** Every project has an `ownerId`.
   `requireProjectAccess` returns 404 — not 403 — for a project that doesn't
   exist, belongs to someone else, *and* isn't shared with the requesting
@@ -126,17 +134,18 @@ real threats to a smaller, concrete list:
   elsewhere in the full vision (section 100) — that changes materially once
   agents get filesystem/shell/git tools in a later phase, and this document
   should be revisited then.
-- **No audit log.** Section 40 of the vision (who changed what, when,
-  human or AI) isn't implemented; checkpoints record *what* changed but not
-  *who* triggered it beyond the implicit single owner.
+- **No audit log for ordinary record CRUD, schema edits, or role changes.**
+  Section 40 of the vision (who changed what, when, human or AI) is still
+  only partially implemented: a checkpoint now records *who* created it
+  (`checkpoints.createdByUserId`, round 1567) and a restore now records who
+  performed it (`projects.lastRestoredByUserId`/`lastRestoredCheckpointId`/
+  `lastRestoredAt`, round 1568), both surfaced in `HistoryPanel.tsx`. But
+  that only covers build/refine/restore events — everyday record
+  create/update/delete, entity/field schema edits outside a build, and
+  collaborator role changes still carry no "who did this" trail beyond the
+  implicit single owner.
 
 ## Before any real deployment
 
 1. Restrict CORS to the actual frontend origin.
-2. Add email verification before treating accounts as real user identities
-   rather than a demo login (password reset is already covered — see
-   "Authentication" above).
-3. Move `DB_PATH` to a persistent, backed-up volume.
-4. Add a session-revocation UI ("log out everywhere") — `deleteSession`
-   exists in `packages/db` but is only wired to the current session's own
-   logout today.
+2. Move `DB_PATH` to a persistent, backed-up volume.
