@@ -32,8 +32,22 @@ export function generateDailyDigest() {
   // recommend losing money.
   const topOpportunity = ranked[0]?.netProfitMid > 0 ? ranked[0] : null;
 
+  // "approve" mode never auto-publishes, even once the owner has approved
+  // an opportunity — a separate, manual "פרסם מוצר" click on the card
+  // itself is still required (mirrors the dashboard's own definition of
+  // "approved but not yet acted on"). Without surfacing this count, an
+  // approved opportunity could sit unpublished indefinitely with nothing
+  // in the daily digest to remind the owner it's one click away.
+  const approvedAwaitingPublish = db.approvals
+    .where((a) => a.status === 'approved' && a.actionType === 'publish_product')
+    .filter((a) => db.opportunities.get(a.opportunityId)?.status === 'draft')
+    .length;
+
   const settings = getSettings();
-  const digest = buildDailyDigest({ ledgerSummary, actionsToday, failuresToday, topOpportunity, emergencyStop: settings.emergencyStop, mode: settings.mode });
+  const digest = buildDailyDigest({
+    ledgerSummary, actionsToday, failuresToday, topOpportunity,
+    emergencyStop: settings.emergencyStop, mode: settings.mode, approvedAwaitingPublish,
+  });
 
   // The owner can click "generate now" on the Digests page any number of
   // times in a day on top of the 7am cron run — without this, each click

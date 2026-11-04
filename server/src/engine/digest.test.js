@@ -57,6 +57,19 @@ test('says nothing about research mode in any other mode', () => {
   assert.doesNotMatch(digest.text, /מצב מחקר/);
 });
 
+test('reminds the owner when opportunities are approved but still waiting on their own manual publish click', () => {
+  // "approve" mode never auto-publishes even after approval - a separate
+  // manual "פרסם מוצר" click is still required, and this is the one
+  // digest line that reminds the owner that's still pending.
+  const digest = buildDailyDigest({ ledgerSummary, approvedAwaitingPublish: 2 });
+  assert.match(digest.text, /2 הזדמנויות מאושרות ומחכות לפרסום בפועל/);
+});
+
+test('says nothing about approved-awaiting-publish when there is none', () => {
+  const digest = buildDailyDigest({ ledgerSummary, approvedAwaitingPublish: 0 });
+  assert.doesNotMatch(digest.text, /מאושרות ומחכות/);
+});
+
 test('shows only the emergency stop line, not also the research-mode line, when both are true', () => {
   // The emergency stop already fully explains "0 actions" on its own —
   // showing both would just be noise, not a second, independent reason.

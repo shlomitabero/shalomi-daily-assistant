@@ -1,6 +1,6 @@
 // Builds the daily summary: net profit, what ran, what broke, and what to
 // do next. Pure text assembly so it's testable without a scheduler.
-export function buildDailyDigest({ ledgerSummary, actionsToday = [], failuresToday = [], topOpportunity = null, emergencyStop = false, mode = null }) {
+export function buildDailyDigest({ ledgerSummary, actionsToday = [], failuresToday = [], topOpportunity = null, emergencyStop = false, mode = null, approvedAwaitingPublish = 0 }) {
   const lines = [
     `רווח נטו מאומת היום: ${formatMoney(ledgerSummary.netProfitToday)}`,
     `נכנס בפועל: ${formatMoney(ledgerSummary.cashInToday)} | יצא בפועל: ${formatMoney(ledgerSummary.cashOutToday)}`,
@@ -13,6 +13,12 @@ export function buildDailyDigest({ ledgerSummary, actionsToday = [], failuresTod
     // emergency stop does — without this line the owner has no way to
     // learn that from the digest text either, every single day.
     ...(!emergencyStop && mode === 'research' ? ['🔬 מצב מחקר בלבד — המערכת מצאה הזדמנויות אבל לא פרסמה ולא גבתה כסף באף אחת מהן, בכוונה.'] : []),
+    // "approve" mode never auto-publishes even after the owner clicks "אשר
+    // פרסום" — a separate, manual "פרסם מוצר" click is still required. Until
+    // now the digest said nothing about this, so an opportunity could sit
+    // approved-but-unpublished indefinitely with no daily reminder that real
+    // money is one click away from actually starting to come in.
+    ...(approvedAwaitingPublish > 0 ? [`✅ ${approvedAwaitingPublish} הזדמנויות מאושרות ומחכות לפרסום בפועל שלך.`] : []),
     `פעולות שבוצעו: ${actionsToday.length}`,
     failuresToday.length
       ? `בעיות: ${failuresToday.map((f) => f.summary).join('; ')}`

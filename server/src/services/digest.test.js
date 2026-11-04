@@ -85,6 +85,33 @@ test('generateDailyDigest never recommends a money-losing opportunity as the nex
   assert.match(digest.text, /אין הזדמנות מספקת כרגע/);
 });
 
+test('generateDailyDigest counts an approved-but-unpublished opportunity as awaiting the owner\'s manual publish click', () => {
+  // "approve" mode never auto-publishes even once approved - this is the
+  // one digest line reminding the owner a separate "פרסם מוצר" click is
+  // still needed for real money to start coming in.
+  __resetForTests();
+  const opp = db.opportunities.insert({ id: makeId('opp'), status: 'draft', title: 'מדריך', costs: {} });
+  db.approvals.insert({
+    id: makeId('appr'), opportunityId: opp.id, actionType: 'publish_product', status: 'approved',
+    createdAt: new Date().toISOString(), approvedAt: new Date().toISOString(),
+  });
+  const digest = generateDailyDigest();
+  assert.match(digest.text, /1 הזדמנויות מאושרות ומחכות לפרסום בפועל/);
+});
+
+test('generateDailyDigest does not count an approval whose opportunity was already published', () => {
+  // Once published, the approval has already done its job - counting it
+  // again here would make the digest nag about a non-existent backlog.
+  __resetForTests();
+  const opp = db.opportunities.insert({ id: makeId('opp'), status: 'published', title: 'מדריך', costs: {}, paddlePriceId: 'pri_1', slug: 's' });
+  db.approvals.insert({
+    id: makeId('appr'), opportunityId: opp.id, actionType: 'publish_product', status: 'approved',
+    createdAt: new Date().toISOString(), approvedAt: new Date().toISOString(),
+  });
+  const digest = generateDailyDigest();
+  assert.doesNotMatch(digest.text, /מאושרות ומחכות/);
+});
+
 test('a digest generated for a different day does not get merged with today\'s', () => {
   __resetForTests();
   const today = generateDailyDigest();
