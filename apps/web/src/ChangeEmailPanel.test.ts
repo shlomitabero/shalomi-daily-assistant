@@ -208,6 +208,44 @@ test("warns before a tab close/refresh while an email-change draft is in progres
   });
 });
 
+/**
+ * Round 1588: this form's two type="email" inputs and its password field
+ * relied on native HTML5 required/type="email" constraint validation with
+ * no `noValidate` -- the exact bug class round 342 fixed for EntityPanel
+ * and round 1587 fixed for AuthScreen (see ChangePasswordPanel.test.ts's
+ * own identical round-1588 test). Left unfixed, submitting with the new-
+ * email field blank would only trigger the browser's own untranslated
+ * validation popup, never reaching handleSubmit's own mismatch check or
+ * the API at all.
+ */
+test("ChangeEmailPanel shows a translated required-field message and sends zero requests when the new-email field is left blank", async () => {
+  await withJsdom(async () => {
+    const originalFetch = globalThis.fetch;
+    let calls = 0;
+    globalThis.fetch = (async () => {
+      calls += 1;
+      throw new Error("changeEmail must never be called when a required field is left blank");
+    }) as typeof fetch;
+
+    try {
+      renderPanel();
+      fillForm("", "", "my-current-password");
+      fireEvent.submit(document.querySelector("form")!);
+      await new Promise((resolve) => setTimeout(resolve, 0));
+
+      assert.equal(calls, 0, "the API must never be called when a required field is blank");
+      const errorEl = document.querySelector(".error");
+      assert.ok(errorEl, "expected a visible required-field error");
+      assert.match(errorEl!.textContent ?? "", /fill in this field/i);
+      assert.equal(errorEl!.getAttribute("role"), "alert");
+      const emailInputs = document.querySelectorAll("input[type='email']") as NodeListOf<HTMLInputElement>;
+      assert.equal(document.activeElement, emailInputs[0], "the blank new-email field must receive focus");
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+});
+
 test("a mismatched confirmation never calls the API and shows a mismatch error instead", async () => {
   await withJsdom(async () => {
     const originalFetch = globalThis.fetch;

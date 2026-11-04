@@ -42,6 +42,33 @@ export function ChangePasswordPanel({ onClose }: { onClose: () => void }) {
   // nothing left to warn about.
   useBeforeUnloadWarning(!done && hasUnsavedDraft);
 
+  /**
+   * Round 1588: this form's three PasswordInput fields (required/
+   * minLength) still relied on native HTML5 constraint-validation popups --
+   * the same bug class round 342 fixed for EntityPanel and round 1587 fixed
+   * for AuthScreen. The browser's own validation tooltip is rendered in the
+   * OS/browser's own locale, not through t(), so it ignores this dialog's
+   * language toggle entirely. `noValidate` on the form (added below)
+   * suppresses only the automatic popup; checkValidity() stays intact, so
+   * this reuses it exactly the way AuthScreen.tsx's own findFirstInvalidField/
+   * describeInvalidField already do (including checking `el.tagName` rather
+   * than `el instanceof HTMLInputElement`, which round 1587 found throws
+   * under this app's own jsdom test harness).
+   */
+  function findFirstInvalidField(form: HTMLFormElement): HTMLInputElement | null {
+    for (const el of Array.from(form.elements)) {
+      if (el.tagName === "INPUT" && !(el as HTMLInputElement).checkValidity()) return el as HTMLInputElement;
+    }
+    return null;
+  }
+
+  function describeInvalidField(input: HTMLInputElement): string {
+    if (input.validity.valueMissing) return t("auth.form.requiredField");
+    if (input.validity.tooShort) return t("auth.form.passwordTooShort");
+    if (input.validity.typeMismatch) return t("auth.form.invalidEmail");
+    return t("auth.form.requiredField");
+  }
+
   function handleResetForm() {
     setCurrentPassword("");
     setNewPassword("");
@@ -63,6 +90,12 @@ export function ChangePasswordPanel({ onClose }: { onClose: () => void }) {
     // user saw success.
     if (busy) return;
     setError(null);
+    const invalid = findFirstInvalidField(e.currentTarget as HTMLFormElement);
+    if (invalid) {
+      setError(describeInvalidField(invalid));
+      invalid.focus();
+      return;
+    }
     if (newPassword !== confirmPassword) {
       setError(t("changePassword.mismatch"));
       return;
@@ -96,6 +129,7 @@ export function ChangePasswordPanel({ onClose }: { onClose: () => void }) {
           <form
             className="auth-form"
             onSubmit={handleSubmit}
+            noValidate
             data-escape-handled-locally={hasUnsavedDraft ? "" : undefined}
             onKeyDown={(e) => {
               if (e.key === "Escape" && hasUnsavedDraft) handleResetForm();

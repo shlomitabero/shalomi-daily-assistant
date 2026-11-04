@@ -52,6 +52,29 @@ export function ChangeEmailPanel({ currentEmail, onClose, onChanged }: { current
   // state isn't reset), so there is nothing left to warn about by then.
   useBeforeUnloadWarning(!done && hasUnsavedDraft);
 
+  /**
+   * Round 1588: this form's two type="email" inputs and its password field
+   * still relied on native HTML5 constraint-validation popups -- the same
+   * bug class round 342 fixed for EntityPanel and round 1587 fixed for
+   * AuthScreen (see ChangePasswordPanel.tsx's own identical doc comment).
+   * `noValidate` on the form (added below) suppresses only the automatic
+   * popup; checkValidity() stays intact, so this reuses it exactly the way
+   * AuthScreen.tsx's findFirstInvalidField/describeInvalidField already do.
+   */
+  function findFirstInvalidField(form: HTMLFormElement): HTMLInputElement | null {
+    for (const el of Array.from(form.elements)) {
+      if (el.tagName === "INPUT" && !(el as HTMLInputElement).checkValidity()) return el as HTMLInputElement;
+    }
+    return null;
+  }
+
+  function describeInvalidField(input: HTMLInputElement): string {
+    if (input.validity.valueMissing) return t("auth.form.requiredField");
+    if (input.validity.tooShort) return t("auth.form.passwordTooShort");
+    if (input.validity.typeMismatch) return t("auth.form.invalidEmail");
+    return t("auth.form.requiredField");
+  }
+
   function handleResetForm() {
     setCurrentPassword("");
     setEmail(currentEmail);
@@ -70,6 +93,12 @@ export function ChangeEmailPanel({ currentEmail, onClose, onChanged }: { current
     // idempotency-protected server-side.
     if (busy) return;
     setError(null);
+    const invalid = findFirstInvalidField(e.currentTarget as HTMLFormElement);
+    if (invalid) {
+      setError(describeInvalidField(invalid));
+      invalid.focus();
+      return;
+    }
     // Round 1205: mirrors CollaboratorsPanel's own email-comparison
     // convention (c.email.toLowerCase() === trimmed.toLowerCase()) and the
     // server's own ChangeEmailSchema, which normalizes with .toLowerCase()
@@ -114,6 +143,7 @@ export function ChangeEmailPanel({ currentEmail, onClose, onChanged }: { current
           <form
             className="auth-form"
             onSubmit={handleSubmit}
+            noValidate
             data-escape-handled-locally={hasUnsavedDraft ? "" : undefined}
             onKeyDown={(e) => {
               if (e.key === "Escape" && hasUnsavedDraft) handleResetForm();
