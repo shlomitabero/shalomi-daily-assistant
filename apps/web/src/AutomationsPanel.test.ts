@@ -2140,6 +2140,106 @@ test("AutomationsPanel still fetches and resolves a relation field's related rec
   });
 });
 
+const fieldRecaseRelationProject: Project = {
+  ...relationFieldProject,
+  id: "proj6e",
+  spec: {
+    ...relationFieldProject.spec,
+    entities: [
+      {
+        name: "Order",
+        label: "Order",
+        fields: [
+          { name: "label", label: "Label", type: "text", required: true },
+          // Round 1603: "courierId" recased to "CourierId" -- the rule
+          // below still stores the OLD casing in its own fieldName, the
+          // same legitimate AI-refine case-only FIELD rename rounds
+          // 1188/1267/1561 already established for sibling lookups in
+          // this same file. relationTo ("Courier") and the entity's own
+          // name ("Order") are both untouched, isolating this test from
+          // the round-1181 relationTo-case-mismatch and round-1486
+          // entity-recase scenarios above.
+          { name: "CourierId", label: "Courier", type: "relation", required: false, relationTo: "Courier" },
+        ],
+      },
+      {
+        name: "Courier",
+        label: "Courier",
+        fields: [{ name: "name", label: "Name", type: "text", required: true }],
+      },
+    ],
+  },
+};
+
+/**
+ * Round 1603's finding: relationFieldTargets' own field-level lookup
+ * (`ruleFieldEntity?.fields.find((f) => f.name === rule.fieldName)`) did
+ * its own exact-case ===, independently of resolveStoredFieldName (used by
+ * this file's own fieldLabel/fieldValueLabel just below it). A case-only
+ * FIELD rename (round 1486 just above only hardened the entity-level
+ * lookup, not this sibling field-level one) made this lookup miss the
+ * rule's own field entirely, so the relation field's target name was never
+ * added to relationFieldTargets -- relatedRecords for it was never fetched
+ * at all, making fieldValueLabel's otherwise-correct relation resolution a
+ * no-op: it falls back to the bare, never-meaningful-to-a-user internal
+ * record id, in both the rule list and the Copy/Download report.
+ */
+test("AutomationsPanel still fetches and resolves a relation field's related record label when the rule's field was only recased, not removed", async () => {
+  await withJsdom(async () => {
+    const originalFetch = globalThis.fetch;
+    const rule = makeRule({
+      id: "rule11e",
+      entityName: "Order",
+      trigger: "field_equals",
+      fieldName: "courierId",
+      fieldValue: "2",
+    });
+    globalThis.fetch = (async (input: string, init?: RequestInit) => {
+      const method = init?.method ?? "GET";
+      if (method === "GET" && input === "/api/projects/proj6e/automations") {
+        return new Response(JSON.stringify({ rules: [rule] }), { status: 200, headers: { "content-type": "application/json" } });
+      }
+      if (method === "GET" && input === "/api/projects/proj6e/entities/Courier") {
+        return new Response(
+          JSON.stringify({ records: [{ id: 1, name: "Yossi Cohen" }, { id: 2, name: "Dana Levi" }] }),
+          { status: 200, headers: { "content-type": "application/json" } },
+        );
+      }
+      throw new Error(`unexpected request ${method} ${input}`);
+    }) as typeof fetch;
+
+    let writtenText: string | undefined;
+    Object.defineProperty(navigator, "clipboard", {
+      value: { writeText: async (text: string) => void (writtenText = text) },
+      configurable: true,
+    });
+
+    try {
+      renderPanelWith(fieldRecaseRelationProject);
+      await waitForCondition(() => document.querySelector(".automations-rule-condition") !== null);
+      await waitForCondition(() => (document.querySelector(".automations-rule-condition")?.textContent ?? "").includes("Dana Levi"));
+      assert.doesNotMatch(
+        document.querySelector(".automations-rule-condition")?.textContent ?? "",
+        /"2"/,
+        "the raw stored id must never be shown once the related record's label is resolvable, even when the rule's own field was only recased",
+      );
+
+      const copyButton = Array.from(document.querySelectorAll("button")).find((b) => b.textContent?.includes("Copy report")) as HTMLButtonElement;
+      await act(async () => {
+        fireEvent.click(copyButton);
+        await Promise.resolve();
+        await Promise.resolve();
+      });
+
+      assert.equal(typeof writtenText, "string", "clicking Copy must actually call navigator.clipboard.writeText");
+      assert.match(writtenText!, /Dana Levi/, "the Copy report text must also resolve the relation id to its display label despite the rule's own field being recased");
+    } finally {
+      globalThis.fetch = originalFetch;
+      delete (navigator as { clipboard?: unknown }).clipboard;
+    }
+  });
+});
+
 /**
  * Round 1486's second finding, same root cause: applyRuleToForm (shared by
  * the Edit and Duplicate actions) did its own independent, unhardened

@@ -429,7 +429,15 @@ export function AutomationsPanel({
       // silently skipping that rule's relation target from the fetch list
       // below no matter what fieldLabel/fieldValueLabel resolved later.
       const ruleFieldEntity = ruleEntity(rule);
-      const field = ruleFieldEntity?.fields.find((f) => f.name === rule.fieldName);
+      // Round 1603: resolveStoredFieldName (same fallback fieldLabel/
+      // fieldValueLabel below already use) instead of a plain exact-case
+      // ===. A case-only FIELD rename (round 1486 above only hardened the
+      // entity-level lookup) left this one still missing a relation
+      // field after its live name's casing changed, so this target's
+      // records were never fetched -- fieldValueLabel resolved the field
+      // fine via its own already-hardened lookup, but then found
+      // relatedRecords[field.relationTo] empty and fell back to the raw id.
+      const field = rule.fieldName ? resolveStoredFieldName(ruleFieldEntity?.fields ?? [], rule.fieldName) : undefined;
       if (field?.type === "relation" && field.relationTo) names.add(field.relationTo);
     }
     // Round 1181: case-insensitive -- without this, a relationTo that
