@@ -1,7 +1,35 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { db, __resetForTests, makeId } from '../db/store.js';
+import { updateSettings } from '../services/settings.js';
 import { createDigitalProduct, listOpportunities, getOpportunity, patchOpportunity, publishOpportunityRoute, rejectOpportunity } from './opportunities.js';
+
+function withPaddleEnv(fn) {
+  const vars = { PADDLE_API_KEY: 'fake', PADDLE_CLIENT_TOKEN: 'fake', PADDLE_WEBHOOK_SECRET: 'fake' };
+  const originals = {};
+  for (const key of Object.keys(vars)) {
+    originals[key] = process.env[key];
+    process.env[key] = vars[key];
+  }
+  return fn().finally(() => {
+    for (const key of Object.keys(originals)) {
+      if (originals[key] === undefined) delete process.env[key];
+      else process.env[key] = originals[key];
+    }
+  });
+}
+
+function stubPaddleFetch(responses) {
+  const original = globalThis.fetch;
+  let call = 0;
+  globalThis.fetch = async () => {
+    const response = responses[call];
+    call += 1;
+    if (!response) throw new Error('unexpected extra fetch call');
+    return response;
+  };
+  return () => { globalThis.fetch = original; };
+}
 
 function makeRes() {
   const res = { statusCode: null, body: null };
@@ -344,4 +372,86 @@ test('publishOpportunityRoute refuses to publish an opportunity the owner alread
   await publishOpportunityRoute({ params: { id: opp.id } }, res);
   assert.equal(res.statusCode, 409);
   assert.equal(db.opportunities.get(opp.id).status, 'rejected');
+});
+
+test('publishOpportunityRoute responds 503 and never calls Paddle when Paddle is not configured yet', async () => {
+  // The owner's "פרסם מוצר" click before PADDLE_API_KEY/CLIENT_TOKEN/
+  // WEBHOOK_SECRET are all set must get an honest "not set up" error, not
+  // a confusing failure from inside publishOpportunity.
+  __resetForTests();
+  const opp = insertOpportunity();
+  const restore = stubPaddleFetch([]); // any fetch call is a failure here
+  try {
+    const res = makeRes();
+    await publishOpportunityRoute({ params: { id: opp.id } }, res);
+    assert.equal(res.statusCode, 503);
+    assert.equal(db.opportunities.get(opp.id).status, 'draft');
+    const logged = db.actions_log.where((a) => a.type === 'publish_product')[0];
+    assert.match(logged.result, /blocked: Paddle is not configured/);
+  } finally {
+    restore();
+  }
+});
+
+test('publishOpportunityRoute responds 409 without ever calling Paddle when the mode gate blocks it', async () => {
+  // Default mode is 'research' - the gate must reject before perform() ever
+  // runs, even once Paddle itself is fully configured.
+  __resetForTests();
+  const opp = insertOpportunity();
+  const restore = stubPaddleFetch([]); // any fetch call means the gate didn't block in time - a failure
+  await withPaddleEnv(async () => {
+    try {
+      const res = makeRes();
+      await publishOpportunityRoute({ params: { id: opp.id } }, res);
+      assert.equal(res.statusCode, 409);
+      assert.equal(db.opportunities.get(opp.id).status, 'draft');
+    } finally {
+      restore();
+    }
+  });
+});
+
+test('publishOpportunityRoute publishes for real and returns the updated opportunity', async () => {
+  __resetForTests();
+  updateSettings({ mode: 'auto_limited' });
+  const opp = insertOpportunity();
+  const restore = stubPaddleFetch([
+    { ok: true, json: async () => ({ data: { id: 'pro_123' } }) },
+    { ok: true, json: async () => ({ data: { id: 'pri_456' } }) },
+  ]);
+  await withPaddleEnv(async () => {
+    try {
+      const res = makeRes();
+      await publishOpportunityRoute({ params: { id: opp.id } }, res);
+      assert.equal(res.statusCode, 200);
+      assert.equal(res.body.opportunity.status, 'published');
+      assert.equal(res.body.opportunity.paddlePriceId, 'pri_456');
+      assert.ok(res.body.opportunity.slug);
+    } finally {
+      restore();
+    }
+  });
+});
+
+test('publishOpportunityRoute responds 502 and leaves the opportunity a draft when the Paddle API call fails', async () => {
+  // A Paddle outage (or a bad API key) during perform() must surface as a
+  // clean error response instead of crashing the request, and must never
+  // leave the opportunity half-published.
+  __resetForTests();
+  updateSettings({ mode: 'auto_limited' });
+  const opp = insertOpportunity();
+  const restore = stubPaddleFetch([
+    { ok: false, text: async () => 'Paddle is down' }, // the product-creation call fails
+  ]);
+  await withPaddleEnv(async () => {
+    try {
+      const res = makeRes();
+      await publishOpportunityRoute({ params: { id: opp.id } }, res);
+      assert.equal(res.statusCode, 502);
+      assert.equal(db.opportunities.get(opp.id).status, 'draft');
+      assert.ok(!db.opportunities.get(opp.id).paddlePriceId);
+    } finally {
+      restore();
+    }
+  });
 });
