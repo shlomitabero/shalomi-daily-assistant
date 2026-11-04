@@ -79,3 +79,21 @@ export async function runAutonomousScan() {
   logAction({ type: 'autonomous_scan', detail: { opportunityId: opportunity.id, published: opportunity.status === 'published' }, result: 'success' });
   return { ran: true, opportunity };
 }
+
+const SCAN_INTERVAL_MS = 4 * 60 * 60 * 1000;
+
+// node-cron's '0 */4 * * *' job only fires while the process happens to be
+// alive at the exact minute the clock hits one of those hours - it does not
+// back-fill a tick it missed. This app gets redeployed roughly hourly by
+// its own upgrade routine, so a scan could go well past its normal 4-hour
+// cadence if a restart keeps landing near that exact minute. Called once at
+// startup: if the last logged 'autonomous_scan' entry (now logged on every
+// outcome, including success) is more than 4 hours old or there is none at
+// all, run a scan immediately instead of waiting out the rest of the gap.
+export async function catchUpAutonomousScanIfMissed(now = new Date()) {
+  const lastScan = db.actions_log
+    .where((a) => a.type === 'autonomous_scan')
+    .sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt))[0];
+  if (lastScan && now - new Date(lastScan.createdAt) < SCAN_INTERVAL_MS) return null;
+  return runAutonomousScan();
+}

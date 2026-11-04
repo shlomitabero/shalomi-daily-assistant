@@ -2,7 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { db, __resetForTests, makeId } from '../db/store.js';
 import { updateSettings } from './settings.js';
-import { runAutonomousScan } from './autonomousScan.js';
+import { runAutonomousScan, catchUpAutonomousScanIfMissed } from './autonomousScan.js';
 
 function withEnv(vars, fn) {
   const originals = {};
@@ -339,4 +339,50 @@ test('runAutonomousScan never counts demo drafts toward the pending-draft cap', 
       else process.env[key] = originalEnv[key];
     }
   }
+});
+
+test('catchUpAutonomousScanIfMissed runs a scan immediately when none has ever been logged', async () => {
+  // A fresh install (or a wiped log) must not wait up to 4 hours for the
+  // normal cron tick before ever looking for revenue once.
+  __resetForTests();
+  await withEnv(
+    { ANTHROPIC_API_KEY: undefined, PADDLE_API_KEY: undefined, PADDLE_CLIENT_TOKEN: undefined, PADDLE_WEBHOOK_SECRET: undefined },
+    async () => {
+      const result = await catchUpAutonomousScanIfMissed(new Date());
+      assert.ok(result);
+      assert.equal(result.ran, false); // source not connected in this test env - still counts as "it ran"
+      assert.equal(db.actions_log.where((a) => a.type === 'autonomous_scan').length, 1);
+    }
+  );
+});
+
+test('catchUpAutonomousScanIfMissed does nothing when the last scan was less than 4 hours ago', async () => {
+  __resetForTests();
+  db.actions_log.insert({
+    id: makeId('act'), type: 'autonomous_scan', detail: {}, result: 'blocked: source not connected',
+    createdAt: new Date('2026-01-01T10:00:00Z').toISOString(),
+  });
+  const result = await catchUpAutonomousScanIfMissed(new Date('2026-01-01T12:00:00Z')); // 2 hours later
+  assert.equal(result, null);
+  assert.equal(db.actions_log.where((a) => a.type === 'autonomous_scan').length, 1);
+});
+
+test('catchUpAutonomousScanIfMissed runs a scan when the last one was more than 4 hours ago', async () => {
+  // This is the self-healing case: a restart (this app gets redeployed
+  // roughly hourly) left a gap longer than the normal 4-hour cadence -
+  // without this, the scan would just stay quiet until the next aligned
+  // cron tick, however long that takes.
+  __resetForTests();
+  db.actions_log.insert({
+    id: makeId('act'), type: 'autonomous_scan', detail: {}, result: 'blocked: source not connected',
+    createdAt: new Date('2026-01-01T06:00:00Z').toISOString(),
+  });
+  await withEnv(
+    { ANTHROPIC_API_KEY: undefined, PADDLE_API_KEY: undefined, PADDLE_CLIENT_TOKEN: undefined, PADDLE_WEBHOOK_SECRET: undefined },
+    async () => {
+      const result = await catchUpAutonomousScanIfMissed(new Date('2026-01-01T11:00:00Z')); // 5 hours later
+      assert.ok(result);
+      assert.equal(db.actions_log.where((a) => a.type === 'autonomous_scan').length, 2);
+    }
+  );
 });

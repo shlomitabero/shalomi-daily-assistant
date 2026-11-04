@@ -19,7 +19,7 @@ import { financialRouter } from './routes/financial.js';
 import { digestRouter } from './routes/digest.js';
 import { syncSources } from './services/sources.js';
 import { generateDailyDigest, catchUpDailyDigestIfMissed } from './services/digest.js';
-import { runAutonomousScan } from './services/autonomousScan.js';
+import { runAutonomousScan, catchUpAutonomousScanIfMissed } from './services/autonomousScan.js';
 import { classifyApiError } from './engine/apiError.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -72,6 +72,13 @@ try {
 } catch (err) {
   console.error('catch-up daily digest failed', err);
 }
+
+// Same self-healing reasoning as the digest catch-up above, for the
+// autonomous scan's own '0 */4 * * *' cron tick: don't let the single most
+// important recurring action this app takes go quiet for longer than its
+// normal 4-hour cadence just because a restart happened to land near the
+// wrong minute.
+catchUpAutonomousScanIfMissed().catch((err) => console.error('catch-up autonomous scan failed', err));
 
 // In-process scheduler. This only runs while the Node process stays alive —
 // on Render's free tier the service can spin down when idle, so this is not
