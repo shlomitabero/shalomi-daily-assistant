@@ -160,10 +160,15 @@ export default function Financial() {
             <option value="short">שורט</option>
           </select>
         </div>
+        {/* step="any" on all three - without it, a type="number" input
+            defaults to step=1, so a decimal price (e.g. 149.99) fails
+            native validation and the browser silently blocks the form's
+            submit event before React even sees it, with no error shown
+            anywhere. */}
         <div className="field-row">
-          <input type="number" placeholder="מחיר כניסה" value={trade.entryPrice} onChange={(e) => setTrade({ ...trade, entryPrice: e.target.value })} />
-          <input type="number" placeholder="מחיר יציאה" value={trade.exitPrice} onChange={(e) => setTrade({ ...trade, exitPrice: e.target.value })} />
-          <input type="number" placeholder="כמות" value={trade.quantity} onChange={(e) => setTrade({ ...trade, quantity: e.target.value })} />
+          <input type="number" step="any" placeholder="מחיר כניסה" value={trade.entryPrice} onChange={(e) => setTrade({ ...trade, entryPrice: e.target.value })} />
+          <input type="number" step="any" placeholder="מחיר יציאה" value={trade.exitPrice} onChange={(e) => setTrade({ ...trade, exitPrice: e.target.value })} />
+          <input type="number" step="any" placeholder="כמות" value={trade.quantity} onChange={(e) => setTrade({ ...trade, quantity: e.target.value })} />
         </div>
         {error && <p className="form-error">{error}</p>}
         <button className="btn btn-ghost" type="submit" disabled={tradeBusy}>{tradeBusy ? 'מריץ…' : 'הרץ סימולציה'}</button>

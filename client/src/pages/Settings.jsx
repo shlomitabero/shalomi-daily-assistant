@@ -89,15 +89,20 @@ export default function Settings() {
       <p className="hint" style={{ margin: '-10px 0 16px' }}>עצירה מיידית חוסמת כל פעולה אמיתית (פרסום, חיוב) מיד, בלי קשר למצב הפעולה — לשימוש בכל רגע שמשהו נראה לא בסדר.</p>
       {error && <p className="form-error">{error}</p>}
 
+      {/* step="any" on both number inputs below - without it, a
+          type="number" input defaults to step=1, so typing a decimal
+          budget (e.g. 49.99) fails native validation and the browser
+          silently blocks the form's submit event before React even sees
+          it, with no error shown anywhere. */}
       <form className="card form" onSubmit={onSave}>
         <label>
           תקציב כולל ({form.currency})
-          <input type="number" value={form.budget} onChange={(e) => setForm({ ...form, budget: e.target.value })} placeholder="0" />
+          <input type="number" step="any" value={form.budget} onChange={(e) => setForm({ ...form, budget: e.target.value })} placeholder="0" />
         </label>
         <p className="hint" style={{ margin: '-4px 0 0' }}>הסכום המרבי שהמערכת מותרת להוציא בסך הכול (עלויות AI, סליקה וכו'). כל עוד זה 0, שום הוצאה אמיתית לא תתבצע.</p>
         <label>
           הפסד מרבי מקובל ({form.currency})
-          <input type="number" value={form.maxLoss} onChange={(e) => setForm({ ...form, maxLoss: e.target.value })} placeholder="ללא הגבלה" />
+          <input type="number" step="any" value={form.maxLoss} onChange={(e) => setForm({ ...form, maxLoss: e.target.value })} placeholder="ללא הגבלה" />
         </label>
         <p className="hint" style={{ margin: '-4px 0 0' }}>תקרה נפרדת על הפסד נטו (עלות שלא כוסתה בהכנסה) — למשל במסחר מדומה. ריק = בלי תקרה נפרדת, רק תקציב כללי.</p>
         <label>

@@ -135,16 +135,24 @@ export default function OpportunityDetail() {
         </div>
       )}
 
+      {/* step="any" on every number input below: a type="number" input
+          with no step attribute defaults to step=1, so typing ANY decimal
+          value (e.g. 9.99 - the single most common digital-product price
+          point) makes the field fail native HTML5 validation. The browser
+          then silently blocks the form's submit event before React ever
+          sees it - the owner's click on "שמור" would just do nothing, no
+          error shown anywhere, for one of the most ordinary values anyone
+          would type into a price or revenue field. */}
       <form className="card form" onSubmit={onSave}>
         <h3>הערכת רווח (על אחריותך — לא נתון מאומת)</h3>
         <div className="field-row">
-          <label>הכנסה נמוכה ($)<input type="number" value={form.low} onChange={(e) => setForm({ ...form, low: e.target.value })} /></label>
-          <label>הכנסה ממוצעת ($)<input type="number" value={form.mid} onChange={(e) => setForm({ ...form, mid: e.target.value })} /></label>
-          <label>הכנסה גבוהה ($)<input type="number" value={form.high} onChange={(e) => setForm({ ...form, high: e.target.value })} /></label>
+          <label>הכנסה נמוכה ($)<input type="number" step="any" value={form.low} onChange={(e) => setForm({ ...form, low: e.target.value })} /></label>
+          <label>הכנסה ממוצעת ($)<input type="number" step="any" value={form.mid} onChange={(e) => setForm({ ...form, mid: e.target.value })} /></label>
+          <label>הכנסה גבוהה ($)<input type="number" step="any" value={form.high} onChange={(e) => setForm({ ...form, high: e.target.value })} /></label>
         </div>
         <div className="field-row">
-          <label>עלות AI ($)<input type="number" step="0.01" value={form.aiUsage} onChange={(e) => setForm({ ...form, aiUsage: e.target.value })} /></label>
-          <label>עמלת סליקה ($)<input type="number" step="0.01" value={form.paymentProcessing} onChange={(e) => setForm({ ...form, paymentProcessing: e.target.value })} /></label>
+          <label>עלות AI ($)<input type="number" step="any" value={form.aiUsage} onChange={(e) => setForm({ ...form, aiUsage: e.target.value })} /></label>
+          <label>עמלת סליקה ($)<input type="number" step="any" value={form.paymentProcessing} onChange={(e) => setForm({ ...form, paymentProcessing: e.target.value })} /></label>
         </div>
         <div className="field-row">
           <label>רמת סיכון
@@ -166,6 +174,7 @@ export default function OpportunityDetail() {
           מחיר מוצר ($)
           <input
             type="number"
+            step="any"
             value={form.priceUSD}
             onChange={(e) => setForm({ ...form, priceUSD: e.target.value })}
             disabled={opp.status === 'published'}
