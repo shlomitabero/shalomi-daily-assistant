@@ -3174,6 +3174,62 @@ test("AutomationsPanel's 'webhook' action shows a URL input instead of the Whats
 });
 
 /**
+ * Round 1589: the webhookUrl input (type="url") relied on native HTML5
+ * format-constraint validation with no `noValidate` -- the same bug class
+ * round 342/1587/1588 already fixed for EntityPanel/AuthScreen/
+ * ChangePasswordPanel/ChangeEmailPanel. `formIncomplete` already disables
+ * the Save button while webhookUrl is blank, so the only still-reachable
+ * native-validation path is a non-empty value that fails the browser's own
+ * URL-format check -- which, left unfixed, would only ever show the
+ * browser's own untranslated popup, never reaching the real POST or the
+ * app's own translated error path.
+ */
+test("AutomationsPanel's webhook action shows a translated invalid-URL message and sends zero requests when webhookUrl is malformed", async () => {
+  await withJsdom(async () => {
+    const originalFetch = globalThis.fetch;
+    let createCalls = 0;
+    globalThis.fetch = (async (input: string, init?: RequestInit) => {
+      const method = init?.method ?? "GET";
+      if (method === "GET" && input === "/api/projects/proj5/automations") {
+        return new Response(JSON.stringify({ rules: [] }), { status: 200, headers: { "content-type": "application/json" } });
+      }
+      if (method === "POST" && input === "/api/projects/proj5/entities/Ticket/automations") {
+        createCalls += 1;
+        throw new Error("createAutomationRule must never be called when webhookUrl is malformed");
+      }
+      throw new Error(`unexpected request ${method} ${input}`);
+    }) as typeof fetch;
+
+    try {
+      renderPanelWith(triggerFieldProject);
+      await waitForCondition(() => document.body.textContent?.includes("No automations yet") ?? false);
+
+      const actionSelect = Array.from(document.querySelectorAll("select")).find((s) =>
+        Array.from(s.options).some((o) => o.value === "webhook"),
+      ) as HTMLSelectElement;
+      fireEvent.change(actionSelect, { target: { value: "webhook" } });
+
+      const urlInput = document.querySelector('input[type="url"]') as HTMLInputElement;
+      fireEvent.change(urlInput, { target: { value: "not-a-url" } });
+
+      const messageField = document.querySelector(".automations-create-form textarea") as HTMLTextAreaElement;
+      fireEvent.change(messageField, { target: { value: "New ticket!" } });
+      fireEvent.submit(document.querySelector(".automations-create-form")!);
+      await new Promise((resolve) => setTimeout(resolve, 0));
+
+      assert.equal(createCalls, 0, "the API must never be called when webhookUrl is malformed");
+      const errorEl = document.querySelector(".error");
+      assert.ok(errorEl, "expected a visible invalid-URL error");
+      assert.match(errorEl!.textContent ?? "", /valid URL/i);
+      assert.equal(errorEl!.getAttribute("role"), "status");
+      assert.equal(document.activeElement, urlInput, "the malformed URL field must receive focus");
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+});
+
+/**
  * Round 1364: the exact same bug class round 1363 closed for
  * EntityPanel.tsx's record-form Save button -- handleSubmit here had no
  * guard against racing ITSELF (every other action in this panel already

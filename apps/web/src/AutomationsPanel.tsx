@@ -683,6 +683,38 @@ export function AutomationsPanel({
   // than recomputing it, so the two protections can't drift apart.
   useBeforeUnloadWarning(hasUnsavedDraft);
 
+  /**
+   * Round 1589: this form's webhookUrl (type="url") and toEmail (type="email")
+   * inputs still relied on native HTML5 format-constraint validation -- the
+   * same bug class round 342/1587/1588 already fixed for EntityPanel/
+   * AuthScreen/ChangePasswordPanel/ChangeEmailPanel. `formIncomplete` above
+   * already disables the submit button while either field is blank, so the
+   * only native-validation path still reachable here is a non-empty value
+   * that fails the browser's own url/email format check (e.g. "not a url"),
+   * which otherwise pops the browser's own untranslated bubble instead of
+   * ever reaching handleSubmit's existing, already-translated server-error
+   * path below. `noValidate` on the form (added below) suppresses only that
+   * automatic popup; checkValidity() stays intact, so this reuses it exactly
+   * the way AuthScreen.tsx's own findFirstInvalidField/describeInvalidField
+   * already do (including `el.tagName` rather than `el instanceof
+   * HTMLInputElement`, per round 1587's own test-harness fix) -- except
+   * describeInvalidField here must also distinguish a url-format mismatch
+   * from an email-format mismatch, since this form (unlike AuthScreen) has
+   * both kinds of field.
+   */
+  function findFirstInvalidField(form: HTMLFormElement): HTMLInputElement | null {
+    for (const el of Array.from(form.elements)) {
+      if (el.tagName === "INPUT" && !(el as HTMLInputElement).checkValidity()) return el as HTMLInputElement;
+    }
+    return null;
+  }
+
+  function describeInvalidField(input: HTMLInputElement): string {
+    if (input.validity.valueMissing) return t("auth.form.requiredField");
+    if (input.validity.typeMismatch) return input.type === "url" ? t("automations.webhookUrl.invalid") : t("auth.form.invalidEmail");
+    return t("auth.form.requiredField");
+  }
+
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
     // Round 1364: this was the one single-write-path handler in this
@@ -697,8 +729,14 @@ export function AutomationsPanel({
     // form Save button.
     if (createBusy) return;
     if (formIncomplete || !selectedEntity) return;
-    setCreateBusy(true);
     setError(null);
+    const invalid = findFirstInvalidField(e.currentTarget as HTMLFormElement);
+    if (invalid) {
+      setError(describeInvalidField(invalid));
+      invalid.focus();
+      return;
+    }
+    setCreateBusy(true);
     const everyDay = scheduleDays.length === 7;
     try {
       if (editingRuleId) {
@@ -1471,6 +1509,7 @@ export function AutomationsPanel({
         <form
           className="automations-create-form"
           onSubmit={handleSubmit}
+          noValidate
           data-escape-handled-locally={hasUnsavedDraft ? "" : undefined}
           onKeyDown={(e) => {
             if (e.key === "Escape" && hasUnsavedDraft) resetToCreateMode();
