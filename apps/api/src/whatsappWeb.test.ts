@@ -2042,6 +2042,50 @@ test("incoming WhatsApp events (the chat's own calendar/event-creation action) a
 });
 
 /**
+ * Round 1606: the RSVP (Going/Not Going/Maybe) half of eventMessage just
+ * above (round 1502) was previously dropped with zero trace, the same
+ * silent-vanish gap every prior round in this message-type-coverage family
+ * fixed for a different message shape. eventResponseMessage.response is a
+ * plaintext int enum, confirmed directly against the installed Baileys
+ * protobuf types (IEventResponseMessage/EventResponseType). Its genuinely-
+ * encrypted sibling encEventResponseMessage carries only encPayload/encIv --
+ * round 1600 surfaced it but deferred it for lacking this plaintext enum
+ * precedent, which this round supplies.
+ */
+test("incoming WhatsApp event RSVPs (Going/Not Going/Maybe, and their encrypted sibling) are logged with a descriptive placeholder instead of being silently dropped", async () => {
+  const { manager, createdSockets, db } = setupManager();
+  insertProject(db, project);
+  applyMigrations(db, project.id, project.spec);
+  markProjectBuilt(db, project.id);
+
+  await manager.connect(project.id);
+  createdSockets[0].emitConnectionUpdate({ connection: "open" });
+
+  createdSockets[0].emitMessagesUpsert({
+    type: "notify",
+    messages: [
+      { key: { remoteJid: "972501234567@s.whatsapp.net", fromMe: false }, message: { eventResponseMessage: { response: 1 } } },
+      { key: { remoteJid: "972501234567@s.whatsapp.net", fromMe: false }, message: { eventResponseMessage: { response: 2 } } },
+      { key: { remoteJid: "972501234567@s.whatsapp.net", fromMe: false }, message: { eventResponseMessage: { response: 3 } } },
+      { key: { remoteJid: "972501234567@s.whatsapp.net", fromMe: false }, message: { eventResponseMessage: {} } },
+      { key: { remoteJid: "972501234567@s.whatsapp.net", fromMe: false }, message: { encEventResponseMessage: {} } },
+    ],
+  });
+
+  // listWhatsAppMessages orders newest-first, the reverse of emission order.
+  const { messages: rsvpMessages } = listWhatsAppMessages(db, project.id);
+  assert.equal(rsvpMessages.length, 5);
+  assert.equal(rsvpMessages[0].body, "[Event response]", "the genuinely-encrypted sibling can only detect presence, not the chosen response");
+  assert.equal(rsvpMessages[1].body, "[Event response]", "an unrecognized/unset response enum must fall back to a plain placeholder, not print nothing or throw");
+  assert.equal(rsvpMessages[2].body, "[Event: Maybe]");
+  assert.equal(rsvpMessages[3].body, "[Event: Not going]");
+  assert.equal(rsvpMessages[4].body, "[Event: Going]");
+  for (const m of rsvpMessages) {
+    assert.equal(m.direction, "in", "every placeholder row must still be a real, matched-against incoming message, not metadata");
+  }
+});
+
+/**
  * Round 1537: WhatsApp's native "Schedule a call" chat-menu action was
  * previously dropped with zero trace, the same silent-vanish gap round
  * 1502 fixed for eventMessage. ScheduledCallCreationMessage's title/

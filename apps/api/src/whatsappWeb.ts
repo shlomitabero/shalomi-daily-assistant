@@ -140,6 +140,8 @@ export interface BaileysIncomingMessage {
     productMessage?: { product?: { title?: string; description?: string }; body?: string; footer?: string };
     orderMessage?: { orderTitle?: string; message?: string };
     eventMessage?: { name?: string; description?: string; isCanceled?: boolean };
+    eventResponseMessage?: { response?: number };
+    encEventResponseMessage?: Record<string, never>;
     scheduledCallCreationMessage?: { callType?: number; title?: string };
     scheduledCallEditMessage?: { editType?: number };
     requestPaymentMessage?: {
@@ -434,6 +436,32 @@ function describeIncomingMessage(message: BaileysIncomingMessage["message"]): st
     const label = ev.isCanceled ? "[Event canceled]" : "[Event]";
     return ev.name ? `${label} ${ev.name}` : label;
   }
+  // Round 1606: the RSVP (Going/Not Going/Maybe) half of eventMessage just
+  // above (round 1502) -- when a recipient taps a response on an event
+  // invite, Baileys delivers eventResponseMessage, a plaintext int enum
+  // (WAProto's IEventResponseMessage.response: EventResponseType
+  // [UNKNOWN=0, GOING=1, NOT_GOING=2, MAYBE=3]), confirmed against the
+  // installed Baileys protobuf and its actively-exercised receive path
+  // (messages-recv.js emits the raw field on messages.upsert; this is not a
+  // reserved/unused protobuf slot). Its genuinely-encrypted sibling
+  // encEventResponseMessage carries only encPayload/encIv, the same
+  // "detect presence only" bar as encReactionMessage above -- round 1600's
+  // own doc comment there surfaced it but deferred it as a "weaker
+  // secondary candidate" for lacking this plaintext enum precedent, which
+  // this branch now supplies. Previously both fell through to the final
+  // `return null` and vanished with zero trace -- an invite's creation and
+  // cancellation were logged (round 1502), but every RSVP to it was not.
+  if (message.eventResponseMessage) {
+    const EVENT_RESPONSE_GOING = 1;
+    const EVENT_RESPONSE_NOT_GOING = 2;
+    const EVENT_RESPONSE_MAYBE = 3;
+    const r = message.eventResponseMessage.response;
+    if (r === EVENT_RESPONSE_GOING) return "[Event: Going]";
+    if (r === EVENT_RESPONSE_NOT_GOING) return "[Event: Not going]";
+    if (r === EVENT_RESPONSE_MAYBE) return "[Event: Maybe]";
+    return "[Event response]";
+  }
+  if (message.encEventResponseMessage) return "[Event response]";
   // Round 1537: WhatsApp's native "Schedule a call" chat-menu action --
   // ScheduledCallCreationMessage in Baileys' own shipped protobuf
   // (WAProto/WAProto.proto: scheduledTimestampMs int64, callType enum
