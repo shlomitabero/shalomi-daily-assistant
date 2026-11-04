@@ -20936,6 +20936,147 @@ test("GET /projects/:id/inbound-webhook-token returns a real, persisted token th
 });
 
 /**
+ * Round 1607: before this round, the inbound-webhook route could only ever
+ * INSERT a new record -- there was no way for an external sender (Stripe,
+ * Typeform, this file's own named integrations) to update one it had
+ * already created, even though those senders routinely post a *sequence*
+ * of events about the *same* underlying object. The create route hands
+ * back `{ id: record.id }` (round 1405) specifically so a caller can store
+ * that id and send follow-up updates to this new sibling route instead of
+ * creating an unrelated duplicate row each time.
+ */
+test("POST /public/webhook-in/:projectId/:entityName/:recordId updates the SAME record the create route previously returned, instead of inserting a duplicate, and fires the \"updated\" (not \"created\") inbound_webhook automation", async () => {
+  let createdSockets: ReturnType<typeof createFakeWhatsAppSocket>[] = [];
+  await withServer(
+    async (baseUrl, db) => {
+      const email = `webhook-in-update-${randomUUID()}@example.com`;
+      const authToken = await signup(baseUrl, email);
+      const user = findUserByEmail(db, email)!;
+      const spec: ProductSpec = {
+        summary: "test",
+        personas: [],
+        roles: ["Admin"],
+        entities: [{ name: "Order", fields: [{ name: "status", type: "text", required: true }, { name: "phone", type: "text" }] }],
+        screens: [],
+        assumptions: [],
+        openQuestions: [],
+      };
+      const projectId = randomUUID();
+      insertProject(db, { id: projectId, ownerId: user.id, name: "Shop", description: "test", spec });
+      diffAndMigrate(db, projectId, undefined, spec);
+      markProjectBuilt(db, projectId);
+
+      await fetch(`${baseUrl}/api/projects/${projectId}/integrations/whatsapp/connect`, { method: "POST", headers: authHeaders(authToken) });
+      createdSockets[0].sock.user = { id: "15550009999:1@s.whatsapp.net" };
+      createdSockets[0].emitConnectionUpdate({ connection: "open" });
+      // field_equals on status === "paid" -- only the UPDATE below should
+      // ever match it; the initial "pending" create below must not.
+      await fetch(`${baseUrl}/api/projects/${projectId}/entities/Order/automations`, {
+        method: "POST",
+        headers: authHeaders(authToken),
+        body: JSON.stringify({
+          trigger: "field_equals",
+          fieldName: "status",
+          fieldOperator: "equals",
+          fieldValue: "paid",
+          actionType: "send_whatsapp",
+          toMode: "field",
+          toField: "phone",
+          messageTemplate: "Order paid!",
+        }),
+      });
+
+      const { token: webhookToken } = (await (
+        await fetch(`${baseUrl}/api/projects/${projectId}/inbound-webhook-token`, { headers: authHeaders(authToken) })
+      ).json()) as { token: string };
+
+      const createRes = await fetch(`${baseUrl}/api/public/webhook-in/${projectId}/Order?token=${webhookToken}`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ status: "pending", phone: "972500000001" }),
+      });
+      assert.equal(createRes.status, 201);
+      const { id: recordId } = (await createRes.json()) as { id: string };
+      assert.ok(recordId, "expected the create route to hand back the id a follow-up update can target");
+
+      // No automation should have fired yet -- the created row is "pending", not "paid".
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      assert.equal(createdSockets[0].sendCalls.length, 0, "the initial create (status: pending) must not match the field_equals(status, paid) rule");
+
+      const updateRes = await fetch(`${baseUrl}/api/public/webhook-in/${projectId}/Order/${recordId}?token=${webhookToken}`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ status: "paid" }),
+      });
+      assert.equal(updateRes.status, 200);
+      const { id: updatedId } = (await updateRes.json()) as { id: string };
+      assert.equal(String(updatedId), String(recordId), "the update route must modify the SAME record, not insert a new one");
+
+      const listRes = await fetch(`${baseUrl}/api/projects/${projectId}/entities/Order`, { headers: authHeaders(authToken) });
+      const { records } = (await listRes.json()) as { records: { id: string; status: string; phone: string }[] };
+      assert.equal(records.length, 1, "there must still be exactly ONE Order record -- the update must not have created a duplicate");
+      assert.equal(records[0].status, "paid");
+      assert.equal(records[0].phone, "972500000001", "an untouched field (phone) must survive the update unchanged");
+
+      for (let i = 0; i < 40 && createdSockets[0].sendCalls.length === 0; i++) {
+        await new Promise((resolve) => setTimeout(resolve, 0));
+      }
+      assert.equal(createdSockets[0].sendCalls.length, 1, "the update transitioning status to \"paid\" must fire the field_equals automation exactly once");
+    },
+    {
+      whatsapp: (db) => {
+        const { manager, createdSockets: sockets } = createTestWhatsAppManager(db);
+        createdSockets = sockets;
+        return manager;
+      },
+    },
+  );
+});
+
+/**
+ * Round 1607: the update route must still 404 (not insert, not crash) when
+ * the recordId in the URL doesn't exist, or belongs to a project the given
+ * token doesn't match -- the same "never leak which part of the lookup
+ * failed" convention the create route's own round-1405 doc comment
+ * establishes for 404s.
+ */
+test("POST /public/webhook-in/:projectId/:entityName/:recordId 404s for a nonexistent record id, without creating anything", async () => {
+  await withServer(async (baseUrl, db) => {
+    const email = `webhook-in-update-404-${randomUUID()}@example.com`;
+    const authToken = await signup(baseUrl, email);
+    const user = findUserByEmail(db, email)!;
+    const spec: ProductSpec = {
+      summary: "test",
+      personas: [],
+      roles: ["Admin"],
+      entities: [{ name: "Order", fields: [{ name: "status", type: "text", required: true }] }],
+      screens: [],
+      assumptions: [],
+      openQuestions: [],
+    };
+    const projectId = randomUUID();
+    insertProject(db, { id: projectId, ownerId: user.id, name: "Shop", description: "test", spec });
+    diffAndMigrate(db, projectId, undefined, spec);
+    markProjectBuilt(db, projectId);
+
+    const { token: webhookToken } = (await (
+      await fetch(`${baseUrl}/api/projects/${projectId}/inbound-webhook-token`, { headers: authHeaders(authToken) })
+    ).json()) as { token: string };
+
+    const updateRes = await fetch(`${baseUrl}/api/public/webhook-in/${projectId}/Order/999999?token=${webhookToken}`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ status: "paid" }),
+    });
+    assert.equal(updateRes.status, 404);
+
+    const listRes = await fetch(`${baseUrl}/api/projects/${projectId}/entities/Order`, { headers: authHeaders(authToken) });
+    const { records } = (await listRes.json()) as { records: unknown[] };
+    assert.equal(records.length, 0, "a 404'd update to a nonexistent record id must not create anything");
+  });
+});
+
+/**
  * Round 1470: the new "inbound_webhook" automation trigger -- before this
  * round, the ONLY way to react to a record created via the public
  * inbound-webhook route was "record_created", which fires identically for

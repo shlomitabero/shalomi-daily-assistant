@@ -1,7 +1,7 @@
 import { timingSafeEqual } from "node:crypto";
 import { Router, type Request, type Response } from "express";
 import type { ForgeDatabase } from "@forge/db";
-import { getInboundWebhookToken, insertRecord, isValidDateString, listRecords, recordInboundWebhookDelivery, recordInboundWebhookFailure } from "@forge/db";
+import { getInboundWebhookToken, getRecord, insertRecord, isValidDateString, listRecords, recordInboundWebhookDelivery, recordInboundWebhookFailure, updateRecord } from "@forge/db";
 import { ProductSpecSchema, type Entity, type Project } from "@forge/shared";
 import type { WhatsAppWebManager } from "../whatsappWeb.js";
 import type { EmailSender } from "../email.js";
@@ -10,6 +10,44 @@ import { createRateLimiter } from "../auth/rateLimit.js";
 import { withIdempotency } from "../idempotency.js";
 import { HttpError } from "../httpError.js";
 import { recordDisplayLabel } from "../displayField.js";
+import { computeChangedFields, parseRecordId } from "./projects.js";
+
+/**
+ * Round 1607: shared by both the create route below and its new sibling
+ * update route -- previously inlined once, duplicated here only because a
+ * second route now needs the exact same "resolve project+entity from a
+ * token" lookup. Behavior-preserving extraction: every branch that used to
+ * write its own `res.status(404)...` now just returns null, and both
+ * callers translate that the same way the original single route did.
+ */
+function resolveWebhookTarget(db: ForgeDatabase, projectId: string, entityName: string, token: string): { project: Project; entity: Entity } | null {
+  const stored = getInboundWebhookToken(db, projectId);
+  if (!stored || !token || !tokenMatches(token, stored)) return null;
+  const row = db.prepare("SELECT id, ownerId, name, description, spec_json, status, createdAt FROM projects WHERE id = ?").get(projectId) as
+    | { id: string; ownerId: string; name: string; description: string; spec_json: string; status: string; createdAt: string }
+    | undefined;
+  if (!row) return null;
+  // Mirrors routes/calendar.ts's own round-1185 reasoning: a stored spec
+  // that no longer parses against today's (only ever stricter) schema is a
+  // real, expected case for an older project -- treated the same as "not
+  // found" here rather than calling packages/db's own getProject (whose
+  // strict ProductSpecSchema.parse would throw instead), so this public
+  // route degrades the same way the other one does instead of 500ing.
+  const parsed = ProductSpecSchema.safeParse(JSON.parse(row.spec_json));
+  if (!parsed.success || row.status !== "built") return null;
+  const entity = parsed.data.entities.find((e) => e.name === entityName) ?? parsed.data.entities.find((e) => e.name.toLowerCase() === entityName.toLowerCase());
+  if (!entity) return null;
+  const project: Project = {
+    id: row.id,
+    ownerId: row.ownerId,
+    name: row.name,
+    description: row.description,
+    spec: parsed.data,
+    status: row.status as Project["status"],
+    createdAt: row.createdAt,
+  };
+  return { project, entity };
+}
 
 function tokenMatches(provided: string, stored: string): boolean {
   const providedBuf = Buffer.from(provided, "utf8");
@@ -292,44 +330,12 @@ export function createInboundWebhookRouter(db: ForgeDatabase, whatsapp: WhatsApp
     asyncRoute(async (req, res) => {
       const { projectId, entityName } = req.params;
       const provided = typeof req.query.token === "string" ? req.query.token : "";
-      const stored = getInboundWebhookToken(db, projectId);
-      if (!stored || !provided || !tokenMatches(provided, stored)) {
+      const target = resolveWebhookTarget(db, projectId, entityName, provided);
+      if (!target) {
         res.status(404).json({ error: "Webhook not found", code: "WEBHOOK_IN_NOT_FOUND" });
         return;
       }
-      const row = db.prepare("SELECT id, ownerId, name, description, spec_json, status, createdAt FROM projects WHERE id = ?").get(projectId) as
-        | { id: string; ownerId: string; name: string; description: string; spec_json: string; status: string; createdAt: string }
-        | undefined;
-      if (!row) {
-        res.status(404).json({ error: "Webhook not found", code: "WEBHOOK_IN_NOT_FOUND" });
-        return;
-      }
-      // Mirrors routes/calendar.ts's own round-1185 reasoning: a stored
-      // spec that no longer parses against today's (only ever stricter)
-      // schema is a real, expected case for an older project -- treated
-      // the same as "not found" here rather than calling packages/db's
-      // own getProject (whose strict ProductSpecSchema.parse would throw
-      // instead), so this public route degrades the same way the other
-      // one does instead of 500ing.
-      const parsed = ProductSpecSchema.safeParse(JSON.parse(row.spec_json));
-      if (!parsed.success || row.status !== "built") {
-        res.status(404).json({ error: "Webhook not found", code: "WEBHOOK_IN_NOT_FOUND" });
-        return;
-      }
-      const entity = parsed.data.entities.find((e) => e.name === entityName) ?? parsed.data.entities.find((e) => e.name.toLowerCase() === entityName.toLowerCase());
-      if (!entity) {
-        res.status(404).json({ error: "Webhook not found", code: "WEBHOOK_IN_NOT_FOUND" });
-        return;
-      }
-      const project: Project = {
-        id: row.id,
-        ownerId: row.ownerId,
-        name: row.name,
-        description: row.description,
-        spec: parsed.data,
-        status: row.status as Project["status"],
-        createdAt: row.createdAt,
-      };
+      const { project, entity } = target;
       // Round 1418: a real third-party sender (Stripe, Typeform, a generic
       // form-posting service) retries a delivery on any non-2xx response or
       // timeout -- that's normal, documented behavior, not an edge case --
@@ -364,7 +370,7 @@ export function createInboundWebhookRouter(db: ForgeDatabase, whatsapp: WhatsApp
               db,
               projectId,
               entity,
-              normalizeBodyValues(db, projectId, parsed.data.entities, entity, normalizeBodyKeys(entity, req.body ?? {})),
+              normalizeBodyValues(db, projectId, project.spec.entities, entity, normalizeBodyKeys(entity, req.body ?? {})),
             );
           } catch (err) {
             // Round 1471: see recordInboundWebhookFailure's own doc comment
@@ -415,6 +421,97 @@ export function createInboundWebhookRouter(db: ForgeDatabase, whatsapp: WhatsApp
             "inbound_webhook",
           );
           return { status: 201, body: { id: record.id } };
+        },
+      );
+      res.status(status).json(body);
+    }),
+  );
+
+  /**
+   * Round 1607: the create route above (and every write path before it)
+   * could only ever INSERT a new row -- there was no way for an external
+   * sender to update one it had already created, even though this route's
+   * own named integrations (Stripe, Typeform) routinely send a *sequence*
+   * of events about the *same* underlying object (checkout.session.created
+   * -> charge.succeeded -> charge.refunded for one order). Without this,
+   * every follow-up event became an unrelated, duplicate new row, with the
+   * original left stuck at its first-seen state forever, and any
+   * record_created/inbound_webhook automation (e.g. "notify on new Order")
+   * double-fired for what was really one real-world purchase.
+   *
+   * Addressed the smallest well-contained way: the create route already
+   * hands back `{ id: record.id }` (round 1405) -- a caller that stores
+   * that id can now POST follow-up updates straight to this sibling route
+   * instead of only ever creating a fresh row. Reuses every existing
+   * validation/coercion/rate-limit/idempotency/failure-tracking mechanism
+   * in this file unchanged (resolveWebhookTarget, normalizeBodyKeys/Values,
+   * webhookInRateLimiter, withIdempotency, recordInboundWebhookFailure) --
+   * the only new logic is updateRecord instead of insertRecord, and firing
+   * the "updated" event (already supported by runAutomationsForRecordChange,
+   * used by the authenticated PATCH route) instead of "created".
+   */
+  router.post(
+    "/public/webhook-in/:projectId/:entityName/:recordId",
+    webhookInRateLimiter,
+    asyncRoute(async (req, res) => {
+      const { projectId, entityName } = req.params;
+      const provided = typeof req.query.token === "string" ? req.query.token : "";
+      const target = resolveWebhookTarget(db, projectId, entityName, provided);
+      if (!target) {
+        res.status(404).json({ error: "Webhook not found", code: "WEBHOOK_IN_NOT_FOUND" });
+        return;
+      }
+      const { project, entity } = target;
+      const recordId = parseRecordId(req.params.recordId);
+      const before = getRecord(db, projectId, entity, recordId);
+      if (!before) {
+        res.status(404).json({ error: "Record not found", code: "WEBHOOK_IN_RECORD_NOT_FOUND" });
+        return;
+      }
+      const idempotencyKey = req.header("X-Idempotency-Key") || undefined;
+      const { status, body } = await withIdempotency(
+        db,
+        idempotencyKey,
+        projectId,
+        `POST /public/webhook-in/${projectId}/${entityName}/${recordId}`,
+        async () => {
+          let record: ReturnType<typeof updateRecord>;
+          try {
+            record = updateRecord(
+              db,
+              projectId,
+              entity,
+              recordId,
+              normalizeBodyValues(db, projectId, project.spec.entities, entity, normalizeBodyKeys(entity, req.body ?? {})),
+            );
+          } catch (err) {
+            // Same FOREIGN KEY constraint translation as the create route
+            // above -- see its own comment for why this is reachable.
+            if (err instanceof Error && err.message === "FOREIGN KEY constraint failed") {
+              const reason = "This record references another record that doesn't exist";
+              recordInboundWebhookFailure(db, projectId, reason);
+              throw new HttpError(400, reason, "INVALID_RELATION_TARGET");
+            }
+            if (err instanceof Error) {
+              recordInboundWebhookFailure(db, projectId, err.message);
+            }
+            throw err;
+          }
+          recordInboundWebhookDelivery(db, projectId);
+          void runAutomationsForRecordChange(
+            db,
+            whatsapp,
+            emailSender,
+            project,
+            entity,
+            "updated",
+            record,
+            computeChangedFields(entity, before, record),
+            uploadsDir,
+            `${req.protocol}://${req.get("host")}`,
+            "inbound_webhook",
+          );
+          return { status: 200, body: { id: record.id } };
         },
       );
       res.status(status).json(body);

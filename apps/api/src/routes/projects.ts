@@ -998,7 +998,7 @@ function validateAutomationToField(field: Field): void {
  * "Record NaN not found in X", a confusing 404 that leaks the raw
  * coercion result instead of clearly rejecting the bad input.
  */
-function parseRecordId(raw: string): number {
+export function parseRecordId(raw: string): number {
   if (!/^\d+$/.test(raw)) {
     throw new HttpError(400, `Invalid record id "${raw}"`, "VALIDATION_ERROR");
   }
