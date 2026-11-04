@@ -8624,6 +8624,55 @@ test("EntityPanel applies an incoming createPrefill by opening the create form p
 });
 
 /**
+ * Round 1597: WhatsAppPanel.tsx stays open and usable while a refine runs
+ * (the same "panel stays open during a live refine" scenario rounds
+ * 1122/1480/1487/1531/1559 already fixed for its sibling jump targets) --
+ * so createPrefill's own fieldName can be a snapshot taken before a
+ * refine's pure case-only field rename lands. Before this round, the
+ * exact-match lookup above silently dropped the prefill (no create form
+ * opened at all) the instant the field's casing changed underneath it,
+ * even though the field itself still exists under its new spelling.
+ */
+test("EntityPanel applies an incoming createPrefill by case-insensitive field match, when a refine case-renamed the field since the prefill was staged", async () => {
+  await withJsdom(async () => {
+    const renamedEntity: Entity = { ...DEAL_ENTITY, fields: [{ ...DEAL_ENTITY.fields[0], name: "Name" }, DEAL_ENTITY.fields[1]] };
+    const store: EntityRecord[] = [{ id: 1, createdAt: "x", Name: "Acme Corp", status: "new" }];
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = (async (input: string) => {
+      if (input === "/api/projects/proj1/entities/Deal") {
+        return new Response(JSON.stringify({ records: store }), { status: 200, headers: { "content-type": "application/json" } });
+      }
+      throw new Error(`unexpected request ${input}`);
+    }) as typeof fetch;
+    let handledCount = 0;
+    const onCreatePrefillHandled = () => {
+      handledCount++;
+    };
+    try {
+      const view = render(buildEntityPanelElement({ entity: renamedEntity, allEntities: [renamedEntity], onCreatePrefillHandled }));
+      await waitForCondition(() => document.querySelectorAll("table tbody tr").length === 1);
+
+      // Staged with the FIELD'S OLD, now-stale lowercase name -- exactly
+      // what a prefill snapshot taken before the refine's rename would carry.
+      view.rerender(
+        buildEntityPanelElement({
+          entity: renamedEntity,
+          allEntities: [renamedEntity],
+          createPrefill: { fieldName: "name", value: "972521112233" },
+          onCreatePrefillHandled,
+        }),
+      );
+
+      await waitForCondition(() => handledCount === 1);
+      const nameInput = document.querySelector(".record-form input[type=text]") as HTMLInputElement;
+      assert.equal(nameInput.value, "972521112233", "a case-only renamed field must still resolve and receive the prefilled value, not silently drop the prefill");
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+});
+
+/**
  * New in this round: the table's own sort was always single-column --
  * clicking a second header threw away the first one entirely, so there
  * was no way to sort by, say, status and THEN by name within each status.
@@ -16818,6 +16867,78 @@ test("EntityPanel applies an incoming createDateFilter by pre-applying the match
         (document.querySelector(".entity-status-filter") as HTMLSelectElement).value,
         "overdue",
         "the toolbar's own filter dropdown must visibly reflect the applied filter, not just the hidden record set",
+      );
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+});
+
+/**
+ * Round 1597: BusinessTwinPanel.tsx stays open and usable while a refine
+ * runs (the same "panel stays open during a live refine" scenario rounds
+ * 1122/1480/1487/1531/1559 already fixed for its sibling jump targets) --
+ * so createDateFilter's own fieldName can be a snapshot taken before a
+ * refine's pure case-only field rename lands. Before this round, the
+ * exact-match lookup above silently skipped the filter entirely (landing
+ * on the full, unfiltered table) the instant the field's casing changed
+ * underneath it, even though the field itself still exists under its new
+ * spelling.
+ */
+test("EntityPanel applies an incoming createDateFilter by case-insensitive field match, when a refine case-renamed the field since the Business Twin stat tile was rendered", async () => {
+  await withJsdom(async () => {
+    function isoDateOffset(days: number): string {
+      const d = new Date();
+      d.setDate(d.getDate() + days);
+      const pad = (n: number) => String(n).padStart(2, "0");
+      return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+    }
+    const taskEntity: Entity = {
+      name: "Task",
+      label: "Task",
+      fields: [
+        { name: "title", label: "Title", type: "text", required: true },
+        { name: "DueDate", label: "Due", type: "date", required: false },
+      ],
+    };
+    const store: EntityRecord[] = [
+      { id: 1, title: "Overdue task", DueDate: isoDateOffset(-5) },
+      { id: 2, title: "Far future task", DueDate: isoDateOffset(30) },
+    ];
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = (async (input: string, init?: RequestInit) => {
+      const method = init?.method ?? "GET";
+      if (method === "GET" && input === "/api/projects/proj1/entities/Task") {
+        return new Response(JSON.stringify({ records: store }), { status: 200, headers: { "content-type": "application/json" } });
+      }
+      throw new Error(`unexpected request ${method} ${input}`);
+    }) as typeof fetch;
+    let handledCount = 0;
+    const onCreateDateFilterHandled = () => {
+      handledCount++;
+    };
+    try {
+      const view = render(buildEntityPanelElement({ entity: taskEntity, allEntities: [taskEntity], onCreateDateFilterHandled }));
+      await waitForCondition(() => document.querySelectorAll("table tbody tr").length === 2);
+
+      // Staged with the FIELD'S OLD, now-stale lowercase name -- exactly
+      // what the stat tile's own snapshot taken before the refine's rename
+      // would carry.
+      view.rerender(
+        buildEntityPanelElement({
+          entity: taskEntity,
+          allEntities: [taskEntity],
+          createDateFilter: { fieldName: "dueDate", value: "overdue" },
+          onCreateDateFilterHandled,
+        }),
+      );
+
+      await waitForCondition(() => handledCount === 1);
+      await waitForCondition(() => document.querySelectorAll("table tbody tr").length === 1);
+      assert.match(
+        document.querySelector("table tbody tr")!.textContent ?? "",
+        /Overdue task/,
+        "a case-only renamed field must still resolve and apply the filter, not silently leave the table unfiltered",
       );
     } finally {
       globalThis.fetch = originalFetch;

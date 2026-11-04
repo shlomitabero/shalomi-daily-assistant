@@ -2950,10 +2950,19 @@ export function EntityPanel({
    * component) rather than duplicating it, since opening the create form
    * pre-filled with one field's value is exactly what that function already
    * does for the Kanban board's "add to this column" click.
+   *
+   * Round 1597: falls back to a case-insensitive match, the same
+   * stale-casing hazard round 985's groupByField effect already guards
+   * against -- WhatsAppPanel.tsx stays open and usable during a live
+   * refine (the same "panel stays open during a live refine" scenario
+   * rounds 1122/1480/1487/1531/1559 already fixed for its sibling jump
+   * targets), so a pure case-only rename of the prefilled field while its
+   * own message is still pending lands here with a now-stale exact name.
    */
   useEffect(() => {
     if (!createPrefill || loading) return;
-    const field = entity.fields.find((f) => f.name === createPrefill.fieldName);
+    const exactField = entity.fields.find((f) => f.name === createPrefill.fieldName);
+    const field = exactField ?? entity.fields.find((f) => f.name.toLowerCase() === createPrefill.fieldName.toLowerCase());
     if (field) startCreateForColumn(createPrefill.value, field);
     onCreatePrefillHandled?.();
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -2970,10 +2979,19 @@ export function EntityPanel({
    * Without this, clicking a stat tile landed on the entity's full,
    * unfiltered table instead of the filtered one the tile's own count was
    * actually about.
+   *
+   * Round 1597: falls back to a case-insensitive match, the same
+   * stale-casing hazard round 985's groupByField effect already guards
+   * against -- BusinessTwinPanel.tsx stays open and usable during a live
+   * refine (the same "panel stays open during a live refine" scenario
+   * rounds 1122/1480/1487/1531/1559 already fixed for its sibling jump
+   * targets), so a pure case-only rename of the deadline field while the
+   * Twin panel is still open lands here with a now-stale exact name.
    */
   useEffect(() => {
     if (!createDateFilter || loading) return;
-    const field = entity.fields.find((f) => f.name === createDateFilter.fieldName);
+    const exactField = entity.fields.find((f) => f.name === createDateFilter.fieldName);
+    const field = exactField ?? entity.fields.find((f) => f.name.toLowerCase() === createDateFilter.fieldName.toLowerCase());
     if (field) {
       setFieldFilters((prev) => {
         const next = { ...prev, [field.name]: createDateFilter.value };
