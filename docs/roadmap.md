@@ -43992,3 +43992,25 @@ Full suite run: `npx tsc -b` (apps/web) passed clean (exit 0). Full `apps/api` s
 
 
 
+
+### Round 1602: `findOversizedGeneratedSpecField` checked an enum's display-label VALUES but never its dictionary KEYS
+
+A fresh survey (general-purpose subagent, backgrounded, diversified toward apps/web/packages/db/spec-engine/shared after 3 apps/api-heavy rounds) found that `findOversizedGeneratedSpecField` (`packages/shared/src/index.ts`) -- the function that catches an LLM token-repetition failure mode inflating a freshly-generated spec field to several KB, before `AnthropicSpecProvider.generate`/`requestSpecFix` ever store it -- only ever iterated `Object.values(field.enumLabels ?? {})`, never `Object.keys(...)`.
+
+**Independently re-verified before implementing**: read `FieldSchema`'s own declaration (`index.ts:173`) directly: `enumLabels: z.record(z.string(), z.string().min(1)).optional()` -- the VALUE has `.min(1)` (round 1246's own fix) but the KEY type is plain `z.string()`, no length bound at all. Read `findOversizedGeneratedSpecField`'s full body (`:359-427`) directly: confirmed only one `Object.values(field.enumLabels ?? {})` loop exists, no `Object.keys` call anywhere in the function or file.
+
+**Reachability**: `generate()` (`packages/spec-engine/src/anthropic.ts:144-155`) and `requestSpecFix` (`packages/spec-engine/src/debug.ts:135`) both call `ProductSpecSchema.safeParse` then this guard before accepting Anthropic's JSON. A model response with `enumLabels: { "<100,000-char key>": "Open" }` for some enum field -- a key that need not match anything in that field's own already-capped `enumValues` array -- passes `ProductSpecSchema` cleanly (no key-length constraint) and this guard returned `null` (not flagged), so the oversized payload got stored to `spec_json` as-is: baked into every future Time Machine checkpoint, re-sent on every `GET /projects/:id` (every page load, every collaborator), and rendered in every table/Kanban/calendar/CSV/print export forever -- the exact amplification shape this whole function exists to prevent, just missed for this one sub-shape.
+
+**Not already covered elsewhere**: `grep -n "enumLabels" apps/api/src/routes/projects.ts` confirms the only HTTP-facing route touching `enumLabels` (`PATCH .../fields/:fieldName/type`) always *derives* its keys from the already-capped, already-validated `enumValues` list -- never accepts a freeform key from an HTTP client -- so the AI-generation path is the only producer needing this guard, and this function is the correct, only chokepoint. This function was extended twice before for the identical single-field-missed-in-a-sweep shape (`relationTo` in round 1448, `entity.description` in round 1431/1426-era work), but neither prior round, nor any other roadmap hit for "enumLabels", mentions checking the dictionary's keys.
+
+**The fix**: added a parallel `for (const key of Object.keys(field.enumLabels ?? {}))` loop right after the existing values loop, using the same `GENERATED_SPEC_LABEL_MAX_LENGTH` (200) identifier-class cap as `enumValues`/`field.name`/`entity.name`, since an `enumLabels` key IS a raw enum-value identifier, not a display phrase.
+
+**Tests**: 1 new in `packages/shared/src/index.test.ts`, added right after the existing `oversizedEnumValue` case in the same test, following its exact shape: an enum field with one oversized `enumLabels` key, asserting the returned message matches `/enumLabel key/`.
+
+Fail-before/pass-after verified directly: `git stash push --keep-index -- packages/shared/src/index.ts`, ran `packages/shared`'s suite -- failed exactly as predicted (24/25, the new assertion not matching `null`). `git stash pop`, reran -- 25/25 passing.
+
+**`codegen.ts` parity**: does not apply. `grep -rn "findOversizedGeneratedSpecField" apps/api/src/codegen.ts` → zero hits; this function is only ever called from the two AI-generation entry points (`anthropic.ts`, `debug.ts`), which have no exported-app equivalent.
+
+Full suite runs (sequential, not parallel, per round 1601's own contention lesson): `packages/shared` 25/25 passing. `packages/spec-engine` (consumer of this function) 231/231 passing. `apps/api` (consumer via workspace dependency) 1108/1109 passing -- the one failure, `codegen.test.ts`'s own SIGKILL, confirmed via isolated re-run to be the pre-existing cgroup-OOM flake (task #55, same signature: 183/184 passing alone). `apps/web` (consumer via workspace dependency) 1888/1888 passing, zero failures. `npm run build` (apps/api) and `npx tsc -b` (apps/web) both clean.
+
+**Topic status**: closes the last unguarded sub-shape of `findOversizedGeneratedSpecField`'s enum-handling branch. No further candidates from this round's survey are being pursued -- the files most closely examined and ruled out (`GlobalSearchPanel.tsx`, `entityFormatting.ts`'s badge-tone word lists cross-checked against every template's `enumValues`, the `noValidate` HTML5-validation family, `packages/db/src/collaborators.ts`) were each confirmed already-correct on direct inspection.
