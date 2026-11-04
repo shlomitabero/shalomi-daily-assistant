@@ -1140,7 +1140,22 @@ app.get("/api/backup", (req, res) => {
       "\\uFEFF" +
       entityToCsv(entity, recordsByEntity[entity.name], recordIndexByEntity, orderedFieldsFor(entity, columnOrders)),
   }));
-  const zip = buildZip(zipEntries);
+  // Round 1604: mirrors routes/projects.ts's own round-1557 fix for the
+  // identical live-app sibling route -- buildZip throws a plain Error
+  // (message containing "Zip64") once one of its own writer limits is
+  // exceeded, which for a long-lived self-hosted app that's accumulated
+  // real data is a genuinely reachable condition, not a contrived one.
+  // Uncaught, that's a bare 500 instead of the clear "too much data"
+  // message the live app already gives for this exact situation.
+  let zip;
+  try {
+    zip = buildZip(zipEntries);
+  } catch (err) {
+    if (err instanceof Error && err.message.includes("Zip64")) {
+      return res.status(422).json({ error: "This project has too much data to back up as a single ZIP file" });
+    }
+    throw err;
+  }
   res.setHeader("content-type", "application/zip");
   res.setHeader("content-disposition", 'attachment; filename="backup.zip"');
   res.send(zip);

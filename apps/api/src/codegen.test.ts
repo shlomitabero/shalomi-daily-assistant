@@ -16631,6 +16631,100 @@ test("the exported server.js's own parseColumnOrdersQueryParam defensively falls
   assert.deepEqual(parseColumnOrdersQueryParam(JSON.stringify({ Customer: ["status", 123, "name"] })), { Customer: ["status", "name"] });
 });
 
+/**
+ * Round 1604: unlike routes/projects.ts's own /projects/:id/backup (round
+ * 1557), this exported app's /api/backup had no try/catch around its own
+ * embedded buildZip -- the sole route in the whole generated server with
+ * none, confirmed by this file's own round-1102 comment on buildZip's
+ * five writer limits plus a grep showing no global Express error
+ * middleware/uncaughtException handler exists here either. A sufficiently
+ * large per-entity CSV (a long-lived self-hosted exported app's genuinely
+ * reachable condition, not contrived) crosses one of those limits and
+ * buildZip throws a plain Error whose message contains "Zip64" --
+ * uncaught, that's an opaque 500 instead of the clear "too much data"
+ * message routes/projects.ts's own sibling already gives for the
+ * identical situation.
+ *
+ * Extracted via indexOf/slice (this file's own established technique for
+ * route/function bodies, e.g. the CalendarView extractions above) rather
+ * than spawning a real server, since genuinely exceeding buildZip's ~4GB
+ * limit through a real HTTP round-trip is impractical in a test (this
+ * route has no uploaded-file entries to abuse for a cheap long-name
+ * trigger the way the live app's own round-1557 test does, and every
+ * record field value is already capped at 20,000 characters -- round
+ * 1479). buildZip itself is stubbed to throw directly, exactly isolating
+ * the route handler's own catch behavior.
+ */
+test("the exported server.js's own /api/backup route returns a clear 422 instead of a bare 500 when buildZip hits one of its own Zip64 writer limits", () => {
+  const serverJs = generateExportFiles(project).find((f) => f.path === "server.js")!.content;
+  const start = serverJs.indexOf('app.get("/api/backup"');
+  const end = serverJs.indexOf("// Round 1010", start);
+  assert.ok(start >= 0 && end > start, "expected to find the /api/backup route in generated server.js");
+  let handlerSrc = serverJs.slice(start, end).trim();
+  handlerSrc = handlerSrc.replace('app.get("/api/backup", (req, res) => {', "(req, res) => {");
+  assert.ok(handlerSrc.endsWith("});"), "expected the extracted route body to still end with the app.get(...) call's closing });");
+  handlerSrc = `${handlerSrc.slice(0, -2)};`; // "});" -> "};": drop the app.get(...) call's closing ")", keep the arrow fn's own "}" + ";"
+
+  function makeRes() {
+    const calls: { status?: number; json?: unknown; headers: Record<string, string>; sent?: unknown } = { headers: {} };
+    return {
+      setHeader(k: string, v: string) {
+        calls.headers[k] = v;
+      },
+      status(code: number) {
+        calls.status = code;
+        return { json: (body: unknown) => void (calls.json = body) };
+      },
+      send(body: unknown) {
+        calls.sent = body;
+      },
+      calls,
+    };
+  }
+
+  const buildHandler = (buildZipStub: (entries: unknown[]) => unknown) =>
+    new Function(
+      "ENTITIES",
+      "db",
+      "q",
+      "rowToRecord",
+      "orderedFieldsFor",
+      "entityToCsv",
+      "parseColumnOrdersQueryParam",
+      "buildZip",
+      `const handler = ${handlerSrc}\nreturn handler;`,
+    )(
+      [{ name: "Thing" }],
+      { prepare: () => ({ all: () => [] }) },
+      (name: string) => name,
+      (_entity: unknown, r: unknown) => r,
+      () => [],
+      () => "",
+      () => ({}),
+      buildZipStub,
+    ) as (req: unknown, res: ReturnType<typeof makeRes>) => void;
+
+  const zip64Handler = buildHandler(() => {
+    throw new Error("buildZip: the archive's total size so far (4294967296 bytes) exceeds the ~4GB limit of this writer's 32-bit offset field (no Zip64 support)");
+  });
+  const res1 = makeRes();
+  zip64Handler({ query: {} }, res1);
+  assert.equal(res1.calls.status, 422, "a Zip64 writer-limit error must become a clear 422, not an uncaught throw that falls through to Express's bare default handler");
+  assert.match((res1.calls.json as { error: string }).error, /too much data/);
+  assert.equal(res1.calls.sent, undefined, "must not also attempt to send a (nonexistent) zip body after the error response");
+  assert.equal(res1.calls.headers["content-type"], undefined, "must not set the zip content-type header on the error path");
+
+  const genericErrorHandler = buildHandler(() => {
+    throw new Error("some unrelated failure, a database connection error for instance");
+  });
+  const res2 = makeRes();
+  assert.throws(
+    () => genericErrorHandler({ query: {} }, res2),
+    /unrelated failure/,
+    "a non-Zip64 error must still be rethrown unchanged, not swallowed into the same 422",
+  );
+});
+
 // Round 117 found that apps/api/src/backup.ts's boolean CSV rendering was
 // completely untested -- and that an *omitted* boolean field rendered
 // "FALSE", not blank, because rowToRecord coerced a stored NULL through
