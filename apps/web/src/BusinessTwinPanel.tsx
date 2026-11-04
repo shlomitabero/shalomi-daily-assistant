@@ -6,6 +6,7 @@ import { useTranslation } from "./i18n/LanguageContext.js";
 import type { Lang } from "./i18n/language.js";
 import { useDialogFocusTrap } from "./useDialogFocusTrap.js";
 import { computeTwinStatPercent, downloadTwinReport, formatTwinReport, sortTwinStatsByCount } from "./twinReport.js";
+import { getTwinView, setTwinView } from "./twinViewPreference.js";
 
 /**
  * A single horizontal bar chart -- the dashboard's one reusable chart
@@ -80,12 +81,14 @@ export function BusinessTwinPanel({
   projectId,
   projectName,
   entities,
+  userId,
   onClose,
   onJumpToEntity,
   onJumpToRecord,
 }: {
   projectId: string;
   projectName: string;
+  userId: string;
   /**
    * Round 1532: unlike its sibling jump-capable panels (GlobalSearchPanel,
    * WhatsAppPanel), this panel's `twin` state is fetched once on mount and
@@ -140,9 +143,17 @@ export function BusinessTwinPanel({
   // jumpableObservations buttons -- keeps rendering immediately exactly as
   // it always has, with no extra click required; the dashboard is an
   // additional view a person opts into, not a replacement for what was
-  // already there.
-  const [view, setView] = useState<"dashboard" | "report">("report");
+  // already there. Round 1596: seeded from twinViewPreference.ts rather
+  // than hardcoded, so a person who always switches to Dashboard doesn't
+  // have to re-click it every single time this panel remounts.
+  const [view, setView] = useState<"dashboard" | "report">(() => getTwinView(userId, projectId));
   const dialogRef = useDialogFocusTrap<HTMLDivElement>(onClose);
+
+  /** Round 1596: persists alongside the in-memory toggle, mirroring projectSortMode.ts's own setProjectSortMode call sites. */
+  function changeView(next: "dashboard" | "report") {
+    setView(next);
+    setTwinView(userId, projectId, next);
+  }
 
   /**
    * Round 1532: see the `entities` prop's own doc comment above. Mirrors
@@ -294,7 +305,7 @@ export function BusinessTwinPanel({
                   type="button"
                   className={view === "dashboard" ? "view-toggle-btn view-toggle-btn-active" : "view-toggle-btn"}
                   aria-pressed={view === "dashboard"}
-                  onClick={() => setView("dashboard")}
+                  onClick={() => changeView("dashboard")}
                 >
                   {t("twin.view.dashboard")}
                 </button>
@@ -302,7 +313,7 @@ export function BusinessTwinPanel({
                   type="button"
                   className={view === "report" ? "view-toggle-btn view-toggle-btn-active" : "view-toggle-btn"}
                   aria-pressed={view === "report"}
-                  onClick={() => setView("report")}
+                  onClick={() => changeView("report")}
                 >
                   {t("twin.view.report")}
                 </button>

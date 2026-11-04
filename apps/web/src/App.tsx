@@ -3416,6 +3416,7 @@ function AppContent() {
               projectId={project.id}
               projectName={project.name}
               entities={orderedEntities}
+              userId={user.id}
               onClose={() => setShowTwin(false)}
               onJumpToEntity={(entityName, dateFilter) => {
                 setActiveEntity(entityName);

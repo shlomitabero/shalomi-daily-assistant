@@ -10,6 +10,7 @@ import type { BusinessTwin } from "./api.js";
 import { BusinessTwinPanel } from "./BusinessTwinPanel.js";
 import { LanguageProvider } from "./i18n/LanguageContext.js";
 import { ThemeProvider } from "./theme/ThemeContext.js";
+import { getTwinView } from "./twinViewPreference.js";
 
 /** Same jsdom-swap technique as the rest of this project's real-DOM tests. */
 async function withJsdom<T>(fn: () => Promise<T> | T): Promise<T> {
@@ -90,6 +91,7 @@ function renderTwinPanel(
   onJumpToEntity: (entityName: string, dateFilter?: { fieldName: string; value: string }) => void,
   onJumpToRecord: (entityName: string, recordId: number) => void = () => {},
   entities: Entity[] = [],
+  userId = "user1",
 ) {
   return render(
     React.createElement(
@@ -102,6 +104,7 @@ function renderTwinPanel(
           projectId: "proj1",
           projectName: "Test CRM",
           entities,
+          userId,
           onClose: () => {},
           onJumpToEntity,
           onJumpToRecord,
@@ -142,6 +145,82 @@ test("BusinessTwinPanel's Dashboard/Report toggle reports its selected state via
       fireEvent.click(dashboardBtn);
       assert.equal(dashboardBtn.getAttribute("aria-pressed"), "true", "clicking Dashboard must flip its own aria-pressed to true");
       assert.equal(reportBtn.getAttribute("aria-pressed"), "false", "switching views must flip the previously-selected button's aria-pressed back to false");
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+});
+
+/**
+ * Round 1596: unlike its two sibling view-toggle groups (EntityPanel.tsx's
+ * table/board/calendar since round 243, App.tsx's recent/alphabetical
+ * project sort since round 1057), this panel's own Dashboard/Report choice
+ * never persisted -- every remount reset it back to the hardcoded "report"
+ * default even for someone who always switches to Dashboard. Confirms a
+ * click on Dashboard is actually written to twinViewPreference.ts, not
+ * just this one mounted component's own React state.
+ */
+test("clicking Dashboard persists the choice to twinViewPreference.ts, not just this component's own state", async () => {
+  await withJsdom(async () => {
+    const twinWithObservation: BusinessTwin = { ...TWIN, observations: ["Something worth noting"] };
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = (async (input: string) => {
+      if (input.startsWith("/api/projects/proj1/twin")) {
+        return new Response(JSON.stringify({ twin: twinWithObservation }), { status: 200, headers: { "content-type": "application/json" } });
+      }
+      throw new Error(`unexpected request ${input}`);
+    }) as typeof fetch;
+    try {
+      renderTwinPanel(() => {});
+      await waitForCondition(() => document.querySelectorAll(".view-toggle-btn").length === 2);
+
+      assert.equal(getTwinView("user1", "proj1"), "report", "nothing chosen yet -- must still read back the panel's own default");
+
+      const [dashboardBtn] = document.querySelectorAll(".view-toggle-btn") as NodeListOf<HTMLButtonElement>;
+      fireEvent.click(dashboardBtn);
+
+      assert.equal(getTwinView("user1", "proj1"), "dashboard", "the click must have actually been written to storage, not just this component's in-memory state");
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+});
+
+/**
+ * Round 1596: confirms the other half of the round-trip -- a panel that
+ * REMOUNTS (the real-world case this whole fix exists for: closing and
+ * reopening the Business Twin dialog, or switching projects and back)
+ * must seed its toggle from whatever was persisted for THIS user+project,
+ * not always reset to "report". Also confirms the per-user/per-project
+ * scoping: a different project (or a different signed-in user on the same
+ * browser) must not inherit this one's choice.
+ */
+test("BusinessTwinPanel seeds its view from a previously persisted choice for this exact user+project, scoped away from other users/projects", async () => {
+  await withJsdom(async () => {
+    const twinWithObservation: BusinessTwin = { ...TWIN, observations: ["Something worth noting"] };
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = (async (input: string) => {
+      if (input.startsWith("/api/projects/proj1/twin")) {
+        return new Response(JSON.stringify({ twin: twinWithObservation }), { status: 200, headers: { "content-type": "application/json" } });
+      }
+      throw new Error(`unexpected request ${input}`);
+    }) as typeof fetch;
+    try {
+      // First mount: switch to Dashboard, then unmount (closing the dialog).
+      const { unmount } = renderTwinPanel(() => {});
+      await waitForCondition(() => document.querySelectorAll(".view-toggle-btn").length === 2);
+      fireEvent.click(document.querySelectorAll(".view-toggle-btn")[0] as HTMLButtonElement);
+      unmount();
+
+      // Remount for the SAME user+project: must come back up already on Dashboard.
+      renderTwinPanel(() => {});
+      await waitForCondition(() => document.querySelectorAll(".view-toggle-btn").length === 2);
+      const [dashboardBtn, reportBtn] = document.querySelectorAll(".view-toggle-btn") as NodeListOf<HTMLButtonElement>;
+      assert.equal(dashboardBtn.getAttribute("aria-pressed"), "true", "remounting for the same user+project must restore the persisted Dashboard choice");
+      assert.equal(reportBtn.getAttribute("aria-pressed"), "false");
+
+      assert.equal(getTwinView("user1", "other-project"), "report", "a different project must not inherit this one's Dashboard choice");
+      assert.equal(getTwinView("user2", "proj1"), "report", "a different signed-in user must not inherit this one's Dashboard choice, even for the same project");
     } finally {
       globalThis.fetch = originalFetch;
     }
@@ -1333,6 +1412,7 @@ test("BusinessTwinPanel's per-entity stat tile calls onJumpToEntity with the ent
               projectId: "proj1",
               projectName: "Test CRM",
               entities: [{ ...customerEntity, name: "CUSTOMER" }, orderEntity],
+              userId: "user1",
               onClose: () => {},
               onJumpToEntity: (entityName: string) => {
                 jumpedToEntity = entityName;
