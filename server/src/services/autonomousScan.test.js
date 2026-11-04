@@ -1,6 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { db, __resetForTests, makeId } from '../db/store.js';
+import { updateSettings } from './settings.js';
 import { runAutonomousScan } from './autonomousScan.js';
 
 function withEnv(vars, fn) {
@@ -110,6 +111,177 @@ test('runAutonomousScan backs off once too many drafts are already awaiting revi
       assert.equal(db.opportunities.all().length, 5);
     }
   );
+});
+
+test('runAutonomousScan reports a clean failure, with no opportunity created, when the AI topic call fails', async () => {
+  // The AI returning something that doesn't parse as a valid {topic,
+  // audience} idea must surface as an honest ran:false failure, not an
+  // unhandled rejection that crashes the scheduler's background job.
+  __resetForTests();
+  const badTopicResponse = {
+    id: 'msg_topic', type: 'message', role: 'assistant', model: 'claude-sonnet-5-5',
+    content: [{ type: 'text', text: JSON.stringify({ somethingElse: true }) }],
+    stop_reason: 'end_turn', stop_sequence: null, usage: { input_tokens: 10, output_tokens: 10 },
+  };
+  const envVars = { ANTHROPIC_API_KEY: 'test-key', PADDLE_API_KEY: 'fake', PADDLE_CLIENT_TOKEN: 'fake', PADDLE_WEBHOOK_SECRET: 'fake' };
+  const originalEnv = {};
+  for (const key of Object.keys(envVars)) {
+    originalEnv[key] = process.env[key];
+    process.env[key] = envVars[key];
+  }
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async () =>
+    new Response(JSON.stringify(badTopicResponse), { status: 200, headers: { 'content-type': 'application/json' } });
+  try {
+    const result = await runAutonomousScan();
+    assert.equal(result.ran, false);
+    assert.match(result.reason, /topic\/audience/);
+    assert.equal(db.opportunities.all().length, 0);
+    const logged = db.actions_log.where((a) => a.type === 'autonomous_scan')[0];
+    assert.equal(logged.result, 'failed');
+  } finally {
+    globalThis.fetch = originalFetch;
+    for (const key of Object.keys(originalEnv)) {
+      if (originalEnv[key] === undefined) delete process.env[key];
+      else process.env[key] = originalEnv[key];
+    }
+  }
+});
+
+test('runAutonomousScan reports a clean failure, with no opportunity created, when the AI draft call fails', async () => {
+  // Same honest-failure requirement as above, but for the second AI call
+  // (drafting the actual product) rather than the first (the topic idea).
+  __resetForTests();
+  const topicResponse = {
+    id: 'msg_topic', type: 'message', role: 'assistant', model: 'claude-sonnet-5-5',
+    content: [{ type: 'text', text: JSON.stringify({ topic: 'נושא', audience: 'קהל' }) }],
+    stop_reason: 'end_turn', stop_sequence: null, usage: { input_tokens: 10, output_tokens: 10 },
+  };
+  const badDraftResponse = {
+    id: 'msg_draft', type: 'message', role: 'assistant', model: 'claude-sonnet-5-5',
+    content: [{ type: 'text', text: JSON.stringify({ title: 'only a title, nothing else' }) }],
+    stop_reason: 'end_turn', stop_sequence: null, usage: { input_tokens: 10, output_tokens: 10 },
+  };
+  const envVars = { ANTHROPIC_API_KEY: 'test-key', PADDLE_API_KEY: 'fake', PADDLE_CLIENT_TOKEN: 'fake', PADDLE_WEBHOOK_SECRET: 'fake' };
+  const originalEnv = {};
+  for (const key of Object.keys(envVars)) {
+    originalEnv[key] = process.env[key];
+    process.env[key] = envVars[key];
+  }
+  let call = 0;
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async () => {
+    call += 1;
+    const body = call === 1 ? topicResponse : badDraftResponse;
+    return new Response(JSON.stringify(body), { status: 200, headers: { 'content-type': 'application/json' } });
+  };
+  try {
+    const result = await runAutonomousScan();
+    assert.equal(result.ran, false);
+    assert.match(result.reason, /title\/guide\/salesHeadline/);
+    assert.equal(db.opportunities.all().length, 0);
+  } finally {
+    globalThis.fetch = originalFetch;
+    for (const key of Object.keys(originalEnv)) {
+      if (originalEnv[key] === undefined) delete process.env[key];
+      else process.env[key] = originalEnv[key];
+    }
+  }
+});
+
+test('runAutonomousScan publishes immediately in auto_limited mode when Paddle is configured', async () => {
+  // Publishing costs $0 (no ad spend, no COGS) so auto_limited mode goes
+  // straight to a real checkout with no per-action approval — this was
+  // the one branch of the whole function never actually exercised.
+  __resetForTests();
+  updateSettings({ mode: 'auto_limited' });
+  const topicResponse = {
+    id: 'msg_topic', type: 'message', role: 'assistant', model: 'claude-sonnet-5-5',
+    content: [{ type: 'text', text: JSON.stringify({ topic: 'נושא', audience: 'קהל' }) }],
+    stop_reason: 'end_turn', stop_sequence: null, usage: { input_tokens: 10, output_tokens: 10 },
+  };
+  const draftResponse = {
+    id: 'msg_draft', type: 'message', role: 'assistant', model: 'claude-sonnet-5-5',
+    content: [{ type: 'text', text: JSON.stringify({
+      title: 'מדריך', guide: 'תוכן', salesHeadline: 'כותרת', salesBullets: ['א'], salesParagraph: 'פסקה',
+    }) }],
+    stop_reason: 'end_turn', stop_sequence: null, usage: { input_tokens: 10, output_tokens: 10 },
+  };
+  const envVars = { ANTHROPIC_API_KEY: 'test-key', PADDLE_API_KEY: 'fake', PADDLE_CLIENT_TOKEN: 'fake', PADDLE_WEBHOOK_SECRET: 'fake' };
+  const originalEnv = {};
+  for (const key of Object.keys(envVars)) {
+    originalEnv[key] = process.env[key];
+    process.env[key] = envVars[key];
+  }
+  let call = 0;
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async () => {
+    call += 1;
+    if (call === 1) return new Response(JSON.stringify(topicResponse), { status: 200, headers: { 'content-type': 'application/json' } });
+    if (call === 2) return new Response(JSON.stringify(draftResponse), { status: 200, headers: { 'content-type': 'application/json' } });
+    if (call === 3) return { ok: true, json: async () => ({ data: { id: 'pro_123' } }) };
+    return { ok: true, json: async () => ({ data: { id: 'pri_456' } }) };
+  };
+  try {
+    const result = await runAutonomousScan();
+    assert.equal(result.ran, true);
+    assert.equal(result.opportunity.status, 'published');
+    assert.equal(result.opportunity.paddlePriceId, 'pri_456');
+  } finally {
+    globalThis.fetch = originalFetch;
+    for (const key of Object.keys(originalEnv)) {
+      if (originalEnv[key] === undefined) delete process.env[key];
+      else process.env[key] = originalEnv[key];
+    }
+  }
+});
+
+test('runAutonomousScan leaves the opportunity as a draft when auto-publish fails in auto_limited mode', async () => {
+  // A Paddle outage during the autonomous loop's own publish attempt must
+  // not lose the drafted opportunity or crash the background job — it
+  // just stays a draft for the owner to retry manually, exactly like a
+  // failed manual "פרסם מוצר" click would.
+  __resetForTests();
+  updateSettings({ mode: 'auto_limited' });
+  const topicResponse = {
+    id: 'msg_topic', type: 'message', role: 'assistant', model: 'claude-sonnet-5-5',
+    content: [{ type: 'text', text: JSON.stringify({ topic: 'נושא', audience: 'קהל' }) }],
+    stop_reason: 'end_turn', stop_sequence: null, usage: { input_tokens: 10, output_tokens: 10 },
+  };
+  const draftResponse = {
+    id: 'msg_draft', type: 'message', role: 'assistant', model: 'claude-sonnet-5-5',
+    content: [{ type: 'text', text: JSON.stringify({
+      title: 'מדריך', guide: 'תוכן', salesHeadline: 'כותרת', salesBullets: ['א'], salesParagraph: 'פסקה',
+    }) }],
+    stop_reason: 'end_turn', stop_sequence: null, usage: { input_tokens: 10, output_tokens: 10 },
+  };
+  const envVars = { ANTHROPIC_API_KEY: 'test-key', PADDLE_API_KEY: 'fake', PADDLE_CLIENT_TOKEN: 'fake', PADDLE_WEBHOOK_SECRET: 'fake' };
+  const originalEnv = {};
+  for (const key of Object.keys(envVars)) {
+    originalEnv[key] = process.env[key];
+    process.env[key] = envVars[key];
+  }
+  let call = 0;
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async () => {
+    call += 1;
+    if (call === 1) return new Response(JSON.stringify(topicResponse), { status: 200, headers: { 'content-type': 'application/json' } });
+    if (call === 2) return new Response(JSON.stringify(draftResponse), { status: 200, headers: { 'content-type': 'application/json' } });
+    return { ok: false, text: async () => 'Paddle is down' }; // the product-creation call fails
+  };
+  try {
+    const result = await runAutonomousScan();
+    assert.equal(result.ran, true);
+    assert.equal(result.opportunity.status, 'draft');
+    assert.equal(result.opportunity.paddlePriceId, null);
+    assert.equal(db.opportunities.get(result.opportunity.id).status, 'draft');
+  } finally {
+    globalThis.fetch = originalFetch;
+    for (const key of Object.keys(originalEnv)) {
+      if (originalEnv[key] === undefined) delete process.env[key];
+      else process.env[key] = originalEnv[key];
+    }
+  }
 });
 
 test('runAutonomousScan never counts demo drafts toward the pending-draft cap', async () => {
