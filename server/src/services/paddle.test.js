@@ -131,6 +131,25 @@ test('createOneTimePrice throws a clear error instead of a crash when Paddle rej
   }
 });
 
+test('createOneTimePrice propagates a real network failure as-is, not mislabeled as a timeout', async () => {
+  // A DNS failure or connection refused rejects fetch() itself with a
+  // non-AbortError (e.g. a plain TypeError) - this must surface as that
+  // real error, not get misreported as "Paddle request timed out" (which
+  // would send the owner chasing the wrong problem).
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async () => { throw new Error('getaddrinfo ENOTFOUND api.paddle.com'); };
+  try {
+    await withEnv({ PADDLE_API_KEY: 'key', PADDLE_ENV: 'sandbox' }, () =>
+      assert.rejects(
+        () => createOneTimePrice({ name: 'test', amountCents: 900 }),
+        /ENOTFOUND/
+      )
+    );
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
 test('createOneTimePrice times out instead of hanging forever when Paddle never responds', async () => {
   // Without an explicit timeout, a hung connection to Paddle would leave
   // the owner's "פרסם מוצר" click pending indefinitely — worse than a
