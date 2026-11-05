@@ -5,7 +5,7 @@ import path from "node:path";
 import { test } from "node:test";
 import type { Project } from "@forge/shared";
 import { applyMigrations, ensureProjectsTable, ensureWhatsAppConnectionsTable, ensureWhatsAppMessagesTable, getWhatsAppConnection, insertProject, insertRecord, listWhatsAppMessages, markProjectBuilt, openDatabase } from "@forge/db";
-import { WhatsAppWebManager, type BaileysConnectionUpdate, type BaileysMessagesUpsert, type WhatsAppSocket } from "./whatsappWeb.js";
+import { WhatsAppWebManager, type BaileysCallEvent, type BaileysConnectionUpdate, type BaileysMessagesUpsert, type WhatsAppSocket } from "./whatsappWeb.js";
 
 /**
  * Real Baileys sockets talk to WhatsApp's actual servers over a raw
@@ -26,6 +26,7 @@ function createFakeSocket(options?: {
     creds?: () => void;
     connectionUpdate?: (u: BaileysConnectionUpdate) => void;
     messagesUpsert?: (u: BaileysMessagesUpsert) => void;
+    call?: (calls: BaileysCallEvent[]) => void;
   } = {};
   const sendCalls: (
     | { jid: string; text: string }
@@ -42,6 +43,7 @@ function createFakeSocket(options?: {
         if (event === "creds.update") handlers.creds = listener as () => void;
         if (event === "connection.update") handlers.connectionUpdate = listener as (u: BaileysConnectionUpdate) => void;
         if (event === "messages.upsert") handlers.messagesUpsert = listener as (u: BaileysMessagesUpsert) => void;
+        if (event === "call") handlers.call = listener as (calls: BaileysCallEvent[]) => void;
       },
     },
     user: null,
@@ -74,6 +76,7 @@ function createFakeSocket(options?: {
     isLoggedOut: () => loggedOut,
     emitConnectionUpdate: (u: BaileysConnectionUpdate) => handlers.connectionUpdate?.(u),
     emitMessagesUpsert: (u: BaileysMessagesUpsert) => handlers.messagesUpsert?.(u),
+    emitCall: (calls: BaileysCallEvent[]) => handlers.call?.(calls),
   };
 }
 
@@ -862,6 +865,57 @@ test("an incoming message is skipped when it is from the linked device itself or
       { key: { remoteJid: "123456789@g.us", fromMe: false }, message: { conversation: "group chatter" } },
     ],
   });
+
+  assert.equal(listWhatsAppMessages(db, project.id).messages.length, 0);
+});
+
+/**
+ * Round 1612: Baileys emits a structurally separate "call" socket event
+ * (never a `messages.upsert` entry) for an incoming WhatsApp call to the
+ * linked number -- before this round, nothing in this manager ever
+ * subscribed to it, so a customer who called the business instead of
+ * texting it left zero trace anywhere in the app. A missed call (declined
+ * or unanswered) should log into the exact same WhatsApp message log an
+ * incoming text does, matched to the same customer record by phone number.
+ */
+test("an incoming call that goes unanswered (rejected or timed out) is logged as a missed call, matched to the right customer record", async () => {
+  const { manager, createdSockets, db } = setupManager();
+  insertProject(db, project);
+  applyMigrations(db, project.id, project.spec);
+  markProjectBuilt(db, project.id);
+  insertRecord(db, project.id, project.spec.entities[0], { name: "Dana Levi", phone: "050-123-4567" });
+
+  await manager.connect(project.id);
+  createdSockets[0].sock.user = { id: "15550001111:1@s.whatsapp.net" };
+  createdSockets[0].emitConnectionUpdate({ connection: "open" });
+
+  createdSockets[0].emitCall([{ from: "972501234567@s.whatsapp.net", status: "reject" }]);
+  createdSockets[0].emitCall([{ from: "972501234567@s.whatsapp.net", status: "timeout", isVideo: true }]);
+
+  // listWhatsAppMessages returns newest-first (see its own doc comment), so
+  // the second call emitted above -- the video one -- is messages[0].
+  const { messages } = listWhatsAppMessages(db, project.id);
+  assert.equal(messages.length, 2);
+  assert.equal(messages[0].direction, "in");
+  assert.equal(messages[0].body, "[Missed video call]");
+  assert.equal(messages[0].matchedEntityName, "Customer");
+  assert.equal(messages[0].matchedLabel, "Dana Levi");
+  assert.equal(messages[1].body, "[Missed call]");
+});
+
+test("an incoming call is NOT logged while it is still ringing, once it's answered, or when it's a group call", async () => {
+  const { manager, createdSockets, db } = setupManager();
+  insertProject(db, project);
+  applyMigrations(db, project.id, project.spec);
+  markProjectBuilt(db, project.id);
+
+  await manager.connect(project.id);
+  createdSockets[0].emitConnectionUpdate({ connection: "open" });
+
+  createdSockets[0].emitCall([{ from: "972501234567@s.whatsapp.net", status: "offer" }]);
+  createdSockets[0].emitCall([{ from: "972501234567@s.whatsapp.net", status: "ringing" }]);
+  createdSockets[0].emitCall([{ from: "972501234567@s.whatsapp.net", status: "accept" }]);
+  createdSockets[0].emitCall([{ from: "123456789@g.us", status: "reject", isGroup: true }]);
 
   assert.equal(listWhatsAppMessages(db, project.id).messages.length, 0);
 });

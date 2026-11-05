@@ -82,6 +82,7 @@ export interface WhatsAppSocket {
     on(event: "creds.update", listener: () => void): void;
     on(event: "connection.update", listener: (update: BaileysConnectionUpdate) => void): void;
     on(event: "messages.upsert", listener: (upsert: BaileysMessagesUpsert) => void): void;
+    on(event: "call", listener: (calls: BaileysCallEvent[]) => void): void;
   };
   user?: { id: string } | null;
   /** Resolves a WhatsApp "LID" (privacy-mode sender id) to the real phone-number JID, when Baileys has learned the mapping. Optional/injectable like the rest of this interface, for testability. */
@@ -174,6 +175,22 @@ export interface BaileysIncomingMessage {
 export interface BaileysMessagesUpsert {
   type: string;
   messages: BaileysIncomingMessage[];
+}
+
+/**
+ * Baileys' own `ev.emit('call', [call])` shape (lib/Types/Call.d.ts) --
+ * this is a structurally separate socket event, not a `Message` content
+ * type, so none of describeIncomingMessage's message-type coverage ever
+ * applied to it. Baileys replays this same event multiple times per call as
+ * its status progresses (offer, then ringing/preaccept/transport, then
+ * exactly one terminal status) -- see handleIncomingCalls below for which
+ * terminal statuses this manager treats as a genuinely missed call.
+ */
+export interface BaileysCallEvent {
+  from: string;
+  status: "offer" | "ringing" | "preaccept" | "transport" | "relaylatency" | "timeout" | "reject" | "accept" | "terminate";
+  isVideo?: boolean;
+  isGroup?: boolean;
 }
 
 /** WhatsApp/Baileys' own documented status code for "this device was logged out (unlinked) from the phone", as opposed to a merely transient network close. */
@@ -994,6 +1011,9 @@ export class WhatsAppWebManager {
       sock.ev.on("messages.upsert", (upsert) => {
         this.handleIncomingMessages(projectId, session, upsert).catch((err) => this.logHandlerError(projectId, err));
       });
+      sock.ev.on("call", (calls) => {
+        this.handleIncomingCalls(projectId, session, calls).catch((err) => this.logHandlerError(projectId, err));
+      });
     } catch (err) {
       session.status = "disconnected";
       session.error = (err as Error).message;
@@ -1141,6 +1161,49 @@ export class WhatsAppWebManager {
         fromNumber: from,
         toNumber: session?.phoneNumber ?? "",
         body: text,
+        matchedEntityName: match?.entityName ?? null,
+        matchedRecordId: match?.recordId ?? null,
+        matchedLabel: match?.label ?? null,
+        status: "received",
+      });
+    }
+  }
+
+  /**
+   * A customer who calls the linked number instead of texting it produced
+   * zero trace anywhere in this app before this method existed: not in the
+   * WhatsApp message log, not a notification, not the backup ZIP's WhatsApp
+   * CSV -- this is the entire point of the feature per this file's own doc
+   * comment, so logging a missed call reuses the exact same
+   * findMatchingRecord/insertWhatsAppMessage plumbing handleIncomingMessages
+   * above already uses for a text message, with zero new UI/storage code.
+   */
+  private async handleIncomingCalls(projectId: string, session: ManagedSession, calls: BaileysCallEvent[]): Promise<void> {
+    if (this.sessions.get(projectId) !== session) return;
+    const project = getProject(this.db, projectId);
+    if (!project || project.status !== "built") return;
+
+    for (const call of calls) {
+      // Baileys emits this same event repeatedly as a single call's status
+      // progresses (see BaileysCallEvent's own doc comment) -- "accept"
+      // means someone answered (nothing missed to log), and every other
+      // non-terminal status is just Baileys replaying the still-ringing
+      // call before its one terminal status arrives. Only these two
+      // terminal statuses mean the call genuinely went unanswered.
+      if (call.status !== "reject" && call.status !== "timeout") continue;
+      // A group call's "from" is the group's own initiator, not a 1:1
+      // caller a phone number can usefully match against -- the same
+      // reasoning as handleIncomingMessages' own "@g.us" exclusion above.
+      if (call.isGroup) continue;
+
+      const from = call.from.split("@")[0];
+      const match = findMatchingRecord(this.db, project, from);
+      insertWhatsAppMessage(this.db, {
+        projectId,
+        direction: "in",
+        fromNumber: from,
+        toNumber: session?.phoneNumber ?? "",
+        body: call.isVideo ? "[Missed video call]" : "[Missed call]",
         matchedEntityName: match?.entityName ?? null,
         matchedRecordId: match?.recordId ?? null,
         matchedLabel: match?.label ?? null,
