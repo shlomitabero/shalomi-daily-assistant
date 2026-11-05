@@ -137,6 +137,17 @@ const MAX_ATTACHMENT_SIZE_BYTES = 10 * 1024 * 1024;
  * even though nothing was actually lost server-side. `freshPage` always
  * overlaps with the newest end of `prev` (both are the same DESC-ordered
  * log), so only the ids not already present are new.
+ *
+ * Round 1626: also reconciles `status` on ids already present in `prev`.
+ * Round 1618 made a message row's status mutable after insert --
+ * markWhatsAppMessageDeliveryFailed (packages/db/src/whatsapp.ts) flips it
+ * from "sent" to "failed" once Baileys' own "messages.update" event reports
+ * a real delivery failure. Without this, the connected-poll tick's own
+ * re-fetch (every CONNECTED_POLL_INTERVAL_MS, see startConnectedPolling
+ * below) saw that id as already present and never applied the corrected
+ * status, so the [Failed] badge/Retry button never appeared for a user who
+ * sent a message and kept the panel open -- the single most likely case,
+ * since they're watching to see if it went through.
  */
 function mergeFreshMessages(
   prev: WhatsAppMessageLogEntry[],
@@ -144,7 +155,18 @@ function mergeFreshMessages(
 ): WhatsAppMessageLogEntry[] {
   const existingIds = new Set(prev.map((m) => m.id));
   const newOnes = freshPage.filter((m) => !existingIds.has(m.id));
-  return newOnes.length === 0 ? prev : [...newOnes, ...prev];
+  const freshById = new Map(freshPage.map((m) => [m.id, m]));
+  let statusChanged = false;
+  const reconciled = prev.map((m) => {
+    const fresh = freshById.get(m.id);
+    if (fresh && fresh.status !== m.status) {
+      statusChanged = true;
+      return { ...m, status: fresh.status };
+    }
+    return m;
+  });
+  if (newOnes.length === 0 && !statusChanged) return prev;
+  return [...newOnes, ...reconciled];
 }
 
 export function WhatsAppPanel({

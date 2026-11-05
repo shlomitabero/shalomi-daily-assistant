@@ -826,6 +826,59 @@ test("WhatsAppPanel's startConnectedPolling also refreshes the message log each 
 });
 
 /**
+ * Regression test for round 1626: round 1618 made a message row's status
+ * mutable after insert (markWhatsAppMessageDeliveryFailed flips "sent" to
+ * "failed" once Baileys' own "messages.update" event reports a real
+ * delivery failure), but mergeFreshMessages was purely additive -- it only
+ * ever spliced in ids missing from `prev`, so a status change on an id
+ * already present (the common case: the user sent a message and kept the
+ * panel open to watch for the correction) was silently discarded by every
+ * connected-poll tick. Extracts and executes the real mergeFreshMessages
+ * (not a reimplementation, unlike the test above) to prove it now
+ * reconciles status on already-present ids while still behaving exactly
+ * like before for genuinely new ids and unrelated existing ones.
+ */
+test("WhatsAppPanel's mergeFreshMessages reconciles an already-loaded message's status when the fresh page reports it changed", () => {
+  const mergeMatch = whatsAppPanelSrc.match(/^function mergeFreshMessages\([\s\S]*?\n\}\n/m);
+  assert.ok(mergeMatch, "expected to find mergeFreshMessages in WhatsAppPanel.tsx");
+  const { code } = transformSync(mergeMatch![0], { loader: "ts" });
+  const mergeFreshMessages = new Function(`${code}\nreturn mergeFreshMessages;`)() as (
+    prev: WhatsAppMessageLogEntry[],
+    freshPage: WhatsAppMessageLogEntry[],
+  ) => WhatsAppMessageLogEntry[];
+
+  function makeMsg(id: string, status: WhatsAppMessageLogEntry["status"]): WhatsAppMessageLogEntry {
+    return {
+      id,
+      direction: "out",
+      fromNumber: "+2000",
+      toNumber: "+1000",
+      body: id,
+      matchedLabel: null,
+      matchedEntityName: null,
+      matchedRecordId: null,
+      status,
+      createdAt: "2024-01-01T00:00:00.000Z",
+    };
+  }
+
+  const prev = [makeMsg("m2", "sent"), makeMsg("m1", "received")];
+  // The server now reports m2 as failed (its own messages.update handler
+  // ran since the last tick), plus a genuinely new message m3.
+  const freshPage = [makeMsg("m3", "received"), makeMsg("m2", "failed")];
+
+  const merged = mergeFreshMessages(prev, freshPage);
+
+  assert.deepEqual(merged.map((m) => m.id), ["m3", "m2", "m1"], "new message prepended, existing order preserved");
+  assert.equal(merged.find((m) => m.id === "m2")?.status, "failed", "m2's status must be reconciled from the fresh page");
+  assert.equal(merged.find((m) => m.id === "m1")?.status, "received", "m1's status must be left untouched -- the fresh page says nothing changed for it");
+
+  // No-op fast path: identical input must still return the same reference.
+  const unchanged = mergeFreshMessages(prev, [makeMsg("m2", "sent"), makeMsg("m1", "received")]);
+  assert.equal(unchanged, prev, "must return the same array reference when nothing actually changed");
+});
+
+/**
  * Regression test for a real race found by round 431's Explore survey:
  * mergeFreshMessages is purely additive (it can only add an id missing
  * from `prev`, never remove one it no longer sees). If handleDeleteMessage
