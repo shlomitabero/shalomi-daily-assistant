@@ -3,6 +3,21 @@ import assert from 'node:assert/strict';
 import { db, __resetForTests } from '../db/store.js';
 import { addLedgerEntry, totalSpentSoFar, totalLossSoFar, todayKey } from './ledger.js';
 
+test('todayKey returns the Israel-local calendar date, not the UTC one', () => {
+  // This app is built throughout for a Hebrew-speaking, Israel-based owner
+  // (Hebrew UI, ILS default currency, Paddle chosen for Israeli payouts).
+  // For roughly 2 hours every day (Israel is ahead of UTC), the UTC
+  // calendar date still reads "yesterday" while Israel's own has already
+  // moved on to "today" - a bare toISOString().slice(0,10) would silently
+  // undercount a sale or cost landing in that window from the dashboard's
+  // "today" figures.
+  assert.equal(todayKey(new Date('2026-01-01T22:30:00Z')), '2026-01-02'); // 00:30 Israel time (winter, UTC+2)
+});
+
+test('todayKey correctly accounts for Israel daylight saving (UTC+3 in summer)', () => {
+  assert.equal(todayKey(new Date('2026-07-01T21:30:00Z')), '2026-07-02'); // 00:30 Israel time (summer, UTC+3)
+});
+
 test('totalSpentSoFar only counts verified costs', () => {
   __resetForTests();
   addLedgerEntry({ type: 'cost', amount: 5, verified: true, description: 'ai' });

@@ -1,8 +1,18 @@
 import { db, makeId } from '../db/store.js';
 import { summarizeLedger } from '../engine/ledger.js';
 
-export function todayKey() {
-  return new Date().toISOString().slice(0, 10);
+// A bare new Date().toISOString().slice(0, 10) gives the UTC calendar date,
+// not the owner's own - this app is built throughout for a Hebrew-speaking,
+// Israel-based owner, and for roughly 2 hours every day (between Israel
+// midnight and UTC midnight, since Israel is ahead of UTC) a sale or cost
+// happening in that window would get dated "yesterday" here while the
+// owner's own calendar had already moved on to "today" - silently
+// undercounting the dashboard's "cash in/out today" for anything that
+// landed in that gap. Every real-money date stamp in this app goes through
+// this one function (addLedgerEntry's default below, and billing.js's
+// webhook, which previously duplicated the UTC-only version inline).
+export function todayKey(now = new Date()) {
+  return new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Jerusalem', year: 'numeric', month: '2-digit', day: '2-digit' }).format(now);
 }
 
 export function addLedgerEntry({ type, amount, verified, description, opportunityId = null, date = todayKey() }) {

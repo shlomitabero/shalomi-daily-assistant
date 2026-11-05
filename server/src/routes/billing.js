@@ -4,6 +4,7 @@ import { verifyPaddleSignature } from '../engine/paddleSignature.js';
 import { extractTransactionAmount, extractTransactionFee } from '../engine/paddleTransaction.js';
 import { logAction } from '../services/execution.js';
 import { isPaddleConfigured, paddleClientConfig } from '../services/paddle.js';
+import { todayKey } from '../services/ledger.js';
 
 export const billingRouter = Router();
 
@@ -71,7 +72,7 @@ export function paddleWebhookHandler(req, res) {
           res.json({ received: true });
           return;
         }
-        const today = new Date().toISOString().slice(0, 10);
+        const today = todayKey();
         const now = new Date().toISOString();
         db.ledger.insert({
           id: makeId('led'),

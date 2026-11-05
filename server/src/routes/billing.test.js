@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import { createHmac } from 'node:crypto';
 import { db, __resetForTests, makeId } from '../db/store.js';
 import { paddleWebhookHandler, getBillingConfigured } from './billing.js';
+import { todayKey } from '../services/ledger.js';
 
 function withEnv(vars, fn) {
   const originals = {};
@@ -86,6 +87,11 @@ test('a verified transaction.completed records real revenue and bumps the opport
     assert.equal(entries.length, 1);
     assert.equal(entries[0].amount, 9);
     assert.equal(entries[0].verified, true);
+    // This used to duplicate its own UTC-only date computation inline
+    // instead of sharing ledger.js's todayKey() - must date a real sale by
+    // the same Israel-local "today" every other part of the app uses, not
+    // its own separate, out-of-sync notion of the day boundary.
+    assert.equal(entries[0].date, todayKey());
     assert.equal(db.opportunities.get(opportunity.id).salesCount, 1);
   });
 });
