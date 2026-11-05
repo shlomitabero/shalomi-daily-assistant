@@ -36,3 +36,18 @@ test('rejects a missing signature header', () => {
 test('rejects when no webhook secret is configured', () => {
   assert.equal(verifyPaddleSignature({ rawBody: '{}', signatureHeader: 'ts=1;h1=abcd', secret: '' }), false);
 });
+
+test('rejects a signature header missing the ts or h1 component instead of crashing on undefined', () => {
+  assert.equal(verifyPaddleSignature({ rawBody: '{}', signatureHeader: 'h1=abcd', secret: 'x' }), false);
+  assert.equal(verifyPaddleSignature({ rawBody: '{}', signatureHeader: 'ts=123', secret: 'x' }), false);
+});
+
+test('rejects a signature value of the wrong length instead of throwing in timingSafeEqual', () => {
+  // timingSafeEqual itself throws on mismatched buffer lengths - a
+  // truncated or otherwise wrong-length h1 (not just a wrong value) must
+  // be rejected cleanly before ever reaching it, not crash the webhook
+  // handler on a malformed/forged request.
+  const secret = 'whsec_test';
+  const ts = '1700000000';
+  assert.equal(verifyPaddleSignature({ rawBody: '{}', signatureHeader: `ts=${ts};h1=ab`, secret }), false);
+});
