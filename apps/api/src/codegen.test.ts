@@ -19399,6 +19399,7 @@ test("the exported EntityView's generated inline cell editor suppresses a stale 
   function makeHandlers() {
     return new Function(
       "editingCell",
+      "writesInFlight",
       "cellDraft",
       "suppressCellBlurCommitRef",
       "entity",
@@ -19410,6 +19411,7 @@ test("the exported EntityView's generated inline cell editor suppresses a stale 
       `${invalidNumberFieldSrc}\n${commitSrc}\n${cancelSrc}\n${blurSrc}\nreturn { commitInlineEdit, handleCellBlur };`,
     )(
       state.editingCell,
+      false,
       state.cellDraft,
       suppressCellBlurCommitRef,
       { name: "Customer", fields: [{ name: "name", required: false }] },
@@ -19452,6 +19454,7 @@ test("the exported EntityView's generated inline cell editor refuses to commit a
   let updateCalled = false;
   const fn = new Function(
     "editingCell",
+    "writesInFlight",
     "cellDraft",
     "suppressCellBlurCommitRef",
     "entity",
@@ -19463,6 +19466,7 @@ test("the exported EntityView's generated inline cell editor refuses to commit a
     `${commitSrc}\nreturn commitInlineEdit;`,
   )(
     { recordId: 1, field: "name" },
+    false,
     "",
     { current: false },
     { name: "Customer", fields: [{ name: "name", label: "Name", required: true }] },
@@ -19503,6 +19507,7 @@ test("the exported EntityView's generated inline cell editor refuses to commit a
   let updateCalled = false;
   const fn = new Function(
     "editingCell",
+    "writesInFlight",
     "cellDraft",
     "suppressCellBlurCommitRef",
     "entity",
@@ -19514,6 +19519,7 @@ test("the exported EntityView's generated inline cell editor refuses to commit a
     `${invalidNumberFieldSrc}\n${commitSrc}\nreturn commitInlineEdit;`,
   )(
     { recordId: 1, field: "amount" },
+    false,
     "abc",
     { current: false },
     { name: "Order", fields: [{ name: "amount", label: "Amount", type: "number", required: false }] },
