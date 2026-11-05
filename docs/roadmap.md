@@ -44458,3 +44458,19 @@ Fail-before/pass-after verified directly: stashed `webhookIn.ts` only (test file
 Fail-before/pass-after verified directly: stashed `BuildProgress.tsx` + `language.ts` only (test file untouched). Both new tests failed exactly as expected (the Hebrew-grammar test on the plain bare-key lookup; the rendering test on the still-single-key, un-ternaried text). Restored the fix, pass-after: both pass. Full `BuildProgress.test.ts`: 39/39 pass. Full `apps/web` suite: 1903/1903 pass.
 
 **`codegen.ts` parity**: N/A -- confirmed via grep that `codegen.ts` has zero reference to Automations at all (same conclusion round 796 already reached); the exported standalone app has no automation-rule feature to port this to.
+
+### Round 1629: domainEntities.ts's Employee rule missing phone field every sibling person-type entity already has
+
+**Survey note**: this round's fresh survey (Explore subagent) independently flagged `domainEntities.ts`'s 1763 lines (a prior round had noted it as under-reviewed) and found a genuinely fresh instance of the long-running "sibling entity missing a field" bug class (rounds 1282/1288/1289/1294/1308).
+
+**The gap**: `domainEntities.ts`'s `Employee` domain rule (lines 203-232 before this fix) -- the heuristic (offline, no-LLM) spec provider's generic rule for any description mentioning employees/staff/team members -- produced `name`/`role`/`email`/`active`, with no `phone`. Every other person-type entity in this same file already has one: `Customer`, `Courier`, `Student`, `Patient`, `Vendor`, `Volunteer` all carry `{ name: "phone", type: "text", required: false }` with the identical Hebrew label `"טלפון"`. `Employee` was the sole person-type entity in this file without it, with no comment anywhere explaining a deliberate omission (unlike every genuinely intentional edge case elsewhere in this file, which is documented inline). Round 1308 had actually quoted this exact rule's shape in full (while fixing an unrelated `Staff` entity in `templates.ts`) and noted it has `email` -- but never caught the missing `phone`. Confirmed via `grep -n "Employee" docs/roadmap.md` that no round ever flagged or rejected this specific gap.
+
+**Reachability**: `HeuristicSpecProvider` (`heuristic.ts`) imports and iterates `DOMAIN_ENTITY_RULES` directly -- the deterministic fallback provider used whenever no AI provider/API key is configured. Any description mentioning employees ("Track our employees, their role and contact info") hits this exact rule and produced an Employee record with no way to store a phone number, unlike every comparable Customer/Vendor/Volunteer/Courier/Student/Patient record in the same generated app.
+
+**The fix**: added `{ name: "phone", type: "text", required: false }` to the `Employee` entity's `fields` array, plus the matching `fieldLabelsHe` entry (`phone: "טלפון"`), identical in shape to every sibling person-type entity.
+
+**Tests** (`packages/spec-engine/src/heuristic.test.ts`): 1 new, mirroring the file's own existing assertion style (generate a real spec via `HeuristicSpecProvider`, find the entity, assert on its field). Confirmed via grep that no existing test (including the 5 pre-existing Employee keyword-collision regression tests) pins the entity's exact field list, so this addition is safe.
+
+Fail-before/pass-after verified directly: stashed `domainEntities.ts` only (test file untouched). Fail-before failed exactly as expected (`Employee must have a phone field`). Restored the fix, pass-after: passes. All 5 pre-existing Employee tests re-run alongside: no regression. Full `@forge/spec-engine` suite: 232/232 pass.
+
+**`codegen.ts` parity**: N/A -- `domainEntities.ts` is a spec-generation-time heuristic rule set (`@forge/spec-engine`), not part of the exported standalone app; `codegen.ts` has no concept of domain-entity rules to port this to.
