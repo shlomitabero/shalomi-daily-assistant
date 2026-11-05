@@ -281,6 +281,30 @@ test("a Property entity's room count seeds a believable 1-6 value, not the gener
   }
 });
 
+/**
+ * Round 1625: the Restaurant & Table Management template's RestaurantTable
+ * entity (templates.ts) has a "seats" field -- same gap as "rooms" above,
+ * a table seated for 10/20 guests looks obviously broken the moment the
+ * generated app renders it.
+ */
+test("a RestaurantTable entity's seat count seeds a believable 2-8 value, not the generic (index+1)*10 formula", () => {
+  const restaurantTable: Entity = {
+    name: "RestaurantTable",
+    fields: [
+      { name: "number", type: "number", required: true },
+      { name: "seats", type: "number", required: false },
+    ],
+  };
+
+  const records = generateSeedRecords(restaurantTable, 3);
+  for (const record of records) {
+    assert.ok(
+      (record.seats as number) >= 2 && (record.seats as number) <= 8,
+      `seats must be a believable 2-8 value, got ${record.seats}`,
+    );
+  }
+});
+
 test("the WorkOrder, Volunteer, and Case entities each get believable seed values, not the generic placeholder formula", () => {
   const workOrder: Entity = {
     name: "WorkOrder",

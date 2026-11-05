@@ -136,6 +136,11 @@ function seedValueFor(field: Field, entity: Entity, index: number): unknown {
       // House/Office, an obviously broken value no real listing would ever
       // have. A 1-6 range covers everything from a studio to a large house.
       if (field.name === "rooms") return (index % 6) + 1;
+      // Round 1625: the Restaurant & Table Management template's
+      // RestaurantTable entity (templates.ts) has a "seats" field -- same
+      // gap as "rooms" above, a table seated for 10/20 guests looks
+      // obviously broken. 2/4/6/8 covers a 2-top through a large booth.
+      if (field.name === "seats") return ((index % 4) * 2) + 2;
       return (index + 1) * 10;
     case "boolean":
       return index % 2 === 0;
