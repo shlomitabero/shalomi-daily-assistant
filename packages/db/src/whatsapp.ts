@@ -110,6 +110,19 @@ export interface WhatsAppMessage {
    * this row is even inserted).
    */
   hadAttachment: boolean;
+  /**
+   * The id Baileys assigned to this outgoing message (its `key.id`),
+   * captured at insert time from performSend's own `WhatsAppSendResult`
+   * -- null for an incoming message (direction: "in", which has no
+   * Baileys-assigned id this app ever sends), a failed send (nothing was
+   * actually sent to correlate), or a row inserted before this column
+   * existed. Lets a later `"messages.update"` delivery-status event
+   * (whatsappWeb.ts's handleMessageUpdates) find this exact row and flip
+   * it from "sent" to "failed" when WhatsApp's own server reports the
+   * send didn't really go through -- see markWhatsAppMessageDeliveryFailed
+   * below.
+   */
+  waMessageId: string | null;
   createdAt: string;
 }
 
@@ -127,6 +140,7 @@ export function ensureWhatsAppMessagesTable(db: ForgeDatabase): void {
       matchedRecordId INTEGER,
       status TEXT NOT NULL,
       hadAttachment INTEGER NOT NULL DEFAULT 0,
+      waMessageId TEXT,
       createdAt TEXT NOT NULL
     )
   `);
@@ -143,6 +157,15 @@ export function ensureWhatsAppMessagesTable(db: ForgeDatabase): void {
   if (!columns.includes("hadAttachment")) {
     db.exec("ALTER TABLE whatsapp_messages ADD COLUMN hadAttachment INTEGER NOT NULL DEFAULT 0");
   }
+  // Round 1618: same additive-only discipline, for waMessageId -- a table
+  // built before this round has no column to correlate a later
+  // "messages.update" delivery-failure event against, so every
+  // pre-existing row (and any row inserted without a known Baileys id --
+  // an incoming message, or a failed send) is simply left at its safe
+  // null default, same as hadAttachment's own rationale above.
+  if (!columns.includes("waMessageId")) {
+    db.exec("ALTER TABLE whatsapp_messages ADD COLUMN waMessageId TEXT");
+  }
 }
 
 function rowToMessage(row: Record<string, unknown>): WhatsAppMessage {
@@ -158,6 +181,7 @@ function rowToMessage(row: Record<string, unknown>): WhatsAppMessage {
     matchedRecordId: (row.matchedRecordId as number | null) ?? null,
     status: row.status as WhatsAppMessageStatus,
     hadAttachment: Boolean(row.hadAttachment),
+    waMessageId: (row.waMessageId as string | null) ?? null,
     createdAt: row.createdAt as string,
   };
 }
@@ -175,14 +199,15 @@ export function insertWhatsAppMessage(
     matchedRecordId?: number | null;
     status: WhatsAppMessageStatus;
     hadAttachment?: boolean;
+    waMessageId?: string | null;
   },
 ): WhatsAppMessage {
   const id = randomUUID();
   const createdAt = new Date().toISOString();
   db.prepare(
     `INSERT INTO whatsapp_messages
-       (id, projectId, direction, fromNumber, toNumber, body, matchedLabel, matchedEntityName, matchedRecordId, status, hadAttachment, createdAt)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+       (id, projectId, direction, fromNumber, toNumber, body, matchedLabel, matchedEntityName, matchedRecordId, status, hadAttachment, waMessageId, createdAt)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
   ).run(
     id,
     message.projectId,
@@ -195,6 +220,7 @@ export function insertWhatsAppMessage(
     message.matchedRecordId ?? null,
     message.status,
     message.hadAttachment ? 1 : 0,
+    message.waMessageId ?? null,
     createdAt,
   );
   return {
@@ -205,7 +231,29 @@ export function insertWhatsAppMessage(
     matchedEntityName: message.matchedEntityName ?? null,
     matchedRecordId: message.matchedRecordId ?? null,
     hadAttachment: Boolean(message.hadAttachment),
+    waMessageId: message.waMessageId ?? null,
   };
+}
+
+/**
+ * Flips a "sent" outgoing message row to "failed" once WhatsApp's own
+ * server later reports (via Baileys' `"messages.update"` event, status
+ * ERROR) that the send didn't really go through -- see
+ * WhatsAppMessage.waMessageId's own doc comment for why performSend's
+ * immediate resolve alone can't know this. Scoped to direction "out" AND
+ * status "sent" (not just projectId + waMessageId) so this can never
+ * overwrite an incoming message that happens to share a random UUID
+ * collision-free waMessageId column value by coincidence, or re-flip a
+ * row some other path already marked "failed". Returns whether a row was
+ * actually updated, so the caller can tell a real reconciliation apart
+ * from a stale/unknown id (e.g. the row predates this column, or belongs
+ * to a message this app never sent).
+ */
+export function markWhatsAppMessageDeliveryFailed(db: ForgeDatabase, projectId: string, waMessageId: string): boolean {
+  const result = db
+    .prepare(`UPDATE whatsapp_messages SET status = 'failed' WHERE projectId = ? AND waMessageId = ? AND direction = 'out' AND status = 'sent'`)
+    .run(projectId, waMessageId);
+  return result.changes > 0;
 }
 
 /**

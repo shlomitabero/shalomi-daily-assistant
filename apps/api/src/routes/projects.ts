@@ -3585,6 +3585,7 @@ export function createProjectsRouter(
             matchedLabel: match?.label ?? null,
             status: result.ok ? "sent" : "failed",
             hadAttachment: Boolean(resolvedAttachment),
+            waMessageId: result.waMessageId,
           });
           if (!result.ok) {
             return { status: 502, body: { ok: false, error: result.error } };

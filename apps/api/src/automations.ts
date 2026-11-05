@@ -1362,6 +1362,7 @@ export async function fireRule(
     // warning, since handleRetry's own confirm-before-text-only-retry
     // guard reads this exact field.
     hadAttachment: Boolean(attachments[0]),
+    waMessageId: result.waMessageId,
   });
   recordAutomationRun(
     db,
@@ -1404,6 +1405,7 @@ export async function fireRule(
       // this loop only ever runs once a real extraAttachment was resolved,
       // so this is always true here, never a `Boolean(...)` conditional.
       hadAttachment: true,
+      waMessageId: extraResult.waMessageId,
     });
   }
 }
@@ -1588,6 +1590,7 @@ export async function fireScheduledRule(
     matchedRecordId: match?.recordId ?? null,
     matchedLabel: match?.label ?? null,
     status: result.ok ? "sent" : "failed",
+    waMessageId: result.waMessageId,
   });
   recordAutomationRun(
     db,

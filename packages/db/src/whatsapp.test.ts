@@ -10,6 +10,7 @@ import {
   getWhatsAppConnection,
   insertWhatsAppMessage,
   listWhatsAppMessages,
+  markWhatsAppMessageDeliveryFailed,
   recordWhatsAppConnected,
   recordWhatsAppDisconnected,
 } from "./whatsapp.js";
@@ -421,4 +422,136 @@ test("insertWhatsAppMessage defaults hadAttachment to false when omitted", () =>
 
   const { messages } = listWhatsAppMessages(db, "proj1");
   assert.equal(messages[0].hadAttachment, false);
+});
+
+/**
+ * Round 1618: waMessageId is the id Baileys assigned to an outgoing
+ * message, captured so a later "messages.update" delivery-failure event
+ * (whatsappWeb.ts's handleMessageUpdates) can find and reconcile this
+ * exact row. Must round-trip through the real column, not just echo back
+ * whatever was passed in -- the same discipline round 1101 established
+ * for hadAttachment.
+ */
+test("insertWhatsAppMessage stores and returns waMessageId, and it survives a fresh read via listWhatsAppMessages", () => {
+  const db = openDatabase(":memory:");
+  ensureWhatsAppMessagesTable(db);
+  const inserted = insertWhatsAppMessage(db, {
+    projectId: "proj1",
+    direction: "out",
+    fromNumber: "972501234567",
+    toNumber: "972521112233",
+    body: "hello",
+    status: "sent",
+    waMessageId: "3EB0ABC123",
+  });
+  assert.equal(inserted.waMessageId, "3EB0ABC123");
+
+  const { messages } = listWhatsAppMessages(db, "proj1");
+  assert.equal(messages.length, 1);
+  assert.equal(messages[0].waMessageId, "3EB0ABC123", "waMessageId must survive a fresh read, not just the insert's own return value");
+});
+
+test("insertWhatsAppMessage defaults waMessageId to null when omitted", () => {
+  const db = openDatabase(":memory:");
+  ensureWhatsAppMessagesTable(db);
+  const inserted = insertWhatsAppMessage(db, {
+    projectId: "proj1",
+    direction: "in",
+    fromNumber: "972521112233",
+    toNumber: "972501234567",
+    body: "plain text message",
+    status: "received",
+  });
+  assert.equal(inserted.waMessageId, null);
+
+  const { messages } = listWhatsAppMessages(db, "proj1");
+  assert.equal(messages[0].waMessageId, null);
+});
+
+test("markWhatsAppMessageDeliveryFailed flips a sent outgoing message to failed and returns true", () => {
+  const db = openDatabase(":memory:");
+  ensureWhatsAppMessagesTable(db);
+  insertWhatsAppMessage(db, {
+    projectId: "proj1",
+    direction: "out",
+    fromNumber: "972501234567",
+    toNumber: "972521112233",
+    body: "hello",
+    status: "sent",
+    waMessageId: "3EB0ABC123",
+  });
+
+  const changed = markWhatsAppMessageDeliveryFailed(db, "proj1", "3EB0ABC123");
+  assert.equal(changed, true);
+
+  const { messages } = listWhatsAppMessages(db, "proj1");
+  assert.equal(messages[0].status, "failed");
+});
+
+test("markWhatsAppMessageDeliveryFailed returns false for an unknown waMessageId, leaving every row untouched", () => {
+  const db = openDatabase(":memory:");
+  ensureWhatsAppMessagesTable(db);
+  insertWhatsAppMessage(db, {
+    projectId: "proj1",
+    direction: "out",
+    fromNumber: "972501234567",
+    toNumber: "972521112233",
+    body: "hello",
+    status: "sent",
+    waMessageId: "3EB0ABC123",
+  });
+
+  const changed = markWhatsAppMessageDeliveryFailed(db, "proj1", "does-not-exist");
+  assert.equal(changed, false);
+
+  const { messages } = listWhatsAppMessages(db, "proj1");
+  assert.equal(messages[0].status, "sent");
+});
+
+test("markWhatsAppMessageDeliveryFailed never flips an incoming message, even if it somehow shares the given waMessageId", () => {
+  const db = openDatabase(":memory:");
+  ensureWhatsAppMessagesTable(db);
+  insertWhatsAppMessage(db, {
+    projectId: "proj1",
+    direction: "in",
+    fromNumber: "972521112233",
+    toNumber: "972501234567",
+    body: "a reply from the customer",
+    status: "received",
+    waMessageId: "3EB0ABC123",
+  });
+
+  const changed = markWhatsAppMessageDeliveryFailed(db, "proj1", "3EB0ABC123");
+  assert.equal(changed, false);
+
+  const { messages } = listWhatsAppMessages(db, "proj1");
+  assert.equal(messages[0].status, "received");
+});
+
+test("markWhatsAppMessageDeliveryFailed never re-flips a message some other path already marked failed, and is scoped to the given project", () => {
+  const db = openDatabase(":memory:");
+  ensureWhatsAppMessagesTable(db);
+  insertWhatsAppMessage(db, {
+    projectId: "proj1",
+    direction: "out",
+    fromNumber: "972501234567",
+    toNumber: "972521112233",
+    body: "already failed for an unrelated reason",
+    status: "failed",
+    waMessageId: "3EB0ABC123",
+  });
+  insertWhatsAppMessage(db, {
+    projectId: "proj2",
+    direction: "out",
+    fromNumber: "972501234567",
+    toNumber: "972521112233",
+    body: "a different project's own message, same id by coincidence",
+    status: "sent",
+    waMessageId: "3EB0ABC123",
+  });
+
+  assert.equal(markWhatsAppMessageDeliveryFailed(db, "proj1", "3EB0ABC123"), false, "an already-failed row has nothing left to flip");
+
+  const proj2Messages = listWhatsAppMessages(db, "proj2").messages;
+  assert.equal(proj2Messages[0].status, "sent", "a lookup scoped to proj1 must never touch proj2's own row");
 });

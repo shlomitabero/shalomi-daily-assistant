@@ -4,8 +4,8 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { test } from "node:test";
 import type { Project } from "@forge/shared";
-import { applyMigrations, ensureProjectsTable, ensureWhatsAppConnectionsTable, ensureWhatsAppMessagesTable, getWhatsAppConnection, insertProject, insertRecord, listWhatsAppMessages, markProjectBuilt, openDatabase } from "@forge/db";
-import { WhatsAppWebManager, type BaileysCallEvent, type BaileysConnectionUpdate, type BaileysMessagesUpsert, type WhatsAppSocket } from "./whatsappWeb.js";
+import { applyMigrations, ensureProjectsTable, ensureWhatsAppConnectionsTable, ensureWhatsAppMessagesTable, getWhatsAppConnection, insertProject, insertRecord, insertWhatsAppMessage, listWhatsAppMessages, markProjectBuilt, openDatabase } from "@forge/db";
+import { WhatsAppWebManager, type BaileysCallEvent, type BaileysConnectionUpdate, type BaileysMessageUpdate, type BaileysMessagesUpsert, type WhatsAppSocket } from "./whatsappWeb.js";
 
 /**
  * Real Baileys sockets talk to WhatsApp's actual servers over a raw
@@ -26,6 +26,7 @@ function createFakeSocket(options?: {
     creds?: () => void;
     connectionUpdate?: (u: BaileysConnectionUpdate) => void;
     messagesUpsert?: (u: BaileysMessagesUpsert) => void;
+    messagesUpdate?: (u: BaileysMessageUpdate[]) => void;
     call?: (calls: BaileysCallEvent[]) => void;
   } = {};
   const sendCalls: (
@@ -35,6 +36,12 @@ function createFakeSocket(options?: {
     | { jid: string; video: Buffer; mimetype: string; caption?: string }
     | { jid: string; audio: Buffer; mimetype: string; ptt?: boolean }
   )[] = [];
+  // Round 1618: a deterministic, distinct id per real Baileys sendMessage
+  // call -- mirrors the real library's own `key.id` (WAMessageUpdate's
+  // own correlation key), letting a test assert exactly which send a
+  // later "messages.update" delivery-failure event ought to reconcile
+  // against.
+  const sentMessageIds: string[] = [];
   let loggedOut = false;
 
   const sock: WhatsAppSocket = {
@@ -43,6 +50,7 @@ function createFakeSocket(options?: {
         if (event === "creds.update") handlers.creds = listener as () => void;
         if (event === "connection.update") handlers.connectionUpdate = listener as (u: BaileysConnectionUpdate) => void;
         if (event === "messages.upsert") handlers.messagesUpsert = listener as (u: BaileysMessagesUpsert) => void;
+        if (event === "messages.update") handlers.messagesUpdate = listener as (u: BaileysMessageUpdate[]) => void;
         if (event === "call") handlers.call = listener as (calls: BaileysCallEvent[]) => void;
       },
     },
@@ -63,7 +71,9 @@ function createFakeSocket(options?: {
       } else {
         sendCalls.push({ jid, audio: content.audio, mimetype: content.mimetype, ptt: content.ptt });
       }
-      return {};
+      const id = `wa-id-${sentMessageIds.length}`;
+      sentMessageIds.push(id);
+      return { key: { id } };
     },
     async logout() {
       loggedOut = true;
@@ -73,9 +83,11 @@ function createFakeSocket(options?: {
   return {
     sock,
     sendCalls,
+    sentMessageIds,
     isLoggedOut: () => loggedOut,
     emitConnectionUpdate: (u: BaileysConnectionUpdate) => handlers.connectionUpdate?.(u),
     emitMessagesUpsert: (u: BaileysMessagesUpsert) => handlers.messagesUpsert?.(u),
+    emitMessagesUpdate: (u: BaileysMessageUpdate[]) => handlers.messagesUpdate?.(u),
     emitCall: (calls: BaileysCallEvent[]) => handlers.call?.(calls),
   };
 }
@@ -338,6 +350,91 @@ test("sendMessage succeeds once connected, addressing the real WhatsApp JID form
   const result = await manager.sendMessage("proj1", "972509998888", "שלום!");
   assert.equal(result.ok, true);
   assert.deepEqual(createdSockets[0].sendCalls, [{ jid: "972509998888@s.whatsapp.net", text: "שלום!" }]);
+  assert.equal(result.waMessageId, createdSockets[0].sentMessageIds[0], "the id Baileys assigned to the real sendMessage call must be returned, for later delivery-status reconciliation");
+});
+
+/**
+ * Round 1618: performSend's own promise resolving only means Baileys
+ * handed the message to the WhatsApp server -- a real downstream failure
+ * (the recipient's number isn't on WhatsApp, the recipient blocked the
+ * linked number) surfaces later, asynchronously, through a structurally
+ * separate Baileys event, "messages.update", carrying the real outcome
+ * for the exact id this test asserts sendMessage's own result returns.
+ */
+test("a 'messages.update' delivery-failure event (status ERROR) flips the matching sent message's log row to failed", async () => {
+  const { manager, db, createdSockets } = setupManager();
+  await manager.connect("proj1");
+  createdSockets[0].sock.user = { id: "972501234567:1@s.whatsapp.net" };
+  createdSockets[0].emitConnectionUpdate({ connection: "open" });
+
+  const result = await manager.sendMessage("proj1", "972509998888", "hello");
+  assert.equal(result.ok, true);
+  const waMessageId = result.waMessageId!;
+  assert.ok(waMessageId, "sendMessage must return the real Baileys-assigned id to reconcile against");
+
+  insertWhatsAppMessage(db, {
+    projectId: "proj1",
+    direction: "out",
+    fromNumber: "972501234567",
+    toNumber: "972509998888",
+    body: "hello",
+    status: "sent",
+    waMessageId,
+  });
+
+  createdSockets[0].emitMessagesUpdate([{ key: { id: waMessageId }, update: { status: 0 } }]);
+  await new Promise((resolve) => setImmediate(resolve));
+
+  const { messages } = listWhatsAppMessages(db, "proj1");
+  assert.equal(messages[0].status, "failed", "the log row for this exact waMessageId must flip from sent to failed");
+});
+
+test("a 'messages.update' event with a non-ERROR status (e.g. DELIVERY_ACK) leaves the message log row untouched", async () => {
+  const { manager, db, createdSockets } = setupManager();
+  await manager.connect("proj1");
+  createdSockets[0].sock.user = { id: "972501234567:1@s.whatsapp.net" };
+  createdSockets[0].emitConnectionUpdate({ connection: "open" });
+
+  const result = await manager.sendMessage("proj1", "972509998888", "hello");
+  const waMessageId = result.waMessageId!;
+  insertWhatsAppMessage(db, {
+    projectId: "proj1",
+    direction: "out",
+    fromNumber: "972501234567",
+    toNumber: "972509998888",
+    body: "hello",
+    status: "sent",
+    waMessageId,
+  });
+
+  createdSockets[0].emitMessagesUpdate([{ key: { id: waMessageId }, update: { status: 3 } }]);
+  await new Promise((resolve) => setImmediate(resolve));
+
+  const { messages } = listWhatsAppMessages(db, "proj1");
+  assert.equal(messages[0].status, "sent", "forward delivery progress (DELIVERY_ACK) is not a failure to reconcile");
+});
+
+test("a 'messages.update' delivery-failure event for an id this project never sent is a harmless no-op, not a crash", async () => {
+  const { manager, db, createdSockets } = setupManager();
+  await manager.connect("proj1");
+  createdSockets[0].sock.user = { id: "972501234567:1@s.whatsapp.net" };
+  createdSockets[0].emitConnectionUpdate({ connection: "open" });
+
+  insertWhatsAppMessage(db, {
+    projectId: "proj1",
+    direction: "out",
+    fromNumber: "972501234567",
+    toNumber: "972509998888",
+    body: "hello",
+    status: "sent",
+    waMessageId: "a-real-id",
+  });
+
+  createdSockets[0].emitMessagesUpdate([{ key: { id: "some-unrelated-id" }, update: { status: 0 } }]);
+  await new Promise((resolve) => setImmediate(resolve));
+
+  const { messages } = listWhatsAppMessages(db, "proj1");
+  assert.equal(messages[0].status, "sent", "an id that matches no row must never touch an unrelated row");
 });
 
 /**
@@ -396,7 +493,10 @@ test("sendMessage serializes concurrent sends for the same project so the socket
     manager.sendMessage("proj1", "972503333333", "three"),
   ]);
 
-  assert.deepEqual(results, [{ ok: true }, { ok: true }, { ok: true }]);
+  assert.deepEqual(
+    results.map((r) => r.ok),
+    [true, true, true],
+  );
   assert.equal(maxActive, 1, "the socket must never see two sends in flight at the same time");
   assert.deepEqual(order, ["one", "two", "three"], "sends must go out in call order, one at a time, not interleaved");
 });

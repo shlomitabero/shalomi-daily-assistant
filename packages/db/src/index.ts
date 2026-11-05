@@ -98,6 +98,7 @@ export {
   recordWhatsAppDisconnected,
   ensureWhatsAppMessagesTable,
   insertWhatsAppMessage,
+  markWhatsAppMessageDeliveryFailed,
   listWhatsAppMessages,
   clearWhatsAppMessages,
   deleteWhatsAppMessage,

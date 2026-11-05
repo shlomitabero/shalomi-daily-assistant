@@ -4,6 +4,7 @@ import {
   getProject,
   getWhatsAppConnection,
   insertWhatsAppMessage,
+  markWhatsAppMessageDeliveryFailed,
   recordWhatsAppConnected,
   recordWhatsAppDisconnected,
   type ForgeDatabase,
@@ -61,6 +62,16 @@ export interface WhatsAppConnectionState {
 export interface WhatsAppSendResult {
   ok: boolean;
   error?: string;
+  /**
+   * The id Baileys assigned to the actually-sent message (its `key.id`),
+   * when the send succeeded and Baileys returned one -- captured so the
+   * caller can store it on the WhatsApp message log row and later
+   * reconcile that row against a `"messages.update"` delivery-failure
+   * event for this exact id (see handleMessageUpdates below). Absent on a
+   * failed send (nothing was actually sent to correlate) or if Baileys'
+   * own `sendMessage` resolved without a key for some reason.
+   */
+  waMessageId?: string;
 }
 
 /**
@@ -82,6 +93,7 @@ export interface WhatsAppSocket {
     on(event: "creds.update", listener: () => void): void;
     on(event: "connection.update", listener: (update: BaileysConnectionUpdate) => void): void;
     on(event: "messages.upsert", listener: (upsert: BaileysMessagesUpsert) => void): void;
+    on(event: "messages.update", listener: (updates: BaileysMessageUpdate[]) => void): void;
     on(event: "call", listener: (calls: BaileysCallEvent[]) => void): void;
   };
   user?: { id: string } | null;
@@ -95,7 +107,7 @@ export interface WhatsAppSocket {
       | { image: Buffer; mimetype: string; caption?: string }
       | { video: Buffer; mimetype: string; caption?: string }
       | { audio: Buffer; mimetype: string; ptt?: boolean },
-  ): Promise<unknown>;
+  ): Promise<{ key?: { id?: string | null } } | undefined>;
   logout(): Promise<void>;
 }
 
@@ -175,6 +187,21 @@ export interface BaileysIncomingMessage {
 export interface BaileysMessagesUpsert {
   type: string;
   messages: BaileysIncomingMessage[];
+}
+
+/**
+ * Baileys' own `ev.emit('messages.update', [...])` shape (lib/Types/Message.d.ts's
+ * `WAMessageUpdate`) -- a structurally separate socket event from
+ * `messages.upsert` above: this one reports a message's own delivery-status
+ * LIFECYCLE (did it reach the server? the recipient? was it read?), not its
+ * content. `update.status` is `proto.WebMessageInfo.Status`
+ * (ERROR=0, PENDING=1, SERVER_ACK=2, DELIVERY_ACK=3, READ=4, PLAYED=5) --
+ * only `ERROR` is ever acted on below (see handleMessageUpdates), since
+ * this app has no read-receipt UI to update for the others.
+ */
+export interface BaileysMessageUpdate {
+  key: { id?: string | null };
+  update: { status?: number | null };
 }
 
 /**
@@ -1014,6 +1041,9 @@ export class WhatsAppWebManager {
       sock.ev.on("call", (calls) => {
         this.handleIncomingCalls(projectId, session, calls).catch((err) => this.logHandlerError(projectId, err));
       });
+      sock.ev.on("messages.update", (updates) => {
+        this.handleMessageUpdates(projectId, session, updates).catch((err) => this.logHandlerError(projectId, err));
+      });
     } catch (err) {
       session.status = "disconnected";
       session.error = (err as Error).message;
@@ -1212,6 +1242,32 @@ export class WhatsAppWebManager {
     }
   }
 
+  /**
+   * performSend's own promise resolving only means Baileys handed the
+   * message to the WhatsApp server (at best SERVER_ACK) -- a real
+   * downstream failure (the recipient's number isn't on WhatsApp, the
+   * recipient has blocked the linked number, a protocol-level rejection)
+   * surfaces later, asynchronously, only through this event. Without this
+   * handler, the message log row insertWhatsAppMessage already wrote as
+   * "sent" (performSend's resolved result was the only signal it ever
+   * had) stayed "sent" forever, even though the customer never received
+   * anything -- the exact same kind of silent, permanent misinformation
+   * round 1612's missed-call gap left in this log for calls, just for a
+   * different Baileys event.
+   */
+  private async handleMessageUpdates(projectId: string, session: ManagedSession, updates: BaileysMessageUpdate[]): Promise<void> {
+    if (this.sessions.get(projectId) !== session) return;
+
+    for (const { key, update } of updates) {
+      // 0 is proto.WebMessageInfo.Status.ERROR (see BaileysMessageUpdate's
+      // own doc comment) -- every other status (PENDING/SERVER_ACK/
+      // DELIVERY_ACK/READ/PLAYED) is forward progress on a message that
+      // already sent successfully, not a failure to reconcile.
+      if (update.status !== 0 || !key.id) continue;
+      markWhatsAppMessageDeliveryFailed(this.db, projectId, key.id);
+    }
+  }
+
   async disconnect(projectId: string): Promise<void> {
     const session = this.sessions.get(projectId);
     if (session?.sock) {
@@ -1330,6 +1386,16 @@ export class WhatsAppWebManager {
     }
     try {
       const jid = `${phone}@s.whatsapp.net`;
+      // The id of whichever call below is this send's own main content --
+      // captured so the caller can store it on the message-log row and
+      // later reconcile that row against a "messages.update" delivery-
+      // failure event for this exact id (see WhatsAppSendResult's own doc
+      // comment and handleMessageUpdates above). For the audio branch's
+      // two independent calls, this is deliberately the audio call's own
+      // id, not the trailing caption text's -- the audio is the real
+      // content Retry's own reasoning above already treats as the
+      // failure-prone step, so it's the one worth reconciling.
+      let waMessageId: string | undefined;
       // Resolved lazily, inside the try block, so a disk error (the
       // referenced upload was deleted/replaced since the automation rule
       // last ran, or the project's uploads directory isn't readable for
@@ -1352,9 +1418,11 @@ export class WhatsAppWebManager {
         // the generic document shape, which is the correct choice for an
         // actual document (PDF, spreadsheet, etc.).
         if (attachment.mimeType.startsWith("image/")) {
-          await this.sendWithTimeout(session.sock.sendMessage(jid, { image: fileBuffer, mimetype: attachment.mimeType, caption: body }));
+          const sent = await this.sendWithTimeout(session.sock.sendMessage(jid, { image: fileBuffer, mimetype: attachment.mimeType, caption: body }));
+          waMessageId = sent?.key?.id ?? undefined;
         } else if (attachment.mimeType.startsWith("video/")) {
-          await this.sendWithTimeout(session.sock.sendMessage(jid, { video: fileBuffer, mimetype: attachment.mimeType, caption: body }));
+          const sent = await this.sendWithTimeout(session.sock.sendMessage(jid, { video: fileBuffer, mimetype: attachment.mimeType, caption: body }));
+          waMessageId = sent?.key?.id ?? undefined;
         } else if (attachment.mimeType.startsWith("audio/")) {
           // Round 966: same degradation round 965 fixed for image/video,
           // but Baileys' own real audio content shape (confirmed directly
@@ -1411,12 +1479,14 @@ export class WhatsAppWebManager {
           // same way makes an empty body here behave like an empty caption
           // everywhere else in this function: silently absent, not an
           // extra blank message.
-          await this.sendWithTimeout(session.sock.sendMessage(jid, { audio: fileBuffer, mimetype: attachment.mimeType, ptt: false }));
+          const sentAudio = await this.sendWithTimeout(session.sock.sendMessage(jid, { audio: fileBuffer, mimetype: attachment.mimeType, ptt: false }));
+          waMessageId = sentAudio?.key?.id ?? undefined;
           if (body) {
             await this.sendWithTimeout(session.sock.sendMessage(jid, { text: body }));
           }
         } else {
-          await this.sendWithTimeout(session.sock.sendMessage(jid, { document: fileBuffer, mimetype: attachment.mimeType, fileName: attachment.fileName, caption: body }));
+          const sent = await this.sendWithTimeout(session.sock.sendMessage(jid, { document: fileBuffer, mimetype: attachment.mimeType, fileName: attachment.fileName, caption: body }));
+          waMessageId = sent?.key?.id ?? undefined;
         }
       } else if (attachment) {
         // Round 1441: an attachment was requested but its file couldn't be
@@ -1448,14 +1518,16 @@ export class WhatsAppWebManager {
         // own "sent" label. Returning a failure here instead makes that
         // row correctly read "failed" in the WhatsApp message log.
         if (body) {
-          await this.sendWithTimeout(session.sock.sendMessage(jid, { text: body }));
+          const sent = await this.sendWithTimeout(session.sock.sendMessage(jid, { text: body }));
+          waMessageId = sent?.key?.id ?? undefined;
         } else {
           return { ok: false, error: "attachment_unavailable" };
         }
       } else {
-        await this.sendWithTimeout(session.sock.sendMessage(jid, { text: body }));
+        const sent = await this.sendWithTimeout(session.sock.sendMessage(jid, { text: body }));
+        waMessageId = sent?.key?.id ?? undefined;
       }
-      return { ok: true };
+      return { ok: true, waMessageId };
     } catch (err) {
       return { ok: false, error: (err as Error).message };
     }
