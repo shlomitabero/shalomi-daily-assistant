@@ -243,6 +243,21 @@ test('createPaperTrade stores a simulated trade and logs it, never touching the 
   assert.equal(logged[0].detail.symbol, 'AAPL');
 });
 
+test('listPaperTrades returns trades newest first', () => {
+  // createPaperTrade stamps createdAt with the real clock, so two trades
+  // created back-to-back in a test can land in the same millisecond and
+  // never actually exercise the sort comparator either way - insert
+  // directly with explicit, clearly-ordered timestamps so this checks the
+  // real sort order instead of relying on test-run timing.
+  __resetForTests();
+  db.paper_trades.insert({ id: 'pt_older', symbol: 'AAPL', side: 'long', createdAt: '2026-01-01T00:00:00.000Z' });
+  db.paper_trades.insert({ id: 'pt_newer', symbol: 'MSFT', side: 'short', createdAt: '2026-01-02T00:00:00.000Z' });
+
+  const res = makeRes();
+  listPaperTrades({}, res);
+  assert.deepEqual(res.body.trades.map((t) => t.id), ['pt_newer', 'pt_older']);
+});
+
 test('listWatchlist and listPaperTrades return what was stored', () => {
   __resetForTests();
   db.financial_watchlist.insert({ id: 'wl_1', symbol: 'AAPL' });
