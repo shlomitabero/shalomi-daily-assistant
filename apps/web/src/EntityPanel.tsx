@@ -5690,7 +5690,11 @@ export function EntityPanel({
               {visibleFields.length > 0 && <p className="muted small sort-hint">{t("entity.sort.multiHint")}</p>}
               {selectedIds.size > 0 && !readOnly && (
                 <div className="bulk-actions-bar">
-                  <span>{t("entity.bulk.selectedCount", { count: selectedIds.size })}</span>
+                  <span>
+                    {t(selectedIds.size === 1 ? "entity.bulk.selectedCount.one" : "entity.bulk.selectedCount.many", {
+                      count: selectedIds.size,
+                    })}
+                  </span>
                   <label className="bulk-edit-field-label">
                     {t("entity.bulk.setField")}
                     <select value={bulkEditField} onChange={(e) => handleBulkEditFieldChange(e.target.value)}>

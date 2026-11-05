@@ -1673,6 +1673,27 @@ test("EntityPanel's 'Clear selection' button empties the current selection witho
 });
 
 /**
+ * Round 1616: the byte-identical sibling of round 1611's App.tsx fix
+ * (home.myProjects.bulk.selectedCount), explicitly flagged by round 1611's
+ * own closing note as a clean pickup left for a round that returns to this
+ * file. The bulk-actions-bar renders whenever selectedIds.size > 0, not
+ * > 1 -- see the "Clear selection" test above for the same reachability --
+ * so checking exactly one row's own checkbox, the ordinary first step of
+ * any bulk-select interaction, read "1 נבחרו" ("1 were selected"), not the
+ * grammatically correct "1 נבחר". Verified via regex extraction of the JSX
+ * call site, the same convention round 1611's own App.test.ts test uses.
+ */
+test("EntityPanel's bulk-actions-bar selected-count span branches on its own count === 1 to pick the singular i18n key", () => {
+  const spanMatch = entityPanelSrc.match(/<span>\s*\{t\(\s*[\s\S]*?selectedCount[\s\S]*?\)\}\s*<\/span>/);
+  assert.ok(spanMatch, "expected to find the bulk-actions-bar's selected-count span in EntityPanel.tsx");
+  assert.match(
+    spanMatch![0],
+    /selectedIds\.size === 1 \? "entity\.bulk\.selectedCount\.one" : "entity\.bulk\.selectedCount\.many"/,
+    "expected the selected-count span to branch on a count of exactly 1, not hardcode the plural key alone",
+  );
+});
+
+/**
  * New in this round: bulk delete/duplicate already existed, but there was
  * no way to change a single shared field's value across several selected
  * records at once (e.g. marking 15 selected orders "Shipped") without
