@@ -136,6 +136,20 @@ test('patchOpportunity accepts revenueEstimate when low equals high (a single-po
   assert.equal(res.statusCode, 200);
 });
 
+test('patchOpportunity accepts a partial revenueEstimate with only low filled in, mid/high left null', () => {
+  // The client's own form only sent an estimate at all when BOTH low and
+  // high were filled in, silently discarding a one-sided estimate (e.g.
+  // just typing a low bound before filling in high) back to null on save.
+  // This confirms the server side of that fix has always been correct -
+  // each field is already independently finite-or-null here.
+  __resetForTests();
+  const opp = insertOpportunity();
+  const res = makeRes();
+  patchOpportunity({ params: { id: opp.id }, body: { revenueEstimate: { low: 50, mid: null, high: null } } }, res);
+  assert.equal(res.statusCode, 200);
+  assert.deepEqual(res.body.opportunity.revenueEstimate, { low: 50, mid: null, high: null });
+});
+
 test('patchOpportunity rejects a non-finite cost field', () => {
   __resetForTests();
   const opp = insertOpportunity();

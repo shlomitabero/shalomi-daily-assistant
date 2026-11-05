@@ -47,8 +47,21 @@ export default function OpportunityDetail() {
     setError('');
     setBusy(true);
     try {
+      // Previously this sent the whole estimate as null unless BOTH low and
+      // high were filled in - so typing only one of them (e.g. just a low
+      // estimate, meaning to fill in high next) silently discarded it on
+      // save, with no error: refresh() would then overwrite the field back
+      // to empty, as if the owner had never typed anything. Each field is
+      // now sent independently, like costs.aiUsage/paymentProcessing below
+      // already are - revenueEstimate is only null when all three are
+      // genuinely empty (the owner explicitly cleared the whole estimate).
+      const allRevenueFieldsEmpty = form.low === '' && form.mid === '' && form.high === '';
       await api.updateOpportunity(id, {
-        revenueEstimate: form.low !== '' && form.high !== '' ? { low: Number(form.low), mid: form.mid !== '' ? Number(form.mid) : undefined, high: Number(form.high) } : null,
+        revenueEstimate: allRevenueFieldsEmpty ? null : {
+          low: form.low !== '' ? Number(form.low) : null,
+          mid: form.mid !== '' ? Number(form.mid) : null,
+          high: form.high !== '' ? Number(form.high) : null,
+        },
         costs: { aiUsage: form.aiUsage !== '' ? Number(form.aiUsage) : null, paymentProcessing: form.paymentProcessing !== '' ? Number(form.paymentProcessing) : null },
         riskLevel: form.riskLevel,
         dataQuality: form.dataQuality,
