@@ -698,6 +698,70 @@ test("BuildProgress's Database detail panel reports a disabled automation rule c
 });
 
 /**
+ * Regression test for round 1628: the Hebrew text for this key used plural
+ * verb conjugations (הושבתו "were disabled", הפנו "referred") unconditionally,
+ * even though the author tried to dodge the noun's own singular/plural form
+ * with "כלל/י". When exactly one rule was disabled, the rendered Hebrew line
+ * read as grammatically plural for a singular count -- the same defect class
+ * this codebase's own .one/.many convention (rounds 1388-1480-ish) already
+ * fixes everywhere else it was found, just never applied to this specific
+ * key (confirmed via grep: only rounds 687/796, which added the feature and
+ * its structured rendering, ever touched it -- neither addressed grammar).
+ * Verifies the raw translated strings directly, independent of rendering,
+ * so a future wording edit that breaks the verb agreement again is caught
+ * even if the English-only "(s)" trick elsewhere would mask it visually.
+ */
+test("build.detail.database.automationRuleDisabled's Hebrew .one/.many keys use grammatically correct singular/plural verb forms", () => {
+  const one = translate("he", "build.detail.database.automationRuleDisabled.one");
+  const many = translate("he", "build.detail.database.automationRuleDisabled.many");
+
+  assert.match(one, /כלל אוטומציה הושבת כי הפנה/, "the singular key must use the singular verb forms (הושבת/הפנה), not the plural ones");
+  assert.doesNotMatch(one, /הושבתו|הפנו/, "the singular key must not contain either plural verb conjugation");
+
+  assert.match(many, /כללי אוטומציה הושבתו כי הפנו/, "the plural key must use the plural verb forms (הושבתו/הפנו)");
+  assert.doesNotMatch(many, /הושבת \S|הפנה /, "the plural key must not read as singular");
+});
+
+/**
+ * Regression test for round 1628, the actual call site: BuildProgress's own
+ * rendering previously always used the single, plural-shaped key regardless
+ * of disabledCount. Confirms the English rendering (where the grammar defect
+ * is invisible thanks to the "(s)" trick, but the *key selection* itself is
+ * what's actually being tested here) picks the singular text for
+ * disabledCount: 1 and the plural text for disabledCount: 2, proving the
+ * ternary at the call site is wired to the real count, not hardcoded to one
+ * key.
+ */
+test("BuildProgress's Database detail panel picks the singular wording for exactly 1 disabled rule and the plural wording for more than 1", async () => {
+  await withJsdom(async () => {
+    const events: AgentStepEvent[] = [
+      { agent: "Database", status: "running", message: "…" },
+      {
+        agent: "Database",
+        status: "success",
+        message: "…",
+        detail: [
+          { type: "automation_rule_disabled", table: "entity_proj1_Order", column: "status", disabledCount: 1 },
+          { type: "automation_rule_disabled", table: "entity_proj1_Customer", disabledCount: 2 },
+        ],
+      },
+    ];
+    renderBuildProgress(events);
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    const steps = [...document.querySelectorAll(".agent-step")];
+    const databaseStep = steps.find((s) => s.textContent?.includes("Database Engineer"));
+    const toggle = databaseStep?.querySelector(".detail-toggle") as HTMLButtonElement | null;
+    fireEvent.click(toggle!);
+
+    const detailList = databaseStep?.querySelector(".detail-list");
+    const text = detailList!.textContent ?? "";
+    assert.match(text, /Automation rule disabled because it referenced.*entity_proj1_Order\.status/, "a disabledCount of 1 must render the singular wording");
+    assert.match(text, /Automation rules disabled because they referenced.*entity_proj1_Customer/, "a disabledCount above 1 must render the plural wording");
+  });
+});
+
+/**
  * New in this round: the subtitle's "step N of M" text already carried
  * this same fraction, but only as text a reader had to do the division on
  * themselves. Confirms a real filled progress bar renders in the DOM with

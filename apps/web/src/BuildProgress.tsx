@@ -234,7 +234,7 @@ function AgentDetail({ agent, detail }: { agent: AgentStepEvent["agent"]; detail
                   : c.type === "relation_missing_fk"
                     ? `${t("build.detail.database.relationMissingFk")}${c.table}.${c.column} (→ ${c.toRelationTo})`
                     : c.type === "automation_rule_disabled"
-                      ? `${t("build.detail.database.automationRuleDisabled")}${c.table}${c.column ? `.${c.column}` : ""} (${c.disabledCount})`
+                      ? `${t(c.disabledCount === 1 ? "build.detail.database.automationRuleDisabled.one" : "build.detail.database.automationRuleDisabled.many")}${c.table}${c.column ? `.${c.column}` : ""} (${c.disabledCount})`
                       : `${t("build.detail.database.typeChanged")}${c.table}.${c.column} (${c.fromType} → ${c.toType})`}
           </li>
         ))}
