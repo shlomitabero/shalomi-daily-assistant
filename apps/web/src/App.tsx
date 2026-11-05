@@ -2572,7 +2572,7 @@ function AppContent() {
               )}
               {visibleSelectedProjectIds.size > 0 && (
                 <div className="bulk-actions-bar">
-                  <span>{t("home.myProjects.bulk.selectedCount", { count: visibleSelectedProjectIds.size })}</span>
+                  <span>{t(visibleSelectedProjectIds.size === 1 ? "home.myProjects.bulk.selectedCount.one" : "home.myProjects.bulk.selectedCount.many", { count: visibleSelectedProjectIds.size })}</span>
                   <button type="button" className="danger" disabled={bulkDeleteBusy || deletingId !== null || cloningId !== null} onClick={handleBulkDeleteProjects}>
                     {bulkDeleteBusy ? t("home.myProjects.bulk.deleteSelected.busy") : t("home.myProjects.bulk.deleteSelected")}
                   </button>

@@ -2295,6 +2295,32 @@ test("App's handleBulkDeleteProjects confirm dialog uses the singular-noun trans
 });
 
 /**
+ * Round 1611: the bulk-actions bar's own selected-count span ("{count}
+ * נבחרו") was the one remaining sibling of the 11-round (1388-1398)
+ * missing-singular-form i18n chain never actually fixed -- round 1452
+ * (just above) already fixed this exact bar's confirm-dialog text, but
+ * left this span, right next to it, using a single hardcoded-plural key.
+ * The bar itself renders whenever visibleSelectedProjectIds.size > 0, not
+ * > 1 (see the confirmDelete test above for the same reachability
+ * argument), so checking exactly one project's own checkbox -- the
+ * ordinary first step of any bulk-select interaction -- read "1 נבחרו"
+ * ("1 were selected"), not the grammatically correct "1 נבחר". Verified
+ * via regex extraction of the JSX call site, the same convention round
+ * 1397 established for the WhatsApp-unread/failing-automations badges'
+ * own inline ternaries just above.
+ */
+test("App.tsx's bulk-actions-bar selected-count span branches on its own count === 1 to pick the singular i18n key", () => {
+  const appSrc = readFileSync(new URL("./App.tsx", import.meta.url), "utf8");
+  const spanMatch = appSrc.match(/<span>\{t\(\s*[\s\S]*?selectedCount[\s\S]*?\)\}<\/span>/);
+  assert.ok(spanMatch, "expected to find the bulk-actions-bar's selected-count span in App.tsx");
+  assert.match(
+    spanMatch![0],
+    /visibleSelectedProjectIds\.size === 1 \? "home\.myProjects\.bulk\.selectedCount\.one" : "home\.myProjects\.bulk\.selectedCount\.many"/,
+    "expected the selected-count span to branch on a count of exactly 1, not hardcode the plural key alone",
+  );
+});
+
+/**
  * Regression test for this round's own fix: a project selected earlier and
  * then hidden by a changed search/filter must never be bulk-deleted, even
  * though it's still present in the raw `selectedProjectIds` set -- only
