@@ -5,13 +5,20 @@ import { rankOpportunities } from '../engine/ranking.js';
 import { computeNetProfit } from '../engine/feasibility.js';
 import { getSettings } from './settings.js';
 
-export function generateDailyDigest() {
-  const today = todayKey();
+export function generateDailyDigest(now = new Date()) {
+  const today = todayKey(now);
   const ledgerSummary = getLedgerSummary();
 
-  const actionsToday = db.actions_log.where((a) => a.createdAt.slice(0, 10) === today && a.result === 'success');
+  // a.createdAt.slice(0, 10) would read off the UTC calendar date (it's
+  // always a plain new Date().toISOString()) while `today` above is now
+  // Israel-local - comparing those two directly would silently exclude (or
+  // wrongly include) anything logged in the ~2-hour gap between Israel
+  // midnight and UTC midnight. todayKey() itself does the Israel-local
+  // conversion, so reusing it on each entry's own createdAt keeps both
+  // sides of the comparison speaking the same calendar.
+  const actionsToday = db.actions_log.where((a) => todayKey(new Date(a.createdAt)) === today && a.result === 'success');
   const failuresToday = db.actions_log
-    .where((a) => a.createdAt.slice(0, 10) === today && String(a.result).startsWith('failed'))
+    .where((a) => todayKey(new Date(a.createdAt)) === today && String(a.result).startsWith('failed'))
     .map((a) => ({ summary: `${a.type}: ${a.detail?.error ?? a.result}` }));
 
   const openOpportunities = db.opportunities.all()

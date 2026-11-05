@@ -10,6 +10,22 @@ test('generateDailyDigest creates exactly one row for today on first run', () =>
   assert.equal(db.digests.all().length, 1);
 });
 
+test('generateDailyDigest counts an action logged in the Israel-midnight-to-UTC-midnight gap as today, not yesterday', () => {
+  // createdAt is always a plain new Date().toISOString() (UTC). Now that
+  // "today" is Israel-local, a naive createdAt.slice(0, 10) comparison
+  // would wrongly exclude an action from roughly 2 hours of every day -
+  // this is exactly that gap: 23:00 UTC on Jan 1 is already 01:00 Israel
+  // time on Jan 2 (winter, UTC+2), so it must count as Jan 2's action, not
+  // get excluded as "Jan 1's".
+  __resetForTests();
+  db.actions_log.insert({
+    id: makeId('act'), type: 'draft_product', detail: {}, result: 'success',
+    createdAt: '2026-01-01T23:00:00.000Z',
+  });
+  const digest = generateDailyDigest(new Date('2026-01-01T23:30:00.000Z')); // 01:30 Israel time, Jan 2
+  assert.match(digest.text, /פעולות שבוצעו: 1/);
+});
+
 test('generating again the same day updates the existing row instead of duplicating it', () => {
   // This is the bug this test guards against: the owner can click
   // "generate now" on the Digests page any number of times a day on top of
