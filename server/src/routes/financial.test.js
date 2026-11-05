@@ -195,6 +195,26 @@ test('deleteWatchlistEntry removes an existing entry and 404s for one that does 
   assert.equal(res2.statusCode, 404);
 });
 
+test('createPaperTrade rejects a whitespace-only symbol instead of storing a blank-looking trade', () => {
+  // Mirrors addToWatchlist's own !symbol.trim() check - without it, a
+  // symbol of "   " (the client sends no trim before uppercasing either)
+  // would pass straight through and get stored as a trade nobody could
+  // make sense of in the list.
+  __resetForTests();
+  const res = makeRes();
+  createPaperTrade({ body: { symbol: '   ', side: 'long', entryPrice: 100, exitPrice: 110, quantity: 1 } }, res);
+  assert.equal(res.statusCode, 400);
+  assert.equal(db.paper_trades.all().length, 0);
+});
+
+test('createPaperTrade normalizes casing and whitespace, not just trusting whatever the client sends', () => {
+  __resetForTests();
+  const res = makeRes();
+  createPaperTrade({ body: { symbol: '  aapl  ', side: 'long', entryPrice: 100, exitPrice: 110, quantity: 1 } }, res);
+  assert.equal(res.statusCode, 201);
+  assert.equal(res.body.trade.symbol, 'AAPL');
+});
+
 test('createPaperTrade rejects an invalid side instead of silently simulating it as a short', () => {
   __resetForTests();
   const res = makeRes();

@@ -93,7 +93,13 @@ const VALID_SIDES = ['long', 'short'];
 // broker connection that does not exist in this build.
 export function createPaperTrade(req, res) {
   const { symbol, side, entryPrice, exitPrice, quantity } = req.body ?? {};
-  if (!symbol || typeof symbol !== 'string') return res.status(400).json({ error: 'symbol is required' });
+  // addToWatchlist already rejects a whitespace-only symbol the same way
+  // (!symbol.trim()) - this check was missing it, so a symbol of "   " (the
+  // client sends trade.symbol.toUpperCase() with no trim either) would pass
+  // straight through and get stored as a paper trade with a blank-looking
+  // symbol in the list below.
+  if (!symbol || typeof symbol !== 'string' || !symbol.trim()) return res.status(400).json({ error: 'symbol is required' });
+  const normalizedSymbol = symbol.trim().toUpperCase();
   // simulateTradeResult silently treats anything other than 'long' as a
   // short, so a typo like "Long" or "buy" would otherwise produce a
   // confidently wrong simulated result instead of an error.
@@ -108,10 +114,10 @@ export function createPaperTrade(req, res) {
 
   const result = simulateTradeResult({ side, entryPrice: entry, exitPrice: exit, quantity: qty });
   const trade = db.paper_trades.insert({
-    id: makeId('pt'), symbol, side, entryPrice: entry, exitPrice: exit, quantity: qty, ...result,
+    id: makeId('pt'), symbol: normalizedSymbol, side, entryPrice: entry, exitPrice: exit, quantity: qty, ...result,
     createdAt: new Date().toISOString(),
   });
-  logAction({ type: 'paper_trade', detail: { symbol, side, netPnl: result.netPnl }, result: 'success' });
+  logAction({ type: 'paper_trade', detail: { symbol: normalizedSymbol, side, netPnl: result.netPnl }, result: 'success' });
   res.status(201).json({ trade });
 }
 

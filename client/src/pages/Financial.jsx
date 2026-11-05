@@ -91,11 +91,12 @@ export default function Financial() {
 
   async function onPaperTrade(e) {
     e.preventDefault();
+    if (!trade.symbol.trim()) return;
     setError('');
     setTradeBusy(true);
     try {
       await api.paperTrade({
-        symbol: trade.symbol.toUpperCase(), side: trade.side,
+        symbol: trade.symbol.trim().toUpperCase(), side: trade.side,
         entryPrice: Number(trade.entryPrice), exitPrice: Number(trade.exitPrice), quantity: Number(trade.quantity),
       });
       setTrade({ symbol: '', side: 'long', entryPrice: '', exitPrice: '', quantity: '' });
