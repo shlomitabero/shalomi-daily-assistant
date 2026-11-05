@@ -2,7 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { db, __resetForTests, makeId } from '../db/store.js';
 import { updateSettings } from '../services/settings.js';
-import { createDigitalProduct, listOpportunities, getOpportunity, patchOpportunity, publishOpportunityRoute, rejectOpportunity } from './opportunities.js';
+import { createDigitalProduct, listOpportunities, getOpportunity, patchOpportunity, publishOpportunityRoute, rejectOpportunity, triggerAutonomousScan } from './opportunities.js';
 
 function withPaddleEnv(fn) {
   const vars = { PADDLE_API_KEY: 'fake', PADDLE_CLIENT_TOKEN: 'fake', PADDLE_WEBHOOK_SECRET: 'fake' };
@@ -79,6 +79,37 @@ test('createDigitalProduct creates a real draft with honest feasibility data whe
     assert.equal(res.body.opportunity.feasibility.status, 'incomplete');
     assert.equal(res.body.opportunity.netProfitMid, null);
   });
+});
+
+test('createDigitalProduct responds 502 instead of crashing when the AI returns a malformed draft', async () => {
+  __resetForTests();
+  const originalEnv = process.env.ANTHROPIC_API_KEY;
+  process.env.ANTHROPIC_API_KEY = 'test-key';
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async () => new Response(JSON.stringify({
+    id: 'msg_1', type: 'message', role: 'assistant', model: 'claude-sonnet-5-5',
+    content: [{ type: 'text', text: JSON.stringify({ title: 'only a title' }) }],
+    stop_reason: 'end_turn', stop_sequence: null, usage: { input_tokens: 10, output_tokens: 10 },
+  }), { status: 200, headers: { 'content-type': 'application/json' } });
+  try {
+    const res = makeRes();
+    await createDigitalProduct({ body: { topic: 'ניהול זמן', audience: 'יזמים' } }, res);
+    assert.equal(res.statusCode, 502);
+    assert.equal(db.opportunities.all().length, 0);
+  } finally {
+    globalThis.fetch = originalFetch;
+    if (originalEnv === undefined) delete process.env.ANTHROPIC_API_KEY;
+    else process.env.ANTHROPIC_API_KEY = originalEnv;
+  }
+});
+
+test('triggerAutonomousScan runs the scan and returns its result as-is', async () => {
+  __resetForTests();
+  const res = makeRes();
+  await triggerAutonomousScan({}, res);
+  assert.equal(res.statusCode, 200);
+  assert.equal(res.body.ran, false); // source not connected in this test env
+  assert.match(res.body.reason, /not connected/);
 });
 
 test('listOpportunities and getOpportunity attach feasibility and 404 for a missing id', () => {
