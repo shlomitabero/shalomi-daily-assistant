@@ -1296,6 +1296,28 @@ test("Employee's 'worker' keyword doesn't spuriously match 'coworker', for both 
 });
 
 /**
+ * Regression test for round 1629: every other person-type entity in
+ * domainEntities.ts (Customer, Courier, Student, Patient, Vendor,
+ * Volunteer) already carries a `phone` field alongside `name`/`email`, but
+ * Employee -- the sole person-type entity in this file -- didn't, with no
+ * comment anywhere explaining a deliberate omission. A description
+ * mentioning employees with contact info had no way to store a phone
+ * number for them, unlike every comparable Customer/Vendor/Volunteer
+ * record in the same generated app.
+ */
+test("Employee has a phone field, like every other person-type domain entity", async () => {
+  const provider = new HeuristicSpecProvider();
+  const spec = await provider.generate("An app to manage our staff: track their name, role, email and phone number.");
+
+  const employee = spec.entities.find((e) => e.name === "Employee")!;
+  assert.ok(employee, "expected the Employee entity to be generated");
+  const phoneField = employee.fields.find((f) => f.name === "phone");
+  assert.ok(phoneField, "Employee must have a phone field, matching every other person-type domain entity");
+  assert.equal(phoneField!.type, "text");
+  assert.equal(phoneField!.required, false);
+});
+
+/**
  * Regression test for a real bug found in round 447: Course's bare
  * "courses" keyword is a substring of "discourses" -- an ordinary word in
  * a plain discussion/forum description that has nothing to do with

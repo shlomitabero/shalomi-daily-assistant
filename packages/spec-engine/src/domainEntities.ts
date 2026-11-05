@@ -218,7 +218,7 @@ export const DOMAIN_ENTITY_RULES: DomainEntityRule[] = [
     ],
     labelHe: "עובדים",
     descriptionHe: "מישהו שעובד בעסק.",
-    fieldLabelsHe: { name: "שם", role: "תפקיד", email: "אימייל", active: "פעיל/ה" },
+    fieldLabelsHe: { name: "שם", role: "תפקיד", email: "אימייל", phone: "טלפון", active: "פעיל/ה" },
     entity: {
       name: "Employee",
       description: "A person who works for the business.",
@@ -226,6 +226,7 @@ export const DOMAIN_ENTITY_RULES: DomainEntityRule[] = [
         { name: "name", type: "text", required: true },
         { name: "role", type: "text", required: false },
         { name: "email", type: "text", required: false },
+        { name: "phone", type: "text", required: false },
         { name: "active", type: "boolean", required: false },
       ],
     },
