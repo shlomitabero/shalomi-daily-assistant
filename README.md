@@ -68,3 +68,7 @@ A daily job (source re-check + digest) and the autonomous scan (every 4 hours) r
 - `client/` — React (Vite) Hebrew RTL mobile-first dashboard: today's cash in/out, verified net profit (kept separate from forecasts), outstanding receivables, active opportunities, pending approvals, and which sources are actually producing money vs. costing without result.
 - `npm test` (run from `server/`) runs the full unit test suite across engine, services and routes.
 - `render.yaml` — a one-click deploy blueprint for Render, kept for anyone who prefers that host. The deployed instance actually runs on Railway (see Data storage above).
+
+## A known, deliberately unfixed dependency advisory
+
+`npm audit` flags `react-router-dom` for two moderate CVEs (an open-redirect via a backslash in `<Link>`/`useNavigate`, and an arbitrary-constructor-injection issue in SSR error hydration). The only fix is `react-router-dom@7.18.5`, a major-version jump that requires Node ≥20 — this app runs on Node 18 in production, so upgrading would break it outright, and no patched 6.x release exists to pin to instead. Verified neither CVE is actually reachable here: every dynamic route this app builds comes from a server-generated nanoid (never attacker-controlled text, so a backslash can never appear in one), and this is a plain client-side SPA with no SSR, so the hydration-based CVE's attack surface doesn't exist in this build at all. Left unfixed on purpose, not missed.
