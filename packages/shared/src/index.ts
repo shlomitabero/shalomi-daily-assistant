@@ -12,18 +12,25 @@ export const FIELD_TYPES = [
 ] as const;
 
 /**
- * Every generated table hardcodes these two columns as built-ins
+ * Every generated table hardcodes these three columns as built-ins
  * (packages/db/src/migrate.ts for the live preview, apps/api/src/codegen.ts
- * for the exported standalone app) -- a field sharing either name, in any
- * casing, produces a duplicate-column `CREATE TABLE`, which throws
+ * for the exported standalone app) -- a field sharing any of these names,
+ * in any casing, produces a duplicate-column `CREATE TABLE`, which throws
  * uncaught and crashes the whole exported app before it can even start
  * listening. Rejected here, at the one point every spec (heuristic, the
  * real Anthropic provider, and its own repair path in debug.ts) is
  * validated, so a bad name just falls back to the heuristic provider
  * (see generateSpec in spec-engine/src/index.ts) instead of reaching
  * either database layer at all.
+ *
+ * Round 1614: "createdbyuserid" closes the exact same gap round 1613's own
+ * new createdByUserId system column (the record-creation audit trail)
+ * opened the moment it shipped -- this set was never updated for it, so a
+ * field literally named "Created By User Id" sailed through this refine
+ * untouched and only hit the real "duplicate column name" SQLite error at
+ * build time.
  */
-const RESERVED_FIELD_NAMES = new Set(["id", "createdat"]);
+const RESERVED_FIELD_NAMES = new Set(["id", "createdat", "createdbyuserid"]);
 
 /**
  * Mirrors packages/db/src/identifiers.ts's own SAFE_IDENTIFIER exactly
@@ -181,7 +188,7 @@ export const FieldSchema = z
     message: "relation fields must declare relationTo",
   })
   .refine((f) => !RESERVED_FIELD_NAMES.has(f.name.toLowerCase()), (f) => ({
-    message: `Field name "${f.name}" collides with a built-in column every table already has (id/createdAt) -- choose a different name`,
+    message: `Field name "${f.name}" collides with a built-in column every table already has (id/createdAt/createdByUserId) -- choose a different name`,
   }))
   .refine((f) => SAFE_FIELD_NAME.test(f.name), (f) => ({
     message: `Field name "${f.name}" must be a plain ASCII identifier (letters, digits, underscore, starting with a letter) -- use "label" for a human-facing display name instead`,

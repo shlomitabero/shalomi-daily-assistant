@@ -737,10 +737,11 @@ export function deriveEntityName(label: string, existingNames: string[]): string
  * Falls back to "field" for a label with no ASCII letters/digits at all,
  * the same as deriveEntityName falls back to "Entity". De-duplicates
  * case-insensitively against both the entity's existing field names and
- * the two column names every table already carries as a built-in (id,
- * createdAt -- see FieldSchema's own RESERVED_FIELD_NAMES check in
- * @forge/shared), appending the first free numeric suffix, so this can
- * never hand FieldSchema's own refine() a name it would reject.
+ * the three column names every table already carries as a built-in (id,
+ * createdAt, createdByUserId -- see FieldSchema's own RESERVED_FIELD_NAMES
+ * check in @forge/shared, round 1613/1614), appending the first free
+ * numeric suffix, so this can never hand FieldSchema's own refine() a name
+ * it would reject.
  */
 export function deriveFieldName(label: string, existingNames: string[]): string {
   const words = label
@@ -761,7 +762,7 @@ export function deriveFieldName(label: string, existingNames: string[]): string 
   // exported codegen app, which uses entity.name with no such prefix --
   // round 555.)
   const base = /^[0-9]/.test(joined) ? `field${joined[0].toUpperCase()}${joined.slice(1)}` : joined;
-  const taken = new Set(["id", "createdat", ...existingNames.map((n) => n.toLowerCase())]);
+  const taken = new Set(["id", "createdat", "createdbyuserid", ...existingNames.map((n) => n.toLowerCase())]);
   if (!taken.has(base.toLowerCase())) return base;
   let suffix = 2;
   while (taken.has(`${base}${suffix}`.toLowerCase())) suffix += 1;

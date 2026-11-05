@@ -189,9 +189,14 @@ test("deriveFieldName appends the first free numeric suffix on a case-insensitiv
  * error instead of just picking a free name the same way a real collision
  * with another field on the entity does.
  */
-test("deriveFieldName treats the built-in 'id'/'createdAt' column names as already taken", () => {
+test("deriveFieldName treats the built-in 'id'/'createdAt'/'createdByUserId' column names as already taken", () => {
   assert.equal(deriveFieldName("Id", []), "id2");
   assert.equal(deriveFieldName("Created At", []), "createdAt2");
+  // Round 1614: createdByUserId (added in round 1613) was missing from the
+  // `taken` set until this fix, so this label would have derived to the
+  // raw colliding "createdByUserId" and crashed the build with a
+  // "duplicate column name" SQLite error instead of falling back here.
+  assert.equal(deriveFieldName("Created By User Id", []), "createdByUserId2");
 });
 
 /**

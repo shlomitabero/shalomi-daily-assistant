@@ -94,6 +94,22 @@ test("FieldSchema rejects a field literally named 'createdAt', case-insensitivel
   }
 });
 
+/**
+ * Round 1614: closes a real self-caused gap -- round 1613 added
+ * createdByUserId as a third universal built-in column (the
+ * record-creation audit trail) but never added it to RESERVED_FIELD_NAMES,
+ * so a field literally named "Created By User Id" sailed through this
+ * refine untouched and only hit the real "duplicate column name" SQLite
+ * error at build time, mirroring the exact "id"/"createdAt" cases above.
+ */
+test("FieldSchema rejects a field literally named 'createdByUserId', case-insensitively, since every table already has a built-in createdByUserId column", () => {
+  for (const name of ["createdByUserId", "createdbyuserid", "CREATEDBYUSERID"]) {
+    const result = FieldSchema.safeParse({ name, type: "text", required: false });
+    assert.ok(!result.success, `expected "${name}" to be rejected`);
+    assert.match(result.error.issues[0].message, /collides with a built-in column/);
+  }
+});
+
 test("FieldSchema accepts an ordinary field name that merely contains 'id' as a substring, not the whole reserved name", () => {
   const result = FieldSchema.safeParse({ name: "vendorId", type: "text", required: false });
   assert.ok(result.success);
