@@ -1930,6 +1930,22 @@ export function EntityPanel({
   const [focusedRowId, setFocusedRowId] = useState<number | null>(null);
   const [editingCell, setEditingCell] = useState<{ recordId: number; field: string } | null>(null);
   const [cellDraft, setCellDraft] = useState<unknown>(undefined);
+  // Round 1619: a 12th useBeforeUnloadWarning gap -- editingCell/cellDraft is
+  // a fourth distinct kind of unsaved draft in this exact component (see
+  // formIsDirty/bulkEditField/pendingDelete above), yet it never got this
+  // same warning. Double-clicking a table cell open for inline editing
+  // (startInlineEdit below), typing a new value, then closing the tab/
+  // refreshing/navigating away before blurring or pressing Enter
+  // (commitInlineEdit) silently discarded the typed value with zero
+  // warning -- exactly the failure mode already closed for the other three
+  // draft shapes in this file. Can't sit alongside formIsDirty/
+  // bulkEditField/pendingDelete above since editingCell/cellDraft isn't
+  // declared until here; looks up the record fresh from `records` (not a
+  // stale closure) the same way commitInlineEdit itself does, so opening an
+  // edit session with no change yet (cellDraft still equal to the stored
+  // value startInlineEdit seeded it with) correctly does not warn.
+  const cellEditIsDirty = editingCell != null && cellDraft !== records.find((r) => r.id === editingCell.recordId)?.[editingCell.field];
+  useBeforeUnloadWarning(cellEditIsDirty);
   // Set right before an Escape-cancel clears editingCell, so the input's own
   // blur (which fires either immediately or once React unmounts it) knows to
   // skip committing a value the user just explicitly discarded, instead of

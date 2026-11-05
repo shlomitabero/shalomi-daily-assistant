@@ -4086,6 +4086,107 @@ test("the exported EntityView warns before a tab close/refresh would silently re
 });
 
 /**
+ * Round 1619, ported from the live Forge AI preview's own round-1619 fix:
+ * editingCell/cellDraft (the inline table-cell editor opened by double-
+ * clicking a cell) is a fourth distinct kind of unsaved draft in this exact
+ * component, yet unlike formIsDirty/bulkEditField/pendingDelete just above,
+ * it never got this same warning. Double-clicking a cell open, typing a
+ * new value, then closing the tab/refreshing before blurring or pressing
+ * Enter used to silently discard the typed value with zero warning.
+ * Confirms a real in-progress inline cell edit now warns, opening the
+ * editor alone with no change yet does not, and the warning clears once
+ * committed or cancelled.
+ */
+test("the exported EntityView warns before a tab close/refresh would silently discard an in-progress inline cell edit, and stops warning once it's committed or cancelled", async () => {
+  const files = generateExportFiles(project);
+  const dir = writeGeneratedWebComponent(files);
+  const store: EntityRecord[] = [{ id: 1, name: "Acme Corp", status: "New" }];
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = (async (input: string, init?: RequestInit): Promise<Response> => {
+    const method = init?.method ?? "GET";
+    if (method === "GET" && input === "/api/Customer") {
+      return new Response(JSON.stringify({ records: store }), { status: 200, headers: { "content-type": "application/json" } });
+    }
+    const patchMatch = /^\/api\/Customer\/(\d+)$/.exec(input);
+    if (method === "PATCH" && patchMatch) {
+      const record = store.find((r) => r.id === Number(patchMatch[1]));
+      assert.ok(record, `mock PATCH target record ${patchMatch[1]} must exist`);
+      Object.assign(record!, JSON.parse(init!.body as string));
+      return new Response(JSON.stringify({ record }), { status: 200, headers: { "content-type": "application/json" } });
+    }
+    throw new Error(`unexpected request ${method} ${input}`);
+  }) as typeof fetch;
+
+  const dispatchBeforeUnload = () => {
+    const event = new window.Event("beforeunload", { cancelable: true });
+    window.dispatchEvent(event);
+    return event.defaultPrevented;
+  };
+
+  try {
+    await withRealLocalStorage(async () => {
+      const { EntityView } = await import(path.join(dir, "web", "src", "components", "EntityView.jsx"));
+      const customerEntity = project.spec.entities.find((e) => e.name === "Customer")!;
+      const props = {
+        entity: customerEntity,
+        highlightRecordId: null,
+        onHighlightHandled: () => {},
+        onJumpToRecord: () => {},
+        onRecordCountChange: () => {},
+      };
+
+      const { container } = render(React.createElement(EntityView, props));
+      for (let i = 0; i < 40; i++) {
+        if (container.querySelectorAll("tbody tr").length === 1) break;
+        await act(async () => {
+          await new Promise((resolve) => setTimeout(resolve, 0));
+        });
+      }
+      assert.equal(container.querySelectorAll("tbody tr").length, 1, "expected the record to have loaded");
+
+      assert.equal(dispatchBeforeUnload(), false, "nothing being edited yet, nothing to warn about");
+
+      const row = container.querySelector('tr[data-record-id="1"]') as HTMLElement;
+      const nameCell = row.querySelectorAll("td")[1] as HTMLTableCellElement;
+      await act(async () => {
+        fireEvent.doubleClick(nameCell);
+      });
+      const getInput = () => (container.querySelector('tr[data-record-id="1"] td.cell-editing input[type="text"]') as HTMLInputElement) ?? null;
+      assert.ok(getInput(), "expected a real text input to open in place inside the cell");
+      assert.equal(dispatchBeforeUnload(), false, "opening an edit session alone, with no change yet, must not warn");
+
+      await act(async () => {
+        fireEvent.change(getInput()!, { target: { value: "Acme Corporation" } });
+      });
+      assert.equal(dispatchBeforeUnload(), true, "a real in-progress inline edit must now warn before a reload would silently discard it");
+
+      await act(async () => {
+        fireEvent.keyDown(getInput()!, { key: "Enter" });
+        await new Promise((resolve) => setTimeout(resolve, 0));
+      });
+      assert.equal(row.querySelectorAll("td")[1]?.textContent, "Acme Corporation", "the committed value must now show in the cell");
+      assert.equal(dispatchBeforeUnload(), false, "committing the edit must clear the warning, with nothing left in progress");
+
+      await act(async () => {
+        fireEvent.doubleClick(row.querySelectorAll("td")[1] as HTMLTableCellElement);
+      });
+      await act(async () => {
+        fireEvent.change(getInput()!, { target: { value: "Something Else" } });
+      });
+      assert.equal(dispatchBeforeUnload(), true, "a second in-progress edit must warn again");
+      await act(async () => {
+        fireEvent.keyDown(getInput()!, { key: "Escape" });
+      });
+      assert.equal(dispatchBeforeUnload(), false, "cancelling the edit (Escape) must also clear the warning, discarding it intentionally");
+    });
+  } finally {
+    globalThis.fetch = originalFetch;
+    cleanup();
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+/**
  * Round 1528, ported from the live Forge AI preview's own round-1528 fix:
  * clicking "Undo" never re-checked the server at all -- it spliced
  * pending.entries[].record (the snapshot from the moment Delete was

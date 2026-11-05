@@ -18812,6 +18812,57 @@ test("EntityPanel warns before a tab close/refresh would silently revert a still
 });
 
 /**
+ * Round 1619: a 12th useBeforeUnloadWarning gap -- editingCell/cellDraft (the
+ * inline table-cell editor opened by double-clicking a cell) is a fourth
+ * distinct kind of unsaved draft in this exact component, yet unlike
+ * formIsDirty/bulkEditField/pendingDelete just above, it never got this
+ * same warning. Double-clicking a cell open, typing a new value, then
+ * closing the tab/refreshing before blurring or pressing Enter used to
+ * silently discard the typed value with zero warning.
+ */
+test("EntityPanel warns before a tab close/refresh would silently discard an in-progress inline cell edit, and stops warning once it's committed or cancelled", async () => {
+  await withJsdom(async () => {
+    const store: EntityRecord[] = [{ id: 1, createdAt: "x", name: "Acme Corp", status: "new" }];
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = mockRecordsFetch(store) as typeof fetch;
+    try {
+      renderEntityPanel();
+      await waitForCondition(() => document.querySelectorAll("table tbody tr").length === 1);
+
+      function dispatchBeforeUnload(): boolean {
+        const event = new window.Event("beforeunload", { cancelable: true });
+        window.dispatchEvent(event);
+        return event.defaultPrevented;
+      }
+
+      assert.equal(dispatchBeforeUnload(), false, "nothing being edited yet, nothing to warn about");
+
+      const nameCell = document.querySelectorAll("table tbody td")[1] as HTMLTableCellElement;
+      fireEvent.doubleClick(nameCell);
+      const input = nameCell.querySelector('input[type="text"]') as HTMLInputElement;
+      assert.ok(input, "expected a real text input to open in place inside the cell");
+      assert.equal(dispatchBeforeUnload(), false, "opening an edit session alone, with no change yet, must not warn");
+
+      fireEvent.change(input, { target: { value: "Acme Corporation" } });
+      assert.equal(dispatchBeforeUnload(), true, "a real in-progress inline edit must now warn before a reload would silently discard it");
+
+      fireEvent.keyDown(input, { key: "Enter" });
+      await waitForCondition(() => document.querySelectorAll("table tbody td")[1]?.textContent === "Acme Corporation");
+      assert.equal(dispatchBeforeUnload(), false, "committing the edit must clear the warning, with nothing left in progress");
+
+      fireEvent.doubleClick(document.querySelectorAll("table tbody td")[1] as HTMLTableCellElement);
+      const secondInput = (document.querySelectorAll("table tbody td")[1] as HTMLTableCellElement).querySelector('input[type="text"]') as HTMLInputElement;
+      fireEvent.change(secondInput, { target: { value: "Something Else" } });
+      assert.equal(dispatchBeforeUnload(), true, "a second in-progress edit must warn again");
+      fireEvent.keyDown(secondInput, { key: "Escape" });
+      assert.equal(dispatchBeforeUnload(), false, "cancelling the edit (Escape) must also clear the warning, discarding it intentionally");
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+});
+
+/**
  * Round 1348: a live Playwright browser session (round 1347's survey)
  * found that in Kanban Board view, `BoardCard`'s `.row-actions` button row
  * (edit/duplicate/send WhatsApp/print/delete -- up to 5 plain buttons)

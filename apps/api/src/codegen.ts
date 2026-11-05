@@ -5853,6 +5853,30 @@ export function EntityView({ entity, highlightRecordId, onHighlightHandled, onJu
   const [dragOverColumn, setDragOverColumn] = useState(null);
   const [editingCell, setEditingCell] = useState(null);
   const [cellDraft, setCellDraft] = useState(undefined);
+  // Round 1619: mirrors the live Forge AI preview's own round-1619 fix --
+  // double-clicking a table cell open for inline editing, typing a new
+  // value, then closing the tab/refreshing before blurring or pressing
+  // Enter (commitInlineEdit, below) used to silently discard the typed
+  // value with zero warning, unlike the other three beforeunload guards
+  // above (formIsDirty/bulkEditField/pendingDelete), which already cover
+  // this exact failure mode for their own kind of unsaved draft. This
+  // generated app defines no custom hooks of its own, so it's inlined
+  // directly here, same as the three beforeunload guards above. Can't sit
+  // alongside those since editingCell/cellDraft isn't declared until here;
+  // looks up the record fresh from \`records\` the same way commitInlineEdit
+  // itself does, so opening an edit session with no change yet (cellDraft
+  // still equal to the stored value startInlineEdit seeded it with)
+  // correctly does not warn.
+  useEffect(() => {
+    const cellEditIsDirty = editingCell != null && cellDraft !== records.find((r) => r.id === editingCell.recordId)?.[editingCell.field];
+    if (!cellEditIsDirty) return;
+    function handleBeforeUnload(e) {
+      e.preventDefault();
+      e.returnValue = "";
+    }
+    window.addEventListener("beforeunload", handleBeforeUnload);
+    return () => window.removeEventListener("beforeunload", handleBeforeUnload);
+  }, [editingCell, cellDraft, records]);
   const [recordToPrint, setRecordToPrint] = useState(null);
   const [showPrintList, setShowPrintList] = useState(false);
   // Set right before an Escape-cancel clears editingCell so the input's own
