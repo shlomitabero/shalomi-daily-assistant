@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { db, __resetForTests, makeId } from '../db/store.js';
-import { listActions } from './actions.js';
+import { listActions, reportClientError } from './actions.js';
 
 function makeRes() {
   const res = { statusCode: null, body: null };
@@ -42,4 +42,44 @@ test('listActions caps the response at the 200 most recent entries', () => {
   // The kept entries must be the 200 most recent, not an arbitrary slice.
   assert.equal(res.body.actions[0].createdAt, new Date(2026, 0, 1, 0, 0, 249).toISOString());
   assert.equal(res.body.actions[199].createdAt, new Date(2026, 0, 1, 0, 0, 50).toISOString());
+});
+
+test('reportClientError rejects a request missing a message instead of logging an empty entry', () => {
+  __resetForTests();
+  const res = makeRes();
+  reportClientError({ body: {} }, res);
+  assert.equal(res.statusCode, 400);
+  assert.equal(db.actions_log.all().length, 0);
+});
+
+test('reportClientError logs a client_error entry the owner can see in the activity log', () => {
+  // Until now a render crash (caught by the client's ErrorBoundary) was
+  // only ever visible in the browser's own console - this gives it the
+  // same visibility as every other failure this app already tracks.
+  __resetForTests();
+  const res = makeRes();
+  reportClientError({ body: { message: 'Cannot read properties of null', path: '/opportunities/opp_1' } }, res);
+  assert.equal(res.statusCode, 201);
+  const logged = db.actions_log.where((a) => a.type === 'client_error')[0];
+  assert.equal(logged.result, 'failed');
+  assert.equal(logged.detail.message, 'Cannot read properties of null');
+  assert.equal(logged.detail.path, '/opportunities/opp_1');
+});
+
+test('reportClientError truncates an unreasonably long message instead of storing it unbounded', () => {
+  __resetForTests();
+  const res = makeRes();
+  reportClientError({ body: { message: 'x'.repeat(5000) } }, res);
+  assert.equal(res.statusCode, 201);
+  const logged = db.actions_log.where((a) => a.type === 'client_error')[0];
+  assert.equal(logged.detail.message.length, 2000);
+});
+
+test('reportClientError stores a null path when none is given, instead of an arbitrary non-string value', () => {
+  __resetForTests();
+  const res = makeRes();
+  reportClientError({ body: { message: 'boom', path: 12345 } }, res);
+  assert.equal(res.statusCode, 201);
+  const logged = db.actions_log.where((a) => a.type === 'client_error')[0];
+  assert.equal(logged.detail.path, null);
 });

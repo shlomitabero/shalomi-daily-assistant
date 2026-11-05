@@ -22,6 +22,7 @@ export const ACTION_TYPE_LABEL = {
   publish_product: 'פרסום מוצר',
   sale_confirmed: 'מכירה אומתה',
   paper_trade: 'עסקה מדומה',
+  client_error: 'תקלה במסך',
 };
 
 export function actionTypeLabel(type) {

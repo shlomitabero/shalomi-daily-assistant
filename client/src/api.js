@@ -84,6 +84,7 @@ export const api = {
   getLedgerEntries: () => request('/ledger/entries'),
 
   getActions: () => request('/actions'),
+  reportClientError: (message, path) => request('/actions/client-error', { method: 'POST', body: { message, path } }),
 
   getFinancialWatchlist: () => request('/financial/watchlist'),
   addToWatchlist: (symbol) => request('/financial/watchlist', { method: 'POST', body: { symbol } }),

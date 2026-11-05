@@ -1,4 +1,5 @@
 import { Component } from 'react';
+import { api, getToken } from '../api.js';
 
 // Without this, a render-time error anywhere in the app (a bad field from
 // the API, a null the UI didn't expect) turns into a blank white screen
@@ -17,6 +18,15 @@ export class ErrorBoundary extends Component {
 
   componentDidCatch(error, info) {
     console.error('Unhandled render error', error, info);
+    // Until now this was only ever visible in the browser's own console -
+    // the owner would never see it unless they happened to have devtools
+    // open at the exact moment it happened. Best-effort only (never let a
+    // failed report cause a second crash), and only when logged in - this
+    // boundary also wraps the public, unauthenticated product page, where
+    // there is no owner token to report under at all.
+    if (getToken()) {
+      api.reportClientError(String(error?.message ?? error), window.location.pathname).catch(() => {});
+    }
   }
 
   render() {
