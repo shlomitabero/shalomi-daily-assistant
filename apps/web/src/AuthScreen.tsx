@@ -469,6 +469,7 @@ export function AuthScreen({ onAuthenticated }: { onAuthenticated: (user: User) 
                     autoComplete="one-time-code"
                     autoFocus
                     required
+                    maxLength={6}
                     value={code}
                     onChange={(e) => setCode(e.target.value)}
                   />

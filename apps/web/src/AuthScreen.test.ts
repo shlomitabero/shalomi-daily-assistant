@@ -965,3 +965,52 @@ test("AuthScreen's email inputs (login/signup and forgot-password) both cap at 3
     assert.equal(forgotPasswordEmailInput.maxLength, 320, "the forgot-password email input must cap at 320 chars client-side");
   });
 });
+
+/**
+ * Round 1621: the same client/server maxLength-parity sweep that covered
+ * AuthScreen's email inputs (round 1458) missed the code-entry step's input.
+ * routes/auth.ts's VerifyLoginCodeSchema caps `code` at 6 chars (round 1599,
+ * generateLoginCode() always produces exactly 6 digits), but this input had
+ * no maxLength at all, so the browser never blocked typing/pasting past 6.
+ */
+test("AuthScreen's login-code input caps at 6 chars, matching the server's VerifyLoginCodeSchema.code.max(6)", async () => {
+  await withJsdom(async () => {
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = (async (input: string) => {
+      const url = String(input);
+      if (url.includes("/auth/login/verify-code")) {
+        return new Response(JSON.stringify({ user: { id: "u1", email: "dana@example.com" }, token: "tok" }), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        });
+      }
+      return new Response(JSON.stringify({ requiresCode: true, loginCodeId: "code-id-1" }), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      });
+    }) as typeof fetch;
+    try {
+      renderAuthScreen(() => {});
+
+      // switch to login mode
+      fireEvent.click(document.querySelector("button.link-button") as HTMLButtonElement);
+
+      const emailInput = document.querySelector('input[type="email"]') as HTMLInputElement;
+      const passwordInput = document.querySelector('input[name="password"]') as HTMLInputElement;
+      fireEvent.change(emailInput, { target: { value: "dana@example.com" } });
+      fireEvent.change(passwordInput, { target: { value: "correct-horse-battery" } });
+
+      await act(async () => {
+        fireEvent.submit(document.querySelector("form.auth-form")!);
+        await Promise.resolve();
+        await Promise.resolve();
+      });
+
+      const codeInput = document.querySelector('input[inputmode="numeric"]') as HTMLInputElement;
+      assert.ok(codeInput, "the code-entry step must now be showing");
+      assert.equal(codeInput.maxLength, 6, "the login-code input must cap at 6 chars client-side");
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+});
