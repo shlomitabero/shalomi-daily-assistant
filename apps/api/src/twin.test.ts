@@ -1566,6 +1566,49 @@ test("computeBusinessTwin's twin.numericStats carries the real sum/average as nu
 });
 
 /**
+ * Round 1278/1286/1321 already established that an AI-generated spec can
+ * type a phone-like-named field "number" (it "looks numeric" to a spec
+ * generator with no domain knowledge). Those rounds each fixed a
+ * destination-resolution bug this caused elsewhere (WhatsApp send-target
+ * lookup); this round closes the same gap in twin.ts's own numeric
+ * aggregation, which had no such exclusion at all -- summing/averaging a
+ * phone number produces a nonsensical "insight" (e.g. "Total 'Phone' in
+ * 'Customers': 29,484,950,603"), directly contradicting this file's own
+ * stated mission ("no fabricated insight").
+ */
+test("computeBusinessTwin's numeric aggregate skips a phone-like-named number field, but still aggregates an ordinary sibling number field on the same entity", () => {
+  const customerProject: Project = {
+    ...project,
+    description: "A customer list with phone numbers",
+    spec: {
+      ...project.spec,
+      entities: [
+        {
+          name: "Customer",
+          label: "Customers",
+          fields: [
+            { name: "name", type: "text", required: true },
+            { name: "phone", label: "Phone", type: "number", required: true },
+            { name: "total", label: "Total", type: "number", required: true },
+          ],
+        },
+      ],
+    },
+  };
+  const db = openDatabase(":memory:");
+  applyMigrations(db, customerProject.id, customerProject.spec);
+  const customer = customerProject.spec.entities[0];
+  insertRecord(db, customerProject.id, customer, { name: "Dana", phone: 501234567, total: 100 });
+  insertRecord(db, customerProject.id, customer, { name: "Yossi", phone: 521234567, total: 300 });
+
+  const twin = computeBusinessTwin(db, customerProject);
+  assert.equal(twin.numericStats.length, 1);
+  assert.equal(twin.numericStats[0]!.fieldName, "total");
+  assert.ok(!twin.numericStats.some((s) => s.fieldName === "phone"));
+  assert.ok(!twin.observations.some((o) => o.includes("Phone") || o.includes("phone")));
+});
+
+/**
  * Round 754: the numeric-aggregate PROSE text's sum/average
  * toLocaleString() calls had no locale argument at all, baked server-side
  * into `text` with no way for a client re-render to ever correct it --

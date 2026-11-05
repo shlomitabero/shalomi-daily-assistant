@@ -540,6 +540,20 @@ function stripBidiMarks(s: string): string {
   return s.replace(/[‎‏]/g, "");
 }
 
+/**
+ * Round 1278/1286/1321 already established, independently, that a
+ * phone-like-named field can end up typed "number" (the AI spec generator
+ * has no way to know "phone" should be text, and a phone number "looks
+ * numeric") -- those three rounds each fixed a destination-resolution bug
+ * this caused (WhatsApp send-target lookup), but none of them touched this
+ * file's own aggregation logic below. Duplicated from whatsapp.ts's own
+ * PHONE_FIELD_NAME_HINTS the same way isDeadlineFieldName above is
+ * duplicated from entityFormatting.ts -- a small, pure, cross-file-reused
+ * heuristic this codebase keeps as independent local copies rather than
+ * importing across module boundaries.
+ */
+const PHONE_FIELD_NAME_HINTS = ["phone", "mobile", "phonenumber", "mobilenumber", "cellphone", "cell", "telephone", "tel"];
+
 function computeNumericAggregateObservations(
   recordsByEntity: Map<string, EntityRecord[]>,
   project: Project,
@@ -557,7 +571,9 @@ function computeNumericAggregateObservations(
 }[] {
   const observations: ReturnType<typeof computeNumericAggregateObservations> = [];
   for (const entity of project.spec.entities) {
-    const numberFields = entity.fields.filter((f) => f.type === "number");
+    const numberFields = entity.fields.filter(
+      (f) => f.type === "number" && !PHONE_FIELD_NAME_HINTS.includes(f.name.toLowerCase()),
+    );
     if (numberFields.length === 0) continue;
     const records = recordsByEntity.get(entity.name) ?? [];
     if (records.length === 0) continue;
