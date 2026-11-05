@@ -1112,6 +1112,28 @@ export function createAuthRouter(
    * forgot-password's own swallowed-send contract below: a failed send
    * must never undo or block an already-successful, already-committed
    * email change.
+   *
+   * Round 1610: `updateUserEmail`'s own round-1199 self-exclusion makes a
+   * retry of the SAME intended change a safe no-op -- and round 960/1372's
+   * own surveys stopped there, concluding (correctly, for that narrow
+   * question) that this route "genuinely needed no fix" the way
+   * PATCH /auth/password did, since a retry's `currentPassword` still
+   * verifies against the unchanged hash. But that reasoning never
+   * considered a genuinely DIFFERENT, newer email change landing in the
+   * gap between a lost response and the stale retry -- e.g. two tabs/
+   * devices on the same account, or the same device retrying a request
+   * fetchWithWakeRetry resends with its original, now-stale body. Without
+   * any idempotency protection, `updateUserEmail` has no way to tell "this
+   * is a late-arriving retry of an already-applied, now-superseded change"
+   * apart from "this is a fresh, independent request" -- so the stale
+   * retry would silently overwrite a legitimate newer email back to the
+   * old one, the identical hazard round 1601 already fixed for
+   * `PATCH /projects/:id/name`, just never extended to this route. Mirrors
+   * `PATCH /auth/password`'s own `withIdempotency` wrap immediately above:
+   * the `currentPassword` check has to move INSIDE the callback for the
+   * same reason that route's own doc comment gives, since a genuine retry
+   * (same idempotency key) never reaches it -- the wrap short-circuits
+   * first with the first attempt's own cached response.
    */
   router.patch("/auth/email", requireAuth(db), changeEmailRateLimiter, async (req, res, next) => {
     const parsed = ChangeEmailSchema.safeParse(req.body);
@@ -1121,50 +1143,52 @@ export function createAuthRouter(
     }
     try {
       const { currentPassword, email, lang } = parsed.data;
-      const storedHash = getPasswordHash(db, req.userId!);
-      if (!storedHash || !(await verifyPassword(currentPassword, storedHash))) {
-        next(new HttpError(401, "Current password is incorrect", "INVALID_CURRENT_PASSWORD"));
-        return;
-      }
-      // Same post-await existence re-check as PATCH /auth/password just
-      // above -- see that route's own doc comment for why: verifyPassword's
-      // genuine scrypt await is long enough for a concurrent DELETE
-      // /auth/account on this same still-valid token to finish first. Also
-      // captures the real, pre-change email here -- the one the
-      // notification below must reach, not the new one being switched to.
-      const existing = findUserById(db, req.userId!);
-      if (!existing) {
-        next(new HttpError(401, "This account no longer exists", "USER_NOT_FOUND"));
-        return;
-      }
-      const previousEmail = existing.email;
-      // Round 1566: deliberate v1 scope decision, written down so a future
-      // round doesn't "rediscover" this as a bug -- this route does NOT
-      // reset emailVerifiedAt (or re-fire a verification email to the new
-      // address) when the email actually changes. The verification
-      // feature is purely informational in v1 (nothing is gated on it),
-      // so an account staying "verified" under its OLD, no-longer-owned
-      // address is a minor consistency gap, not a security exposure.
-      const user = updateUserEmail(db, req.userId!, email);
-      // Resubmitting your own current email (updateUserEmail's own
-      // self-exclusion from the uniqueness check already allows this, per
-      // round 1199) is a genuine no-op -- nothing to alert anyone about.
-      if (emailSender.configured && previousEmail !== email) {
-        const isHebrew = lang !== "en";
-        const subject = isHebrew ? "כתובת האימייל של חשבונך ב-Forge AI השתנתה" : "Your Forge AI account's email address was changed";
-        const body = isHebrew
-          ? `כתובת האימייל של חשבונך ב-Forge AI שונתה לכתובת ${email}.\n\nאם זו לא הייתה אתם, מישהו אחר ידע את הסיסמה הנוכחית שלכם -- היכנסו לחשבון והחליפו סיסמה מיד.`
-          : `Your Forge AI account's email address was changed to ${email}.\n\nIf this wasn't you, someone else knows your current password -- sign in and change it immediately.`;
-        try {
-          await emailSender.send(previousEmail, subject, body);
-        } catch {
-          // Swallowed, deliberately, same as forgot-password's own send
-          // above -- the email change itself already succeeded and was
-          // already committed to the database; a failed best-effort
-          // notification must never turn that into an error response.
+      const idempotencyKey = req.header("X-Idempotency-Key") || undefined;
+      const { status, body } = await withIdempotency(db, idempotencyKey, req.userId!, "PATCH /auth/email", async () => {
+        const storedHash = getPasswordHash(db, req.userId!);
+        if (!storedHash || !(await verifyPassword(currentPassword, storedHash))) {
+          throw new HttpError(401, "Current password is incorrect", "INVALID_CURRENT_PASSWORD");
         }
-      }
-      res.json({ user });
+        // Same post-await existence re-check as PATCH /auth/password just
+        // above -- see that route's own doc comment for why: verifyPassword's
+        // genuine scrypt await is long enough for a concurrent DELETE
+        // /auth/account on this same still-valid token to finish first. Also
+        // captures the real, pre-change email here -- the one the
+        // notification below must reach, not the new one being switched to.
+        const existing = findUserById(db, req.userId!);
+        if (!existing) {
+          throw new HttpError(401, "This account no longer exists", "USER_NOT_FOUND");
+        }
+        const previousEmail = existing.email;
+        // Round 1566: deliberate v1 scope decision, written down so a future
+        // round doesn't "rediscover" this as a bug -- this route does NOT
+        // reset emailVerifiedAt (or re-fire a verification email to the new
+        // address) when the email actually changes. The verification
+        // feature is purely informational in v1 (nothing is gated on it),
+        // so an account staying "verified" under its OLD, no-longer-owned
+        // address is a minor consistency gap, not a security exposure.
+        const user = updateUserEmail(db, req.userId!, email);
+        // Resubmitting your own current email (updateUserEmail's own
+        // self-exclusion from the uniqueness check already allows this, per
+        // round 1199) is a genuine no-op -- nothing to alert anyone about.
+        if (emailSender.configured && previousEmail !== email) {
+          const isHebrew = lang !== "en";
+          const subject = isHebrew ? "כתובת האימייל של חשבונך ב-Forge AI השתנתה" : "Your Forge AI account's email address was changed";
+          const body = isHebrew
+            ? `כתובת האימייל של חשבונך ב-Forge AI שונתה לכתובת ${email}.\n\nאם זו לא הייתה אתם, מישהו אחר ידע את הסיסמה הנוכחית שלכם -- היכנסו לחשבון והחליפו סיסמה מיד.`
+            : `Your Forge AI account's email address was changed to ${email}.\n\nIf this wasn't you, someone else knows your current password -- sign in and change it immediately.`;
+          try {
+            await emailSender.send(previousEmail, subject, body);
+          } catch {
+            // Swallowed, deliberately, same as forgot-password's own send
+            // above -- the email change itself already succeeded and was
+            // already committed to the database; a failed best-effort
+            // notification must never turn that into an error response.
+          }
+        }
+        return { status: 200, body: { user } };
+      });
+      res.status(status).json(body);
     } catch (err) {
       if (err instanceof DuplicateEmailError) {
         next(new HttpError(409, err.message, "EMAIL_TAKEN"));

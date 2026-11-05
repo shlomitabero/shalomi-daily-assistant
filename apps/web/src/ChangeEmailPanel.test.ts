@@ -111,10 +111,15 @@ test("submitting a matching new email and confirmation calls the real changeEmai
  * own-click reentrancy gap rounds 1363-1366 closed for EntityPanel/
  * AutomationsPanel/WhatsAppPanel/CollaboratorsPanel/useAddableSpecItem. A
  * fast double-click on "Save" must only ever reach changeEmail once, not
- * fire two independent PATCH requests -- changeEmail (api.ts) sends no
- * x-idempotency-key at all, so a double-fire here isn't even
- * idempotency-protected server-side the way changePassword/resetPassword
- * already are.
+ * fire two independent PATCH requests. At the time this guard was added,
+ * changeEmail (api.ts) sent no x-idempotency-key at all, so a double-fire
+ * here wasn't even idempotency-protected server-side the way
+ * changePassword/resetPassword already were; round 1610 closed that gap
+ * too (for a different hazard -- a stale fetchWithWakeRetry retry
+ * clobbering a genuinely newer email change), but this client-side guard
+ * still matters on its own: two independent clicks mint two different
+ * idempotency keys, so the server's own replay protection can't dedupe
+ * them either.
  */
 test("ChangeEmailPanel's submit button guards against a fast double-click, so only one PATCH ever fires for one submission", async () => {
   await withJsdom(async () => {

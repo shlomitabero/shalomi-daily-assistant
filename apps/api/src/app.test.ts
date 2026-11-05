@@ -1645,6 +1645,68 @@ test("changing your email rejects a malformed email address with VALIDATION_ERRO
 });
 
 /**
+ * Round 1610: before this round, PATCH /auth/email had no idempotency
+ * protection at all. A stale retry of an ALREADY-APPLIED request (same
+ * idempotency key, same now-outdated target email) would silently
+ * re-apply itself even after a genuinely newer, different email change
+ * had already landed in between -- clobbering that newer value back to
+ * the stale one, with no error to either side. This mirrors the exact
+ * scenario round 1601 fixed for PATCH /projects/:id/name, just never
+ * extended to this route.
+ */
+test("PATCH /auth/email retried with the same idempotency key after the first attempt already succeeded replays the original response, instead of silently re-applying its own now-stale target email over a genuinely newer change", async () => {
+  await withServer(async (baseUrl) => {
+    const oldEmail = `change-email-idem-${Date.now()}@example.com`;
+    const staleTargetEmail = `change-email-idem-stale-${Date.now()}@example.com`;
+    const newerEmail = `change-email-idem-newer-${Date.now()}@example.com`;
+    const token = await signup(baseUrl, oldEmail);
+
+    const headers = { ...authHeaders(token), "x-idempotency-key": "change-email-repro-key" };
+    const firstRes = await fetch(`${baseUrl}/api/auth/email`, {
+      method: "PATCH",
+      headers,
+      body: JSON.stringify({ currentPassword: "correct-horse-battery", email: staleTargetEmail }),
+    });
+    assert.equal(firstRes.status, 200, "sanity check: the first attempt must have succeeded");
+
+    // Simulates a genuinely newer, independent email change landing in the
+    // gap between the first attempt's own response (lost in transit) and a
+    // stale retry of it -- a different tab/device on the same account, or
+    // any other legitimate follow-up edit.
+    const newerChangeRes = await fetch(`${baseUrl}/api/auth/email`, {
+      method: "PATCH",
+      headers: authHeaders(token),
+      body: JSON.stringify({ currentPassword: "correct-horse-battery", email: newerEmail }),
+    });
+    assert.equal(newerChangeRes.status, 200, "sanity check: the newer, independent change must have succeeded");
+
+    const retryRes = await fetch(`${baseUrl}/api/auth/email`, {
+      method: "PATCH",
+      headers,
+      body: JSON.stringify({ currentPassword: "correct-horse-battery", email: staleTargetEmail }),
+    });
+    assert.equal(retryRes.status, 200, "a retried email change with the same idempotency key must replay the original success");
+    const { user } = (await retryRes.json()) as { user: { email: string } };
+    assert.equal(
+      user.email,
+      staleTargetEmail,
+      "the replayed response must report the FIRST attempt's own result (the cached response), proving the retry never re-ran",
+    );
+
+    const newLogin = await fetch(`${baseUrl}/api/auth/login`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ email: newerEmail, password: "correct-horse-battery" }),
+    });
+    assert.equal(
+      newLogin.status,
+      200,
+      "the account's real, current email must still be the newer one -- the stale retry must not have clobbered it back",
+    );
+  });
+});
+
+/**
  * Regression test for a real bug: PATCH /auth/password's own writes
  * (updatePasswordHash + deleteOtherSessionsForUser) ran unconditionally
  * after its two genuine scrypt awaits (verifyPassword, then hashPassword --

@@ -446,9 +446,19 @@ export function changePassword(currentPassword: string, newPassword: string, lan
  * project. `lang` (round 1206) picks which language the server's own
  * old-email notification is written in, the same `login`/`forgotPassword`
  * convention above.
+ *
+ * Round 1610: same `x-idempotency-key` mechanism changePassword just above
+ * already sends, for the identical reason -- without it, a response lost
+ * in transit after a stale retry's own `updateUserEmail` call clobbers a
+ * genuinely newer email change (another tab/device, or a legitimate
+ * follow-up edit) back to this request's own now-superseded value.
  */
 export function changeEmail(currentPassword: string, email: string, lang: "he" | "en"): Promise<{ user: User }> {
-  return request("/auth/email", { method: "PATCH", body: JSON.stringify({ currentPassword, email, lang }) });
+  return request("/auth/email", {
+    method: "PATCH",
+    headers: { "x-idempotency-key": crypto.randomUUID() },
+    body: JSON.stringify({ currentPassword, email, lang }),
+  });
 }
 
 /**
