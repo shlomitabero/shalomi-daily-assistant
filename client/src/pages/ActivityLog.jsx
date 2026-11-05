@@ -41,6 +41,13 @@ export default function ActivityLog() {
             {a.type === 'sale_confirmed' && a.result === 'success' && Number.isFinite(a.detail?.amount) && (
               <p className="hint log-amount">נמכר בעד {formatMoney(a.detail.amount)}</p>
             )}
+            {/* Without the message/path here, a "תקלה במסך - נכשל" row told
+                the owner nothing about what actually broke or where - just
+                that something, somewhere, once did. That defeats most of
+                the point of surfacing it here at all. */}
+            {a.type === 'client_error' && a.detail?.message && (
+              <p className="hint log-reason">{a.detail.message}{a.detail.path ? ` (${a.detail.path})` : ''}</p>
+            )}
             {a.detail?.reason && <p className="hint log-reason">{reasonLabel(a.detail.reason)}</p>}
             <span className="log-time">{new Date(a.createdAt).toLocaleString('he-IL')}</span>
           </div>
