@@ -13566,9 +13566,11 @@ test("the exported EntityView's table has a conditional totals-row <tfoot> backe
   const files = generateExportFiles(numberProject);
   const entityViewJsx = files.find((f) => f.path === "web/src/components/EntityView.jsx")!.content;
 
+  const phoneHintsSrc = entityViewJsx.match(/const PHONE_FIELD_NAME_HINTS = \[[^\]]*\];/)?.[0];
+  assert.ok(phoneHintsSrc, "expected to find PHONE_FIELD_NAME_HINTS in generated output");
   const sumNumericFieldsSrc = entityViewJsx.match(/function sumNumericFields\(records, fields\) \{[\s\S]*?\n\}\n/)?.[0];
   assert.ok(sumNumericFieldsSrc, "expected to find sumNumericFields in generated output");
-  const sumNumericFields = new Function(`${sumNumericFieldsSrc}\nreturn sumNumericFields;`)();
+  const sumNumericFields = new Function(`${phoneHintsSrc}\n${sumNumericFieldsSrc}\nreturn sumNumericFields;`)();
 
   const fields = [
     { name: "client", type: "text" },
@@ -13602,6 +13604,52 @@ test("the exported EntityView's table has a conditional totals-row <tfoot> backe
     serviceEntityViewJsx,
     /\{hasNumericVisibleField && \(\s*<tfoot>/,
     "the conditional guard must still be present in source even for a text-only entity -- it's evaluated at runtime, not per generated file",
+  );
+});
+
+/**
+ * Round 1622: mirrors the live app's own entityFormatting.ts fix for the
+ * identical gap -- the exported app's generated sumNumericFields had no
+ * phone-field-name exclusion at all (PHONE_FIELD_NAME_HINTS doesn't exist
+ * anywhere in codegen.ts), so a spec that typed a phone number as a
+ * "number" field got its digits summed into a meaningless total in the
+ * exported app's own totals row.
+ */
+test("the exported EntityView's generated sumNumericFields excludes a phone-like-named field even when it's typed as number", () => {
+  const phoneNumberProject: Project = {
+    ...project,
+    spec: {
+      ...project.spec,
+      entities: [
+        {
+          name: "Contact",
+          label: "אנשי קשר",
+          fields: [
+            { name: "phone", label: "טלפון", type: "number", required: false },
+            { name: "amount", label: "סכום", type: "number", required: true },
+          ],
+        },
+      ],
+    },
+  };
+  const files = generateExportFiles(phoneNumberProject);
+  const entityViewJsx = files.find((f) => f.path === "web/src/components/EntityView.jsx")!.content;
+
+  const phoneHintsSrc = entityViewJsx.match(/const PHONE_FIELD_NAME_HINTS = \[[^\]]*\];/)?.[0];
+  assert.ok(phoneHintsSrc, "expected to find PHONE_FIELD_NAME_HINTS in generated output");
+  const sumNumericFieldsSrc = entityViewJsx.match(/function sumNumericFields\(records, fields\) \{[\s\S]*?\n\}\n/)?.[0];
+  assert.ok(sumNumericFieldsSrc, "expected to find sumNumericFields in generated output");
+  const sumNumericFields = new Function(`${phoneHintsSrc}\n${sumNumericFieldsSrc}\nreturn sumNumericFields;`)();
+
+  const fields = [
+    { name: "phone", type: "number" },
+    { name: "amount", type: "number" },
+  ];
+  const records = [{ id: 1, phone: 5551234567, amount: 100 }, { id: 2, phone: 5559876543, amount: 250 }];
+  assert.deepEqual(
+    sumNumericFields(records, fields),
+    { amount: 350 },
+    "a phone-like-named number field must be excluded from the totals, while a genuinely numeric sibling still sums normally",
   );
 });
 

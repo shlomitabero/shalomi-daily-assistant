@@ -483,7 +483,10 @@ function stripBidiMarks(s: string): string {
 export function sumNumericFields(records: EntityRecord[], fields: Field[]): Record<string, number> {
   const totals: Record<string, number> = {};
   for (const field of fields) {
-    if (field.type !== "number") continue;
+    // Round 1622: an AI-generated spec can type a phone-like field as
+    // "number" (see isPhoneFieldName below), which otherwise left its
+    // digits summed into a nonsensical "total phone number" footer value.
+    if (field.type !== "number" || isPhoneFieldName(field.name)) continue;
     totals[field.name] = records.reduce((sum, record) => {
       const value = record[field.name];
       return sum + (typeof value === "number" && !Number.isNaN(value) ? value : 0);

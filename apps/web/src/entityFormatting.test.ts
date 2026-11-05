@@ -4120,6 +4120,26 @@ test("sumNumericFields returns 0 totals for number fields when there are no reco
   assert.deepEqual(sumNumericFields([], fields), { amount: 0 });
 });
 
+/**
+ * Round 1622: an AI-generated spec can type a phone number as a "number"
+ * field (the same real-world confusion findMatchingRecord/findRecordPhoneNumber
+ * already compensate for via PHONE_FIELD_NAME_HINTS/isPhoneFieldName), but
+ * sumNumericFields had no such exclusion -- a phone column would get summed
+ * into a meaningless "total phone number" in the table's own footer, right
+ * alongside genuinely summable columns like amount/quantity.
+ */
+test("sumNumericFields excludes a phone-like-named field even when it's typed as number, but still sums a genuinely numeric sibling", () => {
+  const fields: Field[] = [
+    { name: "phone", type: "number", required: false },
+    { name: "amount", type: "number", required: true },
+  ];
+  const records = [
+    { id: 1, phone: 5551234567, amount: 100 },
+    { id: 2, phone: 5559876543, amount: 250 },
+  ];
+  assert.deepEqual(sumNumericFields(records, fields), { amount: 350 });
+});
+
 test("isDeadlineFieldName matches field names that actually mean a deadline, and rejects ordinary date fields", () => {
   assert.equal(isDeadlineFieldName("dueDate"), true, "the built-in Invoice/Task entities' own field name");
   assert.equal(isDeadlineFieldName("deadline"), true, "the built-in Task entity's own field name");

@@ -3497,6 +3497,12 @@ function selectedOrAllRecords(allRecords, visibleRecords, selectedIds) {
   return allRecords.filter((r) => selectedIds.has(r.id));
 }
 
+// Mirrors the live app's own PHONE_FIELD_NAME_HINTS (entityFormatting.ts) --
+// an AI-generated spec can type a phone number as a "number" field, and
+// without this exclusion its digits get summed into a meaningless "total
+// phone number" below.
+const PHONE_FIELD_NAME_HINTS = ["phone", "mobile", "phonenumber", "mobilenumber", "cellphone", "cell", "telephone", "tel"];
+
 // Sums every number-type field across a set of records, for the table's
 // own totals row -- driven off whatever is passed in (the already-
 // filtered/sorted visibleRecords the table itself renders), so the totals
@@ -3506,7 +3512,7 @@ function selectedOrAllRecords(allRecords, visibleRecords, selectedIds) {
 function sumNumericFields(records, fields) {
   const totals = {};
   for (const field of fields) {
-    if (field.type !== "number") continue;
+    if (field.type !== "number" || PHONE_FIELD_NAME_HINTS.includes(field.name.toLowerCase())) continue;
     totals[field.name] = records.reduce((sum, record) => {
       const value = record[field.name];
       return sum + (typeof value === "number" && !Number.isNaN(value) ? value : 0);
