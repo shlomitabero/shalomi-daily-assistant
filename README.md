@@ -58,7 +58,7 @@ Whether data actually survives a redeploy depends entirely on where this runs: o
 
 ## The scheduler
 
-A daily job (source re-check + digest) and the autonomous scan (every 4 hours) run inside the server process via `node-cron`. This only works while the process is alive — on a host that spins the service down when idle (e.g. Render's free tier), this is not a guarantee it runs unattended. A free workaround on such a host: use an external pinger (e.g. cron-job.org) to hit `/api/health` periodically, which keeps the service awake long enough for the scheduled job to fire. Railway's always-on plans don't need this.
+A daily job (source re-check + digest) and the autonomous scan (every 4 hours) run inside the server process via `node-cron`. This only works while the process is alive at the exact minute the schedule fires — on a host that spins the service down when idle (e.g. Render's free tier) or that redeploys frequently, a restart landing near the wrong minute can miss a tick entirely. Both jobs self-heal on the next boot instead: if too much time has passed since the last run (a missed day for the digest, more than 4 hours for the scan), it runs immediately on startup rather than waiting out the rest of the gap. A free workaround for a host that spins the service down for longer stretches: use an external pinger (e.g. cron-job.org) to hit `/api/health` periodically, which keeps the service awake long enough for the scheduled job to fire on its own. Railway's always-on plans don't need this.
 
 ## How it's built
 
