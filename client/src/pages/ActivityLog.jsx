@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { api } from '../api.js';
-import { actionTypeLabel, resultLabel, reasonLabel, formatMoney } from '../labels.js';
+import { actionTypeLabel, resultLabel, reasonLabel, formatMoney, sideLabel } from '../labels.js';
 
 export default function ActivityLog() {
   const [actions, setActions] = useState([]);
@@ -47,6 +47,16 @@ export default function ActivityLog() {
                 the point of surfacing it here at all. */}
             {a.type === 'client_error' && a.detail?.message && (
               <p className="hint log-reason">{a.detail.message}{a.detail.path ? ` (${a.detail.path})` : ''}</p>
+            )}
+            {/* financial.js's createPaperTrade logs symbol/side/netPnl on every
+                simulated trade, but until now the audit log just said "עסקה
+                מדומה - הצלחה" with no way to tell which symbol, which side,
+                or the simulated result apart - the owner had to go back to
+                the Financial page's own trade list to see any of that. This
+                is simulated only (paperTrading.js never touches the real
+                ledger), hence "מדומה" rather than a real profit/loss figure. */}
+            {a.type === 'paper_trade' && a.detail?.symbol && (
+              <p className="hint log-reason">{a.detail.symbol} · {sideLabel(a.detail.side)} · רווח/הפסד מדומה: {formatMoney(a.detail.netPnl)}</p>
             )}
             {a.detail?.reason && <p className="hint log-reason">{reasonLabel(a.detail.reason)}</p>}
             <span className="log-time">{new Date(a.createdAt).toLocaleString('he-IL')}</span>
