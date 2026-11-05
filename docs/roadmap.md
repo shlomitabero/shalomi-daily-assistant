@@ -44404,3 +44404,15 @@ Fail-before/pass-after verified directly for the codegen.ts changes too: stashed
 Fail-before/pass-after verified directly: stashed `seed.ts` only (test file untouched). Fail-before failed exactly as expected (`rooms must be a believable 1-6 value, got 10`). Restored the fix, pass-after: passes. Full `@forge/db` suite: 341/341. `apps/api`'s `npm run build` (esbuild): clean, confirming the workspace dependency still bundles correctly. `apps/web` untouched this round, no re-run needed.
 
 **`codegen.ts` parity**: N/A -- `seed.ts` is a project-creation-time dev tool (confirmed via grep: no `seedValueFor`/`generateSeedRecords` reference anywhere in `codegen.ts`); the exported standalone app has no seeding feature of its own to port this to.
+
+### Round 1625: seed RestaurantTable.seats with a believable 2-8 value, not the generic (index+1)*10 formula
+
+**The gap**: the same bug class as round 1624's `rooms` fix, in the same sibling field family -- the Restaurant & Table Management template's `RestaurantTable` entity (`packages/spec-engine/src/templates.ts:219` Hebrew "מספר מקומות", `:287` English "Seats", both `type: "number"`, not required) has a `seats` field that fell through `seedValueFor`'s generic `(index + 1) * 10` formula, with zero special-casing. Confirmed via grep that `TEMPLATES` includes a `"restaurant"` template id using this entity, so it's genuinely reachable via the Templates Gallery, not dead code -- a fresh restaurant project's seeded tables showed "10 seats"/"20 seats", an obviously broken value no real table would ever have. Confirmed via grep that `docs/roadmap.md` had zero prior mention of "seats". Deliberately left the entity's sibling `number` field (table number) untouched -- a table numbered 10/20 is mundane/plausible, unlike a 10-20-seat table, so only `seats` needed a fix.
+
+**The fix**: added a third special case to `seedValueFor`'s `"number"` branch, alongside `rating`/`rooms`: `if (field.name === "seats") return ((index % 4) * 2) + 2;` (cycles through 2/4/6/8, covering a 2-top through a large booth).
+
+**Tests** (`packages/db/src/seed.test.ts`): added a new test mirroring the `rooms` test's structure -- a `RestaurantTable` entity with a `seats` number field, asserting every seeded record's `seats` value falls in 2-8.
+
+Fail-before/pass-after verified directly: stashed `seed.ts` only (test file untouched). Fail-before failed exactly as expected (`seats must be a believable 2-8 value, got 10`). Restored the fix, pass-after: passes. Full `@forge/db` suite: 342/342 (341 baseline + 1 new). `apps/api`'s `npm run build` (esbuild): clean. `apps/web` untouched this round, no re-run needed.
+
+**`codegen.ts` parity**: N/A -- same reasoning as round 1624: `seed.ts` is a project-creation-time dev tool with no counterpart in the exported standalone app.
