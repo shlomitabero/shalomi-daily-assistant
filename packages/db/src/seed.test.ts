@@ -256,6 +256,31 @@ test("the Vendor, Expense, and Review entities each get believable seed values, 
   assert.ok((reviewRecord.rating as number) >= 1 && (reviewRecord.rating as number) <= 5);
 });
 
+/**
+ * Round 1624: the Real Estate Listings template's Property entity
+ * (domainEntities.ts) has a "rooms" field -- without this, the same
+ * generic (index+1)*10 formula every other numeric field uses seeded
+ * "10 rooms"/"20 rooms" for an Apartment/House/Office, an obviously broken
+ * value no real listing would ever have.
+ */
+test("a Property entity's room count seeds a believable 1-6 value, not the generic (index+1)*10 formula", () => {
+  const property: Entity = {
+    name: "Property",
+    fields: [
+      { name: "address", type: "text", required: true },
+      { name: "rooms", type: "number", required: false },
+    ],
+  };
+
+  const records = generateSeedRecords(property, 3);
+  for (const record of records) {
+    assert.ok(
+      (record.rooms as number) >= 1 && (record.rooms as number) <= 6,
+      `rooms must be a believable 1-6 value, got ${record.rooms}`,
+    );
+  }
+});
+
 test("the WorkOrder, Volunteer, and Case entities each get believable seed values, not the generic placeholder formula", () => {
   const workOrder: Entity = {
     name: "WorkOrder",

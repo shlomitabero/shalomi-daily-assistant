@@ -130,6 +130,12 @@ function seedValueFor(field: Field, entity: Entity, index: number): unknown {
       // narrow domain range, and a value outside it would look broken the
       // moment a real UI renders it as stars.
       if (field.name === "rating") return (index % 5) + 1;
+      // Round 1624: the Real Estate Listings template's Property entity
+      // (domainEntities.ts) has a "rooms" field -- without this, the same
+      // generic formula seeds "10 rooms"/"20 rooms" for an Apartment/
+      // House/Office, an obviously broken value no real listing would ever
+      // have. A 1-6 range covers everything from a studio to a large house.
+      if (field.name === "rooms") return (index % 6) + 1;
       return (index + 1) * 10;
     case "boolean":
       return index % 2 === 0;
