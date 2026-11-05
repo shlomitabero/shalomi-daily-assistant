@@ -61,16 +61,27 @@ export function generateDailyDigest() {
   return db.digests.insert({ id: makeId('dig'), date: today, text: digest.text, generatedAt: digest.generatedAt });
 }
 
+// now.getHours() reads the server process's own local time (UTC on
+// Railway, not the owner's) - server.js's '0 7 * * *' cron is scheduled
+// with timezone: 'Asia/Jerusalem' for exactly this reason (this app is
+// built throughout for a Hebrew-speaking, Israel-based owner), so this
+// check has to use the same timezone or the two would disagree about
+// when "7am" actually is.
+function israelHour(now) {
+  return Number(new Intl.DateTimeFormat('en-US', { timeZone: 'Asia/Jerusalem', hour: 'numeric', hour12: false }).format(now));
+}
+
 // node-cron's '0 7 * * *' job only fires while the process happens to be
-// alive at the exact minute the clock hits 07:00 - it does not back-fill a
-// tick it missed. This app gets redeployed roughly hourly by its own
-// upgrade routine, so any given day's 7am tick has a real chance of landing
-// in the middle of exactly one of those restarts and never firing at all.
-// Called once at startup, this makes a missed tick self-heal on the very
-// next boot instead of silently skipping that day's digest - generateDailyDigest()
-// is itself idempotent per day, so calling it here is always safe.
+// alive at the exact minute the clock hits 07:00 Israel time - it does not
+// back-fill a tick it missed. This app gets redeployed roughly hourly by
+// its own upgrade routine, so any given day's 7am tick has a real chance
+// of landing in the middle of exactly one of those restarts and never
+// firing at all. Called once at startup, this makes a missed tick
+// self-heal on the very next boot instead of silently skipping that day's
+// digest - generateDailyDigest() is itself idempotent per day, so calling
+// it here is always safe.
 export function catchUpDailyDigestIfMissed(now = new Date()) {
-  if (now.getHours() < 7) return null; // too early - the normal 7am cron tick will handle it
+  if (israelHour(now) < 7) return null; // too early - the normal 7am cron tick will handle it
   const today = todayKey();
   if (db.digests.where((d) => d.date === today).length > 0) return null; // already generated today
   return generateDailyDigest();

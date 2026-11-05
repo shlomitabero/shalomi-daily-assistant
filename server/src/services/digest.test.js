@@ -112,31 +112,46 @@ test('generateDailyDigest does not count an approval whose opportunity was alrea
   assert.doesNotMatch(digest.text, /מאושרות ומחכות/);
 });
 
-test('catchUpDailyDigestIfMissed does nothing before 7am, leaving the 7am cron tick to handle it normally', () => {
+// Times are explicit UTC (Z) and chosen so that in winter (Israel = UTC+2,
+// no DST), '04:59Z' is 06:59 Israel time, '07:00Z' is 09:00 Israel time,
+// and '08:00Z' is 10:00 Israel time - the function checks Israel-local
+// hours, not UTC, now that server.js's cron is scheduled in Asia/Jerusalem.
+test('catchUpDailyDigestIfMissed does nothing before 7am Israel time, leaving the 7am cron tick to handle it normally', () => {
   __resetForTests();
-  const result = catchUpDailyDigestIfMissed(new Date('2026-01-01T06:59:00'));
+  const result = catchUpDailyDigestIfMissed(new Date('2026-01-01T04:59:00Z'));
   assert.equal(result, null);
   assert.equal(db.digests.all().length, 0);
 });
 
-test('catchUpDailyDigestIfMissed generates today\'s digest when called after 7am and none exists yet', () => {
-  // This is the self-healing case: the process restarted (this app gets
-  // redeployed roughly hourly) at, say, 9am, missing the exact 7:00 cron
-  // tick entirely - without this, that day's digest would simply never be
-  // generated, with no error or indication anything was skipped.
+test('catchUpDailyDigestIfMissed correctly accounts for Israel daylight saving (UTC+3 in summer, not a fixed UTC+2 offset)', () => {
+  // A naive fixed offset would get this wrong for half the year - July is
+  // Israel Daylight Time (UTC+3), so 06:59 Israel time is 03:59Z, not
+  // 04:59Z as it would be in winter.
   __resetForTests();
-  const result = catchUpDailyDigestIfMissed(new Date('2026-01-01T09:00:00'));
+  const result = catchUpDailyDigestIfMissed(new Date('2026-07-01T03:59:00Z')); // 06:59 Israel (summer)
+  assert.equal(result, null);
+  assert.equal(db.digests.all().length, 0);
+});
+
+test('catchUpDailyDigestIfMissed generates today\'s digest when called after 7am Israel time and none exists yet', () => {
+  // This is the self-healing case: the process restarted (this app gets
+  // redeployed roughly hourly) at, say, 9am Israel time, missing the exact
+  // 7:00 cron tick entirely - without this, that day's digest would
+  // simply never be generated, with no error or indication anything was
+  // skipped.
+  __resetForTests();
+  const result = catchUpDailyDigestIfMissed(new Date('2026-01-01T07:00:00Z'));
   assert.ok(result);
   assert.equal(db.digests.all().length, 1);
 });
 
-test('catchUpDailyDigestIfMissed does nothing when today\'s digest already exists, even after 7am', () => {
+test('catchUpDailyDigestIfMissed does nothing when today\'s digest already exists, even after 7am Israel time', () => {
   // Must never silently overwrite a digest the owner already generated
   // today (via the normal cron tick or their own manual "generate now"
   // click) just because the server happened to restart again later.
   __resetForTests();
   const first = generateDailyDigest();
-  const result = catchUpDailyDigestIfMissed(new Date('2026-01-01T10:00:00'));
+  const result = catchUpDailyDigestIfMissed(new Date('2026-01-01T08:00:00Z'));
   assert.equal(result, null);
   assert.equal(db.digests.all().length, 1);
   assert.equal(db.digests.get(first.id).generatedAt, first.generatedAt);

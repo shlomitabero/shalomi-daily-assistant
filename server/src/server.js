@@ -84,6 +84,14 @@ catchUpAutonomousScanIfMissed().catch((err) => console.error('catch-up autonomou
 // on Render's free tier the service can spin down when idle, so this is not
 // a guarantee of "runs even when nobody has the app open." See README for
 // the free external-ping workaround.
+//
+// node-cron's default timezone is the server process's own local time,
+// which on Railway (and most hosts) is UTC, not the owner's - this app is
+// built for a Hebrew-speaking, Israel-based owner throughout (currency,
+// language, Paddle chosen for Israeli payouts), so "7am" without this
+// would actually fire at 9-10am Israel time depending on daylight saving,
+// not the owner's real morning. catchUpDailyDigestIfMissed's own hour
+// check below is kept in sync with this via israelHour().
 cron.schedule('0 7 * * *', () => {
   try {
     syncSources();
@@ -91,7 +99,7 @@ cron.schedule('0 7 * * *', () => {
   } catch (err) {
     console.error('scheduled daily job failed', err);
   }
-});
+}, { timezone: 'Asia/Jerusalem' });
 
 // The actual "keep looking for revenue" loop — runs every few hours, not
 // just once a day, so the system is genuinely searching on its own rather
