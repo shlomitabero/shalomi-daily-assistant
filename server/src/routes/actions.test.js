@@ -52,6 +52,14 @@ test('reportClientError rejects a request missing a message instead of logging a
   assert.equal(db.actions_log.all().length, 0);
 });
 
+test('reportClientError rejects a non-string message instead of storing a type the UI never expects', () => {
+  __resetForTests();
+  const res = makeRes();
+  reportClientError({ body: { message: { not: 'a string' } } }, res);
+  assert.equal(res.statusCode, 400);
+  assert.equal(db.actions_log.all().length, 0);
+});
+
 test('reportClientError logs a client_error entry the owner can see in the activity log', () => {
   // Until now a render crash (caught by the client's ErrorBoundary) was
   // only ever visible in the browser's own console - this gives it the
