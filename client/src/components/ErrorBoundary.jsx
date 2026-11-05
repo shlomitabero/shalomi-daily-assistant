@@ -21,11 +21,17 @@ export class ErrorBoundary extends Component {
     // Until now this was only ever visible in the browser's own console -
     // the owner would never see it unless they happened to have devtools
     // open at the exact moment it happened. Best-effort only (never let a
-    // failed report cause a second crash), and only when logged in - this
-    // boundary also wraps the public, unauthenticated product page, where
-    // there is no owner token to report under at all.
-    if (getToken()) {
-      api.reportClientError(String(error?.message ?? error), window.location.pathname).catch(() => {});
+    // failed report cause a second crash - including getToken() itself,
+    // which reads localStorage and can throw in some restricted browser
+    // contexts, e.g. private-browsing storage disabled entirely), and only
+    // when logged in - this boundary also wraps the public, unauthenticated
+    // product page, where there is no owner token to report under at all.
+    try {
+      if (getToken()) {
+        api.reportClientError(String(error?.message ?? error), window.location.pathname).catch(() => {});
+      }
+    } catch {
+      // Reporting the crash must never itself be a second crash.
     }
   }
 
