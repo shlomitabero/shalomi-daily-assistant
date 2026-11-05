@@ -142,7 +142,16 @@ export function patchOpportunity(req, res) {
   // to whatever it was at publish time. Letting it be edited afterward
   // would silently desync the dashboard's number from what a real
   // customer is actually charged.
-  if ('priceUSD' in patch && opportunity.status === 'published') {
+  //
+  // patch.priceUSD !== opportunity.priceUSD, not just 'priceUSD' in patch:
+  // OpportunityDetail.jsx's save form always resends priceUSD on every
+  // save (it's a controlled form, not a per-field PATCH), including the
+  // disabled, untouched field on an already-published opportunity — the
+  // bare presence check below blocked that resend unconditionally, so the
+  // owner could never save a new revenueEstimate/costs/riskLevel on a
+  // published opportunity either, every attempt 400ing with this exact
+  // unrelated price-change error.
+  if ('priceUSD' in patch && patch.priceUSD !== opportunity.priceUSD && opportunity.status === 'published') {
     return res.status(400).json({ error: 'priceUSD cannot be changed after publishing — the live price is already fixed in Paddle' });
   }
   // In "approve" mode the owner explicitly approves publish_product for

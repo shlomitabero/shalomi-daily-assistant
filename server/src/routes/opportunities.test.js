@@ -264,6 +264,22 @@ test('patchOpportunity rejects changing priceUSD after publishing — the live P
   assert.equal(db.opportunities.get(opp.id).priceUSD, 9);
 });
 
+test('patchOpportunity allows saving other fields on a published opportunity even though priceUSD is resent unchanged', () => {
+  // OpportunityDetail.jsx's save form is a controlled form that always
+  // resends every field, including priceUSD (shown in a disabled input
+  // once published) — a bare 'priceUSD' in patch check would 400 this
+  // exact, ordinary save with "priceUSD cannot be changed after
+  // publishing", even though the owner never touched the price and only
+  // meant to update the revenue estimate below.
+  __resetForTests();
+  const opp = insertOpportunity({ status: 'published', paddlePriceId: 'pri_123', slug: 'already-live', priceUSD: 9 });
+  const res = makeRes();
+  patchOpportunity({ params: { id: opp.id }, body: { priceUSD: 9, riskLevel: 'low' } }, res);
+  assert.equal(res.statusCode, 200);
+  assert.equal(res.body.opportunity.riskLevel, 'low');
+  assert.equal(res.body.opportunity.priceUSD, 9);
+});
+
 test('patchOpportunity rejects a stale "approve"-mode approval when priceUSD actually changes', () => {
   // The approval has no memory of what priceUSD was when it was given -
   // without this, approving at $9 then changing the price to $29 would
