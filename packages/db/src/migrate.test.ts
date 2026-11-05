@@ -315,7 +315,11 @@ test("diffAndMigrate treats a field that only changed letter-case as the same su
   // The original column (still physically named "name") must survive with
   // its data intact -- no ALTER, no new column, no data loss.
   const columnInfo = db.prepare('PRAGMA table_info("entity_proj1_Customer")').all() as { name: string }[];
-  assert.deepEqual(columnInfo.map((c) => c.name).sort(), ["createdAt", "createdByUserId", "id", "name", "status"], "must still have exactly one name-ish column, not two");
+  assert.deepEqual(
+    columnInfo.map((c) => c.name).sort(),
+    ["createdAt", "createdByUserId", "id", "name", "status", "updatedByUserId"],
+    "must still have exactly one name-ish column, not two",
+  );
   const customers = listRecords(db, "proj1", spec.entities[0]);
   assert.equal(customers.length, 1);
   assert.equal(customers[0].name, "Alice");
@@ -365,7 +369,11 @@ test("diffAndMigrate treats a field removed on one refine and re-added under dif
   );
 
   const columnInfo = db.prepare('PRAGMA table_info("entity_proj1_Customer")').all() as { name: string }[];
-  assert.deepEqual(columnInfo.map((c) => c.name).sort(), ["createdAt", "createdByUserId", "id", "name", "status"], "must still have exactly one name-ish column, not two");
+  assert.deepEqual(
+    columnInfo.map((c) => c.name).sort(),
+    ["createdAt", "createdByUserId", "id", "name", "status", "updatedByUserId"],
+    "must still have exactly one name-ish column, not two",
+  );
   const customers = listRecords(db, "proj1", spec.entities[0]);
   assert.equal(customers.length, 1);
   assert.equal(customers[0].name, "Alice", "the original data in the reused column must survive untouched");

@@ -174,6 +174,13 @@ export function generateCreateTableStatements(projectId: string, spec: ProductSp
       // column added lazily, since this CREATE TABLE statement only ever
       // runs with IF NOT EXISTS and is a no-op for it.
       "createdByUserId TEXT",
+      // Round 1617: the direct sibling of createdByUserId just above, for
+      // record *updates* rather than creation -- same nullable rationale
+      // (a record that was never updated after this column existed has no
+      // real "last updater" to backfill), and the same lazy-ALTER
+      // self-healing path for a table built before this round
+      // (repository.ts's ensureUpdatedByUserIdColumn).
+      "updatedByUserId TEXT",
     ];
     for (const field of entity.fields) {
       const columnName = assertSafeIdentifier(field.name, "column");

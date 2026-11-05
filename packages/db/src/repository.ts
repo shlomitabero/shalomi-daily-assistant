@@ -288,6 +288,7 @@ function rowToRecord(entity: Entity, row: Record<string, unknown>): EntityRecord
     id: row.id as number,
     createdAt: row.createdAt as string,
     createdByUserId: (row.createdByUserId as string | null) ?? null,
+    updatedByUserId: (row.updatedByUserId as string | null) ?? null,
   };
   for (const field of entity.fields) {
     const value = getRowValue(row, field.name);
@@ -336,6 +337,21 @@ function ensureCreatedByUserIdColumn(db: ForgeDatabase, table: string): void {
   );
   if (!hasColumn) {
     db.exec(`ALTER TABLE ${quoteIdentifier(table)} ADD COLUMN createdByUserId TEXT`);
+  }
+}
+
+/**
+ * Round 1617: the direct sibling of ensureCreatedByUserIdColumn above, for
+ * updateRecord's own new updatedByUserId column -- identical self-healing
+ * rationale (generateCreateTableStatements's CREATE TABLE IF NOT EXISTS is
+ * a no-op for a table a project already built before this round shipped).
+ */
+function ensureUpdatedByUserIdColumn(db: ForgeDatabase, table: string): void {
+  const hasColumn = (db.prepare(`PRAGMA table_info(${quoteIdentifier(table)})`).all() as { name: string }[]).some(
+    (c) => c.name === "updatedByUserId",
+  );
+  if (!hasColumn) {
+    db.exec(`ALTER TABLE ${quoteIdentifier(table)} ADD COLUMN updatedByUserId TEXT`);
   }
 }
 
@@ -411,8 +427,10 @@ export function updateRecord(
   entity: Entity,
   id: number,
   data: Record<string, unknown>,
+  updatedByUserId?: string | null,
 ): EntityRecord {
   const table = tableNameFor(projectId, entity.name);
+  ensureUpdatedByUserIdColumn(db, table);
   const existingRow = db.prepare(`SELECT * FROM ${quoteIdentifier(table)} WHERE id = ?`).get(id) as
     | Record<string, unknown>
     | undefined;
@@ -465,8 +483,13 @@ export function updateRecord(
     return coerced;
   });
 
-  const setClause = columns.map((c) => `${quoteIdentifier(c)} = ?`).join(", ");
-  db.prepare(`UPDATE ${quoteIdentifier(table)} SET ${setClause} WHERE id = ?`).run(...values, id);
+  // Written unconditionally on every update, even one whose `data` touches
+  // zero of entity.fields (e.g. a future metadata-only PATCH) -- the
+  // person who performed the update changed the record regardless of
+  // which fields they actually set, mirroring insertRecord's own
+  // unconditional createdByUserId write.
+  const setClause = [...columns.map((c) => `${quoteIdentifier(c)} = ?`), `${quoteIdentifier("updatedByUserId")} = ?`].join(", ");
+  db.prepare(`UPDATE ${quoteIdentifier(table)} SET ${setClause} WHERE id = ?`).run(...values, updatedByUserId ?? null, id);
   return getRecord(db, projectId, entity, id)!;
 }
 

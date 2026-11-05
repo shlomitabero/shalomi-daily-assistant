@@ -84,6 +84,43 @@ test("insertRecord adds the createdByUserId column itself to a pre-existing tabl
   assert.equal(getRecord(db, "proj1", customer, created.id as number)?.createdByUserId, "user-2");
 });
 
+/**
+ * Round 1617: the direct sibling of round 1613's createdByUserId test
+ * above, for record *updates* -- same nullable-when-unknown rationale,
+ * and written unconditionally on every update regardless of which fields
+ * the caller actually changed (updateRecord's own doc comment on this).
+ */
+test("updateRecord stores the given updatedByUserId, and leaves it null when none is given", () => {
+  const db = setup();
+  const record = insertRecord(db, "proj1", customer, { name: "Alice", status: "New" }, "user-1");
+  const updatedWithActor = updateRecord(db, "proj1", customer, record.id as number, { name: "Alice B." }, "user-2");
+  assert.equal(updatedWithActor.updatedByUserId, "user-2");
+  // The original creator is untouched by an update performed by someone else.
+  assert.equal(updatedWithActor.createdByUserId, "user-1");
+  const updatedWithoutActor = updateRecord(db, "proj1", customer, record.id as number, { name: "Alice C." });
+  assert.equal(updatedWithoutActor.updatedByUserId, null);
+  // Round-trips through getRecord/listRecords too, not just the update's own return value.
+  assert.equal(getRecord(db, "proj1", customer, record.id as number)?.updatedByUserId, null);
+});
+
+/**
+ * Regression test for the self-healing ALTER TABLE, mirroring round
+ * 1613's identical test for createdByUserId -- a table built by an OLDER
+ * version of generateCreateTableStatements (before this round added
+ * updatedByUserId to it) has no such column at all.
+ */
+test("updateRecord adds the updatedByUserId column itself to a pre-existing table built before this round", () => {
+  const db = openDatabase(":memory:");
+  const table = quoteIdentifier(tableNameFor("proj1", "Customer"));
+  db.exec(
+    `CREATE TABLE ${table} (id INTEGER PRIMARY KEY AUTOINCREMENT, createdAt TEXT NOT NULL, createdByUserId TEXT, "name" TEXT NOT NULL, "vip" INTEGER, "status" TEXT NOT NULL)`,
+  );
+  const created = insertRecord(db, "proj1", customer, { name: "Legacy", status: "New" }, "user-1");
+  const updated = updateRecord(db, "proj1", customer, created.id as number, { name: "Legacy B." }, "user-3");
+  assert.equal(updated.updatedByUserId, "user-3");
+  assert.equal(getRecord(db, "proj1", customer, created.id as number)?.updatedByUserId, "user-3");
+});
+
 test("listRecords returns newest first", () => {
   const db = setup();
   insertRecord(db, "proj1", customer, { name: "First", status: "New" });

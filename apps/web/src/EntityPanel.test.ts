@@ -2581,6 +2581,62 @@ test("EntityPanel's created-at cell carries a tooltip naming who created the rec
 });
 
 /**
+ * Round 1617: the direct sibling of round 1613's createdByUserId tooltip
+ * test above, for the new updatedByUserId column -- only surfaced when it
+ * genuinely differs from createdByUserId (a record nobody has edited
+ * since creation has the same actor in both, and repeating the same name
+ * twice in one tooltip for every untouched row would be noise, not a real
+ * second fact, per this round's own comment in the component).
+ */
+test("EntityPanel's created-at cell tooltip also names who last updated the record when that differs from who created it", async () => {
+  await withJsdom(async () => {
+    const store: EntityRecord[] = [
+      { id: 1, name: "Dana", status: "new", createdByUserId: "user-99", updatedByUserId: "user-50" },
+      { id: 2, name: "Yossi", status: "new", createdByUserId: "user-99", updatedByUserId: "user-99" },
+      { id: 3, name: "Rivka", status: "new", createdByUserId: "user-99", updatedByUserId: null },
+    ];
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = (async (input: string, init?: RequestInit) => {
+      const method = init?.method ?? "GET";
+      if (method === "GET" && input === "/api/projects/proj1/entities/Deal") {
+        return new Response(
+          JSON.stringify({
+            records: store,
+            collaboratorEmails: { "user-99": "dana@example.com", "user-50": "sara@example.com" },
+          }),
+          { status: 200, headers: { "content-type": "application/json" } },
+        );
+      }
+      throw new Error(`unexpected request ${method} ${input}`);
+    }) as typeof fetch;
+    try {
+      renderEntityPanel();
+      await waitForCondition(() => document.querySelectorAll("table tbody tr").length === 3);
+
+      const cells = Array.from(document.querySelectorAll("table tbody td.created-at-cell"));
+      assert.equal(cells.length, 3);
+      assert.match(
+        cells[0].getAttribute("title") ?? "",
+        /sara@example\.com/,
+        "a record last updated by someone other than its creator must show the updater's email too",
+      );
+      assert.doesNotMatch(
+        cells[1].getAttribute("title") ?? "",
+        /sara@example\.com|dana@example\.com.*dana@example\.com/,
+        "a record whose updatedByUserId equals its own createdByUserId must not repeat the same name as a second fact",
+      );
+      assert.match(cells[2].getAttribute("title") ?? "", /dana@example\.com/, "a record with no known updater must still show its creator");
+      assert.ok(
+        !(cells[2].getAttribute("title") ?? "").includes("undefined"),
+        "a null updatedByUserId must not leak into the tooltip text",
+      );
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+});
+
+/**
  * Round 1518: startEdit was the one entry point into the record form that
  * never scrolled it into view, unlike its three siblings
  * (startCreateNew/startCreateForDate/startCreateForColumn), even though

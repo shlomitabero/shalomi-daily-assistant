@@ -110,6 +110,21 @@ test("FieldSchema rejects a field literally named 'createdByUserId', case-insens
   }
 });
 
+/**
+ * Round 1617: the direct sibling of round 1614's createdByUserId test
+ * above, added in the SAME round that introduced updatedByUserId (the
+ * record-update audit trail) -- not as a follow-up round, the mistake
+ * round 1613 made with createdByUserId and that round 1614 then had to
+ * fix after the fact.
+ */
+test("FieldSchema rejects a field literally named 'updatedByUserId', case-insensitively, since every table already has a built-in updatedByUserId column", () => {
+  for (const name of ["updatedByUserId", "updatedbyuserid", "UPDATEDBYUSERID"]) {
+    const result = FieldSchema.safeParse({ name, type: "text", required: false });
+    assert.ok(!result.success, `expected "${name}" to be rejected`);
+    assert.match(result.error.issues[0].message, /collides with a built-in column/);
+  }
+});
+
 test("FieldSchema accepts an ordinary field name that merely contains 'id' as a substring, not the whole reserved name", () => {
   const result = FieldSchema.safeParse({ name: "vendorId", type: "text", required: false });
   assert.ok(result.success);

@@ -737,11 +737,11 @@ export function deriveEntityName(label: string, existingNames: string[]): string
  * Falls back to "field" for a label with no ASCII letters/digits at all,
  * the same as deriveEntityName falls back to "Entity". De-duplicates
  * case-insensitively against both the entity's existing field names and
- * the three column names every table already carries as a built-in (id,
- * createdAt, createdByUserId -- see FieldSchema's own RESERVED_FIELD_NAMES
- * check in @forge/shared, round 1613/1614), appending the first free
- * numeric suffix, so this can never hand FieldSchema's own refine() a name
- * it would reject.
+ * the built-in column names every table already carries (id, createdAt,
+ * createdByUserId, updatedByUserId -- see FieldSchema's own
+ * RESERVED_FIELD_NAMES check in @forge/shared, round 1613/1614/1617),
+ * appending the first free numeric suffix, so this can never hand
+ * FieldSchema's own refine() a name it would reject.
  */
 export function deriveFieldName(label: string, existingNames: string[]): string {
   const words = label
@@ -762,7 +762,7 @@ export function deriveFieldName(label: string, existingNames: string[]): string 
   // exported codegen app, which uses entity.name with no such prefix --
   // round 555.)
   const base = /^[0-9]/.test(joined) ? `field${joined[0].toUpperCase()}${joined.slice(1)}` : joined;
-  const taken = new Set(["id", "createdat", "createdbyuserid", ...existingNames.map((n) => n.toLowerCase())]);
+  const taken = new Set(["id", "createdat", "createdbyuserid", "updatedbyuserid", ...existingNames.map((n) => n.toLowerCase())]);
   if (!taken.has(base.toLowerCase())) return base;
   let suffix = 2;
   while (taken.has(`${base}${suffix}`.toLowerCase())) suffix += 1;
@@ -5297,7 +5297,7 @@ export function createProjectsRouter(
           // see its own comment for why this is reachable through the real UI.
           let record: ReturnType<typeof updateRecord>;
           try {
-            record = updateRecord(db, project.id, entity, recordId, req.body ?? {});
+            record = updateRecord(db, project.id, entity, recordId, req.body ?? {}, req.userId!);
           } catch (err) {
             if (err instanceof Error && err.message === "FOREIGN KEY constraint failed") {
               throw new HttpError(

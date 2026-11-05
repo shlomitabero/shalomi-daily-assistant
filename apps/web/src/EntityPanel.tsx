@@ -4955,11 +4955,24 @@ export function EntityPanel({
         })}
         <td
           className="muted small created-at-cell"
-          title={
-            record.createdByUserId && collaboratorEmails[record.createdByUserId as string]
-              ? t("entity.table.createdBy", { email: collaboratorEmails[record.createdByUserId as string] })
-              : undefined
-          }
+          title={(() => {
+            const parts: string[] = [];
+            if (record.createdByUserId && collaboratorEmails[record.createdByUserId as string]) {
+              parts.push(t("entity.table.createdBy", { email: collaboratorEmails[record.createdByUserId as string] }));
+            }
+            // Round 1617: only shown when it genuinely differs from createdByUserId
+            // -- a record nobody has edited since creation has the same user in
+            // both columns, and repeating "created by X / last updated by X" for
+            // every untouched row would be noise, not a real second fact.
+            if (
+              record.updatedByUserId &&
+              record.updatedByUserId !== record.createdByUserId &&
+              collaboratorEmails[record.updatedByUserId as string]
+            ) {
+              parts.push(t("entity.table.updatedBy", { email: collaboratorEmails[record.updatedByUserId as string] }));
+            }
+            return parts.length > 0 ? parts.join("\n") : undefined;
+          })()}
         >
           {formatRecordCreatedAt(record.createdAt as string | undefined, lang)}
         </td>

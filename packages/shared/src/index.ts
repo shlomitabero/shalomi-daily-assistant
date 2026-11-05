@@ -12,7 +12,7 @@ export const FIELD_TYPES = [
 ] as const;
 
 /**
- * Every generated table hardcodes these three columns as built-ins
+ * Every generated table hardcodes these built-in columns
  * (packages/db/src/migrate.ts for the live preview, apps/api/src/codegen.ts
  * for the exported standalone app) -- a field sharing any of these names,
  * in any casing, produces a duplicate-column `CREATE TABLE`, which throws
@@ -29,8 +29,14 @@ export const FIELD_TYPES = [
  * field literally named "Created By User Id" sailed through this refine
  * untouched and only hit the real "duplicate column name" SQLite error at
  * build time.
+ *
+ * Round 1617: "updatedbyuserid" closes the identical gap for
+ * updatedByUserId, the record-*update* audit trail added in this same
+ * round -- added here immediately alongside it (not as a follow-up round,
+ * the mistake round 1613 made with createdByUserId) specifically because
+ * round 1614 already demonstrated what happens when it isn't.
  */
-const RESERVED_FIELD_NAMES = new Set(["id", "createdat", "createdbyuserid"]);
+const RESERVED_FIELD_NAMES = new Set(["id", "createdat", "createdbyuserid", "updatedbyuserid"]);
 
 /**
  * Mirrors packages/db/src/identifiers.ts's own SAFE_IDENTIFIER exactly
@@ -188,7 +194,7 @@ export const FieldSchema = z
     message: "relation fields must declare relationTo",
   })
   .refine((f) => !RESERVED_FIELD_NAMES.has(f.name.toLowerCase()), (f) => ({
-    message: `Field name "${f.name}" collides with a built-in column every table already has (id/createdAt/createdByUserId) -- choose a different name`,
+    message: `Field name "${f.name}" collides with a built-in column every table already has (id/createdAt/createdByUserId/updatedByUserId) -- choose a different name`,
   }))
   .refine((f) => SAFE_FIELD_NAME.test(f.name), (f) => ({
     message: `Field name "${f.name}" must be a plain ASCII identifier (letters, digits, underscore, starting with a letter) -- use "label" for a human-facing display name instead`,
