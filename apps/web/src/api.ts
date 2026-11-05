@@ -1209,7 +1209,10 @@ export function deleteCheckpoint(projectId: string, checkpointId: string): Promi
   });
 }
 
-export function listRecords(projectId: string, entityName: string): Promise<{ records: EntityRecord[] }> {
+export function listRecords(
+  projectId: string,
+  entityName: string,
+): Promise<{ records: EntityRecord[]; collaboratorEmails: Record<string, string> }> {
   return request(`/projects/${projectId}/entities/${encodeURIComponent(entityName)}`);
 }
 

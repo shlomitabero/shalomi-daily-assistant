@@ -3,6 +3,7 @@ import { test } from "node:test";
 import type { Entity, ProductSpec } from "@forge/shared";
 import { openDatabase } from "./connection.js";
 import { applyMigrations, diffAndMigrate } from "./migrate.js";
+import { quoteIdentifier, tableNameFor } from "./identifiers.js";
 import {
   insertRecord,
   listRecords,
@@ -46,6 +47,41 @@ test("insertRecord then getRecord round-trips data including boolean coercion", 
   assert.equal(created.vip, true);
   const fetched = getRecord(db, "proj1", customer, created.id as number);
   assert.deepEqual(fetched, created);
+});
+
+/**
+ * Round 1613: closes docs/security.md's own named gap ("no audit log for
+ * ordinary record CRUD") for record creation -- mirrors round 1567's
+ * checkpoints.createdByUserId almost exactly, including staying nullable
+ * for a record inserted with no actor known (e.g. seed data, CSV import,
+ * which this round deliberately leaves unthreaded -- see roadmap.md).
+ */
+test("insertRecord stores the given createdByUserId, and leaves it null when none is given", () => {
+  const db = setup();
+  const withActor = insertRecord(db, "proj1", customer, { name: "Alice", status: "New" }, "user-1");
+  assert.equal(withActor.createdByUserId, "user-1");
+  const withoutActor = insertRecord(db, "proj1", customer, { name: "Bob", status: "New" });
+  assert.equal(withoutActor.createdByUserId, null);
+  // Round-trips through getRecord/listRecords too, not just the insert's own return value.
+  assert.equal(getRecord(db, "proj1", customer, withActor.id as number)?.createdByUserId, "user-1");
+  assert.equal(listRecords(db, "proj1", customer).find((r) => r.id === withActor.id)?.createdByUserId, "user-1");
+});
+
+/**
+ * Regression test for the self-healing ALTER TABLE: a table built by an
+ * OLDER version of generateCreateTableStatements (before this round added
+ * createdByUserId to it) has no such column at all -- simulated here by
+ * dropping down to raw SQL to build the table the old way, bypassing
+ * applyMigrations entirely. insertRecord must still succeed and actually
+ * persist the actor, not silently drop it or crash on "no such column".
+ */
+test("insertRecord adds the createdByUserId column itself to a pre-existing table built before this round", () => {
+  const db = openDatabase(":memory:");
+  const table = quoteIdentifier(tableNameFor("proj1", "Customer"));
+  db.exec(`CREATE TABLE ${table} (id INTEGER PRIMARY KEY AUTOINCREMENT, createdAt TEXT NOT NULL, "name" TEXT NOT NULL, "vip" INTEGER, "status" TEXT NOT NULL)`);
+  const created = insertRecord(db, "proj1", customer, { name: "Legacy", status: "New" }, "user-2");
+  assert.equal(created.createdByUserId, "user-2");
+  assert.equal(getRecord(db, "proj1", customer, created.id as number)?.createdByUserId, "user-2");
 });
 
 test("listRecords returns newest first", () => {

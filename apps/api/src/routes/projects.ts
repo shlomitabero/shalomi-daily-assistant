@@ -3724,7 +3724,18 @@ export function createProjectsRouter(
         throw new HttpError(409, "Project has not been built yet — call POST /build first", "BUILD_REQUIRED");
       }
       const entity = findEntity(project, req.params.entityName);
-      res.json({ records: listRecords(db, project.id, entity) });
+      // Round 1613: resolves each record's raw createdByUserId into a
+      // display email here, at the route layer -- the exact same
+      // owner+collaborators lookup GET .../checkpoints already does for
+      // its own createdByUserId, for the identical reason (the db layer
+      // only ever stores a bare userId, never a fabricated/cached email).
+      const collaboratorEmails: Record<string, string> = {};
+      const owner = getOwnerInfo(db, project);
+      if (owner) collaboratorEmails[owner.userId] = owner.email;
+      for (const collaborator of listCollaborators(db, project.id)) {
+        collaboratorEmails[collaborator.userId] = collaborator.email;
+      }
+      res.json({ records: listRecords(db, project.id, entity), collaboratorEmails });
     }),
   );
 
@@ -3774,7 +3785,7 @@ export function createProjectsRouter(
            */
           let record: ReturnType<typeof insertRecord>;
           try {
-            record = insertRecord(db, project.id, entity, req.body ?? {});
+            record = insertRecord(db, project.id, entity, req.body ?? {}, req.userId!);
           } catch (err) {
             if (err instanceof Error && err.message === "FOREIGN KEY constraint failed") {
               throw new HttpError(

@@ -2520,6 +2520,46 @@ test("EntityPanel's table cell renders a real clickable link for a URL and an em
 });
 
 /**
+ * Round 1613: the "Created" column's cell now carries a tooltip naming who
+ * created the record, resolved from the record's own createdByUserId
+ * (GET .../entities/:entityName now returns alongside createdAt) via the
+ * same owner+collaborators collaboratorEmails map GET .../checkpoints
+ * already sends HistoryPanel.tsx for the identical reason. A record with
+ * no known creator (createdByUserId null, e.g. one that predates this
+ * round) must not get a fabricated tooltip at all.
+ */
+test("EntityPanel's created-at cell carries a tooltip naming who created the record, resolved from collaboratorEmails, and has none when the creator is unknown", async () => {
+  await withJsdom(async () => {
+    const store: EntityRecord[] = [
+      { id: 1, name: "Dana", status: "new", createdByUserId: "user-99" },
+      { id: 2, name: "Yossi", status: "new", createdByUserId: null },
+    ];
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = (async (input: string, init?: RequestInit) => {
+      const method = init?.method ?? "GET";
+      if (method === "GET" && input === "/api/projects/proj1/entities/Deal") {
+        return new Response(JSON.stringify({ records: store, collaboratorEmails: { "user-99": "dana@example.com" } }), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        });
+      }
+      throw new Error(`unexpected request ${method} ${input}`);
+    }) as typeof fetch;
+    try {
+      renderEntityPanel();
+      await waitForCondition(() => document.querySelectorAll("table tbody tr").length === 2);
+
+      const cells = Array.from(document.querySelectorAll("table tbody td.created-at-cell"));
+      assert.equal(cells.length, 2);
+      assert.match(cells[0].getAttribute("title") ?? "", /dana@example\.com/, "the record with a known creator must show their email in the tooltip");
+      assert.equal(cells[1].getAttribute("title"), null, "a record with no known creator (createdByUserId null) must not get a fabricated tooltip");
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+});
+
+/**
  * Round 1518: startEdit was the one entry point into the record form that
  * never scrolled it into view, unlike its three siblings
  * (startCreateNew/startCreateForDate/startCreateForColumn), even though

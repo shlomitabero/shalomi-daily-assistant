@@ -165,6 +165,15 @@ export function generateCreateTableStatements(projectId: string, spec: ProductSp
     const columns = [
       "id INTEGER PRIMARY KEY AUTOINCREMENT",
       "createdAt TEXT NOT NULL",
+      // Round 1613: nullable (no NOT NULL) for the same reason checkpoints.
+      // createdByUserId (round 1567) is -- a record created before this
+      // column existed has no real actor to backfill it from, so it stays
+      // honestly NULL rather than a fabricated owner id. See
+      // repository.ts's insertRecord/ensureCreatedByUserIdColumn for how an
+      // ALREADY-EXISTING table (built before this round) gets this same
+      // column added lazily, since this CREATE TABLE statement only ever
+      // runs with IF NOT EXISTS and is a no-op for it.
+      "createdByUserId TEXT",
     ];
     for (const field of entity.fields) {
       const columnName = assertSafeIdentifier(field.name, "column");

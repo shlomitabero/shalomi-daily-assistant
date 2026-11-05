@@ -3256,6 +3256,75 @@ test("PATCH .../entities/:entityName/:recordId retried with the same idempotency
 });
 
 /**
+ * Round 1613: closes docs/security.md's own named gap ("no audit log for
+ * ordinary record CRUD") for record creation specifically -- mirrors
+ * round 1567's checkpoints.createdByUserId. POST .../entities/:entityName
+ * now attaches the authenticated caller's own userId, and GET .../entities/
+ * :entityName resolves it to a real email via the same owner+collaborators
+ * map GET .../checkpoints already sends for the identical reason.
+ */
+test("POST .../entities/:entityName attaches the authenticated caller's own userId as createdByUserId, and GET .../entities/:entityName resolves it to a real email for both the owner and a collaborator", async () => {
+  await withServer(async (baseUrl, db) => {
+    const ownerEmail = `owner-record-audit-${randomUUID()}@example.com`;
+    const ownerToken = await signup(baseUrl, ownerEmail);
+    const ownerUser = findUserByEmail(db, ownerEmail)!;
+
+    const collabEmail = `collab-record-audit-${randomUUID()}@example.com`;
+    const collabToken = await signup(baseUrl, collabEmail);
+    const collabUser = findUserByEmail(db, collabEmail)!;
+
+    const spec: ProductSpec = {
+      summary: "test",
+      personas: [],
+      roles: ["Admin"],
+      entities: [{ name: "Customer", fields: [{ name: "name", type: "text", required: true }] }],
+      screens: [],
+      assumptions: [],
+      openQuestions: [],
+    };
+    const projectId = randomUUID();
+    insertProject(db, { id: projectId, ownerId: ownerUser.id, name: "CRM", description: "test", spec });
+    diffAndMigrate(db, projectId, undefined, spec);
+    markProjectBuilt(db, projectId);
+
+    await fetch(`${baseUrl}/api/projects/${projectId}/collaborators`, {
+      method: "POST",
+      headers: authHeaders(ownerToken),
+      body: JSON.stringify({ email: collabEmail }),
+    });
+
+    const ownerCreateRes = await fetch(`${baseUrl}/api/projects/${projectId}/entities/Customer`, {
+      method: "POST",
+      headers: authHeaders(ownerToken),
+      body: JSON.stringify({ name: "Dana Levi" }),
+    });
+    assert.equal(ownerCreateRes.status, 201);
+
+    const collabCreateRes = await fetch(`${baseUrl}/api/projects/${projectId}/entities/Customer`, {
+      method: "POST",
+      headers: authHeaders(collabToken),
+      body: JSON.stringify({ name: "Yossi Cohen" }),
+    });
+    assert.equal(collabCreateRes.status, 201);
+
+    const listRes = await fetch(`${baseUrl}/api/projects/${projectId}/entities/Customer`, { headers: authHeaders(ownerToken) });
+    assert.equal(listRes.status, 200);
+    const { records, collaboratorEmails } = (await listRes.json()) as {
+      records: { name: string; createdByUserId: string | null }[];
+      collaboratorEmails: Record<string, string>;
+    };
+
+    const ownerRecord = records.find((r) => r.name === "Dana Levi")!;
+    const collabRecord = records.find((r) => r.name === "Yossi Cohen")!;
+    assert.equal(ownerRecord.createdByUserId, ownerUser.id);
+    assert.equal(collabRecord.createdByUserId, collabUser.id);
+
+    assert.equal(collaboratorEmails[ownerUser.id], ownerEmail);
+    assert.equal(collaboratorEmails[collabUser.id], collabEmail);
+  });
+});
+
+/**
  * Round 595's Explore survey found that an automation rule's field_equals
  * trigger accepted ANY free-text fieldValue with no validation against the
  * chosen field's actual possible values. matchesTrigger (automations.ts)

@@ -1717,6 +1717,12 @@ export function EntityPanel({
 }) {
   const { t, lang, dir } = useTranslation();
   const [records, setRecords] = useState<EntityRecord[]>([]);
+  // Round 1613: resolves a record's raw createdByUserId (now returned
+  // alongside createdAt) into a display email, for the created-at cell's
+  // own tooltip just below -- the exact same owner+collaborators map GET
+  // .../checkpoints already sends HistoryPanel.tsx for the identical
+  // reason (the db layer only ever stores a bare userId).
+  const [collaboratorEmails, setCollaboratorEmails] = useState<Record<string, string>>({});
   const [pendingDelete, setPendingDelete] = useState<PendingDelete | null>(null);
   const pendingDeleteRef = useRef<PendingDelete | null>(null);
   const [form, setForm] = useState<Record<string, unknown>>(() => emptyForm(entity));
@@ -2080,11 +2086,12 @@ export function EntityPanel({
       setLoadError(null);
     }
     try {
-      const { records } = await listRecords(projectId, entity.name);
+      const { records, collaboratorEmails: emails } = await listRecords(projectId, entity.name);
       if (refreshRequestId.current !== requestId) return;
       const pendingIds = new Set(pendingDeleteRef.current?.entries.map((e) => e.id) ?? []);
       const visible = pendingIds.size === 0 ? records : records.filter((r) => !pendingIds.has(r.id as number));
       setRecords(visible);
+      setCollaboratorEmails(emails);
       // A self-referencing relation field (e.g. Category.parentCategoryId ->
       // Category, Employee.managerId -> Employee -- schema-legal, see
       // FieldSchema's own relation refine) makes this entity its own
@@ -4946,7 +4953,16 @@ export function EntityPanel({
             </td>
           );
         })}
-        <td className="muted small created-at-cell">{formatRecordCreatedAt(record.createdAt as string | undefined, lang)}</td>
+        <td
+          className="muted small created-at-cell"
+          title={
+            record.createdByUserId && collaboratorEmails[record.createdByUserId as string]
+              ? t("entity.table.createdBy", { email: collaboratorEmails[record.createdByUserId as string] })
+              : undefined
+          }
+        >
+          {formatRecordCreatedAt(record.createdAt as string | undefined, lang)}
+        </td>
         <td className="row-actions">
           {!readOnly && (
             <button type="button" onClick={() => startEdit(record)}>

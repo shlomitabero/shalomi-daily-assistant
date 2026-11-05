@@ -284,7 +284,11 @@ function getRowValue(row: Record<string, unknown>, fieldName: string): unknown {
 }
 
 function rowToRecord(entity: Entity, row: Record<string, unknown>): EntityRecord {
-  const record: EntityRecord = { id: row.id as number, createdAt: row.createdAt as string };
+  const record: EntityRecord = {
+    id: row.id as number,
+    createdAt: row.createdAt as string,
+    createdByUserId: (row.createdByUserId as string | null) ?? null,
+  };
   for (const field of entity.fields) {
     const value = getRowValue(row, field.name);
     // Round 1134: every other field type below passes a real stored NULL
@@ -315,22 +319,44 @@ function fieldColumns(entity: Entity): string[] {
   return entity.fields.map((f) => assertSafeIdentifier(f.name, "column"));
 }
 
+/**
+ * Round 1613: generateCreateTableStatements (migrate.ts) now declares
+ * createdByUserId on every FRESH entity table, but that CREATE TABLE
+ * statement only ever runs as `IF NOT EXISTS` -- a no-op for a table a
+ * project already built before this round shipped. Checked lazily here
+ * (not once at startup, since there's no single fixed table to check the
+ * way checkpoints.ts's ensureCheckpointsTable does -- a table exists per
+ * project per entity) so every pre-existing entity table self-heals the
+ * moment its own project next creates a record, with no migration step
+ * for an already-"built" project to ever miss.
+ */
+function ensureCreatedByUserIdColumn(db: ForgeDatabase, table: string): void {
+  const hasColumn = (db.prepare(`PRAGMA table_info(${quoteIdentifier(table)})`).all() as { name: string }[]).some(
+    (c) => c.name === "createdByUserId",
+  );
+  if (!hasColumn) {
+    db.exec(`ALTER TABLE ${quoteIdentifier(table)} ADD COLUMN createdByUserId TEXT`);
+  }
+}
+
 export function insertRecord(
   db: ForgeDatabase,
   projectId: string,
   entity: Entity,
   data: Record<string, unknown>,
+  createdByUserId?: string | null,
 ): EntityRecord {
   const table = tableNameFor(projectId, entity.name);
+  ensureCreatedByUserIdColumn(db, table);
   const columns = fieldColumns(entity);
   const values = entity.fields.map((field) => coerceValue(field, data[field.name], projectId, entity.name));
   const createdAt = new Date().toISOString();
 
-  const placeholders = ["?", ...columns.map(() => "?")].join(", ");
+  const placeholders = ["?", "?", ...columns.map(() => "?")].join(", ");
   const stmt = db.prepare(
-    `INSERT INTO ${quoteIdentifier(table)} (createdAt, ${columns.map(quoteIdentifier).join(", ")}) VALUES (${placeholders})`,
+    `INSERT INTO ${quoteIdentifier(table)} (createdAt, createdByUserId, ${columns.map(quoteIdentifier).join(", ")}) VALUES (${placeholders})`,
   );
-  const result = stmt.run(createdAt, ...values);
+  const result = stmt.run(createdAt, createdByUserId ?? null, ...values);
   const id = Number(result.lastInsertRowid);
   // Round 1231: mirrors updateRecord's own round-1037/1176 self-reference
   // guard, which this function never got. The new row's id is only known
