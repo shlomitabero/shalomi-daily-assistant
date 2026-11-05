@@ -33,6 +33,7 @@ export function CollaboratorsPanel({
   projectId,
   projectName,
   isOwner,
+  readOnly,
   currentUserId,
   onClose,
   onLeft,
@@ -41,6 +42,17 @@ export function CollaboratorsPanel({
   projectId: string;
   projectName: string;
   isOwner: boolean;
+  /**
+   * Round 1620: mirrors AutomationsPanel's own identical prop (App.tsx
+   * already computes `readOnly={myRole === "viewer"}` for that sibling
+   * panel) -- true only for a viewer collaborator, false for an editor or
+   * the owner. Gates the inbound-webhook "Check last received" diagnostic
+   * below, which GET .../inbound-webhook-token itself (routes/projects.ts)
+   * already grants to any editor via requireProjectWriteAccess, not just
+   * the owner -- this prop lets the UI stop being stricter than the route
+   * it calls.
+   */
+  readOnly: boolean;
   /** The signed-in user's own id -- lets this panel tell "my own row" apart from every other collaborator's, so only my own row ever gets a "Leave" button. */
   currentUserId: string | undefined;
   onClose: () => void;
@@ -774,22 +786,40 @@ export function CollaboratorsPanel({
           </div>
         )}
 
-        {isOwner && (
+        {/*
+          Round 1620: this whole section used to be isOwner-only, but
+          GET .../inbound-webhook-token (routes/projects.ts) itself uses
+          requireProjectWriteAccess, not requireProjectOwner -- an editor
+          who wired this token into their own Stripe/Typeform integration
+          (via EntityPanel.tsx's own handleCopyWebhookUrl, also not
+          owner-gated) had no way anywhere in this app to check whether
+          deliveries are actually arriving. The regenerate action stays
+          strictly owner-only (rotating it breaks every other
+          collaborator's already-configured integration, see
+          handleRegenerateInboundWebhookToken's own doc comment below) --
+          only the read-only "Check last received" diagnostic widens to
+          match the boundary the GET route it calls already uses.
+        */}
+        {!readOnly && (
           <div className="collab-webhook-in-section">
             <h3>{t("collab.webhookIn.heading")}</h3>
             <p className="muted small">{t("collab.webhookIn.description")}</p>
-            <button
-              type="button"
-              className="secondary"
-              onClick={handleRegenerateInboundWebhookToken}
-              disabled={regeneratingWebhookToken || checkingLastInboundWebhook}
-            >
-              {regeneratingWebhookToken ? t("collab.webhookIn.regenerate.busy") : t("collab.webhookIn.regenerate")}
-            </button>
-            {regenerateWebhookTokenInfo && (
-              <p className="muted small" role="status">
-                {regenerateWebhookTokenInfo}
-              </p>
+            {isOwner && (
+              <>
+                <button
+                  type="button"
+                  className="secondary"
+                  onClick={handleRegenerateInboundWebhookToken}
+                  disabled={regeneratingWebhookToken || checkingLastInboundWebhook}
+                >
+                  {regeneratingWebhookToken ? t("collab.webhookIn.regenerate.busy") : t("collab.webhookIn.regenerate")}
+                </button>
+                {regenerateWebhookTokenInfo && (
+                  <p className="muted small" role="status">
+                    {regenerateWebhookTokenInfo}
+                  </p>
+                )}
+              </>
             )}
             {/*
               Round 1456: a second, independent action in this same section
@@ -798,7 +828,10 @@ export function CollaboratorsPanel({
               button and status line come after the regenerate button/status
               above rather than before them, leaving every existing
               `.collab-webhook-in-section button` lookup (this file's own
-              regenerate tests) still finding the regenerate button first.
+              regenerate tests) still finding the regenerate button first
+              when both are present (owner). Round 1620: now the only
+              control in this section for an editor, since the regenerate
+              button just above is still isOwner-only.
             */}
             <button
               type="button"

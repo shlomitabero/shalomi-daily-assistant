@@ -3492,6 +3492,7 @@ function AppContent() {
               projectId={project.id}
               projectName={project.name}
               isOwner={user?.id === project.ownerId}
+              readOnly={myRole === "viewer"}
               currentUserId={user?.id}
               onClose={() => setShowCollaborators(false)}
               onLeft={() => {

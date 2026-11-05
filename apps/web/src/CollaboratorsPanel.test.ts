@@ -64,6 +64,7 @@ function renderPanel(
   onLeft: () => void = () => {},
   projectName = "Test Project",
   onOwnerTransferred: (project: Project, selfSharedAt: string | undefined) => void = () => {},
+  readOnly = false,
 ) {
   return render(
     React.createElement(
@@ -76,6 +77,7 @@ function renderPanel(
           projectId: "proj1",
           projectName,
           isOwner,
+          readOnly,
           currentUserId,
           onClose: () => {},
           onLeft,
@@ -1402,8 +1404,16 @@ test("CollaboratorsPanel's calendar-feed regenerate button calls the real endpoi
  * test just above -- GET .../inbound-webhook-token/regenerate (which this
  * calls) is requireProjectOwner server-side too, so a plain collaborator
  * must never be shown a button that would just 404.
+ *
+ * Round 1620: narrowed from "the whole section only renders for the owner"
+ * to "only the regenerate button does" -- GET .../inbound-webhook-token
+ * itself (routes/projects.ts) uses requireProjectWriteAccess, not
+ * requireProjectOwner, so an editor collaborator (readOnly=false,
+ * isOwner=false) must still see the section and its "Check last received"
+ * diagnostic, matching the access that route already grants them; only a
+ * viewer (readOnly=true, checked in the next test) must see nothing here.
  */
-test("CollaboratorsPanel's inbound-webhook regenerate button only renders for the owner", async () => {
+test("CollaboratorsPanel's inbound-webhook regenerate button only renders for the owner, but the section itself (and its Check-last-received diagnostic) also renders for a plain editor collaborator", async () => {
   await withJsdom(async () => {
     const originalFetch = globalThis.fetch;
     globalThis.fetch = (async (input: string, init?: RequestInit) => {
@@ -1417,14 +1427,52 @@ test("CollaboratorsPanel's inbound-webhook regenerate button only renders for th
     try {
       renderPanel(true);
       await waitForCondition(() => document.querySelector(".collab-webhook-in-section") !== null);
+      const ownerButtons = Array.from(document.querySelectorAll(".collab-webhook-in-section button"));
+      assert.equal(ownerButtons.length, 2, "the owner must still see both the regenerate button and the Check-last-received button");
+      assert.match(ownerButtons[0].textContent ?? "", /invalidate/i, "the regenerate button must still come first for the owner");
       cleanup();
 
-      renderPanel(false);
+      renderPanel(false, undefined, undefined, undefined, undefined, false);
+      await waitForCondition(() => document.querySelector(".collab-webhook-in-section") !== null);
+      const editorButtons = Array.from(document.querySelectorAll(".collab-webhook-in-section button"));
+      assert.equal(editorButtons.length, 1, "an editor (not the owner) must see exactly the Check-last-received button, not the regenerate one");
+      assert.doesNotMatch(
+        editorButtons[0].textContent ?? "",
+        /invalidate/i,
+        "a plain collaborator (not the owner) must never see the regenerate affordance",
+      );
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+});
+
+/**
+ * Round 1620: the other half of the boundary just above -- a viewer
+ * (readOnly=true) has no write access at all server-side (GET
+ * .../inbound-webhook-token itself uses requireProjectWriteAccess), so the
+ * whole section -- including the Check-last-received diagnostic an editor
+ * now sees -- must stay hidden for them, exactly as it was for everyone
+ * before this round.
+ */
+test("CollaboratorsPanel's inbound-webhook section is hidden entirely for a read-only viewer", async () => {
+  await withJsdom(async () => {
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = (async (input: string, init?: RequestInit) => {
+      const method = init?.method ?? "GET";
+      if (method === "GET" && input === "/api/projects/proj1/collaborators") {
+        return new Response(JSON.stringify({ collaborators: [] }), { status: 200, headers: { "content-type": "application/json" } });
+      }
+      throw new Error(`unexpected request ${method} ${input}`);
+    }) as typeof fetch;
+
+    try {
+      renderPanel(false, undefined, undefined, undefined, undefined, true);
       await new Promise((resolve) => setTimeout(resolve, 0));
       assert.equal(
         document.querySelector(".collab-webhook-in-section"),
         null,
-        "a plain collaborator (not the owner) must never see the regenerate affordance at all",
+        "a read-only viewer must never see the inbound-webhook section at all, not even the Check-last-received diagnostic",
       );
     } finally {
       globalThis.fetch = originalFetch;
@@ -1855,6 +1903,7 @@ test("CollaboratorsPanel's invite form has Escape-to-clear for an in-progress dr
               projectId: "proj1",
               projectName: "Test Project",
               isOwner: true,
+              readOnly: false,
               currentUserId: undefined,
               onClose: () => {
                 closeCalls += 1;
