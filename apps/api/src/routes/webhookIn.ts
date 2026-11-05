@@ -463,11 +463,6 @@ export function createInboundWebhookRouter(db: ForgeDatabase, whatsapp: WhatsApp
       }
       const { project, entity } = target;
       const recordId = parseRecordId(req.params.recordId);
-      const before = getRecord(db, projectId, entity, recordId);
-      if (!before) {
-        res.status(404).json({ error: "Record not found", code: "WEBHOOK_IN_RECORD_NOT_FOUND" });
-        return;
-      }
       const idempotencyKey = req.header("X-Idempotency-Key") || undefined;
       const { status, body } = await withIdempotency(
         db,
@@ -475,6 +470,25 @@ export function createInboundWebhookRouter(db: ForgeDatabase, whatsapp: WhatsApp
         projectId,
         `POST /public/webhook-in/${projectId}/${entityName}/${recordId}`,
         async () => {
+          // Round 1609: moved inside this callback -- withIdempotency
+          // short-circuits with the first attempt's own cached response
+          // for a genuine replay (same key, status "done") WITHOUT ever
+          // calling this callback at all (see its own doc comment, and
+          // round 1310's PATCH /auth/password precedent for the same
+          // rule). A check placed outside, like this one used to be, runs
+          // against CURRENT database state on every call -- including a
+          // replay -- so if the referenced record is deleted between a
+          // successful first delivery and a sender's retry with the same
+          // key (ordinary cleanup, or a chained automation), the retry
+          // would 404 "Record not found" for a request that, per the
+          // cached idempotency record, already succeeded. Mirrors how
+          // routes/projects.ts's own PATCH .../:recordId route already
+          // does its own `before = getRecord(...)` lookup inside its
+          // withIdempotency callback for the identical reason.
+          const before = getRecord(db, projectId, entity, recordId);
+          if (!before) {
+            throw new HttpError(404, "Record not found", "WEBHOOK_IN_RECORD_NOT_FOUND");
+          }
           let record: ReturnType<typeof updateRecord>;
           try {
             record = updateRecord(

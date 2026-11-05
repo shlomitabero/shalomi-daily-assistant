@@ -21077,6 +21077,82 @@ test("POST /public/webhook-in/:projectId/:entityName/:recordId 404s for a nonexi
 });
 
 /**
+ * Round 1609: the update route's own `before = getRecord(...)` existence
+ * check used to run BEFORE withIdempotency ever saw the request, so it was
+ * evaluated against CURRENT database state on every call -- including an
+ * exact-key replay. withIdempotency short-circuits a replay with the first
+ * attempt's own cached response WITHOUT ever invoking the passed-in
+ * callback (see idempotency.ts's own doc comment), so any check placed
+ * outside that callback, as this one used to be, is NOT protected by that
+ * short-circuit. If the referenced record is deleted between a successful
+ * first delivery and a sender's retry with the identical
+ * X-Idempotency-Key (the exact scenario this whole mechanism exists to
+ * paper over -- see docs/wakeRetry-idempotency-design.md), the retry would
+ * 404 "Record not found" for a request that, per the cached idempotency
+ * record, already succeeded -- even though nothing about the retry itself
+ * failed. Fixed by moving the existence check inside the withIdempotency
+ * callback, mirroring routes/projects.ts's own PATCH .../:recordId route.
+ */
+test("POST /public/webhook-in/:projectId/:entityName/:recordId replays its cached success for an idempotency-key retry, even after the record it updated was deleted in between", async () => {
+  await withServer(async (baseUrl, db) => {
+    const email = `webhook-in-update-idem-${randomUUID()}@example.com`;
+    const authToken = await signup(baseUrl, email);
+    const user = findUserByEmail(db, email)!;
+    const spec: ProductSpec = {
+      summary: "test",
+      personas: [],
+      roles: ["Admin"],
+      entities: [{ name: "Order", fields: [{ name: "status", type: "text", required: true }] }],
+      screens: [],
+      assumptions: [],
+      openQuestions: [],
+    };
+    const projectId = randomUUID();
+    insertProject(db, { id: projectId, ownerId: user.id, name: "Shop", description: "test", spec });
+    diffAndMigrate(db, projectId, undefined, spec);
+    markProjectBuilt(db, projectId);
+
+    const { token: webhookToken } = (await (
+      await fetch(`${baseUrl}/api/projects/${projectId}/inbound-webhook-token`, { headers: authHeaders(authToken) })
+    ).json()) as { token: string };
+
+    const createRes = await fetch(`${baseUrl}/api/public/webhook-in/${projectId}/Order?token=${webhookToken}`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ status: "pending" }),
+    });
+    const { id: recordId } = (await createRes.json()) as { id: string };
+
+    const idempotencyKey = randomUUID();
+    const firstUpdateRes = await fetch(`${baseUrl}/api/public/webhook-in/${projectId}/Order/${recordId}?token=${webhookToken}`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "X-Idempotency-Key": idempotencyKey },
+      body: JSON.stringify({ status: "paid" }),
+    });
+    assert.equal(firstUpdateRes.status, 200, "sanity check: the first delivery must succeed normally");
+    const firstBody = await firstUpdateRes.json();
+
+    // Simulates the real-world gap this mechanism exists for: the ack for
+    // the update above was lost in transit, and before the sender's retry
+    // arrives, the record it updated is deleted through ordinary use of
+    // the app.
+    const deleteRes = await fetch(`${baseUrl}/api/projects/${projectId}/entities/Order/${recordId}`, {
+      method: "DELETE",
+      headers: authHeaders(authToken),
+    });
+    assert.equal(deleteRes.status, 204, "sanity check: the record must have actually been deleted");
+
+    const retryRes = await fetch(`${baseUrl}/api/public/webhook-in/${projectId}/Order/${recordId}?token=${webhookToken}`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "X-Idempotency-Key": idempotencyKey },
+      body: JSON.stringify({ status: "paid" }),
+    });
+    assert.equal(retryRes.status, 200, "a retry with the same idempotency key must replay the cached success, not 404 just because the record is now gone");
+    assert.deepEqual(await retryRes.json(), firstBody, "the retry must return the exact same cached response as the first delivery");
+  });
+});
+
+/**
  * Round 1470: the new "inbound_webhook" automation trigger -- before this
  * round, the ONLY way to react to a record created via the public
  * inbound-webhook route was "record_created", which fires identically for
