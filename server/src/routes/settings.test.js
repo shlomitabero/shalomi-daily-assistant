@@ -88,6 +88,15 @@ test('patchSettings rejects a negative maxLoss', () => {
   assert.equal(res.statusCode, 400);
 });
 
+test('patchSettings rejects a non-numeric maxLoss instead of storing it', () => {
+  // Mirrors the budget type-check above - typeof patch.maxLoss !== 'number'
+  // was never actually exercised for maxLoss, only for budget.
+  __resetForTests();
+  const res = makeRes();
+  patchSettings({ body: { maxLoss: 'unlimited' } }, res);
+  assert.equal(res.statusCode, 400);
+});
+
 test('patchSettings ignores fields outside the allowed list, e.g. OWNER_PASSWORD, instead of storing them', () => {
   // The hard rule that an owner-only field can never be set through this
   // endpoint depends entirely on ALLOWED_FIELDS staying an allow-list.
