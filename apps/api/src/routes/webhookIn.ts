@@ -190,6 +190,16 @@ const WEBHOOK_BOOLEAN_TRUE_VALUES = ["true", "1", "yes", "כן"];
 const WEBHOOK_BOOLEAN_FALSE_VALUES = ["false", "0", "no", "לא"];
 const WEBHOOK_DATE_PREFIX = /^\d{4}-\d{2}-\d{2}/;
 const WEBHOOK_NUMBER_FORMATTING = /[,$€£₪\s]/g;
+// Round 1627: accounting-style negatives wrap the whole number in
+// parentheses instead of a leading "-" (e.g. "($1,234.56)" for -1234.56) --
+// the shape QuickBooks/Xero/many payment-provider exports use for a refund
+// or chargeback line. WEBHOOK_NUMBER_FORMATTING already strips the currency
+// symbol/comma/whitespace inside, but the parens themselves aren't in that
+// character class, so `Number("(1234.56)")` is still NaN and the whole
+// record gets hard-rejected -- the same "a real value was sent, just not in
+// the exact shape this route expected" gap the currency/thousands-separator
+// leniency above (round 1584-era) already closed for the positive case.
+const WEBHOOK_PARENTHESIZED_NEGATIVE = /^\((.*)\)$/;
 
 function normalizeBodyValues(db: ForgeDatabase, projectId: string, allEntities: Entity[], entity: Entity, body: Record<string, unknown>): Record<string, unknown> {
   const normalized: Record<string, unknown> = { ...body };
@@ -230,8 +240,10 @@ function normalizeBodyValues(db: ForgeDatabase, projectId: string, allEntities: 
     } else if (field.type === "number") {
       normalized[field.name] = value;
       if (!Number.isFinite(Number(value))) {
-        const cleaned = value.replace(WEBHOOK_NUMBER_FORMATTING, "");
-        if (cleaned !== "" && Number.isFinite(Number(cleaned))) normalized[field.name] = cleaned;
+        const parenMatch = WEBHOOK_PARENTHESIZED_NEGATIVE.exec(value);
+        const unwrapped = parenMatch ? `-${parenMatch[1]}` : value;
+        const cleaned = unwrapped.replace(WEBHOOK_NUMBER_FORMATTING, "");
+        if (cleaned !== "" && cleaned !== "-" && Number.isFinite(Number(cleaned))) normalized[field.name] = cleaned;
       }
     } else if (field.type === "enum" && field.enumValues) {
       normalized[field.name] = value;

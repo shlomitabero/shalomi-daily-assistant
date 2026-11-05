@@ -21869,6 +21869,84 @@ test("POST /public/webhook-in/:projectId/:entityName still rejects a genuinely i
 });
 
 /**
+ * Round 1627: extends the currency/thousands-separator leniency above to
+ * accounting-style parenthesized negatives (e.g. "($1,234.56)" for
+ * -1234.56) -- the shape QuickBooks/Xero/many payment-provider exports use
+ * for a refund or chargeback line, instead of a leading "-". Before this
+ * fix, WEBHOOK_NUMBER_FORMATTING stripped the currency symbol/comma inside
+ * the parens but left the parens themselves, so `Number("(1234.56)")` was
+ * still NaN and the whole record was hard-rejected as an invalid number.
+ */
+test("POST /public/webhook-in/:projectId/:entityName accepts accounting-style parenthesized negative numbers for a number field", async () => {
+  await withServer(async (baseUrl, db) => {
+    const email = `webhook-in-number-paren-negative-${randomUUID()}@example.com`;
+    const authToken = await signup(baseUrl, email);
+    const user = findUserByEmail(db, email)!;
+    const spec: ProductSpec = {
+      summary: "test",
+      personas: [],
+      roles: ["Admin"],
+      entities: [{ name: "Lead", fields: [{ name: "name", type: "text", required: true }, { name: "amount", type: "number", required: false }] }],
+      screens: [],
+      assumptions: [],
+      openQuestions: [],
+    };
+    const projectId = randomUUID();
+    insertProject(db, { id: projectId, ownerId: user.id, name: "CRM", description: "test", spec });
+    diffAndMigrate(db, projectId, undefined, spec);
+    markProjectBuilt(db, projectId);
+
+    const tokenRes = await fetch(`${baseUrl}/api/projects/${projectId}/inbound-webhook-token`, { headers: authHeaders(authToken) });
+    const { token: webhookToken } = (await tokenRes.json()) as { token: string };
+
+    const webhookRes = await fetch(`${baseUrl}/api/public/webhook-in/${projectId}/Lead?token=${webhookToken}`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ name: "Dana", amount: "($1,234.56)" }),
+    });
+    assert.equal(webhookRes.status, 201, "an accounting-style parenthesized negative, the shape a real payment integrator plausibly sends for a refund/chargeback, must not be rejected as an invalid number");
+    const { id: recordId } = (await webhookRes.json()) as { id: string };
+
+    const listRes = await fetch(`${baseUrl}/api/projects/${projectId}/entities/Lead`, { headers: authHeaders(authToken) });
+    const { records } = (await listRes.json()) as { records: { id: string; name: string; amount: number }[] };
+    const created = records.find((r) => r.id === recordId);
+    assert.ok(created, "expected the record the route reported creating to actually exist");
+    assert.equal(created!.amount, -1234.56, "the stored value must be the negated cleaned numeric amount, not the raw string or a positive number");
+  });
+});
+
+test("POST /public/webhook-in/:projectId/:entityName still rejects a bare pair of parentheses with no digits inside for a number field", async () => {
+  await withServer(async (baseUrl, db) => {
+    const email = `webhook-in-number-paren-empty-${randomUUID()}@example.com`;
+    const authToken = await signup(baseUrl, email);
+    const user = findUserByEmail(db, email)!;
+    const spec: ProductSpec = {
+      summary: "test",
+      personas: [],
+      roles: ["Admin"],
+      entities: [{ name: "Lead", fields: [{ name: "name", type: "text", required: true }, { name: "amount", type: "number", required: false }] }],
+      screens: [],
+      assumptions: [],
+      openQuestions: [],
+    };
+    const projectId = randomUUID();
+    insertProject(db, { id: projectId, ownerId: user.id, name: "CRM", description: "test", spec });
+    diffAndMigrate(db, projectId, undefined, spec);
+    markProjectBuilt(db, projectId);
+
+    const tokenRes = await fetch(`${baseUrl}/api/projects/${projectId}/inbound-webhook-token`, { headers: authHeaders(authToken) });
+    const { token: webhookToken } = (await tokenRes.json()) as { token: string };
+
+    const webhookRes = await fetch(`${baseUrl}/api/public/webhook-in/${projectId}/Lead?token=${webhookToken}`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ name: "Dana", amount: "()" }),
+    });
+    assert.equal(webhookRes.status, 400, "a bare empty pair of parentheses has no number inside and must still be rejected, not coerced into \"-\" or 0");
+  });
+});
+
+/**
  * Round 1584: extends the same leniency to relation fields -- a real
  * external sender has no API to discover this app's internal numeric
  * record ids, so the only identifier it could plausibly send for a
