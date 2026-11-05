@@ -44151,6 +44151,22 @@ Full `apps/web` suite, final clean run: 1892/1892 passing. Full `apps/api` suite
 
 **`codegen.ts` parity**: N/A -- the exported standalone app has no authentication/account-management routes of any kind (confirmed: it's a single-project, no-login data app).
 
+### Round 1611: the My Projects bulk-actions bar's own selected-count span was the one remaining sibling of the 11-round (1388-1398) missing-singular-form i18n chain never actually fixed
+
+Fresh survey this round, diversified away from `EntityPanel.tsx`/`AutomationsPanel.tsx`, `webhookIn.ts`/`idempotency.ts`, and `routes/auth.ts` (rounds 1603-1610). Survey found `home.myProjects.bulk.selectedCount` (`apps/web/src/i18n/language.ts`, used at `App.tsx:2575`): `"{count} נבחרו"` -- the plural passive verb form ("were selected") -- hardcoded with no singular variant.
+
+**Independently re-verified before implementing**: grepped `docs/roadmap.md` for `selectedCount` and found zero hits -- this key was genuinely never touched by the 1388-1398 missing-singular-form chain (which fixed `entity.tab.recordCount`, `whatsapp.unreadBadge`, `automations.failingBadge`, etc.) or by round 1452, which fixed this exact bulk-actions bar's own confirm-dialog text (`home.myProjects.bulk.confirmDelete`) but left the count span immediately above it in the JSX untouched. Read `App.tsx:2573-2580` directly: the bar (and this span) renders whenever `visibleSelectedProjectIds.size > 0`, not `> 1` -- the identical reachability argument round 1452's own test already established for this same bar -- so checking exactly one project's own checkbox, the ordinary first step of any bulk-select interaction, is the routine path, not a contrived edge case.
+
+**The fix**: split the key into `.one`/`.many` (he/en) in `language.ts`, mirroring `confirmDelete.one`/`.many`'s own already-established split three lines above it in the same file (even on the English side, where both variants read identically, matching that same precedent). Changed `App.tsx`'s call site to branch on `visibleSelectedProjectIds.size === 1`.
+
+**Tests**: 1 new test in `App.test.ts`, inserted right after round 1452's own `confirmDelete` singular/plural test. Since the fix is an inline JSX ternary (not inside an extractable handler function, unlike `confirmDelete`'s), mirrored round 1397's own regex-extraction convention for the WhatsApp-unread/failing-automations badges' inline ternaries instead: matches the `<span>` JSX directly and asserts it branches on `visibleSelectedProjectIds.size === 1`.
+
+Fail-before/pass-after verified directly: reverted `App.tsx` via `git stash push --keep-index`, new test failed (matched the old hardcoded single key, no ternary); restored the fix, test passed. Re-ran it alongside round 1452's own sibling test (2/2 passing, no regression). Full `language.test.ts` (20/20, confirming the key split didn't break either completeness scan). `npx tsc -b` clean. Full `apps/web` suite: 1893/1893 passing (1892 baseline + 1 new). `apps/api` untouched this round, so no re-run needed.
+
+**`codegen.ts` parity**: N/A -- confirmed via direct grep that the exported standalone app has no projects-list or bulk-select feature at all (it's a single-project export with no home/My-Projects screen).
+
+**Scope note for a future round**: `entity.bulk.selectedCount` (`EntityPanel.tsx`) has the byte-identical bug, deliberately left out of this round since fixing it means editing `EntityPanel.tsx`, which rounds 1603/1605/1608 already concentrated on heavily -- a clean pickup for a round that returns to that file.
+
 ### Round 1608: a case-only field rename wiped `EntityPanel`'s in-progress form, search, selection, and inline edit -- a more severe sibling of round 985's bulk-edit/inline-edit type-tracking bug
 
 Survey candidate going in was narrower -- extend round 985's exact-field-lookup fallback pattern (round 892's "deliberately NOT `currentType &&`" removal-vs-retype distinction) to `bulkEditField`'s and `editingCell`'s own revalidation effects, which still used a plain `entity.fields.find((f) => f.name === X)` with no case-insensitive fallback, unlike the sibling `groupedFieldTypeRef`/`formFieldTypesRef` effects round 985 had already hardened.
