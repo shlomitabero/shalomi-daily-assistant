@@ -64,6 +64,8 @@ import {
   NotFoundError,
   insertRecordDeletion,
   listRecordDeletions,
+  insertCollaboratorAccessChange,
+  listCollaboratorAccessChanges,
   type ForgeDatabase,
   type AutomationTrigger,
   type AutomationToMode,
@@ -2707,6 +2709,23 @@ export function createProjectsRouter(
           throw new HttpError(404, "Collaborator not found", "COLLABORATOR_NOT_FOUND");
         }
         updateCollaboratorRole(db, project.id, req.params.userId, parsed.data.role);
+        // Round 1636: docs/security.md's own "Section 40" note named this
+        // exact gap explicitly -- a role change had no "who did this"
+        // trail at all, unlike checkpoint creation/restore (rounds 1567/
+        // 1568) and record deletion (round 1632). Logged unconditionally,
+        // even when previousRole === parsed.data.role (a no-op resubmit),
+        // mirroring insertRecordDeletion's own "every real DB write gets
+        // logged" convention -- the affected-user notification email just
+        // below is a different, narrower concern (only a REAL change is
+        // worth emailing someone about) and deliberately stays untouched.
+        insertCollaboratorAccessChange(db, {
+          projectId: project.id,
+          targetUserId: req.params.userId,
+          changedByUserId: req.userId!,
+          action: "role_changed",
+          previousRole,
+          newRole: parsed.data.role,
+        });
         // Round 1262: mirrors the sibling invite route's own isNewGrant
         // check (round 1253) -- without comparing against the role this
         // collaborator already had, re-submitting the same role (a UI
@@ -2801,7 +2820,12 @@ export function createProjectsRouter(
         // panel tabs both showing the same stale list, each removing the
         // same person) found the target still existed as a USER and sent a
         // second, spurious "you were removed" email for a no-op removal.
-        const wasCollaborator = !isSelf && getCollaboratorRole(db, project.id, req.params.userId) !== null;
+        // Round 1636: read once and reused below (the audit-log entry
+        // needs the actual role value, not just whether one existed) --
+        // previously this called getCollaboratorRole a second time, just
+        // below, purely to re-derive the same boolean for wasSelfCollaborator.
+        const targetRoleBeforeRemoval = getCollaboratorRole(db, project.id, req.params.userId);
+        const wasCollaborator = !isSelf && targetRoleBeforeRemoval !== null;
         const removed = wasCollaborator ? findUserById(db, req.params.userId) : null;
         // Round 1277: mirrors `wasCollaborator` just above (round 1269) for
         // the self-leave path, as defense in depth -- in practice a
@@ -2815,9 +2839,27 @@ export function createProjectsRouter(
         // getCollaboratorRole always returns null for the owner (they're
         // never a row in project_collaborators), so there's no
         // self-notifying-self case either.
-        const wasSelfCollaborator = isSelf && getCollaboratorRole(db, project.id, req.params.userId) !== null;
+        const wasSelfCollaborator = isSelf && targetRoleBeforeRemoval !== null;
         const leaver = wasSelfCollaborator ? findUserById(db, req.userId!) : null;
         removeCollaborator(db, project.id, req.params.userId);
+        // Round 1636: docs/security.md's own "Section 40" note named this
+        // exact gap -- removing a collaborator had no "who did this" trail
+        // at all, the sibling gap the role-change route's own fix just
+        // above closed. Only logged when a row was actually removed
+        // (wasCollaborator/wasSelfCollaborator, the same guards `removed`/
+        // `leaver` already use just above), so a no-op DELETE (retried
+        // idempotency replay, or the owner targeting their own id) never
+        // adds a spurious entry.
+        if (wasCollaborator || wasSelfCollaborator) {
+          insertCollaboratorAccessChange(db, {
+            projectId: project.id,
+            targetUserId: req.params.userId,
+            changedByUserId: req.userId!,
+            action: "removed",
+            previousRole: targetRoleBeforeRemoval,
+            newRole: null,
+          });
+        }
         if (removed && emailSender.configured) {
           const isHebrew = req.query.lang !== "en";
           const subject = isHebrew ? `הוסרת מהפרויקט "${project.name}" ב-Forge AI` : `You were removed from "${project.name}" on Forge AI`;
@@ -3148,6 +3190,26 @@ export function createProjectsRouter(
     asyncRoute(async (req, res) => {
       const project = requireProjectAccess(db, req.params.id, req.userId!);
       res.json({ deletions: listRecordDeletions(db, project.id) });
+    }),
+  );
+
+  /**
+   * Round 1636: the sibling read endpoint for the audit trail the two
+   * routes above (PATCH .../role, DELETE .../:userId) now write to --
+   * mirrors GET .../record-deletions exactly (same requireProjectAccess,
+   * same rate limiter, any collaborator can read it, not just the owner),
+   * for the same reason: CollaboratorsPanel.tsx's own Copy/Download report
+   * is already "the one surface a collaborator can already reach for
+   * 'what happened on this project'" (see collaboratorsReport.ts's own
+   * doc comment), so this is a read, not a write -- raw userIds, resolved
+   * into emails by the caller the same way record-deletions already is.
+   */
+  router.get(
+    "/projects/:id/collaborator-access-log",
+    checkpointRateLimiter,
+    asyncRoute(async (req, res) => {
+      const project = requireProjectAccess(db, req.params.id, req.userId!);
+      res.json({ changes: listCollaboratorAccessChanges(db, project.id) });
     }),
   );
 

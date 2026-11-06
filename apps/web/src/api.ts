@@ -1368,6 +1368,28 @@ export function listRecordDeletions(projectId: string): Promise<{ deletions: Rec
   return request(`/projects/${projectId}/record-deletions`);
 }
 
+/**
+ * Round 1636: the sibling audit log to RecordDeletion above, for
+ * collaborator role changes/removal -- docs/security.md's own "Section
+ * 40" note named this as the one gap left in this audit-trail family.
+ * `targetUserId`/`changedByUserId` are raw userIds for the same reason
+ * `deletedByUserId` above is: CollaboratorsPanel.tsx already has owner/
+ * collaborators loaded and resolves them itself.
+ */
+export interface CollaboratorAccessChange {
+  id: number;
+  targetUserId: string;
+  changedByUserId: string | null;
+  action: "role_changed" | "removed";
+  previousRole: CollaboratorRole | null;
+  newRole: CollaboratorRole | null;
+  changedAt: string;
+}
+
+export function listCollaboratorAccessChanges(projectId: string): Promise<{ changes: CollaboratorAccessChange[] }> {
+  return request(`/projects/${projectId}/collaborator-access-log`);
+}
+
 /** The owner never appears in `collaborators` itself (see collaborators.ts's own module comment -- their access comes from project.ownerId, not the join table), so the panel needs this separately to show who actually owns the project. Null only in the should-never-happen case of a dangling owner reference. */
 export interface ProjectOwnerInfo {
   userId: string;

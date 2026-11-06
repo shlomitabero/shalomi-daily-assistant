@@ -5,12 +5,14 @@ import {
   getCalendarFeedToken,
   getInboundWebhookToken,
   listCollaborators,
+  listCollaboratorAccessChanges,
   listRecordDeletions,
   regenerateCalendarFeedToken,
   regenerateInboundWebhookToken,
   removeCollaborator,
   transferProjectOwnership,
   updateCollaboratorRole,
+  type CollaboratorAccessChange,
   type ProjectOwnerInfo,
   type RecordDeletion,
 } from "./api.js";
@@ -100,6 +102,11 @@ export function CollaboratorsPanel({
   // "whatever's currently in memory," never a hard dependency of opening
   // this panel at all.
   const [recordDeletions, setRecordDeletions] = useState<RecordDeletion[]>([]);
+  // Round 1636: the sibling fetch to recordDeletions above, for the
+  // collaborator role-change/removal audit log -- same silent-on-failure
+  // contract, for the same reason (Copy/Download-report-only data, never a
+  // hard dependency of opening this panel at all).
+  const [accessChanges, setAccessChanges] = useState<CollaboratorAccessChange[]>([]);
   const [error, setError] = useState<string | null>(null);
   // Distinct from the error above (shared by invite/remove/leave failures,
   // each of which already has its own clear recovery path): specifically
@@ -150,6 +157,11 @@ export function CollaboratorsPanel({
     // (see recordDeletions' own state comment for why this stays silent).
     listRecordDeletions(projectId)
       .then(({ deletions }) => setRecordDeletions(deletions))
+      .catch(() => {});
+    // Round 1636: same independent, silently-failing fetch pattern as
+    // listRecordDeletions above, for the same reason.
+    listCollaboratorAccessChanges(projectId)
+      .then(({ changes }) => setAccessChanges(changes))
       .catch(() => {});
   }
 
@@ -538,8 +550,30 @@ export function CollaboratorsPanel({
     return recordDeletions.map((d) => ({ ...d, deletedByEmail: d.deletedByUserId ? emails[d.deletedByUserId] ?? null : null }));
   }
 
+  // Round 1636: mirrors deletionsForReport's own email-resolution pattern
+  // exactly, for the sibling access-change log -- same owner+collaborators
+  // lookup, same limitation (a removed collaborator or former owner whose
+  // email isn't in either current list resolves to null, same as a
+  // deletedByUserId that no longer appears in either).
+  function accessChangesForReport() {
+    const emails: Record<string, string> = {};
+    if (owner) emails[owner.userId] = owner.email;
+    for (const c of collaborators ?? []) emails[c.userId] = c.email;
+    return accessChanges.map((c) => ({
+      action: c.action,
+      targetEmail: emails[c.targetUserId] ?? c.targetUserId,
+      changedByEmail: c.changedByUserId ? emails[c.changedByUserId] ?? null : null,
+      previousRole: c.previousRole,
+      newRole: c.newRole,
+      changedAt: c.changedAt,
+    }));
+  }
+
   function handleDownload() {
-    downloadCollaboratorsReport(formatCollaboratorsReport(owner, collaborators ?? [], projectName, lang, t, deletionsForReport()), projectName);
+    downloadCollaboratorsReport(
+      formatCollaboratorsReport(owner, collaborators ?? [], projectName, lang, t, deletionsForReport(), accessChangesForReport()),
+      projectName,
+    );
   }
 
   /**
@@ -552,7 +586,9 @@ export function CollaboratorsPanel({
    */
   async function handleCopy() {
     try {
-      await navigator.clipboard.writeText(formatCollaboratorsReport(owner, collaborators ?? [], projectName, lang, t, deletionsForReport()));
+      await navigator.clipboard.writeText(
+        formatCollaboratorsReport(owner, collaborators ?? [], projectName, lang, t, deletionsForReport(), accessChangesForReport()),
+      );
       setCopyStatus("copied");
     } catch {
       setCopyStatus("failed");

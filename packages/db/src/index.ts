@@ -118,6 +118,15 @@ export {
   type RecordDeletion,
 } from "./recordDeletions.js";
 export {
+  ensureCollaboratorAccessChangesTable,
+  insertCollaboratorAccessChange,
+  listCollaboratorAccessChanges,
+  deleteCollaboratorAccessChangesForProject,
+  COLLABORATOR_ACCESS_CHANGES_RETENTION_LIMIT,
+  type CollaboratorAccessChange,
+  type CollaboratorAccessChangeAction,
+} from "./collaboratorAccessChanges.js";
+export {
   ensureIdempotencyKeysTable,
   getIdempotencyRecord,
   insertIdempotencyRecord,

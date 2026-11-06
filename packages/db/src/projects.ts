@@ -8,6 +8,7 @@ import { addCollaborator, removeAllCollaborators, removeCollaborator } from "./c
 import { deleteWhatsAppData } from "./whatsapp.js";
 import { deleteAutomationRulesForProject } from "./automations.js";
 import { deleteRecordDeletionsForProject } from "./recordDeletions.js";
+import { deleteCollaboratorAccessChangesForProject } from "./collaboratorAccessChanges.js";
 
 export function ensureProjectsTable(db: ForgeDatabase): void {
   db.exec(`
@@ -407,6 +408,7 @@ export function deleteProject(db: ForgeDatabase, projectId: string): void {
   deleteWhatsAppData(db, projectId);
   deleteAutomationRulesForProject(db, projectId);
   deleteRecordDeletionsForProject(db, projectId);
+  deleteCollaboratorAccessChangesForProject(db, projectId);
   db.prepare("DELETE FROM projects WHERE id = ?").run(projectId);
 }
 

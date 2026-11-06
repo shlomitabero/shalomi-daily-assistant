@@ -19208,6 +19208,130 @@ test("the owner can change an existing collaborator's role between 'editor' and 
 });
 
 /**
+ * Round 1636: docs/security.md's own "Section 40" note named this exact
+ * gap explicitly -- collaborator role changes/removal had no "who did
+ * this" trail at all, the sibling gap to round 1632's own record-deletion
+ * audit log. Confirms both the role-change and the removal routes each
+ * record a real entry (who was affected, who made the change, and the
+ * before/after role), and that both the owner and a collaborator can read
+ * the combined log via the new GET route -- same access level as
+ * GET .../record-deletions.
+ */
+test("PATCH .../collaborators/:userId/role and DELETE .../collaborators/:userId both record who made the change, readable via GET .../collaborator-access-log", async () => {
+  await withServer(async (baseUrl, db) => {
+    const ownerEmail = `owner-access-audit-${randomUUID()}@example.com`;
+    const ownerToken = await signup(baseUrl, ownerEmail);
+    const ownerUser = findUserByEmail(db, ownerEmail)!;
+
+    const collabEmail = `collab-access-audit-${randomUUID()}@example.com`;
+    const collabToken = await signup(baseUrl, collabEmail);
+    const collabUser = findUserByEmail(db, collabEmail)!;
+
+    const createRes = await fetch(`${baseUrl}/api/projects`, {
+      method: "POST",
+      headers: authHeaders(ownerToken),
+      body: JSON.stringify({ description: "A CRM with customers and deals." }),
+    });
+    const { project } = (await createRes.json()) as { project: { id: string } };
+
+    await fetch(`${baseUrl}/api/projects/${project.id}/collaborators`, {
+      method: "POST",
+      headers: authHeaders(ownerToken),
+      body: JSON.stringify({ email: collabEmail }),
+    });
+
+    const roleRes = await fetch(`${baseUrl}/api/projects/${project.id}/collaborators/${collabUser.id}/role`, {
+      method: "PATCH",
+      headers: { ...authHeaders(ownerToken), "x-idempotency-key": randomUUID() },
+      body: JSON.stringify({ role: "viewer" }),
+    });
+    assert.equal(roleRes.status, 200);
+
+    const removeRes = await fetch(`${baseUrl}/api/projects/${project.id}/collaborators/${collabUser.id}`, {
+      method: "DELETE",
+      headers: { ...authHeaders(ownerToken), "x-idempotency-key": randomUUID() },
+    });
+    assert.equal(removeRes.status, 204);
+
+    const listRes = await fetch(`${baseUrl}/api/projects/${project.id}/collaborator-access-log`, { headers: authHeaders(ownerToken) });
+    assert.equal(listRes.status, 200);
+    const { changes } = (await listRes.json()) as {
+      changes: { action: string; targetUserId: string; changedByUserId: string | null; previousRole: string | null; newRole: string | null }[];
+    };
+
+    const roleChange = changes.find((c) => c.action === "role_changed")!;
+    assert.ok(roleChange, "the role change must have been logged");
+    assert.equal(roleChange.targetUserId, collabUser.id);
+    assert.equal(roleChange.changedByUserId, ownerUser.id);
+    assert.equal(roleChange.previousRole, "editor");
+    assert.equal(roleChange.newRole, "viewer");
+
+    const removal = changes.find((c) => c.action === "removed")!;
+    assert.ok(removal, "the removal must have been logged");
+    assert.equal(removal.targetUserId, collabUser.id);
+    assert.equal(removal.changedByUserId, ownerUser.id);
+    assert.equal(removal.previousRole, "viewer", "the removal's own previousRole must reflect the role at the time of removal, not the original invite role");
+    assert.equal(removal.newRole, null);
+
+    // A collaborator can read the same audit trail -- same access level
+    // GET .../record-deletions already grants (round 1632's own comment).
+    // Re-invite first, since the only existing collaborator was just removed.
+    const reinviteRes = await fetch(`${baseUrl}/api/projects/${project.id}/collaborators`, {
+      method: "POST",
+      headers: authHeaders(ownerToken),
+      body: JSON.stringify({ email: collabEmail }),
+    });
+    assert.equal(reinviteRes.status, 201);
+    const viewerListRes = await fetch(`${baseUrl}/api/projects/${project.id}/collaborator-access-log`, { headers: authHeaders(collabToken) });
+    assert.equal(viewerListRes.status, 200);
+  });
+});
+
+/**
+ * Round 1636: a no-op role-change resubmit (same role as before) must
+ * still be logged -- mirrors insertRecordDeletion's own "every real DB
+ * write gets logged" convention. Distinct from the affected-user
+ * notification email, which deliberately stays narrower (round 1262's own
+ * isNewGrant check): a no-op role PATCH still issues a real UPDATE
+ * statement, so the audit trail should reflect it even though nothing was
+ * worth emailing anyone about.
+ */
+test("PATCH .../collaborators/:userId/role logs an entry even when resubmitting the same role (a no-op for the notification email, but still a real write)", async () => {
+  await withServer(async (baseUrl, db) => {
+    const ownerEmail = `owner-noop-role-audit-${randomUUID()}@example.com`;
+    const ownerToken = await signup(baseUrl, ownerEmail);
+    const collabEmail = `collab-noop-role-audit-${randomUUID()}@example.com`;
+    await signup(baseUrl, collabEmail);
+    const collabUser = findUserByEmail(db, collabEmail)!;
+
+    const createRes = await fetch(`${baseUrl}/api/projects`, {
+      method: "POST",
+      headers: authHeaders(ownerToken),
+      body: JSON.stringify({ description: "A CRM with customers and deals." }),
+    });
+    const { project } = (await createRes.json()) as { project: { id: string } };
+    await fetch(`${baseUrl}/api/projects/${project.id}/collaborators`, {
+      method: "POST",
+      headers: authHeaders(ownerToken),
+      body: JSON.stringify({ email: collabEmail }),
+    });
+
+    const noOpRes = await fetch(`${baseUrl}/api/projects/${project.id}/collaborators/${collabUser.id}/role`, {
+      method: "PATCH",
+      headers: { ...authHeaders(ownerToken), "x-idempotency-key": randomUUID() },
+      body: JSON.stringify({ role: "editor" }),
+    });
+    assert.equal(noOpRes.status, 200);
+
+    const listRes = await fetch(`${baseUrl}/api/projects/${project.id}/collaborator-access-log`, { headers: authHeaders(ownerToken) });
+    const { changes } = (await listRes.json()) as { changes: { previousRole: string | null; newRole: string | null }[] };
+    assert.equal(changes.length, 1, "even a same-role resubmit must be logged");
+    assert.equal(changes[0].previousRole, "editor");
+    assert.equal(changes[0].newRole, "editor");
+  });
+});
+
+/**
  * Round 1254: this route used to send no notification anywhere once the
  * role change succeeded -- the same gap round 1253 just closed for the
  * sibling invite route, except here the affected collaborator (not the

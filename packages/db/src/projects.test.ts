@@ -16,6 +16,7 @@ import {
 } from "./whatsapp.js";
 import { ensureAutomationRulesTable, insertAutomationRule, listAutomationRules } from "./automations.js";
 import { ensureRecordDeletionsTable } from "./recordDeletions.js";
+import { ensureCollaboratorAccessChangesTable } from "./collaboratorAccessChanges.js";
 import {
   ensureProjectsTable,
   deleteProject,
@@ -376,6 +377,7 @@ test("deleteProject removes the project row, its real generated data table, chec
   ensureWhatsAppMessagesTable(db);
   ensureAutomationRulesTable(db);
   ensureRecordDeletionsTable(db);
+  ensureCollaboratorAccessChangesTable(db);
 
   const project = insertProject(db, {
     id: "to-delete",
@@ -482,6 +484,7 @@ test("deleteProject drops the real data table of an entity that was added then l
   ensureWhatsAppMessagesTable(db);
   ensureAutomationRulesTable(db);
   ensureRecordDeletionsTable(db);
+  ensureCollaboratorAccessChangesTable(db);
 
   const buildSpec: ProductSpec = validSpec;
   const project = insertProject(db, {
@@ -554,6 +557,7 @@ test("deleteProject drops a real data table whose entity was only ever migrated 
   ensureWhatsAppMessagesTable(db);
   ensureAutomationRulesTable(db);
   ensureRecordDeletionsTable(db);
+  ensureCollaboratorAccessChangesTable(db);
 
   const buildSpec: ProductSpec = validSpec;
   const project = insertProject(db, {
@@ -616,6 +620,7 @@ test("deleteProject drops a real data table whose entity committed during a diff
   ensureWhatsAppMessagesTable(db);
   ensureAutomationRulesTable(db);
   ensureRecordDeletionsTable(db);
+  ensureCollaboratorAccessChangesTable(db);
 
   const buildSpec: ProductSpec = {
     ...validSpec,
@@ -691,6 +696,7 @@ test("deleteProject still drops a real data table even when the one checkpoint t
   ensureWhatsAppMessagesTable(db);
   ensureAutomationRulesTable(db);
   ensureRecordDeletionsTable(db);
+  ensureCollaboratorAccessChangesTable(db);
 
   const buildSpec: ProductSpec = validSpec;
   const project = insertProject(db, {
@@ -765,6 +771,7 @@ test("deleteProject still drops the real data table of an entity from a checkpoi
   ensureWhatsAppMessagesTable(db);
   ensureAutomationRulesTable(db);
   ensureRecordDeletionsTable(db);
+  ensureCollaboratorAccessChangesTable(db);
 
   const buildSpec: ProductSpec = validSpec;
   const project = insertProject(db, {
@@ -864,6 +871,7 @@ test("deleteProject still drops the real data table, checkpoints, collaborators,
   ensureWhatsAppMessagesTable(db);
   ensureAutomationRulesTable(db);
   ensureRecordDeletionsTable(db);
+  ensureCollaboratorAccessChangesTable(db);
 
   const buildSpec: ProductSpec = validSpec;
   // No FOREIGN KEY ties any of these to a real `projects` row (confirmed

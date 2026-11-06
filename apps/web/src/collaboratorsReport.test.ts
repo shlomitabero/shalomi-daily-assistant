@@ -51,3 +51,68 @@ test("formatCollaboratorsReport does not show the 'no collaborators' line once a
   assert.ok(!result.includes("No collaborators yet."), "the empty-state line must not appear once a real collaborator exists");
   assert.ok(result.includes("dana@example.com"));
 });
+
+/**
+ * Round 1636: the sibling report section to recordDeletions above, for
+ * collaborator role changes/removal -- docs/security.md's own "Section
+ * 40" note named this as the one gap left in this audit-trail family.
+ */
+test("formatCollaboratorsReport includes an access-changes section listing a role change and a removal, each with the actor and date, but omits the section entirely when there are none", () => {
+  const t = (key: string, params?: Record<string, string | number>) => translate("en", key, params);
+  const withoutChanges = formatCollaboratorsReport(owner, [], "CRM", "en", t, [], []);
+  assert.ok(!withoutChanges.includes("Recent access changes:"), "the section must not appear at all when there are no access changes");
+
+  const result = formatCollaboratorsReport(owner, [], "CRM", "en", t, [], [
+    {
+      action: "role_changed",
+      targetEmail: "dana@example.com",
+      changedByEmail: "owner@example.com",
+      previousRole: "editor",
+      newRole: "viewer",
+      changedAt: "2024-02-01T10:00:00.000Z",
+    },
+    {
+      action: "removed",
+      targetEmail: "yossi@example.com",
+      changedByEmail: "owner@example.com",
+      previousRole: "editor",
+      newRole: null,
+      changedAt: "2024-02-02T10:00:00.000Z",
+    },
+  ]);
+  assert.ok(result.includes("Recent access changes:"));
+  assert.ok(result.includes("dana@example.com's role was changed from Editor (full access) to Viewer (read-only) by owner@example.com"));
+  assert.ok(result.includes("yossi@example.com was removed from the project by owner@example.com"));
+});
+
+test("formatCollaboratorsReport in Hebrew renders the access-changes section with translated role labels", () => {
+  const t = (key: string, params?: Record<string, string | number>) => translate("he", key, params);
+  const result = formatCollaboratorsReport(owner, [], "CRM", "he", t, [], [
+    {
+      action: "role_changed",
+      targetEmail: "dana@example.com",
+      changedByEmail: "owner@example.com",
+      previousRole: "editor",
+      newRole: "viewer",
+      changedAt: "2024-02-01T10:00:00.000Z",
+    },
+  ]);
+  assert.ok(result.includes("שינויי הרשאות אחרונים:"));
+  assert.ok(result.includes("עורך/ת (גישה מלאה)"));
+  assert.ok(result.includes("צפייה בלבד"));
+});
+
+test("formatCollaboratorsReport falls back to the unknown-actor translation when changedByEmail is null", () => {
+  const t = (key: string, params?: Record<string, string | number>) => translate("en", key, params);
+  const result = formatCollaboratorsReport(owner, [], "CRM", "en", t, [], [
+    {
+      action: "removed",
+      targetEmail: "yossi@example.com",
+      changedByEmail: null,
+      previousRole: "editor",
+      newRole: null,
+      changedAt: "2024-02-02T10:00:00.000Z",
+    },
+  ]);
+  assert.ok(result.includes("yossi@example.com was removed from the project by Unknown"));
+});

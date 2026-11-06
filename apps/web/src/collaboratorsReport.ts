@@ -26,6 +26,23 @@ export interface RecordDeletionForReport {
 }
 
 /**
+ * Round 1636: the sibling of RecordDeletionForReport above, for
+ * collaborator role changes/removal -- docs/security.md's own "Section
+ * 40" note named this as the one gap left in this audit-trail family.
+ * `targetEmail`/`changedByEmail` are already resolved by the caller
+ * (CollaboratorsPanel.tsx), same reason as RecordDeletionForReport's own
+ * `deletedByEmail`.
+ */
+export interface CollaboratorAccessChangeForReport {
+  action: "role_changed" | "removed";
+  targetEmail: string;
+  changedByEmail: string | null;
+  previousRole: CollaboratorRole | null;
+  newRole: CollaboratorRole | null;
+  changedAt: string;
+}
+
+/**
  * Renders the Collaborators panel's own already-fetched owner + collaborator
  * list as a plain, shareable text snapshot -- the same gap every other
  * read-heavy "list of real data" overlay panel in this app (Business Twin,
@@ -41,6 +58,7 @@ export function formatCollaboratorsReport(
   lang: Lang,
   t: (key: string, params?: Record<string, string | number>) => string,
   recordDeletions: RecordDeletionForReport[] = [],
+  accessChanges: CollaboratorAccessChangeForReport[] = [],
 ): string {
   const lines: string[] = [];
   lines.push(`${t("collab.title")} — ${projectName}`);
@@ -77,6 +95,32 @@ export function formatCollaboratorsReport(
           date: new Date(d.deletedAt).toLocaleString(LOCALE[lang]),
         }),
       );
+    }
+  }
+
+  if (accessChanges.length > 0) {
+    lines.push("");
+    lines.push(t("collab.report.accessChangesHeading"));
+    for (const c of accessChanges) {
+      if (c.action === "role_changed") {
+        lines.push(
+          t("collab.report.roleChangedEntry", {
+            who: c.targetEmail,
+            from: c.previousRole ? roleLabel(c.previousRole, t) : "",
+            to: c.newRole ? roleLabel(c.newRole, t) : "",
+            by: c.changedByEmail ?? t("collab.report.unknownActor"),
+            date: new Date(c.changedAt).toLocaleString(LOCALE[lang]),
+          }),
+        );
+      } else {
+        lines.push(
+          t("collab.report.removedEntry", {
+            who: c.targetEmail,
+            by: c.changedByEmail ?? t("collab.report.unknownActor"),
+            date: new Date(c.changedAt).toLocaleString(LOCALE[lang]),
+          }),
+        );
+      }
     }
   }
 
