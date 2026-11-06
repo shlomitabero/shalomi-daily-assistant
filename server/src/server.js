@@ -55,8 +55,28 @@ app.use((err, req, res, next) => {
 
 const clientDist = join(__dirname, '..', '..', 'client', 'dist');
 if (existsSync(clientDist)) {
-  app.use(express.static(clientDist));
-  app.get(/^(?!\/api).*/, (req, res) => res.sendFile(join(clientDist, 'index.html')));
+  // This app redeploys roughly hourly (its own upgrade routine), and each
+  // Vite build gives every JS/CSS bundle a fresh content hash but
+  // index.html always keeps the same name - without an explicit
+  // Cache-Control, express.static sets none at all, leaving browsers to
+  // their own heuristic caching of index.html. A browser that caches an
+  // old index.html past the next deploy then requests a bundle filename
+  // (e.g. index-OLDHASH.js) that no longer exists in the new dist folder,
+  // breaking the app with a 404 until a hard refresh - a real, recurring
+  // risk given how often this specific app redeploys. The hashed asset
+  // files themselves are the opposite case: once built, that exact
+  // filename's content never changes, so they're safe to cache for a year.
+  app.use(express.static(clientDist, {
+    setHeaders: (res, filePath) => {
+      res.setHeader('Cache-Control', filePath.endsWith('index.html')
+        ? 'no-cache'
+        : 'public, max-age=31536000, immutable');
+    },
+  }));
+  app.get(/^(?!\/api).*/, (req, res) => {
+    res.setHeader('Cache-Control', 'no-cache');
+    res.sendFile(join(clientDist, 'index.html'));
+  });
 }
 
 syncSources();
