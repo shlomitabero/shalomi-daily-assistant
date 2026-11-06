@@ -53,6 +53,7 @@ test("GlobalSearchPanel's runSearch shows results from every entity that succeed
     "setSearched",
     "setHighlightQuery",
     "setSelectedIndex",
+    "setTruncatedEntityNames",
     "searchRequestId",
     "lastRecordsByEntityRef",
     "errorFromShowAllRef",
@@ -77,6 +78,7 @@ test("GlobalSearchPanel's runSearch shows results from every entity that succeed
     () => {},
     () => {},
     () => {},
+    () => {},
     { current: 0 },
     { current: {} },
     { current: false },
@@ -94,6 +96,87 @@ test("GlobalSearchPanel's runSearch shows results from every entity that succeed
     capturedError!,
     /search\.partialFailure/,
     "a partial failure must use the translated partial-failure message, not the raw single-entity rejection",
+  );
+});
+
+/**
+ * Round 1643: listRecords (round 1638) caps its response server-side at
+ * RECORD_LIST_RESPONSE_CAP, newest-first -- for any entity past that cap,
+ * a query matching only an older record finds nothing at all, with no
+ * indication anything was left out. runSearch used to destructure only
+ * `{ records }` from listRecords's own `{ records, truncated }` return
+ * value, silently discarding the one flag that could warn the user.
+ * Extracts the real runSearch the same way the first test above does,
+ * and asserts setTruncatedEntityNames is called with exactly the entity
+ * names whose own fetch came back truncated -- including one with zero
+ * matches, since a truncated entity with no visible matches is exactly
+ * the silent-miss case this flag exists to surface.
+ */
+test("GlobalSearchPanel's runSearch collects every truncated entity's name, even one with zero matches, instead of silently discarding listRecords' own truncated flag", async () => {
+  const handlerMatch = globalSearchPanelSrc.match(/ {2}async function runSearch\(q: string\) \{[\s\S]*?\n {2}\}\n/);
+  assert.ok(handlerMatch, "expected to find runSearch in GlobalSearchPanel.tsx");
+  const { code } = transformSync(handlerMatch![0], { loader: "ts" });
+
+  const entityA = { name: "Alpha", label: "Alpha", fields: [{ name: "name", label: "Name", type: "text" }] };
+  const entityB = { name: "Beta", label: "Beta", fields: [{ name: "name", label: "Name", type: "text" }] };
+
+  function fakeSearchEntityRecords(entity: { name: string; label: string }, records: unknown[]) {
+    return records.length > 0 ? { entityName: entity.name, entityLabel: entity.label, totalMatches: records.length, sample: records } : null;
+  }
+
+  let capturedTruncatedNames: string[] | undefined;
+
+  const fn = new Function(
+    "entities",
+    "projectId",
+    "listRecords",
+    "searchEntityRecords",
+    "t",
+    "setLoading",
+    "setError",
+    "setResults",
+    "setSearched",
+    "setHighlightQuery",
+    "setSelectedIndex",
+    "setTruncatedEntityNames",
+    "searchRequestId",
+    "lastRecordsByEntityRef",
+    "errorFromShowAllRef",
+    "lang",
+    `${code}\nreturn runSearch;`,
+  )(
+    [entityA, entityB],
+    "proj1",
+    async (_projectId: string, entityName: string) => {
+      // "Alpha" has a real match AND is truncated (the exact silent-miss
+      // risk: an older, non-returned row could also match). "Beta" has
+      // zero matches and is NOT truncated, a genuinely complete search.
+      if (entityName === "Alpha") return { records: [{ id: 1, name: "match" }], truncated: true };
+      return { records: [], truncated: false };
+    },
+    fakeSearchEntityRecords,
+    (key: string, params?: Record<string, unknown>) => (params ? `${key}:${JSON.stringify(params)}` : key),
+    () => {},
+    () => {},
+    () => {},
+    () => {},
+    () => {},
+    () => {},
+    (names: string[]) => {
+      capturedTruncatedNames = names;
+    },
+    { current: 0 },
+    { current: {} },
+    { current: false },
+    "en",
+  ) as (q: string) => Promise<void>;
+
+  await fn("match");
+
+  assert.deepEqual(
+    capturedTruncatedNames,
+    ["Alpha"],
+    "must collect exactly the entities whose own fetch came back truncated, regardless of whether they had any matches",
   );
 });
 
@@ -117,6 +200,7 @@ test("GlobalSearchPanel's runSearch still surfaces the raw error message when ev
     "setSearched",
     "setHighlightQuery",
     "setSelectedIndex",
+    "setTruncatedEntityNames",
     "searchRequestId",
     "lastRecordsByEntityRef",
     "errorFromShowAllRef",
@@ -134,6 +218,7 @@ test("GlobalSearchPanel's runSearch still surfaces the raw error message when ev
     (msg: string) => {
       capturedError = msg;
     },
+    () => {},
     () => {},
     () => {},
     () => {},
@@ -188,6 +273,7 @@ test("GlobalSearchPanel's runSearch orders entity groups by totalMatches descend
     "setSearched",
     "setHighlightQuery",
     "setSelectedIndex",
+    "setTruncatedEntityNames",
     "searchRequestId",
     "lastRecordsByEntityRef",
     "errorFromShowAllRef",
@@ -204,6 +290,7 @@ test("GlobalSearchPanel's runSearch orders entity groups by totalMatches descend
     (results: unknown[]) => {
       capturedResults = results;
     },
+    () => {},
     () => {},
     () => {},
     () => {},
@@ -269,6 +356,7 @@ test("GlobalSearchPanel's runSearch ignores a stale, still-in-flight search's re
     "setSearched",
     "setHighlightQuery",
     "setSelectedIndex",
+    "setTruncatedEntityNames",
     "searchRequestId",
     "lastRecordsByEntityRef",
     "errorFromShowAllRef",
@@ -292,6 +380,7 @@ test("GlobalSearchPanel's runSearch ignores a stale, still-in-flight search's re
     (results: unknown[]) => {
       capturedResultsByCall.push(results);
     },
+    () => {},
     () => {},
     () => {},
     () => {},
@@ -435,6 +524,7 @@ test("GlobalSearchPanel's handleShowAll still runs when its entity was only reca
     "lang",
     "setError",
     "errorFromShowAllRef",
+    "setTruncatedEntityNames",
     `${code}\nreturn handleShowAll;`,
   )(
     [entityA],
@@ -454,6 +544,7 @@ test("GlobalSearchPanel's handleShowAll still runs when its entity was only reca
     "en",
     () => {},
     { current: false },
+    () => {},
   ) as (entityName: string) => Promise<void>;
 
   // The UI click still passes the pre-rename casing ("Alpha"), captured
@@ -589,6 +680,7 @@ test("GlobalSearchPanel's handleShowAll re-sorts results after a group's totalMa
     "results",
     "selectedIndex",
     "setSelectedIndex",
+    "setTruncatedEntityNames",
     `${code}\nreturn handleShowAll;`,
   )(
     [entityOrder, entityCustomer],
@@ -619,6 +711,7 @@ test("GlobalSearchPanel's handleShowAll re-sorts results after a group's totalMa
     // routine's own "signature-migration causes expected test breakage"
     // pattern adds to an existing extraction test.
     null,
+    () => {},
     () => {},
   ) as (entityName: string) => Promise<void>;
 
@@ -685,6 +778,7 @@ test("GlobalSearchPanel's handleShowAll keeps a keyboard-highlighted group ident
     "results",
     "selectedIndex",
     "setSelectedIndex",
+    "setTruncatedEntityNames",
     `${code}\nreturn handleShowAll;`,
   )(
     [entityOrder, entityCustomer, entityDeal],
@@ -714,6 +808,7 @@ test("GlobalSearchPanel's handleShowAll keeps a keyboard-highlighted group ident
     (next: number | null) => {
       selectedIndex = next;
     },
+    () => {},
   ) as (entityName: string) => Promise<void>;
 
   await fn("Deal");
@@ -790,6 +885,7 @@ test("GlobalSearchPanel's handleShowAll never loses one group's own totalMatches
     "results",
     "selectedIndex",
     "setSelectedIndex",
+    "setTruncatedEntityNames",
     `${code}\nreturn handleShowAll;`,
   )(
     [entityOrder, entityCustomer],
@@ -816,6 +912,7 @@ test("GlobalSearchPanel's handleShowAll never loses one group's own totalMatches
     },
     results,
     null,
+    () => {},
     () => {},
   ) as (entityName: string) => Promise<void>;
 
@@ -900,6 +997,82 @@ test("GlobalSearchPanel's handleShowAll surfaces a failed fetch via setError, in
     loadingUpdaterCalls.length,
     2,
     "setShowAllLoading must still be called to add then clear the loading state, even on failure",
+  );
+});
+
+/**
+ * Round 1643: mirrors runSearch's own fix just above -- handleShowAll's
+ * fresh re-fetch of one entity is the exact same capped listRecords
+ * endpoint, so it can come back truncated too, and used to discard that
+ * flag the same way. Covers both directions of the updater: a truncated
+ * fetch adds this entity's name (deduped against an already-present
+ * name), and a since-fixed non-truncated fetch removes it again -- e.g.
+ * the collaborator who deleted enough old rows that this entity's data
+ * now fits under the cap.
+ */
+test("GlobalSearchPanel's handleShowAll adds its own entity to the truncated set when its fresh fetch is capped, and removes it again once a later fetch isn't", async () => {
+  const handlerMatch = globalSearchPanelSrc.match(/ {2}async function handleShowAll\(entityName: string\) \{[\s\S]*?\n {2}\}\n/);
+  assert.ok(handlerMatch, "expected to find handleShowAll in GlobalSearchPanel.tsx");
+  const { code } = transformSync(handlerMatch![0], { loader: "ts" });
+
+  const entityA = { name: "Alpha", label: "Alpha", fields: [] };
+  let truncatedNames: string[] = ["Beta"];
+  let truncatedFetch = true;
+
+  const fn = new Function(
+    "entities",
+    "projectId",
+    "listRecords",
+    "searchEntityRecords",
+    "highlightQuery",
+    "lastRecordsByEntityRef",
+    "setShowAllLoading",
+    "setExpandedSamples",
+    "searchRequestId",
+    "lang",
+    "setError",
+    "errorFromShowAllRef",
+    "setResults",
+    "results",
+    "selectedIndex",
+    "setSelectedIndex",
+    "setTruncatedEntityNames",
+    `${code}\nreturn handleShowAll;`,
+  )(
+    [entityA],
+    "proj1",
+    async () => ({ records: [{ id: 1, name: "match" }], truncated: truncatedFetch }),
+    () => ({ entityName: "Alpha", entityLabel: "Alpha", totalMatches: 1, sample: [] }),
+    "query",
+    { current: {} },
+    () => {},
+    () => {},
+    { current: 0 },
+    "en",
+    () => {},
+    { current: false },
+    () => {},
+    [],
+    null,
+    () => {},
+    (next: string[] | ((prev: string[]) => string[])) => {
+      truncatedNames = typeof next === "function" ? (next as (prev: string[]) => string[])(truncatedNames) : next;
+    },
+  ) as (entityName: string) => Promise<void>;
+
+  await fn("Alpha");
+  assert.deepEqual(
+    truncatedNames.slice().sort(),
+    ["Alpha", "Beta"],
+    "a truncated fetch must add this entity's own name, alongside any other entity already tracked as truncated",
+  );
+
+  truncatedFetch = false;
+  await fn("Alpha");
+  assert.deepEqual(
+    truncatedNames.slice().sort(),
+    ["Beta"],
+    "a later, non-truncated fetch for the SAME entity must remove its own name again, without touching a different entity's",
   );
 });
 

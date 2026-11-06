@@ -130,6 +130,13 @@ export function GlobalSearchPanel({
   // entityName so expanding one group's "Show all" never affects another's.
   const [expandedSamples, setExpandedSamples] = useState<Record<string, EntityRecord[]>>({});
   const [showAllLoading, setShowAllLoading] = useState<Set<string>>(new Set());
+  // Round 1643: listRecords (round 1638) caps its response at the server's
+  // own RECORD_LIST_RESPONSE_CAP, newest-first -- for any entity past that
+  // cap, a query matching only an OLDER record finds nothing at all, with
+  // no indication anything was left out. EntityPanel.tsx's own table view
+  // already surfaces this same flag via `truncated`; this panel never did,
+  // for either runSearch's initial fetch or handleShowAll's own re-fetch.
+  const [truncatedEntityNames, setTruncatedEntityNames] = useState<string[]>([]);
   const [copyStatus, setCopyStatus] = useState<"idle" | "copied" | "failed">("idle");
   const dialogRef = useDialogFocusTrap<HTMLDivElement>(onClose);
   const resultsContainerRef = useRef<HTMLDivElement>(null);
@@ -167,6 +174,7 @@ export function GlobalSearchPanel({
       setSearched(false);
       setHighlightQuery("");
       setSelectedIndex(null);
+      setTruncatedEntityNames([]);
       return;
     }
     const requestId = ++searchRequestId.current;
@@ -175,8 +183,8 @@ export function GlobalSearchPanel({
     errorFromShowAllRef.current = false;
     const settled = await Promise.allSettled(
       entities.map(async (entity) => {
-        const { records } = await listRecords(projectId, entity.name);
-        return [entity.name, records] as const;
+        const { records, truncated } = await listRecords(projectId, entity.name);
+        return [entity.name, records, truncated] as const;
       }),
     );
     // A later call to runSearch (the user editing/resubmitting the query
@@ -187,12 +195,19 @@ export function GlobalSearchPanel({
     // moved past.
     if (searchRequestId.current !== requestId) return;
     const recordsByEntity: RelatedRecordsByEntity = {};
+    // Collected across EVERY searched entity, not just ones with a match --
+    // a truncated entity with zero visible matches is exactly the silent-
+    // miss case this flag exists to surface: the real match could be
+    // sitting in the older rows the server cap left out.
+    const truncatedNames: string[] = [];
     for (const result of settled) {
       if (result.status === "fulfilled") {
-        const [name, records] = result.value;
+        const [name, records, truncated] = result.value;
         recordsByEntity[name] = records;
+        if (truncated) truncatedNames.push(name);
       }
     }
+    setTruncatedEntityNames(truncatedNames);
     lastRecordsByEntityRef.current = recordsByEntity;
     const succeeded = entities
       .map((entity) =>
@@ -298,8 +313,13 @@ export function GlobalSearchPanel({
     const requestId = searchRequestId.current;
     setShowAllLoading((prev) => new Set(prev).add(entityName));
     try {
-      const { records } = await listRecords(projectId, entityName);
+      const { records, truncated } = await listRecords(projectId, entityName);
       if (searchRequestId.current !== requestId) return;
+      // Mirrors runSearch's own truncated-name tracking (round 1643) for
+      // this entity's fresh re-fetch -- without it, "Show all" could still
+      // be capped by the same server-side limit with no indication, even
+      // though runSearch's own initial fetch already surfaces this flag.
+      setTruncatedEntityNames((prev) => (truncated ? (prev.includes(entityName) ? prev : [...prev, entityName]) : prev.filter((n) => n !== entityName)));
       // Keeps the shared relation-label lookup in sync with the fresh data
       // this fetch just pulled -- without this, a DIFFERENT entity's own
       // later "Show all" (which reads this exact ref for resolving a
@@ -651,6 +671,11 @@ export function GlobalSearchPanel({
               {t("search.retry")}
             </button>
           </div>
+        )}
+        {!loading && searched && truncatedEntityNames.length > 0 && (
+          <p className="global-search-truncated-hint muted small" role="status">
+            {t("search.truncatedHint", { entities: truncatedEntityNames.join(", ") })}
+          </p>
         )}
         {loading && (
           <p className="muted" role="status">

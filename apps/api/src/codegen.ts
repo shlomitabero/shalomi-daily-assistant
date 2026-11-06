@@ -8632,15 +8632,24 @@ function LinkifiedHighlighted({ text, query }) {
 async function searchAllEntities(entities, query) {
   const settled = await Promise.allSettled(
     entities.map(async (entity) => {
-      const { records } = await listRecords(entity.name);
-      return [entity.name, records];
+      const { records, truncated } = await listRecords(entity.name);
+      return [entity.name, records, truncated];
     }),
   );
   const recordsByEntity = {};
+  // Round 1643: mirrors the live preview's own GlobalSearchPanel.tsx fix --
+  // listRecords caps its response server-side (round 1638), newest-first;
+  // for any entity past that cap, a query matching only an older record
+  // finds nothing at all, with no indication anything was left out.
+  // Collected across every searched entity, not just ones with a match --
+  // a truncated entity with zero visible matches is exactly the silent-
+  // miss case this flag exists to surface.
+  const truncatedNames = [];
   for (const result of settled) {
     if (result.status === "fulfilled") {
-      const [name, records] = result.value;
+      const [name, records, truncated] = result.value;
       recordsByEntity[name] = records;
+      if (truncated) truncatedNames.push(name);
     }
   }
   const entityLabelCounts = entityLabelOccurrences(entities);
@@ -8665,7 +8674,7 @@ async function searchAllEntities(entities, query) {
   // original declared order.
   results.sort((a, b) => b.totalMatches - a.totalMatches);
   const failures = settled.filter((r) => r.status === "rejected");
-  return { results, failures, recordsByEntity };
+  return { results, failures, recordsByEntity, truncatedNames };
 }
 
 // Renders the already-fetched results as a plain, shareable text snapshot --
@@ -8768,6 +8777,8 @@ export function GlobalSearch({ entities, onClose, onJumpToEntity, onJumpToRecord
   // another's, mirroring the live preview's own GlobalSearchPanel.tsx.
   const [expandedSamples, setExpandedSamples] = useState({});
   const [showAllLoading, setShowAllLoading] = useState(() => new Set());
+  // Round 1643: mirrors the live preview's own GlobalSearchPanel.tsx fix.
+  const [truncatedEntityNames, setTruncatedEntityNames] = useState(() => []);
   // Bumped once per runSearch call, so a stale search whose network round
   // trip just happens to take longer than a newer one's can recognize
   // itself as superseded and skip applying its now-outdated results.
@@ -8885,15 +8896,17 @@ export function GlobalSearch({ entities, onClose, onJumpToEntity, onJumpToRecord
       setSearched(false);
       setHighlightQuery("");
       setSelectedIndex(null);
+      setTruncatedEntityNames([]);
       return;
     }
     const requestId = ++searchRequestId.current;
     setLoading(true);
     setError(null);
     errorFromShowAllRef.current = false;
-    const { results: succeeded, failures, recordsByEntity } = await searchAllEntities(entities, q);
+    const { results: succeeded, failures, recordsByEntity, truncatedNames } = await searchAllEntities(entities, q);
     if (searchRequestId.current !== requestId) return;
     lastRecordsByEntityRef.current = recordsByEntity;
+    setTruncatedEntityNames(truncatedNames);
     setResults(succeeded);
     setSearched(true);
     setHighlightQuery(q);
@@ -8948,8 +8961,10 @@ export function GlobalSearch({ entities, onClose, onJumpToEntity, onJumpToRecord
     const requestId = searchRequestId.current;
     setShowAllLoading((prev) => new Set(prev).add(entityName));
     try {
-      const { records } = await listRecords(entityName);
+      const { records, truncated } = await listRecords(entityName);
       if (searchRequestId.current !== requestId) return;
+      // Round 1643: mirrors runSearch's own truncated-name tracking above.
+      setTruncatedEntityNames((prev) => (truncated ? (prev.includes(entityName) ? prev : [...prev, entityName]) : prev.filter((n) => n !== entityName)));
       // Keeps the shared relation-label lookup in sync with the fresh data
       // this fetch just pulled -- without this, a DIFFERENT entity's own
       // later "Show all" (which reads this exact ref for resolving a
@@ -9145,6 +9160,11 @@ export function GlobalSearch({ entities, onClose, onJumpToEntity, onJumpToRecord
               Try again
             </button>
           </div>
+        )}
+        {!loading && searched && truncatedEntityNames.length > 0 && (
+          <p className="global-search-truncated-hint muted small" role="status">
+            {\`These tables are too large for search to scan every record (only the most recent ones are checked): \${truncatedEntityNames.join(", ")}. Older records matching your query may not be shown.\`}
+          </p>
         )}
         {loading && <p className="muted" role="status">Loading…</p>}
         {!loading && !searched && !error && (

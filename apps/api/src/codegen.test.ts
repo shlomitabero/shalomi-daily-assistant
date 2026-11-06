@@ -16227,6 +16227,7 @@ test("the exported GlobalSearch's runSearch shows results from every entity that
     "setSearched",
     "setHighlightQuery",
     "setSelectedIndex",
+    "setTruncatedEntityNames",
     "searchRequestId",
     "lastRecordsByEntityRef",
     "errorFromShowAllRef",
@@ -16244,6 +16245,7 @@ test("the exported GlobalSearch's runSearch shows results from every entity that
     (results: unknown[]) => {
       capturedResults = results;
     },
+    () => {},
     () => {},
     () => {},
     () => {},
@@ -16314,6 +16316,46 @@ test("the exported GlobalSearch's searchAllEntities disambiguates two entities t
 });
 
 /**
+ * Round 1643: mirrors the live preview's own GlobalSearchPanel.tsx fix --
+ * listRecords caps its response server-side (round 1638), newest-first;
+ * for any entity past that cap, a query matching only an older record
+ * finds nothing at all, with no indication anything was left out. The
+ * exported app's own searchAllEntities used to discard listRecords' own
+ * `truncated` flag entirely. Covers an entity with zero matches too,
+ * since that's exactly the silent-miss case this flag exists to surface.
+ */
+test("the exported GlobalSearch's searchAllEntities collects every truncated entity's name, even one with zero matches", async () => {
+  const files = generateExportFiles(project);
+  const globalSearchJsx = files.find((f) => f.path === "web/src/components/GlobalSearch.jsx")!.content;
+  const entityViewJsx = files.find((f) => f.path === "web/src/components/EntityView.jsx")!.content;
+
+  const matchesSearchSrc = entityViewJsx.match(/export function matchesSearch\([\s\S]*?\n\}\n/)?.[0]?.replace("export ", "");
+  const entityLabelOccurrencesSrc = entityViewJsx.match(/function entityLabelOccurrences\([\s\S]*?\n\}\n/)?.[0];
+  const entityDisplayLabelSrc = entityViewJsx.match(/function entityDisplayLabel\([\s\S]*?\n\}\n/)?.[0];
+  const searchAllEntitiesSrc = globalSearchJsx.match(/async function searchAllEntities\([\s\S]*?\n\}\n/)?.[0];
+  assert.ok(
+    matchesSearchSrc && entityLabelOccurrencesSrc && entityDisplayLabelSrc && searchAllEntitiesSrc,
+    "expected to find matchesSearch/entityLabelOccurrences/entityDisplayLabel/searchAllEntities in generated output",
+  );
+
+  const entityA = { name: "Alpha", label: "Alpha", fields: [{ name: "name", label: "Name", type: "text" }] };
+  const entityB = { name: "Beta", label: "Beta", fields: [{ name: "name", label: "Name", type: "text" }] };
+
+  const searchAllEntities = new Function(
+    "listRecords",
+    `${matchesSearchSrc}\n${entityLabelOccurrencesSrc}\n${entityDisplayLabelSrc}\n${searchAllEntitiesSrc}\nreturn searchAllEntities;`,
+  )(async (entityName: string) =>
+    // "Alpha" has a real match AND is truncated (the exact silent-miss
+    // risk: an older, non-returned row could also match). "Beta" has
+    // zero matches and is NOT truncated, a genuinely complete search.
+    entityName === "Alpha" ? { records: [{ id: 1, name: "match" }], truncated: true } : { records: [], truncated: false },
+  ) as (entities: unknown[], query: string) => Promise<{ truncatedNames: string[] }>;
+
+  const { truncatedNames } = await searchAllEntities([entityA, entityB], "match");
+  assert.deepEqual(truncatedNames, ["Alpha"], "must collect exactly the entities whose own fetch came back truncated, regardless of whether they had any matches");
+});
+
+/**
  * New in this round: the exported app's own GlobalSearch.jsx is a
  * deliberate duplicate of the live-preview GlobalSearchPanel.tsx's
  * runSearch, and it had the exact same ordering gap that round's own fix
@@ -16356,6 +16398,7 @@ test("the exported GlobalSearch's runSearch orders entity groups by totalMatches
     "setSearched",
     "setHighlightQuery",
     "setSelectedIndex",
+    "setTruncatedEntityNames",
     "searchRequestId",
     "lastRecordsByEntityRef",
     "errorFromShowAllRef",
@@ -16369,6 +16412,7 @@ test("the exported GlobalSearch's runSearch orders entity groups by totalMatches
     (results: unknown[]) => {
       capturedResults = results;
     },
+    () => {},
     () => {},
     () => {},
     () => {},
@@ -16467,6 +16511,7 @@ test("the exported GlobalSearch's handleShowAll writes the data it just fetched 
     "searchRequestId",
     "lastRecordsByEntityRef",
     "errorFromShowAllRef",
+    "setTruncatedEntityNames",
     `${matchesSearchSrc}\n${handleShowAllSrc}\nreturn handleShowAll;`,
   )(
     [courierEntity],
@@ -16479,6 +16524,7 @@ test("the exported GlobalSearch's handleShowAll writes the data it just fetched 
     { current: 0 },
     lastRecordsByEntityRef,
     { current: false },
+    () => {},
   ) as (entityName: string) => Promise<void>;
 
   await fn("Courier");
@@ -16487,6 +16533,57 @@ test("the exported GlobalSearch's handleShowAll writes the data it just fetched 
     [{ id: 1, name: "Bob Cohen" }],
     "handleShowAll must write the fresh records it just fetched back into lastRecordsByEntityRef, not leave the pre-existing stale snapshot in place",
   );
+});
+
+/**
+ * Round 1643: mirrors the live preview's own GlobalSearchPanel.tsx fix --
+ * handleShowAll's fresh re-fetch of one entity is the exact same capped
+ * listRecords endpoint, so it can come back truncated too, and the
+ * exported app's own copy used to discard that flag the same way.
+ */
+test("the exported GlobalSearch's handleShowAll adds its own entity to the truncated set when its fresh fetch is capped", async () => {
+  const files = generateExportFiles(project);
+  const globalSearchJsx = files.find((f) => f.path === "web/src/components/GlobalSearch.jsx")!.content;
+  const entityViewJsx = files.find((f) => f.path === "web/src/components/EntityView.jsx")!.content;
+
+  const matchesSearchSrc = entityViewJsx.match(/export function matchesSearch\([\s\S]*?\n\}\n/)?.[0]?.replace("export ", "");
+  const handleShowAllSrc = globalSearchJsx.match(/ {2}async function handleShowAll\(entityName\) \{[\s\S]*?\n {2}\}\n/)?.[0];
+  assert.ok(matchesSearchSrc && handleShowAllSrc, "expected to find matchesSearch/handleShowAll in generated output");
+
+  const courierEntity = { name: "Courier", label: "Courier", fields: [{ name: "name", label: "Name", type: "text" }] };
+  let truncatedNames: string[] = [];
+
+  const fn = new Function(
+    "entities",
+    "listRecords",
+    "setShowAllLoading",
+    "setError",
+    "setExpandedSamples",
+    "setResults",
+    "highlightQuery",
+    "searchRequestId",
+    "lastRecordsByEntityRef",
+    "errorFromShowAllRef",
+    "setTruncatedEntityNames",
+    `${matchesSearchSrc}\n${handleShowAllSrc}\nreturn handleShowAll;`,
+  )(
+    [courierEntity],
+    async () => ({ records: [{ id: 1, name: "Dana Levi" }], truncated: true }),
+    () => {},
+    () => {},
+    () => {},
+    () => {},
+    "Dana",
+    { current: 0 },
+    { current: {} },
+    { current: false },
+    (next: string[] | ((prev: string[]) => string[])) => {
+      truncatedNames = typeof next === "function" ? (next as (prev: string[]) => string[])(truncatedNames) : next;
+    },
+  ) as (entityName: string) => Promise<void>;
+
+  await fn("Courier");
+  assert.deepEqual(truncatedNames, ["Courier"], "a truncated fetch must add this entity's own name to the truncated set");
 });
 
 /**
@@ -16602,6 +16699,7 @@ test("the exported GlobalSearch's runSearch ignores a stale, still-in-flight sea
     "setSearched",
     "setHighlightQuery",
     "setSelectedIndex",
+    "setTruncatedEntityNames",
     "searchRequestId",
     "lastRecordsByEntityRef",
     "errorFromShowAllRef",
@@ -16621,6 +16719,7 @@ test("the exported GlobalSearch's runSearch ignores a stale, still-in-flight sea
     (results: unknown[]) => {
       capturedResultsByCall.push(results);
     },
+    () => {},
     () => {},
     () => {},
     () => {},
