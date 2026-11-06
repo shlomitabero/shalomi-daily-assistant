@@ -28,7 +28,11 @@ function sign(body, ts, secret) {
 
 function makeReq(payload, secret) {
   const rawBody = JSON.stringify(payload);
-  const ts = '1700000000';
+  // Must be fresh: verifyPaddleSignature now rejects a signature whose ts
+  // is more than a few minutes old, so a fixed historical ts here would
+  // fail every test in this file on the age check alone, independent of
+  // whatever each test actually means to exercise.
+  const ts = String(Math.floor(Date.now() / 1000));
   return { headers: { 'paddle-signature': `ts=${ts};h1=${sign(rawBody, ts, secret)}` }, body: Buffer.from(rawBody) };
 }
 
@@ -206,7 +210,11 @@ test('a malformed JSON body never crashes the handler', () => {
   __resetForTests();
   withEnv({ PADDLE_WEBHOOK_SECRET: 'whsec_real' }, () => {
     const rawBody = '{not valid json';
-    const ts = '1700000000';
+    // Must be fresh (see makeReq above) - a stale ts would 400 on the
+    // signature age check instead, which would still pass this assertion
+    // for the wrong reason and stop actually exercising the JSON.parse
+    // failure path this test means to cover.
+    const ts = String(Math.floor(Date.now() / 1000));
     const req = { headers: { 'paddle-signature': `ts=${ts};h1=${sign(rawBody, ts, 'whsec_real')}` }, body: Buffer.from(rawBody) };
     const res = makeRes();
     assert.doesNotThrow(() => paddleWebhookHandler(req, res));
