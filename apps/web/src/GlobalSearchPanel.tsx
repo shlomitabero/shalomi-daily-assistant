@@ -2,6 +2,8 @@ import { useEffect, useRef, useState } from "react";
 import type { Entity, EntityRecord } from "@forge/shared";
 import { listRecords } from "./api.js";
 import {
+  entityDisplayLabel,
+  entityLabelOccurrences,
   recordDisplayLabel,
   scrollIntoViewRespectingMotion,
   searchEntityRecords,
@@ -184,7 +186,7 @@ export function GlobalSearchPanel({
     const settled = await Promise.allSettled(
       entities.map(async (entity) => {
         const { records, truncated } = await listRecords(projectId, entity.name);
-        return [entity.name, records, truncated] as const;
+        return [entity, records, truncated] as const;
       }),
     );
     // A later call to runSearch (the user editing/resubmitting the query
@@ -198,13 +200,19 @@ export function GlobalSearchPanel({
     // Collected across EVERY searched entity, not just ones with a match --
     // a truncated entity with zero visible matches is exactly the silent-
     // miss case this flag exists to surface: the real match could be
-    // sitting in the older rows the server cap left out.
+    // sitting in the older rows the server cap left out. Named by each
+    // entity's own display label (not its raw internal name) -- the same
+    // entityLabelOccurrences/entityDisplayLabel pair the result-group
+    // header just below already uses, so an entity whose label was given a
+    // friendlier name than its internal identifier doesn't suddenly show
+    // up under the raw one in this one banner alone.
+    const truncatedOccurrences = entityLabelOccurrences(entities);
     const truncatedNames: string[] = [];
     for (const result of settled) {
       if (result.status === "fulfilled") {
-        const [name, records, truncated] = result.value;
-        recordsByEntity[name] = records;
-        if (truncated) truncatedNames.push(name);
+        const [entity, records, truncated] = result.value;
+        recordsByEntity[entity.name] = records;
+        if (truncated) truncatedNames.push(entityDisplayLabel(entity, truncatedOccurrences));
       }
     }
     setTruncatedEntityNames(truncatedNames);
@@ -319,7 +327,12 @@ export function GlobalSearchPanel({
       // this entity's fresh re-fetch -- without it, "Show all" could still
       // be capped by the same server-side limit with no indication, even
       // though runSearch's own initial fetch already surfaces this flag.
-      setTruncatedEntityNames((prev) => (truncated ? (prev.includes(entityName) ? prev : [...prev, entityName]) : prev.filter((n) => n !== entityName)));
+      // Tracked by the entity's own display label (round 1648), the same
+      // value runSearch itself now pushes, so a truncated entry added by
+      // one code path is actually found and removed by the other's own
+      // `prev.includes`/`prev.filter` lookups below.
+      const displayLabel = entityDisplayLabel(entity, entityLabelOccurrences(entities));
+      setTruncatedEntityNames((prev) => (truncated ? (prev.includes(displayLabel) ? prev : [...prev, displayLabel]) : prev.filter((n) => n !== displayLabel)));
       // Keeps the shared relation-label lookup in sync with the fresh data
       // this fetch just pulled -- without this, a DIFFERENT entity's own
       // later "Show all" (which reads this exact ref for resolving a

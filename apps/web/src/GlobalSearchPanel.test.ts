@@ -7,6 +7,7 @@ import { JSDOM } from "jsdom";
 import React from "react";
 import { act, cleanup, fireEvent, render } from "@testing-library/react";
 import type { Entity, EntityRecord } from "@forge/shared";
+import { entityDisplayLabel, entityLabelOccurrences } from "./entityFormatting.js";
 import { GlobalSearchPanel } from "./GlobalSearchPanel.js";
 import { LanguageProvider } from "./i18n/LanguageContext.js";
 import { ThemeProvider } from "./theme/ThemeContext.js";
@@ -58,6 +59,8 @@ test("GlobalSearchPanel's runSearch shows results from every entity that succeed
     "lastRecordsByEntityRef",
     "errorFromShowAllRef",
     "lang",
+    "entityLabelOccurrences",
+    "entityDisplayLabel",
     `${code}\nreturn runSearch;`,
   )(
     [entityA, entityB, entityC],
@@ -83,6 +86,8 @@ test("GlobalSearchPanel's runSearch shows results from every entity that succeed
     { current: {} },
     { current: false },
     "en",
+    entityLabelOccurrences,
+    entityDisplayLabel,
   ) as (q: string) => Promise<void>;
 
   await fn("match");
@@ -143,6 +148,8 @@ test("GlobalSearchPanel's runSearch collects every truncated entity's name, even
     "lastRecordsByEntityRef",
     "errorFromShowAllRef",
     "lang",
+    "entityLabelOccurrences",
+    "entityDisplayLabel",
     `${code}\nreturn runSearch;`,
   )(
     [entityA, entityB],
@@ -169,6 +176,8 @@ test("GlobalSearchPanel's runSearch collects every truncated entity's name, even
     { current: {} },
     { current: false },
     "en",
+    entityLabelOccurrences,
+    entityDisplayLabel,
   ) as (q: string) => Promise<void>;
 
   await fn("match");
@@ -177,6 +186,85 @@ test("GlobalSearchPanel's runSearch collects every truncated entity's name, even
     capturedTruncatedNames,
     ["Alpha"],
     "must collect exactly the entities whose own fetch came back truncated, regardless of whether they had any matches",
+  );
+});
+
+/**
+ * Round 1648: the truncated-entity banner (round 1643) used to name a
+ * capped entity by its raw internal `name` instead of its own display
+ * `label` -- inconsistent with the real result-group header a few lines
+ * below, which already resolves through
+ * entityDisplayLabel/entityLabelOccurrences. An entity given a friendlier
+ * label than its internal identifier (exactly what the Entity Label
+ * editor lets a user do) would suddenly show up under the raw internal
+ * name in this one banner alone.
+ */
+test("GlobalSearchPanel's runSearch names a truncated entity by its own display label, not its raw internal name", async () => {
+  const handlerMatch = globalSearchPanelSrc.match(/ {2}async function runSearch\(q: string\) \{[\s\S]*?\n {2}\}\n/);
+  assert.ok(handlerMatch, "expected to find runSearch in GlobalSearchPanel.tsx");
+  const { code } = transformSync(handlerMatch![0], { loader: "ts" });
+
+  // A real entity-rename scenario: the internal identifier stayed
+  // "customer_v2" (can't change without breaking existing data), but the
+  // user gave it the friendlier label "Customers" via the Entity Label
+  // editor.
+  const renamedEntity = { name: "customer_v2", label: "Customers", fields: [{ name: "name", label: "Name", type: "text" }] };
+
+  function fakeSearchEntityRecords(entity: { name: string; label: string }, records: unknown[]) {
+    return records.length > 0 ? { entityName: entity.name, entityLabel: entity.label, totalMatches: records.length, sample: records } : null;
+  }
+
+  let capturedTruncatedNames: string[] | undefined;
+
+  const fn = new Function(
+    "entities",
+    "projectId",
+    "listRecords",
+    "searchEntityRecords",
+    "t",
+    "setLoading",
+    "setError",
+    "setResults",
+    "setSearched",
+    "setHighlightQuery",
+    "setSelectedIndex",
+    "setTruncatedEntityNames",
+    "searchRequestId",
+    "lastRecordsByEntityRef",
+    "errorFromShowAllRef",
+    "lang",
+    "entityLabelOccurrences",
+    "entityDisplayLabel",
+    `${code}\nreturn runSearch;`,
+  )(
+    [renamedEntity],
+    "proj1",
+    async () => ({ records: [], truncated: true }),
+    fakeSearchEntityRecords,
+    (key: string, params?: Record<string, unknown>) => (params ? `${key}:${JSON.stringify(params)}` : key),
+    () => {},
+    () => {},
+    () => {},
+    () => {},
+    () => {},
+    () => {},
+    (names: string[]) => {
+      capturedTruncatedNames = names;
+    },
+    { current: 0 },
+    { current: {} },
+    { current: false },
+    "en",
+    entityLabelOccurrences,
+    entityDisplayLabel,
+  ) as (q: string) => Promise<void>;
+
+  await fn("match");
+
+  assert.deepEqual(
+    capturedTruncatedNames,
+    ["Customers"],
+    "the truncated-entity banner must name the entity by its display label, matching the real result-group header's own convention, not the raw internal name",
   );
 });
 
@@ -205,6 +293,8 @@ test("GlobalSearchPanel's runSearch still surfaces the raw error message when ev
     "lastRecordsByEntityRef",
     "errorFromShowAllRef",
     "lang",
+    "entityLabelOccurrences",
+    "entityDisplayLabel",
     `${code}\nreturn runSearch;`,
   )(
     [entityA],
@@ -227,6 +317,8 @@ test("GlobalSearchPanel's runSearch still surfaces the raw error message when ev
     { current: {} },
     { current: false },
     "en",
+    entityLabelOccurrences,
+    entityDisplayLabel,
   ) as (q: string) => Promise<void>;
 
   await fn("match");
@@ -278,6 +370,8 @@ test("GlobalSearchPanel's runSearch orders entity groups by totalMatches descend
     "lastRecordsByEntityRef",
     "errorFromShowAllRef",
     "lang",
+    "entityLabelOccurrences",
+    "entityDisplayLabel",
     `${code}\nreturn runSearch;`,
   )(
     [entityA, entityB, entityC],
@@ -298,6 +392,8 @@ test("GlobalSearchPanel's runSearch orders entity groups by totalMatches descend
     { current: {} },
     { current: false },
     "en",
+    entityLabelOccurrences,
+    entityDisplayLabel,
   ) as (q: string) => Promise<void>;
 
   await fn("match");
@@ -361,6 +457,8 @@ test("GlobalSearchPanel's runSearch ignores a stale, still-in-flight search's re
     "lastRecordsByEntityRef",
     "errorFromShowAllRef",
     "lang",
+    "entityLabelOccurrences",
+    "entityDisplayLabel",
     `${code}\nreturn runSearch;`,
   )(
     [entityA],
@@ -388,6 +486,8 @@ test("GlobalSearchPanel's runSearch ignores a stale, still-in-flight search's re
     { current: {} },
     { current: false },
     "en",
+    entityLabelOccurrences,
+    entityDisplayLabel,
   ) as (q: string) => Promise<void>;
 
   const stalePromise = fn("first query");
@@ -449,6 +549,8 @@ test("GlobalSearchPanel's handleShowAll ignores a stale, still-in-flight fetch o
     "searchRequestId",
     "lang",
     "setError",
+    "entityLabelOccurrences",
+    "entityDisplayLabel",
     `${code}\nreturn handleShowAll;`,
   )(
     [entityA],
@@ -467,6 +569,8 @@ test("GlobalSearchPanel's handleShowAll ignores a stale, still-in-flight fetch o
     searchRequestId,
     "en",
     () => {},
+    entityLabelOccurrences,
+    entityDisplayLabel,
   ) as (entityName: string) => Promise<void>;
 
   const showAllPromise = fn("Alpha");
@@ -525,6 +629,8 @@ test("GlobalSearchPanel's handleShowAll still runs when its entity was only reca
     "setError",
     "errorFromShowAllRef",
     "setTruncatedEntityNames",
+    "entityLabelOccurrences",
+    "entityDisplayLabel",
     `${code}\nreturn handleShowAll;`,
   )(
     [entityA],
@@ -545,6 +651,8 @@ test("GlobalSearchPanel's handleShowAll still runs when its entity was only reca
     () => {},
     { current: false },
     () => {},
+    entityLabelOccurrences,
+    entityDisplayLabel,
   ) as (entityName: string) => Promise<void>;
 
   // The UI click still passes the pre-rename casing ("Alpha"), captured
@@ -597,6 +705,8 @@ test("GlobalSearchPanel's handleShowAll never surfaces a stale, still-in-flight 
     "lang",
     "setError",
     "errorFromShowAllRef",
+    "entityLabelOccurrences",
+    "entityDisplayLabel",
     `${code}\nreturn handleShowAll;`,
   )(
     [entityA],
@@ -615,6 +725,8 @@ test("GlobalSearchPanel's handleShowAll never surfaces a stale, still-in-flight 
       errorCalls.push(message);
     },
     { current: false },
+    entityLabelOccurrences,
+    entityDisplayLabel,
   ) as (entityName: string) => Promise<void>;
 
   const showAllPromise = fn("Alpha");
@@ -681,6 +793,8 @@ test("GlobalSearchPanel's handleShowAll re-sorts results after a group's totalMa
     "selectedIndex",
     "setSelectedIndex",
     "setTruncatedEntityNames",
+    "entityLabelOccurrences",
+    "entityDisplayLabel",
     `${code}\nreturn handleShowAll;`,
   )(
     [entityOrder, entityCustomer],
@@ -713,6 +827,8 @@ test("GlobalSearchPanel's handleShowAll re-sorts results after a group's totalMa
     null,
     () => {},
     () => {},
+    entityLabelOccurrences,
+    entityDisplayLabel,
   ) as (entityName: string) => Promise<void>;
 
   await fn("Customer");
@@ -779,6 +895,8 @@ test("GlobalSearchPanel's handleShowAll keeps a keyboard-highlighted group ident
     "selectedIndex",
     "setSelectedIndex",
     "setTruncatedEntityNames",
+    "entityLabelOccurrences",
+    "entityDisplayLabel",
     `${code}\nreturn handleShowAll;`,
   )(
     [entityOrder, entityCustomer, entityDeal],
@@ -809,6 +927,8 @@ test("GlobalSearchPanel's handleShowAll keeps a keyboard-highlighted group ident
       selectedIndex = next;
     },
     () => {},
+    entityLabelOccurrences,
+    entityDisplayLabel,
   ) as (entityName: string) => Promise<void>;
 
   await fn("Deal");
@@ -886,6 +1006,8 @@ test("GlobalSearchPanel's handleShowAll never loses one group's own totalMatches
     "selectedIndex",
     "setSelectedIndex",
     "setTruncatedEntityNames",
+    "entityLabelOccurrences",
+    "entityDisplayLabel",
     `${code}\nreturn handleShowAll;`,
   )(
     [entityOrder, entityCustomer],
@@ -914,6 +1036,8 @@ test("GlobalSearchPanel's handleShowAll never loses one group's own totalMatches
     null,
     () => {},
     () => {},
+    entityLabelOccurrences,
+    entityDisplayLabel,
   ) as (entityName: string) => Promise<void>;
 
   const orderPromise = fn("Order");
@@ -968,6 +1092,8 @@ test("GlobalSearchPanel's handleShowAll surfaces a failed fetch via setError, in
     "lang",
     "setError",
     "errorFromShowAllRef",
+    "entityLabelOccurrences",
+    "entityDisplayLabel",
     `${code}\nreturn handleShowAll;`,
   )(
     [entityA],
@@ -988,6 +1114,8 @@ test("GlobalSearchPanel's handleShowAll surfaces a failed fetch via setError, in
       capturedError = msg;
     },
     { current: false },
+    entityLabelOccurrences,
+    entityDisplayLabel,
   ) as (entityName: string) => Promise<void>;
 
   await fn("Alpha");
@@ -1037,6 +1165,8 @@ test("GlobalSearchPanel's handleShowAll adds its own entity to the truncated set
     "selectedIndex",
     "setSelectedIndex",
     "setTruncatedEntityNames",
+    "entityLabelOccurrences",
+    "entityDisplayLabel",
     `${code}\nreturn handleShowAll;`,
   )(
     [entityA],
@@ -1058,6 +1188,8 @@ test("GlobalSearchPanel's handleShowAll adds its own entity to the truncated set
     (next: string[] | ((prev: string[]) => string[])) => {
       truncatedNames = typeof next === "function" ? (next as (prev: string[]) => string[])(truncatedNames) : next;
     },
+    entityLabelOccurrences,
+    entityDisplayLabel,
   ) as (entityName: string) => Promise<void>;
 
   await fn("Alpha");

@@ -8683,26 +8683,31 @@ async function searchAllEntities(entities, query) {
   const settled = await Promise.allSettled(
     entities.map(async (entity) => {
       const { records, truncated } = await listRecords(entity.name);
-      return [entity.name, records, truncated];
+      return [entity, records, truncated];
     }),
   );
   const recordsByEntity = {};
+  const entityLabelCounts = entityLabelOccurrences(entities);
   // Round 1643: mirrors the live preview's own GlobalSearchPanel.tsx fix --
   // listRecords caps its response server-side (round 1638), newest-first;
   // for any entity past that cap, a query matching only an older record
   // finds nothing at all, with no indication anything was left out.
   // Collected across every searched entity, not just ones with a match --
   // a truncated entity with zero visible matches is exactly the silent-
-  // miss case this flag exists to surface.
+  // miss case this flag exists to surface. Round 1648: named by each
+  // entity's own display label (not its raw internal name) -- the same
+  // entityLabelOccurrences/entityDisplayLabel pair used just below for the
+  // real result-group label, so an entity given a friendlier label than
+  // its internal identifier doesn't suddenly show up under the raw one in
+  // this one banner alone.
   const truncatedNames = [];
   for (const result of settled) {
     if (result.status === "fulfilled") {
-      const [name, records, truncated] = result.value;
-      recordsByEntity[name] = records;
-      if (truncated) truncatedNames.push(name);
+      const [entity, records, truncated] = result.value;
+      recordsByEntity[entity.name] = records;
+      if (truncated) truncatedNames.push(entityDisplayLabel(entity, entityLabelCounts));
     }
   }
-  const entityLabelCounts = entityLabelOccurrences(entities);
   const results = entities
     .map((entity) => {
       const records = recordsByEntity[entity.name];
@@ -9014,7 +9019,12 @@ export function GlobalSearch({ entities, onClose, onJumpToEntity, onJumpToRecord
       const { records, truncated } = await listRecords(entityName);
       if (searchRequestId.current !== requestId) return;
       // Round 1643: mirrors runSearch's own truncated-name tracking above.
-      setTruncatedEntityNames((prev) => (truncated ? (prev.includes(entityName) ? prev : [...prev, entityName]) : prev.filter((n) => n !== entityName)));
+      // Round 1648: tracked by the entity's own display label, the same
+      // value runSearch/searchAllEntities itself now pushes, so a
+      // truncated entry added by one code path is actually found and
+      // removed by the other's own prev.includes/prev.filter lookups.
+      const displayLabel = entityDisplayLabel(entity, entityLabelOccurrences(entities));
+      setTruncatedEntityNames((prev) => (truncated ? (prev.includes(displayLabel) ? prev : [...prev, displayLabel]) : prev.filter((n) => n !== displayLabel)));
       // Keeps the shared relation-label lookup in sync with the fresh data
       // this fetch just pulled -- without this, a DIFFERENT entity's own
       // later "Show all" (which reads this exact ref for resolving a

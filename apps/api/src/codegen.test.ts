@@ -16359,6 +16359,49 @@ test("the exported GlobalSearch's searchAllEntities collects every truncated ent
 });
 
 /**
+ * Round 1648: searchAllEntities' own truncatedNames array used to be
+ * built from each entity's raw internal `name` instead of its own
+ * display `label` -- inconsistent with the real result-group header a
+ * few lines below, which already resolves through
+ * entityDisplayLabel/entityLabelOccurrences. An entity given a friendlier
+ * label than its internal identifier (exactly what the Entity Label
+ * editor lets a user do) would suddenly show up under the raw internal
+ * name in this one banner alone.
+ */
+test("the exported GlobalSearch's searchAllEntities names a truncated entity by its own display label, not its raw internal name", async () => {
+  const files = generateExportFiles(project);
+  const globalSearchJsx = files.find((f) => f.path === "web/src/components/GlobalSearch.jsx")!.content;
+  const entityViewJsx = files.find((f) => f.path === "web/src/components/EntityView.jsx")!.content;
+
+  const matchesSearchSrc = entityViewJsx.match(/export function matchesSearch\([\s\S]*?\n\}\n/)?.[0]?.replace("export ", "");
+  const entityLabelOccurrencesSrc = entityViewJsx.match(/function entityLabelOccurrences\([\s\S]*?\n\}\n/)?.[0];
+  const entityDisplayLabelSrc = entityViewJsx.match(/function entityDisplayLabel\([\s\S]*?\n\}\n/)?.[0];
+  const searchAllEntitiesSrc = globalSearchJsx.match(/async function searchAllEntities\([\s\S]*?\n\}\n/)?.[0];
+  assert.ok(
+    matchesSearchSrc && entityLabelOccurrencesSrc && entityDisplayLabelSrc && searchAllEntitiesSrc,
+    "expected to find matchesSearch/entityLabelOccurrences/entityDisplayLabel/searchAllEntities in generated output",
+  );
+
+  // A real entity-rename scenario: the internal identifier stayed
+  // "customer_v2" (can't change without breaking existing data), but the
+  // user gave it the friendlier label "Customers" via the Entity Label
+  // editor.
+  const renamedEntity = { name: "customer_v2", label: "Customers", fields: [{ name: "name", label: "Name", type: "text" }] };
+
+  const searchAllEntities = new Function(
+    "listRecords",
+    `${matchesSearchSrc}\n${entityLabelOccurrencesSrc}\n${entityDisplayLabelSrc}\n${searchAllEntitiesSrc}\nreturn searchAllEntities;`,
+  )(async () => ({ records: [], truncated: true })) as (entities: unknown[], query: string) => Promise<{ truncatedNames: string[] }>;
+
+  const { truncatedNames } = await searchAllEntities([renamedEntity], "match");
+  assert.deepEqual(
+    truncatedNames,
+    ["Customers"],
+    "the truncated-entity banner must name the entity by its display label, matching the real result-group header's own convention, not the raw internal name",
+  );
+});
+
+/**
  * New in this round: the exported app's own GlobalSearch.jsx is a
  * deliberate duplicate of the live-preview GlobalSearchPanel.tsx's
  * runSearch, and it had the exact same ordering gap that round's own fix
@@ -16495,8 +16538,13 @@ test("the exported GlobalSearch's handleShowAll writes the data it just fetched 
   const entityViewJsx = files.find((f) => f.path === "web/src/components/EntityView.jsx")!.content;
 
   const matchesSearchSrc = entityViewJsx.match(/export function matchesSearch\([\s\S]*?\n\}\n/)?.[0]?.replace("export ", "");
+  const entityLabelOccurrencesSrc = entityViewJsx.match(/function entityLabelOccurrences\([\s\S]*?\n\}\n/)?.[0];
+  const entityDisplayLabelSrc = entityViewJsx.match(/function entityDisplayLabel\([\s\S]*?\n\}\n/)?.[0];
   const handleShowAllSrc = globalSearchJsx.match(/ {2}async function handleShowAll\(entityName\) \{[\s\S]*?\n {2}\}\n/)?.[0];
-  assert.ok(matchesSearchSrc && handleShowAllSrc, "expected to find matchesSearch/handleShowAll in generated output");
+  assert.ok(
+    matchesSearchSrc && entityLabelOccurrencesSrc && entityDisplayLabelSrc && handleShowAllSrc,
+    "expected to find matchesSearch/entityLabelOccurrences/entityDisplayLabel/handleShowAll in generated output",
+  );
 
   const courierEntity = { name: "Courier", label: "Courier", fields: [{ name: "name", label: "Name", type: "text" }] };
   // Pre-seeded with the STALE snapshot an earlier full search would have
@@ -16515,7 +16563,7 @@ test("the exported GlobalSearch's handleShowAll writes the data it just fetched 
     "lastRecordsByEntityRef",
     "errorFromShowAllRef",
     "setTruncatedEntityNames",
-    `${matchesSearchSrc}\n${handleShowAllSrc}\nreturn handleShowAll;`,
+    `${matchesSearchSrc}\n${entityLabelOccurrencesSrc}\n${entityDisplayLabelSrc}\n${handleShowAllSrc}\nreturn handleShowAll;`,
   )(
     [courierEntity],
     async () => ({ records: [{ id: 1, name: "Bob Cohen" }] }),
@@ -16550,8 +16598,13 @@ test("the exported GlobalSearch's handleShowAll adds its own entity to the trunc
   const entityViewJsx = files.find((f) => f.path === "web/src/components/EntityView.jsx")!.content;
 
   const matchesSearchSrc = entityViewJsx.match(/export function matchesSearch\([\s\S]*?\n\}\n/)?.[0]?.replace("export ", "");
+  const entityLabelOccurrencesSrc = entityViewJsx.match(/function entityLabelOccurrences\([\s\S]*?\n\}\n/)?.[0];
+  const entityDisplayLabelSrc = entityViewJsx.match(/function entityDisplayLabel\([\s\S]*?\n\}\n/)?.[0];
   const handleShowAllSrc = globalSearchJsx.match(/ {2}async function handleShowAll\(entityName\) \{[\s\S]*?\n {2}\}\n/)?.[0];
-  assert.ok(matchesSearchSrc && handleShowAllSrc, "expected to find matchesSearch/handleShowAll in generated output");
+  assert.ok(
+    matchesSearchSrc && entityLabelOccurrencesSrc && entityDisplayLabelSrc && handleShowAllSrc,
+    "expected to find matchesSearch/entityLabelOccurrences/entityDisplayLabel/handleShowAll in generated output",
+  );
 
   const courierEntity = { name: "Courier", label: "Courier", fields: [{ name: "name", label: "Name", type: "text" }] };
   let truncatedNames: string[] = [];
@@ -16568,7 +16621,7 @@ test("the exported GlobalSearch's handleShowAll adds its own entity to the trunc
     "lastRecordsByEntityRef",
     "errorFromShowAllRef",
     "setTruncatedEntityNames",
-    `${matchesSearchSrc}\n${handleShowAllSrc}\nreturn handleShowAll;`,
+    `${matchesSearchSrc}\n${entityLabelOccurrencesSrc}\n${entityDisplayLabelSrc}\n${handleShowAllSrc}\nreturn handleShowAll;`,
   )(
     [courierEntity],
     async () => ({ records: [{ id: 1, name: "Dana Levi" }], truncated: true }),
